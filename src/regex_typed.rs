@@ -24,9 +24,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::geneframe::Ty;
+use crate::geneframe::{regex_rows, Ty, REGEX};
 use crate::gpu_eval::{GpuNode, Op};
-use crate::kingdom_contract::{regex_relations, KingdomContract, KingdomRelations, SymbolId};
+use crate::kingdom_contract::{relations_from_rows, KingdomContract, KingdomRelations, SymbolId};
 
 /// `C_Char` and `C_Pat`: the printable ASCII bytes `0x20..=0x7e`, in byte order,
 /// so neighbouring indices are neighbouring bytes and a point mutation of an
@@ -34,29 +34,57 @@ use crate::kingdom_contract::{regex_relations, KingdomContract, KingdomRelations
 pub const CHAR_POOL_LEN: u32 = 95;
 /// First byte of the printable pool.
 pub const CHAR_POOL_BASE: u32 = 0x20;
-/// `C_I`: the repeat counts `0..=8` (the compiler clamps a count to
-/// `regex_compile::MAX_REPEAT` = 8, so a larger count would be dead range).
-pub const COUNT_POOL_LEN: u32 = 9;
+/// `C_I`: the repeat counts `0..=4`. The count bounds the instructions a
+/// repetition emits (`k` for `rep_n`, `2k` for `rep_upto`), and the layout's
+/// worst-case program must fit the compiler's `MAX_INST` for every gene it can
+/// hold ([`max_insts`]); counts to 4 cover the formats the datasets have
+/// (`\d{1,3}`, `[A-Z]{2}`) and keep N = 12 inside the budget.
+pub const COUNT_POOL_LEN: u32 = 5;
 /// The widest pool, the stride of a flat device pool table.
 pub const POOL_STRIDE: u32 = CHAR_POOL_LEN;
 
 /// The name of the literal-Pattern terminal added by [`typed_regex_relations`].
 pub const PATTERN_LITERAL: &str = "?_Pat";
 
-/// The regex kingdom's relations for the typed core. With `pattern_literal`
-/// the kingdom has `?_Pat`, a constant-capable `Pattern` terminal whose `C_Pat`
-/// value is the byte it matches, so a one-byte pattern is a leaf (`lit(?_Char)`
-/// costs a function and a `Char` slot). Without it a `Pattern` tail holds only
-/// `.`, `^`, `$` and the empty pattern, and every literal costs `lit`.
+/// The typed core's regex rows: [`regex_rows`] with one change. A counted
+/// repetition takes a `CharClass`, `rep_n(CharClass, I)` and
+/// `rep_upto(CharClass, I)`, not a `Pattern`. Expanding a repetition of an
+/// arbitrary sub-pattern multiplies the instruction count with nesting, which no
+/// fixed program buffer holds for every gene a layout can express, and a gene
+/// that overflowed would have to be dropped. A class folds to one 256-bit set, so
+/// a repetition of a class emits at most `2k` instructions however large the
+/// class tree is: the bound is a property of the types, and it covers the
+/// formats the kingdom is for (`\d{3}`, `[A-Z]{1,2}`). A repeated group is
+/// written with `star`, `plus` and `opt`, which loop rather than copy.
+pub fn typed_regex_rows() -> Vec<(String, Vec<Ty>, Ty)> {
+    regex_rows()
+        .iter()
+        .map(|(sem, _, ins, out)| {
+            let ins = match *sem {
+                "regex_rep_n" | "regex_rep_upto" => vec![Ty::CharClass, Ty::I],
+                _ => ins.to_vec(),
+            };
+            (sem.to_string(), ins, *out)
+        })
+        .collect()
+}
+
+/// The regex kingdom's relations for the typed core: [`typed_regex_rows`] plus
+/// the placeholders `?_Char` and `?_I`. With `pattern_literal` the kingdom has
+/// `?_Pat`, a constant-capable `Pattern` terminal whose `C_Pat` value is the
+/// byte it matches, so a one-byte pattern is a leaf (`lit(?_Char)` costs a
+/// function and a `Char` slot). Without it a `Pattern` tail holds only `.`, `^`,
+/// `$` and the empty pattern, and every literal costs `lit`.
 pub fn typed_regex_relations(pattern_literal: bool) -> KingdomRelations {
-    let mut r = regex_relations();
+    let mut rows = typed_regex_rows();
+    rows.push(("?_Char".to_string(), Vec::new(), Ty::Char));
+    rows.push(("?_I".to_string(), Vec::new(), Ty::I));
+    let mut constants = vec!["?_Char", "?_I"];
     if pattern_literal {
-        let id = r.names.len() as SymbolId;
-        r.names.push(PATTERN_LITERAL.to_string());
-        r.symbol_outputs.push((id, Ty::Pattern));
-        r.constants.insert(id);
+        rows.push((PATTERN_LITERAL.to_string(), Vec::new(), Ty::Pattern));
+        constants.push(PATTERN_LITERAL);
     }
-    r
+    relations_from_rows(REGEX, vec![Ty::Pattern], &rows, &constants)
 }
 
 /// `|C_T|` for every constant-capable type of the regex kingdom, the
@@ -166,19 +194,72 @@ impl fmt::Display for EmitDefect {
     }
 }
 
-/// The most nodes any expressed gene of program size `n` can have: every
-/// function row of every head (`sum_T h_T`) plus every leaf (`L`).
-pub fn max_nodes(k: &KingdomContract, n: usize) -> Result<usize, String> {
-    let h = k.heads_from_program_size(Ty::Pattern, n)?;
-    let b = k.bounds(Ty::Pattern, &h)?;
-    Ok(h.values().sum::<usize>() + b.l)
+/// What the regex compiler must hold for every gene a layout can express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capacity {
+    /// The most nodes an expressed gene can have: every function row of every
+    /// head (`sum_T h_T`) plus every leaf (`L`).
+    pub nodes: usize,
+    /// The most VM instructions its program can have, `Match` included.
+    pub insts: usize,
 }
 
-/// The largest program size `N` whose genes can never express more than `cap`
-/// nodes, `cap` being the compiler's `MAX_NODES`. A layout above it is a
-/// configuration defect found at setup, not a gene dropped at run time.
-pub fn largest_program_size(k: &KingdomContract, cap: usize) -> usize {
-    (1..).take_while(|n| max_nodes(k, *n).is_ok_and(|m| m <= cap)).last().unwrap_or(0)
+/// The compiler's limits: `MAX_NODES` nodes and `MAX_INST = 2 * MAX_NODES + 1`
+/// instructions (`regex_compile.wgsl`).
+pub const MAX_INST: usize = 2 * crate::gpu_eval::MAX_NODES + 1;
+
+/// Instructions one `Pattern` function can emit, at most. A class operand and
+/// an `I` operand emit none of their own; `rep_upto` emits `2k`, `rep_n` `k`.
+fn pattern_function_cost(name: &str) -> usize {
+    let max_count = (COUNT_POOL_LEN - 1) as usize;
+    match name {
+        "regex_rep_upto" => 2 * max_count,
+        "regex_rep_n" => max_count,
+        "regex_alt" | "regex_star" => 2,
+        "regex_concat" => 0,
+        _ => 1,
+    }
+}
+
+/// [`Capacity`] of a gene rooted at `Pattern` with head lengths `heads`: nodes
+/// from the node bound, instructions from the `Pattern` frame alone (every
+/// instruction is emitted by a `Pattern` node; class, `Char` and `I` nodes emit
+/// none of their own).
+pub fn capacity(k: &KingdomContract, heads: &BTreeMap<Ty, usize>) -> Result<Capacity, String> {
+    let b = k.bounds(Ty::Pattern, heads)?;
+    let p = b.get(Ty::Pattern).ok_or_else(|| "our software has a bug: the regex kingdom has no Pattern frame".to_string())?;
+    let function_cost = k.functions_of(Ty::Pattern).iter().map(|s| pattern_function_cost(k.name(*s))).max().unwrap_or(1);
+    let leaf_cost = 1;
+    Ok(Capacity { nodes: heads.values().sum::<usize>() + b.l, insts: p.h * function_cost + p.t * leaf_cost + 1 })
+}
+
+/// `Err` when a layout of these heads can express a gene the compiler does not
+/// hold. A configuration check made once at setup: no gene is dropped for
+/// length at run time because none can exceed the limits.
+pub fn check_capacity(k: &KingdomContract, heads: &BTreeMap<Ty, usize>) -> Result<(), String> {
+    let c = capacity(k, heads)?;
+    let (node_cap, inst_cap) = (crate::gpu_eval::MAX_NODES, MAX_INST);
+    if c.nodes > node_cap || c.insts > inst_cap {
+        return Err(format!(
+            "our software has a bug: this layout (heads guarantee a program size of {}) can express {} nodes and {} instructions, the regex compiler holds {node_cap} and {inst_cap}; the largest program size that fits is {}",
+            k.guaranteed_program_size(Ty::Pattern, heads),
+            c.nodes,
+            c.insts,
+            largest_program_size(k)
+        ));
+    }
+    Ok(())
+}
+
+/// The largest program size `N` whose heads fit the compiler's limits
+/// ([`check_capacity`]).
+pub fn largest_program_size(k: &KingdomContract) -> usize {
+    let fits = |n: usize| {
+        k.heads_from_program_size(Ty::Pattern, n)
+            .and_then(|h| capacity(k, &h))
+            .is_ok_and(|c| c.nodes <= crate::gpu_eval::MAX_NODES && c.insts <= MAX_INST)
+    };
+    (1..).take_while(|n| fits(*n)).last().unwrap_or(0)
 }
 
 /// The per-symbol tables of emission, the data both the host [`emit_nodes`]
@@ -328,14 +409,30 @@ mod tests {
 
     /// The kingdom check figures at the program sizes the plan names; printed
     /// for the plan and asserted on the closed-form heads.
-    /// The compiler holds 128 nodes (`gpu_eval::MAX_NODES`), which fixes the
-    /// largest regex layout at N = 12 (124 nodes; N = 13 gives 135).
+    /// The compiler holds 128 nodes and 257 instructions (`gpu_eval::MAX_NODES`,
+    /// `MAX_INST`), which fixes the largest regex layout at N = 12: 124 nodes and
+    /// 209 instructions. N = 13 gives 135 nodes.
     #[test]
-    fn the_compiler_node_limit_fixes_the_program_size() {
+    fn the_compiler_limits_fix_the_program_size() {
         for lit in [false, true] {
             let k = kingdom(lit);
-            assert_eq!((max_nodes(&k, 12), max_nodes(&k, 13)), (Ok(124), Ok(135)));
-            assert_eq!(largest_program_size(&k, crate::gpu_eval::MAX_NODES), 12);
+            let cap = |n: usize| capacity(&k, &k.heads_from_program_size(Ty::Pattern, n).expect("heads")).expect("capacity");
+            assert_eq!(cap(12), Capacity { nodes: 124, insts: 209 });
+            assert_eq!(cap(13), Capacity { nodes: 135, insts: 227 });
+            assert_eq!(largest_program_size(&k), 12);
+            assert!(check_capacity(&k, &k.heads_from_program_size(Ty::Pattern, 12).expect("heads")).is_ok());
+            let e = check_capacity(&k, &k.heads_from_program_size(Ty::Pattern, 13).expect("heads")).expect_err("13 does not fit");
+            assert!(e.starts_with("our software has a bug: ") && e.contains("largest program size that fits is 12"), "{e}");
+        }
+    }
+
+    /// A repetition takes a class, so its cost is bounded by its count.
+    #[test]
+    fn a_repetition_takes_a_class() {
+        let k = kingdom(true);
+        for name in ["regex_rep_n", "regex_rep_upto"] {
+            let s = (0..k.n_symbols() as SymbolId).find(|s| k.name(*s) == name).expect(name);
+            assert_eq!(k.signature(s), [Ty::CharClass, Ty::I], "{name}");
         }
     }
 
@@ -372,7 +469,8 @@ mod tests {
                 for _ in 0..2000 {
                     let gene = random_gene(&k, &layout, &mut rng);
                     let e = express(&k, &layout, &gene, &cl).expect("a valid-by-construction gene expresses");
-                    assert!(e.nodes.len() <= max_nodes(&k, n).expect("bound"), "a layout of size {n} has at most {:?} nodes", max_nodes(&k, n));
+                    let cap = capacity(&k, &k.heads_from_program_size(Ty::Pattern, n).expect("heads")).expect("capacity");
+                    assert!(e.nodes.len() <= cap.nodes, "a layout of size {n} has at most {} nodes", cap.nodes);
                     let typed: Vec<TypedNode> = e.nodes.iter().map(|x| TypedNode { symbol: x.symbol, parent_step: x.parent_step, arg_index: x.arg_index, const_index: x.const_index }).collect();
                     let g = emit_nodes(&t, &typed).expect("emits");
                     assert_eq!(g.len(), e.nodes.len());
