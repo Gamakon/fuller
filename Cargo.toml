@@ -208,3 +208,7 @@ required-features = ["wgsl"]
 [[example]]
 name = "wgsl_typed_roundtrip"
 required-features = ["wgsl"]
+
+[[example]]
+name = "wgsl_harvest_read"
+required-features = ["wgsl"]
