@@ -86,7 +86,6 @@
     code span.vs { color: #4070a0; } /* VerbatimString */
     code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
   </style>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
 </head>
 <body>
 <header id="title-block-header">
@@ -798,5 +797,244 @@ types with up to 4-argument functions, not a tuned buffer: it is what
 the paged geneframe (CR_multityped_gep §10c) has to hold. The older
 <code>kingdoms/wgsl</code> kingdom reads 15,038 words at
 <code>N = 8</code> and 66,590 at <code>N = 32</code>.</p>
+<h2 id="implementation-notes-2026-10-20-phylu">Implementation notes
+(2026-10-20, phylu)</h2>
+<p>The GPU side of the design, in phylu <code>src/evolve</code> (commits
+<code>3fd78355</code> to <code>1257b834</code>). Where the design left a
+choice, this is what was built and why.</p>
+<h3 id="the-heads-function-share-and-the-root-cell">The head’s function
+share and the root cell</h3>
+<p>A head cell is a function or a terminal of its type. The design did
+not say how often a function; two settings of the kingdom now do, read
+by the initialiser and by head point mutation on host and device
+(<code>typed_init.rs</code>, <code>typed_init.wgsl</code>, the mutation
+in <code>typed_vary.*</code>), and held in the type directory as one
+threshold word a type.</p>
+<ol type="1">
+<li><strong><code>FunctionShare</code>.</strong>
+<code>proportional</code> is Ferreira’s practice: a function is drawn in
+proportion to the number of functions against terminals that can stand
+in the cell’s type. <code>half</code> is a fair coin per cell, which is
+what the typed initialiser drew until 2026-10-20 and what the untyped
+engine drew before it. <code>Fixed(p)</code> draws a function with
+probability <code>p</code>. The default is <code>proportional</code>
+(<code>EVOLVE_FUNCTION_SHARE</code>). <code>half</code> is bit-identical
+to the old draw, so the pinned SR golden keeps its line.</li>
+<li><strong><code>root_function</code>.</strong> When on, the root cell
+of the root type’s head (the first symbol of the expression) is drawn
+from the functions of its type wherever the type has any, in the
+initialiser and in point mutation. Off is classical GEP. Inversion,
+transposition and recombination can still place a terminal there.
+Default off (<code>EVOLVE_ROOT_FUNCTION=1</code>).</li>
+</ol>
+<p>Expressed size of a randomly drawn gene, host initialiser and the
+typed walk (<code>examples/init_size_study.rs</code>; 2,000 genes,
+safewgsl 300; SR at head 34, regex and safewgsl at program size 28 and
+8):</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>kingdom</th>
+<th>draw</th>
+<th>one-node trees</th>
+<th>mean nodes</th>
+<th>median</th>
+<th>max (bound)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SR</td>
+<td>fair coin</td>
+<td>51.9 %</td>
+<td>2.56</td>
+<td>1</td>
+<td>33 (69)</td>
+</tr>
+<tr>
+<td>SR</td>
+<td>coin + root function</td>
+<td>0.0 %</td>
+<td>4.20</td>
+<td>3</td>
+<td>33</td>
+</tr>
+<tr>
+<td>SR</td>
+<td>proportional</td>
+<td>18.1 %</td>
+<td>13.49</td>
+<td>6</td>
+<td>48</td>
+</tr>
+<tr>
+<td>SR</td>
+<td>proportional + root function</td>
+<td>0.0 %</td>
+<td>16.43</td>
+<td>9</td>
+<td>49</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>fair coin</td>
+<td>51.9 %</td>
+<td>2.57</td>
+<td>1</td>
+<td>21 (300)</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>coin + root function</td>
+<td>0.0 %</td>
+<td>4.35</td>
+<td>3</td>
+<td>29</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>proportional</td>
+<td>31.4 %</td>
+<td>4.10</td>
+<td>2</td>
+<td>40</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>proportional + root function</td>
+<td>0.0 %</td>
+<td>5.58</td>
+<td>4</td>
+<td>44</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>fair coin</td>
+<td>51.7 %</td>
+<td>9.29</td>
+<td>1</td>
+<td>116 (6,087)</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>coin + root function</td>
+<td>0.0 %</td>
+<td>18.95</td>
+<td>13</td>
+<td>121</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>proportional</td>
+<td>51.7 %</td>
+<td>523.22</td>
+<td>1</td>
+<td>1,717</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>proportional + root function</td>
+<td>0.0 %</td>
+<td>1,089.44</td>
+<td>1,150</td>
+<td>1,717</td>
+</tr>
+</tbody>
+</table>
+<p>The classical head draw of a one-type kingdom is the
+<code>proportional</code> row. The fair coin makes about half of all
+genes a single bare terminal, because the root cell is a terminal half
+the time. Safewgsl’s root type has about as many terminals as functions,
+so even the proportional draw leaves half its genes a single terminal
+and makes the rest large; the root function removes the trivial half,
+and with a proportional share it fills most of the head (median 1,150
+nodes), so a fair coin with the root function (mean 19) is the gentler
+start there. Which setting searches best is not settled by these
+numbers; the SR 93-law run uses the fair coin on both arms.</p>
+<h3 id="the-kernel-text-does-not-depend-on-the-layout">The kernel text
+does not depend on the layout</h3>
+<p>A layout of a million words crashed the shader compiler of Metal
+(<code>XPC_ERROR_CONNECTION_INTERRUPTED</code> in the walk kernel). The
+cause was a shader text that grew with the layout: capacity constants
+prepended to the text sized private arrays (nine per walk, a dozen per
+decode, five in the cleanse): private memory a thread proportional to
+the layout’s node bound. The rule since 2026-10-20:</p>
+<ol start="3" type="1">
+<li><strong>The shipped text is the text.</strong> The walk, init, vary
+and decode kernels are compiled from the shipped file with nothing
+prepended. No constant or array in them is derived from a layout.</li>
+<li><strong>Scratch is a buffer.</strong> Each kernel keeps what used to
+be a private array in a storage buffer, a slice of
+<code>scratch_stride</code> words for each invocation of the dispatch
+(the walk uses its own output record and a small cursor buffer). The
+capacities (the node bound, the longest segment, the type count) are
+fields of the uniform. A dispatch covers as many rows as fit 256 MB of
+scratch, whole rows at a time, so a layout with large per-row scratch is
+processed in chunks and a small one in one dispatch, as before.</li>
+<li><strong>Two contracts are held on the host, with no adapter</strong>
+(<code>kernel_contracts.rs</code>, from naga’s reflection of the shipped
+text): no kernel declares more than 29 bound buffers (Metal’s limit for
+a stage; the decoder had 30, and <code>op_order</code> and
+<code>op_stack</code> became one interleaved binding), and every uniform
+the host fills has the size of the struct the kernel reads
+(<code>VP</code> 22 words, <code>Island</code> 22,
+<code>InitParams</code> 12, <code>DecodeParams</code> 8,
+<code>WalkParams</code> 8; a mismatch failed every test that opened the
+pipeline). Each kernel also has a test that its text has no layout
+constant, is the shipped text, and validates in naga, built against two
+layouts more than twenty times apart. The regex kernels follow the same
+rule (mtgep-regex).</li>
+</ol>
+<p>The cost is that scratch lives in device memory rather than private
+memory; the decode of the one-type kingdoms may be slower for it, and
+the timings of the first run on the new kernels will show how much.</p>
+<h3 id="checkpoints-round-trip-every-float-exactly">Checkpoints
+round-trip every float exactly</h3>
+<p>A resumed fit must equal an uninterrupted one. Three things were lost
+on the way through the checkpoint: the device re-froze the HFF column
+maxima from the resumed population instead of generation 0’s; the cohort
+labels were saved from a stale host copy; and the per-row scores were
+not saved at all, so the next generation’s elites lost theirs (format 3
+carries them). Last, <code>serde_json</code>’s default parser reads an
+<code>f64</code> back one unit in the last place off, which fed
+selection at generation 13; the <code>float_roundtrip</code> feature
+makes the read exact for every float field (a test reads awkward
+<code>f64</code> values back bit for bit).</p>
+<h3 id="the-untyped-engine-is-gone">The untyped engine is gone</h3>
+<p>SR, regex and the WGSL kingdom run on the typed core alone; nothing
+is substituted anywhere in phylu. Removed (CR_multityped_gep section
+11): <code>EvolveDevice</code> and its kernels
+(<code>evolve.wgsl</code>, <code>decode.wgsl</code> with its fallback
+bindings and projection block, <code>vary.wgsl</code>); the host copies
+of the operators (<code>mutate</code>, <code>crossover</code>,
+<code>select</code>, <code>vary</code>, <code>relevel</code>,
+<code>GeneTree</code>, <code>neighbourhood</code>, the cleanse and
+literal mutations); the host <code>init</code>, the old
+<code>Population</code> with a constants array per gene,
+<code>DepthBudget</code>, <code>TypeWalk</code> and the untyped
+<code>TypedSampling</code>; <code>TypedCodes::fallback_op</code>,
+<code>fallback_k</code> and <code>typed_kingdom</code>;
+<code>KingdomTypes::fallbacks</code> and <code>literals</code>,
+<code>SymbolTable::fallback_leaf</code>,
+<code>decode_gene_masked</code>, <code>LiteralCodes</code>,
+<code>Rates::lit_point</code>. <code>decode_gene</code> (host) now
+refuses a token of the wrong type, and a literal placeholder decodes
+like <code>?_T</code>, an index into <code>C_T</code>. Every host
+rewrite of an expressed gene (cleanse, snap, fold, the beam, regex
+simplify) goes through fuller’s <code>express</code> and
+<code>write_back</code> (<code>typed_write_back.rs</code>:
+<code>GeneCodec</code>), and a rewrite that does not fit is a named
+defect. The subexpression search now breeds on the typed device. The
+fold operator on by default in SR is the near-constant-blob collapse, on
+the codec; fuller’s ADF fold (shared subtrees) is a different operator
+and is not on by default.</p>
 </body>
 </html>

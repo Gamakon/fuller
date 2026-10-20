@@ -278,3 +278,51 @@ Kingdom check figures (`cargo test --release --features wgsl --lib the_kingdom_r
 | safewgsl | 32 | `Wgsl(107)` / `Wgsl(186)` | 173 / 174 | 17,518 / 17,860 | 257,242 / 257,771 | `Wgsl(33)`: 93, 6107, 6014, 6107 |
 
 The safewgsl width is a consequence of `N` and of 202 types with up to 4-argument functions, not a tuned buffer: it is what the paged geneframe (CR_multityped_gep §10c) has to hold. The older `kingdoms/wgsl` kingdom reads 15,038 words at `N = 8` and 66,590 at `N = 32`.
+
+## Implementation notes (2026-10-20, phylu)
+
+The GPU side of the design, in phylu `src/evolve` (commits `3fd78355` to `1257b834`). Where the design left a choice, this is what was built and why.
+
+### The head's function share and the root cell
+
+A head cell is a function or a terminal of its type. The design did not say how often a function; two settings of the kingdom now do, read by the initialiser and by head point mutation on host and device (`typed_init.rs`, `typed_init.wgsl`, the mutation in `typed_vary.*`), and held in the type directory as one threshold word a type.
+
+1. **`FunctionShare`.** `proportional` is Ferreira's practice: a function is drawn in proportion to the number of functions against terminals that can stand in the cell's type. `half` is a fair coin per cell, which is what the typed initialiser drew until 2026-10-20 and what the untyped engine drew before it. `Fixed(p)` draws a function with probability `p`. The default is `proportional` (`EVOLVE_FUNCTION_SHARE`). `half` is bit-identical to the old draw, so the pinned SR golden keeps its line.
+2. **`root_function`.** When on, the root cell of the root type's head (the first symbol of the expression) is drawn from the functions of its type wherever the type has any, in the initialiser and in point mutation. Off is classical GEP. Inversion, transposition and recombination can still place a terminal there. Default off (`EVOLVE_ROOT_FUNCTION=1`).
+
+Expressed size of a randomly drawn gene, host initialiser and the typed walk (`examples/init_size_study.rs`; 2,000 genes, safewgsl 300; SR at head 34, regex and safewgsl at program size 28 and 8):
+
+| kingdom | draw | one-node trees | mean nodes | median | max (bound) |
+|---|---|---|---|---|---|
+| SR | fair coin | 51.9 % | 2.56 | 1 | 33 (69) |
+| SR | coin + root function | 0.0 % | 4.20 | 3 | 33 |
+| SR | proportional | 18.1 % | 13.49 | 6 | 48 |
+| SR | proportional + root function | 0.0 % | 16.43 | 9 | 49 |
+| regex | fair coin | 51.9 % | 2.57 | 1 | 21 (300) |
+| regex | coin + root function | 0.0 % | 4.35 | 3 | 29 |
+| regex | proportional | 31.4 % | 4.10 | 2 | 40 |
+| regex | proportional + root function | 0.0 % | 5.58 | 4 | 44 |
+| safewgsl | fair coin | 51.7 % | 9.29 | 1 | 116 (6,087) |
+| safewgsl | coin + root function | 0.0 % | 18.95 | 13 | 121 |
+| safewgsl | proportional | 51.7 % | 523.22 | 1 | 1,717 |
+| safewgsl | proportional + root function | 0.0 % | 1,089.44 | 1,150 | 1,717 |
+
+The classical head draw of a one-type kingdom is the `proportional` row. The fair coin makes about half of all genes a single bare terminal, because the root cell is a terminal half the time. Safewgsl's root type has about as many terminals as functions, so even the proportional draw leaves half its genes a single terminal and makes the rest large; the root function removes the trivial half, and with a proportional share it fills most of the head (median 1,150 nodes), so a fair coin with the root function (mean 19) is the gentler start there. Which setting searches best is not settled by these numbers; the SR 93-law run uses the fair coin on both arms.
+
+### The kernel text does not depend on the layout
+
+A layout of a million words crashed the shader compiler of Metal (`XPC_ERROR_CONNECTION_INTERRUPTED` in the walk kernel). The cause was a shader text that grew with the layout: capacity constants prepended to the text sized private arrays (nine per walk, a dozen per decode, five in the cleanse): private memory a thread proportional to the layout's node bound. The rule since 2026-10-20:
+
+3. **The shipped text is the text.** The walk, init, vary and decode kernels are compiled from the shipped file with nothing prepended. No constant or array in them is derived from a layout.
+4. **Scratch is a buffer.** Each kernel keeps what used to be a private array in a storage buffer, a slice of `scratch_stride` words for each invocation of the dispatch (the walk uses its own output record and a small cursor buffer). The capacities (the node bound, the longest segment, the type count) are fields of the uniform. A dispatch covers as many rows as fit 256 MB of scratch, whole rows at a time, so a layout with large per-row scratch is processed in chunks and a small one in one dispatch, as before.
+5. **Two contracts are held on the host, with no adapter** (`kernel_contracts.rs`, from naga's reflection of the shipped text): no kernel declares more than 29 bound buffers (Metal's limit for a stage; the decoder had 30, and `op_order` and `op_stack` became one interleaved binding), and every uniform the host fills has the size of the struct the kernel reads (`VP` 22 words, `Island` 22, `InitParams` 12, `DecodeParams` 8, `WalkParams` 8; a mismatch failed every test that opened the pipeline). Each kernel also has a test that its text has no layout constant, is the shipped text, and validates in naga, built against two layouts more than twenty times apart. The regex kernels follow the same rule (mtgep-regex).
+
+The cost is that scratch lives in device memory rather than private memory; the decode of the one-type kingdoms may be slower for it, and the timings of the first run on the new kernels will show how much.
+
+### Checkpoints round-trip every float exactly
+
+A resumed fit must equal an uninterrupted one. Three things were lost on the way through the checkpoint: the device re-froze the HFF column maxima from the resumed population instead of generation 0's; the cohort labels were saved from a stale host copy; and the per-row scores were not saved at all, so the next generation's elites lost theirs (format 3 carries them). Last, `serde_json`'s default parser reads an `f64` back one unit in the last place off, which fed selection at generation 13; the `float_roundtrip` feature makes the read exact for every float field (a test reads awkward `f64` values back bit for bit).
+
+### The untyped engine is gone
+
+SR, regex and the WGSL kingdom run on the typed core alone; nothing is substituted anywhere in phylu. Removed (CR_multityped_gep section 11): `EvolveDevice` and its kernels (`evolve.wgsl`, `decode.wgsl` with its fallback bindings and projection block, `vary.wgsl`); the host copies of the operators (`mutate`, `crossover`, `select`, `vary`, `relevel`, `GeneTree`, `neighbourhood`, the cleanse and literal mutations); the host `init`, the old `Population` with a constants array per gene, `DepthBudget`, `TypeWalk` and the untyped `TypedSampling`; `TypedCodes::fallback_op`, `fallback_k` and `typed_kingdom`; `KingdomTypes::fallbacks` and `literals`, `SymbolTable::fallback_leaf`, `decode_gene_masked`, `LiteralCodes`, `Rates::lit_point`. `decode_gene` (host) now refuses a token of the wrong type, and a literal placeholder decodes like `?_T`, an index into `C_T`. Every host rewrite of an expressed gene (cleanse, snap, fold, the beam, regex simplify) goes through fuller's `express` and `write_back` (`typed_write_back.rs`: `GeneCodec`), and a rewrite that does not fit is a named defect. The subexpression search now breeds on the typed device. The fold operator on by default in SR is the near-constant-blob collapse, on the codec; fuller's ADF fold (shared subtrees) is a different operator and is not on by default.
