@@ -106,3 +106,37 @@ Rulings of the lead applied; both `kingdoms/safewgsl` (204 duals, roots `kernel.
 | kernels and grid | `own.kernel_safe`, `own.kernel_module`, `own.kernel_kernel`, `own.grid_grid`, `own.wg_decl`, `own.wg_decls` | roots | the default grid, an empty body and the epilogue's store |
 
 Not done: the 7 duals with no consumer get no row (`payload`, `bound`, `phi`, `indexw`, `array<T>`, `store.store`, `kernel.kernel` in safewgsl). A constant is an f64 (exact for every u32 and i32); phylu's `C_T` holds the bit pattern and converts at the boundary.
+
+## Aggregates
+
+**Objective.** The kingdom holds ANY WGSL. A fixed array `array<T, N>`, a struct `S` and a matrix of a width the table lacks are VALUES in WGSL: a helper takes one and returns one, a local holds one, `a[i]` and `s.m` read one, a binding is one whole. The kingdom has duals for scalars, vectors and `f32` matrices only, so every kernel that moves an aggregate as a value is refused (`untyped leaf load.uniform.u` 142, `load.buffer.in` 11, `load.local.v@N`/`m@N` 19, `load.workgroup.zero` 4 of the harvest, and the aggregate-typed helpers behind "m returns a value no register holds" 43 and "helper a returns nothing" 40).
+
+**Approach.** An aggregate type gets a dual like any other: slot = its WGSL type text (`array<mat2x2<f32>, 4>`, `Memory`), form `value`, so the dual `array<mat2x2<f32>, 4>.value`; lanes 0. The duals a module needs are the closure of the types it declares (arrays of known size, structs, element and member types) and are known only once the module is parsed, so they are an EXTENSION of the kingdom, built per module: `WgslKingdom::extended(&module)` returns the kingdom with the aggregate duals appended after the 204 (`Ty::Wgsl(204 + k)`, ordered by type text, so the same module always gets the same codes) and their rows appended after the table's. Inference (`infer.rs`) types a node by slot and form, so the extended duals type every aggregate node with no other change. The shape of each dual (`Shape::Array { elem, len }`, `Shape::Struct { members }`) is recorded on `WgslDual`, and the rows are generated from the shapes, as the per-kernel rows are generated from the interface; the row classes and signatures are declared once in `gen_tables.py` (class `agg`) so the spec and the data cannot drift.
+
+**Rows, per aggregate dual `A`.**
+
+| Row | Signature | Text |
+|---|---|---|
+| `agg.zero` | `() -> A` | `A()` (the zero value; the dual's terminal) |
+| `agg.at` (array) | `(A, u32.index) -> elem` | `a[i]`; the device clamps the index (naga Restrict) |
+| `agg.member_<m>` (struct) | `(A) -> member` | `a.m` |
+| `agg.col_<c>` (matrix) | `(A) -> column` | `a[c]` |
+| `agg.with_at` (array) | `(A, u32.index, elem) -> A` | the helper `with_<A>(a, i, v)`: a copy with element `i` replaced |
+| `agg.with_<m>` (struct) | `(A, member) -> A` | the helper `with_<A>_<m>(a, v)` |
+| `load.<binding>` | `() -> A` (a whole binding) or `(u32.index) -> S` (an element of a runtime array of structs) | `u`, `in[i]` |
+| `store.<binding>_<rung>` | `(A) -> stmt` or `(u32.index, S) -> stmt` | `u = v;`, `out[i] = v;` |
+| `areg.<n>`, `areg.get`, `areg.set_<rung>` | a register of `A` (as the 17 register kinds are), its read, its write at every rung | a `var` of type `A` |
+
+Construction is zero then updates (`with_*`): the arity stays at most three, and an array of 64 elements or a struct of nine members is built by the same rows as one of two. A constructor with the elements written (`array<f32, 3>(a, b, c)`, `S(x, y)`) is read as that chain. A helper that takes or returns an aggregate needs no row: inlining binds the parameter to the caller's tree and the return value is a tree, both now typed.
+
+**Terminals.** One per dual: `agg.zero`. An aggregate has no single constant, so no `?_T`; constants enter through the elements (`with_*` over `?_T` leaves), each in its own `C_T` pool as exact bit patterns. The kingdom check demands a terminal for every demanded dual, and `agg.zero` is it.
+
+**Reader, renderer, checker.** The reader's `dual_of_type` answers an aggregate type with its dual (it answered `None`); a whole-aggregate leaf is a terminal row; `a(u)` binds the parameter to the leaf; `u[1][0].yx` is `agg.at` then component rows. The renderer writes each row's text from the table above, declares the module's structs in the prologue, and emits the `with_*` helpers it uses (as it emits `at_vec3b`). The checker treats the rows as pure values; an `agg.at` index is a value of `u32.index`, ranged as every index is, and a write through `store.*` is proved as a store of the binding already is.
+
+**The typed gene.** The extended kingdom is the alphabet's kingdom: `Alphabet::new(&extended, &role)`. An aggregate dual is a type with a frame like any other.
+
+**Slices (each measured on the harvest, committed and pushed).**
+1. Duals from the module's types; whole-binding loads; `agg.at`, `agg.member_*`, `agg.col_*`; `agg.zero`; helper parameters by value. (The 142 + 11.)
+2. Aggregate locals and registers, `with_*`, whole stores, returns. (Matrix and vector locals 19, the helpers that return aggregates.)
+3. Constructors read as chains; workgroup and private aggregate variables with initialisers (the 4 zero-init, the 20 and 16 private initialisers).
+4. Typed genes over the extended kingdom: every kernel above round-trips.
