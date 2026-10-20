@@ -413,13 +413,46 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
         bindings.push(BindingUse { name, group: rb.group, binding: rb.binding, space, ty, elem, written: uses.written.contains(&h), read: uses.read.contains(&h), atomic: uses.atomic.contains(&h), role, leaves, image });
     }
     bindings.sort_by_key(|b| (b.group, b.binding));
-    Ok(ModuleInterface { entry: ep.name.clone(), workgroup_size: ep.workgroup_size, bindings, uniform: uniforms.first().cloned(), uniforms, structs })
+    Ok(ModuleInterface { entry: ep.name.clone(), workgroup_size: workgroup_of(module, ep), bindings, uniform: uniforms.first().cloned(), uniforms, structs })
 }
 
 /// [`infer`] over WGSL text.
 pub fn infer_text(source: &str) -> Result<ModuleInterface, String> {
     let module = crate::wgsl::naga_shape::parse(source)?;
     infer(&module)
+}
+
+/// An entry point's workgroup size with its overrides at their defaults: naga keeps `@workgroup_size(n)` over an
+/// `override n: u32 = 64;` as 1 and the expression; the value is the override's default (a module read with no pipeline).
+pub fn workgroup_of(module: &naga::Module, ep: &naga::EntryPoint) -> [u32; 3] {
+    let mut size = ep.workgroup_size;
+    let Some(overrides) = &ep.workgroup_size_overrides else { return size };
+    for (axis, e) in overrides.iter().enumerate() {
+        let Some(mut h) = *e else { continue };
+        // (An override reference stands for its default.)
+        for _ in 0..4 {
+            match module.global_expressions[h] {
+                naga::Expression::Override(o) => match module.overrides[o].init {
+                    Some(init) => h = init,
+                    None => break,
+                },
+                naga::Expression::Literal(l) => {
+                    let v = match l {
+                        naga::Literal::U32(x) => Some(x),
+                        naga::Literal::I32(x) => u32::try_from(x).ok(),
+                        naga::Literal::AbstractInt(x) => u32::try_from(x).ok(),
+                        _ => None,
+                    };
+                    if let Some(v) = v {
+                        size[axis] = v;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+    size
 }
 
 #[cfg(test)]

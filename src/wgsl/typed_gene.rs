@@ -537,4 +537,19 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    /// An override with no default and no header line reads as a constant of its type (a size at 64): the kernel round trips
+    /// through a typed gene with the constant in a `C_T` pool, which evolution may change.
+    #[test]
+    fn an_override_with_no_default_is_a_constant_a_gene_holds() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "override workgroup_width: u32;\noverride scale: f32;\n@group(0) @binding(0) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(workgroup_width)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    dst[gid.x] = f32(gid.x) * scale;\n}\n";
+        let read = crate::wgsl::safe_reader::read_safe(text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, &kingdom, &read.role).expect("renders").text;
+        assert!(rendered.contains("@workgroup_size(64"), "{rendered}");
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }

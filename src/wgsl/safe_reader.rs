@@ -6613,6 +6613,20 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     Ok(SafeRead { tree, ..r })
 }
 
+/// The value an override with no default and no header line starts at: 64 for a size (the usual workgroup width), 1 for any
+/// other integer, 1.0 for a float, `false` for a bool. A constant of its type either way: evolution moves it.
+pub fn override_seed(name: &str, ty: &str) -> String {
+    let lower = name.to_lowercase();
+    let size = ["workgroup", "thread", "group", "size", "block", "tile", "width"].iter().any(|w| lower.contains(w));
+    match ty {
+        "u32" => format!("{}u", if size { 64 } else { 1 }),
+        "i32" => format!("{}i", if size { 64 } else { 1 }),
+        "f32" => "1.0f".to_string(),
+        "bool" => "false".to_string(),
+        _ => "1".to_string(),
+    }
+}
+
 /// A kernel's pipeline-overridable constants given their values by header
 /// lines, `// override <name> <value>`: each `override <name>: <type>;` with no
 /// default is declared with that value (`override <name>: <type> = <value>;`).
@@ -6620,7 +6634,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
 /// its text names.
 pub fn with_overrides(source: &str) -> String {
     let given: Vec<(&str, &str)> = source.lines().filter_map(|l| l.trim().strip_prefix("// override ")).filter_map(|r| r.split_once(' ')).map(|(n, v)| (n.trim(), v.trim())).collect();
-    if given.is_empty() {
+    if given.is_empty() && !source.contains("override ") {
         return source.to_string();
     }
     let mut out = String::with_capacity(source.len() + 32);
@@ -6633,8 +6647,12 @@ pub fn with_overrides(source: &str) -> String {
         let after = &tail["override ".len()..];
         let name: String = after.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
         let end = after.find(';').unwrap_or(after.len());
-        match given.iter().find(|(n, _)| *n == name) {
-            Some((_, v)) if word_start && !after[..end].contains('=') && end < after.len() => {
+        // An override with no default and no header line is a constant the pipeline sets and the kingdom has no pipeline
+        // for: it reads as a constant of its type (a literal, so a gene holds it as a `C_T` entry and evolution chooses it),
+        // started at a seed value, `override_seed`.
+        let seed = (word_start && !after[..end].contains('=') && end < after.len()).then(|| after[..end].split_once(':').map(|(_, ty)| override_seed(&name, ty.trim()))).flatten();
+        match given.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string()).or(seed) {
+            Some(v) if word_start && !after[..end].contains('=') && end < after.len() => {
                 out.push_str("override ");
                 out.push_str(&after[..end]);
                 out.push_str(&format!(" = {v}"));
@@ -6715,7 +6733,7 @@ fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Res
         // The grid: the `// grid x y bx by` header when the text has one (its
         // block factors), else the module's own workgroup with 1 x 1 blocks.
         let ep = position(&role.entry)?;
-        let declared = kernel.module.entry_points[ep].workgroup_size;
+        let declared = crate::wgsl::interface::workgroup_of(&kernel.module, &kernel.module.entry_points[ep]);
         let grid = grid_header(source).unwrap_or((declared[0], declared[1], 1, 1));
         let at = Reading { source, kingdom, kernel: &kernel, role: &role };
         let (tree, notes, registers, _) = read_entry(&at, ep, (grid, grid_rows_x(source)), (BTreeMap::new(), BTreeMap::new()))?;
@@ -6730,7 +6748,7 @@ fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Res
     let at = Reading { source, kingdom, kernel: &kernel, role: &role };
     for name in &role.entries {
         let ep = position(name)?;
-        let declared = kernel.module.entry_points[ep].workgroup_size;
+        let declared = crate::wgsl::interface::workgroup_of(&kernel.module, &kernel.module.entry_points[ep]);
         // (A grid line whose workgroup is not the entry point's own is no line of
         // this kernel's: a model copied the kingdom's text, `// entry ingest grid
         // 16 16 1 1` over @workgroup_size(64, 1, 1), 3 of run 1's seeds; the
@@ -6786,7 +6804,7 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
     // The workgroup the header names is the one the kernel declares: x and y
     // each 1..=1,024 with x * y <= 1,024 (the M3 Max's limits), z 1 (a thread
     // owns cells by x and y; two threads differing only in z would share them).
-    let declared = entry.workgroup_size;
+    let declared = crate::wgsl::interface::workgroup_of(&kernel.module, entry);
     if declared != [grid.0, grid.1, 1] {
         return Err(format!("the header's workgroup {} x {} is not the kernel's @workgroup_size({}, {}, {})", grid.0, grid.1, declared[0], declared[1], declared[2]));
     }
