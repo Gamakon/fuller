@@ -226,40 +226,6 @@ fn adversarial(rel: &KingdomRelations, label: &str, sizes: &[usize]) -> Attained
     out
 }
 
-/// Drop what a kingdom cannot host today: functions with an input type that has
-/// no terminal, and roots with none. This is a test-only view of the older WGSL
-/// kingdom (`kingdoms/wgsl`), which fails its own check on the store and
-/// `array<T>` duals and is reported as failing.
-#[cfg(feature = "wgsl")]
-fn covered(rel: &KingdomRelations) -> KingdomRelations {
-    use crate::kingdom_contract::relations_from_rows;
-    let n = rel.names.len();
-    let mut out = vec![None; n];
-    for (s, t) in &rel.symbol_outputs {
-        out[*s as usize] = Some(*t);
-    }
-    let mut ins: Vec<Vec<(u32, Ty)>> = vec![Vec::new(); n];
-    for (s, i, t) in &rel.argument_signature {
-        ins[*s as usize].push((*i, *t));
-    }
-    let with_terminal: std::collections::BTreeSet<Ty> = (0..n).filter(|s| ins[*s].is_empty()).filter_map(|s| out[s]).collect();
-    let mut rows = Vec::new();
-    let mut constants = Vec::new();
-    for s in 0..n {
-        ins[s].sort_by_key(|(i, _)| *i);
-        let args: Vec<Ty> = ins[s].iter().map(|(_, t)| *t).collect();
-        if args.iter().all(|t| with_terminal.contains(t)) {
-            if args.is_empty() && rel.constants.contains(&(s as SymbolId)) {
-                constants.push(rel.names[s].clone());
-            }
-            rows.push((rel.names[s].clone(), args, out[s].expect("one output")));
-        }
-    }
-    let roots: Vec<Ty> = rel.roots.iter().copied().filter(|t| with_terminal.contains(t)).collect();
-    let c: Vec<&str> = constants.iter().map(String::as_str).collect();
-    relations_from_rows(&rel.kingdom, roots, &rows, &c)
-}
-
 #[test]
 fn closure_sr() {
     closure_n(&sr_relations(), "SR", &SIZES, GENES);
@@ -270,14 +236,14 @@ fn closure_regex() {
     closure_n(&regex_relations(), "regex", &SIZES, GENES);
 }
 
+/// The two WGSL kingdoms in full, every dual a symbol and the roots as the
+/// kingdoms declare them (both pass the kingdom check). Widths are tens of
+/// thousands of words, so fewer genes and smaller program sizes.
 #[cfg(feature = "wgsl")]
 #[test]
-fn closure_wgsl_covered_duals() {
-    let full = crate::kingdom_contract::wgsl_relations();
-    let sub = covered(&full);
-    let k = sub.check().expect("the covered subset passes the check");
-    println!("WGSL covered subset: {} of {} symbols, {} of {} roots, {} types", sub.names.len(), full.names.len(), sub.roots.len(), full.roots.len(), k.types().len());
-    closure_n(&sub, "WGSL (covered)", &SIZES[..3], 20_000);
+fn closure_wgsl_and_safewgsl() {
+    closure_n(&crate::kingdom_contract::wgsl_relations(), "WGSL", &SIZES[..2], 3_000);
+    closure_n(&crate::kingdom_contract::safewgsl_relations(), "safewgsl", &SIZES[..2], 2_000);
 }
 
 /// The bound, measured. For SR it is attained exactly (a head of binary
@@ -291,9 +257,9 @@ fn tail_bound_measured_maximum() {
     let re = adversarial(&regex_relations(), "regex", &SIZES);
     println!("regex: {}/{} tails read to exactly t_T, largest ratio {:.2}", re.attained, re.frames, re.largest_ratio);
     #[cfg(feature = "wgsl")]
-    {
-        let w = adversarial(&covered(&crate::kingdom_contract::wgsl_relations()), "WGSL (covered)", &SIZES[..3]);
-        println!("WGSL (covered): {}/{} tails read to exactly t_T, largest ratio {:.2}", w.attained, w.frames, w.largest_ratio);
+    for (rel, label) in [(crate::kingdom_contract::wgsl_relations(), "WGSL"), (crate::kingdom_contract::safewgsl_relations(), "safewgsl")] {
+        let w = adversarial(&rel, label, &SIZES[..2]);
+        println!("{label}: {}/{} tails read to exactly t_T, largest ratio {:.2}", w.attained, w.frames, w.largest_ratio);
         assert!(w.largest_ratio <= 1.0);
     }
     assert!(re.largest_ratio <= 1.0);
