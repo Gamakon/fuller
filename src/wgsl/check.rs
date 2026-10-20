@@ -1702,6 +1702,44 @@ mod tests {
     /// every failing layer and reason, with the first example of each. The
     /// kingdom should admit only legal trees: every failure is a kingdom bug.
     /// Every tree that passes renders.
+    /// THE FAULTS A WRAP STILL IS (2026-10-20, beside `a_wrapped_hash_is_legal`): a product past `u32::MAX` in
+    /// a store's cell index and in a loop's bound.
+    #[test]
+    fn a_wrap_is_still_a_fault_in_a_store_cell_and_a_loop_bound() {
+        let k = WgslKingdom::load_safe();
+        let kernel = |body: &str| {
+            format!(
+                "struct Cfg {{ n: u32, }};
+@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<u32>;
+@group(0) @binding(2) var<uniform> cfg: Cfg;
+var<workgroup> w: array<u32, 64>;
+@compute @workgroup_size(64, 1, 1)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(global_invocation_id) gid: vec3<u32>) {{
+{body}
+}}
+"
+            )
+        };
+        let checked = |src: &str| {
+            let r = crate::wgsl::safe_reader::read_safe(src, &k).unwrap_or_else(|e| panic!("does not read: {e}\n{src}"));
+            let plain = crate::wgsl::params::to_literals(&r.tree, &k).expect("literals");
+            (Checker::new(&k, &r.role, &Target::recorded()).range(&plain),)
+        };
+        let (range,) = checked(&kernel("    out[gid.x * 2654435761u] = 1u;"));
+        let e = range.expect_err("a wrapped store cell");
+        assert_eq!((e.layer, e.reason), (Layer::Range, "store_cell_wraps"), "{e}");
+        // (The kingdom cannot spell a wrapped loop bound: the reader names it, and layer 6 names it on a tree
+        // that carries one, `each_illegal_tree_fails_at_its_layer`.)
+        let looped = kernel("    var t = 0u;\n    for (var i = 0u; i < cfg.n * cfg.n; i += 1u) { t += i; }\n    out[gid.x] = t;");
+        let Err(e) = crate::wgsl::safe_reader::read_safe(&looped, &k) else { panic!("a wrapped loop bound reads") };
+        assert!(e.contains("may wrap"), "{e}");
+        // (A difference is spelled floored at zero: `lid.x - 5u` reads as `sub_floor`, so no text reaches the
+        // range layer's below-zero fault; `wraps_up` leaves that fault alone.)
+        let (range,) = checked(&kernel("    w[(lid.x - 5u) & 63u] = 1u;\n    workgroupBarrier();\n    out[gid.x] = w[lid.x];"));
+        range.expect("a difference reads floored at zero and is legal");
+    }
+
     #[test]
     fn random_genes_from_the_sampler_by_layer() {
         random_genes(&gram_role(), false);
