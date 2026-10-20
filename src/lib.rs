@@ -39,6 +39,7 @@ pub mod geneframe;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
 pub mod typed_gep;
+pub mod regex_typed;
 #[cfg(test)]
 mod typed_gep_tests;
 // GPU batch evaluator. The module (opcodes, batch layout, WGSL source) always
