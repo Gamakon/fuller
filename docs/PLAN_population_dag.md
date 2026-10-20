@@ -9,7 +9,7 @@ real populations against the current GPU interpreter, with bit-identical
 results, and measure the saving.
 
 **Approach.** The geneframe holds two row kinds, ordinary chromosomes
-and homeotic chromosomes (population-wide shared definitions with a
+and ADF genes (population-wide shared definitions with a
 root type, memoised row values and referrer counts); Fold is a variation
 operator that adds definitions and rewrites references; evaluation is
 one function with no modes; the compiled arm is banded (delta kernels
@@ -77,23 +77,23 @@ half (compile and timed dispatches) stays per variant.
 **The design (Andrew): the cache is embedded in the population.** The
 geneframe already holds the population as a table of chromosomes. Make
 it a table of TWO row kinds: ordinary chromosomes, whose genes reference
-shared definitions by href, and HOMEOTIC CHROMOSOMES, each of which IS
+shared definitions by href, and ADF GENES, each of which IS
 one definition, a gene tree with a root type, memoised row values and
 a count of its referrers. The population is the union, so no separate
 cache value exists; the geneframe is the state:
 
 ```
 fold(population)        -> population'      (adds the definitions the new rows need)
-eval(data, population)  -> population'      (memoises every row once, homeotic rows first)
+eval(data, population)  -> population'      (memoises every row once, ADF rows first)
 ```
 
 **Fold is an operator.** In this form Fold is a variation operator
 beside mutation and crossover, `population -> population'`,
 deterministic and value-preserving on every ordinary row. Per
-generation it ADDS a homeotic chromosome for each subtree the new
+generation it ADDS a ADF gene for each subtree the new
 population repeats and no row yet defines (with its root type),
 REWRITES ordinary chromosomes to reference those rows by href where the
-typed projection admits it, and RE-SORTS the homeotic tail (below). Its
+typed projection admits it, and RE-SORTS the ADF set (below). Its
 inverse, unfold (inline
 a definition into its users), is an operator too, which is the
 share-or-recompute choice of §2.1 for free. Fold sits in the schedule
@@ -108,8 +108,8 @@ definition that goes from unused back to used, how long it was unused.
 The maximum, the frame and the ordering below are set from that study,
 not before it.
 
-**Later: the homeotic tail and its expressed frame (Andrew).** Nothing is
-retired by rule. The homeotic rows are one tail of fixed length, sorted
+**Later: the ADF set and its expressed frame (Andrew).** Nothing is
+retired by rule. The ADF rows are one tail of fixed length, sorted
 every generation by current use (referrer count, ties by age then by
 hash, so the order is a function of the population and deterministic).
 A definition nobody uses sinks one place per generation as used ones
@@ -123,27 +123,27 @@ nursery timer, and the replacement dictionary for free: persisting the
 tail across runs is saving the table.
 
 Consequences: evaluation is uniform, every row once per data version,
-homeotic rows in dependency order first, which is phylu's tail-per-level
+ADF rows in dependency order first, which is phylu's tail-per-level
 dispatch applied across the population instead of inside an individual;
 use is a definition's fitness, measured, not judged (a useful definition
 outlives the individuals that made it); the
-href space is the table, an href names a homeotic row, the device
-decodes homeotic rows into a shared node arena and ordinary genes point
-into it with the GeneRef leaf that exists today; a homeotic row carries
+href space is the table, an href names a ADF row, the device
+decodes ADF rows into a shared node arena and ordinary genes point
+into it with the GeneRef leaf that exists today; a ADF row carries
 its root dual, so a reference is type-checked by the typed projection
 like a terminal. The earlier form of this section (a cache value passed
 beside the population) is kept below as the functional contract it
 still satisfies: the population IS that value.
 
 There is no batch mode and no incremental mode: one function body. A
-population with no homeotic rows (or no memos) makes the call a batch
+population with no ADF rows (or no memos) makes the call a batch
 (every node a miss); last generation's population makes it incremental
 (reused definitions hit, only the nodes above a child's change are
 computed); a data version bump makes every memo stale and the next call
 a batch again. A run is a fold over generations with the population as
 the accumulator.
 
-The homeotic rows hold the DAG (node hashes, child pointers) and, per
+The ADF rows hold the DAG (node hashes, child pointers) and, per
 row, a slot of its row values with the data version they were computed
 on; the slots are a device-resident arena allocated once, one per row
 of the expressed frame, released when a row sinks below the frame,
@@ -151,12 +151,12 @@ so a definition that returns is just a miss. The arena is owned by the
 population value: whoever holds the population holds the memory,
 dropping it frees everything, and no session-global state exists.
 
-Determinism is the contract and a test: a homeotic row changes only
+Determinism is the contract and a test: a ADF row changes only
 whether a value is recomputed, never what it is. The test runs one
-generation with the homeotic rows stripped and with them present and
+generation with the ADF rows stripped and with them present and
 asserts bit-identical fitness and ordinary population; the same seed and
 the same starting population give the same run; and the golden checksum
-holds with homeotic rows on. A difference is a fault in the memo keys,
+holds with ADF rows on. A difference is a fault in the memo keys,
 never tolerated as noise.
 
 What it costs: cached values are rows times live nodes (an SRBench-
@@ -182,7 +182,7 @@ COMPILED instead of interpreted, and stay compiled across generations
 because little changes. The study that proves or bounds it:
 
 **Hypothesis.** A kernel generated for the population's shared DAG
-(the homeotic tail), compiled by Metal, evaluates a generation faster
+(the ADF set), compiled by Metal, evaluates a generation faster
 than phylu's interpreter (decode and eval over node arrays); and because
 generation N+1 reuses most of N, the compile is amortised, so the total
 per generation is lower. The number that decides it is the break-even
@@ -195,7 +195,7 @@ seeds, the official data windows. Same seeds, same laws, two
 evaluators, bit-identical populations required.
 
 **The two arms.** Interpreted: the current chain, per-pass timed.
-Compiled, incremental: the homeotic tail emitted as one WGSL kernel that
+Compiled, incremental: the ADF set emitted as one WGSL kernel that
 writes definition values into the device arena (the kingdom's rebuild
 already writes WGSL from trees), recompiled only when the tail changes;
 the ordinary chromosomes stay node arrays whose leaves reference the
@@ -318,7 +318,7 @@ generation today) sit on the same curve.
 
 ## 2c. Task 3 measured: the shared DAG with memos, on the host (2026-10-09, 11:11–11:13)
 
-`src/population_dag.rs` (fold into one hash-consed DAG; homeotic rows
+`src/population_dag.rs` (fold into one hash-consed DAG; ADF rows
 = repeated nodes doing work; memo keyed by node, data version, type and
 input binding; level schedule; nothing evicted) and
 `examples/population_dag_reuse.rs`, over the sixteen exported pairs of
@@ -335,7 +335,7 @@ survive, their values hit); the sharing within a generation does the
 larger part, three times fewer operator evaluations before any memo.
 Memoised values are bit-identical to a fresh evaluation on every pair
 (the determinism test, held on real data). The DAG holds about 50,000
-nodes for 12,000 genes, 5,000 of them homeotic, 1,400 of those new each
+nodes for 12,000 genes, 5,000 of them ADF, 1,400 of those new each
 generation. Host time (a per-row Rust loop, not the device): 176 ms
 fresh, 161 ms with memos; the host cost is dominated by hashing and
 copying, so the device measurement (variant B, task 4) is the one that
@@ -345,9 +345,9 @@ quarter of it from memos across generations, with no change in values.
 
 ## 2d. Two things the survey of the documents found missing (2026-10-09)
 
-**An href names a stable row id, never a tail position.** The homeotic
+**An href names a stable row id, never a tail position.** The ADF
 tail is re-sorted by use every generation; if a reference pointed at a
-position, every re-sort would rewrite every referrer. So a homeotic row
+position, every re-sort would rewrite every referrer. So a ADF row
 has an id assigned when it is interned and kept for its life
 (`population_dag::PopulationDag` already does this: the node index is
 the id, the use rank and the level are separate columns), the device's
@@ -356,7 +356,7 @@ only.
 
 **Names.** "Tail" and "open reading frame" already name Karva's gene
 tail and coding region in `Fuller_System.tex` and `SPEC_fuller_gpu.md`.
-In this plan the population-wide structure is always the HOMEOTIC TAIL,
+In this plan the population-wide structure is always the ADF SET,
 in full, and its expressed, memoised top is the EXPRESSED FRAME; the
 Karva terms keep their meanings.
 
@@ -396,7 +396,7 @@ the fit's symbol table rebuilt (`wide(2)` plus the snap lattice's named
 constants, compounds off) and proven by re-rendering all 12,000 genes
 against the export's `ast` field: A, the interpreter, one dispatch of
 every gene; B, the population hash-consed by exact node words into
-homeotic definitions (global ids, `GENEREF` leaves, `shared_base` zero),
+ADFs (global ids, `GENEREF` leaves, `shared_base` zero),
 the definitions dispatched one pass per dependency level, then the
 genes; B+memo, B with the definitions that survived from the previous
 generation keeping their `shared` rows by a device copy and only the new
@@ -456,7 +456,7 @@ a scan or a join, not a cosine. Logs: `phylu/logs/POPDAG_AB/`.
   memory); for kernels it is the version and placement lineage already
   carries. A test constructs a pair that differs only in each key
   component and asserts separate memos.
-- **Order of execution (C).** The homeotic tail's sort by use is a
+- **Order of execution (C).** The ADF set's sort by use is a
   liveness order, not an execution order. Execution follows a separate
   dependency schedule: definitions by level (a definition's level is
   one more than its deepest referenced definition), levels dispatched
@@ -473,7 +473,7 @@ generations):
 | variant | what runs |
 |---|---|
 | A | the current GPU interpreter (decode → eval over node arrays) |
-| B | the shared DAG evaluated without compilation: homeotic rows memoised in the arena, ordinary rows interpreted against it |
+| B | the shared DAG evaluated without compilation: ADF rows memoised in the arena, ordinary rows interpreted against it |
 | C | the shared DAG with its STABLE definitions compiled (present k generations; §2a), bands reading the arena, the unstable rest interpreted |
 
 Measured per generation, wall clock stamped: total ms; GPU memory
@@ -491,7 +491,7 @@ real data, warnings fixed, every change committed, wall-clock reported,
 timeouts from the run's requirement). The wider project for every task:
 the geneframe engine (fuller the symbol/typing/share layer, phylu the
 GPU evolution engine) evaluating populations as one shared DAG. Tools:
-fuller `src/homeotic.rs`, `src/geneframe.rs`, `src/wgsl/*`; phylu
+fuller `src/ADF.rs`, `src/geneframe.rs`, `src/wgsl/*`; phylu
 `src/evolve/{resident,device,gene_export,checkpoint,fold_to_dag}.rs`,
 `examples/{evolve_fit,kernel_time}.rs`; wgpu 0.20 on Metal. One GPU
 process at a time, launched by the fuller session, announced, logged.
@@ -510,17 +510,17 @@ process at a time, launched by the fuller session, announced, logged.
    size and compaction interval. Done when the curve is in the README.
 3. **DONE 2026-10-09 (§2c, host side; the device arena is task 4). Read docs/Rules.md, then: the arena, the memo keys and the level
    schedule in fuller.** Purpose: variant B's machinery. Architecture:
-   §1 and §3; homeotic rows with structural hash, root dual, data
+   §1 and §3; ADF rows with structural hash, root dual, data
    version, input binding; levels computed from references; the arena
    device-resident, owned by the population value. Tests: the key-
-   component pair test, the level-order test, determinism (homeotic
+   component pair test, the level-order test, determinism (ADF
    rows present or stripped, bit-identical). Done when the tests pass
    on the exported population.
 4. **MEASURED 2026-10-09 (§2f): variant B does not pay at the SRBench shape; not integrated. Read docs/Rules.md, then: variant B in phylu.** Purpose: sharing
    without compilation. Architecture: Fold as an operator in the
    generation loop (adds, rewrites, re-sorts), evaluation reading the
-   arena for homeotic rows, ordinary rows interpreted; checkpoints
-   carry the homeotic rows. Tests: golden checksum held; A and B
+   arena for ADF rows, ordinary rows interpreted; checkpoints
+   carry the ADF rows. Tests: golden checksum held; A and B
    bit-identical every generation. Done when B runs 300 generations on
    predator-prey with the gate held.
 5. **Read docs/Rules.md, then: variant C, the banded compiler.**

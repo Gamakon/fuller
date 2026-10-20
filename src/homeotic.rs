@@ -1,8 +1,9 @@
-//! The homeotic tail: the converter from the share finder's output back to a
+//! The shared-definition tail (ADF slots): the converter from the share finder's output back to a
 //! mutated chromosome (`docs/Geneframe_Homeotic_Genes_design.md`, §7).
 //!
-//! A chromosome is a HEAD of program genes followed by a TAIL of homeotic
-//! genes. A tail gene holds a shared partial; a head gene, or an earlier
+//! A chromosome is a HEAD of program genes followed by a TAIL of shared-
+//! definition genes (ADF slots; `docs/MultiTypedGEP.md` section 6 reserves "homeotic" for the
+//! chromosome linker). A tail gene holds a shared partial; a head gene, or an earlier
 //! tail gene, reads it through a reference terminal. The share finder
 //! (`extract::maximal_shared_saturated`) reports which subtrees repeat across
 //! a chromosome's genes; [`fold`] moves each repeated subtree into an empty
@@ -38,18 +39,18 @@
 //! references pointing forward by slot, [`EMPTY_SLOT`] filling unused
 //! positions) is the rev 3 design and is what this module implements today.
 //! The agreed design is `docs/PLAN_population_dag.md` §1 and §2d: the
-//! population table holds two row kinds, ordinary chromosomes and HOMEOTIC
-//! CHROMOSOMES, each homeotic row one population-wide shared definition with
+//! population table holds two row kinds, ordinary chromosomes and ADF
+//! GENES, each ADF row one population-wide shared definition with
 //! a stable row id, a root type, memoised row values and a referrer count. An
-//! href names a homeotic row by that stable id, never a position, because the
-//! homeotic tail is re-sorted by use every generation and only a rank column
+//! href names an ADF row by its stable adf_id, never a position, because the
+//! ADF set is re-sorted by use every generation and only a rank column
 //! moves. Acyclicity is held by level (a definition's level is one more than
 //! its deepest referenced definition; execution goes level by level), not by
-//! slot order. Fold is a variation operator on the population: it ADDS a
-//! homeotic row for each subtree the population repeats, REWRITES ordinary
-//! chromosomes to reference it, and RE-SORTS the homeotic tail by use. The
-//! expressed, memoised top of the homeotic tail is the expressed frame.
-//! Evaluation is one function, and values are bit-identical with homeotic
+//! slot order. Fold is a variation operator on the population: it ADDS an
+//! ADF row for each subtree the population repeats, REWRITES ordinary
+//! chromosomes to reference it, and RE-SORTS the ADF set by use. The
+//! expressed, memoised top of the ADF set is the expressed frame.
+//! Evaluation is one function, and values are bit-identical with ADF
 //! rows present or stripped, a tested contract.
 
 use std::collections::BTreeMap;
@@ -214,7 +215,7 @@ pub(crate) fn hrefs_in(n: &MathNode, out: &mut Vec<usize>) {
     }
 }
 
-/// Fold the finder's matches into a homeotic tail.
+/// Fold the finder's matches into the shared-definition tail (ADF slots).
 ///
 /// `chosen_forms` are the per-gene forms `maximal_shared_saturated` returned
 /// (its third value), `matches` its first value; both are relative to each

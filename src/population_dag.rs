@@ -1,12 +1,12 @@
 //! The population DAG (`docs/PLAN_population_dag.md` §1, task 3): one
 //! hash-consed DAG for a whole population's genes, maintained across
-//! generations, with homeotic rows (the definitions the population
+//! generations, with ADF rows (the definitions the population
 //! repeats) carrying memoised row values.
 //!
 //! Functional in the plan's sense: `fold` takes the DAG and a population
 //! and returns the DAG grown by what the population needed (never
 //! rebuilt; an empty DAG makes the first call a batch); `eval` takes the
-//! DAG and the rows and computes every root, reading a homeotic node's
+//! DAG and the rows and computes every root, reading an ADF node's
 //! memo when its key matches and writing it when it does not. Nothing is
 //! evicted (the plan's first version: let it grow, record use).
 //!
@@ -57,7 +57,7 @@ pub struct Memo {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EvalStats {
     /// Node evaluations performed (one per node per root walk, memo
-    /// misses and non-homeotic nodes).
+    /// misses and non-ADF nodes).
     pub evaluated: u64,
     /// Node evaluations avoided by a memo hit (the subtree below counted
     /// too: what the interpreter would have done).
@@ -74,7 +74,7 @@ pub struct PopulationDag {
     /// Occurrences of each node across the LAST folded population (a
     /// node's referrers, counting every path to it).
     pub uses: Vec<u32>,
-    /// Memo per node, present for homeotic nodes once evaluated.
+    /// Memo per node, present for ADF nodes once evaluated.
     pub memo: Vec<Option<Memo>>,
     /// How many generations each node has been present (since it was
     /// interned); the tail study's age.
@@ -84,7 +84,7 @@ pub struct PopulationDag {
 
 /// Whether a node is a definition the population shares: repeated and
 /// doing work.
-pub fn is_homeotic(node: &Node, uses: u32) -> bool {
+pub fn is_adf(node: &Node, uses: u32) -> bool {
     uses >= 2 && node.ops >= 1
 }
 
@@ -145,17 +145,17 @@ impl PopulationDag {
         }
     }
 
-    /// The homeotic rows: the ids of every repeated node doing work, in
+    /// The ADF rows: the ids of every repeated node doing work, in
     /// level order (a definition after everything it references).
-    pub fn homeotic(&self) -> Vec<u32> {
-        let mut ids: Vec<u32> = (0..self.nodes.len() as u32).filter(|&i| is_homeotic(&self.nodes[i as usize], self.uses[i as usize])).collect();
+    pub fn adfs(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = (0..self.nodes.len() as u32).filter(|&i| is_adf(&self.nodes[i as usize], self.uses[i as usize])).collect();
         ids.sort_by_key(|&i| (self.nodes[i as usize].level, i));
         ids
     }
 
     /// Evaluate `roots` over `rows` (each row a binding of variable names
     /// to values; every row the same names, which is the input binding).
-    /// A homeotic node reads its memo when the key matches and writes it
+    /// An ADF node reads its memo when the key matches and writes it
     /// otherwise; every other node is computed. Returns, per root, the
     /// values over the rows, and the counts.
     pub fn eval(&mut self, roots: &[u32], rows: &[Vec<(String, f64)>], data_version: u64) -> Result<(Vec<Vec<f64>>, EvalStats), String> {
@@ -176,8 +176,8 @@ impl PopulationDag {
             // interpreter would redo it either, so it is neither a hit nor a miss.
             return Ok(v.clone());
         }
-        let homeotic = is_homeotic(&self.nodes[id as usize], self.uses[id as usize]);
-        if homeotic {
+        let adfs = is_adf(&self.nodes[id as usize], self.uses[id as usize]);
+        if adfs {
             if let Some(m) = &self.memo[id as usize] {
                 if m.data_version == data_version && m.ty == "f64" && m.binding == binding {
                     stats.hits += 1;
@@ -207,7 +207,7 @@ impl PopulationDag {
                     .collect::<Result<_, _>>()?
             }
         };
-        if homeotic {
+        if adfs {
             self.memo[id as usize] = Some(Memo { data_version, ty: "f64", binding, values: values.clone() });
         }
         cache.insert(id, values.clone());
@@ -251,21 +251,21 @@ fn render(n: &MathNode) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct GenerationReport {
     pub nodes_total: usize,
-    pub homeotic: usize,
-    pub homeotic_new: usize,
+    pub adfs: usize,
+    pub adf_new: usize,
     pub uses_histogram: BTreeMap<u32, usize>,
 }
 
 impl PopulationDag {
-    /// What this generation's fold did to the tail: how many homeotic
+    /// What this generation's fold did to the ADF set: how many ADF
     /// rows, how many of them interned this generation, and the use
     /// histogram.
     pub fn report(&self) -> GenerationReport {
         let mut r = GenerationReport { nodes_total: self.nodes.len(), ..Default::default() };
-        for id in self.homeotic() {
-            r.homeotic += 1;
+        for id in self.adfs() {
+            r.adfs += 1;
             if self.age[id as usize] == 1 {
-                r.homeotic_new += 1;
+                r.adf_new += 1;
             }
             *r.uses_histogram.entry(self.uses[id as usize]).or_default() += 1;
         }
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(roots.len(), 2);
         // x, y, x*y, sin(x*y), the two roots, Num 1.0: seven nodes, no duplicates.
         assert_eq!(dag.nodes.len(), 7);
-        let h = dag.homeotic();
+        let h = dag.adfs();
         let texts: Vec<&str> = h.iter().map(|&i| dag.nodes[i as usize].ctor.as_str()).collect();
         assert_eq!(texts, vec!["Mul", "Sin"], "x*y (used 3 times) then sin(x*y) (used twice), by level");
         assert!(dag.nodes[h[0] as usize].level < dag.nodes[h[1] as usize].level);
