@@ -14,7 +14,6 @@
 use std::collections::BTreeMap;
 
 use crate::geneframe::{Arity, Symbol, SymbolTable, Ty};
-use crate::gpu_eval::{GpuNode, FN_ID_NUM};
 
 use super::table::{FunctionTable, Template};
 
@@ -218,38 +217,6 @@ pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
         });
     }
     Ok(out)
-}
-
-/// The fallback leaf of a dual, as a device node, or `None` where the table
-/// says no value is substituted (`store`) or the element's is (`array<T>`).
-/// The bit pattern rides in `konst` as raw bits (`f32::from_bits`), the way
-/// a literal of a non-float dual is carried until phylu's `ty_code` word
-/// says how to read it; an `f16` dual with a non-zero pattern is refused
-/// rather than widened silently, since a 16-bit pattern in a 32-bit word has
-/// no agreed placement yet.
-pub fn wgsl_fallback_leaf(d: &WgslDual) -> Result<Option<GpuNode>, String> {
-    if d.fallback_noop || d.fallback_elem {
-        return Ok(None);
-    }
-    if d.scalar() == Some("f16") && d.fallback_bits != 0 {
-        return Err(format!("{}: a non-zero f16 fallback ({:#x}) has no 32-bit placement", d.dual, d.fallback_bits));
-    }
-    Ok(Some(GpuNode { op: FN_ID_NUM, arg0: 0, ty_code: d.ty().code(), konst: f32::from_bits(d.fallback_bits) }))
-}
-
-/// The fallback table over the duals, indexed by `Ty::Wgsl(i).code() -
-/// Ty::TABLE_CODE_BASE`, i.e. by dual index.
-pub fn wgsl_fallback_table() -> Result<Vec<Option<GpuNode>>, String> {
-    wgsl_duals().iter().map(wgsl_fallback_leaf).collect()
-}
-
-/// The fallback table over the safeWGSL duals: the WGSL table extended
-/// (the first 83 duals are the WGSL kingdom's, unchanged, so this table
-/// serves both kingdoms). A typed decoder without the safe entries refused
-/// every gene a mutation touched at a block, statement or bounded-count
-/// dual (108 of 108 offspring, fit_safe18, 2026-10-10).
-pub fn safe_fallback_table() -> Result<Vec<Option<GpuNode>>, String> {
-    safe_duals().iter().map(wgsl_fallback_leaf).collect()
 }
 
 /// One concrete typed row: a template instantiated at one choice of duals.
@@ -878,37 +845,6 @@ mod tests {
         assert_eq!(d.iter().filter(|x| x.is_statement_level()).count(), 9);
         assert_eq!(d.iter().find(|x| x.dual == "reg<f32>.real").unwrap().scalar(), None, "a register is not a value slot");
         assert_eq!(d.iter().find(|x| x.dual == "u32.wgdim").unwrap().scalar(), Some("u32"));
-        let table = wgsl_fallback_table().unwrap();
-        assert_eq!(table.len(), 83);
-        assert!(table[70].is_none() && table[69].is_none());
-        assert_eq!(table[71].unwrap().ty_code, Ty::Wgsl(71).code());
-        assert_eq!(table[0].unwrap().op, FN_ID_NUM);
-        assert_eq!(table[sign.index as usize].unwrap().konst.to_bits(), 1);
-        // A non-zero f16 pattern is refused, not widened.
-        let mut bad = d.iter().find(|x| x.dual == "f16.real").unwrap().clone();
-        bad.fallback_bits = 0x3c00;
-        assert!(wgsl_fallback_leaf(&bad).is_err());
-    }
-
-    /// The safeWGSL tables: the WGSL duals and rows unchanged at their refs,
-    /// and the safety rules pinned: one way to make a loop condition, no
-    /// barrier under a condition, no loop nested past its rung, a store to
-    /// h only at an owned cell, a load of phi only at a phi index.
-    /// The safe fallback table extends the WGSL one entry for entry, and has
-    /// a leaf for every safe dual but the no-op and array ones.
-    #[test]
-    fn the_safe_fallback_table_extends_the_wgsl_one() {
-        let w = wgsl_fallback_table().unwrap();
-        let s = safe_fallback_table().unwrap();
-        assert_eq!(s.len(), safe_duals().len());
-        assert!(s.len() > w.len());
-        let key = |l: &Option<GpuNode>| l.as_ref().map(|n| (n.op, n.ty_code, n.konst.to_bits()));
-        assert!(s.iter().zip(&w).all(|(a, b)| key(a) == key(b)), "the WGSL prefix differs");
-        let duals = safe_duals();
-        for (d, leaf) in duals.iter().zip(&s).skip(w.len()) {
-            assert_eq!(leaf.is_none(), d.fallback_noop || d.fallback_elem, "{}", d.dual);
-        }
-        assert!(s.iter().skip(w.len()).filter(|l| l.is_some()).count() >= 40);
     }
 
     #[test]
