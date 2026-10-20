@@ -34,8 +34,8 @@
 | T8 | `PLAN_wgsl_terminals` rows | Sonnet | `kingdoms/wgsl`, plan doc | rows added so the kingdom check passes on the live kingdom | open |
 | T9 | population DAG variant B | Sonnet | phylu engine, device arena | fold in the generation loop, device arena, checkpoints with homeotic rows; then the banded compiler and the A/B/C experiment | open |
 | T10 | ADF fold on by default | lead | engine config | after T9's A/B/C measures it | blocked on T9 |
-| T11 | ticket 0001, the `?` count gate | Haiku | `phylu/docs/tickets/0001_qmark_count_gate.md` | verify open or closed against the typed decode; report | open |
-| T12 | stale status lines | Haiku | `phylu/docs/tickets/CR_multityped_gep.md`, `phylu/docs/PLAN_wgsl_on_typed_gep.md` | replace "not started" with the built state, citing commits found by `git log` | open |
+| T11 | ticket 0001, the `?` count gate | Haiku | `phylu/docs/tickets/0001_qmark_count_gate.md` | verify open or closed against the typed decode; report | closed: decode.wgsl and its gate deleted in phylu a2ecc962 (Haiku, verified) |
+| T12 | stale status lines | Haiku | `phylu/docs/tickets/CR_multityped_gep.md`, `phylu/docs/PLAN_wgsl_on_typed_gep.md` | replace "not started" with the built state, citing commits found by `git log` | done phylu e492bf8c |
 | T13 | infix → `Math` parser in Rust | Sonnet | new `fuller/src/infix.rs` | reads SRBench/Feynman infix (`+ - * / **`, unary minus, `sqrt exp log ln sin cos tan tanh arcsin arccos arctan`, `pi`, numbers, names); returns fuller's `Math` s-expression; test: all Feynman CSV formulas parse and `eval_expr_rows` matches the dataset target to 1e-9 relative on 100 rows (host test reference); no sympy | open |
 | T14 | laws → genes test, committed | Sonnet | `phylu/src/evolve/tsr_typed.rs` | finish the uncommitted test: e-graph step (`extract::denoise`) per law, print Karva per type column, clippy clean, commit; GPU half run by the lead | open |
 | T15 | e-graph step for the laws | Sonnet | with T14 | as T14 | open |
@@ -50,7 +50,7 @@
 | T24 | regex: split the GPU time; fix the profile line | Haiku (line), Sonnet (split) | `engine/regex_profile.rs` | the "genome frame read-back" line removed or replaced by the bytes actually read; a stage split of the matcher and scorer | open |
 | T25 | per-type mutation rate semantics | lead | `typed_vary.rs`, `engine.rs` | report edits per row per kingdom; regex's printed rate made true | open |
 | T26 | two failing engine tests | Sonnet | `phylu/src/evolve/engine.rs` tests | cross-step test and wrap-graft test: find the cause of each; fix the cause, never the assertion | open |
-| T27 | fuller GPU timing tests under load | Haiku | report only | document that they need an idle GPU; no change | open |
+| T27 | fuller GPU timing tests under load | Haiku | report only | document that they need an idle GPU; no change | done: both need an idle GPU, no change |
 | T28 | TSR 8 vs single 19 on hard laws | lead | after T1 | read with T1's result | open |
 | T29 | diversity collapse, tournament 70 | Sonnet | engine selection | measure distinct individuals vs tournament size; report | open |
 | T30 | neutral mutations 35–56 % | Sonnet | with T29 | report by operator | open |
@@ -69,5 +69,5 @@
 | T43 | any-WGSL completeness gate | Sonnet | fuller tests | N of N corpus kernels read, rebuild, compile | open |
 | T44 | a second real WGSL example beyond Gram | lead | problem dir | chosen with T43 | open |
 | T45 | codegraph daemons | Andrew | — | start command needed from Andrew; never `codegraph index` | open |
-| T46 | uncommitted docs | Haiku | phylu, fuller | inventory only (list, no deletes); lead commits the keepers | open |
+| T46 | uncommitted docs | Haiku | phylu, fuller | inventory only (list, no deletes); lead commits the keepers | done: keepers committed (phylu 109ff4d3, fuller a9035c7e); LaTeX junk unstaged; logs/, target-*/ and problems/nluca_* are run output |
 | T47 | old worktrees, `halo` folder | Andrew | — | not ours to remove | open |
