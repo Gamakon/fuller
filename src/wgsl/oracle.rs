@@ -319,7 +319,15 @@ pub mod device {
             // that uses a subgroup built-in compiles only on a device that
             // asked for the feature (2026-10-12). Every later validation is
             // for this device's features and limits.
-            let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP | wgpu::Features::SUBGROUP_BARRIER);
+            // SHADER_F16 and TEXTURE_FORMAT_16BIT_NORM too, as `GpuEvaluator` asks and as the recorded
+            // target names: the installed target is every later validation in the process, so a device
+            // without them made `enable f16;` kernels fail validation in whatever test ran after it.
+            let features = adapter.features()
+                & (wgpu::Features::TIMESTAMP_QUERY
+                    | wgpu::Features::SUBGROUP
+                    | wgpu::Features::SUBGROUP_BARRIER
+                    | wgpu::Features::SHADER_F16
+                    | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM);
             let limits = adapter.limits();
             // The adapter's own limits, requested whole below: the
             // binding limit a problem may plan by (`gram::adapter_buffer_limit`).
