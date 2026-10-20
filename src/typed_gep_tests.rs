@@ -39,11 +39,6 @@ fn const_lens(k: &KingdomContract) -> BTreeMap<Ty, u32> {
     k.types().iter().filter(|t| k.constant_capable(**t)).map(|t| (*t, CONSTS)).collect()
 }
 
-/// Every symbol outputting `ty`: the alphabet of `head_ty`.
-fn head_symbols(k: &KingdomContract, ty: Ty) -> Vec<SymbolId> {
-    (0..k.n_symbols() as SymbolId).filter(|s| k.output(*s) == ty).collect()
-}
-
 /// A gene valid by layout: each head cell drawn from the symbols of its
 /// domain's type, each tail cell a terminal of its type, each Dc cell an index.
 fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng) -> Vec<u32> {
@@ -55,10 +50,13 @@ fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng) -> Vec<u
 }
 
 fn draw_span(k: &KingdomContract, s: &Span, gene: &mut [u32], rng: &mut Rng) {
-    let alpha = if s.domain == Domain::Head { head_symbols(k, s.ty) } else { Vec::new() };
+    let (functions, terminals) = (k.functions_of(s.ty), k.terminals_of(s.ty));
     for cell in &mut gene[s.off..s.off + s.len] {
         *cell = match s.domain {
-            Domain::Head => alpha[rng.below(alpha.len())],
+            Domain::Head => {
+                let i = rng.below(functions.len() + terminals.len());
+                if i < functions.len() { functions[i] } else { terminals[i - functions.len()] }
+            }
             Domain::Tail => {
                 let ts = k.terminals_of(s.ty);
                 ts[rng.below(ts.len())]
@@ -452,13 +450,13 @@ fn tail_bound_attained_two_type() {
 /// Locality: an edit in `head_T` changes only cells of `head_T`, draws only
 /// symbols outputting `T`, and the child expresses (it may change which rows
 /// of another frame are read, never their validity). 100,000 edits per kingdom.
-fn locality(rel: &KingdomRelations, label: &str) {
+fn locality(rel: &KingdomRelations, label: &str, sizes: &[usize]) {
     let k = rel.check().expect("check");
     let consts = const_lens(&k);
     let mut rng = Rng(0x10ca ^ label.len() as u64);
     let mut edits = 0usize;
     for g in 0..GENES {
-        let n = SIZES[g % SIZES.len()];
+        let n = sizes[g % sizes.len()];
         let root = k.roots()[rng.below(k.roots().len())];
         let layout = GeneLayout::from_program_size(&k, root, n).expect("layout");
         let gene = random_gene(&k, &layout, &mut rng);
@@ -485,24 +483,24 @@ fn locality(rel: &KingdomRelations, label: &str) {
 
 #[test]
 fn locality_sr() {
-    locality(&sr_relations(), "SR");
+    locality(&sr_relations(), "SR", &SIZES);
 }
 
 #[test]
 fn locality_regex() {
-    locality(&regex_relations(), "regex");
+    locality(&regex_relations(), "regex", &SIZES);
 }
 
 /// Homologous crossover: two genes of one layout exchange a range inside one
 /// domain of one type; the cells outside the range are untouched, the range
 /// in each child is the other parent's, and both children express. 100,000 per kingdom.
-fn crossover(rel: &KingdomRelations, label: &str) {
+fn crossover(rel: &KingdomRelations, label: &str, sizes: &[usize]) {
     let k = rel.check().expect("check");
     let consts = const_lens(&k);
     let mut rng = Rng(0xc0de ^ label.len() as u64);
     let mut swaps = 0usize;
     for g in 0..GENES {
-        let n = SIZES[g % SIZES.len()];
+        let n = sizes[g % sizes.len()];
         let root = k.roots()[rng.below(k.roots().len())];
         let layout = GeneLayout::from_program_size(&k, root, n).expect("layout");
         let (a, b) = (random_gene(&k, &layout, &mut rng), random_gene(&k, &layout, &mut rng));
@@ -533,12 +531,12 @@ fn crossover(rel: &KingdomRelations, label: &str) {
 
 #[test]
 fn crossover_sr() {
-    crossover(&sr_relations(), "SR");
+    crossover(&sr_relations(), "SR", &SIZES);
 }
 
 #[test]
 fn crossover_regex() {
-    crossover(&regex_relations(), "regex");
+    crossover(&regex_relations(), "regex", &SIZES);
 }
 
 /// Every invalid cell is named and none is repaired: in 100,000 random genes,
@@ -887,4 +885,184 @@ fn duckdb_bound_and_expression_queries_equal_the_host() {
         std::fs::remove_file(f).expect("clean");
     }
     std::fs::remove_dir(&dir).expect("clean");
+}
+
+// ---------------------------------------------------------------------------
+// The TSR kingdoms (plan F3): the same generic tests over the generated tables
+// ---------------------------------------------------------------------------
+
+mod tsr {
+    use super::*;
+    use crate::kingdom_contract::{report, tsr_relations};
+    use crate::tsr_kingdom::{TsrKind, TsrKingdom, TsrVariant};
+    use crate::typed_gep::required_heads;
+
+    /// The two kingdoms the plan's arms B and C use, each over 1 and 9 input variables.
+    const ARMS: [TsrVariant; 2] = [TsrVariant::Order, TsrVariant::OrderDepth];
+    const INPUTS: [usize; 2] = [1, 9];
+
+    fn rel(variant: TsrVariant, n_inputs: usize) -> KingdomRelations {
+        tsr_relations(variant, n_inputs).unwrap_or_else(|e| panic!("{}: {e}", variant.dir()))
+    }
+
+    fn label(variant: TsrVariant, n_inputs: usize) -> String {
+        format!("TSR {} x{n_inputs}", variant.dir())
+    }
+
+    /// Plan test 1: 100,000 random genes, every expressed node typed as its slot.
+    #[test]
+    fn tsr_closure_over_random_genes() {
+        for variant in ARMS {
+            for n in INPUTS {
+                closure_n(&rel(variant, n), &label(variant, n), &[8, 17], GENES);
+            }
+        }
+    }
+
+    /// Plan test 2, mutation: 100,000 domain-local edits each.
+    #[test]
+    fn tsr_locality_of_mutation() {
+        for variant in ARMS {
+            for n in INPUTS {
+                locality(&rel(variant, n), &label(variant, n), &[17]);
+            }
+        }
+    }
+
+    /// Plan test 2, crossover: 100,000 homologous exchanges each.
+    #[test]
+    fn tsr_homologous_crossover() {
+        for variant in ARMS {
+            for n in INPUTS {
+                crossover(&rel(variant, n), &label(variant, n), &[17]);
+            }
+        }
+    }
+
+    /// Plan test 6: the widths the generator and the plan pin.
+    #[test]
+    fn tsr_widths_are_the_generators() {
+        let pinned = [
+            (TsrVariant::Single, [(8, 47), (17, 101), (32, 191)]),
+            (TsrVariant::Order, [(8, 1_622), (17, 3_656), (32, 7_046)]),
+            (TsrVariant::Depth, [(8, 252), (17, 558), (32, 1_068)]),
+            (TsrVariant::OrderDepth, [(8, 9_244), (17, 20_980), (32, 40_540)]),
+            (TsrVariant::OrderDepthWindows, [(8, 9_244), (17, 20_980), (32, 40_540)]),
+        ];
+        for (variant, widths) in pinned {
+            for n_inputs in INPUTS {
+                let k = rel(variant, n_inputs).check().unwrap_or_else(|d| panic!("{}: {d:?}", variant.dir()));
+                let root = k.roots()[0];
+                for (n, width) in widths {
+                    let heads = k.heads_from_program_size(root, n).expect("heads");
+                    assert_eq!(k.bounds(root, &heads).expect("bounds").width(), width, "{} N = {n}", variant.dir());
+                    assert_eq!(GeneLayout::from_program_size(&k, root, n).expect("layout").width, width, "{} N = {n} layout", variant.dir());
+                }
+            }
+        }
+    }
+
+    /// Plan test 4, host side: the single kingdom's rows are `SymbolTable::wide`'s 18 operators over one
+    /// dual, and its contract at N = 17 gives h = 33, t = d = 34, width 101.
+    #[test]
+    fn tsr_single_is_the_classical_wide_table() {
+        let wide = [
+            ("add", "Add", 2), ("sub", "Sub", 2), ("mul", "Mul", 2), ("pdiv", "ProtectedDiv", 2), ("sin", "Sin", 1), ("cos", "Cos", 1),
+            ("tanh", "Tanh", 1), ("psqrt", "ProtectedSqrt", 1), ("plog", "ProtectedLog", 1), ("pexp", "ProtectedExp", 1), ("neg", "Neg", 1),
+            ("abs", "Abs", 1), ("pow2", "Pow2", 1), ("pow3", "Pow3", 1), ("pinv", "ProtectedInv", 1), ("tan", "Tan", 1),
+            ("pasin", "ProtectedAsin", 1), ("pacos", "ProtectedAcos", 1),
+        ];
+        let tsr = TsrKingdom::load(TsrVariant::Single, 9).expect("loads");
+        assert_eq!(tsr.duals.len(), 1);
+        let one = Ty::Tsr(0);
+        let functions: Vec<_> = tsr.rows.iter().filter(|r| !r.terminal()).collect();
+        assert_eq!(functions.len(), wide.len());
+        for (r, (sem, ctor, arity)) in functions.iter().zip(wide) {
+            assert_eq!((r.semantic_id.as_str(), r.constructor.as_str(), r.inputs.len(), r.output), (sem, ctor, arity, one));
+            assert!(r.inputs.iter().all(|t| *t == one), "{sem}: every argument is the one dual");
+            assert_eq!(r.kind, TsrKind::Function);
+        }
+        let terminals: Vec<_> = tsr.rows.iter().filter(|r| r.terminal()).collect();
+        assert_eq!(terminals.iter().filter(|r| matches!(r.kind, TsrKind::Var(_))).count(), 9);
+        assert_eq!(terminals.iter().filter(|r| r.kind == TsrKind::Const).count(), 1);
+        let k = rel(TsrVariant::Single, 9).check().expect("check");
+        assert_eq!(k.n_max(), 2);
+        let b = k.bounds(one, &k.heads_from_program_size(one, 17).expect("heads")).expect("bounds");
+        let f = b.get(one).expect("the one dual");
+        assert_eq!((f.h, f.t, f.d, b.width()), (33, 34, 34, 101));
+        assert!(f.constant);
+    }
+
+    /// Plan test 6: the check names the defect when a leaf exists only at the bottom dual. The generator
+    /// does not write that variant, so the rows are cut here from the loaded kingdom: every terminal off
+    /// `duals[0]` is dropped, leaving each other dual (33 of 34 in `order_depth`, 11 of 12 in `order`)
+    /// demanded and without a terminal.
+    #[test]
+    fn tsr_exact_leaf_variant_fails_the_check_by_name() {
+        for (variant, defects) in [(TsrVariant::Order, 11usize), (TsrVariant::OrderDepth, 33)] {
+            let k = TsrKingdom::load(variant, 2).expect("loads");
+            let bottom = Ty::Tsr(0);
+            let rows: Vec<(String, Vec<Ty>, Ty)> = k.rows.iter().filter(|r| !r.terminal() || r.output == bottom).map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
+            let constants: Vec<&str> = k.rows.iter().filter(|r| r.kind == TsrKind::Const && r.output == bottom).map(|r| r.name.as_str()).collect();
+            let r = relations_from_rows("TSR exact-leaf", vec![k.root().expect("root")], &rows, &constants);
+            let d = r.check().expect_err("a dual without a terminal must fail the check");
+            assert_eq!(d.len(), defects, "{}: {d:?}", variant.dir());
+            assert!(d.iter().all(|m| m.starts_with("our software has a bug: ") && m.contains("no terminal")), "{}: {d:?}", variant.dir());
+            assert!(report(&r, 17).contains(&format!("CHECK FAILED, {defects} defects")), "{}", variant.dir());
+            // the real kingdom has a terminal at every dual
+            assert!(rel(variant, 2).check().is_ok());
+        }
+    }
+
+    /// Plan test 6, bound exactness. For each type a layout holds, a gene built to demand the most of that
+    /// type (`greedy_gene`) is expressed; the frame, tail and Dc reads never pass `min(P_T, L + h_T)`, `t_T`, `d_T`,
+    /// and the head rows the tree needs (`required_heads`) never pass `h_T`.
+    fn exactness(variant: TsrVariant, n_inputs: usize, sizes: &[usize]) -> (usize, usize, usize, usize) {
+        let k = rel(variant, n_inputs).check().expect("check");
+        let consts = const_lens(&k);
+        let root = k.roots()[0];
+        let mut rng = Rng(0x7512 ^ variant as u64);
+        // (types checked, frames read to P_T, tails read to t_T, head demands equal to h_T)
+        let mut out = (0usize, 0usize, 0usize, 0usize);
+        for n in sizes {
+            let layout = GeneLayout::from_program_size(&k, root, *n).expect("layout");
+            let bounds = k.bounds(root, &layout.head_lens()).expect("bounds");
+            for t in k.reachable(root) {
+                let gene = greedy_gene(&k, &layout, Some(t), &mut rng);
+                let e = express(&k, &layout, &gene, &consts).unwrap_or_else(|d| panic!("{} N = {n} target {t:?}: {d}", variant.dir()));
+                assert_well_typed(&k, root, &e, &label(variant, n_inputs));
+                let (f, b) = (layout.frame(t).expect("frame"), bounds.get(t).expect("bound"));
+                assert_eq!((f.head_len, f.tail_len, f.dc_len), (b.h, b.t, if b.constant { b.d } else { 0 }), "{} N = {n} {t:?}: layout is the bound table", variant.dir());
+                assert_eq!(b.h + b.t, b.p.min(bounds.l + b.h), "{} N = {n} {t:?}: the frame is min(P_T, L + h_T) rows", variant.dir());
+                let frame = e.reach.frame_used.get(&t).copied().unwrap_or(0);
+                let tail = e.reach.tail_used.get(&t).copied().unwrap_or(0);
+                assert!(frame <= b.h + b.t && tail <= b.t, "{} N = {n} {t:?}: frame {frame} of {}, tail {tail} of t {}", variant.dir(), b.h + b.t, b.t);
+                let need = required_heads(&k, &e.tree()).get(&t).copied().unwrap_or(0);
+                assert!(need <= b.h, "{} N = {n} {t:?}: head demand {need} past h {}", variant.dir(), b.h);
+                out.0 += 1;
+                out.1 += usize::from(frame == b.h + b.t);
+                out.2 += usize::from(tail == b.t);
+                out.3 += usize::from(need == b.h);
+            }
+        }
+        out
+    }
+
+    /// The bounds hold in every case. The head bound `h_T` is attained for every (N, type): the chain of N
+    /// functions that gives each its last argument of the type needs exactly `h_T` head rows. `P_T` and
+    /// `L + h_T` are upper bounds taken per producer and over the whole program, and a greedy gene (most
+    /// arguments of the type in each head row) reads them exactly for only some types; the single kingdom,
+    /// one type, reads every tail to exactly `t_T`.
+    #[test]
+    fn tsr_bounds_are_never_passed_and_head_chain_attains_h() {
+        for variant in ARMS {
+            for n_inputs in INPUTS {
+                let (types, p, t, h) = exactness(variant, n_inputs, &[1, 2, 3, 8, 17]);
+                println!("{}: {types} (N, type) cases; frame read to its bound in {p}, tail read to t_T in {t}, head demand equal to h_T in {h}", label(variant, n_inputs));
+                assert_eq!(h, types, "{}: the head chain attains h_T for every type", label(variant, n_inputs));
+            }
+        }
+        let single = adversarial(&rel(TsrVariant::Single, 9), "TSR single", &[1, 2, 3, 8, 17, 32]);
+        assert_eq!(single.attained, single.frames, "TSR single: t_F is attained by an all-binary head");
+    }
 }
