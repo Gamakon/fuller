@@ -26,8 +26,11 @@
 //! its expected value computed by hand: integer `x / 0 == x` and
 //! `x % 0 == 0`, `i32::MIN / -1 == i32::MIN` and `i32::MIN % -1 == 0`;
 //! shift amounts masked to the low five bits; integer add, subtract and
-//! multiply wrap; float to integer conversion rounds toward zero and
-//! saturates (NaN gives 0, which is what Rust's `as` does and what the
+//! multiply wrap; float to integer conversion rounds toward zero and, out of
+//! range, is the value of the integer type closest to truncate(X) that the float
+//! type also represents exactly (WGSL 15.7.6 Floating Point Conversion,
+//! https://www.w3.org/TR/WGSL/#floating-point-conversion: 2147483520 for an f32
+//! past i32, 4294967040 past u32, as naga's MSL helper clamps; NaN gives 0, as the
 //! device test measures); `round` is to nearest even; `min`/`max` return
 //! the non-NaN operand; float division and the transcendentals are IEEE.
 //! Indexing follows the bounds-check policy wgpu applies on this platform,
@@ -939,8 +942,9 @@ fn convert(rest: &str, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-/// `v` as kind `to` (`float`, `sint`, `uint`, `bool`), converting (WGSL:
-/// toward zero, saturating) or bit-casting. Vectors convert lane by lane.
+/// `v` as kind `to` (`float`, `sint`, `uint`, `bool`), converting (WGSL 15.7.6:
+/// toward zero; out of range, the closest value that is also exactly an f32,
+/// not the integer type's own limit) or bit-casting. Vectors convert lane by lane.
 fn cast(v: &Value, to: &str, convert: bool) -> Result<Value, String> {
     if let Value::Vec(items) = v {
         return Ok(Value::Vec(items.iter().map(|i| cast(i, to, convert)).collect::<Result<_, _>>()?));
@@ -948,8 +952,10 @@ fn cast(v: &Value, to: &str, convert: bool) -> Result<Value, String> {
     Ok(match (v, to, convert) {
         (Value::U32(x), "float", true) => Value::F32(*x as f32),
         (Value::I32(x), "float", true) => Value::F32(*x as f32),
-        (Value::F32(x), "sint", true) => Value::I32(*x as i32),
-        (Value::F32(x), "uint", true) => Value::U32(*x as u32),
+        // "Otherwise, the result is the value in T closest to truncate(X) and also exactly representable in the
+        // original floating point type" (WGSL 15.7.6): i32 tops out at 2147483520, u32 at 4294967040 for an f32.
+        (Value::F32(x), "sint", true) => Value::I32(if x.is_nan() { 0 } else { x.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32 }),
+        (Value::F32(x), "uint", true) => Value::U32(if x.is_nan() { 0 } else { x.clamp(0.0, 4_294_967_040.0) as u32 }),
         (Value::U32(x), "sint", true) => Value::I32(*x as i32),
         (Value::I32(x), "uint", true) => Value::U32(*x as u32),
         (Value::Bool(b), "float", true) => Value::F32(if *b { 1.0 } else { 0.0 }),
@@ -1373,7 +1379,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     #[test]
-    fn shifts_mask_the_amount_integers_wrap_and_float_to_int_saturates() {
+    fn shifts_mask_the_amount_integers_wrap_and_float_to_int_clamps_to_the_exact_f32() {
         let src = r#"
 @group(0) @binding(0) var<storage, read> x: array<u32>;
 @group(0) @binding(1) var<storage, read> n: array<u32>;
@@ -1396,9 +1402,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let x = [1u32, 0x8000_0000, u32::MAX];
         let n = [33u32, 1, 0];
         let want = [2u32, 0xC000_0000, 0xFFFF_FFFC];
-        // f32 → int: toward zero, saturating; NaN → 0.
+        // f32 → int: toward zero; out of range, the closest value that is also an f32 (WGSL 15.7.6: 2147483520
+        // for i32, not i32::MAX); NaN → 0.
         let f = [-7.9f32, 3.0e9, f32::NAN];
-        let want_i = [-7i32, i32::MAX, 0];
+        let want_i = [-7i32, 2_147_483_520, 0];
         let want_u = [0u32, 3_000_000_000, 0];
         for i in 0..3 {
             let mut m = Memory::default();

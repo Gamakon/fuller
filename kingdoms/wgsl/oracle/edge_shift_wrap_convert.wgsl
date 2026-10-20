@@ -1,5 +1,7 @@
 // Shifts mask their amount to the low five bits, integer add and multiply
-// wrap, and a float converts to an integer toward zero with saturation.
+// wrap, and a float converts to an integer toward zero; out of range it is the
+// closest value that is also exactly an f32 (WGSL 15.7.6 Floating Point Conversion:
+// 2147483520 for i32, 4294967040 for u32, not the integer type's own limit).
 @group(0) @binding(0) var<storage, read> x: array<u32>;
 @group(0) @binding(1) var<storage, read> n: array<u32>;
 @group(0) @binding(2) var<storage, read_write> out: array<u32>;

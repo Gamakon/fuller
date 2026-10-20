@@ -1,5 +1,5 @@
 {
- "what": "shift amounts masked (e2 & 31), wrapping u32 arithmetic, saturating float to integer conversion with NaN to 0",
+ "what": "shift amounts masked (e2 & 31), wrapping u32 arithmetic, float to integer conversion toward zero, out of range the closest value also exactly an f32 (WGSL 15.7.6: 2147483520 for i32, 4294967040 for u32), NaN to 0",
  "interpreter": true,
  "inputs": {
   "buffer.x": {
@@ -115,13 +115,13 @@
   "buffer.fi": {
    "i32": [
     -7,
-    2147483647,
+    2147483520,
     0,
     0,
     -1,
-    2147483647,
+    2147483520,
     -2147483648,
-    2147483647
+    2147483520
    ]
   },
   "buffer.fu": {
@@ -133,7 +133,7 @@
     0,
     2147483648,
     0,
-    4294967295
+    4294967040
    ]
   }
  }
