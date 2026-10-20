@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Multi-typed GEP rebuild</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Multi-typed GEP rebuild</h1>
+</header>
+<h1 id="multi-typed-gep-rebuild-summary-report-2026-10-20">Multi-typed
+GEP rebuild: summary report, 2026-10-20</h1>
+<p><strong>Conclusion.</strong> The multi-typed GEP rebuild moved SR,
+regex and the WGSL kingdom onto one typed core with nothing substituted:
+SR passed the gate in 481 of 1,000 seed-runs on both the old and the new
+engine over 100 laws; on the UK-postcode column the typed regex rule had
+100.0 % held-out recall against 97.5 %, while evaluating 3.5 times fewer
+individuals in the same 180 s (28 to 30 % of the old generation rate at
+equal budget); and the WGSL kingdom runs end to end on 11 interfaces,
+but seed admission is still being fixed, so run 6d is pending and no
+WGSL score is claimed.</p>
+<h2 id="context">Context</h2>
+<p>Objective: one general multi-typed GEP core (a head and a tail per
+output type, per-type Dc, shared constant pools) that every kingdom
+uses, with no repair, rejection, substitution or fallback. A misfit is
+reported as “our software has a bug: …”. Design:
+<code>nucleotable/docs/MultiTypedGEP.md</code> (rev 4, with the
+implementation notes from phylu), adversarial review in
+<code>docs/reviews/2026-10-19_multityped_gep_codex.md</code>. Kingdom
+reports from phylu: <a
+href="../../../phylu/docs/reports/2026-10-20_sr_typed_gep.md">SR on the
+typed core</a> (40 laws; superseded by the 100-law totals below) and <a
+href="../../../phylu/docs/reports/2026-10-20_regex_typed_gep.md">regex
+on the typed core</a>.</p>
+<h2 id="what-was-built">1. What was built</h2>
+<h3 id="design-fuller">Design (fuller)</h3>
+<table>
+<thead>
+<tr>
+<th>item</th>
+<th>commit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rev 4 design</td>
+<td><code>eba4f52f</code></td>
+</tr>
+<tr>
+<td>bound table</td>
+<td><code>ca816f1e</code></td>
+</tr>
+<tr>
+<td>layout</td>
+<td><code>3004a9b1</code></td>
+</tr>
+<tr>
+<td>chromosomes and ADF</td>
+<td><code>ff7fccc8</code></td>
+</tr>
+<tr>
+<td>defect tests</td>
+<td><code>0b005f03</code></td>
+</tr>
+<tr>
+<td>WGSL terminals</td>
+<td><code>034bf41f</code></td>
+</tr>
+<tr>
+<td>node limit</td>
+<td><code>e04e9762</code></td>
+</tr>
+<tr>
+<td>implementation notes (md, html)</td>
+<td><code>7c22ae10</code>, <code>bde03d4c</code></td>
+</tr>
+</tbody>
+</table>
+<p>Also <code>1ef6490d</code>, <code>5e815c9b</code>,
+<code>8dad48ec</code>.</p>
+<h3 id="host-side-fuller">Host side (fuller)</h3>
+<p><code>GeneCodec</code> (<code>express</code> /
+<code>write_back</code>) is the only way a host rewrites a gene.
+Fallbacks removed: geneframe <code>62981dd2</code>, loader fallback
+tables <code>4c339113</code>. WGSL typed-gene encode:
+<code>07356d9e</code>, <code>0398fabe</code>, <code>1d844b4d</code>,
+<code>b7d7577e</code> (481 of 481 saved genes round trip; 1,759 of 1,798
+corpus kernels read and round trip). Aggregates (matrices of f16 as
+duals): <code>1e0c4667</code>, <code>2c06047d</code>,
+<code>dfbcb53c</code>, <code>33931ab4</code>.</p>
+<h3 id="typed-gpu-core-phylu">Typed GPU core (phylu)</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>part</th>
+<th>commits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>init, vary, decode, walk, select</td>
+<td><code>65a1cbc7</code>, <code>f279b306</code>, <code>34bae3a2</code>,
+<code>809949ba</code>, <code>bb11e3e2</code>, <code>8e994549</code>,
+<code>036dd9e4</code>, <code>fb6c91fd</code>, <code>038ec20e</code>,
+<code>f752a9af</code>, <code>2b7cc0e9</code></td>
+</tr>
+<tr>
+<td>SR on the typed core</td>
+<td><code>c77c9328</code></td>
+</tr>
+<tr>
+<td>SR golden (keyed by share and root_function)</td>
+<td><code>168b2aba</code>, <code>6fc6c717</code>,
+<code>20f65a23</code></td>
+</tr>
+<tr>
+<td>write-back and cleanse</td>
+<td><code>5ba2ff53</code>, <code>b844940e</code>,
+<code>039f20a1</code></td>
+</tr>
+<tr>
+<td>snap, fold, beam through the codec</td>
+<td><code>96a7a91d</code>, <code>1241acf0</code>,
+<code>3fd78355</code></td>
+</tr>
+<tr>
+<td>resume fixes (checkpoint format 3 carries per-row scores)</td>
+<td><code>f78e5884</code>, <code>9de90042</code></td>
+</tr>
+<tr>
+<td>layout-free kernels (shader text independent of layout; scratch in
+chunked storage buffers)</td>
+<td><code>7e798bf2</code>, <code>ed8521e9</code></td>
+</tr>
+<tr>
+<td>host contract tests (at most 29 bindings per stage; uniform sizes
+match the WGSL structs)</td>
+<td><code>942fc267</code></td>
+</tr>
+<tr>
+<td>head draw (<code>FunctionShare</code>,
+<code>root_function</code>)</td>
+<td><code>c0bde1bd</code>, <code>1257b834</code>,
+<code>2a4c2b1e</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="kingdoms-moved">Kingdoms moved</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>kingdom</th>
+<th>commits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SR</td>
+<td><code>c77c9328</code></td>
+</tr>
+<tr>
+<td>regex</td>
+<td><code>81d0f041</code>, <code>ec5488f3</code>, <code>d9c8e31e</code>,
+<code>0d04b552</code>, <code>0e69b7d4</code>, <code>e7e6d07a</code>,
+<code>093aae96</code>, <code>19859915</code>, <code>4a30091c</code>,
+<code>3e0c5712</code>, <code>a076dcaa</code></td>
+</tr>
+<tr>
+<td>WGSL</td>
+<td><code>94575f3d</code>, <code>497c4533</code>, <code>e0a34fd7</code>,
+<code>7de95bf0</code>, <code>defef2a8</code>, <code>43eb72ab</code>,
+<code>f6bb9a67</code>, <code>67d4fe54</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="removed-paths-phylu">Removed paths (phylu)</h3>
+<p><code>a2ecc962</code>, <code>f5fc359c</code>, <code>6cbb876d</code>,
+and <code>2cdd40f6</code> (the old WGSL path).</p>
+<h2 id="measurements">2. Measurements</h2>
+<h3 id="sr-old-against-new-100-laws-10-seeds-each-gate-passed">2.1 SR,
+old against new (100 laws, 10 seeds each, gate passed)</h3>
+<table>
+<thead>
+<tr>
+<th>measurement</th>
+<th>expected</th>
+<th>old</th>
+<th>new</th>
+<th>difference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>run 1, laws 1 to 40 (400 seed-runs)</td>
+<td>no loss</td>
+<td>382</td>
+<td>380</td>
+<td>-2</td>
+</tr>
+<tr>
+<td>run 2, laws 41 to 100 (600 seed-runs)</td>
+<td>no loss</td>
+<td>99</td>
+<td>101</td>
+<td>+2</td>
+</tr>
+<tr>
+<td>total, of 1,000</td>
+<td>no loss</td>
+<td>481</td>
+<td>481</td>
+<td>0</td>
+</tr>
+<tr>
+<td>laws 10 of 10 in both arms</td>
+<td>n/a</td>
+<td>34</td>
+<td>34</td>
+<td>0</td>
+</tr>
+<tr>
+<td>killed runs</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<p>Arms: old is phylu <code>7d5e4e96</code> with fuller
+<code>946e5a59</code>; new is phylu <code>093aae96</code> with fuller
+<code>1e0c4667</code>. Window 04:54Z to about 06:25Z; run 2 was stopped
+at law 60 of 93 for the WGSL deadline (<code>552c6c96</code>). Laws that
+differ (old to new, of 10):</p>
+<table>
+<thead>
+<tr>
+<th>run</th>
+<th>law</th>
+<th>old</th>
+<th>new</th>
+<th>run</th>
+<th>law</th>
+<th>old</th>
+<th>new</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>III_13_18</td>
+<td>9</td>
+<td>10</td>
+<td>2</td>
+<td>I_12_4</td>
+<td>9</td>
+<td>10</td>
+</tr>
+<tr>
+<td>1</td>
+<td>III_15_27</td>
+<td>10</td>
+<td>7</td>
+<td>2</td>
+<td>I_43_43</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>1</td>
+<td>II_34_29b</td>
+<td>8</td>
+<td>9</td>
+<td>2</td>
+<td>III_15_14</td>
+<td>8</td>
+<td>10</td>
+</tr>
+<tr>
+<td>1</td>
+<td>II_4_23</td>
+<td>10</td>
+<td>7</td>
+<td>2</td>
+<td>II_10_9</td>
+<td>4</td>
+<td>2</td>
+</tr>
+<tr>
+<td>1</td>
+<td>II_8_7</td>
+<td>9</td>
+<td>10</td>
+<td>2</td>
+<td>II_13_17</td>
+<td>7</td>
+<td>6</td>
+</tr>
+<tr>
+<td>1</td>
+<td>I_6_2a</td>
+<td>7</td>
+<td>6</td>
+<td>2</td>
+<td>II_6_11</td>
+<td>6</td>
+<td>7</td>
+</tr>
+<tr>
+<td>1</td>
+<td>shearflow1</td>
+<td>5</td>
+<td>7</td>
+<td>2</td>
+<td>I_32_5</td>
+<td>8</td>
+<td>7</td>
+</tr>
+<tr>
+<td>2</td>
+<td>III_19_51</td>
+<td>2</td>
+<td>4</td>
+<td>2</td>
+<td>glider2</td>
+<td>3</td>
+<td>7</td>
+</tr>
+<tr>
+<td>2</td>
+<td>barmag1</td>
+<td>2</td>
+<td>0</td>
+<td>2</td>
+<td>I_26_2</td>
+<td>0</td>
+<td>2</td>
+</tr>
+<tr>
+<td>2</td>
+<td>barmag2</td>
+<td>2</td>
+<td>1</td>
+<td>2</td>
+<td>I_13_12</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>2</td>
+<td>I_10_7</td>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>I_34_1</td>
+<td>2</td>
+<td>1</td>
+</tr>
+<tr>
+<td>2</td>
+<td>III_15_12</td>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>I_30_5</td>
+<td>3</td>
+<td>0</td>
+</tr>
+<tr>
+<td>2</td>
+<td>III_17_37</td>
+<td>1</td>
+<td>2</td>
+<td>2</td>
+<td>I_27_6</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>2</td>
+<td>glider1</td>
+<td>1</td>
+<td>2</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3
+id="regex-old-against-new-uk-postcodes-180-s-seeds-7013-to-7016-means-over-four-seeds">2.2
+Regex, old against new (UK postcodes, 180 s, seeds 7013 to 7016, means
+over four seeds)</h3>
+<p>Source: phylu <code>logs/REGEX_TYPED_AB/table.txt</code>; held-out
+set 198 unseen UK postcodes, 60 US ZIP, 30 ZIP+4, 60 Canadian, 50
+corrupted UK.</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+</colgroup>
+<thead>
+<tr>
+<th>measurement</th>
+<th>old</th>
+<th>oldnosimp</th>
+<th>newA28</th>
+<th>newB28</th>
+<th>newA28eq</th>
+<th>newB28eq</th>
+<th>newA12</th>
+<th>newB12</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>held-out recall, % of 198</td>
+<td>97.5</td>
+<td>97.5</td>
+<td>100.0</td>
+<td>100.0</td>
+<td>100.0</td>
+<td>100.0</td>
+<td>100.0</td>
+<td>100.0</td>
+</tr>
+<tr>
+<td>foreign formats leaked, of 600</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>corrupted UK leaked, of 200</td>
+<td>104</td>
+<td>104</td>
+<td>10</td>
+<td>12</td>
+<td>10</td>
+<td>6</td>
+<td>0</td>
+<td>10</td>
+</tr>
+<tr>
+<td>train FN / FP</td>
+<td>14 / 18</td>
+<td>14 / 18</td>
+<td>0 / 1</td>
+<td>0.5 / 4</td>
+<td>0 / 1</td>
+<td>0.2 / 2</td>
+<td>0 / 0</td>
+<td>0 / 1</td>
+</tr>
+<tr>
+<td>rule length, characters</td>
+<td>17</td>
+<td>17</td>
+<td>54</td>
+<td>70.8</td>
+<td>54</td>
+<td>68</td>
+<td>86.2</td>
+<td>65.2</td>
+</tr>
+<tr>
+<td>generations</td>
+<td>24,641</td>
+<td>19,471</td>
+<td>1,007 (22.9 s)</td>
+<td>612 (13.7 s)</td>
+<td>6,964</td>
+<td>7,438</td>
+<td>398 (6.0 s)</td>
+<td>137 (2.3 s)</td>
+</tr>
+<tr>
+<td>individuals, millions</td>
+<td>64.1</td>
+<td>50.6</td>
+<td>2.6</td>
+<td>1.6</td>
+<td>18.1</td>
+<td>19.3</td>
+<td>1.0</td>
+<td>0.4</td>
+</tr>
+</tbody>
+</table>
+<p>The rules are longer (54 characters against 17). The throughput
+expectation in the plan was missed.</p>
+<h3
+id="regex-speed-60-s-n-28-milliseconds-of-the-four-timers-summed-per-generation">2.3
+Regex speed (60 s, N = 28, milliseconds of the four timers summed per
+generation)</h3>
+<table>
+<thead>
+<tr>
+<th>build</th>
+<th>generations</th>
+<th>sum, ms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v1 <code>0e69b7d4</code></td>
+<td>2,758</td>
+<td>22.4</td>
+</tr>
+<tr>
+<td>v2 <code>942fc267</code> (after match kernel
+<code>19859915</code>)</td>
+<td>5,174</td>
+<td>11.8</td>
+</tr>
+<tr>
+<td>A, <code>552c6c96</code> default draw</td>
+<td>3,962</td>
+<td>15.5</td>
+</tr>
+<tr>
+<td>B, half</td>
+<td>4,161</td>
+<td>14.7</td>
+</tr>
+<tr>
+<td>C, half, waits restored</td>
+<td>4,283</td>
+<td>14.3</td>
+</tr>
+<tr>
+<td>D, waits restored</td>
+<td>3,722</td>
+<td>16.5</td>
+</tr>
+</tbody>
+</table>
+<p>The old build takes 7.3 ms a generation; the typed arm is at 28 to 30
+% of the old generation rate at equal budget. Next targets: selection
+(the elite kernel is <code>a076dcaa</code>), cleanse and crossover, and
+matching each distinct program once.</p>
+<h3 id="wgsl-run-6c-as-it-stands">2.4 WGSL run 6c, as it stands</h3>
+<p>Logs: <code>logs/V24/run6c_halfroot.log</code>,
+<code>logs/V24/run6c_proproot.log</code>; started 06:29:30Z, problem
+<code>v24_ingest5b</code>, 20 generations, about 210 to 220 s a run.</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>measurement</th>
+<th>halfroot</th>
+<th>proproot</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>seeds read</td>
+<td>29 under 11 interfaces; 3 not read by the safe reader (seed21,
+seed30, seed31)</td>
+<td>same</td>
+</tr>
+<tr>
+<td>seeds admitted per interface</td>
+<td>5, 4, 4, 2, 3, 1, 1, 6, 1, 1, 1</td>
+<td>same</td>
+</tr>
+<tr>
+<td>initial population</td>
+<td>no single-node genes; median 15 to 20 nodes</td>
+<td>no single-node genes; 5 to 93 nodes</td>
+</tr>
+<tr>
+<td>best fitness, interface 0</td>
+<td>0.33877</td>
+<td>0.33969</td>
+</tr>
+<tr>
+<td>other interfaces</td>
+<td>0.58569</td>
+<td>interface 8 has no feasible row (2.57080)</td>
+</tr>
+<tr>
+<td>result</td>
+<td>runs end to end</td>
+<td>runs end to end</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>run</th>
+<th>state</th>
+<th>result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6c</td>
+<td>done</td>
+<td>table above; seed admission is a known bug</td>
+</tr>
+<tr>
+<td><strong>6d</strong></td>
+<td><strong>PENDING</strong></td>
+<td><strong>not run; follows the seed-admission fix</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="caveats">3. Caveats</h2>
+<ul>
+<li>Stray GPU runs: my own GPU tests ran around 03:00Z to 03:10Z during
+the regex A/B, together with mtgep-regex’s device tests in the same
+window. Throughput in that window is lower than it would be alone.</li>
+<li>Machine-load drift: the load reached 100 at one point; some
+speed-table runs read 15 to 40 % higher host times than others.</li>
+<li>The old regex arm (phylu <code>dfcbb1e2</code>) trained on all 661
+rows; the typed arms held out 132. Train FN and FP above are over all
+rows for both.</li>
+<li>SR is single-typed, so the 481 against 481 result tests
+non-regression only.</li>
+<li>The arms draw different random numbers; per-law differences in 2.1
+are within what seeds alone would give, but I have not run a paired
+test.</li>
+<li>The SR runs used the fair coin head draw on both arms, and the new
+SR arm predates the layout-free kernels (<code>7e798bf2</code>).</li>
+<li>The 40-law SR report is superseded by 2.1.</li>
+</ul>
+<h2 id="open">4. Open</h2>
+<ul>
+<li>Seed admission in the WGSL run (3 seeds not read; 5 interfaces with
+one admitted seed; interface 8 of proproot has no feasible row). Then
+run 6d.</li>
+<li>Removal of the fallback node in fuller <code>src/wgsl</code>.</li>
+<li>Aggregates beyond matrices of f16.</li>
+<li>Speed targets for regex: selection, cleanse and crossover, matching
+each distinct program once.</li>
+</ul>
+</body>
+</html>
