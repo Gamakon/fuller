@@ -153,6 +153,19 @@ impl GeneLayout {
         self.frames.iter().map(|f| (f.ty, f.head_len)).collect()
     }
 
+    /// Frame rows of the gene, `sum_T (h_T + t_T)`: every expressed node reads
+    /// exactly one, so no gene expresses more nodes than this.
+    pub fn frame_rows(&self) -> usize {
+        self.frames.iter().map(|f| f.head_len + f.tail_len).sum()
+    }
+
+    /// The per-thread node scratch an evaluator needs for this layout, derived
+    /// from its own bound ([`crate::gpu_eval::max_nodes_for_rows`]); never
+    /// below `gpu_eval::MAX_NODES`.
+    pub fn max_nodes(&self) -> usize {
+        crate::gpu_eval::max_nodes_for_rows(self.frame_rows())
+    }
+
     /// The largest program size the heads guarantee.
     pub fn guaranteed_program_size(&self, k: &KingdomContract) -> usize {
         k.guaranteed_program_size(self.root, &self.head_lens())

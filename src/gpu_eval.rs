@@ -69,15 +69,31 @@ pub const WORK_NODES: usize = MAX_NODES + 16;
 /// so they read as plain WGSL; this is the only place those literals are
 /// rewritten, and every `ShaderSource::Wgsl` in the crate goes through it.
 pub fn with_limits(src: &str) -> String {
-    src.replace("const MAX_NODES: u32 = 64u;", &format!("const MAX_NODES: u32 = {MAX_NODES}u;"))
-        .replace("const SLOT: u32 = 64u;", &format!("const SLOT: u32 = {MAX_NODES}u;"))
-        .replace("const WORK: u32 = 80u;", &format!("const WORK: u32 = {WORK_NODES}u;"))
-        .replace("array<f32, 64>", &format!("array<f32, {MAX_NODES}>"))
-        .replace("array<u32, 64>", &format!("array<u32, {MAX_NODES}>"))
-        .replace("array<u32, 80>", &format!("array<u32, {WORK_NODES}>"))
-        .replace("array<Node, 64>", &format!("array<Node, {MAX_NODES}>"))
-        .replace("array<Node, 80>", &format!("array<Node, {WORK_NODES}>"))
-        .replace("array<u32, 128>", &format!("array<u32, {}>", 2 * MAX_NODES))
+    with_limits_n(src, MAX_NODES)
+}
+
+/// The scratch a layout needs: every expressed node reads one row of its type's
+/// frame, so a gene never expresses more nodes than `frame_rows` =
+/// `sum_T (h_T + t_T)` (`GeneBounds::frame_rows`). Rounded up to a multiple of
+/// 64 (the stats shader reduces 64 nodes a workgroup) and never below
+/// [`MAX_NODES`]. No valid layout is refused for its size.
+pub fn max_nodes_for_rows(frame_rows: usize) -> usize {
+    frame_rows.max(MAX_NODES).div_ceil(64) * 64
+}
+
+/// [`with_limits`] for an explicit node limit: the scratch of a shader sized for
+/// a layout whose bound exceeds [`MAX_NODES`].
+pub fn with_limits_n(src: &str, max_nodes: usize) -> String {
+    let work = max_nodes + 16;
+    src.replace("const MAX_NODES: u32 = 64u;", &format!("const MAX_NODES: u32 = {max_nodes}u;"))
+        .replace("const SLOT: u32 = 64u;", &format!("const SLOT: u32 = {max_nodes}u;"))
+        .replace("const WORK: u32 = 80u;", &format!("const WORK: u32 = {work}u;"))
+        .replace("array<f32, 64>", &format!("array<f32, {max_nodes}>"))
+        .replace("array<u32, 64>", &format!("array<u32, {max_nodes}>"))
+        .replace("array<u32, 80>", &format!("array<u32, {work}>"))
+        .replace("array<Node, 64>", &format!("array<Node, {max_nodes}>"))
+        .replace("array<Node, 80>", &format!("array<Node, {work}>"))
+        .replace("array<u32, 128>", &format!("array<u32, {}>", 2 * max_nodes))
 }
 
 /// wgpu's per-dimension workgroup cap (`max_compute_workgroups_per_dimension`).
@@ -654,10 +670,15 @@ impl ExprBatch {
     /// evaluate these on the CPU — the kernel marks them NaN rather than
     /// truncating, but knowing up front avoids a wasted round trip.
     pub fn oversized(&self) -> Vec<usize> {
+        self.oversized_over(MAX_NODES)
+    }
+
+    /// [`Self::oversized`] for a kernel sized to `limit` nodes.
+    pub fn oversized_over(&self, limit: usize) -> Vec<usize> {
         self.lengths
             .iter()
             .enumerate()
-            .filter(|(_, &l)| l as usize > MAX_NODES || l == 0)
+            .filter(|(_, &l)| l as usize > limit || l == 0)
             .map(|(i, _)| i)
             .collect()
     }
@@ -677,13 +698,18 @@ impl ExprBatch {
 /// name not in `vars` is an error rather than a default, because silently
 /// reading column 0 would produce a plausible wrong answer.
 pub fn math_to_nodes(expr: &str, vars: &[String]) -> Result<Vec<GpuNode>, String> {
+    math_to_nodes_n(expr, vars, MAX_NODES)
+}
+
+/// [`math_to_nodes`] for a kernel sized to `max_nodes`.
+pub fn math_to_nodes_n(expr: &str, vars: &[String], max_nodes: usize) -> Result<Vec<GpuNode>, String> {
     let toks = tokenize(expr);
     let mut pos = 0usize;
     let tree = parse(&toks, &mut pos)?;
     if pos != toks.len() {
         return Err(format!("trailing tokens at {pos} in {expr:?}"));
     }
-    flatten(&tree, vars)
+    flatten(&tree, vars, max_nodes)
 }
 
 /// Karva tokens straight to GPU nodes.
@@ -786,7 +812,7 @@ fn parse(toks: &[String], pos: &mut usize) -> Result<Tree, String> {
 }
 
 /// Breadth-first flatten with child indices resolved.
-fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
+fn flatten(root: &Tree, vars: &[String], max_nodes: usize) -> Result<Vec<GpuNode>, String> {
     let mut out: Vec<GpuNode> = Vec::new();
     // (tree, index of the slot already reserved in `out`)
     let mut queue: std::collections::VecDeque<(&Tree, usize)> =
@@ -838,8 +864,8 @@ fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
                 }
             }
         }
-        if out.len() > MAX_NODES {
-            return Err(format!("expression exceeds MAX_NODES ({MAX_NODES})"));
+        if out.len() > max_nodes {
+            return Err(format!("expression exceeds the kernel's node limit ({max_nodes})"));
         }
     }
     Ok(out)
@@ -881,15 +907,30 @@ mod device {
         dummy_shared_base: wgpu::Buffer,
         n_rows: u32,
         n_vars: u32,
+        /// The per-thread scratch every shader of this evaluator is sized to.
+        max_nodes: usize,
     }
 
     impl GpuEvaluator {
-        /// Upload the dataset. `rows` is row-major, `n_vars` wide.
+        /// Upload the dataset. `rows` is row-major, `n_vars` wide. Scratch is
+        /// [`MAX_NODES`] nodes; a layout whose bound is larger uses
+        /// [`Self::with_max_nodes`].
         pub fn new(rows: &[f32], n_vars: usize) -> Result<Self, String> {
-            pollster::block_on(Self::new_async(rows, n_vars))
+            Self::with_max_nodes(rows, n_vars, MAX_NODES)
         }
 
-        async fn new_async(rows: &[f32], n_vars: usize) -> Result<Self, String> {
+        /// As [`Self::new`] with the scratch sized to `max_nodes` (see
+        /// [`max_nodes_for_rows`]), so no valid layout is refused for its size.
+        pub fn with_max_nodes(rows: &[f32], n_vars: usize, max_nodes: usize) -> Result<Self, String> {
+            pollster::block_on(Self::new_async(rows, n_vars, max_nodes))
+        }
+
+        /// The scratch size this evaluator's shaders were built with.
+        pub fn max_nodes(&self) -> usize {
+            self.max_nodes
+        }
+
+        async fn new_async(rows: &[f32], n_vars: usize, max_nodes: usize) -> Result<Self, String> {
             if n_vars == 0 || !rows.len().is_multiple_of(n_vars) {
                 return Err(format!(
                     "rows ({}) not divisible by n_vars ({n_vars})",
@@ -927,7 +968,7 @@ mod device {
 
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-eval"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(with_limits(EVAL_WGSL))),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(with_limits_n(EVAL_WGSL, max_nodes))),
             });
 
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1015,6 +1056,7 @@ mod device {
                 dummy_shared_base,
                 n_rows,
                 n_vars: n_vars as u32,
+                max_nodes,
             })
         }
 
@@ -1430,15 +1472,16 @@ mod device {
         pub fn eval_with_partials(&self, batch: &ExprBatch) -> Result<(Vec<f32>, Vec<f32>), String> {
             if batch.is_empty() || batch.nodes.is_empty() {
                 let total = batch.len() * self.n_rows as usize;
-                return Ok((vec![f32::NAN; total], vec![0.0; total * MAX_NODES]));
+                return Ok((vec![f32::NAN; total], vec![0.0; total * self.max_nodes]));
             }
             let n_expr = batch.len() as u32;
             let total = (n_expr as u64) * (self.n_rows as u64);
-            let part_total = total * MAX_NODES as u64;
+            let part_total = total * self.max_nodes as u64;
             if part_total > u32::MAX as u64 {
                 return Err(format!(
-                    "partials of {n_expr} expressions x {MAX_NODES} nodes x {} rows overflows the \
+                    "partials of {n_expr} expressions x {} nodes x {} rows overflows the \
                      kernel's u32 index; pass fewer genes",
+                    self.max_nodes,
                     self.n_rows
                 ));
             }
@@ -1634,25 +1677,27 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         /// Expressions a block holds.
         block: usize,
         n_rows: u32,
+        max_nodes: usize,
     }
 
     impl SubtreeStats {
         pub fn new(evaluator: &GpuEvaluator) -> Result<Self, String> {
             let device = evaluator.device();
             let n_rows = evaluator.n_rows();
+            let max_nodes = evaluator.max_nodes();
             let limits = device.limits();
-            let per_expr = MAX_NODES as u64 * u64::from(n_rows) * 4;
+            let per_expr = max_nodes as u64 * u64::from(n_rows) * 4;
             let cap = PARTIALS_BYTES_CAP.min(limits.max_storage_buffer_binding_size);
             // A workgroup of 64 threads reduces 64 nodes, so an expression takes
             // MAX_NODES / 64 workgroups, and the dispatch is one-dimensional: a
             // block is at most one dimension's worth of workgroups.
-            let block = ((cap / per_expr) as usize).min(MAX_GROUPS_PER_DIM as usize * 64 / MAX_NODES);
+            let block = ((cap / per_expr) as usize).min(MAX_GROUPS_PER_DIM as usize * 64 / max_nodes);
             if block == 0 {
-                return Err(format!("subtree stats: one expression's {MAX_NODES} x {n_rows} partials do not fit the device's binding limit"));
+                return Err(format!("subtree stats: one expression's {max_nodes} x {n_rows} partials do not fit the device's binding limit"));
             }
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-subtree-stats"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(STATS_WGSL))),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits_n(STATS_WGSL, max_nodes))),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-subtree-stats-layout"),
@@ -1686,11 +1731,11 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     mapped_at_creation: false,
                 })
             };
-            let stats_bytes = block as u64 * MAX_NODES as u64 * 16;
+            let stats_bytes = block as u64 * max_nodes as u64 * 16;
             Ok(Self {
                 pipeline,
                 layout,
-                nodes_buf: storage(block as u64 * MAX_NODES as u64 * 16, "subtree stats nodes"),
+                nodes_buf: storage(block as u64 * max_nodes as u64 * 16, "subtree stats nodes"),
                 offsets_buf: storage(block as u64 * 4, "subtree stats offsets"),
                 lengths_buf: storage(block as u64 * 4, "subtree stats lengths"),
                 partials_buf: storage(block as u64 * per_expr, "subtree stats partials"),
@@ -1704,6 +1749,7 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }),
                 block,
                 n_rows,
+                max_nodes,
             })
         }
 
@@ -1722,7 +1768,8 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             let device = evaluator.device();
             let queue = evaluator.queue();
-            let mut out: Vec<SubtreeStat> = Vec::with_capacity(batch.len() * MAX_NODES);
+            let max_nodes = self.max_nodes;
+            let mut out: Vec<SubtreeStat> = Vec::with_capacity(batch.len() * max_nodes);
             let mut e0 = 0usize;
             while e0 < batch.len() {
                 let n = self.block.min(batch.len() - e0);
@@ -1760,9 +1807,9 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
                     pass.set_pipeline(&self.pipeline);
                     pass.set_bind_group(0, &bind, &[]);
-                    pass.dispatch_workgroups(((n * MAX_NODES) as u32).div_ceil(64), 1, 1);
+                    pass.dispatch_workgroups(((n * max_nodes) as u32).div_ceil(64), 1, 1);
                 }
-                let stats_bytes = (n * MAX_NODES * 16) as u64;
+                let stats_bytes = (n * max_nodes * 16) as u64;
                 enc.copy_buffer_to_buffer(&self.stats_buf, 0, &self.staging, 0, stats_bytes);
                 queue.submit(Some(enc.finish()));
                 let slice = self.staging.slice(..stats_bytes);
@@ -1887,6 +1934,52 @@ mod tests {
         let too_long = vec![leaf; MAX_NODES + 1];
         b.push(&too_long);
         assert_eq!(b.oversized(), vec![2]);
+    }
+
+    /// The evaluator's scratch follows the layout's own bound: a layout whose
+    /// frame rows exceed [`MAX_NODES`] gets a larger limit, every shader literal
+    /// follows it, and no valid expression of the layout is refused.
+    #[test]
+    fn the_node_limit_follows_the_layouts_bound() {
+        assert_eq!(max_nodes_for_rows(1), MAX_NODES);
+        assert_eq!(max_nodes_for_rows(MAX_NODES), MAX_NODES);
+        assert_eq!(max_nodes_for_rows(MAX_NODES + 1), MAX_NODES + 64);
+        assert_eq!(max_nodes_for_rows(1000), 1024);
+        // SR at program size 100: h = 199, t = 200, so up to 399 nodes.
+        let k = crate::kingdom_contract::sr_relations().check().expect("SR");
+        let layout = crate::typed_gep::GeneLayout::from_program_size(&k, crate::geneframe::Ty::F, 100).expect("layout");
+        assert_eq!(layout.frame_rows(), 399);
+        assert!(layout.frame_rows() > MAX_NODES);
+        let limit = layout.max_nodes();
+        assert_eq!(limit, 448);
+        // A full binary expression of 399 nodes: refused at the default limit, accepted at the layout's.
+        let mut e = "(Num 1.0)".to_string();
+        for _ in 0..199 {
+            e = format!("(Add {e} (Num 1.0))");
+        }
+        let n = math_to_nodes_n(&e, &[], limit).expect("fits the layout's limit").len();
+        assert_eq!(n, 399);
+        assert!(math_to_nodes(&e, &[]).is_err(), "the default limit still refuses it");
+        let mut b = ExprBatch::new();
+        b.push(&math_to_nodes_n(&e, &[], limit).expect("nodes"));
+        assert_eq!(b.oversized(), vec![0]);
+        assert!(b.oversized_over(limit).is_empty());
+    }
+
+    /// Every literal of every shader follows the limit, and the sized shaders
+    /// still parse.
+    #[cfg(feature = "wgsl")]
+    #[test]
+    fn sized_shaders_carry_the_limit_and_parse() {
+        for limit in [MAX_NODES, 448, 1024] {
+            for (name, src) in [("eval", EVAL_WGSL)] {
+                let sized = with_limits_n(src, limit);
+                assert!(sized.contains(&format!("const MAX_NODES: u32 = {limit}u;")), "{name}");
+                assert!(!sized.contains("const MAX_NODES: u32 = 64u;"), "{name}");
+                crate::wgsl::naga_shape::parse_unscanned(&sized).unwrap_or_else(|e| panic!("{name} at {limit}: {e}"));
+            }
+        }
+        assert_eq!(with_limits(EVAL_WGSL), with_limits_n(EVAL_WGSL, MAX_NODES));
     }
 
     #[test]
