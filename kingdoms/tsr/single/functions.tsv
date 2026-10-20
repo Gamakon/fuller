@@ -1,0 +1,32 @@
+ref	class	instance	constructor	in	out	arity	note
+F00001	function	add	Add	F,F	F	2	
+F00002	function	sub	Sub	F,F	F	2	
+F00003	function	mul	Mul	F,F	F	2	
+F00004	function	pdiv	ProtectedDiv	F,F	F	2	
+F00005	function	sin	Sin	F	F	1	
+F00006	function	cos	Cos	F	F	1	
+F00007	function	tanh	Tanh	F	F	1	
+F00008	function	psqrt	ProtectedSqrt	F	F	1	
+F00009	function	plog	ProtectedLog	F	F	1	
+F00010	function	pexp	ProtectedExp	F	F	1	
+F00011	function	neg	Neg	F	F	1	
+F00012	function	abs	Abs	F	F	1	
+F00013	function	pow2	Pow2	F	F	1	
+F00014	function	pow3	Pow3	F	F	1	
+F00015	function	pinv	ProtectedInv	F	F	1	
+F00016	function	tan	Tan	F	F	1	
+F00017	function	pasin	ProtectedAsin	F	F	1	
+F00018	function	pacos	ProtectedAcos	F	F	1	
+F00019	terminal	var	Var	-	F	0	one terminal per input column (the loader expands `var` to every column)
+F00020	terminal	const	Num	-	F	0	the constant placeholder ?
+F00021	absent	div	Div	-	-	0	raw division: its domain differs from pdiv; a protected form is never mapped to a raw one
+F00022	absent	sqrt	Sqrt	-	-	0	raw square root: not in the alphabet, psqrt is
+F00023	absent	log	Log	-	-	0	raw logarithm: not in the alphabet, plog is
+F00024	absent	exp	Exp	-	-	0	raw exponential: not in the alphabet, pexp is
+F00025	absent	inv	Inv	-	-	0	raw inverse: not in the alphabet, pinv is
+F00026	absent	asin	Asin	-	-	0	raw arcsine: not in the alphabet, pasin is
+F00027	absent	acos	Acos	-	-	0	raw arccosine: not in the alphabet, pacos is
+F00028	absent	pow	Pow	-	-	0	binary power: wide() has no Pow; a literal exponent 2 or 3 canonicalises to pow2/pow3, any other exponent is not offered (never typed by the binary merge rule: it would count the exponent as an arm)
+F00029	absent	select3	Select3	-	-	0	ternary select: a WGSL-kingdom row, not in the SR alphabet
+F00030	canon	pow_2	Pow	-	-	0	Pow(x, 2) with the literal 2 becomes pow2(x), order preserved (canonicalises to pow2)
+F00031	canon	pow_3	Pow	-	-	0	Pow(x, 3) with the literal 3 becomes pow3(x), order preserved (canonicalises to pow3)

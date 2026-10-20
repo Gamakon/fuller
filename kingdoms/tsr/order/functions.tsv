@@ -1,0 +1,1184 @@
+ref	class	instance	constructor	in	out	arity	note
+F00001	function	add	Add	P1,P1	A12	2	
+F00002	function	add	Add	P1,P2	A21	2	
+F00003	function	add	Add	P1,A12	A12	2	
+F00004	function	add	Add	P1,A21	A21	2	
+F00005	function	add	Add	P1,M12	A21	2	
+F00006	function	add	Add	P1,M21	A21	2	
+F00007	function	add	Add	P1,P3	A31	2	
+F00008	function	add	Add	P1,A22	A22	2	
+F00009	function	add	Add	P1,A31	A31	2	
+F00010	function	add	Add	P1,M22	A31	2	
+F00011	function	add	Add	P1,M31	A31	2	
+F00012	function	add	Add	P2,P1	A21	2	
+F00013	function	add	Add	P2,P2	A22	2	
+F00014	function	add	Add	P2,A12	A21	2	
+F00015	function	add	Add	P2,A21	A22	2	
+F00016	function	add	Add	P2,M12	A22	2	
+F00017	function	add	Add	P2,M21	A22	2	
+F00018	function	add	Add	P2,P3	A31	2	
+F00019	function	add	Add	P2,A22	A22	2	
+F00020	function	add	Add	P2,A31	A31	2	
+F00021	function	add	Add	P2,M22	A31	2	
+F00022	function	add	Add	P2,M31	A31	2	
+F00023	function	add	Add	A12,P1	A12	2	
+F00024	function	add	Add	A12,P2	A21	2	
+F00025	function	add	Add	A12,A12	A12	2	
+F00026	function	add	Add	A12,A21	A21	2	
+F00027	function	add	Add	A12,M12	A21	2	
+F00028	function	add	Add	A12,M21	A21	2	
+F00029	function	add	Add	A12,P3	A31	2	
+F00030	function	add	Add	A12,A22	A22	2	
+F00031	function	add	Add	A12,A31	A31	2	
+F00032	function	add	Add	A12,M22	A31	2	
+F00033	function	add	Add	A12,M31	A31	2	
+F00034	function	add	Add	A21,P1	A21	2	
+F00035	function	add	Add	A21,P2	A22	2	
+F00036	function	add	Add	A21,A12	A21	2	
+F00037	function	add	Add	A21,A21	A22	2	
+F00038	function	add	Add	A21,M12	A22	2	
+F00039	function	add	Add	A21,M21	A22	2	
+F00040	function	add	Add	A21,P3	A31	2	
+F00041	function	add	Add	A21,A22	A22	2	
+F00042	function	add	Add	A21,A31	A31	2	
+F00043	function	add	Add	A21,M22	A31	2	
+F00044	function	add	Add	A21,M31	A31	2	
+F00045	function	add	Add	M12,P1	A21	2	
+F00046	function	add	Add	M12,P2	A22	2	
+F00047	function	add	Add	M12,A12	A21	2	
+F00048	function	add	Add	M12,A21	A22	2	
+F00049	function	add	Add	M12,M12	A22	2	
+F00050	function	add	Add	M12,M21	A22	2	
+F00051	function	add	Add	M12,P3	A31	2	
+F00052	function	add	Add	M12,A22	A22	2	
+F00053	function	add	Add	M12,A31	A31	2	
+F00054	function	add	Add	M12,M22	A31	2	
+F00055	function	add	Add	M12,M31	A31	2	
+F00056	function	add	Add	M21,P1	A21	2	
+F00057	function	add	Add	M21,P2	A22	2	
+F00058	function	add	Add	M21,A12	A21	2	
+F00059	function	add	Add	M21,A21	A22	2	
+F00060	function	add	Add	M21,M12	A22	2	
+F00061	function	add	Add	M21,M21	A22	2	
+F00062	function	add	Add	M21,P3	A31	2	
+F00063	function	add	Add	M21,A22	A22	2	
+F00064	function	add	Add	M21,A31	A31	2	
+F00065	function	add	Add	M21,M22	A31	2	
+F00066	function	add	Add	M21,M31	A31	2	
+F00067	function	add	Add	P3,P1	A31	2	
+F00068	function	add	Add	P3,P2	A31	2	
+F00069	function	add	Add	P3,A12	A31	2	
+F00070	function	add	Add	P3,A21	A31	2	
+F00071	function	add	Add	P3,M12	A31	2	
+F00072	function	add	Add	P3,M21	A31	2	
+F00073	function	add	Add	P3,A22	A31	2	
+F00074	function	add	Add	A22,P1	A22	2	
+F00075	function	add	Add	A22,P2	A22	2	
+F00076	function	add	Add	A22,A12	A22	2	
+F00077	function	add	Add	A22,A21	A22	2	
+F00078	function	add	Add	A22,M12	A22	2	
+F00079	function	add	Add	A22,M21	A22	2	
+F00080	function	add	Add	A22,P3	A31	2	
+F00081	function	add	Add	A22,A22	A22	2	
+F00082	function	add	Add	A22,A31	A31	2	
+F00083	function	add	Add	A22,M22	A31	2	
+F00084	function	add	Add	A22,M31	A31	2	
+F00085	function	add	Add	A31,P1	A31	2	
+F00086	function	add	Add	A31,P2	A31	2	
+F00087	function	add	Add	A31,A12	A31	2	
+F00088	function	add	Add	A31,A21	A31	2	
+F00089	function	add	Add	A31,M12	A31	2	
+F00090	function	add	Add	A31,M21	A31	2	
+F00091	function	add	Add	A31,A22	A31	2	
+F00092	function	add	Add	M22,P1	A31	2	
+F00093	function	add	Add	M22,P2	A31	2	
+F00094	function	add	Add	M22,A12	A31	2	
+F00095	function	add	Add	M22,A21	A31	2	
+F00096	function	add	Add	M22,M12	A31	2	
+F00097	function	add	Add	M22,M21	A31	2	
+F00098	function	add	Add	M22,A22	A31	2	
+F00099	function	add	Add	M31,P1	A31	2	
+F00100	function	add	Add	M31,P2	A31	2	
+F00101	function	add	Add	M31,A12	A31	2	
+F00102	function	add	Add	M31,A21	A31	2	
+F00103	function	add	Add	M31,M12	A31	2	
+F00104	function	add	Add	M31,M21	A31	2	
+F00105	function	add	Add	M31,A22	A31	2	
+F00106	function	sub	Sub	P1,P1	A12	2	
+F00107	function	sub	Sub	P1,P2	A21	2	
+F00108	function	sub	Sub	P1,A12	A12	2	
+F00109	function	sub	Sub	P1,A21	A21	2	
+F00110	function	sub	Sub	P1,M12	A21	2	
+F00111	function	sub	Sub	P1,M21	A21	2	
+F00112	function	sub	Sub	P1,P3	A31	2	
+F00113	function	sub	Sub	P1,A22	A22	2	
+F00114	function	sub	Sub	P1,A31	A31	2	
+F00115	function	sub	Sub	P1,M22	A31	2	
+F00116	function	sub	Sub	P1,M31	A31	2	
+F00117	function	sub	Sub	P2,P1	A21	2	
+F00118	function	sub	Sub	P2,P2	A22	2	
+F00119	function	sub	Sub	P2,A12	A21	2	
+F00120	function	sub	Sub	P2,A21	A22	2	
+F00121	function	sub	Sub	P2,M12	A22	2	
+F00122	function	sub	Sub	P2,M21	A22	2	
+F00123	function	sub	Sub	P2,P3	A31	2	
+F00124	function	sub	Sub	P2,A22	A22	2	
+F00125	function	sub	Sub	P2,A31	A31	2	
+F00126	function	sub	Sub	P2,M22	A31	2	
+F00127	function	sub	Sub	P2,M31	A31	2	
+F00128	function	sub	Sub	A12,P1	A12	2	
+F00129	function	sub	Sub	A12,P2	A21	2	
+F00130	function	sub	Sub	A12,A12	A12	2	
+F00131	function	sub	Sub	A12,A21	A21	2	
+F00132	function	sub	Sub	A12,M12	A21	2	
+F00133	function	sub	Sub	A12,M21	A21	2	
+F00134	function	sub	Sub	A12,P3	A31	2	
+F00135	function	sub	Sub	A12,A22	A22	2	
+F00136	function	sub	Sub	A12,A31	A31	2	
+F00137	function	sub	Sub	A12,M22	A31	2	
+F00138	function	sub	Sub	A12,M31	A31	2	
+F00139	function	sub	Sub	A21,P1	A21	2	
+F00140	function	sub	Sub	A21,P2	A22	2	
+F00141	function	sub	Sub	A21,A12	A21	2	
+F00142	function	sub	Sub	A21,A21	A22	2	
+F00143	function	sub	Sub	A21,M12	A22	2	
+F00144	function	sub	Sub	A21,M21	A22	2	
+F00145	function	sub	Sub	A21,P3	A31	2	
+F00146	function	sub	Sub	A21,A22	A22	2	
+F00147	function	sub	Sub	A21,A31	A31	2	
+F00148	function	sub	Sub	A21,M22	A31	2	
+F00149	function	sub	Sub	A21,M31	A31	2	
+F00150	function	sub	Sub	M12,P1	A21	2	
+F00151	function	sub	Sub	M12,P2	A22	2	
+F00152	function	sub	Sub	M12,A12	A21	2	
+F00153	function	sub	Sub	M12,A21	A22	2	
+F00154	function	sub	Sub	M12,M12	A22	2	
+F00155	function	sub	Sub	M12,M21	A22	2	
+F00156	function	sub	Sub	M12,P3	A31	2	
+F00157	function	sub	Sub	M12,A22	A22	2	
+F00158	function	sub	Sub	M12,A31	A31	2	
+F00159	function	sub	Sub	M12,M22	A31	2	
+F00160	function	sub	Sub	M12,M31	A31	2	
+F00161	function	sub	Sub	M21,P1	A21	2	
+F00162	function	sub	Sub	M21,P2	A22	2	
+F00163	function	sub	Sub	M21,A12	A21	2	
+F00164	function	sub	Sub	M21,A21	A22	2	
+F00165	function	sub	Sub	M21,M12	A22	2	
+F00166	function	sub	Sub	M21,M21	A22	2	
+F00167	function	sub	Sub	M21,P3	A31	2	
+F00168	function	sub	Sub	M21,A22	A22	2	
+F00169	function	sub	Sub	M21,A31	A31	2	
+F00170	function	sub	Sub	M21,M22	A31	2	
+F00171	function	sub	Sub	M21,M31	A31	2	
+F00172	function	sub	Sub	P3,P1	A31	2	
+F00173	function	sub	Sub	P3,P2	A31	2	
+F00174	function	sub	Sub	P3,A12	A31	2	
+F00175	function	sub	Sub	P3,A21	A31	2	
+F00176	function	sub	Sub	P3,M12	A31	2	
+F00177	function	sub	Sub	P3,M21	A31	2	
+F00178	function	sub	Sub	P3,A22	A31	2	
+F00179	function	sub	Sub	A22,P1	A22	2	
+F00180	function	sub	Sub	A22,P2	A22	2	
+F00181	function	sub	Sub	A22,A12	A22	2	
+F00182	function	sub	Sub	A22,A21	A22	2	
+F00183	function	sub	Sub	A22,M12	A22	2	
+F00184	function	sub	Sub	A22,M21	A22	2	
+F00185	function	sub	Sub	A22,P3	A31	2	
+F00186	function	sub	Sub	A22,A22	A22	2	
+F00187	function	sub	Sub	A22,A31	A31	2	
+F00188	function	sub	Sub	A22,M22	A31	2	
+F00189	function	sub	Sub	A22,M31	A31	2	
+F00190	function	sub	Sub	A31,P1	A31	2	
+F00191	function	sub	Sub	A31,P2	A31	2	
+F00192	function	sub	Sub	A31,A12	A31	2	
+F00193	function	sub	Sub	A31,A21	A31	2	
+F00194	function	sub	Sub	A31,M12	A31	2	
+F00195	function	sub	Sub	A31,M21	A31	2	
+F00196	function	sub	Sub	A31,A22	A31	2	
+F00197	function	sub	Sub	M22,P1	A31	2	
+F00198	function	sub	Sub	M22,P2	A31	2	
+F00199	function	sub	Sub	M22,A12	A31	2	
+F00200	function	sub	Sub	M22,A21	A31	2	
+F00201	function	sub	Sub	M22,M12	A31	2	
+F00202	function	sub	Sub	M22,M21	A31	2	
+F00203	function	sub	Sub	M22,A22	A31	2	
+F00204	function	sub	Sub	M31,P1	A31	2	
+F00205	function	sub	Sub	M31,P2	A31	2	
+F00206	function	sub	Sub	M31,A12	A31	2	
+F00207	function	sub	Sub	M31,A21	A31	2	
+F00208	function	sub	Sub	M31,M12	A31	2	
+F00209	function	sub	Sub	M31,M21	A31	2	
+F00210	function	sub	Sub	M31,A22	A31	2	
+F00211	function	mul	Mul	P1,P1	M12	2	
+F00212	function	mul	Mul	P1,P2	M21	2	
+F00213	function	mul	Mul	P1,A12	M21	2	
+F00214	function	mul	Mul	P1,A21	M21	2	
+F00215	function	mul	Mul	P1,M12	M12	2	
+F00216	function	mul	Mul	P1,M21	M21	2	
+F00217	function	mul	Mul	P1,P3	M31	2	
+F00218	function	mul	Mul	P1,A22	M31	2	
+F00219	function	mul	Mul	P1,A31	M31	2	
+F00220	function	mul	Mul	P1,M22	M22	2	
+F00221	function	mul	Mul	P1,M31	M31	2	
+F00222	function	mul	Mul	P2,P1	M21	2	
+F00223	function	mul	Mul	P2,P2	M22	2	
+F00224	function	mul	Mul	P2,A12	M22	2	
+F00225	function	mul	Mul	P2,A21	M22	2	
+F00226	function	mul	Mul	P2,M12	M21	2	
+F00227	function	mul	Mul	P2,M21	M22	2	
+F00228	function	mul	Mul	P2,P3	M31	2	
+F00229	function	mul	Mul	P2,A22	M31	2	
+F00230	function	mul	Mul	P2,A31	M31	2	
+F00231	function	mul	Mul	P2,M22	M22	2	
+F00232	function	mul	Mul	P2,M31	M31	2	
+F00233	function	mul	Mul	A12,P1	M21	2	
+F00234	function	mul	Mul	A12,P2	M22	2	
+F00235	function	mul	Mul	A12,A12	M22	2	
+F00236	function	mul	Mul	A12,A21	M22	2	
+F00237	function	mul	Mul	A12,M12	M21	2	
+F00238	function	mul	Mul	A12,M21	M22	2	
+F00239	function	mul	Mul	A12,P3	M31	2	
+F00240	function	mul	Mul	A12,A22	M31	2	
+F00241	function	mul	Mul	A12,A31	M31	2	
+F00242	function	mul	Mul	A12,M22	M22	2	
+F00243	function	mul	Mul	A12,M31	M31	2	
+F00244	function	mul	Mul	A21,P1	M21	2	
+F00245	function	mul	Mul	A21,P2	M22	2	
+F00246	function	mul	Mul	A21,A12	M22	2	
+F00247	function	mul	Mul	A21,A21	M22	2	
+F00248	function	mul	Mul	A21,M12	M21	2	
+F00249	function	mul	Mul	A21,M21	M22	2	
+F00250	function	mul	Mul	A21,P3	M31	2	
+F00251	function	mul	Mul	A21,A22	M31	2	
+F00252	function	mul	Mul	A21,A31	M31	2	
+F00253	function	mul	Mul	A21,M22	M22	2	
+F00254	function	mul	Mul	A21,M31	M31	2	
+F00255	function	mul	Mul	M12,P1	M12	2	
+F00256	function	mul	Mul	M12,P2	M21	2	
+F00257	function	mul	Mul	M12,A12	M21	2	
+F00258	function	mul	Mul	M12,A21	M21	2	
+F00259	function	mul	Mul	M12,M12	M12	2	
+F00260	function	mul	Mul	M12,M21	M21	2	
+F00261	function	mul	Mul	M12,P3	M31	2	
+F00262	function	mul	Mul	M12,A22	M31	2	
+F00263	function	mul	Mul	M12,A31	M31	2	
+F00264	function	mul	Mul	M12,M22	M22	2	
+F00265	function	mul	Mul	M12,M31	M31	2	
+F00266	function	mul	Mul	M21,P1	M21	2	
+F00267	function	mul	Mul	M21,P2	M22	2	
+F00268	function	mul	Mul	M21,A12	M22	2	
+F00269	function	mul	Mul	M21,A21	M22	2	
+F00270	function	mul	Mul	M21,M12	M21	2	
+F00271	function	mul	Mul	M21,M21	M22	2	
+F00272	function	mul	Mul	M21,P3	M31	2	
+F00273	function	mul	Mul	M21,A22	M31	2	
+F00274	function	mul	Mul	M21,A31	M31	2	
+F00275	function	mul	Mul	M21,M22	M22	2	
+F00276	function	mul	Mul	M21,M31	M31	2	
+F00277	function	mul	Mul	P3,P1	M31	2	
+F00278	function	mul	Mul	P3,P2	M31	2	
+F00279	function	mul	Mul	P3,A12	M31	2	
+F00280	function	mul	Mul	P3,A21	M31	2	
+F00281	function	mul	Mul	P3,M12	M31	2	
+F00282	function	mul	Mul	P3,M21	M31	2	
+F00283	function	mul	Mul	P3,M22	M31	2	
+F00284	function	mul	Mul	A22,P1	M31	2	
+F00285	function	mul	Mul	A22,P2	M31	2	
+F00286	function	mul	Mul	A22,A12	M31	2	
+F00287	function	mul	Mul	A22,A21	M31	2	
+F00288	function	mul	Mul	A22,M12	M31	2	
+F00289	function	mul	Mul	A22,M21	M31	2	
+F00290	function	mul	Mul	A22,M22	M31	2	
+F00291	function	mul	Mul	A31,P1	M31	2	
+F00292	function	mul	Mul	A31,P2	M31	2	
+F00293	function	mul	Mul	A31,A12	M31	2	
+F00294	function	mul	Mul	A31,A21	M31	2	
+F00295	function	mul	Mul	A31,M12	M31	2	
+F00296	function	mul	Mul	A31,M21	M31	2	
+F00297	function	mul	Mul	A31,M22	M31	2	
+F00298	function	mul	Mul	M22,P1	M22	2	
+F00299	function	mul	Mul	M22,P2	M22	2	
+F00300	function	mul	Mul	M22,A12	M22	2	
+F00301	function	mul	Mul	M22,A21	M22	2	
+F00302	function	mul	Mul	M22,M12	M22	2	
+F00303	function	mul	Mul	M22,M21	M22	2	
+F00304	function	mul	Mul	M22,P3	M31	2	
+F00305	function	mul	Mul	M22,A22	M31	2	
+F00306	function	mul	Mul	M22,A31	M31	2	
+F00307	function	mul	Mul	M22,M22	M22	2	
+F00308	function	mul	Mul	M22,M31	M31	2	
+F00309	function	mul	Mul	M31,P1	M31	2	
+F00310	function	mul	Mul	M31,P2	M31	2	
+F00311	function	mul	Mul	M31,A12	M31	2	
+F00312	function	mul	Mul	M31,A21	M31	2	
+F00313	function	mul	Mul	M31,M12	M31	2	
+F00314	function	mul	Mul	M31,M21	M31	2	
+F00315	function	mul	Mul	M31,M22	M31	2	
+F00316	function	pdiv	ProtectedDiv	P1,P1	M12	2	
+F00317	function	pdiv	ProtectedDiv	P1,P2	M21	2	
+F00318	function	pdiv	ProtectedDiv	P1,A12	M21	2	
+F00319	function	pdiv	ProtectedDiv	P1,A21	M21	2	
+F00320	function	pdiv	ProtectedDiv	P1,M12	M12	2	
+F00321	function	pdiv	ProtectedDiv	P1,M21	M21	2	
+F00322	function	pdiv	ProtectedDiv	P1,P3	M31	2	
+F00323	function	pdiv	ProtectedDiv	P1,A22	M31	2	
+F00324	function	pdiv	ProtectedDiv	P1,A31	M31	2	
+F00325	function	pdiv	ProtectedDiv	P1,M22	M22	2	
+F00326	function	pdiv	ProtectedDiv	P1,M31	M31	2	
+F00327	function	pdiv	ProtectedDiv	P2,P1	M21	2	
+F00328	function	pdiv	ProtectedDiv	P2,P2	M22	2	
+F00329	function	pdiv	ProtectedDiv	P2,A12	M22	2	
+F00330	function	pdiv	ProtectedDiv	P2,A21	M22	2	
+F00331	function	pdiv	ProtectedDiv	P2,M12	M21	2	
+F00332	function	pdiv	ProtectedDiv	P2,M21	M22	2	
+F00333	function	pdiv	ProtectedDiv	P2,P3	M31	2	
+F00334	function	pdiv	ProtectedDiv	P2,A22	M31	2	
+F00335	function	pdiv	ProtectedDiv	P2,A31	M31	2	
+F00336	function	pdiv	ProtectedDiv	P2,M22	M22	2	
+F00337	function	pdiv	ProtectedDiv	P2,M31	M31	2	
+F00338	function	pdiv	ProtectedDiv	A12,P1	M21	2	
+F00339	function	pdiv	ProtectedDiv	A12,P2	M22	2	
+F00340	function	pdiv	ProtectedDiv	A12,A12	M22	2	
+F00341	function	pdiv	ProtectedDiv	A12,A21	M22	2	
+F00342	function	pdiv	ProtectedDiv	A12,M12	M21	2	
+F00343	function	pdiv	ProtectedDiv	A12,M21	M22	2	
+F00344	function	pdiv	ProtectedDiv	A12,P3	M31	2	
+F00345	function	pdiv	ProtectedDiv	A12,A22	M31	2	
+F00346	function	pdiv	ProtectedDiv	A12,A31	M31	2	
+F00347	function	pdiv	ProtectedDiv	A12,M22	M22	2	
+F00348	function	pdiv	ProtectedDiv	A12,M31	M31	2	
+F00349	function	pdiv	ProtectedDiv	A21,P1	M21	2	
+F00350	function	pdiv	ProtectedDiv	A21,P2	M22	2	
+F00351	function	pdiv	ProtectedDiv	A21,A12	M22	2	
+F00352	function	pdiv	ProtectedDiv	A21,A21	M22	2	
+F00353	function	pdiv	ProtectedDiv	A21,M12	M21	2	
+F00354	function	pdiv	ProtectedDiv	A21,M21	M22	2	
+F00355	function	pdiv	ProtectedDiv	A21,P3	M31	2	
+F00356	function	pdiv	ProtectedDiv	A21,A22	M31	2	
+F00357	function	pdiv	ProtectedDiv	A21,A31	M31	2	
+F00358	function	pdiv	ProtectedDiv	A21,M22	M22	2	
+F00359	function	pdiv	ProtectedDiv	A21,M31	M31	2	
+F00360	function	pdiv	ProtectedDiv	M12,P1	M12	2	
+F00361	function	pdiv	ProtectedDiv	M12,P2	M21	2	
+F00362	function	pdiv	ProtectedDiv	M12,A12	M21	2	
+F00363	function	pdiv	ProtectedDiv	M12,A21	M21	2	
+F00364	function	pdiv	ProtectedDiv	M12,M12	M12	2	
+F00365	function	pdiv	ProtectedDiv	M12,M21	M21	2	
+F00366	function	pdiv	ProtectedDiv	M12,P3	M31	2	
+F00367	function	pdiv	ProtectedDiv	M12,A22	M31	2	
+F00368	function	pdiv	ProtectedDiv	M12,A31	M31	2	
+F00369	function	pdiv	ProtectedDiv	M12,M22	M22	2	
+F00370	function	pdiv	ProtectedDiv	M12,M31	M31	2	
+F00371	function	pdiv	ProtectedDiv	M21,P1	M21	2	
+F00372	function	pdiv	ProtectedDiv	M21,P2	M22	2	
+F00373	function	pdiv	ProtectedDiv	M21,A12	M22	2	
+F00374	function	pdiv	ProtectedDiv	M21,A21	M22	2	
+F00375	function	pdiv	ProtectedDiv	M21,M12	M21	2	
+F00376	function	pdiv	ProtectedDiv	M21,M21	M22	2	
+F00377	function	pdiv	ProtectedDiv	M21,P3	M31	2	
+F00378	function	pdiv	ProtectedDiv	M21,A22	M31	2	
+F00379	function	pdiv	ProtectedDiv	M21,A31	M31	2	
+F00380	function	pdiv	ProtectedDiv	M21,M22	M22	2	
+F00381	function	pdiv	ProtectedDiv	M21,M31	M31	2	
+F00382	function	pdiv	ProtectedDiv	P3,P1	M31	2	
+F00383	function	pdiv	ProtectedDiv	P3,P2	M31	2	
+F00384	function	pdiv	ProtectedDiv	P3,A12	M31	2	
+F00385	function	pdiv	ProtectedDiv	P3,A21	M31	2	
+F00386	function	pdiv	ProtectedDiv	P3,M12	M31	2	
+F00387	function	pdiv	ProtectedDiv	P3,M21	M31	2	
+F00388	function	pdiv	ProtectedDiv	P3,M22	M31	2	
+F00389	function	pdiv	ProtectedDiv	A22,P1	M31	2	
+F00390	function	pdiv	ProtectedDiv	A22,P2	M31	2	
+F00391	function	pdiv	ProtectedDiv	A22,A12	M31	2	
+F00392	function	pdiv	ProtectedDiv	A22,A21	M31	2	
+F00393	function	pdiv	ProtectedDiv	A22,M12	M31	2	
+F00394	function	pdiv	ProtectedDiv	A22,M21	M31	2	
+F00395	function	pdiv	ProtectedDiv	A22,M22	M31	2	
+F00396	function	pdiv	ProtectedDiv	A31,P1	M31	2	
+F00397	function	pdiv	ProtectedDiv	A31,P2	M31	2	
+F00398	function	pdiv	ProtectedDiv	A31,A12	M31	2	
+F00399	function	pdiv	ProtectedDiv	A31,A21	M31	2	
+F00400	function	pdiv	ProtectedDiv	A31,M12	M31	2	
+F00401	function	pdiv	ProtectedDiv	A31,M21	M31	2	
+F00402	function	pdiv	ProtectedDiv	A31,M22	M31	2	
+F00403	function	pdiv	ProtectedDiv	M22,P1	M22	2	
+F00404	function	pdiv	ProtectedDiv	M22,P2	M22	2	
+F00405	function	pdiv	ProtectedDiv	M22,A12	M22	2	
+F00406	function	pdiv	ProtectedDiv	M22,A21	M22	2	
+F00407	function	pdiv	ProtectedDiv	M22,M12	M22	2	
+F00408	function	pdiv	ProtectedDiv	M22,M21	M22	2	
+F00409	function	pdiv	ProtectedDiv	M22,P3	M31	2	
+F00410	function	pdiv	ProtectedDiv	M22,A22	M31	2	
+F00411	function	pdiv	ProtectedDiv	M22,A31	M31	2	
+F00412	function	pdiv	ProtectedDiv	M22,M22	M22	2	
+F00413	function	pdiv	ProtectedDiv	M22,M31	M31	2	
+F00414	function	pdiv	ProtectedDiv	M31,P1	M31	2	
+F00415	function	pdiv	ProtectedDiv	M31,P2	M31	2	
+F00416	function	pdiv	ProtectedDiv	M31,A12	M31	2	
+F00417	function	pdiv	ProtectedDiv	M31,A21	M31	2	
+F00418	function	pdiv	ProtectedDiv	M31,M12	M31	2	
+F00419	function	pdiv	ProtectedDiv	M31,M21	M31	2	
+F00420	function	pdiv	ProtectedDiv	M31,M22	M31	2	
+F00421	function	sin	Sin	P1	P1	1	
+F00422	function	sin	Sin	P2	P2	1	
+F00423	function	sin	Sin	A12	P2	1	
+F00424	function	sin	Sin	A21	P2	1	
+F00425	function	sin	Sin	M12	P2	1	
+F00426	function	sin	Sin	M21	P2	1	
+F00427	function	sin	Sin	P3	P3	1	
+F00428	function	sin	Sin	A22	P3	1	
+F00429	function	sin	Sin	A31	P3	1	
+F00430	function	sin	Sin	M22	P3	1	
+F00431	function	sin	Sin	M31	P3	1	
+F00432	function	cos	Cos	P1	P1	1	
+F00433	function	cos	Cos	P2	P2	1	
+F00434	function	cos	Cos	A12	P2	1	
+F00435	function	cos	Cos	A21	P2	1	
+F00436	function	cos	Cos	M12	P2	1	
+F00437	function	cos	Cos	M21	P2	1	
+F00438	function	cos	Cos	P3	P3	1	
+F00439	function	cos	Cos	A22	P3	1	
+F00440	function	cos	Cos	A31	P3	1	
+F00441	function	cos	Cos	M22	P3	1	
+F00442	function	cos	Cos	M31	P3	1	
+F00443	function	tanh	Tanh	P1	P1	1	
+F00444	function	tanh	Tanh	P2	P2	1	
+F00445	function	tanh	Tanh	A12	P2	1	
+F00446	function	tanh	Tanh	A21	P2	1	
+F00447	function	tanh	Tanh	M12	P2	1	
+F00448	function	tanh	Tanh	M21	P2	1	
+F00449	function	tanh	Tanh	P3	P3	1	
+F00450	function	tanh	Tanh	A22	P3	1	
+F00451	function	tanh	Tanh	A31	P3	1	
+F00452	function	tanh	Tanh	M22	P3	1	
+F00453	function	tanh	Tanh	M31	P3	1	
+F00454	function	psqrt	ProtectedSqrt	P1	P1	1	
+F00455	function	psqrt	ProtectedSqrt	P2	P2	1	
+F00456	function	psqrt	ProtectedSqrt	A12	P2	1	
+F00457	function	psqrt	ProtectedSqrt	A21	P2	1	
+F00458	function	psqrt	ProtectedSqrt	M12	P2	1	
+F00459	function	psqrt	ProtectedSqrt	M21	P2	1	
+F00460	function	psqrt	ProtectedSqrt	P3	P3	1	
+F00461	function	psqrt	ProtectedSqrt	A22	P3	1	
+F00462	function	psqrt	ProtectedSqrt	A31	P3	1	
+F00463	function	psqrt	ProtectedSqrt	M22	P3	1	
+F00464	function	psqrt	ProtectedSqrt	M31	P3	1	
+F00465	function	plog	ProtectedLog	P1	P1	1	
+F00466	function	plog	ProtectedLog	P2	P2	1	
+F00467	function	plog	ProtectedLog	A12	P2	1	
+F00468	function	plog	ProtectedLog	A21	P2	1	
+F00469	function	plog	ProtectedLog	M12	P2	1	
+F00470	function	plog	ProtectedLog	M21	P2	1	
+F00471	function	plog	ProtectedLog	P3	P3	1	
+F00472	function	plog	ProtectedLog	A22	P3	1	
+F00473	function	plog	ProtectedLog	A31	P3	1	
+F00474	function	plog	ProtectedLog	M22	P3	1	
+F00475	function	plog	ProtectedLog	M31	P3	1	
+F00476	function	pexp	ProtectedExp	P1	P1	1	
+F00477	function	pexp	ProtectedExp	P2	P2	1	
+F00478	function	pexp	ProtectedExp	A12	P2	1	
+F00479	function	pexp	ProtectedExp	A21	P2	1	
+F00480	function	pexp	ProtectedExp	M12	P2	1	
+F00481	function	pexp	ProtectedExp	M21	P2	1	
+F00482	function	pexp	ProtectedExp	P3	P3	1	
+F00483	function	pexp	ProtectedExp	A22	P3	1	
+F00484	function	pexp	ProtectedExp	A31	P3	1	
+F00485	function	pexp	ProtectedExp	M22	P3	1	
+F00486	function	pexp	ProtectedExp	M31	P3	1	
+F00487	function	neg	Neg	P1	P1	1	
+F00488	function	neg	Neg	P2	P2	1	
+F00489	function	neg	Neg	A12	P2	1	
+F00490	function	neg	Neg	A21	P2	1	
+F00491	function	neg	Neg	M12	P2	1	
+F00492	function	neg	Neg	M21	P2	1	
+F00493	function	neg	Neg	P3	P3	1	
+F00494	function	neg	Neg	A22	P3	1	
+F00495	function	neg	Neg	A31	P3	1	
+F00496	function	neg	Neg	M22	P3	1	
+F00497	function	neg	Neg	M31	P3	1	
+F00498	function	abs	Abs	P1	P1	1	
+F00499	function	abs	Abs	P2	P2	1	
+F00500	function	abs	Abs	A12	P2	1	
+F00501	function	abs	Abs	A21	P2	1	
+F00502	function	abs	Abs	M12	P2	1	
+F00503	function	abs	Abs	M21	P2	1	
+F00504	function	abs	Abs	P3	P3	1	
+F00505	function	abs	Abs	A22	P3	1	
+F00506	function	abs	Abs	A31	P3	1	
+F00507	function	abs	Abs	M22	P3	1	
+F00508	function	abs	Abs	M31	P3	1	
+F00509	function	pow2	Pow2	P1	P1	1	
+F00510	function	pow2	Pow2	P2	P2	1	
+F00511	function	pow2	Pow2	A12	P2	1	
+F00512	function	pow2	Pow2	A21	P2	1	
+F00513	function	pow2	Pow2	M12	P2	1	
+F00514	function	pow2	Pow2	M21	P2	1	
+F00515	function	pow2	Pow2	P3	P3	1	
+F00516	function	pow2	Pow2	A22	P3	1	
+F00517	function	pow2	Pow2	A31	P3	1	
+F00518	function	pow2	Pow2	M22	P3	1	
+F00519	function	pow2	Pow2	M31	P3	1	
+F00520	function	pow3	Pow3	P1	P1	1	
+F00521	function	pow3	Pow3	P2	P2	1	
+F00522	function	pow3	Pow3	A12	P2	1	
+F00523	function	pow3	Pow3	A21	P2	1	
+F00524	function	pow3	Pow3	M12	P2	1	
+F00525	function	pow3	Pow3	M21	P2	1	
+F00526	function	pow3	Pow3	P3	P3	1	
+F00527	function	pow3	Pow3	A22	P3	1	
+F00528	function	pow3	Pow3	A31	P3	1	
+F00529	function	pow3	Pow3	M22	P3	1	
+F00530	function	pow3	Pow3	M31	P3	1	
+F00531	function	pinv	ProtectedInv	P1	P1	1	
+F00532	function	pinv	ProtectedInv	P2	P2	1	
+F00533	function	pinv	ProtectedInv	A12	P2	1	
+F00534	function	pinv	ProtectedInv	A21	P2	1	
+F00535	function	pinv	ProtectedInv	M12	P2	1	
+F00536	function	pinv	ProtectedInv	M21	P2	1	
+F00537	function	pinv	ProtectedInv	P3	P3	1	
+F00538	function	pinv	ProtectedInv	A22	P3	1	
+F00539	function	pinv	ProtectedInv	A31	P3	1	
+F00540	function	pinv	ProtectedInv	M22	P3	1	
+F00541	function	pinv	ProtectedInv	M31	P3	1	
+F00542	function	tan	Tan	P1	P1	1	
+F00543	function	tan	Tan	P2	P2	1	
+F00544	function	tan	Tan	A12	P2	1	
+F00545	function	tan	Tan	A21	P2	1	
+F00546	function	tan	Tan	M12	P2	1	
+F00547	function	tan	Tan	M21	P2	1	
+F00548	function	tan	Tan	P3	P3	1	
+F00549	function	tan	Tan	A22	P3	1	
+F00550	function	tan	Tan	A31	P3	1	
+F00551	function	tan	Tan	M22	P3	1	
+F00552	function	tan	Tan	M31	P3	1	
+F00553	function	pasin	ProtectedAsin	P1	P1	1	
+F00554	function	pasin	ProtectedAsin	P2	P2	1	
+F00555	function	pasin	ProtectedAsin	A12	P2	1	
+F00556	function	pasin	ProtectedAsin	A21	P2	1	
+F00557	function	pasin	ProtectedAsin	M12	P2	1	
+F00558	function	pasin	ProtectedAsin	M21	P2	1	
+F00559	function	pasin	ProtectedAsin	P3	P3	1	
+F00560	function	pasin	ProtectedAsin	A22	P3	1	
+F00561	function	pasin	ProtectedAsin	A31	P3	1	
+F00562	function	pasin	ProtectedAsin	M22	P3	1	
+F00563	function	pasin	ProtectedAsin	M31	P3	1	
+F00564	function	pacos	ProtectedAcos	P1	P1	1	
+F00565	function	pacos	ProtectedAcos	P2	P2	1	
+F00566	function	pacos	ProtectedAcos	A12	P2	1	
+F00567	function	pacos	ProtectedAcos	A21	P2	1	
+F00568	function	pacos	ProtectedAcos	M12	P2	1	
+F00569	function	pacos	ProtectedAcos	M21	P2	1	
+F00570	function	pacos	ProtectedAcos	P3	P3	1	
+F00571	function	pacos	ProtectedAcos	A22	P3	1	
+F00572	function	pacos	ProtectedAcos	A31	P3	1	
+F00573	function	pacos	ProtectedAcos	M22	P3	1	
+F00574	function	pacos	ProtectedAcos	M31	P3	1	
+F00575	root	add	Add	P1,P1	ROOT	2	twin of the function row, output ROOT
+F00576	root	add	Add	P1,P2	ROOT	2	twin of the function row, output ROOT
+F00577	root	add	Add	P1,A12	ROOT	2	twin of the function row, output ROOT
+F00578	root	add	Add	P1,A21	ROOT	2	twin of the function row, output ROOT
+F00579	root	add	Add	P1,M12	ROOT	2	twin of the function row, output ROOT
+F00580	root	add	Add	P1,M21	ROOT	2	twin of the function row, output ROOT
+F00581	root	add	Add	P1,P3	ROOT	2	twin of the function row, output ROOT
+F00582	root	add	Add	P1,A22	ROOT	2	twin of the function row, output ROOT
+F00583	root	add	Add	P1,A31	ROOT	2	twin of the function row, output ROOT
+F00584	root	add	Add	P1,M22	ROOT	2	twin of the function row, output ROOT
+F00585	root	add	Add	P1,M31	ROOT	2	twin of the function row, output ROOT
+F00586	root	add	Add	P2,P1	ROOT	2	twin of the function row, output ROOT
+F00587	root	add	Add	P2,P2	ROOT	2	twin of the function row, output ROOT
+F00588	root	add	Add	P2,A12	ROOT	2	twin of the function row, output ROOT
+F00589	root	add	Add	P2,A21	ROOT	2	twin of the function row, output ROOT
+F00590	root	add	Add	P2,M12	ROOT	2	twin of the function row, output ROOT
+F00591	root	add	Add	P2,M21	ROOT	2	twin of the function row, output ROOT
+F00592	root	add	Add	P2,P3	ROOT	2	twin of the function row, output ROOT
+F00593	root	add	Add	P2,A22	ROOT	2	twin of the function row, output ROOT
+F00594	root	add	Add	P2,A31	ROOT	2	twin of the function row, output ROOT
+F00595	root	add	Add	P2,M22	ROOT	2	twin of the function row, output ROOT
+F00596	root	add	Add	P2,M31	ROOT	2	twin of the function row, output ROOT
+F00597	root	add	Add	A12,P1	ROOT	2	twin of the function row, output ROOT
+F00598	root	add	Add	A12,P2	ROOT	2	twin of the function row, output ROOT
+F00599	root	add	Add	A12,A12	ROOT	2	twin of the function row, output ROOT
+F00600	root	add	Add	A12,A21	ROOT	2	twin of the function row, output ROOT
+F00601	root	add	Add	A12,M12	ROOT	2	twin of the function row, output ROOT
+F00602	root	add	Add	A12,M21	ROOT	2	twin of the function row, output ROOT
+F00603	root	add	Add	A12,P3	ROOT	2	twin of the function row, output ROOT
+F00604	root	add	Add	A12,A22	ROOT	2	twin of the function row, output ROOT
+F00605	root	add	Add	A12,A31	ROOT	2	twin of the function row, output ROOT
+F00606	root	add	Add	A12,M22	ROOT	2	twin of the function row, output ROOT
+F00607	root	add	Add	A12,M31	ROOT	2	twin of the function row, output ROOT
+F00608	root	add	Add	A21,P1	ROOT	2	twin of the function row, output ROOT
+F00609	root	add	Add	A21,P2	ROOT	2	twin of the function row, output ROOT
+F00610	root	add	Add	A21,A12	ROOT	2	twin of the function row, output ROOT
+F00611	root	add	Add	A21,A21	ROOT	2	twin of the function row, output ROOT
+F00612	root	add	Add	A21,M12	ROOT	2	twin of the function row, output ROOT
+F00613	root	add	Add	A21,M21	ROOT	2	twin of the function row, output ROOT
+F00614	root	add	Add	A21,P3	ROOT	2	twin of the function row, output ROOT
+F00615	root	add	Add	A21,A22	ROOT	2	twin of the function row, output ROOT
+F00616	root	add	Add	A21,A31	ROOT	2	twin of the function row, output ROOT
+F00617	root	add	Add	A21,M22	ROOT	2	twin of the function row, output ROOT
+F00618	root	add	Add	A21,M31	ROOT	2	twin of the function row, output ROOT
+F00619	root	add	Add	M12,P1	ROOT	2	twin of the function row, output ROOT
+F00620	root	add	Add	M12,P2	ROOT	2	twin of the function row, output ROOT
+F00621	root	add	Add	M12,A12	ROOT	2	twin of the function row, output ROOT
+F00622	root	add	Add	M12,A21	ROOT	2	twin of the function row, output ROOT
+F00623	root	add	Add	M12,M12	ROOT	2	twin of the function row, output ROOT
+F00624	root	add	Add	M12,M21	ROOT	2	twin of the function row, output ROOT
+F00625	root	add	Add	M12,P3	ROOT	2	twin of the function row, output ROOT
+F00626	root	add	Add	M12,A22	ROOT	2	twin of the function row, output ROOT
+F00627	root	add	Add	M12,A31	ROOT	2	twin of the function row, output ROOT
+F00628	root	add	Add	M12,M22	ROOT	2	twin of the function row, output ROOT
+F00629	root	add	Add	M12,M31	ROOT	2	twin of the function row, output ROOT
+F00630	root	add	Add	M21,P1	ROOT	2	twin of the function row, output ROOT
+F00631	root	add	Add	M21,P2	ROOT	2	twin of the function row, output ROOT
+F00632	root	add	Add	M21,A12	ROOT	2	twin of the function row, output ROOT
+F00633	root	add	Add	M21,A21	ROOT	2	twin of the function row, output ROOT
+F00634	root	add	Add	M21,M12	ROOT	2	twin of the function row, output ROOT
+F00635	root	add	Add	M21,M21	ROOT	2	twin of the function row, output ROOT
+F00636	root	add	Add	M21,P3	ROOT	2	twin of the function row, output ROOT
+F00637	root	add	Add	M21,A22	ROOT	2	twin of the function row, output ROOT
+F00638	root	add	Add	M21,A31	ROOT	2	twin of the function row, output ROOT
+F00639	root	add	Add	M21,M22	ROOT	2	twin of the function row, output ROOT
+F00640	root	add	Add	M21,M31	ROOT	2	twin of the function row, output ROOT
+F00641	root	add	Add	P3,P1	ROOT	2	twin of the function row, output ROOT
+F00642	root	add	Add	P3,P2	ROOT	2	twin of the function row, output ROOT
+F00643	root	add	Add	P3,A12	ROOT	2	twin of the function row, output ROOT
+F00644	root	add	Add	P3,A21	ROOT	2	twin of the function row, output ROOT
+F00645	root	add	Add	P3,M12	ROOT	2	twin of the function row, output ROOT
+F00646	root	add	Add	P3,M21	ROOT	2	twin of the function row, output ROOT
+F00647	root	add	Add	P3,A22	ROOT	2	twin of the function row, output ROOT
+F00648	root	add	Add	A22,P1	ROOT	2	twin of the function row, output ROOT
+F00649	root	add	Add	A22,P2	ROOT	2	twin of the function row, output ROOT
+F00650	root	add	Add	A22,A12	ROOT	2	twin of the function row, output ROOT
+F00651	root	add	Add	A22,A21	ROOT	2	twin of the function row, output ROOT
+F00652	root	add	Add	A22,M12	ROOT	2	twin of the function row, output ROOT
+F00653	root	add	Add	A22,M21	ROOT	2	twin of the function row, output ROOT
+F00654	root	add	Add	A22,P3	ROOT	2	twin of the function row, output ROOT
+F00655	root	add	Add	A22,A22	ROOT	2	twin of the function row, output ROOT
+F00656	root	add	Add	A22,A31	ROOT	2	twin of the function row, output ROOT
+F00657	root	add	Add	A22,M22	ROOT	2	twin of the function row, output ROOT
+F00658	root	add	Add	A22,M31	ROOT	2	twin of the function row, output ROOT
+F00659	root	add	Add	A31,P1	ROOT	2	twin of the function row, output ROOT
+F00660	root	add	Add	A31,P2	ROOT	2	twin of the function row, output ROOT
+F00661	root	add	Add	A31,A12	ROOT	2	twin of the function row, output ROOT
+F00662	root	add	Add	A31,A21	ROOT	2	twin of the function row, output ROOT
+F00663	root	add	Add	A31,M12	ROOT	2	twin of the function row, output ROOT
+F00664	root	add	Add	A31,M21	ROOT	2	twin of the function row, output ROOT
+F00665	root	add	Add	A31,A22	ROOT	2	twin of the function row, output ROOT
+F00666	root	add	Add	M22,P1	ROOT	2	twin of the function row, output ROOT
+F00667	root	add	Add	M22,P2	ROOT	2	twin of the function row, output ROOT
+F00668	root	add	Add	M22,A12	ROOT	2	twin of the function row, output ROOT
+F00669	root	add	Add	M22,A21	ROOT	2	twin of the function row, output ROOT
+F00670	root	add	Add	M22,M12	ROOT	2	twin of the function row, output ROOT
+F00671	root	add	Add	M22,M21	ROOT	2	twin of the function row, output ROOT
+F00672	root	add	Add	M22,A22	ROOT	2	twin of the function row, output ROOT
+F00673	root	add	Add	M31,P1	ROOT	2	twin of the function row, output ROOT
+F00674	root	add	Add	M31,P2	ROOT	2	twin of the function row, output ROOT
+F00675	root	add	Add	M31,A12	ROOT	2	twin of the function row, output ROOT
+F00676	root	add	Add	M31,A21	ROOT	2	twin of the function row, output ROOT
+F00677	root	add	Add	M31,M12	ROOT	2	twin of the function row, output ROOT
+F00678	root	add	Add	M31,M21	ROOT	2	twin of the function row, output ROOT
+F00679	root	add	Add	M31,A22	ROOT	2	twin of the function row, output ROOT
+F00680	root	sub	Sub	P1,P1	ROOT	2	twin of the function row, output ROOT
+F00681	root	sub	Sub	P1,P2	ROOT	2	twin of the function row, output ROOT
+F00682	root	sub	Sub	P1,A12	ROOT	2	twin of the function row, output ROOT
+F00683	root	sub	Sub	P1,A21	ROOT	2	twin of the function row, output ROOT
+F00684	root	sub	Sub	P1,M12	ROOT	2	twin of the function row, output ROOT
+F00685	root	sub	Sub	P1,M21	ROOT	2	twin of the function row, output ROOT
+F00686	root	sub	Sub	P1,P3	ROOT	2	twin of the function row, output ROOT
+F00687	root	sub	Sub	P1,A22	ROOT	2	twin of the function row, output ROOT
+F00688	root	sub	Sub	P1,A31	ROOT	2	twin of the function row, output ROOT
+F00689	root	sub	Sub	P1,M22	ROOT	2	twin of the function row, output ROOT
+F00690	root	sub	Sub	P1,M31	ROOT	2	twin of the function row, output ROOT
+F00691	root	sub	Sub	P2,P1	ROOT	2	twin of the function row, output ROOT
+F00692	root	sub	Sub	P2,P2	ROOT	2	twin of the function row, output ROOT
+F00693	root	sub	Sub	P2,A12	ROOT	2	twin of the function row, output ROOT
+F00694	root	sub	Sub	P2,A21	ROOT	2	twin of the function row, output ROOT
+F00695	root	sub	Sub	P2,M12	ROOT	2	twin of the function row, output ROOT
+F00696	root	sub	Sub	P2,M21	ROOT	2	twin of the function row, output ROOT
+F00697	root	sub	Sub	P2,P3	ROOT	2	twin of the function row, output ROOT
+F00698	root	sub	Sub	P2,A22	ROOT	2	twin of the function row, output ROOT
+F00699	root	sub	Sub	P2,A31	ROOT	2	twin of the function row, output ROOT
+F00700	root	sub	Sub	P2,M22	ROOT	2	twin of the function row, output ROOT
+F00701	root	sub	Sub	P2,M31	ROOT	2	twin of the function row, output ROOT
+F00702	root	sub	Sub	A12,P1	ROOT	2	twin of the function row, output ROOT
+F00703	root	sub	Sub	A12,P2	ROOT	2	twin of the function row, output ROOT
+F00704	root	sub	Sub	A12,A12	ROOT	2	twin of the function row, output ROOT
+F00705	root	sub	Sub	A12,A21	ROOT	2	twin of the function row, output ROOT
+F00706	root	sub	Sub	A12,M12	ROOT	2	twin of the function row, output ROOT
+F00707	root	sub	Sub	A12,M21	ROOT	2	twin of the function row, output ROOT
+F00708	root	sub	Sub	A12,P3	ROOT	2	twin of the function row, output ROOT
+F00709	root	sub	Sub	A12,A22	ROOT	2	twin of the function row, output ROOT
+F00710	root	sub	Sub	A12,A31	ROOT	2	twin of the function row, output ROOT
+F00711	root	sub	Sub	A12,M22	ROOT	2	twin of the function row, output ROOT
+F00712	root	sub	Sub	A12,M31	ROOT	2	twin of the function row, output ROOT
+F00713	root	sub	Sub	A21,P1	ROOT	2	twin of the function row, output ROOT
+F00714	root	sub	Sub	A21,P2	ROOT	2	twin of the function row, output ROOT
+F00715	root	sub	Sub	A21,A12	ROOT	2	twin of the function row, output ROOT
+F00716	root	sub	Sub	A21,A21	ROOT	2	twin of the function row, output ROOT
+F00717	root	sub	Sub	A21,M12	ROOT	2	twin of the function row, output ROOT
+F00718	root	sub	Sub	A21,M21	ROOT	2	twin of the function row, output ROOT
+F00719	root	sub	Sub	A21,P3	ROOT	2	twin of the function row, output ROOT
+F00720	root	sub	Sub	A21,A22	ROOT	2	twin of the function row, output ROOT
+F00721	root	sub	Sub	A21,A31	ROOT	2	twin of the function row, output ROOT
+F00722	root	sub	Sub	A21,M22	ROOT	2	twin of the function row, output ROOT
+F00723	root	sub	Sub	A21,M31	ROOT	2	twin of the function row, output ROOT
+F00724	root	sub	Sub	M12,P1	ROOT	2	twin of the function row, output ROOT
+F00725	root	sub	Sub	M12,P2	ROOT	2	twin of the function row, output ROOT
+F00726	root	sub	Sub	M12,A12	ROOT	2	twin of the function row, output ROOT
+F00727	root	sub	Sub	M12,A21	ROOT	2	twin of the function row, output ROOT
+F00728	root	sub	Sub	M12,M12	ROOT	2	twin of the function row, output ROOT
+F00729	root	sub	Sub	M12,M21	ROOT	2	twin of the function row, output ROOT
+F00730	root	sub	Sub	M12,P3	ROOT	2	twin of the function row, output ROOT
+F00731	root	sub	Sub	M12,A22	ROOT	2	twin of the function row, output ROOT
+F00732	root	sub	Sub	M12,A31	ROOT	2	twin of the function row, output ROOT
+F00733	root	sub	Sub	M12,M22	ROOT	2	twin of the function row, output ROOT
+F00734	root	sub	Sub	M12,M31	ROOT	2	twin of the function row, output ROOT
+F00735	root	sub	Sub	M21,P1	ROOT	2	twin of the function row, output ROOT
+F00736	root	sub	Sub	M21,P2	ROOT	2	twin of the function row, output ROOT
+F00737	root	sub	Sub	M21,A12	ROOT	2	twin of the function row, output ROOT
+F00738	root	sub	Sub	M21,A21	ROOT	2	twin of the function row, output ROOT
+F00739	root	sub	Sub	M21,M12	ROOT	2	twin of the function row, output ROOT
+F00740	root	sub	Sub	M21,M21	ROOT	2	twin of the function row, output ROOT
+F00741	root	sub	Sub	M21,P3	ROOT	2	twin of the function row, output ROOT
+F00742	root	sub	Sub	M21,A22	ROOT	2	twin of the function row, output ROOT
+F00743	root	sub	Sub	M21,A31	ROOT	2	twin of the function row, output ROOT
+F00744	root	sub	Sub	M21,M22	ROOT	2	twin of the function row, output ROOT
+F00745	root	sub	Sub	M21,M31	ROOT	2	twin of the function row, output ROOT
+F00746	root	sub	Sub	P3,P1	ROOT	2	twin of the function row, output ROOT
+F00747	root	sub	Sub	P3,P2	ROOT	2	twin of the function row, output ROOT
+F00748	root	sub	Sub	P3,A12	ROOT	2	twin of the function row, output ROOT
+F00749	root	sub	Sub	P3,A21	ROOT	2	twin of the function row, output ROOT
+F00750	root	sub	Sub	P3,M12	ROOT	2	twin of the function row, output ROOT
+F00751	root	sub	Sub	P3,M21	ROOT	2	twin of the function row, output ROOT
+F00752	root	sub	Sub	P3,A22	ROOT	2	twin of the function row, output ROOT
+F00753	root	sub	Sub	A22,P1	ROOT	2	twin of the function row, output ROOT
+F00754	root	sub	Sub	A22,P2	ROOT	2	twin of the function row, output ROOT
+F00755	root	sub	Sub	A22,A12	ROOT	2	twin of the function row, output ROOT
+F00756	root	sub	Sub	A22,A21	ROOT	2	twin of the function row, output ROOT
+F00757	root	sub	Sub	A22,M12	ROOT	2	twin of the function row, output ROOT
+F00758	root	sub	Sub	A22,M21	ROOT	2	twin of the function row, output ROOT
+F00759	root	sub	Sub	A22,P3	ROOT	2	twin of the function row, output ROOT
+F00760	root	sub	Sub	A22,A22	ROOT	2	twin of the function row, output ROOT
+F00761	root	sub	Sub	A22,A31	ROOT	2	twin of the function row, output ROOT
+F00762	root	sub	Sub	A22,M22	ROOT	2	twin of the function row, output ROOT
+F00763	root	sub	Sub	A22,M31	ROOT	2	twin of the function row, output ROOT
+F00764	root	sub	Sub	A31,P1	ROOT	2	twin of the function row, output ROOT
+F00765	root	sub	Sub	A31,P2	ROOT	2	twin of the function row, output ROOT
+F00766	root	sub	Sub	A31,A12	ROOT	2	twin of the function row, output ROOT
+F00767	root	sub	Sub	A31,A21	ROOT	2	twin of the function row, output ROOT
+F00768	root	sub	Sub	A31,M12	ROOT	2	twin of the function row, output ROOT
+F00769	root	sub	Sub	A31,M21	ROOT	2	twin of the function row, output ROOT
+F00770	root	sub	Sub	A31,A22	ROOT	2	twin of the function row, output ROOT
+F00771	root	sub	Sub	M22,P1	ROOT	2	twin of the function row, output ROOT
+F00772	root	sub	Sub	M22,P2	ROOT	2	twin of the function row, output ROOT
+F00773	root	sub	Sub	M22,A12	ROOT	2	twin of the function row, output ROOT
+F00774	root	sub	Sub	M22,A21	ROOT	2	twin of the function row, output ROOT
+F00775	root	sub	Sub	M22,M12	ROOT	2	twin of the function row, output ROOT
+F00776	root	sub	Sub	M22,M21	ROOT	2	twin of the function row, output ROOT
+F00777	root	sub	Sub	M22,A22	ROOT	2	twin of the function row, output ROOT
+F00778	root	sub	Sub	M31,P1	ROOT	2	twin of the function row, output ROOT
+F00779	root	sub	Sub	M31,P2	ROOT	2	twin of the function row, output ROOT
+F00780	root	sub	Sub	M31,A12	ROOT	2	twin of the function row, output ROOT
+F00781	root	sub	Sub	M31,A21	ROOT	2	twin of the function row, output ROOT
+F00782	root	sub	Sub	M31,M12	ROOT	2	twin of the function row, output ROOT
+F00783	root	sub	Sub	M31,M21	ROOT	2	twin of the function row, output ROOT
+F00784	root	sub	Sub	M31,A22	ROOT	2	twin of the function row, output ROOT
+F00785	root	mul	Mul	P1,P1	ROOT	2	twin of the function row, output ROOT
+F00786	root	mul	Mul	P1,P2	ROOT	2	twin of the function row, output ROOT
+F00787	root	mul	Mul	P1,A12	ROOT	2	twin of the function row, output ROOT
+F00788	root	mul	Mul	P1,A21	ROOT	2	twin of the function row, output ROOT
+F00789	root	mul	Mul	P1,M12	ROOT	2	twin of the function row, output ROOT
+F00790	root	mul	Mul	P1,M21	ROOT	2	twin of the function row, output ROOT
+F00791	root	mul	Mul	P1,P3	ROOT	2	twin of the function row, output ROOT
+F00792	root	mul	Mul	P1,A22	ROOT	2	twin of the function row, output ROOT
+F00793	root	mul	Mul	P1,A31	ROOT	2	twin of the function row, output ROOT
+F00794	root	mul	Mul	P1,M22	ROOT	2	twin of the function row, output ROOT
+F00795	root	mul	Mul	P1,M31	ROOT	2	twin of the function row, output ROOT
+F00796	root	mul	Mul	P2,P1	ROOT	2	twin of the function row, output ROOT
+F00797	root	mul	Mul	P2,P2	ROOT	2	twin of the function row, output ROOT
+F00798	root	mul	Mul	P2,A12	ROOT	2	twin of the function row, output ROOT
+F00799	root	mul	Mul	P2,A21	ROOT	2	twin of the function row, output ROOT
+F00800	root	mul	Mul	P2,M12	ROOT	2	twin of the function row, output ROOT
+F00801	root	mul	Mul	P2,M21	ROOT	2	twin of the function row, output ROOT
+F00802	root	mul	Mul	P2,P3	ROOT	2	twin of the function row, output ROOT
+F00803	root	mul	Mul	P2,A22	ROOT	2	twin of the function row, output ROOT
+F00804	root	mul	Mul	P2,A31	ROOT	2	twin of the function row, output ROOT
+F00805	root	mul	Mul	P2,M22	ROOT	2	twin of the function row, output ROOT
+F00806	root	mul	Mul	P2,M31	ROOT	2	twin of the function row, output ROOT
+F00807	root	mul	Mul	A12,P1	ROOT	2	twin of the function row, output ROOT
+F00808	root	mul	Mul	A12,P2	ROOT	2	twin of the function row, output ROOT
+F00809	root	mul	Mul	A12,A12	ROOT	2	twin of the function row, output ROOT
+F00810	root	mul	Mul	A12,A21	ROOT	2	twin of the function row, output ROOT
+F00811	root	mul	Mul	A12,M12	ROOT	2	twin of the function row, output ROOT
+F00812	root	mul	Mul	A12,M21	ROOT	2	twin of the function row, output ROOT
+F00813	root	mul	Mul	A12,P3	ROOT	2	twin of the function row, output ROOT
+F00814	root	mul	Mul	A12,A22	ROOT	2	twin of the function row, output ROOT
+F00815	root	mul	Mul	A12,A31	ROOT	2	twin of the function row, output ROOT
+F00816	root	mul	Mul	A12,M22	ROOT	2	twin of the function row, output ROOT
+F00817	root	mul	Mul	A12,M31	ROOT	2	twin of the function row, output ROOT
+F00818	root	mul	Mul	A21,P1	ROOT	2	twin of the function row, output ROOT
+F00819	root	mul	Mul	A21,P2	ROOT	2	twin of the function row, output ROOT
+F00820	root	mul	Mul	A21,A12	ROOT	2	twin of the function row, output ROOT
+F00821	root	mul	Mul	A21,A21	ROOT	2	twin of the function row, output ROOT
+F00822	root	mul	Mul	A21,M12	ROOT	2	twin of the function row, output ROOT
+F00823	root	mul	Mul	A21,M21	ROOT	2	twin of the function row, output ROOT
+F00824	root	mul	Mul	A21,P3	ROOT	2	twin of the function row, output ROOT
+F00825	root	mul	Mul	A21,A22	ROOT	2	twin of the function row, output ROOT
+F00826	root	mul	Mul	A21,A31	ROOT	2	twin of the function row, output ROOT
+F00827	root	mul	Mul	A21,M22	ROOT	2	twin of the function row, output ROOT
+F00828	root	mul	Mul	A21,M31	ROOT	2	twin of the function row, output ROOT
+F00829	root	mul	Mul	M12,P1	ROOT	2	twin of the function row, output ROOT
+F00830	root	mul	Mul	M12,P2	ROOT	2	twin of the function row, output ROOT
+F00831	root	mul	Mul	M12,A12	ROOT	2	twin of the function row, output ROOT
+F00832	root	mul	Mul	M12,A21	ROOT	2	twin of the function row, output ROOT
+F00833	root	mul	Mul	M12,M12	ROOT	2	twin of the function row, output ROOT
+F00834	root	mul	Mul	M12,M21	ROOT	2	twin of the function row, output ROOT
+F00835	root	mul	Mul	M12,P3	ROOT	2	twin of the function row, output ROOT
+F00836	root	mul	Mul	M12,A22	ROOT	2	twin of the function row, output ROOT
+F00837	root	mul	Mul	M12,A31	ROOT	2	twin of the function row, output ROOT
+F00838	root	mul	Mul	M12,M22	ROOT	2	twin of the function row, output ROOT
+F00839	root	mul	Mul	M12,M31	ROOT	2	twin of the function row, output ROOT
+F00840	root	mul	Mul	M21,P1	ROOT	2	twin of the function row, output ROOT
+F00841	root	mul	Mul	M21,P2	ROOT	2	twin of the function row, output ROOT
+F00842	root	mul	Mul	M21,A12	ROOT	2	twin of the function row, output ROOT
+F00843	root	mul	Mul	M21,A21	ROOT	2	twin of the function row, output ROOT
+F00844	root	mul	Mul	M21,M12	ROOT	2	twin of the function row, output ROOT
+F00845	root	mul	Mul	M21,M21	ROOT	2	twin of the function row, output ROOT
+F00846	root	mul	Mul	M21,P3	ROOT	2	twin of the function row, output ROOT
+F00847	root	mul	Mul	M21,A22	ROOT	2	twin of the function row, output ROOT
+F00848	root	mul	Mul	M21,A31	ROOT	2	twin of the function row, output ROOT
+F00849	root	mul	Mul	M21,M22	ROOT	2	twin of the function row, output ROOT
+F00850	root	mul	Mul	M21,M31	ROOT	2	twin of the function row, output ROOT
+F00851	root	mul	Mul	P3,P1	ROOT	2	twin of the function row, output ROOT
+F00852	root	mul	Mul	P3,P2	ROOT	2	twin of the function row, output ROOT
+F00853	root	mul	Mul	P3,A12	ROOT	2	twin of the function row, output ROOT
+F00854	root	mul	Mul	P3,A21	ROOT	2	twin of the function row, output ROOT
+F00855	root	mul	Mul	P3,M12	ROOT	2	twin of the function row, output ROOT
+F00856	root	mul	Mul	P3,M21	ROOT	2	twin of the function row, output ROOT
+F00857	root	mul	Mul	P3,M22	ROOT	2	twin of the function row, output ROOT
+F00858	root	mul	Mul	A22,P1	ROOT	2	twin of the function row, output ROOT
+F00859	root	mul	Mul	A22,P2	ROOT	2	twin of the function row, output ROOT
+F00860	root	mul	Mul	A22,A12	ROOT	2	twin of the function row, output ROOT
+F00861	root	mul	Mul	A22,A21	ROOT	2	twin of the function row, output ROOT
+F00862	root	mul	Mul	A22,M12	ROOT	2	twin of the function row, output ROOT
+F00863	root	mul	Mul	A22,M21	ROOT	2	twin of the function row, output ROOT
+F00864	root	mul	Mul	A22,M22	ROOT	2	twin of the function row, output ROOT
+F00865	root	mul	Mul	A31,P1	ROOT	2	twin of the function row, output ROOT
+F00866	root	mul	Mul	A31,P2	ROOT	2	twin of the function row, output ROOT
+F00867	root	mul	Mul	A31,A12	ROOT	2	twin of the function row, output ROOT
+F00868	root	mul	Mul	A31,A21	ROOT	2	twin of the function row, output ROOT
+F00869	root	mul	Mul	A31,M12	ROOT	2	twin of the function row, output ROOT
+F00870	root	mul	Mul	A31,M21	ROOT	2	twin of the function row, output ROOT
+F00871	root	mul	Mul	A31,M22	ROOT	2	twin of the function row, output ROOT
+F00872	root	mul	Mul	M22,P1	ROOT	2	twin of the function row, output ROOT
+F00873	root	mul	Mul	M22,P2	ROOT	2	twin of the function row, output ROOT
+F00874	root	mul	Mul	M22,A12	ROOT	2	twin of the function row, output ROOT
+F00875	root	mul	Mul	M22,A21	ROOT	2	twin of the function row, output ROOT
+F00876	root	mul	Mul	M22,M12	ROOT	2	twin of the function row, output ROOT
+F00877	root	mul	Mul	M22,M21	ROOT	2	twin of the function row, output ROOT
+F00878	root	mul	Mul	M22,P3	ROOT	2	twin of the function row, output ROOT
+F00879	root	mul	Mul	M22,A22	ROOT	2	twin of the function row, output ROOT
+F00880	root	mul	Mul	M22,A31	ROOT	2	twin of the function row, output ROOT
+F00881	root	mul	Mul	M22,M22	ROOT	2	twin of the function row, output ROOT
+F00882	root	mul	Mul	M22,M31	ROOT	2	twin of the function row, output ROOT
+F00883	root	mul	Mul	M31,P1	ROOT	2	twin of the function row, output ROOT
+F00884	root	mul	Mul	M31,P2	ROOT	2	twin of the function row, output ROOT
+F00885	root	mul	Mul	M31,A12	ROOT	2	twin of the function row, output ROOT
+F00886	root	mul	Mul	M31,A21	ROOT	2	twin of the function row, output ROOT
+F00887	root	mul	Mul	M31,M12	ROOT	2	twin of the function row, output ROOT
+F00888	root	mul	Mul	M31,M21	ROOT	2	twin of the function row, output ROOT
+F00889	root	mul	Mul	M31,M22	ROOT	2	twin of the function row, output ROOT
+F00890	root	pdiv	ProtectedDiv	P1,P1	ROOT	2	twin of the function row, output ROOT
+F00891	root	pdiv	ProtectedDiv	P1,P2	ROOT	2	twin of the function row, output ROOT
+F00892	root	pdiv	ProtectedDiv	P1,A12	ROOT	2	twin of the function row, output ROOT
+F00893	root	pdiv	ProtectedDiv	P1,A21	ROOT	2	twin of the function row, output ROOT
+F00894	root	pdiv	ProtectedDiv	P1,M12	ROOT	2	twin of the function row, output ROOT
+F00895	root	pdiv	ProtectedDiv	P1,M21	ROOT	2	twin of the function row, output ROOT
+F00896	root	pdiv	ProtectedDiv	P1,P3	ROOT	2	twin of the function row, output ROOT
+F00897	root	pdiv	ProtectedDiv	P1,A22	ROOT	2	twin of the function row, output ROOT
+F00898	root	pdiv	ProtectedDiv	P1,A31	ROOT	2	twin of the function row, output ROOT
+F00899	root	pdiv	ProtectedDiv	P1,M22	ROOT	2	twin of the function row, output ROOT
+F00900	root	pdiv	ProtectedDiv	P1,M31	ROOT	2	twin of the function row, output ROOT
+F00901	root	pdiv	ProtectedDiv	P2,P1	ROOT	2	twin of the function row, output ROOT
+F00902	root	pdiv	ProtectedDiv	P2,P2	ROOT	2	twin of the function row, output ROOT
+F00903	root	pdiv	ProtectedDiv	P2,A12	ROOT	2	twin of the function row, output ROOT
+F00904	root	pdiv	ProtectedDiv	P2,A21	ROOT	2	twin of the function row, output ROOT
+F00905	root	pdiv	ProtectedDiv	P2,M12	ROOT	2	twin of the function row, output ROOT
+F00906	root	pdiv	ProtectedDiv	P2,M21	ROOT	2	twin of the function row, output ROOT
+F00907	root	pdiv	ProtectedDiv	P2,P3	ROOT	2	twin of the function row, output ROOT
+F00908	root	pdiv	ProtectedDiv	P2,A22	ROOT	2	twin of the function row, output ROOT
+F00909	root	pdiv	ProtectedDiv	P2,A31	ROOT	2	twin of the function row, output ROOT
+F00910	root	pdiv	ProtectedDiv	P2,M22	ROOT	2	twin of the function row, output ROOT
+F00911	root	pdiv	ProtectedDiv	P2,M31	ROOT	2	twin of the function row, output ROOT
+F00912	root	pdiv	ProtectedDiv	A12,P1	ROOT	2	twin of the function row, output ROOT
+F00913	root	pdiv	ProtectedDiv	A12,P2	ROOT	2	twin of the function row, output ROOT
+F00914	root	pdiv	ProtectedDiv	A12,A12	ROOT	2	twin of the function row, output ROOT
+F00915	root	pdiv	ProtectedDiv	A12,A21	ROOT	2	twin of the function row, output ROOT
+F00916	root	pdiv	ProtectedDiv	A12,M12	ROOT	2	twin of the function row, output ROOT
+F00917	root	pdiv	ProtectedDiv	A12,M21	ROOT	2	twin of the function row, output ROOT
+F00918	root	pdiv	ProtectedDiv	A12,P3	ROOT	2	twin of the function row, output ROOT
+F00919	root	pdiv	ProtectedDiv	A12,A22	ROOT	2	twin of the function row, output ROOT
+F00920	root	pdiv	ProtectedDiv	A12,A31	ROOT	2	twin of the function row, output ROOT
+F00921	root	pdiv	ProtectedDiv	A12,M22	ROOT	2	twin of the function row, output ROOT
+F00922	root	pdiv	ProtectedDiv	A12,M31	ROOT	2	twin of the function row, output ROOT
+F00923	root	pdiv	ProtectedDiv	A21,P1	ROOT	2	twin of the function row, output ROOT
+F00924	root	pdiv	ProtectedDiv	A21,P2	ROOT	2	twin of the function row, output ROOT
+F00925	root	pdiv	ProtectedDiv	A21,A12	ROOT	2	twin of the function row, output ROOT
+F00926	root	pdiv	ProtectedDiv	A21,A21	ROOT	2	twin of the function row, output ROOT
+F00927	root	pdiv	ProtectedDiv	A21,M12	ROOT	2	twin of the function row, output ROOT
+F00928	root	pdiv	ProtectedDiv	A21,M21	ROOT	2	twin of the function row, output ROOT
+F00929	root	pdiv	ProtectedDiv	A21,P3	ROOT	2	twin of the function row, output ROOT
+F00930	root	pdiv	ProtectedDiv	A21,A22	ROOT	2	twin of the function row, output ROOT
+F00931	root	pdiv	ProtectedDiv	A21,A31	ROOT	2	twin of the function row, output ROOT
+F00932	root	pdiv	ProtectedDiv	A21,M22	ROOT	2	twin of the function row, output ROOT
+F00933	root	pdiv	ProtectedDiv	A21,M31	ROOT	2	twin of the function row, output ROOT
+F00934	root	pdiv	ProtectedDiv	M12,P1	ROOT	2	twin of the function row, output ROOT
+F00935	root	pdiv	ProtectedDiv	M12,P2	ROOT	2	twin of the function row, output ROOT
+F00936	root	pdiv	ProtectedDiv	M12,A12	ROOT	2	twin of the function row, output ROOT
+F00937	root	pdiv	ProtectedDiv	M12,A21	ROOT	2	twin of the function row, output ROOT
+F00938	root	pdiv	ProtectedDiv	M12,M12	ROOT	2	twin of the function row, output ROOT
+F00939	root	pdiv	ProtectedDiv	M12,M21	ROOT	2	twin of the function row, output ROOT
+F00940	root	pdiv	ProtectedDiv	M12,P3	ROOT	2	twin of the function row, output ROOT
+F00941	root	pdiv	ProtectedDiv	M12,A22	ROOT	2	twin of the function row, output ROOT
+F00942	root	pdiv	ProtectedDiv	M12,A31	ROOT	2	twin of the function row, output ROOT
+F00943	root	pdiv	ProtectedDiv	M12,M22	ROOT	2	twin of the function row, output ROOT
+F00944	root	pdiv	ProtectedDiv	M12,M31	ROOT	2	twin of the function row, output ROOT
+F00945	root	pdiv	ProtectedDiv	M21,P1	ROOT	2	twin of the function row, output ROOT
+F00946	root	pdiv	ProtectedDiv	M21,P2	ROOT	2	twin of the function row, output ROOT
+F00947	root	pdiv	ProtectedDiv	M21,A12	ROOT	2	twin of the function row, output ROOT
+F00948	root	pdiv	ProtectedDiv	M21,A21	ROOT	2	twin of the function row, output ROOT
+F00949	root	pdiv	ProtectedDiv	M21,M12	ROOT	2	twin of the function row, output ROOT
+F00950	root	pdiv	ProtectedDiv	M21,M21	ROOT	2	twin of the function row, output ROOT
+F00951	root	pdiv	ProtectedDiv	M21,P3	ROOT	2	twin of the function row, output ROOT
+F00952	root	pdiv	ProtectedDiv	M21,A22	ROOT	2	twin of the function row, output ROOT
+F00953	root	pdiv	ProtectedDiv	M21,A31	ROOT	2	twin of the function row, output ROOT
+F00954	root	pdiv	ProtectedDiv	M21,M22	ROOT	2	twin of the function row, output ROOT
+F00955	root	pdiv	ProtectedDiv	M21,M31	ROOT	2	twin of the function row, output ROOT
+F00956	root	pdiv	ProtectedDiv	P3,P1	ROOT	2	twin of the function row, output ROOT
+F00957	root	pdiv	ProtectedDiv	P3,P2	ROOT	2	twin of the function row, output ROOT
+F00958	root	pdiv	ProtectedDiv	P3,A12	ROOT	2	twin of the function row, output ROOT
+F00959	root	pdiv	ProtectedDiv	P3,A21	ROOT	2	twin of the function row, output ROOT
+F00960	root	pdiv	ProtectedDiv	P3,M12	ROOT	2	twin of the function row, output ROOT
+F00961	root	pdiv	ProtectedDiv	P3,M21	ROOT	2	twin of the function row, output ROOT
+F00962	root	pdiv	ProtectedDiv	P3,M22	ROOT	2	twin of the function row, output ROOT
+F00963	root	pdiv	ProtectedDiv	A22,P1	ROOT	2	twin of the function row, output ROOT
+F00964	root	pdiv	ProtectedDiv	A22,P2	ROOT	2	twin of the function row, output ROOT
+F00965	root	pdiv	ProtectedDiv	A22,A12	ROOT	2	twin of the function row, output ROOT
+F00966	root	pdiv	ProtectedDiv	A22,A21	ROOT	2	twin of the function row, output ROOT
+F00967	root	pdiv	ProtectedDiv	A22,M12	ROOT	2	twin of the function row, output ROOT
+F00968	root	pdiv	ProtectedDiv	A22,M21	ROOT	2	twin of the function row, output ROOT
+F00969	root	pdiv	ProtectedDiv	A22,M22	ROOT	2	twin of the function row, output ROOT
+F00970	root	pdiv	ProtectedDiv	A31,P1	ROOT	2	twin of the function row, output ROOT
+F00971	root	pdiv	ProtectedDiv	A31,P2	ROOT	2	twin of the function row, output ROOT
+F00972	root	pdiv	ProtectedDiv	A31,A12	ROOT	2	twin of the function row, output ROOT
+F00973	root	pdiv	ProtectedDiv	A31,A21	ROOT	2	twin of the function row, output ROOT
+F00974	root	pdiv	ProtectedDiv	A31,M12	ROOT	2	twin of the function row, output ROOT
+F00975	root	pdiv	ProtectedDiv	A31,M21	ROOT	2	twin of the function row, output ROOT
+F00976	root	pdiv	ProtectedDiv	A31,M22	ROOT	2	twin of the function row, output ROOT
+F00977	root	pdiv	ProtectedDiv	M22,P1	ROOT	2	twin of the function row, output ROOT
+F00978	root	pdiv	ProtectedDiv	M22,P2	ROOT	2	twin of the function row, output ROOT
+F00979	root	pdiv	ProtectedDiv	M22,A12	ROOT	2	twin of the function row, output ROOT
+F00980	root	pdiv	ProtectedDiv	M22,A21	ROOT	2	twin of the function row, output ROOT
+F00981	root	pdiv	ProtectedDiv	M22,M12	ROOT	2	twin of the function row, output ROOT
+F00982	root	pdiv	ProtectedDiv	M22,M21	ROOT	2	twin of the function row, output ROOT
+F00983	root	pdiv	ProtectedDiv	M22,P3	ROOT	2	twin of the function row, output ROOT
+F00984	root	pdiv	ProtectedDiv	M22,A22	ROOT	2	twin of the function row, output ROOT
+F00985	root	pdiv	ProtectedDiv	M22,A31	ROOT	2	twin of the function row, output ROOT
+F00986	root	pdiv	ProtectedDiv	M22,M22	ROOT	2	twin of the function row, output ROOT
+F00987	root	pdiv	ProtectedDiv	M22,M31	ROOT	2	twin of the function row, output ROOT
+F00988	root	pdiv	ProtectedDiv	M31,P1	ROOT	2	twin of the function row, output ROOT
+F00989	root	pdiv	ProtectedDiv	M31,P2	ROOT	2	twin of the function row, output ROOT
+F00990	root	pdiv	ProtectedDiv	M31,A12	ROOT	2	twin of the function row, output ROOT
+F00991	root	pdiv	ProtectedDiv	M31,A21	ROOT	2	twin of the function row, output ROOT
+F00992	root	pdiv	ProtectedDiv	M31,M12	ROOT	2	twin of the function row, output ROOT
+F00993	root	pdiv	ProtectedDiv	M31,M21	ROOT	2	twin of the function row, output ROOT
+F00994	root	pdiv	ProtectedDiv	M31,M22	ROOT	2	twin of the function row, output ROOT
+F00995	root	sin	Sin	P1	ROOT	1	twin of the function row, output ROOT
+F00996	root	sin	Sin	P2	ROOT	1	twin of the function row, output ROOT
+F00997	root	sin	Sin	A12	ROOT	1	twin of the function row, output ROOT
+F00998	root	sin	Sin	A21	ROOT	1	twin of the function row, output ROOT
+F00999	root	sin	Sin	M12	ROOT	1	twin of the function row, output ROOT
+F01000	root	sin	Sin	M21	ROOT	1	twin of the function row, output ROOT
+F01001	root	sin	Sin	P3	ROOT	1	twin of the function row, output ROOT
+F01002	root	sin	Sin	A22	ROOT	1	twin of the function row, output ROOT
+F01003	root	sin	Sin	A31	ROOT	1	twin of the function row, output ROOT
+F01004	root	sin	Sin	M22	ROOT	1	twin of the function row, output ROOT
+F01005	root	sin	Sin	M31	ROOT	1	twin of the function row, output ROOT
+F01006	root	cos	Cos	P1	ROOT	1	twin of the function row, output ROOT
+F01007	root	cos	Cos	P2	ROOT	1	twin of the function row, output ROOT
+F01008	root	cos	Cos	A12	ROOT	1	twin of the function row, output ROOT
+F01009	root	cos	Cos	A21	ROOT	1	twin of the function row, output ROOT
+F01010	root	cos	Cos	M12	ROOT	1	twin of the function row, output ROOT
+F01011	root	cos	Cos	M21	ROOT	1	twin of the function row, output ROOT
+F01012	root	cos	Cos	P3	ROOT	1	twin of the function row, output ROOT
+F01013	root	cos	Cos	A22	ROOT	1	twin of the function row, output ROOT
+F01014	root	cos	Cos	A31	ROOT	1	twin of the function row, output ROOT
+F01015	root	cos	Cos	M22	ROOT	1	twin of the function row, output ROOT
+F01016	root	cos	Cos	M31	ROOT	1	twin of the function row, output ROOT
+F01017	root	tanh	Tanh	P1	ROOT	1	twin of the function row, output ROOT
+F01018	root	tanh	Tanh	P2	ROOT	1	twin of the function row, output ROOT
+F01019	root	tanh	Tanh	A12	ROOT	1	twin of the function row, output ROOT
+F01020	root	tanh	Tanh	A21	ROOT	1	twin of the function row, output ROOT
+F01021	root	tanh	Tanh	M12	ROOT	1	twin of the function row, output ROOT
+F01022	root	tanh	Tanh	M21	ROOT	1	twin of the function row, output ROOT
+F01023	root	tanh	Tanh	P3	ROOT	1	twin of the function row, output ROOT
+F01024	root	tanh	Tanh	A22	ROOT	1	twin of the function row, output ROOT
+F01025	root	tanh	Tanh	A31	ROOT	1	twin of the function row, output ROOT
+F01026	root	tanh	Tanh	M22	ROOT	1	twin of the function row, output ROOT
+F01027	root	tanh	Tanh	M31	ROOT	1	twin of the function row, output ROOT
+F01028	root	psqrt	ProtectedSqrt	P1	ROOT	1	twin of the function row, output ROOT
+F01029	root	psqrt	ProtectedSqrt	P2	ROOT	1	twin of the function row, output ROOT
+F01030	root	psqrt	ProtectedSqrt	A12	ROOT	1	twin of the function row, output ROOT
+F01031	root	psqrt	ProtectedSqrt	A21	ROOT	1	twin of the function row, output ROOT
+F01032	root	psqrt	ProtectedSqrt	M12	ROOT	1	twin of the function row, output ROOT
+F01033	root	psqrt	ProtectedSqrt	M21	ROOT	1	twin of the function row, output ROOT
+F01034	root	psqrt	ProtectedSqrt	P3	ROOT	1	twin of the function row, output ROOT
+F01035	root	psqrt	ProtectedSqrt	A22	ROOT	1	twin of the function row, output ROOT
+F01036	root	psqrt	ProtectedSqrt	A31	ROOT	1	twin of the function row, output ROOT
+F01037	root	psqrt	ProtectedSqrt	M22	ROOT	1	twin of the function row, output ROOT
+F01038	root	psqrt	ProtectedSqrt	M31	ROOT	1	twin of the function row, output ROOT
+F01039	root	plog	ProtectedLog	P1	ROOT	1	twin of the function row, output ROOT
+F01040	root	plog	ProtectedLog	P2	ROOT	1	twin of the function row, output ROOT
+F01041	root	plog	ProtectedLog	A12	ROOT	1	twin of the function row, output ROOT
+F01042	root	plog	ProtectedLog	A21	ROOT	1	twin of the function row, output ROOT
+F01043	root	plog	ProtectedLog	M12	ROOT	1	twin of the function row, output ROOT
+F01044	root	plog	ProtectedLog	M21	ROOT	1	twin of the function row, output ROOT
+F01045	root	plog	ProtectedLog	P3	ROOT	1	twin of the function row, output ROOT
+F01046	root	plog	ProtectedLog	A22	ROOT	1	twin of the function row, output ROOT
+F01047	root	plog	ProtectedLog	A31	ROOT	1	twin of the function row, output ROOT
+F01048	root	plog	ProtectedLog	M22	ROOT	1	twin of the function row, output ROOT
+F01049	root	plog	ProtectedLog	M31	ROOT	1	twin of the function row, output ROOT
+F01050	root	pexp	ProtectedExp	P1	ROOT	1	twin of the function row, output ROOT
+F01051	root	pexp	ProtectedExp	P2	ROOT	1	twin of the function row, output ROOT
+F01052	root	pexp	ProtectedExp	A12	ROOT	1	twin of the function row, output ROOT
+F01053	root	pexp	ProtectedExp	A21	ROOT	1	twin of the function row, output ROOT
+F01054	root	pexp	ProtectedExp	M12	ROOT	1	twin of the function row, output ROOT
+F01055	root	pexp	ProtectedExp	M21	ROOT	1	twin of the function row, output ROOT
+F01056	root	pexp	ProtectedExp	P3	ROOT	1	twin of the function row, output ROOT
+F01057	root	pexp	ProtectedExp	A22	ROOT	1	twin of the function row, output ROOT
+F01058	root	pexp	ProtectedExp	A31	ROOT	1	twin of the function row, output ROOT
+F01059	root	pexp	ProtectedExp	M22	ROOT	1	twin of the function row, output ROOT
+F01060	root	pexp	ProtectedExp	M31	ROOT	1	twin of the function row, output ROOT
+F01061	root	neg	Neg	P1	ROOT	1	twin of the function row, output ROOT
+F01062	root	neg	Neg	P2	ROOT	1	twin of the function row, output ROOT
+F01063	root	neg	Neg	A12	ROOT	1	twin of the function row, output ROOT
+F01064	root	neg	Neg	A21	ROOT	1	twin of the function row, output ROOT
+F01065	root	neg	Neg	M12	ROOT	1	twin of the function row, output ROOT
+F01066	root	neg	Neg	M21	ROOT	1	twin of the function row, output ROOT
+F01067	root	neg	Neg	P3	ROOT	1	twin of the function row, output ROOT
+F01068	root	neg	Neg	A22	ROOT	1	twin of the function row, output ROOT
+F01069	root	neg	Neg	A31	ROOT	1	twin of the function row, output ROOT
+F01070	root	neg	Neg	M22	ROOT	1	twin of the function row, output ROOT
+F01071	root	neg	Neg	M31	ROOT	1	twin of the function row, output ROOT
+F01072	root	abs	Abs	P1	ROOT	1	twin of the function row, output ROOT
+F01073	root	abs	Abs	P2	ROOT	1	twin of the function row, output ROOT
+F01074	root	abs	Abs	A12	ROOT	1	twin of the function row, output ROOT
+F01075	root	abs	Abs	A21	ROOT	1	twin of the function row, output ROOT
+F01076	root	abs	Abs	M12	ROOT	1	twin of the function row, output ROOT
+F01077	root	abs	Abs	M21	ROOT	1	twin of the function row, output ROOT
+F01078	root	abs	Abs	P3	ROOT	1	twin of the function row, output ROOT
+F01079	root	abs	Abs	A22	ROOT	1	twin of the function row, output ROOT
+F01080	root	abs	Abs	A31	ROOT	1	twin of the function row, output ROOT
+F01081	root	abs	Abs	M22	ROOT	1	twin of the function row, output ROOT
+F01082	root	abs	Abs	M31	ROOT	1	twin of the function row, output ROOT
+F01083	root	pow2	Pow2	P1	ROOT	1	twin of the function row, output ROOT
+F01084	root	pow2	Pow2	P2	ROOT	1	twin of the function row, output ROOT
+F01085	root	pow2	Pow2	A12	ROOT	1	twin of the function row, output ROOT
+F01086	root	pow2	Pow2	A21	ROOT	1	twin of the function row, output ROOT
+F01087	root	pow2	Pow2	M12	ROOT	1	twin of the function row, output ROOT
+F01088	root	pow2	Pow2	M21	ROOT	1	twin of the function row, output ROOT
+F01089	root	pow2	Pow2	P3	ROOT	1	twin of the function row, output ROOT
+F01090	root	pow2	Pow2	A22	ROOT	1	twin of the function row, output ROOT
+F01091	root	pow2	Pow2	A31	ROOT	1	twin of the function row, output ROOT
+F01092	root	pow2	Pow2	M22	ROOT	1	twin of the function row, output ROOT
+F01093	root	pow2	Pow2	M31	ROOT	1	twin of the function row, output ROOT
+F01094	root	pow3	Pow3	P1	ROOT	1	twin of the function row, output ROOT
+F01095	root	pow3	Pow3	P2	ROOT	1	twin of the function row, output ROOT
+F01096	root	pow3	Pow3	A12	ROOT	1	twin of the function row, output ROOT
+F01097	root	pow3	Pow3	A21	ROOT	1	twin of the function row, output ROOT
+F01098	root	pow3	Pow3	M12	ROOT	1	twin of the function row, output ROOT
+F01099	root	pow3	Pow3	M21	ROOT	1	twin of the function row, output ROOT
+F01100	root	pow3	Pow3	P3	ROOT	1	twin of the function row, output ROOT
+F01101	root	pow3	Pow3	A22	ROOT	1	twin of the function row, output ROOT
+F01102	root	pow3	Pow3	A31	ROOT	1	twin of the function row, output ROOT
+F01103	root	pow3	Pow3	M22	ROOT	1	twin of the function row, output ROOT
+F01104	root	pow3	Pow3	M31	ROOT	1	twin of the function row, output ROOT
+F01105	root	pinv	ProtectedInv	P1	ROOT	1	twin of the function row, output ROOT
+F01106	root	pinv	ProtectedInv	P2	ROOT	1	twin of the function row, output ROOT
+F01107	root	pinv	ProtectedInv	A12	ROOT	1	twin of the function row, output ROOT
+F01108	root	pinv	ProtectedInv	A21	ROOT	1	twin of the function row, output ROOT
+F01109	root	pinv	ProtectedInv	M12	ROOT	1	twin of the function row, output ROOT
+F01110	root	pinv	ProtectedInv	M21	ROOT	1	twin of the function row, output ROOT
+F01111	root	pinv	ProtectedInv	P3	ROOT	1	twin of the function row, output ROOT
+F01112	root	pinv	ProtectedInv	A22	ROOT	1	twin of the function row, output ROOT
+F01113	root	pinv	ProtectedInv	A31	ROOT	1	twin of the function row, output ROOT
+F01114	root	pinv	ProtectedInv	M22	ROOT	1	twin of the function row, output ROOT
+F01115	root	pinv	ProtectedInv	M31	ROOT	1	twin of the function row, output ROOT
+F01116	root	tan	Tan	P1	ROOT	1	twin of the function row, output ROOT
+F01117	root	tan	Tan	P2	ROOT	1	twin of the function row, output ROOT
+F01118	root	tan	Tan	A12	ROOT	1	twin of the function row, output ROOT
+F01119	root	tan	Tan	A21	ROOT	1	twin of the function row, output ROOT
+F01120	root	tan	Tan	M12	ROOT	1	twin of the function row, output ROOT
+F01121	root	tan	Tan	M21	ROOT	1	twin of the function row, output ROOT
+F01122	root	tan	Tan	P3	ROOT	1	twin of the function row, output ROOT
+F01123	root	tan	Tan	A22	ROOT	1	twin of the function row, output ROOT
+F01124	root	tan	Tan	A31	ROOT	1	twin of the function row, output ROOT
+F01125	root	tan	Tan	M22	ROOT	1	twin of the function row, output ROOT
+F01126	root	tan	Tan	M31	ROOT	1	twin of the function row, output ROOT
+F01127	root	pasin	ProtectedAsin	P1	ROOT	1	twin of the function row, output ROOT
+F01128	root	pasin	ProtectedAsin	P2	ROOT	1	twin of the function row, output ROOT
+F01129	root	pasin	ProtectedAsin	A12	ROOT	1	twin of the function row, output ROOT
+F01130	root	pasin	ProtectedAsin	A21	ROOT	1	twin of the function row, output ROOT
+F01131	root	pasin	ProtectedAsin	M12	ROOT	1	twin of the function row, output ROOT
+F01132	root	pasin	ProtectedAsin	M21	ROOT	1	twin of the function row, output ROOT
+F01133	root	pasin	ProtectedAsin	P3	ROOT	1	twin of the function row, output ROOT
+F01134	root	pasin	ProtectedAsin	A22	ROOT	1	twin of the function row, output ROOT
+F01135	root	pasin	ProtectedAsin	A31	ROOT	1	twin of the function row, output ROOT
+F01136	root	pasin	ProtectedAsin	M22	ROOT	1	twin of the function row, output ROOT
+F01137	root	pasin	ProtectedAsin	M31	ROOT	1	twin of the function row, output ROOT
+F01138	root	pacos	ProtectedAcos	P1	ROOT	1	twin of the function row, output ROOT
+F01139	root	pacos	ProtectedAcos	P2	ROOT	1	twin of the function row, output ROOT
+F01140	root	pacos	ProtectedAcos	A12	ROOT	1	twin of the function row, output ROOT
+F01141	root	pacos	ProtectedAcos	A21	ROOT	1	twin of the function row, output ROOT
+F01142	root	pacos	ProtectedAcos	M12	ROOT	1	twin of the function row, output ROOT
+F01143	root	pacos	ProtectedAcos	M21	ROOT	1	twin of the function row, output ROOT
+F01144	root	pacos	ProtectedAcos	P3	ROOT	1	twin of the function row, output ROOT
+F01145	root	pacos	ProtectedAcos	A22	ROOT	1	twin of the function row, output ROOT
+F01146	root	pacos	ProtectedAcos	A31	ROOT	1	twin of the function row, output ROOT
+F01147	root	pacos	ProtectedAcos	M22	ROOT	1	twin of the function row, output ROOT
+F01148	root	pacos	ProtectedAcos	M31	ROOT	1	twin of the function row, output ROOT
+F01149	terminal	var	Var	-	P1	0	one terminal per input column (the loader expands `var` to every column)
+F01150	terminal	const	Num	-	P1	0	the constant placeholder ?
+F01151	terminal	var	Var	-	P2	0	one terminal per input column (the loader expands `var` to every column)
+F01152	terminal	const	Num	-	P2	0	the constant placeholder ?
+F01153	terminal	var	Var	-	A12	0	one terminal per input column (the loader expands `var` to every column)
+F01154	terminal	const	Num	-	A12	0	the constant placeholder ?
+F01155	terminal	var	Var	-	A21	0	one terminal per input column (the loader expands `var` to every column)
+F01156	terminal	const	Num	-	A21	0	the constant placeholder ?
+F01157	terminal	var	Var	-	M12	0	one terminal per input column (the loader expands `var` to every column)
+F01158	terminal	const	Num	-	M12	0	the constant placeholder ?
+F01159	terminal	var	Var	-	M21	0	one terminal per input column (the loader expands `var` to every column)
+F01160	terminal	const	Num	-	M21	0	the constant placeholder ?
+F01161	terminal	var	Var	-	P3	0	one terminal per input column (the loader expands `var` to every column)
+F01162	terminal	const	Num	-	P3	0	the constant placeholder ?
+F01163	terminal	var	Var	-	A22	0	one terminal per input column (the loader expands `var` to every column)
+F01164	terminal	const	Num	-	A22	0	the constant placeholder ?
+F01165	terminal	var	Var	-	A31	0	one terminal per input column (the loader expands `var` to every column)
+F01166	terminal	const	Num	-	A31	0	the constant placeholder ?
+F01167	terminal	var	Var	-	M22	0	one terminal per input column (the loader expands `var` to every column)
+F01168	terminal	const	Num	-	M22	0	the constant placeholder ?
+F01169	terminal	var	Var	-	M31	0	one terminal per input column (the loader expands `var` to every column)
+F01170	terminal	const	Num	-	M31	0	the constant placeholder ?
+F01171	terminal	var	Var	-	ROOT	0	one terminal per input column (the loader expands `var` to every column)
+F01172	terminal	const	Num	-	ROOT	0	the constant placeholder ?
+F01173	absent	div	Div	-	-	0	raw division: its domain differs from pdiv; a protected form is never mapped to a raw one
+F01174	absent	sqrt	Sqrt	-	-	0	raw square root: not in the alphabet, psqrt is
+F01175	absent	log	Log	-	-	0	raw logarithm: not in the alphabet, plog is
+F01176	absent	exp	Exp	-	-	0	raw exponential: not in the alphabet, pexp is
+F01177	absent	inv	Inv	-	-	0	raw inverse: not in the alphabet, pinv is
+F01178	absent	asin	Asin	-	-	0	raw arcsine: not in the alphabet, pasin is
+F01179	absent	acos	Acos	-	-	0	raw arccosine: not in the alphabet, pacos is
+F01180	absent	pow	Pow	-	-	0	binary power: wide() has no Pow; a literal exponent 2 or 3 canonicalises to pow2/pow3, any other exponent is not offered (never typed by the binary merge rule: it would count the exponent as an arm)
+F01181	absent	select3	Select3	-	-	0	ternary select: a WGSL-kingdom row, not in the SR alphabet
+F01182	canon	pow_2	Pow	-	-	0	Pow(x, 2) with the literal 2 becomes pow2(x), order preserved (canonicalises to pow2)
+F01183	canon	pow_3	Pow	-	-	0	Pow(x, 3) with the literal 3 becomes pow3(x), order preserved (canonicalises to pow3)

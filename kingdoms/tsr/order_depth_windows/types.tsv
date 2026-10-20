@@ -1,0 +1,35 @@
+ref	dual	shape	level	family	b	c	order	root	meaning
+T001	P1.F	P1	F	-	1	1	1	no	upper bound: neither a sum nor a product, greatest arm order 1, single, stream order 1; at most 0 transcendentals on a path
+T002	P1.T1	P1	T1	-	1	1	1	no	upper bound: neither a sum nor a product, greatest arm order 1, single, stream order 1; at most 1 transcendental on a path
+T003	P1.T2	P1	T2	-	1	1	1	no	upper bound: neither a sum nor a product, greatest arm order 1, single, stream order 1; at most 2 transcendentals on a path
+T004	P2.F	P2	F	-	2	1	2	no	upper bound: neither a sum nor a product, greatest arm order 2, single, stream order 2; at most 0 transcendentals on a path
+T005	P2.T1	P2	T1	-	2	1	2	no	upper bound: neither a sum nor a product, greatest arm order 2, single, stream order 2; at most 1 transcendental on a path
+T006	P2.T2	P2	T2	-	2	1	2	no	upper bound: neither a sum nor a product, greatest arm order 2, single, stream order 2; at most 2 transcendentals on a path
+T007	A12.F	A12	F	A	1	2	2	no	upper bound: a sum, greatest arm order 1, shared, stream order 2; at most 0 transcendentals on a path
+T008	A12.T1	A12	T1	A	1	2	2	no	upper bound: a sum, greatest arm order 1, shared, stream order 2; at most 1 transcendental on a path
+T009	A12.T2	A12	T2	A	1	2	2	no	upper bound: a sum, greatest arm order 1, shared, stream order 2; at most 2 transcendentals on a path
+T010	A21.F	A21	F	A	2	1	2	no	upper bound: a sum, greatest arm order 2, single, stream order 2; at most 0 transcendentals on a path
+T011	A21.T1	A21	T1	A	2	1	2	no	upper bound: a sum, greatest arm order 2, single, stream order 2; at most 1 transcendental on a path
+T012	A21.T2	A21	T2	A	2	1	2	no	upper bound: a sum, greatest arm order 2, single, stream order 2; at most 2 transcendentals on a path
+T013	M12.F	M12	F	M	1	2	2	no	upper bound: a product, greatest arm order 1, shared, stream order 2; at most 0 transcendentals on a path
+T014	M12.T1	M12	T1	M	1	2	2	no	upper bound: a product, greatest arm order 1, shared, stream order 2; at most 1 transcendental on a path
+T015	M12.T2	M12	T2	M	1	2	2	no	upper bound: a product, greatest arm order 1, shared, stream order 2; at most 2 transcendentals on a path
+T016	M21.F	M21	F	M	2	1	2	no	upper bound: a product, greatest arm order 2, single, stream order 2; at most 0 transcendentals on a path
+T017	M21.T1	M21	T1	M	2	1	2	no	upper bound: a product, greatest arm order 2, single, stream order 2; at most 1 transcendental on a path
+T018	M21.T2	M21	T2	M	2	1	2	no	upper bound: a product, greatest arm order 2, single, stream order 2; at most 2 transcendentals on a path
+T019	P3.F	P3	F	-	3	1	3	no	upper bound: neither a sum nor a product, greatest arm order 3, single, stream order 3; at most 0 transcendentals on a path
+T020	P3.T1	P3	T1	-	3	1	3	no	upper bound: neither a sum nor a product, greatest arm order 3, single, stream order 3; at most 1 transcendental on a path
+T021	P3.T2	P3	T2	-	3	1	3	no	upper bound: neither a sum nor a product, greatest arm order 3, single, stream order 3; at most 2 transcendentals on a path
+T022	A22.F	A22	F	A	2	2	3	no	upper bound: a sum, greatest arm order 2, shared, stream order 3; at most 0 transcendentals on a path
+T023	A22.T1	A22	T1	A	2	2	3	no	upper bound: a sum, greatest arm order 2, shared, stream order 3; at most 1 transcendental on a path
+T024	A22.T2	A22	T2	A	2	2	3	no	upper bound: a sum, greatest arm order 2, shared, stream order 3; at most 2 transcendentals on a path
+T025	A31.F	A31	F	A	3	1	3	no	upper bound: a sum, greatest arm order 3, single, stream order 3; at most 0 transcendentals on a path
+T026	A31.T1	A31	T1	A	3	1	3	no	upper bound: a sum, greatest arm order 3, single, stream order 3; at most 1 transcendental on a path
+T027	A31.T2	A31	T2	A	3	1	3	no	upper bound: a sum, greatest arm order 3, single, stream order 3; at most 2 transcendentals on a path
+T028	M22.F	M22	F	M	2	2	3	no	upper bound: a product, greatest arm order 2, shared, stream order 3; at most 0 transcendentals on a path
+T029	M22.T1	M22	T1	M	2	2	3	no	upper bound: a product, greatest arm order 2, shared, stream order 3; at most 1 transcendental on a path
+T030	M22.T2	M22	T2	M	2	2	3	no	upper bound: a product, greatest arm order 2, shared, stream order 3; at most 2 transcendentals on a path
+T031	M31.F	M31	F	M	3	1	3	no	upper bound: a product, greatest arm order 3, single, stream order 3; at most 0 transcendentals on a path
+T032	M31.T1	M31	T1	M	3	1	3	no	upper bound: a product, greatest arm order 3, single, stream order 3; at most 1 transcendental on a path
+T033	M31.T2	M31	T2	M	3	1	3	no	upper bound: a product, greatest arm order 3, single, stream order 3; at most 2 transcendentals on a path
+T034	ROOT	-	-	-	-	-	-	yes	the root slot: any legal expression

@@ -1,0 +1,5 @@
+ref	dual	shape	level	family	b	c	order	root	meaning
+T001	F	-	F	-	-	-	-	no	at most 0 transcendentals on a path
+T002	T1	-	T1	-	-	-	-	no	at most 1 transcendental on a path
+T003	T2	-	T2	-	-	-	-	no	at most 2 transcendentals on a path
+T004	ROOT	-	-	-	-	-	-	yes	the root slot: any legal expression

@@ -148,3 +148,38 @@ The headline, in one line each:
 The one thing the spec did not foresee: at `n_genes = 3` with `gene_subsets`
 on, a refused gene does **not** kill its row. It rides along unscored, so
 typing accumulates dead weight rather than removing shapes from the population.
+
+## Generated tables for the typed-GEP kingdom (plan F1, 2026-10-20)
+
+`gen_tables.py` writes one folder per variant of `docs/PLAN_tsr_typed_gep.md`
+(`single`, `order`, `depth`, `order_depth`, `order_depth_windows`: arms A, B,
+E, C, F), each with `types.tsv`, `functions.tsv`, `TYPES.md`, `symbols.md`.
+`check_types.py` is the check of plan 2.6 and tests 3, 8, 9 and the section 3
+widths; both run with plain `python3 -I`.
+
+| variant | duals | function rows | with root twins | width N=8 / 17 / 32 |
+|---|---|---|---|---|
+| single | 1 | 18 | 18 | 47 / 101 / 191 |
+| order | 12 | 574 | 1,148 | 1,622 / 3,656 / 7,046 |
+| depth | 4 | 68 | 136 | 252 / 558 / 1,068 |
+| order_depth | 34 | 4,132 | 8,264 | 9,244 / 20,980 / 40,540 |
+| order_depth_windows | 34 | 4,047 | 8,094 | 9,244 / 20,980 / 40,540 |
+
+Choices where the plan was open:
+
+- `single` has no ROOT dual (the root is F, plan 2.9), so it has no twin rows.
+- Terminals are rows `var` and `const` per dual, ROOT included. `var` stands for
+  one terminal per input column; the loader expands it. Symbol counts at n
+  inputs are duals x (n + 1) terminals (170 for order_depth at n = 4).
+- Rows are in `wide()` order: add sub mul pdiv, then the 14 unaries; within an
+  operator, argument duals in type order; the root twins follow the function
+  rows. Refs are `T<nnn>` (types) and `F<nnnnn>` (rows) in that order.
+- Windows (`hi`) need an order ceiling: they bound the argument's order.
+- Every constructor `math_to_nodes` reads that is not in `wide()` is an `absent`
+  row (Div Sqrt Log Exp Inv Asin Acos Pow Select3); `Pow(x,2)` and `Pow(x,3)`
+  are `canon` rows. The check reads `gpu_eval.rs`, and phylu's `engine.rs` and
+  `order.rs` when they are present, and compares the sets.
+- The 9-node exhaustive run enumerates every tree and updates the engine's
+  recurrence node by node (cross-validated against the literal node-array ports
+  of `stream_order` and `t_depth` on 20,000 random trees); the runs up to 6
+  nodes and the random runs use the literal ports on the whole tree.

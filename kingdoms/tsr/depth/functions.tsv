@@ -1,0 +1,156 @@
+ref	class	instance	constructor	in	out	arity	note
+F00001	function	add	Add	F,F	F	2	
+F00002	function	add	Add	F,T1	T1	2	
+F00003	function	add	Add	F,T2	T2	2	
+F00004	function	add	Add	T1,F	T1	2	
+F00005	function	add	Add	T1,T1	T1	2	
+F00006	function	add	Add	T1,T2	T2	2	
+F00007	function	add	Add	T2,F	T2	2	
+F00008	function	add	Add	T2,T1	T2	2	
+F00009	function	add	Add	T2,T2	T2	2	
+F00010	function	sub	Sub	F,F	F	2	
+F00011	function	sub	Sub	F,T1	T1	2	
+F00012	function	sub	Sub	F,T2	T2	2	
+F00013	function	sub	Sub	T1,F	T1	2	
+F00014	function	sub	Sub	T1,T1	T1	2	
+F00015	function	sub	Sub	T1,T2	T2	2	
+F00016	function	sub	Sub	T2,F	T2	2	
+F00017	function	sub	Sub	T2,T1	T2	2	
+F00018	function	sub	Sub	T2,T2	T2	2	
+F00019	function	mul	Mul	F,F	F	2	
+F00020	function	mul	Mul	F,T1	T1	2	
+F00021	function	mul	Mul	F,T2	T2	2	
+F00022	function	mul	Mul	T1,F	T1	2	
+F00023	function	mul	Mul	T1,T1	T1	2	
+F00024	function	mul	Mul	T1,T2	T2	2	
+F00025	function	mul	Mul	T2,F	T2	2	
+F00026	function	mul	Mul	T2,T1	T2	2	
+F00027	function	mul	Mul	T2,T2	T2	2	
+F00028	function	pdiv	ProtectedDiv	F,F	F	2	
+F00029	function	pdiv	ProtectedDiv	F,T1	T1	2	
+F00030	function	pdiv	ProtectedDiv	F,T2	T2	2	
+F00031	function	pdiv	ProtectedDiv	T1,F	T1	2	
+F00032	function	pdiv	ProtectedDiv	T1,T1	T1	2	
+F00033	function	pdiv	ProtectedDiv	T1,T2	T2	2	
+F00034	function	pdiv	ProtectedDiv	T2,F	T2	2	
+F00035	function	pdiv	ProtectedDiv	T2,T1	T2	2	
+F00036	function	pdiv	ProtectedDiv	T2,T2	T2	2	
+F00037	function	sin	Sin	F	T1	1	
+F00038	function	sin	Sin	T1	T2	1	
+F00039	function	cos	Cos	F	T1	1	
+F00040	function	cos	Cos	T1	T2	1	
+F00041	function	tanh	Tanh	F	T1	1	
+F00042	function	tanh	Tanh	T1	T2	1	
+F00043	function	psqrt	ProtectedSqrt	F	T1	1	
+F00044	function	psqrt	ProtectedSqrt	T1	T2	1	
+F00045	function	plog	ProtectedLog	F	T1	1	
+F00046	function	plog	ProtectedLog	T1	T2	1	
+F00047	function	pexp	ProtectedExp	F	T1	1	
+F00048	function	pexp	ProtectedExp	T1	T2	1	
+F00049	function	neg	Neg	F	F	1	
+F00050	function	neg	Neg	T1	T1	1	
+F00051	function	neg	Neg	T2	T2	1	
+F00052	function	abs	Abs	F	T1	1	
+F00053	function	abs	Abs	T1	T2	1	
+F00054	function	pow2	Pow2	F	F	1	
+F00055	function	pow2	Pow2	T1	T1	1	
+F00056	function	pow2	Pow2	T2	T2	1	
+F00057	function	pow3	Pow3	F	F	1	
+F00058	function	pow3	Pow3	T1	T1	1	
+F00059	function	pow3	Pow3	T2	T2	1	
+F00060	function	pinv	ProtectedInv	F	F	1	
+F00061	function	pinv	ProtectedInv	T1	T1	1	
+F00062	function	pinv	ProtectedInv	T2	T2	1	
+F00063	function	tan	Tan	F	T1	1	
+F00064	function	tan	Tan	T1	T2	1	
+F00065	function	pasin	ProtectedAsin	F	T1	1	
+F00066	function	pasin	ProtectedAsin	T1	T2	1	
+F00067	function	pacos	ProtectedAcos	F	T1	1	
+F00068	function	pacos	ProtectedAcos	T1	T2	1	
+F00069	root	add	Add	F,F	ROOT	2	twin of the function row, output ROOT
+F00070	root	add	Add	F,T1	ROOT	2	twin of the function row, output ROOT
+F00071	root	add	Add	F,T2	ROOT	2	twin of the function row, output ROOT
+F00072	root	add	Add	T1,F	ROOT	2	twin of the function row, output ROOT
+F00073	root	add	Add	T1,T1	ROOT	2	twin of the function row, output ROOT
+F00074	root	add	Add	T1,T2	ROOT	2	twin of the function row, output ROOT
+F00075	root	add	Add	T2,F	ROOT	2	twin of the function row, output ROOT
+F00076	root	add	Add	T2,T1	ROOT	2	twin of the function row, output ROOT
+F00077	root	add	Add	T2,T2	ROOT	2	twin of the function row, output ROOT
+F00078	root	sub	Sub	F,F	ROOT	2	twin of the function row, output ROOT
+F00079	root	sub	Sub	F,T1	ROOT	2	twin of the function row, output ROOT
+F00080	root	sub	Sub	F,T2	ROOT	2	twin of the function row, output ROOT
+F00081	root	sub	Sub	T1,F	ROOT	2	twin of the function row, output ROOT
+F00082	root	sub	Sub	T1,T1	ROOT	2	twin of the function row, output ROOT
+F00083	root	sub	Sub	T1,T2	ROOT	2	twin of the function row, output ROOT
+F00084	root	sub	Sub	T2,F	ROOT	2	twin of the function row, output ROOT
+F00085	root	sub	Sub	T2,T1	ROOT	2	twin of the function row, output ROOT
+F00086	root	sub	Sub	T2,T2	ROOT	2	twin of the function row, output ROOT
+F00087	root	mul	Mul	F,F	ROOT	2	twin of the function row, output ROOT
+F00088	root	mul	Mul	F,T1	ROOT	2	twin of the function row, output ROOT
+F00089	root	mul	Mul	F,T2	ROOT	2	twin of the function row, output ROOT
+F00090	root	mul	Mul	T1,F	ROOT	2	twin of the function row, output ROOT
+F00091	root	mul	Mul	T1,T1	ROOT	2	twin of the function row, output ROOT
+F00092	root	mul	Mul	T1,T2	ROOT	2	twin of the function row, output ROOT
+F00093	root	mul	Mul	T2,F	ROOT	2	twin of the function row, output ROOT
+F00094	root	mul	Mul	T2,T1	ROOT	2	twin of the function row, output ROOT
+F00095	root	mul	Mul	T2,T2	ROOT	2	twin of the function row, output ROOT
+F00096	root	pdiv	ProtectedDiv	F,F	ROOT	2	twin of the function row, output ROOT
+F00097	root	pdiv	ProtectedDiv	F,T1	ROOT	2	twin of the function row, output ROOT
+F00098	root	pdiv	ProtectedDiv	F,T2	ROOT	2	twin of the function row, output ROOT
+F00099	root	pdiv	ProtectedDiv	T1,F	ROOT	2	twin of the function row, output ROOT
+F00100	root	pdiv	ProtectedDiv	T1,T1	ROOT	2	twin of the function row, output ROOT
+F00101	root	pdiv	ProtectedDiv	T1,T2	ROOT	2	twin of the function row, output ROOT
+F00102	root	pdiv	ProtectedDiv	T2,F	ROOT	2	twin of the function row, output ROOT
+F00103	root	pdiv	ProtectedDiv	T2,T1	ROOT	2	twin of the function row, output ROOT
+F00104	root	pdiv	ProtectedDiv	T2,T2	ROOT	2	twin of the function row, output ROOT
+F00105	root	sin	Sin	F	ROOT	1	twin of the function row, output ROOT
+F00106	root	sin	Sin	T1	ROOT	1	twin of the function row, output ROOT
+F00107	root	cos	Cos	F	ROOT	1	twin of the function row, output ROOT
+F00108	root	cos	Cos	T1	ROOT	1	twin of the function row, output ROOT
+F00109	root	tanh	Tanh	F	ROOT	1	twin of the function row, output ROOT
+F00110	root	tanh	Tanh	T1	ROOT	1	twin of the function row, output ROOT
+F00111	root	psqrt	ProtectedSqrt	F	ROOT	1	twin of the function row, output ROOT
+F00112	root	psqrt	ProtectedSqrt	T1	ROOT	1	twin of the function row, output ROOT
+F00113	root	plog	ProtectedLog	F	ROOT	1	twin of the function row, output ROOT
+F00114	root	plog	ProtectedLog	T1	ROOT	1	twin of the function row, output ROOT
+F00115	root	pexp	ProtectedExp	F	ROOT	1	twin of the function row, output ROOT
+F00116	root	pexp	ProtectedExp	T1	ROOT	1	twin of the function row, output ROOT
+F00117	root	neg	Neg	F	ROOT	1	twin of the function row, output ROOT
+F00118	root	neg	Neg	T1	ROOT	1	twin of the function row, output ROOT
+F00119	root	neg	Neg	T2	ROOT	1	twin of the function row, output ROOT
+F00120	root	abs	Abs	F	ROOT	1	twin of the function row, output ROOT
+F00121	root	abs	Abs	T1	ROOT	1	twin of the function row, output ROOT
+F00122	root	pow2	Pow2	F	ROOT	1	twin of the function row, output ROOT
+F00123	root	pow2	Pow2	T1	ROOT	1	twin of the function row, output ROOT
+F00124	root	pow2	Pow2	T2	ROOT	1	twin of the function row, output ROOT
+F00125	root	pow3	Pow3	F	ROOT	1	twin of the function row, output ROOT
+F00126	root	pow3	Pow3	T1	ROOT	1	twin of the function row, output ROOT
+F00127	root	pow3	Pow3	T2	ROOT	1	twin of the function row, output ROOT
+F00128	root	pinv	ProtectedInv	F	ROOT	1	twin of the function row, output ROOT
+F00129	root	pinv	ProtectedInv	T1	ROOT	1	twin of the function row, output ROOT
+F00130	root	pinv	ProtectedInv	T2	ROOT	1	twin of the function row, output ROOT
+F00131	root	tan	Tan	F	ROOT	1	twin of the function row, output ROOT
+F00132	root	tan	Tan	T1	ROOT	1	twin of the function row, output ROOT
+F00133	root	pasin	ProtectedAsin	F	ROOT	1	twin of the function row, output ROOT
+F00134	root	pasin	ProtectedAsin	T1	ROOT	1	twin of the function row, output ROOT
+F00135	root	pacos	ProtectedAcos	F	ROOT	1	twin of the function row, output ROOT
+F00136	root	pacos	ProtectedAcos	T1	ROOT	1	twin of the function row, output ROOT
+F00137	terminal	var	Var	-	F	0	one terminal per input column (the loader expands `var` to every column)
+F00138	terminal	const	Num	-	F	0	the constant placeholder ?
+F00139	terminal	var	Var	-	T1	0	one terminal per input column (the loader expands `var` to every column)
+F00140	terminal	const	Num	-	T1	0	the constant placeholder ?
+F00141	terminal	var	Var	-	T2	0	one terminal per input column (the loader expands `var` to every column)
+F00142	terminal	const	Num	-	T2	0	the constant placeholder ?
+F00143	terminal	var	Var	-	ROOT	0	one terminal per input column (the loader expands `var` to every column)
+F00144	terminal	const	Num	-	ROOT	0	the constant placeholder ?
+F00145	absent	div	Div	-	-	0	raw division: its domain differs from pdiv; a protected form is never mapped to a raw one
+F00146	absent	sqrt	Sqrt	-	-	0	raw square root: not in the alphabet, psqrt is
+F00147	absent	log	Log	-	-	0	raw logarithm: not in the alphabet, plog is
+F00148	absent	exp	Exp	-	-	0	raw exponential: not in the alphabet, pexp is
+F00149	absent	inv	Inv	-	-	0	raw inverse: not in the alphabet, pinv is
+F00150	absent	asin	Asin	-	-	0	raw arcsine: not in the alphabet, pasin is
+F00151	absent	acos	Acos	-	-	0	raw arccosine: not in the alphabet, pacos is
+F00152	absent	pow	Pow	-	-	0	binary power: wide() has no Pow; a literal exponent 2 or 3 canonicalises to pow2/pow3, any other exponent is not offered (never typed by the binary merge rule: it would count the exponent as an arm)
+F00153	absent	select3	Select3	-	-	0	ternary select: a WGSL-kingdom row, not in the SR alphabet
+F00154	canon	pow_2	Pow	-	-	0	Pow(x, 2) with the literal 2 becomes pow2(x), order preserved (canonicalises to pow2)
+F00155	canon	pow_3	Pow	-	-	0	Pow(x, 3) with the literal 3 becomes pow3(x), order preserved (canonicalises to pow3)
