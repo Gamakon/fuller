@@ -953,7 +953,7 @@ mod device {
                         // Timestamp queries when the adapter has them: a pass can
                         // then be timed on the GPU (phylu's decode pass study;
                         // `docs/PLAN_wgsl_superopt.md` task 1). Nothing else changes.
-                        required_features: adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SHADER_F16),
+                        required_features: adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SHADER_F16 | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM),
                         // The adapter's real limits, not wgpu's portable
                         // defaults: the default 128 MiB storage binding is
                         // smaller than one generation's prediction buffer
