@@ -34,6 +34,7 @@ pub mod expr;
 pub mod extract;
 pub mod extract_dag;
 pub mod homeotic;
+pub mod infix;
 pub mod population_dag;
 pub mod geneframe;
 pub mod tsr_kingdom;
