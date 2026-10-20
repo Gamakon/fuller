@@ -100,6 +100,9 @@ impl WgslKingdom {
         }
         let mut k = self.clone();
         let base = k.duals.len();
+        if let Err(e) = Ty::check_dual_count("wgsl+aggregates", base + found.len(), Ty::MAX_WGSL_DUALS) {
+            panic!("{e}");
+        }
         for (i, (slot, (shape, form))) in found.iter().enumerate() {
             let index = u16::try_from(base + i).expect("fewer than 65,536 duals");
             let lanes = if let Shape::Matrix { cols, rows, .. } = shape { cols * rows } else { 0 };

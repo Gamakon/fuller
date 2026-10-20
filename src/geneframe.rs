@@ -153,7 +153,7 @@ impl Ty {
     pub fn code(self) -> u32 {
         match self {
             Ty::Wgsl(i) => {
-                debug_assert!(u32::from(i) < Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE, "Wgsl({i}) is past its code range and would read back as Tsr");
+                assert!(usize::from(i) < Ty::MAX_WGSL_DUALS, "our software has a bug: Wgsl({i}) is past its {} codes and would read back as Tsr", Ty::MAX_WGSL_DUALS);
                 Ty::TABLE_CODE_BASE + u32::from(i)
             }
             Ty::Tsr(i) => Ty::TSR_CODE_BASE + u32::from(i),
@@ -171,7 +171,23 @@ impl Ty {
 
     /// The first code of the TSR family; the WGSL family owns
     /// `TABLE_CODE_BASE..TSR_CODE_BASE` (4,096 duals).
-    pub const TSR_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + 4096;
+    pub const TSR_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + Ty::MAX_WGSL_DUALS as u32;
+
+    /// The most duals a WGSL kingdom may number: its code range
+    /// `TABLE_CODE_BASE..TSR_CODE_BASE`.
+    pub const MAX_WGSL_DUALS: usize = 4096;
+
+    /// The most duals a TSR kingdom may number: its index is a `u16`.
+    pub const MAX_TSR_DUALS: usize = u16::MAX as usize + 1;
+
+    /// Load-time guard for a kingdom's dual numbering: `Err` when `count`
+    /// duals exceed the `max` codes of its range, in every build.
+    pub fn check_dual_count(kingdom: &str, count: usize, max: usize) -> Result<(), String> {
+        if count > max {
+            return Err(format!("our software has a bug: kingdom {kingdom} has {count} duals, more than its {max} codes"));
+        }
+        Ok(())
+    }
 
     /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
     /// offset from [`Ty::TABLE_CODE_BASE`], a TSR dual by offset from
@@ -795,5 +811,19 @@ mod tests {
         assert!(Ty::Tsr(0) > Ty::Wgsl(u16::MAX), "ordered after the WGSL family");
         // The depth ladder is unmoved by the numbering.
         assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
+    }
+
+    #[test]
+    fn a_kingdom_with_too_many_duals_fails_loudly_in_every_build() {
+        assert!(Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS, Ty::MAX_WGSL_DUALS).is_ok());
+        let e = Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS + 1, Ty::MAX_WGSL_DUALS).unwrap_err();
+        assert_eq!(e, "our software has a bug: kingdom k has 4097 duals, more than its 4096 codes");
+        assert_eq!(Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE, Ty::MAX_WGSL_DUALS as u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "our software has a bug: Wgsl(4096)")]
+    fn code_of_an_out_of_range_wgsl_dual_panics_in_every_build() {
+        let _ = Ty::Wgsl(4096).code();
     }
 }

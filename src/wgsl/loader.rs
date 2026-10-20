@@ -197,7 +197,9 @@ pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
         return Err(format!("types.tsv header is {header:?}, want {want:?}"));
     }
     let mut out = Vec::new();
-    for (n, line) in lines.enumerate() {
+    let lines: Vec<&str> = lines.collect();
+    Ty::check_dual_count("wgsl", lines.len(), Ty::MAX_WGSL_DUALS)?;
+    for (n, line) in lines.into_iter().enumerate() {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() != 11 {
             return Err(format!("line {}: {} fields, want 11", n + 2, f.len()));
@@ -658,6 +660,20 @@ pub fn instantiate(table: &FunctionTable, duals: Vec<WgslDual>) -> WgslKingdom {
 mod tests {
     use super::*;
     use crate::wgsl::render::Tree;
+
+    /// A types table with one dual past the WGSL code range is a loud error;
+    /// the shipped tables, safewgsl the largest, load.
+    #[test]
+    fn a_types_table_with_one_dual_too_many_fails_loudly() {
+        let header = "ref\tdual\tslot\tform\tlanes\tfallback\tfallback_bits\tfallback_noop\tfallback_elem\tmeaning\tliteral\n";
+        let row = |n: usize| format!("T{n}\td{n}.f\td{n}\tf\t0\t-\t0\t0\t0\tm\t-\n");
+        let table = |n: usize| (0..n).fold(header.to_string(), |t, i| t + &row(i));
+        assert_eq!(parse_duals(&table(Ty::MAX_WGSL_DUALS)).unwrap().len(), Ty::MAX_WGSL_DUALS);
+        let e = parse_duals(&table(Ty::MAX_WGSL_DUALS + 1)).unwrap_err();
+        assert!(e.contains("our software has a bug: kingdom wgsl has 4097 duals, more than its 4096 codes"), "{e}");
+        assert!(WgslKingdom::load_safe().duals.len() <= Ty::MAX_WGSL_DUALS);
+        assert!(WgslKingdom::load().duals.len() <= Ty::MAX_WGSL_DUALS);
+    }
 
     /// THE LITERAL COLUMN PARSES AND CANONICALISES: `-` is none, a range is an
     /// integer range (a real range on f32), a set is sorted; canonical rounds

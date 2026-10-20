@@ -144,9 +144,7 @@ impl TsrKingdom {
             }
             duals.push(TsrDual { dual: f[1].to_string(), root: f[8] == "yes" });
         }
-        if u16::try_from(duals.len()).is_err() {
-            return Err(format!("{}: {} duals do not fit Ty::Tsr(u16)", variant.dir(), duals.len()));
-        }
+        Ty::check_dual_count(variant.dir(), duals.len(), Ty::MAX_TSR_DUALS)?;
         let ty_of = |name: &str| -> Result<Ty, String> {
             duals
                 .iter()
