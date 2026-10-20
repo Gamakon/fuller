@@ -457,4 +457,13 @@ mod tests {
         assert_eq!(standard_directives(&with).lines().count(), with.lines().count());
         crate::wgsl::target::Target::recorded().validate(&m, &with).expect("valid with the subgroup capability");
     }
+
+    /// The device target has the 16-bit normalised storage texture formats (wgpu's TEXTURE_FORMAT_16BIT_NORM): 570 harvest
+    /// kernels that read or write an r16snorm texture validate.
+    #[test]
+    fn a_sixteen_bit_normalised_storage_texture_validates_on_the_recorded_target() {
+        let text = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@group(1) @binding(0) var t: texture_storage_1d<r16snorm, read>;\n@compute @workgroup_size(1)\nfn main() { out[0] = textureDimensions(t); }\n";
+        let m = parse(text).expect("parses");
+        crate::wgsl::target::Target::recorded().validate(&m, text).unwrap_or_else(|e| panic!("{e}"));
+    }
 }
