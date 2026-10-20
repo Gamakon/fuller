@@ -104,6 +104,11 @@ pub enum Ty {
     /// family, so a new dual is a table row, not a variant; its device code
     /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]). Appended last.
     Wgsl(u16),
+    /// A dual `shape.level` (or the root dual `ROOT`) of the TSR kingdom: the
+    /// index of its row in `kingdoms/tsr/<variant>/types.tsv` (ref `T001` →
+    /// 0). Its device code is [`Ty::TSR_CODE_BASE`] + the index. Appended
+    /// after [`Ty::Wgsl`].
+    Tsr(u16),
 }
 
 impl Ty {
@@ -143,10 +148,15 @@ impl Ty {
     /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
     /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables). A base variant's code is its declaration index from 0
     /// (what `ty as u32` was before the payload variant made the cast
-    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row.
+    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row,
+    /// a TSR dual's [`Ty::TSR_CODE_BASE`] + its row.
     pub fn code(self) -> u32 {
         match self {
-            Ty::Wgsl(i) => Ty::TABLE_CODE_BASE + u32::from(i),
+            Ty::Wgsl(i) => {
+                debug_assert!(u32::from(i) < Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE, "Wgsl({i}) is past its code range and would read back as Tsr");
+                Ty::TABLE_CODE_BASE + u32::from(i)
+            }
+            Ty::Tsr(i) => Ty::TSR_CODE_BASE + u32::from(i),
             base => Ty::ALL
                 .iter()
                 .position(|t| *t == base)
@@ -159,9 +169,17 @@ impl Ty {
     /// below it.
     pub const TABLE_CODE_BASE: u32 = 256;
 
+    /// The first code of the TSR family; the WGSL family owns
+    /// `TABLE_CODE_BASE..TSR_CODE_BASE` (4,096 duals).
+    pub const TSR_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + 4096;
+
     /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
-    /// offset from [`Ty::TABLE_CODE_BASE`].
+    /// offset from [`Ty::TABLE_CODE_BASE`], a TSR dual by offset from
+    /// [`Ty::TSR_CODE_BASE`].
     pub fn from_code(code: u32) -> Option<Ty> {
+        if code >= Ty::TSR_CODE_BASE {
+            return u16::try_from(code - Ty::TSR_CODE_BASE).ok().map(Ty::Tsr);
+        }
         if code >= Ty::TABLE_CODE_BASE {
             return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().map(Ty::Wgsl);
         }
@@ -762,6 +780,19 @@ mod tests {
         assert_eq!(codes.len(), Ty::ALL.len(), "codes are unique");
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
         assert_eq!(Ty::from_code(Ty::ALL.len() as u32), None);
+        // Both table-defined ranges round-trip in full and do not overlap.
+        assert_eq!(Ty::TSR_CODE_BASE, 4352);
+        for i in 0..(Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE) as u16 {
+            assert_eq!(Ty::from_code(Ty::Wgsl(i).code()), Some(Ty::Wgsl(i)));
+        }
+        for i in 0..=u16::MAX {
+            assert_eq!(Ty::from_code(Ty::Tsr(i).code()), Some(Ty::Tsr(i)));
+        }
+        assert_eq!(Ty::Tsr(0).code(), 4352);
+        assert_eq!(Ty::from_code(4351), Some(Ty::Wgsl(4095)));
+        assert_eq!(Ty::from_code(4352), Some(Ty::Tsr(0)));
+        assert_eq!(Ty::from_code(Ty::TSR_CODE_BASE + 65536), None);
+        assert!(Ty::Tsr(0) > Ty::Wgsl(u16::MAX), "ordered after the WGSL family");
         // The depth ladder is unmoved by the numbering.
         assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
     }
