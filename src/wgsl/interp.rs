@@ -31,12 +31,19 @@
 //! device test measures); `round` is to nearest even; `min`/`max` return
 //! the non-NaN operand; float division and the transcendentals are IEEE.
 //! Indexing follows the bounds-check policy wgpu applies on this platform,
-//! `ReadZeroSkipWrite` (wgpu-hal 0.21 `metal/device.rs`, runtime checks
-//! on): an out-of-range load reads zero, an out-of-range store is skipped.
+//! naga's `Restrict` (wgpu-hal 30 `metal/device.rs`, runtime checks on; the
+//! MSL writer emits `metal::min(unsigned(index), len - 1)`; the sources are
+//! read in `tests/runtime_bounds_checks.rs`): an out-of-range load reads the
+//! LAST element and an out-of-range store writes it.
 //! Where Metal differs from the spec (fast-math on NaN), the device run of
 //! the ORIGINAL kernel is the authority and the difference is a finding.
 
 use std::collections::BTreeMap;
+
+/// naga's `Restrict`: `min(index, len - 1)`; None for an empty array.
+fn restrict(i: usize, len: usize) -> Option<usize> {
+    len.checked_sub(1).map(|last| i.min(last))
+}
 
 use naga::{Expression, Function, Module, Statement, TypeInner};
 
@@ -657,9 +664,10 @@ impl<'a> Interp<'a> {
         };
         for &i in &place.steps {
             cur = match cur {
-                Value::Vec(items) => match items.get(i) {
+                Value::Vec(items) => match restrict(i, items.len()).and_then(|r| items.get(r)) {
                     Some(v) => v,
-                    // ReadZeroSkipWrite: an out-of-range read is zero.
+                    // Restrict: an out-of-range read is the last element; only an empty array has none (WebGPU
+                    // forbids a zero-size binding), and reads the zero of its kind.
                     None => return Ok(items.first().map(Value::zero_like).unwrap_or(Value::F32(0.0))),
                 },
                 other => return Err(format!("interp: indexing into {other:?}")),
@@ -676,9 +684,9 @@ impl<'a> Interp<'a> {
         let mut cur = cell;
         for &i in &place.steps {
             cur = match cur {
-                Value::Vec(items) => match items.get_mut(i) {
+                Value::Vec(items) => match restrict(i, items.len()).and_then(|r| items.get_mut(r)) {
                     Some(v) => v,
-                    // ReadZeroSkipWrite: an out-of-range store is skipped.
+                    // Restrict: an out-of-range store writes the last element; an empty array has none.
                     None => return Ok(()),
                 },
                 other => return Err(format!("interp: indexing into {other:?}")),
@@ -1455,8 +1463,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     /// `||` and `&&` give WGSL's values with the guarded read
     /// `j == 0u || xs[j - 1u] < 2.0` and its dual: xs = [1, 3, 1, 3], the
-    /// `||` 1 1 0 1, the `&&` 0 1 0 1. (This interpreter reads zero past
-    /// a buffer, so an unguarded read is no error here; the right side is
+    /// `||` 1 1 0 1, the `&&` 0 1 0 1. (This interpreter restricts an index
+    /// past a buffer to the last element, so an unguarded read is no error here; the right side is
     /// evaluated only when the left does not decide, as in the CPU
     /// executor, where it is: cpu::tests::logical_or_and_and_short_circuit.)
     #[test]
@@ -1481,7 +1489,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     #[test]
-    fn out_of_range_indexing_reads_zero_and_skips_the_write() {
+    fn out_of_range_indexing_restricts_to_the_last_element_for_loads_and_stores() {
         let src = r#"
 @group(0) @binding(0) var<storage, read> xs: array<f32>;
 @group(0) @binding(1) var<storage, read_write> out: array<f32>;
@@ -1492,18 +1500,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     out[i + 5u] = 7.0;
 }
 "#;
-        // ReadZeroSkipWrite: xs[3] out of range reads 0 → out[1] = 1;
-        // out[6] out of range: skipped, out stays length 2.
+        // Restrict: xs[3] out of range is xs[2] = 30 → out[1] = 31; out[6] out of range is out[1] (the last
+        // element of a length-2 buffer) → out[1] = 7.
         let mut m = Memory::default();
         m.set("buffer.xs", f32s(&[10.0, 20.0, 30.0]));
         m.set("buffer.out", f32s(&[0.0, 0.0]));
         let m = run(src, m, 1).unwrap();
-        assert_eq!(out_f32(&m, "buffer.out"), vec![0.0, 1.0]);
+        assert_eq!(out_f32(&m, "buffer.out"), vec![0.0, 7.0]);
         let mut m = Memory::default();
         m.set("buffer.xs", f32s(&[10.0, 20.0, 30.0]));
         m.set("buffer.out", f32s(&[0.0, 0.0]));
         let m = run(src, m, 0).unwrap();
-        assert_eq!(out_f32(&m, "buffer.out"), vec![31.0, 0.0]);
+        assert_eq!(out_f32(&m, "buffer.out"), vec![31.0, 7.0]);
     }
 
     #[test]

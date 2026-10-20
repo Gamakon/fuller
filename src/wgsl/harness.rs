@@ -2308,9 +2308,17 @@ pub struct HostIds {
     pub entry: usize,
 }
 
+/// The byte offset of word `min(index, words - 1)` of a binding of `len` bytes; None when it holds no whole word.
+fn restricted_word(len: usize, index: u32) -> Option<usize> {
+    (len / 4).checked_sub(1).map(|last| (index as usize).min(last) * 4)
+}
+
 /// The buffers bound to one dispatch, by binding number, under wgpu's
-/// runtime bounds checks (`ReadZeroSkipWrite`): a load out of range reads
-/// zero, a store out of range or to a read-only binding is skipped.
+/// runtime bounds checks on the device (wgpu 30 on Metal: naga's `Restrict`,
+/// the index is `min(index, len - 1)`; `tests/runtime_bounds_checks.rs`): a load
+/// out of range reads the LAST element of the binding and a store out of range
+/// writes it; a store to a read-only binding is skipped (WGSL forbids one). An
+/// empty binding has no element: a load is zero, a store is skipped.
 pub struct HostMemory {
     slots: Vec<(u32, Vec<u8>, bool)>,
 }
@@ -2322,8 +2330,8 @@ impl HostMemory {
 
     pub fn load_u32(&self, binding: u32, index: u32) -> u32 {
         let Some((_, b, _)) = self.slot(binding) else { return 0 };
-        let at = index as usize * 4;
-        b.get(at..at + 4).map_or(0, |w| u32::from_le_bytes(w.try_into().expect("4 bytes")))
+        let Some(at) = restricted_word(b.len(), index) else { return 0 };
+        u32::from_le_bytes(b[at..at + 4].try_into().expect("4 bytes"))
     }
 
     pub fn load_f32(&self, binding: u32, index: u32) -> f32 {
@@ -2332,8 +2340,10 @@ impl HostMemory {
 
     pub fn store_u32(&mut self, binding: u32, index: u32, v: u32) {
         let Some((_, b, writable)) = self.slots.iter_mut().find(|s| s.0 == binding) else { return };
-        let at = index as usize * 4;
-        if *writable && at + 4 <= b.len() {
+        if !*writable {
+            return;
+        }
+        if let Some(at) = restricted_word(b.len(), index) {
             b[at..at + 4].copy_from_slice(&v.to_le_bytes());
         }
     }

@@ -1,5 +1,5 @@
 {
- "what": "out-of-range load reads zero, out-of-range store is skipped (wgpu ReadZeroSkipWrite on Metal)",
+ "what": "out-of-range load reads the last element, out-of-range store writes it (wgpu 30 on Metal: naga Restrict)",
  "interpreter": true,
  "inputs": {
   "buffer.xs": {
@@ -23,8 +23,8 @@
    "f32": [
     21.0,
     31.0,
-    1.0,
-    2.0
+    31.0,
+    33.0
    ]
   }
  }

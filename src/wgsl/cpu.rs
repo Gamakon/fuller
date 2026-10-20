@@ -4,8 +4,10 @@
 //! resume together), so workgroup memory is shared as on the device. It runs
 //! the kernel's naga module directly, with WGSL's value semantics (integer
 //! arithmetic wraps, `x / 0 == x`, `x % 0 == 0`, shift counts masked to five
-//! bits, floats IEEE) and wgpu's bounds policy (`ReadZeroSkipWrite`: a load
-//! past a buffer reads zero, a store past it is skipped). It records every
+//! bits, floats IEEE) and the device's bounds policy (wgpu 30 on Metal:
+//! naga's `Restrict`, `metal::min(unsigned(index), len - 1)`: an index past
+//! an array, vector or matrix is the LAST element, for a load and for a store;
+//! `tests/runtime_bounds_checks.rs` has the sources). It records every
 //! store and atomic to a storage buffer by invocation, so a test can
 //! enumerate each invocation's writes (the exhaustive small-domain check of
 //! the write-set proof, `safety.rs`) and compare outputs exactly (the
@@ -801,28 +803,40 @@ fn convert(v: &Val, kind: ScalarKind, bitcast: bool) -> Result<Val, String> {
     })
 }
 
-/// An element of a value at a path (a matrix's column; out of range: None).
+/// The index naga's `Restrict` policy uses: `min(unsigned(index), len - 1)`. An
+/// empty array has no element to restrict to (None).
+fn restrict(i: u32, len: usize) -> Option<usize> {
+    len.checked_sub(1).map(|last| (i as usize).min(last))
+}
+
+/// An element of a value at a path (a matrix's column), every index restricted to
+/// the value's length as the device does; None only for an empty array or a path
+/// into a scalar.
 fn get_path_val(v: &Val, path: &[u32]) -> Option<Val> {
     match (v, path.split_first()) {
         (_, None) => Some(v.clone()),
         (Val::M(cols), Some((c, rest))) => {
-            let col = Val::V(cols.get(*c as usize)?.iter().map(|x| Val::F(*x)).collect());
+            let col = Val::V(cols.get(restrict(*c, cols.len())?)?.iter().map(|x| Val::F(*x)).collect());
             get_path_val(&col, rest)
         }
-        (Val::V(x), Some((i, rest))) => get_path_val(x.get(*i as usize)?, rest),
+        (Val::V(x), Some((i, rest))) => get_path_val(x.get(restrict(*i, x.len())?)?, rest),
         _ => None,
     }
 }
 
-/// Store at a path; false when the path leaves the value (skipped).
-fn set_path(v: &mut Val, path: &[u32], new: Val) -> bool {
+/// Store at a path, every index restricted as a load's is. The path actually
+/// written (the indices after the restriction), or None when the path leaves the
+/// value (an empty array, a scalar).
+fn set_path(v: &mut Val, path: &[u32], new: Val) -> Option<Vec<u32>> {
     match (v, path.split_first()) {
         (v, None) => {
             *v = new;
-            true
+            Some(Vec::new())
         }
         (Val::M(cols), Some((c, rest))) => {
-            let Some(col) = cols.get_mut(*c as usize) else { return false };
+            let ci = restrict(*c, cols.len())?;
+            let col = cols.get_mut(ci)?;
+            let mut at = vec![ci as u32];
             match (rest, new) {
                 ([], Val::V(nv)) => {
                     for (x, y) in col.iter_mut().zip(nv) {
@@ -830,17 +844,24 @@ fn set_path(v: &mut Val, path: &[u32], new: Val) -> bool {
                             *x = f;
                         }
                     }
-                    true
+                    Some(at)
                 }
-                ([r], Val::F(f)) => col.get_mut(*r as usize).map(|x| *x = f).is_some(),
-                _ => false,
+                ([r], Val::F(f)) => {
+                    let ri = restrict(*r, col.len())?;
+                    col[ri] = f;
+                    at.push(ri as u32);
+                    Some(at)
+                }
+                _ => None,
             }
         }
-        (Val::V(x), Some((i, rest))) => match x.get_mut(*i as usize) {
-            Some(e) => set_path(e, rest, new),
-            None => false,
-        },
-        _ => false,
+        (Val::V(x), Some((i, rest))) => {
+            let ii = restrict(*i, x.len())?;
+            let mut at = vec![ii as u32];
+            at.extend(set_path(&mut x[ii], rest, new)?);
+            Some(at)
+        }
+        _ => None,
     }
 }
 
@@ -981,13 +1002,14 @@ impl<'m> Machine<'m> {
                 _ => &self.globals[g],
             },
         };
-        // Past the end of an array: zero of the element (ReadZeroSkipWrite).
+        // Every index restricted to its array (the device's policy); only an EMPTY array has no element
+        // to restrict to (WebGPU forbids a zero-size binding), where the load is the zero of the element.
         match get_path_val(root, &p.path) {
             Some(v) => Ok(v),
             None => {
                 let ty = match &p.base {
                     Base::Global(g) => self.module.global_variables[*g].ty,
-                    Base::Local(_, _) => return Err("cpu: a local indexed out of range".into()),
+                    Base::Local(_, _) => return Err("cpu: a local array of no elements".into()),
                 };
                 self.zero_at(ty, &p.path)
             }
@@ -1027,8 +1049,9 @@ impl<'m> Machine<'m> {
                     }
                     _ => {
                         let root = self.globals.get_mut(g).ok_or("cpu: a binding")?;
-                        if set_path(root, &p.path, v) {
-                            self.writes.push(Write { binding: gv.name.clone().unwrap_or_default(), path: p.path.clone(), gid: inv.gid });
+                        // The write recorded is the cell written: the path after the restriction.
+                        if let Some(path) = set_path(root, &p.path, v) {
+                            self.writes.push(Write { binding: gv.name.clone().unwrap_or_default(), path, gid: inv.gid });
                         }
                     }
                 }
@@ -1606,7 +1629,7 @@ mod tests {
     }
 
     /// WGSL'S SHORT CIRCUIT: `j == 0u || best[j - 1u] < 2.0` reads no
-    /// best[j - 1u] at j 0 (an index past the local array is an error here),
+    /// best[j - 1u] at j 0 (were it read, the index 0xFFFFFFFF restricts to the last element),
     /// and its dual `j != 0u && best[j - 1u] < 2.0` neither; in a loop the
     /// right side is computed afresh each pass. best = [1, 3, 1, 3]: the
     /// `||` gives 1 1 0 1, the `&&` 0 1 0 1.
@@ -1628,14 +1651,15 @@ fn main() {
         let mut w = Vec::new();
         d.buffers["out"].words(&mut w);
         assert_eq!(w, vec![1, 1, 0, 1, 0, 1, 0, 1]);
-        // The guard is what keeps the read in range: without it the same
-        // read at j 0 is the out-of-range error.
+        // The guard is what keeps the read in range: without it the read at j 0 is best[0xFFFFFFFF], which the
+        // device restricts to the last element, 3.0 (not zero): `3.0 < 2.0` is false, so out[0] is 0 where the
+        // guarded `||` gave 1.
         let unguarded = text.replace("j == 0u || ", "").replace("j != 0u && ", "");
         let mut bufs = HashMap::new();
         bufs.insert("out".to_string(), Val::V(vec![Val::U(9); 8]));
-        match run_text(&unguarded, bufs, [1, 1, 1], 1_000_000) {
-            Err(e) => assert!(e.contains("out of range"), "{e}"),
-            Ok(_) => panic!("the unguarded read at j 0 ran"),
-        }
+        let d = run_text(&unguarded, bufs, [1, 1, 1], 1_000_000).unwrap();
+        let mut w = Vec::new();
+        d.buffers["out"].words(&mut w);
+        assert_eq!(w, vec![0, 1, 0, 1, 0, 1, 0, 1], "j 0 reads the last element, 3.0");
     }
 }
