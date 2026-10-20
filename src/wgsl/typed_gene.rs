@@ -418,4 +418,31 @@ mod tests {
         assert!(g.detail.contains("head rows"), "{}", g.detail);
         assert_eq!(kept, pools, "pools untouched on a refusal");
     }
+
+    /// THE SAVED GENOMES, RE-ENCODED (the 481 dumps of `popA2_g006j/karva`, `library_ep` and `safe96/karva`): each is
+    /// today's reading of its text (safe_karva's test), and each encodes into a rev-4 typed gene, expresses and renders
+    /// to the same text, naga-valid. Skipped when the (untracked) logs are absent.
+    #[test]
+    fn the_saved_genomes_round_trip_through_typed_genes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001");
+        let kingdom = WgslKingdom::load_safe();
+        let mut alphabets = Alphabets::default();
+        let (mut total, mut failures) = (0usize, Vec::new());
+        for (dumps, texts) in [("popA2_g006j/karva", "popA2_g006j/texts"), ("library_ep", "library_ep_texts"), ("safe96/karva", "gen0")] {
+            let Ok(entries) = std::fs::read_dir(root.join(dumps)) else { return };
+            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            files.sort();
+            for f in files {
+                let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                let text = std::fs::read_to_string(root.join(texts).join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{dumps}/{id}: its text: {e}"));
+                total += 1;
+                match round_trip(&mut alphabets, &kingdom, &text) {
+                    Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+                    other => failures.push(format!("{dumps}/{id}: {other:?}")),
+                }
+            }
+        }
+        println!("saved genomes: {} of {total} round trip through a typed gene", total - failures.len());
+        assert!(failures.is_empty(), "{} of {total}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
+    }
 }
