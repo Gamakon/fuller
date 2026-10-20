@@ -950,29 +950,43 @@ impl<'m> An<'m> {
         // SEVERAL FACTS AT ONCE, EACH TIMES A FACTOR: `lr * d + c` under `lr < r_rows` and `c < d` is
         // `d * (lr part) + (c part)`: a fact whose terms the form carries as one common multiple `m` (a
         // non-negative polynomial) bounds that part by `m * (-k)`, and facts over disjoint variables
-        // combine; the variables no fact covers are at their own bounds.
-        let mut covered: BTreeMap<Var, Poly> = BTreeMap::new();
-        let mut sum = f.k.clone();
-        // The facts over the most variables first (`lr + ctr < r_rows` before `lr < r_rows`).
-        let mut by_size: Vec<&Lin> = facts.iter().collect();
-        by_size.sort_by_key(|g| std::cmp::Reverse(g.t.len()));
-        for g in by_size {
+        // combine; the variables no fact covers are at their own bounds. A part may have several facts that
+        // bound it (`lr < r_rows` and `lr + r_off < d`), each a different bound, so every choice of disjoint
+        // facts is a candidate (the caller keeps the one that proves its claim).
+        let mut usable: Vec<(&Lin, Poly)> = Vec::new();
+        for g in facts {
             let Some((v0, c0)) = g.t.iter().next().and_then(|(v, c)| c.as_const().filter(|c| *c > 0).map(|c| (*v, c))) else { continue };
-            if g.t.keys().any(|v| covered.contains_key(v) || !f.t.contains_key(v)) {
+            if g.t.keys().any(|v| !f.t.contains_key(v)) {
                 continue;
             }
             let Some(m) = f.t[&v0].div_mono(&[], c0) else { continue };
             let consistent = g.t.iter().all(|(v, c)| c.as_const().is_some_and(|cv| cv > 0 && f.t[v] == m.scale(cv)));
-            if !consistent || !m.nonneg(&self.syms) {
-                continue;
-            }
-            sum = sum.add(&m.mul(&g.k.scale(-1)));
-            for v in g.t.keys() {
-                covered.insert(*v, m.clone());
+            if consistent && m.nonneg(&self.syms) {
+                usable.push((g, m));
             }
         }
-        if !covered.is_empty() {
-            let rest: BTreeMap<Var, Poly> = f.t.iter().filter(|(v, _)| !covered.contains_key(v)).map(|(v, c)| (*v, c.clone())).collect();
+        usable.truncate(16);
+        usable.sort_by_key(|(g, _)| std::cmp::Reverse(g.t.len()));
+        fn choose(usable: &[(&Lin, Poly)], at: usize, covered: &mut Vec<Var>, sum: Poly, out: &mut Vec<(Vec<Var>, Poly)>) {
+            if at == usable.len() {
+                if !covered.is_empty() {
+                    out.push((covered.clone(), sum));
+                }
+                return;
+            }
+            let (g, m) = &usable[at];
+            if g.t.keys().all(|v| !covered.contains(v)) {
+                let n = covered.len();
+                covered.extend(g.t.keys().copied());
+                choose(usable, at + 1, covered, sum.add(&m.mul(&g.k.scale(-1))), out);
+                covered.truncate(n);
+            }
+            choose(usable, at + 1, covered, sum, out);
+        }
+        let mut chosen = Vec::new();
+        choose(&usable, 0, &mut Vec::new(), f.k.clone(), &mut chosen);
+        for (covered, sum) in chosen.into_iter().take(512) {
+            let rest: BTreeMap<Var, Poly> = f.t.iter().filter(|(v, _)| !covered.contains(v)).map(|(v, c)| (*v, c.clone())).collect();
             out.push(sum.add(&rest_bound(&rest)));
         }
         out
