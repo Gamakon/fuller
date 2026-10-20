@@ -556,7 +556,7 @@ F554	loop	tile_strided_C1	composite	u32.lit64 u32.lit64 block.C2	stmt.C1	3	arity
 F555	loop	tile_strided_C2	composite	u32.lit64 u32.lit64 block.C3	stmt.C2	3	arity 3: a short loop stepped by a literal (the counter of its depth)
 F556	loop	tile_strided_C3	composite	u32.lit64 u32.lit64 block.C4	stmt.C3	3	arity 3: a short loop stepped by a literal (the counter of its depth)
 F557	kernel	entry_safe	composite	grid.grid block.L0 block.O0	kernel.safe	3	arity 3: the safeWGSL kernel, the only producer of the root dual kernel.safe: a body (an L0 block) and an epilogue (an O0 block) that ends in the store of the thread's cell; arity 2 until 2026-10-11, when a body alone let 51 of 133 repaired offspring never write h
-F558	load	phi_safe	composite	u32.index	f32.real	1	phi[i]: any index, a read past the buffer is zero (WGSL's rule)
+F558	load	phi_safe	composite	u32.index	f32.real	1	phi[i]: any index, a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict)
 F559	load	phi4_safe	composite	u32.index	vec4<f32>.real	1	four consecutive values from an index
 F560	load	h_safe	composite	u32.cell	f32.real	1	h[cell], the thread's own cell
 F561	wg	get_safe	composite	wgmem<f32>.real u32.wgindex	f32.real	2	a[i], in range by its type

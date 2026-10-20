@@ -66,7 +66,7 @@ FORMS = {
     "threadrow": ("a row index derived from the thread's own ids and block factor", ["u32"]),
     "threadcol": ("a column index derived from the thread's own ids and block factor", ["u32"]),
     "cell": ("an output cell index row*d + col owned by this thread; the only index a store to h accepts", ["u32"]),
-    "phi": ("unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand", ["u32"]),
+    "phi": ("unused: a load of phi takes any index, since a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict); kept so earlier refs stand", ["u32"]),
     "wgindex": ("a workgroup-array index, masked to the array by its row", ["u32"]),
     "wgvindex": ("an index into a vec4 workgroup array, masked to the array by its row", ["u32"]),
     # Statement rungs: L0 outside any loop, L1 inside the item loop, L2 inside a tile loop;
@@ -837,7 +837,7 @@ for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "
 # The kernel: a grid and a top-level block.
 f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0", "block.O0"], "kernel.safe", "arity 3: the safeWGSL kernel, the only producer of the root dual kernel.safe: a body (an L0 block) and an epilogue (an O0 block) that ends in the store of the thread's cell; arity 2 until 2026-10-11, when a body alone let 51 of 133 repaired offspring never write h")
 # Loads of the kernel's bindings by provenance.
-f("load", "phi_safe", "composite", ["u32.index"], "f32.real", "phi[i]: any index, a read past the buffer is zero (WGSL's rule)")
+f("load", "phi_safe", "composite", ["u32.index"], "f32.real", "phi[i]: any index, a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict)")
 f("load", "phi4_safe", "composite", ["u32.index"], "vec4<f32>.real", "four consecutive values from an index")
 f("load", "h_safe", "composite", ["u32.cell"], "f32.real", "h[cell], the thread's own cell")
 f("wg", "get_safe", "composite", ["wgmem<f32>.real", "u32.wgindex"], "f32.real", "a[i], in range by its type")

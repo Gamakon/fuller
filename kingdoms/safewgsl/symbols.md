@@ -1133,7 +1133,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F558 | `load.phi_safe` | `composite` | `u32.index` | `f32.real` | 1 | phi[i]: any index, a read past the buffer is zero (WGSL's rule) |
+| F558 | `load.phi_safe` | `composite` | `u32.index` | `f32.real` | 1 | phi[i]: any index, a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict) |
 | F559 | `load.phi4_safe` | `composite` | `u32.index` | `vec4<f32>.real` | 1 | four consecutive values from an index |
 | F560 | `load.h_safe` | `composite` | `u32.cell` | `f32.real` | 1 | h[cell], the thread's own cell |
 

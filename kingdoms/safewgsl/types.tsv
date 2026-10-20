@@ -91,7 +91,7 @@ T089	u32.counter	u32	counter	1	0u	0	0	0	the item loop's counter, stepped by the 
 T090	u32.threadrow	u32	threadrow	1	the thread's own first row	0	0	0	a row index derived from the thread's own ids and block factor	-
 T091	u32.threadcol	u32	threadcol	1	the thread's own first column	0	0	0	a column index derived from the thread's own ids and block factor	-
 T092	u32.cell	u32	cell	1	the thread's own first cell	0	0	0	an output cell index row*d + col owned by this thread; the only index a store to h accepts	-
-T093	u32.phi	u32	phi	1	0u	0	0	0	unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand	-
+T093	u32.phi	u32	phi	1	0u	0	0	0	unused: a load of phi takes any index, since a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict); kept so earlier refs stand	-
 T094	u32.wgindex	u32	wgindex	1	0u	0	0	0	a workgroup-array index, masked to the array by its row	-
 T095	bool.bound	bool	bound	1	false	0	0	0	a loop condition: counter < bound, produced by nothing else	-
 T096	stmt.L0	stmt	L0	0	empty	0	0	0	a statement at the top level	-

@@ -43,7 +43,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `threadrow` | a row index derived from the thread's own ids and block factor | u32 |
 | `threadcol` | a column index derived from the thread's own ids and block factor | u32 |
 | `cell` | an output cell index row*d + col owned by this thread; the only index a store to h accepts | u32 |
-| `phi` | unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand | u32 |
+| `phi` | unused: a load of phi takes any index, since a read past the buffer is the buffer's LAST element (the device clamps the index, naga Restrict); kept so earlier refs stand | u32 |
 | `wgindex` | a workgroup-array index, masked to the array by its row | u32 |
 | `wgvindex` | an index into a vec4 workgroup array, masked to the array by its row | u32 |
 | `L0` | a statement or block at the top level | see duals |
