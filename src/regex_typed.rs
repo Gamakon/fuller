@@ -34,12 +34,11 @@ use crate::kingdom_contract::{relations_from_rows, KingdomContract, KingdomRelat
 pub const CHAR_POOL_LEN: u32 = 95;
 /// First byte of the printable pool.
 pub const CHAR_POOL_BASE: u32 = 0x20;
-/// `C_I`: the repeat counts `0..=4`. The count bounds the instructions a
-/// repetition emits (`k` for `rep_n`, `2k` for `rep_upto`), and the layout's
-/// worst-case program must fit the compiler's `MAX_INST` for every gene it can
-/// hold ([`max_insts`]); counts to 4 cover the formats the datasets have
-/// (`\d{1,3}`, `[A-Z]{2}`) and keep N = 12 inside the budget.
-pub const COUNT_POOL_LEN: u32 = 5;
+/// `C_I`: the repeat counts `0..=8`, the compiler's clamp
+/// (`regex_compile::MAX_REPEAT`). The count bounds the instructions a repetition
+/// emits (`k` for `rep_n`, `2k` for `rep_upto`), which [`capacity`] adds to the
+/// layout's worst-case program so the compiler's buffers are sized to hold it.
+pub const COUNT_POOL_LEN: u32 = 9;
 /// The widest pool, the stride of a flat device pool table.
 pub const POOL_STRIDE: u32 = CHAR_POOL_LEN;
 
@@ -194,7 +193,9 @@ impl fmt::Display for EmitDefect {
     }
 }
 
-/// What the regex compiler must hold for every gene a layout can express.
+/// What the regex compiler's buffers must hold for every gene a layout can
+/// express: they are sized from this, never from a fixed constant, so a gene is
+/// never dropped for length at any program size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capacity {
     /// The most nodes an expressed gene can have: every function row of every
@@ -203,10 +204,6 @@ pub struct Capacity {
     /// The most VM instructions its program can have, `Match` included.
     pub insts: usize,
 }
-
-/// The compiler's limits: `MAX_NODES` nodes and `MAX_INST = 2 * MAX_NODES + 1`
-/// instructions (`regex_compile.wgsl`).
-pub const MAX_INST: usize = 2 * crate::gpu_eval::MAX_NODES + 1;
 
 /// Instructions one `Pattern` function can emit, at most. A class operand and
 /// an `I` operand emit none of their own; `rep_upto` emits `2k`, `rep_n` `k`.
@@ -231,35 +228,6 @@ pub fn capacity(k: &KingdomContract, heads: &BTreeMap<Ty, usize>) -> Result<Capa
     let function_cost = k.functions_of(Ty::Pattern).iter().map(|s| pattern_function_cost(k.name(*s))).max().unwrap_or(1);
     let leaf_cost = 1;
     Ok(Capacity { nodes: heads.values().sum::<usize>() + b.l, insts: p.h * function_cost + p.t * leaf_cost + 1 })
-}
-
-/// `Err` when a layout of these heads can express a gene the compiler does not
-/// hold. A configuration check made once at setup: no gene is dropped for
-/// length at run time because none can exceed the limits.
-pub fn check_capacity(k: &KingdomContract, heads: &BTreeMap<Ty, usize>) -> Result<(), String> {
-    let c = capacity(k, heads)?;
-    let (node_cap, inst_cap) = (crate::gpu_eval::MAX_NODES, MAX_INST);
-    if c.nodes > node_cap || c.insts > inst_cap {
-        return Err(format!(
-            "our software has a bug: this layout (heads guarantee a program size of {}) can express {} nodes and {} instructions, the regex compiler holds {node_cap} and {inst_cap}; the largest program size that fits is {}",
-            k.guaranteed_program_size(Ty::Pattern, heads),
-            c.nodes,
-            c.insts,
-            largest_program_size(k)
-        ));
-    }
-    Ok(())
-}
-
-/// The largest program size `N` whose heads fit the compiler's limits
-/// ([`check_capacity`]).
-pub fn largest_program_size(k: &KingdomContract) -> usize {
-    let fits = |n: usize| {
-        k.heads_from_program_size(Ty::Pattern, n)
-            .and_then(|h| capacity(k, &h))
-            .is_ok_and(|c| c.nodes <= crate::gpu_eval::MAX_NODES && c.insts <= MAX_INST)
-    };
-    (1..).take_while(|n| fits(*n)).last().unwrap_or(0)
 }
 
 /// The per-symbol tables of emission, the data both the host [`emit_nodes`]
@@ -409,20 +377,17 @@ mod tests {
 
     /// The kingdom check figures at the program sizes the plan names; printed
     /// for the plan and asserted on the closed-form heads.
-    /// The compiler holds 128 nodes and 257 instructions (`gpu_eval::MAX_NODES`,
-    /// `MAX_INST`), which fixes the largest regex layout at N = 12: 124 nodes and
-    /// 209 instructions. N = 13 gives 135 nodes.
+    /// The compiler's buffers are sized from the layout's bound: the bound grows
+    /// with N and no program size is refused.
     #[test]
-    fn the_compiler_limits_fix_the_program_size() {
+    fn the_layout_bound_sizes_the_compiler() {
         for lit in [false, true] {
             let k = kingdom(lit);
             let cap = |n: usize| capacity(&k, &k.heads_from_program_size(Ty::Pattern, n).expect("heads")).expect("capacity");
-            assert_eq!(cap(12), Capacity { nodes: 124, insts: 209 });
-            assert_eq!(cap(13), Capacity { nodes: 135, insts: 227 });
-            assert_eq!(largest_program_size(&k), 12);
-            assert!(check_capacity(&k, &k.heads_from_program_size(Ty::Pattern, 12).expect("heads")).is_ok());
-            let e = check_capacity(&k, &k.heads_from_program_size(Ty::Pattern, 13).expect("heads")).expect_err("13 does not fit");
-            assert!(e.starts_with("our software has a bug: ") && e.contains("largest program size that fits is 12"), "{e}");
+            assert_eq!(cap(12), Capacity { nodes: 124, insts: 393 });
+            assert_eq!(cap(13), Capacity { nodes: 135, insts: 427 });
+            assert_eq!(cap(28), Capacity { nodes: 300, insts: 937 });
+            assert!(cap(100).nodes > cap(50).nodes && cap(100).insts > cap(50).insts);
         }
     }
 
