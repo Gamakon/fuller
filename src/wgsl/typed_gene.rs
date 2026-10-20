@@ -196,6 +196,32 @@ fn typed_of(a: &Alphabet, kingdom: &WgslKingdom, t: &Tree, pools: &mut BTreeMap<
     Ok(Typed { symbol, const_index, kids })
 }
 
+/// Encode a read kernel tree into a GIVEN layout (a population's gene layout), appending its constants to the
+/// population's pools. A tree the layout cannot hold (`j_T > h_T`, a tail or Dc too short) is a named
+/// [`Gap`] (`reason` "write-back", the defect in `detail`), never a repair; `pools` is left as it was.
+pub fn encode_into(a: &Alphabet, kingdom: &WgslKingdom, tree: &Tree, layout: &GeneLayout, pools: &mut BTreeMap<Ty, Vec<u32>>) -> Result<Vec<u32>, Gap> {
+    let k = &a.contract;
+    let mut trial = pools.clone();
+    let typed = typed_of(a, kingdom, tree, &mut trial)?;
+    let mut filler = vec![0u32; layout.width];
+    for s in layout.spans() {
+        for w in &mut filler[s.off..s.off + s.len] {
+            *w = match s.domain {
+                Domain::Head | Domain::Tail => k.terminals_of(s.ty).iter().copied().find(|t| !k.is_constant(*t)).or_else(|| k.terminals_of(s.ty).first().copied()).ok_or_else(|| gap("layout", format!("no terminal of {:?}", s.ty)))?,
+                Domain::Dc => 0,
+            };
+        }
+    }
+    for f in &layout.frames {
+        if f.dc_off.is_some() {
+            trial.entry(f.ty).or_insert_with(|| vec![0]);
+        }
+    }
+    let gene = typed_gep::write_back(k, layout, &filler, &typed).map_err(|e| gap("write-back", e.to_string()))?;
+    *pools = trial;
+    Ok(gene)
+}
+
 /// Encode a read kernel tree into a typed gene.
 pub fn encode(a: &Alphabet, kingdom: &WgslKingdom, tree: &Tree) -> Result<Encoded, Gap> {
     let mut pools: BTreeMap<Ty, Vec<u32>> = BTreeMap::new();
@@ -365,5 +391,31 @@ mod tests {
         println!("{read} of {total} kernels read; {} do not round trip", failures.len());
         assert!(read > 400, "only {read} kernels read");
         assert!(failures.is_empty(), "{} kernels do not round trip through a typed gene:\n{}", failures.len(), failures.join("\n"));
+    }
+
+    /// A given layout holds the tree it was made for, and names the head it is short of for a layout one row smaller.
+    #[test]
+    fn a_given_layout_holds_what_fits_and_names_what_does_not() {
+        let kingdom = WgslKingdom::load_safe();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(root.join("tests/corpus/nluca/").join(std::fs::read_dir(root.join("tests/corpus/nluca")).expect("dir").flatten().map(|e| e.file_name()).filter(|n| n.to_string_lossy().ends_with(".wgsl")).min().expect("a kernel"))).expect("text");
+        let read = crate::wgsl::safe_reader::read_safe(&text, &kingdom).expect("reads");
+        let mut alphabets = Alphabets::default();
+        let a = alphabets.of(&kingdom, &read.role).as_ref().expect("alphabet");
+        let enc = encode(a, &kingdom, &read.tree).expect("encodes");
+        let mut pools = BTreeMap::new();
+        let gene = encode_into(a, &kingdom, &read.tree, &enc.layout, &mut pools).expect("fits its own layout");
+        assert_eq!(gene, enc.gene);
+        assert_eq!(pools, enc.pools);
+        // One head row fewer for a type that has functions.
+        let mut heads = enc.layout.head_lens();
+        let (ty, h) = heads.iter().map(|(t, h)| (*t, *h)).find(|(_, h)| *h > 0).expect("a head");
+        heads.insert(ty, h - 1);
+        let short = GeneLayout::from_heads(&a.contract, enc.layout.root, &heads).expect("layout");
+        let mut kept = pools.clone();
+        let g = encode_into(a, &kingdom, &read.tree, &short, &mut kept).expect_err("one head row short");
+        assert_eq!(g.reason, "write-back");
+        assert!(g.detail.contains("head rows"), "{}", g.detail);
+        assert_eq!(kept, pools, "pools untouched on a refusal");
     }
 }
