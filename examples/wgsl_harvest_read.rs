@@ -86,7 +86,9 @@ fn main() -> Result<(), String> {
         n[0] += 1;
         let verdict = catch_unwind(AssertUnwindSafe(|| {
             let r = read_safe(&src, &kingdom)?;
-            let text = render_tree_with(&r.tree, &kingdom, &r.role)?.text;
+            // (A module that declares aggregate types reads in the kingdom extended by them.)
+            let k = r.kingdom.as_ref().unwrap_or(&kingdom);
+            let text = render_tree_with(&r.tree, k, &r.role)?.text;
             validate_text(&text)?;
             Ok::<(), String>(())
         }))

@@ -330,3 +330,4 @@ logs/HGP/001/gen0/k29.wgsl	safe	zero sets: naga 30 zeroes a loop-local var at ea
 tests/corpus/model_replies/k1743.wgsl	safe	read now (2026-10-19, registers of every vector type): a kernel the 0.20 snapshot recorded as refused
 tests/corpus/model_replies/k1075.wgsl	safe	read now (2026-10-19, the slot counts): a kernel the 0.20 snapshot recorded as refused
 tests/corpus/model_replies/k1094.wgsl	safe	read now (2026-10-19, the slot counts): a kernel the 0.20 snapshot recorded as refused
+tests/corpus/model_replies/k0979.wgsl	safe	read now (2026-10-20, aggregates slice 2): a helper with no result and no body tree is nothing, not a refusal; the kernel the 0.20 snapshot recorded as refused

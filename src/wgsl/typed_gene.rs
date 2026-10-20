@@ -583,4 +583,20 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    /// A matrix of f16 is a value the shipped duals have no matrix of: the module's extended kingdom holds `mat2x2<f16>.real`
+    /// with its columns as rows (`shape.col_0`, `shape.col_1`), and a uniform of it passed to a helper round trips.
+    #[test]
+    fn an_f16_matrix_is_a_dual_of_the_modules_extended_kingdom() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "enable f16;\n@group(0) @binding(0) var<uniform> u : mat2x2<f16>;\nfn a(m : mat2x2<f16>) {}\nfn b(v : vec2<f16>) {}\nfn c(f : f16) {}\n@compute @workgroup_size(1)\nfn f() { a(u); b(u[1]); b(u[1].yx); c(u[1].x); c(u[1].yx.x); }\n";
+        let read = crate::wgsl::safe_reader::read_safe(text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let ext = read.kingdom.as_ref().expect("the module declares a matrix of f16");
+        assert!(ext.duals.iter().any(|d| d.dual == "mat2x2<f16>.real" && d.lanes == 4), "{:?}", ext.duals.iter().skip(204).map(|d| &d.dual).collect::<Vec<_>>());
+        assert!(ext.rows.iter().any(|r| r.name == "shape.col_1" && r.template == "A-col"));
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }
