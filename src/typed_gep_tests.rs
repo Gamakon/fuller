@@ -575,6 +575,107 @@ fn crossover_regex() {
     crossover(&regex_relations(), "regex");
 }
 
+/// Every invalid cell is named and none is repaired: in 100,000 random genes,
+/// one cell, read or not, is replaced by a symbol outside its domain's
+/// alphabet (a symbol of another type in `head_T` or `tail_T`, a function in a
+/// tail, a symbol outside the kingdom, a Dc word past `C_T`). The decoder
+/// returns exactly that defect at exactly that cell.
+fn planted_defects(rel: &KingdomRelations, label: &str) {
+    let k = rel.check().expect("check");
+    let consts = const_lens(&k);
+    let mut rng = Rng(0xdef ^ label.len() as u64);
+    let mut seen = BTreeMap::<&str, usize>::new();
+    for g in 0..GENES {
+        let n = SIZES[g % SIZES.len()];
+        let root = k.roots()[rng.below(k.roots().len())];
+        let layout = GeneLayout::from_program_size(&k, root, n).expect("layout");
+        let mut gene = random_gene(&k, &layout, &mut rng);
+        let spans = layout.spans();
+        let span = spans[rng.below(spans.len())];
+        let pos = span.off + rng.below(span.len);
+        let (want, kind) = match span.domain {
+            Domain::Dc => {
+                gene[pos] = CONSTS + rng.below(1000) as u32;
+                (LayoutDefect::DcIndexPastConstants { ty: span.ty, index: gene[pos], len: CONSTS }, "dc past C_T")
+            }
+            Domain::Head | Domain::Tail => match rng.below(3) {
+                0 => {
+                    gene[pos] = (k.n_symbols() + rng.below(1000)) as u32;
+                    (LayoutDefect::UnknownSymbol { pos, symbol: gene[pos] }, "unknown symbol")
+                }
+                1 => {
+                    let foreign: Vec<SymbolId> = (0..k.n_symbols() as SymbolId).filter(|s| k.output(*s) != span.ty).collect();
+                    if foreign.is_empty() {
+                        continue;
+                    }
+                    gene[pos] = foreign[rng.below(foreign.len())];
+                    (LayoutDefect::ForeignSymbol { ty: span.ty, symbol: gene[pos], pos }, if span.domain == Domain::Head { "wrong output in head_T" } else { "wrong output in tail_T" })
+                }
+                _ => {
+                    let functions = k.functions_of(span.ty);
+                    if span.domain == Domain::Head || functions.is_empty() {
+                        continue;
+                    }
+                    gene[pos] = functions[rng.below(functions.len())];
+                    (LayoutDefect::FunctionInTail { ty: span.ty, symbol: gene[pos], pos }, "function in tail_T")
+                }
+            },
+        };
+        let err = express(&k, &layout, &gene, &consts).expect_err("a planted defect must be reported");
+        assert_eq!(err, want, "{label} gene {g}: {kind}");
+        assert!(err.to_string().starts_with("our software has a bug: "), "{err}");
+        *seen.entry(kind).or_default() += 1;
+    }
+    let genes = random_gene(&k, &GeneLayout::from_program_size(&k, k.roots()[0], 3).expect("layout"), &mut rng);
+    let layout = GeneLayout::from_program_size(&k, k.roots()[0], 3).expect("layout");
+    assert_eq!(express(&k, &layout, &genes[1..], &consts), Err(LayoutDefect::GeneLength { want: layout.width, got: layout.width - 1 }));
+    println!("{label}: planted defects named at their cell: {seen:?}");
+    assert!(seen.contains_key("wrong output in head_T") || k.types().len() == 1, "{label}: the head_T defect was exercised");
+}
+
+#[test]
+fn planted_defects_sr() {
+    planted_defects(&sr_relations(), "SR");
+}
+
+#[test]
+fn planted_defects_regex() {
+    planted_defects(&regex_relations(), "regex");
+}
+
+#[test]
+fn planted_defects_two_type() {
+    let rel = relations_from_rows(
+        "two-type",
+        vec![Ty::S],
+        &[
+            ("left".to_string(), vec![Ty::S, Ty::I], Ty::S),
+            ("s".to_string(), vec![], Ty::S),
+            ("i".to_string(), vec![], Ty::I),
+            ("z".to_string(), vec![], Ty::S),
+            ("z".to_string(), vec![], Ty::I),
+        ],
+        &[],
+    );
+    planted_defects(&rel, "two-type");
+}
+
+/// A frame the layout does not have and a Dc that is too short are defects the
+/// walk reports when it meets them; nothing is padded or skipped.
+#[test]
+fn a_missing_frame_and_a_short_dc_are_defects() {
+    let k = two_type();
+    let (left, s, i) = (0u32, 1u32, 2u32);
+    let mut layout = GeneLayout::from_heads(&k, Ty::S, &BTreeMap::from([(Ty::S, 2), (Ty::I, 1)])).expect("layout");
+    layout.frames.retain(|f| f.ty != Ty::I);
+    assert_eq!(express(&k, &layout, &[left, s, i, s, i], &BTreeMap::new()), Err(LayoutDefect::NoFrame { ty: Ty::I }));
+
+    let f = relations_from_rows("c", vec![Ty::F], &[("add".to_string(), vec![Ty::F, Ty::F], Ty::F), ("x".to_string(), vec![], Ty::F), ("?".to_string(), vec![], Ty::F)], &["?"]).check().expect("valid");
+    let mut layout = GeneLayout::from_heads(&f, Ty::F, &BTreeMap::from([(Ty::F, 2)])).expect("layout");
+    layout.frames[0].dc_len = 0;
+    assert_eq!(express(&f, &layout, &[0, 2, 1, 1, 1, 0, 0, 0], &BTreeMap::from([(Ty::F, 4)])), Err(LayoutDefect::DcRanOut { ty: Ty::F, q: 0 }));
+}
+
 use crate::typed_gep::Layout;
 
 // ---------------------------------------------------------------------------
