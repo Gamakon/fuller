@@ -552,4 +552,15 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    /// The quad gathers (a quad is four consecutive lanes) read, encode into a typed gene, express and render to the same text.
+    #[test]
+    fn the_quad_gathers_round_trip_through_a_typed_gene() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "enable subgroups;\n@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let v = src[gid.x];\n    dst[gid.x] = quadBroadcast(v, 2u) + quadSwapX(v) + quadSwapY(v) + quadSwapDiagonal(v);\n}\n";
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }

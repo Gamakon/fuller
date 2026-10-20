@@ -2,10 +2,10 @@
 //! docs/PLAN_naga_wgpu_30.md section 2.1). Every WGSL text the kingdom reads
 //! is parsed here, by naga 30's WGSL front end, and scanned at once for
 //! what naga 30 can express and naga 0.20 could not: a cooperative matrix, a
-//! 16-bit literal, an override-sized array, the immediate, task and ray
+//! 16-bit integer literal, an override-sized array, the immediate, task and ray
 //! address spaces, the mesh and ray builtins, a memory barrier without
-//! control, an image atomic, a ray pipeline call, a cooperative store, the
-//! quad gathers. The kingdom has no row for any of them: each is refused by
+//! control, an image atomic, a ray pipeline call, a cooperative store. (The
+//! f16 types and the quad gathers have rows since 2026-10-20.) The kingdom has no row for any of them: each is refused by
 //! name before a reader, the safety checker or the CPU executor sees the
 //! module, so none can fall into a wildcard downstream (Codex's review,
 //! finding 4).
@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use naga::{AddressSpace, ArraySize, BinaryOperator, Binding, BuiltIn, Expression, Function, GatherMode, Handle, Literal, LocalVariable, Module, Statement, TypeInner, UnaryOperator};
+use naga::{AddressSpace, ArraySize, BinaryOperator, Binding, BuiltIn, Expression, Function, Handle, Literal, LocalVariable, Module, Statement, TypeInner, UnaryOperator};
 
 /// Parse `source` and scan it ([`supported`]).
 pub fn parse(source: &str) -> Result<Module, String> {
@@ -132,7 +132,6 @@ fn block(b: &naga::Block) -> Result<(), String> {
             Statement::ImageAtomic { .. } => refuse("an image atomic")?,
             Statement::RayPipelineFunction(_) => refuse("a ray pipeline function")?,
             Statement::CooperativeStore { .. } => refuse("a cooperative matrix store")?,
-            Statement::SubgroupGather { mode: GatherMode::QuadBroadcast(_) | GatherMode::QuadSwap(_), .. } => refuse("a quad gather")?,
             Statement::Block(x) => block(x)?,
             Statement::If { accept, reject, .. } => {
                 block(accept)?;
@@ -349,7 +348,7 @@ pub fn is_dead_local(f: &Function, v: Handle<LocalVariable>) -> bool {
 mod tests {
     use super::*;
 
-    /// WHAT NAGA 30 ADDED IS REFUSED BY NAME: a 16-bit integer type (behind `enable wgpu_int16`), a quad gather; an
+    /// WHAT NAGA 30 ADDED IS REFUSED BY NAME: a 16-bit integer type (behind `enable wgpu_int16`); an
     /// ordinary kernel parses, and so does an f16 one (the kingdom has the f16 duals; the module enables f16).
     #[test]
     fn what_naga_30_added_is_refused_by_name() {
@@ -360,9 +359,9 @@ mod tests {
         let i16 = "enable wgpu_int16;\n@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { var h: i16 = i16(gid.x); out[gid.x] = u32(h); }\n";
         let e = parse(i16).expect_err("a 16-bit integer type");
         assert!(e.contains("a 16-bit integer type has no row"), "{e}");
-        let quad = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = quadSwapX(gid.x); }\n";
-        let e = parse(quad).expect_err("a quad gather");
-        assert!(e.contains("a quad gather has no row"), "{e}");
+        // (A quad gather has rows since 2026-10-20.)
+        let quad = "enable subgroups;\n@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = quadSwapX(gid.x); }\n";
+        parse(quad).expect("a quad gather");
     }
 
     /// The statements of `main` that are an `if` storing to an unnamed local

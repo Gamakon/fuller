@@ -698,9 +698,10 @@ fn walk_block(
                     naga::GatherMode::ShuffleDown(l) => ("shuffle_down", Some(*l)),
                     naga::GatherMode::ShuffleUp(l) => ("shuffle_up", Some(*l)),
                     naga::GatherMode::ShuffleXor(l) => ("shuffle_xor", Some(*l)),
-                    // (Refused by naga_shape before any reading; named for completeness.)
                     naga::GatherMode::QuadBroadcast(l) => ("quad_broadcast", Some(*l)),
-                    naga::GatherMode::QuadSwap(_) => ("quad_swap", None),
+                    naga::GatherMode::QuadSwap(naga::Direction::X) => ("quad_swap_x", None),
+                    naga::GatherMode::QuadSwap(naga::Direction::Y) => ("quad_swap_y", None),
+                    naga::GatherMode::QuadSwap(naga::Direction::Diagonal) => ("quad_swap_diagonal", None),
                 };
                 let mut kids = vec![expand(ctx, *argument, true)];
                 if let Some(l) = lane {

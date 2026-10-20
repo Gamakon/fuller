@@ -1578,6 +1578,12 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5", "C0", "C1", "C2", "C3", "C4", "C5"
         f("own", f"stmt_{r}", "composite", [], f"stmt.{r}", OWN_NOTE + ("a store to the thread's own cell" if store else "an empty statement {}"))
     f("own", f"block_{r}", "composite", [], f"block.{r}", OWN_NOTE + ("a block ending in a store to the thread's own cell" if store else "an empty block {}"))
 
+# ---- quad gathers (2026-10-20, the harvest: 163 kernels): a quad is four consecutive lanes ----
+for value in ("<S.real>", "u32.index", "i32.int"):
+    f("subgroup", "quad_broadcast", "SubgroupGather", [value, "u32.lit64"], value, "quadBroadcast(x, lane): the lane (0..3) a literal")
+    for op, wgsl in (("quad_swap_x", "quadSwapX"), ("quad_swap_y", "quadSwapY"), ("quad_swap_diagonal", "quadSwapDiagonal")):
+        f("subgroup", op, "SubgroupGather", [value], value, f"{wgsl}(x)")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

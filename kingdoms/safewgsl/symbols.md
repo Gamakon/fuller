@@ -3791,4 +3791,21 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F2228 | `own.block_B4` | `composite` | `-` | `block.B4` | 0 | the real terminal of the dual: an empty block {} |
 | F2229 | `own.block_B5` | `composite` | `-` | `block.B5` | 0 | the real terminal of the dual: an empty block {} |
 
-2229 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `subgroup`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2230 | `subgroup.quad_broadcast` | `SubgroupGather` | `<S.real> u32.lit64` | `<S.real>` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2231 | `subgroup.quad_swap_x` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapX(x) |
+| F2232 | `subgroup.quad_swap_y` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapY(x) |
+| F2233 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapDiagonal(x) |
+| F2234 | `subgroup.quad_broadcast` | `SubgroupGather` | `u32.index u32.lit64` | `u32.index` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2235 | `subgroup.quad_swap_x` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapX(x) |
+| F2236 | `subgroup.quad_swap_y` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapY(x) |
+| F2237 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapDiagonal(x) |
+| F2238 | `subgroup.quad_broadcast` | `SubgroupGather` | `i32.int u32.lit64` | `i32.int` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2239 | `subgroup.quad_swap_x` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapX(x) |
+| F2240 | `subgroup.quad_swap_y` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapY(x) |
+| F2241 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapDiagonal(x) |
+
+2241 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

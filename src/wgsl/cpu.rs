@@ -193,6 +193,10 @@ enum Pend {
     ShuffleDown,
     ShuffleUp,
     ShuffleXor,
+    QuadBroadcast,
+    QuadSwapX,
+    QuadSwapY,
+    QuadSwapDiagonal,
 }
 
 /// The subgroup width the executor runs (lanes by local invocation index).
@@ -1331,6 +1335,11 @@ impl<'m> Machine<'m> {
                             Pend::Broadcast | Pend::Shuffle => k,
                             Pend::ShuffleDown => me + k,
                             Pend::ShuffleUp => me.wrapping_sub(k),
+                            // A quad is four consecutive lanes.
+                            Pend::QuadBroadcast => (me & !3) + (k & 3),
+                            Pend::QuadSwapX => me ^ 1,
+                            Pend::QuadSwapY => me ^ 2,
+                            Pend::QuadSwapDiagonal => me ^ 3,
                             _ => me ^ k,
                         };
                         results[i] = at(src, i);
@@ -1513,7 +1522,10 @@ impl<'m> Machine<'m> {
                     naga::GatherMode::Shuffle(e) => (Pend::Shuffle, Some(*e)),
                     naga::GatherMode::ShuffleDown(e) => (Pend::ShuffleDown, Some(*e)),
                     naga::GatherMode::ShuffleUp(e) => (Pend::ShuffleUp, Some(*e)),
-                    naga::GatherMode::QuadBroadcast(_) | naga::GatherMode::QuadSwap(_) => return Err("cpu: our software has a bug: a quad gather has no row in the kingdom (naga_shape refuses it)".into()),
+                    naga::GatherMode::QuadBroadcast(e) => (Pend::QuadBroadcast, Some(*e)),
+                    naga::GatherMode::QuadSwap(naga::Direction::X) => (Pend::QuadSwapX, None),
+                    naga::GatherMode::QuadSwap(naga::Direction::Y) => (Pend::QuadSwapY, None),
+                    naga::GatherMode::QuadSwap(naga::Direction::Diagonal) => (Pend::QuadSwapDiagonal, None),
                     naga::GatherMode::ShuffleXor(e) => (Pend::ShuffleXor, Some(*e)),
                 };
                 let lane = match i {

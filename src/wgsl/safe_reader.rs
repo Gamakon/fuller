@@ -2945,7 +2945,7 @@ impl<'a> Ctx<'a> {
         let x = self.value(&trees[0])?;
         let mut args = vec![x.clone()];
         if let Some(l) = trees.get(1) {
-            if fun == "broadcast" {
+            if fun == "broadcast" || fun == "quad_broadcast" {
                 let lane = literal_value(l).ok_or("subgroupBroadcast's lane is not a literal (WGSL demands a constant)")?;
                 args.push(Tree::literal("literal.lit64", ty(self, "u32.lit64")?, lane));
             } else {

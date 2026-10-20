@@ -996,7 +996,7 @@ mod tests {
         // (ARRAY_FAMILIES and REG_EXTEND of gen_tables.py: the arrays and registers past the first names, and
         // the sixteen of each extra register kind); 2,228 with the terminals of the typed-GEP plan (the `const`
         // rows of the dual forms no literal reaches and the `own` rows, docs/PLAN_wgsl_terminals.md).
-        assert_eq!(fs.rows.len(), 2229);
+        assert_eq!(fs.rows.len(), 2241);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         // (The functions that make a dual; the plan's `own` terminals make it too.)
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d && !r.name.starts_with("own.") && !r.name.starts_with("const.")).map(|r| r.name.clone()).collect() };

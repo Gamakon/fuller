@@ -2638,6 +2638,10 @@ impl Renderer<'_> {
                     "shuffle_down" => "subgroupShuffleDown",
                     "shuffle_up" => "subgroupShuffleUp",
                     "shuffle_xor" => "subgroupShuffleXor",
+                    "quad_broadcast" => "quadBroadcast",
+                    "quad_swap_x" => "quadSwapX",
+                    "quad_swap_y" => "quadSwapY",
+                    "quad_swap_diagonal" => "quadSwapDiagonal",
                     "ballot" => "subgroupBallot",
                     other => return Err(format!("subgroup.{other} is not a subgroup built-in")),
                 };
@@ -2645,7 +2649,7 @@ impl Renderer<'_> {
                 // A broadcast's lane is a const-expression for naga 30's
                 // validator: the literal itself, never through `lit_u32`
                 // (2026-10-19, the naga/wgpu 30 upgrade).
-                if f == "subgroupBroadcast" && v.kids.len() == 2 {
+                if (f == "subgroupBroadcast" || f == "quadBroadcast") && v.kids.len() == 2 {
                     args[1] = format!("{}u", self.lit(&v.kids[1], 64)?);
                 }
                 return Ok(format!("{f}({})", args.join(", ")));
@@ -3909,7 +3913,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // sampler already writes as a fallback, and a literal of a vector, a matrix, a codebook entry, a hash, a fixed-point
     // value or an opaque one is a row for a gene's tail; drawn, they move the random floors by draws alone.)
     let new_terminal = |r: &WgslRow| r.name.starts_with("own.") || r.name.starts_with("const.");
-    let not_drawn = |r: &WgslRow| extra_reg(r) || new_terminal(r) || is_vector_conversion_read_only(r) || uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
+    // (Nor the quad gathers, 2026-10-20: rows for the harvest's kernels; drawn, they move the random floors by draws alone.)
+    let not_drawn = |r: &WgslRow| extra_reg(r) || new_terminal(r) || r.name.starts_with("subgroup.quad_") || is_vector_conversion_read_only(r) || uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
     // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
     // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
     // they move the random floors by draws alone, so they wait for a floor
