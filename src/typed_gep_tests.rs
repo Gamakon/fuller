@@ -575,3 +575,249 @@ fn crossover_regex() {
     crossover(&regex_relations(), "regex");
 }
 
+use crate::typed_gep::Layout;
+
+// ---------------------------------------------------------------------------
+// The DuckDB bound and expression queries of the design (section 3), run on the
+// fixtures, equal to the host
+// ---------------------------------------------------------------------------
+
+/// The design's views and recursive query, verbatim from `MultiTypedGEP.md`
+/// section 3 (extracted, not retyped).
+const WALK_SQL: &str = include_str!("../nucleotable/sql/typed_gep_expression.sql");
+
+/// Loads the setup script, creates the views, derives `layout_bounds`, runs the
+/// walk for each chromosome and prints `{bounds, walk: {chromosome_id: rows}}`
+/// as JSON. Reads argv: the SQL file, the setup script, then chromosome ids.
+const DRIVER: &str = r#"
+import duckdb, json, sys
+views, query = open(sys.argv[1]).read().split("\n\nWITH RECURSIVE", 1)
+query = "WITH RECURSIVE" + query
+con = duckdb.connect(":memory:")
+con.execute(open(sys.argv[2]).read())
+con.execute(views)
+bounds = con.execute("SELECT layout_id, gene_id, type, h, p, l, t, d FROM layout_bounds").fetchall()
+walk = {c: con.execute(query, [int(c)]).fetchall() for c in sys.argv[3:]}
+print(json.dumps({"bounds": bounds, "walk": walk}))
+"#;
+
+fn sql_str(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// A kingdom to load: its name, contract, and which symbols are reference
+/// terminals as `(symbol_id, kind, target_id)` rather than ordinary terminals.
+struct SqlKingdom<'a> {
+    name: &'a str,
+    k: &'a KingdomContract,
+    refs: &'a [(SymbolId, &'a str, i64)],
+}
+
+/// One gene to load: where it lives, its kingdom, layout and words.
+struct Loaded<'a> {
+    chromosome: u64,
+    gene: u64,
+    kingdom: &'a SqlKingdom<'a>,
+    layout: &'a Layout,
+    words: Vec<u32>,
+}
+
+fn setup_sql(kingdoms: &[&SqlKingdom], layouts: &[(&SqlKingdom, &Layout)], genes: &[Loaded]) -> String {
+    let mut s = String::from(
+        "CREATE TABLE functions(kingdom_id VARCHAR, symbol_id BIGINT, spelling VARCHAR, output_type VARCHAR);\n\
+         CREATE TABLE terminals(kingdom_id VARCHAR, symbol_id BIGINT, spelling VARCHAR, output_type VARCHAR);\n\
+         CREATE TABLE reference_terminals(kingdom_id VARCHAR, symbol_id BIGINT, spelling VARCHAR, output_type VARCHAR, kind VARCHAR, target_id BIGINT);\n\
+         CREATE TABLE argument_signature(kingdom_id VARCHAR, symbol_id BIGINT, arg_index BIGINT, required_type VARCHAR);\n\
+         CREATE TABLE layouts(layout_id BIGINT, kingdom_id VARCHAR, program_size BIGINT);\n\
+         CREATE TABLE layout_genes(layout_id BIGINT, gene_id BIGINT, root_type VARCHAR);\n\
+         CREATE TABLE layout_heads(layout_id BIGINT, gene_id BIGINT, type VARCHAR, h BIGINT);\n\
+         CREATE TABLE genes(chromosome_id BIGINT, gene_id BIGINT, kingdom_id VARCHAR, layout_id BIGINT);\n\
+         CREATE TABLE geneframe(chromosome_id BIGINT, gene_id BIGINT, kingdom_id VARCHAR, domain VARCHAR, domain_type VARCHAR, domain_seq_id BIGINT, symbol_id BIGINT, dc_index BIGINT);\n",
+    );
+    for kd in kingdoms {
+        let (name, k) = (kd.name, kd.k);
+        for sym in 0..k.n_symbols() as SymbolId {
+            let out = sql_str(&format!("{:?}", k.output(sym)));
+            if let Some((_, kind, target)) = kd.refs.iter().find(|(r, _, _)| *r == sym) {
+                s.push_str(&format!("INSERT INTO reference_terminals VALUES ({}, {sym}, {}, {out}, {}, {target});\n", sql_str(name), sql_str(k.name(sym)), sql_str(kind)));
+            } else {
+                let table = if k.is_terminal(sym) { "terminals" } else { "functions" };
+                s.push_str(&format!("INSERT INTO {table} VALUES ({}, {sym}, {}, {out});\n", sql_str(name), sql_str(k.name(sym))));
+            }
+            for (i, t) in k.signature(sym).iter().enumerate() {
+                s.push_str(&format!("INSERT INTO argument_signature VALUES ({}, {sym}, {i}, {});\n", sql_str(name), sql_str(&format!("{t:?}"))));
+            }
+        }
+    }
+    for (kd, layout) in layouts {
+        let program_size = layout.gene(0).and_then(|g| g.program_size).map_or("NULL".to_string(), |n| n.to_string());
+        s.push_str(&format!("INSERT INTO layouts VALUES ({}, {}, {program_size});\n", layout.layout_id, sql_str(kd.name)));
+        for (gid, g) in layout.genes().iter().enumerate() {
+            s.push_str(&format!("INSERT INTO layout_genes VALUES ({}, {gid}, {});\n", layout.layout_id, sql_str(&format!("{:?}", g.root))));
+            for (ty, h) in g.head_lens() {
+                s.push_str(&format!("INSERT INTO layout_heads VALUES ({}, {gid}, {}, {h});\n", layout.layout_id, sql_str(&format!("{ty:?}"))));
+            }
+        }
+    }
+    for g in genes {
+        s.push_str(&format!("INSERT INTO genes VALUES ({}, {}, {}, {});\n", g.chromosome, g.gene, sql_str(g.kingdom.name), g.layout.layout_id));
+        let layout = g.layout.gene(g.gene).expect("gene id in layout");
+        let rows: Vec<String> = layout
+            .rows(g.chromosome, g.gene, &g.words)
+            .iter()
+            .map(|r| {
+                format!(
+                    "({}, {}, {}, {}, {}, {}, {}, {})",
+                    r.chromosome_id,
+                    r.gene_id,
+                    sql_str(g.kingdom.name),
+                    sql_str(r.key.domain.name()),
+                    sql_str(&format!("{:?}", r.key.domain_type)),
+                    r.key.domain_seq_id,
+                    r.symbol.map_or("NULL".to_string(), |x| x.to_string()),
+                    r.dc_index.map_or("NULL".to_string(), |x| x.to_string())
+                )
+            })
+            .collect();
+        s.push_str(&format!("INSERT INTO geneframe VALUES {};\n", rows.join(", ")));
+    }
+    s
+}
+
+/// A node as the query reports it: step, type, frame_k, spelling, depth, parent_step, arg_index.
+fn host_row(k: &KingdomContract, n: &crate::typed_gep::Node) -> String {
+    format!("{} {:?} {} {} {} {:?} {:?}", n.step, n.ty, n.frame_k, k.name(n.symbol), n.depth, n.parent_step, n.arg_index)
+}
+
+fn sql_row(r: &serde_json::Value) -> String {
+    let opt = |v: &serde_json::Value| if v.is_null() { "None".to_string() } else { format!("Some({v})") };
+    // The query's columns: gene_id, step, node_type, frame_k, spelling, depth, parent_step, arg_index.
+    format!("{} {} {} {} {} {} {}", r[1], r[2].as_str().unwrap_or("?"), r[3], r[4].as_str().unwrap_or("?"), r[5], opt(&r[6]), opt(&r[7]))
+}
+
+/// The design's two queries, run in DuckDB on four fixtures: the two-type
+/// kingdom with the polymorphic spelling, two genes of one chromosome sharing a
+/// layout, an ADF reference terminal, and the same gene id in several
+/// chromosomes (so a frame that leaked across a gene or chromosome would show);
+/// the one-type SR layout of the design; and 100 random regex genes over 20
+/// chromosomes. The bound query equals `KingdomContract::bounds` for every
+/// (layout, gene, type) and every walk row equals the host decoder's node.
+/// Skipped, with the reason printed, when no interpreter has the `duckdb`
+/// module (`FULLER_DUCKDB_PYTHON` names one).
+#[test]
+fn duckdb_bound_and_expression_queries_equal_the_host() {
+    use std::process::Command;
+    let python = std::env::var("FULLER_DUCKDB_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let probe = Command::new(&python).args(["-I", "-c", "import duckdb"]).output();
+    if !probe.is_ok_and(|o| o.status.success()) {
+        eprintln!("SKIPPED duckdb_bound_and_expression_queries_equal_the_host: `{python} -I -c 'import duckdb'` fails; set FULLER_DUCKDB_PYTHON");
+        return;
+    }
+    let (left, s, i, z_s, a7) = (0u32, 1u32, 2u32, 3u32, 5u32);
+    // left:S(S,I); s:S; i:I; z:S and z:I (one symbol_id per output type); A7:I, an ADF reference.
+    let two = relations_from_rows(
+        "two-type",
+        vec![Ty::S],
+        &[
+            ("left".to_string(), vec![Ty::S, Ty::I], Ty::S),
+            ("s".to_string(), vec![], Ty::S),
+            ("i".to_string(), vec![], Ty::I),
+            ("z".to_string(), vec![], Ty::S),
+            ("z".to_string(), vec![], Ty::I),
+            ("A7".to_string(), vec![], Ty::I),
+        ],
+        &[],
+    )
+    .check()
+    .expect("fixture");
+    let z_i = 4u32;
+    let sr = sr_relations().check().expect("SR");
+    let re = regex_relations().check().expect("regex");
+    let two_kd = SqlKingdom { name: "two-type", k: &two, refs: &[(a7, "adf", 7)] };
+    let sr_kd = SqlKingdom { name: "sr", k: &sr, refs: &[] };
+    let re_kd = SqlKingdom { name: "regex", k: &re, refs: &[] };
+
+    let design = GeneLayout::from_heads(&two, Ty::S, &BTreeMap::from([(Ty::S, 2), (Ty::I, 1)])).expect("layout");
+    let layout_two = Layout::new(1, vec![design.clone(), design]);
+    let layout_sr = Layout::new(2, vec![GeneLayout::from_heads(&sr, Ty::F, &BTreeMap::from([(Ty::F, 7)])).expect("layout")]);
+    let layout_re = Layout::new(3, (0..5).map(|_| GeneLayout::from_program_size(&re, Ty::Pattern, 6).expect("layout")).collect());
+
+    let mut genes: Vec<Loaded> = Vec::new();
+    let mut put = |chromosome: u64, gene: u64, kingdom, layout, words: Vec<u32>| genes.push(Loaded { chromosome, gene, kingdom, layout, words });
+    put(1, 0, &two_kd, &layout_two, vec![left, s, i, s, i]); // left(s, i), the design's table
+    put(1, 1, &two_kd, &layout_two, vec![left, left, i, s, z_i]); // left(left(s, z), i)
+    put(2, 0, &two_kd, &layout_two, vec![left, s, a7, s, i]); // left(s, A7)
+    put(3, 0, &two_kd, &layout_two, vec![left, left, i, z_s, a7]); // left(left(z, A7), i), z as an S
+    let mut rng = Rng(0xd0c);
+    for chromosome in 4..9u64 {
+        let g = random_gene(&sr, layout_sr.gene(0).expect("gene"), &mut rng);
+        put(chromosome, 0, &sr_kd, &layout_sr, g);
+    }
+    for chromosome in 9..29u64 {
+        for gene in 0..5u64 {
+            let words = random_gene(&re, layout_re.gene(gene).expect("gene"), &mut rng);
+            put(chromosome, gene, &re_kd, &layout_re, words);
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("fuller_typed_gep_sql_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let (driver, walk, setup) = (dir.join("driver.py"), dir.join("walk.sql"), dir.join("setup.sql"));
+    std::fs::write(&driver, DRIVER).expect("write driver");
+    std::fs::write(&walk, WALK_SQL).expect("write walk");
+    std::fs::write(&setup, setup_sql(&[&two_kd, &sr_kd, &re_kd], &[(&two_kd, &layout_two), (&sr_kd, &layout_sr), (&re_kd, &layout_re)], &genes)).expect("write setup");
+    let mut chroms: Vec<u64> = genes.iter().map(|g| g.chromosome).collect();
+    chroms.dedup();
+    let out = Command::new(&python).arg("-I").arg(&driver).arg(&walk).arg(&setup).args(chroms.iter().map(u64::to_string)).output().expect("run the driver");
+    assert!(out.status.success(), "duckdb driver failed: {}", String::from_utf8_lossy(&out.stderr));
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).expect("driver prints JSON");
+
+    // The bound query, row for row, against the kingdom contract.
+    let mut got_bounds: Vec<String> = result["bounds"]
+        .as_array()
+        .expect("bounds rows")
+        .iter()
+        .map(|r| format!("{} {} {} h{} p{} l{} t{} d{}", r[0], r[1], r[2].as_str().unwrap_or("?"), r[3], r[4], r[5], r[6], r[7]))
+        .collect();
+    let mut want_bounds: Vec<String> = Vec::new();
+    for (kd, layout) in [(&two_kd, &layout_two), (&sr_kd, &layout_sr), (&re_kd, &layout_re)] {
+        for (gid, g) in layout.genes().iter().enumerate() {
+            let b = kd.k.bounds(g.root, &g.head_lens()).expect("bounds");
+            for t in &b.types {
+                want_bounds.push(format!("{} {gid} {:?} h{} p{} l{} t{} d{}", layout.layout_id, t.ty, t.h, t.p, b.l, t.t, t.d));
+            }
+        }
+    }
+    got_bounds.sort();
+    want_bounds.sort();
+    assert_eq!(got_bounds, want_bounds, "the bound query differs from KingdomContract::bounds");
+    // The design's figures: h_S = 2, h_I = 1, root S gives P_S 3, P_I 2, L 3, t 1/1, d 3/2; SR h = 7 gives t = d = 8.
+    assert!(got_bounds.contains(&"1 0 S h2 p3 l3 t1 d3".to_string()) && got_bounds.contains(&"1 0 I h1 p2 l3 t1 d2".to_string()));
+    assert!(got_bounds.contains(&"2 0 F h7 p15 l8 t8 d8".to_string()));
+
+    // The walk, chromosome by chromosome, against the host decoder.
+    let mut compared = 0usize;
+    for c in &chroms {
+        let rows = result["walk"][c.to_string()].as_array().unwrap_or_else(|| panic!("chromosome {c} has no result")).clone();
+        let mut want: Vec<(u64, usize, String)> = Vec::new();
+        for g in genes.iter().filter(|g| g.chromosome == *c) {
+            let layout = g.layout.gene(g.gene).expect("gene");
+            let e = express(g.kingdom.k, layout, &g.words, &const_lens(g.kingdom.k)).unwrap_or_else(|d| panic!("chromosome {c} gene {}: {d}", g.gene));
+            want.extend(e.nodes.iter().map(|n| (g.gene, n.step, host_row(g.kingdom.k, n))));
+        }
+        want.sort_by_key(|(gene, step, _)| (*gene, *step));
+        let got: Vec<String> = rows.iter().map(sql_row).collect();
+        let want: Vec<String> = want.into_iter().map(|(_, _, r)| r).collect();
+        assert_eq!(got, want, "chromosome {c}: SQL and host decoder differ");
+        compared += got.len();
+    }
+    // The design's trees, as the SQL returned them.
+    let walk_of = |c: &str| -> Vec<String> { result["walk"][c].as_array().expect("chromosome").iter().map(sql_row).collect() };
+    assert_eq!(walk_of("1")[..3], ["1 S 0 left 0 None None", "2 S 1 s 1 Some(1) Some(0)", "3 I 0 i 1 Some(1) Some(1)"]);
+    assert_eq!(walk_of("1")[3..], ["1 S 0 left 0 None None", "2 S 1 left 1 Some(1) Some(0)", "3 I 0 i 1 Some(1) Some(1)", "4 S 2 s 2 Some(2) Some(0)", "5 I 1 z 2 Some(2) Some(1)"]);
+    assert_eq!(walk_of("2"), ["1 S 0 left 0 None None", "2 S 1 s 1 Some(1) Some(0)", "3 I 0 A7 1 Some(1) Some(1)"]);
+    println!("DuckDB bound and expression queries equal the host on {} genes in {} chromosomes, {} bound rows, {compared} nodes", genes.len(), chroms.len(), got_bounds.len());
+    for f in [&driver, &walk, &setup] {
+        std::fs::remove_file(f).expect("clean");
+    }
+    std::fs::remove_dir(&dir).expect("clean");
+}
