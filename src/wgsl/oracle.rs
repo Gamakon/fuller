@@ -627,7 +627,9 @@ fn main() {
     out[idx[3]] = idx[4];
 }
 ";
-        let cases: Vec<(String, String, Vec<(String, Value)>)> = vec![
+        // (name, source, inputs by location)
+        type Case = (String, String, Vec<(String, Value)>);
+        let cases: Vec<Case> = vec![
             (edge.name.clone(), edge.source.clone(), edge.expectation.inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
             ("loaded".into(), loaded.into(), vec![("buffer.idx".into(), u32s(&[9, 0xFFFF_FFFF, 5, 100, 42])), ("buffer.out".into(), u32s(&[1, 2, 3, 4]))]),
         ];
