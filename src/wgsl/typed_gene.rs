@@ -53,7 +53,14 @@ impl Alphabet {
             *per_name.entry(r.name.as_str()).or_default() += 1;
         }
         let mut ids: Vec<(String, Vec<Ty>, Ty)> = kingdom.rows.iter().map(|r| (r.semantic_id(&kingdom.duals, per_name[r.name.as_str()]), r.inputs.clone(), r.output)).collect();
-        for (name, ins, out) in crate::wgsl::safe_karva::per_kernel_rows(kingdom, role) {
+        // The reference's own uses of its bindings first, then every access the interface ALLOWS (a load of every storage
+        // binding, a store of every writable one at every statement rung, the atomic rows): any kernel over the same
+        // bindings is nameable, not just the one the interface was read from.
+        let mut seen: std::collections::BTreeSet<(String, Ty, Vec<Ty>)> = std::collections::BTreeSet::new();
+        for (name, ins, out) in crate::wgsl::safe_karva::per_kernel_rows(kingdom, role).into_iter().chain(capability_rows(kingdom, role)) {
+            if !seen.insert((name.clone(), out, ins.clone())) {
+                continue;
+            }
             rows.push((name.clone(), ins.clone(), out));
             ids.push((format!("kernel:{name}"), ins, out));
         }
@@ -74,6 +81,56 @@ impl Alphabet {
     pub fn row(&self, s: SymbolId) -> &(String, Vec<Ty>, Ty) {
         &self.rows[s as usize]
     }
+}
+
+/// The per-kernel rows of every access an interface's bindings allow: a load of each storage array at an index, a store
+/// of each `read_write` one at every statement rung, the length of a runtime array, and the rows of an array of atomics.
+fn capability_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<crate::wgsl::safe_karva::PerKernelRow> {
+    use crate::wgsl::render::{atomic_array_access, dual_ty, elem_dual, ATOMIC_FUNS, STORE_RUNGS};
+    let ty = |n: &str| dual_ty(kingdom, n).ok();
+    let mut out = Vec::new();
+    for b in &role.bindings {
+        if !b.space.starts_with("storage") {
+            continue;
+        }
+        let writable = b.space == "storage, read_write";
+        let Some(inner) = b.ty.strip_prefix("array<").and_then(|r| r.strip_suffix('>')) else { continue };
+        let index = ty("u32.index");
+        if let Some((value, _)) = atomic_array_access(b) {
+            let (Some(index), Some(value)) = (index, ty(value)) else { continue };
+            out.push((format!("load.{}", b.name), vec![index], value));
+            for r in STORE_RUNGS {
+                if let Some(stmt) = ty(&format!("stmt.{r}")) {
+                    out.push((format!("store.{}_{r}", b.name), vec![index, value], stmt));
+                }
+            }
+            for (fun, _) in ATOMIC_FUNS {
+                out.push((format!("atomic.{}_{fun}", b.name), vec![index, value], value));
+            }
+            continue;
+        }
+        let elem = inner.split(", ").next().unwrap_or(inner);
+        let (Some(index), Some(dual)) = (index, elem_dual(elem).and_then(|d| ty(&d))) else { continue };
+        out.push((format!("load.{}", b.name), vec![index], dual));
+        if !inner.contains(", ") {
+            if let Some(count) = ty("u32.count") {
+                out.push((format!("len.{}", b.name), Vec::new(), count));
+            }
+        }
+        if !writable && elem == "u32" {
+            if let Some(xbound) = ty("u32.xbound") {
+                out.push((format!("load.{}", b.name), vec![index], xbound));
+            }
+        }
+        if writable {
+            for r in STORE_RUNGS {
+                if let Some(stmt) = ty(&format!("stmt.{r}")) {
+                    out.push((format!("store.{}_{r}", b.name), vec![index, dual], stmt));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The exact bit pattern of a constant of `dual` (see the module header).
@@ -454,6 +511,29 @@ mod tests {
         let text = "enable f16;\n@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let h = f16(src[gid.x]) * f16(2.5) + f16(1.0);\n    dst[gid.x] = f32(h);\n}\n";
         match round_trip(&mut Alphabets::default(), &kingdom, text) {
             Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The alphabet of an interface holds every access its bindings allow, not only the ones the kernel it was read from
+    /// made: a kernel that only reads `dst` still has `store.dst_<rung>`, and another kernel that writes it encodes.
+    #[test]
+    fn the_alphabet_of_an_interface_names_every_access_its_bindings_allow() {
+        let kingdom = WgslKingdom::load_safe();
+        let head = "@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@group(0) @binding(2) var<storage, read_write> hist: array<atomic<u32>>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n";
+        let reads = format!("{head}    let x = dst[gid.x] + src[gid.x];\n    _ = x;\n}}\n");
+        let writes = format!("{head}    dst[gid.x] = src[gid.x] * 2.0;\n    atomicAdd(&hist[gid.x & 7u], 1u);\n}}\n");
+        let role = crate::wgsl::safe_reader::read_safe(&reads, &kingdom).expect("reads").role;
+        let mut alphabets = Alphabets::default();
+        let a = alphabets.of(&kingdom, &role).as_ref().expect("alphabet");
+        let named = |n: &str| (0..a.contract.n_symbols() as SymbolId).any(|s| a.row(s).0 == n);
+        for n in ["load.dst", "store.dst_O0", "store.dst_C3", "atomic.hist_add", "store.hist_L0", "len.dst"] {
+            assert!(named(n), "{n}");
+        }
+        assert!(!named("store.src_O0"), "a read-only binding is never stored");
+        match round_trip(&mut alphabets, &kingdom, &writes) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            Outcome::NotRead(e) => panic!("does not read: {e}"),
             other => panic!("{other:?}"),
         }
     }

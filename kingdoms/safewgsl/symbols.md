@@ -3748,46 +3748,47 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F2185 | `own.u32_pindex128` | `composite` | `-` | `u32.pindex128` | 0 | the real terminal of the dual: 128-element private-array index 0 |
 | F2186 | `own.u32_boundx` | `composite` | `-` | `u32.boundx` | 0 | the real terminal of the dual: a loop bound of one pass, 1u |
 | F2187 | `own.u32_boundu` | `composite` | `-` | `u32.boundu` | 0 | the real terminal of the dual: a workgroup-uniform loop bound of one pass, 1u |
-| F2188 | `own.u32_uniformw` | `composite` | `-` | `u32.uniformw` | 0 | the real terminal of the dual: a workgroup-uniform value, 0u |
-| F2189 | `own.bool_uflag` | `composite` | `-` | `bool.uflag` | 0 | the real terminal of the dual: a workgroup-uniform predicate, false |
-| F2190 | `own.block_block` | `composite` | `-` | `block.block` | 0 | the real terminal of the dual: an empty block {} |
-| F2191 | `own.kernel_safe` | `composite` | `-` | `kernel.safe` | 0 | the real terminal of the dual: the default-grid kernel whose epilogue stores the thread's own cell |
-| F2192 | `own.kernel_module` | `composite` | `-` | `kernel.module` | 0 | the real terminal of the dual: a module of one such kernel at each of the interface's entry points |
-| F2193 | `own.grid_grid` | `composite` | `-` | `grid.grid` | 0 | the real terminal of the dual: the default grid: 16 x 16 threads, one cell each |
-| F2194 | `own.wg_decl` | `composite` | `-` | `wg.decl` | 0 | the real terminal of the dual: no workgroup array declaration |
-| F2195 | `own.wg_decls` | `composite` | `-` | `wg.decls` | 0 | the real terminal of the dual: the arrays the kernel uses, at their default lengths |
-| F2196 | `own.block_L0` | `composite` | `-` | `block.L0` | 0 | the real terminal of the dual: an empty block {} |
-| F2197 | `own.block_L1` | `composite` | `-` | `block.L1` | 0 | the real terminal of the dual: an empty block {} |
-| F2198 | `own.block_L2` | `composite` | `-` | `block.L2` | 0 | the real terminal of the dual: an empty block {} |
-| F2199 | `own.block_L3` | `composite` | `-` | `block.L3` | 0 | the real terminal of the dual: an empty block {} |
-| F2200 | `own.block_L4` | `composite` | `-` | `block.L4` | 0 | the real terminal of the dual: an empty block {} |
-| F2201 | `own.block_L5` | `composite` | `-` | `block.L5` | 0 | the real terminal of the dual: an empty block {} |
-| F2202 | `own.stmt_C0` | `composite` | `-` | `stmt.C0` | 0 | the real terminal of the dual: an empty statement {} |
-| F2203 | `own.block_C0` | `composite` | `-` | `block.C0` | 0 | the real terminal of the dual: an empty block {} |
-| F2204 | `own.stmt_C1` | `composite` | `-` | `stmt.C1` | 0 | the real terminal of the dual: an empty statement {} |
-| F2205 | `own.block_C1` | `composite` | `-` | `block.C1` | 0 | the real terminal of the dual: an empty block {} |
-| F2206 | `own.stmt_C2` | `composite` | `-` | `stmt.C2` | 0 | the real terminal of the dual: an empty statement {} |
-| F2207 | `own.block_C2` | `composite` | `-` | `block.C2` | 0 | the real terminal of the dual: an empty block {} |
-| F2208 | `own.stmt_C3` | `composite` | `-` | `stmt.C3` | 0 | the real terminal of the dual: an empty statement {} |
-| F2209 | `own.block_C3` | `composite` | `-` | `block.C3` | 0 | the real terminal of the dual: an empty block {} |
-| F2210 | `own.stmt_C4` | `composite` | `-` | `stmt.C4` | 0 | the real terminal of the dual: an empty statement {} |
-| F2211 | `own.block_C4` | `composite` | `-` | `block.C4` | 0 | the real terminal of the dual: an empty block {} |
-| F2212 | `own.stmt_C5` | `composite` | `-` | `stmt.C5` | 0 | the real terminal of the dual: an empty statement {} |
-| F2213 | `own.block_C5` | `composite` | `-` | `block.C5` | 0 | the real terminal of the dual: an empty block {} |
-| F2214 | `own.stmt_O0` | `composite` | `-` | `stmt.O0` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2215 | `own.block_O0` | `composite` | `-` | `block.O0` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2216 | `own.stmt_O1` | `composite` | `-` | `stmt.O1` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2217 | `own.block_O1` | `composite` | `-` | `block.O1` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2218 | `own.stmt_O2` | `composite` | `-` | `stmt.O2` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2219 | `own.block_O2` | `composite` | `-` | `block.O2` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2220 | `own.stmt_O3` | `composite` | `-` | `stmt.O3` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2221 | `own.block_O3` | `composite` | `-` | `block.O3` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2222 | `own.stmt_O4` | `composite` | `-` | `stmt.O4` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2223 | `own.block_O4` | `composite` | `-` | `block.O4` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2224 | `own.block_B1` | `composite` | `-` | `block.B1` | 0 | the real terminal of the dual: an empty block {} |
-| F2225 | `own.block_B2` | `composite` | `-` | `block.B2` | 0 | the real terminal of the dual: an empty block {} |
-| F2226 | `own.block_B3` | `composite` | `-` | `block.B3` | 0 | the real terminal of the dual: an empty block {} |
-| F2227 | `own.block_B4` | `composite` | `-` | `block.B4` | 0 | the real terminal of the dual: an empty block {} |
-| F2228 | `own.block_B5` | `composite` | `-` | `block.B5` | 0 | the real terminal of the dual: an empty block {} |
+| F2188 | `own.u32_uniform` | `composite` | `-` | `u32.uniform` | 0 | the real terminal of the dual: a workgroup-uniform value, 0u |
+| F2189 | `own.u32_uniformw` | `composite` | `-` | `u32.uniformw` | 0 | the real terminal of the dual: a workgroup-uniform value, 0u |
+| F2190 | `own.bool_uflag` | `composite` | `-` | `bool.uflag` | 0 | the real terminal of the dual: a workgroup-uniform predicate, false |
+| F2191 | `own.block_block` | `composite` | `-` | `block.block` | 0 | the real terminal of the dual: an empty block {} |
+| F2192 | `own.kernel_safe` | `composite` | `-` | `kernel.safe` | 0 | the real terminal of the dual: the default-grid kernel whose epilogue stores the thread's own cell |
+| F2193 | `own.kernel_module` | `composite` | `-` | `kernel.module` | 0 | the real terminal of the dual: a module of one such kernel at each of the interface's entry points |
+| F2194 | `own.grid_grid` | `composite` | `-` | `grid.grid` | 0 | the real terminal of the dual: the default grid: 16 x 16 threads, one cell each |
+| F2195 | `own.wg_decl` | `composite` | `-` | `wg.decl` | 0 | the real terminal of the dual: no workgroup array declaration |
+| F2196 | `own.wg_decls` | `composite` | `-` | `wg.decls` | 0 | the real terminal of the dual: the arrays the kernel uses, at their default lengths |
+| F2197 | `own.block_L0` | `composite` | `-` | `block.L0` | 0 | the real terminal of the dual: an empty block {} |
+| F2198 | `own.block_L1` | `composite` | `-` | `block.L1` | 0 | the real terminal of the dual: an empty block {} |
+| F2199 | `own.block_L2` | `composite` | `-` | `block.L2` | 0 | the real terminal of the dual: an empty block {} |
+| F2200 | `own.block_L3` | `composite` | `-` | `block.L3` | 0 | the real terminal of the dual: an empty block {} |
+| F2201 | `own.block_L4` | `composite` | `-` | `block.L4` | 0 | the real terminal of the dual: an empty block {} |
+| F2202 | `own.block_L5` | `composite` | `-` | `block.L5` | 0 | the real terminal of the dual: an empty block {} |
+| F2203 | `own.stmt_C0` | `composite` | `-` | `stmt.C0` | 0 | the real terminal of the dual: an empty statement {} |
+| F2204 | `own.block_C0` | `composite` | `-` | `block.C0` | 0 | the real terminal of the dual: an empty block {} |
+| F2205 | `own.stmt_C1` | `composite` | `-` | `stmt.C1` | 0 | the real terminal of the dual: an empty statement {} |
+| F2206 | `own.block_C1` | `composite` | `-` | `block.C1` | 0 | the real terminal of the dual: an empty block {} |
+| F2207 | `own.stmt_C2` | `composite` | `-` | `stmt.C2` | 0 | the real terminal of the dual: an empty statement {} |
+| F2208 | `own.block_C2` | `composite` | `-` | `block.C2` | 0 | the real terminal of the dual: an empty block {} |
+| F2209 | `own.stmt_C3` | `composite` | `-` | `stmt.C3` | 0 | the real terminal of the dual: an empty statement {} |
+| F2210 | `own.block_C3` | `composite` | `-` | `block.C3` | 0 | the real terminal of the dual: an empty block {} |
+| F2211 | `own.stmt_C4` | `composite` | `-` | `stmt.C4` | 0 | the real terminal of the dual: an empty statement {} |
+| F2212 | `own.block_C4` | `composite` | `-` | `block.C4` | 0 | the real terminal of the dual: an empty block {} |
+| F2213 | `own.stmt_C5` | `composite` | `-` | `stmt.C5` | 0 | the real terminal of the dual: an empty statement {} |
+| F2214 | `own.block_C5` | `composite` | `-` | `block.C5` | 0 | the real terminal of the dual: an empty block {} |
+| F2215 | `own.stmt_O0` | `composite` | `-` | `stmt.O0` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2216 | `own.block_O0` | `composite` | `-` | `block.O0` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2217 | `own.stmt_O1` | `composite` | `-` | `stmt.O1` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2218 | `own.block_O1` | `composite` | `-` | `block.O1` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2219 | `own.stmt_O2` | `composite` | `-` | `stmt.O2` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2220 | `own.block_O2` | `composite` | `-` | `block.O2` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2221 | `own.stmt_O3` | `composite` | `-` | `stmt.O3` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2222 | `own.block_O3` | `composite` | `-` | `block.O3` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2223 | `own.stmt_O4` | `composite` | `-` | `stmt.O4` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2224 | `own.block_O4` | `composite` | `-` | `block.O4` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2225 | `own.block_B1` | `composite` | `-` | `block.B1` | 0 | the real terminal of the dual: an empty block {} |
+| F2226 | `own.block_B2` | `composite` | `-` | `block.B2` | 0 | the real terminal of the dual: an empty block {} |
+| F2227 | `own.block_B3` | `composite` | `-` | `block.B3` | 0 | the real terminal of the dual: an empty block {} |
+| F2228 | `own.block_B4` | `composite` | `-` | `block.B4` | 0 | the real terminal of the dual: an empty block {} |
+| F2229 | `own.block_B5` | `composite` | `-` | `block.B5` | 0 | the real terminal of the dual: an empty block {} |
 
-2228 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+2229 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

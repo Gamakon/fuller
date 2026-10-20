@@ -1563,7 +1563,7 @@ for dual, text in [
     ("u32.wgindex", "workgroup-array index 0"), ("u32.wgvindex", "vec4 workgroup-array index 0"), ("u32.wgv2index", "vec2 workgroup-array index 0"),
     ("u32.wgaindex", "atomic workgroup-array index 0"), ("u32.pindex", "private-array index 0"), ("u32.pindex16", "16-element private-array index 0"),
     ("u32.pindex128", "128-element private-array index 0"), ("u32.boundx", "a loop bound of one pass, 1u"), ("u32.boundu", "a workgroup-uniform loop bound of one pass, 1u"),
-    ("u32.uniformw", "a workgroup-uniform value, 0u"), ("bool.uflag", "a workgroup-uniform predicate, false"),
+    ("u32.uniform", "a workgroup-uniform value, 0u"), ("u32.uniformw", "a workgroup-uniform value, 0u"), ("bool.uflag", "a workgroup-uniform predicate, false"),
     ("block.block", "an empty block {}"),
     ("kernel.safe", "the default-grid kernel whose epilogue stores the thread's own cell"),
     ("kernel.module", "a module of one such kernel at each of the interface's entry points"),
