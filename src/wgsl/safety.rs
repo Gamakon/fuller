@@ -86,11 +86,19 @@ pub struct Contract {
     /// are left to the design (its invocations of one workgroup may write
     /// one cell; the GPU race check measures whether they do).
     pub rows_mode: bool,
+    /// A lower bound on a binding's length, a polynomial in the params
+    /// (`length h cfg.r_rows * cfg.d`: the binding holds at least that many
+    /// elements in every dispatch of the problem). With it an access whose
+    /// index is proved below the bound, under the guards on its path, cannot
+    /// reach the device's clamp. Terms: (coefficient, params multiplied).
+    pub lengths: BTreeMap<String, Vec<(i128, Vec<String>)>>,
+    /// The same for a kernel that writes the whole output (`// mode full`).
+    pub full_lengths: BTreeMap<String, Vec<(i128, Vec<String>)>>,
 }
 
 impl Default for Contract {
     fn default() -> Self {
-        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new(), arena: BTreeSet::new(), arena_mode: false, rows: BTreeMap::new(), rows_mode: false }
+        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new(), arena: BTreeSet::new(), arena_mode: false, rows: BTreeMap::new(), rows_mode: false, lengths: BTreeMap::new(), full_lengths: BTreeMap::new() }
     }
 }
 
@@ -126,6 +134,14 @@ impl Contract {
                 ["rows", b, width] => {
                     c.rows.insert(b.to_string(), num(width)?);
                 }
+                [kind @ ("length" | "full-length"), b, expr @ ..] if !expr.is_empty() => {
+                    let terms = parse_length(&expr.join(" ")).map_err(|e| format!("contract line {}: {e}", n + 1))?;
+                    if *kind == "length" {
+                        c.lengths.insert(b.to_string(), terms);
+                    } else {
+                        c.full_lengths.insert(b.to_string(), terms);
+                    }
+                }
                 _ => return Err(format!("contract line {}: {line}", n + 1)),
             }
         }
@@ -153,6 +169,9 @@ impl Contract {
         for (k, v) in &self.full {
             c.params.insert(k.clone(), *v);
         }
+        for (k, v) in &self.full_lengths {
+            c.lengths.insert(k.clone(), v.clone());
+        }
         c
     }
 
@@ -165,7 +184,10 @@ impl Contract {
         }
         let g = gram_contract();
         let rename = |m: &BTreeMap<String, (i128, i128)>| -> BTreeMap<String, (i128, i128)> { m.iter().map(|(k, v)| (k.strip_prefix("cfg.").map_or_else(|| k.clone(), |r| role.field(r)), *v)).collect() };
-        Contract { params: rename(&g.params), full: rename(&g.full), ..g }
+        let rename_len = |m: &BTreeMap<String, Vec<(i128, Vec<String>)>>| -> BTreeMap<String, Vec<(i128, Vec<String>)>> {
+            m.iter().map(|(b, ts)| (b.clone(), ts.iter().map(|(c, names)| (*c, names.iter().map(|n| n.strip_prefix("cfg.").map_or_else(|| n.clone(), |r| role.field(r))).collect())).collect())).collect()
+        };
+        Contract { params: rename(&g.params), full: rename(&g.full), lengths: rename_len(&g.lengths), full_lengths: rename_len(&g.full_lengths), ..g }
     }
 
     pub fn param(&self, name: &str) -> (i128, i128) {
@@ -175,6 +197,28 @@ impl Contract {
     fn buffer_of(&self, binding: &str) -> (String, i128) {
         self.aliases.get(binding).cloned().unwrap_or_else(|| (binding.to_string(), 0))
     }
+}
+
+/// `a * b + 2 * c * d - e`-style length expressions: sums of terms, a term an optional
+/// integer coefficient and params multiplied. Only `+` between terms (no subtraction: a length lower
+/// bound is built from products of non-negative params).
+fn parse_length(expr: &str) -> Result<Vec<(i128, Vec<String>)>, String> {
+    let mut terms = Vec::new();
+    for t in expr.split('+') {
+        let mut coef = 1i128;
+        let mut names = Vec::new();
+        for f in t.split('*').map(str::trim) {
+            if f.is_empty() {
+                return Err(format!("length expression {expr:?}"));
+            }
+            match f.replace('_', "").parse::<i128>() {
+                Ok(n) => coef *= n,
+                Err(_) => names.push(f.to_string()),
+            }
+        }
+        terms.push((coef, names));
+    }
+    Ok(terms)
 }
 
 /// What the layer refused, by rule.
@@ -677,6 +721,21 @@ impl<'m> An<'m> {
         i
     }
 
+    /// A contract length expression as a polynomial over the params' symbols.
+    fn length_poly(&mut self, terms: &[(i128, Vec<String>)]) -> Poly {
+        let mut out = Poly::default();
+        for (c, names) in terms {
+            let mut p = Poly::konst(*c);
+            for n in names {
+                let (lo, hi) = self.contract.param(n);
+                let s = self.sym(n, lo, hi);
+                p = p.mul(&Poly::sym(s));
+            }
+            out = out.add(&p);
+        }
+        out
+    }
+
     fn param(&mut self, name: &str) -> Abs {
         let (lo, hi) = self.contract.param(name);
         let s = self.sym(name, lo, hi);
@@ -887,6 +946,34 @@ impl<'m> An<'m> {
             }
             let rest: BTreeMap<Var, Poly> = f.t.iter().filter(|(v, _)| !g.t.contains_key(v)).map(|(v, c)| (*v, c.clone())).collect();
             out.push(g.k.scale(-1).add(&rest_bound(&rest)).add(&f.k));
+        }
+        // SEVERAL FACTS AT ONCE, EACH TIMES A FACTOR: `lr * d + c` under `lr < r_rows` and `c < d` is
+        // `d * (lr part) + (c part)`: a fact whose terms the form carries as one common multiple `m` (a
+        // non-negative polynomial) bounds that part by `m * (-k)`, and facts over disjoint variables
+        // combine; the variables no fact covers are at their own bounds.
+        let mut covered: BTreeMap<Var, Poly> = BTreeMap::new();
+        let mut sum = f.k.clone();
+        // The facts over the most variables first (`lr + ctr < r_rows` before `lr < r_rows`).
+        let mut by_size: Vec<&Lin> = facts.iter().collect();
+        by_size.sort_by_key(|g| std::cmp::Reverse(g.t.len()));
+        for g in by_size {
+            let Some((v0, c0)) = g.t.iter().next().and_then(|(v, c)| c.as_const().filter(|c| *c > 0).map(|c| (*v, c))) else { continue };
+            if g.t.keys().any(|v| covered.contains_key(v) || !f.t.contains_key(v)) {
+                continue;
+            }
+            let Some(m) = f.t[&v0].div_mono(&[], c0) else { continue };
+            let consistent = g.t.iter().all(|(v, c)| c.as_const().is_some_and(|cv| cv > 0 && f.t[v] == m.scale(cv)));
+            if !consistent || !m.nonneg(&self.syms) {
+                continue;
+            }
+            sum = sum.add(&m.mul(&g.k.scale(-1)));
+            for v in g.t.keys() {
+                covered.insert(*v, m.clone());
+            }
+        }
+        if !covered.is_empty() {
+            let rest: BTreeMap<Var, Poly> = f.t.iter().filter(|(v, _)| !covered.contains_key(v)).map(|(v, c)| (*v, c.clone())).collect();
+            out.push(sum.add(&rest_bound(&rest)));
         }
         out
     }
@@ -2048,11 +2135,22 @@ impl<'m> An<'m> {
             return;
         }
         let least = self.contract.params.get(&format!("arrayLength({alloc})")).map(|(lo, _)| *lo);
-        let form_in_bounds = match (&idx, least) {
+        let mut form_in_bounds = match (&idx, least) {
             (Abs::Lin(l), Some(n)) if !workgroup => self.range(l, &self.facts).1 < n,
             _ => false,
         };
-        let length_known = !workgroup && least.is_some();
+        // A length the contract gives as a polynomial in the params: the form's symbolic upper bounds under the
+        // guards on its path (`row * d + col` under `row < r_rows`, `col < d`) against `length - 1`.
+        let length_poly: Option<Poly> = if workgroup { None } else { self.contract.lengths.get(alloc).cloned().map(|terms| self.length_poly(&terms)) };
+        if let (Abs::Lin(l), Some(len)) = (&idx, &length_poly) {
+            if l.t.values().all(|c| c.nonneg(&self.syms)) && l.k.nonneg(&self.syms) {
+                let facts = self.facts.clone();
+                if self.upper_polys(l, &facts).iter().any(|ub| len.sub(ub).sub(&Poly::konst(1)).nonneg(&self.syms)) {
+                    form_in_bounds = true;
+                }
+            }
+        }
+        let length_known = !workgroup && (least.is_some() || length_poly.is_some());
         let (buf, off) = if workgroup { (alloc.to_string(), 0) } else { self.contract.buffer_of(alloc) };
         let form = match idx {
             Abs::Lin(l) => Ok(l.add(&Lin::konst(Poly::konst(off)))),
@@ -3627,7 +3725,8 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
     // `guard`), which this check does not read.
     let written: BTreeSet<&str> = an.sites.iter().filter(|s| s.kind != Kind::Read).map(|s| s.alloc.as_str()).collect();
     if let Some(s) = an.sites.iter().find(|s| s.length_known && !s.form_in_bounds && s.form.is_ok() && written.contains(s.alloc.as_str()) && !arena(s)) {
-        return Err(named(unsafe_("index_not_in_bounds", format!("{}: not proved below the binding's arrayLength at the contract's ranges, and the device clamps an index past the end onto the last element, where two invocations would meet", s.what)), &[s]));
+        let guards: Vec<String> = s.facts.iter().map(|f| format!("{} <= 0", an.show_lin(f))).collect();
+        return Err(named(unsafe_("index_not_in_bounds", format!("{}: not proved below the binding's arrayLength at the contract's ranges and the guards on its path [{}], and the device clamps an index past the end onto the last element, where two invocations would meet", s.what, guards.join("; "))), &[s]));
     }
     // ROWS MODE: a `rows` binding whose every write is in one row per
     // workgroup, no row shared by two workgroups.
@@ -3913,8 +4012,17 @@ mod tests {
         check_text(src, c).unwrap_or_else(|e| panic!("{e}\n{src}"))
     }
 
-    fn one_d() -> Contract {
+    /// The Gram contract for the ownership tests: its ranges, no lengths (the tests below that are about
+    /// disjointness store at arbitrary indices; the length proofs have their own tests).
+    fn gram_ownership_contract() -> Contract {
         let mut c = gram_contract();
+        c.lengths.clear();
+        c.full_lengths.clear();
+        c
+    }
+
+    fn one_d() -> Contract {
+        let mut c = gram_ownership_contract();
         c.workgroups = [(1, 4), (1, 1), (1, 1)];
         c
     }
@@ -4093,7 +4201,7 @@ mod tests {
     /// group) splits at the column count alone.
     #[test]
     fn equal_values_and_strides() {
-        let c = gram_contract();
+        let c = gram_ownership_contract();
         let k = |off: &str, decls: &str| format!("{PRE}{decls}@compute @workgroup_size(16, 16, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    if (gid.y < cfg.r_rows && gid.x * 8u + {off} < cfg.d) {{ h[gid.y * cfg.d + gid.x * 8u + {off}] = h[gid.y * cfg.d + gid.x * 8u + {off}] + phi[0]; }}\n}}\n");
         let at = "fn at3(v: vec3<u32>, i: u32) -> u32 { var t = v; return t[min(i, 2u)]; }\n";
         proved(&k("min(at3(vec3<u32>(1u, 2u, 3u), cfg.r_off), 7u)", at), &c);
@@ -4146,6 +4254,40 @@ mod tests {
         open.params.remove("buffer_6_global[0]");
         let src = std::fs::read_to_string(dir.join("k01.wgsl")).unwrap();
         assert_eq!(rule(&src, &open), "store_index_may_wrap");
+    }
+
+    /// THE GUARD IS WHAT BOUNDS THE STORE (the clamp audit's residual gap): a contract that gives a binding's
+    /// length as a polynomial in the params (`length h cfg.r_rows * cfg.d`) lets the checker prove a store below
+    /// it from the guards on its path. The Gram's own store `h[row * d + col]` under the role's guard
+    /// `row < r_rows && col < d` is proved; the same store with no guard, or with a guard that bounds the wrong
+    /// thing, is refused (`index_not_in_bounds`); a flat guard on the whole index proves a flat store.
+    #[test]
+    fn a_store_is_proved_below_the_symbolic_length_by_its_guard() {
+        let c = gram_contract();
+        assert!(c.lengths.contains_key("h"), "the Gram contract gives h's length");
+        let two_d = |guard: &str| format!("    let row = gid.y;\n    let col = gid.x;\n    if ({guard}) {{\n        h[row * cfg.d + col] = 1.0;\n    }}");
+        proved(&gram(&two_d("row < cfg.r_rows && col < cfg.d"), "16, 16, 1"), &c);
+        // No guard: a thread past the band writes the last cell, where the last in-band thread writes too.
+        let unproved = |src: &str| {
+            let r = rule(src, &c);
+            assert!(matches!(r, "index_not_in_bounds" | "store_index_may_wrap"), "{r}");
+        };
+        unproved(&gram("    h[gid.y * cfg.d + gid.x] = 1.0;", "16, 16, 1"));
+        // The guard bounds the row but not the column.
+        unproved(&gram(&two_d("row < cfg.r_rows"), "16, 16, 1"));
+        // The guard bounds the row by the wrong parameter.
+        unproved(&gram(&two_d("row < cfg.m && col < cfg.d"), "16, 16, 1"));
+        // A flat store under a flat guard on the whole index (a one-dimensional dispatch).
+        let mut flat = c.clone();
+        flat.workgroups = [(1, 65535), (1, 1), (1, 1)];
+        proved(&gram("    if (gid.x < cfg.r_rows * cfg.d) {\n        h[gid.x] = 1.0;\n    }", "16, 1, 1"), &flat);
+        assert_eq!(rule(&gram("    h[gid.x] = 1.0;", "16, 1, 1"), &flat), "index_not_in_bounds");
+        // A contract with no length for h claims nothing about it (the residual: problems whose lengths are not given).
+        flat.lengths.clear();
+        proved(&gram("    h[gid.x] = 1.0;", "16, 1, 1"), &flat);
+        // The text form: a sum of products, a coefficient, params.
+        let parsed = Contract::parse("workgroups x 1 4\nlength out cfg.a * cfg.b + 2 * cfg.c\n").unwrap();
+        assert_eq!(parsed.lengths["out"], vec![(1, vec!["cfg.a".to_string(), "cfg.b".to_string()]), (2, vec!["cfg.c".to_string()])]);
     }
 
     /// THE DEVICE CLAMPS (wgpu 30 on Metal, naga Restrict): an index past a

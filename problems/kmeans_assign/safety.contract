@@ -17,3 +17,7 @@ param params.x 1 262144
 param params.y 1 65536
 param params.z 1 2048
 param params.w 0 536608768
+# `assignments` is the whole N-element buffer, every band writes row_off + local with local < n_band, and the
+# bands cover [0, N) (params.w = row_off, params.x = n_band): at least params.w + params.x elements. The device
+# clamps an index past a binding onto its last element, so the checker proves the store below this length.
+length assignments params.w + params.x

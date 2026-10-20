@@ -14,3 +14,10 @@ param cfg.r_off 0 8192
 # the harness 2026-10-14): one row band, r_off 0, r_rows d, h the whole d x d
 # accumulator; only the item range is banded.
 full cfg.r_off 0 0
+# What the band program allocates (problems/gram/problem.toml: the accumulator is the band's r_rows x d,
+# Phi the item band's m x d). The device clamps an index past a binding onto its last element, so the checker
+# proves every access to a WRITTEN binding below its length, under the guards on its path (the role's guard
+# `row < r_rows && col < d` is such a guard). `full-length`: the whole H of a `// mode full` kernel.
+length h cfg.r_rows * cfg.d
+length phi cfg.m * cfg.d
+full-length h cfg.d * cfg.d
