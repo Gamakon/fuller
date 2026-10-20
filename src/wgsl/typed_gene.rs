@@ -340,7 +340,8 @@ pub struct Alphabets {
 
 impl Alphabets {
     pub fn of(&mut self, kingdom: &WgslKingdom, role: &Role) -> &Result<Alphabet, Gap> {
-        let key = format!("{}|{}", role.name, role.per_kernel.iter().map(|p| format!("{}:{}:{}", p.name, p.inputs.join("+"), p.output)).collect::<Vec<_>>().join(","));
+        // (The aggregate duals a module declared are part of the alphabet.)
+        let key = format!("{}|{}|{}", role.name, role.per_kernel.iter().map(|p| format!("{}:{}:{}", p.name, p.inputs.join("+"), p.output)).collect::<Vec<_>>().join(","), kingdom.duals.iter().filter(|d| d.form == "value").map(|d| d.dual.as_str()).collect::<Vec<_>>().join(","));
         self.by_interface.entry(key).or_insert_with(|| Alphabet::new(kingdom, role))
     }
 }
@@ -367,6 +368,8 @@ pub fn round_trip(alphabets: &mut Alphabets, kingdom: &WgslKingdom, text: &str) 
         Ok(r) => r,
         Err(e) => return Outcome::NotRead(e),
     };
+    // (A module that declares aggregate types reads in the kingdom extended by them.)
+    let kingdom = read.kingdom.as_ref().unwrap_or(kingdom);
     let original = match render_tree_with(&read.tree, kingdom, &read.role) {
         Ok(r) => r.text,
         Err(e) => return Outcome::Unrenderable(e),
@@ -558,6 +561,23 @@ mod tests {
     fn the_quad_gathers_round_trip_through_a_typed_gene() {
         let kingdom = WgslKingdom::load_safe();
         let text = "enable subgroups;\n@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let v = src[gid.x];\n    dst[gid.x] = quadBroadcast(v, 2u) + quadSwapX(v) + quadSwapY(v) + quadSwapDiagonal(v);\n}\n";
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// An array declared by the module is a value: a uniform `array<mat2x2<f32>, 4>` passed whole to a helper, indexed and read
+    /// by member reads, round trips through a typed gene over the module's extended kingdom (the dual `array<..., 4>.value`,
+    /// its rows `agg.at`, `agg.zero`).
+    #[test]
+    fn an_array_value_passed_to_a_helper_round_trips_through_a_typed_gene() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "@group(0) @binding(0) var<uniform> u : array<mat2x2<f32>, 4>;\n@group(0) @binding(1) var<storage, read_write> s: f32;\nfn a(a : array<mat2x2<f32>, 4>) -> f32 { return a[0][0].x; }\nfn b(m : mat2x2<f32>) -> f32 { return m[0].x; }\n@compute @workgroup_size(1)\nfn f() { s = a(u) + b(u[1]); }\n";
+        let read = crate::wgsl::safe_reader::read_safe(text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let ext = read.kingdom.as_ref().expect("the module declares an aggregate type");
+        assert!(ext.duals.iter().any(|d| d.dual == "array<mat2x2<f32>, 4>.value"), "{:?}", ext.duals.iter().skip(204).map(|d| &d.dual).collect::<Vec<_>>());
+        assert!(ext.rows.iter().any(|r| r.name == "agg.at") && ext.rows.iter().any(|r| r.name == "agg.zero"));
         match round_trip(&mut Alphabets::default(), &kingdom, text) {
             Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
             other => panic!("{other:?}"),

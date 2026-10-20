@@ -160,6 +160,11 @@ impl<'a> Index<'a> {
     }
 
     /// The default form of a slot before inference.
+    /// [`Index::default_form`], and `value` for a slot the (extended) kingdom has an aggregate value dual for.
+    fn form_at(&self, slot: &str) -> &'static str {
+        if self.by_dual.contains_key(format!("{slot}.value").as_str()) { "value" } else { Index::default_form(slot) }
+    }
+
     fn default_form(slot: &str) -> &'static str {
         let scalar = match slot.find('<') {
             Some(i) if slot.starts_with("vec") || slot.starts_with("mat") => &slot[i + 1..slot.len() - 1],
@@ -182,7 +187,7 @@ fn produce(n: &Node, ix: &Index, out: &mut Vec<NodeType>) {
     let t = match n {
         Node::Literal { form, slot, .. } => NodeType { dual: ix.dual(slot, form), row: None, rule: "literal" },
         Node::Leaf { name, slot } => {
-            let form = if name.starts_with("builtin.") && slot.contains("u32") { "index" } else { Index::default_form(slot) };
+            let form = if name.starts_with("builtin.") && slot.contains("u32") { "index" } else { ix.form_at(slot) };
             NodeType { dual: ix.dual(slot, form), row: None, rule: "leaf default" }
         }
         Node::App { name, slot, known, kids } => {
@@ -192,13 +197,13 @@ fn produce(n: &Node, ix: &Index, out: &mut Vec<NodeType>) {
             if name.starts_with("store.") {
                 NodeType { dual: ix.dual("store", "store"), row: None, rule: "store" }
             } else if !*known || name.starts_with("load.") {
-                NodeType { dual: ix.dual(slot, Index::default_form(slot)), row: None, rule: if *known { "load default" } else { "unrowed default" } }
+                NodeType { dual: ix.dual(slot, ix.form_at(slot)), row: None, rule: if *known { "load default" } else { "unrowed default" } }
             } else {
                 // The row's out form at this slot; the first instance in
                 // table order when several share the slot (index before count).
                 match ix.rows_at(name, slot).first() {
                     Some((i, r)) => NodeType { dual: Some(r.output), row: Some(*i), rule: "row out form" },
-                    None => NodeType { dual: ix.dual(slot, Index::default_form(slot)), row: None, rule: "no row at slot" },
+                    None => NodeType { dual: ix.dual(slot, ix.form_at(slot)), row: None, rule: "no row at slot" },
                 }
             }
         }
@@ -371,6 +376,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
         let (t, _) = types(src);
         assert!(t.stats.no_dual >= 1, "{:?}", t.stats);
-        assert!(t.stats.untyped_by_slot.contains_key("struct"), "{:?}", t.stats.untyped_by_slot);
+        // (A struct slot is the struct's name since 2026-10-20; the shipped kingdom has no dual for it, an extended one has.)
+        assert!(t.stats.untyped_by_slot.contains_key("P"), "{:?}", t.stats.untyped_by_slot);
     }
 }

@@ -590,6 +590,14 @@ impl Role {
         let pk = |name: String, inputs: Vec<String>, output: String, template: String| PerKernel { name, inputs, output, template };
         let mut extra = Vec::new();
         for b in &i.bindings {
+            // The whole binding as a VALUE when its type is an aggregate the module declares (an array of a known size, a
+            // struct): `u`, passed to a helper or indexed. The row is dropped where the kingdom has no such dual.
+            let fixed_array = b.ty.starts_with("array<") && b.ty.contains(", ") && !b.ty.contains("atomic<");
+            // (Not the first uniform block's struct, whose fields are the kingdom's `cfg` rows.)
+            let value_struct = i.uniform.as_ref().is_none_or(|u| u.var != b.name) && i.structs.iter().any(|(n, members)| *n == b.ty && members.iter().all(|(_, t)| (!t.starts_with("array<") || t.contains(", ")) && !t.contains("atomic<")));
+            if fixed_array || value_struct {
+                extra.push(pk(format!("load.{}", b.name), Vec::new(), format!("{}.value", b.ty), b.name.clone()));
+            }
             // A uniform that is no struct and no vector of lanes (a matrix, a
             // scalar, an array): its value `load.<var>`, an array's element
             // over an index.
@@ -1071,7 +1079,8 @@ pub struct Renderer<'a> {
     pub kingdom: &'a WgslKingdom,
     pub table: &'a FunctionTable,
     pub role: &'a Role,
-    per_kernel: BTreeMap<&'a str, &'a PerKernel>,
+    /// The interface's rows by name and arity (`load.u` is the whole value with no operand and an element with an index).
+    per_kernel: BTreeMap<(&'a str, usize), &'a PerKernel>,
     /// A module's workgroup arrays at one length for every entry point (each
     /// entry point's arrays within the device's 32 KB at those lengths),
     /// while its entry points render; None for a single kernel.
@@ -1283,7 +1292,7 @@ struct Scope {
 
 impl<'a> Renderer<'a> {
     pub fn new(kingdom: &'a WgslKingdom, table: &'a FunctionTable, role: &'a Role) -> Renderer<'a> {
-        Renderer { kingdom, table, role, per_kernel: role.per_kernel.iter().map(|p| (p.name.as_str(), p)).collect(), joint_wg: std::cell::RefCell::new(None) }
+        Renderer { kingdom, table, role, per_kernel: role.per_kernel.iter().map(|p| ((p.name.as_str(), p.inputs.len()), p)).collect(), joint_wg: std::cell::RefCell::new(None) }
     }
 
     fn dual(&self, ty: Ty) -> Result<&WgslDual, String> {
@@ -1510,7 +1519,7 @@ impl<'a> Renderer<'a> {
     fn epilogue_fallback(&self, scope: &mut Scope) -> Result<String, String> {
         // An interface with no output cell (no h: v24's) has no store of its
         // own to end in: its epilogue's fallback is empty, as its body's is.
-        if !self.per_kernel.contains_key("store.h") {
+        if !self.per_kernel.keys().any(|(n, _)| *n == "store.h") {
             return Ok(String::new());
         }
         let t = |n: &str| dual_ty(self.kingdom, n);
@@ -1528,7 +1537,7 @@ impl<'a> Renderer<'a> {
     /// the value a constant (`konst`) of that binding's dual. An interface with no
     /// output binding has no store to end in, and its epilogue is empty.
     fn epilogue_own(&self, scope: &mut Scope, konst: f64) -> Result<String, String> {
-        let Some(store) = self.per_kernel.get("store.h") else { return Ok(String::new()) };
+        let Some(store) = self.per_kernel.iter().find(|((n, _), _)| *n == "store.h").map(|(_, p)| *p) else { return Ok(String::new()) };
         let value_dual = store.inputs.get(1).ok_or("the output store takes no value")?;
         let value_ty = dual_ty(self.kingdom, value_dual)?;
         let d = self.dual(value_ty)?;
@@ -2090,7 +2099,7 @@ impl<'a> Renderer<'a> {
             }
             other => {
                 // (A role's store at a statement rung is named with its rung.)
-                if let Some(p) = self.per_kernel.get(s.name.as_str()).or_else(|| self.per_kernel.get(other)) {
+                if let Some(p) = self.per_kernel.get(&(s.name.as_str(), s.kids.len())).or_else(|| self.per_kernel.get(&(other, s.kids.len()))) {
                     let d = self.dual(s.ty)?;
                     if d.slot != "stmt" {
                         return Err(format!("{other} is a value row used as a statement"));
@@ -2536,6 +2545,17 @@ impl Renderer<'_> {
         if name == "fallback" {
             return self.fallback_value(d, wrap);
         }
+        // The rows of an aggregate value (docs/PLAN_wgsl_terminals.md, "Aggregates"): the zero value `A()`, an array's
+        // element `a[i]`, a struct's member `a.m`. (The device clamps an index past the array: naga Restrict.)
+        if name == "agg.zero" {
+            return Ok(format!("{}()", d.slot));
+        }
+        if name == "agg.at" && v.kids.len() == 2 {
+            return Ok(format!("{}[{}]", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
+        }
+        if let (Some(member), 1) = (name.strip_prefix("agg.member_"), v.kids.len()) {
+            return Ok(format!("{}.{member}", self.value(&v.kids[0], scope)?));
+        }
         // An `own.*` row: the real terminal of a dual that has no value to write, in its own text: the thread's own
         // row, column or cell, a thread id's axis, or the dual's zero.
         if name.starts_with("own.") {
@@ -2562,7 +2582,7 @@ impl Renderer<'_> {
             let form = if form.starts_with("p_") { d.form.as_str() } else { form };
             return self.literal(form, v.konst, d, wrap);
         }
-        if let Some(p) = self.per_kernel.get(name) {
+        if let Some(p) = self.per_kernel.get(&(name, v.kids.len())) {
             return self.fill(p, v, scope);
         }
         // The uniform values: as the index rows and loads they compute alike.

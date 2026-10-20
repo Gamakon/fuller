@@ -21,6 +21,9 @@ use crate::wgsl::render::{dual_ty, Tree, COMPOSITES};
 
 /// The conversion's result: the safe tree and what was noted on the way.
 pub struct SafeRead {
+    /// The kingdom the tree's duals are in when the module declared aggregate types
+    /// ([`WgslKingdom::extended`]); `None`: the caller's own.
+    pub kingdom: Option<WgslKingdom>,
     pub tree: Tree,
     pub notes: Vec<String>,
     pub registers: BTreeMap<String, String>,
@@ -449,7 +452,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             // An element of an array VALUE chosen at run time (`let accs =
             // array<vec4<f32>, 4>(...); accs[i]`, r3x_reinvent): a select
             // chain over the elements on the index.
-            if name == "shape.access_dyn" && kids.len() == 2 {
+            if (name == "shape.access_dyn" || name == "agg.at") && kids.len() == 2 {
                 // The array is usually a `let`: its definition.
                 let base = match &kids[0] {
                     Node::Leaf { name, .. } => name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)).unwrap_or(&kids[0]),
@@ -458,6 +461,10 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 if let Node::App { name: cn, kids: elems, .. } = base {
                     if cn.starts_with("naga.Compose.type") && !elems.is_empty() {
                         let elems = elems.iter().map(|e| tree_of(ctx, e)).collect::<Result<Vec<_>, _>>()?;
+                        // (A constant index picks the element.)
+                        if let Some(i) = (if let Node::Literal { value, .. } = &kids[1] { Some(*value) } else { None }).filter(|l| *l >= 0.0 && l.fract() == 0.0).map(|l| l as usize).filter(|i| *i < elems.len()) {
+                            return Ok(elems[i].clone());
+                        }
                         let idx = tree_of(ctx, &kids[1])?;
                         let (flag, index_ty) = (ty(ctx, "bool.flag")?, ty(ctx, "u32.index")?);
                         let mut chain = elems[elems.len() - 1].clone();
@@ -523,6 +530,14 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
                 if let Some(row) = safe_row_for(name, kids) {
                     return tree_of(ctx, &Node::App { name: row, slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
+                }
+                // A member of a struct VALUE the module declares (a helper's struct argument, a struct a helper returns): the
+                // aggregate's row `agg.member_<m>` over the struct's value (docs/PLAN_wgsl_terminals.md, "Aggregates").
+                if let (Some(i), [k]) = (name.strip_prefix("naga.AccessIndex.").and_then(|i| i.parse::<usize>().ok()), kids.as_slice()) {
+                    let member = ctx.kingdom.duals.iter().position(|d| d.form == "value" && d.slot == slot_of(k)).and_then(|d| ctx.kingdom.shapes.get(&(d as u16))).and_then(|sh| if let crate::wgsl::loader::Shape::Struct { members } = sh { members.get(i).map(|(m, _)| m.clone()) } else { None });
+                    if let Some(m) = member {
+                        return tree_of(ctx, &Node::App { name: format!("agg.member_{m}"), slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
+                    }
                 }
                 return Err(format!("{name} has no row in the table"));
             }
@@ -876,6 +891,12 @@ fn safe_row_for(name: &str, kids: &[Node]) -> Option<String> {
 }
 
 /// A reader node's WGSL slot.
+/// Whether a slot is a struct's: `struct`, or the name of a declared struct (the slots of a value are scalars, vectors,
+/// matrices and the `<>` types; an image, a sampler and the like are named by their first word).
+fn is_struct_slot(slot: &str) -> bool {
+    slot == "struct" || (!slot.contains('<') && !matches!(slot, "f32" | "f16" | "i32" | "u32" | "bool" | "store" | "image" | "sampler" | "bindingarray" | "accelerationstructure" | "rayquery" | "cooperativematrix" | "valuepointer" | "pointer"))
+}
+
 fn slot_of(n: &Node) -> &str {
     match n {
         Node::Leaf { slot, .. } | Node::Literal { slot, .. } | Node::App { slot, .. } => slot,
@@ -1622,7 +1643,7 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
     for i in order {
         let (name, path, tree) = defs[i];
         // A struct held whole has no register: each use reads its field.
-        if matches!(tree, Node::App { kids, .. } if kids.first().is_some_and(|k| slot_of(k) == "struct")) {
+        if matches!(tree, Node::App { kids, .. } if kids.first().is_some_and(|k| is_struct_slot(slot_of(k)))) {
             continue;
         }
         let def_block = &path[..path.len().saturating_sub(1)];
@@ -3209,7 +3230,7 @@ impl<'a> Ctx<'a> {
         // A uniform that is no struct (`load.uniform.u`, `load.uniform.u.#`):
         // the variable's own row.
         let whole = rest.split(['.', '@']).next().unwrap_or(rest);
-        if self.module.global_variables.iter().any(|(_, g)| g.name.as_deref() == Some(whole) && g.space == naga::AddressSpace::Uniform) && self.per_kernel_rows.iter().any(|p| p.0 == format!("load.{whole}")) {
+        if self.module.global_variables.iter().any(|(_, g)| g.name.as_deref() == Some(whole) && g.space == naga::AddressSpace::Uniform) && self.per_kernel_rows.iter().any(|p| p.0 == format!("load.{whole}")) && rest[whole.len()..].split('.').all(|seg| seg.is_empty() || seg == "#") {
             let indexes = rest[whole.len()..].matches("#").count();
             return self.uniform_value(t, whole, indexes);
         }
@@ -3275,7 +3296,8 @@ impl<'a> Ctx<'a> {
     /// `load.<var>`.
     fn uniform_value(&mut self, t: &Tree, var: &str, indexes: usize) -> Result<Option<Tree>, String> {
         let row = format!("load.{var}");
-        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+        // (The row of the most inputs the indexes give: an array's element over its index, else the whole value.)
+        let Some((name, inputs, out)) = self.per_kernel_rows.iter().filter(|p| p.0 == row && p.1.len() <= indexes).max_by_key(|p| p.1.len()).cloned() else {
             return Ok(None);
         };
         let mut idx = Vec::new();
@@ -6603,6 +6625,7 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
 /// reference to it); it renders the same text as [`read_safe_literal`]'s.
 pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let r = read_safe_literal(source, kingdom)?;
+    let kingdom = r.kingdom.as_ref().unwrap_or(kingdom);
     // (A module's entry points each by its own knobs.)
     let tree = if r.tree.name.starts_with("kernel.module_") {
         let entries = crate::wgsl::render::module_entries(&r.tree).iter().map(|k| crate::wgsl::params::assign(k, kingdom)).collect::<Result<Vec<_>, _>>()?;
@@ -6728,6 +6751,9 @@ fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Res
             }
         }
     }
+    let extended = kingdom.extended(&kernel.module);
+    let used = (extended.duals.len() != kingdom.duals.len()).then(|| extended.clone());
+    let kingdom = &extended;
     let position = |name: &str| kernel.module.entry_points.iter().position(|e| e.name == name).ok_or_else(|| format!("no entry point {name}"));
     if role.entries.len() <= 1 {
         // The grid: the `// grid x y bx by` header when the text has one (its
@@ -6737,7 +6763,7 @@ fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Res
         let grid = grid_header(source).unwrap_or((declared[0], declared[1], 1, 1));
         let at = Reading { source, kingdom, kernel: &kernel, role: &role };
         let (tree, notes, registers, _) = read_entry(&at, ep, (grid, grid_rows_x(source)), (BTreeMap::new(), BTreeMap::new()))?;
-        return Ok(SafeRead { tree, notes, registers, role });
+        return Ok(SafeRead { kingdom: used, tree, notes, registers, role });
     }
     // SEVERAL ENTRY POINTS (2026-10-17, B6 of PLAN_v24_ingest_evolution): each
     // read as a safe kernel in the interface's order, each grid from its own
@@ -6761,7 +6787,7 @@ fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Res
         kids.push(tree);
     }
     let tree = crate::wgsl::render::module_tree(kingdom, kids)?;
-    Ok(SafeRead { tree, notes, registers, role })
+    Ok(SafeRead { kingdom: used, tree, notes, registers, role })
 }
 
 /// A statement of a block being walked: the block, the statement's position

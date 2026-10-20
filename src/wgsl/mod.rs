@@ -15,6 +15,7 @@ pub mod canonical;
 pub mod check;
 pub mod closeness;
 pub mod cpu;
+pub mod aggregate;
 pub mod chromosome;
 pub mod generator;
 pub mod flow;

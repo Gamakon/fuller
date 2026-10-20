@@ -635,8 +635,8 @@
 {"file":"tests/corpus/model_replies/k0634.wgsl","scaffold":"8a44a0118b0160e9","safe":"4c39cd65d67c5064"}
 {"file":"tests/corpus/model_replies/k0635.wgsl","scaffold":"82ab119c7b111fba","safe":"7e0c61a27770ba5e"}
 {"file":"tests/corpus/model_replies/k0636.wgsl","scaffold":"dd7fc812b8821ce3","safe":"d8df0efc88bd5997"}
-{"file":"tests/corpus/model_replies/k0637.wgsl","scaffold":"85f74876fd94b67b","safe":"1673cb36e3ccf31c"}
-{"file":"tests/corpus/model_replies/k0638.wgsl","scaffold":"86385755e5fe2397","safe":"251c788cb666e175"}
+{"file":"tests/corpus/model_replies/k0637.wgsl","scaffold":"c057dd86801a0f0c","safe":"1673cb36e3ccf31c"}
+{"file":"tests/corpus/model_replies/k0638.wgsl","scaffold":"6e6c57314ea149e4","safe":"251c788cb666e175"}
 {"file":"tests/corpus/model_replies/k0639.wgsl","scaffold":"0a55acf2c510cc8f","safe":"8faf8e0276a83a42"}
 {"file":"tests/corpus/model_replies/k0640.wgsl","scaffold":"49aa193c205b907a","safe":"2dc4c0dd953086e6"}
 {"file":"tests/corpus/model_replies/k0641.wgsl","scaffold":"4afdcbd18b80f2e4","safe":"399ed5f3fbae7342"}
@@ -821,7 +821,7 @@
 {"file":"tests/corpus/model_replies/k0820.wgsl","scaffold":"f0c80d2e2fdfb4aa","safe":"103e4d090fc04559"}
 {"file":"tests/corpus/model_replies/k0821.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/model_replies/k0822.wgsl","scaffold":"dfab567348030ef8","safe":"9f8eb7aa23fc85c8"}
-{"file":"tests/corpus/model_replies/k0823.wgsl","scaffold":"d5a28f5f93cdebb5","safe":"c57566ead935388f"}
+{"file":"tests/corpus/model_replies/k0823.wgsl","scaffold":"2c3cd49d046cba50","safe":"c57566ead935388f"}
 {"file":"tests/corpus/model_replies/k0824.wgsl","scaffold":"95b499fdd5feaf57","safe":"75991e7363c7bbd5"}
 {"file":"tests/corpus/model_replies/k0825.wgsl","scaffold":"5a4cc723d98bd843","safe":"e97702067273e2b0"}
 {"file":"tests/corpus/model_replies/k0826.wgsl","scaffold":"1d2da9e849a5d3de","safe":"cc790cf29dadbc22"}
@@ -1892,7 +1892,7 @@
 {"file":"tests/corpus/safewgsl/reply_g001_r2x_union_fable.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/safewgsl/reply_g001_r2x_union_fable_clean.wgsl","scaffold":"e7b4e5402b90008d","safe":"485fcf2a845777d8"}
 {"file":"tests/corpus/safewgsl/reply_g001_r3p1_sonnet.wgsl","scaffold":"dfab567348030ef8","safe":"9f8eb7aa23fc85c8"}
-{"file":"tests/corpus/safewgsl/reply_g001_r3x_reinvent_sonnet.wgsl","scaffold":"d5a28f5f93cdebb5","safe":"c57566ead935388f"}
+{"file":"tests/corpus/safewgsl/reply_g001_r3x_reinvent_sonnet.wgsl","scaffold":"2c3cd49d046cba50","safe":"c57566ead935388f"}
 {"file":"tests/corpus/safewgsl/reply_g001_r3x_union_sonnet.wgsl","scaffold":"95b499fdd5feaf57","safe":"75991e7363c7bbd5"}
 {"file":"tests/corpus/safewgsl/reply_g001_r4x_reinvent_sonnet.wgsl","scaffold":"5a4cc723d98bd843","safe":"e97702067273e2b0"}
 {"file":"tests/corpus/safewgsl/reply_g001_r4x_union_sonnet.wgsl","scaffold":"1d2da9e849a5d3de","safe":"cc790cf29dadbc22"}

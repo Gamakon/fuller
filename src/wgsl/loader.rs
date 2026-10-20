@@ -275,6 +275,18 @@ pub struct WgslKingdom {
     /// a pattern the expander has no rule for), so a silent drop is
     /// impossible.
     pub uninstantiated: BTreeMap<String, String>,
+    /// The shape of each aggregate dual (an array, a struct) by dual index: empty in the shipped kingdoms, filled by
+    /// [`WgslKingdom::extended`] for the types a module declares.
+    pub shapes: BTreeMap<u16, Shape>,
+}
+
+/// What an aggregate value dual is made of (docs/PLAN_wgsl_terminals.md, "Aggregates").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shape {
+    /// `array<elem, len>`: the element's slot.
+    Array { elem: String, len: u32 },
+    /// A struct: its members' names and slots, in order.
+    Struct { members: Vec<(String, String)> },
 }
 
 impl WgslKingdom {
@@ -635,7 +647,7 @@ pub fn instantiate(table: &FunctionTable, duals: Vec<WgslDual>) -> WgslKingdom {
             }
         }
     }
-    WgslKingdom { duals, rows, uninstantiated }
+    WgslKingdom { duals, rows, uninstantiated, shapes: BTreeMap::new() }
 }
 
 #[cfg(test)]

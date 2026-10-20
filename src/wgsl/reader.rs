@@ -936,6 +936,17 @@ pub fn slot_name(types: &UniqueArena<naga::Type>, inner: &TypeInner) -> String {
     }
 }
 
+/// The slot of a declared type: [`slot_name`], except that a fixed-size array keeps its size and a struct its name
+/// (`array<mat2x2<f32>, 4>`, `Memory`), the slots of the aggregate value duals (docs/PLAN_wgsl_terminals.md).
+pub fn slot_of_handle(types: &UniqueArena<naga::Type>, h: Handle<naga::Type>) -> String {
+    match &types[h].inner {
+        TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } => format!("array<{}, {n}>", slot_of_handle(types, *base)),
+        TypeInner::Array { base, .. } => format!("array<{}>", slot_of_handle(types, *base)),
+        TypeInner::Struct { .. } => types[h].name.clone().unwrap_or_else(|| "struct".into()),
+        inner => slot_name(types, inner),
+    }
+}
+
 pub(crate) fn kind_of(inner: &TypeInner) -> Option<ScalarKind> {
     let s = match inner {
         TypeInner::Scalar(s) | TypeInner::Vector { scalar: s, .. } | TypeInner::Matrix { scalar: s, .. } | TypeInner::ValuePointer { scalar: s, .. } => *s,
@@ -985,7 +996,10 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         *ctx.reached.entry(h.index() as u32).or_default() += 1;
     }
     let inner = ctx.info[h].ty.inner_with(&ctx.module.types).clone();
-    let slot = slot_name(&ctx.module.types, &inner);
+    let slot = match &ctx.info[h].ty {
+        naga::proc::TypeResolution::Handle(t) => slot_of_handle(&ctx.module.types, *t),
+        naga::proc::TypeResolution::Value(_) => slot_name(&ctx.module.types, &inner),
+    };
     if ctx.lets.contains(&(h.index() as u32)) {
         let name = ctx.func.named_expressions.get(&h).cloned().unwrap_or_else(|| "let".into());
         return Node::Leaf { name: format!("let.{name}@{}", h.index()), slot };
@@ -1212,7 +1226,9 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         Expression::Access { base, index } => {
             let b = expand(ctx, base, count);
             let i = expand(ctx, index, count);
-            Node::App { name: "shape.access_dyn".into(), slot, known: true, kids: vec![b, i] }
+            // (An array VALUE indexed at run time is `agg.at`.)
+            let on_array = matches!(ctx.info[base].ty.inner_with(&ctx.module.types), TypeInner::Array { size: naga::ArraySize::Constant(_), .. });
+            Node::App { name: if on_array { "agg.at".into() } else { "shape.access_dyn".into() }, slot, known: true, kids: vec![b, i] }
         }
         Expression::AccessIndex { base, index } => {
             let b = expand(ctx, base, count);
@@ -1220,6 +1236,16 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             // A struct field read from a VALUE is named by member position:
             // structural, and immune to the writer renaming a field.
             let known = matches!(base_inner, TypeInner::Vector { .. }) && index < 4;
+            // An aggregate value (docs/PLAN_wgsl_terminals.md, "Aggregates"): an array's element is `agg.at` over the
+            // index as a literal, a matrix's column `shape.col_<i>`.
+            match base_inner {
+                TypeInner::Array { size: naga::ArraySize::Constant(_), .. } => {
+                    let ix = Node::Literal { form: "index".into(), slot: "u32".into(), value: f64::from(index) };
+                    return Node::App { name: "agg.at".into(), slot, known: true, kids: vec![b, ix] };
+                }
+                TypeInner::Matrix { .. } if index < 4 => return Node::App { name: format!("shape.col_{index}"), slot, known: true, kids: vec![b] },
+                _ => {}
+            }
             let name = if known { format!("shape.access_{index}") } else { format!("naga.AccessIndex.{index}") };
             Node::App { name, slot, known, kids: vec![b] }
         }
