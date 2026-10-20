@@ -71,5 +71,5 @@
 | T45 | codegraph daemons | Andrew | — | start command needed from Andrew; never `codegraph index` | open |
 | T46 | uncommitted docs | Haiku | phylu, fuller | inventory only (list, no deletes); lead commits the keepers | done: keepers committed (phylu 109ff4d3, fuller a9035c7e); LaTeX junk unstaged; logs/, target-*/ and problems/nluca_* are run output |
 | T47 | old worktrees, `halo` folder | Andrew | — | not ours to remove | open |
-| T48 | `cargo clippy --all-targets` fails without the `wgsl` feature (`examples/wgsl_harvest_read`) | Haiku | fuller `Cargo.toml` | give the example `required-features = ["wgsl"]`; clippy clean with and without the feature | open |
+| T48 | `cargo clippy --all-targets` fails without the `wgsl` feature (`examples/wgsl_harvest_read`) | Haiku | fuller `Cargo.toml` | give the example `required-features = ["wgsl"]`; clippy clean with and without the feature | done fuller 3f4cdf40: clippy --all-targets clean with and without wgsl |
 | T49 | laws read by the infix parser, not hand-written | Sonnet | `phylu/src/evolve/tsr_typed.rs` | `FEYNMAN_LAWS` becomes the CSV infix through `fuller::infix::infix_to_math` (T13); extend to all 100 formulas with datasets | open |
