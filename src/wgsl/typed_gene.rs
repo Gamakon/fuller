@@ -47,12 +47,23 @@ pub struct Alphabet {
 
 impl Alphabet {
     pub fn new(kingdom: &WgslKingdom, role: &Role) -> Result<Alphabet, Gap> {
-        let mut rows: Vec<(String, Vec<Ty>, Ty)> = kingdom.rows.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
+        // A module's size is the interface's: only the module row of that many entry points is in the alphabet (a
+        // module of 4 under an interface of 2 is not a kernel of this interface, and a gene must not name it).
+        let wanted = role.entries.len();
+        let own_size = |name: &str| -> bool {
+            match name.strip_prefix("kernel.module_") {
+                Some(n) if n.starts_with("ext") => wanted > 4,
+                Some(n) => n.parse::<usize>().is_ok_and(|n| n == wanted || wanted > 4),
+                None => true,
+            }
+        };
+        let kept: Vec<&crate::wgsl::loader::WgslRow> = kingdom.rows.iter().filter(|r| own_size(&r.name)).collect();
+        let mut rows: Vec<(String, Vec<Ty>, Ty)> = kept.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
         let mut per_name: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &kingdom.rows {
             *per_name.entry(r.name.as_str()).or_default() += 1;
         }
-        let mut ids: Vec<(String, Vec<Ty>, Ty)> = kingdom.rows.iter().map(|r| (r.semantic_id(&kingdom.duals, per_name[r.name.as_str()]), r.inputs.clone(), r.output)).collect();
+        let mut ids: Vec<(String, Vec<Ty>, Ty)> = kept.iter().map(|r| (r.semantic_id(&kingdom.duals, per_name[r.name.as_str()]), r.inputs.clone(), r.output)).collect();
         // The reference's own uses of its bindings first, then every access the interface ALLOWS (a load of every storage
         // binding, a store of every writable one at every statement rung, the atomic rows): any kernel over the same
         // bindings is nameable, not just the one the interface was read from.
@@ -65,7 +76,7 @@ impl Alphabet {
             ids.push((format!("kernel:{name}"), ins, out));
         }
         let constants: Vec<&str> = ids.iter().zip(&rows).filter(|((_, ins, _), (n, _, _))| ins.is_empty() && (n.starts_with("literal.") || n.starts_with("const."))).map(|((id, _, _), _)| id.as_str()).collect();
-        let roots: Vec<Ty> = kingdom.duals.iter().filter(|d| d.dual == "kernel.safe" || d.dual == "kernel.module").map(WgslDual::ty).collect();
+        let roots: Vec<Ty> = kingdom.duals.iter().filter(|d| (d.dual == "kernel.safe" || d.dual == "kernel.module") && rows.iter().any(|(_, _, o)| *o == d.ty())).map(WgslDual::ty).collect();
         let contract = relations_from_rows("safeWGSL", roots, &ids, &constants).check().map_err(|d| gap("kingdom check", d.join("; ")))?;
         let mut by_key = BTreeMap::new();
         let mut own = BTreeMap::new();
