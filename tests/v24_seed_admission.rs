@@ -1,9 +1,11 @@
 //! The seeds run 5 admitted are still admitted (no GPU). Run 5 (fuller 9d770424, `logs/V24/run5/ledger.tsv`) entered
-//! 16 of its 32 seeds feasible under `problems/v24_ingest5b` at layer 7 `arena+rows`; run 6c lost 10 of them to a rule
-//! change (`dc74bbed` made a u32 literal past 2^24 exact, so a hash multiply tripped `index_wraps`). Each of the 16
-//! kernels is read into the safe grammar, checked under the problem's contract exactly as `wgsl_fit` checks a gene,
-//! encoded into a typed gene of its own interface, expressed, rendered, validated by naga and checked again. A rule
-//! change that loses one fails here by name.
+//! 15 of its 32 seeds feasible under `problems/v24_ingest5b` at layer 7 `arena+rows` (ledger gen 0 row r is
+//! `seed<r-1>`, matched by the workgroup arrays and entry grids of `logs/V24/run5/kernels/g000_r<r>.wgsl`; rows 0 and
+//! 33 are not seeds of this directory). Run 6c lost 10 of them to a rule change: `dc74bbed` made a u32 literal past
+//! 2^24 exact, so a hash multiply (2654435761u) tripped `index_wraps`. This test needs the `wraps_up` fix in `check.rs`
+//! (mtgep-seeds) to pass and fails on main until it lands. Each kernel is read into the safe grammar, checked under the
+//! problem's contract exactly as `wgsl_fit` checks a gene, encoded into a typed gene of its own interface, expressed,
+//! rendered, validated by naga and checked again. A rule change that loses one fails here by name.
 #![cfg(feature = "wgsl")]
 
 use std::path::Path;
@@ -12,9 +14,9 @@ use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::safe_karva::render_tree_with;
 use fuller::wgsl::typed_gene::Alphabets;
 
-/// The run 5 seeds (`tests/fixtures/v24_seeds5/<name>.wgsl`, copies of `logs/V24/run5/seeds`) that run 5 admitted.
-const ADMITTED: [&str; 16] = [
-    "seed03", "seed04", "seed05", "seed06", "seed07", "seed08", "seed11", "seed12", "seed13", "seed16", "seed19", "seed23", "seed24", "seed25", "seed26", "seed27",
+/// The run 5 seeds (`tests/fixtures/v24_seeds5/<name>.wgsl`, copies of `logs/V24/run5/seeds`).
+const ADMITTED: [&str; 15] = [
+    "seed03", "seed04", "seed05", "seed06", "seed07", "seed08", "seed11", "seed12", "seed13", "seed16", "seed23", "seed24", "seed25", "seed26", "seed27",
 ];
 
 #[test]
