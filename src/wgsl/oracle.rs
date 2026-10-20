@@ -588,4 +588,79 @@ mod tests {
         assert_eq!(differences(&Value::Vec(vec![Value::F32(1.0), Value::F32(f32::NAN)]), &[Lane::Exact(1.0f32.to_bits()), Lane::AnyNan]), vec![]);
         assert_eq!(differences(&Value::Vec(vec![Value::F32(-0.0)]), &[Lane::Exact(0)]).len(), 1, "-0.0 is not 0.0 in bits");
     }
+
+    /// AN OUT-OF-RANGE INDEX GIVES THE SAME OUTPUT ON THE DEVICE AND IN BOTH CPU
+    /// REFERENCES (wgpu 30 on Metal: naga's Restrict, an index past an array is its
+    /// last element for a load and for a store; `tests/runtime_bounds_checks.rs`).
+    /// The hand kernel `edge_bounds` (expectation by hand, [21, 31, 31, 33]) and two
+    /// more: an index loaded from a buffer past the output, and the same as an
+    /// all-ones u32 (what a negative i32 index is). Each is run on the device, in the
+    /// interpreter and in the CPU executor; the three agree word for word. GPU test:
+    /// the lead launches it (`cargo test --release --features gpu,wgsl
+    /// out_of_range_index`).
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn out_of_range_index_gives_the_same_output_on_the_device_and_both_cpu_references() {
+        use crate::wgsl::cpu::{run_text, Val};
+        use crate::wgsl::interp::{Interp, Invocation};
+        let to_val = |v: &Value| -> Val {
+            fn go(v: &Value) -> Val {
+                match v {
+                    Value::F32(x) => Val::F(*x),
+                    Value::U32(x) => Val::U(*x),
+                    Value::I32(x) => Val::I(*x),
+                    Value::Bool(b) => Val::B(*b),
+                    Value::Vec(items) => Val::V(items.iter().map(go).collect()),
+                }
+            }
+            go(v)
+        };
+        let hand = hand_kernels(&oracle_dir()).unwrap();
+        let edge = hand.iter().find(|k| k.name == "edge_bounds").expect("edge_bounds");
+        let u32s = |w: &[u32]| Value::Vec(w.iter().map(|x| Value::U32(*x)).collect());
+        let loaded = "@group(0) @binding(0) var<storage, read> idx: array<u32>;
+@group(0) @binding(1) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main() {
+    out[idx[0]] = 7u;
+    out[idx[1]] = out[idx[2]] + 1u;
+    out[idx[3]] = idx[4];
+}
+";
+        let cases: Vec<(String, String, Vec<(String, Value)>)> = vec![
+            (edge.name.clone(), edge.source.clone(), edge.expectation.inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            ("loaded".into(), loaded.into(), vec![("buffer.idx".into(), u32s(&[9, 0xFFFF_FFFF, 5, 100, 42])), ("buffer.out".into(), u32s(&[1, 2, 3, 4]))]),
+        ];
+        let dev = device::Device::new().expect("a device");
+        for (name, source, inputs) in cases {
+            let mut memory = Memory::default();
+            for (loc, v) in &inputs {
+                memory.set(loc, v.clone());
+            }
+            let kernel = read(&source).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let entry = entry_name(&kernel).unwrap();
+            let binds = bindings(&kernel.module).unwrap();
+            let on_device = dev.run(&source, &entry, &memory, &binds).unwrap_or_else(|e| panic!("{name}: device: {e}"));
+            let chromosomes: Vec<_> = kernel.functions.iter().map(|f| chromosome(f, &ChromosomeOptions::default())).collect::<Result<_, _>>().unwrap();
+            let mut it = Interp::new(&kernel, &chromosomes, memory.clone(), Invocation::default()).unwrap();
+            it.run(&entry).unwrap();
+            let buffers = inputs.iter().map(|(loc, v)| (loc.trim_start_matches("buffer.").to_string(), to_val(v))).collect();
+            let cpu = run_text(&source, buffers, [1, 1, 1], 1_000_000).unwrap_or_else(|e| panic!("{name}: cpu: {e}"));
+            let device_words = to_words(on_device.get("buffer.out").expect("out"));
+            let interp_words = to_words(it.memory.get("buffer.out").expect("out"));
+            let mut cpu_words = Vec::new();
+            cpu.buffers["out"].words(&mut cpu_words);
+            assert_eq!(interp_words, device_words, "{name}: the interpreter differs from the device");
+            assert_eq!(cpu_words, device_words, "{name}: the CPU executor differs from the device");
+            println!("{name}: device = interpreter = CPU executor = {device_words:?}");
+        }
+        // By hand, edge_bounds: [21, 31, 31, 33] (the kernel's header).
+        let mut memory = Memory::default();
+        for (loc, v) in &edge.expectation.inputs {
+            memory.set(loc, v.clone());
+        }
+        let on_device = dev.run(&edge.source, &entry_name(&edge.kernel).unwrap(), &memory, &bindings(&edge.kernel.module).unwrap()).unwrap();
+        let (diffs, known) = check(&on_device, &edge.expectation, true);
+        assert!(diffs.is_empty() && known.is_empty(), "{diffs:?} {known:?}");
+    }
 }
