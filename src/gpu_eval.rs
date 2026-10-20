@@ -1687,7 +1687,11 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let max_nodes = evaluator.max_nodes();
             let limits = device.limits();
             let per_expr = max_nodes as u64 * u64::from(n_rows) * 4;
-            let cap = PARTIALS_BYTES_CAP.min(limits.max_storage_buffer_binding_size);
+            // The cap is a preferred block size, not a limit: a layout whose single
+            // expression needs more is given eight of them, up to the device's own binding
+            // and buffer maxima.
+            let device_max = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+            let cap = PARTIALS_BYTES_CAP.max(per_expr * 8).min(device_max);
             // A workgroup of 64 threads reduces 64 nodes, so an expression takes
             // MAX_NODES / 64 workgroups, and the dispatch is one-dimensional: a
             // block is at most one dimension's worth of workgroups.
