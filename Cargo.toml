@@ -178,6 +178,10 @@ name = "wgsl_safety"
 required-features = ["wgsl"]
 
 [[example]]
+name = "wgsl_seed_admit"
+required-features = ["wgsl"]
+
+[[example]]
 name = "wgsl_symmetric_table"
 required-features = ["gpu", "wgsl"]
 
