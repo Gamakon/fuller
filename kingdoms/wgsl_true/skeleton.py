@@ -23,6 +23,7 @@ def declare_types(iface):
     T("u32.blk_row", "a block factor on the row axis: cells per invocation along it", 1, "1,2,4,8")
     T("u32.blk_col", "a block factor on the column axis", 1, "1,2,4,8")
     T("grid.grid", "the entry's workgroup shape and block")
+    T("u32.ktile", "the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)", 1, "1..=4096")
     for x, d, k in rungs("LCOW"):
         T(S(x, d, k), f"one {x}-rung statement at depth {d}, fuel stratum {k}")
         T(B(x, d, k), f"a {x}-rung statement sequence at depth {d}, fuel stratum {k}")
@@ -89,12 +90,12 @@ def build(iface):
     # ---- grids
     kn = lambda wcol, wrow, bcol, brow: (
         "const WG_X: u32 = {0:0}u;\nconst WG_Y: u32 = {0:1}u;\nconst KNOB_WCOL: u32 = " + wcol + ";\nconst KNOB_WROW: u32 = " + wrow + ";\n"
-        "const KNOB_BCOL: u32 = " + bcol + ";\nconst KNOB_BROW: u32 = " + brow + ";\nconst KNOB_KTILE: u32 = {3};\n"
+        "const KNOB_BCOL: u32 = " + bcol + ";\nconst KNOB_BROW: u32 = " + brow + ";\nconst KNOB_KTILE: u32 = {3}u;\n"
         "const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n")
-    R("grid.of", "grid.grid", ["grid.shape", "u32.blk_col", "u32.blk_row", "u32.lit4096"],
+    R("grid.of", "grid.grid", ["grid.shape", "u32.blk_col", "u32.blk_row", "u32.ktile"],
       "// grid {0:0} {0:1} {1} {2}\n" + kn("{0:0}u", "{0:1}u", "{1}u", "{2}u"),
       "the shape is in the target's limits by the table; the header and the attribute come from one node", fields=True)
-    R("grid.of_rows_x", "grid.grid", ["grid.shape", "u32.blk_row", "u32.blk_col", "u32.lit4096"],
+    R("grid.of_rows_x", "grid.grid", ["grid.shape", "u32.blk_row", "u32.blk_col", "u32.ktile"],
       "// grid {0:0} {0:1} {1} {2} rows-x\n" + kn("{0:1}u", "{0:0}u", "{2}u", "{1}u"),
       "the output's rows on thread x; the arguments in the order the spelling binds them", fields=True)
     C("literal.shape", "grid.shape", "{v}", shape_table(iface), "?_shape; its Dc domain is the table")
@@ -103,6 +104,8 @@ def build(iface):
     gx, gy, bx, by = iface["default_grid"]
     R("own.grid_grid", "grid.grid", [], f"// grid {gx} {gy} {bx} {by}\nconst WG_X: u32 = {gx}u;\nconst WG_Y: u32 = {gy}u;\nconst KNOB_WCOL: u32 = {gx}u;\nconst KNOB_WROW: u32 = {gy}u;\nconst KNOB_BCOL: u32 = {bx}u;\nconst KNOB_BROW: u32 = {by}u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = {gx * gy}u;\n",
       "the interface's default grid: its reference kernel's shape and blocks, ktile 1")
+    C("literal.ktile", "u32.ktile", "{v}", [str(v) for v in (1, 2, 3, 4, 8, 16, 32, 64, 100, 256, 1000, 4096)], "?_ktile: a bare literal")
+    R("own.u32_ktile", "u32.ktile", [], "1")
     R("own.u32_blk_row", "u32.blk_row", [], "1", "the domain's smallest value")
     R("own.u32_blk_col", "u32.blk_col", [], "1", "the domain's smallest value")
 
