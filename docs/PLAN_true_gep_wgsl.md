@@ -8,6 +8,10 @@ Andrew, 2026-10-21: everything except the design of the WGSL kingdom's symbol ta
 |---|---|---|---|---|
 | ST1 | READ the design doc (`docs/MultiTypedGEP.html`, `docs/GOAL.md`) and READ the rules (`Rules.md`) | Design the WGSL symbol table: every type, every symbol (output type, ordered argument types, WGSL spelling), every terminal, the root per interface, and for each legality rule the type that carries it. File: `nucleotable/docs/MultiTypedGEP_s9_WGSL_draft.md`. | advisor | Reviewed for one question: can any combination of rows express an illegal or malformed WGSL kernel? Advisor, then Codex, fixed, Codex again. |
 
+| ST2 | READ design doc + rules; ST1 passes | Generate the table (`gen_tables.py` writes `types.tsv`, `functions.tsv` from the ST1 design); the kingdom check of rev 4 §1 passes | Sonnet | kingdom check green; bound table printed |
+| ST3 | READ design doc + rules; ST2 | The first test (Andrew, 2026-10-21): 100 random kernels from the typed initialiser on the GPU; every one renders, compiles (naga and the Metal pipeline), and runs on the right inputs through the problem's unit test without fault | Sonnet | 100 of 100 compile and run; correctness is fitness's job, validity is the table's |
+| ST4 | READ design doc + rules; ST3 | Seeding with a weak LLM writing Karva (Andrew, 2026-10-21): Haiku writes Karva symbol sequences, not programs; each cell takes the model's choice as an index into that cell's type alphabet (modulo its size), so any sequence, mistakes included, decodes to a valid gene with no repair; 100 such genes are the initial population, near-remembered and not quite right, for evolution to improve | Sonnet | 100 of 100 valid by construction; report how many compute something close to the unit test |
+
 Everything below this line is PARKED until ST1 passes its review.
 
 ---
