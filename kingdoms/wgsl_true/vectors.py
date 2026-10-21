@@ -120,7 +120,7 @@ def build(iface):
             R(f"arith.mul_scalar_mat_{c}x{r}", m, ["f32.real", m], "({0} * {1})", twin=True)
             R(f"arith.add_mat_{c}x{r}", m, [m, m], "({0} + {1})", twin=True)
             R(f"arith.sub_mat_{c}x{r}", m, [m, m], "({0} - {1})", twin=True)
-            R(f"arith.neg_mat_{c}x{r}", m, [m], "(-{0})", twin=True)
+            R(f"arith.neg_mat_{c}x{r}", m, [m], "(-1.0 * {0})", "WGSL has no unary minus on a matrix: the product with the scalar -1", twin=True)
             R(f"geom.transpose_{c}x{r}", mat(r, c), [m], "transpose({0})", twin=True)
             helper(f"outer_{c}x{r}", f"fn outer_{c}x{r}(a: vec{r}<f32>, b: vec{c}<f32>) -> mat{c}x{r}<f32> {{ return mat{c}x{r}<f32>(" + ", ".join(f"a * b.{'xyzw'[i]}" for i in range(c)) + "); }")
             R(f"geom.outer_{c}x{r}", m, [colv, ft("real", c)], f"outer_{c}x{r}({{0}}, {{1}})", twin=True)

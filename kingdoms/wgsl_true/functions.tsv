@@ -1729,7 +1729,7 @@ F01727	arith.mul_mat_scalar_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real;f32.r
 F01728	arith.mul_scalar_mat_2x2	function	mat2x2<f32>.real	f32.real;mat2x2<f32>.real	({0} * {1})	
 F01729	arith.add_mat_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real;mat2x2<f32>.real	({0} + {1})	
 F01730	arith.sub_mat_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real;mat2x2<f32>.real	({0} - {1})	
-F01731	arith.neg_mat_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real	(-{0})	
+F01731	arith.neg_mat_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01732	geom.transpose_2x2	function	mat2x2<f32>.real	mat2x2<f32>.real	transpose({0})	
 F01733	geom.outer_2x2	function	mat2x2<f32>.real	vec2<f32>.real;vec2<f32>.real	outer_2x2({0}, {1})	
 F01734	arith.mul_mat_mat_2x2_k2	function	mat2x2<f32>.real	mat2x2<f32>.real;mat2x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1747,7 +1747,7 @@ F01745	arith.mul_mat_scalar_2x3	function	mat2x3<f32>.real	mat2x3<f32>.real;f32.r
 F01746	arith.mul_scalar_mat_2x3	function	mat2x3<f32>.real	f32.real;mat2x3<f32>.real	({0} * {1})	
 F01747	arith.add_mat_2x3	function	mat2x3<f32>.real	mat2x3<f32>.real;mat2x3<f32>.real	({0} + {1})	
 F01748	arith.sub_mat_2x3	function	mat2x3<f32>.real	mat2x3<f32>.real;mat2x3<f32>.real	({0} - {1})	
-F01749	arith.neg_mat_2x3	function	mat2x3<f32>.real	mat2x3<f32>.real	(-{0})	
+F01749	arith.neg_mat_2x3	function	mat2x3<f32>.real	mat2x3<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01750	geom.transpose_2x3	function	mat3x2<f32>.real	mat2x3<f32>.real	transpose({0})	
 F01751	geom.outer_2x3	function	mat2x3<f32>.real	vec3<f32>.real;vec2<f32>.real	outer_2x3({0}, {1})	
 F01752	arith.mul_mat_mat_2x3_k2	function	mat2x3<f32>.real	mat2x3<f32>.real;mat2x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1765,7 +1765,7 @@ F01763	arith.mul_mat_scalar_2x4	function	mat2x4<f32>.real	mat2x4<f32>.real;f32.r
 F01764	arith.mul_scalar_mat_2x4	function	mat2x4<f32>.real	f32.real;mat2x4<f32>.real	({0} * {1})	
 F01765	arith.add_mat_2x4	function	mat2x4<f32>.real	mat2x4<f32>.real;mat2x4<f32>.real	({0} + {1})	
 F01766	arith.sub_mat_2x4	function	mat2x4<f32>.real	mat2x4<f32>.real;mat2x4<f32>.real	({0} - {1})	
-F01767	arith.neg_mat_2x4	function	mat2x4<f32>.real	mat2x4<f32>.real	(-{0})	
+F01767	arith.neg_mat_2x4	function	mat2x4<f32>.real	mat2x4<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01768	geom.transpose_2x4	function	mat4x2<f32>.real	mat2x4<f32>.real	transpose({0})	
 F01769	geom.outer_2x4	function	mat2x4<f32>.real	vec4<f32>.real;vec2<f32>.real	outer_2x4({0}, {1})	
 F01770	arith.mul_mat_mat_2x4_k2	function	mat2x4<f32>.real	mat2x4<f32>.real;mat2x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1786,7 +1786,7 @@ F01784	arith.mul_mat_scalar_3x2	function	mat3x2<f32>.real	mat3x2<f32>.real;f32.r
 F01785	arith.mul_scalar_mat_3x2	function	mat3x2<f32>.real	f32.real;mat3x2<f32>.real	({0} * {1})	
 F01786	arith.add_mat_3x2	function	mat3x2<f32>.real	mat3x2<f32>.real;mat3x2<f32>.real	({0} + {1})	
 F01787	arith.sub_mat_3x2	function	mat3x2<f32>.real	mat3x2<f32>.real;mat3x2<f32>.real	({0} - {1})	
-F01788	arith.neg_mat_3x2	function	mat3x2<f32>.real	mat3x2<f32>.real	(-{0})	
+F01788	arith.neg_mat_3x2	function	mat3x2<f32>.real	mat3x2<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01789	geom.transpose_3x2	function	mat2x3<f32>.real	mat3x2<f32>.real	transpose({0})	
 F01790	geom.outer_3x2	function	mat3x2<f32>.real	vec2<f32>.real;vec3<f32>.real	outer_3x2({0}, {1})	
 F01791	arith.mul_mat_mat_3x2_k2	function	mat3x2<f32>.real	mat2x2<f32>.real;mat3x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1805,7 +1805,7 @@ F01803	arith.mul_mat_scalar_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real;f32.r
 F01804	arith.mul_scalar_mat_3x3	function	mat3x3<f32>.real	f32.real;mat3x3<f32>.real	({0} * {1})	
 F01805	arith.add_mat_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real;mat3x3<f32>.real	({0} + {1})	
 F01806	arith.sub_mat_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real;mat3x3<f32>.real	({0} - {1})	
-F01807	arith.neg_mat_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real	(-{0})	
+F01807	arith.neg_mat_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01808	geom.transpose_3x3	function	mat3x3<f32>.real	mat3x3<f32>.real	transpose({0})	
 F01809	geom.outer_3x3	function	mat3x3<f32>.real	vec3<f32>.real;vec3<f32>.real	outer_3x3({0}, {1})	
 F01810	arith.mul_mat_mat_3x3_k2	function	mat3x3<f32>.real	mat2x3<f32>.real;mat3x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1824,7 +1824,7 @@ F01822	arith.mul_mat_scalar_3x4	function	mat3x4<f32>.real	mat3x4<f32>.real;f32.r
 F01823	arith.mul_scalar_mat_3x4	function	mat3x4<f32>.real	f32.real;mat3x4<f32>.real	({0} * {1})	
 F01824	arith.add_mat_3x4	function	mat3x4<f32>.real	mat3x4<f32>.real;mat3x4<f32>.real	({0} + {1})	
 F01825	arith.sub_mat_3x4	function	mat3x4<f32>.real	mat3x4<f32>.real;mat3x4<f32>.real	({0} - {1})	
-F01826	arith.neg_mat_3x4	function	mat3x4<f32>.real	mat3x4<f32>.real	(-{0})	
+F01826	arith.neg_mat_3x4	function	mat3x4<f32>.real	mat3x4<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01827	geom.transpose_3x4	function	mat4x3<f32>.real	mat3x4<f32>.real	transpose({0})	
 F01828	geom.outer_3x4	function	mat3x4<f32>.real	vec4<f32>.real;vec3<f32>.real	outer_3x4({0}, {1})	
 F01829	arith.mul_mat_mat_3x4_k2	function	mat3x4<f32>.real	mat2x4<f32>.real;mat3x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1846,7 +1846,7 @@ F01844	arith.mul_mat_scalar_4x2	function	mat4x2<f32>.real	mat4x2<f32>.real;f32.r
 F01845	arith.mul_scalar_mat_4x2	function	mat4x2<f32>.real	f32.real;mat4x2<f32>.real	({0} * {1})	
 F01846	arith.add_mat_4x2	function	mat4x2<f32>.real	mat4x2<f32>.real;mat4x2<f32>.real	({0} + {1})	
 F01847	arith.sub_mat_4x2	function	mat4x2<f32>.real	mat4x2<f32>.real;mat4x2<f32>.real	({0} - {1})	
-F01848	arith.neg_mat_4x2	function	mat4x2<f32>.real	mat4x2<f32>.real	(-{0})	
+F01848	arith.neg_mat_4x2	function	mat4x2<f32>.real	mat4x2<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01849	geom.transpose_4x2	function	mat2x4<f32>.real	mat4x2<f32>.real	transpose({0})	
 F01850	geom.outer_4x2	function	mat4x2<f32>.real	vec2<f32>.real;vec4<f32>.real	outer_4x2({0}, {1})	
 F01851	arith.mul_mat_mat_4x2_k2	function	mat4x2<f32>.real	mat2x2<f32>.real;mat4x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1866,7 +1866,7 @@ F01864	arith.mul_mat_scalar_4x3	function	mat4x3<f32>.real	mat4x3<f32>.real;f32.r
 F01865	arith.mul_scalar_mat_4x3	function	mat4x3<f32>.real	f32.real;mat4x3<f32>.real	({0} * {1})	
 F01866	arith.add_mat_4x3	function	mat4x3<f32>.real	mat4x3<f32>.real;mat4x3<f32>.real	({0} + {1})	
 F01867	arith.sub_mat_4x3	function	mat4x3<f32>.real	mat4x3<f32>.real;mat4x3<f32>.real	({0} - {1})	
-F01868	arith.neg_mat_4x3	function	mat4x3<f32>.real	mat4x3<f32>.real	(-{0})	
+F01868	arith.neg_mat_4x3	function	mat4x3<f32>.real	mat4x3<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01869	geom.transpose_4x3	function	mat3x4<f32>.real	mat4x3<f32>.real	transpose({0})	
 F01870	geom.outer_4x3	function	mat4x3<f32>.real	vec3<f32>.real;vec4<f32>.real	outer_4x3({0}, {1})	
 F01871	arith.mul_mat_mat_4x3_k2	function	mat4x3<f32>.real	mat2x3<f32>.real;mat4x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -1886,7 +1886,7 @@ F01884	arith.mul_mat_scalar_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real;f32.r
 F01885	arith.mul_scalar_mat_4x4	function	mat4x4<f32>.real	f32.real;mat4x4<f32>.real	({0} * {1})	
 F01886	arith.add_mat_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real;mat4x4<f32>.real	({0} + {1})	
 F01887	arith.sub_mat_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real;mat4x4<f32>.real	({0} - {1})	
-F01888	arith.neg_mat_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real	(-{0})	
+F01888	arith.neg_mat_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real	(-1.0 * {0})	WGSL has no unary minus on a matrix: the product with the scalar -1
 F01889	geom.transpose_4x4	function	mat4x4<f32>.real	mat4x4<f32>.real	transpose({0})	
 F01890	geom.outer_4x4	function	mat4x4<f32>.real	vec4<f32>.real;vec4<f32>.real	outer_4x4({0}, {1})	
 F01891	arith.mul_mat_mat_4x4_k2	function	mat4x4<f32>.real	mat2x4<f32>.real;mat4x2<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
@@ -7638,7 +7638,7 @@ F07636	arith.mul_mat_scalar_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw;f
 F07637	arith.mul_scalar_mat_2x2_w	function	mat2x2<f32>.realw	f32.realw;mat2x2<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_2x2
 F07638	arith.add_mat_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw;mat2x2<f32>.realw	({0} + {1})	the w twin of arith.add_mat_2x2
 F07639	arith.sub_mat_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw;mat2x2<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_2x2
-F07640	arith.neg_mat_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw	(-{0})	the w twin of arith.neg_mat_2x2
+F07640	arith.neg_mat_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_2x2
 F07641	geom.transpose_2x2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw	transpose({0})	the w twin of geom.transpose_2x2
 F07642	geom.outer_2x2_w	function	mat2x2<f32>.realw	vec2<f32>.realw;vec2<f32>.realw	outer_2x2({0}, {1})	the w twin of geom.outer_2x2
 F07643	arith.mul_mat_mat_2x2_k2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw;mat2x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_2x2_k2
@@ -7655,7 +7655,7 @@ F07653	arith.mul_mat_scalar_2x3_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw;f
 F07654	arith.mul_scalar_mat_2x3_w	function	mat2x3<f32>.realw	f32.realw;mat2x3<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_2x3
 F07655	arith.add_mat_2x3_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw;mat2x3<f32>.realw	({0} + {1})	the w twin of arith.add_mat_2x3
 F07656	arith.sub_mat_2x3_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw;mat2x3<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_2x3
-F07657	arith.neg_mat_2x3_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw	(-{0})	the w twin of arith.neg_mat_2x3
+F07657	arith.neg_mat_2x3_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_2x3
 F07658	geom.transpose_2x3_w	function	mat3x2<f32>.realw	mat2x3<f32>.realw	transpose({0})	the w twin of geom.transpose_2x3
 F07659	geom.outer_2x3_w	function	mat2x3<f32>.realw	vec3<f32>.realw;vec2<f32>.realw	outer_2x3({0}, {1})	the w twin of geom.outer_2x3
 F07660	arith.mul_mat_mat_2x3_k2_w	function	mat2x3<f32>.realw	mat2x3<f32>.realw;mat2x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_2x3_k2
@@ -7672,7 +7672,7 @@ F07670	arith.mul_mat_scalar_2x4_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw;f
 F07671	arith.mul_scalar_mat_2x4_w	function	mat2x4<f32>.realw	f32.realw;mat2x4<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_2x4
 F07672	arith.add_mat_2x4_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw;mat2x4<f32>.realw	({0} + {1})	the w twin of arith.add_mat_2x4
 F07673	arith.sub_mat_2x4_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw;mat2x4<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_2x4
-F07674	arith.neg_mat_2x4_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw	(-{0})	the w twin of arith.neg_mat_2x4
+F07674	arith.neg_mat_2x4_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_2x4
 F07675	geom.transpose_2x4_w	function	mat4x2<f32>.realw	mat2x4<f32>.realw	transpose({0})	the w twin of geom.transpose_2x4
 F07676	geom.outer_2x4_w	function	mat2x4<f32>.realw	vec4<f32>.realw;vec2<f32>.realw	outer_2x4({0}, {1})	the w twin of geom.outer_2x4
 F07677	arith.mul_mat_mat_2x4_k2_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw;mat2x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_2x4_k2
@@ -7692,7 +7692,7 @@ F07690	arith.mul_mat_scalar_3x2_w	function	mat3x2<f32>.realw	mat3x2<f32>.realw;f
 F07691	arith.mul_scalar_mat_3x2_w	function	mat3x2<f32>.realw	f32.realw;mat3x2<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_3x2
 F07692	arith.add_mat_3x2_w	function	mat3x2<f32>.realw	mat3x2<f32>.realw;mat3x2<f32>.realw	({0} + {1})	the w twin of arith.add_mat_3x2
 F07693	arith.sub_mat_3x2_w	function	mat3x2<f32>.realw	mat3x2<f32>.realw;mat3x2<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_3x2
-F07694	arith.neg_mat_3x2_w	function	mat3x2<f32>.realw	mat3x2<f32>.realw	(-{0})	the w twin of arith.neg_mat_3x2
+F07694	arith.neg_mat_3x2_w	function	mat3x2<f32>.realw	mat3x2<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_3x2
 F07695	geom.transpose_3x2_w	function	mat2x3<f32>.realw	mat3x2<f32>.realw	transpose({0})	the w twin of geom.transpose_3x2
 F07696	geom.outer_3x2_w	function	mat3x2<f32>.realw	vec2<f32>.realw;vec3<f32>.realw	outer_3x2({0}, {1})	the w twin of geom.outer_3x2
 F07697	arith.mul_mat_mat_3x2_k2_w	function	mat3x2<f32>.realw	mat2x2<f32>.realw;mat3x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_3x2_k2
@@ -7710,7 +7710,7 @@ F07708	arith.mul_mat_scalar_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw;f
 F07709	arith.mul_scalar_mat_3x3_w	function	mat3x3<f32>.realw	f32.realw;mat3x3<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_3x3
 F07710	arith.add_mat_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw;mat3x3<f32>.realw	({0} + {1})	the w twin of arith.add_mat_3x3
 F07711	arith.sub_mat_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw;mat3x3<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_3x3
-F07712	arith.neg_mat_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw	(-{0})	the w twin of arith.neg_mat_3x3
+F07712	arith.neg_mat_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_3x3
 F07713	geom.transpose_3x3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw	transpose({0})	the w twin of geom.transpose_3x3
 F07714	geom.outer_3x3_w	function	mat3x3<f32>.realw	vec3<f32>.realw;vec3<f32>.realw	outer_3x3({0}, {1})	the w twin of geom.outer_3x3
 F07715	arith.mul_mat_mat_3x3_k2_w	function	mat3x3<f32>.realw	mat2x3<f32>.realw;mat3x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_3x3_k2
@@ -7728,7 +7728,7 @@ F07726	arith.mul_mat_scalar_3x4_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw;f
 F07727	arith.mul_scalar_mat_3x4_w	function	mat3x4<f32>.realw	f32.realw;mat3x4<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_3x4
 F07728	arith.add_mat_3x4_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw;mat3x4<f32>.realw	({0} + {1})	the w twin of arith.add_mat_3x4
 F07729	arith.sub_mat_3x4_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw;mat3x4<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_3x4
-F07730	arith.neg_mat_3x4_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw	(-{0})	the w twin of arith.neg_mat_3x4
+F07730	arith.neg_mat_3x4_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_3x4
 F07731	geom.transpose_3x4_w	function	mat4x3<f32>.realw	mat3x4<f32>.realw	transpose({0})	the w twin of geom.transpose_3x4
 F07732	geom.outer_3x4_w	function	mat3x4<f32>.realw	vec4<f32>.realw;vec3<f32>.realw	outer_3x4({0}, {1})	the w twin of geom.outer_3x4
 F07733	arith.mul_mat_mat_3x4_k2_w	function	mat3x4<f32>.realw	mat2x4<f32>.realw;mat3x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_3x4_k2
@@ -7749,7 +7749,7 @@ F07747	arith.mul_mat_scalar_4x2_w	function	mat4x2<f32>.realw	mat4x2<f32>.realw;f
 F07748	arith.mul_scalar_mat_4x2_w	function	mat4x2<f32>.realw	f32.realw;mat4x2<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_4x2
 F07749	arith.add_mat_4x2_w	function	mat4x2<f32>.realw	mat4x2<f32>.realw;mat4x2<f32>.realw	({0} + {1})	the w twin of arith.add_mat_4x2
 F07750	arith.sub_mat_4x2_w	function	mat4x2<f32>.realw	mat4x2<f32>.realw;mat4x2<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_4x2
-F07751	arith.neg_mat_4x2_w	function	mat4x2<f32>.realw	mat4x2<f32>.realw	(-{0})	the w twin of arith.neg_mat_4x2
+F07751	arith.neg_mat_4x2_w	function	mat4x2<f32>.realw	mat4x2<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_4x2
 F07752	geom.transpose_4x2_w	function	mat2x4<f32>.realw	mat4x2<f32>.realw	transpose({0})	the w twin of geom.transpose_4x2
 F07753	geom.outer_4x2_w	function	mat4x2<f32>.realw	vec2<f32>.realw;vec4<f32>.realw	outer_4x2({0}, {1})	the w twin of geom.outer_4x2
 F07754	arith.mul_mat_mat_4x2_k2_w	function	mat4x2<f32>.realw	mat2x2<f32>.realw;mat4x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_4x2_k2
@@ -7768,7 +7768,7 @@ F07766	arith.mul_mat_scalar_4x3_w	function	mat4x3<f32>.realw	mat4x3<f32>.realw;f
 F07767	arith.mul_scalar_mat_4x3_w	function	mat4x3<f32>.realw	f32.realw;mat4x3<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_4x3
 F07768	arith.add_mat_4x3_w	function	mat4x3<f32>.realw	mat4x3<f32>.realw;mat4x3<f32>.realw	({0} + {1})	the w twin of arith.add_mat_4x3
 F07769	arith.sub_mat_4x3_w	function	mat4x3<f32>.realw	mat4x3<f32>.realw;mat4x3<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_4x3
-F07770	arith.neg_mat_4x3_w	function	mat4x3<f32>.realw	mat4x3<f32>.realw	(-{0})	the w twin of arith.neg_mat_4x3
+F07770	arith.neg_mat_4x3_w	function	mat4x3<f32>.realw	mat4x3<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_4x3
 F07771	geom.transpose_4x3_w	function	mat3x4<f32>.realw	mat4x3<f32>.realw	transpose({0})	the w twin of geom.transpose_4x3
 F07772	geom.outer_4x3_w	function	mat4x3<f32>.realw	vec3<f32>.realw;vec4<f32>.realw	outer_4x3({0}, {1})	the w twin of geom.outer_4x3
 F07773	arith.mul_mat_mat_4x3_k2_w	function	mat4x3<f32>.realw	mat2x3<f32>.realw;mat4x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_4x3_k2
@@ -7787,7 +7787,7 @@ F07785	arith.mul_mat_scalar_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw;f
 F07786	arith.mul_scalar_mat_4x4_w	function	mat4x4<f32>.realw	f32.realw;mat4x4<f32>.realw	({0} * {1})	the w twin of arith.mul_scalar_mat_4x4
 F07787	arith.add_mat_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw;mat4x4<f32>.realw	({0} + {1})	the w twin of arith.add_mat_4x4
 F07788	arith.sub_mat_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw;mat4x4<f32>.realw	({0} - {1})	the w twin of arith.sub_mat_4x4
-F07789	arith.neg_mat_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw	(-{0})	the w twin of arith.neg_mat_4x4
+F07789	arith.neg_mat_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw	(-1.0 * {0})	the w twin of arith.neg_mat_4x4
 F07790	geom.transpose_4x4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw	transpose({0})	the w twin of geom.transpose_4x4
 F07791	geom.outer_4x4_w	function	mat4x4<f32>.realw	vec4<f32>.realw;vec4<f32>.realw	outer_4x4({0}, {1})	the w twin of geom.outer_4x4
 F07792	arith.mul_mat_mat_4x4_k2_w	function	mat4x4<f32>.realw	mat2x4<f32>.realw;mat4x2<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_4x4_k2
