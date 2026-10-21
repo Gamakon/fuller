@@ -450,5 +450,8 @@ mod tests {
             println!("FAIL {f}");
         }
         assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+        assert_eq!(parsed, 100, "expected 100 formulas parsed, got {parsed}");
+        assert_eq!(checked, 98, "expected 98 laws with a dataset, got {checked} (datasets missing?)");
+        assert_eq!(matched, 98, "expected 98 laws matching their dataset, got {matched}");
     }
 }

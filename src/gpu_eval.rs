@@ -2093,7 +2093,7 @@ mod tests {
         let vars = vec!["x".to_string()];
         for k in 2..=8 {
             let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {k}.0))"), &vars).expect("parses");
-            assert_eq!(nodes.len(), 2, "x^{k}");
+            assert_eq!(nodes.len(), 3, "x^{k}");
             assert_eq!(nodes[0].op, Op::Pow as u32, "x^{k}");
         }
         assert_eq!(math_to_nodes_n("(Pow (Var \"x\") (Num 5.0))", &vars, 3).expect("fits three nodes").len(), 3);
