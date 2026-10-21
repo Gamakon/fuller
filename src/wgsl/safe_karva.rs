@@ -1715,27 +1715,33 @@ mod tests {
     /// 1u), 1u)` and phylu's launch-path test failed on 289 of 450 kernels
     /// with a faithful decode. A reader change that alters a saved tree fails
     /// here first: re-encode with `wgsl_safe_convert <texts> --karva <dir>
-    /// --head 32 --slots 128`, keeping the old dumps in a dated directory.
+    /// --head 32 --slots 128` and gzip the dumps into tests/fixtures/wgsl_genomes.
     #[test]
     fn the_saved_genomes_are_todays_reading_of_their_texts() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001");
+        use std::io::Read;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wgsl_genomes");
         let k = WgslKingdom::load_safe();
         let (mut checked, mut stale) = (0usize, Vec::new());
-        for (dumps, texts, slots) in [("popA2_g006j/karva", "popA2_g006j/texts", 128), ("library_ep", "library_ep_texts", 128), ("safe96/karva", "gen0", 96)] {
-            let Ok(entries) = std::fs::read_dir(root.join(dumps)) else { return };
-            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        // (set, dumps expected, slots the set was encoded at); texts live beside the dumps.
+        for (set, expected, slots) in [("popA2_g006j", 20usize, 128), ("library_ep", 430, 128), ("safe96", 31, 96)] {
+            let dumps = root.join(set).join("dumps");
+            let entries = std::fs::read_dir(&dumps).unwrap_or_else(|e| panic!("saved-genome fixture {} is missing: {e}", dumps.display()));
+            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".json.gz")).collect();
             files.sort();
+            assert_eq!(files.len(), expected, "{set}: {} dumps in the fixture, expected {expected}", files.len());
             for f in &files {
-                let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}"));
-                check_dump_duals(&format!("{dumps}/{id}"), &saved, &k).unwrap_or_else(|e| panic!("{e}"));
-                let text = std::fs::read_to_string(root.join(texts).join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{dumps}/{id}: its text: {e}"));
-                let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{dumps}/{id}: its text no longer reads: {}", &e[..e.len().min(300)])).tree;
-                let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, slots, 7013).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}")));
+                let id = f.file_name().map(|s| s.to_string_lossy().trim_end_matches(".json.gz").to_string()).unwrap_or_default();
+                let mut json = String::new();
+                flate2::read::GzDecoder::new(std::fs::File::open(f).unwrap()).read_to_string(&mut json).unwrap_or_else(|e| panic!("{set}/{id}: {e}"));
+                let saved: serde_json::Value = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{set}/{id}: {e}"));
+                check_dump_duals(&format!("{set}/{id}"), &saved, &k).unwrap_or_else(|e| panic!("{e}"));
+                let text = std::fs::read_to_string(root.join(set).join("texts").join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{set}/{id}: its text: {e}"));
+                let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{set}/{id}: its text no longer reads: {}", &e[..e.len().min(300)])).tree;
+                let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, slots, 7013).unwrap_or_else(|e| panic!("{set}/{id}: {e}")));
                 // (The genes, not the kingdom's size the dump records beside them:
                 // a row appended changes no saved tree.)
                 if now["functions"] != saved["functions"] {
-                    stale.push(format!("{dumps}/{id}"));
+                    stale.push(format!("{set}/{id}"));
                 }
                 checked += 1;
             }

@@ -65,6 +65,8 @@ optional = true
 # TEST-ONLY oracle for the regex simplifier: render a Re AST to a regex string
 # and compare match results before/after simplify. Never a run path.
 regex = "1"
+# TEST-ONLY: the saved-genome fixtures under tests/fixtures/wgsl_genomes are gzipped.
+flate2 = "1"
 
 [features]
 # `python` builds the PyO3 extension module; off by default so plain
