@@ -22,6 +22,9 @@ pub mod flow;
 /// The kernel texts the tests read, tracked as fixtures (T63).
 #[cfg(test)]
 pub(crate) mod fixture_texts;
+/// Which tracked kernels the safe reader does not read, asserted against REFUSED.md (T43).
+#[cfg(test)]
+mod reader_census;
 pub mod harness;
 pub mod gram;
 pub mod individual;
