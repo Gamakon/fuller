@@ -55,12 +55,14 @@ fn values(tree: &Tree, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> 
     rows.iter().map(|r| c.eval(r)).collect()
 }
 
-/// The constant `tree` is on every row, when it is finite and the same to 1e-12 of its size.
+/// The constant `tree` is on every row, when it is finite and the SAME f64 (bit-identical) on every row. No
+/// tolerance: a node that varies, however little, is not a constant, and folding it would change the model.
+/// A tree with no variable in it (the clamped nodes already replaced by their constants) is bit-identical by
+/// construction, so it folds here too.
 fn constant_on(tree: &Tree, rows: &[Vec<(String, f64)>]) -> Option<f64> {
     let v = values(tree, rows).ok()?;
-    let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
-    let steady = !v.is_empty() && v.iter().all(|x| x.is_finite()) && hi - lo <= 1e-12 * lo.abs().max(hi.abs()).max(1.0);
-    steady.then_some((lo + hi) / 2.0)
+    let first = *v.first()?;
+    (first.is_finite() && v.iter().all(|x| x.to_bits() == first.to_bits())).then_some(first)
 }
 
 /// Every protected Asin/Acos/Log/Sqrt of `tree` whose argument is outside its raw domain on some row of `rows`,
@@ -177,5 +179,15 @@ mod tests {
         assert_eq!(r.relies[0].op, Op::ProtectedAcos);
         // the parent, asin of that constant, is itself the constant 0 on the data, and folds too
         assert_eq!(r.folded, Tree::parse(r#"(Num 0.0)"#).unwrap());
+    }
+
+    /// Rows 1e12 apart by 1: the sum varies by 1, which a relative 1e-12 tolerance called one value. It is not
+    /// constant, so only the clamp folds and the sum stays.
+    #[test]
+    fn a_parent_that_varies_a_little_is_not_folded() {
+        let r = report(r#"(Add (Var "x_0") (ProtectedAcos (Num 2.0)))"#, &[1e12, 1e12 + 1.0]);
+        assert_eq!(r.folded, Tree::parse(r#"(Add (Var "x_0") (Num 0.0))"#).unwrap());
+        let r = report(r#"(Add (Var "x_0") (ProtectedAcos (Var "x_0")))"#, &[1e12, 1e12 + 1.0]);
+        assert_eq!(r.folded, Tree::parse(r#"(Add (Var "x_0") (Num 0.0))"#).unwrap());
     }
 }
