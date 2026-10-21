@@ -2,6 +2,8 @@
 
 ## Context
 
+**SUPERSEDED for the project's critical path by `docs/PLAN_true_gep_wgsl.md` (2026-10-21).** The project is true multi-typed GEP for WGSL; the items below are parked unless that plan names them.
+
 **Objective.** Close every item left open by the multi-typed GEP rebuild, the TSR kingdom and the day of speed work, so that fuller and phylu are complete, measured against the original fast engine, and ready for the WGSL kingdom to evolve real GPU programs (the route to evolving our own tools).
 
 **Approach.** One list (below), each item a small specified task. Haiku takes mechanical tasks with an exact spec; Sonnet takes tasks that need reading and design. The lead (fuller session) reviews every result, bundles commits, and sends each bundle to Codex for review. GPU work is queued, one process at a time, by the lead only.
