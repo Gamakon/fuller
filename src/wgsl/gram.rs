@@ -684,7 +684,7 @@ pub struct Gram<'a> {
     /// the two swapped with the rows on x).
     pub grid: Grid,
     period_ns: f32,
-    /// The work guard: what is known of the kernel's work per invocation. `Fuel::Proven` (the default of the
+    /// The work guard: what is known of the kernel's work per invocation. `Fuel::Proven` (never a default: every constructor takes its fuel; the
     /// constructors) is for the shipped and hand kernels; a random gene, an evolved child or a seed gets
     /// [`Gram::with_fuel`] before any run, and every submit is checked against the cap first.
     fuel: Fuel,
@@ -696,17 +696,17 @@ impl<'a> Gram<'a> {
     /// refused with its message, not a device error). `workgroup` is the
     /// kernel's `@workgroup_size` in x (columns) and y (rows); the driver
     /// dispatches `ceil(d / x) × ceil(r_rows / y)`.
-    pub fn compile(dev: &'a Device, source: &str) -> Result<Gram<'a>, String> {
-        Self::compile_with(dev, source, grid_of(source)?)
+    pub fn compile(dev: &'a Device, source: &str, fuel: Fuel) -> Result<Gram<'a>, String> {
+        Self::compile_with(dev, source, grid_of(source)?, fuel)
     }
 
     /// A rendered kernel: its text and the grid it asked for.
-    pub fn compile_rendered(dev: &'a Device, r: &Rendered) -> Result<Gram<'a>, String> {
+    pub fn compile_rendered(dev: &'a Device, r: &Rendered, fuel: Fuel) -> Result<Gram<'a>, String> {
         crate::wgsl::naga_shape::parse(&r.text).and_then(|m| super::target::Target::current().validate(&m, &r.text).map(|_| ()).map_err(|e| format!("validation: {e}")))?;
-        Self::compile_with(dev, &r.text, r.grid)
+        Self::compile_with(dev, &r.text, r.grid, fuel)
     }
 
-    fn compile_with(dev: &'a Device, source: &str, grid: Grid) -> Result<Gram<'a>, String> {
+    fn compile_with(dev: &'a Device, source: &str, grid: Grid, fuel: Fuel) -> Result<Gram<'a>, String> {
         if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err("this device has no timestamp queries".into());
         }
@@ -721,14 +721,9 @@ impl<'a> Gram<'a> {
         if let Some(e) = scope.pop() {
             return Err(format!("pipeline: {e}"));
         }
-        Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period(), fuel: Fuel::Proven })
+        Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period(), fuel })
     }
 
-    /// This kernel is not proven: every run is bounded by `fuel` (`work_guard`) before it is submitted.
-    pub fn with_fuel(mut self, fuel: Fuel) -> Self {
-        self.fuel = fuel;
-        self
-    }
 
     /// Build `H` over `phi` (item-major `m × d`) as production does, under
     /// `limit` bytes per binding: upload, run with the read-back, free.
@@ -1296,7 +1291,7 @@ impl FitnessContext {
         let probes = crate::wgsl::probes::probes(1);
         let admission = crate::wgsl::probes::admission(&probes, 1);
         let limit = effective_buffer_limit(&dev.device);
-        let shipped = Gram::compile(dev, SHIPPED)?;
+        let shipped = Gram::compile(dev, SHIPPED, Fuel::Proven("the shipped Gram kernel"))?;
         let sp = splits(cache)?;
         let pick = |pairs: &[crate::wgsl::pairs::Pair], idx: &[usize]| -> Result<Vec<AccuracyPair>, String> {
             idx.iter()
@@ -1343,7 +1338,7 @@ impl FitnessContext {
     /// per shape ([`shipped_min`]) is the speed-ups' denominator. Returns
     /// this measurement.
     pub fn time_shipped(&self, dev: &Device) -> Result<[f64; 3], String> {
-        let shipped = Gram::compile(dev, &self.shipped_source)?;
+        let shipped = Gram::compile(dev, &self.shipped_source, Fuel::Proven("the shipped Gram kernel"))?;
         shipped.run(&self.resident_timing[0], false)?;
         let mut out = [0.0f64; 3];
         for (k, res) in self.resident_timing.iter().enumerate() {
@@ -1372,7 +1367,7 @@ impl FitnessContext {
     /// new speed-ups, columns and HFF. A memoised elite must not keep a
     /// speed measured against a contended shipped time.
     pub fn retime(&self, dev: &Device, source: &str, columns: &[f64; 6]) -> Result<([f64; 3], [f64; 6], f64), String> {
-        let gram = Gram::compile(dev, source)?;
+        let gram = Gram::compile(dev, source, Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
         let reference = self.shipped_reference();
         let mut speedups = [0.0f64; 3];
         for (k, res) in self.resident_timing.iter().enumerate() {
@@ -1422,7 +1417,7 @@ impl<'a> Driver for DeviceDriver<'a> {
     type Kernel = Gram<'a>;
 
     fn compile(&self, source: &str) -> Result<Gram<'a>, String> {
-        Gram::compile(self.dev, source)
+        Gram::compile(self.dev, source, Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))
     }
 
     fn batch(&self, k: &Gram<'a>, cases: std::ops::Range<usize>) -> Result<Batch, String> {
@@ -2013,7 +2008,7 @@ mod tests {
         let admission = crate::wgsl::probes::admission(&probes, 1);
         let res: Vec<Resident> = admission.iter().map(|&i| { let p = &probes[i]; Resident::upload(&dev, &p.phi, p.d, p.m, p.limit).expect("upload") }).collect();
         for (name, text) in [("shipped", SHIPPED), ("tiled", TILED), ("blocked", BLOCKED)] {
-            let g = Gram::compile(&dev, text).expect("compile");
+            let g = Gram::compile(&dev, text, Fuel::Proven("a hand or test kernel of the oracle")).expect("compile");
             for chunk in res.chunks(CASE_CHUNK) {
                 let rs: Vec<&Resident> = chunk.iter().collect();
                 let Batch { h: hs, gpu_ms: gpu, compute_ms: ms } = g.run_batch(&rs).expect("batch");
@@ -2075,12 +2070,12 @@ mod tests {
         let p = phi(d, m, 11);
         let h_ref = reference(&p, d, m);
         let dev = Device::new().expect("device");
-        let gram = Gram::compile_rendered(&dev, &out).expect("compile");
+        let gram = Gram::compile_rendered(&dev, &out, Fuel::Proven("a hand or test kernel of the oracle")).expect("compile");
         let build = gram.build(&p, d, m, 4096).expect("build");
         let v = check(&build.h, &h_ref, d, m);
         assert!(v.passes(), "{v:?}");
         // Bit-identical to the shipped text: the same arithmetic in the same order.
-        let shipped = Gram::compile(&dev, SHIPPED).expect("compile").build(&p, d, m, 4096).expect("build");
+        let shipped = Gram::compile(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel")).expect("compile").build(&p, d, m, 4096).expect("build");
         assert_eq!(build.h.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), shipped.h.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
     }
 
@@ -2104,7 +2099,7 @@ mod tests {
         for seed in 0..n {
             let tree = sample(&k, &r, root, 7, 1000 + seed).unwrap();
             let Ok(out) = rr.kernel(&tree) else { refused += 1; continue };
-            match Gram::compile_rendered(&dev, &out) {
+            match Gram::compile_rendered(&dev, &out, Fuel::Proven("a hand or test kernel of the oracle")) {
                 Err(e) => failed.push(format!("seed {seed} compile: {}", e.lines().next().unwrap_or(""))),
                 Ok(g) => {
                     compiled += 1;
@@ -2146,7 +2141,7 @@ mod tests {
             let tree = sample(&k, &r, root, 7, seed).unwrap();
             let verdict = render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).and_then(|out| {
                 checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
-                Gram::compile_rendered(&dev, &out).map(|_| ()).map_err(|e| format!("compile: {}", e.lines().next().unwrap_or("")))
+                Gram::compile_rendered(&dev, &out, Fuel::Proven("a hand or test kernel of the oracle")).map(|_| ()).map_err(|e| format!("compile: {}", e.lines().next().unwrap_or("")))
             });
             match verdict {
                 Ok(()) => compiled += 1,
@@ -2164,7 +2159,7 @@ mod tests {
     #[test]
     fn every_build_in_a_sequence_has_a_compute_time_on_the_device() {
         let dev = Device::new().expect("device");
-        let gram = Gram::compile(&dev, SHIPPED).expect("compile");
+        let gram = Gram::compile(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel")).expect("compile");
         let limit = effective_buffer_limit(&dev.device);
         let shapes = [(64usize, 1000usize), (32, 500), (64, 1000), (128, 2000), (32, 500), (32, 500)];
         let mut times = Vec::new();
@@ -2197,7 +2192,7 @@ mod tests {
             1,
         );
         assert_ne!(spin, SHIPPED, "the spin was not inserted");
-        let gram = Gram::compile(&dev, &spin).expect("the spinning kernel compiles");
+        let gram = Gram::compile(&dev, &spin, Fuel::Proven("a hand or test kernel of the oracle")).expect("the spinning kernel compiles");
         let t = Instant::now();
         let r = gram.build(&p, d, m, limit);
         let secs = t.elapsed().as_secs_f64();
@@ -2208,7 +2203,7 @@ mod tests {
             Err(e) => e,
         };
         assert!(e.contains("runaway"), "{e}");
-        let shipped = Gram::compile(&dev, SHIPPED).expect("compile");
+        let shipped = Gram::compile(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel")).expect("compile");
         let b = shipped.build(&phi(64, 1000, 1), 64, 1000, limit).expect("the shipped kernel after the runaway");
         println!("the shipped kernel after it: {:.3} ms on the GPU", b.gpu_ms);
         assert!(b.gpu_ms > 0.0, "the shipped kernel timed at zero after the runaway");
@@ -2220,9 +2215,9 @@ mod tests {
         assert_eq!(grid_header(TILED), Some((16, 16, 4, 4)));
         assert_eq!(grid_header(SHIPPED), None);
         let dev = Device::new().expect("device");
-        assert_eq!(Gram::compile(&dev, TILED).unwrap().grid, Grid { x: 16, y: 16, bx: 4, by: 4, rows_x: false });
+        assert_eq!(Gram::compile(&dev, TILED, Fuel::Proven("the shipped Gram kernel")).unwrap().grid, Grid { x: 16, y: 16, bx: 4, by: 4, rows_x: false });
         let wrong = TILED.replace("// grid 16 16 4 4", "// grid 8 8 4 4");
-        let err = match Gram::compile(&dev, &wrong) { Ok(_) => panic!("a mismatched header compiled"), Err(e) => e };
+        let err = match Gram::compile(&dev, &wrong, Fuel::Proven("a hand or test kernel of the oracle")) { Ok(_) => panic!("a mismatched header compiled"), Err(e) => e };
         assert!(err.contains("the grid header says workgroup 8 x 8"), "{err}");
     }
 
@@ -2233,7 +2228,7 @@ mod tests {
     fn the_tiled_and_blocked_kernels_pass_the_criterion_on_the_device() {
         let dev = Device::new().expect("device");
         for (name, text) in [("tiled", TILED), ("blocked", BLOCKED)] {
-            let gram = Gram::compile(&dev, text).expect("compile");
+            let gram = Gram::compile(&dev, text, Fuel::Proven("a hand or test kernel of the oracle")).expect("compile");
             assert_eq!(gram.grid, Grid { x: 16, y: 16, bx: 4, by: 4, rows_x: false });
             for (d, m, limit) in [(64usize, 1000usize, 4096u64), (130, 77, 8192), (200, 33, u64::MAX), (64, 1000, u64::MAX), (33, 5, 1024)] {
                 let p = phi(d, m, 11);
@@ -2274,7 +2269,7 @@ mod tests {
         let p = phi(d, m, 11);
         let h_ref = reference(&p, d, m);
         let dev = Device::new().expect("device");
-        let gram = Gram::compile(&dev, SHIPPED).expect("compile");
+        let gram = Gram::compile(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel")).expect("compile");
         let build = gram.build(&p, d, m, 4096).expect("build");
         assert_eq!((build.item_bands, build.row_bands, build.passes), (63, 4, 252));
         let v = check(&build.h, &h_ref, d, m);

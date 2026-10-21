@@ -30,7 +30,8 @@ pub fn work_bound(h: u64, k: u32, invocations: u64) -> u128 {
 pub enum Fuel {
     /// A kernel proven by hand or by measurement (the shipped kernel, a hand kernel of the oracle, a machinery
     /// kernel): no bound is computed. A random gene, an evolved child or a seed is never proven.
-    Proven,
+    /// The name says which kernel and why it is proven.
+    Proven(&'static str),
     /// A kernel of the true WGSL kingdom: `h` the sum of the head lengths over the reachable types, `k` the
     /// interface's fuel budget.
     Kingdom { h: u64, k: u32 },
@@ -40,7 +41,7 @@ impl Fuel {
     /// The bound of a submit of `invocations`, or `None` for a proven kernel.
     pub fn bound(&self, invocations: u64) -> Option<u128> {
         match self {
-            Fuel::Proven => None,
+            Fuel::Proven(_) => None,
             Fuel::Kingdom { h, k } => Some(work_bound(*h, *k, invocations)),
         }
     }
@@ -82,8 +83,8 @@ mod tests {
         let e = over.check("a run", 2_000_000).expect_err("200 M is over 170 M");
         assert!(e.contains("200000000") && e.contains("170000000") && e.contains("Lower the fuel budget K") && e.contains("smaller dispatch") && e.contains("several submits"), "{e}");
         assert!(Fuel::Kingdom { h: 1, k: 3 }.check("a run", 1_000_000_000).is_err());
-        assert_eq!(Fuel::Proven.check("a run", u64::MAX).expect("proven"), 0);
-        assert_eq!(Fuel::Proven.bound(5), None);
+        assert_eq!(Fuel::Proven("a test").check("a run", u64::MAX).expect("proven"), 0);
+        assert_eq!(Fuel::Proven("a test").bound(5), None);
     }
 
     /// The text of the function starting at `marker` up to the next function at the same indentation.

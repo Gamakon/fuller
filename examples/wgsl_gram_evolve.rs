@@ -218,7 +218,7 @@ fn score(dev: &Device, rr: &Renderer, tree: &Tree, set: &EvalSet, bound: &CostBo
         Ok(o) => o,
         Err(e) => return refused(e),
     };
-    let gram = match Gram::compile_rendered(dev, &out) {
+    let gram = match Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")) {
         Ok(g) => g,
         Err(e) => return refused(format!("compile: {}", e.lines().next().unwrap_or(""))),
     };
@@ -240,7 +240,7 @@ fn score(dev: &Device, rr: &Renderer, tree: &Tree, set: &EvalSet, bound: &CostBo
 #[allow(dead_code)]
 fn timing(dev: &Device, rr: &Renderer, tree: &Tree, shipped: &Gram, train: &[Pair], pairs: &[usize], limit: u64, bound: &CostBound, state: &mut u64) -> Result<(f64, f64), String> {
     let out = rr.kernel(tree)?;
-    let gram = Gram::compile_rendered(dev, &out)?;
+    let gram = Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
     let mut ratios = Vec::with_capacity(pairs.len());
     for &i in pairs {
         let p = &train[i];
@@ -308,7 +308,7 @@ fn main() -> Result<(), String> {
     let bound = CostBound { per_item: 8.0 * shipped_cost.per_item, base: 20_000.0 };
     println!("[{}] shipped cost {:.0} per item, {:.0} base; bound {:.0} per item, {:.0} base; deadline 50x the shipped build, at least 10 s", stamp(), shipped_cost.per_item, shipped_cost.base, bound.per_item, bound.base);
     start_watchdog();
-    let shipped_gram = Gram::compile(&dev, SHIPPED)?;
+    let shipped_gram = Gram::compile(&dev, SHIPPED, fuller::wgsl::oracle::device::Fuel::Proven("the shipped Gram kernel"))?;
 
     let mut ledger = std::fs::File::create(out_dir.join("ledger.tsv")).map_err(|e| format!("ledger: {e}"))?;
     writeln!(ledger, "gen\tid\torigin\tnodes\tcorrect\tpassed_train\tpassed_val\ttrain_mean\tval_mean\tangle\trefused\tsexpr").map_err(|e| e.to_string())?;
@@ -460,7 +460,7 @@ fn main() -> Result<(), String> {
     let out = rr.kernel(&best_tree)?;
     std::fs::write(out_dir.join("best.wgsl"), &out.text).map_err(|e| e.to_string())?;
     std::fs::write(out_dir.join("best.sexpr"), best_tree.to_sexpr()).map_err(|e| e.to_string())?;
-    let best_gram = Gram::compile_rendered(&dev, &out)?;
+    let best_gram = Gram::compile_rendered(&dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
     let mut report = String::new();
     writeln!(report, "split\tpairs\tgated\tmean_ratio\tmax_ratio\tshipped_mean\tshipped_max").map_err(|e| e.to_string())?;
     for (name, pairs) in [("train", &train), ("validation", &val), ("extrapolation", &extrap)] {

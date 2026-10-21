@@ -56,8 +56,8 @@ fn max_error(dev: &Device, parent: &str, child: &str) -> Result<f64, String> {
         })
         .collect();
     let limit = 1u64 << 30;
-    let p = Gram::compile(dev, parent)?.build(&phi, d, m, limit)?.h;
-    let c = Gram::compile(dev, child)?.build(&phi, d, m, limit)?.h;
+    let p = Gram::compile(dev, parent, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?.build(&phi, d, m, limit)?.h;
+    let c = Gram::compile(dev, child, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?.build(&phi, d, m, limit)?.h;
     let scale = p.iter().fold(0.0f64, |a, v| a.max(f64::from(v.abs())));
     let diff = p.iter().zip(&c).fold(0.0f64, |a, (x, y)| a.max(f64::from((x - y).abs())));
     Ok(if scale > 0.0 { diff / scale } else { diff })

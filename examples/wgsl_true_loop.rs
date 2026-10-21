@@ -72,7 +72,7 @@ impl Ctx<'_> {
         self.timing.naga_ms.set(self.timing.naga_ms.get() + t.elapsed().as_secs_f64() * 1e3);
         let Some(dev) = self.dev else { return Ok(()) };
         let t = Instant::now();
-        let gram = Gram::compile(dev, src).map_err(|e| (Stage::Pipeline, e))?.with_fuel(self.fuel.clone());
+        let gram = Gram::compile(dev, src, self.fuel.clone()).map_err(|e| (Stage::Pipeline, e))?;
         // The work guard, before the run: a bound over the cap is a misconfigured experiment, not a verdict on
         // this kernel, so the tool stops (nothing was submitted).
         let bands = band_layout(self.d, self.m, self.limit);

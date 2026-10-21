@@ -124,7 +124,7 @@ fn main() -> Result<(), String> {
     // Rung 2: validate and compile.
     let dev = Device::new()?;
     let limit = effective_buffer_limit(&dev.device);
-    let gram = match Gram::compile(&dev, &source) {
+    let gram = match Gram::compile(&dev, &source, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")) {
         Ok(g) => {
             s.rung = 2;
             println!("[{}] rung 2 validate+compile: ok, grid {:?}", stamp(), g.grid);
@@ -190,7 +190,7 @@ fn main() -> Result<(), String> {
     // Rung 3: the pairs.
     let sp = splits(&cache)?;
     println!("[{}] pairs: {} train, {} validation, {} extrapolation (references in {:.1} s)", stamp(), sp.train.len(), sp.val.len(), sp.extrap.len(), sp.seconds);
-    let shipped = Gram::compile(&dev, SHIPPED)?;
+    let shipped = Gram::compile(&dev, SHIPPED, fuller::wgsl::oracle::device::Fuel::Proven("the shipped Gram kernel"))?;
     let mut pair_fail: Vec<String> = Vec::new();
     for (split, pairs) in [("train", &sp.train), ("validation", &sp.val), ("extrapolation", &sp.extrap)] {
         let t = Instant::now();
@@ -230,7 +230,7 @@ fn main() -> Result<(), String> {
 
 #[allow(clippy::too_many_arguments)]
 fn rung4(dev: &Device, gram: &Gram, limit: u64, cache: &std::path::Path, rounds: usize, s: &mut Summary, ledger: &PathBuf, path: &str, t_all: Instant) -> Result<(), String> {
-    let shipped = Gram::compile(dev, SHIPPED)?;
+    let shipped = Gram::compile(dev, SHIPPED, fuller::wgsl::oracle::device::Fuel::Proven("the shipped Gram kernel"))?;
     // Rung 4 only on an accepted GPU: the shipped kernel alone, at the
     // bench shape, must build within 12 % of its reference 1,015 ms (the
     // quiet-machine measurement of 2026-10-10 15:30). Contention hurts a
@@ -254,7 +254,7 @@ fn rung4(dev: &Device, gram: &Gram, limit: u64, cache: &std::path::Path, rounds:
         }
         println!("[{}] GPU state after a 15 s pause: shipped alone {best:.0} ms against the quiet-chip reference {REFERENCE_MS:.0} ms ({:+.0} %)", stamp(), 100.0 * (best / REFERENCE_MS - 1.0));
     }
-    let shipped2 = Gram::compile(dev, SHIPPED)?;
+    let shipped2 = Gram::compile(dev, SHIPPED, fuller::wgsl::oracle::device::Fuel::Proven("the shipped Gram kernel"))?;
     let mut state = 0x5EED_u64;
     let shapes: [(usize, usize); 3] = [(2048, 65536), (4096, 16384), (8192, 4096)];
     for (d, m) in shapes {
