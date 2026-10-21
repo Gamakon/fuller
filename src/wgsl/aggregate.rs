@@ -106,7 +106,7 @@ impl WgslKingdom {
         for (i, (slot, (shape, form))) in found.iter().enumerate() {
             let index = u16::try_from(base + i).expect("fewer than 65,536 duals");
             let lanes = if let Shape::Matrix { cols, rows, .. } = shape { cols * rows } else { 0 };
-            k.duals.push(WgslDual { index, reference: format!("A{:03}", i + 1), dual: format!("{slot}.{form}"), slot: slot.clone(), form: (*form).into(), lanes, fallback_bits: 0, fallback_noop: false, fallback_elem: false, literal: None });
+            k.duals.push(WgslDual { index, reference: format!("A{:03}", i + 1), dual: format!("{slot}.{form}"), slot: slot.clone(), form: (*form).into(), lanes, literal: None });
             k.shapes.insert(index, shape.clone());
         }
         let by_dual: BTreeMap<String, Ty> = k.duals.iter().map(|d| (d.dual.clone(), d.ty())).collect();
@@ -200,7 +200,7 @@ impl WgslKingdom {
             let Some(stmts) = stmts else { continue };
             let Some(letter) = letters.next() else { break };
             let index = u16::try_from(self.duals.len()).expect("fewer than 65,536 duals");
-            self.duals.push(WgslDual { index, reference: format!("R{index:03}"), dual: format!("reg<{slot}>.{want}"), slot: format!("reg<{slot}>"), form: want.into(), lanes: value.lanes, fallback_bits: 0, fallback_noop: false, fallback_elem: false, literal: None });
+            self.duals.push(WgslDual { index, reference: format!("R{index:03}"), dual: format!("reg<{slot}>.{want}"), slot: format!("reg<{slot}>"), form: want.into(), lanes: value.lanes, literal: None });
             let reg = Ty::Wgsl(index);
             for i in 0..REGISTER_COUNT {
                 rows.push(WgslRow { name: format!("reg.{letter}{i}"), template: "R-reg".into(), inputs: Vec::new(), output: reg, terminal: true });

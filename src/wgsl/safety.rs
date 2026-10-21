@@ -183,9 +183,9 @@ impl Contract {
             return Contract::default();
         }
         let g = gram_contract();
-        let rename = |m: &BTreeMap<String, (i128, i128)>| -> BTreeMap<String, (i128, i128)> { m.iter().map(|(k, v)| (k.strip_prefix("cfg.").map_or_else(|| k.clone(), |r| role.field(r)), *v)).collect() };
+        let rename = |m: &BTreeMap<String, (i128, i128)>| -> BTreeMap<String, (i128, i128)> { m.iter().map(|(k, v)| (k.strip_prefix("cfg.").map_or_else(|| k.clone(), |r| role.field(r).unwrap_or_else(|_| k.clone())), *v)).collect() };
         let rename_len = |m: &BTreeMap<String, Vec<(i128, Vec<String>)>>| -> BTreeMap<String, Vec<(i128, Vec<String>)>> {
-            m.iter().map(|(b, ts)| (b.clone(), ts.iter().map(|(c, names)| (*c, names.iter().map(|n| n.strip_prefix("cfg.").map_or_else(|| n.clone(), |r| role.field(r))).collect())).collect())).collect()
+            m.iter().map(|(b, ts)| (b.clone(), ts.iter().map(|(c, names)| (*c, names.iter().map(|n| n.strip_prefix("cfg.").map_or_else(|| n.clone(), |r| role.field(r).unwrap_or_else(|_| n.clone()))).collect())).collect())).collect()
         };
         Contract { params: rename(&g.params), full: rename(&g.full), lengths: rename_len(&g.lengths), full_lengths: rename_len(&g.full_lengths), ..g }
     }

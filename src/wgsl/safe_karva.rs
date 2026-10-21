@@ -746,7 +746,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // (a 64-bit hash state, a wide fixed-point value): the dual's `const` row at that value, which the renderer
     // writes as that splat (2026-10-12).
     if let (true, [x]) = (t.name.starts_with("shape.splat"), t.kids.as_slice()) {
-        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.fallback_bits) == x.konst) {
+        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.own_bits()) == x.konst) {
             if let Some(c) = const_of(kingdom, demand, x.konst) {
                 return Ok(c);
             }
@@ -843,7 +843,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         }
         // A dual with no literal row (a hash state, a fixed-point value): its `const` row, the zero the renderer
         // writes for it, when the literal is it (2026-10-12: 48 of 1,000 random trees).
-        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.fallback_bits) == t.konst) {
+        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.own_bits()) == t.konst) {
             if let Some(c) = const_of(kingdom, demand, t.konst) {
                 return Ok(c);
             }
@@ -1273,7 +1273,7 @@ mod tests {
 
     /// A store into a vec4 private array whose array leaf is of the wrong
     /// kind (`parr.a` is the f32 array): the projection names it, and
-    /// substitutes no vec4 array for it (it did, as a fallback, until T37).
+    /// substitutes no vec4 array for it (it did, as an own terminal, until T37).
     #[test]
     fn an_array_leaf_of_the_wrong_kind_is_named_not_replaced() {
         let k = WgslKingdom::load_safe();

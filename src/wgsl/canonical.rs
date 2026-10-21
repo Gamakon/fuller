@@ -8,7 +8,7 @@
 //! not record:
 //!
 //! 1. A block's grouping. The emitter writes a nested block's statements in
-//!    place (no braces), nothing for a statement's fallback and nothing
+//!    place (no braces), nothing for a statement's own terminal and nothing
 //!    after a `return`; the parser groups a
 //!    statement list as one block of up to four, more than four as the
 //!    first three and a `stmt.block` of the rest.
@@ -17,7 +17,7 @@
 //!    only the last statement (the one that stores h) as the epilogue and
 //!    reads the ones before it as the body's, at the body's rung. After a
 //!    body that returns at the top level no epilogue is written: it is the
-//!    fallback. The first item loop that continues the item counter
+//!    own terminal. The first item loop that continues the item counter
 //!    (`loop.items_cont_*`, written `for (; t < ..)`) continues it from 0:
 //!    it is the item loop that starts it.
 //! 3. The grid. The header writes the grid the driver dispatches (the
@@ -34,10 +34,10 @@
 //!    kernel's knobs give it ([`params::to_literals`]), so it reads back as
 //!    its dual's plain literal row; a vector literal as its scalar
 //!    splatted (`vec2<f32>(x)` is shape.splat2 of x).
-//! 5. A fallback value. The emitter writes it as its zero (a literal 0, a
+//! 5. An own terminal value. The emitter writes it as its zero (a literal 0, a
 //!    vector splatted from 0, a matrix of such columns), which the parser
 //!    reads as those rows, conformed to the demanded dual as it conforms
-//!    any literal (a dual with no literal row keeps its fallback).
+//!    any literal (a dual with no literal row keeps its own terminal).
 //! 6. A workgroup reduction's count. The emitter rounds it down to a power
 //!    of two, and one of 1 writes only its barrier: a barrier.
 //! 7. A thread's origin. The emitter writes `gid.x * bx`, `wid.x * W bx +
@@ -48,8 +48,8 @@
 //!    an index bound that is a uniform value (literals of 1 to 4,096, the
 //!    uniform's fields, the loop counters, under the uniform's operators) as
 //!    that uniform value; a
-//!    loop over an expression bound that is the bound's fallback, as the
-//!    literal tile loop over the fallback's value.
+//!    loop over an expression bound that is the bound's own terminal, as the
+//!    literal tile loop over the own terminal's value.
 //! 9. A negated matrix is written as the matrix times -1.0; degrees and
 //!    radians as the products by their constants; a band (`x / max(y, 1u)`)
 //!    as the division it reads back as; the role's input load (`load.phi`,
@@ -96,13 +96,13 @@ fn own(kingdom: &WgslKingdom, ty: Ty) -> Tree {
 }
 
 /// The statements a block writes, in order: nested plain blocks spliced in
-/// place, an empty block (its fallback) nothing, and nothing after a return.
+/// place, an empty block (its own terminal) nothing, and nothing after a return.
 fn statements(block: &Tree, out: &mut Vec<Tree>) -> bool {
     if block.name.starts_with("own.") {
         return false;
     }
     for s in &block.kids {
-        // A statement's fallback writes nothing.
+        // A statement's own terminal writes nothing.
         if s.name.starts_with("own.") {
             continue;
         }
@@ -556,7 +556,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_k
         return canonical_literal(t, kingdom);
     }
     if t.name.starts_with("own.") || t.name.starts_with("const.") {
-        if let Some(z) = canonical_fallback(t, kingdom, per_kernel) {
+        if let Some(z) = canonical_own(t, kingdom, per_kernel) {
             return z;
         }
     }
@@ -572,7 +572,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_k
             let mut kids = root.kids.clone();
             for k in kids.iter_mut().skip(1) {
                 // (Unrolled loops spliced, then the blocks regrouped; an
-                // epilogue that is the fallback after a body that returns
+                // epilogue that is the own terminal after a body that returns
                 // is not written, and stays so.)
                 if !k.name.starts_with("own.") {
                     *k = structural(&loops(k, 0, 1, &[], false, kingdom), kingdom, per_kernel);
@@ -590,8 +590,8 @@ fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_k
     canonical_block(&t, kingdom)
 }
 
-/// Rule 5: a fallback value leaf as the parser reads the zero written for it.
-fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_karva::PerKernelRow]) -> Option<Tree> {
+/// Rule 5: an own terminal value leaf as the parser reads the zero written for it.
+fn canonical_own(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_karva::PerKernelRow]) -> Option<Tree> {
     let d = kingdom.dual(t.ty)?;
     let ty = |n: &str| dual_ty(kingdom, n).ok();
     let gid = || -> Option<Tree> { Some(Tree::new("builtin.global_invocation_id", ty("vec3<u32>.gid")?, vec![])) };
@@ -607,11 +607,11 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl
         let store = Tree::new(&format!("store.h_O{level}"), ty(&format!("stmt.O{level}"))?, vec![cell()?, f0]);
         return Some(Tree::new(&format!("block.one_O{level}"), t.ty, vec![store]));
     }
-    // A loop bound's fallback is the loop rule's (rule 8).
+    // A loop bound's own terminal is the loop rule's (rule 8).
     if d.is_statement_level() || d.dual.starts_with("u32.bound") {
         return None;
     }
-    // A thread's origin or cell: the thread's own (the emitter's own_fallback).
+    // A thread's origin or cell: the thread's own (the emitter's own_own terminal).
     match d.dual.as_str() {
         "u32.threadrow" | "u32.rowbase" => return origin("safe.thread_row", "u32.threadrow"),
         "u32.threadcol" | "u32.colbase" => return origin("safe.thread_col", "u32.threadcol"),
@@ -634,12 +634,12 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl
         let name = format!("wg.{}", wgmem_var(t).ok()?.strip_prefix("wg_")?);
         return Some(Tree::new(&name, t.ty, vec![]));
     }
-    // The value written: a u32 or bool dual's fallback value, else 0.
+    // The value written: a u32 or bool dual's own value, else 0.
     let written = match d.scalar() {
         // (A `const` row writes the value it carries.)
         _ if t.name.starts_with("const.") => t.konst as f32,
-        Some("u32") => d.fallback_bits as f32,
-        Some("bool") => f32::from(u8::from(d.fallback_bits != 0)),
+        Some("u32") => d.own_bits() as f32,
+        Some("bool") => f32::from(u8::from(d.own_bits() != 0)),
         _ => 0.0,
     };
     let scalar = |s: &str| -> Option<Tree> {
@@ -752,8 +752,8 @@ fn canonical_neg_mat(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     kingdom.rows.iter().any(|r| r.name == "arith.mul_mat_scalar" && r.output == t.ty).then(|| Tree::new("arith.mul_mat_scalar", t.ty, vec![m.clone(), Tree::literal("literal.real", real, -1.0)]))
 }
 
-/// Rule 8 at a loop over a fallback expression bound.
-fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+/// Rule 8 at a loop over an own terminal expression bound.
+fn canonical_own_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
     let tile = stem.strip_prefix("loop.tilex").map(|rest| format!("loop.tile{rest}_{rung}"))?;
     let bound = t.kids.first().filter(|b| b.name.starts_with("own."))?;
@@ -761,7 +761,7 @@ fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     if t.kids.len() == 3 && t.kids[1].konst > 64.0 {
         return None;
     }
-    let v = kingdom.dual(bound.ty)?.fallback_bits as f32;
+    let v = kingdom.dual(bound.ty)?.own_bits() as f32;
     if !(1.0..=64.0).contains(&v) {
         return None;
     }
@@ -939,7 +939,7 @@ fn plain_if(t: &Tree, op: &str, x: &Tree, y: &Tree, bodies: &[Tree], kingdom: &W
         let ty = if t.name.starts_with("own.") { t.ty } else { kingdom.rows.iter().find(|row| row.name == name).map(|row| row.output)? };
         Some(Tree { name, ty, konst: t.konst, kids })
     }
-    // (A fallback body, the empty block, keeps its leaf under its new dual.)
+    // (An own terminal body, the empty block, keeps its leaf under its new dual.)
     let body = |b: &Tree| -> Option<Tree> {
         if b.name.starts_with("own.") {
             let bt = dual_ty(kingdom, &format!("block.C{}", &rung[1..])).ok()?;
@@ -1023,7 +1023,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             return c;
         }
     }
-    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)).or_else(|| canonical_fallback_bound(t, kingdom)).or_else(|| canonical_written_as(t, kingdom)) {
+    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)).or_else(|| canonical_own_bound(t, kingdom)).or_else(|| canonical_written_as(t, kingdom)) {
         return r;
     }
     if let Some(r) = canonical_reduction(t, kingdom) {

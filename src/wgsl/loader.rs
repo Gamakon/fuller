@@ -33,12 +33,6 @@ pub struct WgslDual {
     /// 1 for a scalar, 2–4 for a vector, columns × rows for a matrix, 0 for
     /// the array and store rows.
     pub lanes: u32,
-    /// The fallback's lane bit pattern, from the generated column.
-    pub fallback_bits: u32,
-    /// 1: the fallback substitutes nothing (`store.store`).
-    pub fallback_noop: bool,
-    /// 1: the fallback is the element's (`array<T>`).
-    pub fallback_elem: bool,
     /// The values a literal of this dual takes (the `literal` column); `None`
     /// for a dual no literal takes.
     pub literal: Option<LiteralDomain>,
@@ -147,6 +141,17 @@ impl WgslDual {
         ["f32", "f16", "i32", "u32", "bool"].contains(&base).then_some(base)
     }
 
+    /// The u32 pattern of the value the dual's `own.*` terminal writes (the meaning column of `functions.tsv`, class
+    /// `own`): `1u` for a loop bound of one pass (`boundx`, `boundu`, `xbound`), `true` for a sign, 256 for a knob's
+    /// payload, zero for every other form. The row's own value, never a stand-in for a child that was not drawn.
+    pub fn own_bits(&self) -> u32 {
+        match self.form.as_str() {
+            "payload" => 256,
+            "boundx" | "boundu" | "xbound" | "sign" => 1,
+            _ => 0,
+        }
+    }
+
     /// A statement-level dual (`kernel`, `grid`, `block`, `stmt`, a register
     /// or a workgroup array): no value slot, rendered by `render.rs`.
     pub fn is_statement_level(&self) -> bool {
@@ -192,7 +197,7 @@ pub const SAFEWGSL: &str = "SAFEWGSL";
 pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
     let mut lines = tsv.lines();
     let header: Vec<&str> = lines.next().ok_or("empty types table")?.split('\t').collect();
-    let want = ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning", "literal"];
+    let want = ["ref", "dual", "slot", "form", "lanes", "meaning", "literal"];
     if header != want {
         return Err(format!("types.tsv header is {header:?}, want {want:?}"));
     }
@@ -201,8 +206,8 @@ pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
     Ty::check_dual_count("wgsl", lines.len(), Ty::MAX_WGSL_DUALS)?;
     for (n, line) in lines.into_iter().enumerate() {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 11 {
-            return Err(format!("line {}: {} fields, want 11", n + 2, f.len()));
+        if f.len() != 7 {
+            return Err(format!("line {}: {} fields, want 7", n + 2, f.len()));
         }
         let num = |i: usize| f[i].parse::<u32>().map_err(|e| format!("line {}: {:?}: {e}", n + 2, f[i]));
         out.push(WgslDual {
@@ -212,10 +217,7 @@ pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
             slot: f[2].to_string(),
             form: f[3].to_string(),
             lanes: num(4)?,
-            fallback_bits: num(6)?,
-            fallback_noop: num(7)? == 1,
-            fallback_elem: num(8)? == 1,
-            literal: LiteralDomain::parse(f[10], f[2]).map_err(|e| format!("line {}: {e}", n + 2))?,
+            literal: LiteralDomain::parse(f[6], f[2]).map_err(|e| format!("line {}: {e}", n + 2))?,
         });
     }
     Ok(out)
@@ -665,8 +667,8 @@ mod tests {
     /// the shipped tables, safewgsl the largest, load.
     #[test]
     fn a_types_table_with_one_dual_too_many_fails_loudly() {
-        let header = "ref\tdual\tslot\tform\tlanes\tfallback\tfallback_bits\tfallback_noop\tfallback_elem\tmeaning\tliteral\n";
-        let row = |n: usize| format!("T{n}\td{n}.f\td{n}\tf\t0\t-\t0\t0\t0\tm\t-\n");
+        let header = "ref\tdual\tslot\tform\tlanes\tmeaning\tliteral\n";
+        let row = |n: usize| format!("T{n}\td{n}.f\td{n}\tf\t0\tm\t-\n");
         let table = |n: usize| (0..n).fold(header.to_string(), |t, i| t + &row(i));
         assert_eq!(parse_duals(&table(Ty::MAX_WGSL_DUALS)).unwrap().len(), Ty::MAX_WGSL_DUALS);
         let e = parse_duals(&table(Ty::MAX_WGSL_DUALS + 1)).unwrap_err();
@@ -794,11 +796,6 @@ mod tests {
                 }
                 let dual = kingdom.dual(ty).expect("a dual");
                 let dom = kingdom.literal_domain(&name, ty).unwrap_or_else(|| panic!("{name} over {}: no domain", dual.dual));
-                let fallback = match dual.scalar() {
-                    Some("f32") => f64::from(f32::from_bits(dual.fallback_bits)),
-                    Some("i32") => f64::from(dual.fallback_bits as i32),
-                    _ => f64::from(dual.fallback_bits),
-                };
                 let mut raw: Vec<f64> = vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::from(f32::from_bits(0xFFFF_FFFF)), 0.5];
                 match &dom {
                     LiteralDomain::Int { lo, hi } => {
@@ -817,7 +814,7 @@ mod tests {
                     LiteralDomain::Set(set) => raw.extend(set.iter().map(|&m| m as f64)),
                 }
                 for v in raw {
-                    let c = dom.canonical(v, fallback);
+                    let c = dom.canonical(v, 0.0);
                     // (A real is an f32's value.)
                     let c = if matches!(dom, LiteralDomain::Real { .. }) { f64::from(c as f32) } else { c };
                     let child = set_at(&read.tree, &at, c);
@@ -856,24 +853,17 @@ mod tests {
     }
 
     #[test]
-    fn the_83_duals_load_with_their_machine_fallbacks() {
+    fn the_83_duals_load() {
         let d = wgsl_duals();
         assert_eq!(d.len(), 83);
         assert_eq!((d[0].reference.as_str(), d[0].dual.as_str(), d[0].ty()), ("T001", "f32.real", Ty::Wgsl(0)));
         assert_eq!(d[70].dual, "store.store");
-        assert!(d[70].fallback_noop && !d[69].fallback_noop);
-        assert!(d[69].fallback_elem, "T070 array<T> defers to its element");
-        let sign = d.iter().find(|x| x.dual == "bool.sign").unwrap();
-        assert_eq!(sign.fallback_bits, 1);
-        assert_eq!(d.iter().filter(|x| x.fallback_bits != 0).count(), 1, "only sign is non-zero");
         assert_eq!(d.iter().find(|x| x.dual == "mat3x4<f32>.real").unwrap().matrix_shape(), Some((3, 4)));
         assert_eq!(d.iter().find(|x| x.dual == "vec3<u32>.index").unwrap().scalar(), Some("u32"));
         // The statement-level duals come after the value duals, so every
-        // earlier ref is unchanged; their fallback is a plain leaf the
-        // renderer gives a meaning (an empty statement, the first register).
+        // earlier ref is unchanged.
         assert_eq!(d[71].dual, "kernel.kernel");
         assert_eq!(d[82].dual, "u32.unroll");
-        assert!(d[71..].iter().all(|x| x.fallback_bits == 0 && !x.fallback_noop && !x.fallback_elem));
         assert_eq!(d.iter().filter(|x| x.is_statement_level()).count(), 9);
         assert_eq!(d.iter().find(|x| x.dual == "reg<f32>.real").unwrap().scalar(), None, "a register is not a value slot");
         assert_eq!(d.iter().find(|x| x.dual == "u32.wgdim").unwrap().scalar(), Some("u32"));
@@ -1195,5 +1185,29 @@ mod tests {
         assert_eq!(ids.len(), n, "semantic ids are unique");
         assert!(t.kingdom(WGSL).iter().all(|s| s.arity.inputs.keys().chain(s.arity.outputs.keys()).all(|ty| matches!(ty, Ty::Wgsl(_)))));
         assert_eq!(t.max_arity(WGSL), 4);
+    }
+
+    /// NO UNSAFE ROW IS LEFT UNREACHABLE (A0, 2026-10-21): every row of the safe kingdom outputs a dual a program rooted
+    /// at `kernel.safe` or `kernel.module` can demand, but the carriers of a value through a module's storage (the
+    /// `opaque` forms, which no kernel root demands), and the kingdom has no row of the deleted escapes: a value admitted
+    /// into a uniform context "when the checker proves it" (`uflag.of_flag`, `uniform.of_checked`), a raw index into a
+    /// workgroup array (`wg.get`, `wg.set`), the wrap-typed arithmetic no row takes, the old unsafe statement rows.
+    #[test]
+    fn every_row_of_the_safe_kingdom_is_reachable_from_a_root_or_an_opaque_carrier() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::kingdom_contract::safewgsl_relations().check().expect("the kingdom check");
+        let mut reach: std::collections::BTreeSet<Ty> = std::collections::BTreeSet::new();
+        for r in contract.roots() {
+            reach.extend(contract.reachable(*r));
+        }
+        let unreachable: Vec<String> = k.rows.iter().filter(|r| !reach.contains(&r.output)).filter(|r| k.dual(r.output).is_none_or(|d| d.form != "opaque") && !r.inputs.iter().any(|t| k.dual(*t).is_some_and(|d| d.form == "opaque"))).map(|r| r.name.clone()).collect();
+        assert!(unreachable.is_empty(), "rows no program can express: {unreachable:?}");
+        for gone in ["uflag.of_flag", "uniform.of_checked", "wg.get", "wg.set", "index.sub", "index.shl", "uniform.mul", "uniform.shl", "uniform.sub", "safe.phi_of", "store.branch"] {
+            assert!(k.rows.iter().all(|r| r.name != gone), "{gone} is a row again");
+        }
+        for dead in ["u32.indexw", "u32.uniformw", "stmt.stmt", "block.block", "kernel.kernel", "bool.bound", "u32.phi", "store.store"] {
+            let produced: Vec<&str> = k.rows.iter().filter(|r| k.dual(r.output).is_some_and(|d| d.dual == dead)).map(|r| r.name.as_str()).collect();
+            assert!(produced.is_empty(), "rows produce {dead} again: {produced:?}");
+        }
     }
 }

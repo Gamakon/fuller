@@ -171,69 +171,6 @@ RUNGS5 = ["L5", "C5"]
 # The epilogue's rungs by tile depth; O<d>'s leading statements are C<d> statements.
 EPILOGUE = ["O0", "O1", "O2", "O3", "O4"]
 
-FALLBACK = {
-    "payload": "256 (the knob itself)",
-    "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
-    "code4": "0u", "code8": "0u", "code16": "0u", "code1024": "0u", "bits": "0u", "hash32": "0u",
-    "hash64": "vec2(0u, 0u)", "flag": "false", "sign": "true (+1)", "opaque": "the slot's zero", "store": "no-op, codon masked",
-    "<form of T>": "the element's fallback",
-    # The renderer gives a statement-level fallback leaf its meaning: an empty
-    # kernel, the 16 x 16 x 1 x 1 grid, an empty block, an empty statement, the
-    # smallest literal, the first register, the first workgroup array.
-    "kernel": "an empty kernel", "grid": "16 x 16, 1 x 1", "block": "empty", "stmt": "empty",
-    "wgdim": "4u", "blk": "1u", "unroll": "2u",
-    "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
-    "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "the thread's own first row", "threadcol": "the thread's own first column", "cell": "the thread's own first cell", "phi": "0u", "wgindex": "0u",
-    "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
-    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u", "pindex128": "0u", "uniform": "0u", "boundu": "1u",
-    "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
-    "boundx": "1u",
-    "tcounter4": "0u", "L5": "empty", "C5": "empty",
-    # The epilogue's fallback is a store, never nothing: h[cell] = h[cell] + f0 at the thread's first cell
-    # (gid.y * by, gid.x * bx), under the store's own bounds check.
-    "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
-    "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
-    "lidx": "0u", "threadrows": "the thread's own first row", "threadcols": "the thread's own first column", "threadrowg": "the thread's own first row", "threadcolg": "the thread's own first column",
-    "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
-    "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
-    "uniformw": "0u", "xbound": "1u", "indexw": "0u", "mirror": "the mirror of the thread's own first cell", "wgown": "the thread's own first element (lidx)",
-    "rowbase": "the thread's own first row", "colbase": "the thread's own first column", "rowbases": "the thread's own first row", "colbases": "the thread's own first column", "rowbaseg": "the thread's own first row", "colbaseg": "the thread's own first column",
-    "module": "an empty kernel at each of the interface's entry points",
-    "uflag": "false",
-}
-
-# The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
-# repeat the lane, so one number suffices. Only `sign` (true = +1) is non-zero. `store` substitutes
-# nothing (fallback_noop = 1; every substitution counts the codon as masked, so that word is not
-# reused here) and `array<T>` defers to its element (fallback_elem = 1); their bits are placeholders
-# the loader must not read before testing those two columns.
-FALLBACK_BITS = {
-    "payload": 256,
-    "real": 0, "int": 0, "q15_16": 0, "q15_16w": 0, "index": 0, "count": 0,
-    "code4": 0, "code8": 0, "code16": 0, "code1024": 0, "bits": 0, "hash32": 0,
-    "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
-    "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
-    "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
-    "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "pindex128": 0, "uniform": 0, "boundu": 1,
-    "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
-    # A loop bound's fallback is one pass, as its text says (1u; 0 before, 2026-10-12: a loop that never
-    # ran, and an epilogue whose store sat in it never stored).
-    "boundx": 1,
-    "tcounter4": 0, "L5": 0, "C5": 0,
-    "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
-    "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
-    "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
-    "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
-    "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
-    "uniformw": 0, "xbound": 1, "indexw": 0, "mirror": 0, "wgown": 0,
-    "rowbase": 0, "colbase": 0, "rowbases": 0, "colbases": 0, "rowbaseg": 0, "colbaseg": 0,
-    "module": 0,
-    "uflag": 0,
-}
-assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
-
-
 def slot_name(scalar: str, lanes: int) -> str:
     return scalar if lanes == 1 else f"vec{lanes}<{scalar}>"
 
@@ -341,12 +278,10 @@ ARRAY_FAMILIES = [
 
 
 def build_types():
-    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning, literal)
+    rows = []  # (ref, dual, slot, form, lanes, meaning, literal)
 
     def add(slot, form, lanes, meaning):
-        noop = int(form == "store")
-        elem = int(slot == "array<T>")
-        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning, literal_domain(slot, form)))
+        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, meaning, literal_domain(slot, form)))
 
     for form, (meaning, scalars) in FORMS.items():
         if form in ("wgdim", "blk", "unroll") or form in SAFE_FORMS:
@@ -568,9 +503,9 @@ f("geom", "face_forward", "Math::FaceForward", ["<vecL<f32>.real>", "<vecL<f32>.
 # intarith: index, count, int
 for op, naga in [("add", "Binary::Add"), ("sub", "Binary::Subtract"), ("mul", "Binary::Multiply"), ("div", "Binary::Divide"), ("mod", "Binary::Modulo"), ("min", "Math::Min"), ("max", "Math::Max")]:
     if op == "sub":
-        # NO WRAP ANYWHERE (2026-10-12, Codex's review): a raw difference may wrap below zero, so its value is
-        # u32.indexw, which no row takes; a difference is index.sub_floor (the reader reads x - y as it).
-        f("index", op, naga, ["u32.index", "u32.index"], "u32.indexw", "a raw difference: it may wrap, no row takes it (index.sub_floor is the kingdom's difference)")
+        # NO WRAP ANYWHERE (2026-10-12, Codex's review): a raw difference may wrap below zero, so there is no
+        # such row; a difference is index.sub_floor (the reader reads x - y as it). (A0, 2026-10-21: the row
+        # whose value was u32.indexw, which no row takes, is deleted.)
         continue
     f("index", op, naga, ["<u32.index>", "<u32.index>"], "<u32.index>", "lanes equal")
 f("index", "clamp", "Math::Clamp", ["<u32.index>", "<u32.index>", "<u32.index>"], "<u32.index>", "arity 3")
@@ -666,38 +601,21 @@ for l in (2, 3, 4):
 # store
 f("store", "buffer", "Store(Access)", ["u32.index", "<T.form of the buffer>"], "store", "one instance per buffer; a head gene's root")
 f("store", "local", "Store", ["<T.form of the local>"], "store", "")
-f("store", "branch", "If/Loop condition", ["bool.flag"], "store", "a branch-condition root in the scaffold")
 
 # ---- statements: the multityped kingdom (PLAN_wgsl_gram_superopt §2). ----
 # Every row is rendered to text by src/wgsl/render.rs; naga validates the text.
 f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension, any integer 1..=1,024 (from {4, 8, 16, 32} until 2026-10-12)")
 f("literal", "blk", "Literal", [], "u32.blk", "a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block)")
 f("literal", "unroll", "Literal", [], "u32.unroll", "an unroll factor from {2, 4, 8}")
-f("kernel", "entry", "composite", ["grid.grid", "block.block"], "kernel.kernel", "the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main")
 f("grid", "of", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); y is cut so x y <= 1,024 threads")
-f("block", "one", "composite", ["stmt.stmt"], "block.block", "")
-f("block", "seq2", "composite", ["stmt.stmt", "stmt.stmt"], "block.block", "the statements in order")
-f("block", "seq3", "composite", ["stmt.stmt"] * 3, "block.block", "arity 3")
-f("block", "seq4", "composite", ["stmt.stmt"] * 4, "block.block", "arity 4")
-f("stmt", "block", "composite", ["block.block"], "stmt.stmt", "{ ... }")
-f("stmt", "if", "composite", ["bool.flag", "block.block"], "stmt.stmt", "if (c) { ... }")
-f("stmt", "if_else", "composite", ["bool.flag", "block.block", "block.block"], "stmt.stmt", "arity 3")
-f("stmt", "return", "composite", [], "stmt.stmt", "return; the thread guard's exit")
-f("stmt", "barrier", "composite", [], "stmt.stmt", "workgroupBarrier()")
-f("loop", "items", "composite", ["block.block"], "stmt.stmt", "for (t = 0u; t < cfg.m; t++) { ... }: the one long loop; nested in another loop.items the kernel is refused")
-f("loop", "items_unrolled", "composite", ["u32.unroll", "block.block"], "stmt.stmt", "the body k times with t + j, then the remainder loop")
-f("loop", "tile", "composite", ["u32.wgdim", "block.block"], "stmt.stmt", "for (k = 0u; k < n; k++) { ... }: a short loop")
 f("builtin", "item", "composite", [], "u32.index", "t, the item loop's index; 0u outside it")
 f("builtin", "tile", "composite", [], "u32.index", "k, the tile loop's index; 0u outside it")
 for name, dual in [("f0", "reg<f32>.real"), ("f1", "reg<f32>.real"), ("f2", "reg<f32>.real"), ("f3", "reg<f32>.real"), ("v0", "reg<vec4<f32>>.real"), ("v1", "reg<vec4<f32>>.real"), ("i0", "reg<u32>.index"), ("i1", "reg<u32>.index"), ("i2", "reg<u32>.index"), ("i3", "reg<u32>.index"), ("b0", "reg<bool>.flag")]:
-    f("reg", name, "composite", [], dual, "a register, declared at the top of the kernel and initialised to its form's fallback")
+    f("reg", name, "composite", [], dual, "a register, declared at the top of the kernel and initialised to its form's zero")
 for suffix, reg, val in [("f", "reg<f32>.real", "f32.real"), ("v", "reg<vec4<f32>>.real", "vec4<f32>.real"), ("i", "reg<u32>.index", "u32.index"), ("b", "reg<bool>.flag", "bool.flag")]:
     f("reg", f"get_{suffix}", "composite", [reg], val, "the register's value")
-    f("reg", f"set_{suffix}", "composite", [reg, val], "stmt.stmt", "name = value;")
 f("wg", "a", "composite", [], "wgmem<f32>.real", "workgroup array a")
 f("wg", "b", "composite", [], "wgmem<f32>.real", "workgroup array b")
-f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 2047u]")
-f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 2047u] = v;")
 
 # More registers for drafted kernels (sixteen f32, eight vec4, eight u32, four bool).
 for i in range(4, 16):
@@ -734,7 +652,6 @@ f("wg", "get_v_safe", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex"], "v
 # Index arithmetic the drafted kernels use on addresses: shifts (the count masked to 0..31) and masks.
 # A left shift may wrap (2026-10-12, Codex's review: no wrap anywhere): u32.indexw, which no row takes; the
 # reader reads x << k (a literal k) as x * 2^k.
-f("index", "shl", "composite", ["u32.index", "u32.index"], "u32.indexw", "i << (s & 31u): it may wrap, no row takes it")
 f("index", "shr", "composite", ["u32.index", "u32.index"], "u32.index", "i >> (s & 31u)")
 f("index", "and", "composite", ["u32.index", "u32.index"], "u32.index", "i & j")
 f("index", "or", "composite", ["u32.index", "u32.index"], "u32.index", "i | j")
@@ -747,12 +664,6 @@ f("bound", "d", "composite", [], "u32.boundd", "cfg.d")
 f("bound", "rows", "composite", [], "u32.boundrows", "cfg.r_rows")
 f("literal", "lit64", "Literal", [], "u32.lit64", "a literal snapped into 1..=64")
 f("literal", "lit4096", "Literal", [], "u32.lit4096", "a literal snapped into 1..=4096")
-# The loop condition: counter < bound, and nothing else produces a flag.bound.
-for b in ("boundm", "boundd", "boundrows", "lit4096"):
-    f("safe", "lt_" + b, "Binary::Less", ["u32.counter", "u32." + b], "bool.bound", "the only producer of a loop condition")
-f("safe", "lt_lit64", "Binary::Less", ["u32.tcounter", "u32.lit64"], "bool.bound", "a tile loop's condition")
-f("safe", "lt_lit64_2", "Binary::Less", ["u32.tcounter2", "u32.lit64"], "bool.bound", "an inner tile loop's condition")
-f("safe", "lt_lit64_3", "Binary::Less", ["u32.tcounter3", "u32.lit64"], "bool.bound", "a third nested tile loop's condition")
 f("safe", "tile_counter3", "composite", [], "u32.tcounter3", "the third nested tile loop's counter k3 (0u outside it)")
 f("safe", "tile_index3", "composite", ["u32.tcounter3"], "u32.index", "the third tile counter as a plain index")
 f("safe", "row_plus_tile3", "composite", ["u32.threadrow", "u32.tcounter3"], "u32.threadrow", "row + min(k3, block rows - 1)")
@@ -781,7 +692,6 @@ f("safe", "col_plus_tile2_s", "composite", ["u32.threadcols", "u32.tcounter2"], 
 f("safe", "row_plus_tile3_s", "composite", ["u32.threadrows", "u32.tcounter3"], "u32.threadrows", "row + min(k3, blk - 1) * Y")
 f("safe", "col_plus_tile3_s", "composite", ["u32.threadcols", "u32.tcounter3"], "u32.threadcols", "col + min(k3, blk - 1) * X")
 f("safe", "cell_of", "composite", ["u32.threadrow", "u32.threadcol"], "u32.cell", "row * cfg.d + col, the cell this thread owns; the only index store.h accepts")
-f("safe", "phi_of", "composite", ["u32.counter", "u32.index"], "u32.phi", "unused (a load of phi takes any index); kept so earlier refs stand")
 f("safe", "wg_of", "composite", ["u32.index"], "u32.wgindex", "i & 2047u, in range by construction")
 f("safe", "row_plus", "composite", ["u32.threadrow", "u32.lit64"], "u32.threadrow", "row + min(i, block rows - 1)")
 f("safe", "col_plus", "composite", ["u32.threadcol", "u32.lit64"], "u32.threadcol", "col + min(j, block columns - 1)")
@@ -886,7 +796,7 @@ for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "
 # Registers again: 64 f32, 32 vec4, 64 u32, 16 bool. Five model kernels copied the kingdom's own
 # rendered declarations (32 u32 registers and the four counters) and asked for a 33rd u32 register.
 # The reader also stopped allocating a register for a local whose only initialiser is its form's
-# fallback (the declaration already holds it), so a copy of a rendered kernel costs no registers.
+# zero (the declaration already holds it), so a copy of a rendered kernel costs no registers.
 for i in range(32, 64):
     f("reg", f"f{i}", "composite", [], "reg<f32>.real", "a register (f32 is spelled f32r: a reserved word)")
 for i in range(16, 32):
@@ -904,7 +814,6 @@ for r in RUNGS:
     f("parr", "set_v_lane_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: pv[i][j & 3u] = x;")
 # A fourth nested tile loop (r2x_union_g9 and _g10 of run A: the item loop, then loops over g, j, r and c):
 # the counter k4, the rungs L5 and C5 with every statement row the other rungs have, and the loops at L4/C4.
-f("safe", "lt_lit64_4", "Binary::Less", ["u32.tcounter4", "u32.lit64"], "bool.bound", "a fourth nested tile loop's condition")
 f("safe", "tile_counter4", "composite", [], "u32.tcounter4", "the fourth nested tile loop's counter k4 (0u outside it)")
 f("safe", "tile_index4", "composite", ["u32.tcounter4"], "u32.index", "the fourth tile counter as a plain index")
 f("safe", "row_plus_tile4", "composite", ["u32.threadrow", "u32.tcounter4"], "u32.threadrow", "row + min(k4, block rows - 1)")
@@ -1291,12 +1200,12 @@ for c in ("x", "y", "z"):
     f("uniform", "nwg_" + c, "composite", [], "u32.uniform", f"nwg.{c}: the grid's size")
 f("uniform", "subgroup_size", "composite", [], "u32.uniform", "the subgroup size")
 f("uniform", "num_subgroups", "composite", [], "u32.uniform", "the subgroups in the workgroup")
-# A difference, a product and a shift may wrap: their value is u32.uniformw, an index only (2026-10-12).
-WRAPS = ("sub", "mul", "shl")
-for op in ("add", "sub_floor", "mul", "div", "min", "max", "shl", "shr", "and", "or"):
-    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniformw" if op in WRAPS else "u32.uniform", f"as index.{op}, of uniform values")
-for op in ("sub", "mod", "round_down", "band_of", "clamp_to"):
-    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniformw" if op in WRAPS else "u32.uniform", f"as index.{op}, of uniform values")
+# A difference, a product and a shift may wrap (2026-10-12): there is no uniform row for them (A0, 2026-10-21:
+# the rows whose value was u32.uniformw, which no row takes, are deleted); the floored difference stands.
+for op in ("add", "sub_floor", "div", "min", "max", "shr", "and", "or"):
+    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniform", f"as index.{op}, of uniform values")
+for op in ("mod", "round_down", "band_of", "clamp_to"):
+    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniform", f"as index.{op}, of uniform values")
 f("uniform", "clamp", "composite", ["u32.uniform", "u32.uniform", "u32.uniform"], "u32.uniform", "as index.clamp, of uniform values (arity 3)")
 # A loop counter is uniform wherever a loop that may hold a barrier can read it: every loop at an L rung has
 # a uniform bound (a literal, a binding, a uniform value), and a loop with any other bound is at a C rung.
@@ -1314,11 +1223,8 @@ for d in (0, 1, 2, 3, 4, 5):
 f("bound", "x_of_uniform", "composite", ["u32.uniform"], "u32.boundx", "a uniform loop bound, uncapped")
 # NO WRAP IN A LOOP BOUND (2026-10-12): a uniform value that may wrap is an index; a min clamps it to a value
 # that cannot (min(1024u, cfg.m - t), reserve2 g003 r12); an expression bound's value is u32.xbound.
-# Retired the same day (Codex's review: a wrap is illegal everywhere, a clamped one too): these took a
-# u32.uniformw; their output is u32.uniformw now, so no demand reaches them. Kept so later refs stand.
-f("index", "of_uniform", "composite", ["u32.uniformw"], "u32.uniformw", "retired: no row takes u32.uniformw")
-f("uniform", "min", "composite", ["u32.uniform", "u32.uniformw"], "u32.uniformw", "retired: no row takes u32.uniformw")
-f("uniform", "min", "composite", ["u32.uniformw", "u32.uniform"], "u32.uniformw", "retired: no row takes u32.uniformw")
+# The rows that took a u32.uniformw (index.of_uniform, uniform.min) were retired the same day (Codex's review:
+# a wrap is illegal everywhere, a clamped one too) and are deleted (A0, 2026-10-21).
 # An expression bound's value (u32.xbound): the rows of u32.index that cannot pass their operands, at
 # signatures of their own (the same rows, so the renderer and the checker read them as the index rows).
 f("reg", "get_i", "composite", ["reg<u32>.index"], "u32.xbound", "a u32 register's value as a loop bound")
@@ -1447,10 +1353,8 @@ for r in RUNGS + RUNGS5:
 # 28, 29, 31: `if (n > 0u)` over `n = workgroupUniformLoad(&wu1)`, `if (dc)` over a flag set under a uniform test,
 # each over a barrier): the row writes the flag; layer 4 proves it uniform or names the barrier in non-uniform
 # control ----
-f("uflag", "of_flag", "composite", ["bool.flag"], "bool.uflag", "the flag, workgroup-uniform when the checker's layer 4 proves it")
 # (and an index as a uniform value, a loop's bound over a barrier: `for (b = 0u; b < c; b += 8u)` with c a helper's
 # argument from a workgroupUniformLoad, seeds 21 and 29)
-f("uniform", "of_checked", "composite", ["u32.index"], "u32.uniform", "the index, workgroup-uniform when the checker's layer 4 proves it")
 # ---- workgroupUniformLoad of a workgroup array's element into a register (2026-10-17, v24 run 1's seed21: a count
 # written by one thread, read by all as `workgroupUniformLoad(&wu1)` and tested over a barrier): one statement, a
 # barrier for the checker (uniform control only), its register uniform when the index is; L rungs only ----
@@ -1563,8 +1467,7 @@ for dual, text in [
     ("u32.wgindex", "workgroup-array index 0"), ("u32.wgvindex", "vec4 workgroup-array index 0"), ("u32.wgv2index", "vec2 workgroup-array index 0"),
     ("u32.wgaindex", "atomic workgroup-array index 0"), ("u32.pindex", "private-array index 0"), ("u32.pindex16", "16-element private-array index 0"),
     ("u32.pindex128", "128-element private-array index 0"), ("u32.boundx", "a loop bound of one pass, 1u"), ("u32.boundu", "a workgroup-uniform loop bound of one pass, 1u"),
-    ("u32.uniform", "a workgroup-uniform value, 0u"), ("u32.uniformw", "a workgroup-uniform value, 0u"), ("bool.uflag", "a workgroup-uniform predicate, false"),
-    ("block.block", "an empty block {}"),
+    ("u32.uniform", "a workgroup-uniform value, 0u"), ("bool.uflag", "a workgroup-uniform predicate, false"),
     ("kernel.safe", "the default-grid kernel whose epilogue stores the thread's own cell"),
     ("kernel.module", "a module of one such kernel at each of the interface's entry points"),
     ("grid.grid", "the default grid: 16 x 16 threads, one cell each"),
@@ -1594,7 +1497,7 @@ def write_tsv(path, header, rows):
 
 def main():
     types = build_types()
-    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning", "literal"], types)
+    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "meaning", "literal"], types)
     frows = [(f"F{i + 1:03d}", c, inst, naga, " ".join(ins) if ins else "-", out, len(ins), note) for i, (c, inst, naga, ins, out, note) in enumerate(FUNCTIONS)]
     write_tsv(os.path.join(HERE, "functions.tsv"), ["ref", "class", "instance", "naga", "in", "out", "arity", "note"], frows)
 
@@ -1605,11 +1508,9 @@ def main():
         md.write("## Forms\n\n| form | meaning | legal scalar slots |\n|---|---|---|\n")
         for form, (meaning, scalars) in FORMS.items():
             md.write(f"| `{form}` | {meaning} | {', '.join(scalars) if scalars else 'see duals'} |\n")
-        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | noop | elem | literal |\n|---|---|---|---|---|---|---|---|---|---|\n")
-        for ref, dual, slot, form, lanes, fb, bits, noop, elem, _, lit in types:
-            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} | `{lit}` |\n")
-        md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
-        md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
+        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | literal |\n|---|---|---|---|---|---|\n")
+        for ref, dual, slot, form, lanes, _, lit in types:
+            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{lit}` |\n")
         md.write("\nThe `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a tree's constant is exact for every u32 and i32.\n")
         md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
         md.write("\n## No wrap, no zero divisor, every computed bound capped\n\nA u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).\n")

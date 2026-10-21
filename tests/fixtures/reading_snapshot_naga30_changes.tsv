@@ -341,3 +341,5 @@ tests/corpus/model_replies/k1753.wgsl	safe	reader gap closed (T43 H): a loop ent
 tests/corpus/model_replies/k1761.wgsl	safe	reader gap closed (T43 H): a loop entered at an expression of the uniforms (for (var p = dp4; ...), dp4 = dp & ~3u): refused before, read now
 tests/corpus/model_replies/k1745.wgsl	safe	reader gap closed (T43 G): a let over vec4<bool> that a store would change before its use, held in a register of its dual: refused before, read now
 tests/corpus/model_replies/k1783.wgsl	safe	reader gap closed (T43 G): a let over vec4<bool> that a store would change before its use, held in a register of its dual: refused before, read now
+tests/corpus/model_replies/k1482.wgsl	safe	outside the kingdom (A0): a test over a barrier that is not a comparison of workgroup-uniform values; uflag.of_flag is deleted: read before, refused now
+tests/corpus/model_replies/k1797.wgsl	safe	outside the kingdom (A0): a test over a barrier that is not a comparison of workgroup-uniform values; uflag.of_flag is deleted: read before, refused now

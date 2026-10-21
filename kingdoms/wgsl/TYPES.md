@@ -34,95 +34,91 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 
 ## Duals
 
-| ref | dual | slot | form | lanes | fallback | bits | noop | elem | literal |
-|---|---|---|---|---|---|---|---|---|---|
-| T001 | `f32.real` | `f32` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T002 | `vec2<f32>.real` | `vec2<f32>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T003 | `vec3<f32>.real` | `vec3<f32>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T004 | `vec4<f32>.real` | `vec4<f32>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T005 | `f16.real` | `f16` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T006 | `vec2<f16>.real` | `vec2<f16>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T007 | `vec3<f16>.real` | `vec3<f16>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T008 | `vec4<f16>.real` | `vec4<f16>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T009 | `i32.int` | `i32` | `int` | 1 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T013 | `i32.q15_16` | `i32` | `q15_16` | 1 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T014 | `vec2<i32>.q15_16` | `vec2<i32>` | `q15_16` | 2 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T015 | `vec3<i32>.q15_16` | `vec3<i32>` | `q15_16` | 3 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T016 | `vec4<i32>.q15_16` | `vec4<i32>` | `q15_16` | 4 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T017 | `u32.index` | `u32` | `index` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T021 | `u32.count` | `u32` | `count` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T025 | `u32.code4` | `u32` | `code4` | 1 | `0u` | 0 | 0 | 0 | `0..=3` |
-| T026 | `u32.code8` | `u32` | `code8` | 1 | `0u` | 0 | 0 | 0 | `0..=7` |
-| T027 | `u32.code16` | `u32` | `code16` | 1 | `0u` | 0 | 0 | 0 | `0..=15` |
-| T028 | `u32.code1024` | `u32` | `code1024` | 1 | `0u` | 0 | 0 | 0 | `0..=1023` |
-| T029 | `u32.bits` | `u32` | `bits` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T033 | `u32.hash32` | `u32` | `hash32` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T034 | `bool.flag` | `bool` | `flag` | 1 | `false` | 0 | 0 | 0 | `0,1` |
-| T035 | `vec2<bool>.flag` | `vec2<bool>` | `flag` | 2 | `false` | 0 | 0 | 0 | `0,1` |
-| T036 | `vec3<bool>.flag` | `vec3<bool>` | `flag` | 3 | `false` | 0 | 0 | 0 | `0,1` |
-| T037 | `vec4<bool>.flag` | `vec4<bool>` | `flag` | 4 | `false` | 0 | 0 | 0 | `0,1` |
-| T038 | `bool.sign` | `bool` | `sign` | 1 | `true (+1)` | 1 | 0 | 0 | `0,1` |
-| T039 | `f32.opaque` | `f32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T040 | `vec2<f32>.opaque` | `vec2<f32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T041 | `vec3<f32>.opaque` | `vec3<f32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T042 | `vec4<f32>.opaque` | `vec4<f32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T043 | `f16.opaque` | `f16` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T044 | `vec2<f16>.opaque` | `vec2<f16>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T045 | `vec3<f16>.opaque` | `vec3<f16>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T046 | `vec4<f16>.opaque` | `vec4<f16>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T047 | `i32.opaque` | `i32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T048 | `vec2<i32>.opaque` | `vec2<i32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T049 | `vec3<i32>.opaque` | `vec3<i32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T050 | `vec4<i32>.opaque` | `vec4<i32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T051 | `u32.opaque` | `u32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T052 | `vec2<u32>.opaque` | `vec2<u32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T053 | `vec3<u32>.opaque` | `vec3<u32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T054 | `vec4<u32>.opaque` | `vec4<u32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T055 | `bool.opaque` | `bool` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T056 | `vec2<bool>.opaque` | `vec2<bool>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T057 | `vec3<bool>.opaque` | `vec3<bool>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T058 | `vec4<bool>.opaque` | `vec4<bool>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T059 | `vec2<i32>.q15_16w` | `vec2<i32>` | `q15_16w` | 2 | `vec2(0, 0)` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T060 | `vec2<u32>.hash64` | `vec2<u32>` | `hash64` | 2 | `vec2(0u, 0u)` | 0 | 0 | 0 | `0..=4294967295` |
-| T061 | `mat2x2<f32>.real` | `mat2x2<f32>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T062 | `mat2x3<f32>.real` | `mat2x3<f32>` | `real` | 6 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T063 | `mat2x4<f32>.real` | `mat2x4<f32>` | `real` | 8 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T064 | `mat3x2<f32>.real` | `mat3x2<f32>` | `real` | 6 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T065 | `mat3x3<f32>.real` | `mat3x3<f32>` | `real` | 9 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T066 | `mat3x4<f32>.real` | `mat3x4<f32>` | `real` | 12 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T067 | `mat4x2<f32>.real` | `mat4x2<f32>` | `real` | 8 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T068 | `mat4x3<f32>.real` | `mat4x3<f32>` | `real` | 12 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T069 | `mat4x4<f32>.real` | `mat4x4<f32>` | `real` | 16 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T070 | `array<T>.<form of T>` | `array<T>` | `<form of T>` | 0 | `the element's fallback` | 0 | 0 | 1 | `-` |
-| T071 | `store.store` | `store` | `store` | 0 | `no-op, codon masked` | 0 | 1 | 0 | `-` |
-| T072 | `kernel.kernel` | `kernel` | `kernel` | 0 | `an empty kernel` | 0 | 0 | 0 | `-` |
-| T073 | `grid.grid` | `grid` | `grid` | 0 | `16 x 16, 1 x 1` | 0 | 0 | 0 | `-` |
-| T074 | `block.block` | `block` | `block` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T075 | `stmt.stmt` | `stmt` | `stmt` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T076 | `reg<f32>.real` | `reg<f32>` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-` |
-| T077 | `reg<vec4<f32>>.real` | `reg<vec4<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-` |
-| T078 | `reg<u32>.index` | `reg<u32>` | `index` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T079 | `reg<bool>.flag` | `reg<bool>` | `flag` | 1 | `false` | 0 | 0 | 0 | `-` |
-| T080 | `wgmem<f32>.real` | `wgmem<f32>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T081 | `u32.wgdim` | `u32` | `wgdim` | 1 | `4u` | 0 | 0 | 0 | `1..=1024` |
-| T082 | `u32.blk` | `u32` | `blk` | 1 | `1u` | 0 | 0 | 0 | `1,2,4,8` |
-| T083 | `u32.unroll` | `u32` | `unroll` | 1 | `2u` | 0 | 0 | 0 | `2,4,8` |
-
-83 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
-
-The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
+| ref | dual | slot | form | lanes | literal |
+|---|---|---|---|---|---|
+| T001 | `f32.real` | `f32` | `real` | 1 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T002 | `vec2<f32>.real` | `vec2<f32>` | `real` | 2 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T003 | `vec3<f32>.real` | `vec3<f32>` | `real` | 3 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T004 | `vec4<f32>.real` | `vec4<f32>` | `real` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T005 | `f16.real` | `f16` | `real` | 1 | `-65504.0..=65504.0` |
+| T006 | `vec2<f16>.real` | `vec2<f16>` | `real` | 2 | `-65504.0..=65504.0` |
+| T007 | `vec3<f16>.real` | `vec3<f16>` | `real` | 3 | `-65504.0..=65504.0` |
+| T008 | `vec4<f16>.real` | `vec4<f16>` | `real` | 4 | `-65504.0..=65504.0` |
+| T009 | `i32.int` | `i32` | `int` | 1 | `-2147483648..=2147483647` |
+| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `-2147483648..=2147483647` |
+| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `-2147483648..=2147483647` |
+| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `-2147483648..=2147483647` |
+| T013 | `i32.q15_16` | `i32` | `q15_16` | 1 | `-2147483648..=2147483647` |
+| T014 | `vec2<i32>.q15_16` | `vec2<i32>` | `q15_16` | 2 | `-2147483648..=2147483647` |
+| T015 | `vec3<i32>.q15_16` | `vec3<i32>` | `q15_16` | 3 | `-2147483648..=2147483647` |
+| T016 | `vec4<i32>.q15_16` | `vec4<i32>` | `q15_16` | 4 | `-2147483648..=2147483647` |
+| T017 | `u32.index` | `u32` | `index` | 1 | `0..=4294967295` |
+| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0..=4294967295` |
+| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0..=4294967295` |
+| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0..=4294967295` |
+| T021 | `u32.count` | `u32` | `count` | 1 | `0..=4294967295` |
+| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0..=4294967295` |
+| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0..=4294967295` |
+| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0..=4294967295` |
+| T025 | `u32.code4` | `u32` | `code4` | 1 | `0..=3` |
+| T026 | `u32.code8` | `u32` | `code8` | 1 | `0..=7` |
+| T027 | `u32.code16` | `u32` | `code16` | 1 | `0..=15` |
+| T028 | `u32.code1024` | `u32` | `code1024` | 1 | `0..=1023` |
+| T029 | `u32.bits` | `u32` | `bits` | 1 | `0..=4294967295` |
+| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0..=4294967295` |
+| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0..=4294967295` |
+| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0..=4294967295` |
+| T033 | `u32.hash32` | `u32` | `hash32` | 1 | `0..=4294967295` |
+| T034 | `bool.flag` | `bool` | `flag` | 1 | `0,1` |
+| T035 | `vec2<bool>.flag` | `vec2<bool>` | `flag` | 2 | `0,1` |
+| T036 | `vec3<bool>.flag` | `vec3<bool>` | `flag` | 3 | `0,1` |
+| T037 | `vec4<bool>.flag` | `vec4<bool>` | `flag` | 4 | `0,1` |
+| T038 | `bool.sign` | `bool` | `sign` | 1 | `0,1` |
+| T039 | `f32.opaque` | `f32` | `opaque` | 1 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T040 | `vec2<f32>.opaque` | `vec2<f32>` | `opaque` | 2 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T041 | `vec3<f32>.opaque` | `vec3<f32>` | `opaque` | 3 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T042 | `vec4<f32>.opaque` | `vec4<f32>` | `opaque` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T043 | `f16.opaque` | `f16` | `opaque` | 1 | `-65504.0..=65504.0` |
+| T044 | `vec2<f16>.opaque` | `vec2<f16>` | `opaque` | 2 | `-65504.0..=65504.0` |
+| T045 | `vec3<f16>.opaque` | `vec3<f16>` | `opaque` | 3 | `-65504.0..=65504.0` |
+| T046 | `vec4<f16>.opaque` | `vec4<f16>` | `opaque` | 4 | `-65504.0..=65504.0` |
+| T047 | `i32.opaque` | `i32` | `opaque` | 1 | `-2147483648..=2147483647` |
+| T048 | `vec2<i32>.opaque` | `vec2<i32>` | `opaque` | 2 | `-2147483648..=2147483647` |
+| T049 | `vec3<i32>.opaque` | `vec3<i32>` | `opaque` | 3 | `-2147483648..=2147483647` |
+| T050 | `vec4<i32>.opaque` | `vec4<i32>` | `opaque` | 4 | `-2147483648..=2147483647` |
+| T051 | `u32.opaque` | `u32` | `opaque` | 1 | `0..=4294967295` |
+| T052 | `vec2<u32>.opaque` | `vec2<u32>` | `opaque` | 2 | `0..=4294967295` |
+| T053 | `vec3<u32>.opaque` | `vec3<u32>` | `opaque` | 3 | `0..=4294967295` |
+| T054 | `vec4<u32>.opaque` | `vec4<u32>` | `opaque` | 4 | `0..=4294967295` |
+| T055 | `bool.opaque` | `bool` | `opaque` | 1 | `0,1` |
+| T056 | `vec2<bool>.opaque` | `vec2<bool>` | `opaque` | 2 | `0,1` |
+| T057 | `vec3<bool>.opaque` | `vec3<bool>` | `opaque` | 3 | `0,1` |
+| T058 | `vec4<bool>.opaque` | `vec4<bool>` | `opaque` | 4 | `0,1` |
+| T059 | `vec2<i32>.q15_16w` | `vec2<i32>` | `q15_16w` | 2 | `-2147483648..=2147483647` |
+| T060 | `vec2<u32>.hash64` | `vec2<u32>` | `hash64` | 2 | `0..=4294967295` |
+| T061 | `mat2x2<f32>.real` | `mat2x2<f32>` | `real` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T062 | `mat2x3<f32>.real` | `mat2x3<f32>` | `real` | 6 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T063 | `mat2x4<f32>.real` | `mat2x4<f32>` | `real` | 8 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T064 | `mat3x2<f32>.real` | `mat3x2<f32>` | `real` | 6 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T065 | `mat3x3<f32>.real` | `mat3x3<f32>` | `real` | 9 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T066 | `mat3x4<f32>.real` | `mat3x4<f32>` | `real` | 12 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T067 | `mat4x2<f32>.real` | `mat4x2<f32>` | `real` | 8 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T068 | `mat4x3<f32>.real` | `mat4x3<f32>` | `real` | 12 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T069 | `mat4x4<f32>.real` | `mat4x4<f32>` | `real` | 16 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T070 | `array<T>.<form of T>` | `array<T>` | `<form of T>` | 0 | `-` |
+| T071 | `store.store` | `store` | `store` | 0 | `-` |
+| T072 | `kernel.kernel` | `kernel` | `kernel` | 0 | `-` |
+| T073 | `grid.grid` | `grid` | `grid` | 0 | `-` |
+| T074 | `block.block` | `block` | `block` | 0 | `-` |
+| T075 | `stmt.stmt` | `stmt` | `stmt` | 0 | `-` |
+| T076 | `reg<f32>.real` | `reg<f32>` | `real` | 1 | `-` |
+| T077 | `reg<vec4<f32>>.real` | `reg<vec4<f32>>` | `real` | 4 | `-` |
+| T078 | `reg<u32>.index` | `reg<u32>` | `index` | 1 | `-` |
+| T079 | `reg<bool>.flag` | `reg<bool>` | `flag` | 1 | `-` |
+| T080 | `wgmem<f32>.real` | `wgmem<f32>` | `real` | 0 | `-` |
+| T081 | `u32.wgdim` | `u32` | `wgdim` | 1 | `1..=1024` |
+| T082 | `u32.blk` | `u32` | `blk` | 1 | `1,2,4,8` |
+| T083 | `u32.unroll` | `u32` | `unroll` | 1 | `2,4,8` |
 
 The `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a gene carries a value's bits exactly.
 

@@ -129,10 +129,13 @@ fn legacy_role(role: &crate::wgsl::render::Role) -> String {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let r = self.role;
             let fields: Vec<LegacyField> = r.fields.iter().map(LegacyField).collect();
+            // (The earlier Role wrote the bare role name when the interface has no item-count field, `.m` for no uniform;
+            // this Role holds nothing there, and the renderer names the bug if an item loop asks for it.)
+            let items = if r.items.is_empty() { format!("{}.m", r.uniform_var) } else { r.items.clone() };
             f.debug_struct("Role")
                 .field("name", &r.name)
                 .field("prologue", &self.prologue)
-                .field("items", &r.items)
+                .field("items", &items)
                 .field("per_kernel", &self.per_kernel)
                 .field("bindings", &r.bindings)
                 .field("uniform_var", &r.uniform_var)

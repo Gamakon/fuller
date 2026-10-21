@@ -7,7 +7,7 @@
 //! | layer | what is proved |
 //! |---|---|
 //! | 1 typed tree | every node is a row of the kingdom (or the role) at its signature (a loop counter read outside its loop is the constant 0, as the rows say and the renderer writes) |
-//! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell (a fallback row, column or cell renders the thread's own); a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
+//! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell (an own terminal row, column or cell renders the thread's own); a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
 //! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape, d 8,192, m 65,536, the band 8,192 rows); no `u32` wrap in index arithmetic anywhere (Codex's review of Andrew's decision, 2026-10-12): `store_cell_wraps` in a store's cell, `index_wraps` elsewhere |
 //! | 4 barrier uniformity | a barrier only where every condition it depends on (an `if`, a loop's trip count, a `break` or `continue` guard, an earlier conditional `return`) is workgroup-uniform |
 //! | 5 adapter | the workgroup's shape and its workgroup memory within the target's limits; subgroup and float features the target has |
@@ -363,7 +363,7 @@ fn brief(t: &Tree) -> String {
 }
 
 /// A bounded literal count as the renderer reads it (`lit`): 1 for a
-/// fallback, the constant rounded into 1..=max.
+/// own terminal, the constant rounded into 1..=max.
 fn lit_count(t: &Tree, max: u128) -> u128 {
     if t.name.starts_with("literal.") && t.konst.is_finite() {
         (t.konst.round().max(1.0) as u128).min(max)
@@ -1227,7 +1227,7 @@ impl<'a> Checker<'a> {
                     let r = self.mul(row, Some(pt(WORST_D as u128)), v, cx);
                     self.add(r, col, v, cx)
                 }
-                _ => (d.slot == "u32").then(|| pt(u128::from(d.fallback_bits))),
+                _ => (d.slot == "u32").then(|| pt(u128::from(d.own_bits()))),
             };
         }
         if v.name.starts_with("literal.") {
@@ -1652,13 +1652,13 @@ mod tests {
         let e = Checker::new(&k, &role, &bare).check(&sg).unwrap_err();
         assert_eq!((e.layer, e.reason), (Layer::Adapter, "feature_missing"), "{e}");
 
-        // A fallback cell is the thread's own (it renders the thread's
+        // An own terminal cell is the thread's own (it renders the thread's
         // block origin): legal.
         let mut own = gram_shipped_safe_tree(&k).unwrap();
         let store = &mut own.kids[2].kids[0].kids[1].kids[0];
         assert_eq!(store.name, "store.h_O0");
         store.kids[0] = crate::wgsl::render::own_leaf(&k, ty(&k, "u32.cell")).unwrap();
-        checker.check(&own).unwrap_or_else(|e| panic!("a fallback cell: {e}"));
+        checker.check(&own).unwrap_or_else(|e| panic!("an own cell: {e}"));
 
         // A store to a cell the thread does not own: the role's `store.h`
         // at any index. Its type is the unsafe kingdom's statement, so

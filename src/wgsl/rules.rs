@@ -160,7 +160,7 @@ pub fn replace_statement(root: &Tree, index: usize, with: Vec<Tree>, kingdom: &W
     Ok(out)
 }
 
-/// A zero value: a literal 0 or false, a fallback value, or a zero splat.
+/// A zero value: a literal 0 or false, an own terminal value, or a zero splat.
 pub(crate) fn is_zero(t: &Tree) -> bool {
     (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || t.name.starts_with("own.") || (t.name.starts_with("shape.splat") && t.kids.len() == 1 && is_zero(&t.kids[0]))
 }

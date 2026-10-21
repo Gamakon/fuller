@@ -54,7 +54,11 @@ impl Alphabet {
                 None => true,
             }
         };
-        let kept: Vec<&crate::wgsl::loader::WgslRow> = kingdom.rows.iter().filter(|r| own_size(&r.name)).collect();
+        // (And only the rows the interface can spell: a row that reads a field the interface's uniform does not have, or
+        // the Gram's input, output cell or fields, is no symbol of this interface: it rendered to a name the module
+        // does not declare, `render::role_spells`. Run 6i: 292 of its 558 illegal children, `uniform.cfg_m` through
+        // `load.cfg_m`, `bound.d`, `cell_of`, under v24's interface.)
+        let kept: Vec<&crate::wgsl::loader::WgslRow> = kingdom.rows.iter().filter(|r| own_size(&r.name) && crate::wgsl::render::role_spells(kingdom, role, r)).collect();
         let mut rows: Vec<(String, Vec<Ty>, Ty)> = kept.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
         let mut per_name: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &kingdom.rows {
@@ -72,6 +76,32 @@ impl Alphabet {
             rows.push((name.clone(), ins.clone(), out));
             ids.push((format!("kernel:{name}"), ins, out));
         }
+        // The rows the interface's symbols can all be built from: a row with an input type no kept row produces (a loop over
+        // `cfg.m` where the interface has no `m`) is no symbol of this interface either, to a fixed point. The instantiated
+        // kingdom, once, before any gene exists.
+        let mut producible: std::collections::BTreeSet<Ty> = std::collections::BTreeSet::new();
+        loop {
+            let before = producible.len();
+            for (_, ins, out) in &rows {
+                if ins.iter().all(|t| producible.contains(t)) {
+                    producible.insert(*out);
+                }
+            }
+            if producible.len() == before {
+                break;
+            }
+        }
+        let usable: Vec<bool> = rows.iter().map(|(_, ins, _)| ins.iter().all(|t| producible.contains(t))).collect();
+        let mut at = 0;
+        rows.retain(|_| {
+            at += 1;
+            usable[at - 1]
+        });
+        let mut at = 0;
+        ids.retain(|_| {
+            at += 1;
+            usable[at - 1]
+        });
         let constants: Vec<&str> = ids.iter().zip(&rows).filter(|((_, ins, _), (n, _, _))| ins.is_empty() && (n.starts_with("literal.") || n.starts_with("const."))).map(|((id, _, _), _)| id.as_str()).collect();
         let roots: Vec<Ty> = kingdom.duals.iter().filter(|d| (d.dual == "kernel.safe" || d.dual == "kernel.module") && rows.iter().any(|(_, _, o)| *o == d.ty())).map(WgslDual::ty).collect();
         let contract = relations_from_rows("safeWGSL", roots, &ids, &constants).check().map_err(|d| gap("kingdom check", d.join("; ")))?;
@@ -642,5 +672,52 @@ mod tests {
             Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
             other => panic!("{other:?}"),
         }
+    }
+    /// EVERY `load.cfg_*` ROW OF AN INTERFACE RENDERS IN A KERNEL AND NAGA VALIDATES IT (run 6i: 292 of the 558 illegal
+    /// children of the v24 run were `kernel_does_not_render` / `kernel_does_not_parse` naming `load.cfg_m`, `load.cfg_d`,
+    /// `load.cfg_r_rows` and `cfg.d`). The rows read a field of the interface's uniform: the Gram's and the cosine's
+    /// interfaces have the four fields (`cfg.m`, `p.nc`, ...) and each row renders to its own field's text; v24's has
+    /// none, and no row that reads one is a symbol of its alphabet.
+    #[test]
+    fn every_cfg_row_of_an_interface_renders_in_a_kernel_and_validates() {
+        use crate::wgsl::render::{cosine_role, gram_role, validate_text};
+        use crate::wgsl::safe_karva::render_tree_with;
+        let kingdom = WgslKingdom::load_safe();
+        let ty = |n: &str| crate::wgsl::render::dual_ty(&kingdom, n).unwrap_or_else(|e| panic!("{e}"));
+        for (role, fields) in [(gram_role(), ["cfg.d", "cfg.m", "cfg.r_rows", "cfg.r_off"]), (cosine_role(), ["p.nc", "p.dim", "p.nq", "p.q_off"])] {
+            let alphabet = Alphabet::new(&kingdom, &role).unwrap_or_else(|g| panic!("{}: {}: {}", role.name, g.reason, g.detail));
+            let mut checked = 0;
+            for (row, field) in ["load.cfg_d", "load.cfg_m", "load.cfg_r_rows", "load.cfg_r_off"].into_iter().zip(fields) {
+                let p = role.per_kernel.iter().find(|p| p.name == row).unwrap_or_else(|| panic!("{}: no per-kernel row {row}", role.name));
+                assert_eq!(p.template, field, "{} {row}", role.name);
+                assert!((0..alphabet.contract.n_symbols()).any(|s| alphabet.contract.name(s as SymbolId) == format!("kernel:{row}")), "{} {row} is not a symbol of its alphabet", role.name);
+                let out = ty(&p.output);
+                let to_real = if p.output == "u32.count" { "convert.count_to_f32" } else { "convert.index_to_f32" };
+                let value = Tree::new(to_real, ty("f32.real"), vec![Tree::new(row, out, vec![])]);
+                let cell = crate::wgsl::render::own_leaf(&kingdom, ty("u32.cell")).unwrap_or_else(|e| panic!("{e}"));
+                let store = Tree::new("block.one_O0", ty("block.O0"), vec![Tree::new("store.h_O0", ty("stmt.O0"), vec![cell, value])]);
+                let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![crate::wgsl::render::own_leaf(&kingdom, ty("grid.grid")).unwrap_or_else(|e| panic!("{e}")), crate::wgsl::render::own_leaf(&kingdom, ty("block.L0")).unwrap_or_else(|e| panic!("{e}")), store]);
+                let text = render_tree_with(&kernel, &kingdom, &role).unwrap_or_else(|e| panic!("{} {row} does not render: {e}", role.name)).text;
+                assert!(text.contains(field), "{} {row}: the kernel does not read {field}:\n{text}", role.name);
+                validate_text(&text).unwrap_or_else(|e| panic!("{} {row}: naga refuses the kernel: {e}\n{text}", role.name));
+                checked += 1;
+            }
+            assert_eq!(checked, 4, "{}", role.name);
+        }
+    }
+
+    /// v24's INTERFACE HAS NONE OF THE GRAM'S FIELDS, INPUT OR OUTPUT CELL: the rows that spell them are no symbols of its
+    /// alphabet, so no gene drawn from it names `cfg.m`, `cfg.d` or the Gram's cell.
+    #[test]
+    fn an_interface_without_the_grams_fields_has_none_of_the_rows_that_read_them() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/problems/v24_ingest_small/reference.wgsl")).expect("v24's reference kernel");
+        let read = crate::wgsl::safe_reader::read_safe(&text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let kingdom = read.kingdom.as_ref().unwrap_or(&kingdom);
+        assert!(read.role.field("m").is_err() && read.role.field("d").is_err(), "v24's uniform has no m or d field");
+        let alphabet = Alphabet::new(kingdom, &read.role).unwrap_or_else(|g| panic!("{}: {}", g.reason, g.detail));
+        let names: Vec<String> = (0..alphabet.contract.n_symbols()).map(|s| alphabet.contract.name(s as SymbolId).to_string()).collect();
+        let gram: Vec<&String> = names.iter().filter(|n| ["uniform.cfg_", "kernel:load.cfg_m", "kernel:load.cfg_d", "kernel:load.cfg_r_rows", "kernel:load.cfg_r_off", "bound.m", "bound.d", "bound.rows", "safe.cell_of", "safe.mirror_of", "kernel:load.phi", "kernel:load.h"].iter().any(|p| n.starts_with(p))).collect();
+        assert!(gram.is_empty(), "rows that read the Gram's fields are symbols of v24's alphabet: {gram:?}");
     }
 }

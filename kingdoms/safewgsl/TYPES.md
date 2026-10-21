@@ -109,216 +109,212 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 
 ## Duals
 
-| ref | dual | slot | form | lanes | fallback | bits | noop | elem | literal |
-|---|---|---|---|---|---|---|---|---|---|
-| T001 | `f32.real` | `f32` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T002 | `vec2<f32>.real` | `vec2<f32>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T003 | `vec3<f32>.real` | `vec3<f32>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T004 | `vec4<f32>.real` | `vec4<f32>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T005 | `f16.real` | `f16` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T006 | `vec2<f16>.real` | `vec2<f16>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T007 | `vec3<f16>.real` | `vec3<f16>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T008 | `vec4<f16>.real` | `vec4<f16>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T009 | `i32.int` | `i32` | `int` | 1 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T013 | `i32.q15_16` | `i32` | `q15_16` | 1 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T014 | `vec2<i32>.q15_16` | `vec2<i32>` | `q15_16` | 2 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T015 | `vec3<i32>.q15_16` | `vec3<i32>` | `q15_16` | 3 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T016 | `vec4<i32>.q15_16` | `vec4<i32>` | `q15_16` | 4 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T017 | `u32.index` | `u32` | `index` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T021 | `u32.count` | `u32` | `count` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T025 | `u32.code4` | `u32` | `code4` | 1 | `0u` | 0 | 0 | 0 | `0..=3` |
-| T026 | `u32.code8` | `u32` | `code8` | 1 | `0u` | 0 | 0 | 0 | `0..=7` |
-| T027 | `u32.code16` | `u32` | `code16` | 1 | `0u` | 0 | 0 | 0 | `0..=15` |
-| T028 | `u32.code1024` | `u32` | `code1024` | 1 | `0u` | 0 | 0 | 0 | `0..=1023` |
-| T029 | `u32.bits` | `u32` | `bits` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T033 | `u32.hash32` | `u32` | `hash32` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
-| T034 | `bool.flag` | `bool` | `flag` | 1 | `false` | 0 | 0 | 0 | `0,1` |
-| T035 | `vec2<bool>.flag` | `vec2<bool>` | `flag` | 2 | `false` | 0 | 0 | 0 | `0,1` |
-| T036 | `vec3<bool>.flag` | `vec3<bool>` | `flag` | 3 | `false` | 0 | 0 | 0 | `0,1` |
-| T037 | `vec4<bool>.flag` | `vec4<bool>` | `flag` | 4 | `false` | 0 | 0 | 0 | `0,1` |
-| T038 | `bool.sign` | `bool` | `sign` | 1 | `true (+1)` | 1 | 0 | 0 | `0,1` |
-| T039 | `f32.opaque` | `f32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T040 | `vec2<f32>.opaque` | `vec2<f32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T041 | `vec3<f32>.opaque` | `vec3<f32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T042 | `vec4<f32>.opaque` | `vec4<f32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T043 | `f16.opaque` | `f16` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T044 | `vec2<f16>.opaque` | `vec2<f16>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T045 | `vec3<f16>.opaque` | `vec3<f16>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T046 | `vec4<f16>.opaque` | `vec4<f16>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-65504.0..=65504.0` |
-| T047 | `i32.opaque` | `i32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T048 | `vec2<i32>.opaque` | `vec2<i32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T049 | `vec3<i32>.opaque` | `vec3<i32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T050 | `vec4<i32>.opaque` | `vec4<i32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T051 | `u32.opaque` | `u32` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T052 | `vec2<u32>.opaque` | `vec2<u32>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T053 | `vec3<u32>.opaque` | `vec3<u32>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T054 | `vec4<u32>.opaque` | `vec4<u32>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `0..=4294967295` |
-| T055 | `bool.opaque` | `bool` | `opaque` | 1 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T056 | `vec2<bool>.opaque` | `vec2<bool>` | `opaque` | 2 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T057 | `vec3<bool>.opaque` | `vec3<bool>` | `opaque` | 3 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T058 | `vec4<bool>.opaque` | `vec4<bool>` | `opaque` | 4 | `the slot's zero` | 0 | 0 | 0 | `0,1` |
-| T059 | `vec2<i32>.q15_16w` | `vec2<i32>` | `q15_16w` | 2 | `vec2(0, 0)` | 0 | 0 | 0 | `-2147483648..=2147483647` |
-| T060 | `vec2<u32>.hash64` | `vec2<u32>` | `hash64` | 2 | `vec2(0u, 0u)` | 0 | 0 | 0 | `0..=4294967295` |
-| T061 | `mat2x2<f32>.real` | `mat2x2<f32>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T062 | `mat2x3<f32>.real` | `mat2x3<f32>` | `real` | 6 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T063 | `mat2x4<f32>.real` | `mat2x4<f32>` | `real` | 8 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T064 | `mat3x2<f32>.real` | `mat3x2<f32>` | `real` | 6 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T065 | `mat3x3<f32>.real` | `mat3x3<f32>` | `real` | 9 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T066 | `mat3x4<f32>.real` | `mat3x4<f32>` | `real` | 12 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T067 | `mat4x2<f32>.real` | `mat4x2<f32>` | `real` | 8 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T068 | `mat4x3<f32>.real` | `mat4x3<f32>` | `real` | 12 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T069 | `mat4x4<f32>.real` | `mat4x4<f32>` | `real` | 16 | `0.0` | 0 | 0 | 0 | `-3.4028234663852886e38..=3.4028234663852886e38` |
-| T070 | `array<T>.<form of T>` | `array<T>` | `<form of T>` | 0 | `the element's fallback` | 0 | 0 | 1 | `-` |
-| T071 | `store.store` | `store` | `store` | 0 | `no-op, codon masked` | 0 | 1 | 0 | `-` |
-| T072 | `kernel.kernel` | `kernel` | `kernel` | 0 | `an empty kernel` | 0 | 0 | 0 | `-` |
-| T073 | `grid.grid` | `grid` | `grid` | 0 | `16 x 16, 1 x 1` | 0 | 0 | 0 | `-` |
-| T074 | `block.block` | `block` | `block` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T075 | `stmt.stmt` | `stmt` | `stmt` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T076 | `reg<f32>.real` | `reg<f32>` | `real` | 1 | `0.0` | 0 | 0 | 0 | `-` |
-| T077 | `reg<vec4<f32>>.real` | `reg<vec4<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-` |
-| T078 | `reg<u32>.index` | `reg<u32>` | `index` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T079 | `reg<bool>.flag` | `reg<bool>` | `flag` | 1 | `false` | 0 | 0 | 0 | `-` |
-| T080 | `wgmem<f32>.real` | `wgmem<f32>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T081 | `u32.wgdim` | `u32` | `wgdim` | 1 | `4u` | 0 | 0 | 0 | `1..=1024` |
-| T082 | `u32.blk` | `u32` | `blk` | 1 | `1u` | 0 | 0 | 0 | `1,2,4,8` |
-| T083 | `u32.unroll` | `u32` | `unroll` | 1 | `2u` | 0 | 0 | 0 | `2,4,8` |
-| T084 | `u32.boundm` | `u32` | `boundm` | 1 | `cfg.m` | 0 | 0 | 0 | `-` |
-| T085 | `u32.boundd` | `u32` | `boundd` | 1 | `cfg.d` | 0 | 0 | 0 | `-` |
-| T086 | `u32.boundrows` | `u32` | `boundrows` | 1 | `cfg.r_rows` | 0 | 0 | 0 | `-` |
-| T087 | `u32.lit64` | `u32` | `lit64` | 1 | `1u` | 0 | 0 | 0 | `1..=64` |
-| T088 | `u32.lit4096` | `u32` | `lit4096` | 1 | `1u` | 0 | 0 | 0 | `1..=4096` |
-| T089 | `u32.counter` | `u32` | `counter` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T090 | `u32.threadrow` | `u32` | `threadrow` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T091 | `u32.threadcol` | `u32` | `threadcol` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T092 | `u32.cell` | `u32` | `cell` | 1 | `the thread's own first cell` | 0 | 0 | 0 | `-` |
-| T093 | `u32.phi` | `u32` | `phi` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T094 | `u32.wgindex` | `u32` | `wgindex` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T095 | `bool.bound` | `bool` | `bound` | 1 | `false` | 0 | 0 | 0 | `-` |
-| T096 | `stmt.L0` | `stmt` | `L0` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T097 | `block.L0` | `block` | `L0` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T098 | `stmt.L1` | `stmt` | `L1` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T099 | `block.L1` | `block` | `L1` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T100 | `stmt.L2` | `stmt` | `L2` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T101 | `block.L2` | `block` | `L2` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T102 | `stmt.C0` | `stmt` | `C0` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T103 | `block.C0` | `block` | `C0` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T104 | `stmt.C1` | `stmt` | `C1` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T105 | `block.C1` | `block` | `C1` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T106 | `stmt.C2` | `stmt` | `C2` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T107 | `block.C2` | `block` | `C2` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T108 | `kernel.safe` | `kernel` | `safe` | 0 | `an empty kernel` | 0 | 0 | 0 | `-` |
-| T109 | `u32.tcounter` | `u32` | `tcounter` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T110 | `u32.tcounter2` | `u32` | `tcounter2` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T111 | `u32.pindex` | `u32` | `pindex` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T112 | `parr<f32>.real` | `parr<f32>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T113 | `parr<vec4<f32>>.real` | `parr<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T114 | `parr<u32>.index` | `parr<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
-| T115 | `stmt.L3` | `stmt` | `L3` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T116 | `block.L3` | `block` | `L3` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T117 | `stmt.C3` | `stmt` | `C3` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T118 | `block.C3` | `block` | `C3` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T119 | `u32.tcounter3` | `u32` | `tcounter3` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T120 | `stmt.L4` | `stmt` | `L4` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T121 | `block.L4` | `block` | `L4` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T122 | `stmt.C4` | `stmt` | `C4` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T123 | `block.C4` | `block` | `C4` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T124 | `parr<bool>.flag` | `parr<bool>` | `flag` | 0 | `false` | 0 | 0 | 0 | `-` |
-| T125 | `wgmem<vec4<f32>>.real` | `wgmem<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T126 | `u32.wgvindex` | `u32` | `wgvindex` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T127 | `u32.boundx` | `u32` | `boundx` | 1 | `1u` | 1 | 0 | 0 | `-` |
-| T128 | `u32.tcounter4` | `u32` | `tcounter4` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T129 | `stmt.L5` | `stmt` | `L5` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T130 | `block.L5` | `block` | `L5` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T131 | `stmt.C5` | `stmt` | `C5` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T132 | `block.C5` | `block` | `C5` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T133 | `stmt.O0` | `stmt` | `O0` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T134 | `block.O0` | `block` | `O0` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T135 | `stmt.O1` | `stmt` | `O1` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T136 | `block.O1` | `block` | `O1` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T137 | `stmt.O2` | `stmt` | `O2` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T138 | `block.O2` | `block` | `O2` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T139 | `stmt.O3` | `stmt` | `O3` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T140 | `block.O3` | `block` | `O3` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T141 | `stmt.O4` | `stmt` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T142 | `block.O4` | `block` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 | `-` |
-| T143 | `vec3<u32>.gid` | `vec3<u32>` | `gid` | 3 | `0u` | 0 | 0 | 0 | `-` |
-| T144 | `vec3<u32>.lid` | `vec3<u32>` | `lid` | 3 | `0u` | 0 | 0 | 0 | `-` |
-| T145 | `vec3<u32>.wid` | `vec3<u32>` | `wid` | 3 | `0u` | 0 | 0 | 0 | `-` |
-| T146 | `u32.rowid` | `u32` | `rowid` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T147 | `u32.colid` | `u32` | `colid` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T148 | `u32.lidx` | `u32` | `lidx` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T149 | `u32.threadrows` | `u32` | `threadrows` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T150 | `u32.threadcols` | `u32` | `threadcols` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T153 | `wgmem<vec2<f32>>.real` | `wgmem<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T154 | `wgmem<u32>.index` | `wgmem<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
-| T155 | `u32.wgv2index` | `u32` | `wgv2index` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T156 | `u32.wglen` | `u32` | `wglen` | 1 | `the array's default length` | 0 | 0 | 0 | `1..=8192` |
-| T157 | `wg.decl` | `wg` | `decl` | 0 | `none` | 0 | 0 | 0 | `-` |
-| T158 | `wg.decls` | `wg` | `decls` | 0 | `none (the arrays the kernel uses, at their default lengths)` | 0 | 0 | 0 | `-` |
-| T159 | `wgmem<atomic<u32>>.index` | `wgmem<atomic<u32>>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
-| T160 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `0` | 0 | 0 | 0 | `-` |
-| T161 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T162 | `reg<i32>.int` | `reg<i32>` | `int` | 1 | `0` | 0 | 0 | 0 | `-` |
-| T163 | `block.B1` | `block` | `B1` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T164 | `block.B2` | `block` | `B2` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T165 | `block.B3` | `block` | `B3` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T166 | `block.B4` | `block` | `B4` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T167 | `block.B5` | `block` | `B5` | 0 | `empty` | 0 | 0 | 0 | `-` |
-| T168 | `reg<vec4<u32>>.bits` | `reg<vec4<u32>>` | `bits` | 4 | `0u` | 0 | 0 | 0 | `-` |
-| T169 | `parr<vec2<f32>>.real` | `parr<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T170 | `reg<mat2x2<f32>>.real` | `reg<mat2x2<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-` |
-| T171 | `reg<mat3x3<f32>>.real` | `reg<mat3x3<f32>>` | `real` | 9 | `0.0` | 0 | 0 | 0 | `-` |
-| T172 | `reg<mat4x4<f32>>.real` | `reg<mat4x4<f32>>` | `real` | 16 | `0.0` | 0 | 0 | 0 | `-` |
-| T173 | `u32.pindex16` | `u32` | `pindex16` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T174 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T175 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 1 | 0 | 0 | `-` |
-| T176 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T177 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 | `0..=4294967295` |
-| T178 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T179 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T180 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T181 | `u32.rowbases` | `u32` | `rowbases` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T182 | `u32.colbases` | `u32` | `colbases` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T183 | `u32.rowbaseg` | `u32` | `rowbaseg` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
-| T184 | `u32.colbaseg` | `u32` | `colbaseg` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
-| T185 | `u32.mirror` | `u32` | `mirror` | 1 | `the mirror of the thread's own first cell` | 0 | 0 | 0 | `-` |
-| T186 | `u32.wgown` | `u32` | `wgown` | 1 | `the thread's own first element (lidx)` | 0 | 0 | 0 | `-` |
-| T187 | `kernel.module` | `kernel` | `module` | 0 | `an empty kernel at each of the interface's entry points` | 0 | 0 | 0 | `-` |
-| T188 | `bool.uflag` | `bool` | `uflag` | 1 | `false` | 0 | 0 | 0 | `-` |
-| T189 | `parr64<u32>.index` | `parr64<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
-| T190 | `reg<vec2<f32>>.real` | `reg<vec2<f32>>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-` |
-| T191 | `parr64<vec4<f32>>.real` | `parr64<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
-| T192 | `u32.payload` | `u32` | `payload` | 1 | `256 (the knob itself)` | 256 | 0 | 0 | `1..=1048576` |
-| T193 | `wgmem<i32>.int` | `wgmem<i32>` | `int` | 0 | `0` | 0 | 0 | 0 | `-` |
-| T194 | `parr128<u32>.index` | `parr128<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
-| T195 | `u32.pindex128` | `u32` | `pindex128` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T196 | `reg<vec3<f32>>.real` | `reg<vec3<f32>>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-` |
-| T197 | `reg<vec2<i32>>.int` | `reg<vec2<i32>>` | `int` | 2 | `0` | 0 | 0 | 0 | `-` |
-| T198 | `reg<vec3<i32>>.int` | `reg<vec3<i32>>` | `int` | 3 | `0` | 0 | 0 | 0 | `-` |
-| T199 | `reg<vec4<i32>>.int` | `reg<vec4<i32>>` | `int` | 4 | `0` | 0 | 0 | 0 | `-` |
-| T200 | `reg<vec2<u32>>.index` | `reg<vec2<u32>>` | `index` | 2 | `0u` | 0 | 0 | 0 | `-` |
-| T201 | `reg<vec3<u32>>.index` | `reg<vec3<u32>>` | `index` | 3 | `0u` | 0 | 0 | 0 | `-` |
-| T202 | `reg<vec2<bool>>.flag` | `reg<vec2<bool>>` | `flag` | 2 | `false` | 0 | 0 | 0 | `-` |
-| T203 | `reg<vec3<bool>>.flag` | `reg<vec3<bool>>` | `flag` | 3 | `false` | 0 | 0 | 0 | `-` |
-| T204 | `reg<vec4<bool>>.flag` | `reg<vec4<bool>>` | `flag` | 4 | `false` | 0 | 0 | 0 | `-` |
-
-204 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
-
-The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
+| ref | dual | slot | form | lanes | literal |
+|---|---|---|---|---|---|
+| T001 | `f32.real` | `f32` | `real` | 1 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T002 | `vec2<f32>.real` | `vec2<f32>` | `real` | 2 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T003 | `vec3<f32>.real` | `vec3<f32>` | `real` | 3 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T004 | `vec4<f32>.real` | `vec4<f32>` | `real` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T005 | `f16.real` | `f16` | `real` | 1 | `-65504.0..=65504.0` |
+| T006 | `vec2<f16>.real` | `vec2<f16>` | `real` | 2 | `-65504.0..=65504.0` |
+| T007 | `vec3<f16>.real` | `vec3<f16>` | `real` | 3 | `-65504.0..=65504.0` |
+| T008 | `vec4<f16>.real` | `vec4<f16>` | `real` | 4 | `-65504.0..=65504.0` |
+| T009 | `i32.int` | `i32` | `int` | 1 | `-2147483648..=2147483647` |
+| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `-2147483648..=2147483647` |
+| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `-2147483648..=2147483647` |
+| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `-2147483648..=2147483647` |
+| T013 | `i32.q15_16` | `i32` | `q15_16` | 1 | `-2147483648..=2147483647` |
+| T014 | `vec2<i32>.q15_16` | `vec2<i32>` | `q15_16` | 2 | `-2147483648..=2147483647` |
+| T015 | `vec3<i32>.q15_16` | `vec3<i32>` | `q15_16` | 3 | `-2147483648..=2147483647` |
+| T016 | `vec4<i32>.q15_16` | `vec4<i32>` | `q15_16` | 4 | `-2147483648..=2147483647` |
+| T017 | `u32.index` | `u32` | `index` | 1 | `0..=4294967295` |
+| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0..=4294967295` |
+| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0..=4294967295` |
+| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0..=4294967295` |
+| T021 | `u32.count` | `u32` | `count` | 1 | `0..=4294967295` |
+| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0..=4294967295` |
+| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0..=4294967295` |
+| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0..=4294967295` |
+| T025 | `u32.code4` | `u32` | `code4` | 1 | `0..=3` |
+| T026 | `u32.code8` | `u32` | `code8` | 1 | `0..=7` |
+| T027 | `u32.code16` | `u32` | `code16` | 1 | `0..=15` |
+| T028 | `u32.code1024` | `u32` | `code1024` | 1 | `0..=1023` |
+| T029 | `u32.bits` | `u32` | `bits` | 1 | `0..=4294967295` |
+| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0..=4294967295` |
+| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0..=4294967295` |
+| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0..=4294967295` |
+| T033 | `u32.hash32` | `u32` | `hash32` | 1 | `0..=4294967295` |
+| T034 | `bool.flag` | `bool` | `flag` | 1 | `0,1` |
+| T035 | `vec2<bool>.flag` | `vec2<bool>` | `flag` | 2 | `0,1` |
+| T036 | `vec3<bool>.flag` | `vec3<bool>` | `flag` | 3 | `0,1` |
+| T037 | `vec4<bool>.flag` | `vec4<bool>` | `flag` | 4 | `0,1` |
+| T038 | `bool.sign` | `bool` | `sign` | 1 | `0,1` |
+| T039 | `f32.opaque` | `f32` | `opaque` | 1 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T040 | `vec2<f32>.opaque` | `vec2<f32>` | `opaque` | 2 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T041 | `vec3<f32>.opaque` | `vec3<f32>` | `opaque` | 3 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T042 | `vec4<f32>.opaque` | `vec4<f32>` | `opaque` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T043 | `f16.opaque` | `f16` | `opaque` | 1 | `-65504.0..=65504.0` |
+| T044 | `vec2<f16>.opaque` | `vec2<f16>` | `opaque` | 2 | `-65504.0..=65504.0` |
+| T045 | `vec3<f16>.opaque` | `vec3<f16>` | `opaque` | 3 | `-65504.0..=65504.0` |
+| T046 | `vec4<f16>.opaque` | `vec4<f16>` | `opaque` | 4 | `-65504.0..=65504.0` |
+| T047 | `i32.opaque` | `i32` | `opaque` | 1 | `-2147483648..=2147483647` |
+| T048 | `vec2<i32>.opaque` | `vec2<i32>` | `opaque` | 2 | `-2147483648..=2147483647` |
+| T049 | `vec3<i32>.opaque` | `vec3<i32>` | `opaque` | 3 | `-2147483648..=2147483647` |
+| T050 | `vec4<i32>.opaque` | `vec4<i32>` | `opaque` | 4 | `-2147483648..=2147483647` |
+| T051 | `u32.opaque` | `u32` | `opaque` | 1 | `0..=4294967295` |
+| T052 | `vec2<u32>.opaque` | `vec2<u32>` | `opaque` | 2 | `0..=4294967295` |
+| T053 | `vec3<u32>.opaque` | `vec3<u32>` | `opaque` | 3 | `0..=4294967295` |
+| T054 | `vec4<u32>.opaque` | `vec4<u32>` | `opaque` | 4 | `0..=4294967295` |
+| T055 | `bool.opaque` | `bool` | `opaque` | 1 | `0,1` |
+| T056 | `vec2<bool>.opaque` | `vec2<bool>` | `opaque` | 2 | `0,1` |
+| T057 | `vec3<bool>.opaque` | `vec3<bool>` | `opaque` | 3 | `0,1` |
+| T058 | `vec4<bool>.opaque` | `vec4<bool>` | `opaque` | 4 | `0,1` |
+| T059 | `vec2<i32>.q15_16w` | `vec2<i32>` | `q15_16w` | 2 | `-2147483648..=2147483647` |
+| T060 | `vec2<u32>.hash64` | `vec2<u32>` | `hash64` | 2 | `0..=4294967295` |
+| T061 | `mat2x2<f32>.real` | `mat2x2<f32>` | `real` | 4 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T062 | `mat2x3<f32>.real` | `mat2x3<f32>` | `real` | 6 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T063 | `mat2x4<f32>.real` | `mat2x4<f32>` | `real` | 8 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T064 | `mat3x2<f32>.real` | `mat3x2<f32>` | `real` | 6 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T065 | `mat3x3<f32>.real` | `mat3x3<f32>` | `real` | 9 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T066 | `mat3x4<f32>.real` | `mat3x4<f32>` | `real` | 12 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T067 | `mat4x2<f32>.real` | `mat4x2<f32>` | `real` | 8 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T068 | `mat4x3<f32>.real` | `mat4x3<f32>` | `real` | 12 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T069 | `mat4x4<f32>.real` | `mat4x4<f32>` | `real` | 16 | `-3.4028234663852886e38..=3.4028234663852886e38` |
+| T070 | `array<T>.<form of T>` | `array<T>` | `<form of T>` | 0 | `-` |
+| T071 | `store.store` | `store` | `store` | 0 | `-` |
+| T072 | `kernel.kernel` | `kernel` | `kernel` | 0 | `-` |
+| T073 | `grid.grid` | `grid` | `grid` | 0 | `-` |
+| T074 | `block.block` | `block` | `block` | 0 | `-` |
+| T075 | `stmt.stmt` | `stmt` | `stmt` | 0 | `-` |
+| T076 | `reg<f32>.real` | `reg<f32>` | `real` | 1 | `-` |
+| T077 | `reg<vec4<f32>>.real` | `reg<vec4<f32>>` | `real` | 4 | `-` |
+| T078 | `reg<u32>.index` | `reg<u32>` | `index` | 1 | `-` |
+| T079 | `reg<bool>.flag` | `reg<bool>` | `flag` | 1 | `-` |
+| T080 | `wgmem<f32>.real` | `wgmem<f32>` | `real` | 0 | `-` |
+| T081 | `u32.wgdim` | `u32` | `wgdim` | 1 | `1..=1024` |
+| T082 | `u32.blk` | `u32` | `blk` | 1 | `1,2,4,8` |
+| T083 | `u32.unroll` | `u32` | `unroll` | 1 | `2,4,8` |
+| T084 | `u32.boundm` | `u32` | `boundm` | 1 | `-` |
+| T085 | `u32.boundd` | `u32` | `boundd` | 1 | `-` |
+| T086 | `u32.boundrows` | `u32` | `boundrows` | 1 | `-` |
+| T087 | `u32.lit64` | `u32` | `lit64` | 1 | `1..=64` |
+| T088 | `u32.lit4096` | `u32` | `lit4096` | 1 | `1..=4096` |
+| T089 | `u32.counter` | `u32` | `counter` | 1 | `-` |
+| T090 | `u32.threadrow` | `u32` | `threadrow` | 1 | `-` |
+| T091 | `u32.threadcol` | `u32` | `threadcol` | 1 | `-` |
+| T092 | `u32.cell` | `u32` | `cell` | 1 | `-` |
+| T093 | `u32.phi` | `u32` | `phi` | 1 | `-` |
+| T094 | `u32.wgindex` | `u32` | `wgindex` | 1 | `-` |
+| T095 | `bool.bound` | `bool` | `bound` | 1 | `-` |
+| T096 | `stmt.L0` | `stmt` | `L0` | 0 | `-` |
+| T097 | `block.L0` | `block` | `L0` | 0 | `-` |
+| T098 | `stmt.L1` | `stmt` | `L1` | 0 | `-` |
+| T099 | `block.L1` | `block` | `L1` | 0 | `-` |
+| T100 | `stmt.L2` | `stmt` | `L2` | 0 | `-` |
+| T101 | `block.L2` | `block` | `L2` | 0 | `-` |
+| T102 | `stmt.C0` | `stmt` | `C0` | 0 | `-` |
+| T103 | `block.C0` | `block` | `C0` | 0 | `-` |
+| T104 | `stmt.C1` | `stmt` | `C1` | 0 | `-` |
+| T105 | `block.C1` | `block` | `C1` | 0 | `-` |
+| T106 | `stmt.C2` | `stmt` | `C2` | 0 | `-` |
+| T107 | `block.C2` | `block` | `C2` | 0 | `-` |
+| T108 | `kernel.safe` | `kernel` | `safe` | 0 | `-` |
+| T109 | `u32.tcounter` | `u32` | `tcounter` | 1 | `-` |
+| T110 | `u32.tcounter2` | `u32` | `tcounter2` | 1 | `-` |
+| T111 | `u32.pindex` | `u32` | `pindex` | 1 | `-` |
+| T112 | `parr<f32>.real` | `parr<f32>` | `real` | 0 | `-` |
+| T113 | `parr<vec4<f32>>.real` | `parr<vec4<f32>>` | `real` | 0 | `-` |
+| T114 | `parr<u32>.index` | `parr<u32>` | `index` | 0 | `-` |
+| T115 | `stmt.L3` | `stmt` | `L3` | 0 | `-` |
+| T116 | `block.L3` | `block` | `L3` | 0 | `-` |
+| T117 | `stmt.C3` | `stmt` | `C3` | 0 | `-` |
+| T118 | `block.C3` | `block` | `C3` | 0 | `-` |
+| T119 | `u32.tcounter3` | `u32` | `tcounter3` | 1 | `-` |
+| T120 | `stmt.L4` | `stmt` | `L4` | 0 | `-` |
+| T121 | `block.L4` | `block` | `L4` | 0 | `-` |
+| T122 | `stmt.C4` | `stmt` | `C4` | 0 | `-` |
+| T123 | `block.C4` | `block` | `C4` | 0 | `-` |
+| T124 | `parr<bool>.flag` | `parr<bool>` | `flag` | 0 | `-` |
+| T125 | `wgmem<vec4<f32>>.real` | `wgmem<vec4<f32>>` | `real` | 0 | `-` |
+| T126 | `u32.wgvindex` | `u32` | `wgvindex` | 1 | `-` |
+| T127 | `u32.boundx` | `u32` | `boundx` | 1 | `-` |
+| T128 | `u32.tcounter4` | `u32` | `tcounter4` | 1 | `-` |
+| T129 | `stmt.L5` | `stmt` | `L5` | 0 | `-` |
+| T130 | `block.L5` | `block` | `L5` | 0 | `-` |
+| T131 | `stmt.C5` | `stmt` | `C5` | 0 | `-` |
+| T132 | `block.C5` | `block` | `C5` | 0 | `-` |
+| T133 | `stmt.O0` | `stmt` | `O0` | 0 | `-` |
+| T134 | `block.O0` | `block` | `O0` | 0 | `-` |
+| T135 | `stmt.O1` | `stmt` | `O1` | 0 | `-` |
+| T136 | `block.O1` | `block` | `O1` | 0 | `-` |
+| T137 | `stmt.O2` | `stmt` | `O2` | 0 | `-` |
+| T138 | `block.O2` | `block` | `O2` | 0 | `-` |
+| T139 | `stmt.O3` | `stmt` | `O3` | 0 | `-` |
+| T140 | `block.O3` | `block` | `O3` | 0 | `-` |
+| T141 | `stmt.O4` | `stmt` | `O4` | 0 | `-` |
+| T142 | `block.O4` | `block` | `O4` | 0 | `-` |
+| T143 | `vec3<u32>.gid` | `vec3<u32>` | `gid` | 3 | `-` |
+| T144 | `vec3<u32>.lid` | `vec3<u32>` | `lid` | 3 | `-` |
+| T145 | `vec3<u32>.wid` | `vec3<u32>` | `wid` | 3 | `-` |
+| T146 | `u32.rowid` | `u32` | `rowid` | 1 | `-` |
+| T147 | `u32.colid` | `u32` | `colid` | 1 | `-` |
+| T148 | `u32.lidx` | `u32` | `lidx` | 1 | `-` |
+| T149 | `u32.threadrows` | `u32` | `threadrows` | 1 | `-` |
+| T150 | `u32.threadcols` | `u32` | `threadcols` | 1 | `-` |
+| T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `-` |
+| T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `-` |
+| T153 | `wgmem<vec2<f32>>.real` | `wgmem<vec2<f32>>` | `real` | 0 | `-` |
+| T154 | `wgmem<u32>.index` | `wgmem<u32>` | `index` | 0 | `-` |
+| T155 | `u32.wgv2index` | `u32` | `wgv2index` | 1 | `-` |
+| T156 | `u32.wglen` | `u32` | `wglen` | 1 | `1..=8192` |
+| T157 | `wg.decl` | `wg` | `decl` | 0 | `-` |
+| T158 | `wg.decls` | `wg` | `decls` | 0 | `-` |
+| T159 | `wgmem<atomic<u32>>.index` | `wgmem<atomic<u32>>` | `index` | 0 | `-` |
+| T160 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `-` |
+| T161 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `-` |
+| T162 | `reg<i32>.int` | `reg<i32>` | `int` | 1 | `-` |
+| T163 | `block.B1` | `block` | `B1` | 0 | `-` |
+| T164 | `block.B2` | `block` | `B2` | 0 | `-` |
+| T165 | `block.B3` | `block` | `B3` | 0 | `-` |
+| T166 | `block.B4` | `block` | `B4` | 0 | `-` |
+| T167 | `block.B5` | `block` | `B5` | 0 | `-` |
+| T168 | `reg<vec4<u32>>.bits` | `reg<vec4<u32>>` | `bits` | 4 | `-` |
+| T169 | `parr<vec2<f32>>.real` | `parr<vec2<f32>>` | `real` | 0 | `-` |
+| T170 | `reg<mat2x2<f32>>.real` | `reg<mat2x2<f32>>` | `real` | 4 | `-` |
+| T171 | `reg<mat3x3<f32>>.real` | `reg<mat3x3<f32>>` | `real` | 9 | `-` |
+| T172 | `reg<mat4x4<f32>>.real` | `reg<mat4x4<f32>>` | `real` | 16 | `-` |
+| T173 | `u32.pindex16` | `u32` | `pindex16` | 1 | `-` |
+| T174 | `u32.uniform` | `u32` | `uniform` | 1 | `-` |
+| T175 | `u32.boundu` | `u32` | `boundu` | 1 | `-` |
+| T176 | `u32.uniformw` | `u32` | `uniformw` | 1 | `-` |
+| T177 | `u32.xbound` | `u32` | `xbound` | 1 | `0..=4294967295` |
+| T178 | `u32.indexw` | `u32` | `indexw` | 1 | `-` |
+| T179 | `u32.rowbase` | `u32` | `rowbase` | 1 | `-` |
+| T180 | `u32.colbase` | `u32` | `colbase` | 1 | `-` |
+| T181 | `u32.rowbases` | `u32` | `rowbases` | 1 | `-` |
+| T182 | `u32.colbases` | `u32` | `colbases` | 1 | `-` |
+| T183 | `u32.rowbaseg` | `u32` | `rowbaseg` | 1 | `-` |
+| T184 | `u32.colbaseg` | `u32` | `colbaseg` | 1 | `-` |
+| T185 | `u32.mirror` | `u32` | `mirror` | 1 | `-` |
+| T186 | `u32.wgown` | `u32` | `wgown` | 1 | `-` |
+| T187 | `kernel.module` | `kernel` | `module` | 0 | `-` |
+| T188 | `bool.uflag` | `bool` | `uflag` | 1 | `-` |
+| T189 | `parr64<u32>.index` | `parr64<u32>` | `index` | 0 | `-` |
+| T190 | `reg<vec2<f32>>.real` | `reg<vec2<f32>>` | `real` | 2 | `-` |
+| T191 | `parr64<vec4<f32>>.real` | `parr64<vec4<f32>>` | `real` | 0 | `-` |
+| T192 | `u32.payload` | `u32` | `payload` | 1 | `1..=1048576` |
+| T193 | `wgmem<i32>.int` | `wgmem<i32>` | `int` | 0 | `-` |
+| T194 | `parr128<u32>.index` | `parr128<u32>` | `index` | 0 | `-` |
+| T195 | `u32.pindex128` | `u32` | `pindex128` | 1 | `-` |
+| T196 | `reg<vec3<f32>>.real` | `reg<vec3<f32>>` | `real` | 3 | `-` |
+| T197 | `reg<vec2<i32>>.int` | `reg<vec2<i32>>` | `int` | 2 | `-` |
+| T198 | `reg<vec3<i32>>.int` | `reg<vec3<i32>>` | `int` | 3 | `-` |
+| T199 | `reg<vec4<i32>>.int` | `reg<vec4<i32>>` | `int` | 4 | `-` |
+| T200 | `reg<vec2<u32>>.index` | `reg<vec2<u32>>` | `index` | 2 | `-` |
+| T201 | `reg<vec3<u32>>.index` | `reg<vec3<u32>>` | `index` | 3 | `-` |
+| T202 | `reg<vec2<bool>>.flag` | `reg<vec2<bool>>` | `flag` | 2 | `-` |
+| T203 | `reg<vec3<bool>>.flag` | `reg<vec3<bool>>` | `flag` | 3 | `-` |
+| T204 | `reg<vec4<bool>>.flag` | `reg<vec4<bool>>` | `flag` | 4 | `-` |
 
 The `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a tree's constant is exact for every u32 and i32.
 

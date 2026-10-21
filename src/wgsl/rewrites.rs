@@ -301,7 +301,7 @@ mod tests {
                         legal += 1;
                         let parent = crate::wgsl::safe_karva::render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text;
                         // A swap of equal-rendering parts, or the epilogue's only store
-                        // deleted (its fallback is that store), renders the parent.
+                        // deleted (its own terminal is that store), renders the parent.
                         assert!(text != parent || matches!(rw, Rewrite::SwapOperands | Rewrite::SwapAdjacent | Rewrite::SwapLeaves | Rewrite::DeleteStatement), "{} {what}: the child is its parent", rw.name());
                     }
                 }

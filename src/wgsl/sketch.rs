@@ -169,7 +169,7 @@ mod tests {
 
     /// A tree that loses one part of the outline does not hold it: the
     /// store's value another register, the update's register another, the
-    /// loop's bound another, the cell another thread's (a fallback cell).
+    /// loop's bound another, the cell another thread's (an own terminal cell).
     #[test]
     fn a_tree_without_a_part_of_the_outline_does_not_hold_it() {
         let k = WgslKingdom::load_safe();

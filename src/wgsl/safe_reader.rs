@@ -199,7 +199,7 @@ pub struct Helper<'a> {
     pub row: Option<&'static str>,
     pub roots: HashMap<Vec<usize>, Vec<&'a Root>>,
     pub inits: Vec<&'a Root>,
-    /// Locals without an initialiser, with their dual: set to the fallback
+    /// Locals without an initialiser, with their dual: set to the own terminal
     /// at each inline (WGSL zero-initialises a `var`; the register may
     /// hold an earlier call's value).
     pub uninit: Vec<(String, String)>,
@@ -2170,14 +2170,13 @@ impl<'a> Ctx<'a> {
     }
 
     /// A test over a body that holds a barrier, as a workgroup-uniform
-    /// predicate: of the uniform values when it is one, else the flag itself
-    /// as `uflag.of_flag`, which the checker's layer 4 proves uniform (a
-    /// register set by a workgroupUniformLoad, a flag set under a uniform
-    /// test) or names as a barrier in non-uniform control.
+    /// predicate of the uniform values. There is no row that admits any other
+    /// flag into a uniform context (`uflag.of_flag` was deleted, A0,
+    /// 2026-10-21), so such a kernel is outside the kingdom, by this reason.
     fn uniform_flag_checked(&self, c: &Tree) -> Result<Tree, String> {
         match self.uniform_flag(c)? {
             Some(f) => Ok(f),
-            None => Ok(Tree::new("uflag.of_flag", ty(self, "bool.uflag")?, vec![c.clone()])),
+            None => Err(format!("outside the kingdom: a test over a barrier that is not a comparison of workgroup-uniform values ({}): no row admits a flag into a uniform context", c.to_sexpr())),
         }
     }
 
@@ -2189,7 +2188,6 @@ impl<'a> Ctx<'a> {
         match (f.name.as_str(), f.kids.as_slice()) {
             ("uflag.and" | "uflag.or", [a, b]) => Ok(Tree::new(&format!("logic.{}", &f.name[6..]), flag, vec![self.flag_of_uniform(a)?, self.flag_of_uniform(b)?])),
             ("uflag.not", [a]) => Ok(Tree::new("logic.not", flag, vec![self.flag_of_uniform(a)?])),
-            ("uflag.of_flag", [a]) => Ok(a.clone()),
             (n, [a, b]) if n.starts_with("uflag.") => Ok(Tree::new(&format!("compare.{}", &n[6..]), flag, vec![index(a)?, index(b)?])),
             _ => Err(format!("{} is not a uniform predicate", f.name)),
         }
@@ -2197,9 +2195,8 @@ impl<'a> Ctx<'a> {
 
     fn uniform_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
         let u = ty(self, "u32.uniform")?;
-        // A product or a shift may wrap (u32.uniformw): no row takes it, so a
-        // uniform value that holds one is not a uniform bound (2026-10-12).
-        let uw = ty(self, "u32.uniformw")?;
+        // A product or a shift may wrap (u32.uniformw): there is no row for it, so a
+        // uniform value that holds one is not a uniform bound (2026-10-12; the rows were deleted, A0, 2026-10-21).
         let plain = |x: &Option<Tree>| x.as_ref().is_some_and(|x| x.ty == u);
         let leaf = |name: &str| Tree::new(name, u, vec![]);
         let comp = |k: &Tree| -> Option<char> { t.name.strip_prefix("shape.access_").and_then(|i| i.parse::<usize>().ok()).and_then(|i| "xyz".chars().nth(i)).filter(|_| k.kids.is_empty()) };
@@ -2228,7 +2225,7 @@ impl<'a> Ctx<'a> {
             }
             (n, []) if n.starts_with("literal.") => {
                 let v = t.konst;
-                // 0 is the uniform dual's fallback, which renders `0u` (2026-10-12).
+                // 0 is the uniform dual's own terminal, which renders `0u` (2026-10-12).
                 if v == 0.0 {
                     return Ok(Some(crate::wgsl::render::own_leaf(self.kingdom, u)?));
                 }
@@ -2264,11 +2261,8 @@ impl<'a> Ctx<'a> {
                     _ => return Ok(None),
                 };
                 match (self.uniform_of(a)?, self.uniform_of(b)?) {
-                    (Some(a), Some(b)) => match (op, a.ty == uw || b.ty == uw) {
-                        (_, true) => None,
-                        ("mul" | "shl", _) => Some(Tree::new(&format!("uniform.{op}"), uw, vec![a, b])),
-                        _ => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
-                    },
+                    (Some(_), Some(_)) if matches!(op, "mul" | "shl") => None,
+                    (Some(a), Some(b)) => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
                     _ => None,
                 }
             }
@@ -3853,7 +3847,7 @@ impl<'a> Ctx<'a> {
         // A kernel that never writes h (a gene whose body returns at the
         // top level, rendered without its epilogue; the reader drops the
         // trailing return as main's implicit one): the body, an explicit
-        // return, and the epilogue's fallback, which the renderer does not
+        // return, and the epilogue's own terminal, which the renderer does not
         // write after a body that returns.
         if !stmts.iter().any(has_store) {
             if stmts.last().is_none_or(|s| rung_stem(&s.name) != Some("stmt.return")) {
@@ -3878,7 +3872,7 @@ impl<'a> Ctx<'a> {
         // An interface with no output cell (no `h`: v24's index arena and
         // candidate lists, 2026-10-17) does not end in one store: statements
         // after its last store (atomics, more stores) are the body's, which
-        // ends in a return, the epilogue its fallback (not written after a
+        // ends in a return, the epilogue its own terminal (not written after a
         // body that returns), as for a kernel that writes no h at all.
         if p + 1 < stmts.len() && !self.per_kernel_rows.iter().any(|r| r.0 == "store.h") {
             stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
@@ -3901,7 +3895,7 @@ impl<'a> Ctx<'a> {
             // An interface with no output cell (no h) needs no epilogue: a last
             // store the epilogue cannot spell (inside an item loop, a loop that
             // breaks: five of the saved model kernels, 2026-10-17) stays in the
-            // body, which ends in a return, the epilogue its fallback.
+            // body, which ends in a return, the epilogue its own terminal.
             Err(_) if !self.per_kernel_rows.iter().any(|r| r.0 == "store.h") => {
                 let mut stmts = stmts;
                 stmts.push(last);
@@ -5891,7 +5885,7 @@ impl<'a> Ctx<'a> {
         let mut bound_tree = bound_tree;
         // The item counter t, after an item loop, against a literal at the top
         // level (`for (; t < 1u; t = t + 1u)`, the items continued to a bound
-        // whose fallback writes 1u, drawn in a uniform test's body): the items
+        // whose own terminal writes 1u, drawn in a uniform test's body): the items
         // continued, bounded by that literal as a uniform value, not a tile
         // loop over t (whose counter is k), 2026-10-17.
         let item_named = counter.strip_prefix("local.").and_then(|r| r.split('@').next()) == Some("t");
@@ -5908,12 +5902,10 @@ impl<'a> Ctx<'a> {
         if kind == "boundx" && rung.starts_with('L') && !breaks0 {
             match self.uniform_bound_of(&bound_tree.kids[0])? {
                 Some(u) => bound_tree = Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]),
-                // A bound over a body that holds a barrier: the index as a
-                // uniform value the checker's layer 4 proves so (a helper's
-                // argument from a workgroupUniformLoad) or names.
+                // A bound over a body that holds a barrier that is not a uniform value: no row admits an
+                // index into a uniform context (`uniform.of_checked` was deleted, A0, 2026-10-21).
                 None if holds_barrier(self.module, body) => {
-                    let u = Tree::new("uniform.of_checked", ty(self, "u32.uniform")?, vec![bound_tree.kids[0].clone()]);
-                    bound_tree = Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]);
+                    return Err(format!("outside the kingdom: a loop over a barrier whose bound is not a workgroup-uniform value ({}): no row admits an index into a uniform context", bound_tree.kids[0].to_sexpr()));
                 }
                 None => {
                     let crung = format!("C{}", &rung[1..]);
@@ -7118,7 +7110,7 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
     let (arrays, array_lens) = arrays;
     let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: preset, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, branch_depth: 0, skip_stmts: BTreeSet::new(), outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), array_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full"), open_thread_index: false };
     // Register initialisations first, in root order. A local initialised to
-    // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
+    // its form's own terminal (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
     // allocated at the local's first use. Five model kernels of run A copied
     // the kingdom's own declarations (every register and the four counters,
@@ -9852,7 +9844,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// left undrawn the same commit measures 3, 948 and 119 exactly; 310 of
     /// the 1,000 draw one, and 17 of those 310 miss the fixpoint, the rate
     /// of the rest); the fixpoint gain is the divisor guard seeing through
-    /// `uniform.of_lit` and a fallback (`x / max(0u, 1u)`, which naga folds to
+    /// `uniform.of_lit` and an own terminal (`x / max(0u, 1u)`, which naga folds to
     /// a division by 1, read back as `max(1u, 1u)`). The first AST
     /// differences are the earlier classes: a subgroup operation the reader
     /// sets into a register at its statement, a barrier against a register

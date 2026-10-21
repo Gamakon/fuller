@@ -362,17 +362,17 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F217 | `reg.f0` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F218 | `reg.f1` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F219 | `reg.f2` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F220 | `reg.f3` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F221 | `reg.v0` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F222 | `reg.v1` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F223 | `reg.i0` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F224 | `reg.i1` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F225 | `reg.i2` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F226 | `reg.i3` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
-| F227 | `reg.b0` | `composite` | `-` | `reg<bool>.flag` | 0 | a register, declared at the top of the kernel and initialised to its form's fallback |
+| F217 | `reg.f0` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F218 | `reg.f1` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F219 | `reg.f2` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F220 | `reg.f3` | `composite` | `-` | `reg<f32>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F221 | `reg.v0` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F222 | `reg.v1` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F223 | `reg.i0` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F224 | `reg.i1` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F225 | `reg.i2` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F226 | `reg.i3` | `composite` | `-` | `reg<u32>.index` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
+| F227 | `reg.b0` | `composite` | `-` | `reg<bool>.flag` | 0 | a register, declared at the top of the kernel and initialised to its form's zero |
 | F228 | `reg.get_f` | `composite` | `reg<f32>.real` | `f32.real` | 1 | the register's value |
 | F229 | `reg.set_f` | `composite` | `reg<f32>.real f32.real` | `stmt.stmt` | 2 | name = value; |
 | F230 | `reg.get_v` | `composite` | `reg<vec4<f32>>.real` | `vec4<f32>.real` | 1 | the register's value |

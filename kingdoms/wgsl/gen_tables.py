@@ -47,32 +47,6 @@ FORMS = {
     "unroll": ("an unroll factor, a literal from {2, 4, 8}", ["u32"]),
 }
 
-FALLBACK = {
-    "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
-    "code4": "0u", "code8": "0u", "code16": "0u", "code1024": "0u", "bits": "0u", "hash32": "0u",
-    "hash64": "vec2(0u, 0u)", "flag": "false", "sign": "true (+1)", "opaque": "the slot's zero", "store": "no-op, codon masked",
-    "<form of T>": "the element's fallback",
-    # The renderer gives a statement-level fallback leaf its meaning: an empty
-    # kernel, the 16 x 16 x 1 x 1 grid, an empty block, an empty statement, the
-    # smallest literal, the first register, the first workgroup array.
-    "kernel": "an empty kernel", "grid": "16 x 16, 1 x 1", "block": "empty", "stmt": "empty",
-    "wgdim": "4u", "blk": "1u", "unroll": "2u",
-}
-
-# The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
-# repeat the lane, so one number suffices. Only `sign` (true = +1) is non-zero. `store` substitutes
-# nothing (fallback_noop = 1; every substitution counts the codon as masked, so that word is not
-# reused here) and `array<T>` defers to its element (fallback_elem = 1); their bits are placeholders
-# the loader must not read before testing those two columns.
-FALLBACK_BITS = {
-    "real": 0, "int": 0, "q15_16": 0, "q15_16w": 0, "index": 0, "count": 0,
-    "code4": 0, "code8": 0, "code16": 0, "code1024": 0, "bits": 0, "hash32": 0,
-    "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
-    "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
-}
-assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
-
-
 def slot_name(scalar: str, lanes: int) -> str:
     return scalar if lanes == 1 else f"vec{lanes}<{scalar}>"
 
@@ -129,12 +103,10 @@ def literal_domain(slot, form):
 
 
 def build_types():
-    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning, literal)
+    rows = []  # (ref, dual, slot, form, lanes, meaning, literal)
 
     def add(slot, form, lanes, meaning):
-        noop = int(form == "store")
-        elem = int(slot == "array<T>")
-        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning, literal_domain(slot, form)))
+        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, meaning, literal_domain(slot, form)))
 
     for form, (meaning, scalars) in FORMS.items():
         if form in ("wgdim", "blk", "unroll"):
@@ -344,7 +316,7 @@ f("loop", "tile", "composite", ["u32.wgdim", "block.block"], "stmt.stmt", "for (
 f("builtin", "item", "composite", [], "u32.index", "t, the item loop's index; 0u outside it")
 f("builtin", "tile", "composite", [], "u32.index", "k, the tile loop's index; 0u outside it")
 for name, dual in [("f0", "reg<f32>.real"), ("f1", "reg<f32>.real"), ("f2", "reg<f32>.real"), ("f3", "reg<f32>.real"), ("v0", "reg<vec4<f32>>.real"), ("v1", "reg<vec4<f32>>.real"), ("i0", "reg<u32>.index"), ("i1", "reg<u32>.index"), ("i2", "reg<u32>.index"), ("i3", "reg<u32>.index"), ("b0", "reg<bool>.flag")]:
-    f("reg", name, "composite", [], dual, "a register, declared at the top of the kernel and initialised to its form's fallback")
+    f("reg", name, "composite", [], dual, "a register, declared at the top of the kernel and initialised to its form's zero")
 for suffix, reg, val in [("f", "reg<f32>.real", "f32.real"), ("v", "reg<vec4<f32>>.real", "vec4<f32>.real"), ("i", "reg<u32>.index", "u32.index"), ("b", "reg<bool>.flag", "bool.flag")]:
     f("reg", f"get_{suffix}", "composite", [reg], val, "the register's value")
     f("reg", f"set_{suffix}", "composite", [reg, val], "stmt.stmt", "name = value;")
@@ -393,7 +365,7 @@ def write_tsv(path, header, rows):
 
 def main():
     types = build_types()
-    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning", "literal"], types)
+    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "meaning", "literal"], types)
     frows = [(f"F{i + 1:03d}", c, inst, naga, " ".join(ins) if ins else "-", out, len(ins), note) for i, (c, inst, naga, ins, out, note) in enumerate(FUNCTIONS)]
     write_tsv(os.path.join(HERE, "functions.tsv"), ["ref", "class", "instance", "naga", "in", "out", "arity", "note"], frows)
 
@@ -404,11 +376,9 @@ def main():
         md.write("## Forms\n\n| form | meaning | legal scalar slots |\n|---|---|---|\n")
         for form, (meaning, scalars) in FORMS.items():
             md.write(f"| `{form}` | {meaning} | {', '.join(scalars) if scalars else 'see duals'} |\n")
-        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | noop | elem | literal |\n|---|---|---|---|---|---|---|---|---|---|\n")
-        for ref, dual, slot, form, lanes, fb, bits, noop, elem, _, lit in types:
-            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} | `{lit}` |\n")
-        md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
-        md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
+        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | literal |\n|---|---|---|---|---|---|\n")
+        for ref, dual, slot, form, lanes, _, lit in types:
+            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{lit}` |\n")
         md.write("\nThe `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a gene carries a value's bits exactly.\n")
         md.write("\n## Not in the table\n\nAtomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 

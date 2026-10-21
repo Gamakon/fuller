@@ -24,8 +24,9 @@ pub struct Tree {
     pub kids: Vec<Tree>,
 }
 
-/// The `own.*` terminal of a dual: the real terminal a dual has when nothing else is drawn for it (the thread's
-/// own row, an empty block, the default grid). A dual with none is our software's bug, and said so.
+/// The `own.*` terminal of a dual, the row a structure names (the thread's own row, an empty block, the default
+/// grid): the reader's empty block and the checker's module kids. It is a named row, not a draw. A dual with none
+/// is our software's bug, and said so.
 pub fn own_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
     kingdom
         .rows
@@ -36,7 +37,7 @@ pub fn own_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
 }
 
 /// A real terminal of a dual for a draw that has nothing else to put there, each a row of the kingdom. A value dual:
-/// its `own.*` terminal, else its `const.*` row at the dual's neutral value (`fallback_bits` of `types.tsv`: 0, or 1 for
+/// its `own.*` terminal, else its `const.*` row at the dual's neutral value (`WgslDual::own_bits`: 0, or 1 for
 /// the sign), else its `literal.*` row at the member of its domain nearest that value, else its first terminal row (a
 /// register, a builtin, a counter). A statement or block dual: its `own.*` terminal, else the row that makes it of
 /// a block's `own.*` terminal (`stmt.block_L0` of the empty block): a statement row with an effect (a return, a
@@ -52,7 +53,7 @@ pub fn terminal_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
                 .find_map(|r| own_leaf(kingdom, r.inputs[0]).ok().map(|o| Tree::new(&r.name, ty, vec![o])))
                 .ok_or(bug);
         }
-        let neutral = f64::from(d.fallback_bits);
+        let neutral = f64::from(d.own_bits());
         let of_dual = |prefix: &str| kingdom.rows.iter().find(|r| r.name.starts_with(prefix) && r.inputs.is_empty() && r.output == ty);
         if let Some(r) = of_dual("const.") {
             return Ok(Tree::literal(&r.name, ty, neutral));
@@ -238,7 +239,7 @@ impl Role {
             }
         }
         let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), structs, more_uniforms, entry: "main".into(), entries: vec!["main".into()] };
-        role.items = role.field("m");
+        role.items = role.field("m").unwrap_or_default();
         let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
         let (i, o) = (input, output);
         // The kingdom's Gram rows (phi, h, the fields' roles) for an interface
@@ -249,11 +250,15 @@ impl Role {
             pk("load.phi4", &["u32.index"], "vec4<f32>.real", format!("vec4<f32>({i}[{{0}}], {i}[{{0}} + 1u], {i}[{{0}} + 2u], {i}[{{0}} + 3u])")),
             pk("load.h", &["u32.index"], "f32.real", format!("{o}[{{0}}]")),
             pk("store.h", &["u32.index", "f32.real"], "stmt.stmt", format!("{o}[{{0}}] = {{1}};")),
-            pk("load.cfg_d", &[], "u32.count", role.field("d")),
-            pk("load.cfg_m", &[], "u32.count", role.field("m")),
-            pk("load.cfg_r_rows", &[], "u32.count", role.field("r_rows")),
-            pk("load.cfg_r_off", &[], "u32.index", role.field("r_off")),
         ] };
+        // (A row that reads a field the interface's uniform has: its own field's text, never a name it does not declare.)
+        for (name, output, field) in [("load.cfg_d", "u32.count", "d"), ("load.cfg_m", "u32.count", "m"), ("load.cfg_r_rows", "u32.count", "r_rows"), ("load.cfg_r_off", "u32.index", "r_off")] {
+            if !role.per_kernel.is_empty() {
+                if let Ok(text) = role.field(field) {
+                    role.per_kernel.push(pk(name, &[], output, text));
+                }
+            }
+        }
         // A storage atomic the interface declares (`atomic<u32>` or
         // `atomic<i32>` in a read_write buffer): its read-modify-writes, each
         // returning the old value, as per-kernel rows `atomic.<name>_<fun>`.
@@ -467,10 +472,12 @@ pub fn atomic_array_access(b: &Binding) -> Option<(&'static str, String)> {
 
 impl Role {
     /// The text of the uniform field with the kingdom's role `role` (`d`,
-    /// `m`, `r_rows`, `r_off`): `cfg.d`, `p.nc`.
-    pub fn field(&self, role: &str) -> String {
-        let name = self.fields.iter().find(|f| f.role == role).map_or(role, |f| f.name.as_str());
-        format!("{}.{name}", self.uniform_var)
+    /// `m`, `r_rows`, `r_off`): `cfg.d`, `p.nc`. An interface without such a field spells no row that reads it
+    /// ([`role_spells`]); asked for one, it is our software's bug, and said so (it was written as the bare role name,
+    /// `cfg.d`, a name the module does not declare).
+    pub fn field(&self, role: &str) -> Result<String, String> {
+        let f = self.fields.iter().find(|f| f.role == role).ok_or_else(|| format!("our software has a bug: the interface {} has no uniform field of role {role} (render::role_spells withholds the rows that read it)", self.name))?;
+        Ok(format!("{}.{}", self.uniform_var, f.name))
     }
 
     /// The bound check of a thread's own cell (row, column).
@@ -1331,13 +1338,21 @@ impl<'a> Renderer<'a> {
         Renderer { kingdom, table, role, per_kernel: role.per_kernel.iter().map(|p| ((p.name.as_str(), p.inputs.len()), p)).collect(), joint_wg: std::cell::RefCell::new(None) }
     }
 
+    /// The item loop's bound, the interface's field of role `m`.
+    fn items_bound(&self) -> Result<&str, String> {
+        if self.role.items.is_empty() {
+            return Err(format!("our software has a bug: an item loop under the interface {}, which has no item-count field (render::role_spells withholds the rows that read it)", self.role.name));
+        }
+        Ok(&self.role.items)
+    }
+
     fn dual(&self, ty: Ty) -> Result<&WgslDual, String> {
         self.kingdom.dual(ty).ok_or_else(|| format!("{ty:?} is not a dual of the kingdom"))
     }
 
     /// Render a whole kernel: the root must be `kernel.entry` or a
-    /// `fallback` of the kernel dual (an empty kernel), or a module of
-    /// several entry points (`kernel.module_N`, or its fallback: an empty
+    /// `own terminal` of the kernel dual (an empty kernel), or a module of
+    /// several entry points (`kernel.module_N`, or its own terminal: an empty
     /// kernel at each), one per entry point the interface names, in its
     /// order; the bindings, the workgroup arrays and the helpers written
     /// once for the module.
@@ -1416,7 +1431,7 @@ impl<'a> Renderer<'a> {
     }
 
     /// One entry point named `name` from a safe kernel root (`kernel.entry`,
-    /// `kernel.entry_safe` or a fallback of either): its function's text,
+    /// `kernel.entry_safe` or an own terminal of either): its function's text,
     /// the workgroup arrays it declares, the helpers it calls.
     fn entry(&self, root: &Tree, name: &str) -> Result<EntryText, String> {
         // Every knob reference written as the value its kernel's knobs give.
@@ -1819,8 +1834,8 @@ impl<'a> Renderer<'a> {
                 let (row, col) = if safe_base(&kids[0].name) == "safe.cell_of" && kids[0].kids.len() == 2 {
                     (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
                 } else {
-                    // A fallback cell is the thread's own first cell.
-                    (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
+                    // An own terminal cell is the thread's own first cell.
+                    (self.own_text("u32.threadrow", scope)?.unwrap_or_default(), self.own_text("u32.threadcol", scope)?.unwrap_or_default())
                 };
                 let (guard, h) = (self.role.guard_text(&row, &col), &self.role.output);
                 Ok(format!("    if ({guard}) {{ {h}[{cell}] = {h}[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
@@ -1835,7 +1850,7 @@ impl<'a> Renderer<'a> {
                 let (row, col) = if safe_base(&kids[0].name) == "safe.mirror_of" && kids[0].kids.len() == 2 {
                     (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
                 } else {
-                    (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
+                    (self.own_text("u32.threadrow", scope)?.unwrap_or_default(), self.own_text("u32.threadcol", scope)?.unwrap_or_default())
                 };
                 let (guard, h) = (self.role.guard_text(&row, &col), &self.role.output);
                 Ok(format!("    if ({guard}) {{ {h}[{cell}] = {h}[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
@@ -2042,16 +2057,18 @@ impl<'a> Renderer<'a> {
             }
             "loop.items" => {
                 n(1)?;
+                let items = self.items_bound()?;
                 if scope.in_items {
                     return Err("loop.items nested in loop.items".into());
                 }
                 scope.in_items = true;
                 let body = self.block(&kids[0], scope);
                 scope.in_items = false;
-                Ok(format!("    for (t = 0u; t < {}; t = t + 1u) {{\n{}    }}\n", self.role.items, body?))
+                Ok(format!("    for (t = 0u; t < {}; t = t + 1u) {{\n{}    }}\n", items, body?))
             }
             "loop.items_unrolled" => {
                 n(2)?;
+                let items = self.items_bound()?;
                 if scope.in_items {
                     return Err("loop.items_unrolled nested in loop.items".into());
                 }
@@ -2064,17 +2081,17 @@ impl<'a> Renderer<'a> {
                     // A body that returns runs once; unrolling it would put
                     // the step after the return. One that continues would
                     // skip the later copies and the counter's reset.
-                    return Ok(format!("    for (t = 0u; t < {}; t = t + 1u) {{\n{body}    }}\n", self.role.items));
+                    return Ok(format!("    for (t = 0u; t < {}; t = t + 1u) {{\n{body}    }}\n", items));
                 }
                 // The body repeated with `t` stepped inside the iteration, then the remainder.
-                let mut out = format!("    for (t = 0u; t + {u}u <= {m}; t = t + {u}u) {{\n", m = self.role.items);
+                let mut out = format!("    for (t = 0u; t + {u}u <= {m}; t = t + {u}u) {{\n", m = items);
                 for j in 0..u {
                     if j > 0 {
                         out.push_str("        t = t + 1u;\n");
                     }
                     out.push_str(&body);
                 }
-                out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {m}; t = t + 1u) {{\n{body}    }}\n", u - 1, m = self.role.items));
+                out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {m}; t = t + 1u) {{\n{body}    }}\n", u - 1, m = items));
                 Ok(out)
             }
             "loop.tile" => {
@@ -2188,6 +2205,18 @@ impl<'a> Renderer<'a> {
 /// load.phi4_safe under v24's role and rendered `vec4<f32>([i], ...)`,
 /// 2026-10-17).
 pub fn role_spells(kingdom: &WgslKingdom, role: &Role, r: &WgslRow) -> bool {
+    // A row that reads a field of the uniform the kingdom names by role (`cfg.m`, `cfg.d`, `cfg.r_rows`, `cfg.r_off`) is
+    // spelled by an interface whose uniform has that field.
+    let field = match r.name.as_str() {
+        "uniform.cfg_m" | "bound.m" | "load.cfg_m" => Some("m"),
+        "uniform.cfg_d" | "bound.d" | "load.cfg_d" => Some("d"),
+        "uniform.cfg_r_rows" | "bound.rows" | "load.cfg_r_rows" => Some("r_rows"),
+        "uniform.cfg_r_off" | "load.cfg_r_off" => Some("r_off"),
+        _ => None,
+    };
+    if field.is_some_and(|f| role.field(f).is_err()) {
+        return false;
+    }
     if role.per_kernel.iter().any(|p| p.name == "store.h") {
         return true;
     }
@@ -2349,7 +2378,7 @@ pub fn array_dual_of_row(row: &str) -> Option<&'static str> {
     array_names().rows.iter().find(|(_, rows)| rows.contains(&row)).map(|(d, _)| *d)
 }
 
-/// A workgroup array leaf's variable name; a fallback leaf names the
+/// A workgroup array leaf's variable name; an own terminal leaf names the
 /// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
 /// regardless — a vec4 value stored into the f32 array was a compile
 /// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
@@ -2530,7 +2559,7 @@ impl Renderer<'_> {
         let name = v.name.as_str();
         // The leaves of a literal-only operation pass through `lit_*`.
         let wrap = scope.const_depth > 0;
-        // A fallback where a thread's row, column or cell is demanded is the
+        // An own terminal where a thread's row, column or cell is demanded is the
         // thread's own (its block's origin): a constant would make every
         // thread store to one cell, a data race (the legality checker: 415
         // of 1,000 random genes, 2026-10-12).
@@ -2561,10 +2590,10 @@ impl Renderer<'_> {
                 "u32.colid" => return self.value(&Tree::new("axis.x_gid", v.ty, vec![gid()?]), scope),
                 _ => {}
             }
-            if let Some(own) = self.own_fallback(&d.dual, scope)? {
+            if let Some(own) = self.own_text(&d.dual, scope)? {
                 return Ok(own);
             }
-            return self.fallback_value(d, wrap);
+            return self.own_value_text(d, wrap);
         }
         // A `const.*` row (the typed-GEP plan's constants of the duals no literal reaches): the literal text of its dual's form.
         if name.starts_with("const.") {
@@ -2716,9 +2745,9 @@ impl Renderer<'_> {
             // Every loop bound a gene computes is capped (2026-10-12, Codex's
             // review): a uniform one too, so no loop runs past MAX_LOOP_TRIP.
             "bound.of_uniform" | "bound.x_of_uniform" => return Ok(format!("min(({}), {MAX_LOOP_TRIP}u)", self.value(&v.kids[0], scope)?)),
-            "bound.m" => return Ok(self.role.field("m")),
-            "bound.d" => return Ok(self.role.field("d")),
-            "bound.rows" => return Ok(self.role.field("r_rows")),
+            "bound.m" => return self.role.field("m"),
+            "bound.d" => return self.role.field("d"),
+            "bound.rows" => return self.role.field("r_rows"),
             // A loop's counter is its loop's: outside the loop it is 0u, as
             // the rows say (written `t` it read the last loop's exit value,
             // 852 of 1,000 random genes, 2026-10-12).
@@ -2768,7 +2797,7 @@ impl Renderer<'_> {
                 // The groups are the ORIGIN's (2026-10-12): an offset over
                 // another count of groups than its origin's left the thread's
                 // block (lid scaled by B / G for one G, offsets up to B / G' - 1
-                // for another: two threads' cells). A fallback origin is the
+                // for another: two threads' cells). An own terminal origin is the
                 // strided one, B groups of one cell.
                 let origin = &v.kids[0];
                 let g = if matches!(safe_base(&origin.name), "safe.thread_row_g" | "safe.thread_col_g") && origin.kids.len() == 4 { self.lit(&origin.kids[3], 64)? } else { blk.max(1) };
@@ -2796,18 +2825,13 @@ impl Renderer<'_> {
             "safe.cell_of" => {
                 let r = self.value(&v.kids[0], scope)?;
                 let c = self.value(&v.kids[1], scope)?;
-                return Ok(format!("(({r}) * {} + ({c}))", self.role.field("d")));
+                return Ok(format!("(({r}) * {} + ({c}))", self.role.field("d")?));
             }
             // The mirror of the thread's cell: column * d + row (the symmetric half).
             "safe.mirror_of" => {
                 let r = self.value(&v.kids[0], scope)?;
                 let c = self.value(&v.kids[1], scope)?;
-                return Ok(format!("(({c}) * {} + ({r}))", self.role.field("d")));
-            }
-            "safe.phi_of" => {
-                let t = self.value(&v.kids[0], scope)?;
-                let c = self.value(&v.kids[1], scope)?;
-                return Ok(format!("(({t}) * {} + ({c}))", self.role.field("d")));
+                return Ok(format!("(({c}) * {} + ({r}))", self.role.field("d")?));
             }
             "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
             // This thread's k-th element of a workgroup array: lidx + k * threads
@@ -2903,7 +2927,7 @@ impl Renderer<'_> {
         // (A literal seen through the rows written as their one child, a
         // uniform's `uniform.of_lit` and `index.of_uniform` (no other row: a
         // conversion changes the value, `u32(max(-3, 0))` is 0), and the zero
-        // a fallback leaf writes:
+        // an own terminal leaf writes:
         // `wid.y / max(1u, 1u)` read back from naga's folded `max(0u, 1u)`
         // was not a fixpoint, 5 of 1,000 random modules, 2026-10-17.)
         fn literal_through(t: &Tree) -> Option<f64> {
@@ -2918,7 +2942,7 @@ impl Renderer<'_> {
             // (A divisor of literal 0 through lit_*: naga folds max(0u, 1u)
             // to 1u, read back as a division by 1, 2026-10-13. Any other
             // literal folds to itself, read back the same.)
-            // (A zero under any one-child rows, or a fallback's zero, written
+            // (A zero under any one-child rows, or an own terminal's zero, written
             // through lit_* so naga folds none of it.)
             fn zero(t: &Tree) -> bool {
                 (t.kids.is_empty() && ((t.name.starts_with("literal.") && t.konst == 0.0) || t.name.starts_with("own."))) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
@@ -3206,40 +3230,15 @@ impl Renderer<'_> {
         Ok(scalar)
     }
 
-    fn fallback_value(&self, d: &WgslDual, wrap: bool) -> Result<String, String> {
-        if d.is_statement_level() {
-            return Err(format!("a {} fallback where a value is needed", d.dual));
-        }
-        // The zero-value constructor for a vector or matrix; a scalar through
-        // lit_* only inside a literal-only expression. An i32 zero is the
-        // concrete `0i`, as a literal is written (an abstract `0` read back
-        // as another value than the literal 0i wrote; 2026-10-13).
+    /// The text of an `own.*` row over a scalar dual: the value the row declares (`WgslDual::own_bits`): `1u`, `0u` or
+    /// `false`. A statement-level dual has its own text elsewhere; an own row of any other dual is our software's bug.
+    fn own_value_text(&self, d: &WgslDual, wrap: bool) -> Result<String, String> {
         let f = |x: String, lit: &str| if wrap { format!("{lit}({x})") } else { x };
-        if d.slot.starts_with("vec") || d.slot.starts_with("mat") {
-            if d.scalar() == Some("f16") {
-                return Err("f16 fallback: the prologue does not enable f16".into());
-            }
-            let lane = match d.scalar() {
-                Some("f32") => f("0.0f".to_string(), "lit_f32"),
-                Some("i32") => f("0i".to_string(), "lit_i32"),
-                Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-                Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
-                _ => return Err(format!("{}: no value fallback", d.dual)),
-            };
-            if let Some((c, r)) = d.matrix_shape() {
-                let col = format!("vec{r}<f32>({lane})");
-                return Ok(format!("{}({})", slot_ctor(&d.slot)?, vec![col; c as usize].join(", ")));
-            }
-            return Ok(format!("{}({lane})", slot_ctor(&d.slot)?));
+        match (d.slot.as_str(), d.scalar()) {
+            ("u32", Some("u32")) => Ok(f(format!("{}u", d.own_bits()), "lit_u32")),
+            ("bool", Some("bool")) => Ok(f((d.own_bits() != 0).to_string(), "lit_bool")),
+            _ => Err(format!("our software has a bug: the own row of {} has no value text", d.dual)),
         }
-        Ok(match d.scalar() {
-            Some("f32") => f("0.0f".to_string(), "lit_f32"),
-            Some("f16") => return Err("f16 fallback: the prologue does not enable f16".into()),
-            Some("i32") => f("0i".to_string(), "lit_i32"),
-            Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-            Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
-            _ => return Err(format!("{}: no value fallback", d.dual)),
-        })
     }
 }
 
@@ -3279,7 +3278,7 @@ pub fn cost(t: &Tree) -> Cost {
     fn walk(t: &Tree, tile: f64, in_items: bool) -> (f64, f64) {
         let own = node_cost(&t.name) * tile;
         let (mut base, mut per_item) = if in_items { (0.0, own) } else { (own, 0.0) };
-        // A bounded literal as the renderer snaps it (1..=max), 1 for a fallback.
+        // A bounded literal as the renderer snaps it (1..=max), 1 for an own terminal.
         let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { k.konst.round().clamp(1.0, max) } else { 1.0 });
         match safe_base(&t.name) {
             "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" | "loop.items_cont_bounded" => {
@@ -3528,7 +3527,7 @@ pub fn safe_base(name: &str) -> &str {
 }
 
 impl Renderer<'_> {
-    /// A private array leaf's variable name; a fallback leaf names the array
+    /// A private array leaf's variable name; an own terminal leaf names the array
     /// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
     /// An array's index as text: a masked literal (`pv[((lit_u32(0u)) & 15u)]`
     /// before 2026-10-11) is folded on the host into a plain literal inside
@@ -3562,10 +3561,10 @@ impl Renderer<'_> {
         self.value(idx, scope)
     }
 
-    /// The thread's own row, column or cell for a fallback of those duals
+    /// The thread's own row, column or cell for an own terminal of those duals
     /// (the origin of its block: `gid * blk`, or for a strided or grouped
     /// block `wid * (W * blk) + lid`); None for any other dual.
-    fn own_fallback(&self, dual: &str, scope: &mut Scope) -> Result<Option<String>, String> {
+    fn own_text(&self, dual: &str, scope: &mut Scope) -> Result<Option<String>, String> {
         let ty = |n: &str| dual_ty(self.kingdom, n);
         let row = |name: &str, d: &str| -> Result<Tree, String> { Ok(Tree::new(name, ty(d)?, vec![])) };
         let tree = match dual {
@@ -3586,13 +3585,13 @@ impl Renderer<'_> {
     }
 }
 
-/// A private array leaf's variable name; a fallback leaf names the array
+/// A private array leaf's variable name; an own terminal leaf names the array
 /// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
 pub fn parr_var(t: &Tree) -> Result<&'static str, String> {
     parr_name(t)
 }
 
-/// Whether every leaf of `t` is a literal or a fallback (a constant expression to naga).
+/// Whether every leaf of `t` is a literal or an own terminal (a constant expression to naga).
 fn literal_only(t: &Tree) -> bool {
     if t.kids.is_empty() {
         return t.name.starts_with("literal.") || t.name.starts_with("const.") || t.name.starts_with("own.");
@@ -3620,7 +3619,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 }
 
 /// The declarations every rendered kernel opens with (registers initialised
-/// to their form's fallback, the loop counters, the private arrays).
+/// to their form's own terminal, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
     for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 16, "vec4<u32>", "vec4<u32>(0u)"), ("w", 16, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 4, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 4, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 4, "mat4x4<f32>", "mat4x4<f32>()")].into_iter().map(|(p, n, t, i)| (p.to_string(), n, t.to_string(), i.to_string())).chain(EXTRA_REGISTERS.iter().map(|x| (x.letter.to_string(), x.count, x.slot.to_string(), format!("{}()", x.slot)))) {
@@ -3899,7 +3898,7 @@ pub const COMPOSITES: &[(&str, &str)] = &[
 
 /// A random typed tree over the kingdom's rows plus the role's: the demand
 /// is met by a row whose output is the dual, functions while depth allows,
-/// terminals at the limit; a dual with no terminal row gets a `fallback`
+/// terminals at the limit; a dual with no terminal row gets a `own terminal`
 /// leaf, as the typed projection would substitute. Deterministic in `seed`.
 /// What a subtree the sampler draws must read.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3923,7 +3922,7 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
 /// priced at its worst shape): while the kernel's [`cost`] is over `bound`,
 /// the top-level statement whose removal lowers the cost most is drawn
 /// again in place (its dual and depth), up to 16 times, then left as its
-/// fallback; the epilogue's last statement is drawn again at the depth cap,
+/// own terminal; the epilogue's last statement is drawn again at the depth cap,
 /// so the kernel keeps its store. Nothing the kingdom allows is forbidden.
 pub fn sample_within(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: &Cost) -> Result<Tree, String> {
     sample_with(kingdom, role, root, max_depth, seed, Some(bound), Shape::Free)
@@ -4000,7 +3999,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     let parr128 = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "parr128<u32>.index" || d.dual == "u32.pindex128"));
     let extra_reg = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| EXTRA_REGISTERS.iter().any(|x| x.dual == d.dual)));
     // (Nor the terminals of the typed-GEP plan, 2026-10-19, docs/PLAN_wgsl_terminals.md: an `own` row is the leaf this
-    // sampler already writes as a fallback, and a literal of a vector, a matrix, a codebook entry, a hash, a fixed-point
+    // sampler already writes as an own terminal, and a literal of a vector, a matrix, a codebook entry, a hash, a fixed-point
     // value or an opaque one is a row for a gene's tail; drawn, they move the random floors by draws alone.)
     let new_terminal = |r: &WgslRow| r.name.starts_with("own.") || r.name.starts_with("const.");
     // (Nor the quad gathers, 2026-10-20: rows for the harvest's kernels; drawn, they move the random floors by draws alone.)
@@ -4031,7 +4030,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         }
     }
     // THE INPUT AND THE OUTPUT (2026-10-13: 5 of 1,000 random kernels stored
-    // a value that read an input; 524 ended in the fallback store of f0,
+    // a value that read an input; 524 ended in the own terminal store of f0,
     // never written). An input read is a row that indexes a read-only
     // storage binding of the role (its per-kernel load, or the kingdom's
     // `load.<binding>` rows); an output store a row that stores to the role's
@@ -4103,7 +4102,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         /// kernel's first cell was drawn with (its row kind and column kind:
         /// plain, strided or grouped), which every later cell of the kernel
         /// takes, and the grouped origins' group counts (row, column); the
-        /// plain cell's row, which a fallback cell renders. Two store sites
+        /// plain cell's row, which an own terminal cell renders. Two store sites
         /// through a block of one kind and of another write one cell from
         /// two threads (126 of 148 write_sets_overlap of 1,000 random
         /// kernels, the checker's layer 7).
@@ -4123,7 +4122,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
 
         /// The depth a comparison's second operand is drawn again at: its
         /// own, then (after four draws equal to the first, a leaf at the cap
-        /// with no other: a fallback, the workgroup count) two levels up, so
+        /// with no other: an own terminal, the workgroup count) two levels up, so
         /// it can be an expression.
         fn redraw_depth(&self, depth: usize, attempt: usize) -> usize {
             if attempt < 4 {
@@ -4267,7 +4266,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         /// a cell is drawn with the kernel's cell row once there is one (at
         /// the depth cap too, its kids then leaves), the first fixes it; a
         /// grouped origin takes the kernel's group count on its axis, the
-        /// first fixes it (a fallback origin is the strided block, every
+        /// first fixes it (an own terminal origin is the strided block, every
         /// cell a group: the most groups).
         fn grow(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
             if self.cell_ty == Some(demand) {
@@ -4297,7 +4296,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                 Some("u32.threadcolg" | "u32.colbaseg") => 1,
                 _ => return t,
             };
-            // (A fallback origin under a group count already drawn: the
+            // (An own terminal origin under a group count already drawn: the
             // grouped origin itself, its kids leaves at the cap.)
             let origin = if axis == 0 { "safe.thread_row_g" } else { "safe.thread_col_g" };
             if t.name.starts_with("own.") && self.groups.borrow()[axis].is_some() {
@@ -4313,7 +4312,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                     None => groups[axis] = Some(t.kids[3].clone()),
                 }
             } else if t.name.starts_with("own.") && groups[axis].is_none() {
-                // (The strided block a fallback origin renders: every cell a group.)
+                // (The strided block an own terminal origin renders: every cell a group.)
                 let lit = self.rows.iter().find(|r| r.name == origin).and_then(|r| r.inputs.get(3).copied());
                 groups[axis] = lit.map(|ty| Tree::literal("literal.lit64", ty, 64.0));
             }
@@ -5020,9 +5019,9 @@ mod tests {
         assert_eq!(reads, 0, "random safe kernels reading h at any index");
     }
 
-    /// A FALLBACK CELL IS THE THREAD'S OWN (2026-10-12; the legality checker
+    /// AN OWN CELL IS THE THREAD'S OWN (2026-10-12; the legality checker
     /// found 415 of 1,000 random genes storing every thread to cell 0, a
-    /// data race): a fallback of u32.cell, u32.threadrow or u32.threadcol
+    /// data race): an own terminal of u32.cell, u32.threadrow or u32.threadcol
     /// renders the thread's own first row, column and cell, the store's
     /// guard included.
     #[test]
@@ -5155,7 +5154,7 @@ mod tests {
             ("set_v", Tree::new("reg.set_v", stmt, vec![Tree::new("reg.v1", ty("reg<vec4<f32>>.real"), vec![]), Tree::new("load.phi4", ty("vec4<f32>.real"), vec![lit_i(4.0)])])),
             ("set_i", Tree::new("reg.set_i", stmt, vec![Tree::new("reg.i3", ty("reg<u32>.index"), vec![]), Tree::new("shape.access_2", index, vec![Tree::new("builtin.num_workgroups", ty("vec3<u32>.count"), vec![])])])),
             ("set_b", Tree::new("reg.set_b", stmt, vec![Tree::new("reg.b0", ty("reg<bool>.flag"), vec![]), Tree::new("logic.is_nan", flag, vec![lit_f(0.0)])])),
-            ("fallback stmt", own(&k, stmt)),
+            ("own stmt", own(&k, stmt)),
         ];
         let rr = Renderer::new(&k, &t, &r);
         let grid = own(&k, ty("grid.grid"));
@@ -5177,7 +5176,7 @@ mod tests {
         // (64 x 64 runs as 64 x 16; until 2026-10-12 each axis snapped to {4, 8, 16, 32}).
         let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), own(&k, ty("u32.blk")), own(&k, ty("u32.blk"))]), one(set_f())]);
         assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1, rows_x: false });
-        // An empty kernel (the root's fallback) is a kernel.
+        // An empty kernel (the root's own terminal) is a kernel.
         let empty = rr.kernel(&own(&k, ty("kernel.kernel"))).unwrap();
         validate_text(&empty.text).unwrap();
     }
@@ -5269,7 +5268,7 @@ mod tests {
             if k.dual(row.output).unwrap().scalar() == Some("f16") || row.inputs.iter().any(|i| k.dual(*i).unwrap().scalar() == Some("f16")) {
                 continue; // the prologue does not enable f16
             }
-            // The value, its children literal fallbacks of their duals, assigned
+            // The value, its children literal own terminals of their duals, assigned
             // to a register through a conversion that the value's own dual permits.
             let kids: Vec<Tree> = row.inputs.iter().map(|&i| own(&k, i)).collect();
             let value = Tree::new(&row.name, row.output, kids);
@@ -5379,7 +5378,7 @@ mod tests {
         let again = rr.kernel(&whole).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(again.text, out.text);
         crate::wgsl::check::Checker::new(&k, &r, &crate::wgsl::target::Target::recorded()).check(&whole).unwrap_or_else(|e| panic!("{e}"));
-        // A thread's own cell and row are the text the fallback leaf writes, and a thread id's axis is its builtin.
+        // A thread's own cell and row are the text the own terminal leaf writes, and a thread id's axis is its builtin.
         let store = |cell: Tree| Tree::new("store.h_O0", ty("stmt.O0"), vec![cell, Tree::literal("literal.real", ty("f32.real"), 1.0)]);
         let epilogue = |cell: Tree| Tree::new("block.one_O0", ty("block.O0"), vec![store(cell)]);
         let with = |cell: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own("own.grid_grid", "grid.grid", 0.0), own("own.block_L0", "block.L0", 0.0), epilogue(cell)]);
