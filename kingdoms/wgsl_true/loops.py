@@ -26,9 +26,14 @@ def declare(iface):
         decl(f"var U{n}: u32 = 0u;")
 
 
-def loop_text(d1, divergent, bound="{0}", stride="1u", body="{1}"):
+def loop_text(d1, divergent, bound="{0}", stride=None, body="{1}"):
+    """A counted loop. naga writes a `for` with a continuing step as `while(true) { if (!loop_init) { k = k + 1 } ... }`, and
+    Apple's compiler hangs the dispatch on that form (docs/reports/2026-10-21_metal_hang_k2), so the step is the first
+    statement of a plain `loop`: the counter starts at -1 (or 0 - stride) and a `continue` still takes the step."""
     n, k = (f"nx{d1}", f"kx{d1}") if divergent else (f"n{d1}", f"k{d1}")
-    return f"{n} = {bound}; {k} = 0u; for (; {k} < {n}; {k} = {k} + {stride}) {{ {body} }}"
+    if stride is None:
+        return f"{n} = {bound}; {k} = 4294967295u; loop {{ {k} = {k} + 1u; if ({k} >= {n}) {{ break; }} {body} }}"
+    return f"{{ let st = {stride}; {n} = {bound}; {k} = 0u - st; loop {{ {k} = {k} + st; if ({k} >= {n}) {{ break; }} {body} }} }}"
 
 
 def build(iface):

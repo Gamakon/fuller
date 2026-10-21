@@ -26,3 +26,10 @@ Evidence that the program is correct and the compiler/GPU is at fault:
    generation fault, not a slow program.
 
 Expected: the command buffer completes in under a millisecond. Actual: never completes.
+
+Addendum, the construct (2026-10-21): the hang needs naga's loop form with a continuing step, `bool loop_init = true; while(true) { ...;
+if (!loop_init) { k = k + 1u; } loop_init = false; if (k < n) {} else { break; } {body} }`. The same kernel with the step moved to the end of the
+body (control_no_loop_init.metal) terminates in 10 ms; a `for (uint kk = 0u; kk < n; kk++)` form terminates; local versus function-scope counters
+make no difference (hangs both ways); naga's loop_bound counters make no difference. The WGSL fix: the table spells counted loops as
+`loop { k = k + 1u; if (k >= n) { break; } body }` from k = 0xFFFFFFFF (no continuing block, so naga writes no loop_init); gene583_reduced_fixed_loop.wgsl
+terminates (VERDICT ok 301 ms through wgpu).

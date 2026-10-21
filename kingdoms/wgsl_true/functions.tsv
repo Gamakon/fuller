@@ -4111,104 +4111,104 @@ F04109	stmt.if_else_uflag_L5_f1	function	stmt.L5_f1	bool.uflag;block.L5_f1;block
 F04110	stmt.barrier_L5_f1	terminal	stmt.L5_f1		workgroupBarrier();	at L rungs only: every enclosing condition and bound is uniform by the types
 F04111	stmt.storage_barrier_L5_f1	terminal	stmt.L5_f1		storageBarrier();	a control barrier affecting the storage address space; L rungs only
 F04112	stmt.subgroup_barrier_L5_f1	terminal	stmt.L5_f1		subgroupBarrier();	present only with the subgroup-barrier feature
-F04113	loop.tile_L0_f0	function	stmt.L0_f1	u32.lit64;block.L1_f0	n1 = {0}; k1 = 0u; for (; k1 < n1; k1 = k1 + 1u) { {1} }	a literal bound raises the stratum by one
-F04114	loop.tile_strided_L0_f0	function	stmt.L0_f1	u32.lit64;u32.lit4096;block.L1_f0	n1 = {0}; k1 = 0u; for (; k1 < n1; k1 = k1 + {1}) { {2} }	the stride form
-F04115	loop.tile_C0_f0	function	stmt.C0_f1	u32.lit64;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a literal bound raises the stratum by one
-F04116	loop.tile_strided_C0_f0	function	stmt.C0_f1	u32.lit64;u32.lit4096;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + {1}) { {2} }	the stride form
-F04117	loop.tile_O0_f0	function	stmt.O0_f1	u32.lit64;block.O1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a literal bound raises the stratum by one
-F04118	loop.tile_strided_O0_f0	function	stmt.O0_f1	u32.lit64;u32.lit4096;block.O1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + {1}) { {2} }	the stride form
-F04119	loop.tile_W0_f0	function	stmt.W0_f1	u32.lit64;block.W1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a literal bound raises the stratum by one
-F04120	loop.tileu_6_L0_f0	function	stmt.L0_f1	u32.boundu6;block.L1_f0	n1 = {0}; k1 = 0u; for (; k1 < n1; k1 = k1 + 1u) { {1} }	a uniform bound: the body keeps the L rung
-F04121	loop.tileu_strided_6_L0_f0	function	stmt.L0_f1	u32.boundu6;u32.lit4096;block.L1_f0	n1 = {0}; k1 = 0u; for (; k1 < n1; k1 = k1 + {1}) { {2} }	
-F04122	loop.tilex_6_L0_f0	function	stmt.L0_f1	u32.boundx6;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04123	loop.tilex_strided_6_L0_f0	function	stmt.L0_f1	u32.boundx6;u32.lit4096;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + {1}) { {2} }	
-F04124	loop.tilex_6_C0_f0	function	stmt.C0_f1	u32.boundx6;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04125	loop.tilex_strided_6_C0_f0	function	stmt.C0_f1	u32.boundx6;u32.lit4096;block.C1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + {1}) { {2} }	
-F04126	loop.tilex_6_W0_f0	function	stmt.W0_f1	u32.boundx6w;block.W1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	
-F04127	loop.tilex_brk_6_L0_f0	function	stmt.L0_f1	u32.boundx6;block.B1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a loop that breaks binds kx
-F04128	loop.tilex_brk_6_C0_f0	function	stmt.C0_f1	u32.boundx6;block.B1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a loop that breaks binds kx
-F04129	loop.tilex_brk_6_W0_f0	function	stmt.W0_f1	u32.boundx6w;block.WB1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	
-F04130	loop.tile_brk_L0_f0	function	stmt.L0_f1	u32.lit64;block.B1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04131	loop.tile_brk_C0_f0	function	stmt.C0_f1	u32.lit64;block.B1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04132	loop.tile_brk_W0_f0	function	stmt.W0_f1	u32.lit64;block.WB1_f0	nx1 = {0}; kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) { {1} }	
-F04133	loop.tile_L1_f0	function	stmt.L1_f1	u32.lit64;block.L2_f0	n2 = {0}; k2 = 0u; for (; k2 < n2; k2 = k2 + 1u) { {1} }	a literal bound raises the stratum by one
-F04134	loop.tile_strided_L1_f0	function	stmt.L1_f1	u32.lit64;u32.lit4096;block.L2_f0	n2 = {0}; k2 = 0u; for (; k2 < n2; k2 = k2 + {1}) { {2} }	the stride form
-F04135	loop.tile_C1_f0	function	stmt.C1_f1	u32.lit64;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a literal bound raises the stratum by one
-F04136	loop.tile_strided_C1_f0	function	stmt.C1_f1	u32.lit64;u32.lit4096;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + {1}) { {2} }	the stride form
-F04137	loop.tile_O1_f0	function	stmt.O1_f1	u32.lit64;block.O2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a literal bound raises the stratum by one
-F04138	loop.tile_strided_O1_f0	function	stmt.O1_f1	u32.lit64;u32.lit4096;block.O2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + {1}) { {2} }	the stride form
-F04139	loop.tile_W1_f0	function	stmt.W1_f1	u32.lit64;block.W2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a literal bound raises the stratum by one
-F04140	loop.tileu_6_L1_f0	function	stmt.L1_f1	u32.boundu6;block.L2_f0	n2 = {0}; k2 = 0u; for (; k2 < n2; k2 = k2 + 1u) { {1} }	a uniform bound: the body keeps the L rung
-F04141	loop.tileu_strided_6_L1_f0	function	stmt.L1_f1	u32.boundu6;u32.lit4096;block.L2_f0	n2 = {0}; k2 = 0u; for (; k2 < n2; k2 = k2 + {1}) { {2} }	
-F04142	loop.tilex_6_L1_f0	function	stmt.L1_f1	u32.boundx6;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04143	loop.tilex_strided_6_L1_f0	function	stmt.L1_f1	u32.boundx6;u32.lit4096;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + {1}) { {2} }	
-F04144	loop.tilex_6_C1_f0	function	stmt.C1_f1	u32.boundx6;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04145	loop.tilex_strided_6_C1_f0	function	stmt.C1_f1	u32.boundx6;u32.lit4096;block.C2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + {1}) { {2} }	
-F04146	loop.tilex_6_W1_f0	function	stmt.W1_f1	u32.boundx6w;block.W2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	
-F04147	loop.tilex_brk_6_L1_f0	function	stmt.L1_f1	u32.boundx6;block.B2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a loop that breaks binds kx
-F04148	loop.tilex_brk_6_C1_f0	function	stmt.C1_f1	u32.boundx6;block.B2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a loop that breaks binds kx
-F04149	loop.tilex_brk_6_W1_f0	function	stmt.W1_f1	u32.boundx6w;block.WB2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	
-F04150	loop.tile_brk_L1_f0	function	stmt.L1_f1	u32.lit64;block.B2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04151	loop.tile_brk_C1_f0	function	stmt.C1_f1	u32.lit64;block.B2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04152	loop.tile_brk_W1_f0	function	stmt.W1_f1	u32.lit64;block.WB2_f0	nx2 = {0}; kx2 = 0u; for (; kx2 < nx2; kx2 = kx2 + 1u) { {1} }	
-F04153	loop.tile_L2_f0	function	stmt.L2_f1	u32.lit64;block.L3_f0	n3 = {0}; k3 = 0u; for (; k3 < n3; k3 = k3 + 1u) { {1} }	a literal bound raises the stratum by one
-F04154	loop.tile_strided_L2_f0	function	stmt.L2_f1	u32.lit64;u32.lit4096;block.L3_f0	n3 = {0}; k3 = 0u; for (; k3 < n3; k3 = k3 + {1}) { {2} }	the stride form
-F04155	loop.tile_C2_f0	function	stmt.C2_f1	u32.lit64;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a literal bound raises the stratum by one
-F04156	loop.tile_strided_C2_f0	function	stmt.C2_f1	u32.lit64;u32.lit4096;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + {1}) { {2} }	the stride form
-F04157	loop.tile_O2_f0	function	stmt.O2_f1	u32.lit64;block.O3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a literal bound raises the stratum by one
-F04158	loop.tile_strided_O2_f0	function	stmt.O2_f1	u32.lit64;u32.lit4096;block.O3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + {1}) { {2} }	the stride form
-F04159	loop.tile_W2_f0	function	stmt.W2_f1	u32.lit64;block.W3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a literal bound raises the stratum by one
-F04160	loop.tileu_6_L2_f0	function	stmt.L2_f1	u32.boundu6;block.L3_f0	n3 = {0}; k3 = 0u; for (; k3 < n3; k3 = k3 + 1u) { {1} }	a uniform bound: the body keeps the L rung
-F04161	loop.tileu_strided_6_L2_f0	function	stmt.L2_f1	u32.boundu6;u32.lit4096;block.L3_f0	n3 = {0}; k3 = 0u; for (; k3 < n3; k3 = k3 + {1}) { {2} }	
-F04162	loop.tilex_6_L2_f0	function	stmt.L2_f1	u32.boundx6;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04163	loop.tilex_strided_6_L2_f0	function	stmt.L2_f1	u32.boundx6;u32.lit4096;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + {1}) { {2} }	
-F04164	loop.tilex_6_C2_f0	function	stmt.C2_f1	u32.boundx6;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04165	loop.tilex_strided_6_C2_f0	function	stmt.C2_f1	u32.boundx6;u32.lit4096;block.C3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + {1}) { {2} }	
-F04166	loop.tilex_6_W2_f0	function	stmt.W2_f1	u32.boundx6w;block.W3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	
-F04167	loop.tilex_brk_6_L2_f0	function	stmt.L2_f1	u32.boundx6;block.B3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a loop that breaks binds kx
-F04168	loop.tilex_brk_6_C2_f0	function	stmt.C2_f1	u32.boundx6;block.B3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a loop that breaks binds kx
-F04169	loop.tilex_brk_6_W2_f0	function	stmt.W2_f1	u32.boundx6w;block.WB3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	
-F04170	loop.tile_brk_L2_f0	function	stmt.L2_f1	u32.lit64;block.B3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04171	loop.tile_brk_C2_f0	function	stmt.C2_f1	u32.lit64;block.B3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04172	loop.tile_brk_W2_f0	function	stmt.W2_f1	u32.lit64;block.WB3_f0	nx3 = {0}; kx3 = 0u; for (; kx3 < nx3; kx3 = kx3 + 1u) { {1} }	
-F04173	loop.tile_L3_f0	function	stmt.L3_f1	u32.lit64;block.L4_f0	n4 = {0}; k4 = 0u; for (; k4 < n4; k4 = k4 + 1u) { {1} }	a literal bound raises the stratum by one
-F04174	loop.tile_strided_L3_f0	function	stmt.L3_f1	u32.lit64;u32.lit4096;block.L4_f0	n4 = {0}; k4 = 0u; for (; k4 < n4; k4 = k4 + {1}) { {2} }	the stride form
-F04175	loop.tile_C3_f0	function	stmt.C3_f1	u32.lit64;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a literal bound raises the stratum by one
-F04176	loop.tile_strided_C3_f0	function	stmt.C3_f1	u32.lit64;u32.lit4096;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + {1}) { {2} }	the stride form
-F04177	loop.tile_O3_f0	function	stmt.O3_f1	u32.lit64;block.O4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a literal bound raises the stratum by one
-F04178	loop.tile_strided_O3_f0	function	stmt.O3_f1	u32.lit64;u32.lit4096;block.O4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + {1}) { {2} }	the stride form
-F04179	loop.tile_W3_f0	function	stmt.W3_f1	u32.lit64;block.W4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a literal bound raises the stratum by one
-F04180	loop.tileu_6_L3_f0	function	stmt.L3_f1	u32.boundu6;block.L4_f0	n4 = {0}; k4 = 0u; for (; k4 < n4; k4 = k4 + 1u) { {1} }	a uniform bound: the body keeps the L rung
-F04181	loop.tileu_strided_6_L3_f0	function	stmt.L3_f1	u32.boundu6;u32.lit4096;block.L4_f0	n4 = {0}; k4 = 0u; for (; k4 < n4; k4 = k4 + {1}) { {2} }	
-F04182	loop.tilex_6_L3_f0	function	stmt.L3_f1	u32.boundx6;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04183	loop.tilex_strided_6_L3_f0	function	stmt.L3_f1	u32.boundx6;u32.lit4096;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + {1}) { {2} }	
-F04184	loop.tilex_6_C3_f0	function	stmt.C3_f1	u32.boundx6;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04185	loop.tilex_strided_6_C3_f0	function	stmt.C3_f1	u32.boundx6;u32.lit4096;block.C4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + {1}) { {2} }	
-F04186	loop.tilex_6_W3_f0	function	stmt.W3_f1	u32.boundx6w;block.W4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	
-F04187	loop.tilex_brk_6_L3_f0	function	stmt.L3_f1	u32.boundx6;block.B4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a loop that breaks binds kx
-F04188	loop.tilex_brk_6_C3_f0	function	stmt.C3_f1	u32.boundx6;block.B4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a loop that breaks binds kx
-F04189	loop.tilex_brk_6_W3_f0	function	stmt.W3_f1	u32.boundx6w;block.WB4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	
-F04190	loop.tile_brk_L3_f0	function	stmt.L3_f1	u32.lit64;block.B4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04191	loop.tile_brk_C3_f0	function	stmt.C3_f1	u32.lit64;block.B4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04192	loop.tile_brk_W3_f0	function	stmt.W3_f1	u32.lit64;block.WB4_f0	nx4 = {0}; kx4 = 0u; for (; kx4 < nx4; kx4 = kx4 + 1u) { {1} }	
-F04193	loop.tile_L4_f0	function	stmt.L4_f1	u32.lit64;block.L5_f0	n5 = {0}; k5 = 0u; for (; k5 < n5; k5 = k5 + 1u) { {1} }	a literal bound raises the stratum by one
-F04194	loop.tile_strided_L4_f0	function	stmt.L4_f1	u32.lit64;u32.lit4096;block.L5_f0	n5 = {0}; k5 = 0u; for (; k5 < n5; k5 = k5 + {1}) { {2} }	the stride form
-F04195	loop.tile_C4_f0	function	stmt.C4_f1	u32.lit64;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a literal bound raises the stratum by one
-F04196	loop.tile_strided_C4_f0	function	stmt.C4_f1	u32.lit64;u32.lit4096;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + {1}) { {2} }	the stride form
-F04197	loop.tile_W4_f0	function	stmt.W4_f1	u32.lit64;block.W5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a literal bound raises the stratum by one
-F04198	loop.tileu_6_L4_f0	function	stmt.L4_f1	u32.boundu6;block.L5_f0	n5 = {0}; k5 = 0u; for (; k5 < n5; k5 = k5 + 1u) { {1} }	a uniform bound: the body keeps the L rung
-F04199	loop.tileu_strided_6_L4_f0	function	stmt.L4_f1	u32.boundu6;u32.lit4096;block.L5_f0	n5 = {0}; k5 = 0u; for (; k5 < n5; k5 = k5 + {1}) { {2} }	
-F04200	loop.tilex_6_L4_f0	function	stmt.L4_f1	u32.boundx6;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04201	loop.tilex_strided_6_L4_f0	function	stmt.L4_f1	u32.boundx6;u32.lit4096;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + {1}) { {2} }	
-F04202	loop.tilex_6_C4_f0	function	stmt.C4_f1	u32.boundx6;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	an expression bound differs between invocations: the body is a C block
-F04203	loop.tilex_strided_6_C4_f0	function	stmt.C4_f1	u32.boundx6;u32.lit4096;block.C5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + {1}) { {2} }	
-F04204	loop.tilex_6_W4_f0	function	stmt.W4_f1	u32.boundx6w;block.W5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	
-F04205	loop.tilex_brk_6_L4_f0	function	stmt.L4_f1	u32.boundx6;block.B5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a loop that breaks binds kx
-F04206	loop.tilex_brk_6_C4_f0	function	stmt.C4_f1	u32.boundx6;block.B5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a loop that breaks binds kx
-F04207	loop.tilex_brk_6_W4_f0	function	stmt.W4_f1	u32.boundx6w;block.WB5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	
-F04208	loop.tile_brk_L4_f0	function	stmt.L4_f1	u32.lit64;block.B5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04209	loop.tile_brk_C4_f0	function	stmt.C4_f1	u32.lit64;block.B5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	a loop that breaks binds kx: after it the counter differs between invocations
-F04210	loop.tile_brk_W4_f0	function	stmt.W4_f1	u32.lit64;block.WB5_f0	nx5 = {0}; kx5 = 0u; for (; kx5 < nx5; kx5 = kx5 + 1u) { {1} }	
+F04113	loop.tile_L0_f0	function	stmt.L0_f1	u32.lit64;block.L1_f0	n1 = {0}; k1 = 4294967295u; loop { k1 = k1 + 1u; if (k1 >= n1) { break; } {1} }	a literal bound raises the stratum by one
+F04114	loop.tile_strided_L0_f0	function	stmt.L0_f1	u32.lit64;u32.lit4096;block.L1_f0	{ let st = {1}; n1 = {0}; k1 = 0u - st; loop { k1 = k1 + st; if (k1 >= n1) { break; } {2} } }	the stride form
+F04115	loop.tile_C0_f0	function	stmt.C0_f1	u32.lit64;block.C1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a literal bound raises the stratum by one
+F04116	loop.tile_strided_C0_f0	function	stmt.C0_f1	u32.lit64;u32.lit4096;block.C1_f0	{ let st = {1}; nx1 = {0}; kx1 = 0u - st; loop { kx1 = kx1 + st; if (kx1 >= nx1) { break; } {2} } }	the stride form
+F04117	loop.tile_O0_f0	function	stmt.O0_f1	u32.lit64;block.O1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a literal bound raises the stratum by one
+F04118	loop.tile_strided_O0_f0	function	stmt.O0_f1	u32.lit64;u32.lit4096;block.O1_f0	{ let st = {1}; nx1 = {0}; kx1 = 0u - st; loop { kx1 = kx1 + st; if (kx1 >= nx1) { break; } {2} } }	the stride form
+F04119	loop.tile_W0_f0	function	stmt.W0_f1	u32.lit64;block.W1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a literal bound raises the stratum by one
+F04120	loop.tileu_6_L0_f0	function	stmt.L0_f1	u32.boundu6;block.L1_f0	n1 = {0}; k1 = 4294967295u; loop { k1 = k1 + 1u; if (k1 >= n1) { break; } {1} }	a uniform bound: the body keeps the L rung
+F04121	loop.tileu_strided_6_L0_f0	function	stmt.L0_f1	u32.boundu6;u32.lit4096;block.L1_f0	{ let st = {1}; n1 = {0}; k1 = 0u - st; loop { k1 = k1 + st; if (k1 >= n1) { break; } {2} } }	
+F04122	loop.tilex_6_L0_f0	function	stmt.L0_f1	u32.boundx6;block.C1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04123	loop.tilex_strided_6_L0_f0	function	stmt.L0_f1	u32.boundx6;u32.lit4096;block.C1_f0	{ let st = {1}; nx1 = {0}; kx1 = 0u - st; loop { kx1 = kx1 + st; if (kx1 >= nx1) { break; } {2} } }	
+F04124	loop.tilex_6_C0_f0	function	stmt.C0_f1	u32.boundx6;block.C1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04125	loop.tilex_strided_6_C0_f0	function	stmt.C0_f1	u32.boundx6;u32.lit4096;block.C1_f0	{ let st = {1}; nx1 = {0}; kx1 = 0u - st; loop { kx1 = kx1 + st; if (kx1 >= nx1) { break; } {2} } }	
+F04126	loop.tilex_6_W0_f0	function	stmt.W0_f1	u32.boundx6w;block.W1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	
+F04127	loop.tilex_brk_6_L0_f0	function	stmt.L0_f1	u32.boundx6;block.B1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a loop that breaks binds kx
+F04128	loop.tilex_brk_6_C0_f0	function	stmt.C0_f1	u32.boundx6;block.B1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a loop that breaks binds kx
+F04129	loop.tilex_brk_6_W0_f0	function	stmt.W0_f1	u32.boundx6w;block.WB1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	
+F04130	loop.tile_brk_L0_f0	function	stmt.L0_f1	u32.lit64;block.B1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04131	loop.tile_brk_C0_f0	function	stmt.C0_f1	u32.lit64;block.B1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04132	loop.tile_brk_W0_f0	function	stmt.W0_f1	u32.lit64;block.WB1_f0	nx1 = {0}; kx1 = 4294967295u; loop { kx1 = kx1 + 1u; if (kx1 >= nx1) { break; } {1} }	
+F04133	loop.tile_L1_f0	function	stmt.L1_f1	u32.lit64;block.L2_f0	n2 = {0}; k2 = 4294967295u; loop { k2 = k2 + 1u; if (k2 >= n2) { break; } {1} }	a literal bound raises the stratum by one
+F04134	loop.tile_strided_L1_f0	function	stmt.L1_f1	u32.lit64;u32.lit4096;block.L2_f0	{ let st = {1}; n2 = {0}; k2 = 0u - st; loop { k2 = k2 + st; if (k2 >= n2) { break; } {2} } }	the stride form
+F04135	loop.tile_C1_f0	function	stmt.C1_f1	u32.lit64;block.C2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a literal bound raises the stratum by one
+F04136	loop.tile_strided_C1_f0	function	stmt.C1_f1	u32.lit64;u32.lit4096;block.C2_f0	{ let st = {1}; nx2 = {0}; kx2 = 0u - st; loop { kx2 = kx2 + st; if (kx2 >= nx2) { break; } {2} } }	the stride form
+F04137	loop.tile_O1_f0	function	stmt.O1_f1	u32.lit64;block.O2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a literal bound raises the stratum by one
+F04138	loop.tile_strided_O1_f0	function	stmt.O1_f1	u32.lit64;u32.lit4096;block.O2_f0	{ let st = {1}; nx2 = {0}; kx2 = 0u - st; loop { kx2 = kx2 + st; if (kx2 >= nx2) { break; } {2} } }	the stride form
+F04139	loop.tile_W1_f0	function	stmt.W1_f1	u32.lit64;block.W2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a literal bound raises the stratum by one
+F04140	loop.tileu_6_L1_f0	function	stmt.L1_f1	u32.boundu6;block.L2_f0	n2 = {0}; k2 = 4294967295u; loop { k2 = k2 + 1u; if (k2 >= n2) { break; } {1} }	a uniform bound: the body keeps the L rung
+F04141	loop.tileu_strided_6_L1_f0	function	stmt.L1_f1	u32.boundu6;u32.lit4096;block.L2_f0	{ let st = {1}; n2 = {0}; k2 = 0u - st; loop { k2 = k2 + st; if (k2 >= n2) { break; } {2} } }	
+F04142	loop.tilex_6_L1_f0	function	stmt.L1_f1	u32.boundx6;block.C2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04143	loop.tilex_strided_6_L1_f0	function	stmt.L1_f1	u32.boundx6;u32.lit4096;block.C2_f0	{ let st = {1}; nx2 = {0}; kx2 = 0u - st; loop { kx2 = kx2 + st; if (kx2 >= nx2) { break; } {2} } }	
+F04144	loop.tilex_6_C1_f0	function	stmt.C1_f1	u32.boundx6;block.C2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04145	loop.tilex_strided_6_C1_f0	function	stmt.C1_f1	u32.boundx6;u32.lit4096;block.C2_f0	{ let st = {1}; nx2 = {0}; kx2 = 0u - st; loop { kx2 = kx2 + st; if (kx2 >= nx2) { break; } {2} } }	
+F04146	loop.tilex_6_W1_f0	function	stmt.W1_f1	u32.boundx6w;block.W2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	
+F04147	loop.tilex_brk_6_L1_f0	function	stmt.L1_f1	u32.boundx6;block.B2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a loop that breaks binds kx
+F04148	loop.tilex_brk_6_C1_f0	function	stmt.C1_f1	u32.boundx6;block.B2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a loop that breaks binds kx
+F04149	loop.tilex_brk_6_W1_f0	function	stmt.W1_f1	u32.boundx6w;block.WB2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	
+F04150	loop.tile_brk_L1_f0	function	stmt.L1_f1	u32.lit64;block.B2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04151	loop.tile_brk_C1_f0	function	stmt.C1_f1	u32.lit64;block.B2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04152	loop.tile_brk_W1_f0	function	stmt.W1_f1	u32.lit64;block.WB2_f0	nx2 = {0}; kx2 = 4294967295u; loop { kx2 = kx2 + 1u; if (kx2 >= nx2) { break; } {1} }	
+F04153	loop.tile_L2_f0	function	stmt.L2_f1	u32.lit64;block.L3_f0	n3 = {0}; k3 = 4294967295u; loop { k3 = k3 + 1u; if (k3 >= n3) { break; } {1} }	a literal bound raises the stratum by one
+F04154	loop.tile_strided_L2_f0	function	stmt.L2_f1	u32.lit64;u32.lit4096;block.L3_f0	{ let st = {1}; n3 = {0}; k3 = 0u - st; loop { k3 = k3 + st; if (k3 >= n3) { break; } {2} } }	the stride form
+F04155	loop.tile_C2_f0	function	stmt.C2_f1	u32.lit64;block.C3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a literal bound raises the stratum by one
+F04156	loop.tile_strided_C2_f0	function	stmt.C2_f1	u32.lit64;u32.lit4096;block.C3_f0	{ let st = {1}; nx3 = {0}; kx3 = 0u - st; loop { kx3 = kx3 + st; if (kx3 >= nx3) { break; } {2} } }	the stride form
+F04157	loop.tile_O2_f0	function	stmt.O2_f1	u32.lit64;block.O3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a literal bound raises the stratum by one
+F04158	loop.tile_strided_O2_f0	function	stmt.O2_f1	u32.lit64;u32.lit4096;block.O3_f0	{ let st = {1}; nx3 = {0}; kx3 = 0u - st; loop { kx3 = kx3 + st; if (kx3 >= nx3) { break; } {2} } }	the stride form
+F04159	loop.tile_W2_f0	function	stmt.W2_f1	u32.lit64;block.W3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a literal bound raises the stratum by one
+F04160	loop.tileu_6_L2_f0	function	stmt.L2_f1	u32.boundu6;block.L3_f0	n3 = {0}; k3 = 4294967295u; loop { k3 = k3 + 1u; if (k3 >= n3) { break; } {1} }	a uniform bound: the body keeps the L rung
+F04161	loop.tileu_strided_6_L2_f0	function	stmt.L2_f1	u32.boundu6;u32.lit4096;block.L3_f0	{ let st = {1}; n3 = {0}; k3 = 0u - st; loop { k3 = k3 + st; if (k3 >= n3) { break; } {2} } }	
+F04162	loop.tilex_6_L2_f0	function	stmt.L2_f1	u32.boundx6;block.C3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04163	loop.tilex_strided_6_L2_f0	function	stmt.L2_f1	u32.boundx6;u32.lit4096;block.C3_f0	{ let st = {1}; nx3 = {0}; kx3 = 0u - st; loop { kx3 = kx3 + st; if (kx3 >= nx3) { break; } {2} } }	
+F04164	loop.tilex_6_C2_f0	function	stmt.C2_f1	u32.boundx6;block.C3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04165	loop.tilex_strided_6_C2_f0	function	stmt.C2_f1	u32.boundx6;u32.lit4096;block.C3_f0	{ let st = {1}; nx3 = {0}; kx3 = 0u - st; loop { kx3 = kx3 + st; if (kx3 >= nx3) { break; } {2} } }	
+F04166	loop.tilex_6_W2_f0	function	stmt.W2_f1	u32.boundx6w;block.W3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	
+F04167	loop.tilex_brk_6_L2_f0	function	stmt.L2_f1	u32.boundx6;block.B3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a loop that breaks binds kx
+F04168	loop.tilex_brk_6_C2_f0	function	stmt.C2_f1	u32.boundx6;block.B3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a loop that breaks binds kx
+F04169	loop.tilex_brk_6_W2_f0	function	stmt.W2_f1	u32.boundx6w;block.WB3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	
+F04170	loop.tile_brk_L2_f0	function	stmt.L2_f1	u32.lit64;block.B3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04171	loop.tile_brk_C2_f0	function	stmt.C2_f1	u32.lit64;block.B3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04172	loop.tile_brk_W2_f0	function	stmt.W2_f1	u32.lit64;block.WB3_f0	nx3 = {0}; kx3 = 4294967295u; loop { kx3 = kx3 + 1u; if (kx3 >= nx3) { break; } {1} }	
+F04173	loop.tile_L3_f0	function	stmt.L3_f1	u32.lit64;block.L4_f0	n4 = {0}; k4 = 4294967295u; loop { k4 = k4 + 1u; if (k4 >= n4) { break; } {1} }	a literal bound raises the stratum by one
+F04174	loop.tile_strided_L3_f0	function	stmt.L3_f1	u32.lit64;u32.lit4096;block.L4_f0	{ let st = {1}; n4 = {0}; k4 = 0u - st; loop { k4 = k4 + st; if (k4 >= n4) { break; } {2} } }	the stride form
+F04175	loop.tile_C3_f0	function	stmt.C3_f1	u32.lit64;block.C4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a literal bound raises the stratum by one
+F04176	loop.tile_strided_C3_f0	function	stmt.C3_f1	u32.lit64;u32.lit4096;block.C4_f0	{ let st = {1}; nx4 = {0}; kx4 = 0u - st; loop { kx4 = kx4 + st; if (kx4 >= nx4) { break; } {2} } }	the stride form
+F04177	loop.tile_O3_f0	function	stmt.O3_f1	u32.lit64;block.O4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a literal bound raises the stratum by one
+F04178	loop.tile_strided_O3_f0	function	stmt.O3_f1	u32.lit64;u32.lit4096;block.O4_f0	{ let st = {1}; nx4 = {0}; kx4 = 0u - st; loop { kx4 = kx4 + st; if (kx4 >= nx4) { break; } {2} } }	the stride form
+F04179	loop.tile_W3_f0	function	stmt.W3_f1	u32.lit64;block.W4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a literal bound raises the stratum by one
+F04180	loop.tileu_6_L3_f0	function	stmt.L3_f1	u32.boundu6;block.L4_f0	n4 = {0}; k4 = 4294967295u; loop { k4 = k4 + 1u; if (k4 >= n4) { break; } {1} }	a uniform bound: the body keeps the L rung
+F04181	loop.tileu_strided_6_L3_f0	function	stmt.L3_f1	u32.boundu6;u32.lit4096;block.L4_f0	{ let st = {1}; n4 = {0}; k4 = 0u - st; loop { k4 = k4 + st; if (k4 >= n4) { break; } {2} } }	
+F04182	loop.tilex_6_L3_f0	function	stmt.L3_f1	u32.boundx6;block.C4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04183	loop.tilex_strided_6_L3_f0	function	stmt.L3_f1	u32.boundx6;u32.lit4096;block.C4_f0	{ let st = {1}; nx4 = {0}; kx4 = 0u - st; loop { kx4 = kx4 + st; if (kx4 >= nx4) { break; } {2} } }	
+F04184	loop.tilex_6_C3_f0	function	stmt.C3_f1	u32.boundx6;block.C4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04185	loop.tilex_strided_6_C3_f0	function	stmt.C3_f1	u32.boundx6;u32.lit4096;block.C4_f0	{ let st = {1}; nx4 = {0}; kx4 = 0u - st; loop { kx4 = kx4 + st; if (kx4 >= nx4) { break; } {2} } }	
+F04186	loop.tilex_6_W3_f0	function	stmt.W3_f1	u32.boundx6w;block.W4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	
+F04187	loop.tilex_brk_6_L3_f0	function	stmt.L3_f1	u32.boundx6;block.B4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a loop that breaks binds kx
+F04188	loop.tilex_brk_6_C3_f0	function	stmt.C3_f1	u32.boundx6;block.B4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a loop that breaks binds kx
+F04189	loop.tilex_brk_6_W3_f0	function	stmt.W3_f1	u32.boundx6w;block.WB4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	
+F04190	loop.tile_brk_L3_f0	function	stmt.L3_f1	u32.lit64;block.B4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04191	loop.tile_brk_C3_f0	function	stmt.C3_f1	u32.lit64;block.B4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04192	loop.tile_brk_W3_f0	function	stmt.W3_f1	u32.lit64;block.WB4_f0	nx4 = {0}; kx4 = 4294967295u; loop { kx4 = kx4 + 1u; if (kx4 >= nx4) { break; } {1} }	
+F04193	loop.tile_L4_f0	function	stmt.L4_f1	u32.lit64;block.L5_f0	n5 = {0}; k5 = 4294967295u; loop { k5 = k5 + 1u; if (k5 >= n5) { break; } {1} }	a literal bound raises the stratum by one
+F04194	loop.tile_strided_L4_f0	function	stmt.L4_f1	u32.lit64;u32.lit4096;block.L5_f0	{ let st = {1}; n5 = {0}; k5 = 0u - st; loop { k5 = k5 + st; if (k5 >= n5) { break; } {2} } }	the stride form
+F04195	loop.tile_C4_f0	function	stmt.C4_f1	u32.lit64;block.C5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a literal bound raises the stratum by one
+F04196	loop.tile_strided_C4_f0	function	stmt.C4_f1	u32.lit64;u32.lit4096;block.C5_f0	{ let st = {1}; nx5 = {0}; kx5 = 0u - st; loop { kx5 = kx5 + st; if (kx5 >= nx5) { break; } {2} } }	the stride form
+F04197	loop.tile_W4_f0	function	stmt.W4_f1	u32.lit64;block.W5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a literal bound raises the stratum by one
+F04198	loop.tileu_6_L4_f0	function	stmt.L4_f1	u32.boundu6;block.L5_f0	n5 = {0}; k5 = 4294967295u; loop { k5 = k5 + 1u; if (k5 >= n5) { break; } {1} }	a uniform bound: the body keeps the L rung
+F04199	loop.tileu_strided_6_L4_f0	function	stmt.L4_f1	u32.boundu6;u32.lit4096;block.L5_f0	{ let st = {1}; n5 = {0}; k5 = 0u - st; loop { k5 = k5 + st; if (k5 >= n5) { break; } {2} } }	
+F04200	loop.tilex_6_L4_f0	function	stmt.L4_f1	u32.boundx6;block.C5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04201	loop.tilex_strided_6_L4_f0	function	stmt.L4_f1	u32.boundx6;u32.lit4096;block.C5_f0	{ let st = {1}; nx5 = {0}; kx5 = 0u - st; loop { kx5 = kx5 + st; if (kx5 >= nx5) { break; } {2} } }	
+F04202	loop.tilex_6_C4_f0	function	stmt.C4_f1	u32.boundx6;block.C5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	an expression bound differs between invocations: the body is a C block
+F04203	loop.tilex_strided_6_C4_f0	function	stmt.C4_f1	u32.boundx6;u32.lit4096;block.C5_f0	{ let st = {1}; nx5 = {0}; kx5 = 0u - st; loop { kx5 = kx5 + st; if (kx5 >= nx5) { break; } {2} } }	
+F04204	loop.tilex_6_W4_f0	function	stmt.W4_f1	u32.boundx6w;block.W5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	
+F04205	loop.tilex_brk_6_L4_f0	function	stmt.L4_f1	u32.boundx6;block.B5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a loop that breaks binds kx
+F04206	loop.tilex_brk_6_C4_f0	function	stmt.C4_f1	u32.boundx6;block.B5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a loop that breaks binds kx
+F04207	loop.tilex_brk_6_W4_f0	function	stmt.W4_f1	u32.boundx6w;block.WB5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	
+F04208	loop.tile_brk_L4_f0	function	stmt.L4_f1	u32.lit64;block.B5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04209	loop.tile_brk_C4_f0	function	stmt.C4_f1	u32.lit64;block.B5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	a loop that breaks binds kx: after it the counter differs between invocations
+F04210	loop.tile_brk_W4_f0	function	stmt.W4_f1	u32.lit64;block.WB5_f0	nx5 = {0}; kx5 = 4294967295u; loop { kx5 = kx5 + 1u; if (kx5 >= nx5) { break; } {1} }	
 F04211	safe.wg_of_7	function	u32.wgidx_7	u32.index	(({0}) & 127u)	the mask is the row's text, one index type per stratum
 F04212	safe.wg_own_7	function	u32.wgown_7	u32.lit64	(lidx + {0} * KNOB_THREADS)	unclamped: for one k the map lidx -> lidx + k * KNOB_THREADS is injective over the workgroup
 F04213	safe.wg_own_x_7	function	u32.wgown_7	u32.indexw	(lidx + {0} * KNOB_THREADS)	any per-invocation k: injective across invocations whatever each chooses
