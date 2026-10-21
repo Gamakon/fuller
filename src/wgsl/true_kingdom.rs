@@ -461,6 +461,7 @@ mod tests {
     }
 
     /// A tree by row names; a constant placeholder names its `C_T` text.
+    #[cfg(feature = "gpu")]
     fn node(k: &TrueKingdom, name: &str, value: Option<&str>, kids: Vec<Tree>) -> Tree {
         let i = k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}"));
         let const_index = value.map(|v| k.constants[&k.rows[i].out].iter().position(|t| t == v).unwrap_or_else(|| panic!("{name}: no constant {v}")) as u32);
