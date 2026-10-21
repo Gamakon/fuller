@@ -5401,8 +5401,35 @@ impl<'a> Ctx<'a> {
                     let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                     return Ok(Some(Tree::new(&format!("parr.set_v_lane_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx, j, v])));
                 }
+                // One lane of a vec4<u32> local (`off[t] = x`, t a counter or a literal): its register set whole, each
+                // lane the old one, or the new value where the index names it (`select`, a literal index leaves the
+                // other three lanes as they were).
                 if self.local_lanes.get(&base) == Some(&4) && self.local_vec_uint(&base) {
-                    return Err(format!("a store to one lane of the vec4<u32> local {base} (the kingdom writes a vec4<u32> register whole)"));
+                    let row = self.register(&base, "vec4<u32>.bits")?;
+                    let whole = Tree::new("reg.get_u", ty(self, "vec4<u32>.bits")?, vec![Tree::new(&row, reg_ty(self, 'u')?, vec![])]);
+                    let (lane_ty, bool_ty) = (ty(self, "u32.bits")?, ty(self, "bool.flag")?);
+                    let v = self.value(value)?;
+                    let literal_lane = literal_value(unmasked(idx, 3.0)).filter(|l| (0.0..=3.0).contains(l));
+                    let index = if literal_lane.is_none() { Some(self.value(unmasked(idx, 3.0))?) } else { None };
+                    let lanes: Vec<Tree> = (0..4usize)
+                        .map(|k| {
+                            let old = Tree::new(&format!("shape.access_{k}"), lane_ty, vec![whole.clone()]);
+                            match (&literal_lane, &index) {
+                                (Some(l), _) => if *l as usize == k { v.clone() } else { old },
+                                (None, Some(i)) => {
+                                    let k_lit = Tree::literal("literal.index", i.ty, k as f32);
+                                    let is_k = Tree::new("compare.eq", bool_ty, vec![i.clone(), k_lit]);
+                                    Tree::new("select.scalar_cond", lane_ty, vec![v.clone(), old, is_k])
+                                }
+                                (None, None) => old,
+                            }
+                        })
+                        .collect();
+                    let vec_ty = |n: usize| ty(self, &format!("vec{n}<u32>.bits"));
+                    let two = Tree::new("shape.compose2", vec_ty(2)?, vec![lanes[0].clone(), lanes[1].clone()]);
+                    let three = Tree::new("shape.compose3", vec_ty(3)?, vec![two, lanes[2].clone()]);
+                    let four = Tree::new("shape.compose4", vec_ty(4)?, vec![three, lanes[3].clone()]);
+                    return Ok(Some(Tree::new(&format!("reg.set_u_{rung}"), st, vec![Tree::new(&row, reg_ty(self, 'u')?, vec![]), four])));
                 }
                 if self.local_lanes.get(&base) == Some(&4) {
                     let row = self.register(&base, "vec4<f32>.real")?;
