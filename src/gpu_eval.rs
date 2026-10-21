@@ -445,11 +445,14 @@ struct Meta {
     // cross-product is far past that, so the dispatch is 2-D.
     stride: u32,
     // 1 = also write every subtree's value to `partials`, laid out
-    // partials[(expr * MAX_NODES + k) * n_rows + row] = scratch[k]. 0 = leave
+    // partials[(expr * partials_stride + k) * n_rows + row] = scratch[k]. 0 = leave
     // `partials` untouched (the ordinary eval, byte-identical to before this
     // field existed). Every subtree value is ALREADY computed in `scratch`; this
     // only decides whether it is emitted.
     emit_partials: u32,
+    // Nodes an expression has room for in `partials`: the caller's longest expression, not the
+    // layout's bound, so a block of expressions takes the room it needs.
+    partials_stride: u32,
 };
 
 @group(0) @binding(0) var<storage, read>       nodes:   array<Node>;
@@ -666,7 +669,7 @@ fn eval_body(idx: u32, expr: u32, row: u32, base: u32, n: u32) {
             if (j >= n) { break; }
             var pv: f32 = scratch[j];
             if (poison) { pv = nan(); }
-            partials[(expr * MAX_NODES + j) * cfg.n_rows + row] = pv;
+            partials[(expr * cfg.partials_stride + j) * cfg.n_rows + row] = pv;
             j = j + 1u;
         }
     }
@@ -750,6 +753,25 @@ pub fn math_to_nodes_n(expr: &str, vars: &[String], max_nodes: usize) -> Result<
     if pos != toks.len() {
         return Err(format!("trailing tokens at {pos} in {expr:?}"));
     }
+    flatten(&tree, vars, max_nodes)
+}
+
+/// [`math_to_nodes`] for a node array that becomes GENE cells: `Pow(x, k)` with integer `k` in
+/// 2..=8 is first expanded to the `Pow2`/`Pow3`/`Mul` chain the gene alphabet holds (see
+/// [`expand_int_pows`]). Only the gene encoders call this; scoring, snap, templates, fold and the
+/// kitchen sink keep [`math_to_nodes`] and its `Pow` node (and its GPU `pow` numerics).
+pub fn math_to_gene_nodes(expr: &str, vars: &[String]) -> Result<Vec<GpuNode>, String> {
+    math_to_gene_nodes_n(expr, vars, MAX_NODES)
+}
+
+/// [`math_to_gene_nodes`] for a kernel sized to `max_nodes`.
+pub fn math_to_gene_nodes_n(expr: &str, vars: &[String], max_nodes: usize) -> Result<Vec<GpuNode>, String> {
+    let toks = tokenize(expr);
+    let mut pos = 0usize;
+    let tree = parse(&toks, &mut pos)?;
+    if pos != toks.len() {
+        return Err(format!("trailing tokens at {pos} in {expr:?}"));
+    }
     flatten(&expand_int_pows(&tree), vars, max_nodes)
 }
 
@@ -757,7 +779,7 @@ pub fn math_to_nodes_n(expr: &str, vars: &[String], max_nodes: usize) -> Result<
 /// chain the gene alphabet can hold (it has `Pow2` and `Pow3` but no general
 /// `Pow`): 4 = Pow2(Pow2 x), 5 = Mul(Pow2 x, Pow3 x), 6 = Pow2(Pow3 x),
 /// 7 = Mul(Pow3 x, Pow2(Pow2 x)), 8 = Pow2(Pow2(Pow2 x)). The e-graph `Math`
-/// keeps the general `Pow`; only this conversion to nodes expands it. Any other
+/// keeps the general `Pow`; only [`math_to_gene_nodes`] expands it. Any other
 /// exponent (non-integer, below 2, above 8) stays a `Pow` node, which a gene
 /// encoder reports as an unmappable op.
 fn expand_int_pows(tree: &Tree) -> Tree {
@@ -1245,7 +1267,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0, 0];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1302,11 +1324,11 @@ mod device {
             n_expr: u32,
             expr_base: u32,
         ) -> Result<wgpu::Buffer, String> {
-            self.eval_pass_range_with(enc, buffers, None, n_expr, expr_base)
+            self.eval_pass_range_with(enc, buffers, None, 0, n_expr, expr_base)
         }
 
         /// [`Self::eval_pass_range`] that ALSO writes every subtree's value into
-        /// `partials` when one is given, at `partials[(expr * MAX_NODES + k) * n_rows + row]`
+        /// `partials` when one is given, at `partials[(expr * partials_stride + k) * n_rows + row]`
         /// for `expr` in `0..n_expr` (batch coordinates, the base already
         /// applied) — the resident form of [`Self::eval_with_partials`]. A
         /// poisoned row (an infinite trig argument) is NaN in every one of its
@@ -1317,6 +1339,7 @@ mod device {
             enc: &mut wgpu::CommandEncoder,
             buffers: [&wgpu::Buffer; 4],
             partials: Option<&wgpu::Buffer>,
+            partials_stride: u32,
             n_expr: u32,
             expr_base: u32,
         ) -> Result<wgpu::Buffer, String> {
@@ -1340,7 +1363,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, u32::from(partials.is_some())];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, u32::from(partials.is_some()), partials_stride];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1371,12 +1394,7 @@ mod device {
                     timestamp_writes: None,
                 });
                 pass.set_bind_group(0, &bind, &[]);
-                if partials.is_none() {
-                    self.dispatch_values(&mut pass, groups_x, groups_y);
-                } else {
-                    pass.set_pipeline(&self.pipeline);
-                    pass.dispatch_workgroups(groups_x, groups_y, 1);
-                }
+                self.dispatch_values(&mut pass, groups_x, groups_y);
             }
             Ok(meta_buf)
         }
@@ -1492,7 +1510,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0, 0];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1632,7 +1650,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 1];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 1, self.max_nodes as u32];
             let meta_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("meta"),
                 contents: bytemuck::cast_slice(&meta),
@@ -1713,22 +1731,22 @@ struct Meta {
     n_rows: u32,
     row_lo: u32,
     row_hi: u32,
+    stride: u32,   // nodes an expression has room for in `partials` and in `stats`
 };
 @group(0) @binding(0) var<storage, read>       partials: array<f32>;
 @group(0) @binding(1) var<storage, read>       lengths:  array<u32>;
 @group(0) @binding(2) var<storage, read_write> stats:    array<f32>;
 @group(0) @binding(3) var<uniform>             cfg:      Meta;
 
-const MAX_NODES: u32 = 64u;
 fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
 fn is_finite(x: f32) -> bool { return abs(x) <= 3.4028235e38; }
 
 @compute @workgroup_size(64, 1, 1)
 fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
-    if (idx >= cfg.n_expr * MAX_NODES) { return; }
-    let expr = idx / MAX_NODES;
-    let k = idx % MAX_NODES;
+    if (idx >= cfg.n_expr * cfg.stride) { return; }
+    let expr = idx / cfg.stride;
+    let k = idx % cfg.stride;
     let o = idx * 4u;
     if (k >= lengths[expr]) {
         stats[o] = nan(); stats[o + 1u] = nan(); stats[o + 2u] = 0.0; stats[o + 3u] = 0.0;
@@ -1790,11 +1808,31 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         out_buf: wgpu::Buffer,
         stats_buf: wgpu::Buffer,
         staging: wgpu::Buffer,
-        /// Expressions a block holds.
+        /// Expressions a block holds when every one is as long as the evaluator allows.
         block: usize,
+        /// The bytes of `partials_buf`.
+        partials_bytes: u64,
         n_rows: u32,
         max_nodes: usize,
     }
+
+    /// The statistics of a batch: `stride` entries an expression, in batch order.
+    #[derive(Debug, Clone)]
+    pub struct StatsOut {
+        /// Entries an expression has: the batch's longest expression (at least 1).
+        pub stride: usize,
+        pub stats: Vec<SubtreeStat>,
+    }
+
+    impl StatsOut {
+        /// Subtree `k` (a node index) of expression `e`; not finite past the expression's length.
+        pub fn at(&self, e: usize, k: usize) -> SubtreeStat {
+            self.stats[e * self.stride + k]
+        }
+    }
+
+    /// The most expressions one block of a run holds (its root predictions and its lengths are sized by it).
+    const STATS_BLOCK_EXPRS: usize = 512;
 
     impl SubtreeStats {
         pub fn new(evaluator: &GpuEvaluator) -> Result<Self, String> {
@@ -1815,9 +1853,10 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if block == 0 {
                 return Err(format!("subtree stats: one expression's {max_nodes} x {n_rows} partials do not fit the device's binding limit"));
             }
+            let partials_bytes = block as u64 * per_expr;
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-subtree-stats"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits_n(STATS_WGSL, max_nodes))),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(STATS_WGSL)),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-subtree-stats-layout"),
@@ -1851,15 +1890,18 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     mapped_at_creation: false,
                 })
             };
-            let stats_bytes = block as u64 * max_nodes as u64 * 16;
+            // Nodes of a block, and the statistics entries of its nodes, are at most the partials'
+            // rows: `partials_bytes / (n_rows * 4)` of them.
+            let entries = partials_bytes / (u64::from(n_rows) * 4);
+            let stats_bytes = entries * 16;
             Ok(Self {
                 pipeline,
                 layout,
-                nodes_buf: storage(block as u64 * max_nodes as u64 * 16, "subtree stats nodes"),
-                offsets_buf: storage(block as u64 * 4, "subtree stats offsets"),
-                lengths_buf: storage(block as u64 * 4, "subtree stats lengths"),
-                partials_buf: storage(block as u64 * per_expr, "subtree stats partials"),
-                out_buf: storage(block as u64 * u64::from(n_rows) * 4, "subtree stats roots"),
+                nodes_buf: storage(stats_bytes, "subtree stats nodes"),
+                offsets_buf: storage(STATS_BLOCK_EXPRS as u64 * 4, "subtree stats offsets"),
+                lengths_buf: storage(STATS_BLOCK_EXPRS as u64 * 4, "subtree stats lengths"),
+                partials_buf: storage(partials_bytes, "subtree stats partials"),
+                out_buf: storage(STATS_BLOCK_EXPRS as u64 * u64::from(n_rows) * 4, "subtree stats roots"),
                 stats_buf: storage(stats_bytes, "subtree stats"),
                 staging: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("subtree stats staging"),
@@ -1868,31 +1910,41 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     mapped_at_creation: false,
                 }),
                 block,
+                partials_bytes,
                 n_rows,
                 max_nodes,
             })
         }
 
-        /// Expressions one block holds.
+        /// Expressions one block holds when every one is as long as the evaluator allows
+        /// (shorter expressions pack more of them, up to [`STATS_BLOCK_EXPRS`]).
         pub fn block(&self) -> usize {
             self.block
         }
 
+        /// The most expressions any block holds.
+        pub fn block_exprs_max(&self) -> usize {
+            STATS_BLOCK_EXPRS
+        }
+
         /// Every subtree's statistics over rows `row_lo..row_hi`, for every
-        /// expression of `batch`: `MAX_NODES` entries an expression, in batch
+        /// expression of `batch`: `stride` entries an expression (the batch's longest), in batch
         /// order, entries past an expression's length marked not finite. An
         /// expression the batch flagged oversized (length 0) is all not finite.
-        pub fn run(&self, evaluator: &GpuEvaluator, batch: &ExprBatch, row_lo: u32, row_hi: u32) -> Result<Vec<SubtreeStat>, String> {
+        pub fn run(&self, evaluator: &GpuEvaluator, batch: &ExprBatch, row_lo: u32, row_hi: u32) -> Result<StatsOut, String> {
             if row_hi > self.n_rows || row_lo >= row_hi {
                 return Err(format!("subtree stats: rows {row_lo}..{row_hi} of {}", self.n_rows));
             }
             let device = evaluator.device();
             let queue = evaluator.queue();
-            let max_nodes = self.max_nodes;
-            let mut out: Vec<SubtreeStat> = Vec::with_capacity(batch.len() * max_nodes);
+            // An expression takes the room of the batch's longest, not of the evaluator's bound.
+            let stride = (batch.lengths.iter().copied().max().unwrap_or(1) as usize).clamp(1, self.max_nodes);
+            let per_expr = stride as u64 * u64::from(self.n_rows) * 4;
+            let block = ((self.partials_bytes / per_expr) as usize).min(STATS_BLOCK_EXPRS).min(MAX_GROUPS_PER_DIM as usize * 64 / stride).max(1);
+            let mut out: Vec<SubtreeStat> = Vec::with_capacity(batch.len() * stride);
             let mut e0 = 0usize;
             while e0 < batch.len() {
-                let n = self.block.min(batch.len() - e0);
+                let n = block.min(batch.len() - e0);
                 // The block's node arrays, re-based to the block, up in one write each.
                 let node_lo = batch.offsets[e0] as usize;
                 let node_hi = (e0 + n..batch.len()).next().map_or(batch.nodes.len(), |e| batch.offsets[e] as usize);
@@ -1906,7 +1958,7 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 queue.write_buffer(&self.lengths_buf, 0, bytemuck::cast_slice(lengths));
                 let meta = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("subtree stats meta"),
-                    contents: bytemuck::cast_slice(&[n as u32, self.n_rows, row_lo, row_hi]),
+                    contents: bytemuck::cast_slice(&[n as u32, self.n_rows, row_lo, row_hi, stride as u32]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1922,14 +1974,14 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("subtree stats") });
                 // The root predictions are a by-product here, written to their own
                 // buffer: two writable bindings may not alias.
-                let eval_meta = evaluator.eval_pass_range_with(&mut enc, [&self.nodes_buf, &self.offsets_buf, &self.lengths_buf, &self.out_buf], Some(&self.partials_buf), n as u32, 0)?;
+                let eval_meta = evaluator.eval_pass_range_with(&mut enc, [&self.nodes_buf, &self.offsets_buf, &self.lengths_buf, &self.out_buf], Some(&self.partials_buf), stride as u32, n as u32, 0)?;
                 {
                     let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
                     pass.set_pipeline(&self.pipeline);
                     pass.set_bind_group(0, &bind, &[]);
-                    pass.dispatch_workgroups(((n * max_nodes) as u32).div_ceil(64), 1, 1);
+                    pass.dispatch_workgroups(((n * stride) as u32).div_ceil(64), 1, 1);
                 }
-                let stats_bytes = (n * max_nodes * 16) as u64;
+                let stats_bytes = (n * stride * 16) as u64;
                 enc.copy_buffer_to_buffer(&self.stats_buf, 0, &self.staging, 0, stats_bytes);
                 queue.submit(Some(enc.finish()));
                 let slice = self.staging.slice(..stats_bytes);
@@ -1950,13 +2002,13 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 crate::gpu_io::drain(device)?;
                 e0 += n;
             }
-            Ok(out)
+            Ok(StatsOut { stride, stats: out })
         }
     }
 }
 
 #[cfg(feature = "gpu")]
-pub use device::{GpuEvaluator, SubtreeStat, SubtreeStats, STATS_WGSL};
+pub use device::{GpuEvaluator, StatsOut, SubtreeStat, SubtreeStats, STATS_WGSL};
 
 /// Per-expression error terms, reduced on the host from the device's
 /// predictions. These are the columns an HFF objective vector is built from.
@@ -2028,7 +2080,7 @@ mod tests {
     fn integer_powers_two_to_eight_expand_to_exact_gene_chains() {
         let vars = vec!["x".to_string()];
         for k in 2..=8 {
-            let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {k}.0))"), &vars).expect("expands");
+            let nodes = math_to_gene_nodes(&format!("(Pow (Var \"x\") (Num {k}.0))"), &vars).expect("expands");
             assert!(nodes.iter().all(|n| n.op != Op::Pow as u32 && n.op != Op::Num as u32), "x^{k} kept a Pow or Num node");
             for x in [-2.5f64, -1.0, 0.5, 1.0, 3.0] {
                 assert_eq!(host_value(&nodes, 0, x), x.powi(k), "x^{k} at {x}");
@@ -2037,10 +2089,21 @@ mod tests {
     }
 
     #[test]
+    fn math_to_nodes_keeps_pow_for_every_caller() {
+        let vars = vec!["x".to_string()];
+        for k in 2..=8 {
+            let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {k}.0))"), &vars).expect("parses");
+            assert_eq!(nodes.len(), 2, "x^{k}");
+            assert_eq!(nodes[0].op, Op::Pow as u32, "x^{k}");
+        }
+        assert_eq!(math_to_nodes_n("(Pow (Var \"x\") (Num 5.0))", &vars, 3).expect("fits three nodes").len(), 3);
+    }
+
+    #[test]
     fn other_exponents_stay_a_pow_node() {
         let vars = vec!["x".to_string()];
         for e in ["1.0", "9.0", "2.5", "-2.0"] {
-            let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {e}))"), &vars).expect("parses");
+            let nodes = math_to_gene_nodes(&format!("(Pow (Var \"x\") (Num {e}))"), &vars).expect("parses");
             assert_eq!(nodes[0].op, Op::Pow as u32, "exponent {e}");
         }
     }
@@ -2513,8 +2576,8 @@ mod subtree_stats_tests {
         batch.push(&[un(Op::Log, 1), bin(Op::Sub, 2, 3), var(0), var(1)]); // log(a-b): a-b < 0
         batch.push(&[un(Op::Sin, 1), un(Op::Exp, 2), num(1000.0)]); // sin(exp(1000)) = sin(inf): poison
         let s = stats.run(&ev, &batch, 0, 4).expect("run");
-        assert_eq!(s.len(), 3 * MAX_NODES);
-        let at = |e: usize, k: usize| s[e * MAX_NODES + k];
+        assert_eq!((s.stride, s.stats.len()), (4, 3 * 4), "an expression has the room of the batch's longest (4 nodes)");
+        let at = |e: usize, k: usize| s.at(e, k);
         // a*b on every row: 2, 12, 30, 56.
         assert!(at(0, 0).finite);
         assert_eq!((at(0, 0).min, at(0, 0).max, at(0, 0).sum), (2.0, 56.0, 100.0));
@@ -2532,10 +2595,44 @@ mod subtree_stats_tests {
         assert!(!at(2, 2).finite, "a poisoned row is NaN in every partial, so the leaf reads not finite");
         // Rows 1..3 only: a*b = 12, 30.
         let s = stats.run(&ev, &batch, 1, 3).expect("run");
-        assert_eq!((s[0].min, s[0].max, s[0].sum), (12.0, 30.0, 42.0));
+        assert_eq!((s.at(0, 0).min, s.at(0, 0).max, s.at(0, 0).sum), (12.0, 30.0, 42.0));
         // An empty range or one past the data is refused.
         assert!(stats.run(&ev, &batch, 2, 2).is_err());
         assert!(stats.run(&ev, &batch, 0, 5).is_err());
+    }
+
+    /// The statistics do not depend on the evaluator's bound: an evaluator built for 1,024 nodes (length
+    /// classes, partials laid out by the batch's longest expression) gives the statistics the default one gives.
+    #[test]
+    fn statistics_do_not_depend_on_the_evaluators_bound() {
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let (Ok(small), Ok(big)) = (GpuEvaluator::new(&rows, 2), GpuEvaluator::with_max_nodes(&rows, 2, 1024)) else {
+            eprintln!("no GPU available; skipping");
+            return;
+        };
+        let mut batch = ExprBatch::new();
+        batch.push(&[bin(Op::Mul, 1, 2), var(0), var(1)]);
+        batch.push(&[un(Op::Log, 1), bin(Op::Sub, 2, 3), var(0), var(1)]);
+        let a = SubtreeStats::new(&small).expect("stats").run(&small, &batch, 0, 4).expect("run");
+        let b = SubtreeStats::new(&big).expect("stats").run(&big, &batch, 0, 4).expect("run");
+        assert_eq!((a.stride, b.stride), (4, 4));
+        for (i, (x, y)) in a.stats.iter().zip(&b.stats).enumerate() {
+            assert_eq!((x.min.to_bits(), x.max.to_bits(), x.sum.to_bits(), x.finite), (y.min.to_bits(), y.max.to_bits(), y.sum.to_bits(), y.finite), "entry {i}");
+        }
+        // a chain of 90 additions (181 nodes), longer than the first class, on the big evaluator
+        let mut chain = Vec::new();
+        for i in 0..90u32 {
+            chain.push(bin(Op::Add, 2 * i + 1, 2 * i + 2));
+            chain.push(var(i % 2));
+        }
+        chain.push(var(0));
+        let mut long = ExprBatch::new();
+        long.push(&chain);
+        let c = SubtreeStats::new(&big).expect("stats").run(&big, &long, 0, 4).expect("run");
+        assert_eq!(c.stride, 181);
+        assert!((0..181).all(|k| c.at(0, k).finite), "every subtree of the chain computes");
+        // 46 leaves a and 45 leaves b; the rows are (a, b) = (1, 2) (3, 4) (5, 6) (7, 8): the root is 136, 318, 500, 682
+        assert_eq!((c.at(0, 0).min, c.at(0, 0).max, c.at(0, 0).sum), (136.0, 682.0, 1636.0));
     }
 
     /// A batch larger than one block runs in blocks and comes back whole, in order.
@@ -2550,15 +2647,15 @@ mod subtree_stats_tests {
             }
         };
         let stats = SubtreeStats::new(&ev).expect("stats");
-        let n = stats.block() + 3;
+        let n = stats.block_exprs_max() + 3;
         let mut batch = ExprBatch::new();
         for i in 0..n {
             batch.push(&[bin(Op::Add, 1, 2), var(0), num(i as f32)]); // a + i
         }
         let s = stats.run(&ev, &batch, 0, 4).expect("run");
-        assert_eq!(s.len(), n * MAX_NODES);
+        assert_eq!((s.stride, s.stats.len()), (3, n * 3));
         for i in 0..n {
-            let r = s[i * MAX_NODES];
+            let r = s.at(i, 0);
             assert!(r.finite, "expr {i}");
             assert_eq!((r.min, r.max), (1.0 + i as f32, 4.0 + i as f32), "expr {i}");
         }
