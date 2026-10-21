@@ -39,8 +39,8 @@ Every reason of every `check.rs` layer, plus the renderer rewrites A1 found. Sta
 | workgroup races and ordering (layer 7) | `WgOwn<A,phase>` for writes, `WgRead<A,phase+1>` produced only by barrier rows; no raw workgroup setter | statement and block rows per phase |
 | barrier and subgroup uniformity (layer 4) | context-indexed values `Val<T,WgUniform>`, `Val<T,SubgroupUniform>`, blocks `Block<ctx>`; barriers and subgroup operations require their context; delete `uflag.of_flag` and `uniform.of_checked` | value and operation rows per provenance |
 | bounded loops and work budget (layer 6, Metal hang) | `Bound<k>` with immutable bound snapshots (a bound held in a `let`); loop bodies carry `Fuel<n>`, nesting consumes a fixed total budget | finite bound and budget strata |
-| wrap (layer 3 `index_wraps`, store cell, loop bound) | a width ladder `U32<lo,hi>`; `add`, `mul`, `shl` rows exist only where the result interval fits; plain modulo arithmetic stays where WGSL defines it and it never reaches an index, a store cell or a bound | range-type proliferation |
-| division, modulo, shifts | `NonZeroU32` (and a signed divisor excluding `-1` with `MIN`), `ShiftCount<0..31>`; renderer guards disappear | safe constructors needed |
+| wrap (layer 3 `index_wraps`, store cell, loop bound) | per §9 draft: wrapping arithmetic is WGSL-defined and its result never reaches an array index, a store cell or a loop bound except through rows that shrink it (mask, clamp, min) | modulo results reach indices only through shrinking rows |
+| division, modulo, shifts | per §9 draft: two rows each, with their own spelling as declared meaning (`index.div` vs `div_nz`; `shl_lit` over a 0..=31 literal dual vs `shl` masked); renderer guards disappear | none beyond the declared spellings |
 | atomics | the atomic's old value has its own result dual (`u32.atomicold`), consumed only by discard in a strict kingdom; deterministic reductions (sum, min, max, and, or, xor whose final value is order-independent) are separately typed rows, declared by the contract; any other use of an order-dependent result does not exist in the table | order-dependent atomic results not spellable outside a declared relaxed contract |
 | typed tree, grammar (layers 1, 2) | already the typed core; the remaining fallback columns of the tables removed | none |
 | render and parse (layer 7 `kernel_does_not_render/parse`) | a render defect, not legality: the `load.cfg_*` rows render (A0) | none |
@@ -76,7 +76,7 @@ Every reason of every `check.rs` layer, plus the renderer rewrites A1 found. Sta
 ## Decisions waiting on Andrew
 
 1. **Mutation rate.** Per type (each type domain takes a whole gene's expected edits: about 5,800 cells per WGSL child, run 6i) or one rate per gene spread over its cells (about two expressed edits a child). E1 measures both arms; Andrew decides on the numbers.
-2. **The range-check patch** (`scratchpad/check_wrap_final_v2.patch`) changes only the checker, which after C2 is a test oracle; it never goes on the evolution path, and D1's width ladder carries wrap in the types.
+2. **The range-check patch** (`scratchpad/check_wrap_final_v2.patch`) changes only the checker, which after C2 is a test oracle; it never goes on the evolution path; §9 carries wrap in the types.
 
 ## Parked
 
