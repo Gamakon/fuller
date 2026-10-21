@@ -32,16 +32,32 @@ pub enum Fuel {
     /// kernel): no bound is computed. A random gene, an evolved child or a seed is never proven.
     /// The name says which kernel and why it is proven.
     Proven(&'static str),
+    /// A caller of the legacy kingdom, whose candidates have no fuel budget: nothing runs until it is ported to
+    /// `kingdoms/wgsl_true`.
+    Unported,
     /// A kernel of the true WGSL kingdom: `h` the sum of the head lengths over the reachable types, `k` the
     /// interface's fuel budget.
     Kingdom { h: u64, k: u32 },
 }
 
+/// The message of every legacy caller.
+pub const LEGACY_NO_FUEL: &str = "legacy kingdom: no fuel budget; port to kingdoms/wgsl_true";
+
 impl Fuel {
+    /// An error, before any device work, for a caller that has not been ported.
+    pub fn refuse_unported(&self) -> Result<(), String> {
+        if *self == Fuel::Unported {
+            Err(LEGACY_NO_FUEL.to_string())
+        } else {
+            Ok(())
+        }
+    }
+
     /// The bound of a submit of `invocations`, or `None` for a proven kernel.
     pub fn bound(&self, invocations: u64) -> Option<u128> {
         match self {
             Fuel::Proven(_) => None,
+            Fuel::Unported => Some(u128::MAX),
             Fuel::Kingdom { h, k } => Some(work_bound(*h, *k, invocations)),
         }
     }
@@ -49,6 +65,7 @@ impl Fuel {
     /// The guard: the submit of `what` (`invocations` in all its dispatches) may start only if its bound is at
     /// most the cap. Returns the bound (0 for a proven kernel).
     pub fn check(&self, what: &str, invocations: u64) -> Result<u128, String> {
+        self.refuse_unported()?;
         let Fuel::Kingdom { h, k } = self else { return Ok(0) };
         let bound = work_bound(*h, *k, invocations);
         if bound <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {

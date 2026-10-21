@@ -5560,7 +5560,7 @@ fn search() { cands[0] = cfg.stage; }
     #[test]
     fn the_device_judge_counts_the_hand_case_on_the_gpu() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
-        let exec = DeviceExecutor::new(&dev, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+        let exec = DeviceExecutor::new(&dev, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test"));
         let spec: ProblemSpec = toml::from_str(&pooled_problem_text("none")).unwrap();
         let p = Problem { dir: PathBuf::new(), spec, suites: Vec::new(), reference: String::new() };
         let (data, env) = pooled_staged(&p);
@@ -5583,7 +5583,7 @@ fn search() { cands[0] = cfg.stage; }
     fn the_device_judge_counts_as_the_host_on_run_3s_kernels_on_the_gpu() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
         let p = Problem::load(&root().join("problems/v24_ingest")).unwrap();
-        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test"));
         let limit = exec.binding_limit();
         let c = &p.suites[0].cases[0];
         let data = p.case_data(c, limit).unwrap();
@@ -5808,7 +5808,7 @@ fn search() { cands[0] = cfg.stage; }
     #[test]
     fn the_v24_reference_runs_on_the_device() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
-        let exec = DeviceExecutor::new(&dev, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+        let exec = DeviceExecutor::new(&dev, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test"));
         let t0 = Instant::now();
         let h = Harness::new(v24_small(), &exec).unwrap();
         let f = h.evaluate(&h.problem.reference);
@@ -5995,7 +5995,7 @@ fn search() { cands[0] = cfg.stage; }
     fn v24_ingest5_projects_its_keys_on_the_device() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
         let p = Problem::load(&root().join("problems/v24_ingest5")).unwrap();
-        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test"));
         let limit = exec.binding_limit();
         println!("v24_ingest5: binding limit {limit} bytes (the effective one {})", crate::wgsl::gram::effective_buffer_limit(&dev.device));
         assert!(limit >= 25_000 * 2048 * 4, "the adapter's limit {limit} is under stage 5's keys");
@@ -6098,7 +6098,7 @@ fn search() { cands[0] = cfg.stage; }
     fn v24_ingest5b_projects_microbatch_keys_on_the_device() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
         let p = Problem::load(&root().join("problems/v24_ingest5b")).unwrap();
-        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+        let exec = DeviceExecutor::for_problem(&dev, &p, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test"));
         let limit = exec.binding_limit();
         let c = &p.suites[0].cases[0];
         let t = Instant::now();

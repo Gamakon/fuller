@@ -70,13 +70,14 @@ fn main() -> Result<(), String> {
         h
     };
 
+    fuller::wgsl::oracle::device::Fuel::Unported.refuse_unported()?;
     let dev = Device::new()?;
     let limit = effective_buffer_limit(&dev.device);
     println!("[{}] device {} limit {} MiB per binding", stamp(), dev.name, limit >> 20);
     println!("{:<28} {:>5} {:>9} {:>10} {:>9} {:>9} {:>6} {:>9} {:>9} {:>8}", "kernel", "round", "gpu ms", "compute ms", "wall ms", "upload ms", "passes", "max ratio", "mean", "fails");
     for (name, source) in &kernels {
         let t = Instant::now();
-        let gram = match Gram::compile(&dev, source, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")) {
+        let gram = match Gram::compile(&dev, source, fuller::wgsl::oracle::device::Fuel::Unported) {
             Ok(g) => g,
             Err(e) => {
                 println!("{name:<28} refused: {e}");

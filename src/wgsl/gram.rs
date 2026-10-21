@@ -707,6 +707,7 @@ impl<'a> Gram<'a> {
     }
 
     fn compile_with(dev: &'a Device, source: &str, grid: Grid, fuel: Fuel) -> Result<Gram<'a>, String> {
+        fuel.refuse_unported()?;
         if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err("this device has no timestamp queries".into());
         }
@@ -1367,7 +1368,7 @@ impl FitnessContext {
     /// new speed-ups, columns and HFF. A memoised elite must not keep a
     /// speed measured against a contended shipped time.
     pub fn retime(&self, dev: &Device, source: &str, columns: &[f64; 6]) -> Result<([f64; 3], [f64; 6], f64), String> {
-        let gram = Gram::compile(dev, source, Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
+        let gram = Gram::compile(dev, source, Fuel::Unported)?;
         let reference = self.shipped_reference();
         let mut speedups = [0.0f64; 3];
         for (k, res) in self.resident_timing.iter().enumerate() {
@@ -1417,7 +1418,7 @@ impl<'a> Driver for DeviceDriver<'a> {
     type Kernel = Gram<'a>;
 
     fn compile(&self, source: &str) -> Result<Gram<'a>, String> {
-        Gram::compile(self.dev, source, Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))
+        Gram::compile(self.dev, source, Fuel::Unported)
     }
 
     fn batch(&self, k: &Gram<'a>, cases: std::ops::Range<usize>) -> Result<Batch, String> {

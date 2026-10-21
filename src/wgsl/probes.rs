@@ -200,14 +200,14 @@ mod tests {
         // The product replaced by its first operand: sums of phi instead of phi².
         let broken = SHIPPED.replace("phi[base + gr] * phi[base + c]", "phi[base + gr]");
         assert_ne!(broken, SHIPPED);
-        let b = run_probes(&Gram::compile(&dev, &broken, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")).unwrap(), &ps).unwrap();
+        let b = run_probes(&Gram::compile(&dev, &broken, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test")).unwrap(), &ps).unwrap();
         let fails = b.iter().filter(|d| **d > PASS).count();
         println!("product replaced by one operand: fails {fails} of {}", ps.len());
         assert_eq!(fails, ps.len());
         // The loop stopped one item early: only the probes that place a value at the last item fail.
         let short = SHIPPED.replace("t < cfg.m;", "t + 1u < cfg.m;");
         assert_ne!(short, SHIPPED);
-        let b = run_probes(&Gram::compile(&dev, &short, crate::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")).unwrap(), &ps).unwrap();
+        let b = run_probes(&Gram::compile(&dev, &short, crate::wgsl::oracle::device::Fuel::Proven("a hand kernel of this test")).unwrap(), &ps).unwrap();
         let failing: Vec<&Probe> = ps.iter().zip(&b).filter(|(_, d)| **d > PASS).map(|(p, _)| p).collect();
         let touches_last = ps.iter().filter(|p| p.phi[(p.m - 1) * p.d..].iter().any(|x| *x != 0.0)).count();
         println!("loop one item short: fails {} of {}; probes with a value at the last item: {touches_last}", failing.len(), ps.len());

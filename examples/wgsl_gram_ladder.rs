@@ -122,9 +122,10 @@ fn main() -> Result<(), String> {
         }
     }
     // Rung 2: validate and compile.
+    fuller::wgsl::oracle::device::Fuel::Unported.refuse_unported()?;
     let dev = Device::new()?;
     let limit = effective_buffer_limit(&dev.device);
-    let gram = match Gram::compile(&dev, &source, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")) {
+    let gram = match Gram::compile(&dev, &source, fuller::wgsl::oracle::device::Fuel::Unported) {
         Ok(g) => {
             s.rung = 2;
             println!("[{}] rung 2 validate+compile: ok, grid {:?}", stamp(), g.grid);

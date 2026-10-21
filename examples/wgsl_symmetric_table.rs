@@ -159,8 +159,9 @@ fn main() -> Result<(), String> {
         return Ok(());
     }
 
+    fuller::wgsl::oracle::device::Fuel::Unported.refuse_unported()?;
     let dev = Device::new()?;
-    let exec = DeviceExecutor::new(&dev, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+    let exec = DeviceExecutor::new(&dev, fuller::wgsl::oracle::device::Fuel::Unported);
     let harness = Harness::new(Problem::load(&problem_dir)?, &exec)?;
     let limit = exec.binding_limit();
     // The timing shapes the full-H mode fits.

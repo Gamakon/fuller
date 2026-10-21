@@ -191,8 +191,9 @@ fn main() -> Result<(), String> {
             }
         });
     }
+    fuller::wgsl::oracle::device::Fuel::Unported.refuse_unported()?;
     let dev = Device::new()?;
-    let exec = DeviceExecutor::new(&dev, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"));
+    let exec = DeviceExecutor::new(&dev, fuller::wgsl::oracle::device::Fuel::Unported);
     let harness = Harness::new(Problem::load(Path::new(&problem))?, &exec)?;
     if let Some(rounds) = pair_rounds {
         println!("kernel\tshape\toriginal median\tkernel median\tratio (kernel / original) [95 %]\trounds\tgate");

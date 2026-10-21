@@ -218,7 +218,7 @@ fn score(dev: &Device, rr: &Renderer, tree: &Tree, set: &EvalSet, bound: &CostBo
         Ok(o) => o,
         Err(e) => return refused(e),
     };
-    let gram = match Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard")) {
+    let gram = match Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Unported) {
         Ok(g) => g,
         Err(e) => return refused(format!("compile: {}", e.lines().next().unwrap_or(""))),
     };
@@ -240,7 +240,7 @@ fn score(dev: &Device, rr: &Renderer, tree: &Tree, set: &EvalSet, bound: &CostBo
 #[allow(dead_code)]
 fn timing(dev: &Device, rr: &Renderer, tree: &Tree, shipped: &Gram, train: &[Pair], pairs: &[usize], limit: u64, bound: &CostBound, state: &mut u64) -> Result<(f64, f64), String> {
     let out = rr.kernel(tree)?;
-    let gram = Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
+    let gram = Gram::compile_rendered(dev, &out, fuller::wgsl::oracle::device::Fuel::Unported)?;
     let mut ratios = Vec::with_capacity(pairs.len());
     for &i in pairs {
         let p = &train[i];
@@ -299,6 +299,7 @@ fn main() -> Result<(), String> {
     let role = gram_role();
     let rr = Renderer::new(&kingdom, &table, &role);
     let root = dual_ty(&kingdom, "kernel.kernel")?;
+    fuller::wgsl::oracle::device::Fuel::Unported.refuse_unported()?;
     let dev = Device::new()?;
     let limit = effective_buffer_limit(&dev.device);
     println!("[{}] device {} limit {} MiB", stamp(), dev.name, limit >> 20);
@@ -460,7 +461,7 @@ fn main() -> Result<(), String> {
     let out = rr.kernel(&best_tree)?;
     std::fs::write(out_dir.join("best.wgsl"), &out.text).map_err(|e| e.to_string())?;
     std::fs::write(out_dir.join("best.sexpr"), best_tree.to_sexpr()).map_err(|e| e.to_string())?;
-    let best_gram = Gram::compile_rendered(&dev, &out, fuller::wgsl::oracle::device::Fuel::Proven("legacy kingdom candidate: no fuel budget exists for it, bounded only by the harness runaway guard"))?;
+    let best_gram = Gram::compile_rendered(&dev, &out, fuller::wgsl::oracle::device::Fuel::Unported)?;
     let mut report = String::new();
     writeln!(report, "split\tpairs\tgated\tmean_ratio\tmax_ratio\tshipped_mean\tshipped_max").map_err(|e| e.to_string())?;
     for (name, pairs) in [("train", &train), ("validation", &val), ("extrapolation", &extrap)] {
