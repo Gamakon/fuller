@@ -44,7 +44,7 @@ fn main() -> Result<(), String> {
         });
     }
     let dev = Device::new()?;
-    let ctx = FitnessContext::new(&dev, Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/logs/WGSL_GRAM/pairs")))?;
+    let ctx = FitnessContext::new(&dev, &fuller::wgsl::pairs::cache_dir())?;
     println!("run\tkernel\tgen\trow\torigin\tstage\tfeasible\tpassed\tdistance\tcloseness_hff\t{}\tdetail", closeness::COLUMNS.join("\t"));
     for run in &args {
         let run = Path::new(run);

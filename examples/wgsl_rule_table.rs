@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use fuller::wgsl::gram::{FitnessContext, Gram};
 use fuller::wgsl::knob;
@@ -101,7 +101,7 @@ fn main() -> Result<(), String> {
     writeln!(tsv, "rule\tparent\tsite\tcheck\tcorrect\tparent_hff\tchild_hff\tmax_error\tfaster_rounds\tmedian_ratio\tratios").map_err(|e| e.to_string())?;
     let kingdom = WgslKingdom::load_safe();
     let dev = Device::new()?;
-    let ctx = FitnessContext::new(&dev, Path::new("logs/WGSL_GRAM/pairs"))?;
+    let ctx = FitnessContext::new(&dev, &fuller::wgsl::pairs::cache_dir())?;
     let started = std::time::Instant::now();
     let mut rows: BTreeMap<&str, Row> = BTreeMap::new();
     for (pi, f) in files.iter().enumerate() {

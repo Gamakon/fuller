@@ -93,6 +93,16 @@ pub fn fitness_pick(shapes: &[Vec<(Kind, usize, usize, u64)>; 3]) -> Result<[Vec
     Ok([train, val, extrap])
 }
 
+/// WHERE THE REFERENCE PAIRS ARE CACHED: `$FULLER_GRAM_CACHE` when set and not empty, else `~/.cache/fuller/wgsl_gram_pairs`
+/// (`$HOME` unset: the system temp directory). Outside the repository on purpose: the pairs are 11 GB of f64 references
+/// built on first use (T43 follow-up, 2026-10-21); in `logs/` a clean checkout would write them into the working tree.
+pub fn cache_dir() -> std::path::PathBuf {
+    match std::env::var_os("FULLER_GRAM_CACHE").filter(|v| !v.is_empty()) {
+        Some(dir) => dir.into(),
+        None => std::env::var_os("HOME").filter(|h| !h.is_empty()).map_or_else(std::env::temp_dir, std::path::PathBuf::from).join(".cache/fuller/wgsl_gram_pairs"),
+    }
+}
+
 /// The three splits, references built on first use and read thereafter.
 pub fn splits(cache: &Path) -> Result<Splits, String> {
     std::fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;

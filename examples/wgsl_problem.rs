@@ -204,7 +204,7 @@ fn main() -> Result<(), String> {
         }
         return Ok(());
     }
-    let ctx = if compare { Some(FitnessContext::new(&dev, Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/logs/WGSL_GRAM/pairs")))?) } else { None };
+    let ctx = if compare { Some(FitnessContext::new(&dev, &fuller::wgsl::pairs::cache_dir())?) } else { None };
     println!("kernel\tfeasible\tpassed\tdistance\tcloseness_hff\thff\tdetail{}{}\treference_gpu_ms\tkernel_gpu_ms", if compare { "\tgram_feasible\tgram_passed\tagree\tfirst_difference (harness / gram)" } else { "" }, if self_check { "\tgram_vs_gram\tharness_vs_harness" } else { "" });
     let (mut agree, mut n, mut gram_self, mut harness_self) = (0usize, 0usize, 0usize, 0usize);
     for k in &kernels {

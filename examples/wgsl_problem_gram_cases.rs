@@ -7,7 +7,7 @@
 //! extrapolation pair's H; the manifests and the constraint suite's files
 //! are committed, the rest is written here.
 //!
-//! `cargo run --release --features wgsl --example wgsl_problem_gram_cases -- <problem dir> [--cache logs/WGSL_GRAM/pairs]`
+//! `cargo run --release --features wgsl --example wgsl_problem_gram_cases -- <problem dir> [--cache <dir>]`
 
 use std::path::Path;
 use std::time::Instant;

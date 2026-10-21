@@ -1804,7 +1804,7 @@ mod tests {
     #[test]
     fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes_on_the_device() {
         let dev = Device::new().expect("device");
-        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let f = ctx.fitness(&dev, SHIPPED);
         assert!(f.feasible, "{f:?}");
         println!("shipped measured {:?} ms, predicted {:?} ms, rate {:.2} ms per 1e9 item-cells, floor {:.2} ms, limit {:.0} ms", ctx.shipped_ms, f.predicted_ms, f.rate_per_g, f.floor_ms, ctx.slow_limit_ms());
@@ -1853,7 +1853,7 @@ mod tests {
     fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes_on_the_device() {
         let slow = slow_shipped();
         let dev = Device::new().expect("device");
-        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let f = ctx.fitness(&dev, &slow);
         println!("{:.1} s: {}", f.seconds, f.detail);
         assert!(!f.feasible && f.passed == ctx.admission.len(), "{f:?}");
@@ -1968,7 +1968,7 @@ mod tests {
     #[test]
     fn the_generations_shipped_times_score_shipped_at_one_on_the_device() {
         let dev = Device::new().expect("device");
-        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let first = ctx.shipped_gpu_ms.get();
         let f = ctx.fitness(&dev, SHIPPED);
         assert!(f.feasible, "{f:?}");
@@ -2231,7 +2231,7 @@ mod tests {
     #[test]
     fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel_on_the_device() {
         let dev = Device::new().expect("device");
-        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let s = ctx.fitness(&dev, SHIPPED);
         assert!(s.feasible, "{s:?}");
         assert!((s.hff - 1.186).abs() < 0.08, "{s:?}");

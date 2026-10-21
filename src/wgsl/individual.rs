@@ -177,7 +177,7 @@ mod tests {
         let ind = Individual::from_source(BLOCKED, &kingdom).unwrap();
         let rebuilt = ind.rebuild_self().unwrap();
         let dev = Device::new().expect("device");
-        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let original = ctx.fitness(&dev, BLOCKED);
         let again = ctx.fitness(&dev, &rebuilt.wgsl);
         assert!(original.feasible && again.feasible, "{original:?} {again:?}");

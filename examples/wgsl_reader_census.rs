@@ -55,13 +55,7 @@ fn main() {
         let mut v: Vec<PathBuf> = std::fs::read_dir(root.join(sub)).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default();
         v.sort();
         for d in v {
-            if sub == "tests/fixtures/wgsl_genomes" {
-                dirs.push(d.join("texts"));
-            } else if sub == "problems" {
-                dirs.push(d);
-            } else {
-                dirs.push(d);
-            }
+            dirs.push(if sub == "tests/fixtures/wgsl_genomes" { d.join("texts") } else { d });
         }
     }
     println!("directory\tkernels\tread\trefused");

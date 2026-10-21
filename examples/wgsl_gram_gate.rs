@@ -28,7 +28,7 @@ fn main() -> Result<(), String> {
     let mut verdicts = verdicts;
     let dev = Device::new()?;
     let t = std::time::Instant::now();
-    let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs"))?;
+    let ctx = FitnessContext::new(&dev, &fuller::wgsl::pairs::cache_dir())?;
     println!("context {:.1} s\tshipped measured\t{:.0} / {:.0} / {:.0} ms\tslow limit {:.0} ms a build", t.elapsed().as_secs_f64(), ctx.shipped_ms[0], ctx.shipped_ms[1], ctx.shipped_ms[2], ctx.slow_limit_ms());
     println!("kernel\tfeasible\thff\tpredicted ms (3 shapes)\tmeasured ms (3 shapes)\trate ms/1e9\tfloor ms\tseconds\tdetail");
     let (mut feasible, mut infeasible) = ((Split::default(), 0usize), (Split::default(), 0usize));

@@ -286,7 +286,7 @@ fn main() -> Result<(), String> {
         }
     }
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
-    let cache = PathBuf::from("logs/WGSL_GRAM/pairs");
+    let cache = fuller::wgsl::pairs::cache_dir();
     std::fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
     let t_all = Instant::now();
     println!("[{}] wgsl_gram_evolve pop {pop} gens {gens} seed {seed} sample {sample_n} start {} out {}", stamp(), if seed_shipped { "shipped tree".to_string() } else if damaged > 0 { format!("shipped tree damaged by {damaged} mutations") } else { "random trees".to_string() }, out_dir.display());

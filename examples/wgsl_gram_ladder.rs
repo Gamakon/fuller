@@ -15,7 +15,7 @@
 //! candidate and the caller's loop goes on. A summary line is appended to
 //! `--ledger` (TSV) and everything is printed with timestamps.
 //!
-//!   cargo run --release --features gpu,wgsl --example wgsl_gram_ladder -- <kernel.wgsl> [--rounds 5] [--probes-only] [--ledger logs/HGP/ladder.tsv] [--cache logs/WGSL_GRAM/pairs]
+//!   cargo run --release --features gpu,wgsl --example wgsl_gram_ladder -- <kernel.wgsl> [--rounds 5] [--probes-only] [--ledger logs/HGP/ladder.tsv] [--cache <dir, default $FULLER_GRAM_CACHE or ~/.cache/fuller/wgsl_gram_pairs>]
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -89,7 +89,7 @@ fn main() -> Result<(), String> {
     let mut probes_only = false;
     let mut timing_only = false;
     let mut ledger = PathBuf::from("logs/HGP/ladder.tsv");
-    let mut cache = PathBuf::from("logs/WGSL_GRAM/pairs");
+    let mut cache = fuller::wgsl::pairs::cache_dir();
     let mut kernel: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
