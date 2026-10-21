@@ -9094,8 +9094,7 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
     /// same name (`norm(x)` calling `sq(x)`: two seeds never finished reading).
     /// The kernel reads, renders, naga validates it, reads back to the tree
     /// read (canonical), a fixpoint, and passes every layer; a test of a
-    /// thread's value over a barrier reads (`uflag.of_flag`, since
-    /// 2026-10-17) and the checker's layer 4 names its barrier.
+    /// thread's value over a barrier is outside the kingdom, by name.
     #[test]
     fn uniform_tests_keep_their_rung_and_nested_helpers_share_an_argument_name() {
         let k = WgslKingdom::load_safe();
@@ -9143,10 +9142,11 @@ fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         let thread = src.replace("if (cfg.pass_index == 0u) {", "if (lid.x == 0u) {");
-        let t = read_safe(&thread, &k).unwrap_or_else(|e| panic!("a barrier under a thread's test: {e}"));
-        let checker = crate::wgsl::check::Checker::with_contract(&k, &t.role, &crate::wgsl::target::Target::recorded(), crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap());
-        let e = checker.check(&t.tree).expect_err("a barrier under a thread's test passes the checker");
-        assert_eq!((e.layer.number(), e.reason), (4, "barrier_in_nonuniform_control_flow"), "{e}");
+        // A barrier under a thread's test (`lid.x == 0u`) is illegal (WGSL's uniformity rule), and no row admits the flag into a
+        // uniform context: the kernel is outside the kingdom, by name. (It read as `uflag.of_flag` while that row existed, and
+        // the checker's layer 4 named the barrier; A0 deleted the row, and the types carry the rule.)
+        let e = read_safe(&thread, &k).err().expect("a barrier under a thread's test reads");
+        assert!(e.contains("outside the kingdom: a test over a barrier that is not a comparison of workgroup-uniform values") && e.contains("no row admits a flag into a uniform context"), "{e}");
     }
 
     /// A LAST STORE THE EPILOGUE CANNOT SPELL, UNDER AN INTERFACE WITH NO h
