@@ -292,6 +292,10 @@ pub mod device {
 
     use std::borrow::Cow;
 
+    /// The work guard (`work_guard`): `work_bound` is `H * 2^(6K) * invocations`; every submit of a kernel that is
+    /// not proven goes through [`Fuel::check`] first.
+    pub use crate::wgsl::work_guard::{work_bound, Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
+
     use super::{bindings, from_words, to_words, Binding};
     use crate::wgsl::interp::{Memory, Value};
 

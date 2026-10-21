@@ -25,7 +25,7 @@ use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 #[cfg(feature = "gpu")]
-use crate::wgsl::oracle::device::Device;
+use crate::wgsl::oracle::device::{Device, Fuel};
 use crate::wgsl::render::Grid;
 #[cfg(feature = "gpu")]
 use crate::wgsl::render::Rendered;
@@ -667,6 +667,13 @@ pub fn grid_of(source: &str) -> Result<Grid, String> {
     Ok(Grid { x, y, bx, by, rows_x })
 }
 
+/// The invocations of one output-row band's submit: `passes` item-band passes, each of [`Grid::dispatch`]
+/// workgroups of `grid.x * grid.y` invocations. The work guard's `invocations`.
+pub fn submit_invocations(grid: Grid, d: usize, r_rows: usize, passes: usize) -> u64 {
+    let (wg_x, wg_y) = grid.dispatch(r_rows as u32, d as u32);
+    u64::from(wg_x).saturating_mul(u64::from(wg_y)).saturating_mul(u64::from(grid.x) * u64::from(grid.y)).saturating_mul(passes as u64)
+}
+
 /// A compiled Gram kernel on the oracle's device.
 #[cfg(feature = "gpu")]
 pub struct Gram<'a> {
@@ -677,6 +684,10 @@ pub struct Gram<'a> {
     /// the two swapped with the rows on x).
     pub grid: Grid,
     period_ns: f32,
+    /// The work guard: what is known of the kernel's work per invocation. `Fuel::Proven` (the default of the
+    /// constructors) is for the shipped and hand kernels; a random gene, an evolved child or a seed gets
+    /// [`Gram::with_fuel`] before any run, and every submit is checked against the cap first.
+    fuel: Fuel,
 }
 
 #[cfg(feature = "gpu")]
@@ -710,7 +721,13 @@ impl<'a> Gram<'a> {
         if let Some(e) = scope.pop() {
             return Err(format!("pipeline: {e}"));
         }
-        Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period() })
+        Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period(), fuel: Fuel::Proven })
+    }
+
+    /// This kernel is not proven: every run is bounded by `fuel` (`work_guard`) before it is submitted.
+    pub fn with_fuel(mut self, fuel: Fuel) -> Self {
+        self.fuel = fuel;
+        self
     }
 
     /// Build `H` over `phi` (item-major `m × d`) as production does, under
@@ -736,6 +753,8 @@ impl<'a> Gram<'a> {
         let item_bands = r.bands.len();
         let row_bands = bands.row_bands;
         let phi_bands = &r.bands;
+        // The work guard, before anything is encoded or submitted: the largest submit is one row band.
+        self.fuel.check("a Gram run", submit_invocations(self.grid, d, row_band_rows.min(d), item_bands))?;
 
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("gram timestamps"), ty: wgpu::QueryType::Timestamp, count: 2 * item_bands as u32 });
         let stamps_bytes = 16 * item_bands as u64;
@@ -873,6 +892,9 @@ impl Gram<'_> {
         let resolve_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch resolve"), size: stamps_bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
         let stamps_read = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch stamps read"), size: stamps_bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch staging"), size: staging_bytes.max(4), usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        // The work guard, before the batch is encoded: the whole batch is one submit.
+        let batch_invocations = bands.iter().fold(0u64, |a, b| a.saturating_add(submit_invocations(self.grid, rs[b.case].d, b.r_rows, b.binds.len())));
+        self.fuel.check("a Gram batch", batch_invocations)?;
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram batch") });
         for b in &bands {
             let d = rs[b.case].d;

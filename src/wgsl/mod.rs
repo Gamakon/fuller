@@ -63,6 +63,7 @@ pub mod true_kingdom;
 pub mod typed_gene;
 pub mod target;
 pub mod versions;
+pub mod work_guard;
 
 pub use chromosome::{chromosome, chromosome_typed, chromosome_with_roots, ChromosomeOptions, WgslChromosome};
 pub use infer::{infer_function, FunctionTypes, NodeType, TypeStats, TypedTree};

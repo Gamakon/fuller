@@ -2744,11 +2744,15 @@ mod device {
 
     use super::{initial_bytes, judge_inputs, kernel_info, windows_of_judged, BindingKind, BufId, CaseData, Cmd, Env, Executor, KernelInfo, OutputSpec, Plan, PooledWindow, Problem, RunOut};
     use crate::wgsl::gram::{adapter_buffer_limit, effective_buffer_limit, wait_gpu, wait_gpu_within};
-    use crate::wgsl::oracle::device::Device;
+    use crate::wgsl::oracle::device::{Device, Fuel};
 
     pub struct DeviceExecutor<'a> {
         pub dev: &'a Device,
         limit: u64,
+        /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
+        /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
+        /// before it is made.
+        fuel: Fuel,
         /// The pooled judge's pipeline, made on first use, and each judged
         /// case's resident tables (its records, accept sets, query rows),
         /// uploaded once a case (keyed by the case data's address, which lives
@@ -2769,7 +2773,13 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), fuel: Fuel::Proven, judge: std::cell::RefCell::new(None) }
+        }
+
+        /// The kernels this executor runs are not proven: every submit is bounded by `fuel` before it is made.
+        pub fn with_fuel(mut self, fuel: Fuel) -> Self {
+            self.fuel = fuel;
+            self
         }
 
         /// The device executor at the binding limit `problem` plans by
@@ -2780,7 +2790,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit, fuel: Fuel::Proven, judge: std::cell::RefCell::new(None) }
         }
     }
 
@@ -2788,6 +2798,8 @@ mod device {
     /// order), over one explicit layout.
     pub struct DeviceKernel {
         pipelines: Vec<wgpu::ComputePipeline>,
+        /// Invocations per workgroup of each entry point (the work guard's workgroup size).
+        workgroup_invocations: Vec<u64>,
         bgl: wgpu::BindGroupLayout,
         period_ns: f32,
     }
@@ -2831,6 +2843,13 @@ mod device {
     }
 
     impl DeviceExecutor<'_> {
+        /// The invocations per workgroup of compute entry `entry` of `source` (the work guard's workgroup size).
+        fn entry_invocations(source: &str, entry: &str) -> Result<u64, String> {
+            let module = crate::wgsl::naga_shape::parse(source)?;
+            let ep = module.entry_points.iter().find(|e| e.name == entry && e.stage == naga::ShaderStage::Compute).ok_or_else(|| format!("no compute entry point {entry}"))?;
+            Ok(ep.workgroup_size.iter().map(|x| u64::from(*x)).product())
+        }
+
         fn make(&self, plan: &Plan, id: BufId, data: &CaseData) -> Result<wgpu::Buffer, String> {
             let b = &plan.buffers[id];
             let usage = if b.uniform { wgpu::BufferUsages::UNIFORM } else { wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST };
@@ -2862,8 +2881,10 @@ mod device {
                 reads: Vec<(usize, BufId, u64, usize, u64, u64)>,
                 keep: Vec<wgpu::Buffer>,
                 any: bool,
+                /// The invocations of the dispatches encoded so far: the work guard's input.
+                invocations: u64,
             }
-            let new_seg = || Seg { enc: device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness segment") }), queries: Vec::new(), reads: Vec::new(), keep: Vec::new(), any: false };
+            let new_seg = || Seg { enc: device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness segment") }), queries: Vec::new(), reads: Vec::new(), keep: Vec::new(), any: false, invocations: 0 };
             // The query set is sized for the largest segment: count the
             // dispatches between syncs first.
             let mut most = 1usize;
@@ -2974,6 +2995,10 @@ mod device {
                             seg.any = true;
                         }
                         Cmd::Dispatch { bind, workgroups, entry, .. } => {
+                            // The work guard, before the dispatch is encoded: the segment is one submit, and
+                            // nothing of it has been submitted when the bound is over the cap.
+                            seg.invocations = seg.invocations.saturating_add(workgroups.iter().fold(1u64, |a, w| a.saturating_mul(u64::from(*w))).saturating_mul(k.workgroup_invocations[*entry]));
+                            self.fuel.check("a harness segment", seg.invocations)?;
                             let entries: Vec<wgpu::BindGroupEntry> = bind.iter().map(|(b, id)| live[i].buf(*id, "a dispatch").map(|buf| wgpu::BindGroupEntry { binding: *b, resource: buf.as_entire_binding() })).collect::<Result<_, _>>()?;
                             let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness bind"), layout, entries: &entries });
                             let q = seg.queries.len() as u32;
@@ -3137,7 +3162,8 @@ mod device {
             if let Some(e) = scope.pop() {
                 return Err(format!("pipeline: {e}"));
             }
-            Ok((DeviceKernel { pipelines, bgl, period_ns: dev.queue.get_timestamp_period() }, info))
+            let workgroup_invocations = problem.spec.kernel.entry_names().iter().map(|e| Self::entry_invocations(source, e)).collect::<Result<Vec<_>, _>>()?;
+            Ok((DeviceKernel { pipelines, workgroup_invocations, bgl, period_ns: dev.queue.get_timestamp_period() }, info))
         }
 
         fn stage(&self, plan: &Plan, data: &CaseData) -> Result<(DeviceStaged, f64), String> {

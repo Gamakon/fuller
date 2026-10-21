@@ -12,15 +12,21 @@
 //!   cargo run --release --features gpu,wgsl --example wgsl_true_loop -- \
 //!       --genes 100 --seed 1 --size 8 --stage all --out /private/tmp/claude-501/st_runs/x
 //! `--stage naga` runs (a) only (no device); `--dump N` prints gene N's kernel.
+//!
+//! Stage (c) is the smallest dispatch that runs the Gram unit test: d = 16, m = 4 (UNIT_TEST_D, UNIT_TEST_M), one
+//! 16 x 16 workgroup of 256 invocations in one pass. Every submit is bounded before it is made by the work guard
+//! (`fuller::wgsl::work_guard`): H * 2^(6K) * invocations must be at most the cap, else the tool stops with the
+//! bound, the cap and what to change (2026-10-21 17:33: K = 2 at the 128 x 64 rung crashed the machine).
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{express, GeneLayout, Tree};
-use fuller::wgsl::gram::{phi, Gram, RUNGS, RUNG_SEED};
-use fuller::wgsl::oracle::device::Device;
+use fuller::wgsl::gram::{band_layout, phi, submit_invocations, Gram, RUNG_SEED};
+use fuller::wgsl::oracle::device::{Device, Fuel};
 use fuller::wgsl::true_kingdom::{default_dir, random_gene, Rng, Share, TrueKingdom};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,7 +38,22 @@ enum Stage {
 
 type Verdict = Result<(), (Stage, String)>;
 
+#[derive(Default)]
+struct Timing {
+    naga_ms: Cell<f64>,
+    pipeline_ms: Cell<f64>,
+    run_ms: Cell<f64>,
+    slowest_run_ms: Cell<f64>,
+}
+
+/// Stage (c)'s dispatch: the smallest that runs the Gram unit test, d = 16 columns and m = 4 items, one 16 x 16
+/// workgroup (256 invocations) in one pass.
+const UNIT_TEST_D: usize = 16;
+const UNIT_TEST_M: usize = 4;
+const UNIT_TEST_INVOCATIONS: u64 = 16 * 16;
+
 struct Ctx<'a> {
+    timing: Timing,
     kingdom: &'a TrueKingdom,
     contract: &'a KingdomContract,
     dev: Option<&'a Device>,
@@ -40,15 +61,34 @@ struct Ctx<'a> {
     d: usize,
     m: usize,
     limit: u64,
+    fuel: Fuel,
 }
 
 impl Ctx<'_> {
     fn check_source(&self, src: &str) -> Verdict {
+        let t = Instant::now();
         let module = naga::front::wgsl::parse_str(src).map_err(|e| (Stage::Naga, e.emit_to_string(src)))?;
         fuller::wgsl::target::Target::current().validate(&module, src).map_err(|e| (Stage::Naga, e))?;
+        self.timing.naga_ms.set(self.timing.naga_ms.get() + t.elapsed().as_secs_f64() * 1e3);
         let Some(dev) = self.dev else { return Ok(()) };
-        let gram = Gram::compile(dev, src).map_err(|e| (Stage::Pipeline, e))?;
-        gram.build(&self.phi, self.d, self.m, self.limit).map_err(|e| (Stage::Run, e))?;
+        let t = Instant::now();
+        let gram = Gram::compile(dev, src).map_err(|e| (Stage::Pipeline, e))?.with_fuel(self.fuel.clone());
+        // The work guard, before the run: a bound over the cap is a misconfigured experiment, not a verdict on
+        // this kernel, so the tool stops (nothing was submitted).
+        let bands = band_layout(self.d, self.m, self.limit);
+        if let Err(e) = self.fuel.check("stage (c)", submit_invocations(gram.grid, self.d, bands.band_rows.min(self.d), bands.item_bands)) {
+            eprintln!("{e}");
+            std::process::exit(4);
+        }
+        self.timing.pipeline_ms.set(self.timing.pipeline_ms.get() + t.elapsed().as_secs_f64() * 1e3);
+        let t = Instant::now();
+        let built = gram.build(&self.phi, self.d, self.m, self.limit).map_err(|e| (Stage::Run, e))?;
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        self.timing.run_ms.set(self.timing.run_ms.get() + ms);
+        self.timing.slowest_run_ms.set(self.timing.slowest_run_ms.get().max(ms));
+        if built.h.len() != self.d * self.d {
+            return Err((Stage::Run, format!("the run returned {} values, not d x d = {}", built.h.len(), self.d * self.d)));
+        }
         Ok(())
     }
 
@@ -152,6 +192,66 @@ fn minimise(ctx: &Ctx, tree: &Tree, sig: &str) -> Tree {
     }
 }
 
+/// Run one kernel text in a child process of this binary (`--file`), killed after `secs`: a kernel that wedges
+/// the device cannot take this process with it. A kill is the verdict `Run: hang`.
+fn isolated(src: &str, secs: u64) -> Verdict {
+    let path = std::env::temp_dir().join(format!("wgsl_true_isolated_{}.wgsl", std::process::id()));
+    std::fs::write(&path, src).map_err(|e| (Stage::Naga, e.to_string()))?;
+    let exe = std::env::current_exe().map_err(|e| (Stage::Naga, e.to_string()))?;
+    let mut child = std::process::Command::new(exe).arg("--file").arg(&path).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().map_err(|e| (Stage::Naga, e.to_string()))?;
+    let t = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if t.elapsed().as_secs() >= secs => {
+                let _ = child.kill();
+                let _ = child.wait();
+                drain();
+                return Err((Stage::Run, "hang: the kernel ran past the guard".into()));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            Err(e) => return Err((Stage::Run, e.to_string())),
+        }
+    }
+    let mut text = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        std::io::Read::read_to_string(&mut o, &mut text).map_err(|e| (Stage::Run, e.to_string()))?;
+    }
+    let line = text.lines().find(|l| l.starts_with("VERDICT")).unwrap_or("VERDICT err Run no verdict").to_string();
+    if line.starts_with("VERDICT ok") {
+        Ok(())
+    } else {
+        let stage = if line.contains(" Naga ") { Stage::Naga } else if line.contains(" Pipeline ") { Stage::Pipeline } else { Stage::Run };
+        Err((stage, line.splitn(4, ' ').nth(3).unwrap_or("").to_string()))
+    }
+}
+
+/// Wait until the device runs a trivial kernel promptly again (a killed runaway keeps it busy for a while).
+fn drain() {
+    let trivial = "@group(0) @binding(0) var<storage, read> phi: array<f32>;\n@group(0) @binding(1) var<storage, read_write> h: array<f32>;\nstruct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\n@group(0) @binding(2) var<uniform> cfg: Cfg;\n// grid 16 16 1 1\n@compute @workgroup_size(16, 16, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { if (gid.x < cfg.d && gid.y < cfg.r_rows) { h[gid.y * cfg.d + gid.x] = 1.0; } }\n";
+    let path = std::env::temp_dir().join(format!("wgsl_true_drain_{}.wgsl", std::process::id()));
+    if std::fs::write(&path, trivial).is_err() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    for _ in 0..120 {
+        let t = Instant::now();
+        let Ok(mut child) = std::process::Command::new(&exe).arg("--file").arg(&path).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() else { return };
+        while child.try_wait().ok().flatten().is_none() && t.elapsed().as_secs() < 15 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let done = child.try_wait().ok().flatten().is_some();
+        if !done {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if done && t.elapsed().as_secs_f64() < 4.0 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+}
+
 fn rows_of(t: &Tree, kingdom: &TrueKingdom, out: &mut Vec<String>) {
     out.push(kingdom.rows[t.symbol as usize].name.clone());
     for c in &t.kids {
@@ -189,12 +289,80 @@ fn run() -> Result<i32, String> {
     println!("{}", fuller::kingdom_contract::report(&relations, n));
     let layout = GeneLayout::from_program_size(&contract, kingdom.root, n).map_err(|e| e.to_string())?;
     let const_len = kingdom.const_lens();
+    let fuel = kingdom.fuel(&contract, n)?;
     println!("gene width {} words; {} types, {} rows; fuel budget K = {}", layout.width, kingdom.types.len(), kingdom.rows.len(), kingdom.fuel_budget);
+    println!(
+        "work guard: H = {}, K = {}; bound at the unit-test dispatch ({UNIT_TEST_INVOCATIONS} invocations) {}, at the 128 x 64 rung (16384) {}; cap {}",
+        kingdom.head_total(&contract, n)?,
+        kingdom.fuel_budget,
+        fuel.bound(UNIT_TEST_INVOCATIONS).unwrap_or(0),
+        fuel.bound(16384).unwrap_or(0),
+        fuller::wgsl::oracle::device::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT
+    );
 
+    // The work guard before the device is opened: the kingdom's H and K against the unit test's dispatch.
+    if stage != "naga" {
+        fuel.check("stage (c) at the unit-test dispatch", UNIT_TEST_INVOCATIONS)?;
+    }
     let dev = if stage == "naga" { None } else { Some(Device::new()?) };
-    let (d, m) = RUNGS[0];
-    let ctx = Ctx { kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)) };
+    let (d, m) = (UNIT_TEST_D, UNIT_TEST_M);
+    let ctx = Ctx { timing: Timing::default(), kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)), fuel };
 
+    if let Some(i) = arg(&args, "--minimise").map(|v| v.parse::<usize>().map_err(|e| format!("--minimise: {e}"))).transpose()? {
+        let mut rng = Rng(seed.wrapping_mul(0x1000_0000_01B3).wrapping_add(i as u64));
+        let share = if i % 2 == 0 { Share::Half } else { Share::Proportional };
+        let gene = random_gene(&contract, &layout, &const_len, &mut rng, share, (i / 2) % 2 == 1);
+        let tree = express(&contract, &layout, &gene, &const_len).map_err(|e| e.to_string())?.tree();
+        let guard: u64 = arg(&args, "--guard").map_or(Ok(15), |v| v.parse().map_err(|e| format!("--guard: {e}")))?;
+        let first = isolated(&kingdom.render(&tree)?, guard);
+        let Err((st, msg)) = first else { return Err(format!("gene {i} passes in isolation")) };
+        let sig = signature(st, &msg);
+        println!("gene {i} fails in isolation: {sig}");
+        let mut cur = tree;
+        let mut idx = 1;
+        loop {
+            let mut all = Vec::new();
+            paths(&cur, &mut Vec::new(), &mut all);
+            if idx >= all.len() {
+                break;
+            }
+            let p = &all[idx];
+            let node = at(&cur, p);
+            let ty = contract.output(node.symbol);
+            let terms = contract.terminals_of(ty);
+            let leaf_sym = terms.iter().copied().find(|s| !contract.is_constant(*s)).or_else(|| terms.first().copied());
+            if node.kids.is_empty() || leaf_sym.is_none() {
+                idx += 1;
+                continue;
+            }
+            let sym = leaf_sym.unwrap_or_default();
+            let leaf = Tree { symbol: sym, const_index: contract.is_constant(sym).then_some(0), kids: Vec::new() };
+            let cand = replaced(&cur, p, &leaf);
+            match isolated(&kingdom.render(&cand)?, guard) {
+                Err((st2, msg2)) if signature(st2, &msg2) == sig => {
+                    cur = cand;
+                    println!("  reduced to {} nodes", size(&cur));
+                }
+                _ => idx += 1,
+            }
+        }
+        let mut rows = Vec::new();
+        rows_of(&cur, &kingdom, &mut rows);
+        let min_src = kingdom.render(&cur)?;
+        std::fs::write(out.join(format!("gene_{i}.min.wgsl")), &min_src).map_err(|e| e.to_string())?;
+        println!("minimal tree {} nodes, rows: {}", size(&cur), rows.join(" "));
+        return Ok(0);
+    }
+    if let Some(file) = arg(&args, "--file") {
+        let src = std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?;
+        let t = Instant::now();
+        let v = ctx.check_source(&src);
+        match &v {
+            Ok(()) => println!("VERDICT ok {:.0} ms", t.elapsed().as_secs_f64() * 1e3),
+            Err((st, m)) => println!("VERDICT err {st:?} {}", signature(*st, m)),
+        }
+        return Ok(i32::from(v.is_err()));
+    }
     let mut hit: BTreeSet<u32> = BTreeSet::new();
     let mut by_sig: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut passed = 0usize;
@@ -219,6 +387,13 @@ fn run() -> Result<i32, String> {
                 let sig = signature(st, &msg);
                 std::fs::write(out.join(format!("gene_{i}.wgsl")), &src).map_err(|e| e.to_string())?;
                 std::fs::write(out.join(format!("gene_{i}.error.txt")), &msg).map_err(|e| e.to_string())?;
+                if st == Stage::Run && msg.starts_with("runaway") {
+                    // The device is wedged by this kernel: nothing after it in this process can be trusted. The
+                    // wrapper restarts at the next gene; `--minimise {i}` names the rows in isolation.
+                    println!("RUNAWAY gene {i} ({} nodes): {sig}", expressed.nodes.len());
+                    println!("{passed} of {} genes before it pass", i - start);
+                    std::process::exit(3);
+                }
                 let small = minimise(&ctx, &tree, &sig);
                 let mut rows = Vec::new();
                 rows_of(&small, &kingdom, &mut rows);
@@ -243,6 +418,13 @@ fn run() -> Result<i32, String> {
         hit.len(),
         kingdom.rows.len(),
         t0.elapsed().as_secs_f64()
+    );
+    println!(
+        "stage totals: naga {:.0} ms, pipeline {:.0} ms, run {:.0} ms (slowest run {:.0} ms)",
+        ctx.timing.naga_ms.get(),
+        ctx.timing.pipeline_ms.get(),
+        ctx.timing.run_ms.get(),
+        ctx.timing.slowest_run_ms.get()
     );
     for (sig, genes) in &by_sig {
         println!("  {} gene(s) {:?}: {sig}", genes.len(), &genes[..genes.len().min(8)]);

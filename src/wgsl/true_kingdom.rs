@@ -21,6 +21,7 @@ use crate::geneframe::Ty;
 use crate::kingdom_contract::{relations_from_rows, KingdomContract, KingdomRelations};
 use crate::typed_gep::{GeneLayout, Tree};
 use crate::wgsl::loader::{parse_duals, WgslDual};
+use crate::wgsl::work_guard::Fuel;
 
 /// The kingdom's name in its relations.
 pub const TRUE_WGSL: &str = "TRUE_WGSL";
@@ -60,6 +61,13 @@ pub struct TrueKingdom {
     pub root: Ty,
     /// The interface's fuel budget `K`.
     pub fuel_budget: u32,
+}
+
+/// `H`: the sum of the head lengths `h_T` over the types `root` reaches, at program size `n`.
+pub fn head_total_of(contract: &KingdomContract, root: Ty, n: usize) -> Result<u64, String> {
+    let heads = contract.heads_from_program_size(root, n)?;
+    let b = contract.bounds(root, &heads)?;
+    Ok(b.types.iter().map(|t| t.h as u64).sum())
 }
 
 fn unescape(s: &str) -> String {
@@ -160,6 +168,17 @@ impl TrueKingdom {
     /// `|C_T|` for every constant-capable type.
     pub fn const_lens(&self) -> BTreeMap<Ty, u32> {
         self.constants.iter().map(|(t, v)| (*t, v.len() as u32)).collect()
+    }
+
+    /// `H`, the sum of the head lengths over the types the root reaches, at program size `n`.
+    pub fn head_total(&self, contract: &KingdomContract, n: usize) -> Result<u64, String> {
+        head_total_of(contract, self.root, n)
+    }
+
+    /// The work guard's fuel for kernels of this kingdom at program size `n`: `H` and the interface's `K`. Every
+    /// device run of a kernel this kingdom produced passes it (`work_guard`).
+    pub fn fuel(&self, contract: &KingdomContract, n: usize) -> Result<Fuel, String> {
+        Ok(Fuel::Kingdom { h: self.head_total(contract, n)?, k: self.fuel_budget })
     }
 
     /// The bound table at program size `n` (design section 2): for every type the root reaches its head `h_T`, the
@@ -352,5 +371,42 @@ mod tests {
         let heads = c.heads_from_program_size(k.root, 8).unwrap();
         let b = c.bounds(k.root, &heads).unwrap();
         assert!(b.width() > 0);
+    }
+
+    /// A small table by hand: one type R, a binary function and a terminal; `h = 1 + (N - 1) * 2`, so at N = 4,
+    /// H = 7; with a second type T (R -> T -> R, a unary each) the sum is over both heads.
+    #[test]
+    fn the_head_total_is_the_sum_of_the_heads_of_a_small_table() {
+        let (r, t) = (Ty::Wgsl(0), Ty::Wgsl(1));
+        let one = relations_from_rows("one", vec![r], &[("add".into(), vec![r, r], r), ("x".into(), vec![], r)], &[]).check().expect("one type");
+        assert_eq!(head_total_of(&one, r, 4).expect("H"), 7);
+        let two = relations_from_rows("two", vec![r], &[("f".into(), vec![t], r), ("g".into(), vec![r], t), ("x".into(), vec![], r), ("y".into(), vec![], t)], &[]).check().expect("two types");
+        let heads = two.heads_from_program_size(r, 4).expect("heads");
+        assert_eq!(head_total_of(&two, r, 4).expect("H"), heads.values().sum::<usize>() as u64);
+        assert!(head_total_of(&two, r, 4).expect("H") > 4, "more than N");
+    }
+
+    /// The crash configuration: K = 2 (2026-10-21 17:33), the Gram dispatch (the 128 x 64 rung, a 16 x 16
+    /// workgroup) is over the cap, and so is even the unit-test dispatch (one workgroup); K = 0 at the unit-test
+    /// dispatch is under it. The tables here are the K = 0 tables (a lower H than the K = 2 ones).
+    #[test]
+    fn the_crash_configuration_k2_with_the_gram_dispatch_is_refused_and_the_unit_test_at_k0_runs() {
+        use crate::wgsl::gram::{band_layout, submit_invocations, RUNGS};
+        use crate::wgsl::render::Grid;
+        use crate::wgsl::work_guard::work_bound;
+        let k = kingdom();
+        assert_eq!(k.fuel_budget, 0, "interface.tsv is at fuel_budget 0 for the compiler and validity test");
+        let c = k.relations().check().expect("check");
+        let h = k.head_total(&c, 8).expect("H");
+        let grid = Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false };
+        let (d, m) = RUNGS[0];
+        let bands = band_layout(d, m, 1 << 30);
+        let rung = submit_invocations(grid, d, bands.band_rows.min(d), bands.item_bands);
+        assert_eq!(rung, 64 * 256, "8 x 8 workgroups of 256");
+        let crash = Fuel::Kingdom { h, k: 2 };
+        let e = crash.check("the Gram rung", rung).expect_err("K = 2 at the Gram dispatch");
+        eprintln!("H = {h}: K = 2 at the 128 x 64 rung: {}; K = 0 unit test: {}; {e}", work_bound(h, 2, rung), work_bound(h, 0, 256));
+        assert!(k.fuel(&c, 8).expect("fuel").check("the unit test", 256).is_ok(), "K = 0 at the unit-test dispatch");
+        assert!(k.fuel(&c, 8).expect("fuel").check("the Gram rung at K = 0", rung).is_ok(), "K = 0 even at the rung");
     }
 }
