@@ -903,9 +903,16 @@ mod tests {
         let (fw, fs) = (FunctionTable::shipped(), FunctionTable::safe());
         // (The 239 templates the safe kingdom copied; the plain kingdom's terminals of 2026-10-19 (docs/PLAN_wgsl_terminals.md)
         // come after them in each table, and are not the same rows.)
-        for (a, b) in fw.rows.iter().zip(&fs.rows).take(239) {
-            assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
+        // A0 (2026-10-21) deleted 21 of those 239 from the safe table, by name: the wrap-typed `index.sub`, `store.branch`, the
+        // old unsafe statement rows no program rooted at kernel.safe can express (`kernel.entry`, `block.one`/`seq2`/`seq3`/
+        // `seq4`, `stmt.block`/`if`/`if_else`/`return`/`barrier`, `loop.items`/`items_unrolled`/`tile`, `reg.set_f`/`v`/`i`/`b`)
+        // and the escape rows `wg.get` and `wg.set`. The rest keep their order; their refs moved up.
+        const DELETED_OF_THE_239: [&str; 21] = ["index.sub", "store.branch", "kernel.entry", "block.one", "block.seq2", "block.seq3", "block.seq4", "stmt.block", "stmt.if", "stmt.if_else", "stmt.return", "stmt.barrier", "loop.items", "loop.items_unrolled", "loop.tile", "reg.set_f", "reg.set_v", "reg.set_i", "reg.set_b", "wg.get", "wg.set"];
+        let kept: Vec<String> = fw.rows.iter().take(239).map(|a| a.name()).filter(|n| !DELETED_OF_THE_239.contains(&n.as_str())).collect();
+        for (a, b) in kept.iter().zip(&fs.rows) {
+            assert_eq!(*a, b.name());
         }
+        assert_eq!(kept.len(), 239 - 21, "the safe table's first {} rows are the plain table's, less the deleted", kept.len());
         // 561 rows until 2026-10-11; 606 with the complete kingdom's registers and arrays (step 6);
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows).
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows);
@@ -954,7 +961,7 @@ mod tests {
         // (ARRAY_FAMILIES and REG_EXTEND of gen_tables.py: the arrays and registers past the first names, and
         // the sixteen of each extra register kind); 2,228 with the terminals of the typed-GEP plan (the `const`
         // rows of the dual forms no literal reaches and the `own` rows, docs/PLAN_wgsl_terminals.md).
-        assert_eq!(fs.rows.len(), 2241);
+        assert_eq!(fs.rows.len(), 2200, "2241 before A0 deleted 41 rows");
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         // (The functions that make a dual; the plan's `own` terminals make it too.)
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d && !r.name.starts_with("own.") && !r.name.starts_with("const.")).map(|r| r.name.clone()).collect() };
@@ -1007,12 +1014,10 @@ mod tests {
             }
             assert!(k.rows.iter().any(|r| dual(r.output) == st && r.name.starts_with("store.h_")));
         }
-        // One kind of loop condition: a loop's own counter below one of four
-        // bounds (the item loop), or a tile counter below a literal (three depths).
+        // No row produces a loop condition of its own: the 8 `safe.lt_*` rows (a loop's counter below a bound, a tile counter
+        // below a literal) produced `bool.bound`, which no loop row takes, and A0 (2026-10-21) deleted them.
         let bound = producers("bool.bound");
-        assert_eq!(bound.len(), 8, "{bound:?}");
-        assert!(bound.iter().all(|n| n.starts_with("safe.lt_")));
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("safe.lt_")).all(|r| dual(r.inputs[0]) == "u32.counter" || dual(r.inputs[0]).starts_with("u32.tcounter")));
+        assert!(bound.is_empty(), "{bound:?}");
         // No barrier in a conditional context; barriers at L0..L5 only.
         // (The WGSL kingdom's own `stmt.barrier → stmt.stmt` stays; `stmt.stmt`
         // is never demanded under the safe root `kernel.entry_safe`.)
