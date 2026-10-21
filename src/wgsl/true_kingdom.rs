@@ -343,6 +343,53 @@ pub fn random_gene(k: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMa
     gene
 }
 
+/// The depth-biased typed initialiser, for the compiler test only: the same draws as [`random_gene`], but a row is
+/// chosen in proportion to `weight[row]` (a function among the functions of the cell's type, a terminal among its
+/// terminals) and a head cell of a type in `function_p` draws a function with that probability. Nothing is masked or
+/// redrawn: every cell still holds a symbol of its domain's type.
+pub fn random_gene_weighted(k: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMap<Ty, u32>, rng: &mut Rng, weight: &[f64], function_p: &BTreeMap<Ty, f64>, root_function: bool) -> Vec<u32> {
+    use crate::typed_gep::Domain;
+    fn cumulative(ids: &[u32], weight: &[f64]) -> Vec<f64> {
+        let mut acc = 0.0;
+        ids.iter()
+            .map(|i| {
+                acc += weight[*i as usize].max(1e-9);
+                acc
+            })
+            .collect()
+    }
+    fn pick(ids: &[u32], cum: &[f64], rng: &mut Rng) -> u32 {
+        let x = rng.unit() * cum.last().copied().unwrap_or(1.0);
+        ids[cum.partition_point(|c| *c <= x).min(ids.len() - 1)]
+    }
+    let mut tables: BTreeMap<Ty, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    for f in &layout.frames {
+        tables.insert(f.ty, (cumulative(k.functions_of(f.ty), weight), cumulative(k.terminals_of(f.ty), weight)));
+    }
+    let mut gene = vec![0u32; layout.width];
+    for s in layout.spans() {
+        let (functions, terminals) = (k.functions_of(s.ty), k.terminals_of(s.ty));
+        let (fcum, tcum) = &tables[&s.ty];
+        for (i, cell) in gene[s.off..s.off + s.len].iter_mut().enumerate() {
+            *cell = match s.domain {
+                Domain::Head => {
+                    let force = root_function && s.ty == layout.root && i == 0 && !functions.is_empty();
+                    let p = function_p.get(&s.ty).copied().unwrap_or(0.5);
+                    let function = !functions.is_empty() && (terminals.is_empty() || force || rng.unit() < p);
+                    if function {
+                        pick(functions, fcum, rng)
+                    } else {
+                        pick(terminals, tcum, rng)
+                    }
+                }
+                Domain::Tail => pick(terminals, tcum, rng),
+                Domain::Dc => rng.below(const_len.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
+            };
+        }
+    }
+    gene
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

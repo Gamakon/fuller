@@ -27,7 +27,7 @@ use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{express, GeneLayout, Tree};
 use fuller::wgsl::gram::{band_layout, phi, submit_invocations, Gram, RUNG_SEED};
 use fuller::wgsl::oracle::device::{Device, Fuel};
-use fuller::wgsl::true_kingdom::{default_dir, random_gene, Rng, Share, TrueKingdom};
+use fuller::wgsl::true_kingdom::{default_dir, random_gene, random_gene_weighted, Rng, Share, TrueKingdom};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Stage {
@@ -255,6 +255,15 @@ fn drain() {
     }
 }
 
+/// The loop depth of a statement-level row's name (`..._L2_f1` is 2).
+fn row_depth(name: &str) -> Option<u32> {
+    let at = name.rfind("_f")?;
+    let head = &name[..at];
+    let digits: String = head.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<Vec<_>>().into_iter().rev().collect();
+    let kind = head.chars().rev().nth(digits.len())?;
+    "LCOW".contains(kind).then(|| digits.parse().ok()).flatten()
+}
+
 fn rows_of(t: &Tree, kingdom: &TrueKingdom, out: &mut Vec<String>) {
     out.push(kingdom.rows[t.symbol as usize].name.clone());
     for c in &t.kids {
@@ -374,6 +383,18 @@ fn run() -> Result<i32, String> {
         return Ok(i32::from(v.is_err()));
     }
     let mut hit: BTreeSet<u32> = BTreeSet::new();
+    // `--bias coverage`: the depth-biased initialiser (this test only). A row's weight is 8 for a loop, 4 at loop depth 1 or
+    // more, 1 otherwise, times 40 while no gene has exercised it; a head cell of a statement or block type draws a function
+    // nine times in ten. `rows_hit.txt` in the output directory carries the hits across restarts.
+    let biased = arg(&args, "--bias").as_deref() == Some("coverage");
+    let hits_path = out.join("rows_hit.txt");
+    if biased {
+        if let Ok(t) = std::fs::read_to_string(&hits_path) {
+            hit.extend(t.lines().filter_map(|l| l.parse::<u32>().ok()));
+        }
+    }
+    let base_weight: Vec<f64> = kingdom.rows.iter().map(|r| if r.name.starts_with("loop.") { 8.0 } else if row_depth(&r.name).is_some_and(|d| d >= 1) { 4.0 } else { 1.0 }).collect();
+    let function_p: BTreeMap<fuller::geneframe::Ty, f64> = kingdom.types.iter().filter(|d| d.dual.starts_with("stmt.") || d.dual.starts_with("block.")).map(|d| (d.ty(), 0.9)).collect();
     let mut by_sig: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut passed = 0usize;
     let mut sizes = Vec::new();
@@ -381,10 +402,18 @@ fn run() -> Result<i32, String> {
         let mut rng = Rng(seed.wrapping_mul(0x1000_0000_01B3).wrapping_add(i as u64));
         let share = if i % 2 == 0 { Share::Half } else { Share::Proportional };
         let root_function = (i / 2) % 2 == 1;
-        let gene = random_gene(&contract, &layout, &const_len, &mut rng, share, root_function);
+        let gene = if biased {
+            let w: Vec<f64> = base_weight.iter().enumerate().map(|(r, b)| if hit.contains(&(r as u32)) { *b } else { *b * 40.0 }).collect();
+            random_gene_weighted(&contract, &layout, &const_len, &mut rng, &w, &function_p, root_function)
+        } else {
+            random_gene(&contract, &layout, &const_len, &mut rng, share, root_function)
+        };
         let expressed = express(&contract, &layout, &gene, &const_len).map_err(|e| format!("gene {i}: {e}"))?;
         let tree = expressed.tree();
         count_rows(&tree, &mut hit);
+        if biased && i % 25 == 0 {
+            let _ = std::fs::write(&hits_path, hit.iter().map(u32::to_string).collect::<Vec<_>>().join("\n"));
+        }
         sizes.push(expressed.nodes.len());
         let src = kingdom.render(&tree)?;
         if dump == Some(i) {
@@ -400,7 +429,7 @@ fn run() -> Result<i32, String> {
                 if st == Stage::Run && msg.starts_with("runaway") {
                     // The device is wedged by this kernel: nothing after it in this process can be trusted. The
                     // wrapper restarts at the next gene; `--minimise {i}` names the rows in isolation.
-                    println!("RUNAWAY gene {i} ({} nodes): {sig}", expressed.nodes.len());
+                    println!("RUNAWAY gene {i} ({} nodes): {sig} -- an Apple GPU dispatch fault (infrastructure, never a kernel score); the gene is saved", expressed.nodes.len());
                     println!("{passed} of {} genes before it pass", i - start);
                     std::process::exit(3);
                 }
@@ -439,13 +468,7 @@ fn run() -> Result<i32, String> {
     for (sig, genes) in &by_sig {
         println!("  {} gene(s) {:?}: {sig}", genes.len(), &genes[..genes.len().min(8)]);
     }
-    let depth_of = |name: &str| -> Option<u32> {
-        let at = name.rfind("_f")?;
-        let head = &name[..at];
-        let digits: String = head.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<Vec<_>>().into_iter().rev().collect();
-        let kind = head.chars().rev().nth(digits.len())?;
-        ("LCOW".contains(kind)).then(|| digits.parse().ok()).flatten()
-    };
+    let depth_of = row_depth;
     let is_loop = |n: &str| n.starts_with("loop.");
     let all_loops = kingdom.rows.iter().filter(|r| is_loop(&r.name)).count();
     let hit_loops = kingdom.rows.iter().enumerate().filter(|(i, r)| is_loop(&r.name) && hit.contains(&(*i as u32))).count();
@@ -453,6 +476,25 @@ fn run() -> Result<i32, String> {
     let nested_hit = kingdom.rows.iter().enumerate().filter(|(i, r)| depth_of(&r.name).is_some_and(|d| d >= 1) && hit.contains(&(*i as u32))).count();
     println!("loop rows used {hit_loops} of {all_loops}; rows at loop depth 1 or more used {nested_hit} of {nested_total}");
     let unused: Vec<&str> = kingdom.rows.iter().enumerate().filter(|(i, _)| !hit.contains(&(*i as u32))).map(|(_, r)| r.name.as_str()).collect();
+    if biased {
+        let reach: BTreeSet<fuller::geneframe::Ty> = layout.frames.iter().map(|f| f.ty).collect();
+        let mut by_reason: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        for row in kingdom.rows.iter().enumerate().filter(|(r, _)| !hit.contains(&(*r as u32))).map(|(_, row)| row) {
+            let why = if !reach.contains(&row.out) {
+                format!("its output type {} is not reachable from the root", kingdom.type_name(row.out))
+            } else if let Some(a) = row.args.iter().find(|a| !reach.contains(a)) {
+                format!("its argument type {} is not reachable from the root", kingdom.type_name(*a))
+            } else {
+                "reachable, not drawn yet".to_string()
+            };
+            by_reason.entry(why).or_default().push(row.name.as_str());
+        }
+        
+        for (why, rows) in &by_reason {
+            println!("rows never exercised ({}): {why}: {}", rows.len(), rows.iter().take(6).copied().collect::<Vec<_>>().join(" "));
+        }
+        println!("rows exercised {} of {}", hit.len(), kingdom.rows.len());
+    }
     std::fs::write(out.join("rows_not_used.txt"), unused.join("\n")).map_err(|e| e.to_string())?;
     Ok(if passed == genes { 0 } else { 1 })
 }
