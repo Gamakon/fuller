@@ -236,9 +236,11 @@ mod tests {
     /// THE READER GAPS CLOSED (T43, 2026-10-21), one cause at a time: each kernel below was refused by the safe reader
     /// (`examples/wgsl_reader_census`) and is now read, rebuilt by the renderer, and run on the CPU executor beside its
     /// source with the same values in every storage buffer. Each cause's kernels are listed with the cause.
-    const CLOSED: [(&str, &[&str]); 1] = [
+    const CLOSED: [(&str, &[&str]); 2] = [
         // F: the thread's row and column from the linear index (`lidx & 15u`, `lidx >> 4u`)
         ("F lidx axes", &["tests/corpus/model_replies/k0017.wgsl", "tests/corpus/model_replies/k0038.wgsl"]),
+        // F: a private array holding two axes (`pi[k]` the rows, `pi[k + 8u]` the columns)
+        ("F two axes in one array", &["tests/corpus/model_replies/k0443.wgsl"]),
     ];
 
     #[test]

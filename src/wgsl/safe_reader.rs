@@ -1315,6 +1315,22 @@ fn tile_min(x: &Tree, tiles: Tiles) -> Option<u8> {
     None
 }
 
+/// An index into a private array that names a slot by a counter: the counter alone (`pi[k]`, the array's own key)
+/// or the counter plus a literal (`pi[k + 8u]`, the key `<array>+8`), as (the counter's tree, the key).
+fn array_slot<'t>(idx: &'t Tree, array: &str) -> Option<(&'t Tree, String)> {
+    if idx.kids.is_empty() {
+        return Some((idx, array.to_string()));
+    }
+    if idx.name == "index.add" && idx.kids.len() == 2 {
+        for (c, l) in [(&idx.kids[0], &idx.kids[1]), (&idx.kids[1], &idx.kids[0])] {
+            if let (true, Some(b)) = (c.kids.is_empty(), literal_value(l)) {
+                return Some((c, format!("{array}+{}", b as u32)));
+            }
+        }
+    }
+    None
+}
+
 /// Which tile counter (1, 2 or 3) a local is, if any.
 fn tile_of(local: &str, tiles: Tiles) -> Option<u8> {
     tiles.iter().position(|c| c.as_deref() == Some(local)).map(|p| p as u8 + 1)
@@ -1335,14 +1351,17 @@ fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, array
             }
         }
     }
-    // A load of a row array at a tile counter: that block row.
+    // A load of a row array at a tile counter: that block row. The array may hold a second axis beyond a literal
+    // offset (`pi[k] = row; pi[k + 8u] = column`, model reply k0443): the load at `k + 8u` is that axis's.
     if let Some(rest) = t.name.strip_prefix("load.local.") {
-        if rest.contains(".#") && t.kids.len() == 1 && t.kids[0].kids.is_empty() {
+        if rest.contains(".#") && t.kids.len() == 1 {
             let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
-            if let Some(&(ax, strided, blk)) = arrays.get(&local) {
-                if ax == axis {
-                    if let Some(n) = local_name(&t.kids[0].name).and_then(|l| tile_of(&l, tiles)) {
-                        return Some((blk, if strided { Off::StridedTile(n) } else { Off::Tile(n) }));
+            if let Some((counter, key)) = array_slot(&t.kids[0], &local) {
+                if let Some(&(ax, strided, blk)) = arrays.get(&key) {
+                    if ax == axis {
+                        if let Some(n) = local_name(&counter.name).and_then(|l| tile_of(&l, tiles)) {
+                            return Some((blk, if strided { Off::StridedTile(n) } else { Off::Tile(n) }));
+                        }
                     }
                 }
             }
@@ -5404,17 +5423,17 @@ impl<'a> Ctx<'a> {
                 }
                 // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
                 // the array holds the thread's rows; a later `lrs[k]` is a row.
-                if idx.kids.is_empty() {
+                if let Some((counter, key)) = array_slot(idx, &local) {
                     let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
                     let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
-                    if let Some(n) = local_name(&idx.name).and_then(|l| tile_of(&l, tiles)) {
+                    if let Some(n) = local_name(&counter.name).and_then(|l| tile_of(&l, tiles)) {
                         for (axis, wg) in [(1usize, self.grid.1), (0usize, self.grid.0)] {
                             match thread_axis_off_in(value, axis, wg, tiles, &self.row_arrays, &self.tile_bounds) {
                                 Some((blk, Off::StridedTile(m))) if m == n => {
-                                    self.row_arrays.insert(local.clone(), (axis, true, blk));
+                                    self.row_arrays.insert(key.clone(), (axis, true, blk));
                                 }
                                 Some((blk, Off::Tile(m))) if m == n => {
-                                    self.row_arrays.insert(local.clone(), (axis, false, blk));
+                                    self.row_arrays.insert(key.clone(), (axis, false, blk));
                                 }
                                 _ => {}
                             }
