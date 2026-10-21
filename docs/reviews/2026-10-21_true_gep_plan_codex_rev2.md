@@ -1,0 +1,18 @@
+# Codex review of the true multi-typed GEP plan, revision 2, 2026-10-21
+
+FAIL
+
+1. **High — E1 can run before coverage and seed conformance are complete.** The advisor finding remains unresolved: E1 depends only on C2 and Andrew’s rate decision, not R1/C4. It can therefore evolve from a reduced seed set while legal V24 seeds remain unread, gapped, lowered, defaulted, or `conform`-substituted. Add an explicit seed-conformance task: eliminate reader rewrites/substitutions, name every formerly unread seed, require each E1 seed to read exactly into its contract kingdom, and make R1/C4 a prerequisite of E1.
+
+2. **High — “fitness runs every expressed kernel” is not operationally closed.** D1 introduces a finite fuel/work budget, but no task expressly removes or proves unreachable the remaining time-based refusals in A1: harness deadline, predicted-time rejection, and runaway draining. C2’s general wording may cover them, but its explicit static gate bans the cost estimator and legality stages—not deadline/runaway paths. A finite iteration count alone does not prove a kernel completes within a device deadline. Require D1 to define a contract/target execution budget and C2 to remove time-based candidate refusal; retain recovery only as an infrastructure fault, never a kernel verdict.
+
+3. **Medium — renderer purity is enforced late and incompletely assigned.** Revision 2 correctly requires D1 to cover every A1 rewrite and C1 to assert zero rewrites. But A0 fixes only selected escape rows/render defects, while A1 identifies ten renderer substitution families: grid/workgroup/literal snapping, fallback leaves, out-of-scope counters, loop caps, index/offset clamps, shift masking, and conditional statement erasure. B1/B2 should explicitly enumerate retirement or conversion of all remaining renderer branches into typed rows with declared semantics. Otherwise a rewrite can survive implementation until C1 catches it after substantial dependent work.
+
+4. **Medium — C2’s “removed or moved to a test” is too permissive for seed-path transformations.** A1 lists pre-evolution rewrites (`lower_returns_in_loops`, override defaults, `conform` conversions/zero substitution) as well as runtime gates. Moving these to a test does not make the authoring/seed path exact. State that tests may observe rejection, but production reader/encoder must either read an exact typed tree or report a named outside-kingdom reason—never rewrite it.
+
+5. **Medium — the plan still needs a concrete C1 oracle boundary.** C1 rightly uses `check.rs` as an oracle while asserting no legality call occurs on the generation path. Make this mechanically unambiguous: instrument generation, expression, rendering, and dispatch separately; permit checker calls only in the post-generation test oracle; fail on any renderer `masked` event or fallback branch. This avoids an implementation interpreting “no checker invoked” as prohibiting the required oracle, or conversely allowing it in scoring.
+
+The revision resolves the prior Codex findings on C4’s scope, contract-instantiated kingdoms, full rule ledger, renderer-repair prohibition, uniformity bypasses, construction ordering, and typed-init/operator closure. It also resolves the advisor’s target/contract, work-budget, T66-before-A2, and cost-estimator inventory findings. The unresolved advisor item is the E1 seed-readability requirement and its missing dependency.
+
+If the added tasks and gates above are made explicit, the design can deliver the stated goal. As written, its dependency graph still permits evolution before exact seed/coverage closure, and its runtime refusal paths are not sufficiently ruled out.
+
