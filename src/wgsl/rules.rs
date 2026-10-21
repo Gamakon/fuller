@@ -1964,14 +1964,13 @@ mod tests {
 
     fn corpus(k: &WgslKingdom) -> Vec<(String, Tree)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files: Vec<std::path::PathBuf> = Vec::new();
-        for dir in ["tests/corpus/safewgsl", "logs/HGP/001/popB_g080/texts"] {
-            if let Ok(rd) = std::fs::read_dir(root.join(dir)) {
-                files.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")));
-            }
-        }
-        files.sort();
-        files.into_iter().filter_map(|f| Some((f.display().to_string(), read_safe(&std::fs::read_to_string(&f).ok()?, k).ok()?.tree))).collect()
+        // The saved population popB_g080 (a fixture, 20 texts), then the tracked corpus (112 texts).
+        let mut texts = crate::wgsl::fixture_texts::set("popB_g080");
+        let mut corpus: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("tests/corpus/safewgsl")).expect("tests/corpus/safewgsl").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        corpus.sort();
+        assert_eq!(corpus.len(), 112, "tests/corpus/safewgsl: {} kernels, expected 112", corpus.len());
+        texts.extend(corpus.iter().map(|f| (f.file_name().expect("name").to_string_lossy().into_owned(), std::fs::read_to_string(f).expect("corpus text"))));
+        texts.into_iter().filter_map(|(name, text)| Some((name, read_safe(&text, k).ok()?.tree))).collect()
     }
 
     /// The editor changes nothing it is not asked to: every block of every
@@ -2029,18 +2028,17 @@ mod tests {
     #[test]
     fn the_row_block_grows_at_a_constant_tile_where_its_preconditions_hold() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts");
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
-        let Some(four) = read("0.1219_fit_A2_stopped_1729Z_g000_r11_ca96ca.wgsl") else { return };
+        let read = |name: &str| read_safe(&crate::wgsl::fixture_texts::text("reserve2", name), &k).unwrap().tree;
+        let four = read("0.1219_fit_A2_stopped_1729Z_g000_r11_ca96ca.wgsl");
         let plan = grow_rows_plan(&four, &k).unwrap();
         assert_eq!(plan.tile, "wg.vb");
         let child = grow_rows(&four, &k).unwrap();
         let (text, _) = crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(text.starts_with("// grid 16 8 4 8"), "{}", &text[..40]);
         assert!(text.contains("(lid.y * 2u)") && text.contains("((lid.y * 2u) + 1u)") && text.contains("pv[7u]") && text.contains("128u * k"), "{text}");
-        let eight = read("0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl").unwrap();
+        let eight = read("0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl");
         assert!(grow_rows_plan(&eight, &k).unwrap_err().contains("row block is 8"));
-        let row_strided = read("0.1222_fit_A2_paused_1912Z_g000_r5_13236c.wgsl").unwrap();
+        let row_strided = read("0.1222_fit_A2_paused_1912Z_g000_r5_13236c.wgsl");
         assert!(grow_rows_plan(&row_strided, &k).unwrap_err().contains("flat thread index"));
     }
 
@@ -2052,8 +2050,7 @@ mod tests {
     #[test]
     fn the_strided_tiles_of_a_loader_become_interleaved_vec4_tiles() {
         let k = WgslKingdom::load_safe();
-        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/popC_rand20/texts/r01_0.1954_fit_A_g001_r12_86aa44.wgsl");
-        let Ok(src) = std::fs::read_to_string(&f) else { return };
+        let src = crate::wgsl::fixture_texts::text("popC_rand20", "r01_0.1954_fit_A_g001_r12_86aa44.wgsl");
         let t = read_safe(&src, &k).unwrap().tree;
         let sites = vec_tile_sites(&t, &k);
         assert_eq!(sites.len(), 1, "{sites:?}");
@@ -2074,8 +2071,7 @@ mod tests {
     #[test]
     fn the_row_block_shrinks_back_with_every_reference_following_the_grid() {
         let k = WgslKingdom::load_safe();
-        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts/0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl");
-        let Ok(src) = std::fs::read_to_string(&f) else { return };
+        let src = crate::wgsl::fixture_texts::text("reserve2", "0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl");
         let t = read_safe(&src, &k).unwrap().tree;
         let (tile, family) = shrink_rows_plan(&t, &k).unwrap();
         assert_eq!(tile, "wg.vb");
@@ -2094,8 +2090,7 @@ mod tests {
     #[test]
     fn a_strided_kernel_climbs_two_steps_in_either_order() {
         let k = WgslKingdom::load_safe();
-        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/popC_rand20/texts/r01_0.1954_fit_A_g001_r12_86aa44.wgsl");
-        let Ok(src) = std::fs::read_to_string(&f) else { return };
+        let src = crate::wgsl::fixture_texts::text("popC_rand20", "r01_0.1954_fit_A_g001_r12_86aa44.wgsl");
         let t = read_safe(&src, &k).unwrap().tree;
         assert!(grow_rows_plan(&t, &k).is_err(), "not the contiguous form");
         let step = |t: &Tree, rule: Rule| -> Tree {
@@ -2120,15 +2115,14 @@ mod tests {
     #[test]
     fn a_k_unroll_by_two_is_undone_and_redone() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts");
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
-        let Some(unrolled) = read("0.1209_fit_A2_stopped_1729Z_g001_r16_c65da8.wgsl") else { return };
+        let read = |name: &str| read_safe(&crate::wgsl::fixture_texts::text("reserve2", name), &k).unwrap().tree;
+        let unrolled = read("0.1209_fit_A2_stopped_1729Z_g001_r16_c65da8.wgsl");
         let site = Rule::UnunrollK.sites(&unrolled, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnunrollK.why_not(&unrolled, &k)));
         let child = crate::wgsl::knob::check_text_under(&Rule::UnunrollK.apply(&unrolled, &site, &k).unwrap(), &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
         let text = crate::wgsl::safe_karva::render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text;
         assert!(text.contains("for (k = 0u; k < 32u; k = k + 1u)") && text.contains("(k * 16u) + lid.y") && !text.contains("(2u * k)"), "{text}");
         assert!(!Rule::GrowRows.sites(&child, &k).is_empty(), "grow-rows fires after un-unroll-K");
-        let one = read("0.1208_fit_A2_stopped_1702Z_g000_r19_6d34a7.wgsl").unwrap();
+        let one = read("0.1208_fit_A2_stopped_1702Z_g000_r19_6d34a7.wgsl");
         let site = Rule::UnrollK.sites(&one, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnrollK.why_not(&one, &k)));
         let child = crate::wgsl::knob::check_text_under(&Rule::UnrollK.apply(&one, &site, &k).unwrap(), &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
         let text = crate::wgsl::safe_karva::render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text;

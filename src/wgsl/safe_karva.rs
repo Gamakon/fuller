@@ -1197,16 +1197,22 @@ mod tests {
         assert!(head_needed(&s.head) <= 8);
     }
 
+    /// The drafted kernels of logs/HGP/001/gen0 (tracked): its 31 `.wgsl` files, sorted; fewer fails the test.
+    fn gen0_kernels() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0");
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        assert_eq!(files.len(), 31, "logs/HGP/001/gen0: {} kernels, expected 31", files.len());
+        files
+    }
+
     /// Every drafted kernel the safe reader converts round-trips at the
     /// population's layout (head 32, 48 slots): encode, decode, unfold,
     /// project, render, the text equal to the tree's own rendering.
     #[test]
     fn the_converted_population_round_trips_through_karva() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0");
-        let Ok(entries) = std::fs::read_dir(&dir) else { return };
         let k = WgslKingdom::load_safe();
-        let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
+        let files = gen0_kernels();
         let (mut converted, mut slots_max) = (0, 0);
         for f in &files {
             let src = std::fs::read_to_string(f).unwrap();
@@ -1258,8 +1264,7 @@ mod tests {
     #[test]
     fn the_rendered_text_carries_its_grid_header() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0/k07.wgsl");
-        let Ok(src) = std::fs::read_to_string(&dir) else { return };
+        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0/k07.wgsl")).expect("logs/HGP/001/gen0/k07.wgsl (tracked)");
         let r = read_safe(&src, &k).unwrap();
         let out = render_tree_with(&r.tree, &k, &crate::wgsl::render::gram_role()).unwrap();
         assert!(out.text.starts_with("// grid 16 16 4 4\n"), "{}", out.text.lines().next().unwrap_or(""));
@@ -1283,10 +1288,7 @@ mod tests {
     #[test]
     fn the_population_fold_shares_a_component_at_one_slot_and_rebuilds_every_kernel() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0");
-        let Ok(entries) = std::fs::read_dir(&dir) else { return };
-        let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
+        let files = gen0_kernels();
         let trees: Vec<Tree> = files.iter().filter_map(|f| read_safe(&std::fs::read_to_string(f).ok()?, &k).ok()).map(|r| r.tree).take(12).collect();
         assert!(trees.len() >= 8);
         let direct: Vec<String> = trees.iter().map(|t| render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text).collect();

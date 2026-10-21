@@ -682,25 +682,23 @@ mod tests {
         use crate::wgsl::safe_reader::{read_safe, read_safe_literal};
         let k = WgslKingdom::load_safe();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files: Vec<std::path::PathBuf> = Vec::new();
-        for dir in ["tests/corpus/safewgsl", "logs/HGP/001/popB_g080/texts"] {
-            if let Ok(rd) = std::fs::read_dir(root.join(dir)) {
-                files.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")));
-            }
-        }
-        files.sort();
+        // The saved population popB_g080 (a fixture, 20 texts), then the tracked corpus (112 texts).
+        let mut files: Vec<(String, String)> = crate::wgsl::fixture_texts::set("popB_g080");
+        let mut corpus: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("tests/corpus/safewgsl")).expect("tests/corpus/safewgsl").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        corpus.sort();
+        assert_eq!(corpus.len(), 112, "tests/corpus/safewgsl: {} kernels, expected 112", corpus.len());
+        files.extend(corpus.iter().map(|f| (f.file_name().expect("name").to_string_lossy().into_owned(), std::fs::read_to_string(f).expect("corpus text"))));
         let (mut read, mut with_t) = (0usize, 0usize);
-        for f in &files {
-            let src = std::fs::read_to_string(f).unwrap();
-            let (Ok(lit), Ok(par)) = (read_safe_literal(&src, &k), read_safe(&src, &k)) else {
-                assert_eq!(read_safe_literal(&src, &k).is_ok(), read_safe(&src, &k).is_ok(), "{}: the two reads disagree", f.display());
+        for (name, src) in &files {
+            let (Ok(lit), Ok(par)) = (read_safe_literal(src, &k), read_safe(src, &k)) else {
+                assert_eq!(read_safe_literal(src, &k).is_ok(), read_safe(src, &k).is_ok(), "{}: the two reads disagree", name);
                 continue;
             };
             read += 1;
-            assert_eq!(render_tree_with(&lit.tree, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&par.tree, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{}", f.display());
+            assert_eq!(render_tree_with(&lit.tree, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&par.tree, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{}", name);
             if ktile_of(&par.tree.kids[0]).is_some() {
                 with_t += 1;
-                assert!(has_refs(&par.tree.kids[1]), "{}", f.display());
+                assert!(has_refs(&par.tree.kids[1]), "{}", name);
             }
         }
         println!("{read} of {} kernels read; {with_t} declare a tile depth", files.len());
@@ -717,18 +715,17 @@ mod tests {
         use crate::wgsl::safe_karva::render_tree_with;
         use crate::wgsl::safe_reader::read_safe;
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts");
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
+        let read = |name: &str| read_safe(&crate::wgsl::fixture_texts::text("reserve2", name), &k).unwrap().tree;
         // wg_vb loaded by one unlooped pass of 256 threads, 16 rows of 16: no tile depth.
-        let Some(single_pass) = read("0.1692_fit_A2_stopped_1554Z_g000_r9_5825fe.wgsl") else { return };
+        let single_pass = read("0.1692_fit_A2_stopped_1554Z_g000_r9_5825fe.wgsl");
         assert_eq!(ktile_of(&single_pass.kids[0]), None);
         // The compute loop `k < 32u; k = k + 2u` follows T; the loop nested in it does not.
-        let stepped = read("0.1607_fit_A2_stopped_1400Z_g001_r4_9a65d4.wgsl").unwrap();
+        let stepped = read("0.1607_fit_A2_stopped_1400Z_g001_r4_9a65d4.wgsl");
         assert_eq!(ktile_of(&stepped.kids[0]), Some(32));
         let text = render_tree_with(&set(&stepped, &Site::Ktile, 8), &k, &crate::wgsl::render::gram_role()).unwrap().text;
         assert!(text.contains("for (k = 0u; k < 8u; k = k + 2u)") && text.contains("for (k2 = 0u; k2 < 4u; k2 = k2 + 1u)"), "{text}");
         // A chunk loop rewriting wg_vb[lidx] on every pass: wg_vb holds one pass, its length stays.
-        let chunked = read("0.1208_fit_A2_g001_r9_2ddca4.wgsl").unwrap();
+        let chunked = read("0.1208_fit_A2_g001_r9_2ddca4.wgsl");
         assert_eq!(ktile_of(&chunked.kids[0]), Some(128));
         let text = render_tree_with(&set(&chunked, &Site::Ktile, 256), &k, &crate::wgsl::render::gram_role()).unwrap().text;
         assert!(text.contains("var<workgroup> wg_vb: array<vec4<f32>, 512>;") && text.contains("t = t + 256u"), "{text}");
@@ -739,13 +736,11 @@ mod tests {
         use crate::wgsl::safe_karva::render_tree_with;
         use crate::wgsl::safe_reader::read_safe;
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/popB_g080/texts");
-        let Ok(rd) = std::fs::read_dir(&dir) else { return };
-        for f in rd.flatten().map(|e| e.path()) {
-            let t = read_safe(&std::fs::read_to_string(&f).unwrap(), &k).unwrap().tree;
+        for (name, text) in crate::wgsl::fixture_texts::set("popB_g080") {
+            let t = read_safe(&text, &k).unwrap().tree;
             let plain = to_literals(&t, &k).unwrap();
-            assert!(!has_refs(&plain), "{}", f.display());
-            assert_eq!(render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&plain, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{}", f.display());
+            assert!(!has_refs(&plain), "{name}");
+            assert_eq!(render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&plain, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{name}");
         }
     }
 

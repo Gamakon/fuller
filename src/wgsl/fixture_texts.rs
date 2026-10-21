@@ -5,8 +5,9 @@
 
 use std::io::Read;
 
-/// (set, source directory when it was copied, files).
-pub(crate) const SETS: [(&str, &str, usize); 9] = [
+/// (set, source directory when it was copied, files). A set's files end `.wgsl.gz`, except `nluca_s3_replies`, whose
+/// model replies end `.reply.txt.gz`.
+pub(crate) const SETS: [(&str, &str, usize); 12] = [
     ("popA_g001", "logs/HGP/001/popA_g001/texts", 20),
     ("popA2_g001b", "logs/HGP/001/popA2_g001b/texts", 20),
     ("library_texts", "logs/HGP/001/library_texts", 22),
@@ -16,6 +17,9 @@ pub(crate) const SETS: [(&str, &str, usize); 9] = [
     ("popR_rules", "logs/HGP/001/popR_rules/texts", 49),
     ("v24_run1_seeds", "logs/V24/run1/seeds", 32),
     ("v24_run1_raw", "logs/V24/run1/raw", 73),
+    ("nluca_s3_seeds", "logs/HGP/001/nluca_s3/seeds", 24),
+    ("opus_cross", "logs/HGP/001/opus_cross", 1),
+    ("nluca_s3_replies", "logs/HGP/001/nluca_s3/calls", 63),
 ];
 
 /// The texts of a set, `(file name, text)`, sorted by file name.
@@ -26,7 +30,7 @@ pub(crate) fn set(name: &str) -> Vec<(String, String)> {
     let (_, source, expected) = SETS.iter().find(|(n, _, _)| *n == name).unwrap_or_else(|| panic!("fixture set {name}: not one of the tracked sets"));
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wgsl_texts").join(name);
     let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("fixture set {name} ({source}) is missing: {}: {e}", dir.display()));
-    let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".wgsl.gz")).collect();
+    let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".gz")).collect();
     files.sort();
     assert_eq!(files.len(), *expected, "fixture set {name} ({source}): {} files, expected {expected}", files.len());
     files
@@ -38,6 +42,14 @@ pub(crate) fn set(name: &str) -> Vec<(String, String)> {
             (file, text)
         })
         .collect()
+}
+
+/// One text of a set by its file name (`name.wgsl`).
+///
+/// # Panics
+/// When the set is not there as [`set`] requires, or has no file of that name.
+pub(crate) fn text(set_name: &str, file: &str) -> String {
+    set(set_name).into_iter().find(|(n, _)| n == file).map(|(_, t)| t).unwrap_or_else(|| panic!("fixture set {set_name} has no {file}"))
 }
 
 #[cfg(test)]

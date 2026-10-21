@@ -152,7 +152,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn wgsl_in(dir: &Path, ext: &str) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = std::fs::read_dir(dir).map(|r| r.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(ext)).collect()).unwrap_or_default();
+        let mut v: Vec<PathBuf> = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(ext)).collect();
         v.sort();
         v
     }
@@ -198,14 +198,19 @@ mod tests {
         let k = WgslKingdom::load_safe();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut sources: Vec<(String, String)> = Vec::new();
-        for d in ["tests/corpus/safewgsl", "tests/corpus/interfaces", "tests/corpus/nluca", "logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts", "logs/HGP/001/popB_g080/texts", "logs/HGP/001/reserve2/texts", "logs/HGP/001/popC_rand20/texts", "logs/HGP/001/popR_rules/texts", "logs/HGP/001/nluca_s3/seeds", "logs/HGP/001/gen0", "logs/HGP/001/opus_cross", "logs/HGP/001/popA2_g006j/texts", "logs/HGP/001/library_ep_texts"] {
-            for f in wgsl_in(&root.join(d), ".wgsl") {
+        // Tracked directories, each with the number of kernels it holds (a directory that shrank fails here).
+        for (d, expected) in [("tests/corpus/safewgsl", 112usize), ("tests/corpus/interfaces", 2), ("tests/corpus/nluca", 6), ("logs/HGP/001/gen0", 31), ("tests/fixtures/wgsl_genomes/popA2_g006j/texts", 20), ("tests/fixtures/wgsl_genomes/library_ep/texts", 441)] {
+            let files = wgsl_in(&root.join(d), ".wgsl");
+            assert_eq!(files.len(), expected, "{d}: {} kernels, expected {expected}", files.len());
+            for f in files {
                 sources.push((f.display().to_string(), std::fs::read_to_string(&f).expect("read")));
             }
         }
-        for f in wgsl_in(&root.join("logs/HGP/001/nluca_s3/calls"), ".reply.txt") {
-            sources.push((f.display().to_string(), reply_kernel(&std::fs::read_to_string(&f).expect("read"))));
+        // The saved populations the logs held, tracked as fixtures (T63).
+        for set in ["popA_g001", "popA2_g001b", "library_texts", "popB_g080", "reserve2", "popC_rand20", "popR_rules", "nluca_s3_seeds", "opus_cross"] {
+            sources.extend(crate::wgsl::fixture_texts::set(set).into_iter().map(|(name, text)| (format!("{set}/{name}"), text)));
         }
+        sources.extend(crate::wgsl::fixture_texts::set("nluca_s3_replies").into_iter().map(|(name, text)| (format!("nluca_s3_replies/{name}"), reply_kernel(&text))));
         assert!(sources.len() > 100, "the corpora are missing: {} kernels", sources.len());
         let (mut same, mut refused, mut not_runnable) = (0usize, 0usize, 0usize);
         let mut failed: Vec<String> = Vec::new();
