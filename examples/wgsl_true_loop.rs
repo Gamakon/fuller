@@ -67,7 +67,7 @@ struct Ctx<'a> {
 impl Ctx<'_> {
     fn check_source(&self, src: &str) -> Verdict {
         let t = Instant::now();
-        let module = naga::front::wgsl::parse_str(src).map_err(|e| (Stage::Naga, e.emit_to_string(src)))?;
+        let module = fuller::wgsl::naga_shape::parse_unscanned(src).map_err(|e| (Stage::Naga, e))?;
         fuller::wgsl::target::Target::current().validate(&module, src).map_err(|e| (Stage::Naga, e))?;
         self.timing.naga_ms.set(self.timing.naga_ms.get() + t.elapsed().as_secs_f64() * 1e3);
         let Some(dev) = self.dev else { return Ok(()) };
@@ -86,6 +86,9 @@ impl Ctx<'_> {
         let ms = t.elapsed().as_secs_f64() * 1e3;
         self.timing.run_ms.set(self.timing.run_ms.get() + ms);
         self.timing.slowest_run_ms.set(self.timing.slowest_run_ms.get().max(ms));
+        if built.compute_ms > 1000.0 {
+            return Err((Stage::Run, format!("runaway: slow submit, {:.0} ms of compute (the stop is 1000 ms)", built.compute_ms)));
+        }
         if built.h.len() != self.d * self.d {
             return Err((Stage::Run, format!("the run returned {} values, not d x d = {}", built.h.len(), self.d * self.d)));
         }

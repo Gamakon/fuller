@@ -162,7 +162,9 @@ impl TrueKingdom {
     pub fn relations(&self) -> KingdomRelations {
         let rows: Vec<(String, Vec<Ty>, Ty)> = self.rows.iter().map(|r| (r.name.clone(), r.args.clone(), r.out)).collect();
         let constants: Vec<&str> = self.rows.iter().filter(|r| r.kind == RowKind::Constant).map(|r| r.name.as_str()).collect();
-        relations_from_rows(TRUE_WGSL, vec![self.root], &rows, &constants)
+        let mut r = relations_from_rows(TRUE_WGSL, vec![self.root], &rows, &constants);
+        r.tail_free_roots = true;
+        r
     }
 
     /// `|C_T|` for every constant-capable type.
@@ -408,5 +410,45 @@ mod tests {
         eprintln!("H = {h}: K = 2 at the 128 x 64 rung: {}; K = 0 unit test: {}; {e}", work_bound(h, 2, rung), work_bound(h, 0, 256));
         assert!(k.fuel(&c, 8).expect("fuel").check("the unit test", 256).is_ok(), "K = 0 at the unit-test dispatch");
         assert!(k.fuel(&c, 8).expect("fuel").check("the Gram rung at K = 0", rung).is_ok(), "K = 0 even at the rung");
+    }
+
+    /// A tree by row names; a constant placeholder names its `C_T` text.
+    fn node(k: &TrueKingdom, name: &str, value: Option<&str>, kids: Vec<Tree>) -> Tree {
+        let i = k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}"));
+        let const_index = value.map(|v| k.constants[&k.rows[i].out].iter().position(|t| t == v).unwrap_or_else(|| panic!("{name}: no constant {v}")) as u32);
+        Tree { symbol: i as u32, const_index, kids }
+    }
+
+    /// `grid.of_rows_x` binds the output's rows to thread x: the ownership rows take the row axis the grid binds, so
+    /// a kernel storing 1.0 to its own cell covers every cell of the output, for both grids and a non-square shape.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn both_grids_cover_every_cell_of_the_output_on_the_device() {
+        use crate::wgsl::gram::{effective_buffer_limit, phi, Gram};
+        use crate::wgsl::oracle::device::Device;
+        let k = kingdom();
+        let c = k.relations().check().expect("check");
+        let fuel = k.fuel(&c, 8).expect("fuel");
+        let dev = Device::new().expect("device");
+        let (d, m) = (32usize, 4usize);
+        for (grid, shape, first, second) in [("grid.of", "32 2", "literal.blk_col", "literal.blk_row"), ("grid.of_rows_x", "32 2", "literal.blk_row", "literal.blk_col"), ("grid.of_rows_x", "2 32", "literal.blk_row", "literal.blk_col"), ("grid.of", "2 32", "literal.blk_col", "literal.blk_row")] {
+            let g = node(&k, grid, None, vec![node(&k, "literal.shape", Some(shape), vec![]), node(&k, first, Some("1"), vec![]), node(&k, second, Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
+            let store = node(
+                &k,
+                "store.h_O0_f0",
+                None,
+                vec![
+                    node(&k, "safe.rowbase_as_row_h", None, vec![node(&k, "own.u32_rowbase_h", None, vec![])]),
+                    node(&k, "safe.colbase_as_col_h", None, vec![node(&k, "own.u32_colbase_h", None, vec![])]),
+                    node(&k, "literal.real", Some("1.0"), vec![]),
+                ],
+            );
+            let entry = node(&k, "kernel.entry_safe", None, vec![g, node(&k, "own.block_L0_f0", None, vec![]), node(&k, "block.one_O0_f0", None, vec![store])]);
+            let src = k.render(&entry).expect("render");
+            let gram = Gram::compile(&dev, &src, fuel.clone()).unwrap_or_else(|e| panic!("{grid} {shape}: {e}"));
+            let built = gram.build(&phi(d, m, 3), d, m, effective_buffer_limit(&dev.device)).expect("run");
+            let missed = built.h.iter().filter(|v| **v != 1.0).count();
+            assert_eq!(missed, 0, "{grid} {shape}: {missed} of {} cells not written", d * d);
+        }
     }
 }
