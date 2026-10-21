@@ -53,6 +53,8 @@ const UNIT_TEST_M: usize = 4;
 const UNIT_TEST_INVOCATIONS: u64 = 16 * 16;
 
 struct Ctx<'a> {
+    /// `--stage pipeline`: naga and the Metal pipeline, no dispatch.
+    compile_only: bool,
     timing: Timing,
     kingdom: &'a TrueKingdom,
     contract: &'a KingdomContract,
@@ -68,7 +70,14 @@ impl Ctx<'_> {
     fn check_source(&self, src: &str) -> Verdict {
         let t = Instant::now();
         let module = fuller::wgsl::naga_shape::parse_unscanned(src).map_err(|e| (Stage::Naga, e))?;
-        fuller::wgsl::target::Target::current().validate(&module, src).map_err(|e| (Stage::Naga, e))?;
+        let info = fuller::wgsl::target::Target::current().validate(&module, src).map_err(|e| (Stage::Naga, e))?;
+        // Apple's compiler hangs the dispatch on naga's counted loop with a continuing step (docs/reports/2026-10-21_metal_hang_k2):
+        // no kernel of the kingdom may carry it. A test of the text naga writes, not a rewrite.
+        let options = naga::back::msl::Options { lang_version: (2, 4), fake_missing_bindings: true, ..Default::default() };
+        let (msl, _) = naga::back::msl::write_string(&module, &info, &options, &naga::back::msl::PipelineOptions::default()).map_err(|e| (Stage::Naga, format!("msl: {e:?}")))?;
+        if msl.contains("loop_init") {
+            return Err((Stage::Naga, "error: naga wrote a loop with a continuing step (loop_init), the form Apple's compiler hangs on".into()));
+        }
         self.timing.naga_ms.set(self.timing.naga_ms.get() + t.elapsed().as_secs_f64() * 1e3);
         let Some(dev) = self.dev else { return Ok(()) };
         let t = Instant::now();
@@ -81,6 +90,9 @@ impl Ctx<'_> {
             std::process::exit(4);
         }
         self.timing.pipeline_ms.set(self.timing.pipeline_ms.get() + t.elapsed().as_secs_f64() * 1e3);
+        if self.compile_only {
+            return Ok(());
+        }
         let t = Instant::now();
         let built = gram.build(&self.phi, self.d, self.m, self.limit).map_err(|e| (Stage::Run, e))?;
         let ms = t.elapsed().as_secs_f64() * 1e3;
@@ -325,7 +337,7 @@ fn run() -> Result<i32, String> {
     }
     let dev = if stage == "naga" { None } else { Some(Device::new()?) };
     let (d, m) = (UNIT_TEST_D, UNIT_TEST_M);
-    let ctx = Ctx { timing: Timing::default(), kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)), fuel };
+    let ctx = Ctx { compile_only: stage == "pipeline", timing: Timing::default(), kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)), fuel };
 
     if let Some(i) = arg(&args, "--minimise").map(|v| v.parse::<usize>().map_err(|e| format!("--minimise: {e}"))).transpose()? {
         let mut rng = Rng(seed.wrapping_mul(0x1000_0000_01B3).wrapping_add(i as u64));
@@ -386,6 +398,7 @@ fn run() -> Result<i32, String> {
     // `--bias coverage`: the depth-biased initialiser (this test only). A row's weight is 8 for a loop, 4 at loop depth 1 or
     // more, 1 otherwise, times 40 while no gene has exercised it; a head cell of a statement or block type draws a function
     // nine times in ten. `rows_hit.txt` in the output directory carries the hits across restarts.
+    let boost: f64 = arg(&args, "--boost").map_or(Ok(40.0), |v| v.parse().map_err(|e| format!("--boost: {e}")))?;
     let biased = arg(&args, "--bias").as_deref() == Some("coverage");
     let hits_path = out.join("rows_hit.txt");
     if biased {
@@ -403,7 +416,26 @@ fn run() -> Result<i32, String> {
         let share = if i % 2 == 0 { Share::Half } else { Share::Proportional };
         let root_function = (i / 2) % 2 == 1;
         let gene = if biased {
-            let w: Vec<f64> = base_weight.iter().enumerate().map(|(r, b)| if hit.contains(&(r as u32)) { *b } else { *b * 40.0 }).collect();
+            // An unexercised row is boosted; so is every row that asks for a type some unexercised row produces, and, two
+            // levels up, every row that asks for the output of those (a row is reached only through its parents).
+            let mut wanted: BTreeSet<fuller::geneframe::Ty> = kingdom.rows.iter().enumerate().filter(|(r, _)| !hit.contains(&(*r as u32))).map(|(_, row)| row.out).collect();
+            let mut factor = vec![1.0f64; kingdom.rows.len()];
+            for (r, f) in factor.iter_mut().enumerate() {
+                if !hit.contains(&(r as u32)) {
+                    *f = boost;
+                }
+            }
+            for level in 1..=3 {
+                let mut next = BTreeSet::new();
+                for (r, row) in kingdom.rows.iter().enumerate() {
+                    if row.args.iter().any(|a| wanted.contains(a)) {
+                        factor[r] = factor[r].max(boost / f64::from(1 << level));
+                        next.insert(row.out);
+                    }
+                }
+                wanted.extend(next);
+            }
+            let w: Vec<f64> = base_weight.iter().zip(&factor).map(|(b, f)| b * f).collect();
             random_gene_weighted(&contract, &layout, &const_len, &mut rng, &w, &function_p, root_function)
         } else {
             random_gene(&contract, &layout, &const_len, &mut rng, share, root_function)
