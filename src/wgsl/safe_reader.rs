@@ -4675,7 +4675,11 @@ impl<'a> Ctx<'a> {
                     }
                     let t = tree_of(self, &def)?;
                     let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-                    if !matches!(d.as_str(), "f32.real" | "vec4<f32>.real" | "u32.index" | "u32.bits" | "u32.count" | "bool.flag") {
+                    // (A let that a store would change before its use is held in a register of its dual when there is one,
+                    // the extra kinds too: `let g = a > b` over vec4<bool>, model replies k1745 and k1783. A let not so stale
+                    // keeps being inlined at its uses, as it was read before.)
+                    let registrable = self.stale_lets.contains(&n) && (crate::wgsl::render::extra_register_of_value(&d).is_some() || module_register_of_value(self.kingdom, &d).is_some() || matches!(d.as_str(), "vec2<f32>.real" | "i32.int" | "vec4<u32>.bits" | "mat2x2<f32>.real" | "mat3x3<f32>.real" | "mat4x4<f32>.real"));
+                    if !registrable && !matches!(d.as_str(), "f32.real" | "vec4<f32>.real" | "u32.index" | "u32.bits" | "u32.count" | "bool.flag") {
                         if self.stale_lets.contains(&n) {
                             return Err(format!("let {n} ({d}) reads a local a store changes before its use, and no register of its dual holds its value"));
                         }

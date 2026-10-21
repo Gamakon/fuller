@@ -236,11 +236,13 @@ mod tests {
     /// THE READER GAPS CLOSED (T43, 2026-10-21), one cause at a time: each kernel below was refused by the safe reader
     /// (`examples/wgsl_reader_census`) and is now read, rebuilt by the renderer, and run on the CPU executor beside its
     /// source with the same values in every storage buffer. Each cause's kernels are listed with the cause.
-    const CLOSED: [(&str, &[&str]); 4] = [
+    const CLOSED: [(&str, &[&str]); 5] = [
         // F: the thread's row and column from the linear index (`lidx & 15u`, `lidx >> 4u`)
         ("F lidx axes", &["tests/corpus/model_replies/k0017.wgsl", "tests/corpus/model_replies/k0038.wgsl"]),
         // F: a private array holding two axes (`pi[k]` the rows, `pi[k + 8u]` the columns)
         ("F two axes in one array", &["tests/corpus/model_replies/k0443.wgsl"]),
+        // G: a let over a vec4<bool> (or another extra kind) that a store would change before its use
+        ("G stale let held in a register", &["tests/corpus/model_replies/k1745.wgsl", "tests/corpus/model_replies/k1783.wgsl", "fixture:v24_run1_raw/g005_r12_mr40_loops_from_r22.wgsl"]),
         // H: a loop entered at a value of the uniforms (`for (var p = dp4; ...)`, dp4 = dp & ~3u)
         ("H loop entry from a uniform expression", &["tests/corpus/model_replies/k1753.wgsl", "tests/corpus/model_replies/k1761.wgsl"]),
         // I: a store to one lane of a vec4<u32> local
@@ -254,7 +256,10 @@ mod tests {
         let mut failed = Vec::new();
         for (cause, files) in CLOSED {
             for f in files {
-                let text = std::fs::read_to_string(root.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+                let text = match f.strip_prefix("fixture:").and_then(|r| r.split_once('/')) {
+                    Some((set, name)) => crate::wgsl::fixture_texts::text(set, name),
+                    None => std::fs::read_to_string(root.join(f)).unwrap_or_else(|e| panic!("{f}: {e}")),
+                };
                 match same_values(&text, &k, &Trial::default()) {
                     Ok(RoundTrip::Same) => {}
                     other => failed.push(format!("{cause}: {f}: {:?}", other.map_err(|e| e.chars().take(300).collect::<String>()).map(|r| format!("{r:?}").chars().take(1500).collect::<String>()))),
