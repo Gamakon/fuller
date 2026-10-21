@@ -750,7 +750,40 @@ pub fn math_to_nodes_n(expr: &str, vars: &[String], max_nodes: usize) -> Result<
     if pos != toks.len() {
         return Err(format!("trailing tokens at {pos} in {expr:?}"));
     }
-    flatten(&tree, vars, max_nodes)
+    flatten(&expand_int_pows(&tree), vars, max_nodes)
+}
+
+/// `Pow(x, k)` for an exact integer `k` in 2..=8 as the exact `Pow2`/`Pow3`/`Mul`
+/// chain the gene alphabet can hold (it has `Pow2` and `Pow3` but no general
+/// `Pow`): 4 = Pow2(Pow2 x), 5 = Mul(Pow2 x, Pow3 x), 6 = Pow2(Pow3 x),
+/// 7 = Mul(Pow3 x, Pow2(Pow2 x)), 8 = Pow2(Pow2(Pow2 x)). The e-graph `Math`
+/// keeps the general `Pow`; only this conversion to nodes expands it. Any other
+/// exponent (non-integer, below 2, above 8) stays a `Pow` node, which a gene
+/// encoder reports as an unmappable op.
+fn expand_int_pows(tree: &Tree) -> Tree {
+    let app = |h: &str, k: Vec<Tree>| Tree::App(h.to_string(), k);
+    match tree {
+        Tree::App(head, kids) => {
+            let kids: Vec<Tree> = kids.iter().map(expand_int_pows).collect();
+            if let ("Pow", [x, Tree::Num(k)]) = (head.as_str(), kids.as_slice()) {
+                let p2 = |t: Tree| app("Pow2", vec![t]);
+                let p3 = |t: Tree| app("Pow3", vec![t]);
+                let x = x.clone();
+                match *k {
+                    2.0 => return p2(x),
+                    3.0 => return p3(x),
+                    4.0 => return p2(p2(x)),
+                    5.0 => return app("Mul", vec![p2(x.clone()), p3(x)]),
+                    6.0 => return p2(p3(x)),
+                    7.0 => return app("Mul", vec![p3(x.clone()), p2(p2(x))]),
+                    8.0 => return p2(p2(p2(x))),
+                    _ => {}
+                }
+            }
+            Tree::App(head.clone(), kids)
+        }
+        other => other.clone(),
+    }
 }
 
 /// Karva tokens straight to GPU nodes.
@@ -1977,6 +2010,40 @@ pub fn score_predictions(preds: &[f32], targets: &[f32], n_expr: usize) -> Vec<E
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Host reference over a level-order node array holding only Var, Pow2, Pow3, Mul.
+    fn host_value(nodes: &[GpuNode], at: usize, x: f64) -> f64 {
+        let n = nodes[at];
+        let kid = |i: u32| host_value(nodes, (n.arg0 + i) as usize, x);
+        match n.op {
+            o if o == Op::Var as u32 => x,
+            o if o == Op::Pow2 as u32 => kid(0) * kid(0),
+            o if o == Op::Pow3 as u32 => kid(0) * kid(0) * kid(0),
+            o if o == Op::Mul as u32 => kid(0) * kid(1),
+            o => panic!("op {o} is outside the gene alphabet chain"),
+        }
+    }
+
+    #[test]
+    fn integer_powers_two_to_eight_expand_to_exact_gene_chains() {
+        let vars = vec!["x".to_string()];
+        for k in 2..=8 {
+            let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {k}.0))"), &vars).expect("expands");
+            assert!(nodes.iter().all(|n| n.op != Op::Pow as u32 && n.op != Op::Num as u32), "x^{k} kept a Pow or Num node");
+            for x in [-2.5f64, -1.0, 0.5, 1.0, 3.0] {
+                assert_eq!(host_value(&nodes, 0, x), x.powi(k), "x^{k} at {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn other_exponents_stay_a_pow_node() {
+        let vars = vec!["x".to_string()];
+        for e in ["1.0", "9.0", "2.5", "-2.0"] {
+            let nodes = math_to_nodes(&format!("(Pow (Var \"x\") (Num {e}))"), &vars).expect("parses");
+            assert_eq!(nodes[0].op, Op::Pow as u32, "exponent {e}");
+        }
+    }
 
     #[test]
     fn opcodes_cover_the_math_alphabet() {
