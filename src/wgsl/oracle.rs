@@ -299,6 +299,30 @@ pub mod device {
     /// buffer, words) behind it.
     type Prepared = (wgpu::ComputePipeline, wgpu::BindGroup, Vec<(Binding, wgpu::Buffer, usize)>);
 
+    /// The error scopes a block of device creation runs in: a kernel the backend cannot compile (Metal rejecting what
+    /// naga wrote for a `modf` of a vector bitcast to integers, 2026-10-21) is reported by wgpu as a validation
+    /// error or as an internal one, and an error with no scope of its kind is a panic that ends the process. Both
+    /// kinds are caught; the first is returned as text, the kernel scored as one that does not compile.
+    pub struct ErrorScopes {
+        internal: wgpu::ErrorScopeGuard,
+        validation: wgpu::ErrorScopeGuard,
+    }
+
+    impl ErrorScopes {
+        pub fn push(device: &wgpu::Device) -> ErrorScopes {
+            let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+            let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+            ErrorScopes { internal, validation }
+        }
+
+        /// The first error the block raised, if any.
+        pub fn pop(self) -> Option<String> {
+            let validation = pollster::block_on(self.validation.pop());
+            let internal = pollster::block_on(self.internal.pop());
+            validation.or(internal).map(|e| e.to_string())
+        }
+    }
+
     pub struct Device {
         pub device: wgpu::Device,
         pub queue: wgpu::Queue,
@@ -442,14 +466,14 @@ pub mod device {
                     binds.push(b.clone());
                 }
             }
-            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = ErrorScopes::push(&self.device);
             let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)) });
-            if let Some(e) = pollster::block_on(scope.pop()) {
+            if let Some(e) = scope.pop() {
                 return Err(format!("shader module: {e}"));
             }
-            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = ErrorScopes::push(&self.device);
             let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(entry), layout: None, module: &shader, entry_point: Some(entry), compilation_options: Default::default(), cache: None });
-            if let Some(e) = pollster::block_on(scope.pop()) {
+            if let Some(e) = scope.pop() {
                 return Err(format!("pipeline {entry}: {e}"));
             }
             let mut buffers = Vec::new();
@@ -477,9 +501,9 @@ pub mod device {
                 entries.push(wgpu::BindGroupEntry { binding: b.binding, resource: buf.as_entire_binding() });
             }
             let layout = pipeline.get_bind_group_layout(0);
-            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = ErrorScopes::push(&self.device);
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(entry), layout: &layout, entries: &entries });
-            if let Some(e) = pollster::block_on(scope.pop()) {
+            if let Some(e) = scope.pop() {
                 return Err(format!("bind group: {e}"));
             }
             Ok((pipeline, bind, buffers))
@@ -512,9 +536,9 @@ pub mod device {
             for (i, read) in &reads {
                 enc.copy_buffer_to_buffer(&buffers[*i].1, 0, read, 0, (buffers[*i].2 * 4) as u64);
             }
-            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = ErrorScopes::push(&self.device);
             self.queue.submit(Some(enc.finish()));
-            if let Some(e) = pollster::block_on(scope.pop()) {
+            if let Some(e) = scope.pop() {
                 return Err(format!("submit: {e}"));
             }
             let mut out = memory.clone();
@@ -682,5 +706,35 @@ fn main() {
         let on_device = dev.run(&edge.source, &entry_name(&edge.kernel).unwrap(), &memory, &bindings(&edge.kernel.module).unwrap()).unwrap();
         let (diffs, known) = check(&on_device, &edge.expectation, true);
         assert!(diffs.is_empty() && known.is_empty(), "{diffs:?} {known:?}");
+    }
+}
+
+/// A kernel the backend cannot compile is reported, not fatal (2026-10-21, run 6g: a wgsl_fit run died at generation 12
+/// on a kernel whose `bitcast<vec3<i32>>(modf(vec3<f32>(..)).whole)` naga validates and writes as an MSL `as_type` between
+/// a packed_float3 and an int3, which Metal rejects). Needs a GPU, run on whatever backend the machine has; on one that
+/// compiles the kernel the test says so and checks nothing.
+#[cfg(all(test, feature = "gpu"))]
+mod device_compile_failure_tests {
+    use super::device::{Device, ErrorScopes};
+
+    const MODF_BITCAST: &str = "@group(0) @binding(0) var<storage, read_write> out: array<i32>;
+@compute @workgroup_size(1)
+fn main() {
+    let x = f32(out[1]);
+    let v = bitcast<vec3<i32>>(modf(vec3<f32>(x, x, x)).whole);
+    out[0] = v.x;
+}
+";
+
+    #[test]
+    fn a_kernel_the_backend_cannot_compile_is_an_error_not_a_panic() {
+        let dev = Device::new().expect("device");
+        let scope = ErrorScopes::push(&dev.device);
+        let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("modf"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(MODF_BITCAST)) });
+        let _pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("main"), layout: None, module: &shader, entry_point: Some("main"), compilation_options: Default::default(), cache: None });
+        match scope.pop() {
+            Some(e) => assert!(e.contains("as_type") || e.contains("ipeline") || e.contains("Metal"), "an error that does not name the compile: {e}"),
+            None => eprintln!("this backend ({}) compiles the kernel; nothing to check", dev.name),
+        }
     }
 }

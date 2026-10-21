@@ -699,7 +699,7 @@ impl<'a> Gram<'a> {
         if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err("this device has no timestamp queries".into());
         }
-        let scope = dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::wgsl::oracle::device::ErrorScopes::push(&dev.device);
         let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gram"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)) });
         // An explicit layout over the role's three bindings: a kernel that
         // reads none of them (a random gene may) still binds them all.
@@ -707,7 +707,7 @@ impl<'a> Gram<'a> {
         let bgl = dev.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("gram"), entries: &[entry(0, wgpu::BufferBindingType::Storage { read_only: true }), entry(1, wgpu::BufferBindingType::Storage { read_only: false }), entry(2, wgpu::BufferBindingType::Uniform)] });
         let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("gram"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
         let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gram"), layout: Some(&layout), module: &shader, entry_point: Some(ENTRY), compilation_options: Default::default(), cache: None });
-        if let Some(e) = pollster::block_on(scope.pop()) {
+        if let Some(e) = scope.pop() {
             return Err(format!("pipeline: {e}"));
         }
         Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period() })

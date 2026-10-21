@@ -3031,7 +3031,7 @@ mod device {
             let device = &self.dev.device;
             let mut judge = self.judge.borrow_mut();
             if judge.is_none() {
-                let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+                let scope = crate::wgsl::oracle::device::ErrorScopes::push(device);
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("pooled judge"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("pooled_judge.wgsl"))) });
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..10u32)
                     .map(|b| wgpu::BindGroupLayoutEntry {
@@ -3044,7 +3044,7 @@ mod device {
                 let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("pooled judge"), entries: &entries });
                 let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("pooled judge"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
                 let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("judge_main"), layout: Some(&layout), module: &shader, entry_point: Some("judge_main"), compilation_options: Default::default(), cache: None });
-                if let Some(e) = pollster::block_on(scope.pop()) {
+                if let Some(e) = scope.pop() {
                     return Err(format!("our software has a bug: the pooled judge does not compile: {e}"));
                 }
                 *judge = Some(Judge { bgl, pipeline, resident: Vec::new() });
@@ -3113,7 +3113,7 @@ mod device {
             if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
                 return Err("this device has no timestamp queries".into());
             }
-            let scope = dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = crate::wgsl::oracle::device::ErrorScopes::push(&dev.device);
             let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&problem.spec.name), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)) });
             // An explicit layout over the schema's bindings: a kernel that
             // reads none of them still binds them all (as `Gram::compile_with`).
@@ -3134,7 +3134,7 @@ mod device {
             let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("harness"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
             // MULTI-ENTRY: one pipeline per entry point, every one over the layout.
             let pipelines = problem.spec.kernel.entry_names().iter().map(|e| dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(e), layout: Some(&layout), module: &shader, entry_point: Some(e), compilation_options: Default::default(), cache: None })).collect();
-            if let Some(e) = pollster::block_on(scope.pop()) {
+            if let Some(e) = scope.pop() {
                 return Err(format!("pipeline: {e}"));
             }
             Ok((DeviceKernel { pipelines, bgl, period_ns: dev.queue.get_timestamp_period() }, info))
@@ -3152,7 +3152,7 @@ mod device {
                 let device = &self.dev.device;
                 let mut compiled = Vec::with_capacity(plan.machines.len());
                 for m in &plan.machines {
-                    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    let scope = crate::wgsl::oracle::device::ErrorScopes::push(device);
                     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&m.name), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&m.source)) });
                     let entries: Vec<wgpu::BindGroupLayoutEntry> = m
                         .bindings
@@ -3169,7 +3169,7 @@ mod device {
                     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(&m.name), entries: &entries });
                     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(&m.name), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
                     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(&m.name), layout: Some(&layout), module: &shader, entry_point: Some(&m.entry), compilation_options: Default::default(), cache: None });
-                    if let Some(e) = pollster::block_on(scope.pop()) {
+                    if let Some(e) = scope.pop() {
                         return Err(format!("our software has a bug: the machinery kernel {} does not compile: {e}", m.name));
                     }
                     compiled.push((pipeline, bgl));
