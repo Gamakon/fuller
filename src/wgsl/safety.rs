@@ -1039,7 +1039,11 @@ impl<'m> An<'m> {
                 return Abs::Vec(v);
             }
         }
-        if let Abs::Vec(y) = &b {
+        // (A vector and a vector of another length, a matrix product's operands: no lane of one pairs with a lane of
+        // the other, so the result is one value of both operands' invariance and uniformity, below. Pairing the whole
+        // of `a` with each lane of `b` nested `a` once per operation, and a kernel of matrix products grew a value to
+        // 37 million nodes: the checker did not terminate.)
+        if let (Abs::Vec(y), false) = (&b, matches!(a, Abs::Vec(_))) {
             let v = y.clone().into_iter().map(|q| self.binary(op, a.clone(), q)).collect();
             return Abs::Vec(v);
         }
@@ -4051,6 +4055,21 @@ mod tests {
     }
 
     /// The planted races, each refused by its rule (and its safe twin proved).
+    /// A CHAIN OF MATRIX PRODUCTS OF OTHER SHAPES TERMINATES (T66: a sampled kernel of mat2x4 * mat4x2 products grew a value
+    /// to 37 million nodes and the proof ran past 50 CPU minutes and 40 GB): the product of two vectors of other lengths
+    /// is one value, not the whole of the first once per lane of the second. The kernel is proved, and quickly.
+    #[test]
+    fn a_chain_of_matrix_products_of_other_shapes_is_proved() {
+        let mut body = String::from("    var a = mat2x4<f32>(vec4<f32>(1.0), vec4<f32>(2.0));\n    var b = mat4x2<f32>(vec2<f32>(1.0), vec2<f32>(2.0), vec2<f32>(3.0), vec2<f32>(4.0));\n");
+        for i in 0..24 {
+            body.push_str(&format!("    let p{i} = a * b;\n    let q{i} = b * a;\n    a = mat2x4<f32>(p{i}[0], p{i}[1]);\n    b = mat4x2<f32>(q{i}[0], q{i}[1], q{i}[0], q{i}[1]);\n"));
+        }
+        body.push_str("    if (gid.x < 16u) { h[gid.x] = a[0].x + b[0].x; }");
+        let started = std::time::Instant::now();
+        proved(&gram(&body, "16, 1, 1"), &one_d());
+        assert!(started.elapsed().as_secs() < 30, "the proof took {:?}", started.elapsed());
+    }
+
     #[test]
     fn planted_races_are_refused() {
         let c = one_d();
