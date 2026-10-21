@@ -82,20 +82,18 @@ G (a stale let held in a register).
 | tests/fixtures/wgsl_texts/v24_run1_seeds | seed29.wgsl | E | a barrier under a condition (reader gap: a uniform-conditional rung) |
 | tests/fixtures/wgsl_texts/v24_run1_seeds | seed31.wgsl | E | a barrier under a condition (reader gap: a uniform-conditional rung) |
 
-## Outside the kingdom (A0, 2026-10-21, 6): read before, refused now because the only spelling was an escape row
+## Outside the kingdom (A0, 2026-10-21, 4): read before, refused now because the only spelling was an escape row
 
 The rows `uflag.of_flag` and `uniform.of_checked` admitted any flag or index into a uniform context "when the checker proves
 it"; they are deleted (`kingdoms/safewgsl/gen_tables.py`), so a test over a barrier that is not a comparison of workgroup-uniform
 values, and a loop over a barrier whose bound is not a uniform value, have no spelling. The reader refuses them with the reason
 "outside the kingdom: ... no row admits a flag into a uniform context". The same shape is the open gap E above
-(seed28, seed29, seed31, a barrier under a condition); these six differ only in that the test is a register or a thread's value.
-A uniform register, set by `workgroupUniformLoad`, is the type that would spell them (the D1 construction `Val<T, WgUniform>`).
+(seed28, seed29, seed31, a barrier under a condition); these four differ only in that the test is a register or a thread's value.
+A uniform register (`reg.U<n>`, written by `workgroupUniformLoad`; `reg.Q<n>`, a flag set under uniform tests) spells a test of a count loaded by workgroupUniformLoad, so seed21 of both directories reads; a test of any other register or of a thread's value does not.
 
 | directory | kernel | class | why |
 |---|---|---|---|
 | tests/corpus/model_replies | k1482.wgsl | O | a barrier under a test of registers and the workgroup id (uniform only if the registers are): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |
 | tests/corpus/model_replies | k1797.wgsl | O | a barrier under a test of the thread's local index (not uniform, so illegal under its contract): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |
 | tests/fixtures/wgsl_texts/v24_run1_raw | seed06.wgsl | O | a barrier under `reg < 512u` (a register): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |
-| tests/fixtures/wgsl_texts/v24_run1_raw | seed21.wgsl | O | a barrier under `reg > 0u` (a register from a workgroupUniformLoad): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |
 | tests/fixtures/wgsl_texts/v24_run1_seeds | seed06.wgsl | O | a barrier under `reg < 512u` (a register): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |
-| tests/fixtures/wgsl_texts/v24_run1_seeds | seed21.wgsl | O | a barrier under `reg > 0u` (a register from a workgroupUniformLoad): no row admits the flag into a uniform context (`uflag.of_flag` deleted) |

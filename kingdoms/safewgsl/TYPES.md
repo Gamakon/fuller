@@ -315,6 +315,8 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T202 | `reg<vec2<bool>>.flag` | `reg<vec2<bool>>` | `flag` | 2 | `-` |
 | T203 | `reg<vec3<bool>>.flag` | `reg<vec3<bool>>` | `flag` | 3 | `-` |
 | T204 | `reg<vec4<bool>>.flag` | `reg<vec4<bool>>` | `flag` | 4 | `-` |
+| T205 | `reg<u32>.uniform` | `reg<u32>` | `uniform` | 1 | `-` |
+| T206 | `reg<bool>.uflag` | `reg<bool>` | `uflag` | 1 | `-` |
 
 The `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a tree's constant is exact for every u32 and i32.
 

@@ -243,7 +243,14 @@ REG_KINDS = [
     ("J", "vec2<bool>", "flag"),
     ("K", "vec3<bool>", "flag"),
     ("L", "vec4<bool>", "flag"),
+    # UNIFORM REGISTERS (A0 follow-up, 2026-10-21): a register of the uniform contexts. U holds a u32.uniform and is written by
+    # workgroupUniformLoad (wg.uload_U) or by a uniform value at an L rung; Q holds a bool.uflag and is written by a uniform
+    # predicate at an L rung. An L rung runs in uniform control, so what they hold is workgroup-uniform by type: no row
+    # writes them at a C or O rung, and a read of one is a uniform value wherever a barrier needs one.
+    ("U", "u32", "uniform"),
+    ("Q", "bool", "uflag"),
 ]
+UNIFORM_REGISTERS = ("U", "Q")
 REG_KIND_COUNT = 16
 
 # The registers of the earlier kinds beyond the counts they were written with: letter, dual, count written above, count now.
@@ -416,7 +423,7 @@ def build_types():
     # Registers of the other vector types (2026-10-19, the harvested corpus: 2,700 of 4,100 reads that failed held a
     # vec2/vec3/vec4 of i32, u32, f32 or bool in a local or returned one): see REG_KINDS.
     for letter, slot, form in REG_KINDS:
-        add(f"reg<{slot}>", form, int(slot[3]), f"a named {slot} register: {letter}0..{letter}{REG_KIND_COUNT - 1}")
+        add(f"reg<{slot}>", form, int(slot[3]) if slot.startswith("vec") else 1, f"a named {slot} register: {letter}0..{letter}{REG_KIND_COUNT - 1}")
     return rows
 
 
@@ -1361,7 +1368,7 @@ for r in RUNGS + RUNGS5:
 # written by one thread, read by all as `workgroupUniformLoad(&wu1)` and tested over a barrier): one statement, a
 # barrier for the checker (uniform control only), its register uniform when the index is; L rungs only ----
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
-    f("wg", "uload_i_" + r, "composite", ["reg<u32>.index", "wgmem<u32>.index", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
+    # (wg.uload_i, which loaded into a plain u32 register, is deleted, A0 2026-10-21: wg.uload_U is the typed spelling.)
     f("wg", "uload_f_" + r, "composite", ["reg<f32>.real", "wgmem<f32>.real", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
 # ---- 64-element vec4<f32> private arrays (2026-10-17, v24 run 1's seed28: `var qreg: array<vec4<f32>, 32>`, a query
 # held in registers, read 16-wide before; indexed as the 64-element arrays are, u32.pindex, i & 63u) ----
@@ -1412,7 +1419,16 @@ for letter, slot, form in REG_KINDS:
         f("reg", f"{letter}{i}", "composite", [], f"reg<{slot}>.{form}", f"a {slot} register")
     f("reg", f"get_{letter}", "composite", [f"reg<{slot}>.{form}"], f"{slot}.{form}", "the register's value")
     for r in RUNGS + RUNGS5:
+        if letter in UNIFORM_REGISTERS and not r.startswith("L"):
+            continue  # a uniform register is written at the rungs of uniform control only
         f("reg", f"set_{letter}_" + r, "composite", [f"reg<{slot}>.{form}", f"{slot}.{form}"], "stmt." + r, "")
+    if letter == "U":
+        for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+            f("wg", "uload_U_" + r, "composite", ["reg<u32>.uniform", "wgmem<u32>.index", "u32.wgindex"], "stmt." + r, "arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread")
+
+# A uniform predicate read where a plain flag is demanded (a uniform flag register in a test of threads): the widening, which
+# only ever forgets that every thread holds one value.
+f("flag", "of_uflag", "composite", ["bool.uflag"], "bool.flag", "a workgroup-uniform predicate as a plain flag")
 
 # ---- a module of more than four entry points (2026-10-19, the harvested corpus: 59 of 344 non-dawn reads that failed;
 # cuneus's blackhole has eight): a node has at most four children (K), so a module of five or more is a module of

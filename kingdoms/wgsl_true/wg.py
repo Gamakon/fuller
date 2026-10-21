@@ -83,7 +83,7 @@ def build(iface):
             cls = reduce_class(j)
             for op in ("add", "max", "min"):
                 body = f"{{0}}[i] + {{0}}[i + s]" if op == "add" else f"{op}({{0}}[i], {{0}}[i + s])"
-                text = "{ var s = {1} >> 1u; loop { if (s == 0u) { break; } workgroupBarrier(); var i = lidx; loop { if (i >= s) { break; } {0}[i] = " + body + "; i = i + KNOB_THREADS; } s = s >> 1u; } workgroupBarrier(); }"
+                text = "{ var s = {1} >> 1u; loop { if (s == 0u) { break; } workgroupBarrier(); for (var i = lidx; i < s; i = i + KNOB_THREADS) { {0}[i] = " + body + "; } s = s >> 1u; } workgroupBarrier(); }"
                 for d in range(0, 6):
                     for k in STRATA:
                         if k + cls <= K:

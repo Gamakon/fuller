@@ -895,7 +895,8 @@ mod tests {
         // workgroup arrays (wgmem<i32>.int, run 4's seeds, 2026-10-19); 195 with the 128-element u32
         // private array and its index (parr128<u32>.index, u32.pindex128, run 4's seed10).
         // 204 with the registers of the other vector types (REG_KINDS, 2026-10-19).
-        assert_eq!(s.len(), 204);
+        // 206 with the uniform registers (reg<u32>.uniform, reg<bool>.uflag, 2026-10-21).
+        assert_eq!(s.len(), 206);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -961,7 +962,9 @@ mod tests {
         // (ARRAY_FAMILIES and REG_EXTEND of gen_tables.py: the arrays and registers past the first names, and
         // the sixteen of each extra register kind); 2,228 with the terminals of the typed-GEP plan (the `const`
         // rows of the dual forms no literal reaches and the `own` rows, docs/PLAN_wgsl_terminals.md).
-        assert_eq!(fs.rows.len(), 2200, "2241 before A0 deleted 41 rows");
+        // 2200 after A0 deleted 41 rows; 2247 with the uniform registers (2 x 16 registers, 2 reads, 12 sets at L0..L5, 6 wg.uload_U,
+        // flag.of_uflag) less the 6 wg.uload_i.
+        assert_eq!(fs.rows.len(), 2247, "2241 before A0 deleted 41 rows");
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         // (The functions that make a dual; the plan's `own` terminals make it too.)
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d && !r.name.starts_with("own.") && !r.name.starts_with("const.")).map(|r| r.name.clone()).collect() };
@@ -1214,6 +1217,28 @@ mod tests {
             let produced: Vec<&str> = k.rows.iter().filter(|r| k.dual(r.output).is_some_and(|d| d.dual == dead)).map(|r| r.name.as_str()).collect();
             assert!(produced.is_empty(), "rows produce {dead} again: {produced:?}");
         }
+    }
+
+    /// A UNIFORM REGISTER IS WRITTEN AT THE RUNGS OF UNIFORM CONTROL ONLY (the typed provenance of a barrier's test): the rows
+    /// that write a `reg<u32>.uniform` or a `reg<bool>.uflag` are statements at an L rung, and take a uniform value (a
+    /// `u32.uniform`, a `bool.uflag`, or a workgroupUniformLoad of a workgroup array). No row writes one at a C or O rung, so
+    /// what it holds is the same in every thread; a row that reads one produces the uniform dual.
+    #[test]
+    fn a_uniform_register_is_written_at_uniform_rungs_and_read_as_a_uniform_value() {
+        let k = WgslKingdom::load_safe();
+        let dual = |t: Ty| k.dual(t).map(|d| d.dual.clone()).unwrap_or_default();
+        let writes: Vec<&WgslRow> = k.rows.iter().filter(|r| r.inputs.first().is_some_and(|t| matches!(dual(*t).as_str(), "reg<u32>.uniform" | "reg<bool>.uflag")) && dual(r.output).starts_with("stmt.")).collect();
+        assert_eq!(writes.len(), 18, "6 reg.set_U, 6 reg.set_Q, 6 wg.uload_U");
+        for r in &writes {
+            assert!(dual(r.output).starts_with("stmt.L"), "{} writes a uniform register at {}", r.name, dual(r.output));
+            let value = dual(*r.inputs.last().unwrap());
+            assert!(matches!(value.as_str(), "u32.uniform" | "bool.uflag" | "u32.wgindex"), "{} takes {value}", r.name);
+        }
+        for (get, out) in [("reg.get_U", "u32.uniform"), ("reg.get_Q", "bool.uflag")] {
+            let rows: Vec<&WgslRow> = k.rows.iter().filter(|r| r.name == get).collect();
+            assert!(rows.len() == 1 && dual(rows[0].output) == out, "{get}");
+        }
+        assert!(k.rows.iter().all(|r| !(r.name.starts_with("wg.uload_") && dual(r.inputs[0]) == "reg<u32>.index")), "a workgroupUniformLoad into a plain u32 register is a row again");
     }
 
     /// NO ROW CONSTRUCTS A TYPE THE KINGDOM HAS NO ROW FOR (T66, 2 of 1,000 typed genes): `frexp` over an f16 operand makes

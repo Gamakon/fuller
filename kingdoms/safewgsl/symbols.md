@@ -3146,585 +3146,647 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1691 | `wg.uload_i_L0` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L0` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1692 | `wg.uload_f_L0` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L0` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1693 | `wg.uload_i_L1` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L1` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1694 | `wg.uload_f_L1` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L1` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1695 | `wg.uload_i_L2` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L2` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1696 | `wg.uload_f_L2` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L2` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1697 | `wg.uload_i_L3` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L3` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1698 | `wg.uload_f_L3` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L3` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1699 | `wg.uload_i_L4` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L4` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1700 | `wg.uload_f_L4` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L4` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1701 | `wg.uload_i_L5` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
-| F1702 | `wg.uload_f_L5` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1691 | `wg.uload_f_L0` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L0` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1692 | `wg.uload_f_L1` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L1` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1693 | `wg.uload_f_L2` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L2` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1694 | `wg.uload_f_L3` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L3` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1695 | `wg.uload_f_L4` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L4` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1696 | `wg.uload_f_L5` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1703 | `parr.vq` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvq of 64 vec4<f32> |
-| F1704 | `parr.vr` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvr of 64 vec4<f32> |
-| F1705 | `parr.get_v` | `composite` | `parr64<vec4<f32>>.real u32.pindex` | `vec4<f32>.real` | 2 | pvq[i] |
-| F1706 | `parr.set_v_L0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pvq[i] = v |
-| F1707 | `parr.set_v_L1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pvq[i] = v |
-| F1708 | `parr.set_v_L2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pvq[i] = v |
-| F1709 | `parr.set_v_L3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pvq[i] = v |
-| F1710 | `parr.set_v_L4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pvq[i] = v |
-| F1711 | `parr.set_v_C0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pvq[i] = v |
-| F1712 | `parr.set_v_C1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pvq[i] = v |
-| F1713 | `parr.set_v_C2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pvq[i] = v |
-| F1714 | `parr.set_v_C3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pvq[i] = v |
-| F1715 | `parr.set_v_C4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pvq[i] = v |
-| F1716 | `parr.set_v_L5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pvq[i] = v |
-| F1717 | `parr.set_v_C5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pvq[i] = v |
+| F1697 | `parr.vq` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvq of 64 vec4<f32> |
+| F1698 | `parr.vr` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvr of 64 vec4<f32> |
+| F1699 | `parr.get_v` | `composite` | `parr64<vec4<f32>>.real u32.pindex` | `vec4<f32>.real` | 2 | pvq[i] |
+| F1700 | `parr.set_v_L0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pvq[i] = v |
+| F1701 | `parr.set_v_L1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pvq[i] = v |
+| F1702 | `parr.set_v_L2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pvq[i] = v |
+| F1703 | `parr.set_v_L3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pvq[i] = v |
+| F1704 | `parr.set_v_L4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pvq[i] = v |
+| F1705 | `parr.set_v_C0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pvq[i] = v |
+| F1706 | `parr.set_v_C1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pvq[i] = v |
+| F1707 | `parr.set_v_C2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pvq[i] = v |
+| F1708 | `parr.set_v_C3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pvq[i] = v |
+| F1709 | `parr.set_v_C4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pvq[i] = v |
+| F1710 | `parr.set_v_L5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pvq[i] = v |
+| F1711 | `parr.set_v_C5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pvq[i] = v |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1718 | `wg.reduce_argmax_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1719 | `wg.reduce_argmax_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1720 | `wg.reduce_argmax_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1721 | `wg.reduce_argmax_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1722 | `wg.reduce_argmax_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1723 | `wg.reduce_argmax_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1724 | `wg.reduce_argmin_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1725 | `wg.reduce_argmin_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1726 | `wg.reduce_argmin_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1727 | `wg.reduce_argmin_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1728 | `wg.reduce_argmin_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1729 | `wg.reduce_argmin_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
-| F1730 | `wg.au_c` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_c of atomic<u32> |
-| F1731 | `wg.au_d` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_d of atomic<u32> |
-| F1732 | `wg.na` | `composite` | `-` | `wgmem<i32>.int` | 0 | workgroup array wg_na of i32 |
-| F1733 | `wg.nb` | `composite` | `-` | `wgmem<i32>.int` | 0 | workgroup array wg_nb of i32 |
-| F1734 | `wg.get_n_safe` | `composite` | `wgmem<i32>.int u32.wgindex` | `i32.int` | 2 | a[i], in range by its type |
-| F1735 | `wg.set_n_L0` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L0` | 3 | arity 3: a[i] = v |
-| F1736 | `wg.set_n_L1` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L1` | 3 | arity 3: a[i] = v |
-| F1737 | `wg.set_n_L2` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L2` | 3 | arity 3: a[i] = v |
-| F1738 | `wg.set_n_L3` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L3` | 3 | arity 3: a[i] = v |
-| F1739 | `wg.set_n_L4` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L4` | 3 | arity 3: a[i] = v |
-| F1740 | `wg.set_n_C0` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C0` | 3 | arity 3: a[i] = v |
-| F1741 | `wg.set_n_C1` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C1` | 3 | arity 3: a[i] = v |
-| F1742 | `wg.set_n_C2` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C2` | 3 | arity 3: a[i] = v |
-| F1743 | `wg.set_n_C3` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C3` | 3 | arity 3: a[i] = v |
-| F1744 | `wg.set_n_C4` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C4` | 3 | arity 3: a[i] = v |
-| F1745 | `wg.set_n_L5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L5` | 3 | arity 3: a[i] = v |
-| F1746 | `wg.set_n_C5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C5` | 3 | arity 3: a[i] = v |
-| F1747 | `wg.decl_n` | `composite` | `wgmem<i32>.int u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<i32, n> |
+| F1712 | `wg.reduce_argmax_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1713 | `wg.reduce_argmax_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1714 | `wg.reduce_argmax_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1715 | `wg.reduce_argmax_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1716 | `wg.reduce_argmax_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1717 | `wg.reduce_argmax_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1718 | `wg.reduce_argmin_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1719 | `wg.reduce_argmin_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1720 | `wg.reduce_argmin_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1721 | `wg.reduce_argmin_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1722 | `wg.reduce_argmin_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1723 | `wg.reduce_argmin_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1724 | `wg.au_c` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_c of atomic<u32> |
+| F1725 | `wg.au_d` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_d of atomic<u32> |
+| F1726 | `wg.na` | `composite` | `-` | `wgmem<i32>.int` | 0 | workgroup array wg_na of i32 |
+| F1727 | `wg.nb` | `composite` | `-` | `wgmem<i32>.int` | 0 | workgroup array wg_nb of i32 |
+| F1728 | `wg.get_n_safe` | `composite` | `wgmem<i32>.int u32.wgindex` | `i32.int` | 2 | a[i], in range by its type |
+| F1729 | `wg.set_n_L0` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L0` | 3 | arity 3: a[i] = v |
+| F1730 | `wg.set_n_L1` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L1` | 3 | arity 3: a[i] = v |
+| F1731 | `wg.set_n_L2` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L2` | 3 | arity 3: a[i] = v |
+| F1732 | `wg.set_n_L3` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L3` | 3 | arity 3: a[i] = v |
+| F1733 | `wg.set_n_L4` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L4` | 3 | arity 3: a[i] = v |
+| F1734 | `wg.set_n_C0` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C0` | 3 | arity 3: a[i] = v |
+| F1735 | `wg.set_n_C1` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C1` | 3 | arity 3: a[i] = v |
+| F1736 | `wg.set_n_C2` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C2` | 3 | arity 3: a[i] = v |
+| F1737 | `wg.set_n_C3` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C3` | 3 | arity 3: a[i] = v |
+| F1738 | `wg.set_n_C4` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C4` | 3 | arity 3: a[i] = v |
+| F1739 | `wg.set_n_L5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L5` | 3 | arity 3: a[i] = v |
+| F1740 | `wg.set_n_C5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C5` | 3 | arity 3: a[i] = v |
+| F1741 | `wg.decl_n` | `composite` | `wgmem<i32>.int u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<i32, n> |
 
 ## class `safe`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1748 | `safe.pidx128` | `composite` | `u32.index` | `u32.pindex128` | 1 | i & 127u |
+| F1742 | `safe.pidx128` | `composite` | `u32.index` | `u32.pindex128` | 1 | i & 127u |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1749 | `parr.ux` | `composite` | `-` | `parr128<u32>.index` | 0 | private array pux of 128 u32 |
-| F1750 | `parr.uy` | `composite` | `-` | `parr128<u32>.index` | 0 | private array puy of 128 u32 |
-| F1751 | `parr.get_i` | `composite` | `parr128<u32>.index u32.pindex128` | `u32.index` | 2 | pux[i] |
-| F1752 | `parr.set_i_L0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L0` | 3 | arity 3: pux[i] = v |
-| F1753 | `parr.set_i_L1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L1` | 3 | arity 3: pux[i] = v |
-| F1754 | `parr.set_i_L2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L2` | 3 | arity 3: pux[i] = v |
-| F1755 | `parr.set_i_L3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L3` | 3 | arity 3: pux[i] = v |
-| F1756 | `parr.set_i_L4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L4` | 3 | arity 3: pux[i] = v |
-| F1757 | `parr.set_i_C0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C0` | 3 | arity 3: pux[i] = v |
-| F1758 | `parr.set_i_C1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C1` | 3 | arity 3: pux[i] = v |
-| F1759 | `parr.set_i_C2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C2` | 3 | arity 3: pux[i] = v |
-| F1760 | `parr.set_i_C3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C3` | 3 | arity 3: pux[i] = v |
-| F1761 | `parr.set_i_C4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C4` | 3 | arity 3: pux[i] = v |
-| F1762 | `parr.set_i_L5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L5` | 3 | arity 3: pux[i] = v |
-| F1763 | `parr.set_i_C5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C5` | 3 | arity 3: pux[i] = v |
+| F1743 | `parr.ux` | `composite` | `-` | `parr128<u32>.index` | 0 | private array pux of 128 u32 |
+| F1744 | `parr.uy` | `composite` | `-` | `parr128<u32>.index` | 0 | private array puy of 128 u32 |
+| F1745 | `parr.get_i` | `composite` | `parr128<u32>.index u32.pindex128` | `u32.index` | 2 | pux[i] |
+| F1746 | `parr.set_i_L0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L0` | 3 | arity 3: pux[i] = v |
+| F1747 | `parr.set_i_L1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L1` | 3 | arity 3: pux[i] = v |
+| F1748 | `parr.set_i_L2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L2` | 3 | arity 3: pux[i] = v |
+| F1749 | `parr.set_i_L3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L3` | 3 | arity 3: pux[i] = v |
+| F1750 | `parr.set_i_L4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L4` | 3 | arity 3: pux[i] = v |
+| F1751 | `parr.set_i_C0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C0` | 3 | arity 3: pux[i] = v |
+| F1752 | `parr.set_i_C1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C1` | 3 | arity 3: pux[i] = v |
+| F1753 | `parr.set_i_C2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C2` | 3 | arity 3: pux[i] = v |
+| F1754 | `parr.set_i_C3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C3` | 3 | arity 3: pux[i] = v |
+| F1755 | `parr.set_i_C4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C4` | 3 | arity 3: pux[i] = v |
+| F1756 | `parr.set_i_L5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L5` | 3 | arity 3: pux[i] = v |
+| F1757 | `parr.set_i_C5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C5` | 3 | arity 3: pux[i] = v |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1764 | `wg.put_n_L0` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1765 | `wg.put_n_L1` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1766 | `wg.put_n_L2` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1767 | `wg.put_n_L3` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1768 | `wg.put_n_L4` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1769 | `wg.put_n_L5` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1758 | `wg.put_n_L0` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1759 | `wg.put_n_L1` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1760 | `wg.put_n_L2` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1761 | `wg.put_n_L3` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1762 | `wg.put_n_L4` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1763 | `wg.put_n_L5` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
 
 ## class `convert`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1770 | `convert.vindex_to_f32` | `As` | `vec2<u32>.index` | `vec2<f32>.real` | 1 | per lane |
-| F1771 | `convert.vcount_to_f32` | `As` | `vec2<u32>.count` | `vec2<f32>.real` | 1 | per lane |
-| F1772 | `convert.vf32_to_count` | `As` | `vec2<f32>.real` | `vec2<u32>.count` | 1 | truncating, floor at 0, per lane |
-| F1773 | `convert.vindex_to_f32` | `As` | `vec3<u32>.index` | `vec3<f32>.real` | 1 | per lane |
-| F1774 | `convert.vcount_to_f32` | `As` | `vec3<u32>.count` | `vec3<f32>.real` | 1 | per lane |
-| F1775 | `convert.vf32_to_count` | `As` | `vec3<f32>.real` | `vec3<u32>.count` | 1 | truncating, floor at 0, per lane |
-| F1776 | `convert.vindex_to_f32` | `As` | `vec4<u32>.index` | `vec4<f32>.real` | 1 | per lane |
-| F1777 | `convert.vcount_to_f32` | `As` | `vec4<u32>.count` | `vec4<f32>.real` | 1 | per lane |
-| F1778 | `convert.vf32_to_count` | `As` | `vec4<f32>.real` | `vec4<u32>.count` | 1 | truncating, floor at 0, per lane |
+| F1764 | `convert.vindex_to_f32` | `As` | `vec2<u32>.index` | `vec2<f32>.real` | 1 | per lane |
+| F1765 | `convert.vcount_to_f32` | `As` | `vec2<u32>.count` | `vec2<f32>.real` | 1 | per lane |
+| F1766 | `convert.vf32_to_count` | `As` | `vec2<f32>.real` | `vec2<u32>.count` | 1 | truncating, floor at 0, per lane |
+| F1767 | `convert.vindex_to_f32` | `As` | `vec3<u32>.index` | `vec3<f32>.real` | 1 | per lane |
+| F1768 | `convert.vcount_to_f32` | `As` | `vec3<u32>.count` | `vec3<f32>.real` | 1 | per lane |
+| F1769 | `convert.vf32_to_count` | `As` | `vec3<f32>.real` | `vec3<u32>.count` | 1 | truncating, floor at 0, per lane |
+| F1770 | `convert.vindex_to_f32` | `As` | `vec4<u32>.index` | `vec4<f32>.real` | 1 | per lane |
+| F1771 | `convert.vcount_to_f32` | `As` | `vec4<u32>.count` | `vec4<f32>.real` | 1 | per lane |
+| F1772 | `convert.vf32_to_count` | `As` | `vec4<f32>.real` | `vec4<u32>.count` | 1 | truncating, floor at 0, per lane |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1779 | `reg.C0` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1780 | `reg.C1` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1781 | `reg.C2` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1782 | `reg.C3` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1783 | `reg.C4` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1784 | `reg.C5` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1785 | `reg.C6` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1786 | `reg.C7` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1787 | `reg.C8` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1788 | `reg.C9` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1789 | `reg.C10` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1790 | `reg.C11` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1791 | `reg.C12` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1792 | `reg.C13` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1793 | `reg.C14` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1794 | `reg.C15` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1795 | `reg.get_C` | `composite` | `reg<vec3<f32>>.real` | `vec3<f32>.real` | 1 | the register's value |
-| F1796 | `reg.set_C_L0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L0` | 2 |  |
-| F1797 | `reg.set_C_L1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L1` | 2 |  |
-| F1798 | `reg.set_C_L2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L2` | 2 |  |
-| F1799 | `reg.set_C_L3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L3` | 2 |  |
-| F1800 | `reg.set_C_L4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L4` | 2 |  |
-| F1801 | `reg.set_C_C0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C0` | 2 |  |
-| F1802 | `reg.set_C_C1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C1` | 2 |  |
-| F1803 | `reg.set_C_C2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C2` | 2 |  |
-| F1804 | `reg.set_C_C3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C3` | 2 |  |
-| F1805 | `reg.set_C_C4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C4` | 2 |  |
-| F1806 | `reg.set_C_L5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L5` | 2 |  |
-| F1807 | `reg.set_C_C5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C5` | 2 |  |
-| F1808 | `reg.D0` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1809 | `reg.D1` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1810 | `reg.D2` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1811 | `reg.D3` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1812 | `reg.D4` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1813 | `reg.D5` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1814 | `reg.D6` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1815 | `reg.D7` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1816 | `reg.D8` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1817 | `reg.D9` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1818 | `reg.D10` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1819 | `reg.D11` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1820 | `reg.D12` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1821 | `reg.D13` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1822 | `reg.D14` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1823 | `reg.D15` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1824 | `reg.get_D` | `composite` | `reg<vec2<i32>>.int` | `vec2<i32>.int` | 1 | the register's value |
-| F1825 | `reg.set_D_L0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L0` | 2 |  |
-| F1826 | `reg.set_D_L1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L1` | 2 |  |
-| F1827 | `reg.set_D_L2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L2` | 2 |  |
-| F1828 | `reg.set_D_L3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L3` | 2 |  |
-| F1829 | `reg.set_D_L4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L4` | 2 |  |
-| F1830 | `reg.set_D_C0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C0` | 2 |  |
-| F1831 | `reg.set_D_C1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C1` | 2 |  |
-| F1832 | `reg.set_D_C2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C2` | 2 |  |
-| F1833 | `reg.set_D_C3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C3` | 2 |  |
-| F1834 | `reg.set_D_C4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C4` | 2 |  |
-| F1835 | `reg.set_D_L5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L5` | 2 |  |
-| F1836 | `reg.set_D_C5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C5` | 2 |  |
-| F1837 | `reg.E0` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1838 | `reg.E1` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1839 | `reg.E2` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1840 | `reg.E3` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1841 | `reg.E4` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1842 | `reg.E5` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1843 | `reg.E6` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1844 | `reg.E7` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1845 | `reg.E8` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1846 | `reg.E9` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1847 | `reg.E10` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1848 | `reg.E11` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1849 | `reg.E12` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1850 | `reg.E13` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1851 | `reg.E14` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1852 | `reg.E15` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1853 | `reg.get_E` | `composite` | `reg<vec3<i32>>.int` | `vec3<i32>.int` | 1 | the register's value |
-| F1854 | `reg.set_E_L0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L0` | 2 |  |
-| F1855 | `reg.set_E_L1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L1` | 2 |  |
-| F1856 | `reg.set_E_L2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L2` | 2 |  |
-| F1857 | `reg.set_E_L3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L3` | 2 |  |
-| F1858 | `reg.set_E_L4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L4` | 2 |  |
-| F1859 | `reg.set_E_C0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C0` | 2 |  |
-| F1860 | `reg.set_E_C1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C1` | 2 |  |
-| F1861 | `reg.set_E_C2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C2` | 2 |  |
-| F1862 | `reg.set_E_C3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C3` | 2 |  |
-| F1863 | `reg.set_E_C4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C4` | 2 |  |
-| F1864 | `reg.set_E_L5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L5` | 2 |  |
-| F1865 | `reg.set_E_C5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C5` | 2 |  |
-| F1866 | `reg.F0` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1867 | `reg.F1` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1868 | `reg.F2` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1869 | `reg.F3` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1870 | `reg.F4` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1871 | `reg.F5` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1872 | `reg.F6` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1873 | `reg.F7` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1874 | `reg.F8` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1875 | `reg.F9` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1876 | `reg.F10` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1877 | `reg.F11` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1878 | `reg.F12` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1879 | `reg.F13` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1880 | `reg.F14` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1881 | `reg.F15` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1882 | `reg.get_F` | `composite` | `reg<vec4<i32>>.int` | `vec4<i32>.int` | 1 | the register's value |
-| F1883 | `reg.set_F_L0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L0` | 2 |  |
-| F1884 | `reg.set_F_L1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L1` | 2 |  |
-| F1885 | `reg.set_F_L2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L2` | 2 |  |
-| F1886 | `reg.set_F_L3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L3` | 2 |  |
-| F1887 | `reg.set_F_L4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L4` | 2 |  |
-| F1888 | `reg.set_F_C0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C0` | 2 |  |
-| F1889 | `reg.set_F_C1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C1` | 2 |  |
-| F1890 | `reg.set_F_C2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C2` | 2 |  |
-| F1891 | `reg.set_F_C3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C3` | 2 |  |
-| F1892 | `reg.set_F_C4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C4` | 2 |  |
-| F1893 | `reg.set_F_L5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L5` | 2 |  |
-| F1894 | `reg.set_F_C5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C5` | 2 |  |
-| F1895 | `reg.G0` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1896 | `reg.G1` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1897 | `reg.G2` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1898 | `reg.G3` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1899 | `reg.G4` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1900 | `reg.G5` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1901 | `reg.G6` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1902 | `reg.G7` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1903 | `reg.G8` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1904 | `reg.G9` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1905 | `reg.G10` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1906 | `reg.G11` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1907 | `reg.G12` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1908 | `reg.G13` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1909 | `reg.G14` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1910 | `reg.G15` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1911 | `reg.get_G` | `composite` | `reg<vec2<u32>>.index` | `vec2<u32>.index` | 1 | the register's value |
-| F1912 | `reg.set_G_L0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L0` | 2 |  |
-| F1913 | `reg.set_G_L1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L1` | 2 |  |
-| F1914 | `reg.set_G_L2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L2` | 2 |  |
-| F1915 | `reg.set_G_L3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L3` | 2 |  |
-| F1916 | `reg.set_G_L4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L4` | 2 |  |
-| F1917 | `reg.set_G_C0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C0` | 2 |  |
-| F1918 | `reg.set_G_C1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C1` | 2 |  |
-| F1919 | `reg.set_G_C2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C2` | 2 |  |
-| F1920 | `reg.set_G_C3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C3` | 2 |  |
-| F1921 | `reg.set_G_C4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C4` | 2 |  |
-| F1922 | `reg.set_G_L5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L5` | 2 |  |
-| F1923 | `reg.set_G_C5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C5` | 2 |  |
-| F1924 | `reg.H0` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1925 | `reg.H1` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1926 | `reg.H2` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1927 | `reg.H3` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1928 | `reg.H4` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1929 | `reg.H5` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1930 | `reg.H6` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1931 | `reg.H7` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1932 | `reg.H8` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1933 | `reg.H9` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1934 | `reg.H10` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1935 | `reg.H11` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1936 | `reg.H12` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1937 | `reg.H13` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1938 | `reg.H14` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1939 | `reg.H15` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1940 | `reg.get_H` | `composite` | `reg<vec3<u32>>.index` | `vec3<u32>.index` | 1 | the register's value |
-| F1941 | `reg.set_H_L0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L0` | 2 |  |
-| F1942 | `reg.set_H_L1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L1` | 2 |  |
-| F1943 | `reg.set_H_L2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L2` | 2 |  |
-| F1944 | `reg.set_H_L3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L3` | 2 |  |
-| F1945 | `reg.set_H_L4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L4` | 2 |  |
-| F1946 | `reg.set_H_C0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C0` | 2 |  |
-| F1947 | `reg.set_H_C1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C1` | 2 |  |
-| F1948 | `reg.set_H_C2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C2` | 2 |  |
-| F1949 | `reg.set_H_C3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C3` | 2 |  |
-| F1950 | `reg.set_H_C4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C4` | 2 |  |
-| F1951 | `reg.set_H_L5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L5` | 2 |  |
-| F1952 | `reg.set_H_C5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C5` | 2 |  |
-| F1953 | `reg.J0` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1954 | `reg.J1` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1955 | `reg.J2` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1956 | `reg.J3` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1957 | `reg.J4` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1958 | `reg.J5` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1959 | `reg.J6` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1960 | `reg.J7` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1961 | `reg.J8` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1962 | `reg.J9` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1963 | `reg.J10` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1964 | `reg.J11` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1965 | `reg.J12` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1966 | `reg.J13` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1967 | `reg.J14` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1968 | `reg.J15` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1969 | `reg.get_J` | `composite` | `reg<vec2<bool>>.flag` | `vec2<bool>.flag` | 1 | the register's value |
-| F1970 | `reg.set_J_L0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L0` | 2 |  |
-| F1971 | `reg.set_J_L1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L1` | 2 |  |
-| F1972 | `reg.set_J_L2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L2` | 2 |  |
-| F1973 | `reg.set_J_L3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L3` | 2 |  |
-| F1974 | `reg.set_J_L4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L4` | 2 |  |
-| F1975 | `reg.set_J_C0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C0` | 2 |  |
-| F1976 | `reg.set_J_C1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C1` | 2 |  |
-| F1977 | `reg.set_J_C2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C2` | 2 |  |
-| F1978 | `reg.set_J_C3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C3` | 2 |  |
-| F1979 | `reg.set_J_C4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C4` | 2 |  |
-| F1980 | `reg.set_J_L5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L5` | 2 |  |
-| F1981 | `reg.set_J_C5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C5` | 2 |  |
-| F1982 | `reg.K0` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1983 | `reg.K1` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1984 | `reg.K2` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1985 | `reg.K3` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1986 | `reg.K4` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1987 | `reg.K5` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1988 | `reg.K6` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1989 | `reg.K7` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1990 | `reg.K8` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1991 | `reg.K9` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1992 | `reg.K10` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1993 | `reg.K11` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1994 | `reg.K12` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1995 | `reg.K13` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1996 | `reg.K14` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1997 | `reg.K15` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1998 | `reg.get_K` | `composite` | `reg<vec3<bool>>.flag` | `vec3<bool>.flag` | 1 | the register's value |
-| F1999 | `reg.set_K_L0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L0` | 2 |  |
-| F2000 | `reg.set_K_L1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L1` | 2 |  |
-| F2001 | `reg.set_K_L2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L2` | 2 |  |
-| F2002 | `reg.set_K_L3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L3` | 2 |  |
-| F2003 | `reg.set_K_L4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L4` | 2 |  |
-| F2004 | `reg.set_K_C0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C0` | 2 |  |
-| F2005 | `reg.set_K_C1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C1` | 2 |  |
-| F2006 | `reg.set_K_C2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C2` | 2 |  |
-| F2007 | `reg.set_K_C3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C3` | 2 |  |
-| F2008 | `reg.set_K_C4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C4` | 2 |  |
-| F2009 | `reg.set_K_L5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L5` | 2 |  |
-| F2010 | `reg.set_K_C5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C5` | 2 |  |
-| F2011 | `reg.L0` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2012 | `reg.L1` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2013 | `reg.L2` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2014 | `reg.L3` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2015 | `reg.L4` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2016 | `reg.L5` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2017 | `reg.L6` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2018 | `reg.L7` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2019 | `reg.L8` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2020 | `reg.L9` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2021 | `reg.L10` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2022 | `reg.L11` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2023 | `reg.L12` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2024 | `reg.L13` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2025 | `reg.L14` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2026 | `reg.L15` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F2027 | `reg.get_L` | `composite` | `reg<vec4<bool>>.flag` | `vec4<bool>.flag` | 1 | the register's value |
-| F2028 | `reg.set_L_L0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L0` | 2 |  |
-| F2029 | `reg.set_L_L1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L1` | 2 |  |
-| F2030 | `reg.set_L_L2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L2` | 2 |  |
-| F2031 | `reg.set_L_L3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L3` | 2 |  |
-| F2032 | `reg.set_L_L4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L4` | 2 |  |
-| F2033 | `reg.set_L_C0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C0` | 2 |  |
-| F2034 | `reg.set_L_C1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C1` | 2 |  |
-| F2035 | `reg.set_L_C2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C2` | 2 |  |
-| F2036 | `reg.set_L_C3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C3` | 2 |  |
-| F2037 | `reg.set_L_C4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C4` | 2 |  |
-| F2038 | `reg.set_L_L5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L5` | 2 |  |
-| F2039 | `reg.set_L_C5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C5` | 2 |  |
-
-## class `kernel`
-
-| ref | instance | naga | in | out | n | note |
-|---|---|---|---|---|---|---|
-| F2040 | `kernel.module_ext1` | `composite` | `kernel.module kernel.safe` | `kernel.module` | 2 | arity 2: the module and 1 more entry points, in order after it |
-| F2041 | `kernel.module_ext2` | `composite` | `kernel.module kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: the module and 2 more entry points, in order after it |
-| F2042 | `kernel.module_ext3` | `composite` | `kernel.module kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: the module and 3 more entry points, in order after it |
-
-## class `reg`
-
-| ref | instance | naga | in | out | n | note |
-|---|---|---|---|---|---|---|
-| F2043 | `reg.u8` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2044 | `reg.u9` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2045 | `reg.u10` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2046 | `reg.u11` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2047 | `reg.u12` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2048 | `reg.u13` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2049 | `reg.u14` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2050 | `reg.u15` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
-| F2051 | `reg.w8` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2052 | `reg.w9` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2053 | `reg.w10` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2054 | `reg.w11` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2055 | `reg.w12` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2056 | `reg.w13` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2057 | `reg.w14` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2058 | `reg.w15` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
-| F2059 | `reg.x2` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
-| F2060 | `reg.x3` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
-| F2061 | `reg.y2` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
-| F2062 | `reg.y3` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
-| F2063 | `reg.z2` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
-| F2064 | `reg.z3` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
+| F1773 | `reg.C0` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1774 | `reg.C1` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1775 | `reg.C2` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1776 | `reg.C3` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1777 | `reg.C4` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1778 | `reg.C5` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1779 | `reg.C6` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1780 | `reg.C7` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1781 | `reg.C8` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1782 | `reg.C9` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1783 | `reg.C10` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1784 | `reg.C11` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1785 | `reg.C12` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1786 | `reg.C13` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1787 | `reg.C14` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1788 | `reg.C15` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1789 | `reg.get_C` | `composite` | `reg<vec3<f32>>.real` | `vec3<f32>.real` | 1 | the register's value |
+| F1790 | `reg.set_C_L0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L0` | 2 |  |
+| F1791 | `reg.set_C_L1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L1` | 2 |  |
+| F1792 | `reg.set_C_L2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L2` | 2 |  |
+| F1793 | `reg.set_C_L3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L3` | 2 |  |
+| F1794 | `reg.set_C_L4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L4` | 2 |  |
+| F1795 | `reg.set_C_C0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C0` | 2 |  |
+| F1796 | `reg.set_C_C1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C1` | 2 |  |
+| F1797 | `reg.set_C_C2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C2` | 2 |  |
+| F1798 | `reg.set_C_C3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C3` | 2 |  |
+| F1799 | `reg.set_C_C4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C4` | 2 |  |
+| F1800 | `reg.set_C_L5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L5` | 2 |  |
+| F1801 | `reg.set_C_C5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C5` | 2 |  |
+| F1802 | `reg.D0` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1803 | `reg.D1` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1804 | `reg.D2` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1805 | `reg.D3` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1806 | `reg.D4` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1807 | `reg.D5` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1808 | `reg.D6` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1809 | `reg.D7` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1810 | `reg.D8` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1811 | `reg.D9` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1812 | `reg.D10` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1813 | `reg.D11` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1814 | `reg.D12` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1815 | `reg.D13` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1816 | `reg.D14` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1817 | `reg.D15` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1818 | `reg.get_D` | `composite` | `reg<vec2<i32>>.int` | `vec2<i32>.int` | 1 | the register's value |
+| F1819 | `reg.set_D_L0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L0` | 2 |  |
+| F1820 | `reg.set_D_L1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L1` | 2 |  |
+| F1821 | `reg.set_D_L2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L2` | 2 |  |
+| F1822 | `reg.set_D_L3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L3` | 2 |  |
+| F1823 | `reg.set_D_L4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L4` | 2 |  |
+| F1824 | `reg.set_D_C0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C0` | 2 |  |
+| F1825 | `reg.set_D_C1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C1` | 2 |  |
+| F1826 | `reg.set_D_C2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C2` | 2 |  |
+| F1827 | `reg.set_D_C3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C3` | 2 |  |
+| F1828 | `reg.set_D_C4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C4` | 2 |  |
+| F1829 | `reg.set_D_L5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L5` | 2 |  |
+| F1830 | `reg.set_D_C5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C5` | 2 |  |
+| F1831 | `reg.E0` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1832 | `reg.E1` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1833 | `reg.E2` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1834 | `reg.E3` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1835 | `reg.E4` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1836 | `reg.E5` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1837 | `reg.E6` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1838 | `reg.E7` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1839 | `reg.E8` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1840 | `reg.E9` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1841 | `reg.E10` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1842 | `reg.E11` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1843 | `reg.E12` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1844 | `reg.E13` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1845 | `reg.E14` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1846 | `reg.E15` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1847 | `reg.get_E` | `composite` | `reg<vec3<i32>>.int` | `vec3<i32>.int` | 1 | the register's value |
+| F1848 | `reg.set_E_L0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L0` | 2 |  |
+| F1849 | `reg.set_E_L1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L1` | 2 |  |
+| F1850 | `reg.set_E_L2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L2` | 2 |  |
+| F1851 | `reg.set_E_L3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L3` | 2 |  |
+| F1852 | `reg.set_E_L4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L4` | 2 |  |
+| F1853 | `reg.set_E_C0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C0` | 2 |  |
+| F1854 | `reg.set_E_C1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C1` | 2 |  |
+| F1855 | `reg.set_E_C2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C2` | 2 |  |
+| F1856 | `reg.set_E_C3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C3` | 2 |  |
+| F1857 | `reg.set_E_C4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C4` | 2 |  |
+| F1858 | `reg.set_E_L5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L5` | 2 |  |
+| F1859 | `reg.set_E_C5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C5` | 2 |  |
+| F1860 | `reg.F0` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1861 | `reg.F1` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1862 | `reg.F2` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1863 | `reg.F3` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1864 | `reg.F4` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1865 | `reg.F5` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1866 | `reg.F6` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1867 | `reg.F7` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1868 | `reg.F8` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1869 | `reg.F9` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1870 | `reg.F10` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1871 | `reg.F11` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1872 | `reg.F12` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1873 | `reg.F13` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1874 | `reg.F14` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1875 | `reg.F15` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1876 | `reg.get_F` | `composite` | `reg<vec4<i32>>.int` | `vec4<i32>.int` | 1 | the register's value |
+| F1877 | `reg.set_F_L0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L0` | 2 |  |
+| F1878 | `reg.set_F_L1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L1` | 2 |  |
+| F1879 | `reg.set_F_L2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L2` | 2 |  |
+| F1880 | `reg.set_F_L3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L3` | 2 |  |
+| F1881 | `reg.set_F_L4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L4` | 2 |  |
+| F1882 | `reg.set_F_C0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C0` | 2 |  |
+| F1883 | `reg.set_F_C1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C1` | 2 |  |
+| F1884 | `reg.set_F_C2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C2` | 2 |  |
+| F1885 | `reg.set_F_C3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C3` | 2 |  |
+| F1886 | `reg.set_F_C4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C4` | 2 |  |
+| F1887 | `reg.set_F_L5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L5` | 2 |  |
+| F1888 | `reg.set_F_C5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C5` | 2 |  |
+| F1889 | `reg.G0` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1890 | `reg.G1` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1891 | `reg.G2` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1892 | `reg.G3` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1893 | `reg.G4` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1894 | `reg.G5` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1895 | `reg.G6` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1896 | `reg.G7` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1897 | `reg.G8` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1898 | `reg.G9` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1899 | `reg.G10` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1900 | `reg.G11` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1901 | `reg.G12` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1902 | `reg.G13` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1903 | `reg.G14` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1904 | `reg.G15` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1905 | `reg.get_G` | `composite` | `reg<vec2<u32>>.index` | `vec2<u32>.index` | 1 | the register's value |
+| F1906 | `reg.set_G_L0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L0` | 2 |  |
+| F1907 | `reg.set_G_L1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L1` | 2 |  |
+| F1908 | `reg.set_G_L2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L2` | 2 |  |
+| F1909 | `reg.set_G_L3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L3` | 2 |  |
+| F1910 | `reg.set_G_L4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L4` | 2 |  |
+| F1911 | `reg.set_G_C0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C0` | 2 |  |
+| F1912 | `reg.set_G_C1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C1` | 2 |  |
+| F1913 | `reg.set_G_C2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C2` | 2 |  |
+| F1914 | `reg.set_G_C3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C3` | 2 |  |
+| F1915 | `reg.set_G_C4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C4` | 2 |  |
+| F1916 | `reg.set_G_L5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L5` | 2 |  |
+| F1917 | `reg.set_G_C5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C5` | 2 |  |
+| F1918 | `reg.H0` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1919 | `reg.H1` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1920 | `reg.H2` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1921 | `reg.H3` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1922 | `reg.H4` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1923 | `reg.H5` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1924 | `reg.H6` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1925 | `reg.H7` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1926 | `reg.H8` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1927 | `reg.H9` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1928 | `reg.H10` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1929 | `reg.H11` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1930 | `reg.H12` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1931 | `reg.H13` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1932 | `reg.H14` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1933 | `reg.H15` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1934 | `reg.get_H` | `composite` | `reg<vec3<u32>>.index` | `vec3<u32>.index` | 1 | the register's value |
+| F1935 | `reg.set_H_L0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L0` | 2 |  |
+| F1936 | `reg.set_H_L1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L1` | 2 |  |
+| F1937 | `reg.set_H_L2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L2` | 2 |  |
+| F1938 | `reg.set_H_L3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L3` | 2 |  |
+| F1939 | `reg.set_H_L4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L4` | 2 |  |
+| F1940 | `reg.set_H_C0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C0` | 2 |  |
+| F1941 | `reg.set_H_C1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C1` | 2 |  |
+| F1942 | `reg.set_H_C2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C2` | 2 |  |
+| F1943 | `reg.set_H_C3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C3` | 2 |  |
+| F1944 | `reg.set_H_C4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C4` | 2 |  |
+| F1945 | `reg.set_H_L5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L5` | 2 |  |
+| F1946 | `reg.set_H_C5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C5` | 2 |  |
+| F1947 | `reg.J0` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1948 | `reg.J1` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1949 | `reg.J2` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1950 | `reg.J3` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1951 | `reg.J4` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1952 | `reg.J5` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1953 | `reg.J6` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1954 | `reg.J7` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1955 | `reg.J8` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1956 | `reg.J9` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1957 | `reg.J10` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1958 | `reg.J11` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1959 | `reg.J12` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1960 | `reg.J13` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1961 | `reg.J14` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1962 | `reg.J15` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1963 | `reg.get_J` | `composite` | `reg<vec2<bool>>.flag` | `vec2<bool>.flag` | 1 | the register's value |
+| F1964 | `reg.set_J_L0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L0` | 2 |  |
+| F1965 | `reg.set_J_L1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L1` | 2 |  |
+| F1966 | `reg.set_J_L2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L2` | 2 |  |
+| F1967 | `reg.set_J_L3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L3` | 2 |  |
+| F1968 | `reg.set_J_L4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L4` | 2 |  |
+| F1969 | `reg.set_J_C0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C0` | 2 |  |
+| F1970 | `reg.set_J_C1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C1` | 2 |  |
+| F1971 | `reg.set_J_C2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C2` | 2 |  |
+| F1972 | `reg.set_J_C3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C3` | 2 |  |
+| F1973 | `reg.set_J_C4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C4` | 2 |  |
+| F1974 | `reg.set_J_L5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L5` | 2 |  |
+| F1975 | `reg.set_J_C5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C5` | 2 |  |
+| F1976 | `reg.K0` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1977 | `reg.K1` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1978 | `reg.K2` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1979 | `reg.K3` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1980 | `reg.K4` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1981 | `reg.K5` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1982 | `reg.K6` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1983 | `reg.K7` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1984 | `reg.K8` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1985 | `reg.K9` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1986 | `reg.K10` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1987 | `reg.K11` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1988 | `reg.K12` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1989 | `reg.K13` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1990 | `reg.K14` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1991 | `reg.K15` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F1992 | `reg.get_K` | `composite` | `reg<vec3<bool>>.flag` | `vec3<bool>.flag` | 1 | the register's value |
+| F1993 | `reg.set_K_L0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L0` | 2 |  |
+| F1994 | `reg.set_K_L1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L1` | 2 |  |
+| F1995 | `reg.set_K_L2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L2` | 2 |  |
+| F1996 | `reg.set_K_L3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L3` | 2 |  |
+| F1997 | `reg.set_K_L4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L4` | 2 |  |
+| F1998 | `reg.set_K_C0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C0` | 2 |  |
+| F1999 | `reg.set_K_C1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C1` | 2 |  |
+| F2000 | `reg.set_K_C2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C2` | 2 |  |
+| F2001 | `reg.set_K_C3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C3` | 2 |  |
+| F2002 | `reg.set_K_C4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C4` | 2 |  |
+| F2003 | `reg.set_K_L5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L5` | 2 |  |
+| F2004 | `reg.set_K_C5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C5` | 2 |  |
+| F2005 | `reg.L0` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2006 | `reg.L1` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2007 | `reg.L2` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2008 | `reg.L3` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2009 | `reg.L4` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2010 | `reg.L5` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2011 | `reg.L6` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2012 | `reg.L7` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2013 | `reg.L8` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2014 | `reg.L9` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2015 | `reg.L10` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2016 | `reg.L11` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2017 | `reg.L12` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2018 | `reg.L13` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2019 | `reg.L14` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2020 | `reg.L15` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2021 | `reg.get_L` | `composite` | `reg<vec4<bool>>.flag` | `vec4<bool>.flag` | 1 | the register's value |
+| F2022 | `reg.set_L_L0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L0` | 2 |  |
+| F2023 | `reg.set_L_L1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L1` | 2 |  |
+| F2024 | `reg.set_L_L2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L2` | 2 |  |
+| F2025 | `reg.set_L_L3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L3` | 2 |  |
+| F2026 | `reg.set_L_L4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L4` | 2 |  |
+| F2027 | `reg.set_L_C0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C0` | 2 |  |
+| F2028 | `reg.set_L_C1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C1` | 2 |  |
+| F2029 | `reg.set_L_C2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C2` | 2 |  |
+| F2030 | `reg.set_L_C3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C3` | 2 |  |
+| F2031 | `reg.set_L_C4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C4` | 2 |  |
+| F2032 | `reg.set_L_L5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L5` | 2 |  |
+| F2033 | `reg.set_L_C5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C5` | 2 |  |
+| F2034 | `reg.U0` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2035 | `reg.U1` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2036 | `reg.U2` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2037 | `reg.U3` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2038 | `reg.U4` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2039 | `reg.U5` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2040 | `reg.U6` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2041 | `reg.U7` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2042 | `reg.U8` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2043 | `reg.U9` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2044 | `reg.U10` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2045 | `reg.U11` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2046 | `reg.U12` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2047 | `reg.U13` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2048 | `reg.U14` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2049 | `reg.U15` | `composite` | `-` | `reg<u32>.uniform` | 0 | a u32 register |
+| F2050 | `reg.get_U` | `composite` | `reg<u32>.uniform` | `u32.uniform` | 1 | the register's value |
+| F2051 | `reg.set_U_L0` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L0` | 2 |  |
+| F2052 | `reg.set_U_L1` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L1` | 2 |  |
+| F2053 | `reg.set_U_L2` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L2` | 2 |  |
+| F2054 | `reg.set_U_L3` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L3` | 2 |  |
+| F2055 | `reg.set_U_L4` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L4` | 2 |  |
+| F2056 | `reg.set_U_L5` | `composite` | `reg<u32>.uniform u32.uniform` | `stmt.L5` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2065 | `wg.f8` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f8 of wgmem<f32>.real |
-| F2066 | `wg.f9` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f9 of wgmem<f32>.real |
-| F2067 | `wg.f10` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f10 of wgmem<f32>.real |
-| F2068 | `wg.f11` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f11 of wgmem<f32>.real |
-| F2069 | `wg.vq4` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq4 of wgmem<vec4<f32>>.real |
-| F2070 | `wg.vq5` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq5 of wgmem<vec4<f32>>.real |
-| F2071 | `wg.vq6` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq6 of wgmem<vec4<f32>>.real |
-| F2072 | `wg.vq7` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq7 of wgmem<vec4<f32>>.real |
-| F2073 | `wg.v2_4` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_4 of wgmem<vec2<f32>>.real |
-| F2074 | `wg.v2_5` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_5 of wgmem<vec2<f32>>.real |
-| F2075 | `wg.v2_6` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_6 of wgmem<vec2<f32>>.real |
-| F2076 | `wg.v2_7` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_7 of wgmem<vec2<f32>>.real |
-| F2077 | `wg.u_12` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_12 of wgmem<u32>.index |
-| F2078 | `wg.u_13` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_13 of wgmem<u32>.index |
-| F2079 | `wg.u_14` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_14 of wgmem<u32>.index |
-| F2080 | `wg.u_15` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_15 of wgmem<u32>.index |
-| F2081 | `wg.au_4` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_4 of wgmem<atomic<u32>>.index |
-| F2082 | `wg.au_5` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_5 of wgmem<atomic<u32>>.index |
-| F2083 | `wg.au_6` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_6 of wgmem<atomic<u32>>.index |
-| F2084 | `wg.au_7` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_7 of wgmem<atomic<u32>>.index |
-| F2085 | `wg.ai_2` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_2 of wgmem<atomic<i32>>.int |
-| F2086 | `wg.ai_3` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_3 of wgmem<atomic<i32>>.int |
-| F2087 | `wg.n_2` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_2 of wgmem<i32>.int |
-| F2088 | `wg.n_3` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_3 of wgmem<i32>.int |
-| F2089 | `wg.n_4` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_4 of wgmem<i32>.int |
-| F2090 | `wg.n_5` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_5 of wgmem<i32>.int |
+| F2057 | `wg.uload_U_L0` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L0` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+| F2058 | `wg.uload_U_L1` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L1` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+| F2059 | `wg.uload_U_L2` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L2` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+| F2060 | `wg.uload_U_L3` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L3` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+| F2061 | `wg.uload_U_L4` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L4` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+| F2062 | `wg.uload_U_L5` | `composite` | `reg<u32>.uniform wgmem<u32>.index u32.wgindex` | `stmt.L5` | 3 | arity 3: U = workgroupUniformLoad(&a[i]); the register holds one value in every thread |
+
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2063 | `reg.Q0` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2064 | `reg.Q1` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2065 | `reg.Q2` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2066 | `reg.Q3` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2067 | `reg.Q4` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2068 | `reg.Q5` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2069 | `reg.Q6` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2070 | `reg.Q7` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2071 | `reg.Q8` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2072 | `reg.Q9` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2073 | `reg.Q10` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2074 | `reg.Q11` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2075 | `reg.Q12` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2076 | `reg.Q13` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2077 | `reg.Q14` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2078 | `reg.Q15` | `composite` | `-` | `reg<bool>.uflag` | 0 | a bool register |
+| F2079 | `reg.get_Q` | `composite` | `reg<bool>.uflag` | `bool.uflag` | 1 | the register's value |
+| F2080 | `reg.set_Q_L0` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L0` | 2 |  |
+| F2081 | `reg.set_Q_L1` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L1` | 2 |  |
+| F2082 | `reg.set_Q_L2` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L2` | 2 |  |
+| F2083 | `reg.set_Q_L3` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L3` | 2 |  |
+| F2084 | `reg.set_Q_L4` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L4` | 2 |  |
+| F2085 | `reg.set_Q_L5` | `composite` | `reg<bool>.uflag bool.uflag` | `stmt.L5` | 2 |  |
+
+## class `flag`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2086 | `flag.of_uflag` | `composite` | `bool.uflag` | `bool.flag` | 1 | a workgroup-uniform predicate as a plain flag |
+
+## class `kernel`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2087 | `kernel.module_ext1` | `composite` | `kernel.module kernel.safe` | `kernel.module` | 2 | arity 2: the module and 1 more entry points, in order after it |
+| F2088 | `kernel.module_ext2` | `composite` | `kernel.module kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: the module and 2 more entry points, in order after it |
+| F2089 | `kernel.module_ext3` | `composite` | `kernel.module kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: the module and 3 more entry points, in order after it |
+
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2090 | `reg.u8` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2091 | `reg.u9` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2092 | `reg.u10` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2093 | `reg.u11` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2094 | `reg.u12` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2095 | `reg.u13` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2096 | `reg.u14` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2097 | `reg.u15` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2098 | `reg.w8` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2099 | `reg.w9` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2100 | `reg.w10` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2101 | `reg.w11` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2102 | `reg.w12` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2103 | `reg.w13` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2104 | `reg.w14` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2105 | `reg.w15` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2106 | `reg.x2` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
+| F2107 | `reg.x3` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
+| F2108 | `reg.y2` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
+| F2109 | `reg.y3` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
+| F2110 | `reg.z2` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
+| F2111 | `reg.z3` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2112 | `wg.f8` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f8 of wgmem<f32>.real |
+| F2113 | `wg.f9` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f9 of wgmem<f32>.real |
+| F2114 | `wg.f10` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f10 of wgmem<f32>.real |
+| F2115 | `wg.f11` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f11 of wgmem<f32>.real |
+| F2116 | `wg.vq4` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq4 of wgmem<vec4<f32>>.real |
+| F2117 | `wg.vq5` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq5 of wgmem<vec4<f32>>.real |
+| F2118 | `wg.vq6` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq6 of wgmem<vec4<f32>>.real |
+| F2119 | `wg.vq7` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq7 of wgmem<vec4<f32>>.real |
+| F2120 | `wg.v2_4` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_4 of wgmem<vec2<f32>>.real |
+| F2121 | `wg.v2_5` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_5 of wgmem<vec2<f32>>.real |
+| F2122 | `wg.v2_6` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_6 of wgmem<vec2<f32>>.real |
+| F2123 | `wg.v2_7` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_7 of wgmem<vec2<f32>>.real |
+| F2124 | `wg.u_12` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_12 of wgmem<u32>.index |
+| F2125 | `wg.u_13` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_13 of wgmem<u32>.index |
+| F2126 | `wg.u_14` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_14 of wgmem<u32>.index |
+| F2127 | `wg.u_15` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_15 of wgmem<u32>.index |
+| F2128 | `wg.au_4` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_4 of wgmem<atomic<u32>>.index |
+| F2129 | `wg.au_5` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_5 of wgmem<atomic<u32>>.index |
+| F2130 | `wg.au_6` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_6 of wgmem<atomic<u32>>.index |
+| F2131 | `wg.au_7` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_7 of wgmem<atomic<u32>>.index |
+| F2132 | `wg.ai_2` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_2 of wgmem<atomic<i32>>.int |
+| F2133 | `wg.ai_3` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_3 of wgmem<atomic<i32>>.int |
+| F2134 | `wg.n_2` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_2 of wgmem<i32>.int |
+| F2135 | `wg.n_3` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_3 of wgmem<i32>.int |
+| F2136 | `wg.n_4` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_4 of wgmem<i32>.int |
+| F2137 | `wg.n_5` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_5 of wgmem<i32>.int |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2091 | `parr.f6` | `composite` | `-` | `parr<f32>.real` | 0 | array f6 of parr<f32>.real |
-| F2092 | `parr.f7` | `composite` | `-` | `parr<f32>.real` | 0 | array f7 of parr<f32>.real |
-| F2093 | `parr.w4` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w4 of parr<vec4<f32>>.real |
-| F2094 | `parr.w5` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w5 of parr<vec4<f32>>.real |
-| F2095 | `parr.i3` | `composite` | `-` | `parr<u32>.index` | 0 | array i3 of parr<u32>.index |
-| F2096 | `parr.i4` | `composite` | `-` | `parr<u32>.index` | 0 | array i4 of parr<u32>.index |
-| F2097 | `parr.m2` | `composite` | `-` | `parr<bool>.flag` | 0 | array m2 of parr<bool>.flag |
-| F2098 | `parr.m3` | `composite` | `-` | `parr<bool>.flag` | 0 | array m3 of parr<bool>.flag |
-| F2099 | `parr.q2` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q2 of parr<vec2<f32>>.real |
-| F2100 | `parr.q3` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q3 of parr<vec2<f32>>.real |
-| F2101 | `parr.ua2` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua2 of parr64<u32>.index |
-| F2102 | `parr.ua3` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua3 of parr64<u32>.index |
-| F2103 | `parr.vq2` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq2 of parr64<vec4<f32>>.real |
-| F2104 | `parr.vq3` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq3 of parr64<vec4<f32>>.real |
-| F2105 | `parr.ux2` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux2 of parr128<u32>.index |
-| F2106 | `parr.ux3` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux3 of parr128<u32>.index |
+| F2138 | `parr.f6` | `composite` | `-` | `parr<f32>.real` | 0 | array f6 of parr<f32>.real |
+| F2139 | `parr.f7` | `composite` | `-` | `parr<f32>.real` | 0 | array f7 of parr<f32>.real |
+| F2140 | `parr.w4` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w4 of parr<vec4<f32>>.real |
+| F2141 | `parr.w5` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w5 of parr<vec4<f32>>.real |
+| F2142 | `parr.i3` | `composite` | `-` | `parr<u32>.index` | 0 | array i3 of parr<u32>.index |
+| F2143 | `parr.i4` | `composite` | `-` | `parr<u32>.index` | 0 | array i4 of parr<u32>.index |
+| F2144 | `parr.m2` | `composite` | `-` | `parr<bool>.flag` | 0 | array m2 of parr<bool>.flag |
+| F2145 | `parr.m3` | `composite` | `-` | `parr<bool>.flag` | 0 | array m3 of parr<bool>.flag |
+| F2146 | `parr.q2` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q2 of parr<vec2<f32>>.real |
+| F2147 | `parr.q3` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q3 of parr<vec2<f32>>.real |
+| F2148 | `parr.ua2` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua2 of parr64<u32>.index |
+| F2149 | `parr.ua3` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua3 of parr64<u32>.index |
+| F2150 | `parr.vq2` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq2 of parr64<vec4<f32>>.real |
+| F2151 | `parr.vq3` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq3 of parr64<vec4<f32>>.real |
+| F2152 | `parr.ux2` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux2 of parr128<u32>.index |
+| F2153 | `parr.ux3` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux3 of parr128<u32>.index |
 
 ## class `const`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2107 | `const.vint` | `Literal` | `-` | `<vecL.int>` | 0 | a constant vector of whole numbers, one value on every lane |
-| F2108 | `const.vindex` | `Literal` | `-` | `<vecL.index>` | 0 | a constant vector of indices, one value on every lane |
-| F2109 | `const.vcount` | `Literal` | `-` | `<vecL.count>` | 0 | a constant vector of counts, one value on every lane |
-| F2110 | `const.vbits` | `Literal` | `-` | `<vecL.bits>` | 0 | a constant vector of bit fields, one value on every lane |
-| F2111 | `const.vflag` | `Literal` | `-` | `<vecL.flag>` | 0 | a constant vector of predicates, one value on every lane |
-| F2112 | `const.q15_16` | `Literal` | `-` | `<i32.q15_16>` | 0 | a fixed-point constant |
-| F2113 | `const.q15_16w` | `Literal` | `-` | `vec2<i32>.q15_16w` | 0 | a wide fixed-point constant, one limb value on both lanes |
-| F2114 | `const.code4` | `Literal` | `-` | `u32.code4` | 0 | a codebook entry |
-| F2115 | `const.code8` | `Literal` | `-` | `u32.code8` | 0 | a codebook entry |
-| F2116 | `const.code16` | `Literal` | `-` | `u32.code16` | 0 | a codebook entry |
-| F2117 | `const.code1024` | `Literal` | `-` | `u32.code1024` | 0 | a codebook entry |
-| F2118 | `const.hash32` | `Literal` | `-` | `u32.hash32` | 0 | a hash state constant |
-| F2119 | `const.hash64` | `Literal` | `-` | `vec2<u32>.hash64` | 0 | a 64-bit hash state constant, one limb value on both lanes |
-| F2120 | `const.sign` | `Literal` | `-` | `bool.sign` | 0 | +1 or -1 as a bit |
-| F2121 | `const.opaque` | `Literal` | `-` | `<S.opaque>` | 0 | a constant of an opaque dual: any value of its scalar |
-| F2122 | `const.mat` | `Literal` | `-` | `<matCxR<f32>.real>` | 0 | a matrix constant, one number on every element |
+| F2154 | `const.vint` | `Literal` | `-` | `<vecL.int>` | 0 | a constant vector of whole numbers, one value on every lane |
+| F2155 | `const.vindex` | `Literal` | `-` | `<vecL.index>` | 0 | a constant vector of indices, one value on every lane |
+| F2156 | `const.vcount` | `Literal` | `-` | `<vecL.count>` | 0 | a constant vector of counts, one value on every lane |
+| F2157 | `const.vbits` | `Literal` | `-` | `<vecL.bits>` | 0 | a constant vector of bit fields, one value on every lane |
+| F2158 | `const.vflag` | `Literal` | `-` | `<vecL.flag>` | 0 | a constant vector of predicates, one value on every lane |
+| F2159 | `const.q15_16` | `Literal` | `-` | `<i32.q15_16>` | 0 | a fixed-point constant |
+| F2160 | `const.q15_16w` | `Literal` | `-` | `vec2<i32>.q15_16w` | 0 | a wide fixed-point constant, one limb value on both lanes |
+| F2161 | `const.code4` | `Literal` | `-` | `u32.code4` | 0 | a codebook entry |
+| F2162 | `const.code8` | `Literal` | `-` | `u32.code8` | 0 | a codebook entry |
+| F2163 | `const.code16` | `Literal` | `-` | `u32.code16` | 0 | a codebook entry |
+| F2164 | `const.code1024` | `Literal` | `-` | `u32.code1024` | 0 | a codebook entry |
+| F2165 | `const.hash32` | `Literal` | `-` | `u32.hash32` | 0 | a hash state constant |
+| F2166 | `const.hash64` | `Literal` | `-` | `vec2<u32>.hash64` | 0 | a 64-bit hash state constant, one limb value on both lanes |
+| F2167 | `const.sign` | `Literal` | `-` | `bool.sign` | 0 | +1 or -1 as a bit |
+| F2168 | `const.opaque` | `Literal` | `-` | `<S.opaque>` | 0 | a constant of an opaque dual: any value of its scalar |
+| F2169 | `const.mat` | `Literal` | `-` | `<matCxR<f32>.real>` | 0 | a matrix constant, one number on every element |
 
 ## class `own`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2123 | `own.u32_threadrow` | `composite` | `-` | `u32.threadrow` | 0 | the real terminal of the dual: the thread's own first row |
-| F2124 | `own.u32_threadcol` | `composite` | `-` | `u32.threadcol` | 0 | the real terminal of the dual: the thread's own first column |
-| F2125 | `own.u32_threadrows` | `composite` | `-` | `u32.threadrows` | 0 | the real terminal of the dual: the thread's own first row of a strided block |
-| F2126 | `own.u32_threadcols` | `composite` | `-` | `u32.threadcols` | 0 | the real terminal of the dual: the thread's own first column of a strided block |
-| F2127 | `own.u32_threadrowg` | `composite` | `-` | `u32.threadrowg` | 0 | the real terminal of the dual: the thread's own first row of a grouped block |
-| F2128 | `own.u32_threadcolg` | `composite` | `-` | `u32.threadcolg` | 0 | the real terminal of the dual: the thread's own first column of a grouped block |
-| F2129 | `own.u32_rowbase` | `composite` | `-` | `u32.rowbase` | 0 | the real terminal of the dual: the origin of the thread's row |
-| F2130 | `own.u32_colbase` | `composite` | `-` | `u32.colbase` | 0 | the real terminal of the dual: the origin of the thread's column |
-| F2131 | `own.u32_rowbases` | `composite` | `-` | `u32.rowbases` | 0 | the real terminal of the dual: the origin of the thread's strided row |
-| F2132 | `own.u32_colbases` | `composite` | `-` | `u32.colbases` | 0 | the real terminal of the dual: the origin of the thread's strided column |
-| F2133 | `own.u32_rowbaseg` | `composite` | `-` | `u32.rowbaseg` | 0 | the real terminal of the dual: the origin of the thread's grouped row |
-| F2134 | `own.u32_colbaseg` | `composite` | `-` | `u32.colbaseg` | 0 | the real terminal of the dual: the origin of the thread's grouped column |
-| F2135 | `own.u32_cell` | `composite` | `-` | `u32.cell` | 0 | the real terminal of the dual: the thread's own first output cell |
-| F2136 | `own.u32_mirror` | `composite` | `-` | `u32.mirror` | 0 | the real terminal of the dual: the mirror of the thread's own first cell |
-| F2137 | `own.u32_wgown` | `composite` | `-` | `u32.wgown` | 0 | the real terminal of the dual: the thread's own workgroup element, lidx |
-| F2138 | `own.u32_rowid` | `composite` | `-` | `u32.rowid` | 0 | the real terminal of the dual: the y of the thread's global id |
-| F2139 | `own.u32_colid` | `composite` | `-` | `u32.colid` | 0 | the real terminal of the dual: the x of the thread's global id |
-| F2140 | `own.u32_wgindex` | `composite` | `-` | `u32.wgindex` | 0 | the real terminal of the dual: workgroup-array index 0 |
-| F2141 | `own.u32_wgvindex` | `composite` | `-` | `u32.wgvindex` | 0 | the real terminal of the dual: vec4 workgroup-array index 0 |
-| F2142 | `own.u32_wgv2index` | `composite` | `-` | `u32.wgv2index` | 0 | the real terminal of the dual: vec2 workgroup-array index 0 |
-| F2143 | `own.u32_wgaindex` | `composite` | `-` | `u32.wgaindex` | 0 | the real terminal of the dual: atomic workgroup-array index 0 |
-| F2144 | `own.u32_pindex` | `composite` | `-` | `u32.pindex` | 0 | the real terminal of the dual: private-array index 0 |
-| F2145 | `own.u32_pindex16` | `composite` | `-` | `u32.pindex16` | 0 | the real terminal of the dual: 16-element private-array index 0 |
-| F2146 | `own.u32_pindex128` | `composite` | `-` | `u32.pindex128` | 0 | the real terminal of the dual: 128-element private-array index 0 |
-| F2147 | `own.u32_boundx` | `composite` | `-` | `u32.boundx` | 0 | the real terminal of the dual: a loop bound of one pass, 1u |
-| F2148 | `own.u32_boundu` | `composite` | `-` | `u32.boundu` | 0 | the real terminal of the dual: a workgroup-uniform loop bound of one pass, 1u |
-| F2149 | `own.u32_uniform` | `composite` | `-` | `u32.uniform` | 0 | the real terminal of the dual: a workgroup-uniform value, 0u |
-| F2150 | `own.bool_uflag` | `composite` | `-` | `bool.uflag` | 0 | the real terminal of the dual: a workgroup-uniform predicate, false |
-| F2151 | `own.kernel_safe` | `composite` | `-` | `kernel.safe` | 0 | the real terminal of the dual: the default-grid kernel whose epilogue stores the thread's own cell |
-| F2152 | `own.kernel_module` | `composite` | `-` | `kernel.module` | 0 | the real terminal of the dual: a module of one such kernel at each of the interface's entry points |
-| F2153 | `own.grid_grid` | `composite` | `-` | `grid.grid` | 0 | the real terminal of the dual: the default grid: 16 x 16 threads, one cell each |
-| F2154 | `own.wg_decl` | `composite` | `-` | `wg.decl` | 0 | the real terminal of the dual: no workgroup array declaration |
-| F2155 | `own.wg_decls` | `composite` | `-` | `wg.decls` | 0 | the real terminal of the dual: the arrays the kernel uses, at their default lengths |
-| F2156 | `own.block_L0` | `composite` | `-` | `block.L0` | 0 | the real terminal of the dual: an empty block {} |
-| F2157 | `own.block_L1` | `composite` | `-` | `block.L1` | 0 | the real terminal of the dual: an empty block {} |
-| F2158 | `own.block_L2` | `composite` | `-` | `block.L2` | 0 | the real terminal of the dual: an empty block {} |
-| F2159 | `own.block_L3` | `composite` | `-` | `block.L3` | 0 | the real terminal of the dual: an empty block {} |
-| F2160 | `own.block_L4` | `composite` | `-` | `block.L4` | 0 | the real terminal of the dual: an empty block {} |
-| F2161 | `own.block_L5` | `composite` | `-` | `block.L5` | 0 | the real terminal of the dual: an empty block {} |
-| F2162 | `own.stmt_C0` | `composite` | `-` | `stmt.C0` | 0 | the real terminal of the dual: an empty statement {} |
-| F2163 | `own.block_C0` | `composite` | `-` | `block.C0` | 0 | the real terminal of the dual: an empty block {} |
-| F2164 | `own.stmt_C1` | `composite` | `-` | `stmt.C1` | 0 | the real terminal of the dual: an empty statement {} |
-| F2165 | `own.block_C1` | `composite` | `-` | `block.C1` | 0 | the real terminal of the dual: an empty block {} |
-| F2166 | `own.stmt_C2` | `composite` | `-` | `stmt.C2` | 0 | the real terminal of the dual: an empty statement {} |
-| F2167 | `own.block_C2` | `composite` | `-` | `block.C2` | 0 | the real terminal of the dual: an empty block {} |
-| F2168 | `own.stmt_C3` | `composite` | `-` | `stmt.C3` | 0 | the real terminal of the dual: an empty statement {} |
-| F2169 | `own.block_C3` | `composite` | `-` | `block.C3` | 0 | the real terminal of the dual: an empty block {} |
-| F2170 | `own.stmt_C4` | `composite` | `-` | `stmt.C4` | 0 | the real terminal of the dual: an empty statement {} |
-| F2171 | `own.block_C4` | `composite` | `-` | `block.C4` | 0 | the real terminal of the dual: an empty block {} |
-| F2172 | `own.stmt_C5` | `composite` | `-` | `stmt.C5` | 0 | the real terminal of the dual: an empty statement {} |
-| F2173 | `own.block_C5` | `composite` | `-` | `block.C5` | 0 | the real terminal of the dual: an empty block {} |
-| F2174 | `own.stmt_O0` | `composite` | `-` | `stmt.O0` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2175 | `own.block_O0` | `composite` | `-` | `block.O0` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2176 | `own.stmt_O1` | `composite` | `-` | `stmt.O1` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2177 | `own.block_O1` | `composite` | `-` | `block.O1` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2178 | `own.stmt_O2` | `composite` | `-` | `stmt.O2` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2179 | `own.block_O2` | `composite` | `-` | `block.O2` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2180 | `own.stmt_O3` | `composite` | `-` | `stmt.O3` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2181 | `own.block_O3` | `composite` | `-` | `block.O3` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2182 | `own.stmt_O4` | `composite` | `-` | `stmt.O4` | 0 | the real terminal of the dual: a store to the thread's own cell |
-| F2183 | `own.block_O4` | `composite` | `-` | `block.O4` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
-| F2184 | `own.block_B1` | `composite` | `-` | `block.B1` | 0 | the real terminal of the dual: an empty block {} |
-| F2185 | `own.block_B2` | `composite` | `-` | `block.B2` | 0 | the real terminal of the dual: an empty block {} |
-| F2186 | `own.block_B3` | `composite` | `-` | `block.B3` | 0 | the real terminal of the dual: an empty block {} |
-| F2187 | `own.block_B4` | `composite` | `-` | `block.B4` | 0 | the real terminal of the dual: an empty block {} |
-| F2188 | `own.block_B5` | `composite` | `-` | `block.B5` | 0 | the real terminal of the dual: an empty block {} |
+| F2170 | `own.u32_threadrow` | `composite` | `-` | `u32.threadrow` | 0 | the real terminal of the dual: the thread's own first row |
+| F2171 | `own.u32_threadcol` | `composite` | `-` | `u32.threadcol` | 0 | the real terminal of the dual: the thread's own first column |
+| F2172 | `own.u32_threadrows` | `composite` | `-` | `u32.threadrows` | 0 | the real terminal of the dual: the thread's own first row of a strided block |
+| F2173 | `own.u32_threadcols` | `composite` | `-` | `u32.threadcols` | 0 | the real terminal of the dual: the thread's own first column of a strided block |
+| F2174 | `own.u32_threadrowg` | `composite` | `-` | `u32.threadrowg` | 0 | the real terminal of the dual: the thread's own first row of a grouped block |
+| F2175 | `own.u32_threadcolg` | `composite` | `-` | `u32.threadcolg` | 0 | the real terminal of the dual: the thread's own first column of a grouped block |
+| F2176 | `own.u32_rowbase` | `composite` | `-` | `u32.rowbase` | 0 | the real terminal of the dual: the origin of the thread's row |
+| F2177 | `own.u32_colbase` | `composite` | `-` | `u32.colbase` | 0 | the real terminal of the dual: the origin of the thread's column |
+| F2178 | `own.u32_rowbases` | `composite` | `-` | `u32.rowbases` | 0 | the real terminal of the dual: the origin of the thread's strided row |
+| F2179 | `own.u32_colbases` | `composite` | `-` | `u32.colbases` | 0 | the real terminal of the dual: the origin of the thread's strided column |
+| F2180 | `own.u32_rowbaseg` | `composite` | `-` | `u32.rowbaseg` | 0 | the real terminal of the dual: the origin of the thread's grouped row |
+| F2181 | `own.u32_colbaseg` | `composite` | `-` | `u32.colbaseg` | 0 | the real terminal of the dual: the origin of the thread's grouped column |
+| F2182 | `own.u32_cell` | `composite` | `-` | `u32.cell` | 0 | the real terminal of the dual: the thread's own first output cell |
+| F2183 | `own.u32_mirror` | `composite` | `-` | `u32.mirror` | 0 | the real terminal of the dual: the mirror of the thread's own first cell |
+| F2184 | `own.u32_wgown` | `composite` | `-` | `u32.wgown` | 0 | the real terminal of the dual: the thread's own workgroup element, lidx |
+| F2185 | `own.u32_rowid` | `composite` | `-` | `u32.rowid` | 0 | the real terminal of the dual: the y of the thread's global id |
+| F2186 | `own.u32_colid` | `composite` | `-` | `u32.colid` | 0 | the real terminal of the dual: the x of the thread's global id |
+| F2187 | `own.u32_wgindex` | `composite` | `-` | `u32.wgindex` | 0 | the real terminal of the dual: workgroup-array index 0 |
+| F2188 | `own.u32_wgvindex` | `composite` | `-` | `u32.wgvindex` | 0 | the real terminal of the dual: vec4 workgroup-array index 0 |
+| F2189 | `own.u32_wgv2index` | `composite` | `-` | `u32.wgv2index` | 0 | the real terminal of the dual: vec2 workgroup-array index 0 |
+| F2190 | `own.u32_wgaindex` | `composite` | `-` | `u32.wgaindex` | 0 | the real terminal of the dual: atomic workgroup-array index 0 |
+| F2191 | `own.u32_pindex` | `composite` | `-` | `u32.pindex` | 0 | the real terminal of the dual: private-array index 0 |
+| F2192 | `own.u32_pindex16` | `composite` | `-` | `u32.pindex16` | 0 | the real terminal of the dual: 16-element private-array index 0 |
+| F2193 | `own.u32_pindex128` | `composite` | `-` | `u32.pindex128` | 0 | the real terminal of the dual: 128-element private-array index 0 |
+| F2194 | `own.u32_boundx` | `composite` | `-` | `u32.boundx` | 0 | the real terminal of the dual: a loop bound of one pass, 1u |
+| F2195 | `own.u32_boundu` | `composite` | `-` | `u32.boundu` | 0 | the real terminal of the dual: a workgroup-uniform loop bound of one pass, 1u |
+| F2196 | `own.u32_uniform` | `composite` | `-` | `u32.uniform` | 0 | the real terminal of the dual: a workgroup-uniform value, 0u |
+| F2197 | `own.bool_uflag` | `composite` | `-` | `bool.uflag` | 0 | the real terminal of the dual: a workgroup-uniform predicate, false |
+| F2198 | `own.kernel_safe` | `composite` | `-` | `kernel.safe` | 0 | the real terminal of the dual: the default-grid kernel whose epilogue stores the thread's own cell |
+| F2199 | `own.kernel_module` | `composite` | `-` | `kernel.module` | 0 | the real terminal of the dual: a module of one such kernel at each of the interface's entry points |
+| F2200 | `own.grid_grid` | `composite` | `-` | `grid.grid` | 0 | the real terminal of the dual: the default grid: 16 x 16 threads, one cell each |
+| F2201 | `own.wg_decl` | `composite` | `-` | `wg.decl` | 0 | the real terminal of the dual: no workgroup array declaration |
+| F2202 | `own.wg_decls` | `composite` | `-` | `wg.decls` | 0 | the real terminal of the dual: the arrays the kernel uses, at their default lengths |
+| F2203 | `own.block_L0` | `composite` | `-` | `block.L0` | 0 | the real terminal of the dual: an empty block {} |
+| F2204 | `own.block_L1` | `composite` | `-` | `block.L1` | 0 | the real terminal of the dual: an empty block {} |
+| F2205 | `own.block_L2` | `composite` | `-` | `block.L2` | 0 | the real terminal of the dual: an empty block {} |
+| F2206 | `own.block_L3` | `composite` | `-` | `block.L3` | 0 | the real terminal of the dual: an empty block {} |
+| F2207 | `own.block_L4` | `composite` | `-` | `block.L4` | 0 | the real terminal of the dual: an empty block {} |
+| F2208 | `own.block_L5` | `composite` | `-` | `block.L5` | 0 | the real terminal of the dual: an empty block {} |
+| F2209 | `own.stmt_C0` | `composite` | `-` | `stmt.C0` | 0 | the real terminal of the dual: an empty statement {} |
+| F2210 | `own.block_C0` | `composite` | `-` | `block.C0` | 0 | the real terminal of the dual: an empty block {} |
+| F2211 | `own.stmt_C1` | `composite` | `-` | `stmt.C1` | 0 | the real terminal of the dual: an empty statement {} |
+| F2212 | `own.block_C1` | `composite` | `-` | `block.C1` | 0 | the real terminal of the dual: an empty block {} |
+| F2213 | `own.stmt_C2` | `composite` | `-` | `stmt.C2` | 0 | the real terminal of the dual: an empty statement {} |
+| F2214 | `own.block_C2` | `composite` | `-` | `block.C2` | 0 | the real terminal of the dual: an empty block {} |
+| F2215 | `own.stmt_C3` | `composite` | `-` | `stmt.C3` | 0 | the real terminal of the dual: an empty statement {} |
+| F2216 | `own.block_C3` | `composite` | `-` | `block.C3` | 0 | the real terminal of the dual: an empty block {} |
+| F2217 | `own.stmt_C4` | `composite` | `-` | `stmt.C4` | 0 | the real terminal of the dual: an empty statement {} |
+| F2218 | `own.block_C4` | `composite` | `-` | `block.C4` | 0 | the real terminal of the dual: an empty block {} |
+| F2219 | `own.stmt_C5` | `composite` | `-` | `stmt.C5` | 0 | the real terminal of the dual: an empty statement {} |
+| F2220 | `own.block_C5` | `composite` | `-` | `block.C5` | 0 | the real terminal of the dual: an empty block {} |
+| F2221 | `own.stmt_O0` | `composite` | `-` | `stmt.O0` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2222 | `own.block_O0` | `composite` | `-` | `block.O0` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2223 | `own.stmt_O1` | `composite` | `-` | `stmt.O1` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2224 | `own.block_O1` | `composite` | `-` | `block.O1` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2225 | `own.stmt_O2` | `composite` | `-` | `stmt.O2` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2226 | `own.block_O2` | `composite` | `-` | `block.O2` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2227 | `own.stmt_O3` | `composite` | `-` | `stmt.O3` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2228 | `own.block_O3` | `composite` | `-` | `block.O3` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2229 | `own.stmt_O4` | `composite` | `-` | `stmt.O4` | 0 | the real terminal of the dual: a store to the thread's own cell |
+| F2230 | `own.block_O4` | `composite` | `-` | `block.O4` | 0 | the real terminal of the dual: a block ending in a store to the thread's own cell |
+| F2231 | `own.block_B1` | `composite` | `-` | `block.B1` | 0 | the real terminal of the dual: an empty block {} |
+| F2232 | `own.block_B2` | `composite` | `-` | `block.B2` | 0 | the real terminal of the dual: an empty block {} |
+| F2233 | `own.block_B3` | `composite` | `-` | `block.B3` | 0 | the real terminal of the dual: an empty block {} |
+| F2234 | `own.block_B4` | `composite` | `-` | `block.B4` | 0 | the real terminal of the dual: an empty block {} |
+| F2235 | `own.block_B5` | `composite` | `-` | `block.B5` | 0 | the real terminal of the dual: an empty block {} |
 
 ## class `subgroup`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2189 | `subgroup.quad_broadcast` | `SubgroupGather` | `<S.real> u32.lit64` | `<S.real>` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
-| F2190 | `subgroup.quad_swap_x` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapX(x) |
-| F2191 | `subgroup.quad_swap_y` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapY(x) |
-| F2192 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapDiagonal(x) |
-| F2193 | `subgroup.quad_broadcast` | `SubgroupGather` | `u32.index u32.lit64` | `u32.index` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
-| F2194 | `subgroup.quad_swap_x` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapX(x) |
-| F2195 | `subgroup.quad_swap_y` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapY(x) |
-| F2196 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapDiagonal(x) |
-| F2197 | `subgroup.quad_broadcast` | `SubgroupGather` | `i32.int u32.lit64` | `i32.int` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
-| F2198 | `subgroup.quad_swap_x` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapX(x) |
-| F2199 | `subgroup.quad_swap_y` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapY(x) |
-| F2200 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapDiagonal(x) |
+| F2236 | `subgroup.quad_broadcast` | `SubgroupGather` | `<S.real> u32.lit64` | `<S.real>` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2237 | `subgroup.quad_swap_x` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapX(x) |
+| F2238 | `subgroup.quad_swap_y` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapY(x) |
+| F2239 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | quadSwapDiagonal(x) |
+| F2240 | `subgroup.quad_broadcast` | `SubgroupGather` | `u32.index u32.lit64` | `u32.index` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2241 | `subgroup.quad_swap_x` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapX(x) |
+| F2242 | `subgroup.quad_swap_y` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapY(x) |
+| F2243 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | quadSwapDiagonal(x) |
+| F2244 | `subgroup.quad_broadcast` | `SubgroupGather` | `i32.int u32.lit64` | `i32.int` | 2 | quadBroadcast(x, lane): the lane (0..3) a literal |
+| F2245 | `subgroup.quad_swap_x` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapX(x) |
+| F2246 | `subgroup.quad_swap_y` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapY(x) |
+| F2247 | `subgroup.quad_swap_diagonal` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | quadSwapDiagonal(x) |
 
-2200 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+2247 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

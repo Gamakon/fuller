@@ -203,3 +203,5 @@ T201	reg<vec3<u32>>.index	reg<vec3<u32>>	index	3	a named vec3<u32> register: H0.
 T202	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	2	a named vec2<bool> register: J0..J15	-
 T203	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	3	a named vec3<bool> register: K0..K15	-
 T204	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	4	a named vec4<bool> register: L0..L15	-
+T205	reg<u32>.uniform	reg<u32>	uniform	1	a named u32 register: U0..U15	-
+T206	reg<bool>.uflag	reg<bool>	uflag	1	a named bool register: Q0..Q15	-
