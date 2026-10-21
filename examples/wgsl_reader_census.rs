@@ -92,6 +92,6 @@ fn main() {
     }
     println!("\ndirectory\tkernel\tfirst error line");
     for (d, n, e) in refused {
-        println!("{d}\t{n}\t{}", e.lines().next().unwrap_or("").chars().take(200).collect::<String>());
+        println!("{d}\t{n}\t{}", e.lines().next().unwrap_or("").chars().take(3000).collect::<String>());
     }
 }
