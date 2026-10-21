@@ -12,6 +12,9 @@ Andrew, 2026-10-21: everything except the design of the WGSL kingdom's symbol ta
 | ST3 | READ design doc + rules; ST2 | The first test (Andrew, 2026-10-21): 100 random kernels from the typed initialiser on the GPU; every one renders, compiles (naga and the Metal pipeline), and runs on the right inputs through the problem's unit test without fault | Sonnet | 100 of 100 compile and run; the HFF fitness scores them, evolution finds the answer |
 | ST4 | READ design doc + rules; ST3 | Seeding with a weak LLM writing Karva (Andrew, 2026-10-21): Haiku writes Karva symbol sequences, not programs; each cell takes the model's choice as an index into that cell's type alphabet (modulo its size), so any sequence, mistakes included, decodes to a valid gene with no repair; 100 such genes are the initial population, near-remembered and not quite right, for evolution to improve | Sonnet | 100 of 100 valid by construction; the HFF fitness scores them and evolution takes it from there |
 
+| ST5 | READ design doc + rules; ST3 | Time the evolution infrastructure (Andrew, 2026-10-21): a population of 10 for 10 generations on the GPU, every stage timed (init, vary, express, render, compile, run, HFF fitness) | Sonnet | a stage table in ms; the slowest stages named |
+| ST6 | READ design doc + rules; ST5 | Evolve our own infrastructure: the slowest GPU kernel of the evolution machinery (e.g. the HFF fitness or the scorer) as the problem, its current WGSL as the seed read into the kingdom, its outputs as the unit test; evolution searches for a faster equivalent kernel | lead + Sonnet | a faster kernel with identical outputs, adopted into the engine |
+
 Everything below this line is PARKED until ST1 passes its review.
 
 ---
