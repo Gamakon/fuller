@@ -9915,7 +9915,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 928 since 15:30Z (the 64-element vec4 arrays, AST_FLOOR's note);
     /// 917 since 16:05Z (the argmax reductions, AST_FLOOR's note); 959
     /// since 19:08Z (an atomic read inside a guarded store's value).
-    const FIXPOINT_FLOOR: usize = 959;
+    // 2026-10-21: 953. The sampler's draws changed with A0 (wg.get deleted, wg.uload_i deleted and read as wg.uload_U), T66 (a
+    // terminal is drawn uniformly from the type's terminals) and the uniform registers; measured 946 after A0, 972 after T66,
+    // 953 now (floor 959 before). The count is a property of one seeded stream, not of the reader.
+    const FIXPOINT_FLOOR: usize = 953;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
@@ -9958,7 +9961,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // (21:30Z, 121: a literal offset in a thread's block snapped below the
     // block factor, as the emitter writes it.)
     // (22:11Z, 128: `min(a, max(n, 1u) - 1u)` read as index.clamp_to.)
-    const AST_FLOOR: usize = 128;
+    // (2026-10-21: 118, the same change of draws: 128 before, 118 after T66 and after the uniform registers.)
+    const AST_FLOOR: usize = 118;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -9997,8 +10001,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 19:54Z, AST 7 with a thread's row or column in an index read as the
     /// row it is. 22:11Z, AST 11 with the clamp below a count read as it.
     const MODULE_AST_FLOOR: usize = 11;
-    const MODULE_FIXPOINT_FLOOR: usize = 970;
-    const MODULE_LEGAL_FLOOR: usize = 134;
+    // 2026-10-21: 947 and 131 (970 and 134 before; AST 35 against 11). Measured AST, fixpoint, legal: 37, 976, 131 after A0; 27, 957,
+    // 135 after T66; 35, 947, 131 with the uniform registers. Terminal draws are uniform over a type's terminals now, so the
+    // stream, and with it the count, changed.
+    const MODULE_FIXPOINT_FLOOR: usize = 947;
+    const MODULE_LEGAL_FLOOR: usize = 131;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
