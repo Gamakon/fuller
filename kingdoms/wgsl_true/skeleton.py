@@ -80,9 +80,10 @@ def build(iface):
         "{0}\n@compute @workgroup_size(WG_X, WG_Y, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, "
         "@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
         "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>"
-        + (", @builtin(subgroup_invocation_id) sg_lane: u32, @builtin(subgroup_size) sg_size: u32, "
-           "@builtin(num_subgroups) sg_num: u32, @builtin(subgroup_id) sg_id: u32" if iface["has_subgroups"] else "")
-        + ") {\n<declarations>\n{1}\n{2}\n}\n"
+        + (", @builtin(subgroup_size) sg_size: u32, @builtin(num_subgroups) sg_num: u32" if iface["has_subgroups"] else "")
+        + ") {\n"
+        + ("let sg_lane: u32 = lidx & (sg_size - 1u);\nlet sg_id: u32 = lidx / sg_size;\n" if iface["has_subgroups"] else "")
+        + "<declarations>\n{1}\n{2}\n}\n"
     )
     R("kernel.entry_safe", "kernel.safe", ["grid.grid", B("L", 0, K), B("O", 0, K)], entry,
       "the only producer of the root; a kernel is a grid, a body and an epilogue that ends in the store of its own cell")
