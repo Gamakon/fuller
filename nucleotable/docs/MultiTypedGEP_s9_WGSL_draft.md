@@ -2,7 +2,7 @@
 
 The kingdom holds any WGSL compute kernel over a declared **interface**: its storage bindings (each an input, read-only, or an output, read-write, with an element type `<e>` and a shape over the uniform's fields), its uniform block's fields, and the target's limits. Rows that mention a binding or a field are **families**, generated once per declared binding or field; the Gram interface (`phi: array<f32>` in, `h: array<f32>` out with shape `cfg.r_rows x cfg.d`, `cfg { d, m, r_rows, r_off }`) is one worked instance, never the default. Notation: `<b>` an output binding, `<i>` an input binding, `<f>` a uniform field, `<e>` the binding's element type (`f32`, `u32`, `i32`, `vec4<f32>`, ...). A 2-D output declares `shape <b> <R_b> <C_b>` (rows and columns, each an expression over fields) and is laid out row-major with stride `C_b`; a 1-D output declares `shape <b> <L_b>`. Every binding with load or store rows declares a length lower bound of at least one. `KNOB_BROW`, `KNOB_BCOL`, `KNOB_WROW`, `KNOB_WCOL` are `const`s the entry point writes from its grid node. `lit_u32`, `lit_f32`, `lit_bool`, `lit_i32` are identity helpers that keep every literal out of constant evaluation.
 
-Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership rows. Batch 2: the remaining builtins and axes, u32 and f32 arithmetic, comparisons and logic, input loads and uniform fields. Batch 3: registers and private arrays, fuel strata, loops and counters, uniform provenance (fields, workgroup ids, uniform counters, `workgroupUniformLoad`), the barrier. Batch 4: the W phase and workgroup-array writes, the stratum map's arrays and reads, reductions, atomics, subgroups. Batch 5: vectors and their arrays, i32 and the remaining scalar families, the strided, grouped and lane partitions, arenas and the relaxed conversions, the storage barrier.
+Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership rows. Batch 2: the remaining builtins and axes, u32 and f32 arithmetic, comparisons and logic, input loads and uniform fields. Batch 3: registers and private arrays, fuel strata, loops and counters, uniform provenance (fields, workgroup ids, uniform counters, `workgroupUniformLoad`), the barrier. Batch 4: the W phase and workgroup-array writes, the stratum map's arrays and reads, reductions, atomics, subgroups. Batch 5: vectors and their arrays, i32 and the remaining scalar families, the strided, grouped and lane partitions, arenas and the relaxed conversions, the storage barrier. Batch 6: f16, matrices, the tile-counter offsets of the strided and grouped partitions, the mirror store, knob references, the grid variants, the vec2/vec3 and i32 workgroup arrays, i32 atomics. The table is complete with batch 6; the families deferred are listed at the end.
 
 ## Types (growing)
 
@@ -127,7 +127,11 @@ Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership r
 | `count.add` | `u32.count` | `u32.count`, `u32.count` | `({0} + {1})` | sizes add (wrap defined); `count.sub_floor`, `count.min`, `count.max` as for `index` |
 | `arith.<op>` | `f32.real` | `f32.real`, `f32.real` | `({0} + {1})`, `({0} - {1})`, `({0} * {1})`, `({0} / {1})`, `min(...)`, `max(...)`, `pow(...)`, `atan2(...)`, `step(...)` | `<op>` in `{add, sub, mul, div, min, max, pow, atan2, step}`: 9 rows; IEEE arithmetic, `x / 0` is an infinity or NaN, a value fitness scores, never a fault |
 | `arith.<un>` | `f32.real` | `f32.real` | `neg: (-{0})`, else `<un>({0})` | `<un>` in `{neg, abs, sign, floor, ceil, round, fract, trunc, saturate, sqrt, inverse_sqrt, exp, exp2, log, log2, sin, cos, tan, tanh, asin, acos, atan}`: 22 rows; `sqrt(-1)` and `log(0)` give NaN or an infinity, scored |
-| `arith.<tri>` | `f32.real` | `f32.real` × 3 | `clamp({0}, {1}, {2})`, `mix(...)`, `fma(...)`, `smoothstep(...)` | 4 rows |
+| `arith.<tri>` | `f32.real` | `f32.real` × 3 | `mix({0}, {1}, {2})`, `fma(...)`, `smoothstep(...)` | 3 rows; `smoothstep` with `edge0 >= edge1` is indeterminate in WGSL for runtime operands only where its text says so (the spec names the constant case an error; the runtime result is a value), scored |
+| `literal.nonneg` | `f32.nonneg` | — | `lit_f32(w)`, `w` in `0.0..=max` | `?_nonneg`: a non-negative width |
+| `bounds.of_lo_width` | `bounds<f32>.ordered` | `f32.real`, `f32.nonneg` | `vec2<f32>({0}, {0} + {1})` | an ordered pair `lo <= hi` by its construction (a non-negative width added to `lo`; `+inf` stays ordered) |
+| `bounds.sorted` | `bounds<f32>.ordered` | `f32.real`, `f32.real` | `vec2<f32>(min({0}, {1}), max({0}, {1}))` | the reordering pair, its own row (ruled, batch 5) |
+| `arith.clamp` | `f32.real` | `f32.real`, `bounds<f32>.ordered` | `clamp({0}, {1}.x, {1}.y)` | WGSL §17.5.11: `clamp(e, low, high)` is indeterminate when `low > high`; the pair type guarantees `low <= high`, so the row is plain `clamp` with WGSL's meaning; a seed's `clamp(x, lo, hi)` reads as `arith.clamp(x, bounds.of_lo_width(lo, hi - lo))` only when `hi - lo` is a non-negative literal, else as `bounds.sorted` only if the seed spelled the sort |
 | `convert.index_to_f32` | `f32.real` | `u32.index` | `f32({0})` | |
 | `convert.count_to_f32` | `f32.real` | `u32.count` | `f32({0})` | |
 | `convert.f32_to_index` | `u32.index` | `f32.real` | `u32({0})` | WGSL §15.7.6: a non-NaN value is clamped into the target's range and rounded toward zero (`-1f` is `0u`, `1e20f` is `4294967040u`): defined, so the row is plain `u32(x)` and a seed's `u32(x)` reads as it exactly (ruled); a NaN gives "an indeterminate value in T": a u32, scored by fitness, never a fault |
@@ -270,7 +274,7 @@ Batch 3: 52 family rows; 16 types added (plus the fuel suffix and the depth ladd
 | `uniform.subgroup_size` | `u32.uniform` | — | `sg_size` | the subgroup size is the same in every invocation of the workgroup; `uniform.num_subgroups` likewise; `builtin.subgroup_id -> u32.index` |
 | `subgroup.<op>_f_L<d>_f<k>` | `stmt.L<d>_f<k>` | `reg<f32>.real`, `f32.real` | `{0} = subgroup<Op>({1});` | `<op>` in `{add, mul, min, max, inclusive_add, inclusive_mul, exclusive_add, exclusive_mul}`: 8 rows; a collective is a statement at L rungs only, so it stands in uniform control (`subgroup_operation_in_nonuniform_control`); its result passes through a register; `subgroup.<op>_i_L` over `reg<u32>.index`, `u32.index` likewise (8 rows) |
 | `subgroup.broadcast_first_f_L<d>_f<k>` | `stmt.L<d>_f<k>` | `reg<f32>.real`, `f32.real` | `{0} = subgroupBroadcastFirst({1});` | and `_i`; `subgroup.broadcast_f_L: (reg, f32.real, u32.lanelit)` spelled `subgroupBroadcast({1}, {2})`: WGSL requires a constant lane, and a `lanelit` is below the target's smallest subgroup size, so it selects an active invocation |
-| `lane.of_index` | `u32.lane` | `u32.index` | `(({0}) & (sg_size - 1u))` | the only producer of a lane from a value: below the subgroup size by the row's text (the subgroup size is a power of two on every target the kingdom lists; the target line states it) |
+| `lane.of_index` | `u32.lane` | `u32.index` | `(({0}) & (sg_size - 1u))` | the only producer of a lane from a value: below the subgroup size by the row's text; the target line states its subgroup sizes, all powers of two, and a target with subgroups admits only shapes whose `X * Y` is a multiple of its largest subgroup size, so every subgroup is full and every lane below the size is active at an L rung (ruled, batch 5) |
 | `lane.lit` | `u32.lane` | `u32.lanelit` | `{0}` | a literal lane below the target's smallest subgroup size |
 | `literal.lanelit` | `u32.lanelit` | — | `lit_u32(n)`, `n` in `0..=min_sg - 1` | `?_lanelit` |
 | `subgroup.shuffle_f_L<d>_f<k>` | `stmt.L<d>_f<k>` | `reg<f32>.real`, `f32.real`, `u32.lane` | `{0} = subgroupShuffle({1}, {2});` | the lane is below the subgroup size by its type, and at an L rung every invocation of the subgroup is active, so WGSL §17.12.12's indeterminate case (a lane that selects no active invocation) has no tree (ruled); `_i` likewise |
@@ -292,6 +296,8 @@ Batch 4: 38 family rows plus the `w` twin family (about 110 twin rows generated 
 | `wgmem<vec4<f32>,512>.real` | the workgroup array `wg_v4_9` (the map's `vec4<f32>` stratum) |
 | `parr<vec4<f32>,16>.real` | a private array of 16 vec4, `pv0..pv5`; `u32.pidx_4` indexes it |
 | `i32.int` | a signed integer; `reg<i32>.int` `n0..n15` |
+| `f32.nonneg` / `i32.nonneg` | a non-negative literal width |
+| `bounds<f32>.ordered` / `bounds<i32>.ordered` | a pair `(lo, hi)` with `lo <= hi` by construction: what a plain `clamp` takes |
 | `u32.bits` | a bit field: masks, packed lanes; no position, no size |
 | `u32.hash32` | a 32-bit hash state |
 | `u32.code<N>` | a codebook entry below `N`, `N` in `{4, 8, 16, 1024}`: literal domain `0..=N-1` |
@@ -319,7 +325,7 @@ Batch 4: 38 family rows plus the `w` twin family (about 110 twin rows generated 
 | `literal.int` | `i32.int` | — | `lit_i32(n)`, `n` in `i32` (`i32::MIN` spelled `(-2147483647i - 1i)`) | `?_int` |
 | `int.<op>` | `i32.int` | `i32.int`, `i32.int` | `({0} + {1})`, `-`, `*`, `/`, `%`, `min`, `max`, `&`, `\|`, `^` | 10 rows; `+ - *` wrap (§6.2.3); `/` and `%` by a runtime zero give `e1` and `0`, `MIN / -1` gives `MIN` (§8.8): all defined |
 | `int.<un>` | `i32.int` | `i32.int` | `(-{0})`, `abs`, `sign`, `~` | 4 rows; `abs(MIN) = MIN`, defined |
-| `int.clamp` | `i32.int` | `i32.int` × 3 | `clamp({0}, {1}, {2})` | WGSL: indeterminate when `low > high`; the row spells `clamp({0}, min({1}, {2}), max({1}, {2}))` so every input is defined |
+| `int.clamp` | `i32.int` | `i32.int`, `bounds<i32>.ordered` | `clamp({0}, {1}.x, {1}.y)` | as `arith.clamp`: the pair type guarantees `low <= high`; `bounds.of_lo_width_int: (i32.int, i32.nonneg) -> bounds<i32>.ordered` spelled `vec2<i32>({0}, max({0}, {0} + {1}))` (a wrapped sum falls back to `lo`, still ordered); `bounds.sorted_int` the reordering row; `literal.nonneg_int` domain `0..=i32::MAX` |
 | `int.shl` / `int.shr` | `i32.int` | `i32.int`, `u32.index` | `({0} << {1})` / `({0} >> {1})` | §8.10: a runtime count is taken modulo 32; arithmetic right shift |
 | `convert.index_to_int` | `i32.int` | `u32.index` | `i32({0})` | WGSL §17.1.2.5: a reinterpretation of bits, defined; `convert.int_to_index`: `u32({0})` likewise (§17.1.2.16); `index.of_int_floor`: `u32(max({0}, 0i))` as a separate row |
 | `convert.f32_to_int` | `i32.int` | `f32.real` | `i32({0})` | §15.7.6: clamped and truncated for every non-NaN; NaN indeterminate (a value); `convert.f32_to_int_nan0` as for u32; `convert.int_to_f32`: `f32({0})` |
@@ -347,11 +353,56 @@ Batch 4: 38 family rows plus the `w` twin family (about 110 twin rows generated 
 
 Batch 5: 41 family rows (vector lane-count variants, `w` twins and per-rung sets generated by suffix); 14 pattern types added. Running total: 72 pattern types; 187 + 41 = 228 family rows, plus the lane-count variants and the `w` twin family.
 
-Rows I am unsure of:
+## Batch 6: f16, matrices, the remaining offsets, the mirror store, knob references, grid variants, the remaining workgroup arrays, i32 atomics
 
-- `lane.of_index` masks by `sg_size - 1u`, which is a lane below the subgroup size only when the size is a power of two (true of every target the kingdom lists; the `target` line must state its subgroup sizes). A workgroup whose invocation count is not a multiple of the subgroup size has a partial last subgroup whose top lanes are inactive, and WGSL's shuffle to an inactive lane is indeterminate; the row above does not exclude it. The fix I propose: a target with subgroups admits only shapes whose `X * Y` is a multiple of its largest subgroup size (a shape-table fact), so every subgroup is full at an L rung.
-- `shuffle_down` / `shuffle_up` spell their own fill for lanes past the edge (the invocation's own value); the alternative is a `u32.delta` type below `sg_size - sg_lane`, which is per invocation and cannot be a type.
-- `shape.at` on a `vec3` uses `% 3u`, a different form from the `& (L-1)` masks; a `vec3` lane has no power-of-two mask.
-- `int.clamp` reorders its bounds in the row's text because WGSL leaves `clamp` with `low > high` indeterminate; `arith.clamp` on f32 (batch 2) needs the same treatment and I have not changed it yet.
-- `load.<i>4`: four clamps and a `+ 3u` that may wrap at the top of `u32`; defined, but the vec4 read of a seed written `vec4(phi[i], phi[i+1], ...)` without clamps reads as outside the kingdom.
-- Arenas: the plain `store.<a>` admits a write race inside a workgroup and across workgroups by the arena policy; this is the design's state as today's arena mode has it, and it is the one place the kingdom spells a race on purpose.
+| type | what it holds |
+|---|---|
+| `f16.real`, `vec<L><f16>.real` | a half-precision number; present only when the target has the f16 feature (the prologue then begins `enable f16;`) |
+| `mat<C>x<R><f32>.real` | a matrix of `C` columns and `R` rows, `C, R` in `{2, 3, 4}`; `reg<mat2x2<f32>>.real` `x0..x3`, `reg<mat3x3<f32>>.real` `y0..y3`, `reg<mat4x4<f32>>.real` `z0..z3` |
+| `u32.payload` | a knob reference's multiplier, a literal `1..=2^20` in units of `1/256` |
+| `u32.passes` | the `// passes N` count, a literal in the interface's declared range `1..=16` |
+| `u32.mirror_<b>` | (mode `full` kingdoms only) the mirror cell of an owned cell of a square output `<b>`: `c * C_b + r` |
+| `wgmem<vec2<f32>,2^j>.real`, `wgmem<vec3<f32>,2^j>.real`, `wgmem<i32,2^j>.int`, `wgmem<atomic<i32>,2^j>.int` | the map's remaining array kinds, one per listed stratum |
+| `i32.atomicold` | an i32 atomic's returned old value, as `u32.atomicold` |
+
+| symbol | output | arguments (ordered) | WGSL spelling | note |
+|---|---|---|---|---|
+| `literal.f16` | `f16.real` | — | `lit_f16(v)`, `v` in `-65504.0..=65504.0` | `?_f16`: the finite f16 range; the `arith`, `trig`, `compare`, `select`, `shape` rows exist over `f16.real` and `vec<L><f16>.real` as over f32, by the real-family pattern, with their `w` twins; registers `h0..h15` (`reg<f16>.real`) likewise |
+| `convert.f32_to_f16` | `f16.real` | `f32.real` | `f16({0})` | §15.7.6 numeric conversion to floating point: an out-of-range f32 gives `±inf` in f16, a value; per lane for vectors |
+| `convert.f16_to_f32` | `f32.real` | `f16.real` | `f32({0})` | exact |
+| `literal.mat<C>x<R>` | `mat<C>x<R><f32>.real` | — | `mat<C>x<R><f32>(vec<R>(lit_f32(v)), ...)` | `?_mat<C>x<R>`: one number on every element; 9 rows |
+| `shape.compose_mat<C>` | `mat<C>x<R><f32>.real` | `vec<R><f32>.real` × C | `mat<C>x<R><f32>({0}, {1}, ...)` | `C` in `{2, 3, 4}` columns, per `R`: 9 rows (arity `C`, at most 4) |
+| `shape.col_<i>` | `vec<R><f32>.real` | `mat<C>x<R><f32>.real` | `{0}[<i>]` | a row exists only for `i < C`: 2 + 3 + 4 rows per `R`, so a constant column is never past the matrix |
+| `shape.col_at` | `vec<R><f32>.real` | `mat<C>x<R><f32>.real`, `u32.index` | `col_at<C>x<R>({0}, ({1}) % <C>u)` (a helper switching on the column) | a run-time column, reduced by the row's text |
+| `arith.mul_mat_vec` | `vec<R><f32>.real` | `mat<C>x<R><f32>.real`, `vec<C><f32>.real` | `({0} * {1})` | the lane count of the vector is the matrix's column count by the row's signature, so no ill-typed product exists (naga would refuse it) |
+| `arith.mul_vec_mat` | `vec<C><f32>.real` | `vec<R><f32>.real`, `mat<C>x<R><f32>.real` | `({0} * {1})` | |
+| `arith.mul_mat_mat` | `mat<C>x<R><f32>.real` | `mat<K>x<R><f32>.real`, `mat<C>x<K><f32>.real` | `({0} * {1})` | the left's columns equal the right's rows (`K`), by signature: 27 rows |
+| `arith.mul_mat_scalar` / `mul_scalar_mat` | `mat<C>x<R><f32>.real` | the matrix and `f32.real` | `({0} * {1})` | |
+| `arith.add_mat` / `sub_mat` / `neg_mat` | `mat<C>x<R><f32>.real` | two matrices / one | `+`, `-`, unary `-` | |
+| `geom.transpose` | `mat<R>x<C><f32>.real` | `mat<C>x<R><f32>.real` | `transpose({0})` | |
+| `geom.determinant` / `geom.inverse` | `f32.real` / `mat<N>x<N><f32>.real` | `mat<N>x<N><f32>.real` | `determinant({0})` / `inverse({0})` | square only by signature; a singular matrix's inverse is `inf`/NaN lanes, scored |
+| `geom.outer` | `mat<C>x<R><f32>.real` | `vec<R><f32>.real`, `vec<C><f32>.real` | `outerProduct({0}, {1})` | |
+| `reg.x<n>` / `y<n>` / `z<n>` | `reg<mat<N>x<N><f32>>.real` | — | `x<n>` ... | `n` in `0..=3`; `reg.get_x/y/z`, `reg.set_x/y/z_<r>` at every rung (W over the `w` twin, which the matrix types also have) |
+| `safe.row_plus_t<d>_<b>` (strided) | `u32.threadrow_<b>` | `u32.rowbase_<b>`, `u32.tcounter<d>` | `({0} + min({1}, KNOB_BROW - 1u) * KNOB_WROW)` | `d` in `1..=5`, strided outputs: the `k`-th row of the invocation's strided block; `safe.row_plus_x_<b>` over `u32.index` likewise; contiguous given in batch 5 |
+| `safe.row_plus_g_t<d>_<b>` (grouped) | `u32.threadrow_<b>` | `u32.rowbase_<b>`, `u32.lit64`, `u32.tcounter<d>` | `({0} + min({1}, G - 1u) * (KNOB_WROW * KNOB_BROW / G) + min({2}, KNOB_BROW / G - 1u))` | the element of a group chosen by a counter; `safe.row_plus_g_x_<b>` over `u32.lit64`, `u32.index` likewise; the group may also be the counter: `safe.row_plus_gt<d>_<b>: (rowbase, tcounter<d>, lit64)`; both offsets clamped by the row's text under every form |
+| `safe.row_plus_xc<d>_<b>` | `u32.threadrow_<b>` | `u32.rowbase_<b>`, `u32.xcounter<d>` | as `row_plus_t<d>` | a divergent counter as an offset is still clamped into the invocation's own block: ownership does not depend on uniformity |
+| `safe.mirror_<b>` | `u32.mirror_<b>` | `u32.threadrow_<b>`, `u32.threadcol_<b>` | `({1} * C_b + {0})` | mode `full` kingdoms only, square outputs (`R_b = C_b`): the transposed cell of an owned cell |
+| `store.<b>_mirror_<r>` | `stmt.<r>` | `u32.threadrow_<b>`, `u32.threadcol_<b>`, `<e>` | `if ({0} < {1} && {1} < C_b) { b[{1} * C_b + {0}] = {2}; }` | mode `full` only: the symmetric half's second write; the triangle guard `r < c` is the row's text, so the diagonal is written by the own store only and the mirror cells of two invocations are the transposes of disjoint owned cells, hence disjoint (`diag_twice`); `c < C_b` with `r < c` keeps the index below `C_b * C_b`, the declared full length; the `u32.mirror_<b>` type is for `load.<b>_mirror` only |
+| `literal.payload` | `u32.payload` | — | `lit_u32(p)`, `p` in `1..=1048576` | `?_payload` |
+| `literal.p_<knob>` | `u32.index` | `u32.payload` | `clamp((KNOB_<KNOB> * {0}) / 256u, 0u, 4294967295u)` | `<knob>` in `{wcol, wrow, bcol, brow, colspan, rowspan, threads, ktile}`: 8 rows; a reference to a kernel knob, spelled over the prologue's constants from the node's own payload (never a value computed from the grid node at render time); `colspan = wcol * bcol`, `rowspan = wrow * brow`, `threads = wcol * wrow`, `ktile` the grid's tile depth |
+| `literal.p_<knob>_lit64` / `_lit4096` | `u32.lit64` / `u32.lit4096` | `u32.payload` | `clamp((KNOB_<KNOB> * {0}) / 256u, 1u, 64u)` / `..., 1u, 4096u)` | the clamp keeps the reference inside the bound type's domain, so a loop bound or an offset referencing a knob is still in its class |
+| `literal.p_<knob>_log2` / `_m1` | `u32.index` | `u32.payload` | `firstLeadingBit(max((KNOB_<KNOB> * {0}) / 256u, 1u))` / `((KNOB_<KNOB> * {0}) / 256u - 1u)` | a shift count and a mask from a knob; `firstLeadingBit(0)` would be `0xffffffff`, so the `max(.., 1u)` is the row's text |
+| `grid.of_rows_x` | `grid.grid` | `grid.shape`, `u32.blk`, `u32.blk`, `u32.lit4096` | as `grid.of` with the header `// grid X Y bx by rows-x` and the constants swapped (`KNOB_WROW = X`, `KNOB_WCOL = Y`, `KNOB_BROW = bx`, `KNOB_BCOL = by`); the fourth argument is `KNOB_KTILE` | the output's rows on thread `x`; one grid row per kernel either way, so the layout is one fact. `grid.of` gains the same fourth argument (`ktile`, default `1` through `own.u32_lit4096`), so every knob exists in every kernel |
+| `literal.passes` | `u32.passes` | — | `lit_u32(n)`, `n` in the declared range | `?_passes`; present only when the interface reads `// passes` |
+| `grid.with_passes` | `grid.grid` | `grid.grid`, `u32.passes` | `{0}` and the header line `// passes N` | the harness reads the count from the header; within the declared range by the literal's domain |
+| `wg.v2_<j>` / `wg.v3_<j>` / `wg.i_<j>` / `wg.ai_<j>` | the array types above | — | `wg_v2_<j>` ... | one terminal per listed stratum; each has `safe.wg_of_<j>` (shared per stratum), `wg.get_*` (foreign, ordinary value, no `w` twin), `wg.get_own_*` (`w` value), `wg.set_*_W<d>` (guarded, W only), `wg.put_*_L<d>`, `wg.reduce_<op>_*_L<d>` (real and i32 arrays, `litpow2_<j>`), lane forms for the vector arrays, as the f32 and u32 rows of batch 4 |
+| `atomic.<fun>_i_<j>` | `i32.atomicold` | `wgmem<atomic<i32>,2^j>.int`, `u32.wgidx_<j>`, `i32.int` | `atomic<Fun>(&{0}[{1}], {2})` | 7 rows per stratum; `stmt.discard_i_<r>: i32.atomicold -> stmt.<r>`; `atomic.uload_i_<j>_L<d>` into `reg<i32>.int` with the two barriers; `atomic.store_i_<j>_W<d>` at `u32.wgown_<j>`; the relaxed rows `int.of_atomicold`, `atomic.exchange_i_<j>` as for u32 |
+| `uniform.subgroup_size` (f16/i32 nothing new) | | | | no further uniform rows: a uniform value is a u32 |
+
+Batch 6: 34 family rows; 9 pattern types added. **The table is complete: 81 pattern types; 228 + 34 = 262 family rows, plus the lane-count variants, the per-rung and per-stratum instances, and the `w` twin family, all generated by suffix.** The generated `functions.tsv` is the exact instantiated count; the kingdom check of §1 runs on it.
+
+### Families deferred (not in this table)
+
+- Textures, samplers and image atomics; ray queries; pointers as values; binding arrays; `override` declarations; user-defined functions (a seed's helpers are inlined by the reader); structs other than the interface's uniform block; f64; `while` and `loop` with no typed bound (an unbounded loop is outside the kingdom by design); `atomicCompareExchangeWeak` and the float atomic built on it (the Metal backend lacks it); `subgroupBallot` (its `vec4<u32>` result needs the `vec4<u32>.bits` register kind, which can be added with one register family when a seed needs it).
+- The chromosome-level linker of a multi-entry module (`kernel.module_of_<interface>` over the genic terminals) is the fixed homeotic gene of §6, not a row of this table.
+- Non-power-of-two subgroup sizes and partial subgroups (excluded by the shape table, ruled batch 5).
