@@ -77,7 +77,7 @@ def decl(text):
 
 # ---------------------------------------------------------------- statements
 
-K = 2           # the interface's fuel budget: strata 0..=K (the root takes K)
+K = 0           # the interface's fuel budget (0 for the compiler and validity test ST3; 2 crashed the machine 2026-10-21): strata 0..=K (the root takes K)
 DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6)}
 STRATA = range(0, K + 1)
 
