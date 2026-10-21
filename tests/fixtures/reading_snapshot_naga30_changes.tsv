@@ -337,3 +337,5 @@ tests/corpus/model_replies/k0443.wgsl	safe	reader gap closed (T43 F): a private 
 tests/corpus/model_replies/k1765.wgsl	safe	reader gap closed (T43 I): a store to one lane of a vec4<u32> local (off[t] = x): refused before, read now
 tests/corpus/model_replies/k1767.wgsl	safe	reader gap closed (T43 I): a store to one lane of a vec4<u32> local (off[t] = x): refused before, read now
 tests/corpus/model_replies/k1771.wgsl	safe	reader gap closed (T43 I): a store to one lane of a vec4<u32> local (off[t] = x): refused before, read now
+tests/corpus/model_replies/k1753.wgsl	safe	reader gap closed (T43 H): a loop entered at an expression of the uniforms (for (var p = dp4; ...), dp4 = dp & ~3u): refused before, read now
+tests/corpus/model_replies/k1761.wgsl	safe	reader gap closed (T43 H): a loop entered at an expression of the uniforms (for (var p = dp4; ...), dp4 = dp & ~3u): refused before, read now

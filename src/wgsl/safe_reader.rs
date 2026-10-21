@@ -694,6 +694,11 @@ fn unmasked(idx: &Tree, mask: f32) -> &Tree {
     idx
 }
 
+/// Whether some node of the tree satisfies `p`.
+fn fn_has(t: &Tree, p: &dyn Fn(&Tree) -> bool) -> bool {
+    p(t) || t.kids.iter().any(|k| fn_has(k, p))
+}
+
 fn is_leaf(t: &Tree, name: &str) -> bool {
     t.kids.is_empty() && t.name == name
 }
@@ -6096,11 +6101,17 @@ impl<'a> Ctx<'a> {
         // the loop's trip count uniform, the thread's part in its guard.
         let grid_stride: Option<Tree> = if entry.is_none() && !(item_loop && self.used_counters.contains(&counter)) {
             let e = self.axis_memo.get(&counter).map(|(t, _)| t.clone());
+            // (A uniform's field never changes inside the loop: `dp & ~3u` is as fixed as a literal.)
             fn fixed(t: &Tree) -> bool {
-                !(t.name.starts_with("reg.") || t.name.starts_with("parr.") || t.name.starts_with("wg.") || t.name.starts_with("load.") || t.name.starts_with("safe.counter") || t.name.starts_with("safe.tile_")) && t.kids.iter().all(fixed)
+                !(t.name.starts_with("reg.") || t.name.starts_with("parr.") || t.name.starts_with("wg.") || (t.name.starts_with("load.") && !t.name.starts_with("load.uniform.")) || t.name.starts_with("safe.counter") || t.name.starts_with("safe.tile_")) && t.kids.iter().all(fixed)
             }
             match e {
-                Some(e) if fixed(&e) && !do_while && e.ty == ty(self, "u32.index")? => Some(e),
+                // (A u32 of any form: read before conform, a node's dual is not final, `round_down` of two indexes is `u32.bits` here.)
+                Some(e) if fixed(&e) && !do_while && self.kingdom.dual(e.ty).is_some_and(|d| d.slot == "u32") => {
+                    // The entry expression may name a lane of the uniform block as the raw read (`dp4 = dp & ~3u`): the
+                    // reader's value of it is the uniform field. (Only then: every other entry is kept as it was read.)
+                    Some(if fn_has(&e, &|t: &Tree| t.name == "load.uniform.cfg.#") { self.value(&e)? } else { e })
+                }
                 _ => return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (a literal, zero, or a thread's expression of its ids, uniforms and literals has a spelling)")),
             }
         } else {
