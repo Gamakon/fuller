@@ -292,7 +292,14 @@ fn run() -> Result<i32, String> {
     println!("{}", fuller::kingdom_contract::report(&relations, n));
     let layout = GeneLayout::from_program_size(&contract, kingdom.root, n).map_err(|e| e.to_string())?;
     let const_len = kingdom.const_lens();
-    let fuel = kingdom.fuel(&contract, n)?;
+    let mut fuel = kingdom.fuel(&contract, n)?;
+    // `--actual-work "<reason>"`: the kernels of this run are one gene whose real work (trip counts times nodes times
+    // invocations) was computed by hand and is under the cap although the table's H * 2^(6K) bound is not (the K = 2
+    // hang analysis); the reason is the Proven name. Never for a run of random genes.
+    let by_hand = arg(&args, "--actual-work");
+    if let Some(reason) = &by_hand {
+        fuel = fuller::wgsl::oracle::device::Fuel::Proven(Box::leak(reason.clone().into_boxed_str()));
+    }
     println!("gene width {} words; {} types, {} rows; fuel budget K = {}", layout.width, kingdom.types.len(), kingdom.rows.len(), kingdom.fuel_budget);
     println!(
         "work guard: H = {}, K = {}; bound at the unit-test dispatch ({UNIT_TEST_INVOCATIONS} invocations) {}, at the 128 x 64 rung (16384) {}; cap {}",
@@ -304,7 +311,7 @@ fn run() -> Result<i32, String> {
     );
 
     // The work guard before the device is opened: the kingdom's H and K against the unit test's dispatch.
-    if stage != "naga" {
+    if stage != "naga" && by_hand.is_none() {
         fuel.check("stage (c) at the unit-test dispatch", UNIT_TEST_INVOCATIONS)?;
     }
     let dev = if stage == "naga" { None } else { Some(Device::new()?) };
