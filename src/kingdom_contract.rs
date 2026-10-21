@@ -184,6 +184,13 @@ impl KingdomRelations {
         let mut demanded: BTreeSet<Ty> = self.roots.iter().copied().collect();
         demanded.extend(a.keys().copied());
         for t in demanded {
+            // A root no function asks for has `P_R = 1 = h_R`, so no tail cell of its type exists (design section
+            // 2.2); its one head cell holds a function, so it needs no terminal (WGSL's `kernel.safe`, section 9
+            // hole 5). A root some function does ask for still needs one.
+            let tail_free_root = self.roots.contains(&t) && !a.contains_key(&t) && functions.get(&t).is_some_and(|v| !v.is_empty());
+            if tail_free_root {
+                continue;
+            }
             if terminals.get(&t).is_none_or(|v| v.is_empty()) {
                 defects.push(bug(format!("{kd}: type {t:?} is demanded (a root or a required type) and has no terminal")));
             }
@@ -708,6 +715,20 @@ mod tests {
         let mut root_only = fixture();
         root_only.roots = vec![Ty::B];
         expect_defect(&root_only, "no terminal");
+    }
+
+    #[test]
+    fn a_root_no_function_asks_for_needs_no_terminal() {
+        // WGSL's kernel.safe: one function produces the root and nothing consumes it, so t_R = 0 and no terminal exists.
+        let rows = vec![("top".to_string(), vec![Ty::S], Ty::B), ("s".to_string(), Vec::new(), Ty::S)];
+        let r = relations_from_rows("tail-free root", vec![Ty::B], &rows, &[]);
+        let k = r.check().expect("a root nothing asks for needs no terminal");
+        let heads = k.heads_from_program_size(Ty::B, 8).unwrap();
+        assert_eq!(k.bounds(Ty::B, &heads).unwrap().get(Ty::B).unwrap().t, 0, "the root has no tail cell");
+        // the moment a function asks for the root type it needs one
+        let mut asked = rows.clone();
+        asked.push(("wrap".to_string(), vec![Ty::B], Ty::S));
+        expect_defect(&relations_from_rows("asked root", vec![Ty::B], &asked, &[]), "no terminal");
     }
 
     #[test]

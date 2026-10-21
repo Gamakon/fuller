@@ -59,6 +59,7 @@ pub mod scaffold;
 pub mod sketch;
 pub mod table;
 pub mod tree_diff;
+pub mod true_kingdom;
 pub mod typed_gene;
 pub mod target;
 pub mod versions;
