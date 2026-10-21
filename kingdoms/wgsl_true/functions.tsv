@@ -2015,70 +2015,70 @@ F02013	own.u32_pidx_6w	terminal	u32.pidx_6w		0u
 F02014	safe.pidx_7	function	u32.pidx_7	u32.index	(({0}) & 127u)	the mask is the row's text; one index type per array length
 F02015	own.u32_pidx_7	terminal	u32.pidx_7		0u	
 F02016	own.u32_pidx_7w	terminal	u32.pidx_7w		0u	
-F02017	reg.f0	terminal	reg<f32>.real		f0	a register is a name, never a value: only a get reads it
-F02018	reg.f1	terminal	reg<f32>.real		f1	a register is a name, never a value: only a get reads it
-F02019	reg.f2	terminal	reg<f32>.real		f2	a register is a name, never a value: only a get reads it
-F02020	reg.f3	terminal	reg<f32>.real		f3	a register is a name, never a value: only a get reads it
-F02021	reg.f4	terminal	reg<f32>.real		f4	a register is a name, never a value: only a get reads it
-F02022	reg.f5	terminal	reg<f32>.real		f5	a register is a name, never a value: only a get reads it
-F02023	reg.f6	terminal	reg<f32>.real		f6	a register is a name, never a value: only a get reads it
-F02024	reg.f7	terminal	reg<f32>.real		f7	a register is a name, never a value: only a get reads it
-F02025	reg.f8	terminal	reg<f32>.real		f8	a register is a name, never a value: only a get reads it
-F02026	reg.f9	terminal	reg<f32>.real		f9	a register is a name, never a value: only a get reads it
-F02027	reg.f10	terminal	reg<f32>.real		f10	a register is a name, never a value: only a get reads it
-F02028	reg.f11	terminal	reg<f32>.real		f11	a register is a name, never a value: only a get reads it
-F02029	reg.f12	terminal	reg<f32>.real		f12	a register is a name, never a value: only a get reads it
-F02030	reg.f13	terminal	reg<f32>.real		f13	a register is a name, never a value: only a get reads it
-F02031	reg.f14	terminal	reg<f32>.real		f14	a register is a name, never a value: only a get reads it
-F02032	reg.f15	terminal	reg<f32>.real		f15	a register is a name, never a value: only a get reads it
-F02033	reg.f16	terminal	reg<f32>.real		f16	a register is a name, never a value: only a get reads it
-F02034	reg.f17	terminal	reg<f32>.real		f17	a register is a name, never a value: only a get reads it
-F02035	reg.f18	terminal	reg<f32>.real		f18	a register is a name, never a value: only a get reads it
-F02036	reg.f19	terminal	reg<f32>.real		f19	a register is a name, never a value: only a get reads it
-F02037	reg.f20	terminal	reg<f32>.real		f20	a register is a name, never a value: only a get reads it
-F02038	reg.f21	terminal	reg<f32>.real		f21	a register is a name, never a value: only a get reads it
-F02039	reg.f22	terminal	reg<f32>.real		f22	a register is a name, never a value: only a get reads it
-F02040	reg.f23	terminal	reg<f32>.real		f23	a register is a name, never a value: only a get reads it
-F02041	reg.f24	terminal	reg<f32>.real		f24	a register is a name, never a value: only a get reads it
-F02042	reg.f25	terminal	reg<f32>.real		f25	a register is a name, never a value: only a get reads it
-F02043	reg.f26	terminal	reg<f32>.real		f26	a register is a name, never a value: only a get reads it
-F02044	reg.f27	terminal	reg<f32>.real		f27	a register is a name, never a value: only a get reads it
-F02045	reg.f28	terminal	reg<f32>.real		f28	a register is a name, never a value: only a get reads it
-F02046	reg.f29	terminal	reg<f32>.real		f29	a register is a name, never a value: only a get reads it
-F02047	reg.f30	terminal	reg<f32>.real		f30	a register is a name, never a value: only a get reads it
-F02048	reg.f31	terminal	reg<f32>.real		f31	a register is a name, never a value: only a get reads it
-F02049	reg.f32	terminal	reg<f32>.real		f32	a register is a name, never a value: only a get reads it
-F02050	reg.f33	terminal	reg<f32>.real		f33	a register is a name, never a value: only a get reads it
-F02051	reg.f34	terminal	reg<f32>.real		f34	a register is a name, never a value: only a get reads it
-F02052	reg.f35	terminal	reg<f32>.real		f35	a register is a name, never a value: only a get reads it
-F02053	reg.f36	terminal	reg<f32>.real		f36	a register is a name, never a value: only a get reads it
-F02054	reg.f37	terminal	reg<f32>.real		f37	a register is a name, never a value: only a get reads it
-F02055	reg.f38	terminal	reg<f32>.real		f38	a register is a name, never a value: only a get reads it
-F02056	reg.f39	terminal	reg<f32>.real		f39	a register is a name, never a value: only a get reads it
-F02057	reg.f40	terminal	reg<f32>.real		f40	a register is a name, never a value: only a get reads it
-F02058	reg.f41	terminal	reg<f32>.real		f41	a register is a name, never a value: only a get reads it
-F02059	reg.f42	terminal	reg<f32>.real		f42	a register is a name, never a value: only a get reads it
-F02060	reg.f43	terminal	reg<f32>.real		f43	a register is a name, never a value: only a get reads it
-F02061	reg.f44	terminal	reg<f32>.real		f44	a register is a name, never a value: only a get reads it
-F02062	reg.f45	terminal	reg<f32>.real		f45	a register is a name, never a value: only a get reads it
-F02063	reg.f46	terminal	reg<f32>.real		f46	a register is a name, never a value: only a get reads it
-F02064	reg.f47	terminal	reg<f32>.real		f47	a register is a name, never a value: only a get reads it
-F02065	reg.f48	terminal	reg<f32>.real		f48	a register is a name, never a value: only a get reads it
-F02066	reg.f49	terminal	reg<f32>.real		f49	a register is a name, never a value: only a get reads it
-F02067	reg.f50	terminal	reg<f32>.real		f50	a register is a name, never a value: only a get reads it
-F02068	reg.f51	terminal	reg<f32>.real		f51	a register is a name, never a value: only a get reads it
-F02069	reg.f52	terminal	reg<f32>.real		f52	a register is a name, never a value: only a get reads it
-F02070	reg.f53	terminal	reg<f32>.real		f53	a register is a name, never a value: only a get reads it
-F02071	reg.f54	terminal	reg<f32>.real		f54	a register is a name, never a value: only a get reads it
-F02072	reg.f55	terminal	reg<f32>.real		f55	a register is a name, never a value: only a get reads it
-F02073	reg.f56	terminal	reg<f32>.real		f56	a register is a name, never a value: only a get reads it
-F02074	reg.f57	terminal	reg<f32>.real		f57	a register is a name, never a value: only a get reads it
-F02075	reg.f58	terminal	reg<f32>.real		f58	a register is a name, never a value: only a get reads it
-F02076	reg.f59	terminal	reg<f32>.real		f59	a register is a name, never a value: only a get reads it
-F02077	reg.f60	terminal	reg<f32>.real		f60	a register is a name, never a value: only a get reads it
-F02078	reg.f61	terminal	reg<f32>.real		f61	a register is a name, never a value: only a get reads it
-F02079	reg.f62	terminal	reg<f32>.real		f62	a register is a name, never a value: only a get reads it
-F02080	reg.f63	terminal	reg<f32>.real		f63	a register is a name, never a value: only a get reads it
+F02017	reg.rf0	terminal	reg<f32>.real		rf0	a register is a name, never a value: only a get reads it
+F02018	reg.rf1	terminal	reg<f32>.real		rf1	a register is a name, never a value: only a get reads it
+F02019	reg.rf2	terminal	reg<f32>.real		rf2	a register is a name, never a value: only a get reads it
+F02020	reg.rf3	terminal	reg<f32>.real		rf3	a register is a name, never a value: only a get reads it
+F02021	reg.rf4	terminal	reg<f32>.real		rf4	a register is a name, never a value: only a get reads it
+F02022	reg.rf5	terminal	reg<f32>.real		rf5	a register is a name, never a value: only a get reads it
+F02023	reg.rf6	terminal	reg<f32>.real		rf6	a register is a name, never a value: only a get reads it
+F02024	reg.rf7	terminal	reg<f32>.real		rf7	a register is a name, never a value: only a get reads it
+F02025	reg.rf8	terminal	reg<f32>.real		rf8	a register is a name, never a value: only a get reads it
+F02026	reg.rf9	terminal	reg<f32>.real		rf9	a register is a name, never a value: only a get reads it
+F02027	reg.rf10	terminal	reg<f32>.real		rf10	a register is a name, never a value: only a get reads it
+F02028	reg.rf11	terminal	reg<f32>.real		rf11	a register is a name, never a value: only a get reads it
+F02029	reg.rf12	terminal	reg<f32>.real		rf12	a register is a name, never a value: only a get reads it
+F02030	reg.rf13	terminal	reg<f32>.real		rf13	a register is a name, never a value: only a get reads it
+F02031	reg.rf14	terminal	reg<f32>.real		rf14	a register is a name, never a value: only a get reads it
+F02032	reg.rf15	terminal	reg<f32>.real		rf15	a register is a name, never a value: only a get reads it
+F02033	reg.rf16	terminal	reg<f32>.real		rf16	a register is a name, never a value: only a get reads it
+F02034	reg.rf17	terminal	reg<f32>.real		rf17	a register is a name, never a value: only a get reads it
+F02035	reg.rf18	terminal	reg<f32>.real		rf18	a register is a name, never a value: only a get reads it
+F02036	reg.rf19	terminal	reg<f32>.real		rf19	a register is a name, never a value: only a get reads it
+F02037	reg.rf20	terminal	reg<f32>.real		rf20	a register is a name, never a value: only a get reads it
+F02038	reg.rf21	terminal	reg<f32>.real		rf21	a register is a name, never a value: only a get reads it
+F02039	reg.rf22	terminal	reg<f32>.real		rf22	a register is a name, never a value: only a get reads it
+F02040	reg.rf23	terminal	reg<f32>.real		rf23	a register is a name, never a value: only a get reads it
+F02041	reg.rf24	terminal	reg<f32>.real		rf24	a register is a name, never a value: only a get reads it
+F02042	reg.rf25	terminal	reg<f32>.real		rf25	a register is a name, never a value: only a get reads it
+F02043	reg.rf26	terminal	reg<f32>.real		rf26	a register is a name, never a value: only a get reads it
+F02044	reg.rf27	terminal	reg<f32>.real		rf27	a register is a name, never a value: only a get reads it
+F02045	reg.rf28	terminal	reg<f32>.real		rf28	a register is a name, never a value: only a get reads it
+F02046	reg.rf29	terminal	reg<f32>.real		rf29	a register is a name, never a value: only a get reads it
+F02047	reg.rf30	terminal	reg<f32>.real		rf30	a register is a name, never a value: only a get reads it
+F02048	reg.rf31	terminal	reg<f32>.real		rf31	a register is a name, never a value: only a get reads it
+F02049	reg.rf32	terminal	reg<f32>.real		rf32	a register is a name, never a value: only a get reads it
+F02050	reg.rf33	terminal	reg<f32>.real		rf33	a register is a name, never a value: only a get reads it
+F02051	reg.rf34	terminal	reg<f32>.real		rf34	a register is a name, never a value: only a get reads it
+F02052	reg.rf35	terminal	reg<f32>.real		rf35	a register is a name, never a value: only a get reads it
+F02053	reg.rf36	terminal	reg<f32>.real		rf36	a register is a name, never a value: only a get reads it
+F02054	reg.rf37	terminal	reg<f32>.real		rf37	a register is a name, never a value: only a get reads it
+F02055	reg.rf38	terminal	reg<f32>.real		rf38	a register is a name, never a value: only a get reads it
+F02056	reg.rf39	terminal	reg<f32>.real		rf39	a register is a name, never a value: only a get reads it
+F02057	reg.rf40	terminal	reg<f32>.real		rf40	a register is a name, never a value: only a get reads it
+F02058	reg.rf41	terminal	reg<f32>.real		rf41	a register is a name, never a value: only a get reads it
+F02059	reg.rf42	terminal	reg<f32>.real		rf42	a register is a name, never a value: only a get reads it
+F02060	reg.rf43	terminal	reg<f32>.real		rf43	a register is a name, never a value: only a get reads it
+F02061	reg.rf44	terminal	reg<f32>.real		rf44	a register is a name, never a value: only a get reads it
+F02062	reg.rf45	terminal	reg<f32>.real		rf45	a register is a name, never a value: only a get reads it
+F02063	reg.rf46	terminal	reg<f32>.real		rf46	a register is a name, never a value: only a get reads it
+F02064	reg.rf47	terminal	reg<f32>.real		rf47	a register is a name, never a value: only a get reads it
+F02065	reg.rf48	terminal	reg<f32>.real		rf48	a register is a name, never a value: only a get reads it
+F02066	reg.rf49	terminal	reg<f32>.real		rf49	a register is a name, never a value: only a get reads it
+F02067	reg.rf50	terminal	reg<f32>.real		rf50	a register is a name, never a value: only a get reads it
+F02068	reg.rf51	terminal	reg<f32>.real		rf51	a register is a name, never a value: only a get reads it
+F02069	reg.rf52	terminal	reg<f32>.real		rf52	a register is a name, never a value: only a get reads it
+F02070	reg.rf53	terminal	reg<f32>.real		rf53	a register is a name, never a value: only a get reads it
+F02071	reg.rf54	terminal	reg<f32>.real		rf54	a register is a name, never a value: only a get reads it
+F02072	reg.rf55	terminal	reg<f32>.real		rf55	a register is a name, never a value: only a get reads it
+F02073	reg.rf56	terminal	reg<f32>.real		rf56	a register is a name, never a value: only a get reads it
+F02074	reg.rf57	terminal	reg<f32>.real		rf57	a register is a name, never a value: only a get reads it
+F02075	reg.rf58	terminal	reg<f32>.real		rf58	a register is a name, never a value: only a get reads it
+F02076	reg.rf59	terminal	reg<f32>.real		rf59	a register is a name, never a value: only a get reads it
+F02077	reg.rf60	terminal	reg<f32>.real		rf60	a register is a name, never a value: only a get reads it
+F02078	reg.rf61	terminal	reg<f32>.real		rf61	a register is a name, never a value: only a get reads it
+F02079	reg.rf62	terminal	reg<f32>.real		rf62	a register is a name, never a value: only a get reads it
+F02080	reg.rf63	terminal	reg<f32>.real		rf63	a register is a name, never a value: only a get reads it
 F02081	reg.get_f	function	f32.real	reg<f32>.real	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02082	reg.set_f_L0_f0	function	stmt.L0_f0	reg<f32>.real;f32.real	{0} = {1};	
 F02083	reg.set_f_L0_f1	function	stmt.L0_f1	reg<f32>.real;f32.real	{0} = {1};	
@@ -2134,70 +2134,70 @@ F02132	reg.set_f_W4_f2	function	stmt.W4_f2	reg<f32>.real;f32.realw	{0} = {1};
 F02133	reg.set_f_W5_f0	function	stmt.W5_f0	reg<f32>.real;f32.realw	{0} = {1};	
 F02134	reg.set_f_W5_f1	function	stmt.W5_f1	reg<f32>.real;f32.realw	{0} = {1};	
 F02135	reg.set_f_W5_f2	function	stmt.W5_f2	reg<f32>.real;f32.realw	{0} = {1};	
-F02136	reg.i0	terminal	reg<u32>.index		i0	a register is a name, never a value: only a get reads it
-F02137	reg.i1	terminal	reg<u32>.index		i1	a register is a name, never a value: only a get reads it
-F02138	reg.i2	terminal	reg<u32>.index		i2	a register is a name, never a value: only a get reads it
-F02139	reg.i3	terminal	reg<u32>.index		i3	a register is a name, never a value: only a get reads it
-F02140	reg.i4	terminal	reg<u32>.index		i4	a register is a name, never a value: only a get reads it
-F02141	reg.i5	terminal	reg<u32>.index		i5	a register is a name, never a value: only a get reads it
-F02142	reg.i6	terminal	reg<u32>.index		i6	a register is a name, never a value: only a get reads it
-F02143	reg.i7	terminal	reg<u32>.index		i7	a register is a name, never a value: only a get reads it
-F02144	reg.i8	terminal	reg<u32>.index		i8	a register is a name, never a value: only a get reads it
-F02145	reg.i9	terminal	reg<u32>.index		i9	a register is a name, never a value: only a get reads it
-F02146	reg.i10	terminal	reg<u32>.index		i10	a register is a name, never a value: only a get reads it
-F02147	reg.i11	terminal	reg<u32>.index		i11	a register is a name, never a value: only a get reads it
-F02148	reg.i12	terminal	reg<u32>.index		i12	a register is a name, never a value: only a get reads it
-F02149	reg.i13	terminal	reg<u32>.index		i13	a register is a name, never a value: only a get reads it
-F02150	reg.i14	terminal	reg<u32>.index		i14	a register is a name, never a value: only a get reads it
-F02151	reg.i15	terminal	reg<u32>.index		i15	a register is a name, never a value: only a get reads it
-F02152	reg.i16	terminal	reg<u32>.index		i16	a register is a name, never a value: only a get reads it
-F02153	reg.i17	terminal	reg<u32>.index		i17	a register is a name, never a value: only a get reads it
-F02154	reg.i18	terminal	reg<u32>.index		i18	a register is a name, never a value: only a get reads it
-F02155	reg.i19	terminal	reg<u32>.index		i19	a register is a name, never a value: only a get reads it
-F02156	reg.i20	terminal	reg<u32>.index		i20	a register is a name, never a value: only a get reads it
-F02157	reg.i21	terminal	reg<u32>.index		i21	a register is a name, never a value: only a get reads it
-F02158	reg.i22	terminal	reg<u32>.index		i22	a register is a name, never a value: only a get reads it
-F02159	reg.i23	terminal	reg<u32>.index		i23	a register is a name, never a value: only a get reads it
-F02160	reg.i24	terminal	reg<u32>.index		i24	a register is a name, never a value: only a get reads it
-F02161	reg.i25	terminal	reg<u32>.index		i25	a register is a name, never a value: only a get reads it
-F02162	reg.i26	terminal	reg<u32>.index		i26	a register is a name, never a value: only a get reads it
-F02163	reg.i27	terminal	reg<u32>.index		i27	a register is a name, never a value: only a get reads it
-F02164	reg.i28	terminal	reg<u32>.index		i28	a register is a name, never a value: only a get reads it
-F02165	reg.i29	terminal	reg<u32>.index		i29	a register is a name, never a value: only a get reads it
-F02166	reg.i30	terminal	reg<u32>.index		i30	a register is a name, never a value: only a get reads it
-F02167	reg.i31	terminal	reg<u32>.index		i31	a register is a name, never a value: only a get reads it
-F02168	reg.i32	terminal	reg<u32>.index		i32	a register is a name, never a value: only a get reads it
-F02169	reg.i33	terminal	reg<u32>.index		i33	a register is a name, never a value: only a get reads it
-F02170	reg.i34	terminal	reg<u32>.index		i34	a register is a name, never a value: only a get reads it
-F02171	reg.i35	terminal	reg<u32>.index		i35	a register is a name, never a value: only a get reads it
-F02172	reg.i36	terminal	reg<u32>.index		i36	a register is a name, never a value: only a get reads it
-F02173	reg.i37	terminal	reg<u32>.index		i37	a register is a name, never a value: only a get reads it
-F02174	reg.i38	terminal	reg<u32>.index		i38	a register is a name, never a value: only a get reads it
-F02175	reg.i39	terminal	reg<u32>.index		i39	a register is a name, never a value: only a get reads it
-F02176	reg.i40	terminal	reg<u32>.index		i40	a register is a name, never a value: only a get reads it
-F02177	reg.i41	terminal	reg<u32>.index		i41	a register is a name, never a value: only a get reads it
-F02178	reg.i42	terminal	reg<u32>.index		i42	a register is a name, never a value: only a get reads it
-F02179	reg.i43	terminal	reg<u32>.index		i43	a register is a name, never a value: only a get reads it
-F02180	reg.i44	terminal	reg<u32>.index		i44	a register is a name, never a value: only a get reads it
-F02181	reg.i45	terminal	reg<u32>.index		i45	a register is a name, never a value: only a get reads it
-F02182	reg.i46	terminal	reg<u32>.index		i46	a register is a name, never a value: only a get reads it
-F02183	reg.i47	terminal	reg<u32>.index		i47	a register is a name, never a value: only a get reads it
-F02184	reg.i48	terminal	reg<u32>.index		i48	a register is a name, never a value: only a get reads it
-F02185	reg.i49	terminal	reg<u32>.index		i49	a register is a name, never a value: only a get reads it
-F02186	reg.i50	terminal	reg<u32>.index		i50	a register is a name, never a value: only a get reads it
-F02187	reg.i51	terminal	reg<u32>.index		i51	a register is a name, never a value: only a get reads it
-F02188	reg.i52	terminal	reg<u32>.index		i52	a register is a name, never a value: only a get reads it
-F02189	reg.i53	terminal	reg<u32>.index		i53	a register is a name, never a value: only a get reads it
-F02190	reg.i54	terminal	reg<u32>.index		i54	a register is a name, never a value: only a get reads it
-F02191	reg.i55	terminal	reg<u32>.index		i55	a register is a name, never a value: only a get reads it
-F02192	reg.i56	terminal	reg<u32>.index		i56	a register is a name, never a value: only a get reads it
-F02193	reg.i57	terminal	reg<u32>.index		i57	a register is a name, never a value: only a get reads it
-F02194	reg.i58	terminal	reg<u32>.index		i58	a register is a name, never a value: only a get reads it
-F02195	reg.i59	terminal	reg<u32>.index		i59	a register is a name, never a value: only a get reads it
-F02196	reg.i60	terminal	reg<u32>.index		i60	a register is a name, never a value: only a get reads it
-F02197	reg.i61	terminal	reg<u32>.index		i61	a register is a name, never a value: only a get reads it
-F02198	reg.i62	terminal	reg<u32>.index		i62	a register is a name, never a value: only a get reads it
-F02199	reg.i63	terminal	reg<u32>.index		i63	a register is a name, never a value: only a get reads it
+F02136	reg.ru0	terminal	reg<u32>.index		ru0	a register is a name, never a value: only a get reads it
+F02137	reg.ru1	terminal	reg<u32>.index		ru1	a register is a name, never a value: only a get reads it
+F02138	reg.ru2	terminal	reg<u32>.index		ru2	a register is a name, never a value: only a get reads it
+F02139	reg.ru3	terminal	reg<u32>.index		ru3	a register is a name, never a value: only a get reads it
+F02140	reg.ru4	terminal	reg<u32>.index		ru4	a register is a name, never a value: only a get reads it
+F02141	reg.ru5	terminal	reg<u32>.index		ru5	a register is a name, never a value: only a get reads it
+F02142	reg.ru6	terminal	reg<u32>.index		ru6	a register is a name, never a value: only a get reads it
+F02143	reg.ru7	terminal	reg<u32>.index		ru7	a register is a name, never a value: only a get reads it
+F02144	reg.ru8	terminal	reg<u32>.index		ru8	a register is a name, never a value: only a get reads it
+F02145	reg.ru9	terminal	reg<u32>.index		ru9	a register is a name, never a value: only a get reads it
+F02146	reg.ru10	terminal	reg<u32>.index		ru10	a register is a name, never a value: only a get reads it
+F02147	reg.ru11	terminal	reg<u32>.index		ru11	a register is a name, never a value: only a get reads it
+F02148	reg.ru12	terminal	reg<u32>.index		ru12	a register is a name, never a value: only a get reads it
+F02149	reg.ru13	terminal	reg<u32>.index		ru13	a register is a name, never a value: only a get reads it
+F02150	reg.ru14	terminal	reg<u32>.index		ru14	a register is a name, never a value: only a get reads it
+F02151	reg.ru15	terminal	reg<u32>.index		ru15	a register is a name, never a value: only a get reads it
+F02152	reg.ru16	terminal	reg<u32>.index		ru16	a register is a name, never a value: only a get reads it
+F02153	reg.ru17	terminal	reg<u32>.index		ru17	a register is a name, never a value: only a get reads it
+F02154	reg.ru18	terminal	reg<u32>.index		ru18	a register is a name, never a value: only a get reads it
+F02155	reg.ru19	terminal	reg<u32>.index		ru19	a register is a name, never a value: only a get reads it
+F02156	reg.ru20	terminal	reg<u32>.index		ru20	a register is a name, never a value: only a get reads it
+F02157	reg.ru21	terminal	reg<u32>.index		ru21	a register is a name, never a value: only a get reads it
+F02158	reg.ru22	terminal	reg<u32>.index		ru22	a register is a name, never a value: only a get reads it
+F02159	reg.ru23	terminal	reg<u32>.index		ru23	a register is a name, never a value: only a get reads it
+F02160	reg.ru24	terminal	reg<u32>.index		ru24	a register is a name, never a value: only a get reads it
+F02161	reg.ru25	terminal	reg<u32>.index		ru25	a register is a name, never a value: only a get reads it
+F02162	reg.ru26	terminal	reg<u32>.index		ru26	a register is a name, never a value: only a get reads it
+F02163	reg.ru27	terminal	reg<u32>.index		ru27	a register is a name, never a value: only a get reads it
+F02164	reg.ru28	terminal	reg<u32>.index		ru28	a register is a name, never a value: only a get reads it
+F02165	reg.ru29	terminal	reg<u32>.index		ru29	a register is a name, never a value: only a get reads it
+F02166	reg.ru30	terminal	reg<u32>.index		ru30	a register is a name, never a value: only a get reads it
+F02167	reg.ru31	terminal	reg<u32>.index		ru31	a register is a name, never a value: only a get reads it
+F02168	reg.ru32	terminal	reg<u32>.index		ru32	a register is a name, never a value: only a get reads it
+F02169	reg.ru33	terminal	reg<u32>.index		ru33	a register is a name, never a value: only a get reads it
+F02170	reg.ru34	terminal	reg<u32>.index		ru34	a register is a name, never a value: only a get reads it
+F02171	reg.ru35	terminal	reg<u32>.index		ru35	a register is a name, never a value: only a get reads it
+F02172	reg.ru36	terminal	reg<u32>.index		ru36	a register is a name, never a value: only a get reads it
+F02173	reg.ru37	terminal	reg<u32>.index		ru37	a register is a name, never a value: only a get reads it
+F02174	reg.ru38	terminal	reg<u32>.index		ru38	a register is a name, never a value: only a get reads it
+F02175	reg.ru39	terminal	reg<u32>.index		ru39	a register is a name, never a value: only a get reads it
+F02176	reg.ru40	terminal	reg<u32>.index		ru40	a register is a name, never a value: only a get reads it
+F02177	reg.ru41	terminal	reg<u32>.index		ru41	a register is a name, never a value: only a get reads it
+F02178	reg.ru42	terminal	reg<u32>.index		ru42	a register is a name, never a value: only a get reads it
+F02179	reg.ru43	terminal	reg<u32>.index		ru43	a register is a name, never a value: only a get reads it
+F02180	reg.ru44	terminal	reg<u32>.index		ru44	a register is a name, never a value: only a get reads it
+F02181	reg.ru45	terminal	reg<u32>.index		ru45	a register is a name, never a value: only a get reads it
+F02182	reg.ru46	terminal	reg<u32>.index		ru46	a register is a name, never a value: only a get reads it
+F02183	reg.ru47	terminal	reg<u32>.index		ru47	a register is a name, never a value: only a get reads it
+F02184	reg.ru48	terminal	reg<u32>.index		ru48	a register is a name, never a value: only a get reads it
+F02185	reg.ru49	terminal	reg<u32>.index		ru49	a register is a name, never a value: only a get reads it
+F02186	reg.ru50	terminal	reg<u32>.index		ru50	a register is a name, never a value: only a get reads it
+F02187	reg.ru51	terminal	reg<u32>.index		ru51	a register is a name, never a value: only a get reads it
+F02188	reg.ru52	terminal	reg<u32>.index		ru52	a register is a name, never a value: only a get reads it
+F02189	reg.ru53	terminal	reg<u32>.index		ru53	a register is a name, never a value: only a get reads it
+F02190	reg.ru54	terminal	reg<u32>.index		ru54	a register is a name, never a value: only a get reads it
+F02191	reg.ru55	terminal	reg<u32>.index		ru55	a register is a name, never a value: only a get reads it
+F02192	reg.ru56	terminal	reg<u32>.index		ru56	a register is a name, never a value: only a get reads it
+F02193	reg.ru57	terminal	reg<u32>.index		ru57	a register is a name, never a value: only a get reads it
+F02194	reg.ru58	terminal	reg<u32>.index		ru58	a register is a name, never a value: only a get reads it
+F02195	reg.ru59	terminal	reg<u32>.index		ru59	a register is a name, never a value: only a get reads it
+F02196	reg.ru60	terminal	reg<u32>.index		ru60	a register is a name, never a value: only a get reads it
+F02197	reg.ru61	terminal	reg<u32>.index		ru61	a register is a name, never a value: only a get reads it
+F02198	reg.ru62	terminal	reg<u32>.index		ru62	a register is a name, never a value: only a get reads it
+F02199	reg.ru63	terminal	reg<u32>.index		ru63	a register is a name, never a value: only a get reads it
 F02200	reg.get_i	function	u32.index	reg<u32>.index	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02201	reg.set_i_L0_f0	function	stmt.L0_f0	reg<u32>.index;u32.index	{0} = {1};	
 F02202	reg.set_i_L0_f1	function	stmt.L0_f1	reg<u32>.index;u32.index	{0} = {1};	
@@ -2253,22 +2253,22 @@ F02251	reg.set_i_W4_f2	function	stmt.W4_f2	reg<u32>.index;u32.indexw	{0} = {1};
 F02252	reg.set_i_W5_f0	function	stmt.W5_f0	reg<u32>.index;u32.indexw	{0} = {1};	
 F02253	reg.set_i_W5_f1	function	stmt.W5_f1	reg<u32>.index;u32.indexw	{0} = {1};	
 F02254	reg.set_i_W5_f2	function	stmt.W5_f2	reg<u32>.index;u32.indexw	{0} = {1};	
-F02255	reg.b0	terminal	reg<bool>.flag		b0	a register is a name, never a value: only a get reads it
-F02256	reg.b1	terminal	reg<bool>.flag		b1	a register is a name, never a value: only a get reads it
-F02257	reg.b2	terminal	reg<bool>.flag		b2	a register is a name, never a value: only a get reads it
-F02258	reg.b3	terminal	reg<bool>.flag		b3	a register is a name, never a value: only a get reads it
-F02259	reg.b4	terminal	reg<bool>.flag		b4	a register is a name, never a value: only a get reads it
-F02260	reg.b5	terminal	reg<bool>.flag		b5	a register is a name, never a value: only a get reads it
-F02261	reg.b6	terminal	reg<bool>.flag		b6	a register is a name, never a value: only a get reads it
-F02262	reg.b7	terminal	reg<bool>.flag		b7	a register is a name, never a value: only a get reads it
-F02263	reg.b8	terminal	reg<bool>.flag		b8	a register is a name, never a value: only a get reads it
-F02264	reg.b9	terminal	reg<bool>.flag		b9	a register is a name, never a value: only a get reads it
-F02265	reg.b10	terminal	reg<bool>.flag		b10	a register is a name, never a value: only a get reads it
-F02266	reg.b11	terminal	reg<bool>.flag		b11	a register is a name, never a value: only a get reads it
-F02267	reg.b12	terminal	reg<bool>.flag		b12	a register is a name, never a value: only a get reads it
-F02268	reg.b13	terminal	reg<bool>.flag		b13	a register is a name, never a value: only a get reads it
-F02269	reg.b14	terminal	reg<bool>.flag		b14	a register is a name, never a value: only a get reads it
-F02270	reg.b15	terminal	reg<bool>.flag		b15	a register is a name, never a value: only a get reads it
+F02255	reg.rb0	terminal	reg<bool>.flag		rb0	a register is a name, never a value: only a get reads it
+F02256	reg.rb1	terminal	reg<bool>.flag		rb1	a register is a name, never a value: only a get reads it
+F02257	reg.rb2	terminal	reg<bool>.flag		rb2	a register is a name, never a value: only a get reads it
+F02258	reg.rb3	terminal	reg<bool>.flag		rb3	a register is a name, never a value: only a get reads it
+F02259	reg.rb4	terminal	reg<bool>.flag		rb4	a register is a name, never a value: only a get reads it
+F02260	reg.rb5	terminal	reg<bool>.flag		rb5	a register is a name, never a value: only a get reads it
+F02261	reg.rb6	terminal	reg<bool>.flag		rb6	a register is a name, never a value: only a get reads it
+F02262	reg.rb7	terminal	reg<bool>.flag		rb7	a register is a name, never a value: only a get reads it
+F02263	reg.rb8	terminal	reg<bool>.flag		rb8	a register is a name, never a value: only a get reads it
+F02264	reg.rb9	terminal	reg<bool>.flag		rb9	a register is a name, never a value: only a get reads it
+F02265	reg.rb10	terminal	reg<bool>.flag		rb10	a register is a name, never a value: only a get reads it
+F02266	reg.rb11	terminal	reg<bool>.flag		rb11	a register is a name, never a value: only a get reads it
+F02267	reg.rb12	terminal	reg<bool>.flag		rb12	a register is a name, never a value: only a get reads it
+F02268	reg.rb13	terminal	reg<bool>.flag		rb13	a register is a name, never a value: only a get reads it
+F02269	reg.rb14	terminal	reg<bool>.flag		rb14	a register is a name, never a value: only a get reads it
+F02270	reg.rb15	terminal	reg<bool>.flag		rb15	a register is a name, never a value: only a get reads it
 F02271	reg.get_b	function	bool.flag	reg<bool>.flag	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02272	reg.set_b_L0_f0	function	stmt.L0_f0	reg<bool>.flag;bool.flag	{0} = {1};	
 F02273	reg.set_b_L0_f1	function	stmt.L0_f1	reg<bool>.flag;bool.flag	{0} = {1};	
@@ -2395,22 +2395,22 @@ F02393	reg.set_n_W4_f2	function	stmt.W4_f2	reg<i32>.int;i32.intw	{0} = {1};
 F02394	reg.set_n_W5_f0	function	stmt.W5_f0	reg<i32>.int;i32.intw	{0} = {1};	
 F02395	reg.set_n_W5_f1	function	stmt.W5_f1	reg<i32>.int;i32.intw	{0} = {1};	
 F02396	reg.set_n_W5_f2	function	stmt.W5_f2	reg<i32>.int;i32.intw	{0} = {1};	
-F02397	reg.h0	terminal	reg<f16>.real		h0	a register is a name, never a value: only a get reads it
-F02398	reg.h1	terminal	reg<f16>.real		h1	a register is a name, never a value: only a get reads it
-F02399	reg.h2	terminal	reg<f16>.real		h2	a register is a name, never a value: only a get reads it
-F02400	reg.h3	terminal	reg<f16>.real		h3	a register is a name, never a value: only a get reads it
-F02401	reg.h4	terminal	reg<f16>.real		h4	a register is a name, never a value: only a get reads it
-F02402	reg.h5	terminal	reg<f16>.real		h5	a register is a name, never a value: only a get reads it
-F02403	reg.h6	terminal	reg<f16>.real		h6	a register is a name, never a value: only a get reads it
-F02404	reg.h7	terminal	reg<f16>.real		h7	a register is a name, never a value: only a get reads it
-F02405	reg.h8	terminal	reg<f16>.real		h8	a register is a name, never a value: only a get reads it
-F02406	reg.h9	terminal	reg<f16>.real		h9	a register is a name, never a value: only a get reads it
-F02407	reg.h10	terminal	reg<f16>.real		h10	a register is a name, never a value: only a get reads it
-F02408	reg.h11	terminal	reg<f16>.real		h11	a register is a name, never a value: only a get reads it
-F02409	reg.h12	terminal	reg<f16>.real		h12	a register is a name, never a value: only a get reads it
-F02410	reg.h13	terminal	reg<f16>.real		h13	a register is a name, never a value: only a get reads it
-F02411	reg.h14	terminal	reg<f16>.real		h14	a register is a name, never a value: only a get reads it
-F02412	reg.h15	terminal	reg<f16>.real		h15	a register is a name, never a value: only a get reads it
+F02397	reg.rh0	terminal	reg<f16>.real		rh0	a register is a name, never a value: only a get reads it
+F02398	reg.rh1	terminal	reg<f16>.real		rh1	a register is a name, never a value: only a get reads it
+F02399	reg.rh2	terminal	reg<f16>.real		rh2	a register is a name, never a value: only a get reads it
+F02400	reg.rh3	terminal	reg<f16>.real		rh3	a register is a name, never a value: only a get reads it
+F02401	reg.rh4	terminal	reg<f16>.real		rh4	a register is a name, never a value: only a get reads it
+F02402	reg.rh5	terminal	reg<f16>.real		rh5	a register is a name, never a value: only a get reads it
+F02403	reg.rh6	terminal	reg<f16>.real		rh6	a register is a name, never a value: only a get reads it
+F02404	reg.rh7	terminal	reg<f16>.real		rh7	a register is a name, never a value: only a get reads it
+F02405	reg.rh8	terminal	reg<f16>.real		rh8	a register is a name, never a value: only a get reads it
+F02406	reg.rh9	terminal	reg<f16>.real		rh9	a register is a name, never a value: only a get reads it
+F02407	reg.rh10	terminal	reg<f16>.real		rh10	a register is a name, never a value: only a get reads it
+F02408	reg.rh11	terminal	reg<f16>.real		rh11	a register is a name, never a value: only a get reads it
+F02409	reg.rh12	terminal	reg<f16>.real		rh12	a register is a name, never a value: only a get reads it
+F02410	reg.rh13	terminal	reg<f16>.real		rh13	a register is a name, never a value: only a get reads it
+F02411	reg.rh14	terminal	reg<f16>.real		rh14	a register is a name, never a value: only a get reads it
+F02412	reg.rh15	terminal	reg<f16>.real		rh15	a register is a name, never a value: only a get reads it
 F02413	reg.get_h	function	f16.real	reg<f16>.real	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02414	reg.set_h_L0_f0	function	stmt.L0_f0	reg<f16>.real;f16.real	{0} = {1};	
 F02415	reg.set_h_L0_f1	function	stmt.L0_f1	reg<f16>.real;f16.real	{0} = {1};	
@@ -2860,14 +2860,14 @@ F02858	reg.set_v3_lane_W4_f2	function	stmt.W4_f2	reg<vec3<f32>>.real;u32.indexw;
 F02859	reg.set_v3_lane_W5_f0	function	stmt.W5_f0	reg<vec3<f32>>.real;u32.indexw;f32.realw	{0}[({1}) % 3u] = {2};	
 F02860	reg.set_v3_lane_W5_f1	function	stmt.W5_f1	reg<vec3<f32>>.real;u32.indexw;f32.realw	{0}[({1}) % 3u] = {2};	
 F02861	reg.set_v3_lane_W5_f2	function	stmt.W5_f2	reg<vec3<f32>>.real;u32.indexw;f32.realw	{0}[({1}) % 3u] = {2};	
-F02862	reg.ru2_0	terminal	reg<vec2<u32>>.index		ru2_0	a register is a name, never a value: only a get reads it
-F02863	reg.ru2_1	terminal	reg<vec2<u32>>.index		ru2_1	a register is a name, never a value: only a get reads it
-F02864	reg.ru2_2	terminal	reg<vec2<u32>>.index		ru2_2	a register is a name, never a value: only a get reads it
-F02865	reg.ru2_3	terminal	reg<vec2<u32>>.index		ru2_3	a register is a name, never a value: only a get reads it
-F02866	reg.ru2_4	terminal	reg<vec2<u32>>.index		ru2_4	a register is a name, never a value: only a get reads it
-F02867	reg.ru2_5	terminal	reg<vec2<u32>>.index		ru2_5	a register is a name, never a value: only a get reads it
-F02868	reg.ru2_6	terminal	reg<vec2<u32>>.index		ru2_6	a register is a name, never a value: only a get reads it
-F02869	reg.ru2_7	terminal	reg<vec2<u32>>.index		ru2_7	a register is a name, never a value: only a get reads it
+F02862	reg.rvu2_0	terminal	reg<vec2<u32>>.index		rvu2_0	a register is a name, never a value: only a get reads it
+F02863	reg.rvu2_1	terminal	reg<vec2<u32>>.index		rvu2_1	a register is a name, never a value: only a get reads it
+F02864	reg.rvu2_2	terminal	reg<vec2<u32>>.index		rvu2_2	a register is a name, never a value: only a get reads it
+F02865	reg.rvu2_3	terminal	reg<vec2<u32>>.index		rvu2_3	a register is a name, never a value: only a get reads it
+F02866	reg.rvu2_4	terminal	reg<vec2<u32>>.index		rvu2_4	a register is a name, never a value: only a get reads it
+F02867	reg.rvu2_5	terminal	reg<vec2<u32>>.index		rvu2_5	a register is a name, never a value: only a get reads it
+F02868	reg.rvu2_6	terminal	reg<vec2<u32>>.index		rvu2_6	a register is a name, never a value: only a get reads it
+F02869	reg.rvu2_7	terminal	reg<vec2<u32>>.index		rvu2_7	a register is a name, never a value: only a get reads it
 F02870	reg.get_uv2	function	vec2<u32>.index	reg<vec2<u32>>.index	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02871	reg.set_uv2_L0_f0	function	stmt.L0_f0	reg<vec2<u32>>.index;vec2<u32>.index	{0} = {1};	
 F02872	reg.set_uv2_L0_f1	function	stmt.L0_f1	reg<vec2<u32>>.index;vec2<u32>.index	{0} = {1};	
@@ -2978,14 +2978,14 @@ F02976	reg.set_uv2_lane_W4_f2	function	stmt.W4_f2	reg<vec2<u32>>.index;u32.index
 F02977	reg.set_uv2_lane_W5_f0	function	stmt.W5_f0	reg<vec2<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 1u] = {2};	
 F02978	reg.set_uv2_lane_W5_f1	function	stmt.W5_f1	reg<vec2<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 1u] = {2};	
 F02979	reg.set_uv2_lane_W5_f2	function	stmt.W5_f2	reg<vec2<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 1u] = {2};	
-F02980	reg.ru3_0	terminal	reg<vec3<u32>>.index		ru3_0	a register is a name, never a value: only a get reads it
-F02981	reg.ru3_1	terminal	reg<vec3<u32>>.index		ru3_1	a register is a name, never a value: only a get reads it
-F02982	reg.ru3_2	terminal	reg<vec3<u32>>.index		ru3_2	a register is a name, never a value: only a get reads it
-F02983	reg.ru3_3	terminal	reg<vec3<u32>>.index		ru3_3	a register is a name, never a value: only a get reads it
-F02984	reg.ru3_4	terminal	reg<vec3<u32>>.index		ru3_4	a register is a name, never a value: only a get reads it
-F02985	reg.ru3_5	terminal	reg<vec3<u32>>.index		ru3_5	a register is a name, never a value: only a get reads it
-F02986	reg.ru3_6	terminal	reg<vec3<u32>>.index		ru3_6	a register is a name, never a value: only a get reads it
-F02987	reg.ru3_7	terminal	reg<vec3<u32>>.index		ru3_7	a register is a name, never a value: only a get reads it
+F02980	reg.rvu3_0	terminal	reg<vec3<u32>>.index		rvu3_0	a register is a name, never a value: only a get reads it
+F02981	reg.rvu3_1	terminal	reg<vec3<u32>>.index		rvu3_1	a register is a name, never a value: only a get reads it
+F02982	reg.rvu3_2	terminal	reg<vec3<u32>>.index		rvu3_2	a register is a name, never a value: only a get reads it
+F02983	reg.rvu3_3	terminal	reg<vec3<u32>>.index		rvu3_3	a register is a name, never a value: only a get reads it
+F02984	reg.rvu3_4	terminal	reg<vec3<u32>>.index		rvu3_4	a register is a name, never a value: only a get reads it
+F02985	reg.rvu3_5	terminal	reg<vec3<u32>>.index		rvu3_5	a register is a name, never a value: only a get reads it
+F02986	reg.rvu3_6	terminal	reg<vec3<u32>>.index		rvu3_6	a register is a name, never a value: only a get reads it
+F02987	reg.rvu3_7	terminal	reg<vec3<u32>>.index		rvu3_7	a register is a name, never a value: only a get reads it
 F02988	reg.get_uv3	function	vec3<u32>.index	reg<vec3<u32>>.index	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02989	reg.set_uv3_L0_f0	function	stmt.L0_f0	reg<vec3<u32>>.index;vec3<u32>.index	{0} = {1};	
 F02990	reg.set_uv3_L0_f1	function	stmt.L0_f1	reg<vec3<u32>>.index;vec3<u32>.index	{0} = {1};	
@@ -3096,14 +3096,14 @@ F03094	reg.set_uv3_lane_W4_f2	function	stmt.W4_f2	reg<vec3<u32>>.index;u32.index
 F03095	reg.set_uv3_lane_W5_f0	function	stmt.W5_f0	reg<vec3<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) % 3u] = {2};	
 F03096	reg.set_uv3_lane_W5_f1	function	stmt.W5_f1	reg<vec3<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) % 3u] = {2};	
 F03097	reg.set_uv3_lane_W5_f2	function	stmt.W5_f2	reg<vec3<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) % 3u] = {2};	
-F03098	reg.ru4_0	terminal	reg<vec4<u32>>.index		ru4_0	a register is a name, never a value: only a get reads it
-F03099	reg.ru4_1	terminal	reg<vec4<u32>>.index		ru4_1	a register is a name, never a value: only a get reads it
-F03100	reg.ru4_2	terminal	reg<vec4<u32>>.index		ru4_2	a register is a name, never a value: only a get reads it
-F03101	reg.ru4_3	terminal	reg<vec4<u32>>.index		ru4_3	a register is a name, never a value: only a get reads it
-F03102	reg.ru4_4	terminal	reg<vec4<u32>>.index		ru4_4	a register is a name, never a value: only a get reads it
-F03103	reg.ru4_5	terminal	reg<vec4<u32>>.index		ru4_5	a register is a name, never a value: only a get reads it
-F03104	reg.ru4_6	terminal	reg<vec4<u32>>.index		ru4_6	a register is a name, never a value: only a get reads it
-F03105	reg.ru4_7	terminal	reg<vec4<u32>>.index		ru4_7	a register is a name, never a value: only a get reads it
+F03098	reg.rvu4_0	terminal	reg<vec4<u32>>.index		rvu4_0	a register is a name, never a value: only a get reads it
+F03099	reg.rvu4_1	terminal	reg<vec4<u32>>.index		rvu4_1	a register is a name, never a value: only a get reads it
+F03100	reg.rvu4_2	terminal	reg<vec4<u32>>.index		rvu4_2	a register is a name, never a value: only a get reads it
+F03101	reg.rvu4_3	terminal	reg<vec4<u32>>.index		rvu4_3	a register is a name, never a value: only a get reads it
+F03102	reg.rvu4_4	terminal	reg<vec4<u32>>.index		rvu4_4	a register is a name, never a value: only a get reads it
+F03103	reg.rvu4_5	terminal	reg<vec4<u32>>.index		rvu4_5	a register is a name, never a value: only a get reads it
+F03104	reg.rvu4_6	terminal	reg<vec4<u32>>.index		rvu4_6	a register is a name, never a value: only a get reads it
+F03105	reg.rvu4_7	terminal	reg<vec4<u32>>.index		rvu4_7	a register is a name, never a value: only a get reads it
 F03106	reg.get_uv4	function	vec4<u32>.index	reg<vec4<u32>>.index	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03107	reg.set_uv4_L0_f0	function	stmt.L0_f0	reg<vec4<u32>>.index;vec4<u32>.index	{0} = {1};	
 F03108	reg.set_uv4_L0_f1	function	stmt.L0_f1	reg<vec4<u32>>.index;vec4<u32>.index	{0} = {1};	
@@ -3214,14 +3214,14 @@ F03212	reg.set_uv4_lane_W4_f2	function	stmt.W4_f2	reg<vec4<u32>>.index;u32.index
 F03213	reg.set_uv4_lane_W5_f0	function	stmt.W5_f0	reg<vec4<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 3u] = {2};	
 F03214	reg.set_uv4_lane_W5_f1	function	stmt.W5_f1	reg<vec4<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 3u] = {2};	
 F03215	reg.set_uv4_lane_W5_f2	function	stmt.W5_f2	reg<vec4<u32>>.index;u32.indexw;u32.indexw	{0}[({1}) & 3u] = {2};	
-F03216	reg.ri2_0	terminal	reg<vec2<i32>>.int		ri2_0	a register is a name, never a value: only a get reads it
-F03217	reg.ri2_1	terminal	reg<vec2<i32>>.int		ri2_1	a register is a name, never a value: only a get reads it
-F03218	reg.ri2_2	terminal	reg<vec2<i32>>.int		ri2_2	a register is a name, never a value: only a get reads it
-F03219	reg.ri2_3	terminal	reg<vec2<i32>>.int		ri2_3	a register is a name, never a value: only a get reads it
-F03220	reg.ri2_4	terminal	reg<vec2<i32>>.int		ri2_4	a register is a name, never a value: only a get reads it
-F03221	reg.ri2_5	terminal	reg<vec2<i32>>.int		ri2_5	a register is a name, never a value: only a get reads it
-F03222	reg.ri2_6	terminal	reg<vec2<i32>>.int		ri2_6	a register is a name, never a value: only a get reads it
-F03223	reg.ri2_7	terminal	reg<vec2<i32>>.int		ri2_7	a register is a name, never a value: only a get reads it
+F03216	reg.rvi2_0	terminal	reg<vec2<i32>>.int		rvi2_0	a register is a name, never a value: only a get reads it
+F03217	reg.rvi2_1	terminal	reg<vec2<i32>>.int		rvi2_1	a register is a name, never a value: only a get reads it
+F03218	reg.rvi2_2	terminal	reg<vec2<i32>>.int		rvi2_2	a register is a name, never a value: only a get reads it
+F03219	reg.rvi2_3	terminal	reg<vec2<i32>>.int		rvi2_3	a register is a name, never a value: only a get reads it
+F03220	reg.rvi2_4	terminal	reg<vec2<i32>>.int		rvi2_4	a register is a name, never a value: only a get reads it
+F03221	reg.rvi2_5	terminal	reg<vec2<i32>>.int		rvi2_5	a register is a name, never a value: only a get reads it
+F03222	reg.rvi2_6	terminal	reg<vec2<i32>>.int		rvi2_6	a register is a name, never a value: only a get reads it
+F03223	reg.rvi2_7	terminal	reg<vec2<i32>>.int		rvi2_7	a register is a name, never a value: only a get reads it
 F03224	reg.get_iv2	function	vec2<i32>.int	reg<vec2<i32>>.int	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03225	reg.set_iv2_L0_f0	function	stmt.L0_f0	reg<vec2<i32>>.int;vec2<i32>.int	{0} = {1};	
 F03226	reg.set_iv2_L0_f1	function	stmt.L0_f1	reg<vec2<i32>>.int;vec2<i32>.int	{0} = {1};	
@@ -3332,14 +3332,14 @@ F03330	reg.set_iv2_lane_W4_f2	function	stmt.W4_f2	reg<vec2<i32>>.int;u32.indexw;
 F03331	reg.set_iv2_lane_W5_f0	function	stmt.W5_f0	reg<vec2<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 1u] = {2};	
 F03332	reg.set_iv2_lane_W5_f1	function	stmt.W5_f1	reg<vec2<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 1u] = {2};	
 F03333	reg.set_iv2_lane_W5_f2	function	stmt.W5_f2	reg<vec2<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 1u] = {2};	
-F03334	reg.ri3_0	terminal	reg<vec3<i32>>.int		ri3_0	a register is a name, never a value: only a get reads it
-F03335	reg.ri3_1	terminal	reg<vec3<i32>>.int		ri3_1	a register is a name, never a value: only a get reads it
-F03336	reg.ri3_2	terminal	reg<vec3<i32>>.int		ri3_2	a register is a name, never a value: only a get reads it
-F03337	reg.ri3_3	terminal	reg<vec3<i32>>.int		ri3_3	a register is a name, never a value: only a get reads it
-F03338	reg.ri3_4	terminal	reg<vec3<i32>>.int		ri3_4	a register is a name, never a value: only a get reads it
-F03339	reg.ri3_5	terminal	reg<vec3<i32>>.int		ri3_5	a register is a name, never a value: only a get reads it
-F03340	reg.ri3_6	terminal	reg<vec3<i32>>.int		ri3_6	a register is a name, never a value: only a get reads it
-F03341	reg.ri3_7	terminal	reg<vec3<i32>>.int		ri3_7	a register is a name, never a value: only a get reads it
+F03334	reg.rvi3_0	terminal	reg<vec3<i32>>.int		rvi3_0	a register is a name, never a value: only a get reads it
+F03335	reg.rvi3_1	terminal	reg<vec3<i32>>.int		rvi3_1	a register is a name, never a value: only a get reads it
+F03336	reg.rvi3_2	terminal	reg<vec3<i32>>.int		rvi3_2	a register is a name, never a value: only a get reads it
+F03337	reg.rvi3_3	terminal	reg<vec3<i32>>.int		rvi3_3	a register is a name, never a value: only a get reads it
+F03338	reg.rvi3_4	terminal	reg<vec3<i32>>.int		rvi3_4	a register is a name, never a value: only a get reads it
+F03339	reg.rvi3_5	terminal	reg<vec3<i32>>.int		rvi3_5	a register is a name, never a value: only a get reads it
+F03340	reg.rvi3_6	terminal	reg<vec3<i32>>.int		rvi3_6	a register is a name, never a value: only a get reads it
+F03341	reg.rvi3_7	terminal	reg<vec3<i32>>.int		rvi3_7	a register is a name, never a value: only a get reads it
 F03342	reg.get_iv3	function	vec3<i32>.int	reg<vec3<i32>>.int	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03343	reg.set_iv3_L0_f0	function	stmt.L0_f0	reg<vec3<i32>>.int;vec3<i32>.int	{0} = {1};	
 F03344	reg.set_iv3_L0_f1	function	stmt.L0_f1	reg<vec3<i32>>.int;vec3<i32>.int	{0} = {1};	
@@ -3450,14 +3450,14 @@ F03448	reg.set_iv3_lane_W4_f2	function	stmt.W4_f2	reg<vec3<i32>>.int;u32.indexw;
 F03449	reg.set_iv3_lane_W5_f0	function	stmt.W5_f0	reg<vec3<i32>>.int;u32.indexw;i32.intw	{0}[({1}) % 3u] = {2};	
 F03450	reg.set_iv3_lane_W5_f1	function	stmt.W5_f1	reg<vec3<i32>>.int;u32.indexw;i32.intw	{0}[({1}) % 3u] = {2};	
 F03451	reg.set_iv3_lane_W5_f2	function	stmt.W5_f2	reg<vec3<i32>>.int;u32.indexw;i32.intw	{0}[({1}) % 3u] = {2};	
-F03452	reg.ri4_0	terminal	reg<vec4<i32>>.int		ri4_0	a register is a name, never a value: only a get reads it
-F03453	reg.ri4_1	terminal	reg<vec4<i32>>.int		ri4_1	a register is a name, never a value: only a get reads it
-F03454	reg.ri4_2	terminal	reg<vec4<i32>>.int		ri4_2	a register is a name, never a value: only a get reads it
-F03455	reg.ri4_3	terminal	reg<vec4<i32>>.int		ri4_3	a register is a name, never a value: only a get reads it
-F03456	reg.ri4_4	terminal	reg<vec4<i32>>.int		ri4_4	a register is a name, never a value: only a get reads it
-F03457	reg.ri4_5	terminal	reg<vec4<i32>>.int		ri4_5	a register is a name, never a value: only a get reads it
-F03458	reg.ri4_6	terminal	reg<vec4<i32>>.int		ri4_6	a register is a name, never a value: only a get reads it
-F03459	reg.ri4_7	terminal	reg<vec4<i32>>.int		ri4_7	a register is a name, never a value: only a get reads it
+F03452	reg.rvi4_0	terminal	reg<vec4<i32>>.int		rvi4_0	a register is a name, never a value: only a get reads it
+F03453	reg.rvi4_1	terminal	reg<vec4<i32>>.int		rvi4_1	a register is a name, never a value: only a get reads it
+F03454	reg.rvi4_2	terminal	reg<vec4<i32>>.int		rvi4_2	a register is a name, never a value: only a get reads it
+F03455	reg.rvi4_3	terminal	reg<vec4<i32>>.int		rvi4_3	a register is a name, never a value: only a get reads it
+F03456	reg.rvi4_4	terminal	reg<vec4<i32>>.int		rvi4_4	a register is a name, never a value: only a get reads it
+F03457	reg.rvi4_5	terminal	reg<vec4<i32>>.int		rvi4_5	a register is a name, never a value: only a get reads it
+F03458	reg.rvi4_6	terminal	reg<vec4<i32>>.int		rvi4_6	a register is a name, never a value: only a get reads it
+F03459	reg.rvi4_7	terminal	reg<vec4<i32>>.int		rvi4_7	a register is a name, never a value: only a get reads it
 F03460	reg.get_iv4	function	vec4<i32>.int	reg<vec4<i32>>.int	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03461	reg.set_iv4_L0_f0	function	stmt.L0_f0	reg<vec4<i32>>.int;vec4<i32>.int	{0} = {1};	
 F03462	reg.set_iv4_L0_f1	function	stmt.L0_f1	reg<vec4<i32>>.int;vec4<i32>.int	{0} = {1};	
@@ -3568,14 +3568,14 @@ F03566	reg.set_iv4_lane_W4_f2	function	stmt.W4_f2	reg<vec4<i32>>.int;u32.indexw;
 F03567	reg.set_iv4_lane_W5_f0	function	stmt.W5_f0	reg<vec4<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 3u] = {2};	
 F03568	reg.set_iv4_lane_W5_f1	function	stmt.W5_f1	reg<vec4<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 3u] = {2};	
 F03569	reg.set_iv4_lane_W5_f2	function	stmt.W5_f2	reg<vec4<i32>>.int;u32.indexw;i32.intw	{0}[({1}) & 3u] = {2};	
-F03570	reg.rb2_0	terminal	reg<vec2<bool>>.flag		rb2_0	a register is a name, never a value: only a get reads it
-F03571	reg.rb2_1	terminal	reg<vec2<bool>>.flag		rb2_1	a register is a name, never a value: only a get reads it
-F03572	reg.rb2_2	terminal	reg<vec2<bool>>.flag		rb2_2	a register is a name, never a value: only a get reads it
-F03573	reg.rb2_3	terminal	reg<vec2<bool>>.flag		rb2_3	a register is a name, never a value: only a get reads it
-F03574	reg.rb2_4	terminal	reg<vec2<bool>>.flag		rb2_4	a register is a name, never a value: only a get reads it
-F03575	reg.rb2_5	terminal	reg<vec2<bool>>.flag		rb2_5	a register is a name, never a value: only a get reads it
-F03576	reg.rb2_6	terminal	reg<vec2<bool>>.flag		rb2_6	a register is a name, never a value: only a get reads it
-F03577	reg.rb2_7	terminal	reg<vec2<bool>>.flag		rb2_7	a register is a name, never a value: only a get reads it
+F03570	reg.rvb2_0	terminal	reg<vec2<bool>>.flag		rvb2_0	a register is a name, never a value: only a get reads it
+F03571	reg.rvb2_1	terminal	reg<vec2<bool>>.flag		rvb2_1	a register is a name, never a value: only a get reads it
+F03572	reg.rvb2_2	terminal	reg<vec2<bool>>.flag		rvb2_2	a register is a name, never a value: only a get reads it
+F03573	reg.rvb2_3	terminal	reg<vec2<bool>>.flag		rvb2_3	a register is a name, never a value: only a get reads it
+F03574	reg.rvb2_4	terminal	reg<vec2<bool>>.flag		rvb2_4	a register is a name, never a value: only a get reads it
+F03575	reg.rvb2_5	terminal	reg<vec2<bool>>.flag		rvb2_5	a register is a name, never a value: only a get reads it
+F03576	reg.rvb2_6	terminal	reg<vec2<bool>>.flag		rvb2_6	a register is a name, never a value: only a get reads it
+F03577	reg.rvb2_7	terminal	reg<vec2<bool>>.flag		rvb2_7	a register is a name, never a value: only a get reads it
 F03578	reg.get_bv2	function	vec2<bool>.flag	reg<vec2<bool>>.flag	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03579	reg.set_bv2_L0_f0	function	stmt.L0_f0	reg<vec2<bool>>.flag;vec2<bool>.flag	{0} = {1};	
 F03580	reg.set_bv2_L0_f1	function	stmt.L0_f1	reg<vec2<bool>>.flag;vec2<bool>.flag	{0} = {1};	
@@ -3686,14 +3686,14 @@ F03684	reg.set_bv2_lane_W4_f2	function	stmt.W4_f2	reg<vec2<bool>>.flag;u32.index
 F03685	reg.set_bv2_lane_W5_f0	function	stmt.W5_f0	reg<vec2<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 1u] = {2};	
 F03686	reg.set_bv2_lane_W5_f1	function	stmt.W5_f1	reg<vec2<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 1u] = {2};	
 F03687	reg.set_bv2_lane_W5_f2	function	stmt.W5_f2	reg<vec2<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 1u] = {2};	
-F03688	reg.rb3_0	terminal	reg<vec3<bool>>.flag		rb3_0	a register is a name, never a value: only a get reads it
-F03689	reg.rb3_1	terminal	reg<vec3<bool>>.flag		rb3_1	a register is a name, never a value: only a get reads it
-F03690	reg.rb3_2	terminal	reg<vec3<bool>>.flag		rb3_2	a register is a name, never a value: only a get reads it
-F03691	reg.rb3_3	terminal	reg<vec3<bool>>.flag		rb3_3	a register is a name, never a value: only a get reads it
-F03692	reg.rb3_4	terminal	reg<vec3<bool>>.flag		rb3_4	a register is a name, never a value: only a get reads it
-F03693	reg.rb3_5	terminal	reg<vec3<bool>>.flag		rb3_5	a register is a name, never a value: only a get reads it
-F03694	reg.rb3_6	terminal	reg<vec3<bool>>.flag		rb3_6	a register is a name, never a value: only a get reads it
-F03695	reg.rb3_7	terminal	reg<vec3<bool>>.flag		rb3_7	a register is a name, never a value: only a get reads it
+F03688	reg.rvb3_0	terminal	reg<vec3<bool>>.flag		rvb3_0	a register is a name, never a value: only a get reads it
+F03689	reg.rvb3_1	terminal	reg<vec3<bool>>.flag		rvb3_1	a register is a name, never a value: only a get reads it
+F03690	reg.rvb3_2	terminal	reg<vec3<bool>>.flag		rvb3_2	a register is a name, never a value: only a get reads it
+F03691	reg.rvb3_3	terminal	reg<vec3<bool>>.flag		rvb3_3	a register is a name, never a value: only a get reads it
+F03692	reg.rvb3_4	terminal	reg<vec3<bool>>.flag		rvb3_4	a register is a name, never a value: only a get reads it
+F03693	reg.rvb3_5	terminal	reg<vec3<bool>>.flag		rvb3_5	a register is a name, never a value: only a get reads it
+F03694	reg.rvb3_6	terminal	reg<vec3<bool>>.flag		rvb3_6	a register is a name, never a value: only a get reads it
+F03695	reg.rvb3_7	terminal	reg<vec3<bool>>.flag		rvb3_7	a register is a name, never a value: only a get reads it
 F03696	reg.get_bv3	function	vec3<bool>.flag	reg<vec3<bool>>.flag	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03697	reg.set_bv3_L0_f0	function	stmt.L0_f0	reg<vec3<bool>>.flag;vec3<bool>.flag	{0} = {1};	
 F03698	reg.set_bv3_L0_f1	function	stmt.L0_f1	reg<vec3<bool>>.flag;vec3<bool>.flag	{0} = {1};	
@@ -3804,14 +3804,14 @@ F03802	reg.set_bv3_lane_W4_f2	function	stmt.W4_f2	reg<vec3<bool>>.flag;u32.index
 F03803	reg.set_bv3_lane_W5_f0	function	stmt.W5_f0	reg<vec3<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) % 3u] = {2};	
 F03804	reg.set_bv3_lane_W5_f1	function	stmt.W5_f1	reg<vec3<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) % 3u] = {2};	
 F03805	reg.set_bv3_lane_W5_f2	function	stmt.W5_f2	reg<vec3<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) % 3u] = {2};	
-F03806	reg.rb4_0	terminal	reg<vec4<bool>>.flag		rb4_0	a register is a name, never a value: only a get reads it
-F03807	reg.rb4_1	terminal	reg<vec4<bool>>.flag		rb4_1	a register is a name, never a value: only a get reads it
-F03808	reg.rb4_2	terminal	reg<vec4<bool>>.flag		rb4_2	a register is a name, never a value: only a get reads it
-F03809	reg.rb4_3	terminal	reg<vec4<bool>>.flag		rb4_3	a register is a name, never a value: only a get reads it
-F03810	reg.rb4_4	terminal	reg<vec4<bool>>.flag		rb4_4	a register is a name, never a value: only a get reads it
-F03811	reg.rb4_5	terminal	reg<vec4<bool>>.flag		rb4_5	a register is a name, never a value: only a get reads it
-F03812	reg.rb4_6	terminal	reg<vec4<bool>>.flag		rb4_6	a register is a name, never a value: only a get reads it
-F03813	reg.rb4_7	terminal	reg<vec4<bool>>.flag		rb4_7	a register is a name, never a value: only a get reads it
+F03806	reg.rvb4_0	terminal	reg<vec4<bool>>.flag		rvb4_0	a register is a name, never a value: only a get reads it
+F03807	reg.rvb4_1	terminal	reg<vec4<bool>>.flag		rvb4_1	a register is a name, never a value: only a get reads it
+F03808	reg.rvb4_2	terminal	reg<vec4<bool>>.flag		rvb4_2	a register is a name, never a value: only a get reads it
+F03809	reg.rvb4_3	terminal	reg<vec4<bool>>.flag		rvb4_3	a register is a name, never a value: only a get reads it
+F03810	reg.rvb4_4	terminal	reg<vec4<bool>>.flag		rvb4_4	a register is a name, never a value: only a get reads it
+F03811	reg.rvb4_5	terminal	reg<vec4<bool>>.flag		rvb4_5	a register is a name, never a value: only a get reads it
+F03812	reg.rvb4_6	terminal	reg<vec4<bool>>.flag		rvb4_6	a register is a name, never a value: only a get reads it
+F03813	reg.rvb4_7	terminal	reg<vec4<bool>>.flag		rvb4_7	a register is a name, never a value: only a get reads it
 F03814	reg.get_bv4	function	vec4<bool>.flag	reg<vec4<bool>>.flag	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03815	reg.set_bv4_L0_f0	function	stmt.L0_f0	reg<vec4<bool>>.flag;vec4<bool>.flag	{0} = {1};	
 F03816	reg.set_bv4_L0_f1	function	stmt.L0_f1	reg<vec4<bool>>.flag;vec4<bool>.flag	{0} = {1};	
@@ -3922,14 +3922,14 @@ F03920	reg.set_bv4_lane_W4_f2	function	stmt.W4_f2	reg<vec4<bool>>.flag;u32.index
 F03921	reg.set_bv4_lane_W5_f0	function	stmt.W5_f0	reg<vec4<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 3u] = {2};	
 F03922	reg.set_bv4_lane_W5_f1	function	stmt.W5_f1	reg<vec4<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 3u] = {2};	
 F03923	reg.set_bv4_lane_W5_f2	function	stmt.W5_f2	reg<vec4<bool>>.flag;u32.indexw;bool.flagw	{0}[({1}) & 3u] = {2};	
-F03924	reg.rh2_0	terminal	reg<vec2<f16>>.real		rh2_0	a register is a name, never a value: only a get reads it
-F03925	reg.rh2_1	terminal	reg<vec2<f16>>.real		rh2_1	a register is a name, never a value: only a get reads it
-F03926	reg.rh2_2	terminal	reg<vec2<f16>>.real		rh2_2	a register is a name, never a value: only a get reads it
-F03927	reg.rh2_3	terminal	reg<vec2<f16>>.real		rh2_3	a register is a name, never a value: only a get reads it
-F03928	reg.rh2_4	terminal	reg<vec2<f16>>.real		rh2_4	a register is a name, never a value: only a get reads it
-F03929	reg.rh2_5	terminal	reg<vec2<f16>>.real		rh2_5	a register is a name, never a value: only a get reads it
-F03930	reg.rh2_6	terminal	reg<vec2<f16>>.real		rh2_6	a register is a name, never a value: only a get reads it
-F03931	reg.rh2_7	terminal	reg<vec2<f16>>.real		rh2_7	a register is a name, never a value: only a get reads it
+F03924	reg.rvh2_0	terminal	reg<vec2<f16>>.real		rvh2_0	a register is a name, never a value: only a get reads it
+F03925	reg.rvh2_1	terminal	reg<vec2<f16>>.real		rvh2_1	a register is a name, never a value: only a get reads it
+F03926	reg.rvh2_2	terminal	reg<vec2<f16>>.real		rvh2_2	a register is a name, never a value: only a get reads it
+F03927	reg.rvh2_3	terminal	reg<vec2<f16>>.real		rvh2_3	a register is a name, never a value: only a get reads it
+F03928	reg.rvh2_4	terminal	reg<vec2<f16>>.real		rvh2_4	a register is a name, never a value: only a get reads it
+F03929	reg.rvh2_5	terminal	reg<vec2<f16>>.real		rvh2_5	a register is a name, never a value: only a get reads it
+F03930	reg.rvh2_6	terminal	reg<vec2<f16>>.real		rvh2_6	a register is a name, never a value: only a get reads it
+F03931	reg.rvh2_7	terminal	reg<vec2<f16>>.real		rvh2_7	a register is a name, never a value: only a get reads it
 F03932	reg.get_hv2	function	vec2<f16>.real	reg<vec2<f16>>.real	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F03933	reg.set_hv2_L0_f0	function	stmt.L0_f0	reg<vec2<f16>>.real;vec2<f16>.real	{0} = {1};	
 F03934	reg.set_hv2_L0_f1	function	stmt.L0_f1	reg<vec2<f16>>.real;vec2<f16>.real	{0} = {1};	
@@ -4040,14 +4040,14 @@ F04038	reg.set_hv2_lane_W4_f2	function	stmt.W4_f2	reg<vec2<f16>>.real;u32.indexw
 F04039	reg.set_hv2_lane_W5_f0	function	stmt.W5_f0	reg<vec2<f16>>.real;u32.indexw;f16.realw	{0}[({1}) & 1u] = {2};	
 F04040	reg.set_hv2_lane_W5_f1	function	stmt.W5_f1	reg<vec2<f16>>.real;u32.indexw;f16.realw	{0}[({1}) & 1u] = {2};	
 F04041	reg.set_hv2_lane_W5_f2	function	stmt.W5_f2	reg<vec2<f16>>.real;u32.indexw;f16.realw	{0}[({1}) & 1u] = {2};	
-F04042	reg.rh3_0	terminal	reg<vec3<f16>>.real		rh3_0	a register is a name, never a value: only a get reads it
-F04043	reg.rh3_1	terminal	reg<vec3<f16>>.real		rh3_1	a register is a name, never a value: only a get reads it
-F04044	reg.rh3_2	terminal	reg<vec3<f16>>.real		rh3_2	a register is a name, never a value: only a get reads it
-F04045	reg.rh3_3	terminal	reg<vec3<f16>>.real		rh3_3	a register is a name, never a value: only a get reads it
-F04046	reg.rh3_4	terminal	reg<vec3<f16>>.real		rh3_4	a register is a name, never a value: only a get reads it
-F04047	reg.rh3_5	terminal	reg<vec3<f16>>.real		rh3_5	a register is a name, never a value: only a get reads it
-F04048	reg.rh3_6	terminal	reg<vec3<f16>>.real		rh3_6	a register is a name, never a value: only a get reads it
-F04049	reg.rh3_7	terminal	reg<vec3<f16>>.real		rh3_7	a register is a name, never a value: only a get reads it
+F04042	reg.rvh3_0	terminal	reg<vec3<f16>>.real		rvh3_0	a register is a name, never a value: only a get reads it
+F04043	reg.rvh3_1	terminal	reg<vec3<f16>>.real		rvh3_1	a register is a name, never a value: only a get reads it
+F04044	reg.rvh3_2	terminal	reg<vec3<f16>>.real		rvh3_2	a register is a name, never a value: only a get reads it
+F04045	reg.rvh3_3	terminal	reg<vec3<f16>>.real		rvh3_3	a register is a name, never a value: only a get reads it
+F04046	reg.rvh3_4	terminal	reg<vec3<f16>>.real		rvh3_4	a register is a name, never a value: only a get reads it
+F04047	reg.rvh3_5	terminal	reg<vec3<f16>>.real		rvh3_5	a register is a name, never a value: only a get reads it
+F04048	reg.rvh3_6	terminal	reg<vec3<f16>>.real		rvh3_6	a register is a name, never a value: only a get reads it
+F04049	reg.rvh3_7	terminal	reg<vec3<f16>>.real		rvh3_7	a register is a name, never a value: only a get reads it
 F04050	reg.get_hv3	function	vec3<f16>.real	reg<vec3<f16>>.real	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F04051	reg.set_hv3_L0_f0	function	stmt.L0_f0	reg<vec3<f16>>.real;vec3<f16>.real	{0} = {1};	
 F04052	reg.set_hv3_L0_f1	function	stmt.L0_f1	reg<vec3<f16>>.real;vec3<f16>.real	{0} = {1};	
@@ -4158,14 +4158,14 @@ F04156	reg.set_hv3_lane_W4_f2	function	stmt.W4_f2	reg<vec3<f16>>.real;u32.indexw
 F04157	reg.set_hv3_lane_W5_f0	function	stmt.W5_f0	reg<vec3<f16>>.real;u32.indexw;f16.realw	{0}[({1}) % 3u] = {2};	
 F04158	reg.set_hv3_lane_W5_f1	function	stmt.W5_f1	reg<vec3<f16>>.real;u32.indexw;f16.realw	{0}[({1}) % 3u] = {2};	
 F04159	reg.set_hv3_lane_W5_f2	function	stmt.W5_f2	reg<vec3<f16>>.real;u32.indexw;f16.realw	{0}[({1}) % 3u] = {2};	
-F04160	reg.rh4_0	terminal	reg<vec4<f16>>.real		rh4_0	a register is a name, never a value: only a get reads it
-F04161	reg.rh4_1	terminal	reg<vec4<f16>>.real		rh4_1	a register is a name, never a value: only a get reads it
-F04162	reg.rh4_2	terminal	reg<vec4<f16>>.real		rh4_2	a register is a name, never a value: only a get reads it
-F04163	reg.rh4_3	terminal	reg<vec4<f16>>.real		rh4_3	a register is a name, never a value: only a get reads it
-F04164	reg.rh4_4	terminal	reg<vec4<f16>>.real		rh4_4	a register is a name, never a value: only a get reads it
-F04165	reg.rh4_5	terminal	reg<vec4<f16>>.real		rh4_5	a register is a name, never a value: only a get reads it
-F04166	reg.rh4_6	terminal	reg<vec4<f16>>.real		rh4_6	a register is a name, never a value: only a get reads it
-F04167	reg.rh4_7	terminal	reg<vec4<f16>>.real		rh4_7	a register is a name, never a value: only a get reads it
+F04160	reg.rvh4_0	terminal	reg<vec4<f16>>.real		rvh4_0	a register is a name, never a value: only a get reads it
+F04161	reg.rvh4_1	terminal	reg<vec4<f16>>.real		rvh4_1	a register is a name, never a value: only a get reads it
+F04162	reg.rvh4_2	terminal	reg<vec4<f16>>.real		rvh4_2	a register is a name, never a value: only a get reads it
+F04163	reg.rvh4_3	terminal	reg<vec4<f16>>.real		rvh4_3	a register is a name, never a value: only a get reads it
+F04164	reg.rvh4_4	terminal	reg<vec4<f16>>.real		rvh4_4	a register is a name, never a value: only a get reads it
+F04165	reg.rvh4_5	terminal	reg<vec4<f16>>.real		rvh4_5	a register is a name, never a value: only a get reads it
+F04166	reg.rvh4_6	terminal	reg<vec4<f16>>.real		rvh4_6	a register is a name, never a value: only a get reads it
+F04167	reg.rvh4_7	terminal	reg<vec4<f16>>.real		rvh4_7	a register is a name, never a value: only a get reads it
 F04168	reg.get_hv4	function	vec4<f16>.real	reg<vec4<f16>>.real	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F04169	reg.set_hv4_L0_f0	function	stmt.L0_f0	reg<vec4<f16>>.real;vec4<f16>.real	{0} = {1};	
 F04170	reg.set_hv4_L0_f1	function	stmt.L0_f1	reg<vec4<f16>>.real;vec4<f16>.real	{0} = {1};	

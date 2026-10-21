@@ -18,16 +18,16 @@ def declare(iface):
     def reg(key, scalar, form, prefix, count, wtype, zero):
         t = vt(scalar, form) if isinstance(scalar, str) and "<" not in scalar else scalar
         REGS.append((key, f"reg<{wtype}>.{form}", t, prefix, count, wtype, zero))
-    reg("f", "f32", "real", "f", 64, "f32", "0.0")
-    reg("i", "u32", "index", "i", 64, "u32", "0u")
-    reg("b", "bool", "flag", "b", 16, "bool", "false")
+    reg("f", "f32", "real", "rf", 64, "f32", "0.0")
+    reg("i", "u32", "index", "ru", 64, "u32", "0u")
+    reg("b", "bool", "flag", "rb", 16, "bool", "false")
     reg("n", "i32", "int", "rn", 16, "i32", "0i")
-    reg("h", "f16", "real", "h", 16, "f16", "0.0h")
+    reg("h", "f16", "real", "rh", 16, "f16", "0.0h")
     for L, p, c in ((4, "v", 32), (2, "w", 16), (3, "C", 16)):
         reg(f"v{L}", vt("f32", "real", L), "real", p, c, vecname("f32", L), f"{vecname('f32', L)}()")
     for s, form, key in (("u32", "index", "u"), ("i32", "int", "i"), ("bool", "flag", "b"), ("f16", "real", "h")):
         for L in (2, 3, 4):
-            reg(f"{key}v{L}", vt(s, form, L), form, f"r{key}{L}_", 8, vecname(s, L), f"{vecname(s, L)}()")
+            reg(f"{key}v{L}", vt(s, form, L), form, f"rv{key}{L}_", 8, vecname(s, L), f"{vecname(s, L)}()")
     for n, p in ((2, "x"), (3, "y"), (4, "z")):
         reg(f"m{n}", f"mat{n}x{n}<f32>.real", "real", p, 4, f"mat{n}x{n}<f32>", f"mat{n}x{n}<f32>()")
     # the uniform register is separate (loops.py)
