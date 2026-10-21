@@ -59,11 +59,11 @@
 | T33 | SR laws 101–133, fair 133-law number | lead (GPU) | `srbench_tf_run.py` | after T1; official seeds only with Andrew's go | open |
 | T34 | regex cleanse and crossover speed, bisect | Sonnet | regex vary | after T24's split | open |
 | T35 | regex simplify fold-back via typed write-back | Sonnet | `regex_simplify.rs` | simplify on, typed | open |
-| T36 | `check.rs` wrap patch | lead | fuller `src/wgsl/check.rs` | verify applied; else Andrew applies | open |
+| T36 | `check.rs` wrap patch | lead | fuller `src/wgsl/check.rs` | verify applied; else Andrew applies | NOT applied on main (cause of 22/29 seeds illegal as read); patch applies cleanly, v24_seed_admission 15/15 with it; its own new loop-bound assertion is wrong (min(1024, wrapped) is bounded) -> v2 patch for Andrew to apply |
 | T37 | WGSL fallback-node removal | Sonnet | fuller `src/wgsl` | from `fallback_removal_wip.patch` | done fuller d5db3a71: Tree::fallback and the fallback leaf removed (~60 uses); each became an own.* terminal, a typed terminal for a sampler draw, or a named bug; lead checked terminal_leaf call sites: sampler/cost draws and a test helper, no substitution of an existing symbol. wgsl lib 348 pass, 1 fail -> T62 |
 | T38 | WGSL aggregate gaps | Sonnet | fuller `src/wgsl` | struct/array reads and rebuilds | open |
 | T39 | `load.cfg_*` render rows | Sonnet | fuller `src/wgsl/render.rs` | emitter fix, test with `pcfg.d` | open |
-| T40 | WGSL children unlike seeds | Sonnet | `wgsl_fit` ledger | parent/operator columns; run 6f (lead GPU) | open |
+| T40 | WGSL children unlike seeds | Sonnet | `wgsl_fit` ledger | parent/operator columns; run 6f (lead GPU) | measured (phylu a940c6b6, run6f_t40): per-type rate rewrites ~105k cells per child in 161 of 174 types; overlap with parent median 0; decision on the rate put to Andrew; rerun at 6e flags |
 | T41 | interface 3 legality 12.9 % | Sonnet | with T40 | cause and fix | open |
 | T42 | legacy WGSL-only variation code | Sonnet | `wgsl/mutate.rs`, `sections.rs`, `llm.rs` | inventory callers; fold useful operators into the shared core or retire | open |
 | T43 | any-WGSL completeness gate | Sonnet | fuller tests | N of N corpus kernels read, rebuild, compile | open |
