@@ -1,11 +1,11 @@
 ref	name	kind	out	args	spelling	note
 F00001	kernel.entry_safe	function	kernel.safe	grid.grid;block.L0_f0;block.O0_f0	{0}\n@compute @workgroup_size(WG_X, WG_Y, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>, @builtin(subgroup_size) sg_size: u32, @builtin(num_subgroups) sg_num: u32) {\nlet sg_lane: u32 = lidx & (sg_size - 1u);\nlet sg_id: u32 = lidx / sg_size;\n<declarations>\n{1}\n{2}\n}\n	the only producer of the root; a kernel is a grid, a body and an epilogue that ends in the store of its own cell
-F00002	grid.of	function	grid.grid	grid.shape;u32.blk_col;u32.blk_row;u32.ktile	// grid {0:0} {0:1} {1} {2}\nconst WG_X: u32 = {0:0}u;\nconst WG_Y: u32 = {0:1}u;\nconst KNOB_WCOL: u32 = {0:0}u;\nconst KNOB_WROW: u32 = {0:1}u;\nconst KNOB_BCOL: u32 = {1}u;\nconst KNOB_BROW: u32 = {2}u;\nconst KNOB_KTILE: u32 = {3}u;\nconst KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n	the shape is in the target's limits by the table; the header and the attribute come from one node
-F00003	grid.of_rows_x	function	grid.grid	grid.shape;u32.blk_row;u32.blk_col;u32.ktile	// grid {0:0} {0:1} {1} {2} rows-x\nconst WG_X: u32 = {0:0}u;\nconst WG_Y: u32 = {0:1}u;\nconst KNOB_WCOL: u32 = {0:1}u;\nconst KNOB_WROW: u32 = {0:0}u;\nconst KNOB_BCOL: u32 = {2}u;\nconst KNOB_BROW: u32 = {1}u;\nconst KNOB_KTILE: u32 = {3}u;\nconst KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n	the output's rows on thread x; the arguments in the order the spelling binds them
+F00002	grid.of	function	grid.grid	grid.shape;u32.blk_col;u32.blk_row;u32.ktile	// grid {0:0} {0:1} {1} {2}\nfn row_axis(g: vec3<u32>) -> u32 { return g.y; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.x; }\nconst WG_X: u32 = {0:0}u;\nconst WG_Y: u32 = {0:1}u;\nconst KNOB_WCOL: u32 = {0:0}u;\nconst KNOB_WROW: u32 = {0:1}u;\nconst KNOB_BCOL: u32 = {1}u;\nconst KNOB_BROW: u32 = {2}u;\nconst KNOB_KTILE: u32 = {3}u;\nconst KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n	the shape is in the target's limits by the table; the header and the attribute come from one node
+F00003	grid.of_rows_x	function	grid.grid	grid.shape;u32.blk_row;u32.blk_col;u32.ktile	// grid {0:0} {0:1} {1} {2} rows-x\nfn row_axis(g: vec3<u32>) -> u32 { return g.x; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.y; }\nconst WG_X: u32 = {0:0}u;\nconst WG_Y: u32 = {0:1}u;\nconst KNOB_WCOL: u32 = {0:1}u;\nconst KNOB_WROW: u32 = {0:0}u;\nconst KNOB_BCOL: u32 = {2}u;\nconst KNOB_BROW: u32 = {1}u;\nconst KNOB_KTILE: u32 = {3}u;\nconst KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n	the output's rows on thread x; the arguments in the order the spelling binds them
 F00004	literal.shape	constant	grid.shape		{v}	?_shape; its Dc domain is the table
 F00005	literal.blk_row	constant	u32.blk_row		{v}	?_blk_row
 F00006	literal.blk_col	constant	u32.blk_col		{v}	?_blk_col
-F00007	own.grid_grid	terminal	grid.grid		// grid 16 16 4 4\nconst WG_X: u32 = 16u;\nconst WG_Y: u32 = 16u;\nconst KNOB_WCOL: u32 = 16u;\nconst KNOB_WROW: u32 = 16u;\nconst KNOB_BCOL: u32 = 4u;\nconst KNOB_BROW: u32 = 4u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = 256u;\n	the interface's default grid: its reference kernel's shape and blocks, ktile 1
+F00007	own.grid_grid	terminal	grid.grid		// grid 16 16 4 4\nfn row_axis(g: vec3<u32>) -> u32 { return g.y; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.x; }\nconst WG_X: u32 = 16u;\nconst WG_Y: u32 = 16u;\nconst KNOB_WCOL: u32 = 16u;\nconst KNOB_WROW: u32 = 16u;\nconst KNOB_BCOL: u32 = 4u;\nconst KNOB_BROW: u32 = 4u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = 256u;\n	the interface's default grid: its reference kernel's shape and blocks, ktile 1
 F00008	literal.ktile	constant	u32.ktile		{v}	?_ktile: a bare literal
 F00009	own.u32_ktile	terminal	u32.ktile		1	
 F00010	own.u32_blk_row	terminal	u32.blk_row		1	the domain's smallest value
@@ -123,8 +123,8 @@ F00121	block.seq2_O0_f0	function	block.O0_f0	stmt.C0_f0;stmt.O0_f0	{0} {1}
 F00122	block.seq3_O0_f0	function	block.O0_f0	stmt.C0_f0;stmt.C0_f0;stmt.O0_f0	{0} {1} {2}	
 F00123	block.seq4_O0_f0	function	block.O0_f0	stmt.C0_f0;stmt.C0_f0;stmt.C0_f0;stmt.O0_f0	{0} {1} {2} {3}	
 F00124	stmt.block_O0_f0	function	stmt.O0_f0	block.O0_f0	{ {0} }	
-F00125	own.block_O0_f0	terminal	block.O0_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
-F00126	own.stmt_O0_f0	terminal	stmt.O0_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
+F00125	own.block_O0_f0	terminal	block.O0_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
+F00126	own.stmt_O0_f0	terminal	stmt.O0_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
 F00127	stmt.if_else_O0_f0	function	stmt.O0_f0	bool.flag;block.O0_f0;block.O0_f0	if ({0}) { {1} } else { {2} }	both branches are epilogues so a store happens whichever is taken
 F00128	store.h_O0_f0	function	stmt.O0_f0	u32.threadrow_h;u32.threadcol_h;f32.real	{ let r = {0}; let c = {1}; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = {2}; } }	the store takes a row and a column of this invocation's block of the output
 F00129	block.one_O1_f0	function	block.O1_f0	stmt.O1_f0	{0}	
@@ -132,8 +132,8 @@ F00130	block.seq2_O1_f0	function	block.O1_f0	stmt.C1_f0;stmt.O1_f0	{0} {1}
 F00131	block.seq3_O1_f0	function	block.O1_f0	stmt.C1_f0;stmt.C1_f0;stmt.O1_f0	{0} {1} {2}	
 F00132	block.seq4_O1_f0	function	block.O1_f0	stmt.C1_f0;stmt.C1_f0;stmt.C1_f0;stmt.O1_f0	{0} {1} {2} {3}	
 F00133	stmt.block_O1_f0	function	stmt.O1_f0	block.O1_f0	{ {0} }	
-F00134	own.block_O1_f0	terminal	block.O1_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
-F00135	own.stmt_O1_f0	terminal	stmt.O1_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
+F00134	own.block_O1_f0	terminal	block.O1_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
+F00135	own.stmt_O1_f0	terminal	stmt.O1_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
 F00136	stmt.if_else_O1_f0	function	stmt.O1_f0	bool.flag;block.O1_f0;block.O1_f0	if ({0}) { {1} } else { {2} }	both branches are epilogues so a store happens whichever is taken
 F00137	store.h_O1_f0	function	stmt.O1_f0	u32.threadrow_h;u32.threadcol_h;f32.real	{ let r = {0}; let c = {1}; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = {2}; } }	the store takes a row and a column of this invocation's block of the output
 F00138	block.one_O2_f0	function	block.O2_f0	stmt.O2_f0	{0}	
@@ -141,8 +141,8 @@ F00139	block.seq2_O2_f0	function	block.O2_f0	stmt.C2_f0;stmt.O2_f0	{0} {1}
 F00140	block.seq3_O2_f0	function	block.O2_f0	stmt.C2_f0;stmt.C2_f0;stmt.O2_f0	{0} {1} {2}	
 F00141	block.seq4_O2_f0	function	block.O2_f0	stmt.C2_f0;stmt.C2_f0;stmt.C2_f0;stmt.O2_f0	{0} {1} {2} {3}	
 F00142	stmt.block_O2_f0	function	stmt.O2_f0	block.O2_f0	{ {0} }	
-F00143	own.block_O2_f0	terminal	block.O2_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
-F00144	own.stmt_O2_f0	terminal	stmt.O2_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
+F00143	own.block_O2_f0	terminal	block.O2_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
+F00144	own.stmt_O2_f0	terminal	stmt.O2_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
 F00145	stmt.if_else_O2_f0	function	stmt.O2_f0	bool.flag;block.O2_f0;block.O2_f0	if ({0}) { {1} } else { {2} }	both branches are epilogues so a store happens whichever is taken
 F00146	store.h_O2_f0	function	stmt.O2_f0	u32.threadrow_h;u32.threadcol_h;f32.real	{ let r = {0}; let c = {1}; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = {2}; } }	the store takes a row and a column of this invocation's block of the output
 F00147	block.one_O3_f0	function	block.O3_f0	stmt.O3_f0	{0}	
@@ -150,8 +150,8 @@ F00148	block.seq2_O3_f0	function	block.O3_f0	stmt.C3_f0;stmt.O3_f0	{0} {1}
 F00149	block.seq3_O3_f0	function	block.O3_f0	stmt.C3_f0;stmt.C3_f0;stmt.O3_f0	{0} {1} {2}	
 F00150	block.seq4_O3_f0	function	block.O3_f0	stmt.C3_f0;stmt.C3_f0;stmt.C3_f0;stmt.O3_f0	{0} {1} {2} {3}	
 F00151	stmt.block_O3_f0	function	stmt.O3_f0	block.O3_f0	{ {0} }	
-F00152	own.block_O3_f0	terminal	block.O3_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
-F00153	own.stmt_O3_f0	terminal	stmt.O3_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
+F00152	own.block_O3_f0	terminal	block.O3_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
+F00153	own.stmt_O3_f0	terminal	stmt.O3_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
 F00154	stmt.if_else_O3_f0	function	stmt.O3_f0	bool.flag;block.O3_f0;block.O3_f0	if ({0}) { {1} } else { {2} }	both branches are epilogues so a store happens whichever is taken
 F00155	store.h_O3_f0	function	stmt.O3_f0	u32.threadrow_h;u32.threadcol_h;f32.real	{ let r = {0}; let c = {1}; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = {2}; } }	the store takes a row and a column of this invocation's block of the output
 F00156	block.one_O4_f0	function	block.O4_f0	stmt.O4_f0	{0}	
@@ -159,8 +159,8 @@ F00157	block.seq2_O4_f0	function	block.O4_f0	stmt.C4_f0;stmt.O4_f0	{0} {1}
 F00158	block.seq3_O4_f0	function	block.O4_f0	stmt.C4_f0;stmt.C4_f0;stmt.O4_f0	{0} {1} {2}	
 F00159	block.seq4_O4_f0	function	block.O4_f0	stmt.C4_f0;stmt.C4_f0;stmt.C4_f0;stmt.O4_f0	{0} {1} {2} {3}	
 F00160	stmt.block_O4_f0	function	stmt.O4_f0	block.O4_f0	{ {0} }	
-F00161	own.block_O4_f0	terminal	block.O4_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
-F00162	own.stmt_O4_f0	terminal	stmt.O4_f0		{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
+F00161	own.block_O4_f0	terminal	block.O4_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store of the primary output's first cell
+F00162	own.stmt_O4_f0	terminal	stmt.O4_f0		{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = h[r * cfg.d + c]; } }	the value-neutral store
 F00163	stmt.if_else_O4_f0	function	stmt.O4_f0	bool.flag;block.O4_f0;block.O4_f0	if ({0}) { {1} } else { {2} }	both branches are epilogues so a store happens whichever is taken
 F00164	store.h_O4_f0	function	stmt.O4_f0	u32.threadrow_h;u32.threadcol_h;f32.real	{ let r = {0}; let c = {1}; if (r < cfg.r_rows && c < cfg.d) { h[r * cfg.d + c] = {2}; } }	the store takes a row and a column of this invocation's block of the output
 F00165	block.one_W0_f0	function	block.W0_f0	stmt.W0_f0	{0}	
@@ -247,35 +247,35 @@ F00245	block.brk_B5_f0	function	block.B5_f0	block.C5_f0;bool.flag;block.C5_f0	{0
 F00246	block.cont_B5_f0	function	block.B5_f0	bool.flag;block.C5_f0	if ({0}) { continue; } {1}	continue lives only in the divergent barrier-free loop bodies
 F00247	block.brk_WB5_f0	function	block.WB5_f0	block.W5_f0;bool.flagw;block.W5_f0	{0} if ({1}) { break; } {2}	
 F00248	block.cont_WB5_f0	function	block.WB5_f0	bool.flagw;block.W5_f0	if ({0}) { continue; } {1}	
-F00249	safe.thread_row_h	function	u32.rowbase_h	vec3<u32>.gid	({0}.y * KNOB_BROW)	the origin of the invocation's block on the row axis
-F00250	safe.thread_col_h	function	u32.colbase_h	vec3<u32>.gid	({0}.x * KNOB_BCOL)	
+F00249	safe.thread_row_h	function	u32.rowbase_h	vec3<u32>.gid	(row_axis({0}) * KNOB_BROW)	the origin of the invocation's block on the row axis
+F00250	safe.thread_col_h	function	u32.colbase_h	vec3<u32>.gid	(col_axis({0}) * KNOB_BCOL)	
 F00251	safe.row_plus_h	function	u32.threadrow_h	u32.rowbase_h;u32.lit64	({0} + min({1}, KNOB_BROW - 1u))	an origin plus an offset clamped into the block
 F00252	safe.col_plus_h	function	u32.threadcol_h	u32.colbase_h;u32.lit64	({0} + min({1}, KNOB_BCOL - 1u))	
 F00253	safe.rowbase_as_row_h	function	u32.threadrow_h	u32.rowbase_h	{0}	the origin is the block's first row
 F00254	safe.colbase_as_col_h	function	u32.threadcol_h	u32.colbase_h	{0}	
 F00255	safe.row_as_index_h	function	u32.index	u32.threadrow_h	{0}	an owned row used as a plain position; nothing goes the other way
 F00256	safe.col_as_index_h	function	u32.index	u32.threadcol_h	{0}	
-F00257	own.u32_rowbase_h	terminal	u32.rowbase_h		(gid.y * KNOB_BROW)	the invocation's own origin
-F00258	own.u32_colbase_h	terminal	u32.colbase_h		(gid.x * KNOB_BCOL)	
-F00259	own.u32_threadrow_h	terminal	u32.threadrow_h		(gid.y * KNOB_BROW)	the block's first row
-F00260	own.u32_threadcol_h	terminal	u32.threadcol_h		(gid.x * KNOB_BCOL)	
+F00257	own.u32_rowbase_h	terminal	u32.rowbase_h		(row_axis(gid) * KNOB_BROW)	the invocation's own origin
+F00258	own.u32_colbase_h	terminal	u32.colbase_h		(col_axis(gid) * KNOB_BCOL)	
+F00259	own.u32_threadrow_h	terminal	u32.threadrow_h		(row_axis(gid) * KNOB_BROW)	the block's first row
+F00260	own.u32_threadcol_h	terminal	u32.threadcol_h		(col_axis(gid) * KNOB_BCOL)	
 F00261	literal.lit64	constant	u32.lit64		lit_u32({v}u)	?_lit64
 F00262	builtin.global_invocation_id	terminal	vec3<u32>.gid		gid	the only producer of vec3<u32>.gid
 F00263	literal.flag	constant	bool.flag		lit_bool({v})	?_flag
-F00264	own.u32_rowid	terminal	u32.rowid		gid.y	
-F00265	own.u32_colid	terminal	u32.colid		gid.x	
+F00264	own.u32_rowid	terminal	u32.rowid		row_axis(gid)	
+F00265	own.u32_colid	terminal	u32.colid		col_axis(gid)	
 F00266	builtin.local_invocation_id	terminal	vec3<u32>.lid		lid	its own type, so a mutation cannot swap lid for gid inside an ownership row
 F00267	builtin.workgroup_id	terminal	vec3<u32>.wid		wid	
 F00268	builtin.local_invocation_index	terminal	u32.lidx		lidx	
 F00269	builtin.num_workgroups	terminal	vec3<u32>.nwg		nwg	
-F00270	axis.x_gid	function	u32.colid	vec3<u32>.gid	{0}.x	the column axis
-F00271	axis.y_gid	function	u32.rowid	vec3<u32>.gid	{0}.y	the row axis
+F00270	axis.x_gid	function	u32.colid	vec3<u32>.gid	col_axis({0})	the column axis the grid binds
+F00271	axis.y_gid	function	u32.rowid	vec3<u32>.gid	row_axis({0})	the row axis the grid binds
 F00272	axis.z_gid	function	u32.index	vec3<u32>.gid	{0}.z	z is a plain index
-F00273	axis.x_lid	function	u32.colid	vec3<u32>.lid	{0}.x	the column axis
-F00274	axis.y_lid	function	u32.rowid	vec3<u32>.lid	{0}.y	the row axis
+F00273	axis.x_lid	function	u32.colid	vec3<u32>.lid	col_axis({0})	the column axis the grid binds
+F00274	axis.y_lid	function	u32.rowid	vec3<u32>.lid	row_axis({0})	the row axis the grid binds
 F00275	axis.z_lid	function	u32.index	vec3<u32>.lid	{0}.z	z is a plain index
-F00276	axis.x_wid	function	u32.colid	vec3<u32>.wid	{0}.x	the column axis
-F00277	axis.y_wid	function	u32.rowid	vec3<u32>.wid	{0}.y	the row axis
+F00276	axis.x_wid	function	u32.colid	vec3<u32>.wid	col_axis({0})	the column axis the grid binds
+F00277	axis.y_wid	function	u32.rowid	vec3<u32>.wid	row_axis({0})	the row axis the grid binds
 F00278	axis.z_wid	function	u32.index	vec3<u32>.wid	{0}.z	z is a plain index
 F00279	count.nwg_x	function	u32.count	vec3<u32>.nwg	{0}.x	a workgroup count is a size
 F00280	count.nwg_y	function	u32.count	vec3<u32>.nwg	{0}.y	a workgroup count is a size

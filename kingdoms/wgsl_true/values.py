@@ -119,8 +119,8 @@ def build(iface):
     R("builtin.local_invocation_index", "u32.lidx", [], "lidx")
     R("builtin.num_workgroups", "vec3<u32>.nwg", [], "nwg")
     for i in ("gid", "lid", "wid"):
-        R(f"axis.x_{i}", "u32.colid", [f"vec3<u32>.{i}"], "{0}.x", "the column axis")
-        R(f"axis.y_{i}", "u32.rowid", [f"vec3<u32>.{i}"], "{0}.y", "the row axis")
+        R(f"axis.x_{i}", "u32.colid", [f"vec3<u32>.{i}"], "col_axis({0})", "the column axis the grid binds")
+        R(f"axis.y_{i}", "u32.rowid", [f"vec3<u32>.{i}"], "row_axis({0})", "the row axis the grid binds")
         R(f"axis.z_{i}", "u32.index", [f"vec3<u32>.{i}"], "{0}.z", "z is a plain index", twin=True)
     for c in "xyz":
         R(f"count.nwg_{c}", "u32.count", ["vec3<u32>.nwg"], "{0}." + c, "a workgroup count is a size", twin=True)

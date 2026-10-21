@@ -3,6 +3,8 @@ store, the ownership rows (design section 9). Every statement and block type
 carries a depth `d` (the loop ladder) and a fuel stratum `k` (batch 3)."""
 from lib import *
 
+AXES_COLS_X = "fn row_axis(g: vec3<u32>) -> u32 { return g.y; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.x; }\n"
+AXES_ROWS_X = "fn row_axis(g: vec3<u32>) -> u32 { return g.x; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.y; }\n"
 SHAPES = []   # target shapes "X Y": x * y a multiple of the largest subgroup size, at most max invocations
 
 
@@ -66,7 +68,7 @@ def own_store_text(iface):
     o = next(o for o in iface["outputs"] if o["name"] == iface["primary"])
     b = o["name"]
     idx = f"{b}[r * {o['cols']} + c]"
-    return "{ let r = gid.y * KNOB_BROW; let c = gid.x * KNOB_BCOL; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { " + idx + " = " + idx + "; } }"
+    return "{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { " + idx + " = " + idx + "; } }"
 
 
 def build(iface):
@@ -94,16 +96,16 @@ def build(iface):
         "const KNOB_BCOL: u32 = " + bcol + ";\nconst KNOB_BROW: u32 = " + brow + ";\nconst KNOB_KTILE: u32 = {3}u;\n"
         "const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n")
     R("grid.of", "grid.grid", ["grid.shape", "u32.blk_col", "u32.blk_row", "u32.ktile"],
-      "// grid {0:0} {0:1} {1} {2}\n" + kn("{0:0}u", "{0:1}u", "{1}u", "{2}u"),
+      "// grid {0:0} {0:1} {1} {2}\n" + AXES_COLS_X + kn("{0:0}u", "{0:1}u", "{1}u", "{2}u"),
       "the shape is in the target's limits by the table; the header and the attribute come from one node", fields=True)
     R("grid.of_rows_x", "grid.grid", ["grid.shape", "u32.blk_row", "u32.blk_col", "u32.ktile"],
-      "// grid {0:0} {0:1} {1} {2} rows-x\n" + kn("{0:1}u", "{0:0}u", "{2}u", "{1}u"),
+      "// grid {0:0} {0:1} {1} {2} rows-x\n" + AXES_ROWS_X + kn("{0:1}u", "{0:0}u", "{2}u", "{1}u"),
       "the output's rows on thread x; the arguments in the order the spelling binds them", fields=True)
     C("literal.shape", "grid.shape", "{v}", shape_table(iface), "?_shape; its Dc domain is the table")
     C("literal.blk_row", "u32.blk_row", "{v}", ["1", "2", "4", "8"], "?_blk_row")
     C("literal.blk_col", "u32.blk_col", "{v}", ["1", "2", "4", "8"], "?_blk_col")
     gx, gy, bx, by = iface["default_grid"]
-    R("own.grid_grid", "grid.grid", [], f"// grid {gx} {gy} {bx} {by}\nconst WG_X: u32 = {gx}u;\nconst WG_Y: u32 = {gy}u;\nconst KNOB_WCOL: u32 = {gx}u;\nconst KNOB_WROW: u32 = {gy}u;\nconst KNOB_BCOL: u32 = {bx}u;\nconst KNOB_BROW: u32 = {by}u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = {gx * gy}u;\n",
+    R("own.grid_grid", "grid.grid", [], f"// grid {gx} {gy} {bx} {by}\n" + AXES_COLS_X + f"const WG_X: u32 = {gx}u;\nconst WG_Y: u32 = {gy}u;\nconst KNOB_WCOL: u32 = {gx}u;\nconst KNOB_WROW: u32 = {gy}u;\nconst KNOB_BCOL: u32 = {bx}u;\nconst KNOB_BROW: u32 = {by}u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = {gx * gy}u;\n",
       "the interface's default grid: its reference kernel's shape and blocks, ktile 1")
     C("literal.ktile", "u32.ktile", "{v}", [str(v) for v in (1, 2, 3, 4, 8, 16, 32, 64, 100, 256, 1000, 4096)], "?_ktile: a bare literal")
     R("own.u32_ktile", "u32.ktile", [], "1")
@@ -158,20 +160,20 @@ def build(iface):
     # ---- ownership rows, per output binding
     for o in iface["outputs"]:
         b = o["name"]
-        R(f"safe.thread_row_{b}", f"u32.rowbase_{b}", ["vec3<u32>.gid"], "({0}.y * KNOB_BROW)", "the origin of the invocation's block on the row axis")
-        R(f"safe.thread_col_{b}", f"u32.colbase_{b}", ["vec3<u32>.gid"], "({0}.x * KNOB_BCOL)")
+        R(f"safe.thread_row_{b}", f"u32.rowbase_{b}", ["vec3<u32>.gid"], "(row_axis({0}) * KNOB_BROW)", "the origin of the invocation's block on the row axis")
+        R(f"safe.thread_col_{b}", f"u32.colbase_{b}", ["vec3<u32>.gid"], "(col_axis({0}) * KNOB_BCOL)")
         R(f"safe.row_plus_{b}", f"u32.threadrow_{b}", [f"u32.rowbase_{b}", "u32.lit64"], "({0} + min({1}, KNOB_BROW - 1u))", "an origin plus an offset clamped into the block")
         R(f"safe.col_plus_{b}", f"u32.threadcol_{b}", [f"u32.colbase_{b}", "u32.lit64"], "({0} + min({1}, KNOB_BCOL - 1u))")
         R(f"safe.rowbase_as_row_{b}", f"u32.threadrow_{b}", [f"u32.rowbase_{b}"], "{0}", "the origin is the block's first row")
         R(f"safe.colbase_as_col_{b}", f"u32.threadcol_{b}", [f"u32.colbase_{b}"], "{0}")
         R(f"safe.row_as_index_{b}", "u32.index", [f"u32.threadrow_{b}"], "{0}", "an owned row used as a plain position; nothing goes the other way", twin=True)
         R(f"safe.col_as_index_{b}", "u32.index", [f"u32.threadcol_{b}"], "{0}", twin=True)
-        R(f"own.u32_rowbase_{b}", f"u32.rowbase_{b}", [], "(gid.y * KNOB_BROW)", "the invocation's own origin")
-        R(f"own.u32_colbase_{b}", f"u32.colbase_{b}", [], "(gid.x * KNOB_BCOL)")
-        R(f"own.u32_threadrow_{b}", f"u32.threadrow_{b}", [], "(gid.y * KNOB_BROW)", "the block's first row")
-        R(f"own.u32_threadcol_{b}", f"u32.threadcol_{b}", [], "(gid.x * KNOB_BCOL)")
+        R(f"own.u32_rowbase_{b}", f"u32.rowbase_{b}", [], "(row_axis(gid) * KNOB_BROW)", "the invocation's own origin")
+        R(f"own.u32_colbase_{b}", f"u32.colbase_{b}", [], "(col_axis(gid) * KNOB_BCOL)")
+        R(f"own.u32_threadrow_{b}", f"u32.threadrow_{b}", [], "(row_axis(gid) * KNOB_BROW)", "the block's first row")
+        R(f"own.u32_threadcol_{b}", f"u32.threadcol_{b}", [], "(col_axis(gid) * KNOB_BCOL)")
     C("literal.lit64", "u32.lit64", "lit_u32({v}u)", [str(i) for i in range(1, 65)], "?_lit64")
     R("builtin.global_invocation_id", "vec3<u32>.gid", [], "gid", "the only producer of vec3<u32>.gid")
     C("literal.flag", "bool.flag", "lit_bool({v})", ["true", "false"], "?_flag", twin=True)
-    R("own.u32_rowid", "u32.rowid", [], "gid.y")
-    R("own.u32_colid", "u32.colid", [], "gid.x")
+    R("own.u32_rowid", "u32.rowid", [], "row_axis(gid)")
+    R("own.u32_colid", "u32.colid", [], "col_axis(gid)")

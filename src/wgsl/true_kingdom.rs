@@ -424,14 +424,22 @@ mod tests {
     #[cfg(feature = "gpu")]
     #[test]
     fn both_grids_cover_every_cell_of_the_output_on_the_device() {
-        use crate::wgsl::gram::{effective_buffer_limit, phi, Gram};
+        use crate::wgsl::gram::{phi, Gram};
         use crate::wgsl::oracle::device::Device;
         let k = kingdom();
         let c = k.relations().check().expect("check");
         let fuel = k.fuel(&c, 8).expect("fuel");
         let dev = Device::new().expect("device");
         let (d, m) = (32usize, 4usize);
-        for (grid, shape, first, second) in [("grid.of", "32 2", "literal.blk_col", "literal.blk_row"), ("grid.of_rows_x", "32 2", "literal.blk_row", "literal.blk_col"), ("grid.of_rows_x", "2 32", "literal.blk_row", "literal.blk_col"), ("grid.of", "2 32", "literal.blk_col", "literal.blk_row")] {
+        // four row bands of 8 rows: the output is not square per dispatch, so a swapped axis misses cells
+        let band_limit = (d * 4 * 8) as u64;
+        for (grid, shape, first, second) in [
+            ("grid.of", "32 2", "literal.blk_col", "literal.blk_row"),
+            ("grid.of_rows_x", "32 2", "literal.blk_row", "literal.blk_col"),
+            ("grid.of_rows_x", "4 32", "literal.blk_row", "literal.blk_col"),
+            ("grid.of", "4 32", "literal.blk_col", "literal.blk_row"),
+            ("grid.of_rows_x", "2 32", "literal.blk_row", "literal.blk_col"),
+        ] {
             let g = node(&k, grid, None, vec![node(&k, "literal.shape", Some(shape), vec![]), node(&k, first, Some("1"), vec![]), node(&k, second, Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
             let store = node(
                 &k,
@@ -446,7 +454,7 @@ mod tests {
             let entry = node(&k, "kernel.entry_safe", None, vec![g, node(&k, "own.block_L0_f0", None, vec![]), node(&k, "block.one_O0_f0", None, vec![store])]);
             let src = k.render(&entry).expect("render");
             let gram = Gram::compile(&dev, &src, fuel.clone()).unwrap_or_else(|e| panic!("{grid} {shape}: {e}"));
-            let built = gram.build(&phi(d, m, 3), d, m, effective_buffer_limit(&dev.device)).expect("run");
+            let built = gram.build(&phi(d, m, 3), d, m, band_limit).expect("run");
             let missed = built.h.iter().filter(|v| **v != 1.0).count();
             assert_eq!(missed, 0, "{grid} {shape}: {missed} of {} cells not written", d * d);
         }
