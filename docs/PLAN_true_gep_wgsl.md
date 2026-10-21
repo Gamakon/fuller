@@ -1,52 +1,74 @@
-# PLAN: true multi-typed GEP for WGSL
+# PLAN: true multi-typed GEP for WGSL (revision 2)
 
 ## Context
 
-**Objective.** The WGSL kingdom becomes true Gene Expression Programming. Every gene, drawn by the typed initialiser or produced by any variation operator, expresses a legal WGSL compute kernel, because the symbol table's types describe exactly the legal kernels. Fitness runs every expressed kernel. The project is true GEP, incapable of malformed ASTs.
+**Objective.** The WGSL kingdom becomes true Gene Expression Programming. Every gene, drawn by the typed initialiser or produced by any variation operator, expresses a legal WGSL compute kernel, because the symbol table's types describe exactly the legal kernels. The renderer spells the expressed tree and nothing else. Fitness runs every expressed kernel. The project is true GEP, incapable of malformed or illegal ASTs.
 
-**The specification.** `nucleotable/docs/MultiTypedGEP.md` rev 4 (rendered as `docs/MultiTypedGEP.html`) and `docs/GOAL.md`. This plan adds a WGSL section to that specification (rev 5, task D1); it never replaces it. Every task is built and reviewed against the specification. Anything not to the specification is a failure and is redone.
+**The specification.** `nucleotable/docs/MultiTypedGEP.md` rev 4 (rendered as `docs/MultiTypedGEP.html`) and `docs/GOAL.md`. This plan adds the WGSL section to that specification (rev 5, task D1). Every task is built and reviewed against the specification; anything not to it is a failure and is redone.
 
-**Approach.** Measure first: which legality rules does the kingdom already carry in its types, and which are still judged after expression? Then move each judged rule into the types, one rule a commit, until a property test shows that a million random genes and a million children per operator express kernels that every legality layer passes. At that point the layers are tests, not filters, and evolution runs on fitness alone.
+**Approach.** The WGSL kingdom is instantiated per contract: `K<target, interface, dispatch contract, alias partition>`. The contract (adapter limits, bindings and their ranges and aliasing, workgroup size, dispatch geometry) is validated once on the host before any gene exists; that is input validation, not a gene filter. Within one instantiated kingdom, every legality rule is a type: each rule of `src/wgsl/check.rs` is written into the specification as a type construction with its closure argument (D1), built in dependency order (B), and proved by a property test that also asserts no checker or renderer rewrite is ever invoked (C1). Then the evolution path loses every legality call (C2).
 
-**Unique feature.** WGSL legality (in-range indexing, a thread writing only the cell it owns, barriers in uniform control flow, bounded loops, defined arithmetic) is a property of the symbol table. A safe GPU program is reachable from any gene by ordinary GEP operators.
+**Unique feature.** WGSL legality (in-range indexing, a thread writing only the cells it owns, race-free workgroup memory, barriers and subgroup operations in uniform control, bounded work, defined arithmetic) is a property of the symbol table of a contract-instantiated kingdom. A legal GPU program is all any gene can express.
 
-**Status.** Written 2026-10-21 after Andrew stopped all work: the WGSL kingdom had been built as typed genes plus a post-expression legality checker (`docs/PLAN_general_safety_layer.md`, `src/wgsl/check.rs`). That checker becomes the oracle for the property test (task C2), then a test only.
+**Status.** Revision 2, 2026-10-21, after the advisor review (`docs/reviews/2026-10-21_true_gep_plan_advisor.md`) and Codex's (`docs/reviews/2026-10-21_true_gep_plan_codex.md`), and the measurements A1 (`docs/reports/2026-10-21_A1_post_expression_inventory.md`: on the evolution path 1 filter, 10 renderer substitutions, 27 refusals; run 6i 21 % of children judged illegal, of which 292 of 558 were render or parse failures of the `cfg` field rows) and A3 (`docs/reports/2026-10-21_A3_rules_in_types.md`: which rules the types carry today).
 
-**Why.** Evolution can only build on what it can spell. A filter after expression throws away children, so search sees a cliff where GEP should see a landscape (run 6i: 20 % of children judged illegal; children of good seeds shared 0.6 % of their parent's expression).
+**Why.** Evolution can only build on what it can spell. A judgement after expression throws children away, so search sees a cliff where GEP should see a landscape (run 6i: 21 % of children judged illegal; children of good seeds shared 0.6 % of their parent's expression; A2 smoke: 88-98 % of structural-operator children of seeds failed a layer).
 
 ## Prerequisite for every task
 
-**READ the design doc** (`docs/MultiTypedGEP.html`, source `nucleotable/docs/MultiTypedGEP.md` rev 4, and `docs/GOAL.md`). **READ the rules** (`~/dev/minkymorgan/qdrant/docs/Rules.md`). State in the task report how the work delivers the true multi-typed design. The lead checks every result against the specification; Codex reviews every bundle against the specification (the review prompt quotes GOAL.md and asks "does this deliver true multi-typed GEP?").
+**READ the design doc** (`docs/MultiTypedGEP.html`, source `nucleotable/docs/MultiTypedGEP.md` rev 4, and `docs/GOAL.md`). **READ the rules** (`~/dev/minkymorgan/qdrant/docs/Rules.md`). State in the task report how the work delivers the true multi-typed design. The lead checks every result against the specification; Codex reviews every bundle against GOAL.md and the specification; if Codex fails, the advisor reviews.
 
 ## Conformance (what "done" means)
 
-- **C1 Closure.** For every interface of the WGSL kingdom: 1,000,000 genes from the typed initialiser and 1,000,000 children per variation operator express trees that render to naga-valid WGSL and pass every legality layer of `check.rs`. Zero failures. (`MultiTypedGEP.md` §7 item 3, extended to legality.)
-- **C2 No filter.** The WGSL evolution path (`phylu/src/evolve/wgsl_typed_fit.rs`, `examples/wgsl_fit.rs`) calls no legality layer. Every child is scored by fitness. The layers run only in tests.
+- **C1 Closure.** For every interface of every contract in use: 1,000,000 genes from the typed initialiser and 1,000,000 children per shared-core variation operator, drawn on the GPU, express trees that render to naga-valid WGSL and pass every layer of `check.rs` run as an oracle; zero failures. The test also asserts that the renderer applied no rewrite (no mask, cap, clamp, guard, snap or leaf substitution beyond the rows' own declared semantics) and that no legality call was made on the generation path.
+- **C2 No judgement on the evolution path.** The evolution binary (`phylu/examples/wgsl_fit.rs`, `src/evolve/wgsl_typed_fit.rs`) has no call into `check.rs`, `safety.rs`, `check_legal_under`, the cost estimator or any legality stage. Every child is scored by fitness; an infeasible score measures only how wrong the kernel's output is.
 - **C3 Shared core.** WGSL evolves on the shared typed core only; no WGSL-specific variation operator is on the evolution path.
-- **C4 Coverage.** Every WGSL compute kernel naga accepts reads into the kingdom (the human authoring path of `nucleotable/docs/KingdomMatrix.md`).
-- **C5 Evolution.** On a real problem with real seeds, children resemble their parents and fitness improves over generations.
+- **C4 Coverage.** Every kernel that is legal under its declared contract reads into that contract's kingdom (the human authoring path of `nucleotable/docs/KingdomMatrix.md`). A kernel that is illegal under its contract (a race, an unbounded loop, a non-injective store) is outside the kingdom by design and is listed by reason, the way `tests/fixtures/wgsl_genomes/REFUSED.md` lists invalid text.
+- **C5 Evolution.** On a real problem whose seeds read into the kingdom, children resemble their parents and fitness improves over generations.
+
+## The rule ledger (D1 writes the type for each; none is optional)
+
+Every reason of every `check.rs` layer, plus the renderer rewrites A1 found. Starting constructions from the Codex review (§5) and the advisor review; D1 settles each with its closure argument and its cost in expressiveness.
+
+| rule | construction to settle in D1 | expressiveness cost |
+|---|---|---|
+| contract, target limits, features (layer 5) | `K<target, interface, contract>`: feature rows present only where the target has them; `WgSize<target>`, `WgMem<target,bytes>` declarations compose only within limits | one kingdom per target and contract |
+| array range: storage, workgroup, private (layer 3) | `Array<B,E>` and `Idx<B>` produced only by range-preserving rows (literal below the length, masks and clamps as explicit rows, affine forms proved in range); every access consumes `Idx<B>`; the renderer's mask disappears | raw indexing disappears; one index family per binding or length class |
+| write ownership, write-set disjointness per output binding (layer 7) | `Own<out,region>` produced only from injective invocation maps generated from the dispatch contract; stores consume it; statement sequences compose only disjoint regions; scatter writes go through atomics | arbitrary and non-affine stores excluded; finite region templates |
+| output reads, aliasing, read-after-write of outputs (layer 7) | output loads take `Own` only; `Binding<range, alias class>` from the contract; only declared-disjoint bindings coexist | overlapping bindings excluded |
+| workgroup races and ordering (layer 7) | `WgOwn<A,phase>` for writes, `WgRead<A,phase+1>` produced only by barrier rows; no raw workgroup setter | statement and block rows per phase |
+| barrier and subgroup uniformity (layer 4) | context-indexed values `Val<T,WgUniform>`, `Val<T,SubgroupUniform>`, blocks `Block<ctx>`; barriers and subgroup operations require their context; delete `uflag.of_flag` and `uniform.of_checked` | value and operation rows per provenance |
+| bounded loops and work budget (layer 6, Metal hang) | `Bound<k>` with immutable bound snapshots (a bound held in a `let`); loop bodies carry `Fuel<n>`, nesting consumes a fixed total budget | finite bound and budget strata |
+| wrap (layer 3 `index_wraps`, store cell, loop bound) | a width ladder `U32<lo,hi>`; `add`, `mul`, `shl` rows exist only where the result interval fits; plain modulo arithmetic stays where WGSL defines it and it never reaches an index, a store cell or a bound | range-type proliferation |
+| division, modulo, shifts | `NonZeroU32` (and a signed divisor excluding `-1` with `MIN`), `ShiftCount<0..31>`; renderer guards disappear | safe constructors needed |
+| atomics | rows by atomic kind and binding; determinism declared per reduction | as today |
+| typed tree, grammar (layers 1, 2) | already the typed core; the remaining fallback columns of the tables removed | none |
+| render and parse (layer 7 `kernel_does_not_render/parse`) | a render defect, not legality: the `load.cfg_*` rows render (A0) | none |
 
 ## Tasks
 
 | id | prerequisite | task | model | spec and gate |
 |---|---|---|---|---|
-| A1 | READ design doc + rules | Inventory every post-expression judgement in the WGSL evolution path | Sonnet | List every call from phylu `wgsl_typed_fit.rs` / `examples/wgsl_fit.rs` and fuller `src/wgsl` into `check.rs` layers, the harness's legality stages, and any refusal, infeasible score, mask, substitute or fallback-like draw (`render::terminal_leaf`, `own_or_bug`, `safe_karva` mask). File:line, what it judges, when. No code change. |
-| A2 | READ design doc + rules | Measure which layer fails, and why, on random genes and children | Sonnet (GPU by lead's lock) | For each interface of `problems/v24_ingest5b`: 100,000 typed-init genes and 100,000 children per operator, every layer of `check.rs` run on each expressed tree; table of failures by layer and reason, with three example trees per reason. This table is the list of rules still outside the types. |
-| A3 | READ design doc + rules | Map what the kingdom's types already carry | Sonnet | From `kingdoms/safewgsl` (types.tsv, functions.tsv, gen_tables.py) and `WGSL_COVERAGE.md`: which legality rules are already type structure (masked workgroup/private indices, `own.*` cells, barrier rungs, counted loops) and which are not. Table: rule, carried by (dual/rows), or not carried. |
-| D1 | READ design doc + rules; A1-A3 done | Write the WGSL section of the specification (MultiTypedGEP.md rev 5, §9 "WGSL legality as types") | lead | For each rule A2/A3 show outside the types: the type construction that carries it, stated positively (the duals, the rows that produce and consume them, why every expressed tree obeys the rule). Covers at least: in-range index, owned store cell (write-set disjointness as a type of the store index), uniform context for barriers, bounded loops, defined arithmetic (no wrap where it matters). Codex reviews D1 against GOAL.md before any build. |
-| B1..Bn | READ design doc + rules; D1 reviewed | One rule a commit: generate the rows (`gen_tables.py`, never hand-edited TSVs), the reader maps source text onto them, the renderer spells them | Sonnet each, sequential | Gate per rule: the kingdom check passes; C1 for that rule's layer reaches zero failures; round trips of the tracked corpora unchanged or better (`wgsl_reader_census`, `REFUSED.md` exact set). |
-| C1 | READ design doc + rules; B done | The closure property test | Sonnet | A test that draws the 1,000,000 genes and children per operator of C1 and asserts zero layer failures, run under the GPU lock. |
-| C2 | READ design doc + rules; C1 green | Remove every legality judgement from the evolution path | Sonnet | A1's inventory, each item removed or moved to a test; the run scores every child by fitness; Codex review against GOAL.md. |
-| C3 | READ design doc + rules | Retire the WGSL-only operators from the evolution path | Sonnet | `wgsl/mutate.rs`, `sections.rs`, `llm.rs`: callers listed; none on the evolution path; kept code is labelled as tools outside GEP or deleted on the lead's word. |
-| T66 | READ design doc + rules | Sampler terminal draws and the test generator (Codex bundle 3, #2 #3) | Sonnet | A draw ending at a terminal draws uniformly from the type's terminals; the random-gene test generator draws by the typed initialiser, never by masking. |
-| R1 | READ design doc + rules | Coverage C4: the reader reads every naga-valid compute kernel | Sonnet, sequential | The open reader gaps of `tests/fixtures/wgsl_genomes/REFUSED.md` (E barrier under a uniform condition, K uniform-step and fifth tile rung, J struct construction, F3 branch-held row) each as kingdom rows by D1's rules. |
-| E1 | READ design doc + rules; C2 done; Andrew's mutation-rate decision | Evolution on a real problem | lead (GPU) | `wgsl_fit` on V24 ingest with its seeds: ledger shows children resemble parents (overlap), fitness improves; report against C5. |
+| A1 | READ design doc + rules | Inventory of post-expression judgements | Sonnet | DONE fuller c8add64b. Add the cost estimator and the runaway drain (advisor). |
+| A3 | READ design doc + rules | Rules the types carry today | Sonnet | DONE fuller 0c5848e6. |
+| A0 | READ design doc + rules | Remove escape rows and fix render defects before measuring | Sonnet | Delete `uflag.of_flag` and `uniform.of_checked` (through `gen_tables.py`); fix the `load.cfg_*` render and parse failures (`pcfg.d`); remove the tables' remaining fallback columns. Gate: kingdom check passes; corpora round trips unchanged or better. |
+| T66 | READ design doc + rules | Sampler terminal draws and the test generator | Sonnet | A draw ending at a terminal draws uniformly from the type's terminals; the random-gene test generator uses the typed initialiser, never a mask. |
+| A2 | READ design doc + rules; A0, T66 done | Measure, on the GPU, which rules random genes and children break | Sonnet, GPU lock | The device typed init and vary kernels (`TypedInit`, `TypedVaryDevice`), every interface of `problems/v24_ingest5b`, 100,000 genes and 100,000 children per operator from random parents and from the seeds; `check.rs` layers as oracle; table by layer and reason with examples. Tool: `phylu/examples/wgsl_layer_failures.rs` (43266127) moved to the device. |
+| D1 | READ design doc + rules; A2 done | WGSL section of the specification (MultiTypedGEP.md rev 5, §9 "WGSL legality as types") | lead, advisor | For every row of the rule ledger and every reason A2 reports: the duals, the rows that produce and consume them, the closure argument (why every expressed tree obeys the rule), the expressiveness cost, the rows removed. The contract-instantiated kingdom `K<target, interface, contract, alias partition>`. The renderer as pure spelling. Advisor review, Codex review, both against GOAL.md, before any build. |
+| B1 | READ design doc + rules; D1 reviewed | Contract-instantiated kingdom roots and context types | Sonnet | `K<...>` built from a validated contract; target feature rows; the uniformity, phase, ownership and fuel contexts as duals. |
+| B2 | READ design doc + rules; B1 | Dependent rows: arrays and indices, stores and loads, barriers and subgroups, loops and bounds, arithmetic ladders | Sonnet, sequential sub-steps as D1 orders them | Rows through `gen_tables.py` only; reader maps source text onto them; renderer spells them without rewriting. Gate per sub-step: kingdom check; C1 for the layers it closes reaches zero failures. |
+| B3 | READ design doc + rules; B2 | Typed frames and the shared operators on the new kingdom | Sonnet | Layouts, bounds and the device init and vary on the instantiated kingdom; MultiTypedGEP §7 tests 1-6 pass on it. |
+| C1 | READ design doc + rules; B3 | The closure property test | Sonnet | As C1 above, on the GPU, under the lock. |
+| C2 | READ design doc + rules; C1 green | Remove every legality judgement from the evolution path | Sonnet | Every A1 item on the path removed or moved to a test; the gate is C2 above; Codex review against GOAL.md. |
+| C3 | READ design doc + rules | Retire the WGSL-only operators from the evolution path | Sonnet | `wgsl/mutate.rs`, `sections.rs`, `llm.rs`: callers listed; none on the evolution path. |
+| R1 | READ design doc + rules; B3 | Coverage C4 | Sonnet, sequential | Every kernel legal under its contract reads; the open reader gaps (E, K, J, F3) as rows of the D1 types; kernels illegal under their contract listed by reason. |
+| E1 | READ design doc + rules; C2 done; Andrew's mutation-rate decision | Evolution on a real problem | lead (GPU) | `wgsl_fit` on V24 ingest whose seeds read into the kingdom; children resemble parents (overlap); fitness improves; report against C5. |
 
 ## Decisions waiting on Andrew
 
-1. **Mutation rate.** Per type (each type domain takes a whole gene's expected edits, as now: ~5,800 cells per WGSL child) or one rate per gene spread over its cells (about two expressed edits a child). Measured in run 6i; E1 waits on it.
-2. **The range-check patch** (`scratchpad/check_wrap_final_v2.patch`), until D1 moves wrapping arithmetic into the types.
+1. **Mutation rate.** Per type (each type domain takes a whole gene's expected edits: about 5,800 cells per WGSL child, run 6i) or one rate per gene spread over its cells (about two expressed edits a child). E1 waits on it.
+2. **The range-check patch** (`scratchpad/check_wrap_final_v2.patch`), superseded once D1's width ladder carries wrap in the types.
 
-## Parked (not this project's critical path)
+## Parked
 
-The SR, TSR, regex, benchmark and finisher items of `docs/PLAN_outstanding_2026-10-21.md`. They resume when Andrew says.
+The SR, TSR, regex, benchmark and finisher items of `docs/PLAN_outstanding_2026-10-21.md` resume when Andrew says.
