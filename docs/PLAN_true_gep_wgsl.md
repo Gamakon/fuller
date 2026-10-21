@@ -50,7 +50,7 @@ Every reason of every `check.rs` layer, plus the renderer rewrites A1 found. Sta
 | literals: `nonfinite_literal`, `literal_not_a_row`, `blk` {1,2,4,8}, `code4` (what grid and literal snapping repair today) | each literal dual's `C_T` domain is its `literal` range column, append-only (rev 4 §4); a Dc index names a legal value only | literal values per dual |
 | `arena_index_not_in_bounds`, the `--layer7 strict / arena / arena+rows` policy | the arena policy is a contract choice of `K<...>`, named, not a flag | one kingdom per policy |
 | `module_entries_not_the_interfaces` | one root dual per interface | none |
-| execution budget, device deadline (harness deadline, predicted time, runaway drain) | `Fuel<n>` bounded by the contract's execution budget per target, so every expressed kernel completes within the deadline | budget strata per target |
+| execution budget, device deadline (harness deadline, predicted time, runaway drain) | fuel strata (§9 draft): every expressed kernel terminates after a bounded work count; no candidate deadline, time is fitness | budget strata per target |
 | renderer rewrites (A1 §4, ten families: grid, workgroup and literal snapping; fallback leaves; out-of-scope counters; loop caps; index and offset clamps; shift masking; conditional statement erasure; division guards) | each family becomes rows with declared semantics or is removed; the renderer spells the tree only | as the rows above |
 
 ## Tasks
