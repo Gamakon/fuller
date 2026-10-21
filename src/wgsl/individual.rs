@@ -178,8 +178,8 @@ mod tests {
         let rebuilt = ind.rebuild_self().unwrap();
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
-        let original = ctx.fitness(&dev, BLOCKED);
-        let again = ctx.fitness(&dev, &rebuilt.wgsl);
+        let original = ctx.fitness_with_fuel(&dev, BLOCKED, crate::wgsl::oracle::device::Fuel::Proven("the blocked Gram kernel"));
+        let again = ctx.fitness_with_fuel(&dev, &rebuilt.wgsl, crate::wgsl::oracle::device::Fuel::Proven("the blocked Gram kernel rebuilt from its genes"));
         assert!(original.feasible && again.feasible, "{original:?} {again:?}");
         assert!((original.hff - again.hff).abs() < 0.1, "{original:?} {again:?}");
     }

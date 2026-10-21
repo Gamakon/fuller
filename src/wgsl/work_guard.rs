@@ -128,7 +128,7 @@ mod tests {
         let (g, s) = (b.find("self.fuel.check(").expect("harness exec: no guard"), b.find("pass.dispatch_workgroups(").expect("a dispatch"));
         assert!(g < s, "harness exec: the guard comes after the dispatch is encoded");
         let example = include_str!("../../examples/wgsl_true_loop.rs");
-        assert!(example.contains(".with_fuel(") && example.contains("fuel.check(\"stage (c) at the unit-test dispatch\"") && example.contains("self.fuel.check(\"stage (c)\""), "wgsl_true_loop stage (c)");
+        assert!(example.contains("Gram::compile(dev, src, self.fuel.clone())") && example.contains("fuel.check(\"stage (c) at the unit-test dispatch\"") && example.contains("self.fuel.check(\"stage (c)\""), "wgsl_true_loop stage (c)");
         assert!(example.find("fuel.check(\"stage (c) at the unit-test dispatch\"") < example.find("Device::new()"), "the guard comes before the device is opened");
     }
 

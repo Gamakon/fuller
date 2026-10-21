@@ -1388,6 +1388,12 @@ impl FitnessContext {
     }
 
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
+        self.fitness_with_fuel(dev, source, Fuel::Unported)
+    }
+
+    /// The fitness of `source` under `fuel`: [`Fuel::Proven`] for our own shipped and hand kernels (named), the
+    /// kingdom's fuel for a candidate. [`FitnessContext::fitness`] is the legacy candidate path: it runs nothing.
+    pub fn fitness_with_fuel(&self, dev: &Device, source: &str, fuel: Fuel) -> Fitness {
         let spec = Spec {
             probes: &self.probes,
             admission: &self.admission,
@@ -1399,7 +1405,7 @@ impl FitnessContext {
             timing_rounds: self.timing_rounds,
             shipped_reference: self.shipped_reference(),
         };
-        fitness_with(&spec, &DeviceDriver { dev, ctx: self }, source)
+        fitness_with(&spec, &DeviceDriver { dev, ctx: self, fuel }, source)
     }
 }
 
@@ -1411,6 +1417,7 @@ impl FitnessContext {
 struct DeviceDriver<'a> {
     dev: &'a Device,
     ctx: &'a FitnessContext,
+    fuel: Fuel,
 }
 
 #[cfg(feature = "gpu")]
@@ -1418,7 +1425,7 @@ impl<'a> Driver for DeviceDriver<'a> {
     type Kernel = Gram<'a>;
 
     fn compile(&self, source: &str) -> Result<Gram<'a>, String> {
-        Gram::compile(self.dev, source, Fuel::Unported)
+        Gram::compile(self.dev, source, self.fuel.clone())
     }
 
     fn batch(&self, k: &Gram<'a>, cases: std::ops::Range<usize>) -> Result<Batch, String> {
@@ -1823,7 +1830,7 @@ mod tests {
     fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
-        let f = ctx.fitness(&dev, SHIPPED);
+        let f = ctx.fitness_with_fuel(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel"));
         assert!(f.feasible, "{f:?}");
         println!("shipped measured {:?} ms, predicted {:?} ms, rate {:.2} ms per 1e9 item-cells, floor {:.2} ms, limit {:.0} ms", ctx.shipped_ms, f.predicted_ms, f.rate_per_g, f.floor_ms, ctx.slow_limit_ms());
         println!("shipped as the candidate, measured {:?} ms", f.measured_ms);
@@ -1872,7 +1879,7 @@ mod tests {
         let slow = slow_shipped();
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
-        let f = ctx.fitness(&dev, &slow);
+        let f = ctx.fitness_with_fuel(&dev, &slow, Fuel::Proven("a deliberately slow hand kernel of this test"));
         println!("{:.1} s: {}", f.seconds, f.detail);
         assert!(!f.feasible && f.passed == ctx.admission.len(), "{f:?}");
         assert!(f.detail.starts_with("slow: predicted") && f.detail.contains("not dispatched"), "{}", f.detail);
@@ -1988,7 +1995,7 @@ mod tests {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
         let first = ctx.shipped_gpu_ms.get();
-        let f = ctx.fitness(&dev, SHIPPED);
+        let f = ctx.fitness_with_fuel(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel"));
         assert!(f.feasible, "{f:?}");
         let again = ctx.time_shipped(&dev).expect("time shipped");
         println!("shipped {first:?} then {again:?} ms; shipped as a candidate: speed-ups {:?}", f.speedups);
@@ -2250,13 +2257,13 @@ mod tests {
     fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
-        let s = ctx.fitness(&dev, SHIPPED);
+        let s = ctx.fitness_with_fuel(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel"));
         assert!(s.feasible, "{s:?}");
         assert!((s.hff - 1.186).abs() < 0.08, "{s:?}");
-        let b = ctx.fitness(&dev, BLOCKED);
+        let b = ctx.fitness_with_fuel(&dev, BLOCKED, Fuel::Proven("the blocked Gram kernel"));
         assert!(b.feasible && b.hff < s.hff && b.speedups.iter().all(|x| *x > 2.0), "{b:?}");
         let broken = SHIPPED.replace("phi[base + gr] * phi[base + c]", "phi[base + gr]");
-        let w = ctx.fitness(&dev, &broken);
+        let w = ctx.fitness_with_fuel(&dev, &broken, Fuel::Proven("a broken copy of the shipped kernel, a hand kernel of this test"));
         assert!(!w.feasible && w.detail.starts_with("constraint"), "{w:?}");
         println!("shipped {:.3} in {:.1} s; blocked {:.3} in {:.1} s; broken in {:.1} s", s.hff, s.seconds, b.hff, b.seconds, w.seconds);
     }
