@@ -503,6 +503,7 @@ mod tests {
         let mut alphabets = Alphabets::default();
         let (mut read, mut total) = (0usize, 0usize);
         let mut failures: Vec<String> = Vec::new();
+        let mut outside: Vec<String> = Vec::new();
         for (dir, limit) in [("tests/corpus/safewgsl", usize::MAX), ("tests/corpus/nluca", usize::MAX), ("tests/corpus/interfaces", usize::MAX), ("tests/corpus/model_replies", 300)] {
             let mut files: Vec<_> = std::fs::read_dir(root.join(dir)).expect("the corpus").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
             files.sort();
@@ -510,6 +511,12 @@ mod tests {
                 total += 1;
                 match round_trip(&mut alphabets, &kingdom, &std::fs::read_to_string(&f).expect("a kernel")) {
                     Outcome::NotRead(_) | Outcome::Unrenderable(_) => {}
+                    // A kernel that returns before the output store its interface demands has no spelling: the Gram's
+                    // alphabet has no `return` symbol. Named, and counted below.
+                    Outcome::Gap(g) if g.reason == "no row" && g.detail.starts_with("stmt.return_") => {
+                        read += 1;
+                        outside.push(f.file_name().map_or_else(String::new, |n| n.to_string_lossy().to_string()));
+                    }
                     Outcome::Gap(g) => {
                         read += 1;
                         failures.push(format!("{}: {}: {}", f.display(), g.reason, g.detail));
@@ -523,7 +530,8 @@ mod tests {
                 }
             }
         }
-        println!("{read} of {total} kernels read; {} do not round trip", failures.len());
+        println!("{read} of {total} kernels read; {} do not round trip; outside the typed kingdom (a return before the store): {outside:?}", failures.len());
+        assert_eq!(outside, vec!["draft_no_store.wgsl".to_string()], "the kernels that return before the output store");
         assert!(read > 400, "only {read} kernels read");
         assert!(failures.is_empty(), "{} kernels do not round trip through a typed gene:\n{}", failures.len(), failures.join("\n"));
     }
@@ -791,5 +799,62 @@ mod tests {
         println!("{N} random typed genes of v24's interface: {} failed to render or validate: {failures:?}", failures.values().sum::<usize>());
         let cfg: Vec<&String> = failures.keys().filter(|e| e.contains("cfg") || e.contains("field accessor") || e.contains("is not a row of the function table")).collect();
         assert!(cfg.is_empty(), "genes of v24's interface fail on the Gram's fields: {cfg:?}");
+    }
+
+    /// A kernel whose body sets register b0 to `flag`, rendered and validated by naga.
+    fn flag_kernel_validates(flag: &Tree, what: &str) {
+        use crate::wgsl::render::{dual_ty, gram_role, own_leaf, validate_text};
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let ty = |n: &str| dual_ty(&k, n).unwrap_or_else(|e| panic!("{e}"));
+        let set = Tree::new("reg.set_b_L0", ty("stmt.L0"), vec![Tree::new("reg.b0", ty("reg<bool>.flag"), vec![]), flag.clone()]);
+        let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own_leaf(&k, ty("grid.grid")).unwrap(), Tree::new("block.one_L0", ty("block.L0"), vec![set]), own_leaf(&k, ty("block.O0")).unwrap()]);
+        let text = crate::wgsl::safe_karva::render_tree_with(&kernel, &k, &role).unwrap_or_else(|e| panic!("{what}: {e}")).text;
+        validate_text(&text).unwrap_or_else(|e| panic!("{what}: naga refuses the kernel: {e}\n{text}"));
+    }
+
+    /// CAUSE 1 OF THE NAGA ERRORS OF THE TYPED GENES: `logic.is_inf` compared an f16 operand with the f32 maximum
+    /// (`abs(x) > 3.4028235e38`: "the concrete type f16 cannot represent the abstract value", and a vec3<f16> against a
+    /// vec3<f32>). It is written with the operand's own width.
+    #[test]
+    fn is_inf_of_an_f16_operand_is_spelled_in_f16() {
+        let k = WgslKingdom::load_safe();
+        let ty = |n: &str| crate::wgsl::render::dual_ty(&k, n).unwrap_or_else(|e| panic!("{e}"));
+        let scalar = Tree::new("logic.is_inf", ty("bool.flag"), vec![Tree::literal("literal.real", ty("f16.real"), 1.5)]);
+        flag_kernel_validates(&scalar, "is_inf of an f16 scalar");
+        let lanes = Tree::new("logic.is_inf", ty("vec3<bool>.flag"), vec![Tree::literal("literal.real", ty("vec3<f16>.real"), 1.5)]);
+        flag_kernel_validates(&Tree::new("logic.any", ty("bool.flag"), vec![lanes]), "is_inf of a vec3<f16>");
+    }
+
+    /// CAUSE 2: an f16 literal in a literal-only expression was written bare (`asin(vec4<f16>(f16(-3.88f)))`), which naga
+    /// folds and refuses ("asin built-in function argument is out of valid range"); an f32 one passes through `lit_f32`.
+    /// An f16 literal passes through `lit_f16` the same way.
+    #[test]
+    fn a_literal_only_expression_over_f16_is_not_folded_by_naga() {
+        let k = WgslKingdom::load_safe();
+        let ty = |n: &str| crate::wgsl::render::dual_ty(&k, n).unwrap_or_else(|e| panic!("{e}"));
+        let asin = Tree::new("trig.asin", ty("f16.real"), vec![Tree::literal("literal.real", ty("f16.real"), -3.5)]);
+        flag_kernel_validates(&Tree::new("logic.is_nan", ty("bool.flag"), vec![asin]), "asin of an f16 constant");
+        let lanes = Tree::new("trig.asin", ty("vec4<f16>.real"), vec![Tree::literal("literal.real", ty("vec4<f16>.real"), -3.5)]);
+        let nan = Tree::new("logic.is_nan", ty("vec4<bool>.flag"), vec![lanes]);
+        flag_kernel_validates(&Tree::new("logic.any", ty("bool.flag"), vec![nan]), "asin of a vec4<f16> constant");
+    }
+
+    /// AN INTERFACE THAT DEMANDS THE OUTPUT STORE HAS NO `return` SYMBOL (T66: 76 of 1,000 random typed genes under the
+    /// Gram's interface returned before the epilogue and never wrote h); v24's, with no output cell, keeps it.
+    #[test]
+    fn no_return_can_skip_the_epilogue_store_the_problem_demands() {
+        let kingdom = WgslKingdom::load_safe();
+        let returns = |role: &Role| -> usize {
+            let a = Alphabet::new(&kingdom, role).unwrap_or_else(|g| panic!("{}: {}", g.reason, g.detail));
+            (0..a.contract.n_symbols()).filter(|s| a.contract.name(*s as SymbolId).starts_with("stmt.return_")).count()
+        };
+        assert_eq!(returns(&crate::wgsl::render::gram_role()), 0);
+        assert_eq!(returns(&crate::wgsl::render::cosine_role()), 0);
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/problems/v24_ingest_small/reference.wgsl")).expect("v24's reference kernel");
+        let read = crate::wgsl::safe_reader::read_safe(&text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let ext = read.kingdom.as_ref().unwrap_or(&kingdom);
+        let a = Alphabet::new(ext, &read.role).unwrap_or_else(|g| panic!("{}: {}", g.reason, g.detail));
+        assert!((0..a.contract.n_symbols()).any(|s| a.contract.name(s as SymbolId).starts_with("stmt.return_")), "v24's interface keeps its return rows");
     }
 }

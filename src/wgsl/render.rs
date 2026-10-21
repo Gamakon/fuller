@@ -1414,7 +1414,7 @@ impl<'a> Renderer<'a> {
         }
         // The pass-through functions a literal-only expression needs (see
         // `Scope::const_depth`), declared only when a body uses them.
-        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
+        for (name, ty) in [("lit_f32", "f32"), ("lit_f16", "f16"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
             if parts.iter().any(|p| p.body.contains(&format!("{name}("))) {
                 text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
             }
@@ -2230,7 +2230,14 @@ pub fn role_spells(kingdom: &WgslKingdom, role: &Role, r: &WgslRow) -> bool {
     if field.is_some_and(|f| role.field(f).is_err()) {
         return false;
     }
-    if role.per_kernel.iter().any(|p| p.name == "store.h") {
+    // An interface whose problem demands the output store ends every kernel in it (the epilogue, `store.h`): no row may end
+    // the kernel before that store, so a `return` is no symbol of it. (An interface with no output cell has no epilogue
+    // to skip, and ends its kernels in a return, as v24's do.)
+    let demands_the_store = role.per_kernel.iter().any(|p| p.name == "store.h");
+    if demands_the_store && r.name.starts_with("stmt.return_") {
+        return false;
+    }
+    if demands_the_store {
         return true;
     }
     let gram_dual = |t: &Ty| kingdom.dual(*t).is_some_and(|d| matches!(d.dual.as_str(), "u32.boundm" | "u32.boundd" | "u32.boundrows" | "u32.cell" | "u32.mirror"));
@@ -3061,7 +3068,15 @@ impl Renderer<'_> {
                 // WGSL has no isNan/isInf: the IEEE tests, written out.
                 "IsNan" => format!("({0} != {0})", a[0]),
                 "IsInf" => {
-                    let big = if d.lanes > 1 { format!("vec{}<f32>(3.4028235e38)", d.lanes) } else { "3.4028235e38".to_string() };
+                    // (The operand's own width: f16's greatest finite value is 65504, f32's 3.4028235e38; the other
+                    // compared an f16 vector with an f32 one and naga refused the kernel.)
+                    let x = self.dual(v.kids[0].ty)?;
+                    let big = match (x.scalar(), d.lanes > 1) {
+                        (Some("f16"), true) => format!("vec{}<f16>(65504.0h)", d.lanes),
+                        (Some("f16"), false) => "65504.0h".to_string(),
+                        (_, true) => format!("vec{}<f32>(3.4028235e38)", d.lanes),
+                        (_, false) => "3.4028235e38".to_string(),
+                    };
                     format!("(abs({}) > {big})", a[0])
                 }
                 other => return Err(format!("{name}: relational {other} has no text")),
@@ -3192,7 +3207,10 @@ impl Renderer<'_> {
                 }
                 if d.scalar() == Some("f16") {
                     // An f16 constant: the value converted from its f32 text (the module enables f16 when its text uses it).
-                    return Ok(if d.lanes > 1 && d.slot.starts_with("vec") { format!("{}(f16({v:?}f))", slot_ctor(&d.slot)?) } else { format!("f16({v:?}f)") });
+                    // (In a literal-only expression it passes through `lit_f16`, so naga folds none of it: asin of a constant
+                    // is a compile error.)
+                    let one = if wrap { format!("lit_f16(f16({v:?}f))") } else { format!("f16({v:?}f)") };
+                    return Ok(if d.lanes > 1 && d.slot.starts_with("vec") { format!("{}({one})", slot_ctor(&d.slot)?) } else { one });
                 }
                 if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
