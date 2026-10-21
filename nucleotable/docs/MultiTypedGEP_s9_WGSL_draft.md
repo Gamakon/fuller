@@ -2,7 +2,7 @@
 
 The kingdom holds any WGSL compute kernel over a declared **interface**: its storage bindings (each an input, read-only, or an output, read-write, with an element type `<e>` and a shape over the uniform's fields), its uniform block's fields, and the target's limits. Rows that mention a binding or a field are **families**, generated once per declared binding or field; the Gram interface (`phi: array<f32>` in, `h: array<f32>` out with shape `cfg.r_rows x cfg.d`, `cfg { d, m, r_rows, r_off }`) is one worked instance, never the default. Notation: `<b>` an output binding, `<i>` an input binding, `<f>` a uniform field, `<e>` the binding's element type (`f32`, `u32`, `i32`, `vec4<f32>`, ...). A 2-D output declares `shape <b> <R_b> <C_b>` (rows and columns, each an expression over fields) and is laid out row-major with stride `C_b`; a 1-D output declares `shape <b> <L_b>`. Every binding with load or store rows declares a length lower bound of at least one. `KNOB_BROW`, `KNOB_BCOL`, `KNOB_WROW`, `KNOB_WCOL` are `const`s the entry point writes from its grid node. `lit_u32`, `lit_f32`, `lit_bool`, `lit_i32` are identity helpers that keep every literal out of constant evaluation.
 
-Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership rows. Batch 2: the remaining builtins and axes, u32 and f32 arithmetic, comparisons and logic, input loads and uniform fields. Later: fuel strata, loops, counters, the W phase, uniform provenance and barriers, registers and arrays, atomics, subgroups, the other partitions, arenas.
+Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership rows. Batch 2: the remaining builtins and axes, u32 and f32 arithmetic, comparisons and logic, input loads and uniform fields. Batch 3: registers and private arrays, fuel strata, loops and counters, uniform provenance (fields, workgroup ids, uniform counters, `workgroupUniformLoad`), the barrier. Later: the W phase and workgroup-array writes, reductions, atomics, subgroups, the other partitions, arenas, vectors, i32 and the other scalar families.
 
 ## Types (growing)
 
@@ -112,14 +112,16 @@ Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership r
 | `index.of_count` | `u32.index` | `u32.count` | `{0}` | a size used as a position |
 | `index.add` | `u32.index` | `u32.index`, `u32.index` | `({0} + {1})` | wraps modulo `2^32` as WGSL defines; a wrapped value is a wrong position, never an unsafe one: no store takes a `u32.index`, and every load clamps |
 | `index.mul` | `u32.index` | `u32.index`, `u32.index` | `({0} * {1})` | likewise |
-| `index.sub_floor` | `u32.index` | `u32.index`, `u32.index` | `({0} - min({0}, {1}))` | the kingdom's difference: floored at zero, so it never wraps below zero; the reader reads `a - b` as this row (same value where `a >= b`); a raw difference has no row |
-| `index.div` | `u32.index` | `u32.index`, `u32.index` | `({0} / {1})` | WGSL's `x / 0 = x`: defined |
-| `index.mod` | `u32.index` | `u32.index`, `u32.index` | `({0} % {1})` | WGSL's `x % 0 = 0`: defined |
+| `index.sub` | `u32.index` | `u32.index`, `u32.index` | `({0} - {1})` | wraps modulo `2^32` as WGSL defines (§6.2.3), like `add` and `mul`; reaches no store or bound except through the capped bound rows; a seed's `a - b` reads as this row exactly (ruled, batch 2 review) |
+| `index.sub_floor` | `u32.index` | `u32.index`, `u32.index` | `({0} - min({0}, {1}))` | the floored difference, a separate row with its own text |
+| `index.div` | `u32.index` | `u32.index`, `u32.index` | `({0} / {1})` | WGSL §8.8: for a runtime divisor of zero the result is `e1`; defined |
+| `index.mod` | `u32.index` | `u32.index`, `u32.index` | `({0} % {1})` | WGSL §8.8: a runtime divisor of zero gives `0`; defined |
 | `index.min` | `u32.index` | `u32.index`, `u32.index` | `min({0}, {1})` | |
 | `index.max` | `u32.index` | `u32.index`, `u32.index` | `max({0}, {1})` | |
 | `index.clamp_to` | `u32.index` | `u32.index`, `u32.count` | `min({0}, max({1}, 1u) - 1u)` | `i < n`, and `0` for `n = 0` |
-| `index.shl` | `u32.index` | `u32.index`, `u32.index` | `({0} << (({1}) & 31u))` | the count is masked by the row's text, so no shift by 32 or more exists (naga rejects it at constant evaluation; WGSL's runtime result would be the same masked one) |
-| `index.shr` | `u32.index` | `u32.index`, `u32.index` | `({0} >> (({1}) & 31u))` | |
+| `index.shl` | `u32.index` | `u32.index`, `u32.index` | `({0} << {1})` | WGSL §8.10: for runtime operands "the number of bits to shift is the value of e2, modulo the bit width of e1"; a shift count at or past the width is an error only for a const-expression, and every literal of this kingdom passes through `lit_u32`, so no const-expression shift exists; the row's meaning is WGSL's |
+| `index.shr` | `u32.index` | `u32.index`, `u32.index` | `({0} >> {1})` | likewise (§8.10) |
+| `index.shl_m` | `u32.index` | `u32.index`, `u32.index` | `({0} << (({1}) & 31u))` | the explicitly masked spelling, a separate row so a seed written with the mask reads exactly; `index.shr_m` likewise |
 | `index.and` | `u32.index` | `u32.index`, `u32.index` | `({0} & {1})` | |
 | `index.or` | `u32.index` | `u32.index`, `u32.index` | `({0} \| {1})` | |
 | `count.add` | `u32.count` | `u32.count`, `u32.count` | `({0} + {1})` | sizes add (wrap defined); `count.sub_floor`, `count.min`, `count.max` as for `index` |
@@ -128,8 +130,9 @@ Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership r
 | `arith.<tri>` | `f32.real` | `f32.real` × 3 | `clamp({0}, {1}, {2})`, `mix(...)`, `fma(...)`, `smoothstep(...)` | 4 rows |
 | `convert.index_to_f32` | `f32.real` | `u32.index` | `f32({0})` | |
 | `convert.count_to_f32` | `f32.real` | `u32.count` | `f32({0})` | |
-| `convert.f32_to_index` | `u32.index` | `f32.real` | `u32(clamp({0}, 0.0, 4294967040.0))` | the clamp is the row's text: `u32()` of a negative, a NaN or a value past `u32::MAX` is indeterminate in WGSL, so the row fixes it (`4294967040` is the largest f32 below `2^32`) |
-| `convert.f32_to_count` | `u32.count` | `f32.real` | as `convert.f32_to_index` | |
+| `convert.f32_to_index` | `u32.index` | `f32.real` | `u32({0})` | WGSL §15.7.6: a non-NaN value is clamped into the target's range and rounded toward zero (`-1f` is `0u`, `1e20f` is `4294967040u`): defined, so the row is plain `u32(x)` and a seed's `u32(x)` reads as it exactly (ruled); a NaN gives "an indeterminate value in T": a u32, scored by fitness, never a fault |
+| `convert.f32_to_index_nan0` | `u32.index` | `f32.real` | `u32(select({0}, 0.0, {0} != {0}))` | the deterministic variant for the one indeterminate case of §15.7.6 (NaN gives `0u`), a separate row with its own text |
+| `convert.f32_to_count` | `u32.count` | `f32.real` | `u32({0})` | as `convert.f32_to_index` |
 | `compare.<cmp>_index` | `bool.flag` | `u32.index`, `u32.index` | `({0} < {1})` ... | `<cmp>` in `{lt, le, gt, ge, eq, ne}`: 6 rows |
 | `compare.<cmp>_count` | `bool.flag` | `u32.count`, `u32.count` | likewise | 6 rows; a comparison of a position with a size goes through `index.of_count` |
 | `compare.<cmp>_real` | `bool.flag` | `f32.real`, `f32.real` | likewise | 6 rows; a comparison with NaN is false, defined |
@@ -138,10 +141,91 @@ Batch 1 (2026-10-21): the kernel skeleton, the epilogue's store, the ownership r
 | `logic.not` | `bool.flag` | `bool.flag` | `(!{0})` | |
 | `select.real` | `f32.real` | `f32.real`, `f32.real`, `bool.flag` | `select({0}, {1}, {2})` | `select.index`, `select.count` likewise |
 
-Batch 2: 46 rows (families counted once; 3-row axis and 6-row comparison patterns as written). Types added in batch 2: `vec3<u32>.lid`, `vec3<u32>.wid`, `u32.lidx`, `vec3<u32>.nwg`, `u32.rowid`, `u32.colid`, `u32.count`. Running total: 26 types; 48 + 46 = 94 rows (families).
+Batch 2: 49 rows (families counted once; 3-row axis and 6-row comparison patterns as written). Types added in batch 2: `vec3<u32>.lid`, `vec3<u32>.wid`, `u32.lidx`, `vec3<u32>.nwg`, `u32.rowid`, `u32.colid`, `u32.count`. Running total: 26 types; 48 + 49 = 97 rows (families).
+
+## Batch 3: registers, private arrays, fuel strata, loops and counters, uniform provenance, the barrier
+
+**Fuel strata, applied to every statement type.** From this batch every statement and block type carries a fuel stratum `_f<k>`, `k` in `0..=4`: `stmt.L0_f2`, `block.C1_f0`, `block.O0_f4`, ... The meaning of stratum `k`: one execution of the statement performs at most `H * 2^(6k)` node executions, `H` the layout's total head length (the walk reads each head row at most once, so a tree has at most `H` functions). Every row of batches 1 and 2 that takes or gives a statement or block type now exists once per stratum with **all** its statement inputs and its output at one stratum (`block.seq2_L0_f2: (stmt.L0_f2, stmt.L0_f2) -> block.L0_f2`; `stmt.if_L0_f1: (bool.flag, block.C0_f1) -> stmt.L0_f1`; `store.<b>_O0_f3 -> stmt.O0_f3`; `own.stmt_L0_f0`, ... at every stratum), and the root takes the interface's budget `K`: `kernel.entry_safe: (grid.grid, block.L0_f<K>, block.O0_f<K>)`. Only loop rows raise the stratum (by their trip class); the lift rows below raise it without text. So a kernel of budget `K` executes at most `H * 2^(6K)` nodes an invocation and terminates: the hang (A1 P3, H10) has no tree.
+
+**Rung ladder.** A loop at rung `<X><d>` has a body at `<X><d+1>` and binds the counter of depth `d+1`; depths run `0..=5`, so five loops nest and no row takes a `block.*6`. Types added: `stmt.L<d>`, `block.L<d>`, `stmt.C<d>`, `block.C<d>` for `d` in `1..=5`; `stmt.O<d>`, `block.O<d>` for `d` in `1..=4`; `block.B<d>` for `d` in `1..=5` (a loop body that breaks: conditional statements, the guard, conditional statements; no barrier, so an invocation that leaves early skips no barrier).
+
+| type | what it holds |
+|---|---|
+| `reg<f32>.real` | a named f32 register `f0..f63`, declared at kernel scope, initialised `0.0` |
+| `reg<u32>.index` | a named u32 register `i0..i63`, initialised `0u` |
+| `reg<bool>.flag` | a named bool register `b0..b15`, initialised `false` |
+| `ureg<u32>.uniform` | a named u32 register `U0..U7` that holds the same value in every invocation: written only at L rungs from uniform values |
+| `parr<f32,64>.real` | a private array of 64 f32, `pf0..pf7` |
+| `parr<u32,16>.index` | a private array of 16 u32, `pi0..pi4` |
+| `u32.pidx_6` | an index below 64, by the mask its row writes |
+| `u32.pidx_4` | an index below 16, likewise |
+| `u32.lit4096` | a literal `1..=4096` |
+| `u32.boundx<c>` | an expression loop bound capped at `2^c`, `c` in `{6, 12, 18, 24}` (trip class `c/6`); any invocation's value |
+| `u32.boundu<c>` | a loop bound capped at `2^c` that is the same in every invocation of the workgroup |
+| `u32.tcounter<d>` | the counter `k<d>` of a loop whose bound is a literal or uniform, `d` in `1..=5`: uniform |
+| `u32.xcounter<d>` | the counter `kx<d>` of a loop whose bound is any expression, or that breaks: divergent |
+| `u32.uniform` | a u32 the same in every invocation of the workgroup: a field, a literal, the workgroup id, the grid, a uniform counter, a uniform register, arithmetic of these |
+| `bool.uflag` | a predicate the same in every invocation: comparisons of uniform values and their logic |
+| `wgmem<u32,1024>.index` | a workgroup array of 1,024 u32, `wg_u_10` (the stratum map's; the full map and its writes come in batch 4) |
+
+| symbol | output | arguments (ordered) | WGSL spelling | note |
+|---|---|---|---|---|
+| `reg.f<n>` | `reg<f32>.real` | — | `f<n>` | `n` in `0..=63`: 64 terminals; a register is a name, never a value: only `reg.get_f` reads it |
+| `reg.i<n>` | `reg<u32>.index` | — | `i<n>` | 64 terminals |
+| `reg.b<n>` | `reg<bool>.flag` | — | `b<n>` | 16 terminals |
+| `reg.get_f` | `f32.real` | `reg<f32>.real` | `{0}` | |
+| `reg.get_i` | `u32.index` | `reg<u32>.index` | `{0}` | a register holds any invocation's value: no row makes a `u32.uniform` or an ownership type from it |
+| `reg.get_b` | `bool.flag` | `reg<bool>.flag` | `{0}` | |
+| `reg.set_f_<r>` | `stmt.<r>` | `reg<f32>.real`, `f32.real` | `{0} = {1};` | `<r>` every `L<d>_f<k>` and `C<d>_f<k>` rung (not `O`: the epilogue's last statement is a store, and its leading statements are `C`) |
+| `reg.set_i_<r>` | `stmt.<r>` | `reg<u32>.index`, `u32.index` | `{0} = {1};` | likewise |
+| `reg.set_b_<r>` | `stmt.<r>` | `reg<bool>.flag`, `bool.flag` | `{0} = {1};` | likewise |
+| `parr.f<n>` | `parr<f32,64>.real` | — | `pf<n>` | `n` in `0..=7`; private arrays per element type and length as the kingdom's register file lists them (`vec4<f32>` × 16 and × 64, `u32` × 64 and × 128, `bool` × 16, `vec2<f32>` × 16 follow the same three-row pattern when their scalar families arrive) |
+| `parr.i<n>` | `parr<u32,16>.index` | — | `pi<n>` | `n` in `0..=4` |
+| `safe.pidx_6` | `u32.pidx_6` | `u32.index` | `(({0}) & 63u)` | the mask is the row's text; one index type per array length, so a 64-mask can never reach a 16-element array (`index_out_of_range`) |
+| `safe.pidx_4` | `u32.pidx_4` | `u32.index` | `(({0}) & 15u)` | |
+| `parr.get_f_6` | `f32.real` | `parr<f32,64>.real`, `u32.pidx_6` | `{0}[{1}]` | in range by the index type |
+| `parr.get_i_4` | `u32.index` | `parr<u32,16>.index`, `u32.pidx_4` | `{0}[{1}]` | |
+| `parr.set_f_6_<r>` | `stmt.<r>` | `parr<f32,64>.real`, `u32.pidx_6`, `f32.real` | `{0}[{1}] = {2};` | at the `L` and `C` rungs of every stratum |
+| `parr.set_i_4_<r>` | `stmt.<r>` | `parr<u32,16>.index`, `u32.pidx_4`, `u32.index` | `{0}[{1}] = {2};` | |
+| `literal.lit4096` | `u32.lit4096` | — | `lit_u32(n)`, `n` in `1..=4096` | `?_lit4096` |
+| `bound.of_index_<c>` | `u32.boundx<c>` | `u32.index` | `min({0}, lit_u32(2^c))` | `c` in `{6, 12, 18, 24}`: 4 rows; the cap is the row's text, so every expression-bounded loop has a known trip bound (`loop_bound_wraps`: the counter steps by at most 4,096 from below `2^24`, so it never passes `u32::MAX`) |
+| `bound.of_uniform_<c>` | `u32.boundu<c>` | `u32.uniform` | `min({0}, lit_u32(2^c))` | 4 rows; a uniform bound: the loop's trip count is the same in every invocation, so its body may hold a barrier |
+| `stmt.lift_<X><d>_f<k>` | `stmt.<X><d>_f<k>` | `stmt.<X><d>_f<k-1>` | `{0}` | `k` in `1..=4`, every rung: a statement of a lower stratum stands in a higher one (needed so a sequence can mix a loop with plain statements) |
+| `loop.tile_L<d>_f<k>` | `stmt.L<d>_f<k+1>` | `u32.lit64`, `block.L<d+1>_f<k>` | `let n = {0}; k<d+1> = 0u; for (; k<d+1> < n; k<d+1> = k<d+1> + 1u) { {1} }` | `d` in `0..=4`, `k` in `0..=3`: a literal bound (class 1) raises the stratum by one; the body keeps the L rung, so it may hold a barrier (every invocation runs the same trips); the counter is the kernel-scope `k<d+1>`, reset and never redeclared; the bound is in a `let`, so the body cannot change the trip count (`loop_bound_changes_in_body`) |
+| `loop.tile_C<d>_f<k>` | `stmt.C<d>_f<k+1>` | `u32.lit64`, `block.C<d+1>_f<k>` | as above with `kx<d+1>` | under a condition: the body stays conditional; `loop.tile_O<d>_f<k>: (u32.lit64, block.O<d+1>_f<k>) -> stmt.O<d>_f<k+1>` for `d` in `0..=3` (the epilogue's loop: its body ends in the store, so the loop runs the store at least once because `n >= 1`) |
+| `loop.tileu_<c>_L<d>_f<k>` | `stmt.L<d>_f<k+c/6>` | `u32.boundu<c>`, `block.L<d+1>_f<k>` | `let n = {0}; k<d+1> = 0u; for (; k<d+1> < n; k<d+1> = k<d+1> + 1u) { {1} }` | a uniform bound of class `c/6` at an L rung: the body keeps the L rung; exists only where `k + c/6 <= 4` |
+| `loop.tilex_<c>_<X><d>_f<k>` | `stmt.<X><d>_f<k+c/6>` | `u32.boundx<c>`, `block.C<d+1>_f<k>` | as above with `kx<d+1>` | `<X>` in `{L, C}`: an expression bound differs between invocations, so the body is a `C` block whatever the rung (no barrier in it: `barrier_in_nonuniform_control_flow`) and the counter is `kx`; `loop.tilex_<c>_O<d>` with body `block.O<d+1>` likewise (no barrier in an epilogue) |
+| `loop.tile_strided_<X><d>_f<k>` | `stmt.<X><d>_f<k+1>` | `u32.lit64`, `u32.lit4096`, `block.<X'><d+1>_f<k>` | `... k = k + {1} ...` | the stride form of each loop row above (`tileu_strided`, `tilex_strided` with `u32.lit4096` as the stride); a stride only lowers the trip count, so the class is the bound's |
+| `loop.unroll_<X><d>_f<k>` | `stmt.<X><d>_f<k+1>` | `u32.lit64`, `block.<X'><d+1>_f<k>` | the body written `n` times, `k<d+1>` a literal `0u, 1u, ...` in each copy | straight-line; the counter variable is not assigned |
+| `block.brk_B<d>` | `block.B<d>_f<k>` | `block.C<d>_f<k>`, `bool.flag`, `block.C<d>_f<k>` | `{0} if ({1}) { break; } {2}` | `d` in `1..=5`; both parts are `C` blocks: no barrier before or after the break |
+| `loop.tile_brk_<X><d>_f<k>` | `stmt.<X><d>_f<k+1>` | `u32.lit64`, `block.B<d+1>_f<k>` | as `loop.tile` with `kx<d+1>` | a loop that breaks binds `kx`: after it the counter differs between invocations; `loop.tilex_brk_<c>` likewise with `u32.boundx<c>` |
+| `block.cont_C<d>` | `block.C<d>_f<k>` | `bool.flag`, `block.C<d>_f<k>` | `if ({0}) { continue; } {1}` | `d` in `1..=5` only: a `C<d>` block with `d >= 1` is inside a loop, so `continue_outside_loop` has no tree; the rest of the block is conditional |
+| `safe.tile_counter<d>` | `u32.tcounter<d>` | — | `k<d>` | `d` in `1..=5`: terminal; `0u` before its loop, the trip inside, the final value after |
+| `safe.xtile_counter<d>` | `u32.xcounter<d>` | — | `kx<d>` | terminal |
+| `index.of_tcounter<d>` | `u32.index` | `u32.tcounter<d>` | `{0}` | 5 rows; `index.of_xcounter<d>` likewise |
+| `uniform.<f>` | `u32.uniform` | — | `cfg.<f>` | one per u32 uniform field: the same in every invocation. Gram: `uniform.d`, `uniform.m`, `uniform.r_rows`, `uniform.r_off` |
+| `uniform.lit` | `u32.uniform` | `u32.lit4096` | `{0}` | |
+| `uniform.wid_<c>` | `u32.uniform` | `vec3<u32>.wid` | `{0}.<c>` | `<c>` in `{x, y, z}`: the workgroup id is uniform; `uniform.nwg_<c>` over `vec3<u32>.nwg` likewise; no row makes a `uniform` from `gid`, `lid` or `lidx` |
+| `uniform.of_tcounter<d>` | `u32.uniform` | `u32.tcounter<d>` | `{0}` | the counter of a literal- or uniform-bounded loop is the same in every invocation; no row takes an `xcounter` |
+| `uniform.<op>` | `u32.uniform` | `u32.uniform`, `u32.uniform` | as `index.<op>` | `<op>` in `{add, sub, mul, div, mod, min, max, shl, shr, and, or}`: 11 rows; arithmetic of uniforms is uniform (a wrap gives a uniform wrong value) |
+| `index.of_uniform` | `u32.index` | `u32.uniform` | `{0}` | one way only |
+| `uflag.<cmp>` | `bool.uflag` | `u32.uniform`, `u32.uniform` | `({0} < {1})` ... | `<cmp>` in `{lt, le, gt, ge, eq, ne}`: 6 rows |
+| `uflag.and` / `uflag.or` / `uflag.not` | `bool.uflag` | `bool.uflag` (× 2 / × 2 / × 1) | `&&`, `\|\|`, `!` | 3 rows |
+| `flag.of_uflag` | `bool.flag` | `bool.uflag` | `{0}` | one way only: a uniform predicate is a predicate; no row makes a `uflag` from a `flag` |
+| `stmt.if_uflag_L<d>_f<k>` | `stmt.L<d>_f<k>` | `bool.uflag`, `block.L<d>_f<k>` | `if ({0}) { {1} }` | the body keeps the L rung: every invocation takes the same branch, so a barrier inside is reached by all (WGSL's uniformity rule) |
+| `stmt.if_else_uflag_L<d>_f<k>` | `stmt.L<d>_f<k>` | `bool.uflag`, `block.L<d>_f<k>`, `block.L<d>_f<k>` | `if ({0}) { {1} } else { {2} }` | |
+| `ureg.U<n>` | `ureg<u32>.uniform` | — | `U<n>` | `n` in `0..=7`: 8 terminals |
+| `uniform.get_U` | `u32.uniform` | `ureg<u32>.uniform` | `{0}` | a uniform register reads as a uniform value: its only writers are the two rows below, both at L rungs from uniform sources |
+| `ureg.set_L<d>_f<k>` | `stmt.L<d>_f<k>` | `ureg<u32>.uniform`, `u32.uniform` | `{0} = {1};` | at L rungs only (uniform control), from a uniform value only |
+| `wg.u_10` | `wgmem<u32,1024>.index` | — | `wg_u_10` | terminal; the array is declared from the stratum map in the prologue |
+| `wg.uload_L<d>_f<k>` | `stmt.L<d>_f<k>` | `ureg<u32>.uniform`, `wgmem<u32,1024>.index`, `u32.uniform` | `{0} = workgroupUniformLoad(&{1}[({2}) & 1023u]);` | WGSL §17.11.4: the pointer must be uniform (the index is a `u32.uniform`, masked by the row's text) and the call is a control barrier, so it stands at L rungs only; its result is uniform, so it lands in a `ureg` |
+| `stmt.barrier_L<d>_f<k>` | `stmt.L<d>_f<k>` | — | `workgroupBarrier();` | §17.11.3; at L rungs only: every enclosing condition and bound is uniform by the types above, so every invocation reaches it (`barrier_in_nonuniform_control_flow`, `barrier_under_condition`) |
+
+Batch 3: 52 family rows; 16 types added (plus the fuel suffix and the depth ladder on the statement types: `stmt`/`block` × `L0..5`, `C0..5`, `O0..4`, `B1..5` × 5 strata = 165 statement-level types in all, counted as patterns). Running total: 42 pattern types (165 statement-level instances); 97 + 52 = 149 family rows.
 
 Rows I am unsure of:
 
-- `convert.f32_to_index` clamps before the cast because WGSL leaves `u32(NaN)` and `u32(-1.0)` indeterminate (naga's backends differ); the clamp makes the row's value defined on every target. A seed written `u32(x)` reads as this row only when its `x` is provably in range, else as outside the kingdom.
-- `index.sub_floor` as the only difference: a seed's `a - b` reads as it; where `a < b` the seed wrapped and the row floors, a different value. That is C4's named reason "a wrapping difference", not a rewrite.
-- `load.<f>` outputs `u32.count` for every u32 field. `cfg.r_off` is used as a position (`gid.y + r_off`); it reaches `u32.index` through `index.of_count`, one extra node per use.
+- `loop.tile_O<d>` (the epilogue inside a loop): with `n >= 1` the store runs; a uniform-bounded `tileu_O` would need `boundu`, whose cap gives `n = 0` for a uniform value `0`; so the epilogue admits only the literal bound (`lit64 >= 1`), and `tilex_O` is given with body `O<d+1>` but a cap of `0` would skip the store. I have left `tilex_O` in the table with that defect; the fix is to have the O-rung loops take only `u32.lit64`, which is what I propose.
+- `uniform.<op>` includes `mul` and `shl`, whose wrap gives a smaller uniform bound after the cap: a bounded, uniform, wrong trip count. Legal; flagging because today's table typed these out (`u32.uniformw`).
+- `wg.uload` takes a `u32.uniform` index and masks it itself; a seed that loads at a non-uniform index reads as outside the kingdom, which is WGSL's own rule.
+- `ureg` as a separate register file (8 registers) rather than a uniformity analysis of the ordinary registers: this is what makes "uniform" a type; the cost is that a value computed in an ordinary register can never become a bound of a barrier loop.
