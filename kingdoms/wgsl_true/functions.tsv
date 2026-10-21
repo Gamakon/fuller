@@ -1395,18 +1395,18 @@ F01393	select.lane_int_v2	function	vec2<i32>.int	vec2<i32>.int;vec2<i32>.int;vec
 F01394	select.lane_int_v3	function	vec3<i32>.int	vec3<i32>.int;vec3<i32>.int;vec3<bool>.flag	select({0}, {1}, {2})	per lane
 F01395	select.lane_int_v4	function	vec4<i32>.int	vec4<i32>.int;vec4<i32>.int;vec4<bool>.flag	select({0}, {1}, {2})	per lane
 F01396	select.flag	function	bool.flag	bool.flag;bool.flag;bool.flag	select({0}, {1}, {2})	
-F01397	own.vec2	terminal	vec2<f32>.real		vec2<f32>()	the zero vector: the second terminal every demanded type has
+F01397	own.vec2	terminal	vec2<f32>.real		zero_vec2_f32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01398	shape.splat2	function	vec2<f32>.real	f32.real	vec2<f32>({0})	
 F01399	shape.access_0_v2	function	f32.real	vec2<f32>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01400	shape.access_1_v2	function	f32.real	vec2<f32>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01401	shape.at_v2	function	f32.real	vec2<f32>.real;u32.index	at2_f32({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01402	own.vec3	terminal	vec3<f32>.real		vec3<f32>()	the zero vector: the second terminal every demanded type has
+F01402	own.vec3	terminal	vec3<f32>.real		zero_vec3_f32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01403	shape.splat3	function	vec3<f32>.real	f32.real	vec3<f32>({0})	
 F01404	shape.access_0_v3	function	f32.real	vec3<f32>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01405	shape.access_1_v3	function	f32.real	vec3<f32>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01406	shape.access_2_v3	function	f32.real	vec3<f32>.real	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01407	shape.at_v3	function	f32.real	vec3<f32>.real;u32.index	at3_f32({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01408	own.vec4	terminal	vec4<f32>.real		vec4<f32>()	the zero vector: the second terminal every demanded type has
+F01408	own.vec4	terminal	vec4<f32>.real		zero_vec4_f32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01409	shape.splat4	function	vec4<f32>.real	f32.real	vec4<f32>({0})	
 F01410	shape.access_0_v4	function	f32.real	vec4<f32>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01411	shape.access_1_v4	function	f32.real	vec4<f32>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1443,18 +1443,18 @@ F01441	shape.swizzle_xxx_v4	function	vec3<f32>.real	vec4<f32>.real	{0}.xxx
 F01442	shape.swizzle_xyxy_v4	function	vec4<f32>.real	vec4<f32>.real	{0}.xyxy	
 F01443	shape.swizzle_xxxx_v4	function	vec4<f32>.real	vec4<f32>.real	{0}.xxxx	
 F01444	shape.swizzle_wzyx_v4	function	vec4<f32>.real	vec4<f32>.real	{0}.wzyx	
-F01445	own.vec2_f16	terminal	vec2<f16>.real		vec2<f16>()	the zero vector: the second terminal every demanded type has
+F01445	own.vec2_f16	terminal	vec2<f16>.real		zero_vec2_f16()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01446	shape.splat2_f16	function	vec2<f16>.real	f16.real	vec2<f16>({0})	
 F01447	shape.access_0_v2_f16	function	f16.real	vec2<f16>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01448	shape.access_1_v2_f16	function	f16.real	vec2<f16>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01449	shape.at_v2_f16	function	f16.real	vec2<f16>.real;u32.index	at2_f16({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01450	own.vec3_f16	terminal	vec3<f16>.real		vec3<f16>()	the zero vector: the second terminal every demanded type has
+F01450	own.vec3_f16	terminal	vec3<f16>.real		zero_vec3_f16()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01451	shape.splat3_f16	function	vec3<f16>.real	f16.real	vec3<f16>({0})	
 F01452	shape.access_0_v3_f16	function	f16.real	vec3<f16>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01453	shape.access_1_v3_f16	function	f16.real	vec3<f16>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01454	shape.access_2_v3_f16	function	f16.real	vec3<f16>.real	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01455	shape.at_v3_f16	function	f16.real	vec3<f16>.real;u32.index	at3_f16({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01456	own.vec4_f16	terminal	vec4<f16>.real		vec4<f16>()	the zero vector: the second terminal every demanded type has
+F01456	own.vec4_f16	terminal	vec4<f16>.real		zero_vec4_f16()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01457	shape.splat4_f16	function	vec4<f16>.real	f16.real	vec4<f16>({0})	
 F01458	shape.access_0_v4_f16	function	f16.real	vec4<f16>.real	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01459	shape.access_1_v4_f16	function	f16.real	vec4<f16>.real	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1491,18 +1491,18 @@ F01489	shape.swizzle_xxx_v4_f16	function	vec3<f16>.real	vec4<f16>.real	{0}.xxx
 F01490	shape.swizzle_xyxy_v4_f16	function	vec4<f16>.real	vec4<f16>.real	{0}.xyxy	
 F01491	shape.swizzle_xxxx_v4_f16	function	vec4<f16>.real	vec4<f16>.real	{0}.xxxx	
 F01492	shape.swizzle_wzyx_v4_f16	function	vec4<f16>.real	vec4<f16>.real	{0}.wzyx	
-F01493	own.vec2_index	terminal	vec2<u32>.index		vec2<u32>()	the zero vector: the second terminal every demanded type has
+F01493	own.vec2_index	terminal	vec2<u32>.index		zero_vec2_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01494	shape.splat2_index	function	vec2<u32>.index	u32.index	vec2<u32>({0})	
 F01495	shape.access_0_v2_index	function	u32.index	vec2<u32>.index	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01496	shape.access_1_v2_index	function	u32.index	vec2<u32>.index	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01497	shape.at_v2_index	function	u32.index	vec2<u32>.index;u32.index	at2_u32({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01498	own.vec3_index	terminal	vec3<u32>.index		vec3<u32>()	the zero vector: the second terminal every demanded type has
+F01498	own.vec3_index	terminal	vec3<u32>.index		zero_vec3_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01499	shape.splat3_index	function	vec3<u32>.index	u32.index	vec3<u32>({0})	
 F01500	shape.access_0_v3_index	function	u32.index	vec3<u32>.index	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01501	shape.access_1_v3_index	function	u32.index	vec3<u32>.index	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01502	shape.access_2_v3_index	function	u32.index	vec3<u32>.index	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01503	shape.at_v3_index	function	u32.index	vec3<u32>.index;u32.index	at3_u32({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01504	own.vec4_index	terminal	vec4<u32>.index		vec4<u32>()	the zero vector: the second terminal every demanded type has
+F01504	own.vec4_index	terminal	vec4<u32>.index		zero_vec4_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01505	shape.splat4_index	function	vec4<u32>.index	u32.index	vec4<u32>({0})	
 F01506	shape.access_0_v4_index	function	u32.index	vec4<u32>.index	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01507	shape.access_1_v4_index	function	u32.index	vec4<u32>.index	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1539,18 +1539,18 @@ F01537	shape.swizzle_xxx_v4_index	function	vec3<u32>.index	vec4<u32>.index	{0}.x
 F01538	shape.swizzle_xyxy_v4_index	function	vec4<u32>.index	vec4<u32>.index	{0}.xyxy	
 F01539	shape.swizzle_xxxx_v4_index	function	vec4<u32>.index	vec4<u32>.index	{0}.xxxx	
 F01540	shape.swizzle_wzyx_v4_index	function	vec4<u32>.index	vec4<u32>.index	{0}.wzyx	
-F01541	own.vec2_count	terminal	vec2<u32>.count		vec2<u32>()	the zero vector: the second terminal every demanded type has
+F01541	own.vec2_count	terminal	vec2<u32>.count		zero_vec2_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01542	shape.splat2_count	function	vec2<u32>.count	u32.count	vec2<u32>({0})	
 F01543	shape.access_0_v2_count	function	u32.count	vec2<u32>.count	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01544	shape.access_1_v2_count	function	u32.count	vec2<u32>.count	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01545	shape.at_v2_count	function	u32.count	vec2<u32>.count;u32.index	at2_u32({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01546	own.vec3_count	terminal	vec3<u32>.count		vec3<u32>()	the zero vector: the second terminal every demanded type has
+F01546	own.vec3_count	terminal	vec3<u32>.count		zero_vec3_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01547	shape.splat3_count	function	vec3<u32>.count	u32.count	vec3<u32>({0})	
 F01548	shape.access_0_v3_count	function	u32.count	vec3<u32>.count	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01549	shape.access_1_v3_count	function	u32.count	vec3<u32>.count	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01550	shape.access_2_v3_count	function	u32.count	vec3<u32>.count	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01551	shape.at_v3_count	function	u32.count	vec3<u32>.count;u32.index	at3_u32({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01552	own.vec4_count	terminal	vec4<u32>.count		vec4<u32>()	the zero vector: the second terminal every demanded type has
+F01552	own.vec4_count	terminal	vec4<u32>.count		zero_vec4_u32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01553	shape.splat4_count	function	vec4<u32>.count	u32.count	vec4<u32>({0})	
 F01554	shape.access_0_v4_count	function	u32.count	vec4<u32>.count	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01555	shape.access_1_v4_count	function	u32.count	vec4<u32>.count	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1587,18 +1587,18 @@ F01585	shape.swizzle_xxx_v4_count	function	vec3<u32>.count	vec4<u32>.count	{0}.x
 F01586	shape.swizzle_xyxy_v4_count	function	vec4<u32>.count	vec4<u32>.count	{0}.xyxy	
 F01587	shape.swizzle_xxxx_v4_count	function	vec4<u32>.count	vec4<u32>.count	{0}.xxxx	
 F01588	shape.swizzle_wzyx_v4_count	function	vec4<u32>.count	vec4<u32>.count	{0}.wzyx	
-F01589	own.vec2_int	terminal	vec2<i32>.int		vec2<i32>()	the zero vector: the second terminal every demanded type has
+F01589	own.vec2_int	terminal	vec2<i32>.int		zero_vec2_i32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01590	shape.splat2_int	function	vec2<i32>.int	i32.int	vec2<i32>({0})	
 F01591	shape.access_0_v2_int	function	i32.int	vec2<i32>.int	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01592	shape.access_1_v2_int	function	i32.int	vec2<i32>.int	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01593	shape.at_v2_int	function	i32.int	vec2<i32>.int;u32.index	at2_i32({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01594	own.vec3_int	terminal	vec3<i32>.int		vec3<i32>()	the zero vector: the second terminal every demanded type has
+F01594	own.vec3_int	terminal	vec3<i32>.int		zero_vec3_i32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01595	shape.splat3_int	function	vec3<i32>.int	i32.int	vec3<i32>({0})	
 F01596	shape.access_0_v3_int	function	i32.int	vec3<i32>.int	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01597	shape.access_1_v3_int	function	i32.int	vec3<i32>.int	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01598	shape.access_2_v3_int	function	i32.int	vec3<i32>.int	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01599	shape.at_v3_int	function	i32.int	vec3<i32>.int;u32.index	at3_i32({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01600	own.vec4_int	terminal	vec4<i32>.int		vec4<i32>()	the zero vector: the second terminal every demanded type has
+F01600	own.vec4_int	terminal	vec4<i32>.int		zero_vec4_i32()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01601	shape.splat4_int	function	vec4<i32>.int	i32.int	vec4<i32>({0})	
 F01602	shape.access_0_v4_int	function	i32.int	vec4<i32>.int	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01603	shape.access_1_v4_int	function	i32.int	vec4<i32>.int	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1635,18 +1635,18 @@ F01633	shape.swizzle_xxx_v4_int	function	vec3<i32>.int	vec4<i32>.int	{0}.xxx
 F01634	shape.swizzle_xyxy_v4_int	function	vec4<i32>.int	vec4<i32>.int	{0}.xyxy	
 F01635	shape.swizzle_xxxx_v4_int	function	vec4<i32>.int	vec4<i32>.int	{0}.xxxx	
 F01636	shape.swizzle_wzyx_v4_int	function	vec4<i32>.int	vec4<i32>.int	{0}.wzyx	
-F01637	own.vec2_flag	terminal	vec2<bool>.flag		vec2<bool>()	the zero vector: the second terminal every demanded type has
+F01637	own.vec2_flag	terminal	vec2<bool>.flag		zero_vec2_bool()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01638	shape.splat2_flag	function	vec2<bool>.flag	bool.flag	vec2<bool>({0})	
 F01639	shape.access_0_v2_flag	function	bool.flag	vec2<bool>.flag	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01640	shape.access_1_v2_flag	function	bool.flag	vec2<bool>.flag	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01641	shape.at_v2_flag	function	bool.flag	vec2<bool>.flag;u32.index	at2_bool({0}, ({1}) & 1u)	a run-time lane reduced by the row's text
-F01642	own.vec3_flag	terminal	vec3<bool>.flag		vec3<bool>()	the zero vector: the second terminal every demanded type has
+F01642	own.vec3_flag	terminal	vec3<bool>.flag		zero_vec3_bool()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01643	shape.splat3_flag	function	vec3<bool>.flag	bool.flag	vec3<bool>({0})	
 F01644	shape.access_0_v3_flag	function	bool.flag	vec3<bool>.flag	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01645	shape.access_1_v3_flag	function	bool.flag	vec3<bool>.flag	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
 F01646	shape.access_2_v3_flag	function	bool.flag	vec3<bool>.flag	{0}[2]	a row exists only for i < L, so a constant lane is never past the vector
 F01647	shape.at_v3_flag	function	bool.flag	vec3<bool>.flag;u32.index	at3_bool({0}, ({1}) % 3u)	a run-time lane reduced by the row's text
-F01648	own.vec4_flag	terminal	vec4<bool>.flag		vec4<bool>()	the zero vector: the second terminal every demanded type has
+F01648	own.vec4_flag	terminal	vec4<bool>.flag		zero_vec4_bool()	the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation
 F01649	shape.splat4_flag	function	vec4<bool>.flag	bool.flag	vec4<bool>({0})	
 F01650	shape.access_0_v4_flag	function	bool.flag	vec4<bool>.flag	{0}[0]	a row exists only for i < L, so a constant lane is never past the vector
 F01651	shape.access_1_v4_flag	function	bool.flag	vec4<bool>.flag	{0}[1]	a row exists only for i < L, so a constant lane is never past the vector
@@ -1718,7 +1718,7 @@ F01716	geom.refract_v4	function	vec4<f32>.real	vec4<f32>.real;vec4<f32>.real;f32
 F01717	geom.face_forward_v4	function	vec4<f32>.real	vec4<f32>.real;vec4<f32>.real;vec4<f32>.real	faceForward({0}, {1}, {2})	
 F01718	geom.cross	function	vec3<f32>.real	vec3<f32>.real;vec3<f32>.real	cross({0}, {1})	
 F01719	literal.mat2x2	constant	mat2x2<f32>.real		mat2x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	?_mat2x2: one number on every element
-F01720	own.mat2x2	terminal	mat2x2<f32>.real		mat2x2<f32>()	
+F01720	own.mat2x2	terminal	mat2x2<f32>.real		zero_mat2x2()	a call, so no operation on it is evaluated at shader creation
 F01721	shape.compose_mat2x2	function	mat2x2<f32>.real	vec2<f32>.real;vec2<f32>.real	mat2x2<f32>({0}, {1})	
 F01722	shape.col_0_2x2	function	vec2<f32>.real	mat2x2<f32>.real	{0}[0]	
 F01723	shape.col_1_2x2	function	vec2<f32>.real	mat2x2<f32>.real	{0}[1]	
@@ -1736,7 +1736,7 @@ F01734	arith.mul_mat_mat_2x2_k2	function	mat2x2<f32>.real	mat2x2<f32>.real;mat2x
 F01735	arith.mul_mat_mat_2x2_k3	function	mat2x2<f32>.real	mat3x2<f32>.real;mat2x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01736	arith.mul_mat_mat_2x2_k4	function	mat2x2<f32>.real	mat4x2<f32>.real;mat2x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01737	literal.mat2x3	constant	mat2x3<f32>.real		mat2x3<f32>(vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})))	?_mat2x3: one number on every element
-F01738	own.mat2x3	terminal	mat2x3<f32>.real		mat2x3<f32>()	
+F01738	own.mat2x3	terminal	mat2x3<f32>.real		zero_mat2x3()	a call, so no operation on it is evaluated at shader creation
 F01739	shape.compose_mat2x3	function	mat2x3<f32>.real	vec3<f32>.real;vec3<f32>.real	mat2x3<f32>({0}, {1})	
 F01740	shape.col_0_2x3	function	vec3<f32>.real	mat2x3<f32>.real	{0}[0]	
 F01741	shape.col_1_2x3	function	vec3<f32>.real	mat2x3<f32>.real	{0}[1]	
@@ -1754,7 +1754,7 @@ F01752	arith.mul_mat_mat_2x3_k2	function	mat2x3<f32>.real	mat2x3<f32>.real;mat2x
 F01753	arith.mul_mat_mat_2x3_k3	function	mat2x3<f32>.real	mat3x3<f32>.real;mat2x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01754	arith.mul_mat_mat_2x3_k4	function	mat2x3<f32>.real	mat4x3<f32>.real;mat2x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01755	literal.mat2x4	constant	mat2x4<f32>.real		mat2x4<f32>(vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})))	?_mat2x4: one number on every element
-F01756	own.mat2x4	terminal	mat2x4<f32>.real		mat2x4<f32>()	
+F01756	own.mat2x4	terminal	mat2x4<f32>.real		zero_mat2x4()	a call, so no operation on it is evaluated at shader creation
 F01757	shape.compose_mat2x4	function	mat2x4<f32>.real	vec4<f32>.real;vec4<f32>.real	mat2x4<f32>({0}, {1})	
 F01758	shape.col_0_2x4	function	vec4<f32>.real	mat2x4<f32>.real	{0}[0]	
 F01759	shape.col_1_2x4	function	vec4<f32>.real	mat2x4<f32>.real	{0}[1]	
@@ -1774,7 +1774,7 @@ F01772	arith.mul_mat_mat_2x4_k4	function	mat2x4<f32>.real	mat4x4<f32>.real;mat2x
 F01773	geom.determinant_2	function	f32.real	mat2x2<f32>.real	determinant({0})	
 F01774	geom.inverse_2	function	mat2x2<f32>.real	mat2x2<f32>.real	inverse({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
 F01775	literal.mat3x2	constant	mat3x2<f32>.real		mat3x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	?_mat3x2: one number on every element
-F01776	own.mat3x2	terminal	mat3x2<f32>.real		mat3x2<f32>()	
+F01776	own.mat3x2	terminal	mat3x2<f32>.real		zero_mat3x2()	a call, so no operation on it is evaluated at shader creation
 F01777	shape.compose_mat3x2	function	mat3x2<f32>.real	vec2<f32>.real;vec2<f32>.real;vec2<f32>.real	mat3x2<f32>({0}, {1}, {2})	
 F01778	shape.col_0_3x2	function	vec2<f32>.real	mat3x2<f32>.real	{0}[0]	
 F01779	shape.col_1_3x2	function	vec2<f32>.real	mat3x2<f32>.real	{0}[1]	
@@ -1793,7 +1793,7 @@ F01791	arith.mul_mat_mat_3x2_k2	function	mat3x2<f32>.real	mat2x2<f32>.real;mat3x
 F01792	arith.mul_mat_mat_3x2_k3	function	mat3x2<f32>.real	mat3x2<f32>.real;mat3x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01793	arith.mul_mat_mat_3x2_k4	function	mat3x2<f32>.real	mat4x2<f32>.real;mat3x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01794	literal.mat3x3	constant	mat3x3<f32>.real		mat3x3<f32>(vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})))	?_mat3x3: one number on every element
-F01795	own.mat3x3	terminal	mat3x3<f32>.real		mat3x3<f32>()	
+F01795	own.mat3x3	terminal	mat3x3<f32>.real		zero_mat3x3()	a call, so no operation on it is evaluated at shader creation
 F01796	shape.compose_mat3x3	function	mat3x3<f32>.real	vec3<f32>.real;vec3<f32>.real;vec3<f32>.real	mat3x3<f32>({0}, {1}, {2})	
 F01797	shape.col_0_3x3	function	vec3<f32>.real	mat3x3<f32>.real	{0}[0]	
 F01798	shape.col_1_3x3	function	vec3<f32>.real	mat3x3<f32>.real	{0}[1]	
@@ -1812,7 +1812,7 @@ F01810	arith.mul_mat_mat_3x3_k2	function	mat3x3<f32>.real	mat2x3<f32>.real;mat3x
 F01811	arith.mul_mat_mat_3x3_k3	function	mat3x3<f32>.real	mat3x3<f32>.real;mat3x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01812	arith.mul_mat_mat_3x3_k4	function	mat3x3<f32>.real	mat4x3<f32>.real;mat3x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01813	literal.mat3x4	constant	mat3x4<f32>.real		mat3x4<f32>(vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})))	?_mat3x4: one number on every element
-F01814	own.mat3x4	terminal	mat3x4<f32>.real		mat3x4<f32>()	
+F01814	own.mat3x4	terminal	mat3x4<f32>.real		zero_mat3x4()	a call, so no operation on it is evaluated at shader creation
 F01815	shape.compose_mat3x4	function	mat3x4<f32>.real	vec4<f32>.real;vec4<f32>.real;vec4<f32>.real	mat3x4<f32>({0}, {1}, {2})	
 F01816	shape.col_0_3x4	function	vec4<f32>.real	mat3x4<f32>.real	{0}[0]	
 F01817	shape.col_1_3x4	function	vec4<f32>.real	mat3x4<f32>.real	{0}[1]	
@@ -1833,7 +1833,7 @@ F01831	arith.mul_mat_mat_3x4_k4	function	mat3x4<f32>.real	mat4x4<f32>.real;mat3x
 F01832	geom.determinant_3	function	f32.real	mat3x3<f32>.real	determinant({0})	
 F01833	geom.inverse_3	function	mat3x3<f32>.real	mat3x3<f32>.real	inverse({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
 F01834	literal.mat4x2	constant	mat4x2<f32>.real		mat4x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	?_mat4x2: one number on every element
-F01835	own.mat4x2	terminal	mat4x2<f32>.real		mat4x2<f32>()	
+F01835	own.mat4x2	terminal	mat4x2<f32>.real		zero_mat4x2()	a call, so no operation on it is evaluated at shader creation
 F01836	shape.compose_mat4x2	function	mat4x2<f32>.real	vec2<f32>.real;vec2<f32>.real;vec2<f32>.real;vec2<f32>.real	mat4x2<f32>({0}, {1}, {2}, {3})	
 F01837	shape.col_0_4x2	function	vec2<f32>.real	mat4x2<f32>.real	{0}[0]	
 F01838	shape.col_1_4x2	function	vec2<f32>.real	mat4x2<f32>.real	{0}[1]	
@@ -1853,7 +1853,7 @@ F01851	arith.mul_mat_mat_4x2_k2	function	mat4x2<f32>.real	mat2x2<f32>.real;mat4x
 F01852	arith.mul_mat_mat_4x2_k3	function	mat4x2<f32>.real	mat3x2<f32>.real;mat4x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01853	arith.mul_mat_mat_4x2_k4	function	mat4x2<f32>.real	mat4x2<f32>.real;mat4x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01854	literal.mat4x3	constant	mat4x3<f32>.real		mat4x3<f32>(vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})), vec3<f32>(lit_f32({v})))	?_mat4x3: one number on every element
-F01855	own.mat4x3	terminal	mat4x3<f32>.real		mat4x3<f32>()	
+F01855	own.mat4x3	terminal	mat4x3<f32>.real		zero_mat4x3()	a call, so no operation on it is evaluated at shader creation
 F01856	shape.compose_mat4x3	function	mat4x3<f32>.real	vec3<f32>.real;vec3<f32>.real;vec3<f32>.real;vec3<f32>.real	mat4x3<f32>({0}, {1}, {2}, {3})	
 F01857	shape.col_0_4x3	function	vec3<f32>.real	mat4x3<f32>.real	{0}[0]	
 F01858	shape.col_1_4x3	function	vec3<f32>.real	mat4x3<f32>.real	{0}[1]	
@@ -1873,7 +1873,7 @@ F01871	arith.mul_mat_mat_4x3_k2	function	mat4x3<f32>.real	mat2x3<f32>.real;mat4x
 F01872	arith.mul_mat_mat_4x3_k3	function	mat4x3<f32>.real	mat3x3<f32>.real;mat4x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01873	arith.mul_mat_mat_4x3_k4	function	mat4x3<f32>.real	mat4x3<f32>.real;mat4x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01874	literal.mat4x4	constant	mat4x4<f32>.real		mat4x4<f32>(vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})), vec4<f32>(lit_f32({v})))	?_mat4x4: one number on every element
-F01875	own.mat4x4	terminal	mat4x4<f32>.real		mat4x4<f32>()	
+F01875	own.mat4x4	terminal	mat4x4<f32>.real		zero_mat4x4()	a call, so no operation on it is evaluated at shader creation
 F01876	shape.compose_mat4x4	function	mat4x4<f32>.real	vec4<f32>.real;vec4<f32>.real;vec4<f32>.real;vec4<f32>.real	mat4x4<f32>({0}, {1}, {2}, {3})	
 F01877	shape.col_0_4x4	function	vec4<f32>.real	mat4x4<f32>.real	{0}[0]	
 F01878	shape.col_1_4x4	function	vec4<f32>.real	mat4x4<f32>.real	{0}[1]	
@@ -7305,18 +7305,18 @@ F07303	select.lane_int_v2_w	function	vec2<i32>.intw	vec2<i32>.intw;vec2<i32>.int
 F07304	select.lane_int_v3_w	function	vec3<i32>.intw	vec3<i32>.intw;vec3<i32>.intw;vec3<bool>.flagw	select({0}, {1}, {2})	the w twin of select.lane_int_v3
 F07305	select.lane_int_v4_w	function	vec4<i32>.intw	vec4<i32>.intw;vec4<i32>.intw;vec4<bool>.flagw	select({0}, {1}, {2})	the w twin of select.lane_int_v4
 F07306	select.flag_w	function	bool.flagw	bool.flagw;bool.flagw;bool.flagw	select({0}, {1}, {2})	the w twin of select.flag
-F07307	own.vec2_w	terminal	vec2<f32>.realw		vec2<f32>()	the w twin of own.vec2
+F07307	own.vec2_w	terminal	vec2<f32>.realw		zero_vec2_f32()	the w twin of own.vec2
 F07308	shape.splat2_w	function	vec2<f32>.realw	f32.realw	vec2<f32>({0})	the w twin of shape.splat2
 F07309	shape.access_0_v2_w	function	f32.realw	vec2<f32>.realw	{0}[0]	the w twin of shape.access_0_v2
 F07310	shape.access_1_v2_w	function	f32.realw	vec2<f32>.realw	{0}[1]	the w twin of shape.access_1_v2
 F07311	shape.at_v2_w	function	f32.realw	vec2<f32>.realw;u32.indexw	at2_f32({0}, ({1}) & 1u)	the w twin of shape.at_v2
-F07312	own.vec3_w	terminal	vec3<f32>.realw		vec3<f32>()	the w twin of own.vec3
+F07312	own.vec3_w	terminal	vec3<f32>.realw		zero_vec3_f32()	the w twin of own.vec3
 F07313	shape.splat3_w	function	vec3<f32>.realw	f32.realw	vec3<f32>({0})	the w twin of shape.splat3
 F07314	shape.access_0_v3_w	function	f32.realw	vec3<f32>.realw	{0}[0]	the w twin of shape.access_0_v3
 F07315	shape.access_1_v3_w	function	f32.realw	vec3<f32>.realw	{0}[1]	the w twin of shape.access_1_v3
 F07316	shape.access_2_v3_w	function	f32.realw	vec3<f32>.realw	{0}[2]	the w twin of shape.access_2_v3
 F07317	shape.at_v3_w	function	f32.realw	vec3<f32>.realw;u32.indexw	at3_f32({0}, ({1}) % 3u)	the w twin of shape.at_v3
-F07318	own.vec4_w	terminal	vec4<f32>.realw		vec4<f32>()	the w twin of own.vec4
+F07318	own.vec4_w	terminal	vec4<f32>.realw		zero_vec4_f32()	the w twin of own.vec4
 F07319	shape.splat4_w	function	vec4<f32>.realw	f32.realw	vec4<f32>({0})	the w twin of shape.splat4
 F07320	shape.access_0_v4_w	function	f32.realw	vec4<f32>.realw	{0}[0]	the w twin of shape.access_0_v4
 F07321	shape.access_1_v4_w	function	f32.realw	vec4<f32>.realw	{0}[1]	the w twin of shape.access_1_v4
@@ -7353,18 +7353,18 @@ F07351	shape.swizzle_xxx_v4_w	function	vec3<f32>.realw	vec4<f32>.realw	{0}.xxx	t
 F07352	shape.swizzle_xyxy_v4_w	function	vec4<f32>.realw	vec4<f32>.realw	{0}.xyxy	the w twin of shape.swizzle_xyxy_v4
 F07353	shape.swizzle_xxxx_v4_w	function	vec4<f32>.realw	vec4<f32>.realw	{0}.xxxx	the w twin of shape.swizzle_xxxx_v4
 F07354	shape.swizzle_wzyx_v4_w	function	vec4<f32>.realw	vec4<f32>.realw	{0}.wzyx	the w twin of shape.swizzle_wzyx_v4
-F07355	own.vec2_f16_w	terminal	vec2<f16>.realw		vec2<f16>()	the w twin of own.vec2_f16
+F07355	own.vec2_f16_w	terminal	vec2<f16>.realw		zero_vec2_f16()	the w twin of own.vec2_f16
 F07356	shape.splat2_f16_w	function	vec2<f16>.realw	f16.realw	vec2<f16>({0})	the w twin of shape.splat2_f16
 F07357	shape.access_0_v2_f16_w	function	f16.realw	vec2<f16>.realw	{0}[0]	the w twin of shape.access_0_v2_f16
 F07358	shape.access_1_v2_f16_w	function	f16.realw	vec2<f16>.realw	{0}[1]	the w twin of shape.access_1_v2_f16
 F07359	shape.at_v2_f16_w	function	f16.realw	vec2<f16>.realw;u32.indexw	at2_f16({0}, ({1}) & 1u)	the w twin of shape.at_v2_f16
-F07360	own.vec3_f16_w	terminal	vec3<f16>.realw		vec3<f16>()	the w twin of own.vec3_f16
+F07360	own.vec3_f16_w	terminal	vec3<f16>.realw		zero_vec3_f16()	the w twin of own.vec3_f16
 F07361	shape.splat3_f16_w	function	vec3<f16>.realw	f16.realw	vec3<f16>({0})	the w twin of shape.splat3_f16
 F07362	shape.access_0_v3_f16_w	function	f16.realw	vec3<f16>.realw	{0}[0]	the w twin of shape.access_0_v3_f16
 F07363	shape.access_1_v3_f16_w	function	f16.realw	vec3<f16>.realw	{0}[1]	the w twin of shape.access_1_v3_f16
 F07364	shape.access_2_v3_f16_w	function	f16.realw	vec3<f16>.realw	{0}[2]	the w twin of shape.access_2_v3_f16
 F07365	shape.at_v3_f16_w	function	f16.realw	vec3<f16>.realw;u32.indexw	at3_f16({0}, ({1}) % 3u)	the w twin of shape.at_v3_f16
-F07366	own.vec4_f16_w	terminal	vec4<f16>.realw		vec4<f16>()	the w twin of own.vec4_f16
+F07366	own.vec4_f16_w	terminal	vec4<f16>.realw		zero_vec4_f16()	the w twin of own.vec4_f16
 F07367	shape.splat4_f16_w	function	vec4<f16>.realw	f16.realw	vec4<f16>({0})	the w twin of shape.splat4_f16
 F07368	shape.access_0_v4_f16_w	function	f16.realw	vec4<f16>.realw	{0}[0]	the w twin of shape.access_0_v4_f16
 F07369	shape.access_1_v4_f16_w	function	f16.realw	vec4<f16>.realw	{0}[1]	the w twin of shape.access_1_v4_f16
@@ -7401,18 +7401,18 @@ F07399	shape.swizzle_xxx_v4_f16_w	function	vec3<f16>.realw	vec4<f16>.realw	{0}.x
 F07400	shape.swizzle_xyxy_v4_f16_w	function	vec4<f16>.realw	vec4<f16>.realw	{0}.xyxy	the w twin of shape.swizzle_xyxy_v4_f16
 F07401	shape.swizzle_xxxx_v4_f16_w	function	vec4<f16>.realw	vec4<f16>.realw	{0}.xxxx	the w twin of shape.swizzle_xxxx_v4_f16
 F07402	shape.swizzle_wzyx_v4_f16_w	function	vec4<f16>.realw	vec4<f16>.realw	{0}.wzyx	the w twin of shape.swizzle_wzyx_v4_f16
-F07403	own.vec2_index_w	terminal	vec2<u32>.indexw		vec2<u32>()	the w twin of own.vec2_index
+F07403	own.vec2_index_w	terminal	vec2<u32>.indexw		zero_vec2_u32()	the w twin of own.vec2_index
 F07404	shape.splat2_index_w	function	vec2<u32>.indexw	u32.indexw	vec2<u32>({0})	the w twin of shape.splat2_index
 F07405	shape.access_0_v2_index_w	function	u32.indexw	vec2<u32>.indexw	{0}[0]	the w twin of shape.access_0_v2_index
 F07406	shape.access_1_v2_index_w	function	u32.indexw	vec2<u32>.indexw	{0}[1]	the w twin of shape.access_1_v2_index
 F07407	shape.at_v2_index_w	function	u32.indexw	vec2<u32>.indexw;u32.indexw	at2_u32({0}, ({1}) & 1u)	the w twin of shape.at_v2_index
-F07408	own.vec3_index_w	terminal	vec3<u32>.indexw		vec3<u32>()	the w twin of own.vec3_index
+F07408	own.vec3_index_w	terminal	vec3<u32>.indexw		zero_vec3_u32()	the w twin of own.vec3_index
 F07409	shape.splat3_index_w	function	vec3<u32>.indexw	u32.indexw	vec3<u32>({0})	the w twin of shape.splat3_index
 F07410	shape.access_0_v3_index_w	function	u32.indexw	vec3<u32>.indexw	{0}[0]	the w twin of shape.access_0_v3_index
 F07411	shape.access_1_v3_index_w	function	u32.indexw	vec3<u32>.indexw	{0}[1]	the w twin of shape.access_1_v3_index
 F07412	shape.access_2_v3_index_w	function	u32.indexw	vec3<u32>.indexw	{0}[2]	the w twin of shape.access_2_v3_index
 F07413	shape.at_v3_index_w	function	u32.indexw	vec3<u32>.indexw;u32.indexw	at3_u32({0}, ({1}) % 3u)	the w twin of shape.at_v3_index
-F07414	own.vec4_index_w	terminal	vec4<u32>.indexw		vec4<u32>()	the w twin of own.vec4_index
+F07414	own.vec4_index_w	terminal	vec4<u32>.indexw		zero_vec4_u32()	the w twin of own.vec4_index
 F07415	shape.splat4_index_w	function	vec4<u32>.indexw	u32.indexw	vec4<u32>({0})	the w twin of shape.splat4_index
 F07416	shape.access_0_v4_index_w	function	u32.indexw	vec4<u32>.indexw	{0}[0]	the w twin of shape.access_0_v4_index
 F07417	shape.access_1_v4_index_w	function	u32.indexw	vec4<u32>.indexw	{0}[1]	the w twin of shape.access_1_v4_index
@@ -7449,18 +7449,18 @@ F07447	shape.swizzle_xxx_v4_index_w	function	vec3<u32>.indexw	vec4<u32>.indexw	{
 F07448	shape.swizzle_xyxy_v4_index_w	function	vec4<u32>.indexw	vec4<u32>.indexw	{0}.xyxy	the w twin of shape.swizzle_xyxy_v4_index
 F07449	shape.swizzle_xxxx_v4_index_w	function	vec4<u32>.indexw	vec4<u32>.indexw	{0}.xxxx	the w twin of shape.swizzle_xxxx_v4_index
 F07450	shape.swizzle_wzyx_v4_index_w	function	vec4<u32>.indexw	vec4<u32>.indexw	{0}.wzyx	the w twin of shape.swizzle_wzyx_v4_index
-F07451	own.vec2_count_w	terminal	vec2<u32>.countw		vec2<u32>()	the w twin of own.vec2_count
+F07451	own.vec2_count_w	terminal	vec2<u32>.countw		zero_vec2_u32()	the w twin of own.vec2_count
 F07452	shape.splat2_count_w	function	vec2<u32>.countw	u32.countw	vec2<u32>({0})	the w twin of shape.splat2_count
 F07453	shape.access_0_v2_count_w	function	u32.countw	vec2<u32>.countw	{0}[0]	the w twin of shape.access_0_v2_count
 F07454	shape.access_1_v2_count_w	function	u32.countw	vec2<u32>.countw	{0}[1]	the w twin of shape.access_1_v2_count
 F07455	shape.at_v2_count_w	function	u32.countw	vec2<u32>.countw;u32.indexw	at2_u32({0}, ({1}) & 1u)	the w twin of shape.at_v2_count
-F07456	own.vec3_count_w	terminal	vec3<u32>.countw		vec3<u32>()	the w twin of own.vec3_count
+F07456	own.vec3_count_w	terminal	vec3<u32>.countw		zero_vec3_u32()	the w twin of own.vec3_count
 F07457	shape.splat3_count_w	function	vec3<u32>.countw	u32.countw	vec3<u32>({0})	the w twin of shape.splat3_count
 F07458	shape.access_0_v3_count_w	function	u32.countw	vec3<u32>.countw	{0}[0]	the w twin of shape.access_0_v3_count
 F07459	shape.access_1_v3_count_w	function	u32.countw	vec3<u32>.countw	{0}[1]	the w twin of shape.access_1_v3_count
 F07460	shape.access_2_v3_count_w	function	u32.countw	vec3<u32>.countw	{0}[2]	the w twin of shape.access_2_v3_count
 F07461	shape.at_v3_count_w	function	u32.countw	vec3<u32>.countw;u32.indexw	at3_u32({0}, ({1}) % 3u)	the w twin of shape.at_v3_count
-F07462	own.vec4_count_w	terminal	vec4<u32>.countw		vec4<u32>()	the w twin of own.vec4_count
+F07462	own.vec4_count_w	terminal	vec4<u32>.countw		zero_vec4_u32()	the w twin of own.vec4_count
 F07463	shape.splat4_count_w	function	vec4<u32>.countw	u32.countw	vec4<u32>({0})	the w twin of shape.splat4_count
 F07464	shape.access_0_v4_count_w	function	u32.countw	vec4<u32>.countw	{0}[0]	the w twin of shape.access_0_v4_count
 F07465	shape.access_1_v4_count_w	function	u32.countw	vec4<u32>.countw	{0}[1]	the w twin of shape.access_1_v4_count
@@ -7497,18 +7497,18 @@ F07495	shape.swizzle_xxx_v4_count_w	function	vec3<u32>.countw	vec4<u32>.countw	{
 F07496	shape.swizzle_xyxy_v4_count_w	function	vec4<u32>.countw	vec4<u32>.countw	{0}.xyxy	the w twin of shape.swizzle_xyxy_v4_count
 F07497	shape.swizzle_xxxx_v4_count_w	function	vec4<u32>.countw	vec4<u32>.countw	{0}.xxxx	the w twin of shape.swizzle_xxxx_v4_count
 F07498	shape.swizzle_wzyx_v4_count_w	function	vec4<u32>.countw	vec4<u32>.countw	{0}.wzyx	the w twin of shape.swizzle_wzyx_v4_count
-F07499	own.vec2_int_w	terminal	vec2<i32>.intw		vec2<i32>()	the w twin of own.vec2_int
+F07499	own.vec2_int_w	terminal	vec2<i32>.intw		zero_vec2_i32()	the w twin of own.vec2_int
 F07500	shape.splat2_int_w	function	vec2<i32>.intw	i32.intw	vec2<i32>({0})	the w twin of shape.splat2_int
 F07501	shape.access_0_v2_int_w	function	i32.intw	vec2<i32>.intw	{0}[0]	the w twin of shape.access_0_v2_int
 F07502	shape.access_1_v2_int_w	function	i32.intw	vec2<i32>.intw	{0}[1]	the w twin of shape.access_1_v2_int
 F07503	shape.at_v2_int_w	function	i32.intw	vec2<i32>.intw;u32.indexw	at2_i32({0}, ({1}) & 1u)	the w twin of shape.at_v2_int
-F07504	own.vec3_int_w	terminal	vec3<i32>.intw		vec3<i32>()	the w twin of own.vec3_int
+F07504	own.vec3_int_w	terminal	vec3<i32>.intw		zero_vec3_i32()	the w twin of own.vec3_int
 F07505	shape.splat3_int_w	function	vec3<i32>.intw	i32.intw	vec3<i32>({0})	the w twin of shape.splat3_int
 F07506	shape.access_0_v3_int_w	function	i32.intw	vec3<i32>.intw	{0}[0]	the w twin of shape.access_0_v3_int
 F07507	shape.access_1_v3_int_w	function	i32.intw	vec3<i32>.intw	{0}[1]	the w twin of shape.access_1_v3_int
 F07508	shape.access_2_v3_int_w	function	i32.intw	vec3<i32>.intw	{0}[2]	the w twin of shape.access_2_v3_int
 F07509	shape.at_v3_int_w	function	i32.intw	vec3<i32>.intw;u32.indexw	at3_i32({0}, ({1}) % 3u)	the w twin of shape.at_v3_int
-F07510	own.vec4_int_w	terminal	vec4<i32>.intw		vec4<i32>()	the w twin of own.vec4_int
+F07510	own.vec4_int_w	terminal	vec4<i32>.intw		zero_vec4_i32()	the w twin of own.vec4_int
 F07511	shape.splat4_int_w	function	vec4<i32>.intw	i32.intw	vec4<i32>({0})	the w twin of shape.splat4_int
 F07512	shape.access_0_v4_int_w	function	i32.intw	vec4<i32>.intw	{0}[0]	the w twin of shape.access_0_v4_int
 F07513	shape.access_1_v4_int_w	function	i32.intw	vec4<i32>.intw	{0}[1]	the w twin of shape.access_1_v4_int
@@ -7545,18 +7545,18 @@ F07543	shape.swizzle_xxx_v4_int_w	function	vec3<i32>.intw	vec4<i32>.intw	{0}.xxx
 F07544	shape.swizzle_xyxy_v4_int_w	function	vec4<i32>.intw	vec4<i32>.intw	{0}.xyxy	the w twin of shape.swizzle_xyxy_v4_int
 F07545	shape.swizzle_xxxx_v4_int_w	function	vec4<i32>.intw	vec4<i32>.intw	{0}.xxxx	the w twin of shape.swizzle_xxxx_v4_int
 F07546	shape.swizzle_wzyx_v4_int_w	function	vec4<i32>.intw	vec4<i32>.intw	{0}.wzyx	the w twin of shape.swizzle_wzyx_v4_int
-F07547	own.vec2_flag_w	terminal	vec2<bool>.flagw		vec2<bool>()	the w twin of own.vec2_flag
+F07547	own.vec2_flag_w	terminal	vec2<bool>.flagw		zero_vec2_bool()	the w twin of own.vec2_flag
 F07548	shape.splat2_flag_w	function	vec2<bool>.flagw	bool.flagw	vec2<bool>({0})	the w twin of shape.splat2_flag
 F07549	shape.access_0_v2_flag_w	function	bool.flagw	vec2<bool>.flagw	{0}[0]	the w twin of shape.access_0_v2_flag
 F07550	shape.access_1_v2_flag_w	function	bool.flagw	vec2<bool>.flagw	{0}[1]	the w twin of shape.access_1_v2_flag
 F07551	shape.at_v2_flag_w	function	bool.flagw	vec2<bool>.flagw;u32.indexw	at2_bool({0}, ({1}) & 1u)	the w twin of shape.at_v2_flag
-F07552	own.vec3_flag_w	terminal	vec3<bool>.flagw		vec3<bool>()	the w twin of own.vec3_flag
+F07552	own.vec3_flag_w	terminal	vec3<bool>.flagw		zero_vec3_bool()	the w twin of own.vec3_flag
 F07553	shape.splat3_flag_w	function	vec3<bool>.flagw	bool.flagw	vec3<bool>({0})	the w twin of shape.splat3_flag
 F07554	shape.access_0_v3_flag_w	function	bool.flagw	vec3<bool>.flagw	{0}[0]	the w twin of shape.access_0_v3_flag
 F07555	shape.access_1_v3_flag_w	function	bool.flagw	vec3<bool>.flagw	{0}[1]	the w twin of shape.access_1_v3_flag
 F07556	shape.access_2_v3_flag_w	function	bool.flagw	vec3<bool>.flagw	{0}[2]	the w twin of shape.access_2_v3_flag
 F07557	shape.at_v3_flag_w	function	bool.flagw	vec3<bool>.flagw;u32.indexw	at3_bool({0}, ({1}) % 3u)	the w twin of shape.at_v3_flag
-F07558	own.vec4_flag_w	terminal	vec4<bool>.flagw		vec4<bool>()	the w twin of own.vec4_flag
+F07558	own.vec4_flag_w	terminal	vec4<bool>.flagw		zero_vec4_bool()	the w twin of own.vec4_flag
 F07559	shape.splat4_flag_w	function	vec4<bool>.flagw	bool.flagw	vec4<bool>({0})	the w twin of shape.splat4_flag
 F07560	shape.access_0_v4_flag_w	function	bool.flagw	vec4<bool>.flagw	{0}[0]	the w twin of shape.access_0_v4_flag
 F07561	shape.access_1_v4_flag_w	function	bool.flagw	vec4<bool>.flagw	{0}[1]	the w twin of shape.access_1_v4_flag

@@ -89,3 +89,27 @@ fn sorted(a: f32, b: f32) -> vec2<f32> { return vec2<f32>(min(a, b), max(a, b));
 fn sorted_i(a: i32, b: i32) -> vec2<i32> { return vec2<i32>(min(a, b), max(a, b)); }
 fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }
 fn sub_sat(a: i32, b: i32) -> i32 { let s = a - b; let ov = ((a ^ b) & (a ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
+fn zero_mat2x2() -> mat2x2<f32> { return mat2x2<f32>(); }
+fn zero_mat2x3() -> mat2x3<f32> { return mat2x3<f32>(); }
+fn zero_mat2x4() -> mat2x4<f32> { return mat2x4<f32>(); }
+fn zero_mat3x2() -> mat3x2<f32> { return mat3x2<f32>(); }
+fn zero_mat3x3() -> mat3x3<f32> { return mat3x3<f32>(); }
+fn zero_mat3x4() -> mat3x4<f32> { return mat3x4<f32>(); }
+fn zero_mat4x2() -> mat4x2<f32> { return mat4x2<f32>(); }
+fn zero_mat4x3() -> mat4x3<f32> { return mat4x3<f32>(); }
+fn zero_mat4x4() -> mat4x4<f32> { return mat4x4<f32>(); }
+fn zero_vec2_bool() -> vec2<bool> { return vec2<bool>(); }
+fn zero_vec2_f16() -> vec2<f16> { return vec2<f16>(); }
+fn zero_vec2_f32() -> vec2<f32> { return vec2<f32>(); }
+fn zero_vec2_i32() -> vec2<i32> { return vec2<i32>(); }
+fn zero_vec2_u32() -> vec2<u32> { return vec2<u32>(); }
+fn zero_vec3_bool() -> vec3<bool> { return vec3<bool>(); }
+fn zero_vec3_f16() -> vec3<f16> { return vec3<f16>(); }
+fn zero_vec3_f32() -> vec3<f32> { return vec3<f32>(); }
+fn zero_vec3_i32() -> vec3<i32> { return vec3<i32>(); }
+fn zero_vec3_u32() -> vec3<u32> { return vec3<u32>(); }
+fn zero_vec4_bool() -> vec4<bool> { return vec4<bool>(); }
+fn zero_vec4_f16() -> vec4<f16> { return vec4<f16>(); }
+fn zero_vec4_f32() -> vec4<f32> { return vec4<f32>(); }
+fn zero_vec4_i32() -> vec4<i32> { return vec4<i32>(); }
+fn zero_vec4_u32() -> vec4<u32> { return vec4<u32>(); }

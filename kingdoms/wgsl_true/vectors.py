@@ -39,7 +39,8 @@ def build(iface):
         t1 = ft(fam)
         for L in (2, 3, 4):
             v = ft(fam, L)
-            R(f"own.vec{L}" + fs[fam], v, [], f"vec{L}<{s}>()", "the zero vector: the second terminal every demanded type has", twin=True)
+            helper(f"zero_vec{L}_{s}", f"fn zero_vec{L}_{s}() -> vec{L}<{s}> {{ return vec{L}<{s}>(); }}")
+            R(f"own.vec{L}" + fs[fam], v, [], f"zero_vec{L}_{s}()", "the zero vector: the second terminal every demanded type has; a call, so no operation on it is evaluated at shader creation", twin=True)
             R(f"shape.splat{L}" + fs[fam], v, [t1], f"vec{L}<{s}>({{0}})", twin=True)
             for i in range(L):
                 R(f"shape.access_{i}_v{L}" + fs[fam], t1, [v], "{0}[" + str(i) + "]", "a row exists only for i < L, so a constant lane is never past the vector", twin=True)
@@ -80,7 +81,8 @@ def build(iface):
             colv = ft("real", r)
             col = ", ".join([f"vec{r}<f32>(lit_f32({{v}}))"] * c)
             C(f"literal.mat{c}x{r}", m, f"mat{c}x{r}<f32>({col})", [x for x in __import__("values").f32_values(-3.4028234663852886e38, 3.4028234663852886e38, 16, f"mat{c}x{r}")], f"?_mat{c}x{r}: one number on every element", twin=True)
-            R(f"own.mat{c}x{r}", m, [], f"mat{c}x{r}<f32>()")
+            helper(f"zero_mat{c}x{r}", f"fn zero_mat{c}x{r}() -> mat{c}x{r}<f32> {{ return mat{c}x{r}<f32>(); }}")
+            R(f"own.mat{c}x{r}", m, [], f"zero_mat{c}x{r}()", "a call, so no operation on it is evaluated at shader creation")
             R(f"shape.compose_mat{c}x{r}", m, [colv] * c, f"mat{c}x{r}<f32>(" + ", ".join("{%d}" % i for i in range(c)) + ")", twin=True)
             for i in range(c):
                 R(f"shape.col_{i}_{c}x{r}", colv, [m], "{0}[" + str(i) + "]", twin=True)
