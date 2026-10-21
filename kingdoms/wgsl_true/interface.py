@@ -13,7 +13,9 @@ GRAM = dict(
     # the reference kernel's grid (kingdoms/wgsl/gram/blocked.wgsl): own.grid_grid
     default_grid=(16, 16, 4, 4),
     # the target: the M3 Max oracle device (src/wgsl/target.rs recorded)
-    max_invocations=1024,
+    # the shape table's largest workgroup: the work guard (fuller work_guard) at K = 1 allows H * 64 * invocations <= 1.7e8,
+    # and a 16 x 16 unit-test dispatch of a 64-thread shape launches at most 1,024 invocations (H = 2,325: 1.5e8)
+    max_invocations=64,
     subgroup_sizes=(32,),
     has_subgroups=True,
     has_subgroup_barrier=True,

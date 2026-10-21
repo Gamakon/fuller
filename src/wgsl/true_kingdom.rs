@@ -397,7 +397,7 @@ mod tests {
         use crate::wgsl::render::Grid;
         use crate::wgsl::work_guard::work_bound;
         let k = kingdom();
-        assert_eq!(k.fuel_budget, 0, "interface.tsv is at fuel_budget 0 for the compiler and validity test");
+        assert!(k.fuel_budget <= 1, "interface.tsv is at fuel_budget 0 or 1 for the compiler and validity test");
         let c = k.relations().check().expect("check");
         let h = k.head_total(&c, 8).expect("H");
         let grid = Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false };
@@ -408,8 +408,9 @@ mod tests {
         let crash = Fuel::Kingdom { h, k: 2 };
         let e = crash.check("the Gram rung", rung).expect_err("K = 2 at the Gram dispatch");
         eprintln!("H = {h}: K = 2 at the 128 x 64 rung: {}; K = 0 unit test: {}; {e}", work_bound(h, 2, rung), work_bound(h, 0, 256));
-        assert!(k.fuel(&c, 8).expect("fuel").check("the unit test", 256).is_ok(), "K = 0 at the unit-test dispatch");
-        assert!(k.fuel(&c, 8).expect("fuel").check("the Gram rung at K = 0", rung).is_ok(), "K = 0 even at the rung");
+        assert!(k.fuel(&c, 8).expect("fuel").check("the unit test", 256).is_ok(), "the table's K at the unit-test dispatch");
+        let at_rung = k.fuel(&c, 8).expect("fuel").check("the Gram rung", rung);
+        assert_eq!(at_rung.is_ok(), k.fuel_budget == 0, "K = 0 is under the cap even at the rung, K = 1 is not: {at_rung:?}");
     }
 
     /// A tree by row names; a constant placeholder names its `C_T` text.
