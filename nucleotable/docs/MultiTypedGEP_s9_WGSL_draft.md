@@ -222,9 +222,9 @@ Reasons: `nonfinite_literal`, `literal_not_a_row`, `literal_with_children`, `kno
 
 ### 9.2.11 Render and parse (layer 7 `kernel_does_not_render`, `kernel_does_not_parse`; R1–R4)
 
-**Types and rows.** None new. The renderer is a total function `render: Tree -> String` (§9.4): every row of every generated table has a spelling; the generator's test renders every row once at an instance of each input (§9.6.3) and parses the text in naga with the target's capabilities. The `load.cfg_*` rows spell the interface's own field names (A0 fixed `pcfg.d`).
+**Types and rows.** None new. The renderer is a total function `render: Tree -> String` (§9.4): every row of every generated table has a spelling; the generator's test renders every row once at an instance of each input (§9.6.2 item 3) and parses the text in naga with the target's capabilities. The `load.cfg_*` rows spell the interface's own field names (A0 fixed `pcfg.d`).
 
-**Closure.** Every node is a row with a spelling (frame membership), so `render` has no `Err` branch to take; `kernel_does_not_render` and `kernel_does_not_parse` are generator defects caught by §9.6.3, not properties of a gene. R2 is the rung ladder (§9.2.6), R3 the domains and the target (§9.2.1, §9.2.10), R4 the per-entry alphabet (an interface's rows are the only rows; a workgroup array is consumed only by access rows; every helper has a scalar by the generator's test).
+**Closure.** Every node is a row with a spelling (frame membership), so `render` has no `Err` branch to take; `kernel_does_not_render` and `kernel_does_not_parse` are generator defects caught by §9.6.2 item 3, not properties of a gene. R2 is the rung ladder (§9.2.6), R3 the domains and the target (§9.2.1, §9.2.10), R4 the per-entry alphabet (an interface's rows are the only rows; a workgroup array is consumed only by access rows; every helper has a scalar by the generator's test).
 
 **Removed.** Every `Err` return of `render.rs` on an expressed tree (A1 R1–R4), `Rendered.masked`, `Checker::safety`'s render-and-parse on the path.
 
