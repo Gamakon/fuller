@@ -100,6 +100,10 @@ name = "parity_device"
 required-features = ["gpu"]
 
 [[example]]
+name = "st4_correct_seed"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "st4_seeds"
 required-features = ["wgsl"]
 
