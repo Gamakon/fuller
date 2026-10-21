@@ -1,4 +1,19 @@
-# PLAN: true multi-typed GEP for WGSL (revision 5)
+# PLAN: true multi-typed GEP for WGSL
+
+## NOW: the symbol table (the only active task)
+
+Andrew, 2026-10-21: everything except the design of the WGSL kingdom's symbol table is PARKED. GEP itself (typed Karva genes, heads and tails per type, expression, operators, the GPU engine) is standard and already built; the only thing WGSL changes is the kingdom's symbol table: its types, its symbols, and the types of each symbol's arguments and output.
+
+| id | prerequisite | task | owner | gate |
+|---|---|---|---|---|
+| ST1 | READ the design doc (`docs/MultiTypedGEP.html`, `docs/GOAL.md`) and READ the rules (`Rules.md`) | Design the WGSL symbol table: every type, every symbol (output type, ordered argument types, WGSL spelling), every terminal, the root per interface, and for each legality rule the type that carries it. File: `nucleotable/docs/MultiTypedGEP_s9_WGSL_draft.md`. | advisor | Reviewed for one question: can any combination of rows express an illegal or malformed WGSL kernel? Advisor, then Codex, fixed, Codex again. |
+
+Everything below this line is PARKED until ST1 passes its review.
+
+---
+
+## PARKED
+
 
 ## Context
 
