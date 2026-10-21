@@ -19,6 +19,9 @@ pub mod aggregate;
 pub mod chromosome;
 pub mod generator;
 pub mod flow;
+/// The kernel texts the tests read, tracked as fixtures (T63).
+#[cfg(test)]
+pub(crate) mod fixture_texts;
 pub mod harness;
 pub mod gram;
 pub mod individual;

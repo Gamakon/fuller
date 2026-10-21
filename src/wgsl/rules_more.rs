@@ -1691,18 +1691,17 @@ mod tests {
     use crate::wgsl::safe_karva::render_tree_with;
     use crate::wgsl::safe_reader::read_safe;
 
-    /// The corpus kernels and the rule population popR_rules (when this
-    /// checkout holds it), read.
+    /// The corpus kernels and the rule population popR_rules (a tracked fixture), read.
     fn kernels(k: &WgslKingdom) -> Vec<(String, Tree)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files: Vec<std::path::PathBuf> = Vec::new();
-        for dir in ["tests/corpus/safewgsl", "logs/HGP/001/popR_rules/texts"] {
-            if let Ok(rd) = std::fs::read_dir(root.join(dir)) {
-                files.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")));
-            }
-        }
-        files.sort();
-        files.into_iter().filter_map(|f| Some((f.file_name()?.to_string_lossy().into_owned(), read_safe(&std::fs::read_to_string(&f).ok()?, k).ok()?.tree))).collect()
+        // The saved population first (a fixture, 49 texts), then the tracked corpus (112 texts): the order the two
+        // directories sorted in when both were read from the checkout.
+        let mut texts = crate::wgsl::fixture_texts::set("popR_rules");
+        let mut corpus: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("tests/corpus/safewgsl")).expect("tests/corpus/safewgsl").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        corpus.sort();
+        assert_eq!(corpus.len(), 112, "tests/corpus/safewgsl: {} kernels, expected 112", corpus.len());
+        texts.extend(corpus.iter().map(|f| (f.file_name().expect("name").to_string_lossy().into_owned(), std::fs::read_to_string(f).expect("corpus text"))));
+        texts.into_iter().filter_map(|(name, text)| Some((name, read_safe(&text, k).ok()?.tree))).collect()
     }
 
     const NEW: [Rule; 11] = [Rule::DropDeadStore, Rule::UnrollK4, Rule::RollK, Rule::SplitAccumulator, Rule::WgShape, Rule::HoistLoad, Rule::PadShared, Rule::GrowCols, Rule::ShrinkCols, Rule::DoubleBuffer, Rule::SymmetricHalf];

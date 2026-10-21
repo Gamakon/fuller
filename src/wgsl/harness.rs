@@ -4523,15 +4523,12 @@ mod tests {
     #[test]
     fn the_saved_sets_get_gram_rss_verdicts_and_plans() {
         let p = gram_problem();
-        let dirs = ["logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts", "logs/HGP/001/popB_g080/texts", "logs/HGP/001/reserve2/texts", "logs/HGP/001/popC_rand20/texts", "logs/HGP/001/popR_rules/texts"];
+        let dirs = ["popA_g001", "popA2_g001b", "library_texts", "popB_g080", "reserve2", "popC_rand20", "popR_rules"];
         let (mut kernels, mut accepted, mut plans) = (0usize, 0usize, 0usize);
         let mut differ = Vec::new();
         for dir in dirs {
-            let dir = root().join(dir);
-            let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|f| f.extension().is_some_and(|x| x == "wgsl")).collect();
-            files.sort();
-            for f in files {
-                let text = std::fs::read_to_string(&f).unwrap();
+            for (name, text) in crate::wgsl::fixture_texts::set(dir) {
+                let f = std::path::PathBuf::from(format!("{dir}/{name}"));
                 kernels += 1;
                 match (gram::grid_of(&text), kernel_info(&p.spec, &text)) {
                     (Ok(g), Ok(k)) => {

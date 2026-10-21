@@ -4398,20 +4398,17 @@ mod tests {
         let lined = Contract::parse(&format!("{base}\narena index_u32 index_f32\nparam arrayLength(index_u32) 8388608 8388608\nparam arrayLength(index_f32) 8388608 8388608\nrows cands 64\n")).unwrap();
         let arena = lined.with_arena_mode(true);
         let rows = arena.with_rows_mode(true);
-        let dir = root.join("logs/V24/run1/raw");
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
-        let rows_ok = files.iter().filter(|f| check_text(&std::fs::read_to_string(f).unwrap(), &rows).is_ok()).count();
+        let files = crate::wgsl::fixture_texts::set("v24_run1_raw");
+        let rows_ok = files.iter().filter(|(_, text)| check_text(text, &rows).is_ok()).count();
         let (mut strict_ok, mut arena_ok) = (0usize, 0usize);
         let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
-        for f in &files {
-            let src = std::fs::read_to_string(f).unwrap();
-            let (a, b) = (check_text(&src, &plain).map_err(|e| e.rule), check_text(&src, &lined).map_err(|e| e.rule));
-            assert_eq!(a.as_ref().err(), b.as_ref().err(), "{}: strict changed by the arena line", f.display());
-            let c = check_text(&src, &arena);
+        for (file, src) in &files {
+            let (a, b) = (check_text(src, &plain).map_err(|e| e.rule), check_text(src, &lined).map_err(|e| e.rule));
+            assert_eq!(a.as_ref().err(), b.as_ref().err(), "{file}: strict changed by the arena line");
+            let c = check_text(src, &arena);
             if a.is_ok() {
                 strict_ok += 1;
-                assert!(c.is_ok(), "{}: strict proves it, arena does not: {:?}", f.display(), c.err());
+                assert!(c.is_ok(), "{file}: strict proves it, arena does not: {:?}", c.err());
             }
             match c {
                 Ok(_) => arena_ok += 1,

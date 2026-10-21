@@ -7664,13 +7664,8 @@ mod tests {
         let mut failures = Vec::new();
         let mut checked = 0usize;
         let mut r5_per_item = None;
-        for dir in ["logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts"] {
-            let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/")).join(dir);
-            let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-            files.sort();
-            for f in files {
-                let name = f.file_name().unwrap().to_string_lossy().to_string();
-                let src = std::fs::read_to_string(&f).unwrap();
+        for set in ["popA_g001", "popA2_g001b", "library_texts"] {
+            for (name, src) in crate::wgsl::fixture_texts::set(set) {
                 checked += 1;
                 let tree = match read_safe(&src, &k) {
                     Ok(r) => r.tree,
@@ -8498,24 +8493,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     #[test]
     fn run_ones_readable_seeds_render_to_their_own_values() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/V24/run1/raw");
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
+        let files = crate::wgsl::fixture_texts::set("v24_run1_raw");
         let (mut read, mut same, mut not_runnable) = (0usize, 0usize, 0usize);
         let mut differ = Vec::new();
-        for f in &files {
-            let src = std::fs::read_to_string(f).unwrap();
-            if read_safe(&src, &k).is_err() {
+        for (file, src) in &files {
+            if read_safe(src, &k).is_err() {
                 continue;
             }
             read += 1;
-            match same_values_every_entry(&src, &k, [2, 1, 1]) {
+            match same_values_every_entry(src, &k, [2, 1, 1]) {
                 Ok(true) => same += 1,
                 Ok(false) => {
                     not_runnable += 1;
-                    println!("not runnable on the CPU: {}", f.file_name().unwrap().to_string_lossy());
+                    println!("not runnable on the CPU: {file}");
                 }
-                Err(e) => differ.push(format!("{}: {}", f.file_name().unwrap().to_string_lossy(), e.lines().next().unwrap_or(""))),
+                Err(e) => differ.push(format!("{file}: {}", e.lines().next().unwrap_or(""))),
             }
         }
         println!("run 1's seeds: {} files, {read} read, {same} render to their own values, {not_runnable} not runnable on the CPU", files.len());

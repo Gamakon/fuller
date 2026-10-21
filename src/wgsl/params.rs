@@ -658,17 +658,14 @@ mod tests {
     #[test]
     fn a_modules_references_resolve_entry_by_entry() {
         let k = WgslKingdom::load_safe();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/V24/run1/seeds");
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).expect("logs/V24/run1/seeds").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
         let mut modules = 0;
-        for f in files {
-            let Ok(r) = crate::wgsl::safe_reader::read_safe(&std::fs::read_to_string(&f).expect("seed"), &k) else { continue };
+        for (name, text) in crate::wgsl::fixture_texts::set("v24_run1_seeds") {
+            let Ok(r) = crate::wgsl::safe_reader::read_safe(&text, &k) else { continue };
             if !r.tree.name.starts_with("kernel.module") || !has_refs(&r.tree) {
                 continue;
             }
-            let plain = to_literals(&r.tree, &k).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-            assert!(!has_refs(&plain), "{}: a reference left", f.display());
+            let plain = to_literals(&r.tree, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(!has_refs(&plain), "{name}: a reference left");
             modules += 1;
         }
         assert!(modules >= 10, "{modules} module seeds with references");
