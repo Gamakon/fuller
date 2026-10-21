@@ -34,7 +34,7 @@ pub fn statements(block: &Tree) -> Vec<Tree> {
     fn walk(t: &Tree, out: &mut Vec<Tree>) {
         if is_plain_block(&t.name) || is_chain_link(t) {
             t.kids.iter().for_each(|k| walk(k, out));
-        } else if t.name != "fallback" {
+        } else if !t.name.starts_with("own.stmt") {
             out.push(t.clone());
         }
     }
@@ -45,12 +45,12 @@ pub fn statements(block: &Tree) -> Vec<Tree> {
 
 /// A plain block at `rung` holding `stmts` in the grammar's spelling (at
 /// most four a row, the rest nested through `stmt.block`); an empty list is
-/// the block's fallback.
+/// the block's own terminal.
 pub fn rebuild(stmts: Vec<Tree>, rung: &str, kingdom: &WgslKingdom) -> Result<Tree, String> {
     let bt = dual_ty(kingdom, &format!("block.{rung}"))?;
     let st = dual_ty(kingdom, &format!("stmt.{rung}"))?;
     if stmts.is_empty() {
-        return Ok(Tree::fallback(bt));
+        return crate::wgsl::render::own_leaf(kingdom, bt);
     }
     let mut items = stmts;
     while items.len() > 4 {
@@ -95,7 +95,7 @@ pub fn kernel_statements(root: &Tree) -> Vec<Stmt> {
         let looped = in_loop || safe_base(&t.name).starts_with("loop.");
         let container = is_plain_block(&t.name);
         for k in &t.kids {
-            walk(k, counter, looped, container && !is_chain_link(k) && k.name != "fallback", out);
+            walk(k, counter, looped, container && !is_chain_link(k) && !k.name.starts_with("own."), out);
         }
     }
     let mut out = Vec::new();
@@ -162,7 +162,7 @@ pub fn replace_statement(root: &Tree, index: usize, with: Vec<Tree>, kingdom: &W
 
 /// A zero value: a literal 0 or false, a fallback value, or a zero splat.
 pub(crate) fn is_zero(t: &Tree) -> bool {
-    (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || t.name == "fallback" || (t.name.starts_with("shape.splat") && t.kids.len() == 1 && is_zero(&t.kids[0]))
+    (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || t.name.starts_with("own.") || (t.name.starts_with("shape.splat") && t.kids.len() == 1 && is_zero(&t.kids[0]))
 }
 
 /// The storage a zero store writes (`parr.a`, `reg.i3`), when `s` is one:
@@ -1333,7 +1333,7 @@ pub fn loader_plan(plain: &Tree, node: usize, depth: usize, lp: &Tree) -> Result
     if strides != 1 || terms.iter().filter(|t| any_node(t, &|m| m.name == counter)).count() != 1 {
         return Err("the flat index is not G + threads * k".into());
     }
-    let marker = Tree::new("fallback", fx.ty, vec![]);
+    let marker = Tree::new("own.marker", fx.ty, vec![]);
     if body.iter().any(|s| any_node(&substitute(s, &f, &marker), &|m| m.name == counter)) {
         return Err("the loader's counter is used outside its flat index".into());
     }

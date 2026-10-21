@@ -17,8 +17,8 @@
 //!
 //! The way back is [`build`]: a decoded, unfolded gene text projected onto
 //! the kingdom's rows under a demanded dual, so a phenotype is always a
-//! typed tree the renderer accepts; a token the demand has no row for
-//! becomes a fallback leaf, as the typed projection does on the device.
+//! typed tree the renderer accepts; a token the demand has no row for is our
+//! software's bug, named (nothing stands in for it).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -31,9 +31,6 @@ use crate::wgsl::table::FunctionTable;
 
 /// The kingdom's K: every node has at most four children.
 pub const K: usize = 4;
-
-/// The terminal a projection substitutes for a token of the wrong dual.
-pub const FALLBACK: &str = "fallback";
 
 /// A kernel split into its head gene and homeotic tail genes; an `href<n>`
 /// leaf carries slot n's root dual as its `ty`.
@@ -76,11 +73,6 @@ pub fn typed_token(name: &str, ty: Ty) -> String {
     }
 }
 
-/// A fallback leaf's token: `fallback@T061`, its dual named.
-pub fn fallback_token(ty: Ty) -> String {
-    typed_token(FALLBACK, ty)
-}
-
 /// A token's name and the dual it names, if typed (`name@T061`).
 pub fn split_token(token: &str) -> (&str, Option<Ty>) {
     if let Some((name, r)) = token.rsplit_once("@T") {
@@ -101,12 +93,18 @@ fn token(t: &Tree) -> String {
     }
 }
 
+/// Whether a leaf carries its constant as a payload token: a `literal.*` row, or a `const.*` row (the constants of the
+/// duals no literal reaches).
+fn has_payload(name: &str) -> bool {
+    name.starts_with("literal.") || name.starts_with("const.")
+}
+
 /// The tree in the Karva text form the encoder and the decoder share: a
 /// terminal as `(Var "name@T…")`, a literal as `(literal.x@T… (Num v))`, an
 /// application as `(name@T… kids…)`; each token typed ([`typed_token`]).
 pub fn karva_text(t: &Tree) -> String {
     if t.kids.is_empty() {
-        if t.name.starts_with("literal.") {
+        if has_payload(&t.name) {
             return format!("({} (Num {:?}))", token(t), t.konst);
         }
         return format!("(Var {:?})", token(t));
@@ -126,7 +124,7 @@ fn level_order(t: &Tree) -> Vec<(&Tree, bool)> {
         if payload {
             continue;
         }
-        if n.kids.is_empty() && n.name.starts_with("literal.") {
+        if n.kids.is_empty() && has_payload(&n.name) {
             queue.push_back((n, true));
         }
         for k in &n.kids {
@@ -210,7 +208,7 @@ pub fn encode_folded(head: &Tree, tail: &[Option<Tree>], head_length: usize, rng
     let mut functions: BTreeMap<String, usize> = BTreeMap::new();
     fn collect(t: &Tree, variables: &mut Vec<String>, functions: &mut BTreeMap<String, usize>) -> Result<(), String> {
         if t.kids.is_empty() {
-            if t.name.starts_with("literal.") {
+            if has_payload(&t.name) {
                 functions.insert(token(t), 1);
             } else if !variables.contains(&token(t)) && !is_href(t) {
                 variables.push(token(t));
@@ -228,8 +226,8 @@ pub fn encode_folded(head: &Tree, tail: &[Option<Tree>], head_length: usize, rng
     }
     collect(head, &mut variables, &mut functions)?;
     tail.iter().flatten().try_for_each(|t| collect(t, &mut variables, &mut functions))?;
-    if !variables.iter().any(|v| v == FALLBACK) {
-        variables.push(FALLBACK.into());
+    if variables.is_empty() {
+        return Err("our software has a bug: a gene with no terminal (every kernel ends in leaves)".into());
     }
     let pset = PsetSpec { variables, functions: functions.iter().map(|(n, &a)| (n.clone(), FunctionSpec { semantic_id: n.clone(), arity: a })).collect(), rnc_values: vec![0.0] };
     let tail_text: Vec<String> = tail.iter().map(|t| t.as_ref().map_or_else(|| EMPTY_SLOT.to_string(), karva_text)).collect();
@@ -460,7 +458,7 @@ type OwnSlots = Result<Vec<usize>, String>;
 /// engine's Karva crossovers swap genes by position, and each kernel
 /// numbered its own definitions from 0: slot N of two kernels were
 /// unrelated, and a crossover gave a head a reference to a definition of
-/// another dual, a fallback). A definition is keyed by its content, its own
+/// another dual). A definition is keyed by its content, its own
 /// references expanded; the keys are placed in order of reference depth,
 /// then by how many individuals hold them, each at the lowest slot above
 /// its references that is free in every holder, the same slot in all of
@@ -692,7 +690,7 @@ pub fn per_kernel_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<PerKernelRow> 
 pub fn build(text: &str, kingdom: &WgslKingdom, role: &Role) -> Result<Tree, String> {
     let node = parse_math(text)?;
     let root = dual_ty(kingdom, role.root_dual())?;
-    Ok(project(&node, root, kingdom, &per_kernel_rows(kingdom, role)))
+    project(&node, root, kingdom, &per_kernel_rows(kingdom, role))
 }
 
 /// The tree made row-consistent under `demand`: every node's `ty` is the
@@ -744,15 +742,14 @@ fn conform_with(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKe
 /// take two conversions, the inner one never converted further.
 fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow], convert: bool, chains: bool) -> Result<Tree, String> {
     let dual = |ty: Ty| kingdom.dual(ty).map(|d| d.dual.clone()).unwrap_or_else(|| format!("{ty:?}"));
-    if t.name == FALLBACK {
-        return Ok(Tree::fallback(demand));
-    }
     // A splat of a literal where a vector dual with no splat row is demanded
-    // (a 64-bit hash state, a wide fixed-point value): its fallback, which
-    // the renderer writes as that splat of zero (2026-10-12).
+    // (a 64-bit hash state, a wide fixed-point value): the dual's `const` row at that value, which the renderer
+    // writes as that splat (2026-10-12).
     if let (true, [x]) = (t.name.starts_with("shape.splat"), t.kids.as_slice()) {
         if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.fallback_bits) == x.konst) {
-            return Ok(Tree::fallback(demand));
+            if let Some(c) = const_of(kingdom, demand, x.konst) {
+                return Ok(c);
+            }
         }
     }
     // A count used as an index (index.of_count) where the count is demanded:
@@ -844,11 +841,12 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         if let Some(r) = kingdom.rows.iter().find(|r| r.name.starts_with("literal.") && r.inputs.is_empty() && r.output == demand && matches!(r.name.as_str(), "literal.index" | "literal.count" | "literal.bits") && whole && t.konst >= 0.0 && matches!(t.name.as_str(), "literal.index" | "literal.count" | "literal.bits")) {
             return Ok(Tree::literal(&r.name, demand, t.konst));
         }
-        // A dual with no literal row (a hash state, a fixed-point value): its
-        // fallback, the zero the renderer writes for it, when the literal is it
-        // (2026-10-12: 48 of 1,000 random trees).
+        // A dual with no literal row (a hash state, a fixed-point value): its `const` row, the zero the renderer
+        // writes for it, when the literal is it (2026-10-12: 48 of 1,000 random trees).
         if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.fallback_bits) == t.konst) {
-            return Ok(Tree::fallback(demand));
+            if let Some(c) = const_of(kingdom, demand, t.konst) {
+                return Ok(c);
+            }
         }
     } else {
         // Every row of the name under the demand; the one that needs the
@@ -957,9 +955,9 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     Err(format!("{} (of {}) where {} is demanded: no row and no conversion", t.name, own.iter().map(|&o| dual(o)).collect::<Vec<_>>().join("/"), dual(demand)))
 }
 
-/// The number of fallback leaves a projection made.
-pub fn fallbacks(t: &Tree) -> usize {
-    usize::from(t.name == FALLBACK) + t.kids.iter().map(fallbacks).sum::<usize>()
+/// The `const.*` row of a dual at a value (the constants of the duals no literal reaches), when the dual has one.
+fn const_of(kingdom: &WgslKingdom, ty: Ty, konst: f64) -> Option<Tree> {
+    kingdom.rows.iter().find(|r| r.name.starts_with("const.") && r.inputs.is_empty() && r.output == ty).map(|r| Tree::literal(&r.name, ty, konst))
 }
 
 /// The candidate signatures of a name under a demand: the kingdom's rows
@@ -972,62 +970,46 @@ fn signatures<'a>(name: &'a str, demand: Ty, arity: usize, kingdom: &'a WgslKing
     rows.chain(pk)
 }
 
-fn project(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(String, Vec<Ty>, Ty)]) -> Tree {
-    project_scored(n, demand, kingdom, per_kernel).0
-}
-
-/// [`project`] with its cost: the nodes the gene did not ask to be
-/// fallbacks that became one. A typed fallback under its own dual costs
-/// nothing, under another dual one, so a row's signatures are told apart by
-/// the duals its fallback leaves name.
-fn project_scored(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(String, Vec<Ty>, Ty)]) -> (Tree, usize) {
-    // A typed token under another dual than its position demands costs one.
-    let off = |t: Option<Ty>| usize::from(t.is_some_and(|t| t != demand));
+/// A gene's node as a typed tree under `demand`. A token the kingdom has no row for at its position, a number
+/// where a row is demanded, or a token of another dual than its position's is our software's bug, named: the gene is
+/// valid by construction, and nothing stands in for a token that is not.
+fn project(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(String, Vec<Ty>, Ty)]) -> Result<Tree, String> {
+    let dual = |ty: Ty| kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone());
+    let off = |token: &str, t: Option<Ty>| match t {
+        Some(t) if t != demand => Err(format!("our software has a bug: the token {token} of dual {} where {} is demanded", dual(t), dual(demand))),
+        _ => Ok(()),
+    };
     match n {
-        MathNode::Num(_) => (Tree::fallback(demand), 1),
+        MathNode::Num(v) => Err(format!("our software has a bug: the number {v} where a row of {} is demanded", dual(demand))),
         MathNode::Var(token) => {
             let (name, t) = split_token(token);
-            if name == FALLBACK {
-                // A fallback asked for: free under its own dual (untyped, as
-                // before the duals were written, it costs one).
-                (Tree::fallback(demand), t.map_or(1, |_| off(t)))
-            } else if signatures(name, demand, 0, kingdom, per_kernel).next().is_some() {
-                (Tree::new(name, demand, vec![]), off(t))
+            off(token, t)?;
+            if signatures(name, demand, 0, kingdom, per_kernel).next().is_some() {
+                Ok(Tree::new(name, demand, vec![]))
             } else {
-                (Tree::fallback(demand), 1)
+                Err(format!("our software has a bug: no terminal row {name} of dual {}", dual(demand)))
             }
         }
         MathNode::App(token, kids) => {
             let (ctor, t) = split_token(token);
-            if ctor.starts_with("literal.") {
+            off(token, t)?;
+            if has_payload(ctor) {
                 let v = match kids.as_slice() {
                     [MathNode::Num(v)] => *v,
-                    _ => 0.0,
+                    _ => return Err(format!("our software has a bug: the literal {ctor} without its one number")),
                 };
-                return if kingdom.rows.iter().any(|r| r.name == ctor && r.output == demand) { (Tree::literal(ctor, demand, v), off(t)) } else { (Tree::fallback(demand), 1) };
+                return if kingdom.rows.iter().any(|r| r.name == ctor && r.output == demand) { Ok(Tree::literal(ctor, demand, v)) } else { Err(format!("our software has a bug: no literal row {ctor} of dual {}", dual(demand))) };
             }
-            // Every row of the name under the demand with this arity; the
-            // one whose inputs cost least wins (the first on a tie).
-            let mut best: Option<(usize, Tree)> = None;
+            // Every row of the name under the demand with this arity; the first whose inputs all project is the
+            // node's. None projecting names the last reason.
+            let mut last = format!("our software has a bug: no row {ctor} of {} arguments under dual {}", kids.len(), dual(demand));
             for inputs in signatures(ctor, demand, kids.len(), kingdom, per_kernel) {
-                let mut cost = off(t);
-                let kids: Vec<Tree> = kids
-                    .iter()
-                    .zip(inputs)
-                    .map(|(k, &d)| {
-                        let (t, c) = project_scored(k, d, kingdom, per_kernel);
-                        cost += c;
-                        t
-                    })
-                    .collect();
-                if best.as_ref().is_none_or(|(bc, _)| cost < *bc) {
-                    best = Some((cost, Tree::new(ctor, demand, kids)));
-                }
-                if cost == 0 {
-                    break;
+                match kids.iter().zip(inputs).map(|(k, &d)| project(k, d, kingdom, per_kernel)).collect::<Result<Vec<Tree>, String>>() {
+                    Ok(kids) => return Ok(Tree::new(ctor, demand, kids)),
+                    Err(e) => last = e,
                 }
             }
-            best.map_or_else(|| (Tree::fallback(demand), 1), |(c, t)| (t, c))
+            Err(last)
         }
     }
 }
@@ -1054,9 +1036,9 @@ pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::
 }
 
 /// Decoded genes to kernel text under the interface `role`: unfold,
-/// project, render; with the number of fallback leaves the projection made.
-pub fn rebuild_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize), String> {
-    rebuild_bounded_with(decoded, filled, kingdom, None, role).map(|(r, f, _)| (r, f))
+/// project, render.
+pub fn rebuild_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<Rendered, String> {
+    rebuild_bounded_with(decoded, filled, kingdom, None, role).map(|(r, _)| r)
 }
 
 /// The static cost bound a kernel must stay under BEFORE it is dispatched:
@@ -1088,19 +1070,18 @@ pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
 /// Decoded genes to kernel text under the interface `role`, refusing by name a
 /// kernel whose static cost exceeds `bound` (the per-item or the base
 /// figure); the kernel's cost is returned with the text.
-pub fn rebuild_bounded_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize, Cost), String> {
+pub fn rebuild_bounded_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>, role: &crate::wgsl::render::Role) -> Result<(Rendered, Cost), String> {
     let text = unfold_decoded(decoded, filled)?;
     let tree = build(&text, kingdom, role)?;
     // A grid the knob references cannot be resolved against is named before the cost.
     crate::wgsl::params::resolve(&tree)?;
-    let f = fallbacks(&tree);
     let c = cost(&tree);
     if let Some(b) = bound {
         if c.per_item > b.per_item || c.base > b.base {
             return Err(format!("cost: {:.0} per item, {:.0} base exceeds the bound {:.0}, {:.0}; not dispatched", c.per_item, c.base, b.per_item, b.base));
         }
     }
-    Ok((render_tree_with(&tree, kingdom, role)?, f, c))
+    Ok((render_tree_with(&tree, kingdom, role)?, c))
 }
 
 #[cfg(test)]
@@ -1140,16 +1121,14 @@ mod tests {
     const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
     /// Encode at `h`, decode every gene, unfold, project, render: the text
-    /// must be the tree's own rendering, with no fallback.
+    /// must be the tree's own rendering.
     fn round_trip(tree: &Tree, kingdom: &WgslKingdom, h: usize, slots: usize) -> SafeChromosome {
         let direct = render_tree_with(tree, kingdom, &crate::wgsl::render::gram_role()).unwrap().text;
         let c = encode(tree, h, slots, 7).unwrap_or_else(|e| panic!("{e}"));
         let pset = homeotic::pset_with_hrefs(&c.pset, slots);
         let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
         let bound = default_bound(kingdom).unwrap();
-        let (r, f, _) = rebuild_bounded_with(&decoded, c.folded.filled, kingdom, Some(&bound), &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{e}"));
-        let text = unfold_decoded(&decoded, c.folded.filled).unwrap();
-        assert_eq!(f, 0, "fallbacks in {}\nfrom {text}", build(&text, kingdom, &gram_role()).unwrap().to_sexpr());
+        let (r, _) = rebuild_bounded_with(&decoded, c.folded.filled, kingdom, Some(&bound), &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(r.text, direct);
         validate_text(&r.text).unwrap();
         for (g, codes) in c.genes.iter().zip(&c.ty_codes) {
@@ -1256,9 +1235,10 @@ mod tests {
         let mut t = r.tree.clone();
         fn wrap(t: &mut Tree, k: &WgslKingdom) -> bool {
             if t.name == "loop.items_boundm" {
-                let body = t.kids[1].clone();
                 let lit = |v: f32| Tree::literal("literal.lit64", dual_ty(k, "u32.lit64").unwrap(), v);
-                let l3 = Tree::new("loop.tile_L3", dual_ty(k, "stmt.L3").unwrap(), vec![lit(64.0), Tree::new("block.one_L4", dual_ty(k, "block.L4").unwrap(), vec![Tree::new("stmt.block_L4", dual_ty(k, "stmt.L4").unwrap(), vec![Tree { ty: dual_ty(k, "block.L4").unwrap(), ..body.clone() }])])]);
+                // (A statement of the innermost rung: the item loop's own body is of rung L1 and cannot stand in L4.)
+                let set = Tree::new("reg.set_f_L4", dual_ty(k, "stmt.L4").unwrap(), vec![Tree::new("reg.f0", dual_ty(k, "reg<f32>.real").unwrap(), vec![]), Tree::literal("literal.real", dual_ty(k, "f32.real").unwrap(), 1.0)]);
+                let l3 = Tree::new("loop.tile_L3", dual_ty(k, "stmt.L3").unwrap(), vec![lit(64.0), Tree::new("block.one_L4", dual_ty(k, "block.L4").unwrap(), vec![set])]);
                 let l2 = Tree::new("loop.tile_L2", dual_ty(k, "stmt.L2").unwrap(), vec![lit(64.0), Tree::new("block.one_L3", dual_ty(k, "block.L3").unwrap(), vec![l3])]);
                 let l1 = Tree::new("loop.tile_L1", dual_ty(k, "stmt.L1").unwrap(), vec![lit(64.0), Tree::new("block.one_L2", dual_ty(k, "block.L2").unwrap(), vec![l2])]);
                 t.kids[1] = Tree::new("block.one_L1", dual_ty(k, "block.L1").unwrap(), vec![l1]);
@@ -1287,17 +1267,14 @@ mod tests {
     }
 
     /// A store into a vec4 private array whose array leaf is of the wrong
-    /// kind: the leaf becomes the vec4 array's fallback and the text names
-    /// the vec4 array, so it validates (a vec4 into `pa` did not).
+    /// kind (`parr.a` is the f32 array): the projection names it, and
+    /// substitutes no vec4 array for it (it did, as a fallback, until T37).
     #[test]
-    fn an_array_fallback_names_the_array_of_its_dual() {
+    fn an_array_leaf_of_the_wrong_kind_is_named_not_replaced() {
         let k = WgslKingdom::load_safe();
         let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.seq2_L0 (parr.set_v_L0 (Var "parr.a") (safe.pidx16 (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0"))) (wg.set_v_L0 (Var "wg.a") (safe.wgv_of (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0")))) (block.one_O0 (store.h_O0 (safe.cell_of (safe.thread_row (Var "builtin.global_invocation_id") (literal.blk (Num 1.0))) (safe.thread_col (Var "builtin.global_invocation_id") (literal.blk (Num 1.0)))) (reg.get_f (Var "reg.f0")))))"#;
-        let t = build(text, &k, &gram_role()).unwrap();
-        assert_eq!(fallbacks(&t), 2, "{}", t.to_sexpr());
-        let r = render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap();
-        assert!(r.text.contains("pv[") && r.text.contains("wg_va["), "{}", r.text);
-        validate_text(&r.text).unwrap();
+        let e = build(text, &k, &gram_role()).expect_err("a wrong array leaf built");
+        assert!(e.starts_with("our software has a bug:") && (e.contains("parr.a") || e.contains("wg.a")), "{e}");
     }
 
     /// The population fold: two kernels that share a subtree get it as ONE
@@ -1324,8 +1301,7 @@ mod tests {
             let c = c.as_ref().unwrap_or_else(|e| panic!("{e}"));
             let pset = homeotic::pset_with_hrefs(&c.pset, pset_slots);
             let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
-            let (r, fb) = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("individual {i}: {e}"));
-            assert_eq!(fb, 0);
+            let r = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("individual {i}: {e}"));
             assert_eq!(r.text, direct[i], "individual {i} rebuilds to its own text after the fold");
         }
         // Own definitions several kernels hold sit at one slot in each (the
@@ -1379,7 +1355,7 @@ mod tests {
             let Ok(c) = c else { continue };
             let pset = homeotic::pset_with_hrefs(&c.pset, 128);
             let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
-            let (r, _) = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{}: {e}", files[i].display()));
+            let r = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{}: {e}", files[i].display()));
             if r.text != direct[i] {
                 let first = r.text.lines().zip(direct[i].lines()).find(|(a, b)| a != b).map(|(a, b)| format!("\n  folded: {a}\n  kernel: {b}")).unwrap_or_default();
                 wrong.push(format!("{}{first}", files[i].file_name().unwrap().to_string_lossy()));
@@ -1388,16 +1364,14 @@ mod tests {
         assert!(wrong.is_empty(), "{} kernels folded into others:\n{}", wrong.len(), wrong.join("\n"));
     }
 
-    /// A gene text with a token of the wrong dual projects to a fallback
-    /// leaf rather than failing.
+    /// A gene text with a token of the wrong dual is a named defect of our
+    /// software, never a leaf in its place.
     #[test]
-    fn a_wrong_dual_becomes_a_fallback_leaf() {
+    fn a_wrong_dual_is_a_named_defect() {
         let k = WgslKingdom::load_safe();
         let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.one_L0 (reg.set_f_L0 (Var "reg.f0") (Var "safe.counter"))) (block.one_O0 (store.h_O0 (safe.cell_of (safe.thread_row (Var "builtin.global_invocation_id") (literal.blk (Num 1.0))) (safe.thread_col (Var "builtin.global_invocation_id") (literal.blk (Num 1.0)))) (reg.get_f (Var "reg.f0")))))"#;
-        let t = build(text, &k, &gram_role()).unwrap();
-        assert_eq!(fallbacks(&t), 1, "{}", t.to_sexpr());
-        assert_eq!(t.kids[1].name, "block.one_L0");
-        render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap();
+        let e = build(text, &k, &gram_role()).expect_err("a token of the wrong dual built");
+        assert!(e.starts_with("our software has a bug:") && e.contains("safe.counter"), "{e}");
     }
 
     /// EVERY RANDOM GENE IS A KERNEL THAT STORES (Andrew's rule: a gene the
@@ -1455,7 +1429,7 @@ mod tests {
                 Token::Var(terminals[next() % terminals.len()].clone())
             }
         };
-        let (mut rendered, mut stored, mut failed, mut invalid) = (0usize, 0usize, Vec::new(), Vec::<String>::new());
+        let (mut rendered, mut stored, mut failed, mut invalid, mut unstored) = (0usize, 0usize, Vec::new(), Vec::<String>::new(), Vec::<String>::new());
         for i in 0..N {
             let mut genes: Vec<MathNode> = Vec::with_capacity(SLOTS + 1);
             for g in 0..=SLOTS {
@@ -1475,7 +1449,7 @@ mod tests {
             }
             // The typed decode (the engine's): a slot's dual is its root's
             // row's output, and an href where its slot's dual is not the
-            // demand is masked to the fallback, as a token of the wrong dual is.
+            // demand is masked to a real terminal of the demand (an own or const row), as the typed decode fills a tail.
             let root_dual = |n: &MathNode| -> Option<Ty> {
                 match n {
                     MathNode::App(c, kids) => k.rows.iter().find(|r| r.name == *c && (r.inputs.len() == kids.len() || c.starts_with("literal."))).map(|r| r.output),
@@ -1485,17 +1459,34 @@ mod tests {
             };
             let slot_duals: Vec<Option<Ty>> = genes[1..].iter().map(root_dual).collect();
             fn mask(n: &MathNode, demand: Ty, slot_duals: &[Option<Ty>], k: &WgslKingdom, per_kernel: &[PerKernelRow]) -> MathNode {
+                fn node(t: &Tree) -> MathNode {
+                    if has_payload(&t.name) && t.kids.is_empty() {
+                        MathNode::App(t.name.clone(), vec![MathNode::Num(t.konst)])
+                    } else if t.kids.is_empty() {
+                        MathNode::Var(t.name.clone())
+                    } else {
+                        MathNode::App(t.name.clone(), t.kids.iter().map(node).collect())
+                    }
+                }
+                let terminal = || node(&crate::wgsl::render::terminal_leaf(k, demand).unwrap_or_else(|e| panic!("{e}")));
                 match n {
                     MathNode::Var(v) => match href_slot(v) {
                         Some(s) if slot_duals.get(s).copied().flatten() == Some(demand) => n.clone(),
-                        Some(_) => MathNode::Var(FALLBACK.into()),
-                        None => n.clone(),
+                        Some(_) => terminal(),
+                        None if signatures(split_token(v).0, demand, 0, k, per_kernel).next().is_some() => n.clone(),
+                        None => terminal(),
                     },
-                    MathNode::Num(_) => n.clone(),
-                    MathNode::App(c, kids) if c.starts_with("literal.") => MathNode::App(c.clone(), kids.clone()),
+                    MathNode::Num(_) => terminal(),
+                    MathNode::App(c, kids) if has_payload(c) => {
+                        if k.rows.iter().any(|r| r.name == *c && r.output == demand) {
+                            MathNode::App(c.clone(), kids.clone())
+                        } else {
+                            terminal()
+                        }
+                    }
                     MathNode::App(c, kids) => match signatures(c, demand, kids.len(), k, per_kernel).next() {
                         Some(inputs) => MathNode::App(c.clone(), kids.iter().zip(inputs).map(|(x, &d)| mask(x, d, slot_duals, k, per_kernel)).collect()),
-                        None => MathNode::Var(FALLBACK.into()),
+                        None => terminal(),
                     },
                 }
             }
@@ -1515,7 +1506,8 @@ mod tests {
                     demand.map_or_else(|| EMPTY_SLOT.to_string(), |d| text(&mask(n, d, &slot_duals, &k, &per_kernel)))
                 })
                 .collect();
-            let text = match unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role)).and_then(|t| render_tree_with(&t, &k, &crate::wgsl::render::gram_role())) {
+            let built = unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role));
+            let text = match built.as_ref().map_err(Clone::clone).and_then(|t| render_tree_with(t, &k, &crate::wgsl::render::gram_role())) {
                 Ok(r) => r.text,
                 Err(e) => {
                     failed.push(format!("chromosome {i}: {}", &e[..e.len().min(160)]));
@@ -1525,6 +1517,8 @@ mod tests {
             rendered += 1;
             if text.contains("h[") {
                 stored += 1;
+            } else {
+                unstored.push(format!("chromosome {i}: {}\n{text}", built.as_ref().map_or_else(Clone::clone, Tree::to_sexpr)));
             }
             if let Err(e) = validate_text(&text) {
                 invalid.push(format!("chromosome {i}: {}", e.lines().next().unwrap_or("")));
@@ -1535,7 +1529,7 @@ mod tests {
             println!("  {e}");
         }
         assert!(failed.is_empty(), "{} did not render:\n{}", failed.len(), failed.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
-        assert_eq!(stored, rendered, "{} of {rendered} rendered kernels never write h", rendered - stored);
+        assert_eq!(stored, rendered, "{} of {rendered} rendered kernels never write h:\n{}", rendered - stored, unstored.iter().take(3).cloned().collect::<Vec<_>>().join("\n"));
         assert!(invalid.is_empty(), "{} rendered kernels naga refuses:\n{}", invalid.len(), invalid.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
     }
 
@@ -1569,7 +1563,7 @@ mod tests {
         let mut rows: Vec<(String, Vec<Ty>, Ty)> = k.rows.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
         rows.extend(per_kernel.iter().cloned());
         fn paths(t: &Tree, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-            if !t.name.starts_with("literal.") && t.name != FALLBACK {
+            if !t.name.starts_with("literal.") && !t.name.starts_with("own.") {
                 out.push(at.clone());
             }
             if t.name.starts_with("literal.") {

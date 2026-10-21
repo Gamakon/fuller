@@ -2,9 +2,8 @@
 //! §2): a typed tree whose root is `kernel.kernel` becomes WGSL text. Every
 //! node is a row of the kingdom's table (`class.instance`), a per-kernel row
 //! of the [`Role`] (the kernel's own bindings), a `literal.*` leaf carrying
-//! its constant, or a `fallback` leaf (the typed projection's substitute,
-//! given a meaning here per dual: an empty statement, the first register,
-//! the form's zero). Value rows render from their naga column (an operator,
+//! its constant, or an `own.*` terminal (the real terminal of a dual: an
+//! empty statement, the thread's own cell, the form's zero). Value rows render from their naga column (an operator,
 //! a builtin function, a conversion) or from the composite library below;
 //! statement rows render structurally. Nothing is checked twice: the text
 //! goes to naga, which validates it, and a refusal names its reason.
@@ -16,13 +15,54 @@ use crate::wgsl::loader::{WgslDual, WgslKingdom, WgslRow};
 use crate::wgsl::table::FunctionTable;
 
 /// A typed tree. `name` is a row name (`arith.add`), a per-kernel row
-/// (`load.phi`), a `literal.*` row with `konst`, or `fallback`.
+/// (`load.phi`), a `literal.*` row with `konst`, or an `own.*` terminal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tree {
     pub name: String,
     pub ty: Ty,
     pub konst: f64,
     pub kids: Vec<Tree>,
+}
+
+/// The `own.*` terminal of a dual: the real terminal a dual has when nothing else is drawn for it (the thread's
+/// own row, an empty block, the default grid). A dual with none is our software's bug, and said so.
+pub fn own_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
+    kingdom
+        .rows
+        .iter()
+        .find(|r| r.name.starts_with("own.") && r.inputs.is_empty() && r.output == ty)
+        .map(|r| Tree::new(&r.name, ty, Vec::new()))
+        .ok_or_else(|| format!("our software has a bug: the dual {} has no own terminal", kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone())))
+}
+
+/// A real terminal of a dual for a draw that has nothing else to put there, each a row of the kingdom. A value dual:
+/// its `own.*` terminal, else its `const.*` row at the dual's neutral value (`fallback_bits` of `types.tsv`: 0, or 1 for
+/// the sign), else its `literal.*` row at the member of its domain nearest that value, else its first terminal row (a
+/// register, a builtin, a counter). A statement or block dual: its `own.*` terminal, else the row that makes it of
+/// a block's `own.*` terminal (`stmt.block_L0` of the empty block): a statement row with an effect (a return, a
+/// barrier) is never put where nothing was asked for. A dual with none of these is our software's bug.
+pub fn terminal_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
+    own_leaf(kingdom, ty).or_else(|bug| {
+        let Some(d) = kingdom.dual(ty) else { return Err(bug) };
+        if matches!(d.slot.as_str(), "stmt" | "block") {
+            return kingdom
+                .rows
+                .iter()
+                .filter(|r| r.output == ty && (r.name == "stmt.block" || r.name.starts_with("stmt.block_")) && r.inputs.len() == 1)
+                .find_map(|r| own_leaf(kingdom, r.inputs[0]).ok().map(|o| Tree::new(&r.name, ty, vec![o])))
+                .ok_or(bug);
+        }
+        let neutral = f64::from(d.fallback_bits);
+        let of_dual = |prefix: &str| kingdom.rows.iter().find(|r| r.name.starts_with(prefix) && r.inputs.is_empty() && r.output == ty);
+        if let Some(r) = of_dual("const.") {
+            return Ok(Tree::literal(&r.name, ty, neutral));
+        }
+        if let Some(r) = of_dual("literal.") {
+            let konst = d.literal.as_ref().map_or(neutral, |l| l.canonical(neutral, neutral));
+            return Ok(Tree::literal(&r.name, ty, konst));
+        }
+        kingdom.rows.iter().find(|r| r.inputs.is_empty() && r.output == ty).map(|r| Tree::new(&r.name, ty, Vec::new())).ok_or(bug)
+    })
 }
 
 impl Tree {
@@ -34,9 +74,6 @@ impl Tree {
         Tree { name: name.to_string(), ty, konst: konst.into(), kids: Vec::new() }
     }
 
-    pub fn fallback(ty: Ty) -> Tree {
-        Tree { name: "fallback".into(), ty, konst: 0.0, kids: Vec::new() }
-    }
 
     pub fn size(&self) -> usize {
         1 + self.kids.iter().map(Tree::size).sum::<usize>()
@@ -1022,13 +1059,12 @@ pub fn workgroup_shape(x: u32, y: u32) -> (u32, u32) {
 
 /// The grid a grid row asks the driver for, as the renderer writes it: the
 /// workgroup dimensions rounded and cut to the device's invocations, the
-/// block factors snapped to {1, 2, 4, 8}; a fallback is 16 x 16 at 1 x 1.
+/// block factors snapped to {1, 2, 4, 8}; an own terminal is 16 x 16 at 1 x 1.
 /// The workgroup arrays (`grid.with_wg`) and the tile depth
 /// (`grid.with_ktile`) wrap a grid without changing it.
 pub fn grid_of(g: &Tree) -> Result<Grid, String> {
     let code = |t: &Tree| -> Result<u32, String> {
         match t.name.as_str() {
-            "fallback" => Ok(BLK[0]),
             n if n.starts_with("literal.") => Ok(snap(&BLK, t.konst)),
             other => Err(format!("{other} is not a literal code")),
         }
@@ -1038,7 +1074,6 @@ pub fn grid_of(g: &Tree) -> Result<Grid, String> {
             let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("{} with {} children", g.name, g.kids.len())) };
             let dim = |t: &Tree| -> Result<u32, String> {
                 match t.name.as_str() {
-                    "fallback" => Ok(16),
                     n if n.starts_with("literal.") => Ok(workgroup_dim(t.konst)),
                     other => Err(format!("{other} is not a workgroup dimension")),
                 }
@@ -1046,7 +1081,7 @@ pub fn grid_of(g: &Tree) -> Result<Grid, String> {
             let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
             Ok(Grid { x: gx, y: gy, bx: code(bx)?, by: code(by)?, rows_x: g.name == "grid.of_rows_x" })
         }
-        "fallback" | "own.grid_grid" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
+        "own.grid_grid" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
         // A grid and the kernel's workgroup arrays: the arrays are the plan's;
         // a grid and its tile depth: the depth is the references' (params.rs).
         "grid.with_wg" | "grid.with_ktile" if g.kids.len() == 2 => grid_of(&g.kids[0]),
@@ -1309,7 +1344,6 @@ impl<'a> Renderer<'a> {
     pub fn kernel(&self, root: &Tree) -> Result<Rendered, String> {
         if self.dual(root.ty)?.dual == "kernel.module" {
             let kids: Vec<Tree> = match root.name.as_str() {
-                "fallback" => vec![Tree::fallback(dual_ty(self.kingdom, "kernel.safe")?); self.role.entries.len()],
                 "own.kernel_module" => vec![Tree::new("own.kernel_safe", dual_ty(self.kingdom, "kernel.safe")?, Vec::new()); self.role.entries.len()],
                 n if n.starts_with("kernel.module_") => module_entries(root),
                 other => return Err(format!("{other} is not a module row")),
@@ -1422,7 +1456,7 @@ impl<'a> Renderer<'a> {
                     scope = fresh;
                     scope.grid = grid;
                     scope.unwritten = unwritten;
-                    scope.wg = self.at_joint(workgroup_plan_of(self.kingdom, g, root, Some(&written))?)?;
+                    scope.wg = self.at_joint(workgroup_plan_of(g, root, Some(&written))?)?;
                     let (again, terminated) = self.block_t(b, &mut scope)?;
                     text = again;
                     if !terminated {
@@ -1432,8 +1466,7 @@ impl<'a> Renderer<'a> {
                 (grid, text)
             }
             // An empty kernel of the safe root still ends in its thread's store.
-            "fallback" if d.dual == "kernel.safe" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, self.epilogue_fallback(&mut scope)?),
-            "fallback" | "own.kernel_kernel" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, String::new()),
+            "own.kernel_kernel" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, String::new()),
             // The terminal of kernel.safe: the default grid, an empty body, the epilogue's store of the thread's own cell.
             "own.kernel_safe" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, self.epilogue_own(&mut scope, root.konst)?),
             other => return Err(format!("{other} is not a kernel row")),
@@ -1489,19 +1522,17 @@ impl<'a> Renderer<'a> {
         grid_of(g)
     }
 
-    /// A bounded literal (`literal.lit64`, `literal.lit4096`) or its fallback, clamped into 1..=max.
+    /// A bounded literal (`literal.lit64`, `literal.lit4096`), clamped into 1..=max.
     fn lit(&self, t: &Tree, max: u32) -> Result<u32, String> {
         match t.name.as_str() {
-            "fallback" => Ok(1),
             n if n.starts_with("literal.") => Ok(if t.konst.is_finite() { (t.konst.round() as i64).clamp(1, i64::from(max)) as u32 } else { 1 }),
             other => Err(format!("{other} is not a bounded literal")),
         }
     }
 
-    /// A literal code (`literal.wgdim`…) or its fallback, snapped to the set.
+    /// A literal code (`literal.wgdim`…), snapped to the set.
     fn code(&self, t: &Tree, set: &[u32]) -> Result<u32, String> {
         match t.name.as_str() {
-            "fallback" => Ok(set[0]),
             n if n.starts_with("literal.") => Ok(snap(set, t.konst)),
             other => Err(format!("{other} is not a literal code")),
         }
@@ -1514,26 +1545,6 @@ impl<'a> Renderer<'a> {
     /// Whether a dual is one of the epilogue's (`stmt.O<d>`, `block.O<d>`).
     fn is_epilogue(&self, ty: Ty) -> bool {
         self.kingdom.dual(ty).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'))
-    }
-
-    /// THE EPILOGUE'S FALLBACK: a store, never nothing (a gene whose epilogue
-    /// token is of the wrong dual still writes h): `h[cell] = h[cell] + f0`
-    /// at the thread's first cell, `(gid.y * by, gid.x * bx)`, under the
-    /// store's own bounds check.
-    fn epilogue_fallback(&self, scope: &mut Scope) -> Result<String, String> {
-        // An interface with no output cell (no h: v24's) has no store of its
-        // own to end in: its epilogue's fallback is empty, as its body's is.
-        if !self.per_kernel.keys().any(|(n, _)| *n == "store.h") {
-            return Ok(String::new());
-        }
-        let t = |n: &str| dual_ty(self.kingdom, n);
-        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
-        let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", t("u32.blk")?, v as f32)) };
-        let row = Tree::new("safe.thread_row", t("u32.threadrow")?, vec![gid()?, blk(scope.grid.by)?]);
-        let col = Tree::new("safe.thread_col", t("u32.threadcol")?, vec![gid()?, blk(scope.grid.bx)?]);
-        let cell = Tree::new("safe.cell_of", t("u32.cell")?, vec![row, col]);
-        let f0 = Tree::new("reg.get_f", t("f32.real")?, vec![Tree::new("reg.f0", t("reg<f32>.real")?, vec![])]);
-        self.stmt(&Tree::new("store.h_O0", t("stmt.O0")?, vec![cell, f0]), scope)
     }
 
     /// THE EPILOGUE'S OWN TERMINAL (docs/PLAN_wgsl_terminals.md): the store of the
@@ -1560,8 +1571,6 @@ impl<'a> Renderer<'a> {
     /// what follows in the gene is unreachable and dropped.
     fn block_t(&self, b: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
         match safe_base(&b.name) {
-            "fallback" if self.is_epilogue(b.ty) => Ok((self.epilogue_fallback(scope)?, false)),
-            "fallback" => Ok((String::new(), false)),
             // The terminals of a block dual: the epilogue's store of the thread's own cell, or an empty block.
             "own.block" | "own.block_block" if self.is_epilogue(b.ty) => Ok((self.epilogue_own(scope, b.konst)?, false)),
             "own.block" | "own.block_block" => Ok((String::new(), false)),
@@ -1685,8 +1694,6 @@ impl<'a> Renderer<'a> {
         let kids = s.kids.as_slice();
         let n = |want: usize| -> Result<(), String> { if kids.len() == want { Ok(()) } else { Err(format!("{} with {} children, {want} expected", s.name, kids.len())) } };
         match safe_base(&s.name) {
-            "fallback" if self.is_epilogue(s.ty) => self.epilogue_fallback(scope),
-            "fallback" => Ok(String::new()),
             "own.stmt" if self.is_epilogue(s.ty) => self.epilogue_own(scope, s.konst),
             "own.stmt" => Ok(String::new()),
             // ---- safeWGSL statements ----
@@ -2121,7 +2128,7 @@ impl<'a> Renderer<'a> {
 
     /// A workgroup array leaf's variable name ([`wgmem_var`]).
     fn wgmem(&self, w: &Tree) -> Result<&'static str, String> {
-        wgmem_var(self.kingdom, w)
+        wgmem_var(w)
     }
 
     /// The workgroup memory a kernel asks for, in bytes, before the renderer
@@ -2129,12 +2136,12 @@ impl<'a> Renderer<'a> {
     /// mutation's join keeps it within the device's limit, so a child is
     /// never silently given shorter arrays than its references assume.
     pub fn workgroup_request(&self, root: &Tree) -> Result<u64, String> {
-        workgroup_request(self.kingdom, root)
+        workgroup_request(root)
     }
 
     /// The kernel's workgroup arrays ([`workgroup_plan`]).
     fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        self.at_joint(workgroup_plan(self.kingdom, grid, root)?)
+        self.at_joint(workgroup_plan(grid, root)?)
     }
 
     /// A plan's arrays at the module's joint lengths, when a module renders.
@@ -2153,7 +2160,7 @@ impl<'a> Renderer<'a> {
         for k in kids {
             let r = crate::wgsl::params::resolve(k)?;
             let Some(grid) = r.kids.first().filter(|_| r.name == "kernel.entry_safe") else { continue };
-            let req = workgroup_plan_requested_of(self.kingdom, grid, &r, None)?;
+            let req = workgroup_plan_requested_of(grid, &r, None)?;
             uses.push(req.keys().cloned().collect());
             for (v, (e, l)) in req {
                 let at = joint.entry(v).or_insert((e, l));
@@ -2242,33 +2249,17 @@ pub fn has_register_kind(slot: &str) -> bool {
     matches!(slot, "f32" | "vec4<f32>" | "u32" | "bool" | "i32" | "vec4<u32>" | "vec2<f32>" | "mat2x2<f32>" | "mat3x3<f32>" | "mat4x4<f32>") || EXTRA_REGISTERS.iter().any(|r| r.slot == slot)
 }
 
-/// A register leaf's WGSL variable name (`f3`, `i32r`); a fallback leaf
-/// names the first register of ITS DUAL.
+/// A register leaf's WGSL variable name (`f3`, `i32r`); a leaf that is not a register row is our software's bug.
 pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> {
     let d = kingdom.dual(r.ty).ok_or_else(|| format!("{:?} is not a dual of the kingdom", r.ty))?;
     let ok = |n: &str, kind: char, max: usize| n.strip_prefix(kind).and_then(|k| k.parse::<usize>().ok()).is_some_and(|k| k < max);
-    Ok(match (r.name.as_str(), d.dual.as_str()) {
-        ("fallback", "reg<f32>.real") => "f0".to_string(),
-        ("fallback", "reg<vec4<f32>>.real") => "v0".to_string(),
-        ("fallback", "reg<u32>.index") => "i0".to_string(),
-        ("fallback", "reg<bool>.flag") => "b0".to_string(),
-        ("fallback", "reg<i32>.int") => "n0".to_string(),
-        ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
-        ("fallback", "reg<vec2<f32>>.real") => "w0".to_string(),
-        ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
-        ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
-        ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
-        ("fallback", dual) if EXTRA_REGISTERS.iter().any(|x| x.dual == dual) => format!("{}0", EXTRA_REGISTERS.iter().find(|x| x.dual == dual).map_or('C', |x| x.letter)),
-        (name, _) => {
-            let n = name.strip_prefix("reg.").unwrap_or("");
-            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 16) || ok(n, 'w', 16) || ok(n, 'x', 4) || ok(n, 'y', 4) || ok(n, 'z', 4) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) || n.chars().next().is_some_and(|c| c.is_ascii_uppercase() && ok(n, c, crate::wgsl::aggregate::REGISTER_COUNT)) {
-                let k: usize = n[1..].parse().unwrap_or(0);
-                register_var(&n[..1], k)
-            } else {
-                return Err(format!("{name} ({}) is not a register", d.dual));
-            }
-        }
-    })
+    let n = r.name.strip_prefix("reg.").unwrap_or("");
+    if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 16) || ok(n, 'w', 16) || ok(n, 'x', 4) || ok(n, 'y', 4) || ok(n, 'z', 4) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) || n.chars().next().is_some_and(|c| c.is_ascii_uppercase() && ok(n, c, crate::wgsl::aggregate::REGISTER_COUNT)) {
+        let k: usize = n[1..].parse().unwrap_or(0);
+        Ok(register_var(&n[..1], k))
+    } else {
+        Err(format!("{} ({}) is not a register", r.name, d.dual))
+    }
 }
 
 
@@ -2362,11 +2353,7 @@ pub fn array_dual_of_row(row: &str) -> Option<&'static str> {
 /// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
 /// regardless — a vec4 value stored into the f32 array was a compile
 /// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
-pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String> {
-    if w.name == "fallback" {
-        let d = kingdom.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(array_names().rows.get(d.as_str()).and_then(|r| r.first()).and_then(|r| array_names().var.get(*r)).copied().unwrap_or("wg_a"));
-    }
+pub fn wgmem_var(w: &Tree) -> Result<&'static str, String> {
     array_names().var.get(w.name.as_str()).copied().filter(|_| w.name.starts_with("wg.")).ok_or_else(|| format!("{} is not a workgroup array", w.name))
 }
 
@@ -2376,14 +2363,14 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
 /// then the largest halved until the total fits the device's 32 KB. Empty
 /// (the original four declarations) for a kernel that declares none and
 /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
-pub fn workgroup_plan(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-    workgroup_plan_of(kingdom, grid, root, None)
+pub fn workgroup_plan(grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+    workgroup_plan_of(grid, root, None)
 }
 
 /// [`workgroup_plan`] over the arrays `only` names when given (the arrays a
 /// first rendering's text uses: a statement after a return is not written).
-pub fn workgroup_plan_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
-    let mut plan = workgroup_plan_requested_of(kingdom, grid, root, only)?;
+pub fn workgroup_plan_of(grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
+    let mut plan = workgroup_plan_requested_of(grid, root, only)?;
     while plan_bytes(&plan) > 32768 {
         let largest = plan.iter().max_by_key(|(v, (e, l))| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
         let entry = plan.get_mut(&largest).expect("present");
@@ -2395,22 +2382,22 @@ pub fn workgroup_plan_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: 
 /// The bytes of workgroup memory a kernel requests (knob references resolved;
 /// the interface plays no part: the arrays are the kernel's own). A module:
 /// its most demanding entry point (each runs as its own pipeline).
-pub fn workgroup_request(kingdom: &WgslKingdom, root: &Tree) -> Result<u64, String> {
+pub fn workgroup_request(root: &Tree) -> Result<u64, String> {
     if root.name.starts_with("kernel.module_") {
-        return root.kids.iter().map(|k| workgroup_request(kingdom, k)).try_fold(0, |m, r| r.map(|r| m.max(r)));
+        return root.kids.iter().map(workgroup_request).try_fold(0, |m, r| r.map(|r| m.max(r)));
     }
     let root = crate::wgsl::params::resolve(root)?;
     let Some(grid) = root.kids.first().filter(|_| root.name == "kernel.entry_safe") else { return Ok(0) };
-    Ok(plan_bytes(&workgroup_plan_requested(kingdom, grid, &root)?))
+    Ok(plan_bytes(&workgroup_plan_requested(grid, &root)?))
 }
 
 /// [`workgroup_plan`] before any array is halved.
-pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-    workgroup_plan_requested_of(kingdom, grid, root, None)
+pub fn workgroup_plan_requested(grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+    workgroup_plan_requested_of(grid, root, None)
 }
 
 /// [`workgroup_plan_requested`] over the arrays `only` names when given.
-fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
+fn workgroup_plan_requested_of(grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
     let elem_of = wg_elem;
     let default_len = wg_default_len;
     let mut declared: Vec<(String, u32)> = Vec::new();
@@ -2423,7 +2410,7 @@ fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, 
                 _ => (None, None),
             };
             if let Some(x) = decl.filter(|x| x.kids.len() == 2 && x.name.starts_with("wg.decl_")) {
-                let var = wgmem_var(kingdom, &x.kids[0])?.to_string();
+                let var = wgmem_var(&x.kids[0])?.to_string();
                 let len = match x.kids[1].name.as_str() {
                     n if n.starts_with("literal.") && x.kids[1].konst.is_finite() => (x.kids[1].konst.round() as i64).clamp(1, 8192) as u32,
                     _ => default_len(&var),
@@ -2436,20 +2423,20 @@ fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, 
         }
     }
     let mut used: BTreeSet<String> = BTreeSet::new();
-    fn uses(kingdom: &WgslKingdom, t: &Tree, out: &mut BTreeSet<String>) {
-        let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
+    fn uses(t: &Tree, out: &mut BTreeSet<String>) {
+        let array = t.kids.is_empty() && t.name.starts_with("wg.");
         if array {
-            if let Ok(v) = wgmem_var(kingdom, t) {
+            if let Ok(v) = wgmem_var(t) {
                 out.insert(v.to_string());
             }
         }
-        t.kids.iter().for_each(|k| uses(kingdom, k, out));
+        t.kids.iter().for_each(|k| uses(k, out));
     }
     // The statements' uses, not the grid's own declarations.
     if root.name == "kernel.entry_safe" {
-        root.kids.iter().skip(1).for_each(|k| uses(kingdom, k, &mut used));
+        root.kids.iter().skip(1).for_each(|k| uses(k, &mut used));
     } else {
-        uses(kingdom, root, &mut used);
+        uses(root, &mut used);
     }
     if let Some(only) = only {
         used.retain(|v| only.contains(v));
@@ -2547,14 +2534,6 @@ impl Renderer<'_> {
         // thread's own (its block's origin): a constant would make every
         // thread store to one cell, a data race (the legality checker: 415
         // of 1,000 random genes, 2026-10-12).
-        if name == "fallback" {
-            if let Some(own) = self.own_fallback(&d.dual, scope)? {
-                return Ok(own);
-            }
-        }
-        if name == "fallback" {
-            return self.fallback_value(d, wrap);
-        }
         // The rows of an aggregate value (docs/PLAN_wgsl_terminals.md, "Aggregates"): the zero value `A()`, an array's
         // element `a[i]`, a struct's member `a.m`. (The device clamps an index past the array: naga Restrict.)
         if name == "agg.zero" {
@@ -2930,7 +2909,6 @@ impl Renderer<'_> {
         fn literal_through(t: &Tree) -> Option<f64> {
             match (t.name.as_str(), t.kids.as_slice()) {
                 (n, []) if n.starts_with("literal.") => Some(t.konst),
-                ("fallback", []) => Some(0.0),
                 ("uniform.of_lit" | "index.of_uniform", [k]) => literal_through(k),
                 _ => None,
             }
@@ -2943,7 +2921,7 @@ impl Renderer<'_> {
             // (A zero under any one-child rows, or a fallback's zero, written
             // through lit_* so naga folds none of it.)
             fn zero(t: &Tree) -> bool {
-                (t.kids.is_empty() && ((t.name.starts_with("literal.") && t.konst == 0.0) || t.name == "fallback")) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
+                (t.kids.is_empty() && ((t.name.starts_with("literal.") && t.konst == 0.0) || t.name.starts_with("own."))) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
             }
             let b = if zero(&v.kids[1]) { self.unfolded(&v.kids[1], scope)? } else { a[1].clone() };
             let op = if name == "index.div" { "/" } else { "%" };
@@ -3291,8 +3269,8 @@ pub fn cost(t: &Tree) -> Cost {
             n if n.starts_with("trig.") || n.starts_with("arith.exp") || n.starts_with("arith.log") || n.starts_with("arith.pow") => 8.0,
             "stmt.barrier" => 50.0,
             n if n.starts_with("stmt.storage_barrier") => 50.0,
-            "fallback" => 0.0,
-            n if n.starts_with("own.") => 1.0,
+            // (An empty statement, block, grid or kernel writes nothing.)
+            n if n.starts_with("own.stmt") || n.starts_with("own.block") || n.starts_with("own.grid") || n.starts_with("own.kernel") => 0.0,
             _ => 1.0,
         }
     }
@@ -3604,24 +3582,20 @@ impl Renderer<'_> {
     }
 
     fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
-        parr_var(self.kingdom, t)
+        parr_var(t)
     }
 }
 
 /// A private array leaf's variable name; a fallback leaf names the array
 /// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
-pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
-    if t.name == "fallback" {
-        let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(array_names().rows.get(d.as_str()).and_then(|r| r.first()).and_then(|r| array_names().var.get(*r)).copied().unwrap_or("pa"));
-    }
+pub fn parr_var(t: &Tree) -> Result<&'static str, String> {
     parr_name(t)
 }
 
 /// Whether every leaf of `t` is a literal or a fallback (a constant expression to naga).
 fn literal_only(t: &Tree) -> bool {
     if t.kids.is_empty() {
-        return t.name.starts_with("literal.") || t.name.starts_with("const.") || t.name == "fallback";
+        return t.name.starts_with("literal.") || t.name.starts_with("const.") || t.name.starts_with("own.");
     }
     t.kids.iter().all(literal_only)
 }
@@ -4136,6 +4110,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         cell_ty: Option<Ty>,
         cell_row: std::cell::Cell<Option<usize>>,
         groups: std::cell::RefCell<[Option<Tree>; 2]>,
+        /// The first dual the draw found no row for and no own terminal: our software's bug, named by the sampler.
+        bug: std::cell::RefCell<Option<String>>,
         plain_cell: Option<usize>,
     }
     impl Draw<'_> {
@@ -4306,10 +4282,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                 return t;
             }
             let mut t = self.grow_free(demand, depth, need, no_cont, inside, state);
-            // An epilogue statement's or block's fallback is the store of the
+            // An epilogue statement's or block's own terminal is the store of the
             // plain cell: the kernel's cell, or the store's path drawn instead.
             let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
-            if t.name == "fallback" && epilogue && self.cell_ty.is_some() {
+            if t.name.starts_with("own.") && epilogue && self.cell_ty.is_some() {
                 match self.cell_row.get() {
                     None => self.cell_row.set(self.plain_cell),
                     Some(c) if Some(c) != self.plain_cell => t = self.grow_free(demand, depth.max(self.max_depth), need, no_cont, inside, state),
@@ -4324,7 +4300,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             // (A fallback origin under a group count already drawn: the
             // grouped origin itself, its kids leaves at the cap.)
             let origin = if axis == 0 { "safe.thread_row_g" } else { "safe.thread_col_g" };
-            if t.name == "fallback" && self.groups.borrow()[axis].is_some() {
+            if t.name.starts_with("own.") && self.groups.borrow()[axis].is_some() {
                 if let Some(i) = self.rows.iter().position(|r| r.name == origin && r.output == demand) {
                     let kids = self.rows[i].inputs.iter().map(|&k| self.grow_free(k, depth + 1, Need::Nothing, no_cont, inside, state)).collect();
                     t = Tree::new(origin, demand, kids);
@@ -4336,7 +4312,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                     Some(g) => t.kids[3] = g.clone(),
                     None => groups[axis] = Some(t.kids[3].clone()),
                 }
-            } else if t.name == "fallback" && groups[axis].is_none() {
+            } else if t.name.starts_with("own.") && groups[axis].is_none() {
                 // (The strided block a fallback origin renders: every cell a group.)
                 let lit = self.rows.iter().find(|r| r.name == origin).and_then(|r| r.inputs.get(3).copied());
                 groups[axis] = lit.map(|ty| Tree::literal("literal.lit64", ty, 64.0));
@@ -4345,12 +4321,21 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             t
         }
 
+        /// The dual's own terminal: what a draw ends in when the dual has no row to draw. A dual with none is
+        /// our software's bug, recorded here (the sampler returns it; the tree drawn meanwhile is discarded).
+        fn own_or_bug(&self, demand: Ty) -> Tree {
+            crate::wgsl::render::terminal_leaf(self.kingdom, demand).unwrap_or_else(|e| {
+                self.bug.borrow_mut().get_or_insert(e);
+                Tree::new("own.missing", demand, Vec::new())
+            })
+        }
+
         /// [`Draw::grow`] without the kernel's cell. `need_input`: it must
         /// read an input (the value an output store writes). An epilogue
         /// block or statement at the depth cap draws its way to an output
-        /// store, not its fallback.
+        /// store, not its own terminal.
         fn grow_free(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
-            let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return Tree::fallback(demand) };
+            let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return self.own_or_bug(demand) };
             // A continue inside a conditional block of a loop body's statement
             // (an if at an L rung) would skip the rest of the body in some
             // threads, a barrier after it among them: not drawn there
@@ -4441,7 +4426,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
             if pick_terminal {
                 if terminals.is_empty() {
-                    return Tree::fallback(demand);
+                    return self.own_or_bug(demand);
                 }
                 let r = &self.rows[terminals[(next(state) % terminals.len() as u64) as usize]];
                 if r.name.starts_with("literal.") {
@@ -4499,7 +4484,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         let (row, col) = (dual_ty(kingdom, "u32.threadrow").ok()?, dual_ty(kingdom, "u32.threadcol").ok()?);
         rows.iter().position(|r| r.name == "safe.cell_of" && r.output == c && r.inputs == [row, col])
     });
-    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags, cell_ty, cell_row: std::cell::Cell::new(None), groups: std::cell::RefCell::new([None, None]), plain_cell };
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags, cell_ty, cell_row: std::cell::Cell::new(None), groups: std::cell::RefCell::new([None, None]), bug: std::cell::RefCell::new(None), plain_cell };
     /// A hole of the sketch: where it is, the depth it is drawn at and what it must read.
     struct Hole {
         path: Vec<usize>,
@@ -4560,6 +4545,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             (t, Some(h))
         }
     };
+    let drawn = |draw: &Draw<'_>| draw.bug.borrow().clone().map_or(Ok(()), Err);
+    drawn(&draw)?;
     let Some(bound) = bound else { return Ok(tree) };
     let over = |c: &Cost| c.per_item > bound.per_item || c.base > bound.base;
     // The top-level statements of the body (kid 1) and the epilogue (kid 2),
@@ -4614,7 +4601,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         };
         // The statement (the hole) whose removal lowers the cost most.
         let gain = |p: &Vec<usize>| {
-            let without = cost(&put(&tree, p, Tree::fallback(at(&tree, p).ty)));
+            // (A site whose dual has no own terminal cannot be taken out: it gains nothing.)
+            let without = cost(&crate::wgsl::render::terminal_leaf(kingdom, at(&tree, p).ty).map_or_else(|_| tree.clone(), |o| put(&tree, p, o)));
             (c.per_item - without.per_item) / bound.per_item.max(1.0) + (c.base - without.base) / bound.base.max(1.0)
         };
         let Some((worst, depth, need)) = paths.iter().max_by(|a, b| gain(&a.0).partial_cmp(&gain(&b.0)).unwrap_or(std::cmp::Ordering::Equal)).cloned() else { return Ok(tree) };
@@ -4626,10 +4614,11 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             // The epilogue's store, its shortest way.
             draw.grow(node.ty, max_depth, Need::Nothing, false, 0, &mut state)
         } else if *n > 16 {
-            Tree::fallback(node.ty)
+            crate::wgsl::render::terminal_leaf(kingdom, node.ty)?
         } else {
             draw.grow(node.ty, depth, need, false, 0, &mut state)
         };
+        drawn(&draw)?;
         tree = put(&tree, &worst, again);
     }
     Ok(tree)
@@ -4693,7 +4682,7 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
             }
         }
         if !same {
-            let show = |t: &Tree| if t.name.starts_with("literal.") { format!("{} {}", t.name, t.konst) } else { format!("{}{}", t.name, if t.kids.is_empty() { String::new() } else { format!("/{}", t.kids.len()) }) };
+            let show = |t: &Tree| if t.name.starts_with("literal.") || t.name.starts_with("const.") { format!("{} {}", t.name, t.konst) } else { format!("{}{}", t.name, if t.kids.is_empty() { String::new() } else { format!("/{}", t.kids.len()) }) };
             let tail: Vec<&String> = path.iter().rev().take(2).collect();
             return Some(format!("{}: {} / {}", tail.into_iter().rev().map(String::as_str).collect::<Vec<_>>().join(" > "), show(a), show(b)));
         }
@@ -4712,6 +4701,11 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    /// A terminal of a dual for a test that needs any leaf there: its own terminal, else a row with no inputs at zero.
+    fn own(k: &WgslKingdom, ty: Ty) -> Tree {
+        terminal_leaf(k, ty).or_else(|e| k.rows.iter().find(|r| r.inputs.is_empty() && r.output == ty).map(|r| Tree::literal(&r.name, ty, 0.0)).ok_or(e)).unwrap_or_else(|e| panic!("{e}"))
+    }
+
     use super::*;
 
     /// Every array name of the families is a terminal row of the family's dual,
@@ -4916,7 +4910,7 @@ mod tests {
             let c = cost(&t);
             over += usize::from(c.per_item > bound.per_item || c.base > bound.base);
             fn stores(t: &Tree) -> bool {
-                t.name.starts_with("store.h") || t.kids.iter().any(stores)
+                t.name.starts_with("store.h") || t.name.starts_with("own.block_O") || t.kids.iter().any(stores)
             }
             assert!(stores(&t.kids[2]), "seed {seed}: an epilogue with no store: {}", t.kids[2].to_sexpr());
         }
@@ -4974,12 +4968,12 @@ mod tests {
         let ty = |n: &str| dual_ty(&k, n).unwrap();
         for (len, want) in [(256.0, "& 255u)"), (1056.0, ", 1055u)")] {
             let decl = Tree::new("wg.decls_one", ty("wg.decls"), vec![Tree::new("wg.decl_f", ty("wg.decl"), vec![Tree::new("wg.a", ty("wgmem<f32>.real"), vec![]), Tree::literal("literal.wglen", ty("u32.wglen"), len)])]);
-            let grid = Tree::new("grid.with_wg", ty("grid.grid"), vec![Tree::fallback(ty("grid.grid")), decl]);
+            let grid = Tree::new("grid.with_wg", ty("grid.grid"), vec![own(&k, ty("grid.grid")), decl]);
             let i = || Tree::new("safe.counter_index", ty("u32.index"), vec![Tree::new("safe.counter", ty("u32.counter"), vec![])]);
             let get = Tree::new("wg.get", ty("f32.real"), vec![Tree::new("wg.a", ty("wgmem<f32>.real"), vec![]), i()]);
             let set = Tree::new("reg.set_f_L1", ty("stmt.L1"), vec![Tree::new("reg.f1", ty("reg<f32>.real"), vec![]), get]);
             let body = Tree::new("block.one_L0", ty("block.L0"), vec![Tree::new("loop.items_boundm", ty("stmt.L0"), vec![Tree::new("bound.m", ty("u32.boundm"), vec![]), Tree::new("block.one_L1", ty("block.L1"), vec![set])])]);
-            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid, body, Tree::fallback(ty("block.O0"))]);
+            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid, body, own(&k, ty("block.O0"))]);
             let text = rr.kernel(&kernel).unwrap().text;
             assert!(text.contains(want) && !text.contains("& 2047u"), "{text}");
             validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
@@ -5032,18 +5026,18 @@ mod tests {
     /// renders the thread's own first row, column and cell, the store's
     /// guard included.
     #[test]
-    fn a_fallback_cell_is_the_threads_own() {
+    fn an_own_cell_is_the_threads_own() {
         let k = WgslKingdom::load_safe();
         let (t, role) = (FunctionTable::safe(), gram_role());
         let rr = Renderer::new(&k, &t, &role);
         let ty = |n: &str| dual_ty(&k, n).unwrap();
         let store = |cell: Tree| Tree::new("block.one_O0", ty("block.O0"), vec![Tree::new("store.h_O0", ty("stmt.O0"), vec![cell, Tree::literal("literal.real", ty("f32.real"), 1.0)])]);
-        let kernel = |e: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::fallback(ty("block.L0")), e]);
-        let own = "h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))]";
-        let whole = rr.kernel(&kernel(store(Tree::fallback(ty("u32.cell"))))).unwrap().text;
-        assert!(whole.contains(own) && whole.contains("if ((((gid.y * 1u)) < cfg.r_rows)"), "{whole}");
-        let parts = rr.kernel(&kernel(store(Tree::new("safe.cell_of", ty("u32.cell"), vec![Tree::fallback(ty("u32.threadrow")), Tree::fallback(ty("u32.threadcol"))])))).unwrap().text;
-        assert!(parts.contains(own), "{parts}");
+        let kernel = |e: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own(&k, ty("grid.grid")), own(&k, ty("block.L0")), e]);
+        let want = "h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))]";
+        let whole = rr.kernel(&kernel(store(own(&k, ty("u32.cell"))))).unwrap().text;
+        assert!(whole.contains(want) && whole.contains("if ((((gid.y * 1u)) < cfg.r_rows)"), "{whole}");
+        let parts = rr.kernel(&kernel(store(Tree::new("safe.cell_of", ty("u32.cell"), vec![own(&k, ty("u32.threadrow")), own(&k, ty("u32.threadcol"))])))).unwrap().text;
+        assert!(parts.contains(want), "{parts}");
         for text in [&whole, &parts] {
             validate_text(text).unwrap_or_else(|e| panic!("{e}\n{text}"));
             assert!(!text.contains("h[(0u"), "{text}");
@@ -5069,7 +5063,7 @@ mod tests {
         let items = Tree::new("loop.items_boundm", ty("stmt.L0"), vec![Tree::new("bound.m", ty("u32.boundm"), vec![]), Tree::new("block.one_L1", ty("block.L1"), vec![set_i("L1", item())])]);
         let tiled = Tree::new("loop.tile_L0", ty("stmt.L0"), vec![Tree::literal("literal.lit64", ty("u32.lit64"), 4.0), Tree::new("block.one_L2", ty("block.L2"), vec![set_i("L2", tile())])]);
         let inside = Tree::new("block.seq2_L0", ty("block.L0"), vec![items, tiled]);
-        let kernel = |body: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), body, Tree::fallback(ty("block.O0"))]);
+        let kernel = |body: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own(&k, ty("grid.grid")), body, own(&k, ty("block.O0"))]);
         let out = rr.kernel(&kernel(outside)).unwrap().text;
         assert_eq!(out.matches("i0 = lit_u32(0u);").count(), 2, "{out}");
         validate_text(&out).unwrap_or_else(|e| panic!("{e}\n{out}"));
@@ -5092,7 +5086,7 @@ mod tests {
         let nested = |outer: f32, inner: f32| {
             let inner = Tree::new("loop.unroll_L1", ty("stmt.L1"), vec![lit(inner), Tree::new("block.one_L2", ty("block.L2"), vec![set.clone()])]);
             let outer = Tree::new("loop.unroll_L0", ty("stmt.L0"), vec![lit(outer), Tree::new("block.one_L1", ty("block.L1"), vec![inner])]);
-            Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![outer]), Tree::fallback(ty("block.O0"))])
+            Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own(&k, ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![outer]), own(&k, ty("block.O0"))])
         };
         let small = rr.kernel(&nested(8.0, 8.0)).unwrap().text;
         assert_eq!(small.matches("f1 = 0.5f;").count(), 64, "{small}");
@@ -5129,8 +5123,8 @@ mod tests {
         // A tile of 32 around the item loop multiplies the per-item cost by 32.
         let (stmt, block) = (ty("stmt.stmt"), ty("block.block"));
         let body = Tree::new("loop.items", stmt, vec![Tree::new("block.one", block, vec![Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f0", ty("reg<f32>.real"), vec![]), Tree::new("load.phi", ty("f32.real"), vec![Tree::new("builtin.item", ty("u32.index"), vec![])])])])]);
-        let inner = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one", block, vec![body.clone()])]));
-        let tiled = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one", block, vec![Tree::new("loop.tile", stmt, vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 32.0), Tree::new("block.one", block, vec![body])])])]));
+        let inner = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![own(&k, ty("grid.grid")), Tree::new("block.one", block, vec![body.clone()])]));
+        let tiled = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![own(&k, ty("grid.grid")), Tree::new("block.one", block, vec![Tree::new("loop.tile", stmt, vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 32.0), Tree::new("block.one", block, vec![body])])])]));
         assert_eq!(tiled.per_item, 32.0 * inner.per_item, "{inner:?} {tiled:?}");
     }
 
@@ -5150,10 +5144,10 @@ mod tests {
             ("block", Tree::new("stmt.block", stmt, vec![one(set_f())])),
             ("if", Tree::new("stmt.if", stmt, vec![Tree::new("reg.get_b", flag, vec![Tree::new("reg.b0", ty("reg<bool>.flag"), vec![])]), one(set_f())])),
             ("barrier masked under if", Tree::new("stmt.if", stmt, vec![Tree::literal("literal.flag", flag, 1.0), one(Tree::new("stmt.barrier", stmt, vec![]))])),
-            ("outer", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.outer", ty("mat3x3<f32>.real"), vec![Tree::fallback(ty("vec3<f32>.real")), Tree::fallback(ty("vec3<f32>.real"))])])])),
-            ("inverse", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat4x4<f32>.real"), vec![Tree::new("geom.inverse", ty("mat4x4<f32>.real"), vec![Tree::fallback(ty("mat4x4<f32>.real"))])])])])),
-            ("inverse2", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat2x2<f32>.real"), vec![Tree::fallback(ty("mat2x2<f32>.real"))]), ])])),
-            ("inverse3", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat3x3<f32>.real"), vec![Tree::fallback(ty("mat3x3<f32>.real"))]), ])])),
+            ("outer", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.outer", ty("mat3x3<f32>.real"), vec![own(&k, ty("vec3<f32>.real")), own(&k, ty("vec3<f32>.real"))])])])),
+            ("inverse", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat4x4<f32>.real"), vec![Tree::new("geom.inverse", ty("mat4x4<f32>.real"), vec![own(&k, ty("mat4x4<f32>.real"))])])])])),
+            ("inverse2", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat2x2<f32>.real"), vec![own(&k, ty("mat2x2<f32>.real"))]), ])])),
+            ("inverse3", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f2", ty("reg<f32>.real"), vec![]), Tree::new("geom.determinant", real, vec![Tree::new("geom.inverse", ty("mat3x3<f32>.real"), vec![own(&k, ty("mat3x3<f32>.real"))]), ])])),
             ("if_else", Tree::new("stmt.if_else", stmt, vec![Tree::literal("literal.flag", flag, 1.0), one(set_f()), one(Tree::new("stmt.return", stmt, vec![]))])),
             ("items", Tree::new("loop.items", stmt, vec![one(set_f())])),
             ("items_unrolled", Tree::new("loop.items_unrolled", stmt, vec![Tree::literal("literal.unroll", ty("u32.unroll"), 4.0), one(Tree::new("store.h", stmt, vec![Tree::new("builtin.item", index, vec![]), Tree::new("load.phi", real, vec![Tree::new("builtin.item", index, vec![])])]))])),
@@ -5161,10 +5155,10 @@ mod tests {
             ("set_v", Tree::new("reg.set_v", stmt, vec![Tree::new("reg.v1", ty("reg<vec4<f32>>.real"), vec![]), Tree::new("load.phi4", ty("vec4<f32>.real"), vec![lit_i(4.0)])])),
             ("set_i", Tree::new("reg.set_i", stmt, vec![Tree::new("reg.i3", ty("reg<u32>.index"), vec![]), Tree::new("shape.access_2", index, vec![Tree::new("builtin.num_workgroups", ty("vec3<u32>.count"), vec![])])])),
             ("set_b", Tree::new("reg.set_b", stmt, vec![Tree::new("reg.b0", ty("reg<bool>.flag"), vec![]), Tree::new("logic.is_nan", flag, vec![lit_f(0.0)])])),
-            ("fallback stmt", Tree::fallback(stmt)),
+            ("fallback stmt", own(&k, stmt)),
         ];
         let rr = Renderer::new(&k, &t, &r);
-        let grid = Tree::fallback(ty("grid.grid"));
+        let grid = own(&k, ty("grid.grid"));
         for (name, s) in cases {
             let tree = Tree::new("kernel.entry", ty("kernel.kernel"), vec![grid.clone(), one(s)]);
             let out = rr.kernel(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -5181,10 +5175,10 @@ mod tests {
         assert_eq!(rr.kernel(&nested).unwrap_err(), "loop.items nested in loop.items");
         // A grid over 1,024 threads is cut to the device's limit: x as written, y the largest that fits
         // (64 x 64 runs as 64 x 16; until 2026-10-12 each axis snapped to {4, 8, 16, 32}).
-        let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::fallback(ty("u32.blk")), Tree::fallback(ty("u32.blk"))]), one(set_f())]);
+        let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), own(&k, ty("u32.blk")), own(&k, ty("u32.blk"))]), one(set_f())]);
         assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1, rows_x: false });
         // An empty kernel (the root's fallback) is a kernel.
-        let empty = rr.kernel(&Tree::fallback(ty("kernel.kernel"))).unwrap();
+        let empty = rr.kernel(&own(&k, ty("kernel.kernel"))).unwrap();
         validate_text(&empty.text).unwrap();
     }
 
@@ -5243,9 +5237,9 @@ mod tests {
             ("parr.set_v_lane", Tree::new("parr.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("parr.v", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex16"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("parr.get_v_lane", real, vec![Tree::new("parr.w", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
         ];
         let rr = Renderer::new(&k, &t, &r);
-        let grid = Tree::fallback(ty("grid.grid"));
+        let grid = own(&k, ty("grid.grid"));
         for (name, s) in cases {
-            let tree = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid.clone(), Tree::new("block.one_L0", ty("block.L0"), vec![s]), Tree::fallback(ty("block.O0"))]);
+            let tree = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid.clone(), Tree::new("block.one_L0", ty("block.L0"), vec![s]), own(&k, ty("block.O0"))]);
             let out = rr.kernel(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
             validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}\n{}", out.text));
             if name.starts_with("set_f at") {
@@ -5277,7 +5271,7 @@ mod tests {
             }
             // The value, its children literal fallbacks of their duals, assigned
             // to a register through a conversion that the value's own dual permits.
-            let kids: Vec<Tree> = row.inputs.iter().map(|&i| Tree::fallback(i)).collect();
+            let kids: Vec<Tree> = row.inputs.iter().map(|&i| own(&k, i)).collect();
             let value = Tree::new(&row.name, row.output, kids);
             let out_dual = k.dual(row.output).unwrap();
             let value = if out_dual.lanes > 1 { Tree::new("shape.access_0", row.output, vec![value]) } else { value };
@@ -5289,7 +5283,7 @@ mod tests {
                 (Some("i32"), 1) => Tree::new("reg.set_i", ty("stmt.stmt"), vec![Tree::new("reg.i0", ty("reg<u32>.index"), vec![]), Tree::new("index.of_int", ty("u32.index"), vec![value])]),
                 (s, l) => panic!("{}: out {} ({s:?}, {l} lanes) has no register", row.name, out_dual.dual),
             };
-            let tree = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one", ty("block.block"), vec![stmt])]);
+            let tree = Tree::new("kernel.entry", ty("kernel.kernel"), vec![own(&k, ty("grid.grid")), Tree::new("block.one", ty("block.block"), vec![stmt])]);
             match rr.kernel(&tree).and_then(|o| validate_text(&o.text).map(|_| o)) {
                 Ok(_) => {}
                 Err(e) => failed.push(format!("{}: {}", row.name, e.lines().next().unwrap_or(""))),
@@ -5410,7 +5404,7 @@ mod tests {
             ("reg.set_n_L0", ("reg.n0", "reg<i32>.int"), "literal.int", "i32.int", f64::from(i32::MAX)),
         ] {
             let stmt = Tree::new(set, ty("stmt.L0"), vec![Tree::new(reg.0, ty(reg.1), vec![]), Tree::literal(lit, ty(dual), want)]);
-            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![stmt]), Tree::fallback(ty("block.O0"))]);
+            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own(&k, ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![stmt]), own(&k, ty("block.O0"))]);
             let text = rr.kernel(&kernel).unwrap_or_else(|e| panic!("{e}")).text;
             validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
             let back = crate::wgsl::safe_reader::read_safe(&text, &k).unwrap_or_else(|e| panic!("{want}: does not read back: {e}\n{text}"));

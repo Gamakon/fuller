@@ -115,7 +115,7 @@ fn row_inputs<'k>(t: &Tree, kingdom: &'k WgslKingdom) -> Option<&'k [crate::gene
 
 /// A variable leaf: a terminal row that is not a literal.
 fn is_variable(t: &Tree) -> bool {
-    t.kids.is_empty() && !t.name.starts_with("literal.") && t.name != "fallback"
+    t.kids.is_empty() && !t.name.starts_with("literal.") && !t.name.starts_with("own.")
 }
 
 /// ONE REWRITE of `root` (its references written as their values), or None

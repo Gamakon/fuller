@@ -146,7 +146,7 @@
 {"file":"tests/corpus/model_replies/k0145.wgsl","scaffold":"f58d34e01973cd75","safe":"bdf8d33082b117fe"}
 {"file":"tests/corpus/model_replies/k0146.wgsl","scaffold":"f2bcd8d05906261b","safe":"5de1526778d238f3"}
 {"file":"tests/corpus/model_replies/k0147.wgsl","scaffold":"1d6ede7cac68f9ea","safe":"4b06b0d02cd02d64"}
-{"file":"tests/corpus/model_replies/k0148.wgsl","scaffold":"5413b35290160163","safe":"ffd3bdab50ddddec"}
+{"file":"tests/corpus/model_replies/k0148.wgsl","scaffold":"5413b35290160163","safe":"fbd98e71b14ccd77"}
 {"file":"tests/corpus/model_replies/k0149.wgsl","scaffold":"462dd5a2a2df90ca","safe":"cb4828901f01254b"}
 {"file":"tests/corpus/model_replies/k0150.wgsl","scaffold":"81d70bba75a866bf","safe":"6695f4297e1492ea"}
 {"file":"tests/corpus/model_replies/k0151.wgsl","scaffold":"271a19cf99904ba9","safe":"6135d30d9dc01bb5"}
@@ -416,7 +416,7 @@
 {"file":"tests/corpus/model_replies/k0415.wgsl","scaffold":"ddea461a0ca8b00f","safe":"94b63fdbe1190900"}
 {"file":"tests/corpus/model_replies/k0416.wgsl","scaffold":"434c6b9ddeed2478","safe":"69b7926f0f1f9551"}
 {"file":"tests/corpus/model_replies/k0417.wgsl","scaffold":"d12334505d1ecdbc","safe":"818eae17dd0e783c"}
-{"file":"tests/corpus/model_replies/k0418.wgsl","scaffold":"5bb45b0d0681fbfe","safe":"1baab96bb72b73db"}
+{"file":"tests/corpus/model_replies/k0418.wgsl","scaffold":"5bb45b0d0681fbfe","safe":"d4d6582884682de1"}
 {"file":"tests/corpus/model_replies/k0419.wgsl","scaffold":"1d689a2cbde0c083","safe":"97ec9eefb5355d28"}
 {"file":"tests/corpus/model_replies/k0420.wgsl","scaffold":"d08e092d32844934","safe":"9368cb7a6e45f566"}
 {"file":"tests/corpus/model_replies/k0421.wgsl","scaffold":"d52a2c34d4bab7e9","safe":"380c91e0f4c3a593"}
@@ -1058,7 +1058,7 @@
 {"file":"tests/corpus/model_replies/k1057.wgsl","scaffold":"789b046b3325719f","safe":"70190f5ef8ed8621"}
 {"file":"tests/corpus/model_replies/k1058.wgsl","scaffold":"9a35516f4f1ed367","safe":"2573a83791a45bcd"}
 {"file":"tests/corpus/model_replies/k1059.wgsl","scaffold":"e3472ffa93e08506","safe":"a920fd73afce7864"}
-{"file":"tests/corpus/model_replies/k1060.wgsl","scaffold":"8e3b613d91dc4d18","safe":"5b907d4d7aab4f69"}
+{"file":"tests/corpus/model_replies/k1060.wgsl","scaffold":"8e3b613d91dc4d18","safe":"d762ee276e047e78"}
 {"file":"tests/corpus/model_replies/k1061.wgsl","scaffold":"21b95503f86637b0","safe":"c03175fd2f9e23d2"}
 {"file":"tests/corpus/model_replies/k1062.wgsl","scaffold":"b36aeb342a69239a","safe":"f240bf0f07d55b11"}
 {"file":"tests/corpus/model_replies/k1063.wgsl","scaffold":"6f814bedcc7a7b6f","safe":"4b06b0d02cd02d64"}
@@ -1148,7 +1148,7 @@
 {"file":"tests/corpus/model_replies/k1147.wgsl","scaffold":"5b01ef09e15cab6f","safe":"99a617eea6d98f7a"}
 {"file":"tests/corpus/model_replies/k1148.wgsl","scaffold":"cbb1f17c61afdcd5","safe":"4a450d868c786359"}
 {"file":"tests/corpus/model_replies/k1149.wgsl","scaffold":"refused","safe":"refused"}
-{"file":"tests/corpus/model_replies/k1150.wgsl","scaffold":"9424e64e14d83a4c","safe":"03b17b440119d384"}
+{"file":"tests/corpus/model_replies/k1150.wgsl","scaffold":"9424e64e14d83a4c","safe":"0cb80a50a21a9089"}
 {"file":"tests/corpus/model_replies/k1151.wgsl","scaffold":"0c1321c0c05aca14","safe":"2bf635ed219c9b2c"}
 {"file":"tests/corpus/model_replies/k1152.wgsl","scaffold":"1cb6a0879863878f","safe":"57bab0d64d9027ba"}
 {"file":"tests/corpus/model_replies/k1153.wgsl","scaffold":"3f1b6f83b1e1e8c2","safe":"1995661c1ba46f0c"}
@@ -1249,7 +1249,7 @@
 {"file":"tests/corpus/model_replies/k1248.wgsl","scaffold":"75d5d91a2c7f1627","safe":"55b087d8a87e97ec"}
 {"file":"tests/corpus/model_replies/k1249.wgsl","scaffold":"bbab894679644f46","safe":"278e66dee0b83915"}
 {"file":"tests/corpus/model_replies/k1250.wgsl","scaffold":"6a49ca71dbe537ad","safe":"4ebce8e886c427e0"}
-{"file":"tests/corpus/model_replies/k1251.wgsl","scaffold":"659ca9f77b198bdc","safe":"e0a97cc689aa99bf"}
+{"file":"tests/corpus/model_replies/k1251.wgsl","scaffold":"659ca9f77b198bdc","safe":"dcad2dbba3b02436"}
 {"file":"tests/corpus/model_replies/k1252.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/model_replies/k1253.wgsl","scaffold":"4ac4590fd8648346","safe":"235f10c324f667fc"}
 {"file":"tests/corpus/model_replies/k1254.wgsl","scaffold":"e00f587073ac1c3e","safe":"cb8ffce56e44bf4c"}
@@ -1391,7 +1391,7 @@
 {"file":"tests/corpus/model_replies/k1390.wgsl","scaffold":"98973a03227ccd11","safe":"50ae0b5ea5e60d7a"}
 {"file":"tests/corpus/model_replies/k1391.wgsl","scaffold":"05edc61ad99c02ca","safe":"1bb323803028b1db"}
 {"file":"tests/corpus/model_replies/k1392.wgsl","scaffold":"46712e2889336ae1","safe":"2d7e41424e1470a1"}
-{"file":"tests/corpus/model_replies/k1393.wgsl","scaffold":"65a1361c3a65d375","safe":"88a6952f5d878314"}
+{"file":"tests/corpus/model_replies/k1393.wgsl","scaffold":"65a1361c3a65d375","safe":"c42fefce2f907eb9"}
 {"file":"tests/corpus/model_replies/k1394.wgsl","scaffold":"aa05a2483e275de5","safe":"85d3c41c2f55604b"}
 {"file":"tests/corpus/model_replies/k1395.wgsl","scaffold":"e563a53a123bbdef","safe":"50ae0b5ea5e60d7a"}
 {"file":"tests/corpus/model_replies/k1396.wgsl","scaffold":"2469c9436fb8928d","safe":"9ebf93f19f1415ee"}
@@ -1447,7 +1447,7 @@
 {"file":"tests/corpus/model_replies/k1446.wgsl","scaffold":"4affc7ed47e18fc9","safe":"3db2dc8f6afec875"}
 {"file":"tests/corpus/model_replies/k1447.wgsl","scaffold":"ad8869933ebff642","safe":"e300be038759ed87"}
 {"file":"tests/corpus/model_replies/k1448.wgsl","scaffold":"e6be5452c786852f","safe":"e4fa91d742ef02ed"}
-{"file":"tests/corpus/model_replies/k1449.wgsl","scaffold":"5413b35290160163","safe":"ffd3bdab50ddddec"}
+{"file":"tests/corpus/model_replies/k1449.wgsl","scaffold":"5413b35290160163","safe":"fbd98e71b14ccd77"}
 {"file":"tests/corpus/model_replies/k1450.wgsl","scaffold":"cd122641e289e582","safe":"9389a19bcc7a117c"}
 {"file":"tests/corpus/model_replies/k1451.wgsl","scaffold":"4b49227ee87806e2","safe":"0e324a39f47e7c38"}
 {"file":"tests/corpus/model_replies/k1452.wgsl","scaffold":"f334c31adf763d10","safe":"8c9f5fbda9eb4a2b"}
@@ -1649,7 +1649,7 @@
 {"file":"tests/corpus/model_replies/k1648.wgsl","scaffold":"7ec459f22c429769","safe":"f59a4ffc36a51857"}
 {"file":"tests/corpus/model_replies/k1649.wgsl","scaffold":"51ccb75b9bd6d4a7","safe":"50a59cfc4ac58a52"}
 {"file":"tests/corpus/model_replies/k1650.wgsl","scaffold":"c880ea6a87248189","safe":"8147b42c8988b2de"}
-{"file":"tests/corpus/model_replies/k1651.wgsl","scaffold":"9830273fc9dd97ff","safe":"a489455ece40bd60"}
+{"file":"tests/corpus/model_replies/k1651.wgsl","scaffold":"9830273fc9dd97ff","safe":"4afb369704af11fd"}
 {"file":"tests/corpus/model_replies/k1652.wgsl","scaffold":"fbd63467d5e8e668","safe":"ca5be41c8f824186"}
 {"file":"tests/corpus/model_replies/k1653.wgsl","scaffold":"b00d5e9dcea449a1","safe":"b9143ab5a6d4e539"}
 {"file":"tests/corpus/model_replies/k1654.wgsl","scaffold":"7be1b01be0f795ef","safe":"f347d631ed14b456"}
@@ -1661,7 +1661,7 @@
 {"file":"tests/corpus/model_replies/k1660.wgsl","scaffold":"678c33ee1ab55e25","safe":"d9324ae20dc98670"}
 {"file":"tests/corpus/model_replies/k1661.wgsl","scaffold":"cb5181f0581ad661","safe":"c72952b8c37eff5e"}
 {"file":"tests/corpus/model_replies/k1662.wgsl","scaffold":"11a6d4eb210a6051","safe":"125d598c247d99e3"}
-{"file":"tests/corpus/model_replies/k1663.wgsl","scaffold":"417e7931db501ff8","safe":"0b3cb147a2ce9953"}
+{"file":"tests/corpus/model_replies/k1663.wgsl","scaffold":"417e7931db501ff8","safe":"cf3bfd9ad7c0032c"}
 {"file":"tests/corpus/model_replies/k1664.wgsl","scaffold":"5b55a0414310fc48","safe":"50a59cfc4ac58a52"}
 {"file":"tests/corpus/model_replies/k1665.wgsl","scaffold":"064b458a5c102f2e","safe":"9ad652d1edc25529"}
 {"file":"tests/corpus/model_replies/k1666.wgsl","scaffold":"0039bd683edeefe6","safe":"c736915f026643fe"}
@@ -1722,7 +1722,7 @@
 {"file":"tests/corpus/model_replies/k1721.wgsl","scaffold":"385ed9f634bcad77","safe":"0b496d7dc74ec7c9"}
 {"file":"tests/corpus/model_replies/k1722.wgsl","scaffold":"0b76d7a74a9389aa","safe":"e9e86637d5699bb4"}
 {"file":"tests/corpus/model_replies/k1723.wgsl","scaffold":"refused","safe":"refused"}
-{"file":"tests/corpus/model_replies/k1724.wgsl","scaffold":"93d71d08d5c40f46","safe":"932045f989c3ddb7"}
+{"file":"tests/corpus/model_replies/k1724.wgsl","scaffold":"93d71d08d5c40f46","safe":"86946cd4f5cd408e"}
 {"file":"tests/corpus/model_replies/k1725.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/model_replies/k1726.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/model_replies/k1727.wgsl","scaffold":"d62e5180c709278d","safe":"47e42fe167b71792"}
@@ -1735,7 +1735,7 @@
 {"file":"tests/corpus/model_replies/k1734.wgsl","scaffold":"c1cd0ad93e1bdfa5","safe":"c2f26afccb0a428b"}
 {"file":"tests/corpus/model_replies/k1735.wgsl","scaffold":"546748a2441daa1b","safe":"9da4357ea2a77b19"}
 {"file":"tests/corpus/model_replies/k1736.wgsl","scaffold":"c0d628070d121dd5","safe":"8441842a0fb942a4"}
-{"file":"tests/corpus/model_replies/k1737.wgsl","scaffold":"06f1104ccbf64d55","safe":"41971c0df1e512cc"}
+{"file":"tests/corpus/model_replies/k1737.wgsl","scaffold":"06f1104ccbf64d55","safe":"29b84e7187d53d33"}
 {"file":"tests/corpus/model_replies/k1738.wgsl","scaffold":"f2402f32a0e230b9","safe":"49732131fa97adda"}
 {"file":"tests/corpus/model_replies/k1739.wgsl","scaffold":"b5b0f5342d3a507f","safe":"2b0061457afde72d"}
 {"file":"tests/corpus/model_replies/k1740.wgsl","scaffold":"452c7efbf4e8e146","safe":"011634f4e3191b5b"}
@@ -1795,13 +1795,13 @@
 {"file":"tests/corpus/model_replies/k1794.wgsl","scaffold":"bac5571c076684b0","safe":"e51a86afd653d053"}
 {"file":"tests/corpus/model_replies/k1795.wgsl","scaffold":"2fc78430c992eccf","safe":"0fb53f5d1e52ac09"}
 {"file":"tests/corpus/model_replies/k1796.wgsl","scaffold":"1652eeb18fa53980","safe":"2d8c1004b697e87b"}
-{"file":"tests/corpus/model_replies/k1797.wgsl","scaffold":"3257601654d25785","safe":"9b864a3bd37cb6e5"}
+{"file":"tests/corpus/model_replies/k1797.wgsl","scaffold":"3257601654d25785","safe":"4e6db0a8b2d69404"}
 {"file":"tests/corpus/safewgsl/draft_add_chain.wgsl","scaffold":"1834e1e021a317db","safe":"5a74ea4921bacf08"}
 {"file":"tests/corpus/safewgsl/draft_atomics.wgsl","scaffold":"af2f1d4054c4eb15","safe":"f7afead5c2bf3000"}
 {"file":"tests/corpus/safewgsl/draft_barriers_nwg.wgsl","scaffold":"f8d309c6b44afece","safe":"27672ff8dd02cdb3"}
 {"file":"tests/corpus/safewgsl/draft_blocked_continue.wgsl","scaffold":"65951723c53f3729","safe":"633ebd46ce30fa18"}
 {"file":"tests/corpus/safewgsl/draft_capped_bound.wgsl","scaffold":"31eca1d621adde91","safe":"9b851bcccf7f9e8c"}
-{"file":"tests/corpus/safewgsl/draft_control_flow.wgsl","scaffold":"b7c3ceb5a8232362","safe":"08bae0e88e205f7d"}
+{"file":"tests/corpus/safewgsl/draft_control_flow.wgsl","scaffold":"b7c3ceb5a8232362","safe":"8c45d2bb3da433e8"}
 {"file":"tests/corpus/safewgsl/draft_float_literals.wgsl","scaffold":"b7b5754a0b167850","safe":"3bc915c88da05e77"}
 {"file":"tests/corpus/safewgsl/draft_halving_loop.wgsl","scaffold":"b684d957a17bc582","safe":"335d752e7fe1c0da"}
 {"file":"tests/corpus/safewgsl/draft_helpers.wgsl","scaffold":"0e2e60ff470dfa54","safe":"959922c1ab25beee"}
@@ -1809,7 +1809,7 @@
 {"file":"tests/corpus/safewgsl/draft_kahan.wgsl","scaffold":"a458b86e25bd8cde","safe":"5ffe947d3f9011c1"}
 {"file":"tests/corpus/safewgsl/draft_matrices.wgsl","scaffold":"09df5c3d43086020","safe":"503276c9189a9707"}
 {"file":"tests/corpus/safewgsl/draft_module_vars.wgsl","scaffold":"46a7030f32a03c3f","safe":"54ba22c3b871d8ba"}
-{"file":"tests/corpus/safewgsl/draft_no_store.wgsl","scaffold":"b46cde2705ca2515","safe":"0a9a9af7731f4420"}
+{"file":"tests/corpus/safewgsl/draft_no_store.wgsl","scaffold":"b46cde2705ca2515","safe":"b4bab369a38d92cd"}
 {"file":"tests/corpus/safewgsl/draft_rows_x.wgsl","scaffold":"6be7fd01f049b875","safe":"e9175f7913a79f46"}
 {"file":"tests/corpus/safewgsl/draft_struct_results.wgsl","scaffold":"a1a3f72ebb0cceb5","safe":"c6955f6b66dcc677"}
 {"file":"tests/corpus/safewgsl/draft_subgroups.wgsl","scaffold":"c118589146bffc0a","safe":"7c006f887c284543"}
@@ -1869,7 +1869,7 @@
 {"file":"tests/corpus/safewgsl/reply_fitA2_g002_r5p1_codex.wgsl","scaffold":"6a80af540835f868","safe":"refused"}
 {"file":"tests/corpus/safewgsl/reply_fitA2_g003_r2x_union_1702Z_sonnet.wgsl","scaffold":"refused","safe":"refused"}
 {"file":"tests/corpus/safewgsl/reply_fitA2_g004_r3p1_opus.wgsl","scaffold":"9ef8dbe6759928d8","safe":"423a9499b762d0b9"}
-{"file":"tests/corpus/safewgsl/reply_fitA2_g006_r12p1_sonnet.wgsl","scaffold":"5bb45b0d0681fbfe","safe":"1baab96bb72b73db"}
+{"file":"tests/corpus/safewgsl/reply_fitA2_g006_r12p1_sonnet.wgsl","scaffold":"5bb45b0d0681fbfe","safe":"d4d6582884682de1"}
 {"file":"tests/corpus/safewgsl/reply_fitA_g001_r10p1_sonnet.wgsl","scaffold":"44342c0c96ea7a5b","safe":"899b0e4f8717bafe"}
 {"file":"tests/corpus/safewgsl/reply_fitA_g001_r11p1_fable.wgsl","scaffold":"44342c0c96ea7a5b","safe":"899b0e4f8717bafe"}
 {"file":"tests/corpus/safewgsl/reply_fitA_g001_r2p1_fable.wgsl","scaffold":"95f45292ac1fe5fe","safe":"7700f419ac78a823"}
@@ -1939,4 +1939,4 @@
 {"file":"logs/HGP/001/gen0/k29.wgsl","scaffold":"1ef96d582cb9b932","safe":"6c03060359110769"}
 {"file":"logs/HGP/001/gen0/k30.wgsl","scaffold":"f8149808f5880242","safe":"fff3cadff89dd91e"}
 {"file":"logs/HGP/001/gen0/k31.wgsl","scaffold":"fc5d9da6276d8e53","safe":"ae92a4dffccbd98b"}
-{"file":"problems/v24_ingest_small/reference.wgsl","scaffold":"5e6c135fbce676f6","safe":"89dea7b0ee79348d"}
+{"file":"problems/v24_ingest_small/reference.wgsl","scaffold":"5e6c135fbce676f6","safe":"06cb8ef8b9967fe4"}

@@ -12,7 +12,6 @@
 //! Constants are indices into `C_T`, one append-only pool per dual holding each
 //! constant's EXACT BIT PATTERN as a `u32` (an f32's bits, a u32, an i32's two's
 //! complement, a flag's 0 or 1, an f16's 16 bits): never an f32 `konst`.
-//! A `fallback` leaf of a read tree is the `own.*` terminal of its dual.
 //!
 //! Anything that does not encode, express or render back is a [`Gap`], named.
 
@@ -41,8 +40,6 @@ pub struct Alphabet {
     /// Per symbol: the WGSL row name, its inputs and output.
     rows: Vec<(String, Vec<Ty>, Ty)>,
     by_key: BTreeMap<(String, Ty, Vec<Ty>), SymbolId>,
-    /// The `own.*` terminal of each dual.
-    own: BTreeMap<Ty, SymbolId>,
 }
 
 impl Alphabet {
@@ -79,14 +76,10 @@ impl Alphabet {
         let roots: Vec<Ty> = kingdom.duals.iter().filter(|d| (d.dual == "kernel.safe" || d.dual == "kernel.module") && rows.iter().any(|(_, _, o)| *o == d.ty())).map(WgslDual::ty).collect();
         let contract = relations_from_rows("safeWGSL", roots, &ids, &constants).check().map_err(|d| gap("kingdom check", d.join("; ")))?;
         let mut by_key = BTreeMap::new();
-        let mut own = BTreeMap::new();
         for (i, (name, ins, out)) in rows.iter().enumerate() {
             by_key.entry((name.clone(), *out, ins.clone())).or_insert(i as SymbolId);
-            if name.starts_with("own.") {
-                own.entry(*out).or_insert(i as SymbolId);
-            }
         }
-        Ok(Alphabet { contract, rows, by_key, own })
+        Ok(Alphabet { contract, rows, by_key })
     }
 
     pub fn row(&self, s: SymbolId) -> &(String, Vec<Ty>, Ty) {
@@ -235,13 +228,9 @@ impl Encoded {
     }
 }
 
-/// A read tree with its `fallback` leaves as the `own.*` terminal of their dual.
+/// A read tree as typed nodes of the alphabet.
 fn typed_of(a: &Alphabet, kingdom: &WgslKingdom, t: &Tree, pools: &mut BTreeMap<Ty, Vec<u32>>) -> Result<Typed, Gap> {
     let dual_name = |ty: Ty| kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone());
-    if t.name == "fallback" {
-        let s = *a.own.get(&t.ty).ok_or_else(|| gap("fallback leaf of a dual with no own terminal", dual_name(t.ty)))?;
-        return Ok(Typed { symbol: s, const_index: None, kids: Vec::new() });
-    }
     let kids = t.kids.iter().map(|k| typed_of(a, kingdom, k, pools)).collect::<Result<Vec<_>, _>>()?;
     let ins: Vec<Ty> = t.kids.iter().map(|k| k.ty).collect();
     let symbol = *a.by_key.get(&(t.name.clone(), t.ty, ins.clone())).ok_or_else(|| {
@@ -333,16 +322,6 @@ pub fn express(a: &Alphabet, kingdom: &WgslKingdom, e: &Encoded) -> Result<Tree,
     back(a, kingdom, e, &x.tree())
 }
 
-/// A read tree with its `fallback` leaves as `own.*` (what [`express`] returns for them).
-pub fn normalised(a: &Alphabet, t: &Tree) -> Tree {
-    if t.name == "fallback" {
-        if let Some(s) = a.own.get(&t.ty) {
-            return Tree::new(&a.row(*s).0, t.ty, Vec::new());
-        }
-    }
-    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| normalised(a, k)).collect() }
-}
-
 /// The alphabets of the interfaces met, by their per-kernel rows.
 #[derive(Default)]
 pub struct Alphabets {
@@ -369,9 +348,22 @@ pub enum Outcome {
     Unrenderable(String),
     /// A named gap in the typed core.
     Gap(Gap),
-    /// Encoded and expressed: the tree equal to the read one (fallbacks as their own terminals), the text equal to
+    /// Encoded and expressed: the tree equal to the read one, the text equal to
     /// the read tree's, and naga's verdict on that text.
     Expressed { tree_equal: bool, text_equal: bool, valid: Result<(), String>, difference: String },
+}
+
+/// A tree encoded into a typed gene and expressed again: the tree back, as the alphabet normalises it, or the named
+/// gap.
+pub fn through_the_gene(alphabets: &mut Alphabets, kingdom: &WgslKingdom, role: &Role, tree: &Tree) -> Result<(), String> {
+    let a = alphabets.of(kingdom, role).as_ref().map_err(|g| format!("{}: {}", g.reason, g.detail))?;
+    let enc = encode(a, kingdom, tree).map_err(|g| format!("{}: {}", g.reason, g.detail))?;
+    let back = express(a, kingdom, &enc).map_err(|g| format!("{}: {}", g.reason, g.detail))?;
+    if back == *tree {
+        Ok(())
+    } else {
+        Err(format!("the gene expresses another tree: {}", first_difference(tree, &back)))
+    }
 }
 
 /// WGSL text, read, encoded, expressed, rendered (design test 5).
@@ -400,11 +392,10 @@ pub fn round_trip(alphabets: &mut Alphabets, kingdom: &WgslKingdom, text: &str) 
         Ok(t) => t,
         Err(g) => return Outcome::Gap(g),
     };
-    let want = normalised(a, &read.tree);
-    let difference = first_difference(&want, &back);
+    let difference = first_difference(&read.tree, &back);
     match render_tree_with(&back, kingdom, &read.role) {
         Err(e) => Outcome::Gap(gap("render of the expressed tree", e)),
-        Ok(r) => Outcome::Expressed { tree_equal: back == want, text_equal: r.text == original, valid: validate_text(&r.text), difference },
+        Ok(r) => Outcome::Expressed { tree_equal: back == read.tree, text_equal: r.text == original, valid: validate_text(&r.text), difference },
     }
 }
 

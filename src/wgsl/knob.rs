@@ -192,7 +192,7 @@ pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(),
         t.kids.iter().try_for_each(|k| refs(k, knobs, kingdom))
     }
     refs(child, &knobs, kingdom)?;
-    let bytes = crate::wgsl::render::workgroup_request(kingdom, child)?;
+    let bytes = crate::wgsl::render::workgroup_request(child)?;
     if bytes > u64::from(target.max_workgroup_storage) {
         return Err(format!("workgroup memory {bytes} bytes beyond the adapter's {}", target.max_workgroup_storage));
     }

@@ -955,7 +955,7 @@ fn break_guard(t: &Tree, ctx: &Ctx) -> Option<Result<Tree, String>> {
         flatten_stmts(b.clone(), &mut inner);
         matches!(inner.as_slice(), [s] if s.name == "stmt.break")
     };
-    let empty = |b: &Tree| b.name == "fallback" || {
+    let empty = |b: &Tree| b.name.starts_with("own.block") || {
         let mut inner = Vec::new();
         flatten_stmts(b.clone(), &mut inner);
         inner.is_empty()
@@ -1753,7 +1753,7 @@ fn flatten_stmts(s: Tree, out: &mut Vec<Tree>) {
         for k in s.kids {
             flatten_stmts(k, out);
         }
-    } else if s.name != "fallback" {
+    } else if !s.name.starts_with("own.stmt") && !s.name.starts_with("own.block") {
         out.push(s);
     }
 }
@@ -2206,7 +2206,7 @@ impl<'a> Ctx<'a> {
                 let v = t.konst;
                 // 0 is the uniform dual's fallback, which renders `0u` (2026-10-12).
                 if v == 0.0 {
-                    return Ok(Some(Tree::fallback(u)));
+                    return Ok(Some(crate::wgsl::render::own_leaf(self.kingdom, u)?));
                 }
                 (v.fract() == 0.0 && (1.0..=4096.0).contains(&v)).then(|| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096").expect("dual"), v)]))
             }
@@ -3791,7 +3791,7 @@ impl<'a> Ctx<'a> {
             if stmts.last().is_none_or(|s| rung_stem(&s.name) != Some("stmt.return")) {
                 stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
             }
-            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+            return Ok((stmts, crate::wgsl::render::own_leaf(self.kingdom, ty(self, "block.O0")?)?));
         }
         // A body that returns (main ends in `return;`): the epilogue was not
         // written (the renderer stops at the return, and writes none at the
@@ -3804,7 +3804,7 @@ impl<'a> Ctx<'a> {
         };
         if self.main_returns && unspelled(&stmts) {
             stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
-            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+            return Ok((stmts, crate::wgsl::render::own_leaf(self.kingdom, ty(self, "block.O0")?)?));
         }
         let p = stmts.iter().rposition(has_store).ok_or("the kernel never writes h: the kingdom's root ends every kernel in the store of its thread's cell")?;
         // An interface with no output cell (no `h`: v24's index arena and
@@ -3814,7 +3814,7 @@ impl<'a> Ctx<'a> {
         // body that returns), as for a kernel that writes no h at all.
         if p + 1 < stmts.len() && !self.per_kernel_rows.iter().any(|r| r.0 == "store.h") {
             stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
-            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+            return Ok((stmts, crate::wgsl::render::own_leaf(self.kingdom, ty(self, "block.O0")?)?));
         }
         let after: Vec<Tree> = stmts.split_off(p + 1);
         if !after.is_empty() {
@@ -3838,7 +3838,7 @@ impl<'a> Ctx<'a> {
                 let mut stmts = stmts;
                 stmts.push(last);
                 stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
-                Ok((stmts, Tree::fallback(ty(self, "block.O0")?)))
+                Ok((stmts, crate::wgsl::render::own_leaf(self.kingdom, ty(self, "block.O0")?)?))
             }
             Err(e) => Err(e),
         }
@@ -4222,7 +4222,7 @@ impl<'a> Ctx<'a> {
         let stmts = if rung.starts_with('L') { self.fold_puts(self.fold_reductions(stmts, rung)?, rung)? } else { stmts };
         let stmts = self.fold_unrolled(stmts)?;
         if stmts.is_empty() {
-            return Ok(Tree::fallback(bt));
+            return crate::wgsl::render::own_leaf(self.kingdom, bt);
         }
         // `if (c) { continue; }` inside a loop (an L or C rung below the top):
         // the guard, then the rest of the block at the conditional rung of its
@@ -8329,14 +8329,8 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
-        // The genome: encoded, decoded and projected under the module's root, the tree.
-        let h = 128usize;
-        let slots = crate::wgsl::safe_karva::split(&r.tree, h).unwrap().tail.len().div_ceil(8) * 8;
-        let c = crate::wgsl::safe_karva::encode(&r.tree, h, slots, 17).unwrap_or_else(|e| panic!("{e}"));
-        let pset = crate::homeotic::pset_with_hrefs(&c.pset, slots);
-        let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| crate::karva::karva_to_terms_generic(hd, tl, &pset)).collect::<Result<_, _>>().unwrap();
-        let rebuilt = crate::wgsl::safe_karva::build(&crate::wgsl::safe_karva::unfold_decoded(&decoded, c.folded.filled).unwrap(), &k, &r.role).unwrap();
-        assert!(rebuilt == r.tree, "through the genome: {:?}", crate::wgsl::render::first_difference(&r.tree, &rebuilt));
+        // The genome: a typed gene, expressed under the module's root, the tree.
+        crate::wgsl::typed_gene::through_the_gene(&mut crate::wgsl::typed_gene::Alphabets::default(), &k, &r.role, &r.tree).unwrap_or_else(|e| panic!("through the gene: {e}"));
         // The outline names each entry point's statements.
         let outline = statement_outline(&src).unwrap();
         assert!(outline.iter().any(|l| l.starts_with("ingest [")) && outline.iter().any(|l| l.starts_with("search [")), "{outline:?}");
@@ -9236,8 +9230,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
-        // A node of four children at most: the chain is a genome.
-        crate::wgsl::safe_karva::encode(&r.tree, 32, 128, 7).unwrap_or_else(|e| panic!("encode: {e}"));
+        // The chain is a typed gene.
+        crate::wgsl::typed_gene::through_the_gene(&mut crate::wgsl::typed_gene::Alphabets::default(), &k, &r.role, &r.tree).unwrap_or_else(|e| panic!("through the gene: {e}"));
     }
 
     /// AN i32 LOOP COUNTER AND A LOOP BOUND FROM A STRUCT'S U32 LANE

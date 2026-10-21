@@ -118,12 +118,12 @@ pub struct Knobs {
 }
 
 impl Knobs {
-    /// The knobs of a kernel root (`kernel.entry_safe`, `kernel.entry`, or a
-    /// fallback, whose grid is the renderer's default).
+    /// The knobs of a kernel root (`kernel.entry_safe`, `kernel.entry`, or an
+    /// own terminal, whose grid is the renderer's default).
     pub fn of_root(root: &Tree) -> Result<Knobs, String> {
         let g = match root.kids.first() {
             Some(g) if root.name.starts_with("kernel.") => g,
-            _ => return Ok(Knobs { grid: grid_of(&Tree::fallback(root.ty))?, ktile: None }),
+            _ => return Ok(Knobs { grid: crate::wgsl::render::Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, ktile: None }),
         };
         Ok(Knobs { grid: grid_of(g)?, ktile: ktile_of(g) })
     }
@@ -808,7 +808,7 @@ mod tests {
             }
         };
         let refs = Tree::new("index.add", t("u32.index"), vec![Tree::literal("literal.p_colspan", t("u32.index"), 256.0), Tree::literal("literal.p_ktile_m1", t("u32.index"), 128.0)]);
-        let root = |g: Tree| Tree::new("kernel.entry_safe", t("kernel.safe"), vec![g, refs.clone(), Tree::fallback(t("block.O0"))]);
+        let root = |g: Tree| Tree::new("kernel.entry_safe", t("kernel.safe"), vec![g, refs.clone(), crate::wgsl::render::own_leaf(&k, t("block.O0")).unwrap()]);
         let r = resolve(&root(grid(16.0, 8.0, 4.0, 8.0, Some(32.0)))).unwrap();
         assert_eq!((r.kids[1].kids[0].konst, r.kids[1].kids[1].konst), (64.0, 15.0));
         let r = resolve(&root(grid(8.0, 8.0, 2.0, 8.0, Some(64.0)))).unwrap();

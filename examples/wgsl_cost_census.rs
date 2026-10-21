@@ -48,13 +48,13 @@ fn statements(b: &Tree, out: &mut Vec<(Tree, Vec<usize>)>, path: Vec<usize>) {
     }
 }
 
-fn replaced(t: &Tree, path: &[usize]) -> Tree {
+fn replaced(t: &Tree, path: &[usize], k: &WgslKingdom) -> Result<Tree, String> {
     match path.split_first() {
-        None => Tree::fallback(t.ty),
+        None => fuller::wgsl::render::terminal_leaf(k, t.ty),
         Some((&i, rest)) => {
             let mut kids = t.kids.clone();
-            kids[i] = replaced(&kids[i], rest);
-            Tree { kids, ..t.clone() }
+            kids[i] = replaced(&kids[i], rest, k)?;
+            Ok(Tree { kids, ..t.clone() })
         }
     }
 }
@@ -85,9 +85,11 @@ fn main() -> Result<(), String> {
         let worst = stmts
             .iter()
             .map(|(s, p)| {
-                let without = cost(&replaced(&tree, p));
-                ((c.per_item - without.per_item) / bound.per_item + (c.base - without.base) / bound.base, s.clone())
+                let without = cost(&replaced(&tree, p, &k)?);
+                Ok(((c.per_item - without.per_item) / bound.per_item + (c.base - without.base) / bound.base, s.clone()))
             })
+            .collect::<Result<Vec<_>, String>>()?
+            .into_iter()
             .max_by(|a, b| a.0.partial_cmp(&b.0).expect("finite"));
         let key = match worst {
             Some((_, s)) => {

@@ -313,7 +313,7 @@ fn tile_counter_depth(base: &str) -> Option<usize> {
 /// register or a conversion.
 fn carries_value(name: &str) -> bool {
     let base = safe_base(name);
-    name == "fallback" || name.starts_with("own.") || ["index.", "count.", "bound.", "uniform.", "subgroup.", "safe.", "shape.", "axis.", "literal."].iter().any(|p| base.starts_with(p))
+    name.starts_with("own.") || ["index.", "count.", "bound.", "uniform.", "subgroup.", "safe.", "shape.", "axis.", "literal."].iter().any(|p| base.starts_with(p))
 }
 
 /// Whether a row clamps its child `i` to a bound of its own: either side
@@ -444,7 +444,8 @@ impl<'a> Checker<'a> {
             if entries.len() != self.role.entries.len() {
                 return fail("module_entries_not_the_interfaces", format!("a module of {} entry points under an interface of {} ({:?})", entries.len(), self.role.entries.len(), self.role.entries));
             }
-            self.typed(&Tree { kids: tree.kids.iter().map(|k| Tree::fallback(k.ty)).collect(), ..tree.clone() })?;
+            let own_kids = tree.kids.iter().map(|k| crate::wgsl::render::own_leaf(self.kingdom, k.ty).map_err(|e| illegal(Layer::Typed, "no_own_terminal", e))).collect::<Result<Vec<_>, _>>()?;
+            self.typed(&Tree { kids: own_kids, ..tree.clone() })?;
             for (kid, name) in entries.iter().zip(&self.role.entries) {
                 let at = Checker::with_contract(self.kingdom, &self.role.at_entry(name), &self.target, self.contract.clone());
                 at.check(kid).map_err(|e| Illegal { detail: format!("entry point {name}: {}", e.detail), ..e })?;
@@ -488,11 +489,6 @@ impl<'a> Checker<'a> {
         self.kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone())
     }
 
-    /// A dual holding a thread's row, column or cell (thread-dependent).
-    fn is_thread_dual(&self, t: &Tree) -> bool {
-        self.kingdom.dual(t.ty).is_some_and(|d| d.form.starts_with("thread") || d.form == "cell")
-    }
-
     fn is_stmt_level(&self, t: &Tree) -> bool {
         self.kingdom.dual(t.ty).is_some_and(|d| matches!(d.slot.as_str(), "stmt" | "block" | "kernel"))
     }
@@ -500,17 +496,11 @@ impl<'a> Checker<'a> {
     // ---------------------------------------------------------------- layer 1
 
     /// Layer 1, types: every node a row at its signature, a literal of its
-    /// dual with a finite constant, or a childless fallback.
+    /// dual with a finite constant, (an own terminal is a row with no inputs).
     pub fn typed(&self, t: &Tree) -> Result<(), Illegal> {
         let fail = |reason: &'static str, detail: String| Err(illegal(Layer::Typed, reason, detail));
         if self.kingdom.dual(t.ty).is_none() {
             return fail("unknown_dual", format!("{} has type {:?}, not a dual of the kingdom", t.name, t.ty));
-        }
-        if t.name == "fallback" {
-            if !t.kids.is_empty() {
-                return fail("fallback_with_children", format!("a fallback of {} with {} children", self.dual_name(t.ty), t.kids.len()));
-            }
-            return Ok(());
         }
         if t.name.starts_with("literal.") {
             if !t.kids.is_empty() {
@@ -542,7 +532,7 @@ impl<'a> Checker<'a> {
     /// barriers outside every `if`, loops from the bounded constructors.
     pub fn grammar(&self, tree: &Tree) -> Result<(), Illegal> {
         let root_dual = self.dual_name(tree.ty);
-        let root_ok = tree.name == "kernel.entry_safe" || ((tree.name == "fallback" || tree.name == "own.kernel_safe") && root_dual == "kernel.safe");
+        let root_ok = tree.name == "kernel.entry_safe" || (tree.name == "own.kernel_safe" && root_dual == "kernel.safe");
         if !root_ok {
             return Err(illegal(Layer::Grammar, "root_not_safe_kernel", format!("the root is {} ({root_dual}), not kernel.entry_safe", tree.name)));
         }
@@ -682,7 +672,7 @@ impl<'a> Checker<'a> {
                     regs.insert(r);
                 }
             } else if d.slot.starts_with("parr<") {
-                if let Ok(p) = parr_var(self.kingdom, t) {
+                if let Ok(p) = parr_var(t) {
                     parrs.insert(p.to_string());
                 }
             }
@@ -699,7 +689,7 @@ impl<'a> Checker<'a> {
                     regs.insert(r);
                 }
             } else if base.starts_with("parr.set_") {
-                if let Ok(p) = parr_var(self.kingdom, target) {
+                if let Ok(p) = parr_var(target) {
                     parrs.insert(p.to_string());
                 }
             }
@@ -720,7 +710,7 @@ impl<'a> Checker<'a> {
         match (tree.name.as_str(), tree.kids.first()) {
             ("kernel.entry_safe", Some(g)) => {
                 let grid = grid_of(g).map_err(|e| illegal(Layer::Grammar, "grid_not_in_grammar", e))?;
-                let plan = workgroup_plan(self.kingdom, g, tree).map_err(|e| illegal(Layer::Grammar, "workgroup_array_not_in_grammar", e))?;
+                let plan = workgroup_plan(g, tree).map_err(|e| illegal(Layer::Grammar, "workgroup_array_not_in_grammar", e))?;
                 Ok((grid, plan))
             }
             _ => Ok((Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, BTreeMap::new())),
@@ -757,7 +747,7 @@ impl<'a> Checker<'a> {
         let in_loop = cx.in_items || !cx.tiles.is_empty();
         match safe_base(&b.name) {
             // An empty block, or the epilogue's store at the thread's first cell.
-            "fallback" | "own.block" | "own.block_block" => {}
+            "own.block" | "own.block_block" => {}
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => k.iter().for_each(|s| self.walk_stmt(s, cx, ctrl)),
             "block.brk" if k.len() == 3 => {
                 if cx.mode == Mode::Grammar && !in_loop {
@@ -810,7 +800,7 @@ impl<'a> Checker<'a> {
         let base = safe_base(&s.name);
         let live = ctrl && !cx.tainted;
         match base {
-            "fallback" | "own.stmt" => {}
+            "own.stmt" => {}
             // stmt.cblock (legality item 5): conditional statements written in place.
             "stmt.block" | "stmt.cblock" if k.len() == 1 => self.walk_block(&k[0], cx, ctrl),
             "stmt.if" | "stmt.if_else" if k.len() >= 2 => {
@@ -904,7 +894,7 @@ impl<'a> Checker<'a> {
                 self.access(s, cx);
                 self.values(s, cx);
                 if cx.mode == Mode::Uniform {
-                    if let Some(p) = k.first().and_then(|p| parr_var(self.kingdom, p).ok()) {
+                    if let Some(p) = k.first().and_then(|p| parr_var(p).ok()) {
                         let uniform = live && k.get(1..).unwrap_or(&[]).iter().all(|v| self.uniform(v, cx));
                         if !uniform && cx.nonuniform_parrs.insert(p.to_string()) {
                             cx.changed = true;
@@ -1099,12 +1089,11 @@ impl<'a> Checker<'a> {
                 return register_name(self.kingdom, v).is_ok_and(|r| !cx.nonuniform_regs.contains(&r));
             }
             if d.slot.starts_with("parr<") {
-                return parr_var(self.kingdom, v).is_ok_and(|p| !cx.nonuniform_parrs.contains(p));
+                return parr_var(v).is_ok_and(|p| !cx.nonuniform_parrs.contains(p));
             }
         }
         let base = safe_base(&v.name);
         match base {
-            "fallback" => !self.is_thread_dual(v),
             // (An own row is the thread's own origin where its dual is a thread's, and a thread id's axis.)
             b if b.starts_with("own.") => self.kingdom.dual(v.ty).is_none_or(|d| !(d.form.starts_with("thread") || d.form.starts_with("rowbase") || d.form.starts_with("colbase") || matches!(d.form.as_str(), "cell" | "mirror" | "rowid" | "colid" | "wgown"))),
             b if b.starts_with("literal.") => true,
@@ -1225,7 +1214,7 @@ impl<'a> Checker<'a> {
             let axis = if d.form == "rowid" { "axis.y_gid" } else { "axis.x_gid" };
             return self.iv_raw(&Tree::new(axis, v.ty, vec![Tree::new("builtin.global_invocation_id", gid, Vec::new())]), cx);
         }
-        if v.name == "fallback" || v.name.starts_with("own.") {
+        if v.name.starts_with("own.") {
             // A thread's row, column or cell renders the thread's own origin.
             return match d.form.as_str() {
                 "threadrow" | "rowbase" => self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx),
@@ -1433,10 +1422,10 @@ impl<'a> Checker<'a> {
         let wg = matches!(base, "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" | "wg.get_n_safe" | "wg.get_v_lane" | "wg.set_safe" | "wg.set_v_lane" | "wg.get" | "wg.set") || base.starts_with("atomic.");
         let parr = matches!(base, "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" | "parr.get_t" | "parr.get_v_lane" | "parr.set_safe" | "parr.set_v_lane");
         let (var, len) = if wg {
-            let Ok(var) = wgmem_var(self.kingdom, array) else { return };
+            let Ok(var) = wgmem_var(array) else { return };
             (var, cx.plan.get(var).map_or_else(|| array_len(var), |(_, l)| *l))
         } else if parr {
-            let Ok(var) = parr_var(self.kingdom, array) else { return };
+            let Ok(var) = parr_var(array) else { return };
             (var, array_len(var))
         } else {
             return;
@@ -1668,7 +1657,7 @@ mod tests {
         let mut own = gram_shipped_safe_tree(&k).unwrap();
         let store = &mut own.kids[2].kids[0].kids[1].kids[0];
         assert_eq!(store.name, "store.h_O0");
-        store.kids[0] = Tree::fallback(ty(&k, "u32.cell"));
+        store.kids[0] = crate::wgsl::render::own_leaf(&k, ty(&k, "u32.cell")).unwrap();
         checker.check(&own).unwrap_or_else(|e| panic!("a fallback cell: {e}"));
 
         // A store to a cell the thread does not own: the role's `store.h`

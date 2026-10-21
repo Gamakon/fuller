@@ -131,13 +131,11 @@ mod tests {
     /// outline (a rewrite child enters through the reader).
     #[test]
     fn a_thousand_sketch_draws_are_legal_distinct_and_hold_the_outline() {
-        use crate::homeotic;
-        use crate::karva::karva_to_terms_generic;
         let k = WgslKingdom::load_safe();
         let role = gram_role();
         let bound = safe_karva::default_bound(&k).unwrap();
         let checker = Checker::new(&k, &role, &Target::recorded());
-        let (h, slots) = (128usize, 128usize);
+        let mut alphabets = crate::wgsl::typed_gene::Alphabets::default();
         let mut texts = BTreeSet::new();
         let (mut nodes, mut value_nodes) = (0usize, 0usize);
         for seed in 0..1000u64 {
@@ -152,15 +150,7 @@ mod tests {
                 println!("sketch seed 0:\n{text}");
             }
             assert!(texts.insert(text.clone()), "seed {seed}: a kernel drawn before:\n{text}");
-            let back = safe_karva::encode(&tree, h, slots, seed).and_then(|c| {
-                let pset = homeotic::pset_with_hrefs(&c.pset, slots);
-                let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset)).collect::<Result<_, _>>()?;
-                safe_karva::build(&safe_karva::unfold_decoded(&decoded, c.folded.filled)?, &k, &role)
-            });
-            match back {
-                Ok(t) => assert!(t == tree, "seed {seed}: the genome decodes to another tree: {}", crate::wgsl::render::first_difference(&tree, &t).unwrap_or_default()),
-                Err(e) => panic!("seed {seed}: the genome: {e}"),
-            }
+            crate::wgsl::typed_gene::through_the_gene(&mut alphabets, &k, &role, &tree).unwrap_or_else(|e| panic!("seed {seed}: the gene: {e}"));
             let read = crate::wgsl::safe_reader::read_safe(&text, &k).unwrap_or_else(|e| panic!("seed {seed}: the reader: {e}\n{text}")).tree;
             assert!(holds_outline(&read), "seed {seed}: read back without the outline:\n{text}\n{}", read.to_sexpr());
             nodes += tree.size();
@@ -208,10 +198,10 @@ mod tests {
         assert!(!holds_outline(&store), "the store of another register");
         let update = rename(&t, &|x| x.name == "reg.set_f_L1" && x.kids[1].name == "arith.add" && read_of(&x.kids[1].kids[0]) == Some(acc.as_str()), &swap_reg(0));
         assert!(!holds_outline(&update), "the update of another register");
-        let unbounded = rename(&t, &|x| x.name == "bound.m", &|x| Tree::fallback(x.ty));
-        assert!(!holds_outline(&unbounded), "the loop's bound a fallback");
-        let cell = rename(&t, &|x| x.name == "safe.cell_of", &|x| Tree::fallback(x.ty));
-        assert!(!holds_outline(&cell), "the cell a fallback");
+        let unbounded = rename(&t, &|x| x.name == "bound.m", &|x| Tree::new("bound.d", x.ty, Vec::new()));
+        assert!(!holds_outline(&unbounded), "the loop's bound another bound");
+        let cell = rename(&t, &|x| x.name == "safe.cell_of", &|x| crate::wgsl::render::own_leaf(&k, x.ty).unwrap());
+        assert!(!holds_outline(&cell), "the cell an own terminal");
         assert!(holds_outline(&t));
     }
 }

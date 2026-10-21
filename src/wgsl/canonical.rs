@@ -90,18 +90,23 @@ fn is_plain_block(name: &str) -> bool {
     ["block.one_", "block.seq2_", "block.seq3_", "block.seq4_"].iter().any(|p| name.starts_with(p))
 }
 
+/// The `own.*` terminal of a dual (the test oracle: a dual without one is our software's bug).
+fn own(kingdom: &WgslKingdom, ty: Ty) -> Tree {
+    crate::wgsl::render::own_leaf(kingdom, ty).unwrap_or_else(|e| panic!("{e}"))
+}
+
 /// The statements a block writes, in order: nested plain blocks spliced in
 /// place, an empty block (its fallback) nothing, and nothing after a return.
 fn statements(block: &Tree, out: &mut Vec<Tree>) -> bool {
-    if block.name == "fallback" {
+    if block.name.starts_with("own.") {
         return false;
     }
     for s in &block.kids {
         // A statement's fallback writes nothing.
-        if s.name == "fallback" {
+        if s.name.starts_with("own.") {
             continue;
         }
-        let nested = s.name.starts_with("stmt.block_") && s.kids.len() == 1 && (is_plain_block(&s.kids[0].name) || s.kids[0].name == "fallback");
+        let nested = s.name.starts_with("stmt.block_") && s.kids.len() == 1 && (is_plain_block(&s.kids[0].name) || s.kids[0].name.starts_with("own."));
         if nested {
             if statements(&s.kids[0], out) {
                 return true;
@@ -129,14 +134,14 @@ fn epilogue_items(mut items: Vec<Tree>, rung: &str, kingdom: &WgslKingdom) -> Ve
     let (Ok(cst), Ok(cbt)) = (dual_ty(kingdom, &format!("stmt.{c}")), dual_ty(kingdom, &format!("block.{c}"))) else { return items };
     let last = items.pop().expect("more than four");
     let keep = items.split_off(items.len() - 2);
-    let lead = grouped(items, &c, &Tree::fallback(cbt), Some(cst));
+    let lead = grouped(items, &c, &own(kingdom, cbt), Some(cst));
     [vec![Tree::new(&format!("stmt.block_{c}"), cst, vec![lead])], keep, vec![last]].concat()
 }
 
 /// A statement list as the parser groups it at `rung`.
 fn grouped(mut items: Vec<Tree>, rung: &str, like: &Tree, stmt_ty: Option<Ty>) -> Tree {
     if items.is_empty() {
-        return Tree::fallback(like.ty);
+        return like.clone();
     }
     // One statement that is a block of this rung (a continue's) is that block.
     if let [one] = items.as_slice() {
@@ -167,8 +172,8 @@ fn convert(t: &Tree, demand: Ty, kingdom: &WgslKingdom) -> Option<Tree> {
     if t.ty == demand {
         return Some(t.clone());
     }
-    if t.name == "fallback" {
-        return Some(Tree::fallback(demand));
+    if t.name.starts_with("own.") {
+        return crate::wgsl::render::own_leaf(kingdom, demand).ok();
     }
     // A uniform bound under either bound dual (a conditional loop's, a
     // body loop's): the same uniform.
@@ -203,9 +208,9 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
         }
         seen |= s.name.starts_with("loop.items");
     }
-    let body_block = |items: Vec<Tree>| grouped(items, "L0", &Tree::fallback(b0), Some(l0));
+    let body_block = |items: Vec<Tree>| grouped(items, "L0", &own(kingdom, b0), Some(l0));
     if returns {
-        return Tree::new(&like.name, like.ty, vec![grid, body_block(items), Tree::fallback(o0)]);
+        return Tree::new(&like.name, like.ty, vec![grid, body_block(items), own(kingdom, o0)]);
     }
     let mut epi = Vec::new();
     statements(epilogue, &mut epi);
@@ -218,7 +223,7 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
     let mut run: Vec<Tree> = Vec::new();
     let flush = |run: &mut Vec<Tree>, items: &mut Vec<Tree>| {
         if !run.is_empty() {
-            items.push(Tree::new("stmt.cblock_L0", l0, vec![grouped(std::mem::take(run), "C0", &Tree::fallback(cb), Some(c0))]));
+            items.push(Tree::new("stmt.cblock_L0", l0, vec![grouped(std::mem::take(run), "C0", &own(kingdom, cb), Some(c0))]));
         }
     };
     for s in epi {
@@ -232,7 +237,7 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
         }
     }
     flush(&mut run, &mut items);
-    let epilogue = grouped(vec![last], "O0", &Tree::fallback(o0), dual_ty(kingdom, "stmt.O0").ok());
+    let epilogue = grouped(vec![last], "O0", &own(kingdom, o0), dual_ty(kingdom, "stmt.O0").ok());
     Tree::new(&like.name, like.ty, vec![grid, body_block(items), epilogue])
 }
 
@@ -296,13 +301,13 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
     let (x, y) = workgroup_shape(g.x, g.y);
     let gt = dual_ty(kingdom, "grid.grid").ok()?;
     let base = Tree::new(if g.rows_x { "grid.of_rows_x" } else { "grid.of" }, gt, vec![lit("literal.wgdim", "u32.wgdim", x)?, lit("literal.wgdim", "u32.wgdim", y)?, lit("literal.blk", "u32.blk", g.bx)?, lit("literal.blk", "u32.blk", g.by)?]);
-    let mut plan = workgroup_plan(kingdom, grid, root).ok()?;
+    let mut plan = workgroup_plan(grid, root).ok()?;
     if plan.is_empty() {
         // The original four arrays, declared as they always were: the ones
         // the statements use, at their original lengths.
         fn uses(t: &Tree, kingdom: &WgslKingdom, out: &mut std::collections::BTreeMap<String, (String, u32)>) {
-            let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
-            if let Some(v) = array.then(|| wgmem_var(kingdom, t).ok()).flatten() {
+            let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name.starts_with("own.") && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
+            if let Some(v) = array.then(|| wgmem_var(t).ok()).flatten() {
                 out.insert(v.to_string(), (String::new(), array_len(v)));
             }
             t.kids.iter().for_each(|k| uses(k, kingdom, out));
@@ -356,7 +361,7 @@ fn counter_at(depth: usize) -> Option<&'static str> {
 fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bool, kingdom: &WgslKingdom) -> Tree {
     // A counter: the copy's literal, 0 outside its loop, else itself.
     let value = |c: &Tree| -> Option<u32> {
-        if c.name == "fallback" {
+        if c.name.starts_with("own.") {
             return Some(0);
         }
         if let Some((_, v)) = fixed.iter().find(|(n, _)| *n == c.name) {
@@ -377,7 +382,7 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
             }
             if t.name.starts_with("uniform.of_tcounter") {
                 if v == 0 {
-                    return Tree::fallback(t.ty);
+                    return own(kingdom, t.ty);
                 }
                 if let Ok(l) = dual_ty(kingdom, "u32.lit4096") {
                     return Tree::new("uniform.of_lit", t.ty, vec![Tree::literal("literal.lit4096", l, v as f32)]);
@@ -444,7 +449,7 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
                         None => return t.clone(),
                     }
                 }
-                return Tree::new(&format!("stmt.block_{rung}"), st, vec![grouped(epilogue_items(items, rung, kingdom), rung, &Tree::fallback(bt), Some(st))]);
+                return Tree::new(&format!("stmt.block_{rung}"), st, vec![grouped(epilogue_items(items, rung, kingdom), rung, &own(kingdom, bt), Some(st))]);
             }
         }
     }
@@ -458,7 +463,7 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
         };
     }
     if t.name == "uniform.of_counter" && !items {
-        return Tree::fallback(t.ty);
+        return own(kingdom, t.ty);
     }
     let in_items = items || stem.starts_with("loop.items");
     let last = t.kids.len().saturating_sub(1);
@@ -495,13 +500,13 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tr
         // below the block factor (`min(v, B - 1)`, the k-th row of a strided
         // block at k * W), so read back as that offset, none at 0
         // (2026-10-17: 45 of the 889 random trees that missed the AST drawn).
-        ("safe.row_plus_s" | "safe.col_plus_s" | "safe.row_plus" | "safe.col_plus", [origin, off]) if off.kids.is_empty() && (off.name == "fallback" || off.name.starts_with("literal.")) => {
-            let v = if off.name == "fallback" || !off.konst.is_finite() { 1 } else { (off.konst.round() as i64).clamp(1, 64) as u32 };
+        ("safe.row_plus_s" | "safe.col_plus_s" | "safe.row_plus" | "safe.col_plus", [origin, off]) if off.kids.is_empty() && (off.name.starts_with("own.") || off.name.starts_with("literal.")) => {
+            let v = if off.name.starts_with("own.") || !off.konst.is_finite() { 1 } else { (off.konst.round() as i64).clamp(1, 64) as u32 };
             let v = v.min(f.saturating_sub(1));
             if v == 0 {
                 return origin.clone();
             }
-            let lit = if off.name == "fallback" { "literal.lit64" } else { off.name.as_str() };
+            let lit = if off.name.starts_with("own.") { "literal.lit64" } else { off.name.as_str() };
             vec![origin.clone(), Tree::literal(lit, off.ty, v as f32)]
         }
         // A grouped offset: its groups are its origin's (the emitter reads
@@ -550,7 +555,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_k
     if t.kids.is_empty() && t.name.starts_with("literal.") {
         return canonical_literal(t, kingdom);
     }
-    if t.name == "fallback" {
+    if t.name.starts_with("own.") || t.name.starts_with("const.") {
         if let Some(z) = canonical_fallback(t, kingdom, per_kernel) {
             return z;
         }
@@ -569,7 +574,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_k
                 // (Unrolled loops spliced, then the blocks regrouped; an
                 // epilogue that is the fallback after a body that returns
                 // is not written, and stays so.)
-                if k.name != "fallback" {
+                if !k.name.starts_with("own.") {
                     *k = structural(&loops(k, 0, 1, &[], false, kingdom), kingdom, per_kernel);
                 }
             }
@@ -613,19 +618,26 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl
         "u32.threadrows" | "u32.threadrowg" | "u32.rowbases" | "u32.rowbaseg" => return origin("safe.thread_row_s", "u32.threadrows"),
         "u32.threadcols" | "u32.threadcolg" | "u32.colbases" | "u32.colbaseg" => return origin("safe.thread_col_s", "u32.threadcols"),
         "u32.cell" => return cell(),
+        // A uniform's zero is the uniform dual's own terminal, as the parser reads it.
+        "u32.uniform" if t.name.starts_with("own.") => return Some(t.clone()),
+        // A thread id's axis: the builtin's component the renderer writes for it.
+        "u32.rowid" => return Some(Tree::new("axis.y_gid", t.ty, vec![gid()?])),
+        "u32.colid" => return Some(Tree::new("axis.x_gid", t.ty, vec![gid()?])),
         _ => {}
     }
     // An array: the one the emitter names for the dual.
     if d.dual.starts_with("parr<") {
-        let name = format!("parr.{}", parr_var(kingdom, t).ok()?.strip_prefix('p')?);
+        let name = format!("parr.{}", parr_var(t).ok()?.strip_prefix('p')?);
         return Some(Tree::new(&name, t.ty, vec![]));
     }
     if d.dual.starts_with("wgmem<") {
-        let name = format!("wg.{}", wgmem_var(kingdom, t).ok()?.strip_prefix("wg_")?);
+        let name = format!("wg.{}", wgmem_var(t).ok()?.strip_prefix("wg_")?);
         return Some(Tree::new(&name, t.ty, vec![]));
     }
     // The value written: a u32 or bool dual's fallback value, else 0.
     let written = match d.scalar() {
+        // (A `const` row writes the value it carries.)
+        _ if t.name.starts_with("const.") => t.konst as f32,
         Some("u32") => d.fallback_bits as f32,
         Some("bool") => f32::from(u8::from(d.fallback_bits != 0)),
         _ => 0.0,
@@ -656,7 +668,7 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl
     } else {
         return None;
     };
-    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, per_kernel).ok().filter(|z| z.name != "fallback").or_else(|| {
+    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, per_kernel).ok().filter(|z| !z.name.starts_with("own.") && !z.name.starts_with("const.")).or_else(|| {
         // A safe index (a workgroup or private array's): the zero through
         // the safe row the parser reads it with (`safe.wga_of(0u)`).
         match kingdom.rows.iter().find(|r| r.name.starts_with("safe.") && r.output == t.ty && r.inputs.as_slice() == [zero.ty]) {
@@ -676,7 +688,7 @@ fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     if !(1..=2).contains(&arrays.len()) {
         return None;
     }
-    let v = if n.name == "fallback" { 1 } else { n.konst.max(1.0) as u32 };
+    let v = if n.name.starts_with("own.") { 1 } else { n.konst.max(1.0) as u32 };
     let p = 1u32 << (31 - v.leading_zeros());
     if p == 1 {
         return Some(Tree::new(&format!("stmt.barrier_{rung}"), t.ty, vec![]));
@@ -744,7 +756,7 @@ fn canonical_neg_mat(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
     let tile = stem.strip_prefix("loop.tilex").map(|rest| format!("loop.tile{rest}_{rung}"))?;
-    let bound = t.kids.first().filter(|b| b.name == "fallback")?;
+    let bound = t.kids.first().filter(|b| b.name.starts_with("own."))?;
     // A step wider than the short loop's 64 stays expression-bounded.
     if t.kids.len() == 3 && t.kids[1].konst > 64.0 {
         return None;
@@ -803,7 +815,7 @@ fn uniform_value(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         (n, []) if n.starts_with("literal.") && crate::wgsl::params::parse_ref(n).is_none() => {
             let v = t.konst;
             if v == 0.0 {
-                return Some(Tree::fallback(u));
+                return Some(own(kingdom, u));
             }
             let l = dual_ty(kingdom, "u32.lit4096").ok()?;
             (v.fract() == 0.0 && (1.0..=4096.0).contains(&v)).then(|| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", l, v)]))
@@ -882,7 +894,7 @@ fn canonical_uniform_test(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         return plain_if(t, op, &x, &y, bodies, kingdom);
     }
     let u = dual_ty(kingdom, "u32.uniform").ok()?;
-    let zero = |t: &Tree| t.name == "fallback" || (t.name == "uniform.of_lit" && t.kids.first().is_some_and(|l| l.konst == 0.0));
+    let zero = |t: &Tree| t.name.starts_with("own.") || (t.name == "uniform.of_lit" && t.kids.first().is_some_and(|l| l.konst == 0.0));
     let one = || Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok().unwrap_or(u), 1.0)]);
     let (row, a, b) = match op {
         "eq" if zero(&y) => ("ult", x, one()),
@@ -924,14 +936,14 @@ fn plain_if(t: &Tree, op: &str, x: &Tree, y: &Tree, bodies: &[Tree], kingdom: &W
             _ => return None,
         };
         let name = format!("{}_{to}", &t.name[..t.name.len() - r.len() - 1]);
-        let ty = if t.name == "fallback" { t.ty } else { kingdom.rows.iter().find(|row| row.name == name).map(|row| row.output)? };
+        let ty = if t.name.starts_with("own.") { t.ty } else { kingdom.rows.iter().find(|row| row.name == name).map(|row| row.output)? };
         Some(Tree { name, ty, konst: t.konst, kids })
     }
     // (A fallback body, the empty block, keeps its leaf under its new dual.)
     let body = |b: &Tree| -> Option<Tree> {
-        if b.name == "fallback" {
+        if b.name.starts_with("own.") {
             let bt = dual_ty(kingdom, &format!("block.C{}", &rung[1..])).ok()?;
-            return Some(Tree::fallback(bt));
+            return Some(own(kingdom, bt));
         }
         down(b, kingdom)
     };
@@ -955,7 +967,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     }
     // A literal private index, masked as written.
     if let (true, [arr, idx, rest @ ..]) = (t.name.starts_with("parr.get_") || t.name.starts_with("parr.set_"), t.kids.as_slice()) {
-        if let ([k], Ok(var)) = (idx.kids.as_slice(), parr_var(kingdom, arr)) {
+        if let ([k], Ok(var)) = (idx.kids.as_slice(), parr_var(arr)) {
             let mask = match idx.name.as_str() {
                 "safe.pidx64" => Some(63u32),
                 "safe.pidx128" => Some(127u32),
@@ -972,11 +984,11 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     }
     // A breaking loop with an empty body (no break written) is the loop.
     if let (Some(rest), Some(body)) = (t.name.strip_prefix("loop.tile_brk_").map(|r| format!("loop.tile_{r}")).or_else(|| t.name.strip_prefix("loop.tilex_brk_").map(|r| format!("loop.tilex_{r}"))), t.kids.last()) {
-        if body.name == "fallback" {
+        if body.name.starts_with("own.") {
             if let Some(r) = kingdom.rows.iter().find(|r| r.name == rest && r.output == t.ty && r.inputs.len() == t.kids.len()) {
                 let mut kids = t.kids.clone();
                 let last = kids.len() - 1;
-                kids[last] = Tree::fallback(r.inputs[last]);
+                kids[last] = own(kingdom, r.inputs[last]);
                 return Tree::new(&rest, t.ty, kids);
             }
         }
@@ -1002,7 +1014,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     // An if with an empty else is the if.
     if let (Some(rung), [c, then, other]) = (t.name.strip_prefix("stmt.if_else_"), t.kids.as_slice()) {
         let name = format!("stmt.if_{rung}");
-        if other.name == "fallback" && kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty) {
+        if other.name.starts_with("own.") && kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty) {
             return Tree::new(&name, t.ty, vec![c.clone(), then.clone()]);
         }
     }
@@ -1022,7 +1034,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             let mut items = Vec::new();
             statements(t, &mut items);
             let stmt_ty = dual_ty(kingdom, &format!("stmt.{rung}")).ok();
-            return grouped(epilogue_items(items, rung, kingdom), rung, t, stmt_ty);
+            return grouped(epilogue_items(items, rung, kingdom), rung, &own(kingdom, t.ty), stmt_ty);
         }
     }
     t.clone()
