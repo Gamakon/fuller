@@ -146,7 +146,8 @@ fn capability_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<crate::wgsl::safe_
         let elem = inner.split(", ").next().unwrap_or(inner);
         let (Some(index), Some(dual)) = (index, elem_dual(elem).and_then(|d| ty(&d))) else { continue };
         out.push((format!("load.{}", b.name), vec![index], dual));
-        if !inner.contains(", ") {
+        // (The length of the interface's own input and output is the kingdom's row, `load.phi_len` / `load.h_len`.)
+        if !inner.contains(", ") && b.name != role.input && b.name != role.output {
             if let Some(count) = ty("u32.count") {
                 out.push((format!("len.{}", b.name), Vec::new(), count));
             }
@@ -334,6 +335,45 @@ pub fn encode(a: &Alphabet, kingdom: &WgslKingdom, tree: &Tree) -> Result<Encode
     }
     let gene = typed_gep::write_back(k, &layout, &filler, &typed).map_err(|e| gap("write-back", e.to_string()))?;
     Ok(Encoded { layout, gene, pools })
+}
+
+/// THE HOST TYPED INITIALISER: a gene of `layout` drawn cell by cell, every draw taken from the alphabet of the cell
+/// it writes, from the run's seeded generator `state`. A head cell is a function of the cell's type or a terminal of it
+/// by a fair coin (the design's `FunctionShare::half`; the kingdom's types hold hundreds of functions against tens of
+/// terminals, so a draw in proportion to their numbers expresses over a thousand nodes), then uniform within the chosen
+/// kind; a tail cell: any terminal of the type; a Dc cell: any index of the type's pool `C_T`. No cell is drawn and then
+/// changed: the gene is a program of the kingdom whatever the draws are. `C_T` holds, for each constant-capable type,
+/// the constant 0 and seven values drawn from the dual's literal domain.
+pub fn random_gene(a: &Alphabet, kingdom: &WgslKingdom, layout: &GeneLayout, state: &mut u64) -> Result<Encoded, Gap> {
+    use crate::wgsl::render::{drawn_constant, next_draw};
+    let k = &a.contract;
+    let mut pools: BTreeMap<Ty, Vec<u32>> = BTreeMap::new();
+    for f in layout.frames.iter().filter(|f| f.dc_off.is_some()) {
+        let d = kingdom.dual(f.ty).ok_or_else(|| gap("constant of an unknown dual", format!("{:?}", f.ty)))?;
+        let mut pool = vec![0u32];
+        for _ in 0..7 {
+            let u = (next_draw(state) >> 11) as f64 / (1u64 << 53) as f64;
+            pool.push(const_bits(d, drawn_constant(d, u))?);
+        }
+        pools.insert(f.ty, pool);
+    }
+    let mut gene = vec![0u32; layout.width];
+    for s in layout.spans() {
+        let (functions, terminals): (&[u32], Vec<u32>) = match s.domain {
+            Domain::Head => (k.functions_of(s.ty), k.terminals_of(s.ty).to_vec()),
+            Domain::Tail => (&[], k.terminals_of(s.ty).to_vec()),
+            Domain::Dc => (&[], (0..pools.get(&s.ty).map_or(0, Vec::len) as u32).collect()),
+        };
+        if terminals.is_empty() && functions.is_empty() {
+            return Err(gap("layout", format!("no symbol for the {:?} cells of {:?}", s.domain, s.ty)));
+        }
+        for w in &mut gene[s.off..s.off + s.len] {
+            let pick_function = !functions.is_empty() && (terminals.is_empty() || next_draw(state) & 1 == 0);
+            let kind: &[u32] = if pick_function { functions } else { &terminals };
+            *w = kind[(next_draw(state) % kind.len() as u64) as usize];
+        }
+    }
+    Ok(Encoded { layout: layout.clone(), gene, pools })
 }
 
 /// Express an encoded kernel back into a render tree.
@@ -719,5 +759,37 @@ mod tests {
         let names: Vec<String> = (0..alphabet.contract.n_symbols()).map(|s| alphabet.contract.name(s as SymbolId).to_string()).collect();
         let gram: Vec<&String> = names.iter().filter(|n| ["uniform.cfg_", "kernel:load.cfg_m", "kernel:load.cfg_d", "kernel:load.cfg_r_rows", "kernel:load.cfg_r_off", "bound.m", "bound.d", "bound.rows", "safe.cell_of", "safe.mirror_of", "kernel:load.phi", "kernel:load.h"].iter().any(|p| n.starts_with(p))).collect();
         assert!(gram.is_empty(), "rows that read the Gram's fields are symbols of v24's alphabet: {gram:?}");
+    }
+
+    /// N GENES FROM THE TYPED INITIALISER OF v24's INTERFACE, rendered and validated by naga: none fails on a `cfg` row
+    /// (run 6i: `load.cfg_m` is not a row of the function table, `invalid field accessor 'd'`). The other render
+    /// failures the genes show (printed: a vector of f16 indexed by `shape.at`, `store.index_*` named as a row, naga's
+    /// folding of `acos`, `asin` and `pow` of constants, a fifth nested tile loop) are kingdom bugs of their own, listed in
+    /// the A0 report for the rows' owners; the legality layers are not judged here.
+    #[test]
+    fn random_typed_genes_of_v24s_interface_name_no_cfg_row() {
+        use crate::wgsl::render::validate_text;
+        use crate::wgsl::safe_karva::render_tree_with;
+        const N: usize = 200;
+        let kingdom = WgslKingdom::load_safe();
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/problems/v24_ingest_small/reference.wgsl")).expect("v24's reference kernel");
+        let read = crate::wgsl::safe_reader::read_safe(&text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let kingdom = read.kingdom.as_ref().unwrap_or(&kingdom);
+        let a = Alphabet::new(kingdom, &read.role).unwrap_or_else(|g| panic!("{}: {}", g.reason, g.detail));
+        let root = crate::wgsl::render::dual_ty(kingdom, read.role.root_dual()).unwrap_or_else(|e| panic!("{e}"));
+        let layout = GeneLayout::from_program_size(&a.contract, root, 16).unwrap_or_else(|e| panic!("{e}"));
+        let mut state = 0xA11CE_u64;
+        let mut failures: BTreeMap<String, usize> = BTreeMap::new();
+        for i in 0..N {
+            let gene = random_gene(&a, kingdom, &layout, &mut state).unwrap_or_else(|g| panic!("gene {i}: {}: {}", g.reason, g.detail));
+            let tree = express(&a, kingdom, &gene).unwrap_or_else(|g| panic!("gene {i}: {}: {}", g.reason, g.detail));
+            match render_tree_with(&tree, kingdom, &read.role).and_then(|r| validate_text(&r.text)) {
+                Ok(()) => {}
+                Err(e) => *failures.entry(e.lines().next().unwrap_or("").chars().take(140).collect()).or_default() += 1,
+            }
+        }
+        println!("{N} random typed genes of v24's interface: {} failed to render or validate: {failures:?}", failures.values().sum::<usize>());
+        let cfg: Vec<&String> = failures.keys().filter(|e| e.contains("cfg") || e.contains("field accessor") || e.contains("is not a row of the function table")).collect();
+        assert!(cfg.is_empty(), "genes of v24's interface fail on the Gram's fields: {cfg:?}");
     }
 }

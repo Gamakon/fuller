@@ -746,7 +746,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // (a 64-bit hash state, a wide fixed-point value): the dual's `const` row at that value, which the renderer
     // writes as that splat (2026-10-12).
     if let (true, [x]) = (t.name.starts_with("shape.splat"), t.kids.as_slice()) {
-        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.own_bits()) == x.konst) {
+        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| holds_constant(d, x.konst)) {
             if let Some(c) = const_of(kingdom, demand, x.konst) {
                 return Ok(c);
             }
@@ -843,7 +843,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         }
         // A dual with no literal row (a hash state, a fixed-point value): its `const` row, the zero the renderer
         // writes for it, when the literal is it (2026-10-12: 48 of 1,000 random trees).
-        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.own_bits()) == t.konst) {
+        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && holds_constant(d, t.konst)) {
             if let Some(c) = const_of(kingdom, demand, t.konst) {
                 return Ok(c);
             }
@@ -956,6 +956,18 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
 }
 
 /// The `const.*` row of a dual at a value (the constants of the duals no literal reaches), when the dual has one.
+/// Whether a constant is a value of the dual's scalar (a whole number for an integer slot, not negative for u32, 0 or 1 for
+/// bool): the value its `const` row writes, as the literal writes it.
+fn holds_constant(d: &crate::wgsl::loader::WgslDual, konst: f64) -> bool {
+    match d.scalar() {
+        Some("u32") => konst.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&konst),
+        Some("i32") => konst.fract() == 0.0 && (f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&konst),
+        Some("bool") => konst == 0.0 || konst == 1.0,
+        Some("f32" | "f16") => konst.is_finite(),
+        _ => false,
+    }
+}
+
 fn const_of(kingdom: &WgslKingdom, ty: Ty, konst: f64) -> Option<Tree> {
     kingdom.rows.iter().find(|r| r.name.starts_with("const.") && r.inputs.is_empty() && r.output == ty).map(|r| Tree::literal(&r.name, ty, konst))
 }
@@ -1379,140 +1391,32 @@ mod tests {
     /// EVERY RANDOM GENE IS A KERNEL THAT STORES (Andrew's rule: a gene the
     /// kingdom admits that cannot be a correct kernel is a kingdom bug; 51 of
     /// 133 of fit_A2's first repair briefs carried an offspring that never
-    /// writes h). N random chromosomes at the 128-slot layout (head 32, K 4,
-    /// tail 97): gene 0's root is `kernel.entry_safe` (as the engine fixes
-    /// it), every other head token is drawn over the whole symbol set (the
-    /// kingdom's rows, the role's loads, the 128 hrefs, a literal payload),
-    /// every tail token over the terminals; every gene is decoded, unfolded,
-    /// projected and rendered, and the text must write h and validate.
-    /// Measured 2026-10-11: 0 of 1,000 wrote h before the epilogue, 1,000 of
-    /// 1,000 with it, all 1,000 valid.
+    /// writes h). N genes from the TYPED INITIALISER at program size 32
+    /// ([`crate::wgsl::typed_gene::random_gene`]: every cell drawn from the
+    /// alphabet of its own type, root `kernel.safe`, nothing drawn and then
+    /// changed); each is expressed, rendered, and the text must write h and
+    /// validate.
+    /// Measured 2026-10-11 with the untyped chromosomes: 0 of 1,000 wrote h
+    /// before the epilogue, 1,000 of 1,000 with it, all 1,000 valid.
     #[test]
     fn every_random_gene_renders_a_store_of_h() {
+        use crate::typed_gep::GeneLayout;
+        use crate::wgsl::typed_gene::{express, random_gene, Alphabet};
         const N: usize = 1000;
-        const HEAD: usize = 32;
-        const SLOTS: usize = 128;
         let k = WgslKingdom::load_safe();
         let role = gram_role();
-        let tail_len = HEAD * (K - 1) + 1;
-        let f16 = |t: &Ty| k.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
-        let mut functions: BTreeMap<String, usize> = BTreeMap::new();
-        let mut terminals: BTreeSet<String> = BTreeSet::new();
-        for r in k.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16)) {
-            if r.name.starts_with("literal.") {
-                functions.insert(r.name.clone(), 1);
-            } else if r.inputs.is_empty() {
-                terminals.insert(r.name.clone());
-            } else {
-                functions.insert(r.name.clone(), r.inputs.len());
-            }
-        }
-        let per_kernel = per_kernel_rows(&k, &role);
-        for (name, inputs, _) in per_kernel.iter().cloned() {
-            if inputs.is_empty() {
-                terminals.insert(name);
-            }
-        }
-        for s in 0..SLOTS {
-            terminals.insert(href_name(s));
-        }
-        let functions: Vec<(String, usize)> = functions.into_iter().filter(|(_, a)| *a <= K).collect();
-        let terminals: Vec<String> = terminals.into_iter().collect();
-        let pset = PsetSpec { variables: terminals.clone(), functions: functions.iter().map(|(n, a)| (n.clone(), FunctionSpec { semantic_id: n.clone(), arity: *a })).collect(), rnc_values: vec![0.0] };
+        let a = Alphabet::new(&k, &role).unwrap_or_else(|g| panic!("{}: {}", g.reason, g.detail));
+        let root = dual_ty(&k, "kernel.safe").expect("the root dual");
+        let layout = GeneLayout::from_program_size(&a.contract, root, 32).unwrap_or_else(|e| panic!("{e}"));
         let mut state = 0x5eed_u64;
-        let mut next = move || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            (state >> 33) as usize
-        };
-        let terminal = |next: &mut dyn FnMut() -> usize| -> Token {
-            if next().is_multiple_of(8) {
-                Token::Num((next() % 64) as f64)
-            } else {
-                Token::Var(terminals[next() % terminals.len()].clone())
-            }
-        };
         let (mut rendered, mut stored, mut failed, mut invalid, mut unstored) = (0usize, 0usize, Vec::new(), Vec::<String>::new(), Vec::<String>::new());
         for i in 0..N {
-            let mut genes: Vec<MathNode> = Vec::with_capacity(SLOTS + 1);
-            for g in 0..=SLOTS {
-                let head: Vec<Token> = (0..HEAD)
-                    .map(|p| {
-                        if g == 0 && p == 0 {
-                            Token::Func("kernel.entry_safe".into())
-                        } else if next().is_multiple_of(2) {
-                            Token::Func(functions[next() % functions.len()].0.clone())
-                        } else {
-                            terminal(&mut next)
-                        }
-                    })
-                    .collect();
-                let tail: Vec<Token> = (0..tail_len).map(|_| terminal(&mut next)).collect();
-                genes.push(parse_math(&karva_to_terms_generic(&head, &tail, &pset).unwrap_or_else(|e| panic!("chromosome {i} gene {g}: {e}"))).expect("a decoded gene parses"));
-            }
-            // The typed decode (the engine's): a slot's dual is its root's
-            // row's output, and an href where its slot's dual is not the
-            // demand is masked to a real terminal of the demand (an own or const row), as the typed decode fills a tail.
-            let root_dual = |n: &MathNode| -> Option<Ty> {
-                match n {
-                    MathNode::App(c, kids) => k.rows.iter().find(|r| r.name == *c && (r.inputs.len() == kids.len() || c.starts_with("literal."))).map(|r| r.output),
-                    MathNode::Var(v) => k.rows.iter().find(|r| r.name == *v && r.inputs.is_empty()).map(|r| r.output).or_else(|| per_kernel.iter().find(|(n, i, _)| n == v && i.is_empty()).map(|(_, _, o)| *o)),
-                    MathNode::Num(_) => None,
-                }
-            };
-            let slot_duals: Vec<Option<Ty>> = genes[1..].iter().map(root_dual).collect();
-            fn mask(n: &MathNode, demand: Ty, slot_duals: &[Option<Ty>], k: &WgslKingdom, per_kernel: &[PerKernelRow]) -> MathNode {
-                fn node(t: &Tree) -> MathNode {
-                    if has_payload(&t.name) && t.kids.is_empty() {
-                        MathNode::App(t.name.clone(), vec![MathNode::Num(t.konst)])
-                    } else if t.kids.is_empty() {
-                        MathNode::Var(t.name.clone())
-                    } else {
-                        MathNode::App(t.name.clone(), t.kids.iter().map(node).collect())
-                    }
-                }
-                let terminal = || node(&crate::wgsl::render::terminal_leaf(k, demand).unwrap_or_else(|e| panic!("{e}")));
-                match n {
-                    MathNode::Var(v) => match href_slot(v) {
-                        Some(s) if slot_duals.get(s).copied().flatten() == Some(demand) => n.clone(),
-                        Some(_) => terminal(),
-                        None if signatures(split_token(v).0, demand, 0, k, per_kernel).next().is_some() => n.clone(),
-                        None => terminal(),
-                    },
-                    MathNode::Num(_) => terminal(),
-                    MathNode::App(c, kids) if has_payload(c) => {
-                        if k.rows.iter().any(|r| r.name == *c && r.output == demand) {
-                            MathNode::App(c.clone(), kids.clone())
-                        } else {
-                            terminal()
-                        }
-                    }
-                    MathNode::App(c, kids) => match signatures(c, demand, kids.len(), k, per_kernel).next() {
-                        Some(inputs) => MathNode::App(c.clone(), kids.iter().zip(inputs).map(|(x, &d)| mask(x, d, slot_duals, k, per_kernel)).collect()),
-                        None => terminal(),
-                    },
-                }
-            }
-            fn text(n: &MathNode) -> String {
-                match n {
-                    MathNode::Num(v) => format!("(Num {v:?})"),
-                    MathNode::Var(v) => format!("(Var {v:?})"),
-                    MathNode::App(c, kids) => format!("({c}{})", kids.iter().map(|x| format!(" {}", text(x))).collect::<String>()),
-                }
-            }
-            let root = dual_ty(&k, "kernel.safe").expect("the root dual");
-            let genes: Vec<String> = genes
-                .iter()
-                .enumerate()
-                .map(|(g, n)| {
-                    let demand = if g == 0 { Some(root) } else { slot_duals[g - 1] };
-                    demand.map_or_else(|| EMPTY_SLOT.to_string(), |d| text(&mask(n, d, &slot_duals, &k, &per_kernel)))
-                })
-                .collect();
-            let built = unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role));
-            let text = match built.as_ref().map_err(Clone::clone).and_then(|t| render_tree_with(t, &k, &crate::wgsl::render::gram_role())) {
+            let gene = random_gene(&a, &k, &layout, &mut state).unwrap_or_else(|g| panic!("gene {i}: {}: {}", g.reason, g.detail));
+            let tree = express(&a, &k, &gene).unwrap_or_else(|g| panic!("gene {i}: {}: {}", g.reason, g.detail));
+            let text = match render_tree_with(&tree, &k, &role) {
                 Ok(r) => r.text,
                 Err(e) => {
-                    failed.push(format!("chromosome {i}: {}", &e[..e.len().min(160)]));
+                    failed.push(format!("gene {i}: {}", &e[..e.len().min(160)]));
                     continue;
                 }
             };
@@ -1520,13 +1424,25 @@ mod tests {
             if text.contains("h[") {
                 stored += 1;
             } else {
-                unstored.push(format!("chromosome {i}: {}\n{text}", built.as_ref().map_or_else(Clone::clone, Tree::to_sexpr)));
+                unstored.push(format!("gene {i}: {}\n{text}", tree.to_sexpr()));
             }
             if let Err(e) = validate_text(&text) {
-                invalid.push(format!("chromosome {i}: {}", e.lines().next().unwrap_or("")));
+                invalid.push(format!("gene {i}: {}", e.lines().next().unwrap_or("")));
             }
         }
-        println!("{N} random chromosomes: {rendered} rendered, {stored} write h, {} valid WGSL, {} did not render", rendered - invalid.len(), failed.len());
+        println!("{N} random typed genes: {rendered} rendered, {stored} write h, {} valid WGSL, {} did not render", rendered - invalid.len(), failed.len());
+        let mut classes: BTreeMap<String, usize> = BTreeMap::new();
+        for f in failed.iter().chain(&invalid) {
+            let reason = f.split_once(": ").map_or(f.as_str(), |(_, r)| r);
+            let mut class: String = reason.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect();
+            class.truncate(110);
+            *classes.entry(class).or_default() += 1;
+        }
+        let mut classes: Vec<(String, usize)> = classes.into_iter().collect();
+        classes.sort_by(|x, y| y.1.cmp(&x.1));
+        for (class, n) in classes.iter().take(25) {
+            println!("  {n:>4}  {class}");
+        }
         for e in invalid.iter().take(5) {
             println!("  {e}");
         }

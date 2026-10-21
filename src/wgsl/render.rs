@@ -36,34 +36,47 @@ pub fn own_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
         .ok_or_else(|| format!("our software has a bug: the dual {} has no own terminal", kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone())))
 }
 
-/// A real terminal of a dual for a draw that has nothing else to put there, each a row of the kingdom. A value dual:
-/// its `own.*` terminal, else its `const.*` row at the dual's neutral value (`WgslDual::own_bits`: 0, or 1 for
-/// the sign), else its `literal.*` row at the member of its domain nearest that value, else its first terminal row (a
-/// register, a builtin, a counter). A statement or block dual: its `own.*` terminal, else the row that makes it of
-/// a block's `own.*` terminal (`stmt.block_L0` of the empty block): a statement row with an effect (a return, a
-/// barrier) is never put where nothing was asked for. A dual with none of these is our software's bug.
-pub fn terminal_leaf(kingdom: &WgslKingdom, ty: Ty) -> Result<Tree, String> {
-    own_leaf(kingdom, ty).or_else(|bug| {
-        let Some(d) = kingdom.dual(ty) else { return Err(bug) };
-        if matches!(d.slot.as_str(), "stmt" | "block") {
-            return kingdom
-                .rows
-                .iter()
-                .filter(|r| r.output == ty && (r.name == "stmt.block" || r.name.starts_with("stmt.block_")) && r.inputs.len() == 1)
-                .find_map(|r| own_leaf(kingdom, r.inputs[0]).ok().map(|o| Tree::new(&r.name, ty, vec![o])))
-                .ok_or(bug);
+/// One step of the run's seeded generator (SplitMix64): every draw of the sampler and of [`terminal_leaf`] takes its
+/// numbers from it, so the same seed draws the same tree.
+pub fn next_draw(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A constant for a terminal row of a literal or `const` kind: drawn by the form of its dual from the unit draw `u`,
+/// then read into the dual's literal domain, so a drawn constant is a value of the domain (a bounded literal is never 0,
+/// a block factor is one of {1, 2, 4, 8}).
+pub fn drawn_constant(dual: &WgslDual, u: f64) -> f64 {
+    let v = match dual.form.as_str() {
+        "real" => f64::from(((u * 8.0) - 4.0) as f32),
+        "flag" | "sign" => f64::from(u8::from(u >= 0.5)),
+        "int" | "q15_16" => ((u * 200.0) - 100.0).round(),
+        _ => (u * 64.0).floor(),
+    };
+    dual.literal.as_ref().map_or(v, |l| l.canonical(v, 0.0))
+}
+
+/// A terminal of type `ty`, drawn UNIFORMLY from every terminal row of that type (the kingdom's and the interface's, the
+/// rows the interface spells), by the run's seeded generator `state`; a literal or constant row takes a value drawn
+/// from its dual's domain. There is no order of preference: a draw that ends at a terminal of `T` is a draw from `T`'s
+/// terminals. A type with no terminal is our software's bug, and said so.
+pub fn terminal_leaf(kingdom: &WgslKingdom, role: &Role, ty: Ty, state: &mut u64) -> Result<Tree, String> {
+    let role_rows = role.rows(kingdom)?;
+    let terminals: Vec<&WgslRow> = kingdom.rows.iter().chain(&role_rows).filter(|r| r.inputs.is_empty() && r.output == ty && role_spells(kingdom, role, r)).collect();
+    if terminals.is_empty() {
+        return Err(format!("our software has a bug: the type {} has no terminal", kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone())));
+    }
+    let row = terminals[(next_draw(state) % terminals.len() as u64) as usize];
+    match kingdom.dual(ty) {
+        Some(d) if row.name.starts_with("literal.") || row.name.starts_with("const.") => {
+            let u = (next_draw(state) >> 11) as f64 / (1u64 << 53) as f64;
+            Ok(Tree::literal(&row.name, ty, drawn_constant(d, u)))
         }
-        let neutral = f64::from(d.own_bits());
-        let of_dual = |prefix: &str| kingdom.rows.iter().find(|r| r.name.starts_with(prefix) && r.inputs.is_empty() && r.output == ty);
-        if let Some(r) = of_dual("const.") {
-            return Ok(Tree::literal(&r.name, ty, neutral));
-        }
-        if let Some(r) = of_dual("literal.") {
-            let konst = d.literal.as_ref().map_or(neutral, |l| l.canonical(neutral, neutral));
-            return Ok(Tree::literal(&r.name, ty, konst));
-        }
-        kingdom.rows.iter().find(|r| r.inputs.is_empty() && r.output == ty).map(|r| Tree::new(&r.name, ty, Vec::new())).ok_or(bug)
-    })
+        _ => Ok(Tree::new(&row.name, ty, Vec::new())),
+    }
 }
 
 impl Tree {
@@ -2969,6 +2982,7 @@ impl Renderer<'_> {
                 Some("u32") => "u",
                 Some("i32") => "i",
                 Some("bool") => "b",
+                Some("f16") => "h",
                 other => return Err(format!("shape.at over {}: no helper for scalar {other:?}", vd.dual)),
             };
             if !(2..=4).contains(&vd.lanes) {
@@ -3861,6 +3875,9 @@ pub const COMPOSITES: &[(&str, &str)] = &[
     ("at_vec2b", "fn at_vec2b(v: vec2<bool>, i: u32) -> bool { var t = v; return t[i & 1u]; }"),
     ("at_vec3b", "fn at_vec3b(v: vec3<bool>, i: u32) -> bool { var t = v; return t[min(i, 2u)]; }"),
     ("at_vec4b", "fn at_vec4b(v: vec4<bool>, i: u32) -> bool { var t = v; return t[i & 3u]; }"),
+    ("at_vec2h", "fn at_vec2h(v: vec2<f16>, i: u32) -> f16 { var t = v; return t[i & 1u]; }"),
+    ("at_vec3h", "fn at_vec3h(v: vec3<f16>, i: u32) -> f16 { var t = v; return t[min(i, 2u)]; }"),
+    ("at_vec4h", "fn at_vec4h(v: vec4<f16>, i: u32) -> f16 { var t = v; return t[i & 3u]; }"),
     ("inverse_2", "fn inverse_2(m: mat2x2<f32>) -> mat2x2<f32> {\n    let inv_det = 1.0 / determinant(m);\n    return mat2x2<f32>(vec2<f32>(m[1][1], -m[0][1]) * inv_det, vec2<f32>(-m[1][0], m[0][0]) * inv_det);\n}"),
     ("inverse_3", "fn inverse_3(m: mat3x3<f32>) -> mat3x3<f32> {\n    // Columns of the adjugate: cross products of the columns, transposed.\n    let c0 = cross(m[1], m[2]);\n    let c1 = cross(m[2], m[0]);\n    let c2 = cross(m[0], m[1]);\n    let inv_det = 1.0 / dot(m[0], c0);\n    return transpose(mat3x3<f32>(c0, c1, c2)) * inv_det;\n}"),
     ("inverse_4", "fn inverse_4(m: mat4x4<f32>) -> mat4x4<f32> {\n    // The adjugate from 2x2 sub-determinants (column-major m[col][row]).\n    let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];\n    let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];\n    let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];\n    let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];\n    let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10; let b02 = a00 * a13 - a03 * a10;\n    let b03 = a01 * a12 - a02 * a11; let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;\n    let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30; let b08 = a20 * a33 - a23 * a30;\n    let b09 = a21 * a32 - a22 * a31; let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;\n    let inv_det = 1.0 / (b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06);\n    return mat4x4<f32>(\n        vec4<f32>(a11 * b11 - a12 * b10 + a13 * b09, a02 * b10 - a01 * b11 - a03 * b09, a31 * b05 - a32 * b04 + a33 * b03, a22 * b04 - a21 * b05 - a23 * b03),\n        vec4<f32>(a12 * b08 - a10 * b11 - a13 * b07, a00 * b11 - a02 * b08 + a03 * b07, a32 * b02 - a30 * b05 - a33 * b01, a20 * b05 - a22 * b02 + a23 * b01),\n        vec4<f32>(a10 * b10 - a11 * b08 + a13 * b06, a01 * b08 - a00 * b10 - a03 * b06, a30 * b04 - a31 * b02 + a33 * b00, a21 * b02 - a20 * b04 - a23 * b00),\n        vec4<f32>(a11 * b07 - a10 * b09 - a12 * b06, a00 * b09 - a01 * b07 + a02 * b06, a31 * b01 - a30 * b03 - a32 * b00, a20 * b03 - a21 * b01 + a22 * b00)) * inv_det;\n}"),
@@ -4081,17 +4098,12 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     let varying_reach = reach(&reads_varying);
     let flags: Vec<(bool, bool, bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r), reads_variable(r), reads_varying(r))).collect();
     let mut state = seed ^ 0x5DEE_CE66_D1CE_4E5B;
-    fn next(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = *state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
+    use crate::wgsl::render::next_draw as next;
     struct Draw<'a> {
         rows: &'a [WgslRow],
         by_out: &'a BTreeMap<Ty, (Vec<usize>, Vec<usize>)>,
         kingdom: &'a WgslKingdom,
+        role: &'a Role,
         max_depth: usize,
         input_reach: &'a BTreeMap<Ty, usize>,
         store_reach: &'a BTreeMap<Ty, usize>,
@@ -4320,10 +4332,11 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             t
         }
 
-        /// The dual's own terminal: what a draw ends in when the dual has no row to draw. A dual with none is
-        /// our software's bug, recorded here (the sampler returns it; the tree drawn meanwhile is discarded).
-        fn own_or_bug(&self, demand: Ty) -> Tree {
-            crate::wgsl::render::terminal_leaf(self.kingdom, demand).unwrap_or_else(|e| {
+        /// A terminal of the dual, drawn uniformly from the dual's terminals ([`terminal_leaf`]): what a draw ends in
+        /// when the rows it may use are none. A dual with no terminal is our software's bug, recorded here (the
+        /// sampler returns it; the tree drawn meanwhile is discarded).
+        fn own_or_bug(&self, demand: Ty, state: &mut u64) -> Tree {
+            crate::wgsl::render::terminal_leaf(self.kingdom, self.role, demand, state).unwrap_or_else(|e| {
                 self.bug.borrow_mut().get_or_insert(e);
                 Tree::new("own.missing", demand, Vec::new())
             })
@@ -4334,7 +4347,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         /// block or statement at the depth cap draws its way to an output
         /// store, not its own terminal.
         fn grow_free(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
-            let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return self.own_or_bug(demand) };
+            let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return self.own_or_bug(demand, state) };
             // A continue inside a conditional block of a loop body's statement
             // (an if at an L rung) would skip the rest of the body in some
             // threads, a barrier after it among them: not drawn there
@@ -4425,7 +4438,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
             if pick_terminal {
                 if terminals.is_empty() {
-                    return self.own_or_bug(demand);
+                    return self.own_or_bug(demand, state);
                 }
                 let r = &self.rows[terminals[(next(state) % terminals.len() as u64) as usize]];
                 if r.name.starts_with("literal.") {
@@ -4483,7 +4496,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         let (row, col) = (dual_ty(kingdom, "u32.threadrow").ok()?, dual_ty(kingdom, "u32.threadcol").ok()?);
         rows.iter().position(|r| r.name == "safe.cell_of" && r.output == c && r.inputs == [row, col])
     });
-    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags, cell_ty, cell_row: std::cell::Cell::new(None), groups: std::cell::RefCell::new([None, None]), bug: std::cell::RefCell::new(None), plain_cell };
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, role, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags, cell_ty, cell_row: std::cell::Cell::new(None), groups: std::cell::RefCell::new([None, None]), bug: std::cell::RefCell::new(None), plain_cell };
     /// A hole of the sketch: where it is, the depth it is drawn at and what it must read.
     struct Hole {
         path: Vec<usize>,
@@ -4601,7 +4614,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         // The statement (the hole) whose removal lowers the cost most.
         let gain = |p: &Vec<usize>| {
             // (A site whose dual has no own terminal cannot be taken out: it gains nothing.)
-            let without = cost(&crate::wgsl::render::terminal_leaf(kingdom, at(&tree, p).ty).map_or_else(|_| tree.clone(), |o| put(&tree, p, o)));
+            let mut probe = seed ^ 0x7E57_1EAF_5EED_0001;
+            let without = cost(&crate::wgsl::render::terminal_leaf(kingdom, role, at(&tree, p).ty, &mut probe).map_or_else(|_| tree.clone(), |o| put(&tree, p, o)));
             (c.per_item - without.per_item) / bound.per_item.max(1.0) + (c.base - without.base) / bound.base.max(1.0)
         };
         let Some((worst, depth, need)) = paths.iter().max_by(|a, b| gain(&a.0).partial_cmp(&gain(&b.0)).unwrap_or(std::cmp::Ordering::Equal)).cloned() else { return Ok(tree) };
@@ -4613,7 +4627,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             // The epilogue's store, its shortest way.
             draw.grow(node.ty, max_depth, Need::Nothing, false, 0, &mut state)
         } else if *n > 16 {
-            crate::wgsl::render::terminal_leaf(kingdom, node.ty)?
+            crate::wgsl::render::terminal_leaf(kingdom, role, node.ty, &mut state)?
         } else {
             draw.grow(node.ty, depth, need, false, 0, &mut state)
         };
@@ -4702,7 +4716,7 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 mod tests {
     /// A terminal of a dual for a test that needs any leaf there: its own terminal, else a row with no inputs at zero.
     fn own(k: &WgslKingdom, ty: Ty) -> Tree {
-        terminal_leaf(k, ty).or_else(|e| k.rows.iter().find(|r| r.inputs.is_empty() && r.output == ty).map(|r| Tree::literal(&r.name, ty, 0.0)).ok_or(e)).unwrap_or_else(|e| panic!("{e}"))
+        terminal_leaf(k, &gram_role(), ty, &mut (0x7E57_0000_u64 ^ u64::from(ty.code()))).unwrap_or_else(|e| panic!("{e}"))
     }
 
     use super::*;
@@ -5174,7 +5188,7 @@ mod tests {
         assert_eq!(rr.kernel(&nested).unwrap_err(), "loop.items nested in loop.items");
         // A grid over 1,024 threads is cut to the device's limit: x as written, y the largest that fits
         // (64 x 64 runs as 64 x 16; until 2026-10-12 each axis snapped to {4, 8, 16, 32}).
-        let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), own(&k, ty("u32.blk")), own(&k, ty("u32.blk"))]), one(set_f())]);
+        let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.blk", ty("u32.blk"), 1.0), Tree::literal("literal.blk", ty("u32.blk"), 1.0)]), one(set_f())]);
         assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1, rows_x: false });
         // An empty kernel (the root's own terminal) is a kernel.
         let empty = rr.kernel(&own(&k, ty("kernel.kernel"))).unwrap();

@@ -48,12 +48,12 @@ fn statements(b: &Tree, out: &mut Vec<(Tree, Vec<usize>)>, path: Vec<usize>) {
     }
 }
 
-fn replaced(t: &Tree, path: &[usize], k: &WgslKingdom) -> Result<Tree, String> {
+fn replaced(t: &Tree, path: &[usize], k: &WgslKingdom, role: &fuller::wgsl::render::Role, state: &mut u64) -> Result<Tree, String> {
     match path.split_first() {
-        None => fuller::wgsl::render::terminal_leaf(k, t.ty),
+        None => fuller::wgsl::render::terminal_leaf(k, role, t.ty, state),
         Some((&i, rest)) => {
             let mut kids = t.kids.clone();
-            kids[i] = replaced(&kids[i], rest, k)?;
+            kids[i] = replaced(&kids[i], rest, k, role, state)?;
             Ok(Tree { kids, ..t.clone() })
         }
     }
@@ -85,7 +85,7 @@ fn main() -> Result<(), String> {
         let worst = stmts
             .iter()
             .map(|(s, p)| {
-                let without = cost(&replaced(&tree, p, &k)?);
+                let without = cost(&replaced(&tree, p, &k, &role, &mut (seed ^ 0xC057_C375_u64))?);
                 Ok(((c.per_item - without.per_item) / bound.per_item + (c.base - without.base) / bound.base, s.clone()))
             })
             .collect::<Result<Vec<_>, String>>()?
