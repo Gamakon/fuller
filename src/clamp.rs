@@ -94,6 +94,18 @@ pub fn clamp_report(tree: &Tree, rows: &[Vec<(String, f64)>]) -> Result<ClampRep
         }
         relies.push(Reliance { op: *op, path, rows_outside, constant });
     }
+    // A node that takes one value because a clamp beneath it does (x / acos(2) with the protected division giving 0) is that
+    // value on the data too: climb from each folded node while its parent is one constant.
+    for path in &gone {
+        for depth in (0..path.len()).rev() {
+            let parent = &path[..depth];
+            let Some(node) = folded.at(parent) else { break };
+            match constant_on(node, rows) {
+                Some(c) => folded = folded.replaced(parent, Tree::Num(c)),
+                None => break,
+            }
+        }
+    }
     Ok(ClampReport { protected, relies, folded })
 }
 
@@ -148,6 +160,14 @@ mod tests {
         assert_eq!(r.relies[0].rows_outside, 1, "ln 0 is outside the raw domain");
     }
 
+    /// A quotient by a node a clamp makes 0 is the protected division's 0: the dead term folds with it.
+    #[test]
+    fn a_term_a_clamp_kills_folds_whole() {
+        let r = report(r#"(Add (Var "x_0") (ProtectedDiv (Var "x_0") (ProtectedAcos (Var "x_0"))))"#, &[2.0, 3.0, 5.0]);
+        assert_eq!(r.relies.len(), 1);
+        assert_eq!(r.folded, Tree::parse(r#"(Add (Var "x_0") (Num 0.0))"#).unwrap());
+    }
+
     /// The inner clamp folds to 0, and the parent then reads that constant (inside its own domain).
     #[test]
     fn a_folded_node_is_the_constant_its_parent_sees() {
@@ -155,6 +175,7 @@ mod tests {
         // Acos of x+5 beyond 1 is the constant 0; asin of that constant is inside its domain: only the inner one is outside
         assert_eq!(r.relies.len(), 1);
         assert_eq!(r.relies[0].op, Op::ProtectedAcos);
-        assert_eq!(r.folded, Tree::parse(r#"(ProtectedAsin (Num 0.0))"#).unwrap());
+        // the parent, asin of that constant, is itself the constant 0 on the data, and folds too
+        assert_eq!(r.folded, Tree::parse(r#"(Num 0.0)"#).unwrap());
     }
 }
