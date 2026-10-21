@@ -2704,7 +2704,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F1387 | `arith.modf_fract` | `composite` | `<S.real>` | `<S.real>` | 1 | modf(x).fract |
 | F1388 | `arith.modf_whole` | `composite` | `<S.real>` | `<S.real>` | 1 | modf(x).whole |
-| F1389 | `arith.frexp_fract` | `composite` | `<S.real>` | `<S.real>` | 1 | frexp(x).fract |
+| F1389 | `arith.frexp_fract` | `composite` | `<f32.real>` | `<f32.real>` | 1 | frexp(x).fract |
 | F1390 | `arith.frexp_exp` | `composite` | `<f32.real>` | `<i32.int>` | 1 | frexp(x).exp |
 
 ## class `load`

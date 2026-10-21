@@ -1215,4 +1215,15 @@ mod tests {
             assert!(produced.is_empty(), "rows produce {dead} again: {produced:?}");
         }
     }
+
+    /// NO ROW CONSTRUCTS A TYPE THE KINGDOM HAS NO ROW FOR (T66, 2 of 1,000 typed genes): `frexp` over an f16 operand makes
+    /// naga 30 type its exponent an i16, a 16-bit integer type the kernel scan refuses by name. `arith.frexp_fract` is over
+    /// f32 values only, as `arith.frexp_exp` is.
+    #[test]
+    fn frexp_is_over_f32_only() {
+        let k = WgslKingdom::load_safe();
+        let rows: Vec<&WgslRow> = k.rows.iter().filter(|r| r.name == "arith.frexp_fract" || r.name == "arith.frexp_exp").collect();
+        assert!(rows.len() >= 2);
+        assert!(rows.iter().all(|r| r.inputs.iter().chain([&r.output]).all(|t| k.dual(*t).is_some_and(|d| d.scalar() != Some("f16")))), "a frexp row over f16");
+    }
 }

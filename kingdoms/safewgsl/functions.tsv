@@ -1387,7 +1387,7 @@ F1385	reg	set_z_L5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L5	2
 F1386	reg	set_z_C5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C5	2	
 F1387	arith	modf_fract	composite	<S.real>	<S.real>	1	modf(x).fract
 F1388	arith	modf_whole	composite	<S.real>	<S.real>	1	modf(x).whole
-F1389	arith	frexp_fract	composite	<S.real>	<S.real>	1	frexp(x).fract
+F1389	arith	frexp_fract	composite	<f32.real>	<f32.real>	1	frexp(x).fract
 F1390	arith	frexp_exp	composite	<f32.real>	<i32.int>	1	frexp(x).exp
 F1391	load	phi_len	ArrayLength	-	u32.count	0	arrayLength(&phi)
 F1392	load	h_len	ArrayLength	-	u32.count	0	arrayLength(&h)

@@ -1159,7 +1159,9 @@ for n, k in ((2, "x"), (3, "y"), (4, "z")):
 # role's runtime-sized bindings, phi and h.
 f("arith", "modf_fract", "composite", ["<S.real>"], "<S.real>", "modf(x).fract")
 f("arith", "modf_whole", "composite", ["<S.real>"], "<S.real>", "modf(x).whole")
-f("arith", "frexp_fract", "composite", ["<S.real>"], "<S.real>", "frexp(x).fract")
+# (f32 only: naga 30 types the exponent of frexp(f16) as an i16, which the kingdom has no row for; a gene that held one expressed a
+# kernel its own scan refuses.)
+f("arith", "frexp_fract", "composite", ["<f32.real>"], "<f32.real>", "frexp(x).fract")
 f("arith", "frexp_exp", "composite", ["<f32.real>"], "<i32.int>", "frexp(x).exp")
 f("load", "phi_len", "ArrayLength", [], "u32.count", "arrayLength(&phi)")
 f("load", "h_len", "ArrayLength", [], "u32.count", "arrayLength(&h)")
