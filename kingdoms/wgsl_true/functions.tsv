@@ -1772,7 +1772,7 @@ F01770	arith.mul_mat_mat_2x4_k2	function	mat2x4<f32>.real	mat2x4<f32>.real;mat2x
 F01771	arith.mul_mat_mat_2x4_k3	function	mat2x4<f32>.real	mat3x4<f32>.real;mat2x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01772	arith.mul_mat_mat_2x4_k4	function	mat2x4<f32>.real	mat4x4<f32>.real;mat2x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01773	geom.determinant_2	function	f32.real	mat2x2<f32>.real	determinant({0})	
-F01774	geom.inverse_2	function	mat2x2<f32>.real	mat2x2<f32>.real	inverse({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
+F01774	geom.inverse_2	function	mat2x2<f32>.real	mat2x2<f32>.real	inverse_2({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
 F01775	literal.mat3x2	constant	mat3x2<f32>.real		mat3x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	?_mat3x2: one number on every element
 F01776	own.mat3x2	terminal	mat3x2<f32>.real		zero_mat3x2()	a call, so no operation on it is evaluated at shader creation
 F01777	shape.compose_mat3x2	function	mat3x2<f32>.real	vec2<f32>.real;vec2<f32>.real;vec2<f32>.real	mat3x2<f32>({0}, {1}, {2})	
@@ -1831,7 +1831,7 @@ F01829	arith.mul_mat_mat_3x4_k2	function	mat3x4<f32>.real	mat2x4<f32>.real;mat3x
 F01830	arith.mul_mat_mat_3x4_k3	function	mat3x4<f32>.real	mat3x4<f32>.real;mat3x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01831	arith.mul_mat_mat_3x4_k4	function	mat3x4<f32>.real	mat4x4<f32>.real;mat3x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01832	geom.determinant_3	function	f32.real	mat3x3<f32>.real	determinant({0})	
-F01833	geom.inverse_3	function	mat3x3<f32>.real	mat3x3<f32>.real	inverse({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
+F01833	geom.inverse_3	function	mat3x3<f32>.real	mat3x3<f32>.real	inverse_3({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
 F01834	literal.mat4x2	constant	mat4x2<f32>.real		mat4x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	?_mat4x2: one number on every element
 F01835	own.mat4x2	terminal	mat4x2<f32>.real		zero_mat4x2()	a call, so no operation on it is evaluated at shader creation
 F01836	shape.compose_mat4x2	function	mat4x2<f32>.real	vec2<f32>.real;vec2<f32>.real;vec2<f32>.real;vec2<f32>.real	mat4x2<f32>({0}, {1}, {2}, {3})	
@@ -1893,7 +1893,7 @@ F01891	arith.mul_mat_mat_4x4_k2	function	mat4x4<f32>.real	mat2x4<f32>.real;mat4x
 F01892	arith.mul_mat_mat_4x4_k3	function	mat4x4<f32>.real	mat3x4<f32>.real;mat4x3<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01893	arith.mul_mat_mat_4x4_k4	function	mat4x4<f32>.real	mat4x4<f32>.real;mat4x4<f32>.real	({0} * {1})	the left's columns equal the right's rows (K), by signature
 F01894	geom.determinant_4	function	f32.real	mat4x4<f32>.real	determinant({0})	
-F01895	geom.inverse_4	function	mat4x4<f32>.real	mat4x4<f32>.real	inverse({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
+F01895	geom.inverse_4	function	mat4x4<f32>.real	mat4x4<f32>.real	inverse_4({0})	square only by signature; a singular matrix's inverse is inf/NaN lanes, scored
 F01896	literal.bits	constant	u32.bits		lit_u32({v}u)	?_bits
 F01897	own.u32_bits	terminal	u32.bits		lit_u32(0u)	
 F01898	bits.and	function	u32.bits	u32.bits;u32.bits	({0} & {1})	
@@ -7679,7 +7679,7 @@ F07677	arith.mul_mat_mat_2x4_k2_w	function	mat2x4<f32>.realw	mat2x4<f32>.realw;m
 F07678	arith.mul_mat_mat_2x4_k3_w	function	mat2x4<f32>.realw	mat3x4<f32>.realw;mat2x3<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_2x4_k3
 F07679	arith.mul_mat_mat_2x4_k4_w	function	mat2x4<f32>.realw	mat4x4<f32>.realw;mat2x4<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_2x4_k4
 F07680	geom.determinant_2_w	function	f32.realw	mat2x2<f32>.realw	determinant({0})	the w twin of geom.determinant_2
-F07681	geom.inverse_2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw	inverse({0})	the w twin of geom.inverse_2
+F07681	geom.inverse_2_w	function	mat2x2<f32>.realw	mat2x2<f32>.realw	inverse_2({0})	the w twin of geom.inverse_2
 F07682	literal.mat3x2_w	constant	mat3x2<f32>.realw		mat3x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	the w twin of literal.mat3x2
 F07683	shape.compose_mat3x2_w	function	mat3x2<f32>.realw	vec2<f32>.realw;vec2<f32>.realw;vec2<f32>.realw	mat3x2<f32>({0}, {1}, {2})	the w twin of shape.compose_mat3x2
 F07684	shape.col_0_3x2_w	function	vec2<f32>.realw	mat3x2<f32>.realw	{0}[0]	the w twin of shape.col_0_3x2
@@ -7735,7 +7735,7 @@ F07733	arith.mul_mat_mat_3x4_k2_w	function	mat3x4<f32>.realw	mat2x4<f32>.realw;m
 F07734	arith.mul_mat_mat_3x4_k3_w	function	mat3x4<f32>.realw	mat3x4<f32>.realw;mat3x3<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_3x4_k3
 F07735	arith.mul_mat_mat_3x4_k4_w	function	mat3x4<f32>.realw	mat4x4<f32>.realw;mat3x4<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_3x4_k4
 F07736	geom.determinant_3_w	function	f32.realw	mat3x3<f32>.realw	determinant({0})	the w twin of geom.determinant_3
-F07737	geom.inverse_3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw	inverse({0})	the w twin of geom.inverse_3
+F07737	geom.inverse_3_w	function	mat3x3<f32>.realw	mat3x3<f32>.realw	inverse_3({0})	the w twin of geom.inverse_3
 F07738	literal.mat4x2_w	constant	mat4x2<f32>.realw		mat4x2<f32>(vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})), vec2<f32>(lit_f32({v})))	the w twin of literal.mat4x2
 F07739	shape.compose_mat4x2_w	function	mat4x2<f32>.realw	vec2<f32>.realw;vec2<f32>.realw;vec2<f32>.realw;vec2<f32>.realw	mat4x2<f32>({0}, {1}, {2}, {3})	the w twin of shape.compose_mat4x2
 F07740	shape.col_0_4x2_w	function	vec2<f32>.realw	mat4x2<f32>.realw	{0}[0]	the w twin of shape.col_0_4x2
@@ -7794,7 +7794,7 @@ F07792	arith.mul_mat_mat_4x4_k2_w	function	mat4x4<f32>.realw	mat2x4<f32>.realw;m
 F07793	arith.mul_mat_mat_4x4_k3_w	function	mat4x4<f32>.realw	mat3x4<f32>.realw;mat4x3<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_4x4_k3
 F07794	arith.mul_mat_mat_4x4_k4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw;mat4x4<f32>.realw	({0} * {1})	the w twin of arith.mul_mat_mat_4x4_k4
 F07795	geom.determinant_4_w	function	f32.realw	mat4x4<f32>.realw	determinant({0})	the w twin of geom.determinant_4
-F07796	geom.inverse_4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw	inverse({0})	the w twin of geom.inverse_4
+F07796	geom.inverse_4_w	function	mat4x4<f32>.realw	mat4x4<f32>.realw	inverse_4({0})	the w twin of geom.inverse_4
 F07797	load.phi4_w	function	vec4<f32>.realw	u32.indexw	load4_phi({0})	the w twin of load.phi4
 F07798	literal.p_wcol_w	function	u32.indexw	u32.payload	clamp((KNOB_WCOL * {0}) / 256u, 0u, 4294967295u)	the w twin of literal.p_wcol
 F07799	literal.p_wcol_log2_w	function	u32.indexw	u32.payload	firstLeadingBit(max((KNOB_WCOL * {0}) / 256u, 1u))	the w twin of literal.p_wcol_log2
