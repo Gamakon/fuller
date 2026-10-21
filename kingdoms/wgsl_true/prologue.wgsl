@@ -81,10 +81,10 @@ fn own_get_wg_v3_7(i: u32) -> vec3<f32> { return select(vec3<f32>(), wg_v3_7[min
 fn own_get_wg_v4_9(i: u32) -> vec4<f32> { return select(vec4<f32>(), wg_v4_9[min(i, 511u)], i < 512u); }
 fn own_load_h(r: u32, c: u32) -> f32 { return h[min(r * cfg.d + c, arrayLength(&h) - 1u)]; }
 fn sat_add_u32(x: u32, y: u32) -> u32 { let s = x + y; return select(s, 0xffffffffu, s < x); }
-fn shuffle_down_f(x: f32, d: u32) -> f32 { let dd = min(d, sg_size); return select(subgroupShuffleDown(x, dd), x, sg_lane + dd >= sg_size); }
-fn shuffle_down_i(x: u32, d: u32) -> u32 { let dd = min(d, sg_size); return select(subgroupShuffleDown(x, dd), x, sg_lane + dd >= sg_size); }
-fn shuffle_up_f(x: f32, d: u32) -> f32 { let dd = min(d, sg_size); return select(subgroupShuffleUp(x, dd), x, sg_lane < dd); }
-fn shuffle_up_i(x: u32, d: u32) -> u32 { let dd = min(d, sg_size); return select(subgroupShuffleUp(x, dd), x, sg_lane < dd); }
+fn shuffle_down_f(x: f32, d: u32, lane: u32, size: u32) -> f32 { let dd = min(d, size); return select(subgroupShuffleDown(x, dd), x, lane + dd >= size); }
+fn shuffle_down_i(x: u32, d: u32, lane: u32, size: u32) -> u32 { let dd = min(d, size); return select(subgroupShuffleDown(x, dd), x, lane + dd >= size); }
+fn shuffle_up_f(x: f32, d: u32, lane: u32, size: u32) -> f32 { let dd = min(d, size); return select(subgroupShuffleUp(x, dd), x, lane < dd); }
+fn shuffle_up_i(x: u32, d: u32, lane: u32, size: u32) -> u32 { let dd = min(d, size); return select(subgroupShuffleUp(x, dd), x, lane < dd); }
 fn sorted(a: f32, b: f32) -> vec2<f32> { return vec2<f32>(min(a, b), max(a, b)); }
 fn sorted_i(a: i32, b: i32) -> vec2<i32> { return vec2<i32>(min(a, b), max(a, b)); }
 fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }
