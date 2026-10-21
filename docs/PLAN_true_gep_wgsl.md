@@ -15,6 +15,25 @@ Andrew, 2026-10-21: everything except the design of the WGSL kingdom's symbol ta
 | ST5 | READ design doc + rules; ST3 | Time the evolution infrastructure (Andrew, 2026-10-21): a population of 10 for 10 generations on the GPU, every stage timed (init, vary, express, render, compile, run, HFF fitness) | Sonnet | a stage table in ms; the slowest stages named |
 | ST6 | READ design doc + rules; ST5 | Evolve our own infrastructure: the slowest GPU kernel of the evolution machinery (e.g. the HFF fitness or the scorer) as the problem, its current WGSL as the seed read into the kingdom, its outputs as the unit test; evolution searches for a faster equivalent kernel | lead + Sonnet | a faster kernel with identical outputs, adopted into the engine |
 
+**ST5 result (2026-10-21, phylu `examples/wgsl_true_fit.rs`, seed 2, Gram, K = 1, N = 8, row 45,391 words, population 10 for 10 generations, 90 kernels scored).** Milliseconds per generation. `select` and `vary` are the device's selection passes and the rest of the variation (`profile_vary`); `walk` is the device-walk against host-express node check (generations 0, 5, 10); `pipeline` is the Metal compile of each new kernel; `run` is three guarded runs (d = 16, m = 4) a kernel; `HFF` is the hff library's TrueNorth on three tolerance ratios and the speed against the shipped kernel. No legality check, no filter. Load and WindowServer were checked after each generation.
+
+| gen | init | select | vary | walk | express | render | naga | pipeline | run | HFF | writefit | scored | wall |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 1.4 | 0.46 | 1.65 | 29.9 | 1.13 | 0.09 | 15.8 | 730 | 31.5 | 0.01 | 0.02 | 10 | 817 |
+| 1 | 0.0 | 0.27 | 2.08 | 0.0 | 1.07 | 0.06 | 12.0 | 22 | 22.6 | 0.01 | 0.02 | 8 | 65 |
+| 2 | 0.0 | 0.30 | 21.93 | 0.0 | 1.06 | 0.05 | 11.5 | 21 | 22.4 | 0.01 | 0.02 | 8 | 83 |
+| 3 | 0.0 | 0.34 | 17.03 | 0.0 | 1.08 | 0.06 | 11.9 | 514 | 24.8 | 0.01 | 0.03 | 8 | 574 |
+| 4 | 0.0 | 0.28 | 13.13 | 0.0 | 1.06 | 0.06 | 11.8 | 21 | 23.3 | 0.01 | 0.03 | 8 | 75 |
+| 5 | 0.0 | 0.29 | 8.78 | 21.0 | 1.04 | 0.06 | 11.6 | 22 | 23.1 | 0.01 | 0.02 | 8 | 93 |
+| 6 | 0.0 | 0.28 | 0.78 | 0.0 | 1.07 | 0.07 | 11.5 | 21 | 21.9 | 0.01 | 0.02 | 8 | 61 |
+| 7 | 0.0 | 0.32 | 9.05 | 0.0 | 1.07 | 0.06 | 11.6 | 22 | 22.4 | 0.01 | 0.02 | 8 | 70 |
+| 8 | 0.0 | 0.36 | 18.52 | 0.0 | 1.09 | 0.07 | 12.0 | 497 | 25.0 | 0.01 | 0.02 | 8 | 558 |
+| 9 | 0.0 | 0.30 | 0.84 | 0.0 | 1.08 | 0.06 | 11.8 | 22 | 22.9 | 0.01 | 0.03 | 8 | 63 |
+| 10 | 0.0 | 0.00 | 0.00 | 21.4 | 1.05 | 0.06 | 11.6 | 21 | 22.4 | 0.01 | 0.02 | 8 | 81 |
+| all | 1.4 | 3.21 | 93.80 | 72.3 | 11.80 | 0.71 | 133.2 | 1913 | 262.3 | 0.08 | 0.24 | 90 | 2540 |
+
+The slowest stages: the Metal pipeline of a kernel the compiler has not seen (500 to 730 ms each; 22 ms a generation when every kernel is a near-copy already compiled, 1,913 of the 2,540 ms in all), then the three runs (about 7 ms a kernel, 262 ms in all, mostly upload and synchronisation: the device time of a kernel is 0.01 ms), the device walk check (21 to 30 ms), naga (1.5 ms a kernel) and the device variation (up to 22 ms). Init, express, render, HFF and the fitness write are each under 12 ms in all. The best fitness stays at 1.3182: a random kernel does not compute the Gram matrix, so HFF sees the same worst accuracy; the first run's cold compile was 8,696 ms (seed 1). Terminal-free roots (`kernel.safe` has no tail) needed the typed core's init and point mutation to draw a function when a type has no terminal (phylu `typed_init`, `typed_vary`, host and device).
+
 Corpus for reading WGSL into Karva and for genetic improvement (Andrew, 2026-10-21): https://github.com/altunenes/cuneus/tree/main/examples/shaders (4 already in `tests/corpus/cuneus`). Used by R1 (read into the kingdom) and as ST6-style improvement targets.
 
 Everything below this line is PARKED until ST1 passes its review.
