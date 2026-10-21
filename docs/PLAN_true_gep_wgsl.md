@@ -15,6 +15,8 @@ Andrew, 2026-10-21: everything except the design of the WGSL kingdom's symbol ta
 | ST5 | READ design doc + rules; ST3 | Time the evolution infrastructure (Andrew, 2026-10-21): a population of 10 for 10 generations on the GPU, every stage timed (init, vary, express, render, compile, run, HFF fitness) | Sonnet | a stage table in ms; the slowest stages named |
 | ST6 | READ design doc + rules; ST5 | Evolve our own infrastructure: the slowest GPU kernel of the evolution machinery (e.g. the HFF fitness or the scorer) as the problem, its current WGSL as the seed read into the kingdom, its outputs as the unit test; evolution searches for a faster equivalent kernel | lead + Sonnet | a faster kernel with identical outputs, adopted into the engine |
 
+Corpus for reading WGSL into Karva and for genetic improvement (Andrew, 2026-10-21): https://github.com/altunenes/cuneus/tree/main/examples/shaders (4 already in `tests/corpus/cuneus`). Used by R1 (read into the kingdom) and as ST6-style improvement targets.
+
 Everything below this line is PARKED until ST1 passes its review.
 
 ---
