@@ -268,7 +268,7 @@ T0266	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
 T0267	reg<f32>.real	reg<f32>	real	1	a named f32 register f0..f63, initialised to zero: a name, never a value	-
 T0268	reg<u32>.index	reg<u32>	index	1	a named u32 register i0..i63, initialised to zero: a name, never a value	-
 T0269	reg<bool>.flag	reg<bool>	flag	1	a named bool register b0..b15, initialised to zero: a name, never a value	-
-T0270	reg<i32>.int	reg<i32>	int	1	a named i32 register n0..n15, initialised to zero: a name, never a value	-
+T0270	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn15, initialised to zero: a name, never a value	-
 T0271	reg<f16>.real	reg<f16>	real	1	a named f16 register h0..h15, initialised to zero: a name, never a value	-
 T0272	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v31, initialised to zero: a name, never a value	-
 T0273	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w15, initialised to zero: a name, never a value	-

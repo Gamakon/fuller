@@ -188,6 +188,10 @@ def esc(s):
 
 def write_all(outdir, root, iface):
     problems, produced, consumed = check()
+    names = [re.match(r"var (\w+):", d).group(1) for d in DECLS]
+    for n in set(names):
+        if names.count(n) > 1:
+            problems.append(f"declaration {n} is declared {names.count(n)} times")
     tnames = list(TYPES)
     with open(os.path.join(outdir, "types.tsv"), "w") as f:
         f.write("ref\tdual\tslot\tform\tlanes\tmeaning\tliteral\n")

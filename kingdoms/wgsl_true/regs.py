@@ -21,7 +21,7 @@ def declare(iface):
     reg("f", "f32", "real", "f", 64, "f32", "0.0")
     reg("i", "u32", "index", "i", 64, "u32", "0u")
     reg("b", "bool", "flag", "b", 16, "bool", "false")
-    reg("n", "i32", "int", "n", 16, "i32", "0i")
+    reg("n", "i32", "int", "rn", 16, "i32", "0i")
     reg("h", "f16", "real", "h", 16, "f16", "0.0h")
     for L, p, c in ((4, "v", 32), (2, "w", 16), (3, "C", 16)):
         reg(f"v{L}", vt("f32", "real", L), "real", p, c, vecname("f32", L), f"{vecname('f32', L)}()")

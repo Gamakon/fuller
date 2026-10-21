@@ -2322,22 +2322,22 @@ F02320	reg.set_b_W4_f2	function	stmt.W4_f2	reg<bool>.flag;bool.flagw	{0} = {1};
 F02321	reg.set_b_W5_f0	function	stmt.W5_f0	reg<bool>.flag;bool.flagw	{0} = {1};	
 F02322	reg.set_b_W5_f1	function	stmt.W5_f1	reg<bool>.flag;bool.flagw	{0} = {1};	
 F02323	reg.set_b_W5_f2	function	stmt.W5_f2	reg<bool>.flag;bool.flagw	{0} = {1};	
-F02324	reg.n0	terminal	reg<i32>.int		n0	a register is a name, never a value: only a get reads it
-F02325	reg.n1	terminal	reg<i32>.int		n1	a register is a name, never a value: only a get reads it
-F02326	reg.n2	terminal	reg<i32>.int		n2	a register is a name, never a value: only a get reads it
-F02327	reg.n3	terminal	reg<i32>.int		n3	a register is a name, never a value: only a get reads it
-F02328	reg.n4	terminal	reg<i32>.int		n4	a register is a name, never a value: only a get reads it
-F02329	reg.n5	terminal	reg<i32>.int		n5	a register is a name, never a value: only a get reads it
-F02330	reg.n6	terminal	reg<i32>.int		n6	a register is a name, never a value: only a get reads it
-F02331	reg.n7	terminal	reg<i32>.int		n7	a register is a name, never a value: only a get reads it
-F02332	reg.n8	terminal	reg<i32>.int		n8	a register is a name, never a value: only a get reads it
-F02333	reg.n9	terminal	reg<i32>.int		n9	a register is a name, never a value: only a get reads it
-F02334	reg.n10	terminal	reg<i32>.int		n10	a register is a name, never a value: only a get reads it
-F02335	reg.n11	terminal	reg<i32>.int		n11	a register is a name, never a value: only a get reads it
-F02336	reg.n12	terminal	reg<i32>.int		n12	a register is a name, never a value: only a get reads it
-F02337	reg.n13	terminal	reg<i32>.int		n13	a register is a name, never a value: only a get reads it
-F02338	reg.n14	terminal	reg<i32>.int		n14	a register is a name, never a value: only a get reads it
-F02339	reg.n15	terminal	reg<i32>.int		n15	a register is a name, never a value: only a get reads it
+F02324	reg.rn0	terminal	reg<i32>.int		rn0	a register is a name, never a value: only a get reads it
+F02325	reg.rn1	terminal	reg<i32>.int		rn1	a register is a name, never a value: only a get reads it
+F02326	reg.rn2	terminal	reg<i32>.int		rn2	a register is a name, never a value: only a get reads it
+F02327	reg.rn3	terminal	reg<i32>.int		rn3	a register is a name, never a value: only a get reads it
+F02328	reg.rn4	terminal	reg<i32>.int		rn4	a register is a name, never a value: only a get reads it
+F02329	reg.rn5	terminal	reg<i32>.int		rn5	a register is a name, never a value: only a get reads it
+F02330	reg.rn6	terminal	reg<i32>.int		rn6	a register is a name, never a value: only a get reads it
+F02331	reg.rn7	terminal	reg<i32>.int		rn7	a register is a name, never a value: only a get reads it
+F02332	reg.rn8	terminal	reg<i32>.int		rn8	a register is a name, never a value: only a get reads it
+F02333	reg.rn9	terminal	reg<i32>.int		rn9	a register is a name, never a value: only a get reads it
+F02334	reg.rn10	terminal	reg<i32>.int		rn10	a register is a name, never a value: only a get reads it
+F02335	reg.rn11	terminal	reg<i32>.int		rn11	a register is a name, never a value: only a get reads it
+F02336	reg.rn12	terminal	reg<i32>.int		rn12	a register is a name, never a value: only a get reads it
+F02337	reg.rn13	terminal	reg<i32>.int		rn13	a register is a name, never a value: only a get reads it
+F02338	reg.rn14	terminal	reg<i32>.int		rn14	a register is a name, never a value: only a get reads it
+F02339	reg.rn15	terminal	reg<i32>.int		rn15	a register is a name, never a value: only a get reads it
 F02340	reg.get_n	function	i32.int	reg<i32>.int	{0}	a register holds any invocation's value: no row makes a uniform or an ownership type from it
 F02341	reg.set_n_L0_f0	function	stmt.L0_f0	reg<i32>.int;i32.int	{0} = {1};	
 F02342	reg.set_n_L0_f1	function	stmt.L0_f1	reg<i32>.int;i32.int	{0} = {1};	
