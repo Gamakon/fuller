@@ -432,6 +432,19 @@ fn run() -> Result<i32, String> {
     for (sig, genes) in &by_sig {
         println!("  {} gene(s) {:?}: {sig}", genes.len(), &genes[..genes.len().min(8)]);
     }
+    let depth_of = |name: &str| -> Option<u32> {
+        let at = name.rfind("_f")?;
+        let head = &name[..at];
+        let digits: String = head.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<Vec<_>>().into_iter().rev().collect();
+        let kind = head.chars().rev().nth(digits.len())?;
+        ("LCOW".contains(kind)).then(|| digits.parse().ok()).flatten()
+    };
+    let is_loop = |n: &str| n.starts_with("loop.");
+    let all_loops = kingdom.rows.iter().filter(|r| is_loop(&r.name)).count();
+    let hit_loops = kingdom.rows.iter().enumerate().filter(|(i, r)| is_loop(&r.name) && hit.contains(&(*i as u32))).count();
+    let nested_total = kingdom.rows.iter().filter(|r| depth_of(&r.name).is_some_and(|d| d >= 1)).count();
+    let nested_hit = kingdom.rows.iter().enumerate().filter(|(i, r)| depth_of(&r.name).is_some_and(|d| d >= 1) && hit.contains(&(*i as u32))).count();
+    println!("loop rows used {hit_loops} of {all_loops}; rows at loop depth 1 or more used {nested_hit} of {nested_total}");
     let unused: Vec<&str> = kingdom.rows.iter().enumerate().filter(|(i, _)| !hit.contains(&(*i as u32))).map(|(_, r)| r.name.as_str()).collect();
     std::fs::write(out.join("rows_not_used.txt"), unused.join("\n")).map_err(|e| e.to_string())?;
     Ok(if passed == genes { 0 } else { 1 })
