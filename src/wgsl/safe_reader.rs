@@ -3522,11 +3522,55 @@ impl<'a> Ctx<'a> {
         Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| self.expand_memo_at(k, depth)).collect() }
     }
 
+    /// THE LINEAR LOCAL INDEX AS THE WORKGROUP'S TWO AXES. In a workgroup of (W, H, 1) with W a power of two,
+    /// `local_invocation_index` is `lid.y * W + lid.x`, so `lidx >> log2 W` is `lid.y` and `lidx & (W - 1)` is `lid.x`
+    /// (in either operand order). A kernel that takes its thread's row and column from the linear index
+    /// (`tx = lidx & 15u; ty = lidx >> 4u`, model replies k0017 and k0038) names the same cells as one that reads
+    /// `local_invocation_id`; the index proofs below match the axes, so the spelling is read as them. An exact
+    /// identity of the integers, applied to a copy of the index expression; nothing else about the tree changes.
+    fn lid_axes(&self, t: &Tree) -> Tree {
+        let kids: Vec<Tree> = t.kids.iter().map(|k| self.lid_axes(k)).collect();
+        let w = self.grid.0;
+        let axis_of = |lidx: &Tree, lit: &Tree| -> Option<usize> {
+            let l = literal_value(lit)?;
+            if !(lidx.kids.is_empty() && lidx.name == "builtin.local_invocation_index") || w < 2 || !w.is_power_of_two() {
+                return None;
+            }
+            match t.name.as_str() {
+                "bits.shr" if l == w.trailing_zeros() as f32 => Some(1),
+                "bits.and" if l == (w - 1) as f32 => Some(0),
+                _ => None,
+            }
+        };
+        if kids.len() == 2 {
+            let axis = axis_of(&kids[0], &kids[1]).or_else(|| (t.name == "bits.and").then(|| axis_of(&kids[1], &kids[0])).flatten());
+            if let (Some(axis), Ok(lid)) = (axis, ty(self, "vec3<u32>.lid")) {
+                return Tree::new(&format!("shape.access_{axis}"), t.ty, vec![Tree::new("builtin.local_invocation_id", lid, vec![])]);
+            }
+        }
+        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
+    }
+
     /// `(index.add (index.mul R D) C)` with R and C this thread's row and
     /// column → `safe.cell_of(row, col)`.
     fn cell(&mut self, idx: &Tree) -> Result<Tree, String> {
         let expanded = self.expand_memo(idx);
-        let idx = &expanded;
+        match self.cell_of_expanded(&expanded) {
+            Ok(cell) => Ok(cell),
+            // Not read as it stands: the linear local index read as the workgroup's two axes (only then, so a kernel
+            // the reader already read keeps the tree it was read as).
+            Err(e) => {
+                let axes = self.lid_axes(&expanded);
+                if axes.to_sexpr() == expanded.to_sexpr() {
+                    return Err(e);
+                }
+                self.cell_of_expanded(&axes).map_err(|_| e)
+            }
+        }
+    }
+
+    fn cell_of_expanded(&mut self, expanded: &Tree) -> Result<Tree, String> {
+        let idx = expanded;
         let fail = |what: &str| Err(format!("a store or load of h is not at this thread's cell: {what}: {}", idx.to_sexpr()));
         if idx.name != "index.add" || idx.kids.len() != 2 {
             return fail("not row * d + col");

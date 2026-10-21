@@ -331,3 +331,5 @@ tests/corpus/model_replies/k1743.wgsl	safe	read now (2026-10-19, registers of ev
 tests/corpus/model_replies/k1075.wgsl	safe	read now (2026-10-19, the slot counts): a kernel the 0.20 snapshot recorded as refused
 tests/corpus/model_replies/k1094.wgsl	safe	read now (2026-10-19, the slot counts): a kernel the 0.20 snapshot recorded as refused
 tests/corpus/model_replies/k0979.wgsl	safe	read now (2026-10-20, aggregates slice 2): a helper with no result and no body tree is nothing, not a refusal; the kernel the 0.20 snapshot recorded as refused
+tests/corpus/model_replies/k0017.wgsl	safe	reader gap closed (T43 F): the thread row and column from local_invocation_index (lidx >> 4u, lidx & 15u): refused before, read now
+tests/corpus/model_replies/k0038.wgsl	safe	reader gap closed (T43 F): the thread row and column from local_invocation_index (lidx >> 4u, lidx & 15u): refused before, read now
