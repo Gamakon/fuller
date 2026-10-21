@@ -423,3 +423,15 @@ Batch 6: 34 family rows; 9 pattern types added. Advisor review (`docs/reviews/20
 - Textures, samplers and image atomics; ray queries; pointers as values; binding arrays; `override` declarations; user-defined functions (a seed's helpers are inlined by the reader); structs other than the interface's uniform block; f64; `while` and `loop` with no typed bound (an unbounded loop is outside the kingdom by design); `atomicCompareExchangeWeak` and the float atomic built on it (the Metal backend lacks it); `subgroupBallot` (its `vec4<u32>` result needs the `vec4<u32>.bits` register kind, which can be added with one register family when a seed needs it).
 - The chromosome-level linker of a multi-entry module (`kernel.module_of_<interface>` over the genic terminals) is the fixed homeotic gene of §6, not a row of this table.
 - Non-power-of-two subgroup sizes and partial subgroups (excluded by the shape table, ruled batch 5).
+
+## Row notes from the compiler loop (ST3, 2026-10-21)
+
+Random genes through naga 30, the Metal pipeline and one guarded run found these table defects; each is fixed in `kingdoms/wgsl_true/gen_tables.py` and its modules. Where the table and this document disagree, the table is the one every gene can be legal under.
+
+- Registers: the i32 registers `n0..n15` collided with the loop bounds `n1..n5`, and `f32`, `f16`, `i32` shadowed WGSL types. Registers are `rf`, `ru`, `rb`, `rn`, `rh` and `rv<key><lanes>_`.
+- `grid.of` and `grid.of_rows_x` take the tile depth as `u32.ktile`, a bare literal (a `const` initialiser may not call `lit_u32` nor read a knob reference, and `u32.lit4096` allowed `KNOB_KTILE` to define itself).
+- The subgroup shuffle helpers take `lane` and `size` as arguments (helpers cannot see entry-point builtins). `sg_lane` and `sg_id` are lets over `lidx` and `sg_size`: naga refuses the builtins in a 2-D workgroup.
+- The zero vector and zero matrix terminals are helper calls: a const expression lets naga evaluate `log(0)` or `normalize(0)` at shader creation.
+- WGSL has no `inverse` and no matrix negation: `geom.inverse_N` spells a prologue helper; `arith.neg_mat` spells `-1.0 * m`.
+- `wg.set`, `wg.put` and `atomic.store` bind the index once with a block-scoped `let` (hole 8).
+- Fuel: with the work guard (`fuller::wgsl::work_guard`) the compiler and validity test run at K = 0.
