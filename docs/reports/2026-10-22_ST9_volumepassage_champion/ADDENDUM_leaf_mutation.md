@@ -1,6 +1,6 @@
 # ST9 addendum: LEAF mutation at real speed (2026-10-22)
 
-RESULTS_SUMMARY
+**With LEAF mutation, a child keeps 0.998 of its parent's tree, against about 0.5 under LOW in the morning run.** Best HFF moved from 0.29375 to 0.26305 in 500 generations (last step at generation 123), at 64 x 64 where every kernel is timed as one submit. The population also became near-identical: median pair overlap 0.998, against 0.21 in the morning run.
 
 ## Why
 
@@ -48,7 +48,27 @@ Started 08:37:20Z on fuller e36faaee, phylu dedab1ad plus the ST8b working tree 
 
 ## Results
 
-RESULTS_BODY
+Run ended 08:51:03Z, exit 0, 500 generations (0 to 500), about 1.6 s a generation. Pipeline cache: 367 hits, 3,630 misses (9.2 %).
+
+HFF (0 best, about 1.57 worst), from `series.tsv`:
+
+| generation | best HFF | mean HFF | distinct trees of 10 | median pair overlap |
+|---|---|---|---|---|
+| 0 | 0.29375 | 0.47823 | 10 | 0.724 |
+| 100 | 0.27036 | 0.84108 | 7 | 0.998 |
+| 200 | 0.26305 | 0.74413 | 6 | 0.998 |
+| 300 | 0.26305 | 0.83405 | 8 | 0.996 |
+| 400 | 0.26305 | 0.74149 | 6 | 0.998 |
+| 500 | 0.26305 | 0.73550 | 8 | 0.998 |
+
+- **Best line:** four values, 0.29375 (g0), 0.29105 (g4), 0.27036 (g11), 0.26305 (g123), then flat to 500.
+- **Parent overlap:** the median child's tree overlap with its first parent is 0.998 in every one of the 500 generations (morning run, LOW: about 0.5). Cells changed per child: median 1.
+- **Population diversity:** median pair overlap 0.998 over the run, median 7 distinct trees of 10 (morning run: 0.21, 28 of 32). The diversity dial did not move; alpha stayed 2.00.
+- **Picture-exact share:** 1,480 of 5,010 population rows in the dumps (29.5 %) draw the original's picture exactly. This counts rows of the scored population each generation, not children separately.
+- **Mean HFF** stays between about 0.74 and 1.04 after generation 0, so most rows still draw a different picture even with one leaf edit.
+- The champion at generation 500 was not re-timed against the shipped original outside the run (no GPU use for this note).
+
+Chart: `addendum_chart.png` (best and mean HFF against generation). Hall of fame at generation 500: `addendum_hof.png`. Dumps: `/private/tmp/claude-501/st9p3/run/dump/` (501 files).
 
 ## Limits
 
