@@ -85,3 +85,41 @@ Chart: `addendum_chart.png` (best and mean HFF against generation). Hall of fame
 3. **NVIDIA/Vulkan timing target.** Repeat the timing on an NVIDIA GPU under Vulkan (the Runpod 4090 build), so a speed-up is measured on a second compiler and device.
 4. **Map the dumps.** Run UltraDim over `run/dump/` (clusters, UMAP over generations, novelty) and report how many species the population holds and when they appear.
 5. **Larger size in one submit.** Time at 256 and 512 with all tiles in one command buffer, so larger pictures are timed without the 3x wait cost.
+
+## Speed of the champion
+
+**The generation-500 champion is not meaningfully faster than the original: 0.33 % faster at 64 x 64 (interval reaches 1.000, sign p 0.087), 0.81 % faster at 128 x 128 (sign p 0.0099), and its three edits do not remove any work.**
+
+How it was run: `timing_leaf/go.sh` waited for the run's `## 08:51:03 exit 0`, took the GPU lock at 08:51:04Z, ran fuller `st9_champion_time` (the 31da0d71 binary, unchanged) and released the lock at 08:51:07Z. Input: the top 5 of the final hall of fame (`timing_leaf/top5.py` keeps the 5 lowest HFF, 0.2631 to 0.2892), 61 rounds, every kernel once a round in a random order (seed 3), Apple M3 Max, Metal, t = 5. Outputs are in `timing_leaf/` (`times.tsv`, `summary.tsv`, `ratios.tsv`, `pictures.tsv`, each kernel's WGSL, `time.log`).
+
+Submits: every hall-of-fame tree has a work bound of 36,659 per invocation against the original's 36,658, so the tool will not time any of them as one submit (`Fuel::Proven`). At 64 x 64 the tiled mode is a single submit, the same as for the original. At 128 x 128 tiled means 4 submits, so the 128 ratios compare 4-submit candidates with the 4-submit encoded original, not with the shipped shader's single submit.
+
+| size | kernel / reference | submits | GPU ms median (cand / ref) | ratio median | 95 % bootstrap | faster / slower of 61 | sign p |
+|---|---|---|---|---|---|---|---|
+| 64 | rank1 / encoded | 1 / 1 | 0.0503 / 0.0506 | 0.9967 | [0.9950, 1.0000] | 36 / 22 | 0.087 |
+| 64 | rank2 / encoded | 1 / 1 | 0.0504 / 0.0506 | 0.9972 | [0.9951, 1.0000] | 37 / 23 | 0.092 |
+| 64 | rank3 / encoded | 1 / 1 | 0.0506 / 0.0506 | 0.9971 | [0.9942, 1.0024] | 35 / 25 | 0.245 |
+| 64 | rank4 / encoded | 1 / 1 | 0.0501 / 0.0506 | 0.9945 | [0.9913, 0.9967] | 44 / 17 | 7.3e-4 |
+| 64 | rank5 / encoded | 1 / 1 | 0.0505 / 0.0506 | 1.0025 | [1.0000, 1.0041] | 19 / 37 | 0.022 |
+| 64 | encoded / shipped | 1 / 1 | 0.0506 / 0.0480 | 1.0518 | [1.0498, 1.0550] | 7 / 54 | 4.3e-10 |
+| 128 | rank1 / encoded | 4 / 4 | 0.1994 / 0.2010 | 0.9919 | [0.9894, 0.9935] | 41 / 20 | 0.0099 |
+| 128 | rank2 / encoded | 4 / 4 | 0.2007 / 0.2010 | 0.9986 | [0.9957, 1.0017] | 36 / 25 | 0.200 |
+| 128 | rank3 / encoded | 4 / 4 | 0.2004 / 0.2010 | 0.9944 | [0.9905, 0.9983] | 43 / 18 | 0.0019 |
+| 128 | rank4 / encoded | 4 / 4 | 0.1999 / 0.2010 | 0.9946 | [0.9932, 0.9975] | 42 / 19 | 0.0044 |
+| 128 | rank5 / encoded | 4 / 4 | 0.1993 / 0.2010 | 0.9893 | [0.9862, 0.9928] | 42 / 19 | 0.0044 |
+| 128 | encoded (4) / shipped (1) | 4 / 1 | 0.2010 / 0.0868 | 2.3099 | [2.2900, 2.3162] | 0 / 61 | 8.7e-19 |
+
+The encoded original itself is 5.2 % slower than the shipped shader at 64 x 64, both as one submit. Every champion ratio above is measured against the encoded original, not the shipped shader.
+
+Pictures: the differing channels against the shipped original are **0 at t = 2, 5 and 8** for all 5 ranks, at 64 x 64 (16,384 channels) and 128 x 128 (65,536), and 0 at the held-out 200 x 136, t = 5. The maximum absolute error is 0 everywhere.
+
+WGSL diff, champion (rank 1) against the encoded original. One line of the body differs, at three places:
+
+    - rf3 = (rf3 + lit_f32(1.0));
+    + rf3 = (rf22 + lit_f32(1.0));                         // rf22 is never written (0.0), so rf3 = 1.0; rf3 is never read
+    - cos(((w3[1] * lit_f32(1.1)) + cos((w3[0] * lit_f32(2.3)))))
+    + cos(((w3[1] * lit_f32(1.1)) + cos((lit_f32(2.3) * w3[0]))))   // operands swapped
+    - C7 = ((C5 * ((lit_f32(0.983729) * C5) + ...
+    + C7 = ((C5 * ((C5 * vec3<f32>(lit_f32(0.983729))) + ...       // operands swapped, scalar splatted
+
+None of the three edits removes an operation from the 50 x 7 inner loop. The +1 in the work bound comes from the splat. Ranks 2 to 5 differ from the encoded original by edits of the same kind (`rf3` reading another unwritten register, such as `rf62` in rank 5, and the same swaps). The 0.3 to 1.1 % differences are inside the spread one kernel shows between rounds (64 x 64: p10 0.050 ms, p90 0.186 ms, so the GPU clock is bimodal) and they change sign between ranks (rank 5 is 0.25 % slower at 64 x 64). The kernels draw identical pictures, and no rank is faster at both sizes with an interval that excludes 1.

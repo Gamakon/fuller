@@ -1,0 +1,63 @@
+## 08:51:04 lock taken; load 1.26 1.64 2.52
+gen 500 count 5 row 2875505 fitness [0.26305457949638367, 0.27035966515541077, 0.2729468047618866, 0.2811528444290161, 0.2892218232154846] top5 [0, 1, 2, 3, 4]
+# 08:51:04Z ST9 champion timing	hall of fame generation 500, 5 entries	61 rounds	sizes [64, 128]	seed 3
+# rank 1	HFF 0.263055	493 nodes	work bound 36659 an invocation (original 36658)	text differs from the encoded original
+# rank 2	HFF 0.270360	493 nodes	work bound 36659 an invocation (original 36658)	text differs from the encoded original
+# rank 3	HFF 0.272947	493 nodes	work bound 36659 an invocation (original 36658)	text differs from the encoded original
+# rank 4	HFF 0.281153	493 nodes	work bound 36659 an invocation (original 36658)	text differs from the encoded original
+# rank 5	HFF 0.289222	493 nodes	work bound 36659 an invocation (original 36658)	text differs from the encoded original
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+# device Apple M3 Max (Metal)
+# 08:51:04Z size 64x64: compile
+# rank1: work bound above the original's, not timed as one submit
+# rank2: work bound above the original's, not timed as one submit
+# rank3: work bound above the original's, not timed as one submit
+# rank4: work bound above the original's, not timed as one submit
+# rank5: work bound above the original's, not timed as one submit
+# 08:51:05Z size 64x64: 8 kernels, 61 rounds
+64	shipped.one   	 1 submits	GPU ms median 0.0480 p10 0.0476 p90 0.1762	wall median 0.2651
+64	encoded.tiled 	 1 submits	GPU ms median 0.0506 p10 0.0500 p90 0.1856	wall median 0.2680
+64	encoded.one   	 1 submits	GPU ms median 0.0505 p10 0.0502 p90 0.1851	wall median 0.2655
+64	rank1.tiled   	 1 submits	GPU ms median 0.0503 p10 0.0499 p90 0.1855	wall median 0.2579
+64	rank2.tiled   	 1 submits	GPU ms median 0.0504 p10 0.0500 p90 0.1851	wall median 0.2625
+64	rank3.tiled   	 1 submits	GPU ms median 0.0506 p10 0.0498 p90 0.1847	wall median 0.2657
+64	rank4.tiled   	 1 submits	GPU ms median 0.0501 p10 0.0496 p90 0.1847	wall median 0.2677
+64	rank5.tiled   	 1 submits	GPU ms median 0.0505 p10 0.0502 p90 0.1858	wall median 0.2611
+64	encoded.tiled / shipped.one	ratio median 1.0518 [95 % 1.0498, 1.0550]	faster in 7, slower in 54 of 61	sign p 4.322e-10
+64	encoded.one / shipped.one	ratio median 1.0532 [95 % 1.0522, 1.0554]	faster in 5, slower in 56 of 61	sign p 5.646e-12
+64	rank1.tiled / encoded.tiled	ratio median 0.9967 [95 % 0.9950, 1.0000]	faster in 36, slower in 22 of 61	sign p 8.695e-2
+64	rank2.tiled / encoded.tiled	ratio median 0.9972 [95 % 0.9951, 1.0000]	faster in 37, slower in 23 of 61	sign p 9.246e-2
+64	rank3.tiled / encoded.tiled	ratio median 0.9971 [95 % 0.9942, 1.0024]	faster in 35, slower in 25 of 61	sign p 2.451e-1
+64	rank4.tiled / encoded.tiled	ratio median 0.9945 [95 % 0.9913, 0.9967]	faster in 44, slower in 17 of 61	sign p 7.299e-4
+64	rank5.tiled / encoded.tiled	ratio median 1.0025 [95 % 1.0000, 1.0041]	faster in 19, slower in 37 of 61	sign p 2.224e-2
+# 08:51:06Z size 128x128: compile
+# rank1: work bound above the original's, not timed as one submit
+# rank2: work bound above the original's, not timed as one submit
+# rank3: work bound above the original's, not timed as one submit
+# rank4: work bound above the original's, not timed as one submit
+# rank5: work bound above the original's, not timed as one submit
+# 08:51:06Z size 128x128: 8 kernels, 61 rounds
+128	shipped.one   	 1 submits	GPU ms median 0.0868 p10 0.0867 p90 0.0871	wall median 0.3061
+128	encoded.tiled 	 4 submits	GPU ms median 0.2010 p10 0.1946 p90 0.2023	wall median 1.0672
+128	encoded.one   	 1 submits	GPU ms median 0.0871 p10 0.0869 p90 0.0877	wall median 0.3042
+128	rank1.tiled   	 4 submits	GPU ms median 0.1994 p10 0.1923 p90 0.2007	wall median 1.0682
+128	rank2.tiled   	 4 submits	GPU ms median 0.2007 p10 0.1941 p90 0.2045	wall median 1.0629
+128	rank3.tiled   	 4 submits	GPU ms median 0.2004 p10 0.1890 p90 0.2019	wall median 1.0705
+128	rank4.tiled   	 4 submits	GPU ms median 0.1999 p10 0.1924 p90 0.2011	wall median 1.0657
+128	rank5.tiled   	 4 submits	GPU ms median 0.1993 p10 0.1901 p90 0.2025	wall median 1.0534
+128	encoded.tiled / shipped.one	ratio median 2.3099 [95 % 2.2900, 2.3162]	faster in 0, slower in 61 of 61	sign p 8.674e-19
+128	encoded.one / shipped.one	ratio median 1.0034 [95 % 1.0014, 1.0053]	faster in 11, slower in 49 of 61	sign p 7.561e-7
+128	rank1.tiled / encoded.tiled	ratio median 0.9919 [95 % 0.9894, 0.9935]	faster in 41, slower in 20 of 61	sign p 9.853e-3
+128	rank2.tiled / encoded.tiled	ratio median 0.9986 [95 % 0.9957, 1.0017]	faster in 36, slower in 25 of 61	sign p 2.000e-1
+128	rank3.tiled / encoded.tiled	ratio median 0.9944 [95 % 0.9905, 0.9983]	faster in 43, slower in 18 of 61	sign p 1.868e-3
+128	rank4.tiled / encoded.tiled	ratio median 0.9946 [95 % 0.9932, 0.9975]	faster in 42, slower in 19 of 61	sign p 4.444e-3
+128	rank5.tiled / encoded.tiled	ratio median 0.9893 [95 % 0.9862, 0.9928]	faster in 42, slower in 19 of 61	sign p 4.444e-3
+# 08:51:06Z size 200x136: compile
+# rank1: work bound above the original's, not timed as one submit
+# rank2: work bound above the original's, not timed as one submit
+# rank3: work bound above the original's, not timed as one submit
+# rank4: work bound above the original's, not timed as one submit
+# rank5: work bound above the original's, not timed as one submit
+# 08:51:06Z done: /private/tmp/claude-501/st9p3/time/out
+## 08:51:07 timing exit 0
+## 08:51:07 lock released

@@ -1,0 +1,15 @@
+size	candidate	reference	rounds	ratio_median	ci95_lo	ci95_hi	faster_rounds	slower_rounds	sign_p
+64	encoded.tiled	shipped.one	61	1.0518	1.0498	1.0550	7	54	4.322e-10
+64	encoded.one	shipped.one	61	1.0532	1.0522	1.0554	5	56	5.646e-12
+64	rank1.tiled	encoded.tiled	61	0.9967	0.9950	1.0000	36	22	8.695e-2
+64	rank2.tiled	encoded.tiled	61	0.9972	0.9951	1.0000	37	23	9.246e-2
+64	rank3.tiled	encoded.tiled	61	0.9971	0.9942	1.0024	35	25	2.451e-1
+64	rank4.tiled	encoded.tiled	61	0.9945	0.9913	0.9967	44	17	7.299e-4
+64	rank5.tiled	encoded.tiled	61	1.0025	1.0000	1.0041	19	37	2.224e-2
+128	encoded.tiled	shipped.one	61	2.3099	2.2900	2.3162	0	61	8.674e-19
+128	encoded.one	shipped.one	61	1.0034	1.0014	1.0053	11	49	7.561e-7
+128	rank1.tiled	encoded.tiled	61	0.9919	0.9894	0.9935	41	20	9.853e-3
+128	rank2.tiled	encoded.tiled	61	0.9986	0.9957	1.0017	36	25	2.000e-1
+128	rank3.tiled	encoded.tiled	61	0.9944	0.9905	0.9983	43	18	1.868e-3
+128	rank4.tiled	encoded.tiled	61	0.9946	0.9932	0.9975	42	19	4.444e-3
+128	rank5.tiled	encoded.tiled	61	0.9893	0.9862	0.9928	42	19	4.444e-3
