@@ -13,6 +13,9 @@
 //!       --genes 100 --seed 1 --size 8 --stage all --out /private/tmp/claude-501/st_runs/x
 //! `--stage naga` runs (a) only (no device); `--dump N` prints gene N's kernel.
 //!
+//! `--image <shader> --dir <kingdoms/wgsl_true/img/..>` runs stage (c) on an interface with a storage-texture output
+//! (ST9, `fuller::wgsl::image`): the kernel draws a 16 x 16 picture from the shader's fixed uniforms.
+//!
 //! Stage (c) is the smallest dispatch that runs the Gram unit test: d = 16, m = 4 (UNIT_TEST_D, UNIT_TEST_M), one
 //! 16 x 16 workgroup of 256 invocations in one pass. Every submit is bounded before it is made by the work guard
 //! (`fuller::wgsl::work_guard`): H * 2^(6K) * invocations must be at most the cap, else the tool stops with the
@@ -25,6 +28,7 @@ use std::time::Instant;
 
 use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{express, GeneLayout, Tree};
+use fuller::wgsl::image::{BindingData, ImageKernel};
 use fuller::wgsl::gram::{band_layout, phi, submit_invocations, Gram, RUNG_SEED};
 use fuller::wgsl::oracle::device::{Device, Fuel};
 use fuller::wgsl::true_kingdom::{default_dir, random_gene, random_gene_weighted, Rng, Share, TrueKingdom};
@@ -64,7 +68,12 @@ struct Ctx<'a> {
     m: usize,
     limit: u64,
     fuel: Fuel,
+    /// `--image`: the shader's name and its fixed bindings; stage (c) draws a 16 x 16 picture instead of running Gram.
+    image: Option<(String, Vec<BindingData>)>,
 }
+
+/// The picture side of stage (c) on an image interface.
+const IMAGE_SIDE: u32 = 16;
 
 impl Ctx<'_> {
     fn check_source(&self, src: &str) -> Verdict {
@@ -80,6 +89,31 @@ impl Ctx<'_> {
         }
         self.timing.naga_ms.set(self.timing.naga_ms.get() + t.elapsed().as_secs_f64() * 1e3);
         let Some(dev) = self.dev else { return Ok(()) };
+        if let Some((name, bindings)) = &self.image {
+            let t = Instant::now();
+            let k = ImageKernel::compile(dev, name, src, "main", bindings, IMAGE_SIDE, IMAGE_SIDE, self.fuel.clone()).map_err(|e| (Stage::Pipeline, e))?;
+            let (_, _, invocations) = k.dispatch();
+            if let Err(e) = self.fuel.check("stage (c)", invocations) {
+                eprintln!("{e}");
+                std::process::exit(4);
+            }
+            self.timing.pipeline_ms.set(self.timing.pipeline_ms.get() + t.elapsed().as_secs_f64() * 1e3);
+            if self.compile_only {
+                return Ok(());
+            }
+            let t = Instant::now();
+            let run = k.run(0, 1).map_err(|e| (Stage::Run, e))?;
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            self.timing.run_ms.set(self.timing.run_ms.get() + ms);
+            self.timing.slowest_run_ms.set(self.timing.slowest_run_ms.get().max(ms));
+            if run.median_gpu_ms() > 1000.0 {
+                return Err((Stage::Run, format!("runaway: slow submit, {:.0} ms of compute (the stop is 1000 ms)", run.median_gpu_ms())));
+            }
+            if run.picture.rgba.len() != (IMAGE_SIDE * IMAGE_SIDE * 4) as usize {
+                return Err((Stage::Run, format!("the run returned {} values, not {}", run.picture.rgba.len(), IMAGE_SIDE * IMAGE_SIDE * 4)));
+            }
+            return Ok(());
+        }
         let t = Instant::now();
         let gram = Gram::compile(dev, src, self.fuel.clone()).map_err(|e| (Stage::Pipeline, e))?;
         // The work guard, before the run: a bound over the cap is a misconfigured experiment, not a verdict on
@@ -337,7 +371,8 @@ fn run() -> Result<i32, String> {
     }
     let dev = if stage == "naga" { None } else { Some(Device::new()?) };
     let (d, m) = (UNIT_TEST_D, UNIT_TEST_M);
-    let ctx = Ctx { compile_only: stage == "pipeline", timing: Timing::default(), kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)), fuel };
+    let image = arg(&args, "--image").map(|shader| fuller::wgsl::cuneus_originals::case_bindings(&shader, 5.0, IMAGE_SIDE, IMAGE_SIDE).map(|b| (shader, b))).transpose()?;
+    let ctx = Ctx { compile_only: stage == "pipeline", timing: Timing::default(), kingdom: &kingdom, contract: &contract, dev: dev.as_ref(), phi: phi(d, m, RUNG_SEED), d, m, limit: dev.as_ref().map_or(0, |v| fuller::wgsl::gram::effective_buffer_limit(&v.device)), fuel, image };
 
     if let Some(i) = arg(&args, "--minimise").map(|v| v.parse::<usize>().map_err(|e| format!("--minimise: {e}"))).transpose()? {
         let mut rng = Rng(seed.wrapping_mul(0x1000_0000_01B3).wrapping_add(i as u64));
