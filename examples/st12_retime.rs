@@ -46,7 +46,9 @@ fn run() -> Result<(), String> {
     let original = std::fs::read_to_string(format!("{}/tests/corpus/cuneus_visual/volumepassage.wgsl", env!("CARGO_MANIFEST_DIR"))).map_err(|e| e.to_string())?;
     let k = TrueKingdom::load(&image_dir("volumepassage"))?;
     let tree = volumepassage(&k).map_err(|g| format!("table gaps: {g:?}"))?;
-    let kernels = [("champion", champion, Fuel::Tree { per_invocation: bound }), ("encoded original", k.render(&tree)?, k.tree_fuel(&tree)?)];
+    // the control: the shipped text compiled a second time, timed against the shipped original like the others (its
+    // ratio is the harness's own bias)
+    let kernels = [("champion", champion, Fuel::Tree { per_invocation: bound }), ("encoded original", k.render(&tree)?, k.tree_fuel(&tree)?), ("shipped (control)", original.clone(), Fuel::Proven("cuneus original volumepassage"))];
     let dev = Device::new()?;
     println!("# {} ST12 re-time: {path} (bound {bound}) and the encoded original against the shipped volumepassage", utc());
     for (time, w, h) in [(2.0f32, 256u32, 256u32), (5.0, 256, 256), (8.0, 256, 256), (5.0, 200, 136), (5.0, 64, 64)] {
@@ -71,6 +73,8 @@ fn run() -> Result<(), String> {
     let mut ratios: Vec<Vec<f64>> = vec![Vec::new(); compiled.len()];
     let mut ms: Vec<(Vec<f64>, Vec<f64>)> = vec![(Vec::new(), Vec::new()); compiled.len()];
     let mut round_medians: Vec<Vec<f64>> = vec![Vec::new(); compiled.len()];
+    // ratios by order: (kernel first, shipped first)
+    let mut by_order: Vec<(Vec<f64>, Vec<f64>)> = vec![(Vec::new(), Vec::new()); compiled.len()];
     for r in 0..rounds {
         let order: Vec<usize> = if r % 2 == 0 { (0..compiled.len()).collect() } else { (0..compiled.len()).rev().collect() };
         for i in order {
@@ -78,17 +82,20 @@ fn run() -> Result<(), String> {
             let pt = timed_pairs(kk, planned.as_ref().unwrap_or(&shipped), 3, pairs)?;
             let rr: Vec<f64> = pt.times.iter().map(|t| t.0 / t.1).collect();
             round_medians[i].push(median(&rr));
+            for (x, first) in rr.iter().zip(&pt.candidate_first) {
+                if *first { by_order[i].0.push(*x) } else { by_order[i].1.push(*x) }
+            }
             ratios[i].extend(rr);
             ms[i].0.extend(pt.times.iter().map(|t| t.0));
             ms[i].1.extend(pt.times.iter().map(|t| t.1));
         }
     }
     let mut rng = Rng(12);
-    println!("kernel\tsubmits\tpairs\tkernel / shipped median\t95 % interval\tround medians\tkernel ms\tshipped ms");
+    println!("kernel\tsubmits\tpairs\tkernel / shipped median\t95 % interval\tround medians\tkernel first\tshipped first\tkernel ms\tshipped ms");
     for (i, (name, kk, _)) in compiled.iter().enumerate() {
         let (lo, hi) = bootstrap_median(&ratios[i], &mut rng);
         let rm: Vec<String> = round_medians[i].iter().map(|v| format!("{v:.4}")).collect();
-        println!("{name}\t{}\t{}\t{:.4}\t[{lo:.4}, {hi:.4}]\t{}\t{:.4}\t{:.4}", kk.submits(), ratios[i].len(), median(&ratios[i]), rm.join(" "), median(&ms[i].0), median(&ms[i].1));
+        println!("{name}\t{}\t{}\t{:.4}\t[{lo:.4}, {hi:.4}]\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}", kk.submits(), ratios[i].len(), median(&ratios[i]), rm.join(" "), median(&by_order[i].0), median(&by_order[i].1), median(&ms[i].0), median(&ms[i].1));
     }
     println!("# {}", utc());
     Ok(())
