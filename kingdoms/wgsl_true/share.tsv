@@ -126,161 +126,173 @@ S00124	share.let.vec4<bool>.flag.block.L0_f1	function	block.L0_f1	share.name;vec
 S00125	share.ref.vec4<bool>.flag	function	vec4<bool>.flag	share.name	{0}	the value of a vec4<bool>.flag let, by its name
 S00126	share.let.vec4<bool>.flagw.block.L0_f1	function	block.L0_f1	share.name;vec4<bool>.flagw;block.L0_f1	let {0}: vec4<bool> = {1};\n{2}	binds a vec4<bool>.flagw subtree the kernel repeats, at function scope ahead of every in-body use
 S00127	share.ref.vec4<bool>.flagw	function	vec4<bool>.flagw	share.name	{0}	the value of a vec4<bool>.flagw let, by its name
-S00128	share.let.f32.nonneg.block.L0_f1	function	block.L0_f1	share.name;f32.nonneg;block.L0_f1	let {0}: f32 = {1};\n{2}	binds a f32.nonneg subtree the kernel repeats, at function scope ahead of every in-body use
-S00129	share.ref.f32.nonneg	function	f32.nonneg	share.name	{0}	the value of a f32.nonneg let, by its name
-S00130	share.let.i32.nonneg.block.L0_f1	function	block.L0_f1	share.name;i32.nonneg;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.nonneg subtree the kernel repeats, at function scope ahead of every in-body use
-S00131	share.ref.i32.nonneg	function	i32.nonneg	share.name	{0}	the value of a i32.nonneg let, by its name
-S00132	share.let.u32.lit4096.block.L0_f1	function	block.L0_f1	share.name;u32.lit4096;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lit4096 subtree the kernel repeats, at function scope ahead of every in-body use
-S00133	share.ref.u32.lit4096	function	u32.lit4096	share.name	{0}	the value of a u32.lit4096 let, by its name
-S00134	share.let.u32.uniform.block.L0_f1	function	block.L0_f1	share.name;u32.uniform;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.uniform subtree the kernel repeats, at function scope ahead of every in-body use
-S00135	share.ref.u32.uniform	function	u32.uniform	share.name	{0}	the value of a u32.uniform let, by its name
-S00136	share.let.bool.uflag.block.L0_f1	function	block.L0_f1	share.name;bool.uflag;block.L0_f1	let {0}: bool = {1};\n{2}	binds a bool.uflag subtree the kernel repeats, at function scope ahead of every in-body use
-S00137	share.ref.bool.uflag	function	bool.uflag	share.name	{0}	the value of a bool.uflag let, by its name
-S00138	share.let.mat2x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x2<f32>.real;block.L0_f1	let {0}: mat2x2<f32> = {1};\n{2}	binds a mat2x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00139	share.ref.mat2x2<f32>.real	function	mat2x2<f32>.real	share.name	{0}	the value of a mat2x2<f32>.real let, by its name
-S00140	share.let.mat2x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x2<f32>.realw;block.L0_f1	let {0}: mat2x2<f32> = {1};\n{2}	binds a mat2x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00141	share.ref.mat2x2<f32>.realw	function	mat2x2<f32>.realw	share.name	{0}	the value of a mat2x2<f32>.realw let, by its name
-S00142	share.let.mat2x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x3<f32>.real;block.L0_f1	let {0}: mat2x3<f32> = {1};\n{2}	binds a mat2x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00143	share.ref.mat2x3<f32>.real	function	mat2x3<f32>.real	share.name	{0}	the value of a mat2x3<f32>.real let, by its name
-S00144	share.let.mat2x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x3<f32>.realw;block.L0_f1	let {0}: mat2x3<f32> = {1};\n{2}	binds a mat2x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00145	share.ref.mat2x3<f32>.realw	function	mat2x3<f32>.realw	share.name	{0}	the value of a mat2x3<f32>.realw let, by its name
-S00146	share.let.mat2x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x4<f32>.real;block.L0_f1	let {0}: mat2x4<f32> = {1};\n{2}	binds a mat2x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00147	share.ref.mat2x4<f32>.real	function	mat2x4<f32>.real	share.name	{0}	the value of a mat2x4<f32>.real let, by its name
-S00148	share.let.mat2x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x4<f32>.realw;block.L0_f1	let {0}: mat2x4<f32> = {1};\n{2}	binds a mat2x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00149	share.ref.mat2x4<f32>.realw	function	mat2x4<f32>.realw	share.name	{0}	the value of a mat2x4<f32>.realw let, by its name
-S00150	share.let.mat3x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x2<f32>.real;block.L0_f1	let {0}: mat3x2<f32> = {1};\n{2}	binds a mat3x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00151	share.ref.mat3x2<f32>.real	function	mat3x2<f32>.real	share.name	{0}	the value of a mat3x2<f32>.real let, by its name
-S00152	share.let.mat3x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x2<f32>.realw;block.L0_f1	let {0}: mat3x2<f32> = {1};\n{2}	binds a mat3x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00153	share.ref.mat3x2<f32>.realw	function	mat3x2<f32>.realw	share.name	{0}	the value of a mat3x2<f32>.realw let, by its name
-S00154	share.let.mat3x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x3<f32>.real;block.L0_f1	let {0}: mat3x3<f32> = {1};\n{2}	binds a mat3x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00155	share.ref.mat3x3<f32>.real	function	mat3x3<f32>.real	share.name	{0}	the value of a mat3x3<f32>.real let, by its name
-S00156	share.let.mat3x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x3<f32>.realw;block.L0_f1	let {0}: mat3x3<f32> = {1};\n{2}	binds a mat3x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00157	share.ref.mat3x3<f32>.realw	function	mat3x3<f32>.realw	share.name	{0}	the value of a mat3x3<f32>.realw let, by its name
-S00158	share.let.mat3x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x4<f32>.real;block.L0_f1	let {0}: mat3x4<f32> = {1};\n{2}	binds a mat3x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00159	share.ref.mat3x4<f32>.real	function	mat3x4<f32>.real	share.name	{0}	the value of a mat3x4<f32>.real let, by its name
-S00160	share.let.mat3x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x4<f32>.realw;block.L0_f1	let {0}: mat3x4<f32> = {1};\n{2}	binds a mat3x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00161	share.ref.mat3x4<f32>.realw	function	mat3x4<f32>.realw	share.name	{0}	the value of a mat3x4<f32>.realw let, by its name
-S00162	share.let.mat4x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x2<f32>.real;block.L0_f1	let {0}: mat4x2<f32> = {1};\n{2}	binds a mat4x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00163	share.ref.mat4x2<f32>.real	function	mat4x2<f32>.real	share.name	{0}	the value of a mat4x2<f32>.real let, by its name
-S00164	share.let.mat4x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x2<f32>.realw;block.L0_f1	let {0}: mat4x2<f32> = {1};\n{2}	binds a mat4x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00165	share.ref.mat4x2<f32>.realw	function	mat4x2<f32>.realw	share.name	{0}	the value of a mat4x2<f32>.realw let, by its name
-S00166	share.let.mat4x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x3<f32>.real;block.L0_f1	let {0}: mat4x3<f32> = {1};\n{2}	binds a mat4x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00167	share.ref.mat4x3<f32>.real	function	mat4x3<f32>.real	share.name	{0}	the value of a mat4x3<f32>.real let, by its name
-S00168	share.let.mat4x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x3<f32>.realw;block.L0_f1	let {0}: mat4x3<f32> = {1};\n{2}	binds a mat4x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00169	share.ref.mat4x3<f32>.realw	function	mat4x3<f32>.realw	share.name	{0}	the value of a mat4x3<f32>.realw let, by its name
-S00170	share.let.mat4x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x4<f32>.real;block.L0_f1	let {0}: mat4x4<f32> = {1};\n{2}	binds a mat4x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
-S00171	share.ref.mat4x4<f32>.real	function	mat4x4<f32>.real	share.name	{0}	the value of a mat4x4<f32>.real let, by its name
-S00172	share.let.mat4x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x4<f32>.realw;block.L0_f1	let {0}: mat4x4<f32> = {1};\n{2}	binds a mat4x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
-S00173	share.ref.mat4x4<f32>.realw	function	mat4x4<f32>.realw	share.name	{0}	the value of a mat4x4<f32>.realw let, by its name
-S00174	share.let.u32.bits.block.L0_f1	function	block.L0_f1	share.name;u32.bits;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.bits subtree the kernel repeats, at function scope ahead of every in-body use
-S00175	share.ref.u32.bits	function	u32.bits	share.name	{0}	the value of a u32.bits let, by its name
-S00176	share.let.u32.hash32.block.L0_f1	function	block.L0_f1	share.name;u32.hash32;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.hash32 subtree the kernel repeats, at function scope ahead of every in-body use
-S00177	share.ref.u32.hash32	function	u32.hash32	share.name	{0}	the value of a u32.hash32 let, by its name
-S00178	share.let.u32.code4.block.L0_f1	function	block.L0_f1	share.name;u32.code4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code4 subtree the kernel repeats, at function scope ahead of every in-body use
-S00179	share.ref.u32.code4	function	u32.code4	share.name	{0}	the value of a u32.code4 let, by its name
-S00180	share.let.u32.code8.block.L0_f1	function	block.L0_f1	share.name;u32.code8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code8 subtree the kernel repeats, at function scope ahead of every in-body use
-S00181	share.ref.u32.code8	function	u32.code8	share.name	{0}	the value of a u32.code8 let, by its name
-S00182	share.let.u32.code16.block.L0_f1	function	block.L0_f1	share.name;u32.code16;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code16 subtree the kernel repeats, at function scope ahead of every in-body use
-S00183	share.ref.u32.code16	function	u32.code16	share.name	{0}	the value of a u32.code16 let, by its name
-S00184	share.let.u32.code1024.block.L0_f1	function	block.L0_f1	share.name;u32.code1024;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code1024 subtree the kernel repeats, at function scope ahead of every in-body use
-S00185	share.ref.u32.code1024	function	u32.code1024	share.name	{0}	the value of a u32.code1024 let, by its name
-S00186	share.let.i32.q15_16.block.L0_f1	function	block.L0_f1	share.name;i32.q15_16;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.q15_16 subtree the kernel repeats, at function scope ahead of every in-body use
-S00187	share.ref.i32.q15_16	function	i32.q15_16	share.name	{0}	the value of a i32.q15_16 let, by its name
-S00188	share.let.bool.sign.block.L0_f1	function	block.L0_f1	share.name;bool.sign;block.L0_f1	let {0}: bool = {1};\n{2}	binds a bool.sign subtree the kernel repeats, at function scope ahead of every in-body use
-S00189	share.ref.bool.sign	function	bool.sign	share.name	{0}	the value of a bool.sign let, by its name
-S00190	share.let.u32.pidx_4.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_4 subtree the kernel repeats, at function scope ahead of every in-body use
-S00191	share.ref.u32.pidx_4	function	u32.pidx_4	share.name	{0}	the value of a u32.pidx_4 let, by its name
-S00192	share.let.u32.pidx_4w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_4w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_4w subtree the kernel repeats, at function scope ahead of every in-body use
-S00193	share.ref.u32.pidx_4w	function	u32.pidx_4w	share.name	{0}	the value of a u32.pidx_4w let, by its name
-S00194	share.let.u32.pidx_6.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_6 subtree the kernel repeats, at function scope ahead of every in-body use
-S00195	share.ref.u32.pidx_6	function	u32.pidx_6	share.name	{0}	the value of a u32.pidx_6 let, by its name
-S00196	share.let.u32.pidx_6w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_6w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_6w subtree the kernel repeats, at function scope ahead of every in-body use
-S00197	share.ref.u32.pidx_6w	function	u32.pidx_6w	share.name	{0}	the value of a u32.pidx_6w let, by its name
-S00198	share.let.u32.pidx_7.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_7 subtree the kernel repeats, at function scope ahead of every in-body use
-S00199	share.ref.u32.pidx_7	function	u32.pidx_7	share.name	{0}	the value of a u32.pidx_7 let, by its name
-S00200	share.let.u32.pidx_7w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_7w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_7w subtree the kernel repeats, at function scope ahead of every in-body use
-S00201	share.ref.u32.pidx_7w	function	u32.pidx_7w	share.name	{0}	the value of a u32.pidx_7w let, by its name
-S00202	share.let.u32.boundx6.block.L0_f1	function	block.L0_f1	share.name;u32.boundx6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx6 subtree the kernel repeats, at function scope ahead of every in-body use
-S00203	share.ref.u32.boundx6	function	u32.boundx6	share.name	{0}	the value of a u32.boundx6 let, by its name
-S00204	share.let.u32.boundu6.block.L0_f1	function	block.L0_f1	share.name;u32.boundu6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu6 subtree the kernel repeats, at function scope ahead of every in-body use
-S00205	share.ref.u32.boundu6	function	u32.boundu6	share.name	{0}	the value of a u32.boundu6 let, by its name
-S00206	share.let.u32.boundx6w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx6w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx6w subtree the kernel repeats, at function scope ahead of every in-body use
-S00207	share.ref.u32.boundx6w	function	u32.boundx6w	share.name	{0}	the value of a u32.boundx6w let, by its name
-S00208	share.let.u32.boundx12.block.L0_f1	function	block.L0_f1	share.name;u32.boundx12;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx12 subtree the kernel repeats, at function scope ahead of every in-body use
-S00209	share.ref.u32.boundx12	function	u32.boundx12	share.name	{0}	the value of a u32.boundx12 let, by its name
-S00210	share.let.u32.boundu12.block.L0_f1	function	block.L0_f1	share.name;u32.boundu12;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu12 subtree the kernel repeats, at function scope ahead of every in-body use
-S00211	share.ref.u32.boundu12	function	u32.boundu12	share.name	{0}	the value of a u32.boundu12 let, by its name
-S00212	share.let.u32.boundx12w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx12w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx12w subtree the kernel repeats, at function scope ahead of every in-body use
-S00213	share.ref.u32.boundx12w	function	u32.boundx12w	share.name	{0}	the value of a u32.boundx12w let, by its name
-S00214	share.let.u32.boundx18.block.L0_f1	function	block.L0_f1	share.name;u32.boundx18;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx18 subtree the kernel repeats, at function scope ahead of every in-body use
-S00215	share.ref.u32.boundx18	function	u32.boundx18	share.name	{0}	the value of a u32.boundx18 let, by its name
-S00216	share.let.u32.boundu18.block.L0_f1	function	block.L0_f1	share.name;u32.boundu18;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu18 subtree the kernel repeats, at function scope ahead of every in-body use
-S00217	share.ref.u32.boundu18	function	u32.boundu18	share.name	{0}	the value of a u32.boundu18 let, by its name
-S00218	share.let.u32.boundx18w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx18w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx18w subtree the kernel repeats, at function scope ahead of every in-body use
-S00219	share.ref.u32.boundx18w	function	u32.boundx18w	share.name	{0}	the value of a u32.boundx18w let, by its name
-S00220	share.let.u32.boundx24.block.L0_f1	function	block.L0_f1	share.name;u32.boundx24;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx24 subtree the kernel repeats, at function scope ahead of every in-body use
-S00221	share.ref.u32.boundx24	function	u32.boundx24	share.name	{0}	the value of a u32.boundx24 let, by its name
-S00222	share.let.u32.boundu24.block.L0_f1	function	block.L0_f1	share.name;u32.boundu24;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu24 subtree the kernel repeats, at function scope ahead of every in-body use
-S00223	share.ref.u32.boundu24	function	u32.boundu24	share.name	{0}	the value of a u32.boundu24 let, by its name
-S00224	share.let.u32.boundx24w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx24w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx24w subtree the kernel repeats, at function scope ahead of every in-body use
-S00225	share.ref.u32.boundx24w	function	u32.boundx24w	share.name	{0}	the value of a u32.boundx24w let, by its name
-S00226	share.let.u32.tcounter1.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter1;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter1 subtree the kernel repeats, at function scope ahead of every in-body use
-S00227	share.ref.u32.tcounter1	function	u32.tcounter1	share.name	{0}	the value of a u32.tcounter1 let, by its name
-S00228	share.let.u32.xcounter1.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter1;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter1 subtree the kernel repeats, at function scope ahead of every in-body use
-S00229	share.ref.u32.xcounter1	function	u32.xcounter1	share.name	{0}	the value of a u32.xcounter1 let, by its name
-S00230	share.let.u32.tcounter2.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter2;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter2 subtree the kernel repeats, at function scope ahead of every in-body use
-S00231	share.ref.u32.tcounter2	function	u32.tcounter2	share.name	{0}	the value of a u32.tcounter2 let, by its name
-S00232	share.let.u32.xcounter2.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter2;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter2 subtree the kernel repeats, at function scope ahead of every in-body use
-S00233	share.ref.u32.xcounter2	function	u32.xcounter2	share.name	{0}	the value of a u32.xcounter2 let, by its name
-S00234	share.let.u32.tcounter3.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter3;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter3 subtree the kernel repeats, at function scope ahead of every in-body use
-S00235	share.ref.u32.tcounter3	function	u32.tcounter3	share.name	{0}	the value of a u32.tcounter3 let, by its name
-S00236	share.let.u32.xcounter3.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter3;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter3 subtree the kernel repeats, at function scope ahead of every in-body use
-S00237	share.ref.u32.xcounter3	function	u32.xcounter3	share.name	{0}	the value of a u32.xcounter3 let, by its name
-S00238	share.let.u32.tcounter4.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter4 subtree the kernel repeats, at function scope ahead of every in-body use
-S00239	share.ref.u32.tcounter4	function	u32.tcounter4	share.name	{0}	the value of a u32.tcounter4 let, by its name
-S00240	share.let.u32.xcounter4.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter4 subtree the kernel repeats, at function scope ahead of every in-body use
-S00241	share.ref.u32.xcounter4	function	u32.xcounter4	share.name	{0}	the value of a u32.xcounter4 let, by its name
-S00242	share.let.u32.tcounter5.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter5;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter5 subtree the kernel repeats, at function scope ahead of every in-body use
-S00243	share.ref.u32.tcounter5	function	u32.tcounter5	share.name	{0}	the value of a u32.tcounter5 let, by its name
-S00244	share.let.u32.xcounter5.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter5;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter5 subtree the kernel repeats, at function scope ahead of every in-body use
-S00245	share.ref.u32.xcounter5	function	u32.xcounter5	share.name	{0}	the value of a u32.xcounter5 let, by its name
-S00246	share.let.u32.atomicold.block.L0_f1	function	block.L0_f1	share.name;u32.atomicold;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.atomicold subtree the kernel repeats, at function scope ahead of every in-body use
-S00247	share.ref.u32.atomicold	function	u32.atomicold	share.name	{0}	the value of a u32.atomicold let, by its name
-S00248	share.let.i32.atomicold.block.L0_f1	function	block.L0_f1	share.name;i32.atomicold;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.atomicold subtree the kernel repeats, at function scope ahead of every in-body use
-S00249	share.ref.i32.atomicold	function	i32.atomicold	share.name	{0}	the value of a i32.atomicold let, by its name
-S00250	share.let.u32.wgidx_7.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_7 subtree the kernel repeats, at function scope ahead of every in-body use
-S00251	share.ref.u32.wgidx_7	function	u32.wgidx_7	share.name	{0}	the value of a u32.wgidx_7 let, by its name
-S00252	share.let.u32.wgown_7.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_7 subtree the kernel repeats, at function scope ahead of every in-body use
-S00253	share.ref.u32.wgown_7	function	u32.wgown_7	share.name	{0}	the value of a u32.wgown_7 let, by its name
-S00254	share.let.u32.wgidx_8.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_8 subtree the kernel repeats, at function scope ahead of every in-body use
-S00255	share.ref.u32.wgidx_8	function	u32.wgidx_8	share.name	{0}	the value of a u32.wgidx_8 let, by its name
-S00256	share.let.u32.wgown_8.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_8 subtree the kernel repeats, at function scope ahead of every in-body use
-S00257	share.ref.u32.wgown_8	function	u32.wgown_8	share.name	{0}	the value of a u32.wgown_8 let, by its name
-S00258	share.let.u32.wgidx_9.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_9 subtree the kernel repeats, at function scope ahead of every in-body use
-S00259	share.ref.u32.wgidx_9	function	u32.wgidx_9	share.name	{0}	the value of a u32.wgidx_9 let, by its name
-S00260	share.let.u32.wgown_9.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_9 subtree the kernel repeats, at function scope ahead of every in-body use
-S00261	share.ref.u32.wgown_9	function	u32.wgown_9	share.name	{0}	the value of a u32.wgown_9 let, by its name
-S00262	share.let.u32.wgidx_10.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_10;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_10 subtree the kernel repeats, at function scope ahead of every in-body use
-S00263	share.ref.u32.wgidx_10	function	u32.wgidx_10	share.name	{0}	the value of a u32.wgidx_10 let, by its name
-S00264	share.let.u32.wgown_10.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_10;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_10 subtree the kernel repeats, at function scope ahead of every in-body use
-S00265	share.ref.u32.wgown_10	function	u32.wgown_10	share.name	{0}	the value of a u32.wgown_10 let, by its name
-S00266	share.let.u32.wgidx_11.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_11 subtree the kernel repeats, at function scope ahead of every in-body use
-S00267	share.ref.u32.wgidx_11	function	u32.wgidx_11	share.name	{0}	the value of a u32.wgidx_11 let, by its name
-S00268	share.let.u32.wgown_11.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_11 subtree the kernel repeats, at function scope ahead of every in-body use
-S00269	share.ref.u32.wgown_11	function	u32.wgown_11	share.name	{0}	the value of a u32.wgown_11 let, by its name
-S00270	share.let.u32.litpow2_7.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_7 subtree the kernel repeats, at function scope ahead of every in-body use
-S00271	share.ref.u32.litpow2_7	function	u32.litpow2_7	share.name	{0}	the value of a u32.litpow2_7 let, by its name
-S00272	share.let.u32.litpow2_8.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_8 subtree the kernel repeats, at function scope ahead of every in-body use
-S00273	share.ref.u32.litpow2_8	function	u32.litpow2_8	share.name	{0}	the value of a u32.litpow2_8 let, by its name
-S00274	share.let.u32.litpow2_9.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_9 subtree the kernel repeats, at function scope ahead of every in-body use
-S00275	share.ref.u32.litpow2_9	function	u32.litpow2_9	share.name	{0}	the value of a u32.litpow2_9 let, by its name
-S00276	share.let.u32.litpow2_11.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_11 subtree the kernel repeats, at function scope ahead of every in-body use
-S00277	share.ref.u32.litpow2_11	function	u32.litpow2_11	share.name	{0}	the value of a u32.litpow2_11 let, by its name
-S00278	share.let.u32.lane.block.L0_f1	function	block.L0_f1	share.name;u32.lane;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lane subtree the kernel repeats, at function scope ahead of every in-body use
-S00279	share.ref.u32.lane	function	u32.lane	share.name	{0}	the value of a u32.lane let, by its name
-S00280	share.let.u32.sgoff.block.L0_f1	function	block.L0_f1	share.name;u32.sgoff;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.sgoff subtree the kernel repeats, at function scope ahead of every in-body use
-S00281	share.ref.u32.sgoff	function	u32.sgoff	share.name	{0}	the value of a u32.sgoff let, by its name
-S00282	share.let.u32.lanelit.block.L0_f1	function	block.L0_f1	share.name;u32.lanelit;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lanelit subtree the kernel repeats, at function scope ahead of every in-body use
-S00283	share.ref.u32.lanelit	function	u32.lanelit	share.name	{0}	the value of a u32.lanelit let, by its name
-S00284	share.let.u32.payload.block.L0_f1	function	block.L0_f1	share.name;u32.payload;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.payload subtree the kernel repeats, at function scope ahead of every in-body use
-S00285	share.ref.u32.payload	function	u32.payload	share.name	{0}	the value of a u32.payload let, by its name
+S00128	share.let.f32.bare.block.L0_f1	function	block.L0_f1	share.name;f32.bare;block.L0_f1	let {0}: f32 = {1};\n{2}	binds a f32.bare subtree the kernel repeats, at function scope ahead of every in-body use
+S00129	share.ref.f32.bare	function	f32.bare	share.name	{0}	the value of a f32.bare let, by its name
+S00130	share.let.f16.bare.block.L0_f1	function	block.L0_f1	share.name;f16.bare;block.L0_f1	let {0}: f16 = {1};\n{2}	binds a f16.bare subtree the kernel repeats, at function scope ahead of every in-body use
+S00131	share.ref.f16.bare	function	f16.bare	share.name	{0}	the value of a f16.bare let, by its name
+S00132	share.let.u32.bare_index.block.L0_f1	function	block.L0_f1	share.name;u32.bare_index;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.bare_index subtree the kernel repeats, at function scope ahead of every in-body use
+S00133	share.ref.u32.bare_index	function	u32.bare_index	share.name	{0}	the value of a u32.bare_index let, by its name
+S00134	share.let.u32.bare_count.block.L0_f1	function	block.L0_f1	share.name;u32.bare_count;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.bare_count subtree the kernel repeats, at function scope ahead of every in-body use
+S00135	share.ref.u32.bare_count	function	u32.bare_count	share.name	{0}	the value of a u32.bare_count let, by its name
+S00136	share.let.i32.bare.block.L0_f1	function	block.L0_f1	share.name;i32.bare;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.bare subtree the kernel repeats, at function scope ahead of every in-body use
+S00137	share.ref.i32.bare	function	i32.bare	share.name	{0}	the value of a i32.bare let, by its name
+S00138	share.let.bool.bare.block.L0_f1	function	block.L0_f1	share.name;bool.bare;block.L0_f1	let {0}: bool = {1};\n{2}	binds a bool.bare subtree the kernel repeats, at function scope ahead of every in-body use
+S00139	share.ref.bool.bare	function	bool.bare	share.name	{0}	the value of a bool.bare let, by its name
+S00140	share.let.f32.nonneg.block.L0_f1	function	block.L0_f1	share.name;f32.nonneg;block.L0_f1	let {0}: f32 = {1};\n{2}	binds a f32.nonneg subtree the kernel repeats, at function scope ahead of every in-body use
+S00141	share.ref.f32.nonneg	function	f32.nonneg	share.name	{0}	the value of a f32.nonneg let, by its name
+S00142	share.let.i32.nonneg.block.L0_f1	function	block.L0_f1	share.name;i32.nonneg;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.nonneg subtree the kernel repeats, at function scope ahead of every in-body use
+S00143	share.ref.i32.nonneg	function	i32.nonneg	share.name	{0}	the value of a i32.nonneg let, by its name
+S00144	share.let.u32.lit4096.block.L0_f1	function	block.L0_f1	share.name;u32.lit4096;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lit4096 subtree the kernel repeats, at function scope ahead of every in-body use
+S00145	share.ref.u32.lit4096	function	u32.lit4096	share.name	{0}	the value of a u32.lit4096 let, by its name
+S00146	share.let.u32.uniform.block.L0_f1	function	block.L0_f1	share.name;u32.uniform;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.uniform subtree the kernel repeats, at function scope ahead of every in-body use
+S00147	share.ref.u32.uniform	function	u32.uniform	share.name	{0}	the value of a u32.uniform let, by its name
+S00148	share.let.bool.uflag.block.L0_f1	function	block.L0_f1	share.name;bool.uflag;block.L0_f1	let {0}: bool = {1};\n{2}	binds a bool.uflag subtree the kernel repeats, at function scope ahead of every in-body use
+S00149	share.ref.bool.uflag	function	bool.uflag	share.name	{0}	the value of a bool.uflag let, by its name
+S00150	share.let.mat2x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x2<f32>.real;block.L0_f1	let {0}: mat2x2<f32> = {1};\n{2}	binds a mat2x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00151	share.ref.mat2x2<f32>.real	function	mat2x2<f32>.real	share.name	{0}	the value of a mat2x2<f32>.real let, by its name
+S00152	share.let.mat2x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x2<f32>.realw;block.L0_f1	let {0}: mat2x2<f32> = {1};\n{2}	binds a mat2x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00153	share.ref.mat2x2<f32>.realw	function	mat2x2<f32>.realw	share.name	{0}	the value of a mat2x2<f32>.realw let, by its name
+S00154	share.let.mat2x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x3<f32>.real;block.L0_f1	let {0}: mat2x3<f32> = {1};\n{2}	binds a mat2x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00155	share.ref.mat2x3<f32>.real	function	mat2x3<f32>.real	share.name	{0}	the value of a mat2x3<f32>.real let, by its name
+S00156	share.let.mat2x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x3<f32>.realw;block.L0_f1	let {0}: mat2x3<f32> = {1};\n{2}	binds a mat2x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00157	share.ref.mat2x3<f32>.realw	function	mat2x3<f32>.realw	share.name	{0}	the value of a mat2x3<f32>.realw let, by its name
+S00158	share.let.mat2x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat2x4<f32>.real;block.L0_f1	let {0}: mat2x4<f32> = {1};\n{2}	binds a mat2x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00159	share.ref.mat2x4<f32>.real	function	mat2x4<f32>.real	share.name	{0}	the value of a mat2x4<f32>.real let, by its name
+S00160	share.let.mat2x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat2x4<f32>.realw;block.L0_f1	let {0}: mat2x4<f32> = {1};\n{2}	binds a mat2x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00161	share.ref.mat2x4<f32>.realw	function	mat2x4<f32>.realw	share.name	{0}	the value of a mat2x4<f32>.realw let, by its name
+S00162	share.let.mat3x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x2<f32>.real;block.L0_f1	let {0}: mat3x2<f32> = {1};\n{2}	binds a mat3x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00163	share.ref.mat3x2<f32>.real	function	mat3x2<f32>.real	share.name	{0}	the value of a mat3x2<f32>.real let, by its name
+S00164	share.let.mat3x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x2<f32>.realw;block.L0_f1	let {0}: mat3x2<f32> = {1};\n{2}	binds a mat3x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00165	share.ref.mat3x2<f32>.realw	function	mat3x2<f32>.realw	share.name	{0}	the value of a mat3x2<f32>.realw let, by its name
+S00166	share.let.mat3x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x3<f32>.real;block.L0_f1	let {0}: mat3x3<f32> = {1};\n{2}	binds a mat3x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00167	share.ref.mat3x3<f32>.real	function	mat3x3<f32>.real	share.name	{0}	the value of a mat3x3<f32>.real let, by its name
+S00168	share.let.mat3x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x3<f32>.realw;block.L0_f1	let {0}: mat3x3<f32> = {1};\n{2}	binds a mat3x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00169	share.ref.mat3x3<f32>.realw	function	mat3x3<f32>.realw	share.name	{0}	the value of a mat3x3<f32>.realw let, by its name
+S00170	share.let.mat3x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat3x4<f32>.real;block.L0_f1	let {0}: mat3x4<f32> = {1};\n{2}	binds a mat3x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00171	share.ref.mat3x4<f32>.real	function	mat3x4<f32>.real	share.name	{0}	the value of a mat3x4<f32>.real let, by its name
+S00172	share.let.mat3x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat3x4<f32>.realw;block.L0_f1	let {0}: mat3x4<f32> = {1};\n{2}	binds a mat3x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00173	share.ref.mat3x4<f32>.realw	function	mat3x4<f32>.realw	share.name	{0}	the value of a mat3x4<f32>.realw let, by its name
+S00174	share.let.mat4x2<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x2<f32>.real;block.L0_f1	let {0}: mat4x2<f32> = {1};\n{2}	binds a mat4x2<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00175	share.ref.mat4x2<f32>.real	function	mat4x2<f32>.real	share.name	{0}	the value of a mat4x2<f32>.real let, by its name
+S00176	share.let.mat4x2<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x2<f32>.realw;block.L0_f1	let {0}: mat4x2<f32> = {1};\n{2}	binds a mat4x2<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00177	share.ref.mat4x2<f32>.realw	function	mat4x2<f32>.realw	share.name	{0}	the value of a mat4x2<f32>.realw let, by its name
+S00178	share.let.mat4x3<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x3<f32>.real;block.L0_f1	let {0}: mat4x3<f32> = {1};\n{2}	binds a mat4x3<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00179	share.ref.mat4x3<f32>.real	function	mat4x3<f32>.real	share.name	{0}	the value of a mat4x3<f32>.real let, by its name
+S00180	share.let.mat4x3<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x3<f32>.realw;block.L0_f1	let {0}: mat4x3<f32> = {1};\n{2}	binds a mat4x3<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00181	share.ref.mat4x3<f32>.realw	function	mat4x3<f32>.realw	share.name	{0}	the value of a mat4x3<f32>.realw let, by its name
+S00182	share.let.mat4x4<f32>.real.block.L0_f1	function	block.L0_f1	share.name;mat4x4<f32>.real;block.L0_f1	let {0}: mat4x4<f32> = {1};\n{2}	binds a mat4x4<f32>.real subtree the kernel repeats, at function scope ahead of every in-body use
+S00183	share.ref.mat4x4<f32>.real	function	mat4x4<f32>.real	share.name	{0}	the value of a mat4x4<f32>.real let, by its name
+S00184	share.let.mat4x4<f32>.realw.block.L0_f1	function	block.L0_f1	share.name;mat4x4<f32>.realw;block.L0_f1	let {0}: mat4x4<f32> = {1};\n{2}	binds a mat4x4<f32>.realw subtree the kernel repeats, at function scope ahead of every in-body use
+S00185	share.ref.mat4x4<f32>.realw	function	mat4x4<f32>.realw	share.name	{0}	the value of a mat4x4<f32>.realw let, by its name
+S00186	share.let.u32.bits.block.L0_f1	function	block.L0_f1	share.name;u32.bits;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.bits subtree the kernel repeats, at function scope ahead of every in-body use
+S00187	share.ref.u32.bits	function	u32.bits	share.name	{0}	the value of a u32.bits let, by its name
+S00188	share.let.u32.hash32.block.L0_f1	function	block.L0_f1	share.name;u32.hash32;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.hash32 subtree the kernel repeats, at function scope ahead of every in-body use
+S00189	share.ref.u32.hash32	function	u32.hash32	share.name	{0}	the value of a u32.hash32 let, by its name
+S00190	share.let.u32.code4.block.L0_f1	function	block.L0_f1	share.name;u32.code4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code4 subtree the kernel repeats, at function scope ahead of every in-body use
+S00191	share.ref.u32.code4	function	u32.code4	share.name	{0}	the value of a u32.code4 let, by its name
+S00192	share.let.u32.code8.block.L0_f1	function	block.L0_f1	share.name;u32.code8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code8 subtree the kernel repeats, at function scope ahead of every in-body use
+S00193	share.ref.u32.code8	function	u32.code8	share.name	{0}	the value of a u32.code8 let, by its name
+S00194	share.let.u32.code16.block.L0_f1	function	block.L0_f1	share.name;u32.code16;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code16 subtree the kernel repeats, at function scope ahead of every in-body use
+S00195	share.ref.u32.code16	function	u32.code16	share.name	{0}	the value of a u32.code16 let, by its name
+S00196	share.let.u32.code1024.block.L0_f1	function	block.L0_f1	share.name;u32.code1024;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.code1024 subtree the kernel repeats, at function scope ahead of every in-body use
+S00197	share.ref.u32.code1024	function	u32.code1024	share.name	{0}	the value of a u32.code1024 let, by its name
+S00198	share.let.i32.q15_16.block.L0_f1	function	block.L0_f1	share.name;i32.q15_16;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.q15_16 subtree the kernel repeats, at function scope ahead of every in-body use
+S00199	share.ref.i32.q15_16	function	i32.q15_16	share.name	{0}	the value of a i32.q15_16 let, by its name
+S00200	share.let.bool.sign.block.L0_f1	function	block.L0_f1	share.name;bool.sign;block.L0_f1	let {0}: bool = {1};\n{2}	binds a bool.sign subtree the kernel repeats, at function scope ahead of every in-body use
+S00201	share.ref.bool.sign	function	bool.sign	share.name	{0}	the value of a bool.sign let, by its name
+S00202	share.let.u32.pidx_4.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_4 subtree the kernel repeats, at function scope ahead of every in-body use
+S00203	share.ref.u32.pidx_4	function	u32.pidx_4	share.name	{0}	the value of a u32.pidx_4 let, by its name
+S00204	share.let.u32.pidx_4w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_4w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_4w subtree the kernel repeats, at function scope ahead of every in-body use
+S00205	share.ref.u32.pidx_4w	function	u32.pidx_4w	share.name	{0}	the value of a u32.pidx_4w let, by its name
+S00206	share.let.u32.pidx_6.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_6 subtree the kernel repeats, at function scope ahead of every in-body use
+S00207	share.ref.u32.pidx_6	function	u32.pidx_6	share.name	{0}	the value of a u32.pidx_6 let, by its name
+S00208	share.let.u32.pidx_6w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_6w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_6w subtree the kernel repeats, at function scope ahead of every in-body use
+S00209	share.ref.u32.pidx_6w	function	u32.pidx_6w	share.name	{0}	the value of a u32.pidx_6w let, by its name
+S00210	share.let.u32.pidx_7.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_7 subtree the kernel repeats, at function scope ahead of every in-body use
+S00211	share.ref.u32.pidx_7	function	u32.pidx_7	share.name	{0}	the value of a u32.pidx_7 let, by its name
+S00212	share.let.u32.pidx_7w.block.L0_f1	function	block.L0_f1	share.name;u32.pidx_7w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.pidx_7w subtree the kernel repeats, at function scope ahead of every in-body use
+S00213	share.ref.u32.pidx_7w	function	u32.pidx_7w	share.name	{0}	the value of a u32.pidx_7w let, by its name
+S00214	share.let.u32.boundx6.block.L0_f1	function	block.L0_f1	share.name;u32.boundx6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx6 subtree the kernel repeats, at function scope ahead of every in-body use
+S00215	share.ref.u32.boundx6	function	u32.boundx6	share.name	{0}	the value of a u32.boundx6 let, by its name
+S00216	share.let.u32.boundu6.block.L0_f1	function	block.L0_f1	share.name;u32.boundu6;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu6 subtree the kernel repeats, at function scope ahead of every in-body use
+S00217	share.ref.u32.boundu6	function	u32.boundu6	share.name	{0}	the value of a u32.boundu6 let, by its name
+S00218	share.let.u32.boundx6w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx6w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx6w subtree the kernel repeats, at function scope ahead of every in-body use
+S00219	share.ref.u32.boundx6w	function	u32.boundx6w	share.name	{0}	the value of a u32.boundx6w let, by its name
+S00220	share.let.u32.boundx12.block.L0_f1	function	block.L0_f1	share.name;u32.boundx12;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx12 subtree the kernel repeats, at function scope ahead of every in-body use
+S00221	share.ref.u32.boundx12	function	u32.boundx12	share.name	{0}	the value of a u32.boundx12 let, by its name
+S00222	share.let.u32.boundu12.block.L0_f1	function	block.L0_f1	share.name;u32.boundu12;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu12 subtree the kernel repeats, at function scope ahead of every in-body use
+S00223	share.ref.u32.boundu12	function	u32.boundu12	share.name	{0}	the value of a u32.boundu12 let, by its name
+S00224	share.let.u32.boundx12w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx12w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx12w subtree the kernel repeats, at function scope ahead of every in-body use
+S00225	share.ref.u32.boundx12w	function	u32.boundx12w	share.name	{0}	the value of a u32.boundx12w let, by its name
+S00226	share.let.u32.boundx18.block.L0_f1	function	block.L0_f1	share.name;u32.boundx18;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx18 subtree the kernel repeats, at function scope ahead of every in-body use
+S00227	share.ref.u32.boundx18	function	u32.boundx18	share.name	{0}	the value of a u32.boundx18 let, by its name
+S00228	share.let.u32.boundu18.block.L0_f1	function	block.L0_f1	share.name;u32.boundu18;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu18 subtree the kernel repeats, at function scope ahead of every in-body use
+S00229	share.ref.u32.boundu18	function	u32.boundu18	share.name	{0}	the value of a u32.boundu18 let, by its name
+S00230	share.let.u32.boundx18w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx18w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx18w subtree the kernel repeats, at function scope ahead of every in-body use
+S00231	share.ref.u32.boundx18w	function	u32.boundx18w	share.name	{0}	the value of a u32.boundx18w let, by its name
+S00232	share.let.u32.boundx24.block.L0_f1	function	block.L0_f1	share.name;u32.boundx24;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx24 subtree the kernel repeats, at function scope ahead of every in-body use
+S00233	share.ref.u32.boundx24	function	u32.boundx24	share.name	{0}	the value of a u32.boundx24 let, by its name
+S00234	share.let.u32.boundu24.block.L0_f1	function	block.L0_f1	share.name;u32.boundu24;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundu24 subtree the kernel repeats, at function scope ahead of every in-body use
+S00235	share.ref.u32.boundu24	function	u32.boundu24	share.name	{0}	the value of a u32.boundu24 let, by its name
+S00236	share.let.u32.boundx24w.block.L0_f1	function	block.L0_f1	share.name;u32.boundx24w;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.boundx24w subtree the kernel repeats, at function scope ahead of every in-body use
+S00237	share.ref.u32.boundx24w	function	u32.boundx24w	share.name	{0}	the value of a u32.boundx24w let, by its name
+S00238	share.let.u32.tcounter1.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter1;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter1 subtree the kernel repeats, at function scope ahead of every in-body use
+S00239	share.ref.u32.tcounter1	function	u32.tcounter1	share.name	{0}	the value of a u32.tcounter1 let, by its name
+S00240	share.let.u32.xcounter1.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter1;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter1 subtree the kernel repeats, at function scope ahead of every in-body use
+S00241	share.ref.u32.xcounter1	function	u32.xcounter1	share.name	{0}	the value of a u32.xcounter1 let, by its name
+S00242	share.let.u32.tcounter2.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter2;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter2 subtree the kernel repeats, at function scope ahead of every in-body use
+S00243	share.ref.u32.tcounter2	function	u32.tcounter2	share.name	{0}	the value of a u32.tcounter2 let, by its name
+S00244	share.let.u32.xcounter2.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter2;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter2 subtree the kernel repeats, at function scope ahead of every in-body use
+S00245	share.ref.u32.xcounter2	function	u32.xcounter2	share.name	{0}	the value of a u32.xcounter2 let, by its name
+S00246	share.let.u32.tcounter3.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter3;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter3 subtree the kernel repeats, at function scope ahead of every in-body use
+S00247	share.ref.u32.tcounter3	function	u32.tcounter3	share.name	{0}	the value of a u32.tcounter3 let, by its name
+S00248	share.let.u32.xcounter3.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter3;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter3 subtree the kernel repeats, at function scope ahead of every in-body use
+S00249	share.ref.u32.xcounter3	function	u32.xcounter3	share.name	{0}	the value of a u32.xcounter3 let, by its name
+S00250	share.let.u32.tcounter4.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter4 subtree the kernel repeats, at function scope ahead of every in-body use
+S00251	share.ref.u32.tcounter4	function	u32.tcounter4	share.name	{0}	the value of a u32.tcounter4 let, by its name
+S00252	share.let.u32.xcounter4.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter4;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter4 subtree the kernel repeats, at function scope ahead of every in-body use
+S00253	share.ref.u32.xcounter4	function	u32.xcounter4	share.name	{0}	the value of a u32.xcounter4 let, by its name
+S00254	share.let.u32.tcounter5.block.L0_f1	function	block.L0_f1	share.name;u32.tcounter5;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.tcounter5 subtree the kernel repeats, at function scope ahead of every in-body use
+S00255	share.ref.u32.tcounter5	function	u32.tcounter5	share.name	{0}	the value of a u32.tcounter5 let, by its name
+S00256	share.let.u32.xcounter5.block.L0_f1	function	block.L0_f1	share.name;u32.xcounter5;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.xcounter5 subtree the kernel repeats, at function scope ahead of every in-body use
+S00257	share.ref.u32.xcounter5	function	u32.xcounter5	share.name	{0}	the value of a u32.xcounter5 let, by its name
+S00258	share.let.u32.atomicold.block.L0_f1	function	block.L0_f1	share.name;u32.atomicold;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.atomicold subtree the kernel repeats, at function scope ahead of every in-body use
+S00259	share.ref.u32.atomicold	function	u32.atomicold	share.name	{0}	the value of a u32.atomicold let, by its name
+S00260	share.let.i32.atomicold.block.L0_f1	function	block.L0_f1	share.name;i32.atomicold;block.L0_f1	let {0}: i32 = {1};\n{2}	binds a i32.atomicold subtree the kernel repeats, at function scope ahead of every in-body use
+S00261	share.ref.i32.atomicold	function	i32.atomicold	share.name	{0}	the value of a i32.atomicold let, by its name
+S00262	share.let.u32.wgidx_7.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_7 subtree the kernel repeats, at function scope ahead of every in-body use
+S00263	share.ref.u32.wgidx_7	function	u32.wgidx_7	share.name	{0}	the value of a u32.wgidx_7 let, by its name
+S00264	share.let.u32.wgown_7.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_7 subtree the kernel repeats, at function scope ahead of every in-body use
+S00265	share.ref.u32.wgown_7	function	u32.wgown_7	share.name	{0}	the value of a u32.wgown_7 let, by its name
+S00266	share.let.u32.wgidx_8.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_8 subtree the kernel repeats, at function scope ahead of every in-body use
+S00267	share.ref.u32.wgidx_8	function	u32.wgidx_8	share.name	{0}	the value of a u32.wgidx_8 let, by its name
+S00268	share.let.u32.wgown_8.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_8 subtree the kernel repeats, at function scope ahead of every in-body use
+S00269	share.ref.u32.wgown_8	function	u32.wgown_8	share.name	{0}	the value of a u32.wgown_8 let, by its name
+S00270	share.let.u32.wgidx_9.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_9 subtree the kernel repeats, at function scope ahead of every in-body use
+S00271	share.ref.u32.wgidx_9	function	u32.wgidx_9	share.name	{0}	the value of a u32.wgidx_9 let, by its name
+S00272	share.let.u32.wgown_9.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_9 subtree the kernel repeats, at function scope ahead of every in-body use
+S00273	share.ref.u32.wgown_9	function	u32.wgown_9	share.name	{0}	the value of a u32.wgown_9 let, by its name
+S00274	share.let.u32.wgidx_10.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_10;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_10 subtree the kernel repeats, at function scope ahead of every in-body use
+S00275	share.ref.u32.wgidx_10	function	u32.wgidx_10	share.name	{0}	the value of a u32.wgidx_10 let, by its name
+S00276	share.let.u32.wgown_10.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_10;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_10 subtree the kernel repeats, at function scope ahead of every in-body use
+S00277	share.ref.u32.wgown_10	function	u32.wgown_10	share.name	{0}	the value of a u32.wgown_10 let, by its name
+S00278	share.let.u32.wgidx_11.block.L0_f1	function	block.L0_f1	share.name;u32.wgidx_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgidx_11 subtree the kernel repeats, at function scope ahead of every in-body use
+S00279	share.ref.u32.wgidx_11	function	u32.wgidx_11	share.name	{0}	the value of a u32.wgidx_11 let, by its name
+S00280	share.let.u32.wgown_11.block.L0_f1	function	block.L0_f1	share.name;u32.wgown_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.wgown_11 subtree the kernel repeats, at function scope ahead of every in-body use
+S00281	share.ref.u32.wgown_11	function	u32.wgown_11	share.name	{0}	the value of a u32.wgown_11 let, by its name
+S00282	share.let.u32.litpow2_7.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_7;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_7 subtree the kernel repeats, at function scope ahead of every in-body use
+S00283	share.ref.u32.litpow2_7	function	u32.litpow2_7	share.name	{0}	the value of a u32.litpow2_7 let, by its name
+S00284	share.let.u32.litpow2_8.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_8;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_8 subtree the kernel repeats, at function scope ahead of every in-body use
+S00285	share.ref.u32.litpow2_8	function	u32.litpow2_8	share.name	{0}	the value of a u32.litpow2_8 let, by its name
+S00286	share.let.u32.litpow2_9.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_9;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_9 subtree the kernel repeats, at function scope ahead of every in-body use
+S00287	share.ref.u32.litpow2_9	function	u32.litpow2_9	share.name	{0}	the value of a u32.litpow2_9 let, by its name
+S00288	share.let.u32.litpow2_11.block.L0_f1	function	block.L0_f1	share.name;u32.litpow2_11;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.litpow2_11 subtree the kernel repeats, at function scope ahead of every in-body use
+S00289	share.ref.u32.litpow2_11	function	u32.litpow2_11	share.name	{0}	the value of a u32.litpow2_11 let, by its name
+S00290	share.let.u32.lane.block.L0_f1	function	block.L0_f1	share.name;u32.lane;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lane subtree the kernel repeats, at function scope ahead of every in-body use
+S00291	share.ref.u32.lane	function	u32.lane	share.name	{0}	the value of a u32.lane let, by its name
+S00292	share.let.u32.sgoff.block.L0_f1	function	block.L0_f1	share.name;u32.sgoff;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.sgoff subtree the kernel repeats, at function scope ahead of every in-body use
+S00293	share.ref.u32.sgoff	function	u32.sgoff	share.name	{0}	the value of a u32.sgoff let, by its name
+S00294	share.let.u32.lanelit.block.L0_f1	function	block.L0_f1	share.name;u32.lanelit;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.lanelit subtree the kernel repeats, at function scope ahead of every in-body use
+S00295	share.ref.u32.lanelit	function	u32.lanelit	share.name	{0}	the value of a u32.lanelit let, by its name
+S00296	share.let.u32.payload.block.L0_f1	function	block.L0_f1	share.name;u32.payload;block.L0_f1	let {0}: u32 = {1};\n{2}	binds a u32.payload subtree the kernel repeats, at function scope ahead of every in-body use
+S00297	share.ref.u32.payload	function	u32.payload	share.name	{0}	the value of a u32.payload let, by its name

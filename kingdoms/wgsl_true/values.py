@@ -14,6 +14,7 @@ FAMS = {
     "flag": ("bool", "flag", "a predicate"),
 }
 LANES = (1, 2, 3, 4)
+BARE_NAME = {"real": "f32.bare", "h": "f16.bare", "index": "u32.bare_index", "count": "u32.bare_count", "int": "i32.bare", "flag": "bool.bare"}
 F32MAX = 3.4028234663852886e38
 
 
@@ -87,6 +88,14 @@ def declare(iface):
             }[fam] if L == 1 else "-"
             T(t, mean if L == 1 else f"a vector of {L} lanes: {mean}", L, lit)
             register_twin(t)
+    # the bare literal of each scalar value family (s9 batch 7, "Bare and runtime literals"): spelled as WGSL writes it,
+    # standing only in a slot of a row that is never constant-evaluated or cannot fail if it is (lib.finish_bare)
+    for fam, (s, f, mean) in FAMS.items():
+        base = vt(s, f)
+        b = T(BARE_NAME[fam], f"a bare literal of {base}: a const-expression, so it stands only where constant evaluation cannot fail", 1, TYPES[base]["literal"])
+        BARE[base] = b
+        BARE[TWIN[base]] = b
+        SAFE_ARGS.add(b)
     T("f32.nonneg", "a non-negative width", 1, f"0.0..={F32MAX}")
     T("i32.nonneg", "a non-negative width", 1, "0..=2147483647")
     T("bounds<f32>.ordered", "a pair (lo, hi) with lo <= hi by construction")
@@ -110,6 +119,13 @@ IDX_BIN = {"add": "({0} + {1})", "sub": "({0} - {1})", "mul": "({0} * {1})", "di
 INT_BIN = {"add": "({0} + {1})", "sub": "({0} - {1})", "mul": "({0} * {1})", "div": "({0} / {1})", "mod": "({0} % {1})", "min": "min({0}, {1})",
            "max": "max({0}, {1})", "and": "({0} & {1})", "or": "({0} | {1})", "xor": "({0} ^ {1})"}
 INT_UN = {"neg": "(-{0})", "abs": "abs({0})", "sign": "sign({0})", "not": "(~{0})"}
+
+
+def bare_constants(iface):
+    """The bare literal `?_T` of each scalar family: the same C_T as the family's runtime literal, spelled bare."""
+    spell = {"real": "{v}", "h": "{v}h", "index": "{v}u", "count": "{v}u", "int": "{v}", "flag": "{v}"}
+    for fam, runtime in (("real", "literal.real"), ("h", "literal.f16"), ("index", "literal.index"), ("count", "literal.count"), ("int", "literal.int"), ("flag", "literal.flag")):
+        C(f"bare.{fam}", BARE_NAME[fam], spell[fam], ROWS[runtime]["values"], f"the bare spelling of {runtime}'s C_T: a const-expression, so only rows whose constant evaluation cannot fail take it")
 
 
 def build(iface):
@@ -150,15 +166,16 @@ def build(iface):
     C("literal.index", "u32.index", "lit_u32({v}u)", extra(iface, "index", int_values(0, 2**32 - 1, 48, "index")), "?_index", twin=True)
     C("literal.count", "u32.count", "lit_u32({v}u)", extra(iface, "count", int_values(0, 2**32 - 1, 48, "count")), "?_count", twin=True)
     C("literal.real", "f32.real", "lit_f32({v})", extra(iface, "real", f32_values(-F32MAX, F32MAX, 48, "real")), "?_real: a finite f32, so no NaN or infinity literal exists", twin=True)
-    C("literal.nonneg", "f32.nonneg", "lit_f32({v})", f32_values(0.0, F32MAX, 32, "nonneg"), "?_nonneg: a non-negative width")
+    C("literal.nonneg", "f32.nonneg", "{v}", f32_values(0.0, F32MAX, 32, "nonneg"), "?_nonneg: a non-negative width")
     C("literal.f16", "f16.real", "lit_f16({v}h)", f32_values(-65504.0, 65504.0, 32, "f16", True), "?_f16: the finite f16 range", twin=True)
     C("literal.int", "i32.int", "lit_i32({v})", extra(iface, "int", [("(-2147483647i - 1i)" if v == -2147483648 else f"{v}i") for v in int_values(-2**31, 2**31 - 1, 48, "int")]), "?_int", twin=True)
-    C("literal.nonneg_int", "i32.nonneg", "lit_i32({v}i)", [str(v) for v in int_values(0, 2**31 - 1, 32, "nonneg_int")], "?_nonneg_int")
-    C("literal.lit4096", "u32.lit4096", "lit_u32({v}u)", [str(v) for v in int_values(1, 4096, 32, "lit4096")], "?_lit4096")
-    R("own.u32_lit4096", "u32.lit4096", [], "lit_u32(1u)")
-    R("own.u32_lit64", "u32.lit64", [], "lit_u32(1u)")
-    R("own.f32_nonneg", "f32.nonneg", [], "lit_f32(0.0)")
-    R("own.i32_nonneg", "i32.nonneg", [], "lit_i32(0i)")
+    bare_constants(iface)
+    C("literal.nonneg_int", "i32.nonneg", "{v}i", [str(v) for v in int_values(0, 2**31 - 1, 32, "nonneg_int")], "?_nonneg_int")
+    C("literal.lit4096", "u32.lit4096", "{v}u", [str(v) for v in int_values(1, 4096, 32, "lit4096")], "?_lit4096")
+    R("own.u32_lit4096", "u32.lit4096", [], "1u")
+    R("own.u32_lit64", "u32.lit64", [], "1u")
+    R("own.f32_nonneg", "f32.nonneg", [], "0.0")
+    R("own.i32_nonneg", "i32.nonneg", [], "0i")
     R("own.bounds_f32", "bounds<f32>.ordered", [], "vec2<f32>(0.0, 0.0)", "an ordered pair")
     R("own.bounds_i32", "bounds<i32>.ordered", [], "vec2<i32>(0i, 0i)", "an ordered pair")
     # ---- index and count

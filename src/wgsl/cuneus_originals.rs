@@ -63,6 +63,10 @@ pub fn case_bindings(shader: &str, time: f32, width: u32, height: u32) -> Result
     }
 }
 
+/// The runtime literal of each scalar family and its bare literal (`kingdoms/wgsl_true/values.py`, `bare_constants`):
+/// both read the same `C_T`, so a constant index means the same text in either.
+const BARE_OF: [(&str, &str); 6] = [("literal.real", "bare.real"), ("literal.f16", "bare.h"), ("literal.index", "bare.index"), ("literal.count", "bare.count"), ("literal.int", "bare.int"), ("literal.flag", "bare.flag")];
+
 /// Rows by name, with every table gap collected.
 pub struct Rows<'a> {
     pub k: &'a TrueKingdom,
@@ -82,16 +86,32 @@ impl<'a> Rows<'a> {
         Tree { symbol: 0, const_index: None, kids: Vec::new() }
     }
 
-    /// A node of row `name` with `kids`.
-    pub fn n(&self, name: &str, kids: Vec<Tree>) -> Tree {
-        match self.k.rows.iter().position(|r| r.name == name) {
+    /// A node of row `name` with `kids`. The shaders spell a literal bare (`x * 3.0`), so a runtime literal in slot `s`
+    /// (`literal.real`, `lit_f32(3.0)`) is read as the bare literal (`bare.real`, the same `C_T` entry) in the row's
+    /// bare-literal twin `<name>_bare<s>` when the table has one: the twin exists exactly where a bare literal cannot
+    /// make the expression fail at shader creation (s9 batch 7, "Bare and runtime literals"). The first such slot is read
+    /// bare; the others stay runtime literals (one slot a twin).
+    pub fn n(&self, name: &str, mut kids: Vec<Tree>) -> Tree {
+        let position = |n: &str| self.k.rows.iter().position(|r| r.name == n);
+        match position(name) {
             None => self.gap(format!("no row {name}")),
             Some(i) => {
                 let want = self.k.rows[i].args.len();
                 if want != kids.len() {
                     return self.gap(format!("{name} takes {want} arguments, given {}", kids.len()));
                 }
-                Tree { symbol: i as u32, const_index: None, kids }
+                let bare = kids.iter().enumerate().find_map(|(s, kid)| {
+                    let row = self.k.rows.get(kid.symbol as usize)?;
+                    let fam = BARE_OF.iter().find(|(runtime, _)| row.kind == crate::wgsl::true_kingdom::RowKind::Constant && (row.name == *runtime || row.name == format!("{runtime}_w")))?.1;
+                    Some((s, position(&format!("{name}_bare{s}"))?, position(fam)?))
+                });
+                match bare {
+                    None => Tree { symbol: i as u32, const_index: None, kids },
+                    Some((s, twin, literal)) => {
+                        kids[s] = Tree { symbol: literal as u32, const_index: kids[s].const_index, kids: Vec::new() };
+                        Tree { symbol: twin as u32, const_index: None, kids }
+                    }
+                }
             }
         }
     }

@@ -177,124 +177,130 @@ T0175	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
 T0176	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
 T0177	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
 T0178	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
-T0179	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
-T0180	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
-T0181	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0182	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0183	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
-T0184	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
-T0185	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
-T0186	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
-T0187	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
-T0188	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
-T0189	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
-T0190	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
-T0191	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
-T0192	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
-T0193	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
-T0194	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
-T0195	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
-T0196	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
-T0197	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
-T0198	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
-T0199	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
-T0200	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
-T0201	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
-T0202	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
-T0203	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
-T0204	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
-T0205	u32.hash32	u32	hash32	1	a 32-bit hash state	-
-T0206	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
-T0207	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
-T0208	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
-T0209	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
-T0210	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
-T0211	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
-T0212	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf63, initialised to zero: a name, never a value	-
-T0213	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru63, initialised to zero: a name, never a value	-
-T0214	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb15, initialised to zero: a name, never a value	-
-T0215	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn15, initialised to zero: a name, never a value	-
-T0216	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh15, initialised to zero: a name, never a value	-
-T0217	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v31, initialised to zero: a name, never a value	-
-T0218	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w15, initialised to zero: a name, never a value	-
-T0219	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C15, initialised to zero: a name, never a value	-
-T0220	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_7, initialised to zero: a name, never a value	-
-T0221	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_7, initialised to zero: a name, never a value	-
-T0222	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_7, initialised to zero: a name, never a value	-
-T0223	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_7, initialised to zero: a name, never a value	-
-T0224	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_7, initialised to zero: a name, never a value	-
-T0225	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_7, initialised to zero: a name, never a value	-
-T0226	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_7, initialised to zero: a name, never a value	-
-T0227	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_7, initialised to zero: a name, never a value	-
-T0228	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_7, initialised to zero: a name, never a value	-
-T0229	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_7, initialised to zero: a name, never a value	-
-T0230	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_7, initialised to zero: a name, never a value	-
-T0231	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_7, initialised to zero: a name, never a value	-
-T0232	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x3, initialised to zero: a name, never a value	-
-T0233	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y3, initialised to zero: a name, never a value	-
-T0234	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z3, initialised to zero: a name, never a value	-
-T0235	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
-T0236	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
-T0237	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
-T0238	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
-T0239	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
-T0240	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
-T0241	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf7	-
-T0242	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi4	-
-T0243	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj1	-
-T0244	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk1	-
-T0245	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb2	-
-T0246	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv5	-
-T0247	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq3	-
-T0248	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq3	-
-T0249	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
-T0250	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
-T0251	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
-T0252	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
-T0253	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
-T0254	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
-T0255	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
-T0256	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
-T0257	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
-T0258	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
-T0259	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
-T0260	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
-T0261	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
-T0262	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
-T0263	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
-T0264	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
-T0265	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
-T0266	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
-T0267	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
-T0268	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
-T0269	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
-T0270	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
-T0271	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T0272	wgmem<f32,2048>.real	wgmem<f32,2048>	real	1	the workgroup array wg_f_11: 2048 f32	-
-T0273	wgmem<u32,1024>.index	wgmem<u32,1024>	index	1	the workgroup array wg_u_10: 1024 u32	-
-T0274	wgmem<vec4<f32>,512>.real	wgmem<vec4<f32>,512>	real	1	the workgroup array wg_v4_9: 512 vec4<f32>	-
-T0275	wgmem<vec2<f32>,256>.real	wgmem<vec2<f32>,256>	real	1	the workgroup array wg_v2_8: 256 vec2<f32>	-
-T0276	wgmem<vec3<f32>,128>.real	wgmem<vec3<f32>,128>	real	1	the workgroup array wg_v3_7: 128 vec3<f32>	-
-T0277	wgmem<i32,512>.int	wgmem<i32,512>	int	1	the workgroup array wg_i_9: 512 i32	-
-T0278	wgmem<atomic<u32>,256>.index	wgmem<atomic<u32>,256>	index	1	the workgroup array wg_au_8 of atomics	-
-T0279	u32.atomicold	u32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
-T0280	wgmem<atomic<i32>,128>.int	wgmem<atomic<i32>,128>	int	1	the workgroup array wg_ai_7 of atomics	-
-T0281	i32.atomicold	i32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
-T0282	u32.wgidx_7	u32	wgidx_7	1	an index below 2^7, by the mask its row writes	-
-T0283	u32.wgown_7	u32	wgown_7	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^7 array; the access rows guard it	-
-T0284	u32.wgidx_8	u32	wgidx_8	1	an index below 2^8, by the mask its row writes	-
-T0285	u32.wgown_8	u32	wgown_8	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^8 array; the access rows guard it	-
-T0286	u32.wgidx_9	u32	wgidx_9	1	an index below 2^9, by the mask its row writes	-
-T0287	u32.wgown_9	u32	wgown_9	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^9 array; the access rows guard it	-
-T0288	u32.wgidx_10	u32	wgidx_10	1	an index below 2^10, by the mask its row writes	-
-T0289	u32.wgown_10	u32	wgown_10	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^10 array; the access rows guard it	-
-T0290	u32.wgidx_11	u32	wgidx_11	1	an index below 2^11, by the mask its row writes	-
-T0291	u32.wgown_11	u32	wgown_11	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^11 array; the access rows guard it	-
-T0292	u32.litpow2_7	u32	litpow2_7	1	a literal power of two from 1 to 2^7: a reduction's element count	1..=128
-T0293	u32.litpow2_8	u32	litpow2_8	1	a literal power of two from 1 to 2^8: a reduction's element count	1..=256
-T0294	u32.litpow2_9	u32	litpow2_9	1	a literal power of two from 1 to 2^9: a reduction's element count	1..=512
-T0295	u32.litpow2_11	u32	litpow2_11	1	a literal power of two from 1 to 2^11: a reduction's element count	1..=2048
-T0296	u32.lane	u32	lane	1	a subgroup lane below the subgroup size, by the mask its row writes	-
-T0297	u32.sgoff	u32	sgoff	1	a subgroup-uniform shuffle offset or mask	-
-T0298	u32.lanelit	u32	lanelit	1	a literal lane 0..=min_subgroup_size - 1 of the target	-
-T0299	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T0179	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
+T0180	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
+T0181	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0182	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0183	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
+T0184	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
+T0185	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
+T0186	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
+T0187	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0188	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0189	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
+T0190	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
+T0191	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
+T0192	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
+T0193	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
+T0194	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
+T0195	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
+T0196	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
+T0197	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
+T0198	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
+T0199	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
+T0200	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
+T0201	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
+T0202	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
+T0203	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
+T0204	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
+T0205	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
+T0206	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
+T0207	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
+T0208	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
+T0209	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
+T0210	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
+T0211	u32.hash32	u32	hash32	1	a 32-bit hash state	-
+T0212	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
+T0213	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
+T0214	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
+T0215	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
+T0216	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
+T0217	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
+T0218	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf63, initialised to zero: a name, never a value	-
+T0219	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru63, initialised to zero: a name, never a value	-
+T0220	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb15, initialised to zero: a name, never a value	-
+T0221	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn15, initialised to zero: a name, never a value	-
+T0222	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh15, initialised to zero: a name, never a value	-
+T0223	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v31, initialised to zero: a name, never a value	-
+T0224	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w15, initialised to zero: a name, never a value	-
+T0225	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C15, initialised to zero: a name, never a value	-
+T0226	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_7, initialised to zero: a name, never a value	-
+T0227	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_7, initialised to zero: a name, never a value	-
+T0228	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_7, initialised to zero: a name, never a value	-
+T0229	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_7, initialised to zero: a name, never a value	-
+T0230	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_7, initialised to zero: a name, never a value	-
+T0231	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_7, initialised to zero: a name, never a value	-
+T0232	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_7, initialised to zero: a name, never a value	-
+T0233	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_7, initialised to zero: a name, never a value	-
+T0234	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_7, initialised to zero: a name, never a value	-
+T0235	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_7, initialised to zero: a name, never a value	-
+T0236	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_7, initialised to zero: a name, never a value	-
+T0237	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_7, initialised to zero: a name, never a value	-
+T0238	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x3, initialised to zero: a name, never a value	-
+T0239	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y3, initialised to zero: a name, never a value	-
+T0240	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z3, initialised to zero: a name, never a value	-
+T0241	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
+T0242	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
+T0243	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
+T0244	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
+T0245	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
+T0246	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
+T0247	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf7	-
+T0248	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi4	-
+T0249	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj1	-
+T0250	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk1	-
+T0251	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb2	-
+T0252	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv5	-
+T0253	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq3	-
+T0254	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq3	-
+T0255	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
+T0256	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
+T0257	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
+T0258	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
+T0259	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
+T0260	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
+T0261	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
+T0262	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
+T0263	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
+T0264	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
+T0265	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
+T0266	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
+T0267	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
+T0268	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
+T0269	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
+T0270	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
+T0271	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
+T0272	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
+T0273	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
+T0274	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
+T0275	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
+T0276	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
+T0277	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
+T0278	wgmem<f32,2048>.real	wgmem<f32,2048>	real	1	the workgroup array wg_f_11: 2048 f32	-
+T0279	wgmem<u32,1024>.index	wgmem<u32,1024>	index	1	the workgroup array wg_u_10: 1024 u32	-
+T0280	wgmem<vec4<f32>,512>.real	wgmem<vec4<f32>,512>	real	1	the workgroup array wg_v4_9: 512 vec4<f32>	-
+T0281	wgmem<vec2<f32>,256>.real	wgmem<vec2<f32>,256>	real	1	the workgroup array wg_v2_8: 256 vec2<f32>	-
+T0282	wgmem<vec3<f32>,128>.real	wgmem<vec3<f32>,128>	real	1	the workgroup array wg_v3_7: 128 vec3<f32>	-
+T0283	wgmem<i32,512>.int	wgmem<i32,512>	int	1	the workgroup array wg_i_9: 512 i32	-
+T0284	wgmem<atomic<u32>,256>.index	wgmem<atomic<u32>,256>	index	1	the workgroup array wg_au_8 of atomics	-
+T0285	u32.atomicold	u32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
+T0286	wgmem<atomic<i32>,128>.int	wgmem<atomic<i32>,128>	int	1	the workgroup array wg_ai_7 of atomics	-
+T0287	i32.atomicold	i32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
+T0288	u32.wgidx_7	u32	wgidx_7	1	an index below 2^7, by the mask its row writes	-
+T0289	u32.wgown_7	u32	wgown_7	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^7 array; the access rows guard it	-
+T0290	u32.wgidx_8	u32	wgidx_8	1	an index below 2^8, by the mask its row writes	-
+T0291	u32.wgown_8	u32	wgown_8	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^8 array; the access rows guard it	-
+T0292	u32.wgidx_9	u32	wgidx_9	1	an index below 2^9, by the mask its row writes	-
+T0293	u32.wgown_9	u32	wgown_9	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^9 array; the access rows guard it	-
+T0294	u32.wgidx_10	u32	wgidx_10	1	an index below 2^10, by the mask its row writes	-
+T0295	u32.wgown_10	u32	wgown_10	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^10 array; the access rows guard it	-
+T0296	u32.wgidx_11	u32	wgidx_11	1	an index below 2^11, by the mask its row writes	-
+T0297	u32.wgown_11	u32	wgown_11	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^11 array; the access rows guard it	-
+T0298	u32.litpow2_7	u32	litpow2_7	1	a literal power of two from 1 to 2^7: a reduction's element count	1..=128
+T0299	u32.litpow2_8	u32	litpow2_8	1	a literal power of two from 1 to 2^8: a reduction's element count	1..=256
+T0300	u32.litpow2_9	u32	litpow2_9	1	a literal power of two from 1 to 2^9: a reduction's element count	1..=512
+T0301	u32.litpow2_11	u32	litpow2_11	1	a literal power of two from 1 to 2^11: a reduction's element count	1..=2048
+T0302	u32.lane	u32	lane	1	a subgroup lane below the subgroup size, by the mask its row writes	-
+T0303	u32.sgoff	u32	sgoff	1	a subgroup-uniform shuffle offset or mask	-
+T0304	u32.lanelit	u32	lanelit	1	a literal lane 0..=min_subgroup_size - 1 of the target	-
+T0305	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576

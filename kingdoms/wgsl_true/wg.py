@@ -62,8 +62,8 @@ def build(iface):
         R(f"own.u32_wgidx_{j}", f"u32.wgidx_{j}", [], "0u")
         R(f"own.u32_wgown_{j}", f"u32.wgown_{j}", [], "lidx", "each invocation's own element, injective")
     for j in sorted({w[3] for w in WG if w[0] != "u"}):
-        C(f"literal.litpow2_{j}", f"u32.litpow2_{j}", "lit_u32({v}u)", [str(1 << p) for p in range(0, j + 1)], f"?_litpow2_{j}")
-        R(f"own.u32_litpow2_{j}", f"u32.litpow2_{j}", [], "lit_u32(1u)")
+        C(f"literal.litpow2_{j}", f"u32.litpow2_{j}", "{v}u", [str(1 << p) for p in range(0, j + 1)], f"?_litpow2_{j}")
+        R(f"own.u32_litpow2_{j}", f"u32.litpow2_{j}", [], "1u")
     # the phase
     for x, d, k in rungs("L"):
         R(f"wg.phase_L{d}_f{k}", S("L", d, k), [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the phase: a W block holds no foreign read and writes own elements only")

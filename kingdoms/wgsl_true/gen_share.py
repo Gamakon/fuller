@@ -85,7 +85,8 @@ def main():
             rows.append((f"share.let.{t['dual']}.{b}", "function", b, f"share.name;{t['dual']};{b}", f"let {{0}}: {t['slot']} = {{1}};\\n{{2}}", f"binds a {t['dual']} subtree the kernel repeats, at function scope ahead of every in-body use"))
         rows.append((f"share.ref.{t['dual']}", "function", t["dual"], "share.name", "{0}", f"the value of a {t['dual']} let, by its name"))
     with open(os.path.join(HERE, "share.tsv"), "w") as f:
-        f.write("\t".join(fheader) + "\n")
+        # the share rows declare no variable, so share.tsv keeps the seven columns before functions.tsv's `declares`
+        f.write("\t".join(fheader[:7]) + "\n")
         for i, r in enumerate(rows):
             f.write("\t".join((f"S{i + 1:05d}",) + r) + "\n")
     with open(os.path.join(HERE, "share_constants.tsv"), "w") as f:

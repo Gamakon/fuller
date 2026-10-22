@@ -26,6 +26,7 @@ HELPERS = {}    # name -> WGSL text (prologue)
 DECLS = []      # function-scope declarations, in order
 PROLOGUE_TOP = []   # module-scope lines before the helpers
 TWIN = {}       # base type -> w twin type
+BARE = {}       # scalar value type (and its w twin) -> its bare literal type (values.declare)
 SAFE_ARGS = set()   # argument types a W twin may keep as they are
 
 PH = re.compile(r"\{(\d+)(?::(\d+))?\}")
@@ -166,6 +167,61 @@ def finish_twins():
     return made
 
 
+# ---------------------------------------------------------------- bare literals
+
+VALUE_FORMS = {"real", "index", "count", "int", "flag"}
+VALUE_SLOT = re.compile(r"(f32|f16|u32|i32|bool)|vec[234]<(f32|f16|u32|i32|bool)>|mat[234]x[234]<f32>")
+
+
+def is_value(t):
+    """A value type of the families (scalar, vector, matrix; the w twins included): never a const-expression, because
+    every literal that produces one is a runtime literal (`lit_*`) and every other producer reads a runtime name."""
+    slot, form = t.rsplit(".", 1)
+    return form.removesuffix("w") in VALUE_FORMS and VALUE_SLOT.fullmatch(slot) is not None
+
+
+# WGSL 8.8 and 8.10: an integer `/` or `%` whose divisor is a const-expression equal to zero, and a shift whose count is
+# a const-expression at or past the bit width, are shader-creation errors whatever the other operand is.
+INT_BARE = {"u32.bare_index", "u32.bare_count", "i32.bare"}
+
+
+def finish_bare():
+    """Every function row taking a scalar value type in slot i gets a twin `<row>_bare<i>` taking that family's bare
+    literal there, when the row is never constant-evaluated or cannot fail if it is:
+
+    * a statement row (an assignment, a store, a condition): a statement is not a const-expression, and the bare
+      literal standing alone as its argument expression cannot fail;
+    * an expression row with another argument of a value type: that argument is never a const-expression, so the row's
+      expression is not one either and WGSL evaluates it at run time (8.1.1);
+
+    except an integer divisor or shift count (INT_BARE): WGSL makes a constant zero divisor and a constant count at or
+    past the width shader-creation errors even beside a runtime operand. One slot a twin: the others keep their types."""
+    made = 0
+    for name, r in list(ROWS.items()):
+        if r["values"] is not None or not r["args"]:
+            continue
+        for i, a in enumerate(r["args"]):
+            b = BARE.get(a)
+            if b is None:
+                continue
+            stmt = r["out"].startswith("stmt.")
+            other = any(is_value(x) for j, x in enumerate(r["args"]) if j != i)
+            if not (stmt or other):
+                continue
+            if b in INT_BARE and re.search(r"(/|%|<<|>>)\s*\(*\{" + str(i) + r"\}", r["spell"]):
+                continue
+            # naga 30 reads a constant component of an integer vector constructor as a constant shift count or divisor
+            # lane (measured 2026-10-22, the 1,000-gene loop: "Shift amount exceeds the bit width" on
+            # `x >> vec4<u32>(v, 2097153u)`), so an integer vector is never built from a bare literal
+            if b in INT_BARE and VALUE_SLOT.fullmatch(r["out"].rsplit(".", 1)[0]) and r["out"].startswith("vec"):
+                continue
+            args = list(r["args"])
+            args[i] = b
+            R(f"{name}_bare{i}", r["out"], args, r["spell"], note=f"{name} with argument {i} a bare literal", fields=r["fields"])
+            made += 1
+    return made
+
+
 # ---------------------------------------------------------------- literals
 
 def f32(x):
@@ -199,14 +255,49 @@ def check():
         terms = [n for n in produced.get(t, []) if not ROWS[n]["args"]]
         if not terms:
             problems.append(f"type {t} is an argument type and has no terminal")
+    problems += never_constant_problems()
     return problems, produced, consumed
+
+
+# The types that may be const-expressions: the bare literals and the literal-only helper types spelled bare.
+MAYBE_CONST = re.compile(r"u32\.(lit64|lit4096|litpow2_\d+|boundx\d+w?|boundu\d+|ktile|blk_row|blk_col|lanelit|lane|lanew|sgoff|pidx_\d+w?|wgidx_\d+w?|aidx_\w+)|f32\.nonneg|i32\.nonneg|grid\.shape|bounds<\w+>\.ordered")
+RUNTIME_NAMES = {"gid", "lid", "wid", "lidx", "nwg", "sg_size", "sg_num", "sg_lane", "sg_id"}
+
+
+def never_constant_problems():
+    """The rule bare literals rest on (s9 batch 7): no value type is ever a const-expression. A row giving a value type
+    whose arguments may all be constant must name something that is not: a runtime literal or other helper call, a
+    declared variable, a builtin, a binding."""
+    bare = set(BARE.values())
+    runtime = set(HELPERS) | {re.match(r"var (\w+):", d).group(1) for d in DECLS} | RUNTIME_NAMES | BINDINGS
+    out = []
+    for n, r in ROWS.items():
+        if not is_value(r["out"]) or any(not (a in bare or MAYBE_CONST.fullmatch(a)) for a in r["args"]):
+            continue
+        if not set(IDENT.findall(PH.sub(" ", r["spell"]).replace("{v}", " "))) & runtime:
+            out.append(f"row {n} gives the value type {r['out']} and may be a const-expression: {r['spell']!r}")
+    return out
 
 
 def esc(s):
     return str(s).replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
 
+IDENT = re.compile(r"\b[A-Za-z_]\w*\b")
+
+
+def declares_of(spell):
+    """The declarations (DECLS, in table order) of the kernel-scope variables a row's spelling names: the row-attached
+    prologue fragment the renderer emits for each row in the expressed tree, deduplicated, in table order."""
+    named = set(IDENT.findall(PH.sub(" ", spell).replace("{v}", " ")))
+    return [d for d in DECLS if re.match(r"var (\w+):", d).group(1) in named]
+
+
+BINDINGS = set()   # the interface's module-scope variable names (write_all)
+
+
 def write_all(outdir, root, iface):
+    BINDINGS.update(re.findall(r"var(?:<[^>]*>)?\s+(\w+)\s*:", iface["prologue_top"]))
     problems, produced, consumed = check()
     names = [re.match(r"var (\w+):", d).group(1) for d in DECLS]
     for n in set(names):
@@ -220,10 +311,10 @@ def write_all(outdir, root, iface):
             m = TYPES[t]
             f.write(f"T{i + 1:04d}\t{t}\t{slot}\t{form}\t{m['lanes']}\t{esc(m['meaning'])}\t{m['literal']}\n")
     with open(os.path.join(outdir, "functions.tsv"), "w") as f:
-        f.write("ref\tname\tkind\tout\targs\tspelling\tnote\n")
+        f.write("ref\tname\tkind\tout\targs\tspelling\tnote\tdeclares\n")
         for i, (n, r) in enumerate(ROWS.items()):
             kind = "constant" if r["values"] is not None else ("terminal" if not r["args"] else "function")
-            f.write(f"F{i + 1:05d}\t{n}\t{kind}\t{r['out']}\t{';'.join(r['args'])}\t{esc(r['spell'])}\t{esc(r['note'])}\n")
+            f.write(f"F{i + 1:05d}\t{n}\t{kind}\t{r['out']}\t{';'.join(r['args'])}\t{esc(r['spell'])}\t{esc(r['note'])}\t{esc(chr(10).join(declares_of(r['spell'])))}\n")
     with open(os.path.join(outdir, "constants.tsv"), "w") as f:
         f.write("type\tindex\ttext\n")
         for n, r in ROWS.items():

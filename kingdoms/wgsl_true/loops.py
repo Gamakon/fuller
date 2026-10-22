@@ -40,11 +40,11 @@ def build(iface):
     # ---- bounds
     for c in BOUND_CLASSES:
         cap = 2 ** c
-        R(f"bound.of_index_{c}", f"u32.boundx{c}", ["u32.index"], f"min({{0}}, lit_u32({cap}u))", "the cap is the row's text, so every expression-bounded loop has a known trip bound", twin=True)
-        R(f"bound.of_uniform_{c}", f"u32.boundu{c}", ["u32.uniform"], f"min({{0}}, lit_u32({cap}u))", "a uniform bound: the trip count is the same in every invocation")
-        R(f"own.u32_boundx{c}", f"u32.boundx{c}", [], "lit_u32(1u)", "a bound of one trip")
-        R(f"own.u32_boundx{c}w", f"u32.boundx{c}w", [], "lit_u32(1u)")
-        R(f"own.u32_boundu{c}", f"u32.boundu{c}", [], "lit_u32(1u)")
+        R(f"bound.of_index_{c}", f"u32.boundx{c}", ["u32.index"], f"min({{0}}, {cap}u)", "the cap is the row's text, so every expression-bounded loop has a known trip bound", twin=True)
+        R(f"bound.of_uniform_{c}", f"u32.boundu{c}", ["u32.uniform"], f"min({{0}}, {cap}u)", "a uniform bound: the trip count is the same in every invocation")
+        R(f"own.u32_boundx{c}", f"u32.boundx{c}", [], "1u", "a bound of one trip")
+        R(f"own.u32_boundx{c}w", f"u32.boundx{c}w", [], "1u")
+        R(f"own.u32_boundu{c}", f"u32.boundu{c}", [], "1u")
     # ---- counters
     for d in range(1, 6):
         R(f"safe.tile_counter{d}", f"u32.tcounter{d}", [], f"k{d}", "0u before its loop, the trip inside, the final value after")
@@ -55,7 +55,7 @@ def build(iface):
     # ---- uniform provenance
     for f in iface["fields"]:
         R(f"uniform.{f}", "u32.uniform", [], f"cfg.{f}", "a field is the same in every invocation")
-    R("uniform.lit", "u32.uniform", ["u32.lit4096"], "{0}")
+    R("uniform.lit", "u32.uniform", ["u32.lit4096"], "lit_u32({0})", "the runtime literal: a u32.uniform is never a const-expression (uniform arithmetic of literals could overflow at shader creation)")
     for c in "xyz":
         R(f"uniform.wid_{c}", "u32.uniform", ["vec3<u32>.wid"], "{0}." + c, "the workgroup id is uniform")
         R(f"uniform.nwg_{c}", "u32.uniform", ["vec3<u32>.nwg"], "{0}." + c)

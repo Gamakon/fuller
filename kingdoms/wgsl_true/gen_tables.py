@@ -54,8 +54,9 @@ def main(argv):
         image.declare(iface)
         image.build(iface)
     twins = lib.finish_twins()
+    bare = lib.finish_bare()
     problems, produced = lib.write_all(outdir, "kernel.safe", iface)
-    print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
+    print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins, {bare} bare-literal twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:
         print("PROBLEM:", p)
     return 1 if problems else 0

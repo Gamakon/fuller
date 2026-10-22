@@ -188,7 +188,7 @@ def build(iface):
         R(f"own.u32_colbase_{b}", f"u32.colbase_{b}", [], "(col_axis(gid) * KNOB_BCOL)")
         R(f"own.u32_threadrow_{b}", f"u32.threadrow_{b}", [], "(row_axis(gid) * KNOB_BROW)", "the block's first row")
         R(f"own.u32_threadcol_{b}", f"u32.threadcol_{b}", [], "(col_axis(gid) * KNOB_BCOL)")
-    C("literal.lit64", "u32.lit64", "lit_u32({v}u)", [str(i) for i in range(1, 65)], "?_lit64")
+    C("literal.lit64", "u32.lit64", "{v}u", [str(i) for i in range(1, 65)], "?_lit64: a bare literal; its consumers (a loop bound's assignment, an offset's min against a knob, the own-element's product with KNOB_THREADS, at most 64 * 1024) cannot fail if constant-evaluated")
     R("builtin.global_invocation_id", "vec3<u32>.gid", [], "gid", "the only producer of vec3<u32>.gid")
     C("literal.flag", "bool.flag", "lit_bool({v})", ["true", "false"], "?_flag", twin=True)
     R("own.u32_rowid", "u32.rowid", [], "row_axis(gid)")

@@ -362,7 +362,7 @@ impl Share {
                 o => return Err(bug(format!("share.tsv row {}: kind {o}", f[1]))),
             };
             let args = if f[4].is_empty() { Vec::new() } else { f[4].split(';').map(|a| ty_of(a, &f[1])).collect::<Result<Vec<_>, _>>()? };
-            rows.push(TrueRow { name: f[1].clone(), kind, out: ty_of(&f[3], &f[1])?, args, spelling: f[5].replace("\\n", "\n"), note: f[6].clone() });
+            rows.push(TrueRow { name: f[1].clone(), kind, out: ty_of(&f[3], &f[1])?, args, spelling: f[5].replace("\\n", "\n"), note: f[6].clone(), declares: Vec::new() });
         }
         let mut names = Vec::new();
         for f in tsv_rows(&read("share_constants.tsv")?, "share_constants.tsv")? {
@@ -633,7 +633,7 @@ impl Share {
     /// the declarations and the prologue. A tree with no share row renders to `k.render`'s text exactly.
     pub fn render(&self, k: &TrueKingdom, tree: &Tree) -> Result<String, String> {
         let body = self.spell(k, tree)?;
-        Ok(format!("{}{}", k.prologue, body.replace("<declarations>", k.declarations.trim_end_matches('\n'))))
+        Ok(format!("{}{}", k.prologue, body.replace("<declarations>", &k.declarations_of(tree)?)))
     }
 
     fn spell(&self, k: &TrueKingdom, node: &Tree) -> Result<String, String> {

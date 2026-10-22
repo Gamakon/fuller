@@ -14,7 +14,7 @@
 //! the value text a constant reads from its `C_T`. Every other brace is WGSL.
 //! The renderer does nothing else: no mask, no clamp, no fallback, no rewrite.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::geneframe::Ty;
@@ -49,6 +49,9 @@ pub struct TrueRow {
     pub args: Vec<Ty>,
     pub spelling: String,
     pub note: String,
+    /// The declarations of the kernel-scope variables the row's spelling names (a register, a private array, a loop's
+    /// counter and bound): its prologue fragment, emitted when the row is in the expressed tree ([`TrueKingdom::declarations_of`]).
+    pub declares: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,15 +160,15 @@ impl TrueKingdom {
         let text = read(dir, "functions.tsv")?;
         let mut lines = text.lines();
         let header: Vec<&str> = lines.next().ok_or("empty functions.tsv")?.split('\t').collect();
-        let want = ["ref", "name", "kind", "out", "args", "spelling", "note"];
+        let want = ["ref", "name", "kind", "out", "args", "spelling", "note", "declares"];
         if header != want {
             return Err(format!("functions.tsv header is {header:?}, want {want:?}"));
         }
         let mut rows = Vec::new();
         for (n, line) in lines.enumerate() {
             let f: Vec<&str> = line.split('\t').collect();
-            if f.len() != 7 {
-                return Err(format!("functions.tsv line {}: {} fields, want 7", n + 2, f.len()));
+            if f.len() != 8 {
+                return Err(format!("functions.tsv line {}: {} fields, want 8", n + 2, f.len()));
             }
             let kind = match f[2] {
                 "function" => RowKind::Function,
@@ -174,7 +177,8 @@ impl TrueKingdom {
                 o => return Err(format!("functions.tsv line {}: kind {o:?}", n + 2)),
             };
             let args = if f[4].is_empty() { Vec::new() } else { f[4].split(';').map(|a| ty_of(a, f[1])).collect::<Result<Vec<_>, _>>()? };
-            rows.push(TrueRow { name: f[1].to_string(), kind, out: ty_of(f[3], f[1])?, args, spelling: unescape(f[5]), note: unescape(f[6]) });
+            let declares = if f[7].is_empty() { Vec::new() } else { unescape(f[7]).lines().map(str::to_string).collect() };
+            rows.push(TrueRow { name: f[1].to_string(), kind, out: ty_of(f[3], f[1])?, args, spelling: unescape(f[5]), note: unescape(f[6]), declares });
         }
         let text = read(dir, "constants.tsv")?;
         let mut constants: BTreeMap<Ty, Vec<String>> = BTreeMap::new();
@@ -316,11 +320,31 @@ impl TrueKingdom {
     }
 
     /// Spell an expressed tree: substitute each node's argument texts into its
-    /// row's spelling, then put the interface's declarations in the entry point
-    /// behind the prologue. Nothing else is done to the text.
+    /// row's spelling, then put the declarations of the rows the tree holds in the
+    /// entry point behind the prologue. Nothing else is done to the text.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
         let body = self.spell(tree)?;
-        Ok(format!("{}{}", self.prologue, body.replace("<declarations>", self.declarations.trim_end_matches('\n'))))
+        Ok(format!("{}{}", self.prologue, body.replace("<declarations>", &self.declarations_of(tree)?)))
+    }
+
+    /// The declarations a tree's kernel needs: the `declares` fragments of the rows of its nodes, deduplicated, in the
+    /// table's order (`declarations.wgsl`). Pure row data: a variable is declared exactly when a row in the tree names
+    /// it, zero-initialised as the table writes it. A node that is not a base row (a share row) declares nothing.
+    pub fn declarations_of(&self, tree: &Tree) -> Result<String, String> {
+        let mut named: BTreeSet<&str> = BTreeSet::new();
+        let mut stack = vec![tree];
+        while let Some(n) = stack.pop() {
+            if let Some(r) = self.rows.get(n.symbol as usize) {
+                named.extend(r.declares.iter().map(String::as_str));
+            }
+            stack.extend(n.kids.iter());
+        }
+        let out: Vec<&str> = self.declarations.lines().filter(|l| named.contains(l)).collect();
+        if out.len() != named.len() {
+            let missing: Vec<&&str> = named.iter().filter(|d| !out.contains(d)).collect();
+            return Err(format!("our software has a bug: rows declare {missing:?}, which declarations.wgsl does not hold"));
+        }
+        Ok(out.join("\n"))
     }
 
     fn spell(&self, node: &Tree) -> Result<String, String> {
@@ -591,6 +615,38 @@ mod tests {
         let c = k.relations().check().expect("check");
         let h = k.head_total(&c, 8).expect("H");
         assert!(k.tree_work_bound(&entry_own).expect("bound") <= u128::from(h) << 12, "never more than H * 2^(6K)");
+    }
+
+    /// Declarations are row data: a tree with no register, array, counter or loop row declares no variable; adding a
+    /// store of `rf3` declares `rf3` alone; a literal loop declares its bound and counter, and the encoded volumepassage
+    /// declares exactly the variables its text names, each once.
+    #[test]
+    fn a_tree_declares_only_the_variables_its_rows_name() {
+        let k = TrueKingdom::load(&default_dir().join("img").join("volumepassage")).expect("the image table");
+        let kf = k.fuel_budget;
+        let grid = || node(&k, "own.grid_grid", None, vec![]);
+        let vars = |src: &str| src.lines().filter(|l| l.starts_with("var ")).map(str::to_string).collect::<Vec<_>>();
+        let bare = node(&k, "kernel.entry_safe", None, vec![grid(), node(&k, &format!("own.block_L0_f{kf}"), None, vec![]), node(&k, &format!("own.block_O0_f{kf}"), None, vec![])]);
+        assert_typed(&k, &bare);
+        let src = k.render(&bare).expect("render");
+        assert_eq!(vars(&src), Vec::<String>::new(), "a tree with no register row declares nothing:\n{src}");
+        let set = node(&k, &format!("reg.set_f_L0_f{kf}"), None, vec![node(&k, "reg.rf3", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])]);
+        let one = node(&k, "kernel.entry_safe", None, vec![grid(), node(&k, &format!("block.one_L0_f{kf}"), None, vec![set]), node(&k, &format!("own.block_O0_f{kf}"), None, vec![])]);
+        assert_typed(&k, &one);
+        assert_eq!(vars(&k.render(&one).expect("render")), vec!["var rf3: f32 = 0.0;".to_string()]);
+        let tree = crate::wgsl::cuneus_originals::volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
+        let src = k.render(&tree).expect("render");
+        let declared = vars(&src);
+        let mut names: Vec<String> = declared.iter().map(|l| l["var ".len()..l.find(':').expect("a typed var")].to_string()).collect();
+        let n = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), n, "each declared once: {declared:?}");
+        let body: String = src.lines().filter(|l| !l.starts_with("var ")).collect::<Vec<_>>().join("\n");
+        for name in &names {
+            assert!(body.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|w| w == name), "{name} is declared and never named");
+        }
+        assert!(names.contains(&"n1".to_string()) && names.contains(&"k1".to_string()) && !names.contains(&"rf63".to_string()), "{names:?}");
     }
 
     /// Every child's row outputs the type its parent's signature asks for at that slot.
