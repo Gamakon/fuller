@@ -914,6 +914,29 @@ mod tests {
         }
     }
 
+    /// A KERNEL THAT TOUCHES NOTHING IS TIMED IN ORDER (ST12): a kernel whose compiled program reads and writes no
+    /// resource (here an empty body, like the 24 planted-win kernels whose stores the compiler removed) shares nothing
+    /// with the shipped original, so only the pair's fence orders their passes. 9 pairs in each order, 5 calls: every
+    /// call succeeds (none of its passes began before the pass before it ended) and every time is above zero.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn a_kernel_that_touches_nothing_is_timed_without_overlap_on_the_device() {
+        use crate::wgsl::image::{timed_pairs, ImageKernel};
+        use crate::wgsl::oracle::device::{Device, Fuel};
+        let empty = "struct TimeUniform { time: f32, delta: f32, frame: u32, _padding: u32, };\n@group(0) @binding(0) var<uniform> time_data: TimeUniform;\n@group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;\n@compute @workgroup_size(8, 8, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n}\n";
+        let original = std::fs::read_to_string(format!("{}/tests/corpus/cuneus_visual/volumepassage.wgsl", env!("CARGO_MANIFEST_DIR"))).expect("the original");
+        let dev = Device::new().expect("device");
+        let (w, h) = (16u32, 16u32);
+        let bindings = case_bindings("volumepassage", 5.0, w, h).expect("bindings");
+        let shipped = ImageKernel::compile(&dev, "volumepassage", &original, "main", &bindings, w, h, Fuel::Proven("cuneus original volumepassage")).expect("the original");
+        let cand = ImageKernel::compile(&dev, "empty", empty, "main", &bindings, w, h, Fuel::Proven("an empty body")).expect("empty");
+        for call in 0..5 {
+            let pt = timed_pairs(&cand, &shipped, 1, 9).unwrap_or_else(|e| panic!("call {call}: {e}"));
+            assert_eq!(pt.times.len(), 9);
+            assert!(pt.times.iter().all(|t| t.0 > 0.0 && t.1 > 0.0), "{:?}", pt.times);
+        }
+    }
+
     #[test]
     fn a_missing_row_is_a_named_gap_never_a_substitute() {
         let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");

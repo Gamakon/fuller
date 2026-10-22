@@ -449,32 +449,53 @@ pub fn single_submit_size(fuel: &crate::wgsl::work_guard::Fuel, workgroup: (u32,
 /// One dispatch in a timed pair's command buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairStep {
-    /// The reference's untimed warm-up dispatch of `submit`, so the GPU is clocked up before the timed two.
-    WarmReference { submit: usize },
+    /// The reference's warm-up dispatch of `submit`, so the GPU is clocked up before the timed two. Its compute pass
+    /// writes timestamps `query` (begin) and `query + 1` (end), read only to prove the passes ran one after another.
+    WarmReference { submit: usize, query: u32 },
     /// A timed dispatch of `submit` (the candidate's or the reference's), its compute pass writing timestamps
     /// `query` (begin) and `query + 1` (end).
     Timed { candidate: bool, submit: usize, query: u32 },
 }
 
-/// The reference's untimed warm-up dispatches that lead each command buffer of a timed pair.
+impl PairStep {
+    /// The begin timestamp of this step's compute pass (its end is the next query).
+    pub fn query(&self) -> u32 {
+        match *self {
+            PairStep::WarmReference { query, .. } | PairStep::Timed { query, .. } => query,
+        }
+    }
+}
+
+/// The reference's warm-up dispatches that lead each command buffer of a timed pair.
 pub const PAIR_WARM_DISPATCHES: usize = 4;
 
+/// Timestamp queries of one submit of a timed pair: a begin and an end for every compute pass of its command buffer.
+pub const PAIR_QUERIES_PER_SUBMIT: u32 = 2 * (PAIR_WARM_DISPATCHES as u32 + 2);
+
 /// THE COMMAND BUFFERS OF ONE TIMED PAIR over a plan of `submits` submits: one command buffer a submit, holding the
-/// reference's warm-up of that submit, then the candidate's and the reference's timed dispatches of it back to back
-/// (`candidate_first` picks the order), the candidate's timestamps at `4c, 4c+1`, the reference's at `4c+2, 4c+3`.
+/// reference's warm-ups of that submit, then the candidate's and the reference's timed dispatches of it back to back
+/// (`candidate_first` picks the order). With `b = PAIR_QUERIES_PER_SUBMIT * c`, warm-up `i` writes timestamps
+/// `b + 2i, b + 2i + 1`, the candidate `b + 2W, b + 2W + 1` and the reference `b + 2W + 2, b + 2W + 3` (`W` the warm-ups).
 pub fn pair_schedule(submits: usize, candidate_first: bool) -> Vec<Vec<PairStep>> {
     (0..submits)
         .map(|c| {
-            let q = 4 * c as u32;
-            let cand = PairStep::Timed { candidate: true, submit: c, query: q };
-            let refr = PairStep::Timed { candidate: false, submit: c, query: q + 2 };
+            let base = PAIR_QUERIES_PER_SUBMIT * c as u32;
+            let warm = 2 * PAIR_WARM_DISPATCHES as u32;
+            let cand = PairStep::Timed { candidate: true, submit: c, query: base + warm };
+            let refr = PairStep::Timed { candidate: false, submit: c, query: base + warm + 2 };
             let (a, b) = if candidate_first { (cand, refr) } else { (refr, cand) };
-            let mut v = vec![PairStep::WarmReference { submit: c }; PAIR_WARM_DISPATCHES];
+            let mut v: Vec<PairStep> = (0..PAIR_WARM_DISPATCHES as u32).map(|i| PairStep::WarmReference { submit: c, query: base + 2 * i }).collect();
             v.extend([a, b]);
             v
         })
         .collect()
 }
+
+/// THE FENCE KERNEL of a timed pair's command buffer (ST12): one invocation that reads and writes a word of the timing
+/// harness's own buffer. It is the first dispatch of every compute pass in the command buffer, so every pass writes that
+/// buffer, and Metal starts a pass only after the pass before it that wrote it has ended, whatever the timed kernel
+/// itself touches.
+pub const FENCE_WGSL: &str = "@group(0) @binding(0) var<storage, read_write> fence: array<u32, 4>;\n@compute @workgroup_size(1, 1, 1)\nfn main() {\n    fence[0] = fence[0] + 1u;\n}\n";
 
 #[cfg(feature = "gpu")]
 pub use device::{timed_pairs, ImageKernel, ImageRun, PairTimes};
@@ -840,7 +861,7 @@ mod device {
                     let tile_invocations = u64::from(tile.w) * u64::from(tile.h) * wg_inv;
                     self.fuel.check_under(&format!("an image run of {}", self.name), tile_invocations, self.cap)?;
                     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("image pass") });
-                    self.encode_submit(&mut enc, c, Some((query_set, 2 * c as u32)));
+                    self.encode_submit(&mut enc, c, Some((query_set, 2 * c as u32)), None);
                     queue.submit(Some(enc.finish()));
                     crate::gpu_io::wait(device)?;
                 }
@@ -871,8 +892,9 @@ mod device {
         }
 
         /// Encode submit `c` of a pass into `enc`: the zero storage cleared first when `c` is the pass's first submit,
-        /// then one compute pass dispatching tile `c`, its begin and end written to `stamps` at `(query, query + 1)`.
-        fn encode_submit(&self, enc: &mut wgpu::CommandEncoder, c: usize, stamps: Option<(&wgpu::QuerySet, u32)>) {
+        /// then one compute pass dispatching tile `c`, its begin and end written to `stamps` at `(query, query + 1)`;
+        /// with a `fence`, the pass's first dispatch is the fence kernel's (see [`super::FENCE_WGSL`]).
+        fn encode_submit(&self, enc: &mut wgpu::CommandEncoder, c: usize, stamps: Option<(&wgpu::QuerySet, u32)>, fence: Option<&Fence>) {
             if c == 0 {
                 for b in &self.zero_buffers {
                     if b.usage().contains(wgpu::BufferUsages::STORAGE) {
@@ -883,6 +905,11 @@ mod device {
             let tile = &self.tiles[c];
             let timestamp_writes = stamps.map(|(query_set, at)| wgpu::ComputePassTimestampWrites { query_set, beginning_of_pass_write_index: Some(at), end_of_pass_write_index: Some(at + 1) });
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("image"), timestamp_writes });
+            if let Some(f) = fence {
+                pass.set_pipeline(&f.pipeline);
+                pass.set_bind_group(0, &f.bind, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
             pass.set_pipeline(&self.pipeline);
             for (g, bg) in &self.bind_groups {
                 pass.set_bind_group(*g, bg, &[]);
@@ -930,6 +957,31 @@ mod device {
         }
     }
 
+    /// The fence kernel's pipeline and its buffer (see [`super::FENCE_WGSL`]).
+    struct Fence {
+        pipeline: wgpu::ComputePipeline,
+        bind: wgpu::BindGroup,
+        _buffer: wgpu::Buffer,
+    }
+
+    impl Fence {
+        fn new(dev: &Device) -> Result<Fence, String> {
+            let device = &dev.device;
+            let scopes = ErrorScopes::push(device);
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("pair fence"), source: wgpu::ShaderSource::Wgsl(super::FENCE_WGSL.into()) });
+            let entry = wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None };
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("pair fence"), entries: &[entry] });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("pair fence"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("pair fence"), layout: Some(&layout), module: &shader, entry_point: Some("main"), compilation_options: Default::default(), cache: None });
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("pair fence"), size: 16, usage: wgpu::BufferUsages::STORAGE, mapped_at_creation: false });
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("pair fence"), layout: &bgl, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }] });
+            if let Some(e) = scopes.pop() {
+                return Err(format!("our software has a bug: the pair fence kernel: {e}"));
+            }
+            Ok(Fence { pipeline, bind, _buffer: buffer })
+        }
+    }
+
     /// The timed pairs of a candidate against a reference and the plan they shared.
     #[derive(Debug, Clone)]
     pub struct PairTimes {
@@ -956,9 +1008,16 @@ mod device {
     /// The two kernels must have ONE submit plan (the same submits over the same pixels; the caller gives the reference
     /// the candidate's plan with [`ImageKernel::with_plan`]): a pair under two plans would time the splitting, so it is
     /// our software's bug and nothing is timed. A command buffer holds the warm-up and both passes of one submit, so the
-    /// sum of their work-guard bounds (a proven kernel's is 0) must be under the cap before anything is encoded. A timed
-    /// dispatch that starts before the one before it in its command buffer ends is our software's bug (the two would
-    /// overlap and neither time would be a kernel's).
+    /// sum of their work-guard bounds (a proven kernel's is 0) must be under the cap before anything is encoded.
+    ///
+    /// THE ORDER (ST12): Metal runs compute passes of one command buffer that share no resource at the same time, and a
+    /// kernel shares only what its compiled program reads or writes: a kernel whose stores the compiler removes shares
+    /// nothing, so a one-texel copy between the pictures (to 2026-10-22) did not order it (measured: 24 kernels of the
+    /// planted-win run, 70 of 70 replays, and an empty kernel). Every compute pass of the command buffer, warm-ups
+    /// included, therefore begins with the fence kernel's dispatch, which reads and writes the harness's own buffer: each
+    /// pass waits for the pass before it. Every pass writes its begin and end timestamps, and a pass that begins before
+    /// the pass before it in its command buffer ends is our software's bug (the two overlapped and neither time would be a
+    /// kernel's), so the order is proved on every pair, never assumed.
     pub fn timed_pairs(candidate: &ImageKernel<'_>, reference: &ImageKernel<'_>, warmup: usize, pairs: usize) -> Result<PairTimes, String> {
         let (cp, rp) = (candidate.plan(), reference.plan());
         if !rp.launches(&cp) || candidate.size() != reference.size() {
@@ -982,7 +1041,8 @@ mod device {
         }
         let device = &candidate.dev.device;
         let queue = &candidate.dev.queue;
-        let queries = 4 * n as u32;
+        let fence = Fence::new(candidate.dev)?;
+        let queries = super::PAIR_QUERIES_PER_SUBMIT * n as u32;
         let bytes = 8 * u64::from(queries);
         let query_set = &device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("pair timestamps"), ty: wgpu::QueryType::Timestamp, count: queries });
         let resolve = &device.create_buffer(&wgpu::BufferDescriptor { label: Some("pair stamps"), size: bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
@@ -994,24 +1054,15 @@ mod device {
             let mut written = vec![usize::MAX; queries as usize];
             for (b, steps) in schedule.iter().enumerate() {
                 let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("timed pair") });
-                let mut before: Option<&ImageKernel<'_>> = None;
                 for step in steps {
-                    let (k, stamp) = match *step {
-                        super::PairStep::WarmReference { submit } => (reference, (submit, None)),
-                        super::PairStep::Timed { candidate: is_c, submit, query } => {
-                            written[query as usize] = b;
-                            written[query as usize + 1] = b;
-                            (if is_c { candidate } else { reference }, (submit, Some((query_set, query))))
-                        }
+                    let (k, submit) = match *step {
+                        super::PairStep::WarmReference { submit, .. } => (reference, submit),
+                        super::PairStep::Timed { candidate: is_c, submit, .. } => (if is_c { candidate } else { reference }, submit),
                     };
-                    // THE ORDER: Metal runs compute passes of one command buffer that share no resource at the same
-                    // time (measured 2026-10-22: the second timed pass began before the first ended). A one-texel copy
-                    // from the previous dispatch's picture into this one's makes this pass wait for the previous one.
-                    if let Some(p) = before.filter(|p| !std::ptr::eq(*p, k)) {
-                        enc.copy_texture_to_texture(p.texture.as_image_copy(), k.texture.as_image_copy(), wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
-                    }
-                    k.encode_submit(&mut enc, stamp.0, stamp.1);
-                    before = Some(k);
+                    let query = step.query();
+                    written[query as usize] = b;
+                    written[query as usize + 1] = b;
+                    k.encode_submit(&mut enc, submit, Some((query_set, query)), Some(&fence));
                 }
                 queue.submit(Some(enc.finish()));
                 crate::gpu_io::wait(device)?;
@@ -1034,11 +1085,13 @@ mod device {
             stamps.unmap();
             let (mut c_ns, mut r_ns, mut pair_buffers) = (0f64, 0f64, Vec::with_capacity(n));
             for (c, steps) in schedule.iter().enumerate() {
-                let timed: Vec<(bool, u32)> = steps.iter().filter_map(|st| if let super::PairStep::Timed { candidate, query, .. } = *st { Some((candidate, query)) } else { None }).collect();
-                let (first, second) = (timed[0].1 as usize, timed[1].1 as usize);
-                if s[second] < s[first + 1] {
-                    return Err(format!("our software has a bug: in pair {p} submit {c} the second timed dispatch began at tick {} before the first ended at tick {}: the two overlapped", s[second], s[first + 1]));
+                for (i, w) in steps.windows(2).enumerate() {
+                    let (first, second) = (w[0].query() as usize, w[1].query() as usize);
+                    if s[second] < s[first + 1] {
+                        return Err(format!("our software has a bug: in pair {p} submit {c} pass {} ({:?}) began at tick {} before pass {i} ({:?}) ended at tick {}: the two overlapped", i + 1, w[1], s[second], w[0], s[first + 1]));
+                    }
                 }
+                let timed: Vec<(bool, u32)> = steps.iter().filter_map(|st| if let super::PairStep::Timed { candidate, query, .. } = *st { Some((candidate, query)) } else { None }).collect();
                 let mut idx = [0usize; 4];
                 for (is_c, q) in timed {
                     let ns = s[q as usize + 1].wrapping_sub(s[q as usize]) as f64 * period;
@@ -1226,9 +1279,10 @@ mod tests {
         assert_eq!(single_submit_size(&Fuel::Tree { per_invocation: cap + 1 }, (1, 1), 256, cap).expect("size"), None, "not even one invocation fits");
     }
 
-    /// A PAIR'S TWO TIMESTAMPS COME FROM ONE COMMAND BUFFER: every submit's command buffer holds the reference's warm-up
+    /// A PAIR'S TIMESTAMPS COME FROM ONE COMMAND BUFFER: every submit's command buffer holds the reference's warm-ups
     /// first, then exactly one timed candidate dispatch and one timed reference dispatch of that same submit, in the
-    /// order asked; the queries of all submits are distinct and cover 0..4n.
+    /// order asked; every pass (warm-ups included) has its own begin and end query, the queries of all submits are
+    /// distinct and cover 0..PAIR_QUERIES_PER_SUBMIT * n.
     #[test]
     fn a_pairs_timestamps_come_from_one_command_buffer() {
         for n in [1usize, 2, 5] {
@@ -1237,17 +1291,27 @@ mod tests {
                 assert_eq!(s.len(), n, "one command buffer a submit");
                 let mut queries = Vec::new();
                 for (c, buf) in s.iter().enumerate() {
-                    assert_eq!(buf[0], PairStep::WarmReference { submit: c }, "the warm-up leads its command buffer");
+                    assert_eq!(buf.len(), PAIR_WARM_DISPATCHES + 2);
+                    assert!(buf[..PAIR_WARM_DISPATCHES].iter().all(|st| matches!(st, PairStep::WarmReference { submit, .. } if *submit == c)), "the warm-ups lead their command buffer");
                     let timed: Vec<(bool, usize, u32)> = buf.iter().filter_map(|st| if let PairStep::Timed { candidate, submit, query } = *st { Some((candidate, submit, query)) } else { None }).collect();
                     assert_eq!(timed.len(), 2);
                     assert_eq!((timed[0].0, timed[1].0), (first, !first), "the order alternates by pair");
                     assert!(timed.iter().all(|t| t.1 == c), "both timed dispatches are this submit's");
-                    queries.extend(timed.iter().flat_map(|t| [t.2, t.2 + 1]));
+                    queries.extend(buf.iter().flat_map(|st| [st.query(), st.query() + 1]));
                 }
                 queries.sort_unstable();
-                assert_eq!(queries, (0..4 * n as u32).collect::<Vec<_>>());
+                assert_eq!(queries, (0..PAIR_QUERIES_PER_SUBMIT * n as u32).collect::<Vec<_>>());
             }
         }
+    }
+
+    /// THE FENCE KERNEL VALIDATES: it is the first dispatch of every pass of a timed pair, so it must be a legal module
+    /// with one read-write storage binding and its entry point.
+    #[test]
+    fn the_pair_fence_kernel_is_valid_wgsl() {
+        let module = crate::wgsl::naga_shape::parse_unscanned(FENCE_WGSL).expect("the fence parses");
+        assert!(module.entry_points.iter().any(|e| e.name == "main" && e.workgroup_size == [1, 1, 1]));
+        crate::wgsl::target::Target::current().validate(&module, FENCE_WGSL).expect("the fence validates");
     }
 
     #[test]

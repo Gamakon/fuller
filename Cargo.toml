@@ -258,3 +258,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "st11_planted_time"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "st12_overlap_replay"
+required-features = ["gpu", "wgsl"]
