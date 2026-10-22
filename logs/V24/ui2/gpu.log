@@ -1,0 +1,14 @@
+[22:23:08Z] waiting for the GPU lock
+[22:40:09Z] GPU lock taken
+[22:40:09Z] start smoke (guard 600 s)
+[22:40:16Z] end smoke rc 0
+[22:40:16Z] start scan_budget_s1 (guard 600 s)
+[22:40:18Z] end scan_budget_s1 rc 0
+[22:40:18Z] start scan_wide_s1 (guard 600 s)
+[22:40:21Z] end scan_wide_s1 rc 0
+[22:40:21Z] start scan_budget_s5 (guard 1800 s)
+[22:40:43Z] end scan_budget_s5 rc 0
+[22:40:43Z] start scan_wide_s5 (guard 1800 s)
+[22:41:09Z] end scan_wide_s5 rc 0
+[22:41:09Z] all done
+[22:41:09Z] GPU lock released

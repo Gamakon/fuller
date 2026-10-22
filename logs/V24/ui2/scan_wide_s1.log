@@ -1,0 +1,21 @@
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+[22:40:19Z] v24_ingest250k case 250000 + 2500, 5 stages [("stages", 1.0), ("arena_u32", 33554432.0)]; kernel logs/V24/ui2/run4_champion_rows262144.wgsl; binding limit 4294967292 bytes; 3 fresh runs
+[22:40:19Z] staged (keys projected on the device) in 115 ms
+run	stage	half	queries	recall@10	M	M_today	P	P_today	B
+1	1	0	1189	0.3829	7337	209	75839	289152	0
+1	1	1	1311	0.3857	8054	304	83469	322856	0
+[22:40:20Z] run 1: 427 ms GPU, 0.5 s wall
+2	1	0	1189	0.3829	7337	209	75839	289152	0
+2	1	1	1311	0.3857	8054	304	83469	322856	0
+[22:40:20Z] run 2: 438 ms GPU, 0.5 s wall
+3	1	0	1189	0.3829	7337	209	75839	289152	0
+3	1	1	1311	0.3857	8054	304	83469	322856	0
+[22:40:21Z] run 3: 483 ms GPU, 0.5 s wall
+run	sample	kernel_gpu_ms	today_ms	time_input
+1	ingest1	7.37	55074.7	0.0000
+1	search1	419.91	13707.1	0.1216
+2	ingest1	7.59	55074.7	0.0000
+2	search1	430.22	13707.1	0.1242
+3	ingest1	7.99	55074.7	0.0000
+3	search1	475.03	13707.1	0.1349
+[22:40:21Z] done in 2.1 s

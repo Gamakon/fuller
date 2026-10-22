@@ -1,0 +1,8 @@
+[22:41:23Z] waiting for the GPU lock
+[22:42:13Z] GPU lock taken
+[22:42:13Z] start scaled_s1 (guard 600 s)
+[22:42:16Z] end scaled_s1 rc 0
+[22:42:16Z] start scaled_s5 (guard 1800 s)
+[22:43:02Z] end scaled_s5 rc 0
+[22:43:02Z] all done
+[22:43:02Z] GPU lock released

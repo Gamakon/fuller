@@ -1,0 +1,8 @@
+
+running 1 test
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+v24_ingest250k stage 1 at 4294967292 bytes a binding: staged in 129 ms, the reference 7529 ms GPU, 5.9 s in all; [PooledWindow { stage: 1, half: 0, queries: 1189, found: 0, misses: 11890, pooled: 0, broken: 0, misses_today: 209, pooled_today: 289152 }, PooledWindow { stage: 1, half: 1, queries: 1311, found: 0, misses: 13110, pooled: 0, broken: 0, misses_today: 304, pooled_today: 322856 }]
+test v24_ingest250k_reference_runs_stage_1_on_the_device ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.96s
+

@@ -128,6 +128,10 @@ name = "v24_seed"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "v24_measure"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_gram"
 required-features = ["gpu", "wgsl"]
 
