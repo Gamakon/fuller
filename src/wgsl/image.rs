@@ -398,6 +398,9 @@ mod device {
         tiles: Vec<Tile>,
         name: String,
         zero_buffers: Vec<wgpu::Buffer>,
+        query_set: wgpu::QuerySet,
+        resolve: wgpu::Buffer,
+        stamps: wgpu::Buffer,
     }
 
     /// One measured run: the picture of the last pass and the milliseconds of every timed pass.
@@ -424,6 +427,12 @@ mod device {
     /// What a size and a set of bindings need on the device: the texture, the bind groups, the uniform buffers and the
     /// tiles of the dispatch.
     struct Target {
+        /// The timestamp queries of a pass (two per submit), resolved into `resolve` and read through `stamps`; kept
+        /// for the target's life and written once at creation: on this machine (M3 Max, Metal) the first pass that
+        /// writes a fresh query set reads back 0 ns.
+        query_set: wgpu::QuerySet,
+        resolve: wgpu::Buffer,
+        stamps: wgpu::Buffer,
         bind_groups: Vec<(u32, wgpu::BindGroup)>,
         uniforms: Vec<((u32, u32), wgpu::Buffer)>,
         texture: wgpu::Texture,
@@ -487,7 +496,20 @@ mod device {
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("dispatch tile"), layout: &layouts[TILE_GROUP as usize], entries: &[wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }] });
             tile_list.push(Tile { x0, y0, w, h, bind, _uniform: buf });
         }
-        Ok(Target { bind_groups, uniforms, texture, tiles: tile_list, zero_buffers })
+        let n = tile_list.len() as u32;
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("image timestamps"), ty: wgpu::QueryType::Timestamp, count: 2 * n });
+        let bytes = 16 * u64::from(n);
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor { label: Some("image stamps"), size: bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+        let stamps = device.create_buffer(&wgpu::BufferDescriptor { label: Some("image stamps read"), size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        // the first write of the query set, by empty passes (no dispatch, no kernel work)
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("image timestamps first write") });
+        for c in 0..n {
+            let _pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("image timestamps first write"), timestamp_writes: Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(2 * c), end_of_pass_write_index: Some(2 * c + 1) }) });
+        }
+        enc.resolve_query_set(&query_set, 0..2 * n, &resolve, 0);
+        dev.queue.submit(Some(enc.finish()));
+        crate::gpu_io::wait(device)?;
+        Ok(Target { query_set, resolve, stamps, bind_groups, uniforms, texture, tiles: tile_list, zero_buffers })
     }
 
     impl<'a> ImageKernel<'a> {
@@ -535,7 +557,7 @@ mod device {
             if let Some(e) = scopes.pop() {
                 return Err(format!("pipeline: {e}"));
             }
-            Ok(ImageKernel { dev, pipeline, layouts, bind_groups: t.bind_groups, uniforms: t.uniforms, texture: t.texture, width, height, workgroup, fuel, cap, tiles: t.tiles, name: name.to_string(), zero_buffers: t.zero_buffers })
+            Ok(ImageKernel { dev, pipeline, layouts, bind_groups: t.bind_groups, uniforms: t.uniforms, texture: t.texture, width, height, workgroup, fuel, cap, tiles: t.tiles, name: name.to_string(), zero_buffers: t.zero_buffers, query_set: t.query_set, resolve: t.resolve, stamps: t.stamps })
         }
 
         /// The same compiled pipeline drawing at another size with another case's bindings (no recompile).
@@ -556,6 +578,9 @@ mod device {
                 tiles: t.tiles,
                 name: self.name.clone(),
                 zero_buffers: t.zero_buffers,
+                query_set: t.query_set,
+                resolve: t.resolve,
+                stamps: t.stamps,
             })
         }
 
@@ -602,10 +627,8 @@ mod device {
             let device = &self.dev.device;
             let queue = &self.dev.queue;
             let n = self.tiles.len() as u32;
-            let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("image timestamps"), ty: wgpu::QueryType::Timestamp, count: 2 * n });
+            let (query_set, resolve, stamps) = (&self.query_set, &self.resolve, &self.stamps);
             let bytes = 16 * u64::from(n);
-            let resolve = device.create_buffer(&wgpu::BufferDescriptor { label: Some("image stamps"), size: bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
-            let stamps = device.create_buffer(&wgpu::BufferDescriptor { label: Some("image stamps read"), size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
             let period = f64::from(queue.get_timestamp_period());
             let (mut wall, mut gpu) = (Vec::new(), Vec::new());
             for i in 0..warmup + repeats {
@@ -623,7 +646,7 @@ mod device {
                     }
                     {
                         let at = 2 * c as u32;
-                        let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(at), end_of_pass_write_index: Some(at + 1) });
+                        let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set, beginning_of_pass_write_index: Some(at), end_of_pass_write_index: Some(at + 1) });
                         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("image"), timestamp_writes });
                         pass.set_pipeline(&self.pipeline);
                         for (g, bg) in &self.bind_groups {
@@ -633,8 +656,8 @@ mod device {
                         pass.dispatch_workgroups(tile.w, tile.h, 1);
                     }
                     if c + 1 == self.tiles.len() {
-                        enc.resolve_query_set(&query_set, 0..2 * n, &resolve, 0);
-                        enc.copy_buffer_to_buffer(&resolve, 0, &stamps, 0, bytes);
+                        enc.resolve_query_set(query_set, 0..2 * n, resolve, 0);
+                        enc.copy_buffer_to_buffer(resolve, 0, stamps, 0, bytes);
                     }
                     queue.submit(Some(enc.finish()));
                     crate::gpu_io::wait(device)?;
