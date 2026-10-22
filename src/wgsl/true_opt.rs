@@ -10,7 +10,11 @@
 //!   no effect becomes its statement type's empty terminal (`{}`); then every statement left empty (a block of empties, an `if`
 //!   over empties with an effect-free condition, a `_ = x;` of an effect-free `x`, a counted loop over an empty body
 //!   whose counter nothing else reads) becomes the empty terminal too. A write spelled with a barrier (`wg.put_*`) is
-//!   never removed: its barriers may order other memory.
+//!   never removed: its barriers may order other memory. An output store (every `store.<b>_O*`/`_L*`/`_C*` row, the
+//!   texture's `textureStore` rows among them, and the epilogue's terminals) is live by its row and never removed.
+//! * THE EPILOGUE RULE: [`Optimisers::new`] fails unless every row giving an epilogue type (`stmt.O*`, `block.O*`)
+//!   stores the primary output on every path, so no draw, crossover or rewrite at an epilogue cell has a row that skips
+//!   the store in its domain; [`Optimisers::missing_store`] checks one tree.
 //! * [`Optimisers::simplify`]: table-row rewrites of scalar float arithmetic, bottom up to a fixed point: constant
 //!   folding (`lit + lit`, `-lit`), `x * 1`, `x / 1`, `x - 0`, `-(-x)` (exact), `x + 0`, `x * 0` (equal for finite
 //!   `x`), strength reduction `x / c` to `x * (1 / c)` (exact when `c` is a power of two). A folded value must be an
@@ -178,6 +182,15 @@ enum Flow {
     /// Text that leaves the statement early (`break`, `continue`, `return`, `discard` outside a counted loop's own
     /// exit): every variable is live before it.
     Jump,
+    /// An output store (a `store.<b>_*` row, the texture store among them, or an epilogue terminal): live by its row
+    /// whatever is read after it, every value it takes is read, and it is never removed.
+    Store,
+}
+
+/// An epilogue statement type (`stmt.O<d>_f<k>`, `block.O<d>_f<k>`): every path through a statement of one of these
+/// ends in the primary output's store (`MultiTypedGEP_s9` batch 1).
+fn is_epilogue_name(d: &str) -> bool {
+    d.strip_prefix("stmt.O").or_else(|| d.strip_prefix("block.O")).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// The argument placeholders of a spelling in spelling order: `(index, has a field)` for `{N}` and `{N:F}`.
@@ -240,6 +253,12 @@ pub struct Optimisers {
     flow: Vec<Flow>,
     /// Per row: its spelling acts beyond its value, or it outputs a statement.
     effect: Vec<bool>,
+    /// Per row: an output store, by its row: the `store.<b>_O*`, `_L*`, `_C*` rows of every output (the texture's
+    /// `textureStore` rows among them) and the epilogue's terminals `own.block_O*` / `own.stmt_O*`, which spell the
+    /// primary output's store. Cleanse treats each as live and never removes it.
+    store: Vec<bool>,
+    /// The epilogue statement types ([`is_epilogue_name`]).
+    epilogue: BTreeSet<Ty>,
     /// Per row: a pure sequence (`block.one`, `block.seq*`, `stmt.block`, `stmt.lift`): statement arguments and no text
     /// but braces.
     container: Vec<bool>,
@@ -294,7 +313,16 @@ fn without_placeholders(s: &str) -> String {
 }
 
 impl Optimisers {
+    /// The optimisers of table `k`; our bug, named, when a row giving an epilogue type can skip the primary output's
+    /// store ([`Optimisers::check_epilogue_rows`]).
     pub fn new(k: &TrueKingdom) -> Result<Optimisers, String> {
+        let o = Optimisers::of_rows(k);
+        o.check_epilogue_rows(k)?;
+        Ok(o)
+    }
+
+    /// Every row family read from the table, before the epilogue rule is checked.
+    fn of_rows(k: &TrueKingdom) -> Optimisers {
         let n = k.rows.len();
         let dual = |t: Ty| k.type_name(t);
         let statement: BTreeSet<Ty> = k.types.iter().map(|d| d.ty()).filter(|t| {
@@ -313,6 +341,16 @@ impl Optimisers {
         }
         let name_terminal: Vec<bool> = k.rows.iter().map(|r| r.kind == RowKind::Terminal && is_name_ty(r.out)).collect();
         let effect: Vec<bool> = k.rows.iter().map(|r| statement.contains(&r.out) || EFFECTS.iter().any(|e| without_placeholders(&r.spelling).contains(e))).collect();
+        let epilogue: BTreeSet<Ty> = statement.iter().copied().filter(|t| is_epilogue_name(&dual(*t))).collect();
+        let store: Vec<bool> = k
+            .rows
+            .iter()
+            .map(|r| {
+                let stores = r.name.starts_with("store.") && r.kind == RowKind::Function && statement.contains(&r.out) && r.args.iter().all(|a| !statement.contains(a));
+                let own_epilogue = (r.name.starts_with("own.block_O") || r.name.starts_with("own.stmt_O")) && r.kind == RowKind::Terminal && epilogue.contains(&r.out);
+                stores || own_epilogue
+            })
+            .collect();
         let write: Vec<bool> = k
             .rows
             .iter()
@@ -333,6 +371,9 @@ impl Optimisers {
         let flow: Vec<Flow> = (0..n)
             .map(|i| {
                 let r = &k.rows[i];
+                if store[i] {
+                    return Flow::Store;
+                }
                 if write[i] {
                     let d = dual(r.args[0]);
                     return Flow::Write { kills: d.starts_with("reg<") || d.starts_with("ureg<") };
@@ -450,7 +491,100 @@ impl Optimisers {
             .collect();
         let rules_all = Rules::work(k);
         let rules_exact = rules_all.exact_only();
-        Ok(Optimisers { statement, empty, name_terminal, wg_name, flow, effect, container, is_if, discard, loop_body, context_free: context_free_rows(k), consts, bins, bin_by_shape, neg, regs, seq, row_cost, rules_all, rules_exact })
+        Optimisers { statement, empty, name_terminal, wg_name, flow, effect, store, epilogue, container, is_if, discard, loop_body, context_free: context_free_rows(k), consts, bins, bin_by_shape, neg, regs, seq, row_cost, rules_all, rules_exact }
+    }
+
+    /// THE EPILOGUE RULE OVER THE TABLE: every row that gives an epilogue type stores the primary output on every
+    /// path, so the rows of an epilogue type (the domain every draw, crossover and rewrite at an epilogue cell takes
+    /// from) hold no tree that skips the store. A row passes when it is an output store ([`Flow::Store`]); a sequence
+    /// that runs one of its epilogue arguments exactly once; an `if` with an `else` whose every statement argument is
+    /// an epilogue; or a counted loop whose every statement argument is an epilogue and whose trip bound is a literal
+    /// type every producer of which is at least 1. Anything else (a discard, a one-armed `if`, a jump, a row with no
+    /// epilogue argument) is our bug, named.
+    fn check_epilogue_rows(&self, k: &TrueKingdom) -> Result<(), String> {
+        let mut bad = Vec::new();
+        for (i, r) in k.rows.iter().enumerate() {
+            if !self.epilogue.contains(&r.out) || self.store[i] {
+                continue;
+            }
+            let stmts: Vec<Ty> = r.args.iter().copied().filter(|a| self.statement.contains(a)).collect();
+            let all_epilogue = !stmts.is_empty() && stmts.iter().all(|a| self.epilogue.contains(a));
+            let ok = match &self.flow[i] {
+                Flow::Straight(_) => r.kind == RowKind::Function && r.args.iter().any(|a| self.epilogue.contains(a)),
+                Flow::Any if k.loops[i].is_some() => all_epilogue && self.bound_at_least_one(k, i),
+                Flow::Any => all_epilogue && self.is_if[i] && words(&without_placeholders(&r.spelling)).any(|w| w == "else"),
+                Flow::Store | Flow::Write { .. } | Flow::Jump => false,
+            };
+            if !ok {
+                bad.push(format!("{} ({}: {})", r.name, k.type_name(r.out), r.spelling));
+            }
+        }
+        if bad.is_empty() {
+            return Ok(());
+        }
+        Err(bug(format!("{} row(s) give an epilogue type and do not store the primary output on every path: {}", bad.len(), bad.join("; "))))
+    }
+
+    /// A loop row's trip bound is a literal argument whose every producer is at least 1: its `C_T` entries, its
+    /// terminals' spellings, and its function rows clamped below at `1u`.
+    fn bound_at_least_one(&self, k: &TrueKingdom, row: usize) -> bool {
+        let Some(arg) = k.loops[row].as_ref().and_then(|l| l.literal_arg) else { return false };
+        let ty = k.rows[row].args[arg];
+        let at_least_one = |s: &str| s.trim().trim_end_matches('u').parse::<u64>().is_ok_and(|v| v >= 1);
+        k.rows.iter().filter(|p| p.out == ty).all(|p| match p.kind {
+            RowKind::Constant => k.constants.get(&ty).is_some_and(|c| !c.is_empty() && c.iter().all(|v| at_least_one(v))),
+            RowKind::Terminal => at_least_one(&p.spelling),
+            _ => p.spelling.trim_end().ends_with(", 1u, 64u)"),
+        })
+    }
+
+    /// `Some(reason)` when the expressed tree's epilogue can end without the primary output's store: an epilogue
+    /// statement stores when it is a store row, a sequence one of whose epilogue arguments stores, an `if`/`else` or
+    /// counted loop whose every epilogue argument stores (a loop's literal bound at least 1). A kingdom with no
+    /// epilogue type (no `block.O`) has nothing to check.
+    pub fn missing_store(&self, k: &TrueKingdom, tree: &Tree) -> Option<String> {
+        if self.epilogue.is_empty() {
+            return None;
+        }
+        let root = &k.rows[tree.symbol as usize];
+        let epilogues: Vec<&Tree> = tree.kids.iter().filter(|c| self.epilogue.contains(&k.rows[c.symbol as usize].out)).collect();
+        if epilogues.is_empty() {
+            return Some(format!("the root {} takes no epilogue", root.name));
+        }
+        epilogues.into_iter().find_map(|e| (!self.stores(k, e)).then(|| format!("the epilogue {} can end without the primary output's store", k.rows[e.symbol as usize].name)))
+    }
+
+    fn stores(&self, k: &TrueKingdom, t: &Tree) -> bool {
+        let s = t.symbol as usize;
+        if self.store[s] {
+            return true;
+        }
+        let o: Vec<&Tree> = t.kids.iter().filter(|c| self.epilogue.contains(&k.rows[c.symbol as usize].out)).collect();
+        if o.is_empty() {
+            return false;
+        }
+        match &self.flow[s] {
+            Flow::Straight(_) => o.iter().any(|c| self.stores(k, c)),
+            Flow::Any => {
+                let trips = match k.loops[s].as_ref() {
+                    None => self.is_if[s],
+                    Some(l) => l.literal_arg.and_then(|i| t.kids.get(i)).is_some_and(|b| self.literal_at_least_one(k, b)),
+                };
+                trips && o.iter().all(|c| self.stores(k, c))
+            }
+            Flow::Store | Flow::Write { .. } | Flow::Jump => false,
+        }
+    }
+
+    /// A loop bound node that is at least 1: a `C_T` literal, a terminal or a function row clamped below at `1u`.
+    fn literal_at_least_one(&self, k: &TrueKingdom, b: &Tree) -> bool {
+        let r = &k.rows[b.symbol as usize];
+        let at_least_one = |s: &str| s.trim().trim_end_matches('u').parse::<u64>().is_ok_and(|v| v >= 1);
+        match r.kind {
+            RowKind::Constant => b.const_index.and_then(|i| k.constants.get(&r.out)?.get(i as usize).cloned()).is_some_and(|v| at_least_one(&v)),
+            RowKind::Terminal => at_least_one(&r.spelling),
+            _ => r.spelling.trim_end().ends_with(", 1u, 64u)"),
+        }
     }
 
     /// The cost a node's row adds to a program: 1, 4 for a division, 8 for `pow`, `exp`, `log`, `sqrt` and the
@@ -550,6 +684,14 @@ impl Optimisers {
                 live
             }
             Flow::Jump => cx.universe.clone(),
+            Flow::Store => {
+                // an output store is live by its row: never marked dead, and everything its values read is live
+                let mut live = out.clone();
+                for c in &t.kids {
+                    self.reads_into(c, &mut live);
+                }
+                live
+            }
             Flow::Straight(order) => {
                 let mut live = out.clone();
                 for &a in order.iter().rev() {
@@ -602,6 +744,13 @@ impl Optimisers {
     fn sweep(&self, k: &TrueKingdom, t: &Tree, dead: &BTreeSet<Vec<usize>>, path: &mut Vec<usize>, named_outside: &BTreeSet<&str>, counts: &mut Counts) -> Result<Tree, String> {
         let s = t.symbol as usize;
         let row = &k.rows[s];
+        // an output store stays as it is, by its row
+        if self.store[s] {
+            if dead.contains(path.as_slice()) {
+                return Err(bug(format!("cleanse marked the output store {} dead", row.name)));
+            }
+            return Ok(t.clone());
+        }
         // a dead write (found by `live_in`, so its value has no effect and its type has an empty terminal)
         if dead.contains(path.as_slice()) {
             let e = self.empty.get(&row.out).ok_or_else(|| bug(format!("cleanse marked {} dead, but {} has no empty terminal", row.name, k.type_name(row.out))))?;
@@ -1108,7 +1257,7 @@ mod tests {
     use super::*;
     use crate::typed_gep::{express, write_back, GeneLayout};
     use crate::wgsl::cuneus_originals::{image_dir, nebula, volumepassage};
-    use crate::wgsl::true_kingdom::{random_gene, Share};
+    use crate::wgsl::true_kingdom::{random_gene, Share, TrueRow};
 
     fn assert_typed(k: &TrueKingdom, t: &Tree) {
         let row = &k.rows[t.symbol as usize];
@@ -1547,5 +1696,240 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The Metal source naga writes for a tree (one submit: `DISPATCH_TILED = false`), after the tree renders, parses
+    /// and validates.
+    fn msl_of(k: &TrueKingdom, t: &Tree) -> Result<String, String> {
+        let src = k.render(t)?;
+        let module = crate::wgsl::naga_shape::parse_unscanned(&src)?;
+        let info = crate::wgsl::target::Target::current().validate(&module, &src)?;
+        crate::wgsl::target::metal_source(&module, &info, "main", &[("DISPATCH_TILED", 0.0)])
+    }
+
+    /// The texture store as naga's MSL spells `textureStore(output, ...)`.
+    const MSL_STORE: &str = "output.write(";
+
+    /// The table as `wg.py` wrote it before 2026-10-22: the atomic discard rows at the epilogue rungs too
+    /// (`stmt.discard_<u|i>_O<d>_f<k>: <atomicold> -> stmt.O<d>_f<k>`, spelled `_ = {0};`), rebuilt in memory from the
+    /// shipped table's L-rung rows with the same name pattern, argument and spelling.
+    fn with_epilogue_discards(k: &TrueKingdom) -> TrueKingdom {
+        let mut old = k.clone();
+        let ty_named = |name: &str| k.types.iter().map(|d| d.ty()).find(|t| k.type_name(*t) == name);
+        for r in &k.rows {
+            let Some(rest) = r.name.strip_prefix("stmt.discard_") else { continue };
+            let Some((key, rung)) = rest.split_once("_L") else { continue };
+            let Some(out) = ty_named(&format!("stmt.O{rung}")) else { continue };
+            old.rows.push(TrueRow { name: format!("stmt.discard_{key}_O{rung}"), out, ..r.clone() });
+            old.loops.push(None);
+        }
+        old
+    }
+
+    /// The encoded volumepassage with its epilogue (the root's `block.O` argument) replaced by `epilogue`.
+    fn with_epilogue(k: &TrueKingdom, tree: &Tree, epilogue: Tree) -> Tree {
+        let mut t = tree.clone();
+        let at = t.kids.iter().position(|c| k.type_name(k.rows[c.symbol as usize].out).starts_with("block.O")).expect("the root's epilogue");
+        t.kids[at] = epilogue;
+        t
+    }
+
+    /// THE TWO SAVED KERNELS OF THE PLANTED-WIN RUN THAT WROTE NO PICTURE (`st11plant/run20/bugs`): `g122_r14`, whose
+    /// epilogue is `_ = lit_u32(0u);`, and `g179_r8`, whose epilogue is `if (false) { <store> } else { _ = ...; }`.
+    /// Their epilogues, rebuilt on the table before the fix, render with no texture store (the first) or with the store
+    /// only in the branch that never runs (the second): the bug reproduces, and the epilogue rule names the rows. On
+    /// the shipped table those rows do not exist, the rule holds, and the encoded original's epilogue stores.
+    #[test]
+    fn the_saved_kernels_without_a_store_reproduce_on_the_old_table_and_not_on_the_fixed_one() {
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let old = with_epilogue_discards(&k);
+        let made = old.rows.len() - k.rows.len();
+        assert_eq!(made, 30, "15 epilogue rungs x the u32 and i32 discards");
+        let err = Optimisers::new(&old).expect_err("the old table breaks the epilogue rule");
+        assert!(err.contains("30 row(s)") && err.contains("stmt.discard_u_O0_f2"), "{err}");
+        let o_old = Optimisers::of_rows(&old);
+        let n = |name: &str, value: Option<&str>, kids: Vec<Tree>| node(&old, name, value, kids);
+        let discard = || n("block.one_O0_f2", None, vec![n("stmt.discard_u_O0_f2", None, vec![n("own.u32_atomicold", None, vec![])])]);
+        let original_epilogue = tree.kids.iter().find(|c| k.type_name(k.rows[c.symbol as usize].out).starts_with("block.O")).expect("epilogue").clone();
+        let g122 = with_epilogue(&old, &tree, discard());
+        let g179 = with_epilogue(&old, &tree, n("block.one_O0_f2", None, vec![n("stmt.if_else_O0_f2_bare0", None, vec![n("bare.flag", Some("false"), vec![]), original_epilogue, discard()])]));
+        let text = old.render(&g122).expect("render");
+        assert!(!text.contains("textureStore") && text.contains("_ = lit_u32(0u);"), "g122: no store in the kernel");
+        assert!(!msl_of(&old, &g122).expect("msl").contains(MSL_STORE), "g122: no store in naga's MSL");
+        assert!(msl_of(&old, &g179).expect("msl").contains(MSL_STORE), "g179: the store is in the MSL, in the branch that never runs");
+        for (name, t) in [("g122", &g122), ("g179", &g179)] {
+            let why = o_old.missing_store(&old, t).unwrap_or_else(|| panic!("{name}: the epilogue rule finds the missing store"));
+            eprintln!("before the fix, {name}: {why}");
+        }
+        // the fix: no row of the shipped tables gives an epilogue type without storing
+        let o = Optimisers::new(&k).expect("the shipped table keeps the epilogue rule");
+        assert!(!k.rows.iter().any(|r| r.name.starts_with("stmt.discard_") && o.epilogue.contains(&r.out)), "no discard row at an epilogue rung");
+        assert_eq!(o.missing_store(&k, &tree), None);
+        assert!(msl_of(&k, &tree).expect("msl").contains(MSL_STORE));
+        for dir in [crate::wgsl::true_kingdom::default_dir(), image_dir("volumepassage_k1"), image_dir("nebula")] {
+            let t = TrueKingdom::load(&dir).expect("table");
+            Optimisers::new(&t).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        }
+    }
+
+    /// Cleanse keeps every output store by its row: the encoded original's epilogue store, and a body store
+    /// (`store.output_<rung>`) of the planted register rf63, which nothing else reads, stay, and so does rf63's write.
+    #[test]
+    fn cleanse_keeps_every_output_store_and_what_it_reads() {
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let stores = |t: &Tree| count(&k, t, &|n: &str| n.starts_with("store."));
+        let cleansed = o.cleanse(&k, &tree).expect("cleanse").map_or(tree.clone(), |x| x.0);
+        assert_eq!(stores(&cleansed), stores(&tree));
+        assert_eq!(o.missing_store(&k, &cleansed), None);
+        // a body store of the dead register rf63's value: the store keeps rf63's write alive
+        let reg = k.rows.iter().position(|r| r.name == "reg.rf63").expect("rf63") as u32;
+        let mut done = false;
+        let planted = plant_dead_write(&k, &tree, &o, reg, false, &mut done);
+        assert!(done);
+        let rf63 = || node(&k, "reg.get_f", None, vec![Tree { symbol: reg, const_index: None, kids: Vec::new() }]);
+        let v4 = node(&k, "shape.compose4", None, vec![node(&k, "shape.splat3", None, vec![rf63()]), rf63()]);
+        let row = node(&k, "own.u32_threadrow_output", None, vec![]);
+        let col = node(&k, "own.u32_threadcol_output", None, vec![]);
+        /// The planted `{ rf63 = 2.0; S }`: the node `stmt.block(block.seq2(reg.set_f(rf63, ..), S))`.
+        fn is_planted(k: &TrueKingdom, t: &Tree, reg: u32) -> bool {
+            t.kids.len() == 1 && k.rows[t.kids[0].symbol as usize].name.starts_with("block.seq2_") && {
+                let w = &t.kids[0].kids[0];
+                k.rows[w.symbol as usize].name.starts_with("reg.set_f") && w.kids.first().is_some_and(|v| v.symbol == reg)
+            }
+        }
+        fn after_planted(k: &TrueKingdom, t: &Tree, store: &Tree, reg: u32, done: &mut bool) -> Tree {
+            // S becomes `{ S; store }` through the same two-statement block
+            if !*done && is_planted(k, t, reg) {
+                *done = true;
+                let mut inner = t.kids[0].clone();
+                let s = inner.kids[1].clone();
+                inner.kids[1] = Tree { symbol: t.symbol, const_index: None, kids: vec![Tree { symbol: inner.symbol, const_index: None, kids: vec![s, store.clone()] }] };
+                return Tree { symbol: t.symbol, const_index: t.const_index, kids: vec![inner] };
+            }
+            Tree { symbol: t.symbol, const_index: t.const_index, kids: t.kids.iter().map(|c| after_planted(k, c, store, reg, done)).collect() }
+        }
+        fn planted_type(k: &TrueKingdom, t: &Tree, reg: u32) -> Option<String> {
+            if is_planted(k, t, reg) {
+                return Some(k.type_name(k.rows[t.symbol as usize].out));
+            }
+            t.kids.iter().find_map(|c| planted_type(k, c, reg))
+        }
+        let planted_ty = planted_type(&k, &planted, reg).expect("the planted statement's type");
+        let rung = planted_ty.strip_prefix("stmt.").expect("a statement type");
+        let store = node(&k, &format!("store.output_{rung}"), None, vec![row, col, v4]);
+        let mut done = false;
+        let with_store = after_planted(&k, &planted, &store, reg, &mut done);
+        assert!(done, "the store follows the planted write");
+        assert_typed(&k, &with_store);
+        let out = o.cleanse(&k, &with_store).expect("cleanse").map_or(with_store.clone(), |x| x.0);
+        assert_eq!(stores(&out), stores(&with_store), "both stores stay");
+        let writes_rf63 = |t: &Tree| {
+            fn go(t: &Tree, reg: u32) -> usize {
+                usize::from(t.kids.first().is_some_and(|v| v.symbol == reg && v.kids.is_empty()) && t.kids.len() == 2) + t.kids.iter().map(|c| go(c, reg)).sum::<usize>()
+            }
+            go(t, reg)
+        };
+        assert_eq!(writes_rf63(&out), 1, "the stored value's write stays live");
+        assert_eq!(o.missing_store(&k, &out), None);
+    }
+
+    /// EVERY OPTIMISER'S OUTPUT OVER 10,000 RANDOM REWRITES OF THE VOLUMEPASSAGE CHAMPION KEEPS A REACHABLE TEXTURE
+    /// STORE. From the encoded original, each step is a typed subtree crossover (a node of the current tree replaced by
+    /// a subtree of the same type from a random gene or the original, as the marriage's subtree crossover does) and
+    /// then one optimiser in turn (cleanse, both e-graphs, hoist, snap, fewer trips); every output is checked by the
+    /// epilogue rule on its tree and in naga's MSL (the texture store is there). A tree over 4,000 nodes restarts the
+    /// walk from the original.
+    #[test]
+    fn every_optimiser_output_over_ten_thousand_random_rewrites_keeps_a_reachable_texture_store() {
+        use std::time::Instant;
+        let start = Instant::now();
+        let mut k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let champion = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let c = k.relations().check().expect("check");
+        let cl = k.const_lens();
+        let layout = GeneLayout::from_program_size(&c, k.root, 64).expect("layout");
+        let mut rng = Rng(22);
+        fn nodes(t: &Tree) -> usize {
+            1 + t.kids.iter().map(nodes).sum::<usize>()
+        }
+        fn of_type<'t>(k: &TrueKingdom, t: &'t Tree, ty: Ty, out: &mut Vec<&'t Tree>) {
+            if k.rows[t.symbol as usize].out == ty {
+                out.push(t);
+            }
+            for c in &t.kids {
+                of_type(k, c, ty, out);
+            }
+        }
+        fn replace_at(t: &Tree, at: usize, with: &Tree, seen: &mut usize) -> Tree {
+            if *seen == at {
+                *seen += 1 + t.kids.iter().map(nodes).sum::<usize>();
+                return with.clone();
+            }
+            *seen += 1;
+            Tree { symbol: t.symbol, const_index: t.const_index, kids: t.kids.iter().map(|c| replace_at(c, at, with, seen)).collect() }
+        }
+        fn nth(t: &Tree, at: usize, seen: &mut usize) -> Option<Tree> {
+            if *seen == at {
+                return Some(t.clone());
+            }
+            *seen += 1;
+            t.kids.iter().find_map(|c| nth(c, at, seen))
+        }
+        let (mut cur, mut made, mut crossovers, mut restarts) = (champion.clone(), [0usize; 6], 0usize, 0usize);
+        for step in 0..10_000usize {
+            // the typed subtree crossover
+            let donor = if rng.below(4) == 0 {
+                champion.clone()
+            } else {
+                let gene = random_gene(&c, &layout, &cl, &mut rng, Share::Half, true);
+                express(&c, &layout, &gene, &cl).expect("express").tree()
+            };
+            let at = 1 + rng.below(nodes(&cur) - 1);
+            let target = nth(&cur, at, &mut 0).expect("a node");
+            let mut pool = Vec::new();
+            of_type(&k, &donor, k.rows[target.symbol as usize].out, &mut pool);
+            if !pool.is_empty() {
+                let pick = pool[rng.below(pool.len())].clone();
+                cur = replace_at(&cur, at, &pick, &mut 0);
+                crossovers += 1;
+            }
+            if let Some(why) = o.missing_store(&k, &cur) {
+                panic!("step {step}: the crossover child: {why}");
+            }
+            // one optimiser in turn
+            let op = Optimiser::ALL[step % Optimiser::ALL.len()];
+            let out = match op {
+                Optimiser::Cleanse => o.cleanse(&k, &cur).expect("cleanse").map(|x| x.0),
+                Optimiser::EgraphExact => o.egraph(&k, &cur, true, 3, 200_000).expect("e-graph").map(|x| x.0),
+                Optimiser::EgraphReal => o.egraph(&k, &cur, false, 3, 200_000).expect("e-graph").map(|x| x.0),
+                Optimiser::Hoist => o.hoist(&k, &cur).expect("hoist").map(|x| x.0),
+                Optimiser::Snap => o.snap(&mut k, &cur, 1e-2).0,
+                Optimiser::Trips => o.fewer_trips(&k, &cur, &mut rng),
+            };
+            if let Some(t) = out {
+                made[step % Optimiser::ALL.len()] += 1;
+                assert_typed(&k, &t);
+                if let Some(why) = o.missing_store(&k, &t) {
+                    panic!("step {step}: {}: {why}", op.name());
+                }
+                let msl = msl_of(&k, &t).unwrap_or_else(|e| panic!("step {step}: {}: {e}", op.name()));
+                assert!(msl.contains(MSL_STORE), "step {step}: {}: no texture store in naga's MSL", op.name());
+                cur = t;
+            }
+            if nodes(&cur) > 4_000 {
+                cur = champion.clone();
+                restarts += 1;
+            }
+        }
+        eprintln!(
+            "10,000 rewrites in {:.1} s: {crossovers} typed subtree crossovers, {restarts} restarts; outputs checked: {}",
+            start.elapsed().as_secs_f64(),
+            Optimiser::ALL.iter().zip(made).map(|(op, n)| format!("{} {n}", op.name())).collect::<Vec<_>>().join(", ")
+        );
+        assert!(made.iter().all(|n| *n > 0), "every optimiser made outputs: {made:?}");
     }
 }

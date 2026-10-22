@@ -100,7 +100,9 @@ def build(iface):
         for fn, F in ATOMIC_FUNS.items():
             R(f"atomic.{fn}_{key}_{j}", old, [at, f"u32.wgidx_{j}", vtyp], f"atomic{F}(&{{0}}[{{1}}], {{2}})", "race-free at any index; the old value is order-dependent so it is atomicold")
         R(f"own.{old.replace('.', '_')}", old, [], "lit_u32(0u)" if welem == "u32" else "lit_i32(0i)", "a value whose only consumer discards it")
-        for x, d, k in rungs("LCO"):
+        # L and C rungs only: an O statement is an epilogue's, which ends in the primary output's store on every
+        # path (MultiTypedGEP_s9 batch 1, kernel.entry_safe), and a discard stores nothing
+        for x, d, k in rungs("LC"):
             R(f"stmt.discard_{key}_{x}{d}_f{k}", S(x, d, k), [old], "_ = {0};", "the effect without the value")
         for d in range(0, 6):
             for k in STRATA:

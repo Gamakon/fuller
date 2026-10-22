@@ -76,7 +76,8 @@ pub struct Difference {
     pub rmse: f64,
     /// Pixels whose largest channel difference exceeds 1/255 (one 8-bit step of the saved PNG).
     pub pixels_over_one_step: usize,
-    /// A channel is non-finite in one picture and not the same in the other.
+    /// A channel is non-finite in one picture and not the same in the other. Such a channel also counts as an
+    /// infinite difference in `max_abs`, `mean_abs`, `rmse` (its colour channels) and `pixels_over_one_step`.
     pub non_finite_mismatch: usize,
 }
 
@@ -94,13 +95,18 @@ pub fn compare(got: &Picture, want: &Picture) -> Result<Difference, String> {
             if a.to_bits() != b.to_bits() {
                 differing += 1;
             }
-            if !a.is_finite() || !b.is_finite() {
-                if a.to_bits() != b.to_bits() {
-                    nonfinite += 1;
+            // a channel non-finite in one picture and not the same in the other is as wrong as a channel can be: an
+            // infinite difference (the fitness's unit clamp makes it 1), never skipped, so a picture of NaN is not a
+            // near match (volumepassage run45: champions storing NaN scored rmse 0 with 75 % of channels differing)
+            let d = if !a.is_finite() || !b.is_finite() {
+                if a.to_bits() == b.to_bits() {
+                    continue;
                 }
-                continue;
-            }
-            let d = f64::from((a - b).abs());
+                nonfinite += 1;
+                f64::INFINITY
+            } else {
+                f64::from((a - b).abs())
+            };
             max_abs = max_abs.max(d);
             worst = worst.max(d);
             if c < 3 {
@@ -1192,6 +1198,21 @@ mod tests {
         assert_eq!((d.differing_channels, d.pixels_over_one_step), (1, 1));
         assert!((d.max_abs - 0.25).abs() < 1e-9 && (d.mean_abs - 0.25 / 6.0).abs() < 1e-9);
         assert!(compare(&a, &Picture { width: 1, height: 2, rgba: vec![0.0; 8] }).is_err());
+    }
+
+    /// A picture whose colour channels are NaN and whose alpha is right (what the volumepassage run45 champions drew:
+    /// a store of 0/0 and of pow of a negative) is as wrong as can be on every error statistic, not a near match; the
+    /// same NaN in both pictures is no difference.
+    #[test]
+    fn a_nan_picture_is_the_largest_error_on_every_statistic() {
+        let want = Picture { width: 2, height: 1, rgba: vec![0.2, 0.4, 0.6, 1.0, 0.1, 0.3, 0.5, 1.0] };
+        let got = Picture { width: 2, height: 1, rgba: vec![f32::NAN, f32::NAN, f32::NAN, 1.0, f32::NAN, f32::NAN, f32::NAN, 1.0] };
+        let d = compare(&got, &want).expect("same size");
+        assert_eq!((d.differing_channels, d.non_finite_mismatch, d.pixels_over_one_step), (6, 6, 2));
+        assert!(d.rmse.is_infinite() && d.mean_abs.is_infinite() && d.max_abs.is_infinite(), "{d:?}");
+        let same = compare(&got, &got).expect("same size");
+        assert_eq!((same.differing_channels, same.non_finite_mismatch, same.pixels_over_one_step), (0, 0, 0));
+        assert_eq!((same.rmse, same.mean_abs, same.max_abs), (0.0, 0.0, 0.0));
     }
 
     /// The submits of a split dispatch cover every workgroup exactly once, each within `per_submit` workgroups, for a
