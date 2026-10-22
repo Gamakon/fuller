@@ -471,6 +471,24 @@ diverged. And it is the acceptance gate when an edited gene is re-inserted
 count is zero, which certifies that the re-inserted gene is a valid multi-typed
 gene expressing with no fallback.
 
+The typed domains also admit one more operator beside Ferreira's point
+mutation, IS and RIS transposition, and one-point, two-point and gene
+recombination~\cite{ferreira2001gep}: a \emph{shape-keeping, leaf-skewed point
+mutation}. A Karva edit that changes a node's argument signature shifts every
+later read of every type frame, so an ordinary point mutation in a multi-typed
+gene can rewrite much of the expressed tree. The shape-keeping operator edits
+only expressed positions, chosen with weight $(1/s)^{\alpha}$ for
+Horton--Strahler order $s$ (leaves are order~1), so edits fall mostly on the
+leaves. The replacement is drawn from the symbols of the same type with the
+identical ordered argument-type signature. No later read moves, and the child
+differs from its parent in exactly the edited nodes. It draws from the same
+typed domain as the other operators, with a different distribution, so every
+child is legal by construction, with no filter and no repair. A diversity
+control lowers $\alpha$ when population diversity falls. Its first measurement on
+the WGSL kingdom is a research note
+(\texttt{docs/reports/2026-10-22\_ST9\_volumepassage\_champion/ADDENDUM\_leaf\_mutation.md}),
+not a result of this paper.
+
 \subsection{Two decoders: refusal and projection}
 
 The TSR kingdom was the first use of the typed table and it types the other way
