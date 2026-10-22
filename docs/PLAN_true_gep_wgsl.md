@@ -130,6 +130,40 @@ LEAF changes one node a child, against 207 for LOW. Measured 09:01Z with `exampl
 - The kernel passes naga validation and the binding contracts.
 - The device == host parity test (`device_leaf_mode_equals_the_host_reference_on_sr_regex_and_two_type`) is written and has NOT been run: it needs the GPU.
 
+**ST10 (2026-10-22): SR's in-loop optimisers for WGSL** (Andrew: "we will never optimise WGSL if we're not trying our best"). fuller `src/wgsl/true_opt.rs` (326326ff), phylu `true_wgsl_fit::OptSpec` (fdd95f61), runner flag `--optimisers sr`.
+
+How SR does it (phylu `src/evolve/engine.rs`, `Config` defaults, `pump_every` = 20). Every step runs after the generation is scored and before the pump and breeding.
+
+| SR step | what it does | where | how often | cost |
+|---|---|---|---|---|
+| cleanse | promotes or collapses one function node of a row's gene (variation operator) | `typed_vary` step 10, `Rates.cleanse` | per row at rate `cleanse`; default 0 (off) | none by default |
+| snap winners | a literal within rel 1e-3 of a lattice constant becomes that constant; guard on train R²; written back into its own row | `Engine::snap_winners` | every `snap_every` = 20 generations, best 50 rows of each island | 6.25 s of a 1,115 s fit (0.006 s a beat), measured in the code |
+| fold winners | a near-constant subtree is collapsed to `?_T` with its mean; written back into its own row | `Engine::fold_winners` | every `fold_every` = 20 generations, best 50 rows of each island | not recorded |
+| beam | the best individual's functional wraps (a, b by least squares), the tree neighbourhood off; the winner goes into the float zone or the intake's worst row | `Engine::beam` | every `beam_every` = 20 generations, best 1 row, width 2,000 | not recorded |
+| pump | the intake's best (3 % of the champion island) replace the champion's worst; the intake keeps its best fifth, the rest are fresh random | `Engine::pump` | every 20 generations | not recorded |
+| e-graph (`denoise`) | not in the generation loop: tower collapse, typed snap residual, and the finisher's form proliferation | `extract::denoise`, `proliferate::score_forms` | on demand and at the end of a run | |
+| replacement dictionary | designed 2026-10-01, never built (`gene_export.rs`: "Nothing here emits it yet") | | | |
+
+What WGSL now does (phylu `true_wgsl_fit`, same hook point, after the WGSL pump; revised 18:50Z). Every one of the best 50 rows (SR's `snap_top_k`/`fold_top_k`, here the whole population) takes one optimiser a generation, in turn. An exact rewrite goes back into its own row, as SR's snap and fold repair theirs. A picture-changing rewrite of a top-half row lands in a bottom-half row, so the original is never lost (SR's beam). Each rewrite goes through the per-type write-back and is scored at once, with lineage codes 6 to 11 (fold 12). A write-back that does not fit is a `# DEFECT` line. The first version, which placed about 1 child per optimiser a generation and let the real e-graph rewrite elites in place, collapsed the population (best HFF 0.36 to 0.90 in 3 generations) and was replaced.
+
+| optimiser | WGSL rewrite | claim | schedule (`OptSpec::sr_schedule`) |
+|---|---|---|---|
+| cleanse | removes dead writes to registers, private and workgroup arrays (liveness closed over writes); empties, `if`s, discards and loops left empty become `{}`; a barrier-spelled write is never removed | exact | every generation |
+| egraph_exact / egraph_real | table-row simplify (folds in `C_T`, x*1, x/1, x-0, -(-x); real: x+0, x*0, x/c to x*(1/c)), then the cheapest program of the e-graph (ST9 rules plus negneg, sqrt_square, exp_log), then simplify | exact / real | every generation |
+| hoist | moves context-free subtrees of 2 or more functions inside a counted loop into a fresh register before the outermost loop | exact | every generation |
+| trips | lowers one literal loop bound to the next smaller `C_T` literal | variation | every generation, once a source |
+| snap | moves a literal within 1 % of a library constant (pi, e, sqrt 2, 1/sqrt 2, ln 2, p/q with q <= 12) to that constant, appending it to `C_T` when absent; SR's 1e-3 made 0 children in 72 generations because no volumepassage literal lies within 1e-3 of a short exact value it is not already | variation | the pump's beat |
+| fold | ADFs of the population in the run's epoch alphabet (fuller `RunEpoch`: `Epoch::new` with every ADF so far, append-only, `A_d` = symbol `n_base + d`); every gene holding one is rewritten to its reference in its own row; the device's tables are rebuilt (65 ms) | exact | the pump's beat |
+| share lets | every kernel spelled through ST7's `let`s | exact | every kernel |
+| finisher | every hall-of-fame entry through each optimiser, their chain and fewer trips at each loop, scored and offered to the hall of fame | | end of run |
+| pump | unchanged: it already injects the hall of fame and given genes | | `--pump-every` |
+
+Snap and the fold grow the epoch (append-only), and the device is rebuilt on the spot. A checkpoint does not yet carry the epoch, so a folded population does not resume. The beam's functional wraps have no kernel analogue.
+
+Pre-flight (`wgsl_true_image_fit --optimisers sr --preflight`: 3 generations, every beat at 1; it fails unless every optimiser enters with no defect and no device failure). Volumepassage, population 16, 18:47Z: cleanse 12 entered (6 improved), exact e-graph 10 (2), real e-graph 7 (0), hoist 8 (6), trips 4 (0), snap 6 (0), fold 166 ADFs into 52 genes; 0 defects, 0 device failures; best HFF 0.36370 to 0.35154.
+
+Tests: 1,000 of 1,000 random K = 1 volumepassage genes pass naga, Metal and the run (168 s). On the device, every exact rewrite and the lets give 0 differing channels on encoded volumepassage and nebula at 64 x 64 and 60 x 44. Host tests cover a planted dead write, a dead chain, a kept live write and the shipped shader's own unread `i` (`var i = 0.0; i += 1.0;`, two dead writes). A short phylu run shows every optimiser making programs and the counts in every snapshot (`optimisers`, `share_lets`; phylu-sr-watch column `opt e/i`).
+
 Everything below this line is PARKED until ST1 passes its review.
 
 ---

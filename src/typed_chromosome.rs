@@ -185,7 +185,9 @@ impl Epoch {
             adf_sym.insert(d.id, id);
         }
         let c: Vec<&str> = constants.iter().map(String::as_str).collect();
-        let k = relations_from_rows(base.kingdom(), base.roots().to_vec(), &rows, &c).check().map_err(|d| ChromosomeDefect::Kingdom(d.join("; ")))?;
+        let mut relations = relations_from_rows(base.kingdom(), base.roots().to_vec(), &rows, &c);
+        relations.tail_free_roots = base.tail_free_roots();
+        let k = relations.check().map_err(|d| ChromosomeDefect::Kingdom(d.join("; ")))?;
         Ok(Epoch { k, n_base, refs, genic, adf_sym, decls })
     }
 

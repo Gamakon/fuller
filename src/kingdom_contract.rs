@@ -68,6 +68,9 @@ pub struct KingdomContract {
     n_max: u32,
     terminals: BTreeMap<Ty, Vec<SymbolId>>,
     functions: BTreeMap<Ty, Vec<SymbolId>>,
+    /// The relations' [`KingdomRelations::tail_free_roots`], kept so a contract derived from this one (an epoch
+    /// alphabet) is checked by the same rule.
+    tail_free_roots: bool,
 }
 
 fn bug(what: String) -> String {
@@ -214,6 +217,7 @@ impl KingdomRelations {
                 n_max,
                 terminals,
                 functions,
+                tail_free_roots: self.tail_free_roots,
             })
         } else {
             Err(defects)
@@ -222,6 +226,10 @@ impl KingdomRelations {
 }
 
 impl KingdomContract {
+    /// Whether the check exempted a root no function asks for from having a terminal.
+    pub fn tail_free_roots(&self) -> bool {
+        self.tail_free_roots
+    }
     pub fn kingdom(&self) -> &str {
         &self.kingdom
     }

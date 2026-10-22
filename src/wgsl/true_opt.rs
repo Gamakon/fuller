@@ -134,6 +134,8 @@ pub struct Counts {
     pub hoist_unspellable: usize,
     /// Snap: literals snapped; near misses whose exact constant `C_T` does not hold (named in `defects`).
     pub snapped: usize,
+    /// Snap: library constants appended to a `C_T` that did not hold them.
+    pub appended: usize,
     /// Named defects: a rewrite the table cannot spell.
     pub defects: Vec<String>,
 }
@@ -706,31 +708,35 @@ impl Optimisers {
 
     // ---- snap
 
-    /// Float literals near a library constant snapped to the `C_T` entry that is it (module doc). `None` when nothing
-    /// snaps; a near miss `C_T` cannot spell is a named defect in the counts.
-    pub fn snap(&self, k: &TrueKingdom, tree: &Tree, rel_tol: f64) -> (Option<Tree>, Counts) {
-        let library = crate::snap::default_constants();
+    /// Float literals near a library constant ([`snap_library`]) snapped to that constant (module doc). A literal
+    /// that already is a library value is left alone; of the values within `rel_tol` the nearest is taken. Its
+    /// `C_T` entry is used when `C_T` holds it bit for bit, and otherwise appended to `C_T` (append-only for the run's
+    /// epoch; the caller rebuilds what reads `C_T`). `None` when nothing snaps.
+    pub fn snap(&self, k: &mut TrueKingdom, tree: &Tree, rel_tol: f64) -> (Option<Tree>, Counts) {
+        let library = snap_library();
         let mut counts = Counts::default();
-        fn go(o: &Optimisers, k: &TrueKingdom, t: &Tree, lib: &[(&str, f64)], tol: f64, counts: &mut Counts) -> Tree {
+        fn index_of(k: &TrueKingdom, ty: Ty, v: f32) -> Option<u32> {
+            k.constants.get(&ty)?.iter().position(|t| t.trim().parse::<f64>().ok().is_some_and(|x| (x as f32).to_bits() == v.to_bits())).map(|i| i as u32)
+        }
+        fn go(o: &Optimisers, k: &mut TrueKingdom, t: &Tree, lib: &[(String, f64)], tol: f64, counts: &mut Counts) -> Tree {
             if let Some((ty, v)) = o.value_of(t) {
-                let v64 = f64::from(v);
-                for (name, s) in lib {
-                    for target in [*s, -*s] {
-                        let exact = target as f32;
-                        if v.to_bits() != exact.to_bits() && (v64 - target).abs() <= tol * target.abs() {
-                            match o.literal(ty, exact) {
-                                Some(l) => {
-                                    counts.snapped += 1;
-                                    return l;
-                                }
-                                None => {
-                                    let d = format!("snap: {v} is within {tol} of {}{name}, which C_T of {} does not hold", if target < 0.0 { "-" } else { "" }, k.type_name(ty));
-                                    if !counts.defects.contains(&d) {
-                                        counts.defects.push(d);
-                                    }
-                                }
+                let is_library = lib.iter().any(|(_, s)| (*s as f32).to_bits() == v.to_bits());
+                if v.is_finite() && v != 0.0 && !is_library {
+                    let v64 = f64::from(v);
+                    let near = lib.iter().filter(|(_, s)| (v64 - s).abs() <= tol * s.abs()).min_by(|a, b| (v64 - a.1).abs().total_cmp(&(v64 - b.1).abs()));
+                    if let Some((_, s)) = near {
+                        let exact = *s as f32;
+                        let i = match index_of(k, ty, exact) {
+                            Some(i) => i,
+                            None => {
+                                let v = k.constants.entry(ty).or_default();
+                                v.push(format!("{exact:?}"));
+                                counts.appended += 1;
+                                v.len() as u32 - 1
                             }
-                        }
+                        };
+                        counts.snapped += 1;
+                        return Tree { symbol: t.symbol, const_index: Some(i), kids: Vec::new() };
                     }
                 }
             }
@@ -798,6 +804,138 @@ impl Optimisers {
         let mut seen = 0;
         let out = go(self, k, tree, site, &mut seen);
         (out != *tree).then_some(out)
+    }
+}
+
+/// The snap library: pi, e, sqrt 2, tau, 1/sqrt 2, ln 2, 2 pi, pi/2, and every rational p/q with q <= 12 and
+/// |p/q| <= 64. The literals of a WGSL kernel are entries of a finite `C_T`, so a constant is a near miss only against
+/// a short exact value it could have been (0.59719 against 3/5, 1.60475 against 8/5).
+pub fn snap_library() -> Vec<(String, f64)> {
+    use std::f64::consts::{E, FRAC_1_SQRT_2, FRAC_PI_2, LN_2, PI, SQRT_2, TAU};
+    let mut out: Vec<(String, f64)> = [("pi", PI), ("e", E), ("sqrt2", SQRT_2), ("tau", TAU), ("1/sqrt2", FRAC_1_SQRT_2), ("ln2", LN_2), ("pi/2", FRAC_PI_2)].iter().map(|(n, v)| (n.to_string(), *v)).collect();
+    let mut seen: BTreeSet<u64> = out.iter().map(|(_, v)| v.to_bits()).collect();
+    for q in 1..=12i64 {
+        for p in -64 * q..=64 * q {
+            let v = p as f64 / q as f64;
+            if p != 0 && seen.insert(v.to_bits()) {
+                out.push((format!("{p}/{q}"), v));
+            }
+        }
+    }
+    out
+}
+
+/// THE RUN'S EPOCH (`MultiTypedGEP.md` section 6): the kingdom plus one ADF reference terminal `A_d` for every ADF the
+/// run's fold has made, append-only, so `A_d` is symbol `n_base + d` for the whole run and a gene written in an earlier
+/// epoch reads the same in every later one. An ADF is an immutable expanded tree of base rows (its root is never the
+/// kingdom's root); a gene holding `A_d` expresses its tree by inlining.
+#[derive(Debug, Clone)]
+pub struct RunEpoch {
+    base: crate::kingdom_contract::KingdomContract,
+    root: Ty,
+    epoch: crate::typed_chromosome::Epoch,
+    /// By id: the expanded body, its root type, its level.
+    bodies: Vec<(Tree, Ty, u32)>,
+    index: std::collections::HashMap<Tree, u32>,
+}
+
+impl RunEpoch {
+    pub fn new(base: &crate::kingdom_contract::KingdomContract, root: Ty) -> Result<RunEpoch, String> {
+        let epoch = crate::typed_chromosome::Epoch::new(base, &[], &[]).map_err(|e| e.to_string())?;
+        Ok(RunEpoch { base: base.clone(), root, epoch, bodies: Vec::new(), index: std::collections::HashMap::new() })
+    }
+
+    /// The epoch alphabet as a contract: genes are laid out, drawn, varied and expressed against this.
+    pub fn contract(&self) -> &crate::kingdom_contract::KingdomContract {
+        self.epoch.kingdom()
+    }
+
+    pub fn adfs(&self) -> usize {
+        self.bodies.len()
+    }
+
+    fn n_base(&self) -> usize {
+        self.epoch.n_base()
+    }
+
+    /// The tree with every `A_d` replaced by its body: base rows only.
+    pub fn inline(&self, t: &Tree) -> Tree {
+        let n = self.n_base() as u32;
+        if t.symbol >= n {
+            return self.bodies[(t.symbol - n) as usize].0.clone();
+        }
+        Tree { symbol: t.symbol, const_index: t.const_index, kids: t.kids.iter().map(|c| self.inline(c)).collect() }
+    }
+
+    /// A base tree with every subtree that is an ADF's body replaced by its reference, top down (the largest first).
+    pub fn fold_known(&self, t: &Tree) -> Tree {
+        if let Some(id) = self.index.get(t) {
+            return Tree { symbol: self.n_base() as u32 + id, const_index: None, kids: Vec::new() };
+        }
+        Tree { symbol: t.symbol, const_index: t.const_index, kids: t.kids.iter().map(|c| self.fold_known(c)).collect() }
+    }
+
+    /// THE FOLD of a population (`trees`: base trees): every subtree holding a function, not rooted at the kingdom's
+    /// root, with two or more DAG edges in two or more individuals becomes an ADF (an existing body keeps its id); the
+    /// epoch is rebuilt with every ADF made so far. Returns how many ADFs are new. Each individual's gene is then
+    /// [`fold_known`](RunEpoch::fold_known) of its tree, written back: a removal against the gene's own tree, because
+    /// every reference the gene held is to an ADF that still exists.
+    pub fn fold(&mut self, trees: &[Tree]) -> Result<usize, String> {
+        let mut ids: std::collections::HashMap<&Tree, usize> = std::collections::HashMap::new();
+        let mut info: Vec<(&Tree, u64, u64, usize)> = Vec::new(); // tree, functions, edges, individuals
+        let base = &self.base;
+        fn walk<'t>(t: &'t Tree, base: &crate::kingdom_contract::KingdomContract, ids: &mut std::collections::HashMap<&'t Tree, usize>, info: &mut Vec<(&'t Tree, u64, u64, usize)>, seen: &mut BTreeSet<usize>) -> (usize, u64) {
+            let mut f = u64::from(!base.is_terminal(t.symbol));
+            if let Some(&id) = ids.get(t) {
+                info[id].2 += 1;
+                if seen.insert(id) {
+                    info[id].3 += 1;
+                }
+                return (id, info[id].1);
+            }
+            for c in &t.kids {
+                f += walk(c, base, ids, info, seen).1;
+            }
+            let id = info.len();
+            info.push((t, f, 1, 1));
+            ids.insert(t, id);
+            seen.insert(id);
+            (id, f)
+        }
+        for t in trees {
+            let mut seen = BTreeSet::new();
+            walk(t, base, &mut ids, &mut info, &mut seen);
+        }
+        let mut made = 0;
+        // post-order ids: a body after everything it holds, so a lower ADF has a lower id
+        for (t, f, edges, individuals) in &info {
+            let qualifies = *f >= 1 && *edges >= 2 && *individuals >= 2 && base.output(t.symbol) != self.root;
+            if qualifies && !self.index.contains_key(*t) {
+                fn deepest(t: &Tree, index: &std::collections::HashMap<Tree, u32>, bodies: &[(Tree, Ty, u32)], top: bool) -> Option<u32> {
+                    if !top {
+                        if let Some(id) = index.get(t) {
+                            return Some(bodies[*id as usize].2);
+                        }
+                    }
+                    t.kids.iter().filter_map(|c| deepest(c, index, bodies, false)).max()
+                }
+                let level = deepest(t, &self.index, &self.bodies, true).map_or(0, |l| l + 1);
+                let id = self.bodies.len() as u32;
+                self.bodies.push(((*t).clone(), base.output(t.symbol), level));
+                self.index.insert((*t).clone(), id);
+                made += 1;
+            }
+        }
+        if made > 0 {
+            let decls: Vec<crate::typed_chromosome::AdfDecl> = self.bodies.iter().enumerate().map(|(i, (_, root, level))| crate::typed_chromosome::AdfDecl { id: i as u64, root: *root, level: *level }).collect();
+            self.epoch = crate::typed_chromosome::Epoch::new(&self.base, &[], &decls).map_err(|e| e.to_string())?;
+            for i in 0..self.bodies.len() {
+                if self.epoch.adf_terminal(i as u64) != Some((self.n_base() + i) as u32) {
+                    return Err(bug(format!("ADF {i} is not symbol n_base + {i} in the rebuilt epoch")));
+                }
+            }
+        }
+        Ok(made)
     }
 }
 
@@ -987,10 +1125,11 @@ mod tests {
         eprintln!("volumepassage hoist: {counts:?}, {} -> {} nodes", tree.level_order().len(), t.level_order().len());
     }
 
-    /// Snap on a table whose `C_T` holds a near-pi literal: it becomes the exact pi of `C_T`; with no exact entry, the
-    /// near miss is a named defect and nothing changes.
+    /// Snap on a table whose `C_T` holds a near-pi literal: it becomes the exact pi of `C_T`; with no exact entry, pi
+    /// is appended to `C_T` and used; a literal that already is a library value (2.0, 0.3 = 3/10) is left alone; on
+    /// the encoded volumepassage the ACES constants snap (0.59719 to 3/5).
     #[test]
-    fn snap_moves_a_near_constant_to_the_exact_one_or_names_the_missing_constant() {
+    fn snap_moves_a_near_constant_to_the_exact_one_appending_it_when_c_t_lacks_it() {
         let mut k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
         let lit = k.rows.iter().position(|r| r.name == "literal.real").expect("literal.real");
         let ty = k.rows[lit].out;
@@ -998,15 +1137,70 @@ mod tests {
         let o = Optimisers::new(&k).expect("optimisers");
         let near = Tree { symbol: lit as u32, const_index: Some(k.constants[&ty].len() as u32 - 1), kids: Vec::new() };
         let x = node(&k, "arith.mul", None, vec![node(&k, "reg.get_f", None, vec![node(&k, "reg.rf0", None, vec![])]), near.clone()]);
-        let (snapped, counts) = o.snap(&k, &x, 1e-3);
         let pi = k.constants[&ty].iter().position(|t| t.parse::<f64>().ok().map(|v| v as f32) == Some(std::f32::consts::PI)).expect("pi in C_T");
+        let (snapped, counts) = o.snap(&mut k, &x, 1e-2);
         assert_eq!(snapped.expect("snapped").kids[1].const_index, Some(pi as u32));
-        assert_eq!(counts.snapped, 1);
-        let only_pi = k.constants[&ty][pi].clone();
+        assert_eq!((counts.snapped, counts.appended), (1, 0));
         k.constants.get_mut(&ty).expect("C_T")[pi] = "3.0000001".to_string();
         let o2 = Optimisers::new(&k).expect("optimisers");
-        let (none, counts) = o2.snap(&k, &x, 1e-3);
-        assert!(none.is_none() && counts.defects.iter().any(|d| d.contains("pi")), "{counts:?} (C_T had {only_pi})");
+        let before = k.constants[&ty].len();
+        let (snapped, counts) = o2.snap(&mut k, &x, 1e-2);
+        assert_eq!((counts.snapped, counts.appended), (1, 1));
+        assert_eq!(k.constants[&ty].len(), before + 1);
+        let i = snapped.expect("snapped").kids[1].const_index.expect("index") as usize;
+        assert_eq!(k.constants[&ty][i].parse::<f64>().map(|v| v as f32), Ok(std::f32::consts::PI));
+        for exact in ["2.0", "0.3"] {
+            let t = node(&k, "arith.mul", None, vec![node(&k, "reg.get_f", None, vec![node(&k, "reg.rf0", None, vec![])]), node(&k, "literal.real", Some(exact), vec![])]);
+            assert!(o2.snap(&mut k, &t, 1e-2).0.is_none(), "{exact} is a library value");
+        }
+        let mut k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let (t, counts) = o.snap(&mut k, &tree, 1e-2);
+        let t = t.expect("the ACES constants snap");
+        assert!(counts.snapped >= 3, "{counts:?}");
+        assert_typed(&k, &t);
+        k.render(&t).expect("render");
+        eprintln!("volumepassage snap: {counts:?}");
+    }
+
+    /// THE RUN'S EPOCH: three individuals (the encoded volumepassage, its fewer-trips child, the original again) fold
+    /// into ADFs; each folded gene is written back over its own gene under the epoch contract, expresses, and inlines
+    /// to its tree; a second fold keeps every id and symbol (append-only); a gene written in the first epoch still
+    /// expresses in the second.
+    #[test]
+    fn the_run_epoch_folds_append_only_and_folded_genes_inline_to_their_trees() {
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let c = k.relations().check().expect("check");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let child = o.fewer_trips_at(&k, &tree, 0).expect("a trips child");
+        let trees = vec![tree.clone(), child.clone(), tree.clone()];
+        let layout = GeneLayout::from_program_size(&c, k.root, functions(&tree, &k)).expect("layout");
+        let cl = k.const_lens();
+        let filler = random_gene(&c, &layout, &cl, &mut Rng(5), Share::Half, true);
+        let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&c, &layout, &filler, t).expect("write-back")).collect();
+        let mut ep = RunEpoch::new(&c, k.root).expect("epoch");
+        let made = ep.fold(&trees).expect("fold");
+        assert!(made > 0 && ep.adfs() == made, "{made} ADFs");
+        let mut folded = Vec::new();
+        for (g, t) in genes.iter().zip(&trees) {
+            let f = ep.fold_known(t);
+            assert!(f.level_order().len() < t.level_order().len(), "the fold removes nodes");
+            let w = write_back(ep.contract(), &layout, g, &f).expect("a removal fits");
+            let e = express(ep.contract(), &layout, &w, &cl).expect("express under the epoch").tree();
+            assert_eq!(&e, &f);
+            assert_eq!(&ep.inline(&e), t, "the folded gene inlines to its tree");
+            folded.push(w);
+        }
+        let first = ep.contract().n_symbols();
+        let other = o.fewer_trips_at(&k, &tree, 1).expect("another child");
+        let again = ep.fold(&[tree.clone(), other.clone(), other.clone()]).expect("fold again");
+        assert!(ep.contract().n_symbols() == first + again, "append-only");
+        for (w, t) in folded.iter().zip(&trees) {
+            let e = express(ep.contract(), &layout, w, &cl).expect("a first-epoch gene expresses in the second").tree();
+            assert_eq!(&ep.inline(&e), t);
+        }
     }
 
     /// Fewer trips: one of the encoded volumepassage's literal-bound loops gets the next smaller literal, every other
