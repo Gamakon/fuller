@@ -301,6 +301,26 @@ impl Rung {
 /// `volumepassage.wgsl` (cuneus `examples/shaders`, entry `main`): a 50-step ray march through a 7-octave sine noise,
 /// tone mapped, one pixel per invocation, 8 x 8 workgroups. Returns the tree, or every table gap.
 pub fn volumepassage(k: &TrueKingdom) -> Result<Tree, Vec<String>> {
+    volumepassage_with(k, false)
+}
+
+/// THE PLANTED-WIN TEST (ST11): `tests/corpus/cuneus/volumepassage_planted.wgsl`, volumepassage with three slowdowns
+/// planted in the 50-trip march that leave the picture bit-identical, read into the same rows as the original:
+///
+/// 1. dead heavy work: `rf15 = sin(z * 1.1) * pow(abs(d) + 1.0, 2.3) * exp(-abs(N))`, then
+///    `rf15 = rf15 + (sin(t * 0.3 + z) * exp(z * 0.01) + pow(abs(N) + 2.0, 0.3))`; nothing reads `rf15`;
+/// 2. a loop-invariant expression recomputed every trip: `d = max(abs(d) + 0.01, -(exp(sin(speed * 2.7)) *
+///    pow(zoom + 1.0, 1.1) + exp(cos(gamma * 2.3))))`, the second argument always negative, so `d` is unchanged;
+/// 3. a repeated common subexpression: the 7-octave noise `f(p + t * 0.1)` computed a second time (the same
+///    statements, its result in `rf16`) and `N = min(N, rf16)`.
+///
+/// Measured on the M3 Max (st11_planted_time, 64 x 64): Metal's compiler deletes plant 1 and hoists plant 2 by itself
+/// (each alone costs 1 to 2 %); plant 3 is a loop, which it neither merges nor deletes (1.8 times the shipped time).
+pub fn volumepassage_planted(k: &TrueKingdom) -> Result<Tree, Vec<String>> {
+    volumepassage_with(k, true)
+}
+
+fn volumepassage_with(k: &TrueKingdom, planted: bool) -> Result<Tree, Vec<String>> {
     let b = Rows::new(k);
     let l = |d: u8, kk: u8| Rung { x: 'L', d, k: kk };
     let p = |name: &str| b.n(&format!("load.params.{name}"), vec![]);
@@ -339,76 +359,113 @@ pub fn volumepassage(k: &TrueKingdom) -> Result<Tree, Vec<String>> {
     let xy_p = || b.swz(3, "xy", b.g3(p3));
     let pz = || b.lane(3, 2, b.g3(p3));
     let color = |n: u8| b.v3s(p(&format!("color{n}_r")), p(&format!("color{n}_g")), p(&format!("color{n}_b")));
-    let body = b.block(
-        r11,
-        vec![
-            b.set_f(r11, i, b.add(b.gf(i), real("1.0"))),
-            b.set_f(r11, z, b.add(b.gf(z), b.mul(b.gf(d), real("0.6")))),
-            // p = z * normalize(vec3((C - 0.5 * r.xy) / zoom, r.y))
-            b.set_3(
-                r11,
-                p3,
-                b.smul(
-                    3,
-                    b.gf(z),
-                    b.n(
-                        "geom.normalize_v3",
-                        vec![b.v3(b.vop("div", 2, b.vop("sub", 2, b.g2(cpix), b.smul(2, real("0.5"), b.g2(rdim))), b.splat(2, p("zoom"))), b.lane(2, 1, b.g2(rdim)))],
-                    ),
-                ),
-            ),
-            // p.z += t
-            b.set_3(r11, p3, b.v3(xy_p(), b.add(pz(), b.gf(t)))),
-            // let R_mat = mm2(p.z * 1.1)
-            b.set_f(r11, ang, b.mul(pz(), real("1.1"))),
-            b.set_f(r11, co, b.f1("cos", b.gf(ang))),
-            b.set_f(r11, si, b.f1("sin", b.gf(ang))),
-            // rotated_xy = R_mat * p.xy, with m2(c, -s, s, c)
-            b.set_2(
-                r11,
-                rot,
+    // the planted registers: rf15 the dead work, rf16 the noise computed a second time
+    let (dead, n2) = (15usize, 16usize);
+    let mut stmts = vec![b.set_f(r11, i, b.add(b.gf(i), real("1.0"))), b.set_f(r11, z, b.add(b.gf(z), b.mul(b.gf(d), real("0.6"))))];
+    if planted {
+        // PLANT 1: dead heavy work, nothing reads rf15
+        let abs_n_plus = |c: &str| b.add(b.f1("abs", b.gf(nn)), real(c));
+        stmts.push(b.set_f(
+            r11,
+            dead,
+            b.mul(b.mul(b.f1("sin", b.mul(b.gf(z), real("1.1"))), b.n("arith.pow", vec![b.add(b.f1("abs", b.gf(d)), real("1.0")), real("2.3")])), b.f1("exp", b.f1("neg", b.f1("abs", b.gf(nn))))),
+        ));
+        stmts.push(b.set_f(
+            r11,
+            dead,
+            b.add(b.gf(dead), b.add(b.mul(b.f1("sin", b.add(b.mul(b.gf(t), real("0.3")), b.gf(z))), b.f1("exp", b.mul(b.gf(z), real("0.01")))), b.n("arith.pow", vec![abs_n_plus("2.0"), real("0.3")]))),
+        ));
+    }
+    stmts.extend(vec![
+        // p = z * normalize(vec3((C - 0.5 * r.xy) / zoom, r.y))
+        b.set_3(
+            r11,
+            p3,
+            b.smul(
+                3,
+                b.gf(z),
                 b.n(
-                    "arith.mul_mat_vec_2x2",
-                    vec![b.n("shape.compose_mat2x2", vec![b.v2(b.gf(co), b.f1("neg", b.gf(si))), b.v2(b.gf(si), b.gf(co))]), xy_p()],
+                    "geom.normalize_v3",
+                    vec![b.v3(b.vop("div", 2, b.vop("sub", 2, b.g2(cpix), b.smul(2, real("0.5"), b.g2(rdim))), b.splat(2, p("zoom"))), b.lane(2, 1, b.g2(rdim)))],
                 ),
             ),
-            // p.x = rotated_xy.x; p.y = rotated_xy.y
-            b.set_3(r11, p3, b.v3(b.g2(rot), pz())),
-            // N = f(p + t * 0.1)
+        ),
+        // p.z += t
+        b.set_3(r11, p3, b.v3(xy_p(), b.add(pz(), b.gf(t)))),
+        // let R_mat = mm2(p.z * 1.1)
+        b.set_f(r11, ang, b.mul(pz(), real("1.1"))),
+        b.set_f(r11, co, b.f1("cos", b.gf(ang))),
+        b.set_f(r11, si, b.f1("sin", b.gf(ang))),
+        // rotated_xy = R_mat * p.xy, with m2(c, -s, s, c)
+        b.set_2(
+            r11,
+            rot,
+            b.n(
+                "arith.mul_mat_vec_2x2",
+                vec![b.n("shape.compose_mat2x2", vec![b.v2(b.gf(co), b.f1("neg", b.gf(si))), b.v2(b.gf(si), b.gf(co))]), xy_p()],
+            ),
+        ),
+        // p.x = rotated_xy.x; p.y = rotated_xy.y
+        b.set_3(r11, p3, b.v3(b.g2(rot), pz())),
+    ]);
+    // N = f(p + t * 0.1)
+    let noise = |into: usize| {
+        vec![
             b.set_3(r11, pos3, b.vop("add", 3, b.g3(p3), b.splat(3, b.mul(b.gf(t), real("0.1"))))),
             b.set_f(r11, v, real("0.0")),
             b.set_f(r11, a, real("1.0")),
-            inner,
-            b.set_f(r11, nn, b.gf(v)),
-            // d = length(p.xy) - 1.0 + N * 0.3
-            b.set_f(r11, d, b.add(b.sub(b.length(2, xy_p()), real("1.0")), b.mul(b.gf(nn), real("0.3")))),
-            // p.z = pmap(p.z, 4.0): r = value % domain; select(r + domain, r, r >= 0.0) - (domain * 0.5)
-            b.set_f(r11, rm, b.n("arith.rem", vec![pz(), real("4.0")])),
-            b.set_3(
-                r11,
-                p3,
-                b.v3(
-                    xy_p(),
-                    b.sub(
-                        b.n("select.real", vec![b.add(b.gf(rm), real("4.0")), b.gf(rm), b.n("compare.ge_real", vec![b.gf(rm), real("0.0")])]),
-                        b.mul(real("4.0"), real("0.5")),
-                    ),
+            inner.clone(),
+            b.set_f(r11, into, b.gf(v)),
+        ]
+    };
+    stmts.extend(noise(nn));
+    if planted {
+        // PLANT 3: the noise a second time into rf16, and N = min(N, rf16)
+        stmts.extend(noise(n2));
+        stmts.push(b.set_f(r11, nn, b.n("arith.min", vec![b.gf(nn), b.gf(n2)])));
+    }
+    stmts.extend(vec![
+        // d = length(p.xy) - 1.0 + N * 0.3
+        b.set_f(r11, d, b.add(b.sub(b.length(2, xy_p()), real("1.0")), b.mul(b.gf(nn), real("0.3")))),
+        // p.z = pmap(p.z, 4.0): r = value % domain; select(r + domain, r, r >= 0.0) - (domain * 0.5)
+        b.set_f(r11, rm, b.n("arith.rem", vec![pz(), real("4.0")])),
+        b.set_3(
+            r11,
+            p3,
+            b.v3(
+                xy_p(),
+                b.sub(
+                    b.n("select.real", vec![b.add(b.gf(rm), real("4.0")), b.gf(rm), b.n("compare.ge_real", vec![b.gf(rm), real("0.0")])]),
+                    b.mul(real("4.0"), real("0.5")),
                 ),
             ),
-            // d = abs(d) + 0.01
-            b.set_f(r11, d, b.add(b.f1("abs", b.gf(d)), real("0.01"))),
-            // den1, den2
-            b.set_f(r11, den1, b.max(b.mul(b.length(2, b.vop("add", 2, xy_p(), b.splat(2, b.gf(nn)))), real("0.8")), real("0.005"))),
-            b.set_f(r11, den2, b.max(b.mul(b.length(2, b.vop("add", 2, b.swz(3, "xz", b.g3(p3)), b.splat(2, b.gf(nn)))), real("0.8")), real("0.005"))),
-            // c = color1 / den1; c += color2 / den2; c += color3 * (0.5 + 0.5 * sin(N * 1.0 + t))
-            b.set_3(r11, c3, b.vop("div", 3, color(1), b.splat(3, b.gf(den1)))),
-            b.set_3(r11, c3, b.vop("add", 3, b.g3(c3), b.vop("div", 3, color(2), b.splat(3, b.gf(den2))))),
-            b.set_f(r11, sc, b.add(real("0.5"), b.mul(real("0.5"), b.f1("sin", b.add(b.mul(b.gf(nn), real("1.0")), b.gf(t)))))),
-            b.set_3(r11, c3, b.vop("add", 3, b.g3(c3), b.smul(3, b.gf(sc), color(3)))),
-            // o += c / d * 0.12
-            b.set_3(r11, o3, b.vop("add", 3, b.g3(o3), b.smul(3, real("0.12"), b.vop("div", 3, b.g3(c3), b.splat(3, b.gf(d)))))),
-        ],
-    );
+        ),
+    ]);
+    // d = abs(d) + 0.01
+    let d_new = b.add(b.f1("abs", b.gf(d)), real("0.01"));
+    stmts.push(if planted {
+        // PLANT 2: max(d, -(a positive loop invariant)) is d
+        let invariant = b.add(
+            b.mul(b.f1("exp", b.f1("sin", b.mul(p("speed"), real("2.7")))), b.n("arith.pow", vec![b.add(p("zoom"), real("1.0")), real("1.1")])),
+            b.f1("exp", b.f1("cos", b.mul(p("gamma"), real("2.3")))),
+        );
+        b.set_f(r11, d, b.max(d_new, b.f1("neg", invariant)))
+    } else {
+        b.set_f(r11, d, d_new)
+    });
+    stmts.extend(vec![
+        // den1, den2
+        b.set_f(r11, den1, b.max(b.mul(b.length(2, b.vop("add", 2, xy_p(), b.splat(2, b.gf(nn)))), real("0.8")), real("0.005"))),
+        b.set_f(r11, den2, b.max(b.mul(b.length(2, b.vop("add", 2, b.swz(3, "xz", b.g3(p3)), b.splat(2, b.gf(nn)))), real("0.8")), real("0.005"))),
+        // c = color1 / den1; c += color2 / den2; c += color3 * (0.5 + 0.5 * sin(N * 1.0 + t))
+        b.set_3(r11, c3, b.vop("div", 3, color(1), b.splat(3, b.gf(den1)))),
+        b.set_3(r11, c3, b.vop("add", 3, b.g3(c3), b.vop("div", 3, color(2), b.splat(3, b.gf(den2))))),
+        b.set_f(r11, sc, b.add(real("0.5"), b.mul(real("0.5"), b.f1("sin", b.add(b.mul(b.gf(nn), real("1.0")), b.gf(t)))))),
+        b.set_3(r11, c3, b.vop("add", 3, b.g3(c3), b.smul(3, b.gf(sc), color(3)))),
+        // o += c / d * 0.12
+        b.set_3(r11, o3, b.vop("add", 3, b.g3(o3), b.smul(3, real("0.12"), b.vop("div", 3, b.g3(c3), b.splat(3, b.gf(d)))))),
+    ]);
+    let body = b.block(r11, stmts);
     let outer = b.n("loop.tile_L0_f1", vec![b.lit64("50"), body]);
 
     // ---- preamble (depth 0, stratum 2)
@@ -710,6 +767,11 @@ mod tests {
     #[test]
     fn volumepassage_is_a_tree_of_rows_that_round_trips_through_a_gene() {
         round_trips("volumepassage", volumepassage, 492);
+    }
+
+    #[test]
+    fn the_planted_volumepassage_is_a_tree_of_rows_that_round_trips_through_a_gene() {
+        round_trips("volumepassage", volumepassage_planted, 660);
     }
 
     #[test]

@@ -17,3 +17,8 @@ Altun).
 
 fallback.wgsl and vertex.wgsl have no compute entry point; every other
 cuneus kernel binds images or samplers, which the kingdom has no rows for.
+
+volumepassage_planted.wgsl is not a cuneus file: it is
+tests/corpus/cuneus_visual/volumepassage.wgsl (cuneus examples/shaders,
+CC BY-NC-SA 3.0, Enes Altun) with three slowdowns planted for fuller's
+planted-win test (ST11), each marked PLANT; the picture is bit-identical.

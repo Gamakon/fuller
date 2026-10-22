@@ -254,3 +254,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "st9_msl"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "st11_planted_time"
+required-features = ["gpu", "wgsl"]
