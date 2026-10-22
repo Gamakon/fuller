@@ -4,10 +4,10 @@
 //! gene that expresses a legal kernel by construction; nothing here judges a kernel, fitness does.
 //!
 //! * [`Optimisers::cleanse`]: dead work. A write to a register, a uniform register, a private array or a workgroup
-//!   array (the `reg.set_*`, `ureg.set*`, `parr.set_*`, `wg.set_*` rows: arg 0 names the variable) is dead when no read of
-//!   that variable reaches anything a live statement uses: the live variables are those read outside any write's value,
-//!   closed under "read in the value of a write to a live variable". A dead write whose other arguments have no effect
-//!   becomes its statement type's empty terminal (`{}`); then every statement left empty (a block of empties, an `if`
+//!   array (the `reg.set_*`, `ureg.set*`, `parr.set_*`, `wg.set_*` rows: arg 0 names the variable) is dead when no later
+//!   read made by a live statement uses its value: per write, by strong liveness backwards over the statements (ST12;
+//!   to ST11 per variable, so a variable live anywhere kept every write of it). A dead write whose other arguments have
+//!   no effect becomes its statement type's empty terminal (`{}`); then every statement left empty (a block of empties, an `if`
 //!   over empties with an effect-free condition, a `_ = x;` of an effect-free `x`, a counted loop over an empty body
 //!   whose counter nothing else reads) becomes the empty terminal too. A write spelled with a barrier (`wg.put_*`) is
 //!   never removed: its barriers may order other memory.
@@ -163,6 +163,59 @@ struct BinRow {
     args: [Ty; 2],
 }
 
+/// How a statement row moves liveness backwards (cleanse's per-write analysis).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Flow {
+    /// A write row: arg 0 names the variable; `kills` when it replaces the whole variable (a register), not when it
+    /// writes one element (a private or workgroup array).
+    Write { kills: bool },
+    /// Text with no control flow and each statement argument spelled exactly once: the arguments run once, in the
+    /// order of their placeholders (the argument indices in spelling order, value arguments included).
+    Straight(Vec<usize>),
+    /// A loop, an `if`, or any other row: its statement arguments run in any order, any number of times, possibly
+    /// none (a counted loop's own `break` leaves to after the loop, which this covers).
+    Any,
+    /// Text that leaves the statement early (`break`, `continue`, `return`, `discard` outside a counted loop's own
+    /// exit): every variable is live before it.
+    Jump,
+}
+
+/// The argument placeholders of a spelling in spelling order: `(index, has a field)` for `{N}` and `{N:F}`.
+fn placeholders(s: &str) -> Vec<(usize, bool)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(open) = s[i..].find('{') {
+        let at = i + open;
+        let Some(close) = s[at..].find('}') else { break };
+        let inner = &s[at + 1..at + close];
+        let (a, f) = inner.split_once(':').map_or((inner, None), |(a, f)| (a, Some(f)));
+        if !a.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) && f.is_none_or(|f| !f.is_empty() && f.bytes().all(|c| c.is_ascii_digit())) {
+            if let Ok(n) = a.parse::<usize>() {
+                out.push((n, f.is_some()));
+            }
+            i = at + close + 1;
+        } else {
+            i = at + 1;
+        }
+    }
+    out
+}
+
+/// The identifier words of a text.
+fn words(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty())
+}
+
+/// The state of one cleanse's liveness pass: the table, every variable the tree names, the path of the statement being
+/// analysed, the dead writes found (by path) and the dead writes the table cannot remove.
+struct Liveness<'a> {
+    k: &'a TrueKingdom,
+    universe: BTreeSet<u32>,
+    path: Vec<usize>,
+    dead: BTreeSet<Vec<usize>>,
+    defects: BTreeSet<String>,
+}
+
 /// A register family: the register type, its read row, its terminals, its write row at each statement type.
 #[derive(Debug, Clone)]
 struct RegFamily {
@@ -180,8 +233,11 @@ pub struct Optimisers {
     empty: BTreeMap<Ty, u32>,
     /// Per row: a variable's name (a register, private array or workgroup array terminal).
     name_terminal: Vec<bool>,
-    /// Per row: a write whose arg 0 is the variable written and whose spelling has no barrier.
-    write: Vec<bool>,
+    /// Per row: a workgroup array's name (memory other invocations of the workgroup read).
+    wg_name: Vec<bool>,
+    /// Per row: how a statement row moves liveness (cleanse); a write row (arg 0 the variable written, no barrier in
+    /// its spelling) is [`Flow::Write`].
+    flow: Vec<Flow>,
     /// Per row: its spelling acts beyond its value, or it outputs a statement.
     effect: Vec<bool>,
     /// Per row: a pure sequence (`block.one`, `block.seq*`, `stmt.block`, `stmt.lift`): statement arguments and no text
@@ -271,6 +327,33 @@ impl Optimisers {
             .map(|r| {
                 let text = without_placeholders(&r.spelling);
                 r.kind == RowKind::Function && statement.contains(&r.out) && !r.args.is_empty() && r.args.iter().all(|a| statement.contains(a)) && text.chars().all(|c| c.is_whitespace() || c == '{' || c == '}')
+            })
+            .collect();
+        let wg_name: Vec<bool> = k.rows.iter().map(|r| r.kind == RowKind::Terminal && dual(r.out).starts_with("wgmem<")).collect();
+        let flow: Vec<Flow> = (0..n)
+            .map(|i| {
+                let r = &k.rows[i];
+                if write[i] {
+                    let d = dual(r.args[0]);
+                    return Flow::Write { kills: d.starts_with("reg<") || d.starts_with("ureg<") };
+                }
+                if k.loops[i].is_some() {
+                    return Flow::Any;
+                }
+                let text = without_placeholders(&r.spelling);
+                if words(&text).any(|w| matches!(w, "break" | "continue" | "return" | "discard")) {
+                    return Flow::Jump;
+                }
+                if words(&text).any(|w| matches!(w, "if" | "else" | "loop" | "for" | "while" | "switch" | "continuing")) {
+                    return Flow::Any;
+                }
+                let order = placeholders(&r.spelling);
+                let once = r.args.iter().enumerate().filter(|(_, a)| statement.contains(a)).all(|(j, _)| order.iter().filter(|(p, _)| *p == j).count() == 1 && order.iter().any(|(p, f)| *p == j && !f));
+                if once && order.iter().all(|(p, _)| *p < r.args.len()) {
+                    Flow::Straight(order.into_iter().map(|(p, _)| p).collect())
+                } else {
+                    Flow::Any
+                }
             })
             .collect();
         let is_if: Vec<bool> = k.rows.iter().map(|r| r.name.starts_with("stmt.if") && r.kind == RowKind::Function && statement.contains(&r.out)).collect();
@@ -367,7 +450,7 @@ impl Optimisers {
             .collect();
         let rules_all = Rules::work(k);
         let rules_exact = rules_all.exact_only();
-        Ok(Optimisers { statement, empty, name_terminal, write, effect, container, is_if, discard, loop_body, context_free: context_free_rows(k), consts, bins, bin_by_shape, neg, regs, seq, row_cost, rules_all, rules_exact })
+        Ok(Optimisers { statement, empty, name_terminal, wg_name, flow, effect, container, is_if, discard, loop_body, context_free: context_free_rows(k), consts, bins, bin_by_shape, neg, regs, seq, row_cost, rules_all, rules_exact })
     }
 
     /// The cost a node's row adds to a program: 1, 4 for a division, 8 for `pow`, `exp`, `log`, `sqrt` and the
@@ -388,39 +471,28 @@ impl Optimisers {
     // ---- cleanse
 
     /// Dead work removed (module doc). `None` when nothing is dead or empty.
+    ///
+    /// A WRITE IS DEAD when no later read that a live statement makes uses its value (strong liveness, the faint
+    /// variables of the dataflow literature): liveness runs backwards over the statements, a write of a variable not
+    /// live after it is dead and reads nothing (so a value fed only to dead writes, or only to itself around a loop, is
+    /// dead too), a register write kills its variable, an array element write does not, a loop or `if` runs its bodies
+    /// any number of times in any order (iterated to its fixpoint), a statement that leaves early makes every variable
+    /// live, and a workgroup array read anywhere is live everywhere (other invocations read it). Each dead write found
+    /// this way is removed where it stands, so a variable written dead in one place and live in another keeps its live
+    /// writes.
     pub fn cleanse(&self, k: &TrueKingdom, tree: &Tree) -> Result<Option<(Tree, Counts)>, String> {
-        // reads: (owner write's variable or none, variable read)
-        let mut reads: Vec<(Option<u32>, u32)> = Vec::new();
-        fn walk(o: &Optimisers, t: &Tree, owner: Option<u32>, reads: &mut Vec<(Option<u32>, u32)>) {
-            if o.write[t.symbol as usize] && t.kids.first().is_some_and(|v| o.name_terminal[v.symbol as usize]) {
-                let var = t.kids[0].symbol;
-                for c in &t.kids[1..] {
-                    walk(o, c, Some(owner.unwrap_or(var)), reads);
-                }
-                return;
+        let mut universe: BTreeSet<u32> = BTreeSet::new();
+        let mut stack = vec![tree];
+        while let Some(t) = stack.pop() {
+            if self.name_terminal[t.symbol as usize] {
+                universe.insert(t.symbol);
             }
-            if o.name_terminal[t.symbol as usize] {
-                reads.push((owner, t.symbol));
-            }
-            for c in &t.kids {
-                walk(o, c, owner, reads);
-            }
+            stack.extend(t.kids.iter());
         }
-        walk(self, tree, None, &mut reads);
-        let mut live: BTreeSet<u32> = reads.iter().filter(|(o, _)| o.is_none()).map(|(_, v)| *v).collect();
-        loop {
-            let before = live.len();
-            for (o, v) in &reads {
-                if let Some(w) = o {
-                    if live.contains(w) {
-                        live.insert(*v);
-                    }
-                }
-            }
-            if live.len() == before {
-                break;
-            }
-        }
+        let exit: BTreeSet<u32> = universe.iter().copied().filter(|v| self.wg_name[*v as usize]).collect();
+        let mut cx = Liveness { k, universe, path: Vec::new(), dead: BTreeSet::new(), defects: BTreeSet::new() };
+        self.live_in(&mut cx, tree, &exit, true);
+        let Liveness { dead, defects, .. } = cx;
         // the variables (declared names) of every row that is not a loop: a loop's counter is read only through these
         let mut named_outside: BTreeSet<&str> = BTreeSet::new();
         let mut stack = vec![tree];
@@ -430,30 +502,122 @@ impl Optimisers {
             }
             stack.extend(t.kids.iter());
         }
-        let mut counts = Counts::default();
-        let out = self.sweep(k, tree, &live, &named_outside, &mut counts)?;
+        let mut counts = Counts { defects: defects.into_iter().collect(), ..Counts::default() };
+        let out = self.sweep(k, tree, &dead, &mut Vec::new(), &named_outside, &mut counts)?;
         if out == *tree {
             return Ok(None);
         }
         Ok(Some((out, counts)))
     }
 
+    /// The variables read by a value subtree (every name terminal in it).
+    fn reads_into(&self, t: &Tree, live: &mut BTreeSet<u32>) {
+        if self.name_terminal[t.symbol as usize] {
+            live.insert(t.symbol);
+        }
+        for c in &t.kids {
+            self.reads_into(c, live);
+        }
+    }
+
+    /// The variables live before statement `t` given those live after it (`out`). With `mark`, every dead write is
+    /// recorded in `cx.dead` by its path of argument indices from the root (`cx.path` is `t`'s).
+    fn live_in(&self, cx: &mut Liveness<'_>, t: &Tree, out: &BTreeSet<u32>, mark: bool) -> BTreeSet<u32> {
+        let k = cx.k;
+        let s = t.symbol as usize;
+        let stmt = |c: &Tree| self.statement.contains(&k.rows[c.symbol as usize].out);
+        let flow = if matches!(self.flow[s], Flow::Write { .. }) && !t.kids.first().is_some_and(|v| self.name_terminal[v.symbol as usize]) { &Flow::Any } else { &self.flow[s] };
+        match flow {
+            Flow::Write { kills } => {
+                let var = t.kids[0].symbol;
+                if !out.contains(&var) && t.kids[1..].iter().all(|c| self.effect_free(c)) {
+                    let row = &k.rows[s];
+                    if self.empty.contains_key(&row.out) {
+                        if mark {
+                            cx.dead.insert(cx.path.clone());
+                        }
+                        return out.clone();
+                    }
+                    cx.defects.insert(format!("cleanse: a dead write {} has no empty terminal of {}", row.name, k.type_name(row.out)));
+                }
+                let mut live = out.clone();
+                if *kills {
+                    live.remove(&var);
+                }
+                for c in &t.kids[1..] {
+                    self.reads_into(c, &mut live);
+                }
+                live
+            }
+            Flow::Jump => cx.universe.clone(),
+            Flow::Straight(order) => {
+                let mut live = out.clone();
+                for &a in order.iter().rev() {
+                    let c = &t.kids[a];
+                    if stmt(c) {
+                        cx.path.push(a);
+                        live = self.live_in(cx, c, &live, mark);
+                        cx.path.pop();
+                    } else {
+                        self.reads_into(c, &mut live);
+                    }
+                }
+                live
+            }
+            Flow::Any => {
+                // the bodies' exit: after the statement, before any body, or after a value is read
+                let mut values = BTreeSet::new();
+                for c in t.kids.iter().filter(|c| !stmt(c)) {
+                    self.reads_into(c, &mut values);
+                }
+                let mut exit: BTreeSet<u32> = out.union(&values).copied().collect();
+                loop {
+                    let mut next = exit.clone();
+                    for (a, c) in t.kids.iter().enumerate().filter(|(_, c)| stmt(c)) {
+                        cx.path.push(a);
+                        next.extend(self.live_in(cx, c, &exit, false));
+                        cx.path.pop();
+                    }
+                    if next == exit {
+                        break;
+                    }
+                    exit = next;
+                }
+                if mark {
+                    for (a, c) in t.kids.iter().enumerate().filter(|(_, c)| stmt(c)) {
+                        cx.path.push(a);
+                        self.live_in(cx, c, &exit, true);
+                        cx.path.pop();
+                    }
+                }
+                exit
+            }
+        }
+    }
+
     fn is_empty_terminal(&self, t: &Tree) -> bool {
         t.kids.is_empty() && self.empty.values().any(|e| *e == t.symbol)
     }
 
-    fn sweep(&self, k: &TrueKingdom, t: &Tree, live: &BTreeSet<u32>, named_outside: &BTreeSet<&str>, counts: &mut Counts) -> Result<Tree, String> {
+    fn sweep(&self, k: &TrueKingdom, t: &Tree, dead: &BTreeSet<Vec<usize>>, path: &mut Vec<usize>, named_outside: &BTreeSet<&str>, counts: &mut Counts) -> Result<Tree, String> {
         let s = t.symbol as usize;
         let row = &k.rows[s];
-        // a dead write
-        if self.write[s] && t.kids.first().is_some_and(|v| self.name_terminal[v.symbol as usize] && !live.contains(&v.symbol)) && t.kids[1..].iter().all(|c| self.effect_free(c)) {
-            if let Some(e) = self.empty.get(&row.out) {
-                counts.dead_writes += 1;
-                return Ok(Tree { symbol: *e, const_index: None, kids: Vec::new() });
-            }
-            counts.defects.push(format!("cleanse: a dead write {} has no empty terminal of {}", row.name, k.type_name(row.out)));
+        // a dead write (found by `live_in`, so its value has no effect and its type has an empty terminal)
+        if dead.contains(path.as_slice()) {
+            let e = self.empty.get(&row.out).ok_or_else(|| bug(format!("cleanse marked {} dead, but {} has no empty terminal", row.name, k.type_name(row.out))))?;
+            counts.dead_writes += 1;
+            return Ok(Tree { symbol: *e, const_index: None, kids: Vec::new() });
         }
-        let kids: Vec<Tree> = t.kids.iter().map(|c| if self.statement.contains(&k.rows[c.symbol as usize].out) { self.sweep(k, c, live, named_outside, counts) } else { Ok(c.clone()) }).collect::<Result<_, _>>()?;
+        let mut kids = Vec::with_capacity(t.kids.len());
+        for (a, c) in t.kids.iter().enumerate() {
+            if self.statement.contains(&k.rows[c.symbol as usize].out) {
+                path.push(a);
+                kids.push(self.sweep(k, c, dead, path, named_outside, counts)?);
+                path.pop();
+            } else {
+                kids.push(c.clone());
+            }
+        }
         let rebuilt = Tree { symbol: t.symbol, const_index: t.const_index, kids };
         if self.is_empty_terminal(&rebuilt) || !self.statement.contains(&row.out) {
             return Ok(rebuilt);
@@ -1008,8 +1172,9 @@ mod tests {
         let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
         let base = o.cleanse(&k, &tree).expect("cleanse").map_or(tree.clone(), |(t, _)| t);
         let writes = |t: &Tree| count(&k, t, &|n: &str| n.starts_with("reg.set_"));
-        // the shipped shader's own dead work: `var i = 0.0;` and `i += 1.0;` in the march, `i` never read
-        assert_eq!(writes(&base), writes(&tree) - 2, "the original's two writes of its unread `i` are dead, every other write is live");
+        // the shipped shader's own dead work: `var i = 0.0;` and `i += 1.0;` in the march, `i` never read, and
+        // `var N = 0.0;`, which the march's `N = f(...)` overwrites before every read (a per-write death: N is live)
+        assert_eq!(writes(&base), writes(&tree) - 3, "the original's two writes of its unread `i` and its unread initial `N` are dead, every other write is live");
         let reg = k.rows.iter().position(|r| r.name == "reg.rf63").expect("rf63") as u32;
         let plant = |t: &Tree, reg: u32, empty: bool| {
             let mut done = false;
@@ -1022,7 +1187,7 @@ mod tests {
         let want = o.cleanse(&k, &with_empty).expect("cleanse").map_or(with_empty.clone(), |(t, _)| t);
         assert_eq!(writes(&planted), writes(&tree) + 1);
         let (cleansed, counts) = o.cleanse(&k, &planted).expect("cleanse").expect("the planted write is dead");
-        assert!(counts.dead_writes >= 3, "the planted write and the original's two: {counts:?}");
+        assert_eq!(counts.dead_writes, 4, "the planted write and the original's three: {counts:?}");
         assert_eq!(cleansed, want, "the planted write is removed and nothing else differs");
         assert_typed(&k, &cleansed);
         writes_back_and_validates(&k, &cleansed);
@@ -1041,9 +1206,9 @@ mod tests {
         }
         assert!(reread(&mut second, reg, get, r62));
         let (_, counts) = o.cleanse(&k, &second).expect("cleanse").expect("dead chain");
-        assert_eq!(counts.dead_writes, 4, "both writes of the dead chain and the original's two: {counts:?}");
-        // a planted write of a register the kernel reads is live: plant a write of the first f32 register the cleansed
-        // original still writes
+        assert_eq!(counts.dead_writes, 5, "both writes of the dead chain and the original's three: {counts:?}");
+        // a planted write whose value a live write reads is live: plant `rf63 = 2.0` and make the first write of the
+        // first f32 register the cleansed original still writes (a live write) read rf63
         fn first_write(k: &TrueKingdom, t: &Tree) -> Option<u32> {
             if k.rows[t.symbol as usize].name.starts_with("reg.set_f_") {
                 return t.kids.first().map(|v| v.symbol);
@@ -1051,9 +1216,126 @@ mod tests {
             t.kids.iter().find_map(|c| first_write(k, c))
         }
         let live_reg = first_write(&k, &base).expect("a live f32 write");
-        let live = plant(&tree, live_reg, false);
+        let mut live = plant(&tree, reg, false);
+        assert!(reread(&mut live, live_reg, get, reg), "the first write of the live register reads rf63");
         let kept = o.cleanse(&k, &live).expect("cleanse").map_or(live.clone(), |(t, _)| t);
-        assert_eq!(writes(&kept), writes(&base) + 1, "the planted write of a read register stays");
+        assert_eq!(writes(&kept), writes(&base) + 1, "the planted write a live write reads stays");
+        // a planted write of a live register that the next statements overwrite before any read is dead (per write)
+        let overwritten = plant(&tree, live_reg, false);
+        let gone = o.cleanse(&k, &overwritten).expect("cleanse").map_or(overwritten.clone(), |(t, _)| t);
+        assert_eq!(writes(&gone), writes(&base), "a write of a live register overwritten before any read goes");
+    }
+
+    /// The planted-win champion's dead loop (ST11 run20): the march's 7-octave noise computed a second time, with its
+    /// own `rf6 = 0.0; rf7 = 1.0;` before it, right after `rf2 = rf6`. Every register it writes (rf6, rf7, C2, w3, rf11)
+    /// is live elsewhere, but each value it writes is overwritten before any read (rf6 and rf7 by the next iteration's
+    /// resets, C2 by the next `C2 = p + t * 0.1`). The original volumepassage with that copy inserted.
+    fn with_dead_noise_loop(k: &TrueKingdom, t: &Tree) -> Option<Tree> {
+        let name = |t: &Tree| k.rows[t.symbol as usize].name.as_str();
+        let writes = |t: &Tree, reg: &str| name(t).starts_with("reg.set_") && t.kids.first().is_some_and(|v| name(v) == reg);
+        if name(t).starts_with("block.seq4_") && t.kids.len() == 4 && writes(&t.kids[1], "reg.rf6") && writes(&t.kids[2], "reg.rf7") {
+            let (rf6, rf7) = (t.kids[1].clone(), t.kids[2].clone());
+            let inner = t.kids[3].kids.first()?;
+            let (noise, rf2) = (inner.kids.first()?.clone(), inner.kids.get(1)?.clone());
+            if !(k.loops[noise.symbol as usize].is_some() && writes(&rf2, "reg.rf2")) {
+                return None;
+            }
+            let ty = k.type_name(k.rows[rf2.symbol as usize].out);
+            let x = ty.strip_prefix("stmt.")?;
+            let id = |n: &str| k.rows.iter().position(|r| r.name == n).map(|i| i as u32);
+            let (sb, s4) = (id(&format!("stmt.block_{x}"))?, id(&format!("block.seq4_{x}"))?);
+            let dup = Tree { symbol: sb, const_index: None, kids: vec![Tree { symbol: s4, const_index: None, kids: vec![rf2, rf6, rf7, noise] }] };
+            let mut inner2 = inner.clone();
+            inner2.kids[1] = dup;
+            let mut block = t.kids[3].clone();
+            block.kids[0] = inner2;
+            let mut out = t.clone();
+            out.kids[3] = block;
+            return Some(out);
+        }
+        let mut out = t.clone();
+        for (i, c) in t.kids.iter().enumerate() {
+            if let Some(d) = with_dead_noise_loop(k, c) {
+                out.kids[i] = d;
+                return Some(out);
+            }
+        }
+        None
+    }
+
+    /// CLEANSE PER WRITE (ST12): the champion's dead noise loop goes although every register it writes is live
+    /// elsewhere: its two resets and its five writes are dead, the loop left empty becomes `{}`, and what remains has
+    /// exactly the cleansed original's writes and loops. The planted volumepassage loses its dead heavy work (plant 1,
+    /// rf15) and keeps its live duplicate noise (plant 3 is read by `N = min(N, rf16)`). Both write back and validate.
+    #[test]
+    fn cleanse_removes_each_dead_write_of_a_live_register() {
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let base = o.cleanse(&k, &tree).expect("cleanse").expect("the original's dead writes").0;
+        let writes = |t: &Tree| count(&k, t, &|n: &str| n.starts_with("reg.set_"));
+        let loops = |t: &Tree| {
+            let mut n = 0;
+            let mut stack = vec![t];
+            while let Some(x) = stack.pop() {
+                n += usize::from(k.loops[x.symbol as usize].is_some());
+                stack.extend(x.kids.iter());
+            }
+            n
+        };
+        let dup = with_dead_noise_loop(&k, &tree).expect("the march's noise loop");
+        assert_eq!(loops(&dup), loops(&tree) + 1);
+        assert_eq!(writes(&dup), writes(&tree) + 7, "two resets and five writes in the copy");
+        let (cleansed, counts) = o.cleanse(&k, &dup).expect("cleanse").expect("dead work");
+        assert_eq!(counts.dead_writes, 3 + 7, "the original's three and the copy's seven: {counts:?}");
+        assert!(counts.empties >= 1, "the emptied loop: {counts:?}");
+        assert!(counts.defects.is_empty(), "{:?}", counts.defects);
+        assert_eq!(writes(&cleansed), writes(&base));
+        assert_eq!(loops(&cleansed), loops(&base), "the copied loop is gone");
+        assert_typed(&k, &cleansed);
+        writes_back_and_validates(&k, &cleansed);
+        assert!(o.cleanse(&k, &cleansed).expect("cleanse").is_none(), "one cleanse leaves nothing dead");
+        // the planted shader
+        let planted = crate::wgsl::cuneus_originals::volumepassage_planted(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let p = o.cleanse(&k, &planted).expect("cleanse").expect("plant 1 is dead").0;
+        let rf15 = count(&k, &p, &|n: &str| n == "reg.rf15");
+        assert_eq!(rf15, 0, "plant 1's dead work into rf15 is gone");
+        assert!(count(&k, &p, &|n: &str| n == "reg.rf16") > 0, "plant 3 is read, so it stays");
+        assert_typed(&k, &p);
+        writes_back_and_validates(&k, &p);
+        assert!(o.cleanse(&k, &p).expect("cleanse").is_none());
+    }
+
+    /// The per-write cleanse keeps the picture: the copy of the noise loop and the planted shader, each cleansed, draw
+    /// the SHIPPED volumepassage's picture with 0 differing channels at 64 x 64 and 60 x 44, t 5, and at 256 x 256, t 2.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn the_per_write_cleanse_draws_the_shipped_picture_on_the_device() {
+        use crate::wgsl::cuneus_originals::case_bindings;
+        use crate::wgsl::image::{compare, ImageKernel};
+        use crate::wgsl::oracle::device::{Device, Fuel};
+        let dev = Device::new().expect("device");
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let o = Optimisers::new(&k).expect("optimisers");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let dup = with_dead_noise_loop(&k, &tree).expect("the noise loop");
+        let planted = crate::wgsl::cuneus_originals::volumepassage_planted(&k).unwrap_or_else(|g| panic!("{g:?}"));
+        let original = std::fs::read_to_string(format!("{}/tests/corpus/cuneus_visual/volumepassage.wgsl", env!("CARGO_MANIFEST_DIR"))).expect("the original");
+        let mut texts = Vec::new();
+        for (name, t) in [("copy of the noise loop, cleansed", &dup), ("planted, cleansed", &planted)] {
+            let c = o.cleanse(&k, t).expect("cleanse").expect("dead work").0;
+            texts.push((name, k.render(&c).expect("render"), k.tree_fuel(&c).expect("fuel")));
+        }
+        for (time, w, h) in [(5.0f32, 64u32, 64u32), (5.0, 60, 44), (2.0, 256, 256)] {
+            let bindings = case_bindings("volumepassage", time, w, h).expect("bindings");
+            let want = ImageKernel::compile(&dev, "shipped", &original, "main", &bindings, w, h, Fuel::Proven("cuneus original volumepassage")).expect("shipped").run(0, 1).expect("run").picture;
+            for (name, src, fuel) in &texts {
+                let got = ImageKernel::compile(&dev, name, src, "main", &bindings, w, h, fuel.clone()).unwrap_or_else(|e| panic!("{name}: {e}")).run(0, 1).expect("run").picture;
+                let d = compare(&got, &want).expect("same size");
+                eprintln!("{w}x{h} t {time} {name}: {} differing channels", d.differing_channels);
+                assert_eq!(d.differing_channels, 0, "{w}x{h} t {time} {name}: {d:?}");
+            }
+        }
     }
 
     /// Simplify on small trees: `x * 1` is `x`, `2 + 1` is the literal 3, `x / 2` is `x * 0.5` (exact), `x / 3` keeps
