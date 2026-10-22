@@ -11,6 +11,11 @@
 //! it to be at most [`CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`] BEFORE the submit. A bound over the cap is a
 //! misconfigured experiment (the kingdom's budget or the dispatch is too large for one submit), not a verdict on
 //! the kernel: the message names the bound, the cap and what to change.
+//!
+//! An expressed tree of the true kingdom has its own exact bound ([`Fuel::Tree`], `TrueKingdom::tree_work_bound`: the
+//! sum over its nodes of the product of the trip caps of the loops enclosing each), far below `H * 2^(6K)`; the image
+//! harness splits a dispatch into submits of whole workgroups ([`Fuel::workgroups_per_submit`]) so each submit's bound
+//! is at most the cap.
 
 /// Node executions one submit may be bounded by, on this machine (Apple M3 Max, the laptop that also drives the
 /// display). Basis: the evaluator throughput measured earlier, about 17 G node evaluations per second (phylu tsr
@@ -38,6 +43,10 @@ pub enum Fuel {
     /// A kernel of the true WGSL kingdom: `h` the sum of the head lengths over the reachable types, `k` the
     /// interface's fuel budget.
     Kingdom { h: u64, k: u32 },
+    /// One expressed tree of the true kingdom: `per_invocation` is the exact bound its types give
+    /// (`TrueKingdom::tree_work_bound`: the sum over the expressed nodes of the product of the trip caps of the loops
+    /// enclosing each), never more than the kingdom's `H * 2^(6K)`.
+    Tree { per_invocation: u128 },
 }
 
 /// The message of every legacy caller.
@@ -53,26 +62,60 @@ impl Fuel {
         }
     }
 
-    /// The bound of a submit of `invocations`, or `None` for a proven kernel.
-    pub fn bound(&self, invocations: u64) -> Option<u128> {
+    /// The bound of one invocation, or `None` for a proven kernel.
+    pub fn per_invocation(&self) -> Option<u128> {
         match self {
             Fuel::Proven(_) => None,
             Fuel::Unported => Some(u128::MAX),
-            Fuel::Kingdom { h, k } => Some(work_bound(*h, *k, invocations)),
+            Fuel::Kingdom { h, k } => Some(work_bound(*h, *k, 1)),
+            Fuel::Tree { per_invocation } => Some(*per_invocation),
         }
+    }
+
+    /// The bound of a submit of `invocations`, or `None` for a proven kernel.
+    pub fn bound(&self, invocations: u64) -> Option<u128> {
+        self.per_invocation().map(|p| p.saturating_mul(u128::from(invocations)))
+    }
+
+    /// How many whole workgroups of `workgroup_invocations` one submit may hold under `cap`: `None` for a proven kernel
+    /// (one submit holds the dispatch), else at least one. A tree whose single workgroup is bounded above the cap cannot
+    /// be split into whole workgroups: the error names the bound and the cap, and nothing is submitted.
+    pub fn workgroups_per_submit(&self, workgroup_invocations: u64, cap: u128) -> Result<Option<u64>, String> {
+        self.refuse_unported()?;
+        let Some(per) = self.per_invocation() else { return Ok(None) };
+        let one = per.saturating_mul(u128::from(workgroup_invocations.max(1)));
+        if one > cap {
+            return Err(format!(
+                "one workgroup ({workgroup_invocations} invocations) of this kernel is bounded by {one} node executions ({per} an invocation), over the per-submit cap {cap}: whole workgroups cannot split it; nothing was submitted"
+            ));
+        }
+        Ok(Some(u64::try_from((cap / one.max(1)).min(u128::from(u64::MAX))).unwrap_or(u64::MAX)))
     }
 
     /// The guard: the submit of `what` (`invocations` in all its dispatches) may start only if its bound is at
     /// most the cap. Returns the bound (0 for a proven kernel).
     pub fn check(&self, what: &str, invocations: u64) -> Result<u128, String> {
+        self.check_under(what, invocations, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT)
+    }
+
+    /// [`Fuel::check`] against an explicit cap (at most the machine's; a test lowers it to force a split).
+    pub fn check_under(&self, what: &str, invocations: u64, cap: u128) -> Result<u128, String> {
         self.refuse_unported()?;
+        let cap = cap.min(CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT);
+        if let Fuel::Tree { per_invocation } = self {
+            let bound = per_invocation.saturating_mul(u128::from(invocations));
+            if bound <= cap {
+                return Ok(bound);
+            }
+            return Err(format!("{what}: the expressed tree is bounded by {per_invocation} node executions an invocation, {bound} for {invocations} invocations in one submit, over the cap {cap}. Nothing was submitted; the dispatch must be split into smaller submits."));
+        }
         let Fuel::Kingdom { h, k } = self else { return Ok(0) };
         let bound = work_bound(*h, *k, invocations);
-        if bound <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+        if bound <= cap {
             return Ok(bound);
         }
         Err(format!(
-            "the experiment is misconfigured, not the kernel: {what} is bounded by H * 2^(6K) * invocations = {h} * 2^{} * {invocations} = {bound} node executions in one submit, over the cap {CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT} (M3 Max, about 0.1 s at the measured 17 G/s with a safety factor of 10). Nothing was submitted. Lower the fuel budget K (now {k}), use a smaller dispatch, or split the work into several submits.",
+            "the experiment is misconfigured, not the kernel: {what} is bounded by H * 2^(6K) * invocations = {h} * 2^{} * {invocations} = {bound} node executions in one submit, over the cap {cap} (M3 Max, about 0.1 s at the measured 17 G/s with a safety factor of 10). Nothing was submitted. Lower the fuel budget K (now {k}), use a smaller dispatch, or split the work into several submits.",
             6 * k
         ))
     }
@@ -104,6 +147,26 @@ mod tests {
         assert_eq!(Fuel::Proven("a test").bound(5), None);
     }
 
+    /// A tree's own bound: the submit of `invocations` is bounded by `per_invocation * invocations`; whole workgroups per
+    /// submit are the largest count under the cap, at least one; a single workgroup over the cap is an error, never a
+    /// submit; a proven kernel is one submit.
+    #[test]
+    fn a_tree_bound_splits_into_whole_workgroups_under_the_cap() {
+        let t = Fuel::Tree { per_invocation: 35_000 };
+        assert_eq!(t.bound(64), Some(35_000 * 64));
+        assert_eq!(t.check("a run", 64).expect("one workgroup"), 2_240_000);
+        assert!(t.check("a run", 65_536).is_err(), "a 256 x 256 picture in one submit is over the cap");
+        assert_eq!(t.workgroups_per_submit(64, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT).expect("split"), Some(170_000_000 / 2_240_000));
+        assert_eq!(t.workgroups_per_submit(64, 2_240_000).expect("exactly one"), Some(1));
+        let e = t.workgroups_per_submit(64, 2_239_999).expect_err("one workgroup over the cap");
+        assert!(e.contains("2240000") && e.contains("whole workgroups cannot split it"), "{e}");
+        assert_eq!(Fuel::Proven("a test").workgroups_per_submit(64, 1).expect("proven"), None);
+        assert!(Fuel::Unported.workgroups_per_submit(64, 1).is_err());
+        assert!(t.check_under("a run", 64, 1_000_000).is_err(), "a lowered cap is obeyed");
+        assert!(t.check_under("a run", 64, u128::MAX).is_ok(), "a cap above the machine's is the machine's");
+        assert!(Fuel::Tree { per_invocation: 1 }.check_under("a run", 200_000_000, u128::MAX).is_err(), "never above the machine's cap");
+    }
+
     /// The text of the function starting at `marker` up to the next function at the same indentation.
     fn body<'a>(src: &'a str, marker: &str) -> &'a str {
         let at = src.find(marker).unwrap_or_else(|| panic!("{marker} is not in the source"));
@@ -129,9 +192,13 @@ mod tests {
         assert!(g < s, "harness exec: the guard comes after the dispatch is encoded");
         // The image harness (ST9): the guard is checked, with the dispatch's invocation count, before anything is encoded.
         let image = include_str!("image.rs");
-        let b = body(image, "pub fn run(&self, warmup: usize, repeats: usize)");
-        let (g, s) = (b.find("self.fuel.check(").expect("image run: no guard"), b.find("queue.submit(").expect("a submit"));
+        let b = body(image, "pub fn passes(&self, warmup: usize, repeats: usize)");
+        let (g, s) = (b.find("self.fuel.check_under(").expect("image run: no guard"), b.find("queue.submit(").expect("a submit"));
         assert!(g < s, "image run: the guard comes after the submit");
+        // every submit of the tiled pass is preceded by the guard on its own tile, inside the same loop
+        let tile_loop = &b[b.find("for (c, tile) in self.tiles.iter().enumerate()").expect("the tile loop")..];
+        let (g, s) = (tile_loop.find("self.fuel.check_under(").expect("no guard in the tile loop"), tile_loop.find("queue.submit(").expect("a submit"));
+        assert!(g < s, "image run: a tile is submitted before its guard");
         let example = include_str!("../../examples/wgsl_true_loop.rs");
         assert!(example.contains("Gram::compile(dev, src, self.fuel.clone())") && example.contains("fuel.check(\"stage (c) at the unit-test dispatch\"") && example.contains("self.fuel.check(\"stage (c)\""), "wgsl_true_loop stage (c)");
         assert!(example.find("fuel.check(\"stage (c) at the unit-test dispatch\"") < example.find("Device::new()"), "the guard comes before the device is opened");

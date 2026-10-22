@@ -23,6 +23,8 @@ use crate::typed_gep::{GeneLayout, Tree};
 use crate::wgsl::loader::{parse_duals, WgslDual};
 use crate::wgsl::work_guard::Fuel;
 
+pub mod egraph;
+
 /// The kingdom's name in its relations.
 pub const TRUE_WGSL: &str = "TRUE_WGSL";
 
@@ -61,6 +63,57 @@ pub struct TrueKingdom {
     pub root: Ty,
     /// The interface's fuel budget `K`.
     pub fuel_budget: u32,
+    /// For every row, how it repeats the nodes below it ([`LoopRow`]); `None` for a row whose spelling has no loop.
+    pub loops: Vec<Option<LoopRow>>,
+}
+
+/// How a loop row repeats its arguments, read from its own spelling and types.
+///
+/// `inside[i]`: argument `i` is spelled inside the loop (its placeholder comes after the row's first `loop {` or
+/// `for (`), so it runs once per trip; an argument spelled before the loop (a bound, a stride bound by a `let`) runs
+/// once. `cap` is the trip cap the types give: `2^(6c)` for the stratum class `c` the row raises (the output's fuel
+/// stratum less the body's, or less the row's own `_f<k>` for a row with no body, the workgroup reductions); a tile
+/// row whose bound argument (`u32.lit64`) is a `?_T` constant uses that literal `n` when it is below the cap. A row whose
+/// loop holds no argument (a reduction) executes `cap` trips of its own text: its own work is `cap`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRow {
+    pub inside: Vec<bool>,
+    pub cap: u128,
+    /// The argument that is the literal trip bound (`u32.lit64`), if the row has one.
+    pub literal_arg: Option<usize>,
+    /// No argument is inside the loop: the row's own text is what repeats.
+    pub own_work: bool,
+}
+
+/// The fuel stratum `k` of a type or row name ending in `_f<k>`.
+fn stratum(name: &str) -> Option<u32> {
+    let at = name.rfind("_f")?;
+    name[at + 2..].parse().ok()
+}
+
+/// The [`LoopRow`] of a row, or `None` when its spelling has no loop.
+fn loop_row(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<LoopRow>, String> {
+    let at = [row.spelling.find("loop {"), row.spelling.find("for (")].into_iter().flatten().min();
+    let Some(at) = at else { return Ok(None) };
+    let inside: Vec<bool> = (0..row.args.len())
+        .map(|i| {
+            let (plain, field) = (format!("{{{i}}}"), format!("{{{i}:"));
+            let first = [row.spelling.find(&plain), row.spelling.find(&field)].into_iter().flatten().min();
+            first.is_some_and(|p| p > at)
+        })
+        .collect();
+    let out_k = stratum(&type_name(row.out)).ok_or_else(|| format!("our software has a bug: loop row {} outputs {}, which has no fuel stratum", row.name, type_name(row.out)))?;
+    let body_k = row.args.iter().zip(&inside).filter(|(_, ins)| **ins).filter_map(|(t, _)| stratum(&type_name(*t))).max();
+    let in_k = match body_k {
+        Some(k) => k,
+        None => stratum(&row.name).ok_or_else(|| format!("our software has a bug: loop row {} has no body and no _f<k> in its name", row.name))?,
+    };
+    let class = out_k.checked_sub(in_k).ok_or_else(|| format!("our software has a bug: loop row {} lowers the stratum ({in_k} to {out_k})", row.name))?;
+    let shift = 6 * class;
+    let cap = if shift >= 127 { u128::MAX } else { 1u128 << shift };
+    let literal_arg = row.args.iter().position(|t| type_name(*t) == "u32.lit64").filter(|i| !inside[*i]);
+    let own_work = !inside.iter().any(|b| *b);
+    Ok(Some(LoopRow { inside, cap, literal_arg, own_work }))
 }
 
 /// `H`: the sum of the head lengths `h_T` over the types `root` reaches, at program size `n`.
@@ -137,6 +190,12 @@ impl TrueKingdom {
             }
             v.push(unescape(f[2]));
         }
+        let names: Vec<String> = types.iter().map(|d| d.dual.clone()).collect();
+        let type_name = |t: Ty| match t {
+            Ty::Wgsl(i) => names.get(i as usize).cloned().unwrap_or_default(),
+            o => format!("{o:?}"),
+        };
+        let loops = rows.iter().map(|r| loop_row(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
         let meta = read(dir, "interface.tsv")?;
         let get = |key: &str| meta.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, v)| v.to_string()).ok_or_else(|| format!("interface.tsv has no {key}"));
         Ok(TrueKingdom {
@@ -148,7 +207,49 @@ impl TrueKingdom {
             constants,
             prologue: read(dir, "prologue.wgsl")?,
             declarations: read(dir, "declarations.wgsl")?,
+            loops,
         })
+    }
+
+    /// The exact work bound of one invocation of the kernel `tree` spells, from its types: the sum over the expressed
+    /// nodes of the product of the trip caps of the loops enclosing each ([`LoopRow`]); a loop whose text holds no
+    /// argument counts its own `cap` trips. Every legal tree obeys it, whatever its uniforms; it is never more than `H * 2^(6K)`. It is a
+    /// property of the expressed tree (the work guard's split of a dispatch into submits), never a verdict on the gene.
+    pub fn tree_work_bound(&self, tree: &Tree) -> Result<u128, String> {
+        let mut total = 0u128;
+        let mut stack: Vec<(&Tree, u128)> = vec![(tree, 1)];
+        while let Some((node, mult)) = stack.pop() {
+            let row = self.rows.get(node.symbol as usize).ok_or_else(|| format!("our software has a bug: symbol {} is not a row", node.symbol))?;
+            match self.loops.get(node.symbol as usize).and_then(|l| l.as_ref()) {
+                None => {
+                    total = total.saturating_add(mult);
+                    stack.extend(node.kids.iter().map(|k| (k, mult)));
+                }
+                Some(l) => {
+                    let mut cap = l.cap;
+                    if let Some(i) = l.literal_arg {
+                        let kid = node.kids.get(i).ok_or_else(|| format!("our software has a bug: {} has no argument {i}", row.name))?;
+                        let kid_row = &self.rows[kid.symbol as usize];
+                        if let (RowKind::Constant, Some(c)) = (kid_row.kind, kid.const_index) {
+                            let text = self.constants.get(&kid_row.out).and_then(|v| v.get(c as usize)).ok_or_else(|| format!("our software has a bug: {}: constant {c} is past C_T", kid_row.name))?;
+                            let n: u128 = text.trim_end_matches('u').parse().map_err(|e| format!("our software has a bug: {}: the literal {text:?} is not a count: {e}", kid_row.name))?;
+                            cap = cap.min(n);
+                        }
+                    }
+                    total = total.saturating_add(mult.saturating_mul(if l.own_work { cap.max(1) } else { 1 }));
+                    for (i, k) in node.kids.iter().enumerate() {
+                        let inside = l.inside.get(i).copied().unwrap_or(false);
+                        stack.push((k, if inside { mult.saturating_mul(cap) } else { mult }));
+                    }
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// The work guard's fuel for one expressed tree ([`TrueKingdom::tree_work_bound`]).
+    pub fn tree_fuel(&self, tree: &Tree) -> Result<Fuel, String> {
+        Ok(Fuel::Tree { per_invocation: self.tree_work_bound(tree)? })
     }
 
     pub fn type_name(&self, t: Ty) -> String {
@@ -460,8 +561,50 @@ mod tests {
         assert_eq!(at_rung.is_ok(), k.fuel_budget == 0, "K = 0 is under the cap even at the rung, K = 1 is not: {at_rung:?}");
     }
 
+    /// The image instance at K = 2: a literal loop of 5 trips holding a literal loop of 7 trips holding one register
+    /// store. Each node counts once per trip of every loop enclosing it: the bounds and the loop nodes themselves are
+    /// outside their own loops; the inner body (4 nodes) runs 35 times, the outer body (3 nodes) 5 times.
+    #[test]
+    fn a_tree_with_nested_literal_loops_is_bounded_by_the_product_of_their_trips() {
+        let k = TrueKingdom::load(&default_dir().join("img").join("volumepassage")).expect("the image table");
+        assert_eq!(k.fuel_budget, 2);
+        let set = node(&k, "reg.set_f_L2_f0", None, vec![node(&k, "reg.rf0", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])]);
+        let inner = node(&k, "loop.tile_L1_f0", None, vec![node(&k, "literal.lit64", Some("7"), vec![]), node(&k, "block.one_L2_f0", None, vec![set])]);
+        let outer = node(&k, "loop.tile_L0_f1", None, vec![node(&k, "literal.lit64", Some("5"), vec![]), node(&k, "block.one_L1_f1", None, vec![inner])]);
+        let grid = node(&k, "grid.of", None, vec![node(&k, "literal.shape", Some("8 8"), vec![]), node(&k, "literal.blk_col", Some("1"), vec![]), node(&k, "literal.blk_row", Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
+        let entry = node(&k, "kernel.entry_safe", None, vec![grid, node(&k, "block.one_L0_f2", None, vec![outer]), node(&k, "own.block_O0_f2", None, vec![])]);
+        assert_typed(&k, &entry);
+        // outside: entry, grid (5), block.one_L0_f2, the outer loop and its bound, the epilogue = 10; outer body: block,
+        // inner loop, its bound = 3, x 5; inner body: block, set, register, value = 4, x 35
+        assert_eq!(k.tree_work_bound(&entry).expect("bound"), 10 + 3 * 5 + 4 * 35);
+        // the same loops with a bound that is not a literal (the domain's terminal) take the type's cap, 64 trips each
+        let outer_own = node(&k, "loop.tile_L0_f1", None, vec![node(&k, "own.u32_lit64", None, vec![]), node(&k, "block.one_L1_f1", None, vec![node(&k, "loop.tile_L1_f0", None, vec![node(&k, "own.u32_lit64", None, vec![]), node(&k, "block.one_L2_f0", None, vec![node(&k, "reg.set_f_L2_f0", None, vec![node(&k, "reg.rf0", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])])])])])]);
+        let entry_own = node(&k, "kernel.entry_safe", None, vec![entry.kids[0].clone(), node(&k, "block.one_L0_f2", None, vec![outer_own]), node(&k, "own.block_O0_f2", None, vec![])]);
+        assert_typed(&k, &entry_own);
+        assert_eq!(k.tree_work_bound(&entry_own).expect("bound"), 10 + 3 * 64 + 4 * 64 * 64);
+        // a workgroup reduction of class 2: its array is spelled inside its loop, so the array's node counts 4,096
+        // times (the reduction's trips), its element count once
+        let red = k.rows.iter().position(|r| r.name == "wg.reduce_add_f_11_L0_f0").expect("a reduction row");
+        assert_eq!(k.loops[red].as_ref().map(|l| (l.cap, l.inside.clone(), l.own_work)), Some((4096, vec![true, false], false)));
+        let tile = k.rows.iter().position(|r| r.name == "loop.tile_strided_L0_f0").expect("a strided row");
+        assert_eq!(k.loops[tile].as_ref().map(|l| (l.inside.clone(), l.literal_arg)), Some((vec![false, false, true], Some(0))), "the stride is bound by a let before the loop");
+        let c = k.relations().check().expect("check");
+        let h = k.head_total(&c, 8).expect("H");
+        assert!(k.tree_work_bound(&entry_own).expect("bound") <= u128::from(h) << 12, "never more than H * 2^(6K)");
+    }
+
+    /// Every child's row outputs the type its parent's signature asks for at that slot.
+    fn assert_typed(k: &TrueKingdom, t: &Tree) {
+        let row = &k.rows[t.symbol as usize];
+        assert_eq!(row.args.len(), t.kids.len(), "{}", row.name);
+        for (i, kid) in t.kids.iter().enumerate() {
+            let kr = &k.rows[kid.symbol as usize];
+            assert_eq!(kr.out, row.args[i], "{} argument {i} is {} of {}, the signature asks for {}", row.name, kr.name, k.type_name(kr.out), k.type_name(row.args[i]));
+            assert_typed(k, kid);
+        }
+    }
+
     /// A tree by row names; a constant placeholder names its `C_T` text.
-    #[cfg(feature = "gpu")]
     fn node(k: &TrueKingdom, name: &str, value: Option<&str>, kids: Vec<Tree>) -> Tree {
         let i = k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}"));
         let const_index = value.map(|v| k.constants[&k.rows[i].out].iter().position(|t| t == v).unwrap_or_else(|| panic!("{name}: no constant {v}")) as u32);
@@ -469,30 +612,33 @@ mod tests {
     }
 
     /// `grid.of_rows_x` binds the output's rows to thread x: the ownership rows take the row axis the grid binds, so
-    /// a kernel storing 1.0 to its own cell covers every cell of the output, for both grids and a non-square shape.
+    /// a kernel storing 1.0 to its own cell covers every cell of the output, for both grids and every workgroup shape of
+    /// the table under test (its `C_T` of `grid.shape`), the non-square ones included.
     #[cfg(feature = "gpu")]
     #[test]
     fn both_grids_cover_every_cell_of_the_output_on_the_device() {
         use crate::wgsl::gram::{phi, Gram};
         use crate::wgsl::oracle::device::Device;
         let k = kingdom();
-        let c = k.relations().check().expect("check");
-        let fuel = k.fuel(&c, 8).expect("fuel");
+        let shape_ty = k.rows.iter().find(|r| r.name == "literal.shape").expect("the shape placeholder").out;
+        let shapes = k.constants.get(&shape_ty).expect("C_T of grid.shape").clone();
+        let square = |s: &str| s.split_whitespace().collect::<Vec<_>>().windows(2).all(|w| w[0] == w[1]);
+        assert!(shapes.iter().filter(|s| !square(s)).count() >= 2, "the table has non-square shapes, so a swapped axis would miss cells: {shapes:?}");
         let dev = Device::new().expect("device");
         let (d, m) = (32usize, 4usize);
         // four row bands of 8 rows: the output is not square per dispatch, so a swapped axis misses cells
         let band_limit = (d * 4 * 8) as u64;
-        for (grid, shape, first, second) in [
-            ("grid.of", "32 2", "literal.blk_col", "literal.blk_row"),
-            ("grid.of_rows_x", "32 2", "literal.blk_row", "literal.blk_col"),
-            ("grid.of_rows_x", "4 32", "literal.blk_row", "literal.blk_col"),
-            ("grid.of", "4 32", "literal.blk_col", "literal.blk_row"),
-            ("grid.of_rows_x", "2 32", "literal.blk_row", "literal.blk_col"),
-        ] {
+        let mut cases = Vec::new();
+        for shape in &shapes {
+            cases.push(("grid.of", shape.as_str(), "literal.blk_col", "literal.blk_row"));
+            cases.push(("grid.of_rows_x", shape.as_str(), "literal.blk_row", "literal.blk_col"));
+        }
+        let kf = k.fuel_budget;
+        for (grid, shape, first, second) in cases {
             let g = node(&k, grid, None, vec![node(&k, "literal.shape", Some(shape), vec![]), node(&k, first, Some("1"), vec![]), node(&k, second, Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
             let store = node(
                 &k,
-                "store.h_O0_f0",
+                &format!("store.h_O0_f{kf}"),
                 None,
                 vec![
                     node(&k, "safe.rowbase_as_row_h", None, vec![node(&k, "own.u32_rowbase_h", None, vec![])]),
@@ -500,9 +646,10 @@ mod tests {
                     node(&k, "literal.real", Some("1.0"), vec![]),
                 ],
             );
-            let entry = node(&k, "kernel.entry_safe", None, vec![g, node(&k, "own.block_L0_f0", None, vec![]), node(&k, "block.one_O0_f0", None, vec![store])]);
+            let entry = node(&k, "kernel.entry_safe", None, vec![g, node(&k, &format!("own.block_L0_f{kf}"), None, vec![]), node(&k, &format!("block.one_O0_f{kf}"), None, vec![store])]);
+            assert_typed(&k, &entry);
             let src = k.render(&entry).expect("render");
-            let gram = Gram::compile(&dev, &src, fuel.clone()).unwrap_or_else(|e| panic!("{grid} {shape}: {e}"));
+            let gram = Gram::compile(&dev, &src, k.tree_fuel(&entry).expect("the tree's bound")).unwrap_or_else(|e| panic!("{grid} {shape}: {e}"));
             let built = gram.build(&phi(d, m, 3), d, m, band_limit).expect("run");
             let missed = built.h.iter().filter(|v| **v != 1.0).count();
             assert_eq!(missed, 0, "{grid} {shape}: {missed} of {} cells not written", d * d);

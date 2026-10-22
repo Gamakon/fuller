@@ -15,6 +15,11 @@ struct VolumeParams {
 };
 @group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(1) var<uniform> params: VolumeParams;
+struct DispatchTile {
+    origin: vec4<u32>,
+    grid: vec4<u32>,
+};
+@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;
 var<workgroup> wg_f_11: array<f32, 2048>;
 var<workgroup> wg_u_10: array<u32, 1024>;
 var<workgroup> wg_v4_9: array<vec4<f32>, 512>;

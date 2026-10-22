@@ -697,6 +697,66 @@ mod tests {
         round_trips("nebula", nebula, 878);
     }
 
+    /// The first node of row `name` in the tree, depth first.
+    fn find<'t>(t: &'t Tree, k: &TrueKingdom, name: &str) -> Option<&'t Tree> {
+        if k.rows[t.symbol as usize].name == name {
+            return Some(t);
+        }
+        t.kids.iter().find_map(|c| find(c, k, name))
+    }
+
+    /// The work bound of the encoded volumepassage: the 50-trip march (`loop.tile_L0_f1`) holds the 7-octave noise
+    /// (`loop.tile_L1_f0`); every node outside the march counts once, the march's body 50 times, the noise's body 350
+    /// times; each loop's literal bound is outside its own loop. The bound is far under the kingdom's `H * 2^(6K)`.
+    #[test]
+    fn the_work_bound_of_the_encoded_volumepassage_is_its_loops_trips_times_their_bodies() {
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
+        let size = |t: &Tree| t.level_order().len() as u128;
+        let outer = find(&tree, &k, "loop.tile_L0_f1").expect("the march");
+        let inner = find(outer, &k, "loop.tile_L1_f0").expect("the noise");
+        let (outer_body, inner_body) = (size(&outer.kids[1]), size(&inner.kids[1]));
+        let want = (size(&tree) - outer_body) + 50 * (outer_body - inner_body) + 350 * inner_body;
+        let got = k.tree_work_bound(&tree).expect("bound");
+        assert_eq!(got, want, "outer body {outer_body} nodes, inner body {inner_body}");
+        let c = k.relations().check().expect("kingdom check");
+        let h = k.head_total(&c, functions(&tree, &k)).expect("H");
+        eprintln!("volumepassage: {} nodes, bound {got} an invocation (H * 2^12 = {}); 256 x 256: {} in one dispatch", size(&tree), u128::from(h) << 12, got * 65_536);
+        assert!(got < u128::from(h) << 12);
+    }
+
+    /// The encoded volumepassage drawn in one dispatch (proven: its loops are the original's) and drawn tiled, in submits
+    /// of three whole workgroups under a cap lowered to force the split (the tree's own bound), give the same picture,
+    /// and both are the original shader's, for a picture the 8 x 8 grid divides and for one it does not.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn a_tiled_dispatch_draws_the_same_picture_as_one_dispatch_on_the_device() {
+        use crate::wgsl::image::{compare, ImageKernel};
+        use crate::wgsl::oracle::device::{Device, Fuel};
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
+        let src = k.render(&tree).expect("render");
+        let original = std::fs::read_to_string(format!("{}/tests/corpus/cuneus_visual/volumepassage.wgsl", env!("CARGO_MANIFEST_DIR"))).expect("the original");
+        let per = k.tree_work_bound(&tree).expect("bound");
+        let dev = Device::new().expect("device");
+        for (w, h) in [(64u32, 64u32), (60, 44)] {
+            let bindings = case_bindings("volumepassage", 5.0, w, h).expect("bindings");
+            let reference = ImageKernel::compile(&dev, "volumepassage", &original, "main", &bindings, w, h, Fuel::Proven("cuneus original volumepassage")).expect("the original").run(0, 1).expect("run");
+            let one = ImageKernel::compile(&dev, "encoded", &src, "main", &bindings, w, h, Fuel::Proven("the encoded original: its loops are the original's 50 x 7")).expect("one dispatch");
+            assert_eq!(one.submits(), 1);
+            let tiled = ImageKernel::compile_under(&dev, "encoded", &src, "main", &bindings, w, h, Fuel::Tree { per_invocation: per }, per * 64 * 3).expect("tiled");
+            let (gx, gy, _) = tiled.dispatch();
+            assert_eq!(tiled.submits(), (gy * gx.div_ceil(3)) as usize, "{w}x{h}: three workgroups a submit, row by row");
+            let a = one.run(0, 1).expect("run");
+            let b = tiled.run(0, 1).expect("run");
+            assert_eq!(b.submits, tiled.submits());
+            let d = compare(&b.picture, &a.picture).expect("same size");
+            assert_eq!(d.differing_channels, 0, "{w}x{h}: tiled against one dispatch: {d:?}");
+            let o = compare(&a.picture, &reference.picture).expect("same size");
+            assert_eq!(o.differing_channels, 0, "{w}x{h}: encoded against the original: {o:?}");
+        }
+    }
+
     #[test]
     fn a_missing_row_is_a_named_gap_never_a_substitute() {
         let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");

@@ -82,12 +82,24 @@ def build(iface):
     helper("lit_bool", "fn lit_bool(x: bool) -> bool { return x; }")
     helper("lit_f16", "fn lit_f16(x: f16) -> f16 { return x; }")
 
-    entry = (
-        "{0}\n@compute @workgroup_size(WG_X, WG_Y, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, "
-        "@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
+    # A tiled dispatch (ST9, the image interfaces): the host splits the dispatch into submits of whole workgroups (the
+    # work guard's bound of each submit at most its cap), and the interface's `dispatch_tile` uniform gives each submit's
+    # origin in workgroups and the whole grid. `gid`, `wid` and `nwg` are then the ids of the whole dispatch, so every
+    # row that reads them means what it means in one dispatch; the builtins of the submit are `gid_tile`, `wid_tile`.
+    tiled = iface.get("tiled_dispatch", False)
+    ids = (
+        "@builtin(global_invocation_id) gid_tile: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid_tile: vec3<u32>, "
+        "@builtin(local_invocation_index) lidx: u32"
+        if tiled
+        else "@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
         "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>"
+    )
+    entry = (
+        "{0}\n@compute @workgroup_size(WG_X, WG_Y, 1)\nfn main(" + ids
         + (", @builtin(subgroup_size) sg_size: u32, @builtin(num_subgroups) sg_num: u32" if iface["has_subgroups"] else "")
         + ") {\n"
+        + ("let wid: vec3<u32> = wid_tile + dispatch_tile.origin.xyz;\nlet gid: vec3<u32> = gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u);\n"
+           "let nwg: vec3<u32> = dispatch_tile.grid.xyz;\n" if tiled else "")
         + ("let sg_lane: u32 = lidx & (sg_size - 1u);\nlet sg_id: u32 = lidx / sg_size;\n" if iface["has_subgroups"] else "")
         + "<declarations>\n{1}\n{2}\n}\n"
     )

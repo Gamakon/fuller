@@ -232,5 +232,9 @@ name = "wgsl_true_loop"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "cuneus_image"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_true_share"
 required-features = ["wgsl"]

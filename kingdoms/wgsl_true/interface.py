@@ -30,6 +30,10 @@ struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
 )
 
 
+# The tiled dispatch of the image interfaces (skeleton.py): the submit's origin and the whole grid, in workgroups, written
+# by the host before each submit (fuller::wgsl::image, group 3 binding 0).
+TILE_DECL = "struct DispatchTile {\n    origin: vec4<u32>,\n    grid: vec4<u32>,\n};\n@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;\n"
+
 TIME_STRUCT = "struct TimeUniform {\n    time: f32,\n    delta: f32,\n    frame: u32,\n    _padding: u32,\n};\n"
 
 # ST9: the cuneus visual shaders (examples/shaders in ~/Dev/gamakon/cuneus). One picture into a write-only storage
@@ -38,6 +42,7 @@ TIME_STRUCT = "struct TimeUniform {\n    time: f32,\n    delta: f32,\n    frame:
 VOLUMEPASSAGE = dict(
     name="img_volumepassage",
     image=True,
+    tiled_dispatch=True,
     fuel_budget=2,
     fields=[],
     inputs=[],
@@ -69,7 +74,7 @@ struct VolumeParams {
 };
 @group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(1) var<uniform> params: VolumeParams;
-""",
+""" + TILE_DECL,
 )
 
 # The same interface at K = 1, for the random-gene loop (examples/wgsl_true_loop.rs --image): at K = 2 the work guard's bound
@@ -86,6 +91,7 @@ _NEBULA_FIELDS = [("iterations", "i32"), ("formuparam", "f32"), ("volsteps", "i3
 NEBULA = dict(
     name="img_nebula",
     image=True,
+    tiled_dispatch=True,
     fuel_budget=2,
     fields=[],
     inputs=[dict(name="atomic_buffer", kind="atomic_u32", ty="u32.count")],
@@ -108,7 +114,7 @@ NEBULA = dict(
 @group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(1) var<uniform> params: NebulaParams;
 @group(2) @binding(0) var<storage, read_write> atomic_buffer: array<atomic<u32>>;
-""",
+""" + TILE_DECL,
 )
 
 INTERFACES = {"img_nebula": NEBULA, "gram": GRAM, "img_volumepassage": VOLUMEPASSAGE, "img_volumepassage_k1": VOLUMEPASSAGE_K1}
