@@ -266,3 +266,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "st12_retime"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "v24_true_read"
+required-features = ["gpu", "wgsl"]

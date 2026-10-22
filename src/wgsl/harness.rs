@@ -2746,9 +2746,18 @@ mod device {
     use crate::wgsl::gram::{adapter_buffer_limit, effective_buffer_limit, wait_gpu, wait_gpu_within};
     use crate::wgsl::oracle::device::{Device, Fuel};
 
+    /// A bound of one dispatch's node executions an invocation, from its entry (index into
+    /// `KernelSpec::entry_names`) and its uniform's words (the run's own field values): the work guard of a kernel of
+    /// the true kingdom read per dispatch (`TrueKingdom::tree_work_bound_in`).
+    pub type DispatchBound = Box<dyn Fn(usize, &[u8]) -> Result<u128, String>>;
+
     pub struct DeviceExecutor<'a> {
         pub dev: &'a Device,
         limit: u64,
+        /// With a dispatch bound, every dispatch is checked against the per-submit cap by its own bound, and a
+        /// segment is submitted early (at a dispatch boundary) rather than let its bound pass the cap: the values
+        /// are those of one submission a segment, the timings are not. `None`: the segment's bound by [`Fuel`].
+        dispatch_bound: Option<DispatchBound>,
         /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
         /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
         /// before it is made.
@@ -2773,7 +2782,13 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device, fuel: Fuel) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, fuel, judge: std::cell::RefCell::new(None) }
+        }
+
+        /// The work guard per dispatch ([`DispatchBound`]), for a value check (one submission a segment is not kept).
+        pub fn with_dispatch_bound(mut self, f: DispatchBound) -> DeviceExecutor<'a> {
+            self.dispatch_bound = Some(f);
+            self
         }
 
 
@@ -2785,7 +2800,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit, dispatch_bound: None, fuel, judge: std::cell::RefCell::new(None) }
         }
     }
 
@@ -2878,8 +2893,10 @@ mod device {
                 any: bool,
                 /// The invocations of the dispatches encoded so far: the work guard's input.
                 invocations: u64,
+                /// With a dispatch bound: the node executions the encoded dispatches are bounded by.
+                bound: u128,
             }
-            let new_seg = || Seg { enc: device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness segment") }), queries: Vec::new(), reads: Vec::new(), keep: Vec::new(), any: false, invocations: 0 };
+            let new_seg = || Seg { enc: device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness segment") }), queries: Vec::new(), reads: Vec::new(), keep: Vec::new(), any: false, invocations: 0, bound: 0 };
             // The query set is sized for the largest segment: count the
             // dispatches between syncs first.
             let mut most = 1usize;
@@ -2992,8 +3009,33 @@ mod device {
                         Cmd::Dispatch { bind, workgroups, entry, .. } => {
                             // The work guard, before the dispatch is encoded: the segment is one submit, and
                             // nothing of it has been submitted when the bound is over the cap.
-                            seg.invocations = seg.invocations.saturating_add(workgroups.iter().fold(1u64, |a, w| a.saturating_mul(u64::from(*w))).saturating_mul(k.workgroup_invocations[*entry]));
-                            self.fuel.check("a harness segment", seg.invocations)?;
+                            let invocations = workgroups.iter().fold(1u64, |a, w| a.saturating_mul(u64::from(*w))).saturating_mul(k.workgroup_invocations[*entry]);
+                            match &self.dispatch_bound {
+                                None => {
+                                    seg.invocations = seg.invocations.saturating_add(invocations);
+                                    self.fuel.check("a harness segment", seg.invocations)?;
+                                }
+                                Some(bound) => {
+                                    let words: &[u8] = bind
+                                        .iter()
+                                        .find_map(|(_, id)| match &live[i].plan.buffers[*id] {
+                                            super::BufferDecl { uniform: true, init: super::Init::Words(w), .. } => Some(w.as_slice()),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(&[]);
+                                    let per = bound(*entry, words)?;
+                                    let this = per.saturating_mul(u128::from(invocations));
+                                    let cap = crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+                                    if this > cap {
+                                        return Err(format!("the work guard: a dispatch of entry {} is bounded by {this} node executions ({per} an invocation, {invocations} invocations), over the per-submit cap {cap}; nothing of it was submitted", *entry));
+                                    }
+                                    if seg.bound.saturating_add(this) > cap {
+                                        let done = std::mem::replace(&mut seg, new_seg());
+                                        flush(done, live, &mut compute_ms)?;
+                                    }
+                                    seg.bound = seg.bound.saturating_add(this);
+                                }
+                            }
                             let entries: Vec<wgpu::BindGroupEntry> = bind.iter().map(|(b, id)| live[i].buf(*id, "a dispatch").map(|buf| wgpu::BindGroupEntry { binding: *b, resource: buf.as_entire_binding() })).collect::<Result<_, _>>()?;
                             let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness bind"), layout, entries: &entries });
                             let q = seg.queries.len() as u32;

@@ -20,19 +20,30 @@ def shape_table(iface):
 
 
 def declare_types(iface):
-    T("kernel.safe", "the entry point; the gene's root")
+    if iface.get("module"):
+        # s9 batch 8: a module of several entry points, each a normal gene rooted at its own entry type, joined by the
+        # fixed homeotic linker of design section 6 (the module type is the linker's root)
+        T("kernel.module", "a module of entry points: the fixed linker's root")
+        for e, _ in iface["module"]:
+            T(f"kernel.{e}", f"the entry point {e}: the root of its normal gene")
+        T("u32.passes", "the // passes N count, a literal in the interface's declared range", 1, "1..=16")
+        SAFE_ARGS.add("u32.passes")
+    else:
+        T("kernel.safe", "the entry point; the gene's root")
     T("grid.shape", "one of the target's legal workgroup shapes (x, y, 1): a literal from the target's table")
     T("u32.blk_row", "a block factor on the row axis: cells per invocation along it", 1, "1,2,4,8")
     T("u32.blk_col", "a block factor on the column axis", 1, "1,2,4,8")
     T("grid.grid", "the entry's workgroup shape and block")
     T("u32.ktile", "the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)", 1, "1..=4096")
-    for x, d, k in rungs("LCOW"):
+    for x, d, k in rungs("LCOWPS"):
         T(S(x, d, k), f"one {x}-rung statement at depth {d}, fuel stratum {k}")
         T(B(x, d, k), f"a {x}-rung statement sequence at depth {d}, fuel stratum {k}")
     for d in range(1, 6):
         for k in STRATA:
             T(BB(d, k), f"a loop body that breaks, depth {d}, stratum {k}")
             T(WBB(d, k), f"a write-phase loop body that breaks, depth {d}, stratum {k}")
+            if d in DEPTH["S"]:
+                T(SBB(d, k), f"a solo-phase loop body that breaks, depth {d}, stratum {k}")
     T("vec3<u32>.gid", "global_invocation_id", 3)
     T("vec3<u32>.lid", "local_invocation_id", 3)
     T("vec3<u32>.wid", "workgroup_id", 3)
@@ -107,6 +118,9 @@ def build(iface):
         + ("let sg_lane: u32 = lidx & (sg_size - 1u);\nlet sg_id: u32 = lidx / sg_size;\n" if iface["has_subgroups"] else "")
         + "<declarations>\n{1}\n{2}\n}\n"
     )
+    if iface.get("module"):
+        build_module(iface)
+        return build_rest(iface)
     R("kernel.entry_safe", "kernel.safe", ["grid.grid", B("L", 0, K), B("O", 0, K)], entry,
       "the only producer of the root; a kernel is a grid, a body and an epilogue that ends in the store of its own cell")
 
@@ -127,13 +141,61 @@ def build(iface):
     gx, gy, bx, by = iface["default_grid"]
     R("own.grid_grid", "grid.grid", [], f"// grid {gx} {gy} {bx} {by}\n" + AXES_COLS_X + f"const WG_X: u32 = {gx}u;\nconst WG_Y: u32 = {gy}u;\nconst KNOB_WCOL: u32 = {gx}u;\nconst KNOB_WROW: u32 = {gy}u;\nconst KNOB_BCOL: u32 = {bx}u;\nconst KNOB_BROW: u32 = {by}u;\nconst KNOB_KTILE: u32 = 1u;\nconst KNOB_THREADS: u32 = {gx * gy}u;\n",
       "the interface's default grid: its reference kernel's shape and blocks, ktile 1")
+    grid_literals(iface)
+    build_rest(iface)
+
+
+def grid_literals(iface):
     C("literal.ktile", "u32.ktile", "{v}", [str(v) for v in (1, 2, 3, 4, 8, 16, 32, 64, 100, 256, 1000, 4096)], "?_ktile: a bare literal")
     R("own.u32_ktile", "u32.ktile", [], "1")
     R("own.u32_blk_row", "u32.blk_row", [], "1", "the domain's smallest value")
     R("own.u32_blk_col", "u32.blk_col", [], "1", "the domain's smallest value")
 
+
+MODULE_IDS = ("@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
+              "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>")
+
+
+def build_module(iface):
+    """s9 batch 8: the entry points of a module. Each entry is the root of its own normal gene, `kernel.entry_<e>: (grid,
+    [passes,] block.L0) -> kernel.<e>`; the fixed homeotic linker `kernel.module_<iface>: (kernel.<e1>, kernel.<e2>, ...)`
+    joins them (design section 6: head `(link)`, tails the genic terminals in gene order, immutable). Two entries of one
+    module cannot share module-scope knobs, so the grid's knobs are function-scope constants of the entry, spelled from the
+    grid node's fields (`{0:F}`): the attribute and the knobs still come from one node. There is no epilogue: the
+    interface has no primary output whose own cell every invocation must store (the v24 contract: every slot of `cands`
+    starts as a pad, a slot not written stays a pad)."""
+    helper("row_axis", "fn row_axis(g: vec3<u32>) -> u32 { return g.y; }")
+    helper("col_axis", "fn col_axis(g: vec3<u32>) -> u32 { return g.x; }")
+    knobs = ("const KNOB_WCOL: u32 = {0:0}u; const KNOB_WROW: u32 = {0:1}u; const KNOB_BCOL: u32 = {0:2}u; const KNOB_BROW: u32 = {0:3}u; "
+             "const KNOB_KTILE: u32 = {0:4}u; const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n")
+    entries = []
+    for e, passes in iface["module"]:
+        body = "{2}" if passes else "{1}"
+        head = "// passes {1}\n" if passes else ""
+        text = head + "@compute @workgroup_size({0:0}, {0:1}, 1)\nfn " + e + "(" + MODULE_IDS + ") {\n" + knobs + "<declarations>\n" + body + "\n}\n"
+        args = ["grid.grid", "u32.passes", B("L", 0, K)] if passes else ["grid.grid", B("L", 0, K)]
+        R(f"kernel.entry_{e}", f"kernel.{e}", args, text, f"the entry point {e}: a grid and a body (no epilogue: the module has no primary output)", fields=True)
+        empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n"
+        R(f"own.kernel_{e}", f"kernel.{e}", [], empty, "the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it")
+        entries.append(f"kernel.{e}")
+    R(f"kernel.module_{iface['name']}", "kernel.module", entries, "\n".join("{%d}" % i for i in range(len(entries))) + "\n",
+      "the fixed homeotic linker's link function: the module is its entries in gene order")
+    R("grid.of", "grid.grid", ["grid.shape", "u32.blk_col", "u32.blk_row", "u32.ktile"], "{0:0} {0:1} {1} {2} {3}",
+      "the entry's workgroup shape, blocks and tile depth as fields the entry spells", fields=True)
+    C("literal.shape", "grid.shape", "{v}", shape_table(iface), "?_shape; its Dc domain is the table")
+    C("literal.blk_row", "u32.blk_row", "{v}", ["1", "2", "4", "8"], "?_blk_row")
+    C("literal.blk_col", "u32.blk_col", "{v}", ["1", "2", "4", "8"], "?_blk_col")
+    gx, gy, bx, by = iface["default_grid"]
+    R("own.grid_grid", "grid.grid", [], f"{gx} {gy} {bx} {by} 1", "the interface's default grid")
+    lo, hi = iface.get("passes", (1, 16))
+    C("literal.passes", "u32.passes", "{v}", [str(n) for n in range(lo, hi + 1)], "?_passes: the harness reads the count from the header")
+    R("own.u32_passes", "u32.passes", [], str(lo), "the domain's smallest value")
+    grid_literals(iface)
+
+
+def build_rest(iface):
     # ---- the statement rungs
-    for x, d, k in rungs("LCOW"):
+    for x, d, k in rungs("LCOWPS"):
         s, b = S(x, d, k), B(x, d, k)
         sfx = f"_{x}{d}_f{k}"
         R("block.one" + sfx, b, [s if x != "O" else S("O", d, k)], "{0}")
@@ -161,9 +223,14 @@ def build(iface):
             R("stmt.if" + sfx, s, ["bool.flag", B("C", d, k)], "if ({0}) { {1} }", "nesting stays conditional")
         if x == "O":
             R("stmt.if_else" + sfx, s, ["bool.flag", b, b], "if ({0}) { {1} } else { {2} }", "both branches are epilogues so a store happens whichever is taken")
-        if x == "W":
-            R("stmt.if" + sfx, s, ["bool.flagw", b], "if ({0}) { {1} }", "the body stays W")
+        if x in "WP":
+            R("stmt.if" + sfx, s, ["bool.flagw", b], "if ({0}) { {1} }", "the body stays W" if x == "W" else "the body stays P")
             R("stmt.if_else" + sfx, s, ["bool.flagw", b, b], "if ({0}) { {1} } else { {2} }")
+        if x == "S":
+            R("stmt.if" + sfx, s, ["bool.flag", b], "if ({0}) { {1} }", "the body stays S: one invocation")
+            R("stmt.if_else" + sfx, s, ["bool.flag", b, b], "if ({0}) { {1} } else { {2} }")
+        if x in "LC" and iface.get("module"):
+            R("stmt.if_else" + sfx, s, ["bool.flag", B("C", d, k), B("C", d, k)], "if ({0}) { {1} } else { {2} }", "both branches conditional (s9 batch 8)")
         if x in "LCO":
             for o in iface["outputs"]:
                 R(f"store.{o['name']}{sfx}", s, [f"u32.threadrow_{o['name']}", f"u32.threadcol_{o['name']}", o["ty"]], store_text(iface, o),
@@ -176,6 +243,9 @@ def build(iface):
             R(f"block.cont_B{d}_f{k}", BB(d, k), ["bool.flag", B("C", d, k)], "if ({0}) { continue; } {1}", "continue lives only in the divergent barrier-free loop bodies")
             R(f"block.brk_WB{d}_f{k}", WBB(d, k), [B("W", d, k), "bool.flagw", B("W", d, k)], "{0} if ({1}) { break; } {2}")
             R(f"block.cont_WB{d}_f{k}", WBB(d, k), ["bool.flagw", B("W", d, k)], "if ({0}) { continue; } {1}")
+            if d in DEPTH["S"]:
+                R(f"own.block_SB{d}_f{k}", SBB(d, k), [], "{}", "an empty solo-phase loop body")
+                R(f"block.brk_SB{d}_f{k}", SBB(d, k), [B("S", d, k), "bool.flag", B("S", d, k)], "{0} if ({1}) { break; } {2}")
 
     # ---- ownership rows, per output binding
     for o in iface["outputs"]:

@@ -99,7 +99,7 @@ def build(iface):
                     continue
                 div = x != "L"
                 R(f"loop.tile_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", B(x, d1, k)], loop_text(d1, div), "a literal bound raises the stratum by one")
-                if x != "W":
+                if x != "W" or DEPTH["S"]:
                     R(f"loop.tile_strided_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", "u32.lit4096", B(x, d1, k)], loop_text(d1, div, stride="{1}", body="{2}"), "the stride form")
             for c in BOUND_CLASSES:
                 cls = c // 6
@@ -112,6 +112,9 @@ def build(iface):
                     R(f"loop.tilex_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", B("C", d1, k)], loop_text(d1, True), "an expression bound differs between invocations: the body is a C block")
                     R(f"loop.tilex_strided_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", "u32.lit4096", B("C", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
                 R(f"loop.tilex_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", B("W", d1, k)], loop_text(d1, True))
+                if DEPTH["S"]:
+                    # a pool interface (s9 batch 9): the strided write-phase loop (an invocation's own elements t, t + T, ...)
+                    R(f"loop.tilex_strided_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", "u32.lit4096", B("W", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
                 for x in "LC":
                     R(f"loop.tilex_brk_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx")
                 R(f"loop.tilex_brk_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", WBB(d1, k)], loop_text(d1, True))
@@ -119,3 +122,15 @@ def build(iface):
                 for x in "LC":
                     R(f"loop.tile_brk_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx: after it the counter differs between invocations")
                 R(f"loop.tile_brk_W{d}_f{k}", S("W", d, k + 1), ["u32.lit64", WBB(d1, k)], loop_text(d1, True))
+            if d1 in DEPTH["S"]:
+                # the solo phase's loops (s9 batch 9): one invocation, the body stays S
+                if k + 1 <= K:
+                    R(f"loop.tile_S{d}_f{k}", S("S", d, k + 1), ["u32.lit64", B("S", d1, k)], loop_text(d1, True), "a literal bound inside the solo phase")
+                    R(f"loop.tile_strided_S{d}_f{k}", S("S", d, k + 1), ["u32.lit64", "u32.lit4096", B("S", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
+                    R(f"loop.tile_brk_S{d}_f{k}", S("S", d, k + 1), ["u32.lit64", SBB(d1, k)], loop_text(d1, True))
+                for c in BOUND_CLASSES:
+                    if k + c // 6 > K:
+                        continue
+                    R(f"loop.tilex_{c}_S{d}_f{k}", S("S", d, k + c // 6), [f"u32.boundx{c}", B("S", d1, k)], loop_text(d1, True))
+                    R(f"loop.tilex_strided_{c}_S{d}_f{k}", S("S", d, k + c // 6), [f"u32.boundx{c}", "u32.lit4096", B("S", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
+                    R(f"loop.tilex_brk_{c}_S{d}_f{k}", S("S", d, k + c // 6), [f"u32.boundx{c}", SBB(d1, k)], loop_text(d1, True))

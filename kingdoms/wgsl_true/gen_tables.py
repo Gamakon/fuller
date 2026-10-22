@@ -32,10 +32,12 @@ from interface import INTERFACES
 def main(argv):
     iface = INTERFACES[argv[1] if len(argv) > 1 else "gram"]
     # K and the strata are read by the submodules when they are imported
-    lib.configure(iface.get("fuel_budget", 1))
+    lib.configure(iface.get("fuel_budget", 1), epilogue=not iface.get("module"), pools=bool(iface.get("wg_pool")))
     skeleton, values, regs, loops, wg, vectors = (importlib.import_module(m) for m in ("skeleton", "values", "regs", "loops", "wg", "vectors"))
     image = importlib.import_module("image") if iface.get("image") else None
-    outdir = lib.HERE if iface["name"] == "gram" else os.path.join(lib.HERE, "img", iface["name"].removeprefix("img_"))
+    arena = importlib.import_module("arena") if iface.get("arenas") or iface.get("row_outputs") else None
+    pool = importlib.import_module("pool") if iface.get("wg_pool") else None
+    outdir = lib.HERE if iface["name"] == "gram" else (os.path.join(lib.HERE, "mod", iface["name"]) if iface.get("module") else os.path.join(lib.HERE, "img", iface["name"].removeprefix("img_")))
     os.makedirs(outdir, exist_ok=True)
     # types first (every row names declared types), in dependency order
     skeleton.declare_types(iface)
@@ -43,19 +45,28 @@ def main(argv):
     vectors.declare(iface)
     regs.declare(iface)
     loops.declare(iface)
-    wg.declare(iface)
+    if not pool:
+        # a pool interface (s9 batch 9) keeps all its workgroup memory in the two pools of pool.py, not the stratum map
+        wg.declare(iface)
     skeleton.build(iface)
     values.build(iface)
     vectors.build(iface)
     regs.build(iface)
     loops.build(iface)
-    wg.build(iface)
+    if not pool:
+        wg.build(iface)
     if image:
         image.declare(iface)
         image.build(iface)
+    if pool:
+        pool.declare(iface)
+        pool.build(iface)
+    if arena:
+        arena.declare(iface)
+        arena.build(iface)
     twins = lib.finish_twins()
     bare = lib.finish_bare()
-    problems, produced = lib.write_all(outdir, "kernel.safe", iface)
+    problems, produced = lib.write_all(outdir, "kernel.module" if iface.get("module") else "kernel.safe", iface)
     print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins, {bare} bare-literal twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:
         print("PROBLEM:", p)

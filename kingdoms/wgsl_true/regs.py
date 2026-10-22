@@ -15,7 +15,14 @@ def vecname(s, L):
 
 
 def declare(iface):
+    # an interface may hold larger kernels (v24: register_scale 4, private arrays of 256): every count is row data, so a
+    # register no tree names is never declared
+    scale = iface.get("register_scale", 1)
+    if iface.get("big_private_arrays"):
+        PIDX[8] = 255
+
     def reg(key, scalar, form, prefix, count, wtype, zero):
+        count *= scale
         t = vt(scalar, form) if isinstance(scalar, str) and "<" not in scalar else scalar
         REGS.append((key, f"reg<{wtype}>.{form}", t, prefix, count, wtype, zero))
     reg("f", "f32", "real", "rf", 64, "f32", "0.0")
@@ -37,8 +44,8 @@ def declare(iface):
         for n in range(count):
             decl(f"var {prefix}{n}: {wtype} = {zero};")
     def parr(key, elem_t, value_t, j, prefix, count, welem):
-        n = 1 << j if j != 7 else 128
-        length = {4: 16, 6: 64, 7: 128}[j]
+        count *= scale
+        length = {4: 16, 6: 64, 7: 128, 8: 256}[j]
         at = f"parr<{welem},{length}>.{value_t.split('.')[1]}"
         PARRS.append((key, at, value_t, f"u32.pidx_{j}", prefix, count, welem, length))
     parr("f", "f32", "f32.real", 6, "pf", 8, "f32")
@@ -49,6 +56,10 @@ def declare(iface):
     parr("v", "vec4<f32>", "vec4<f32>.real", 4, "pv", 6, "vec4<f32>")
     parr("q", "vec2<f32>", "vec2<f32>.real", 4, "pq", 4, "vec2<f32>")
     parr("vq", "vec4<f32>", "vec4<f32>.real", 6, "pvq", 4, "vec4<f32>")
+    if iface.get("big_private_arrays"):
+        parr("fk", "f32", "f32.real", 7, "pfk", 2, "f32")
+        parr("fh", "f32", "f32.real", 8, "pfh", 2, "f32")
+        parr("jh", "u32", "u32.index", 8, "pjh", 2, "u32")
     for j, mask in PIDX.items():
         T(f"u32.pidx_{j}", f"an index below {mask + 1}, by the mask its row writes")
         register_twin(f"u32.pidx_{j}")
@@ -60,7 +71,7 @@ def declare(iface):
 
 
 def set_rungs():
-    return list(rungs("LC")) + list(rungs("W"))
+    return list(rungs("LCS")) + list(rungs("WP"))
 
 
 def build(iface):
@@ -74,8 +85,8 @@ def build(iface):
             R(f"reg.{prefix}{n}", rt, [], f"{prefix}{n}", "a register is a name, never a value: only a get reads it")
         R(f"reg.get_{key}", vtyp, [rt], "{0}", "a register holds any invocation's value: no row makes a uniform or an ownership type from it", twin=True)
         for x, d, k in set_rungs():
-            if x == "W":
-                R(f"reg.set_{key}_W{d}_f{k}", S("W", d, k), [rt, w_of(vtyp)], "{0} = {1};")
+            if x in "WP":
+                R(f"reg.set_{key}_{x}{d}_f{k}", S(x, d, k), [rt, w_of(vtyp)], "{0} = {1};")
             else:
                 R(f"reg.set_{key}_{x}{d}_f{k}", S(x, d, k), [rt, vtyp], "{0} = {1};")
         lanes = TYPES[vtyp]["lanes"]
@@ -88,8 +99,8 @@ def build(iface):
             if scalar_t in TYPES:
                 R(f"reg.get_{key}_lane", scalar_t, [rt, "u32.index"], "{0}[({1}) " + mask + "]", "a register's lane at a run-time index, reduced by the row's text", twin=True)
                 for x, d, k in set_rungs():
-                    if x == "W":
-                        R(f"reg.set_{key}_lane_W{d}_f{k}", S("W", d, k), [rt, "u32.indexw", w_of(scalar_t)], "{0}[({1}) " + mask + "] = {2};")
+                    if x in "WP":
+                        R(f"reg.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [rt, "u32.indexw", w_of(scalar_t)], "{0}[({1}) " + mask + "] = {2};")
                     else:
                         R(f"reg.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [rt, "u32.index", scalar_t], "{0}[({1}) " + mask + "] = {2};")
     # ---- private arrays
@@ -98,8 +109,8 @@ def build(iface):
             R(f"parr.{prefix}{n}", at, [], f"{prefix}{n}")
         R(f"parr.get_{key}", vtyp, [at, it], "{0}[{1}]", "in range by the index type", twin=True)
         for x, d, k in set_rungs():
-            if x == "W":
-                R(f"parr.set_{key}_W{d}_f{k}", S("W", d, k), [at, w_of(it), w_of(vtyp)], "{0}[{1}] = {2};")
+            if x in "WP":
+                R(f"parr.set_{key}_{x}{d}_f{k}", S(x, d, k), [at, w_of(it), w_of(vtyp)], "{0}[{1}] = {2};")
             else:
                 R(f"parr.set_{key}_{x}{d}_f{k}", S(x, d, k), [at, it, vtyp], "{0}[{1}] = {2};")
         lanes = TYPES[vtyp]["lanes"]
@@ -109,7 +120,7 @@ def build(iface):
             scalar_t = vt(sname, vtyp.split(".")[1])
             R(f"parr.get_{key}_lane", scalar_t, [at, it, "u32.index"], "{0}[{1}][({2}) " + mask + "]", twin=True)
             for x, d, k in set_rungs():
-                if x == "W":
-                    R(f"parr.set_{key}_lane_W{d}_f{k}", S("W", d, k), [at, w_of(it), "u32.indexw", w_of(scalar_t)], "{0}[{1}][({2}) " + mask + "] = {3};")
+                if x in "WP":
+                    R(f"parr.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [at, w_of(it), "u32.indexw", w_of(scalar_t)], "{0}[{1}][({2}) " + mask + "] = {3};")
                 else:
                     R(f"parr.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [at, it, "u32.index", scalar_t], "{0}[{1}][({2}) " + mask + "] = {3};")

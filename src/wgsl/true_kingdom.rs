@@ -68,6 +68,12 @@ pub struct TrueKingdom {
     pub fuel_budget: u32,
     /// For every row, how it repeats the nodes below it ([`LoopRow`]); `None` for a row whose spelling has no loop.
     pub loops: Vec<Option<LoopRow>>,
+    /// A module interface (s9 batch 8): the roots of its normal genes, one entry point each, in gene order; empty for
+    /// a one-entry interface, whose genes are rooted at [`TrueKingdom::root`].
+    pub gene_roots: Vec<Ty>,
+    /// A module interface's fixed homeotic linker (design section 6): the link function whose signature is the gene
+    /// roots in order and whose output is [`TrueKingdom::root`].
+    pub linker: Option<String>,
 }
 
 /// How a loop row repeats its arguments, read from its own spelling and types.
@@ -202,7 +208,20 @@ impl TrueKingdom {
         let loops = rows.iter().map(|r| loop_row(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
         let meta = read(dir, "interface.tsv")?;
         let get = |key: &str| meta.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, v)| v.to_string()).ok_or_else(|| format!("interface.tsv has no {key}"));
+        let gene_roots = match get("gene_roots") {
+            Ok(v) => v.split(';').map(|t| ty_of(t, "interface.tsv gene_roots")).collect::<Result<Vec<_>, _>>()?,
+            Err(_) => Vec::new(),
+        };
+        let linker = get("linker").ok();
+        if let Some(l) = &linker {
+            let row = rows.iter().find(|r| &r.name == l).ok_or_else(|| format!("our software has a bug: interface.tsv names the linker {l}, which is not a row"))?;
+            if row.args != gene_roots {
+                return Err(format!("our software has a bug: the linker {l} takes {:?}, the gene roots are {gene_roots:?}", row.args));
+            }
+        }
         Ok(TrueKingdom {
+            gene_roots,
+            linker,
             dir: dir.to_path_buf(),
             root: ty_of(&get("root")?, "interface.tsv root")?,
             fuel_budget: get("fuel_budget")?.parse().map_err(|e| format!("interface.tsv fuel_budget: {e}"))?,
@@ -251,6 +270,93 @@ impl TrueKingdom {
         Ok(total)
     }
 
+    /// [`TrueKingdom::tree_work_bound`] for one run whose uniform fields are known (`fields`: each field's value, by
+    /// name): a loop's trips are its bound's value in this run (interval arithmetic over the bound's own rows: the
+    /// fields, literals, `+ * min max >> / & -`, the cap `min(.., 2^c)`), divided by its literal stride, never more than
+    /// the cap its types give. A bound whose value the rows do not give (a register, a load) keeps the cap. It is an
+    /// upper bound of the node executions of one invocation of that run, never more than the type bound.
+    pub fn tree_work_bound_in(&self, tree: &Tree, fields: &BTreeMap<String, u64>) -> Result<u128, String> {
+        let mut total = 0u128;
+        let mut stack: Vec<(&Tree, u128)> = vec![(tree, 1)];
+        while let Some((node, mult)) = stack.pop() {
+            let row = self.rows.get(node.symbol as usize).ok_or_else(|| format!("our software has a bug: symbol {} is not a row", node.symbol))?;
+            match self.loops.get(node.symbol as usize).and_then(|l| l.as_ref()) {
+                None => {
+                    total = total.saturating_add(mult);
+                    stack.extend(node.kids.iter().map(|k| (k, mult)));
+                }
+                Some(l) => {
+                    let mut cap = l.cap;
+                    // the bound: the first argument spelled before the loop; the stride: a literal second argument before it
+                    let outside: Vec<usize> = (0..node.kids.len()).filter(|i| !l.inside.get(*i).copied().unwrap_or(false)).collect();
+                    if let Some(b) = outside.first().and_then(|i| node.kids.get(*i)) {
+                        if let Some(n) = self.value_max(b, fields) {
+                            let stride = outside.get(1).and_then(|i| node.kids.get(*i)).and_then(|s| self.value_min(s)).filter(|s| *s > 0).unwrap_or(1);
+                            cap = cap.min(u128::from(n.div_ceil(stride)));
+                        }
+                    }
+                    total = total.saturating_add(mult.saturating_mul(if l.own_work { cap.max(1) } else { 1 }));
+                    for (i, k) in node.kids.iter().enumerate() {
+                        let inside = l.inside.get(i).copied().unwrap_or(false);
+                        stack.push((k, if inside { mult.saturating_mul(cap) } else { mult }));
+                    }
+                    let _ = row;
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// A constant node's value, when its `C_T` text is an unsigned integer.
+    fn const_value(&self, node: &Tree) -> Option<u64> {
+        let row = self.rows.get(node.symbol as usize)?;
+        let text = self.constants.get(&row.out)?.get(node.const_index? as usize)?;
+        text.trim().trim_end_matches('u').parse().ok()
+    }
+
+    fn value_min(&self, node: &Tree) -> Option<u64> {
+        let row = self.rows.get(node.symbol as usize)?;
+        match row.kind {
+            RowKind::Constant => self.const_value(node),
+            RowKind::Terminal => row.spelling.trim().trim_end_matches('u').parse().ok(),
+            RowKind::Function if row.spelling == "{0}" || row.spelling == "lit_u32({0})" => self.value_min(node.kids.first()?),
+            _ => None,
+        }
+    }
+
+    /// The largest value a u32 node can take in a run whose fields are `fields`, from its rows' spellings; `None` when
+    /// the rows do not say.
+    fn value_max(&self, node: &Tree, fields: &BTreeMap<String, u64>) -> Option<u64> {
+        let row = self.rows.get(node.symbol as usize)?;
+        let sp = row.spelling.as_str();
+        let kid = |i: usize| node.kids.get(i).and_then(|k| self.value_max(k, fields));
+        let r = match row.kind {
+            RowKind::Constant => self.const_value(node)?,
+            RowKind::Terminal => match sp.strip_prefix("cfg.") {
+                Some(f) => *fields.get(f)?,
+                None => sp.trim().trim_start_matches("lit_u32(").trim_end_matches(')').trim_end_matches('u').parse().ok()?,
+            },
+            RowKind::Function => match sp {
+                "{0}" | "lit_u32({0})" => kid(0)?,
+                "({0} + {1})" => kid(0)?.checked_add(kid(1)?)?,
+                "({0} * {1})" => kid(0)?.checked_mul(kid(1)?)?,
+                "({0} - {1})" | "({0} / {1})" | "({0} >> {1})" | "sub_floor({0}, {1})" => kid(0)?,
+                "({0} & {1})" | "min({0}, {1})" => match (kid(0), kid(1)) {
+                    (Some(a), Some(b)) => a.min(b),
+                    (Some(a), None) | (None, Some(a)) => a,
+                    _ => return None,
+                },
+                "max({0}, {1})" => kid(0)?.max(kid(1)?),
+                o => {
+                    // the bound rows' cap: `min({0}, Nu)`
+                    let n = o.strip_prefix("min({0}, ").and_then(|t| t.strip_suffix("u)")).and_then(|t| t.parse::<u64>().ok())?;
+                    kid(0).map_or(n, |a| a.min(n))
+                }
+            },
+        };
+        (r <= u64::from(u32::MAX)).then_some(r)
+    }
+
     /// The work guard's fuel for one expressed tree ([`TrueKingdom::tree_work_bound`]).
     pub fn tree_fuel(&self, tree: &Tree) -> Result<Fuel, String> {
         Ok(Fuel::Tree { per_invocation: self.tree_work_bound(tree)? })
@@ -267,7 +373,9 @@ impl TrueKingdom {
     pub fn relations(&self) -> KingdomRelations {
         let rows: Vec<(String, Vec<Ty>, Ty)> = self.rows.iter().map(|r| (r.name.clone(), r.args.clone(), r.out)).collect();
         let constants: Vec<&str> = self.rows.iter().filter(|r| r.kind == RowKind::Constant).map(|r| r.name.as_str()).collect();
-        let mut r = relations_from_rows(TRUE_WGSL, vec![self.root], &rows, &constants);
+        let mut roots = vec![self.root];
+        roots.extend(self.gene_roots.iter().copied());
+        let mut r = relations_from_rows(TRUE_WGSL, roots, &rows, &constants);
         r.tail_free_roots = true;
         r
     }
@@ -323,8 +431,7 @@ impl TrueKingdom {
     /// row's spelling, then put the declarations of the rows the tree holds in the
     /// entry point behind the prologue. Nothing else is done to the text.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
-        let body = self.spell(tree)?;
-        Ok(format!("{}{}", self.prologue, body.replace("<declarations>", &self.declarations_of(tree)?)))
+        Ok(format!("{}{}", self.prologue, self.spell(tree)?))
     }
 
     /// The declarations a tree's kernel needs: the `declares` fragments of the rows of its nodes, deduplicated, in the
@@ -364,7 +471,13 @@ impl TrueKingdom {
             (RowKind::Constant, None) => return Err(format!("our software has a bug: {}: a placeholder without a Dc index", row.name)),
             _ => None,
         };
-        substitute(&row.spelling, &kids, value).map_err(|e| format!("our software has a bug: {}: {e}", row.name))
+        let text = substitute(&row.spelling, &kids, value).map_err(|e| format!("our software has a bug: {}: {e}", row.name))?;
+        // An entry point's declarations are those of the rows of its own subtree: a one-entry kernel's root holds the
+        // whole tree, and each entry of a module (s9 batch 8) declares only what its own gene names.
+        if row.spelling.contains("<declarations>") {
+            return Ok(text.replace("<declarations>", &self.declarations_of(node)?));
+        }
+        Ok(text)
     }
 }
 

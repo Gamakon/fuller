@@ -64,6 +64,8 @@ pub mod tree_diff;
 pub mod karva_seed;
 pub mod true_gram;
 pub mod true_kingdom;
+pub mod true_module;
+pub mod true_reader;
 pub mod true_share;
 pub mod true_opt;
 pub mod typed_gene;

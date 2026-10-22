@@ -1,0 +1,6 @@
+key	value
+root	kernel.module
+fuel_budget	6
+interface	v24
+gene_roots	kernel.ingest;kernel.search
+linker	kernel.module_v24

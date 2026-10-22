@@ -81,15 +81,22 @@ def decl(text):
 K = 1
 
 
-def configure(k):
+def configure(k, epilogue=True, pools=False):
     """Set the fuel budget K of the interface about to be generated. The submodules read K and STRATA when they
-    are imported (`from lib import *`), so this runs before they are imported."""
+    are imported (`from lib import *`), so this runs before they are imported. An interface with no primary output
+    (a module of several entries, s9 batch 8) has no epilogue: its O rungs do not exist."""
     global K, STRATA
     K = k
     STRATA = range(0, K + 1)
+    if not epilogue:
+        DEPTH["O"] = range(0)
+    if pools:
+        # s9 batch 9: the pair phase's body (P, W plus the partner load) and the solo phase's body (S, one invocation)
+        DEPTH["P"] = range(0, 6)
+        DEPTH["S"] = range(0, 6)
 
 
-DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6)}
+DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0)}
 STRATA = range(0, K + 1)
 
 
@@ -107,6 +114,10 @@ def BB(d, k):
 
 def WBB(d, k):
     return f"block.WB{d}_f{k}"
+
+
+def SBB(d, k):
+    return f"block.SB{d}_f{k}"
 
 
 def rungs(xs):
@@ -333,4 +344,8 @@ def write_all(outdir, root, iface):
         f.write(f"root\t{root}\n")
         f.write(f"fuel_budget\t{K}\n")
         f.write(f"interface\t{iface['name']}\n")
+        if iface.get("module"):
+            # the normal genes' roots, in gene order: the fixed homeotic linker (design section 6) takes them
+            f.write("gene_roots\t" + ";".join(f"kernel.{e}" for e, _ in iface["module"]) + "\n")
+            f.write(f"linker\tkernel.module_{iface['name']}\n")
     return problems, produced

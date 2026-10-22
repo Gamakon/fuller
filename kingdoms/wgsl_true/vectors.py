@@ -132,7 +132,7 @@ def build(iface):
         helper(f"inverse_{c}", INVERSE_HELPERS[c])
         R(f"geom.inverse_{c}", mat(c, c), [mat(c, c)], f"inverse_{c}({{0}})", "square only by signature; a singular matrix's inverse is inf/NaN lanes, scored", twin=True)
     # ---- bits
-    C("literal.bits", "u32.bits", "lit_u32({v}u)", [str(v) for v in int_values(0, 2**32 - 1, 32, "bits")], "?_bits")
+    C("literal.bits", "u32.bits", "lit_u32({v}u)", extra(iface, "bits", [str(v) for v in int_values(0, 2**32 - 1, 32, "bits")]), "?_bits")
     R("own.u32_bits", "u32.bits", [], "lit_u32(0u)")
     for op, sp in (("and", "({0} & {1})"), ("or", "({0} | {1})"), ("xor", "({0} ^ {1})")):
         R(f"bits.{op}", "u32.bits", ["u32.bits", "u32.bits"], sp)

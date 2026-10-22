@@ -171,7 +171,7 @@ def build(iface):
     C("literal.int", "i32.int", "lit_i32({v})", extra(iface, "int", [("(-2147483647i - 1i)" if v == -2147483648 else f"{v}i") for v in int_values(-2**31, 2**31 - 1, 48, "int")]), "?_int", twin=True)
     bare_constants(iface)
     C("literal.nonneg_int", "i32.nonneg", "{v}i", [str(v) for v in int_values(0, 2**31 - 1, 32, "nonneg_int")], "?_nonneg_int")
-    C("literal.lit4096", "u32.lit4096", "{v}u", [str(v) for v in int_values(1, 4096, 32, "lit4096")], "?_lit4096")
+    C("literal.lit4096", "u32.lit4096", "{v}u", extra(iface, "lit4096", [str(v) for v in int_values(1, 4096, 32, "lit4096")]), "?_lit4096")
     R("own.u32_lit4096", "u32.lit4096", [], "1u")
     R("own.u32_lit64", "u32.lit64", [], "1u")
     R("own.f32_nonneg", "f32.nonneg", [], "0.0")
