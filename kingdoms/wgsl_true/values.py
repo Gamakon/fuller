@@ -132,20 +132,27 @@ def build(iface):
         R(f"load.{f}", "u32.count", [], f"cfg.{f}", "a field of the uniform block is a size", twin=True)
     for i in iface["inputs"]:
         n = i["name"]
+        if i.get("kind") == "atomic_u32":
+            # a device buffer of atomic<u32> the host writes; this kernel only reads it, through atomicLoad
+            R(f"load.{n}", "u32.count", ["u32.index"], f"atomicLoad(&{n}[min({{0}}, arrayLength(&{n}) - 1u)])", "an atomic read of any position, clamped to the last element by the row's own text", twin=True)
+            R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
+            continue
         R(f"load.{n}", i["ty"], ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read at any position, clamped to the last element by the row's own text", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
     for o in iface["outputs"]:
         n = o["name"]
+        if o.get("kind") == "texture":
+            continue   # a write-only storage texture has no load row
         helper(f"own_load_{n}", f"fn own_load_{n}(r: u32, c: u32) -> f32 {{ return {n}[min(r * {o['cols']} + c, arrayLength(&{n}) - 1u)]; }}")
         R(f"load.{n}_own", o["ty"], [f"u32.threadrow_{n}", f"u32.threadcol_{n}"], f"own_load_{n}({{0}}, {{1}})", "a read of the invocation's own cell only", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
     # ---- literals
-    C("literal.index", "u32.index", "lit_u32({v}u)", int_values(0, 2**32 - 1, 48, "index"), "?_index", twin=True)
-    C("literal.count", "u32.count", "lit_u32({v}u)", int_values(0, 2**32 - 1, 48, "count"), "?_count", twin=True)
-    C("literal.real", "f32.real", "lit_f32({v})", f32_values(-F32MAX, F32MAX, 48, "real"), "?_real: a finite f32, so no NaN or infinity literal exists", twin=True)
+    C("literal.index", "u32.index", "lit_u32({v}u)", extra(iface, "index", int_values(0, 2**32 - 1, 48, "index")), "?_index", twin=True)
+    C("literal.count", "u32.count", "lit_u32({v}u)", extra(iface, "count", int_values(0, 2**32 - 1, 48, "count")), "?_count", twin=True)
+    C("literal.real", "f32.real", "lit_f32({v})", extra(iface, "real", f32_values(-F32MAX, F32MAX, 48, "real")), "?_real: a finite f32, so no NaN or infinity literal exists", twin=True)
     C("literal.nonneg", "f32.nonneg", "lit_f32({v})", f32_values(0.0, F32MAX, 32, "nonneg"), "?_nonneg: a non-negative width")
     C("literal.f16", "f16.real", "lit_f16({v}h)", f32_values(-65504.0, 65504.0, 32, "f16", True), "?_f16: the finite f16 range", twin=True)
-    C("literal.int", "i32.int", "lit_i32({v})", [("(-2147483647i - 1i)" if v == -2147483648 else f"{v}i") for v in int_values(-2**31, 2**31 - 1, 48, "int")], "?_int", twin=True)
+    C("literal.int", "i32.int", "lit_i32({v})", extra(iface, "int", [("(-2147483647i - 1i)" if v == -2147483648 else f"{v}i") for v in int_values(-2**31, 2**31 - 1, 48, "int")]), "?_int", twin=True)
     C("literal.nonneg_int", "i32.nonneg", "lit_i32({v}i)", [str(v) for v in int_values(0, 2**31 - 1, 32, "nonneg_int")], "?_nonneg_int")
     C("literal.lit4096", "u32.lit4096", "lit_u32({v}u)", [str(v) for v in int_values(1, 4096, 32, "lit4096")], "?_lit4096")
     R("own.u32_lit4096", "u32.lit4096", [], "lit_u32(1u)")

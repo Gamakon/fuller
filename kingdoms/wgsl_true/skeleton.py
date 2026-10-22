@@ -61,12 +61,16 @@ def declare_types(iface):
 
 def store_text(iface, o, val="{2}"):
     b = o["name"]
+    if o.get("kind") == "texture":
+        return "{ let r = {0}; let c = {1}; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { textureStore(" + b + ", vec2<u32>(c, r), " + val + "); } }"
     return "{ let r = {0}; let c = {1}; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { " + b + "[r * " + o["cols"] + " + c] = " + val + "; } }"
 
 
 def own_store_text(iface):
     o = next(o for o in iface["outputs"] if o["name"] == iface["primary"])
     b = o["name"]
+    if o.get("kind") == "texture":
+        return "{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { textureStore(" + b + ", vec2<u32>(c, r), vec4<f32>()); } }"
     idx = f"{b}[r * {o['cols']} + c]"
     return "{ let r = row_axis(gid) * KNOB_BROW; let c = col_axis(gid) * KNOB_BCOL; if (r < " + o["rows"] + " && c < " + o["cols"] + ") { " + idx + " = " + idx + "; } }"
 

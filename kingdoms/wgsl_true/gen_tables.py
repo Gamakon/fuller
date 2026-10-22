@@ -13,18 +13,30 @@ shape the old format cannot hold, so it is written beside it.
 
     python3 gen_tables.py        # writes types.tsv functions.tsv constants.tsv
                                  # prologue.wgsl declarations.wgsl interface.tsv
+    python3 gen_tables.py img_volumepassage   # the image-output instance (ST9), into img/volumepassage/
+
+The Gram instance is the default and writes beside this file. An interface with an output of kind "texture" (a
+write-only storage texture, the cuneus visual shaders) adds the families of image.py and takes its own fuel budget K
+from the interface; the directory it writes is `img/<name without img_>/`.
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import importlib
+
 import lib
-from interface import GRAM
-import skeleton, values, regs, loops, wg, vectors
+from interface import INTERFACES
 
 
-def main():
-    iface = GRAM
+def main(argv):
+    iface = INTERFACES[argv[1] if len(argv) > 1 else "gram"]
+    # K and the strata are read by the submodules when they are imported
+    lib.configure(iface.get("fuel_budget", 1))
+    skeleton, values, regs, loops, wg, vectors = (importlib.import_module(m) for m in ("skeleton", "values", "regs", "loops", "wg", "vectors"))
+    image = importlib.import_module("image") if iface.get("image") else None
+    outdir = lib.HERE if iface["name"] == "gram" else os.path.join(lib.HERE, "img", iface["name"].removeprefix("img_"))
+    os.makedirs(outdir, exist_ok=True)
     # types first (every row names declared types), in dependency order
     skeleton.declare_types(iface)
     values.declare(iface)
@@ -38,8 +50,11 @@ def main():
     regs.build(iface)
     loops.build(iface)
     wg.build(iface)
+    if image:
+        image.declare(iface)
+        image.build(iface)
     twins = lib.finish_twins()
-    problems, produced = lib.write_all(lib.HERE, "kernel.safe", iface)
+    problems, produced = lib.write_all(outdir, "kernel.safe", iface)
     print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:
         print("PROBLEM:", p)
@@ -47,4 +62,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

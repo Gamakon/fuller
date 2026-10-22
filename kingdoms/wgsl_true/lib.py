@@ -78,6 +78,16 @@ def decl(text):
 # ---------------------------------------------------------------- statements
 
 K = 1
+
+
+def configure(k):
+    """Set the fuel budget K of the interface about to be generated. The submodules read K and STRATA when they
+    are imported (`from lib import *`), so this runs before they are imported."""
+    global K, STRATA
+    K = k
+    STRATA = range(0, K + 1)
+
+
 DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6)}
 STRATA = range(0, K + 1)
 
@@ -122,6 +132,16 @@ def register_twin(base, meaning=None):
 
 def w_of(t):
     return TWIN.get(t, t)
+
+
+def extra(iface, fam, base):
+    """`base` followed by the interface's own constants of this family (append-only: the base list is unchanged, so an
+    interface with none generates exactly the table it always did)."""
+    out = list(base)
+    for v in iface.get("extra_constants", {}).get(fam, []):
+        if v not in out:
+            out.append(v)
+    return out
 
 
 def finish_twins():

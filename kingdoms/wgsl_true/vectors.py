@@ -108,7 +108,9 @@ def build(iface):
             R(f"own.mat{c}x{r}", m, [], f"zero_mat{c}x{r}()", "a call, so no operation on it is evaluated at shader creation")
             R(f"shape.compose_mat{c}x{r}", m, [colv] * c, f"mat{c}x{r}<f32>(" + ", ".join("{%d}" % i for i in range(c)) + ")", twin=True)
             for i in range(c):
-                R(f"shape.col_{i}_{c}x{r}", colv, [m], "{0}[" + str(i) + "]", twin=True)
+                # a helper call, not `{0}[i]`: indexing a matrix constructor (`mat4x4<f32>(..)[3]`) makes naga's MSL an
+                # indirection of a value, which Apple's compiler rejects (ST9, ST3 loop genes 173 and 489)
+                R(f"shape.col_{i}_{c}x{r}", colv, [m], f"col_at{c}x{r}({{0}}, {i}u)", twin=True)
             names = "xyzw"
             hn = f"col_at{c}x{r}"
             body = "".join(f"case {i}u: {{ return m[{i}]; }} " for i in range(c - 1))
@@ -204,6 +206,8 @@ def build(iface):
     # ---- input vector loads
     for i in iface["inputs"]:
         n = i["name"]
+        if i.get("kind") == "atomic_u32":
+            continue   # no vector read of atomics
         helper(f"load4_{n}", f"fn load4_{n}(k: u32) -> vec4<f32> {{ let m = arrayLength(&{n}) - 1u; return vec4<f32>({n}[min(k, m)], {n}[min(k + 1u, m)], {n}[min(k + 2u, m)], {n}[min(k + 3u, m)]); }}")
         R(f"load.{n}4", "vec4<f32>.real", ["u32.index"], f"load4_{n}({{0}})", "four consecutive elements, each read clamped in the helper", twin=True)
     # ---- the knob references (batch 6)
