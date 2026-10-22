@@ -236,5 +236,9 @@ name = "cuneus_image"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "st9_champion_time"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_true_share"
 required-features = ["wgsl"]
