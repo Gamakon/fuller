@@ -1,0 +1,36 @@
+## 13:48:53Z gpu lock taken; load 4.21 9.48 16.99
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+# encoded: 0 differing channels against the shipped original
+# encoded(2): 0 differing channels against the shipped original
+# notile: 0 differing channels against the shipped original
+# bare: 0 differing channels against the shipped original
+# for: 0 differing channels against the shipped original
+# boundlit: 0 differing channels against the shipped original
+# zero: 0 differing channels against the shipped original
+# axes: 0 differing channels against the shipped original
+# all: 0 differing channels against the shipped original
+# all_but_for: 0 differing channels against the shipped original
+# 13:48:55Z 64x64 t 5, one submit, 5 rounds of 41 pairs a comparison, the order of the comparisons reversed every other round
+comparison	median ratio (all pairs)	p10	p90	round medians min	max	pairs
+shipped(2) / shipped	1.0000	0.9869	1.0236	0.9998	1.0010	205
+encoded(2) / encoded	1.0000	0.9890	1.0507	0.9972	1.0009	205
+encoded / shipped	1.0235	0.9676	1.0681	1.0208	1.0253	205
+notile / shipped	1.0180	0.9636	1.0545	1.0161	1.0205	205
+bare / shipped	1.0225	1.0070	1.0680	1.0209	1.0245	205
+for / shipped	0.9981	0.9656	1.0573	0.9962	0.9996	205
+boundlit / shipped	1.0181	1.0075	1.0313	1.0160	1.0198	205
+zero / shipped	1.0256	0.9944	1.0389	1.0236	1.0275	205
+axes / shipped	1.0170	0.9930	1.0351	1.0161	1.0181	205
+all / shipped	0.9981	0.9803	1.0217	0.9962	1.0000	205
+all_but_for / shipped	1.0332	1.0206	1.0645	1.0321	1.0342	205
+notile / encoded	0.9945	0.9854	1.0074	0.9926	0.9963	205
+bare / encoded	1.0000	0.9828	1.0186	0.9982	1.0019	205
+for / encoded	0.9761	0.9618	1.0343	0.9743	0.9778	205
+boundlit / encoded	0.9972	0.9863	1.0148	0.9954	0.9982	205
+zero / encoded	1.0028	0.9819	1.0212	1.0009	1.0055	205
+axes / encoded	0.9944	0.9799	1.0156	0.9935	0.9963	205
+all / encoded	0.9750	0.9642	0.9861	0.9742	0.9760	205
+all_but_for / encoded	1.0102	0.9991	1.0291	1.0092	1.0120	205
+# 13:48:58Z
+## exit 0 13:48:58Z
+## gpu lock released 13:48:58Z

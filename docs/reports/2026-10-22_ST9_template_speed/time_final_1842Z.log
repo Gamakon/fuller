@@ -1,0 +1,15 @@
+## 18:42:12Z gpu lock taken; load 2.01 2.39 2.98
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+# encoded: 0 differing channels against the shipped original
+# encoded(2): 0 differing channels against the shipped original
+# before: 0 differing channels against the shipped original
+# 18:42:13Z 64x64 t 5, one submit, 5 rounds of 41 pairs a comparison, the order of the comparisons reversed every other round
+comparison	median ratio (all pairs)	p10	p90	round medians min	max	pairs
+shipped(2) / shipped	1.0000	0.9440	1.0585	0.9981	1.0010	205
+encoded(2) / encoded	1.0000	0.9481	1.0381	0.9981	1.0019	205
+encoded / shipped	0.9831	0.9124	1.0291	0.9821	0.9858	205
+before / shipped	1.0416	0.9901	1.1088	1.0387	1.0437	205
+before / encoded	1.0587	0.9812	1.1387	1.0585	1.0618	205
+# 18:42:14Z
+## exit 0 18:42:14Z
+## gpu lock released 18:42:14Z

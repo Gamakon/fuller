@@ -18,7 +18,7 @@ def declare(iface):
         T(f"u32.xcounter{d}", f"the counter kx{d} of a loop whose bound is any expression, or that breaks: divergent")
         SAFE_ARGS.add(f"u32.tcounter{d}")
         SAFE_ARGS.add(f"u32.xcounter{d}")
-        for p in ("n", "k", "nx", "kx"):
+        for p in ("n", "k", "nx", "kx", "kc", "kxc"):
             decl(f"var {p}{d}: u32 = 0u;")
     T("ureg<u32>.uniform", "a named u32 register U0..U7 that holds the same value in every invocation")
     SAFE_ARGS.add("ureg<u32>.uniform")
@@ -28,12 +28,18 @@ def declare(iface):
 
 def loop_text(d1, divergent, bound="{0}", stride=None, body="{1}"):
     """A counted loop. naga writes a `for` with a continuing step as `while(true) { if (!loop_init) { k = k + 1 } ... }`, and
-    Apple's compiler hangs the dispatch on that form (docs/reports/2026-10-21_metal_hang_k2), so the step is the first
-    statement of a plain `loop`: the counter starts at -1 (or 0 - stride) and a `continue` still takes the step."""
-    n, k = (f"nx{d1}", f"kx{d1}") if divergent else (f"n{d1}", f"k{d1}")
+    Apple's compiler hangs the dispatch on that form (docs/reports/2026-10-21_metal_hang_k2), so the loop is a plain `loop`
+    with no continuing block. The step is taken on a shadow counter `kc` before the body: `k = kc` at the top, the test
+    `k >= n` before the body, `kc = k + step` next, so `k` is the trip inside the body, the final value after the loop (n
+    after the last trip, the trip of a `break`), and a `continue` still takes the step. Measured 2026-10-22 against the
+    earlier spelling, where the counter started at -1 and the step came before the test (`k = k + 1u; if (k >= n)`):
+    volumepassage at 64 x 64 one submit 0.957x of its time (the test of a counter from 0 before the step lets Apple's
+    compiler see the trip count); it terminates on the hang reproducer."""
+    n, k, kc = (f"nx{d1}", f"kx{d1}", f"kxc{d1}") if divergent else (f"n{d1}", f"k{d1}", f"kc{d1}")
+    head = f"{kc} = 0u; loop {{ {k} = {kc}; if ({k} >= {n}) {{ break; }} "
     if stride is None:
-        return f"{n} = {bound}; {k} = 4294967295u; loop {{ {k} = {k} + 1u; if ({k} >= {n}) {{ break; }} {body} }}"
-    return f"{{ let st = {stride}; {n} = {bound}; {k} = 0u - st; loop {{ {k} = {k} + st; if ({k} >= {n}) {{ break; }} {body} }} }}"
+        return f"{n} = {bound}; {head}{kc} = {k} + 1u; {body} }}"
+    return f"{{ let st = {stride}; {n} = {bound}; {head}{kc} = {k} + st; {body} }} }}"
 
 
 def build(iface):

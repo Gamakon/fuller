@@ -31,8 +31,11 @@ struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
 
 
 # The tiled dispatch of the image interfaces (skeleton.py): the submit's origin and the whole grid, in workgroups, written
-# by the host before each submit (fuller::wgsl::image, group 3 binding 0).
-TILE_DECL = "struct DispatchTile {\n    origin: vec4<u32>,\n    grid: vec4<u32>,\n};\n@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;\n"
+# by the host before each submit (fuller::wgsl::image, group 3 binding 0). `DISPATCH_TILED` is a pipeline-overridable
+# constant the host sets when it creates the pipeline: true when a pass takes more than one submit, false for one submit
+# (then the entry reads the builtins and never the tile uniform). It is the interface's, never a row's.
+TILE_DECL = ("struct DispatchTile {\n    origin: vec4<u32>,\n    grid: vec4<u32>,\n};\n@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;\n"
+             "override DISPATCH_TILED: bool = true;\n")
 
 TIME_STRUCT = "struct TimeUniform {\n    time: f32,\n    delta: f32,\n    frame: u32,\n    _padding: u32,\n};\n"
 

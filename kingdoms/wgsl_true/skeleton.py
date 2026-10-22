@@ -85,11 +85,14 @@ def build(iface):
     # A tiled dispatch (ST9, the image interfaces): the host splits the dispatch into submits of whole workgroups (the
     # work guard's bound of each submit at most its cap), and the interface's `dispatch_tile` uniform gives each submit's
     # origin in workgroups and the whole grid. `gid`, `wid` and `nwg` are then the ids of the whole dispatch, so every
-    # row that reads them means what it means in one dispatch; the builtins of the submit are `gid_tile`, `wid_tile`.
+    # row that reads them means what it means in one dispatch; the builtins of the submit are `gid_tile`, `wid_tile`,
+    # `nwg_tile`. The prologue's pipeline-overridable constant `DISPATCH_TILED` (TILE_DECL, interface.py) is set by the
+    # host at pipeline creation: false for a pass of one submit (origin 0, grid the submit's own), so the ids are the
+    # builtins and Apple's compiler folds the tile uniform away (measured 2.9 % of volumepassage at 64 x 64, 2026-10-22).
     tiled = iface.get("tiled_dispatch", False)
     ids = (
         "@builtin(global_invocation_id) gid_tile: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid_tile: vec3<u32>, "
-        "@builtin(local_invocation_index) lidx: u32"
+        "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg_tile: vec3<u32>"
         if tiled
         else "@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
         "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>"
@@ -98,8 +101,9 @@ def build(iface):
         "{0}\n@compute @workgroup_size(WG_X, WG_Y, 1)\nfn main(" + ids
         + (", @builtin(subgroup_size) sg_size: u32, @builtin(num_subgroups) sg_num: u32" if iface["has_subgroups"] else "")
         + ") {\n"
-        + ("let wid: vec3<u32> = wid_tile + dispatch_tile.origin.xyz;\nlet gid: vec3<u32> = gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u);\n"
-           "let nwg: vec3<u32> = dispatch_tile.grid.xyz;\n" if tiled else "")
+        + ("let wid: vec3<u32> = select(wid_tile, wid_tile + dispatch_tile.origin.xyz, DISPATCH_TILED);\n"
+           "let gid: vec3<u32> = select(gid_tile, gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u), DISPATCH_TILED);\n"
+           "let nwg: vec3<u32> = select(nwg_tile, dispatch_tile.grid.xyz, DISPATCH_TILED);\n" if tiled else "")
         + ("let sg_lane: u32 = lidx & (sg_size - 1u);\nlet sg_id: u32 = lidx / sg_size;\n" if iface["has_subgroups"] else "")
         + "<declarations>\n{1}\n{2}\n}\n"
     )

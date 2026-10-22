@@ -1,0 +1,46 @@
+## 13:56:46Z start; load 5.53 6.23 11.96; WindowServer 645
+## shadow, Metal API only
+compile+pipeline 345.7759618759155 ms
+OK in 3.4589767456054688 ms status 4 error nil
+## exit 0 13:56:47Z
+## shadow, wgpu (naga + pipeline + one run, Gram bindings)
+TRUE_WGSL: 8861 symbols (8111 functions, 750 terminals), 1 roots
+  check passed; 305 types, n_max 4, program size N = 8
+  root Wgsl(0): 208 types reachable, L = 3559, gene width 50851 words, heads guarantee N = 8
+    Wgsl(178): h 7 P 784 t 777 d 784
+    Wgsl(126): h 14 P 707 t 693 d 707
+    Wgsl(128): h 21 P 665 t 644 d 665
+    Wgsl(183): h 7 P 567 t 560 d 567
+    Wgsl(149): h 14 P 511 t 497 d 511
+    Wgsl(134): h 21 P 490 t 469 d 490
+    ... 202 more types
+gene width 50851 words; 305 types, 8861 rows; fuel budget K = 1
+work guard: H = 2367, K = 1; bound at the unit-test dispatch (256 invocations) 38780928, at the 128 x 64 rung (16384) 2481979392; cap 170000000
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+VERDICT ok 164 ms
+## exit 0 13:56:48Z
+## control: the loop_init form, Metal API only (expected HANG)
+compile+pipeline 305.64892292022705 ms
+OK in 762.0940208435059 ms status 5 error Optional(Error Domain=MTLCommandBufferErrorDomain Code=2 "Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang)" UserInfo={NSLocalizedDescription=Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang), NSUnderlyingError=0xb568308a0 {Error Domain=IOGPUCommandQueueErrorDomain Code=3 "(null)"}})
+## exit 0 13:56:50Z
+## control: naga's MSL of the for-form reduced kernel, wgpu options (expected HANG)
+compile+pipeline 325.5230188369751 ms
+OK in 774.4159698486328 ms status 5 error Optional(Error Domain=MTLCommandBufferErrorDomain Code=2 "Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang)" UserInfo={NSLocalizedDescription=Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang), NSUnderlyingError=0xa46c688a0 {Error Domain=IOGPUCommandQueueErrorDomain Code=3 "(null)"}})
+## exit 0 13:56:52Z
+## probe: shadow, wgpu again
+TRUE_WGSL: 8861 symbols (8111 functions, 750 terminals), 1 roots
+  check passed; 305 types, n_max 4, program size N = 8
+  root Wgsl(0): 208 types reachable, L = 3559, gene width 50851 words, heads guarantee N = 8
+    Wgsl(178): h 7 P 784 t 777 d 784
+    Wgsl(126): h 14 P 707 t 693 d 707
+    Wgsl(128): h 21 P 665 t 644 d 665
+    Wgsl(183): h 7 P 567 t 560 d 567
+    Wgsl(149): h 14 P 511 t 497 d 511
+    Wgsl(134): h 21 P 490 t 469 d 490
+    ... 202 more types
+gene width 50851 words; 305 types, 8861 rows; fuel budget K = 1
+work guard: H = 2367, K = 1; bound at the unit-test dispatch (256 invocations) 38780928, at the 128 x 64 rung (16384) 2481979392; cap 170000000
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+VERDICT ok 46 ms
+## exit 0 13:56:53Z
+## 13:56:53Z end; load 5.33 6.18 11.90; WindowServer 645

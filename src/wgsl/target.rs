@@ -128,6 +128,31 @@ impl Target {
     }
 }
 
+/// THE METAL SOURCE wgpu 30 hands Apple's compiler for entry point `entry` of `module` on this machine (wgpu-hal 30,
+/// `metal::Device::load_shader`): the pipeline-overridable constants `constants` (by name) applied by naga's
+/// `process_overrides`, MSL 4.0 (wgpu-hal's language version on macOS 26), bounds checks `Restrict` on indices, buffers
+/// and image loads (wgpu's default runtime checks), naga's loop bounding, workgroup memory zeroed, integer division
+/// checks. Bindings are naga's fake slots: the layout's slot numbers do not change the code.
+pub fn metal_source(module: &naga::Module, info: &ModuleInfo, entry: &str, constants: &[(&str, f64)]) -> Result<String, String> {
+    let mut pc = naga::back::PipelineConstants::default();
+    for (k, v) in constants {
+        pc.insert((*k).to_string(), *v);
+    }
+    let (module, info) = naga::back::pipeline_constants::process_overrides(module, info, Some((naga::ShaderStage::Compute, entry)), &pc).map_err(|e| format!("overrides: {e}"))?;
+    let restrict = naga::proc::BoundsCheckPolicy::Restrict;
+    let options = naga::back::msl::Options {
+        lang_version: (4, 0),
+        fake_missing_bindings: true,
+        bounds_check_policies: naga::proc::BoundsCheckPolicies { index: restrict, buffer: restrict, image_load: restrict, binding_array: naga::proc::BoundsCheckPolicy::Unchecked },
+        zero_initialize_workgroup_memory: true,
+        force_loop_bounding: true,
+        emit_int_div_checks: true,
+        ..Default::default()
+    };
+    let pipeline = naga::back::msl::PipelineOptions { entry_point: Some((naga::ShaderStage::Compute, entry.to_string())), ..Default::default() };
+    naga::back::msl::write_string(&module, &info, &options, &pipeline).map(|(s, _)| s).map_err(|e| format!("msl: {e:?}"))
+}
+
 /// The global variables a function's expressions name, with those of every
 /// function it calls.
 fn globals_used(module: &naga::Module, f: &naga::Function, out: &mut std::collections::BTreeSet<naga::Handle<naga::GlobalVariable>>, seen: &mut std::collections::BTreeSet<naga::Handle<naga::Function>>) {

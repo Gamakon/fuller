@@ -1,0 +1,27 @@
+## 13:50:00Z gpu lock taken; load 6.08 8.85 16.15
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+# encoded: 0 differing channels against the shipped original
+# encoded(2): 0 differing channels against the shipped original
+# for: 0 differing channels against the shipped original
+# shadow: 0 differing channels against the shipped original
+# end: 0 differing channels against the shipped original
+# boundlit: 0 differing channels against the shipped original
+# notile: 0 differing channels against the shipped original
+# 13:50:00Z 64x64 t 5, one submit, 5 rounds of 41 pairs a comparison, the order of the comparisons reversed every other round
+comparison	median ratio (all pairs)	p10	p90	round medians min	max	pairs
+shipped(2) / shipped	1.0000	0.9913	1.0060	0.9978	1.0009	205
+encoded(2) / encoded	1.0004	0.9903	1.0048	1.0000	1.0005	205
+encoded / shipped	1.0250	1.0154	1.0440	1.0229	1.0275	205
+for / shipped	0.9994	0.9908	1.0175	0.9983	0.9998	205
+shadow / shipped	0.9779	0.9497	0.9896	0.9757	0.9841	205
+end / shipped	0.9863	0.9651	1.0273	0.9839	0.9923	205
+boundlit / shipped	1.0204	1.0124	1.0560	1.0194	1.0208	205
+notile / shipped	1.0283	1.0188	1.0397	1.0271	1.0287	205
+for / encoded	0.9756	0.9447	0.9911	0.9755	0.9765	205
+shadow / encoded	0.9571	0.9281	0.9659	0.9563	0.9575	205
+end / encoded	0.9639	0.9438	0.9714	0.9607	0.9655	205
+boundlit / encoded	0.9965	0.9920	1.0004	0.9962	0.9970	205
+notile / encoded	1.0042	0.9875	1.0114	1.0041	1.0042	205
+# 13:50:04Z
+## exit 0 13:50:04Z
+## gpu lock released 13:50:04Z

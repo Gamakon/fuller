@@ -49,6 +49,7 @@ struct DispatchTile {
     grid: vec4<u32>,
 };
 @group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;
+override DISPATCH_TILED: bool = true;
 var<workgroup> wg_f_11: array<f32, 2048>;
 var<workgroup> wg_u_10: array<u32, 1024>;
 var<workgroup> wg_v4_9: array<vec4<f32>, 512>;

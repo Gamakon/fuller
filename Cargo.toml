@@ -250,3 +250,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "st9_template_cost"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "st9_msl"
+required-features = ["gpu", "wgsl"]

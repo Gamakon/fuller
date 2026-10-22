@@ -331,6 +331,11 @@ pub fn median(v: &[f64]) -> f64 {
 /// declare it ignores it.
 pub const TILE_GROUP: u32 = 3;
 
+/// The image interfaces' pipeline-overridable constant (`override DISPATCH_TILED: bool = true;`, the prologue's, never a
+/// row's): the harness sets it when it creates a pipeline, false when a pass is one submit (the entry then reads the
+/// builtins and never the tile uniform, so Apple's compiler folds the offset away), true for a pass of several submits.
+pub const TILED_OVERRIDE: &str = "DISPATCH_TILED";
+
 /// The submits of a dispatch of `gx` x `gy` workgroups when one submit may hold at most `per_submit` whole
 /// workgroups: rectangles `(x0, y0, w, h)` in workgroups, row by row, covering every workgroup exactly once. `None`
 /// (a proven kernel) is one rectangle.
@@ -476,7 +481,7 @@ pub use device::{timed_pairs, ImageKernel, ImageRun, PairTimes};
 
 #[cfg(feature = "gpu")]
 mod device {
-    use super::{half_to_f32, median, tiles, BindingData, Picture, SubmitPlan, TILE_GROUP};
+    use super::{half_to_f32, median, tiles, BindingData, Picture, SubmitPlan, TILED_OVERRIDE, TILE_GROUP};
     use crate::wgsl::oracle::device::{Device, ErrorScopes};
     use crate::wgsl::work_guard::{Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
     use std::time::Instant;
@@ -495,6 +500,15 @@ mod device {
     pub struct ImageKernel<'a> {
         dev: &'a Device,
         pipeline: wgpu::ComputePipeline,
+        /// The module and layout the pipeline was made from, so a plan of the other kind (one submit, several) makes the
+        /// pipeline with the other value of [`TILED_OVERRIDE`].
+        shader: wgpu::ShaderModule,
+        pipeline_layout: wgpu::PipelineLayout,
+        entry: String,
+        /// Whether the module declares [`TILED_OVERRIDE`].
+        tiled_override: bool,
+        /// The value of [`TILED_OVERRIDE`] the pipeline was made with (false when the module does not declare it).
+        pipeline_tiled: bool,
         layouts: Vec<wgpu::BindGroupLayout>,
         bind_groups: Vec<(u32, wgpu::BindGroup)>,
         /// The case's uniform buffers by `(group, binding)`, so a pass at another time rewrites them in place.
@@ -617,6 +631,22 @@ mod device {
         Ok(Target { bind_groups, uniforms, texture, tiles: tile_list, zero_buffers })
     }
 
+    /// The compute pipeline of `shader`'s `entry`, with [`TILED_OVERRIDE`] set to `tiled` when the module declares it.
+    fn make_pipeline(dev: &Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry: &str, tiled_override: bool, tiled: bool) -> Result<wgpu::ComputePipeline, String> {
+        let constants: &[(&str, f64)] = match (tiled_override, tiled) {
+            (false, _) => &[],
+            (true, false) => &[(TILED_OVERRIDE, 0.0)],
+            (true, true) => &[(TILED_OVERRIDE, 1.0)],
+        };
+        let scopes = ErrorScopes::push(&dev.device);
+        let compilation_options = wgpu::PipelineCompilationOptions { constants, ..Default::default() };
+        let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("image pipeline"), layout: Some(layout), module: shader, entry_point: Some(entry), compilation_options, cache: None });
+        if let Some(e) = scopes.pop() {
+            return Err(format!("pipeline: {e}"));
+        }
+        Ok(pipeline)
+    }
+
     impl<'a> ImageKernel<'a> {
         /// Compile `source`'s entry point `entry` against the case's bindings at `width` x `height`. `fuel` is the
         /// kernel's work guard (never a default: the caller names it); the dispatch is split into submits of whole
@@ -653,24 +683,54 @@ mod device {
                 }
                 layouts.push(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("image bgl"), entries: &entries }));
             }
+            let tiled_override = module.overrides.iter().any(|(_, o)| o.name.as_deref() == Some(TILED_OVERRIDE));
             let t = target(dev, &layouts, bindings, width, height, workgroup, &fuel, cap, None)?;
             let scopes = ErrorScopes::push(device);
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("image kernel"), source: wgpu::ShaderSource::Wgsl(source.into()) });
             let layout_refs: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(Some).collect();
-            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("image layout"), bind_group_layouts: &layout_refs, immediate_size: 0 });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("image pipeline"), layout: Some(&pl), module: &shader, entry_point: Some(entry), compilation_options: Default::default(), cache: None });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("image layout"), bind_group_layouts: &layout_refs, immediate_size: 0 });
             if let Some(e) = scopes.pop() {
-                return Err(format!("pipeline: {e}"));
+                return Err(format!("shader: {e}"));
             }
-            Ok(ImageKernel { dev, pipeline, layouts, bind_groups: t.bind_groups, uniforms: t.uniforms, texture: t.texture, width, height, workgroup, fuel, cap, tiles: t.tiles, name: name.to_string(), zero_buffers: t.zero_buffers })
+            let pipeline_tiled = tiled_override && t.tiles.len() > 1;
+            let pipeline = make_pipeline(dev, &shader, &pipeline_layout, entry, tiled_override, pipeline_tiled)?;
+            Ok(ImageKernel {
+                dev,
+                pipeline,
+                shader,
+                pipeline_layout,
+                entry: entry.to_string(),
+                tiled_override,
+                pipeline_tiled,
+                layouts,
+                bind_groups: t.bind_groups,
+                uniforms: t.uniforms,
+                texture: t.texture,
+                width,
+                height,
+                workgroup,
+                fuel,
+                cap,
+                tiles: t.tiles,
+                name: name.to_string(),
+                zero_buffers: t.zero_buffers,
+            })
         }
 
-        /// The same compiled pipeline drawing at another size with another case's bindings (no recompile).
-        pub fn resized(&self, bindings: &[BindingData], width: u32, height: u32) -> Result<ImageKernel<'a>, String> {
-            let t = target(self.dev, &self.layouts, bindings, width, height, self.workgroup, &self.fuel, self.cap, None)?;
+        /// This kernel's compiled program over `t` (another size, bindings or plan): the same pipeline, or, when `t`'s
+        /// submits are of the other kind (one, several) and the module declares [`TILED_OVERRIDE`], the pipeline made
+        /// with the other value of it.
+        fn over(&self, t: Target, width: u32, height: u32) -> Result<ImageKernel<'a>, String> {
+            let tiled = self.tiled_override && t.tiles.len() > 1;
+            let pipeline = if tiled == self.pipeline_tiled { self.pipeline.clone() } else { make_pipeline(self.dev, &self.shader, &self.pipeline_layout, &self.entry, self.tiled_override, tiled)? };
             Ok(ImageKernel {
                 dev: self.dev,
-                pipeline: self.pipeline.clone(),
+                pipeline,
+                shader: self.shader.clone(),
+                pipeline_layout: self.pipeline_layout.clone(),
+                entry: self.entry.clone(),
+                tiled_override: self.tiled_override,
+                pipeline_tiled: tiled,
                 layouts: self.layouts.clone(),
                 bind_groups: t.bind_groups,
                 uniforms: t.uniforms,
@@ -684,6 +744,18 @@ mod device {
                 name: self.name.clone(),
                 zero_buffers: t.zero_buffers,
             })
+        }
+
+        /// Whether the pipeline reads the tile uniform: the module does not declare [`TILED_OVERRIDE`] (the uniform is
+        /// always read), or it does and the pass takes several submits.
+        pub fn reads_tile_uniform(&self) -> bool {
+            !self.tiled_override || self.pipeline_tiled
+        }
+
+        /// The same compiled pipeline drawing at another size with another case's bindings (no recompile).
+        pub fn resized(&self, bindings: &[BindingData], width: u32, height: u32) -> Result<ImageKernel<'a>, String> {
+            let t = target(self.dev, &self.layouts, bindings, width, height, self.workgroup, &self.fuel, self.cap, None)?;
+            self.over(t, width, height)
         }
 
         /// Rewrite the bytes of the case's uniform at `(group, binding)` (a pass at another time).
@@ -732,22 +804,7 @@ mod device {
         /// submit of the plan is checked under the work guard before anything is encoded.
         pub fn with_plan(&self, bindings: &[BindingData], plan: &SubmitPlan) -> Result<ImageKernel<'a>, String> {
             let t = target(self.dev, &self.layouts, bindings, self.width, self.height, self.workgroup, &self.fuel, self.cap, Some(plan))?;
-            Ok(ImageKernel {
-                dev: self.dev,
-                pipeline: self.pipeline.clone(),
-                layouts: self.layouts.clone(),
-                bind_groups: t.bind_groups,
-                uniforms: t.uniforms,
-                texture: t.texture,
-                width: self.width,
-                height: self.height,
-                workgroup: self.workgroup,
-                fuel: self.fuel.clone(),
-                cap: self.cap,
-                tiles: t.tiles,
-                name: self.name.clone(),
-                zero_buffers: t.zero_buffers,
-            })
+            self.over(t, self.width, self.height)
         }
 
         /// `warmup` untimed passes, then `repeats` timed ones; the picture is read back after the last. Each pass is

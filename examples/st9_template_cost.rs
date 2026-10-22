@@ -59,8 +59,12 @@ fn bare(src: &str) -> String {
 fn notile(src: &str) -> Result<String, String> {
     let mut s = src.replace("@builtin(global_invocation_id) gid_tile: vec3<u32>", "@builtin(global_invocation_id) gid: vec3<u32>");
     s = s.replace("@builtin(workgroup_id) wid_tile: vec3<u32>", "@builtin(workgroup_id) wid: vec3<u32>");
-    s = s.replace("@builtin(local_invocation_index) lidx: u32", "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>");
-    let lets = ["let wid: vec3<u32> = wid_tile + dispatch_tile.origin.xyz;\n", "let gid: vec3<u32> = gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u);\n", "let nwg: vec3<u32> = dispatch_tile.grid.xyz;\n"];
+    s = s.replace("@builtin(num_workgroups) nwg_tile: vec3<u32>", "@builtin(num_workgroups) nwg: vec3<u32>");
+    let lets = [
+        "let wid: vec3<u32> = select(wid_tile, wid_tile + dispatch_tile.origin.xyz, DISPATCH_TILED);\n",
+        "let gid: vec3<u32> = select(gid_tile, gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u), DISPATCH_TILED);\n",
+        "let nwg: vec3<u32> = select(nwg_tile, dispatch_tile.grid.xyz, DISPATCH_TILED);\n",
+    ];
     for l in lets {
         if !s.contains(l) {
             return Err(format!("our software has a bug: the tiled entry has no line {l:?}"));

@@ -81,9 +81,9 @@ impl Ctx<'_> {
         let module = fuller::wgsl::naga_shape::parse_unscanned(src).map_err(|e| (Stage::Naga, e))?;
         let info = fuller::wgsl::target::Target::current().validate(&module, src).map_err(|e| (Stage::Naga, e))?;
         // Apple's compiler hangs the dispatch on naga's counted loop with a continuing step (docs/reports/2026-10-21_metal_hang_k2):
-        // no kernel of the kingdom may carry it. A test of the text naga writes, not a rewrite.
-        let options = naga::back::msl::Options { lang_version: (2, 4), fake_missing_bindings: true, ..Default::default() };
-        let (msl, _) = naga::back::msl::write_string(&module, &info, &options, &naga::back::msl::PipelineOptions::default()).map_err(|e| (Stage::Naga, format!("msl: {e:?}")))?;
+        // no kernel of the kingdom may carry it. A test of the text naga writes for the device (wgpu's options, the
+        // pipeline constants at their defaults), not a rewrite.
+        let msl = fuller::wgsl::target::metal_source(&module, &info, "main", &[]).map_err(|e| (Stage::Naga, e))?;
         if msl.contains("loop_init") {
             return Err((Stage::Naga, "error: naga wrote a loop with a continuing step (loop_init), the form Apple's compiler hangs on".into()));
         }

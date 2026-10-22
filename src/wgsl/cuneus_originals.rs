@@ -774,6 +774,18 @@ mod tests {
             assert_eq!(d.differing_channels, 0, "{w}x{h}: tiled against one dispatch: {d:?}");
             let o = compare(&a.picture, &reference.picture).expect("same size");
             assert_eq!(o.differing_channels, 0, "{w}x{h}: encoded against the original: {o:?}");
+            // the pipeline constant DISPATCH_TILED: one submit never reads the tile uniform, several do; a plan of the
+            // other kind makes the other pipeline, and every pass still draws the original's picture
+            assert!(!one.reads_tile_uniform() && tiled.reads_tile_uniform(), "{w}x{h}: the one-submit pipeline reads the builtins, the tiled one the tile uniform");
+            let one_tiled = one.with_plan(&bindings, &tiled.plan()).expect("the tiled plan");
+            let back = one_tiled.with_plan(&bindings, &one.plan()).expect("the single plan again");
+            assert!(one_tiled.reads_tile_uniform() && !back.reads_tile_uniform(), "{w}x{h}: the pipeline follows the plan");
+            for (label, kk) in [("one dispatch under the tiled plan", &one_tiled), ("the tiled plan's kernel under the single plan", &back)] {
+                let r = kk.run(0, 1).expect("run");
+                assert_eq!(r.submits, kk.submits());
+                let d = compare(&r.picture, &reference.picture).expect("same size");
+                assert_eq!(d.differing_channels, 0, "{w}x{h}: {label} against the original: {d:?}");
+            }
         }
     }
 
