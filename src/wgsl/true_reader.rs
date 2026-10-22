@@ -157,6 +157,8 @@ struct Reg {
 struct Parr {
     kind: usize,
     n: usize,
+    /// The seed's own length of the array: an index past it reads its last element, as the device restricts it.
+    len: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -542,7 +544,7 @@ impl<'a> Reader<'a> {
             return gap(format!("a private array {}{n}: the kernel needs more than the {} arrays of {} {}", self.parrs[kind].1, self.parr_limit[kind], self.parrs[kind].3, elem.name()));
         }
         self.next_parr[kind] += 1;
-        Ok(Parr { kind, n })
+        Ok(Parr { kind, n, len })
     }
 
     fn ty_of(&self, fr: &Frame<'a>, h: Handle<Expression>) -> &'a TypeInner {
@@ -2076,7 +2078,7 @@ impl<'a> Reader<'a> {
                 let names = [format!("parr.get_{key}"), format!("parr.get_{key}_w")];
                 let leaf = self.leaf(&format!("parr.{prefix}{}", p.n)).ok()?;
                 for (row, args) in self.named_rows(&names, want) {
-                    if let Some(i) = self.val(idx, args[1]) {
+                    if let Some(i) = self.parr_index(idx, args[1], p.len) {
                         return Some(Tree { symbol: row, const_index: None, kids: vec![leaf.clone(), i] });
                     }
                 }
@@ -2239,6 +2241,17 @@ impl<'a> Reader<'a> {
             }
         }
         None
+    }
+
+    /// A private array's index as the kingdom's index type: `min(i, len - 1)`, the device's own restriction.
+    fn parr_index(&mut self, idx: &E, pidx: crate::geneframe::Ty, len: u32) -> Option<Tree> {
+        let tn = self.k.type_name(pidx);
+        let w = tn.ends_with('w');
+        let j = tn.trim_start_matches("u32.pidx_").trim_end_matches('w');
+        let row = *self.rows_by_name.get(&format!("safe.pidx_c_{j}{}", if w { "_w" } else { "" }))?;
+        let last = self.konst(&format!("u32.plast_{j}"), &Lit::U(len.saturating_sub(1)))?;
+        let it = self.val(idx, self.ty(if w { "u32.indexw" } else { "u32.index" }).ok()?)?;
+        Some(Tree { symbol: row, const_index: None, kids: vec![it, last] })
     }
 
     fn wg_base(&mut self, blocks: u32) -> Option<Tree> {
@@ -2419,7 +2432,12 @@ impl<'a> Reader<'a> {
             St::ParrSet(p, i, e) => {
                 let (key, prefix, _, _, _) = self.parrs[p.kind].clone();
                 let leaf = self.leaf(&format!("parr.{prefix}{}", p.n))?;
-                self.stmt_row(&format!("parr.set_{key}_{r}"), vec![leaf], &[i, e])
+                let name = format!("parr.set_{key}_{r}");
+                let row = self.row(&name)?;
+                let pidx = self.k.rows[row as usize].args[1];
+                self.memo.clear();
+                let it = self.parr_index(i, pidx, p.len).ok_or_else(|| ReadError::Gap(format!("the private array index {i:?}")))?;
+                self.stmt_row(&name, vec![leaf, it], &[e])
             }
             St::Store(b, i, e) => self.stmt_row(&format!("store.{b}_{r}"), vec![], &[i, e]),
             St::Discard(e) => {
@@ -2888,6 +2906,22 @@ mod tests {
         assert_eq!(table, want, "the seeds' statuses changed");
         let reads = table.lines().filter(|l| l.split('\t').nth(1) == Some("reads")).count();
         println!("{reads} of {} seeds read", table.lines().count() - 1);
+    }
+
+    /// `UI1_DUMP=<set/name>`: print that seed's expressed module (the text its genes render), for reading by eye.
+    #[test]
+    fn dump_one_seed_when_asked() {
+        let Ok(want) = std::env::var("UI1_DUMP") else { return };
+        let k = kingdom();
+        let c = contract();
+        for (set, name, text) in seeds() {
+            if format!("{set}/{name}") == want {
+                let trees = read_module(&k, &text, &c).expect("reads");
+                let m = crate::wgsl::true_module::TrueModule::new(&k, &trees.iter().map(|t| functions(t, &k)).collect::<Vec<_>>()).expect("module");
+                let tree = m.module_tree(trees).expect("tree");
+                println!("{}", k.render(&tree).expect("render"));
+            }
+        }
     }
 
     #[test]

@@ -74,11 +74,20 @@ fn main() -> Result<(), String> {
     }
     let k = Arc::new(TrueKingdom::load(&default_dir().join("mod").join("v24"))?);
     let contract = Contract::parse(&std::fs::read_to_string(problem_dir.join("safety.contract")).map_err(|e| format!("safety.contract: {e}"))?, &FIELDS)?;
-    let case = problem.cases_of("cases/admission.toml")?.into_iter().next().ok_or("no admission case")?;
+    let mut case = problem.cases_of("cases/admission.toml")?.into_iter().next().ok_or("no admission case")?;
+    // `--set name=value`: a case parameter replaced (a smaller run of the same program on the same files, when a
+    // dispatch of the admission case is over the work guard's cap)
+    for (i, a) in args.iter().enumerate() {
+        if a == "--set" {
+            let kv = args.get(i + 1).ok_or("--set name=value")?;
+            let (n, v) = kv.split_once('=').ok_or_else(|| format!("--set {kv}: not name=value"))?;
+            case.params.insert(n.to_string(), v.parse::<f64>().map_err(|e| format!("--set {kv}: {e}"))?);
+        }
+    }
     let out = problem.pooled_output().cloned().ok_or("the problem has no pooled_recall output")?;
     let oi = problem.spec.output.iter().position(|o| o.name == out.name).ok_or("the pooled output is not the problem's")?;
     let dev = Device::new()?;
-    println!("[{}] {} case {}; {} kernels; {runs} fresh runs a text", stamp(), problem.spec.name, case.label, kernels.len());
+    println!("[{}] {} case {} {:?}; {} kernels; {runs} fresh runs a text", stamp(), problem.spec.name, case.label, case.params.iter().filter(|(k, _)| ["stages", "per_section", "n_queries"].contains(&k.as_str())).collect::<Vec<_>>(), kernels.len());
     println!("kernel\tstatus\tdetail");
     for path in &kernels {
         let name = std::path::Path::new(path).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();

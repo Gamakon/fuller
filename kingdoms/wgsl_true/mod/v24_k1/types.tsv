@@ -354,9 +354,13 @@ T0352	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a li
 T0353	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
 T0354	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
 T0355	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T0356	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
-T0357	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
-T0358	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
-T0359	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
-T0360	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
-T0361	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2111
+T0356	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
+T0357	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
+T0358	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
+T0359	u32.plast_8	u32	plast_8	1	the last index of a private array held in a 256-element array: a bare literal	0..=255
+T0360	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
+T0361	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
+T0362	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
+T0363	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
+T0364	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
+T0365	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2111

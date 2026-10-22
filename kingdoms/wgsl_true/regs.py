@@ -77,6 +77,14 @@ def set_rungs():
 def build(iface):
     for j, mask in PIDX.items():
         R(f"safe.pidx_{j}", f"u32.pidx_{j}", ["u32.index"], f"(({{0}}) & {mask}u)", "the mask is the row's text; one index type per array length", twin=True)
+        if iface.get("module"):
+            # the device's restriction of a private array's index to its last element (a seed's array of L elements
+            # read past its end reads element L - 1): min(i, last) with last below the kingdom array's length
+            T(f"u32.plast_{j}", f"the last index of a private array held in a {mask + 1}-element array: a bare literal", 1, f"0..={mask}")
+            SAFE_ARGS.add(f"u32.plast_{j}")
+            C(f"literal.plast_{j}", f"u32.plast_{j}", "{v}u", [str(i) for i in range(mask + 1)], f"?_plast_{j}")
+            R(f"own.u32_plast_{j}", f"u32.plast_{j}", [], "0u")
+            R(f"safe.pidx_c_{j}", f"u32.pidx_{j}", ["u32.index", f"u32.plast_{j}"], "min({0}, {1})", "the index restricted to the array's last element, as the device restricts it", twin=True)
         R(f"own.u32_pidx_{j}", f"u32.pidx_{j}", [], "0u")
         R(f"own.u32_pidx_{j}w", f"u32.pidx_{j}w", [], "0u")
     # ---- registers
