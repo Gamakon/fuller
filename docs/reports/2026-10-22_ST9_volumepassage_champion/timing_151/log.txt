@@ -1,0 +1,76 @@
+## 08:31:22 start; load 4.33 4.82 3.45; fuller 37cc49cb
+# 08:31:22Z ST9 champion timing	hall of fame generation 3000, 5 entries	151 rounds	sizes [256, 512]	seed 2
+# rank 1	HFF 0.268261	492 nodes	work bound 36658 an invocation (original 36658)	text differs from the encoded original
+# rank 2	HFF 0.268409	492 nodes	work bound 36658 an invocation (original 36658)	text differs from the encoded original
+# rank 3	HFF 0.268711	492 nodes	work bound 36658 an invocation (original 36658)	text differs from the encoded original
+# rank 4	HFF 0.269090	492 nodes	work bound 36658 an invocation (original 36658)	text differs from the encoded original
+# rank 5	HFF 0.269320	492 nodes	work bound 36658 an invocation (original 36658)	text differs from the encoded original
+device Apple M3 Max (Metal): max_storage_buffer_binding_size 4294967292 bytes, max_buffer_size 4294967295 bytes (the adapter's)
+# device Apple M3 Max (Metal)
+# 08:31:22Z size 256x256: compile
+# 08:31:23Z size 256x256: 13 kernels, 151 rounds
+256	shipped.one   	 1 submits	GPU ms median 0.2610 p10 0.2607 p90 0.2615	wall median 0.4471
+256	encoded.tiled 	16 submits	GPU ms median 0.7929 p10 0.7441 p90 0.8116	wall median 3.8115
+256	encoded.one   	 1 submits	GPU ms median 0.2610 p10 0.2607 p90 0.2615	wall median 0.4478
+256	rank1.tiled   	16 submits	GPU ms median 0.7736 p10 0.7277 p90 0.7920	wall median 3.7835
+256	rank1.one     	 1 submits	GPU ms median 0.2615 p10 0.2612 p90 0.2620	wall median 0.4482
+256	rank2.tiled   	16 submits	GPU ms median 0.7788 p10 0.7350 p90 0.7977	wall median 3.7892
+256	rank2.one     	 1 submits	GPU ms median 0.2610 p10 0.2606 p90 0.2615	wall median 0.4469
+256	rank3.tiled   	16 submits	GPU ms median 0.7866 p10 0.7394 p90 0.8055	wall median 3.7965
+256	rank3.one     	 1 submits	GPU ms median 0.2610 p10 0.2607 p90 0.2615	wall median 0.4478
+256	rank4.tiled   	16 submits	GPU ms median 0.7752 p10 0.7330 p90 0.7949	wall median 3.7945
+256	rank4.one     	 1 submits	GPU ms median 0.2615 p10 0.2611 p90 0.2620	wall median 0.4479
+256	rank5.tiled   	16 submits	GPU ms median 0.7854 p10 0.7376 p90 0.8018	wall median 3.7947
+256	rank5.one     	 1 submits	GPU ms median 0.2617 p10 0.2615 p90 0.2622	wall median 0.4491
+256	encoded.tiled / shipped.one	ratio median 3.0303 [95 % 3.0142, 3.0425]	faster in 0, slower in 151 of 151	sign p 7.006e-46
+256	encoded.one / shipped.one	ratio median 0.9997 [95 % 0.9994, 0.9998]	faster in 89, slower in 57 of 151	sign p 1.006e-2
+256	rank1.tiled / encoded.tiled	ratio median 0.9777 [95 % 0.9723, 0.9806]	faster in 124, slower in 27 of 151	sign p 4.686e-16
+256	rank1.one / shipped.one	ratio median 1.0016 [95 % 1.0014, 1.0019]	faster in 16, slower in 132 of 151	sign p 6.953e-24
+256	rank1.one / encoded.one	ratio median 1.0019 [95 % 1.0018, 1.0024]	faster in 16, slower in 134 of 151	sign p 2.176e-24
+256	rank2.tiled / encoded.tiled	ratio median 0.9835 [95 % 0.9772, 0.9894]	faster in 106, slower in 45 of 151	sign p 7.494e-7
+256	rank2.one / shipped.one	ratio median 0.9997 [95 % 0.9992, 1.0000]	faster in 88, slower in 59 of 151	sign p 2.061e-2
+256	rank2.one / encoded.one	ratio median 0.9997 [95 % 0.9995, 1.0000]	faster in 84, slower in 64 of 151	sign p 1.180e-1
+256	rank3.tiled / encoded.tiled	ratio median 0.9941 [95 % 0.9879, 0.9984]	faster in 93, slower in 58 of 151	sign p 5.482e-3
+256	rank3.one / shipped.one	ratio median 0.9998 [95 % 0.9997, 1.0002]	faster in 80, slower in 66 of 151	sign p 2.819e-1
+256	rank3.one / encoded.one	ratio median 1.0000 [95 % 0.9998, 1.0003]	faster in 68, slower in 75 of 151	sign p 6.160e-1
+256	rank4.tiled / encoded.tiled	ratio median 0.9775 [95 % 0.9731, 0.9861]	faster in 111, slower in 40 of 151	sign p 6.474e-9
+256	rank4.one / shipped.one	ratio median 1.0017 [95 % 1.0013, 1.0021]	faster in 21, slower in 128 of 151	sign p 6.459e-20
+256	rank4.one / encoded.one	ratio median 1.0021 [95 % 1.0018, 1.0022]	faster in 22, slower in 128 of 151	sign p 2.222e-19
+256	rank5.tiled / encoded.tiled	ratio median 0.9903 [95 % 0.9874, 0.9960]	faster in 97, slower in 54 of 151	sign p 5.846e-4
+256	rank5.one / shipped.one	ratio median 1.0027 [95 % 1.0024, 1.0030]	faster in 8, slower in 142 of 151	sign p 7.800e-33
+256	rank5.one / encoded.one	ratio median 1.0030 [95 % 1.0027, 1.0034]	faster in 10, slower in 140 of 151	sign p 1.763e-30
+# 08:31:27Z size 512x512: compile
+# 08:31:28Z size 512x512: 13 kernels, 151 rounds
+512	shipped.one   	 1 submits	GPU ms median 0.9728 p10 0.9723 p90 0.9777	wall median 1.1968
+512	encoded.tiled 	64 submits	GPU ms median 3.1618 p10 3.0205 p90 3.2209	wall median 15.5000
+512	encoded.one   	 1 submits	GPU ms median 0.9698 p10 0.9693 p90 0.9751	wall median 1.1975
+512	rank1.tiled   	64 submits	GPU ms median 3.1434 p10 3.0048 p90 3.2041	wall median 15.4843
+512	rank1.one     	 1 submits	GPU ms median 0.9728 p10 0.9723 p90 0.9781	wall median 1.1970
+512	rank2.tiled   	64 submits	GPU ms median 3.1304 p10 2.9947 p90 3.1969	wall median 15.4103
+512	rank2.one     	 1 submits	GPU ms median 0.9707 p10 0.9702 p90 0.9757	wall median 1.1976
+512	rank3.tiled   	64 submits	GPU ms median 3.1416 p10 2.9888 p90 3.2186	wall median 15.5023
+512	rank3.one     	 1 submits	GPU ms median 0.9706 p10 0.9702 p90 0.9756	wall median 1.1996
+512	rank4.tiled   	64 submits	GPU ms median 3.1545 p10 3.0205 p90 3.2232	wall median 15.4748
+512	rank4.one     	 1 submits	GPU ms median 0.9727 p10 0.9722 p90 0.9775	wall median 1.1993
+512	rank5.tiled   	64 submits	GPU ms median 3.1203 p10 2.9646 p90 3.1896	wall median 15.4065
+512	rank5.one     	 1 submits	GPU ms median 0.9722 p10 0.9718 p90 0.9770	wall median 1.1972
+512	encoded.tiled / shipped.one	ratio median 3.2400 [95 % 3.2168, 3.2497]	faster in 0, slower in 151 of 151	sign p 7.006e-46
+512	encoded.one / shipped.one	ratio median 0.9968 [95 % 0.9967, 0.9970]	faster in 133, slower in 18 of 151	sign p 7.322e-23
+512	rank1.tiled / encoded.tiled	ratio median 0.9994 [95 % 0.9919, 1.0028]	faster in 77, slower in 74 of 151	sign p 8.708e-1
+512	rank1.one / shipped.one	ratio median 1.0000 [95 % 0.9998, 1.0001]	faster in 79, slower in 72 of 151	sign p 6.255e-1
+512	rank1.one / encoded.one	ratio median 1.0032 [95 % 1.0031, 1.0033]	faster in 13, slower in 138 of 151	sign p 1.547e-27
+512	rank2.tiled / encoded.tiled	ratio median 0.9942 [95 % 0.9878, 0.9967]	faster in 101, slower in 50 of 151	sign p 4.037e-5
+512	rank2.one / shipped.one	ratio median 0.9977 [95 % 0.9976, 0.9979]	faster in 130, slower in 21 of 151	sign p 2.175e-20
+512	rank2.one / encoded.one	ratio median 1.0009 [95 % 1.0008, 1.0011]	faster in 22, slower in 129 of 151	sign p 1.299e-19
+512	rank3.tiled / encoded.tiled	ratio median 0.9950 [95 % 0.9911, 0.9982]	faster in 91, slower in 60 of 151	sign p 1.436e-2
+512	rank3.one / shipped.one	ratio median 0.9978 [95 % 0.9976, 0.9979]	faster in 134, slower in 17 of 151	sign p 9.743e-24
+512	rank3.one / encoded.one	ratio median 1.0009 [95 % 1.0008, 1.0010]	faster in 20, slower in 126 of 151	sign p 5.407e-20
+512	rank4.tiled / encoded.tiled	ratio median 1.0013 [95 % 0.9955, 1.0040]	faster in 74, slower in 77 of 151	sign p 8.708e-1
+512	rank4.one / shipped.one	ratio median 0.9999 [95 % 0.9997, 1.0001]	faster in 84, slower in 65 of 151	sign p 1.401e-1
+512	rank4.one / encoded.one	ratio median 1.0030 [95 % 1.0029, 1.0031]	faster in 18, slower in 133 of 151	sign p 7.322e-23
+512	rank5.tiled / encoded.tiled	ratio median 0.9888 [95 % 0.9826, 0.9912]	faster in 106, slower in 45 of 151	sign p 7.494e-7
+512	rank5.one / shipped.one	ratio median 0.9994 [95 % 0.9993, 0.9995]	faster in 120, slower in 31 of 151	sign p 1.471e-13
+512	rank5.one / encoded.one	ratio median 1.0025 [95 % 1.0024, 1.0027]	faster in 18, slower in 133 of 151	sign p 7.322e-23
+# 08:31:44Z size 200x136: compile
+# 08:31:44Z done: /private/tmp/claude-501/st9time/out_rep
+## 08:31:45 exit 0; load 3.96 4.70 3.44; WindowServer 645
