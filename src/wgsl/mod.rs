@@ -65,6 +65,7 @@ pub mod karva_seed;
 pub mod true_gram;
 pub mod true_kingdom;
 pub mod true_share;
+pub mod true_opt;
 pub mod typed_gene;
 pub mod target;
 pub mod versions;

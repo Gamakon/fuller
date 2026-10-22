@@ -53,17 +53,92 @@ impl Pat {
     }
 }
 
+/// What a rule claims about the programs it makes equal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Claim {
+    /// Both sides compute the same IEEE value bit for bit on every input (`a + b` and `b + a`, `a - b` and `a + (-b)`,
+    /// `-(-a)` and `a`).
+    Exact,
+    /// Equal as real-number programs only: rounding, NaN or overflow can differ (`fma`, `pow(a, 2.0)`, `exp(log(a))`).
+    Real,
+}
+
 /// The rules generated from a table.
 #[derive(Debug, Clone)]
 pub struct Rules {
     /// `(name, egglog command)`.
     rules: Vec<(String, String)>,
+    /// What each rule claims, by position.
+    claims: Vec<Claim>,
 }
 
 impl Rules {
     /// The rule names made from this table, in order.
     pub fn made(&self) -> Vec<String> {
         self.rules.iter().map(|(n, _)| n.clone()).collect()
+    }
+
+    /// Each rule's name and claim, in order.
+    pub fn claimed(&self) -> Vec<(String, Claim)> {
+        self.rules.iter().zip(&self.claims).map(|((n, _), c)| (n.clone(), *c)).collect()
+    }
+
+    /// The rules whose claim is [`Claim::Exact`].
+    pub fn exact_only(&self) -> Rules {
+        let keep: Vec<usize> = (0..self.rules.len()).filter(|i| self.claims[*i] == Claim::Exact).collect();
+        Rules { rules: keep.iter().map(|i| self.rules[*i].clone()).collect(), claims: keep.iter().map(|i| self.claims[*i]).collect() }
+    }
+
+    /// The claim of a rule made by [`Rules::from_table`], by its name: commutativity of `add` and `mul`, `sub` as `add`
+    /// of `neg` and the scalar-times-vector splat are exact in IEEE arithmetic; `min`/`max` commutativity (NaN), `fma`
+    /// and `mix` (one rounding against two) and `square` (`pow` is not `x * x`) are real-number equalities.
+    fn claim_of(name: &str) -> Claim {
+        if name.starts_with("commute.add") || name.starts_with("commute.mul") || name.starts_with("sub") || name.starts_with("scale") || name.starts_with("negneg") {
+            Claim::Exact
+        } else {
+            Claim::Real
+        }
+    }
+
+    /// [`Rules::from_table`] and the rules that remove work, each a one-way rewrite whose both sides are rows of the
+    /// same type, per lane count where the rows exist: `-(-a)` to `a` (exact), `sqrt(a * a)` to `abs(a)`, `exp(log(a))`
+    /// to `a` and `exp2(log2(a))` to `a` (real: overflow and the domain of `log` differ).
+    pub fn work(k: &TrueKingdom) -> Rules {
+        let mut r = Rules::from_table(k);
+        let id = |name: &str| k.rows.iter().position(|r| r.name == name).map(|i| i as u32);
+        let unary = |name: &str| -> Option<(u32, crate::geneframe::Ty)> {
+            let s = id(name)?;
+            let row = &k.rows[s as usize];
+            (row.args.len() == 1 && row.args[0] == row.out).then_some((s, row.out))
+        };
+        let a = Pat::Var("a");
+        for sfx in ["", "_v2", "_v3", "_v4"] {
+            let op = |o: &str| unary(&format!("arith.{o}{sfx}"));
+            let mul = id(&format!("arith.mul{sfx}")).filter(|s| {
+                let row = &k.rows[*s as usize];
+                row.args.len() == 2 && row.args.iter().all(|t| *t == row.out)
+            });
+            let mut push = |name: String, text: String| {
+                r.claims.push(Rules::claim_of(&name));
+                r.rules.push((name, text));
+            };
+            if let Some((neg, _)) = op("neg") {
+                push(format!("negneg{sfx}"), format!("(rewrite {} {})", Pat::Row(neg, vec![Pat::Row(neg, vec![a.clone()])]).text(), a.text()));
+            }
+            if let (Some((sq, t)), Some((ab, t2)), Some(mu)) = (op("sqrt"), op("abs"), mul) {
+                if t == t2 && k.rows[mu as usize].out == t {
+                    push(format!("sqrt_square{sfx}"), format!("(rewrite {} {})", Pat::Row(sq, vec![Pat::Row(mu, vec![a.clone(), a.clone()])]).text(), Pat::Row(ab, vec![a.clone()]).text()));
+                }
+            }
+            for (e, l) in [("exp", "log"), ("exp2", "log2")] {
+                if let (Some((ex, t)), Some((lo, t2))) = (op(e), op(l)) {
+                    if t == t2 {
+                        push(format!("{e}_{l}{sfx}"), format!("(rewrite {} {})", Pat::Row(ex, vec![Pat::Row(lo, vec![a.clone()])]).text(), a.text()));
+                    }
+                }
+            }
+        }
+        r
     }
 
     pub fn len(&self) -> usize {
@@ -138,7 +213,8 @@ impl Rules {
                 }
             }
         }
-        Rules { rules }
+        let claims = rules.iter().map(|(n, _)| Rules::claim_of(n)).collect();
+        Rules { rules, claims }
     }
 }
 
@@ -252,6 +328,59 @@ impl Equivalents {
         let classes: BTreeMap<String, Vec<Member>> = classes.into_iter().map(|(c, ms)| (c, ms.into_iter().collect())).collect();
         let choice_classes = classes.values().filter(|ms| ms.len() > 1).count();
         Ok(Equivalents { classes_total: classes.len(), classes, original_class, original_member, root, choice_classes, iterations: done })
+    }
+
+    /// The cheapest program of the e-graph: at every class the member of least total cost (`cost` of each node's row,
+    /// summed over the tree it spells), the original member wherever it ties. Costs are found by a fixed point over the
+    /// classes; every node costs at least one, so a chosen member's children cost strictly less and the tree is finite.
+    pub fn cheapest(&self, cost: &dyn Fn(u32) -> u64) -> Result<Tree, String> {
+        let mut best: BTreeMap<&str, (u64, &Member)> = BTreeMap::new();
+        let mut rounds = 0usize;
+        loop {
+            let mut changed = false;
+            for (c, ms) in &self.classes {
+                for m in ms {
+                    let mut total = cost(m.symbol).max(1);
+                    let mut known = true;
+                    for kid in &m.kids {
+                        match best.get(kid.as_str()) {
+                            Some((v, _)) => total = total.saturating_add(*v),
+                            None => {
+                                known = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !known {
+                        continue;
+                    }
+                    let is_original = self.original_member.get(c).is_some_and(|o| o == m);
+                    let better = match best.get(c.as_str()) {
+                        None => true,
+                        Some((v, cur)) => total < *v || (total == *v && is_original && self.original_member.get(c) != Some(*cur)),
+                    };
+                    if better {
+                        best.insert(c.as_str(), (total, m));
+                        changed = true;
+                    }
+                }
+            }
+            rounds += 1;
+            if !changed {
+                break;
+            }
+            if rounds > self.classes.len() + 8 {
+                return Err("our software has a bug: the cheapest-program costs did not settle".into());
+            }
+        }
+        fn build(class: &str, best: &BTreeMap<&str, (u64, &Member)>, depth: usize) -> Result<Tree, String> {
+            if depth > 100_000 {
+                return Err("our software has a bug: the cheapest program does not end".into());
+            }
+            let (_, m) = best.get(class).ok_or_else(|| format!("our software has a bug: class {class} has no finite program"))?;
+            Ok(Tree { symbol: m.symbol, const_index: m.const_index, kids: m.kids.iter().map(|c| build(c, best, depth + 1)).collect::<Result<_, _>>()? })
+        }
+        build(&self.root, &best, 0)
     }
 
     /// Classes of the original tree's nodes that have another member: where a draw can differ from the original.
