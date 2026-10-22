@@ -16,7 +16,9 @@
 //! The interpreter beside it (`interp.rs`) runs one invocation of a folded
 //! chromosome alone; this one runs the rendered text. Not here: images,
 //! ray queries, subgroup operations (a kernel using one is refused by name),
-//! f16, 64-bit values.
+//! 64-bit values, f16 buffers. An f16 value is its bits ([`Val::H`]); an
+//! operation on f16 operands is computed in f32 and rounded to the nearest
+//! f16 (`in_f16`).
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -27,6 +29,9 @@ use naga::{AddressSpace, BinaryOperator, Block, Expression, Function, Handle, Ma
 #[derive(Debug, Clone, PartialEq)]
 pub enum Val {
     F(f32),
+    /// An f16 by its bits: carried (initialised, loaded, stored, selected, composed), never computed; an operation on
+    /// one is an error, so a kernel that computes in f16 does not run here.
+    H(u16),
     U(u32),
     I(i32),
     B(bool),
@@ -78,6 +83,8 @@ impl Val {
     pub fn words(&self, out: &mut Vec<u32>) {
         match self {
             Val::F(v) => out.push(v.to_bits()),
+            // The executor binds no f16 buffer; a lone f16 is its bits in the low half of a word.
+            Val::H(v) => out.push(u32::from(*v)),
             Val::U(v) => out.push(*v),
             Val::I(v) => out.push(*v as u32),
             Val::B(b) => out.push(u32::from(*b)),
@@ -91,8 +98,8 @@ impl Val {
 /// The zero value of a type.
 pub fn zero(module: &Module, ty: Handle<naga::Type>) -> Result<Val, String> {
     Ok(match &module.types[ty].inner {
-        TypeInner::Scalar(s) | TypeInner::Atomic(s) => scalar_zero(s.kind)?,
-        TypeInner::Vector { size, scalar } => Val::V(vec![scalar_zero(scalar.kind)?; *size as usize]),
+        TypeInner::Scalar(s) | TypeInner::Atomic(s) => scalar_zero(*s)?,
+        TypeInner::Vector { size, scalar } => Val::V(vec![scalar_zero(*scalar)?; *size as usize]),
         TypeInner::Matrix { columns, rows, .. } => Val::M(vec![vec![0.0; *rows as usize]; *columns as usize]),
         TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } => Val::V(vec![zero(module, *base)?; n.get() as usize]),
         TypeInner::Array { size: naga::ArraySize::Dynamic, .. } => Val::V(Vec::new()),
@@ -101,8 +108,9 @@ pub fn zero(module: &Module, ty: Handle<naga::Type>) -> Result<Val, String> {
     })
 }
 
-fn scalar_zero(k: ScalarKind) -> Result<Val, String> {
-    Ok(match k {
+fn scalar_zero(s: naga::Scalar) -> Result<Val, String> {
+    Ok(match s.kind {
+        ScalarKind::Float if s.width == 2 => Val::H(0),
         ScalarKind::Float => Val::F(0.0),
         ScalarKind::Uint => Val::U(0),
         ScalarKind::Sint => Val::I(0),
@@ -121,6 +129,7 @@ pub fn from_words(module: &Module, elem: Handle<naga::Type>, words: &[u32]) -> R
         fn go(z: &Val, it: &mut std::slice::Iter<u32>) -> Val {
             match z {
                 Val::F(_) => Val::F(f32::from_bits(*it.next().unwrap_or(&0))),
+                Val::H(_) => Val::H(*it.next().unwrap_or(&0) as u16),
                 Val::U(_) => Val::U(*it.next().unwrap_or(&0)),
                 Val::I(_) => Val::I(*it.next().unwrap_or(&0) as i32),
                 Val::B(_) => Val::B(*it.next().unwrap_or(&0) != 0),
@@ -508,7 +517,7 @@ fn round_even(x: f32) -> f32 {
 }
 
 /// f32 to the bits of the nearest f16 (ties to even), as WGSL's pack2x16float.
-fn f16_bits(x: f32) -> u32 {
+pub(crate) fn f16_bits(x: f32) -> u32 {
     let b = x.to_bits();
     let sign = (b >> 16) & 0x8000;
     let exp = ((b >> 23) & 0xff) as i32;
@@ -778,6 +787,44 @@ fn math(fun: MathFunction, args: &[Val]) -> Result<Val, String> {
     }
 }
 
+/// Whether a value holds an f16.
+fn has_f16(v: &Val) -> bool {
+    match v {
+        Val::H(_) => true,
+        Val::V(x) => x.iter().any(has_f16),
+        _ => false,
+    }
+}
+
+/// Every f16 as the f32 of the same value.
+fn widen_f16(v: &Val) -> Val {
+    match v {
+        Val::H(h) => Val::F(f16_value(u32::from(*h))),
+        Val::V(x) => Val::V(x.iter().map(widen_f16).collect()),
+        o => o.clone(),
+    }
+}
+
+/// Every f32 rounded to the nearest f16 (ties to even).
+fn narrow_f16(v: &Val) -> Val {
+    match v {
+        Val::F(x) => Val::H(f16_bits(*x) as u16),
+        Val::V(x) => Val::V(x.iter().map(narrow_f16).collect()),
+        o => o.clone(),
+    }
+}
+
+/// An operation over f16 operands: computed in f32 and its float result rounded to f16 (one rounding of the exact
+/// f32 result; for `+ - * /` and `sqrt` that is the correctly rounded f16, since f32 carries more than twice f16's
+/// significand). An operation with no f16 operand is `op` itself.
+fn in_f16(args: &[Val], op: impl Fn(&[Val]) -> Result<Val, String>) -> Result<Val, String> {
+    if !args.iter().any(has_f16) {
+        return op(args);
+    }
+    let wide: Vec<Val> = args.iter().map(widen_f16).collect();
+    Ok(narrow_f16(&op(&wide)?))
+}
+
 fn convert(v: &Val, kind: ScalarKind, bitcast: bool) -> Result<Val, String> {
     if let Val::V(x) = v {
         return Ok(Val::V(x.iter().map(|e| convert(e, kind, bitcast)).collect::<Result<_, _>>()?));
@@ -1026,7 +1073,7 @@ impl<'m> Machine<'m> {
             ty = match &self.module.types[ty].inner {
                 TypeInner::Array { base, .. } => *base,
                 TypeInner::Struct { members, .. } => members.get(i as usize).ok_or("cpu: a struct member out of range")?.ty,
-                TypeInner::Vector { scalar, .. } => return scalar_zero(scalar.kind),
+                TypeInner::Vector { scalar, .. } => return scalar_zero(*scalar),
                 TypeInner::Matrix { rows, .. } => return Ok(Val::V(vec![Val::F(0.0); *rows as usize])),
                 other => return Err(format!("cpu: a path into {other:?}")),
             };
@@ -1120,7 +1167,7 @@ impl<'m> Machine<'m> {
             }
             Expression::Unary { op, expr } => {
                 let v = self.eval(inv, fr, *expr)?;
-                unary(*op, &v)?
+                in_f16(&[v], |a| unary(*op, &a[0]))?
             }
             // WGSL's `||` and `&&` short-circuit: the right side is
             // evaluated only when the left does not decide (`j == 0u ||
@@ -1135,7 +1182,7 @@ impl<'m> Machine<'m> {
             }
             Expression::Binary { op, left, right } => {
                 let (a, b) = (self.eval(inv, fr, *left)?, self.eval(inv, fr, *right)?);
-                binary(*op, &a, &b)?
+                in_f16(&[a, b], |x| binary(*op, &x[0], &x[1]))?
             }
             Expression::Select { condition, accept, reject } => {
                 let c = self.eval(inv, fr, *condition)?;
@@ -1144,14 +1191,22 @@ impl<'m> Machine<'m> {
             }
             Expression::Math { fun, arg, arg1, arg2, arg3 } => {
                 let args = [Some(*arg), *arg1, *arg2, *arg3].into_iter().flatten().map(|a| self.eval(inv, fr, a)).collect::<Result<Vec<_>, _>>()?;
-                math(*fun, &args)?
+                in_f16(&args, |x| math(*fun, x))?
             }
             Expression::As { expr, kind, convert: c } => {
                 let v = self.eval(inv, fr, *expr)?;
-                convert(&v, *kind, c.is_none())?
+                if c.is_none() && has_f16(&v) {
+                    return Err(format!("cpu: a bitcast of the f16 {v:?}"));
+                }
+                let out = convert(&widen_f16(&v), *kind, c.is_none())?;
+                if *kind == ScalarKind::Float && *c == Some(2) {
+                    narrow_f16(&out)
+                } else {
+                    out
+                }
             }
             Expression::Relational { fun, argument } => {
-                let v = self.eval(inv, fr, *argument)?;
+                let v = widen_f16(&self.eval(inv, fr, *argument)?);
                 let lanes: Vec<Val> = match v {
                     Val::V(x) => x,
                     s => vec![s],
@@ -1553,6 +1608,7 @@ enum Flow {
 fn literal(l: &naga::Literal) -> Result<Val, String> {
     Ok(match l {
         naga::Literal::F32(x) => Val::F(*x),
+        naga::Literal::F16(x) => Val::H(x.to_bits()),
         naga::Literal::U32(x) => Val::U(*x),
         naga::Literal::I32(x) => Val::I(*x),
         naga::Literal::Bool(b) => Val::B(*b),

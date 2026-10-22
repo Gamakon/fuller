@@ -55,6 +55,7 @@ fn next(state: &mut u64) -> u64 {
 fn fill(z: &Val, state: &mut u64, lo: u32) -> Val {
     match z {
         Val::F(_) => Val::F((next(state) % 128) as f32 / 64.0 - 1.0),
+        Val::H(_) => Val::H(crate::wgsl::cpu::f16_bits((next(state) % 128) as f32 / 64.0 - 1.0) as u16),
         Val::U(_) => Val::U(lo + (next(state) % u64::from(16 - lo)) as u32),
         Val::I(_) => Val::I((next(state) % 16) as i32 - 8),
         Val::B(_) => Val::B(next(state) % 2 == 1),

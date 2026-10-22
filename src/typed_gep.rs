@@ -449,7 +449,7 @@ pub struct Expressed {
 }
 
 /// An expression as a tree of symbols.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tree {
     pub symbol: SymbolId,
     pub const_index: Option<u32>,
