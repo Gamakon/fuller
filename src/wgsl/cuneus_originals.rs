@@ -757,6 +757,33 @@ mod tests {
         }
     }
 
+    /// Forty kernels alive at once (a pipeline cache), each at two sizes, and every single timed pass of each reads a
+    /// GPU time above zero: a query set lives for one call and is written before its timed pass (2026-10-22: one per
+    /// kernel exhausted Metal's counter sample buffers at 32, and a fresh query set's first pass read 0 ns).
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn forty_kernels_alive_each_time_a_single_pass_above_zero_on_the_device() {
+        use crate::wgsl::image::ImageKernel;
+        use crate::wgsl::oracle::device::Device;
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
+        let src = k.render(&tree).expect("render");
+        let fuel = k.tree_fuel(&tree).expect("bound");
+        let dev = Device::new().expect("device");
+        let mut alive = Vec::new();
+        for _ in 0..40 {
+            let a = ImageKernel::compile(&dev, "encoded", &src, "main", &case_bindings("volumepassage", 5.0, 16, 16).expect("bindings"), 16, 16, fuel.clone()).expect("compile");
+            let b = a.resized(&case_bindings("volumepassage", 5.0, 24, 8).expect("bindings"), 24, 8).expect("resized");
+            alive.push((a, b));
+        }
+        for (a, b) in &alive {
+            for kk in [a, b] {
+                let (_, gpu) = kk.passes(0, 1).expect("one pass");
+                assert!(gpu[0] > 0.0, "a single timed pass read {} ms", gpu[0]);
+            }
+        }
+    }
+
     #[test]
     fn a_missing_row_is_a_named_gap_never_a_substitute() {
         let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
