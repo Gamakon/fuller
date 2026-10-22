@@ -9,7 +9,9 @@ Input: DUMP_DIR/gNNNNNN.bin, one file per generation, little-endian u32 words
           then n_t triples (type code, W_T, h_T+t_T)
   record  generation, row, HFF f32, picture_exact (1/0/0xFFFFFFFF), GPU ms f32 (NaN unknown),
           born, hof, cells_cut, node_count; (a) C u32 symbols padded 0xFFFFFFFF;
-          (b) B u32 subtree-hash bucket counts; (c) I f32 HFF inputs (NaN unknown)
+          (b) B u32 subtree-hash bucket counts; (c) I f32 HFF inputs (NaN unknown);
+          (d, version 2) 4 u32 lineage: first parent, second parent (0xFFFFFFFF none),
+          operator (0 one-parent child, 1 one-point, 2 two-point, 3 gene, 4 subtree, 5 copies), mutated
 
 Three point sets, one row per individual:
   st9p3_cells      (a) as a ONE-HOT over (cell position, symbol) pairs seen in the loaded dumps
@@ -59,10 +61,11 @@ def read_dump(path):
     if len(w) < HEADER or (int(w[0]) | (int(w[1]) << 32)) != MAGIC:
         raise SystemExit(f"{path}: not an ST8BDMP1 dump")
     version, gen, rows, n_t, b, i, rec, c = (int(x) for x in w[2:10])
-    if version != 1:
-        raise SystemExit(f"{path}: dump version {version}, this loader reads 1")
-    if rec != FIXED + c + b + i:
-        raise SystemExit(f"{path}: record_words {rec} != 9 + C {c} + B {b} + I {i}")
+    if version not in (1, 2):
+        raise SystemExit(f"{path}: dump version {version}, this loader reads 1 and 2")
+    lin = 4 if version == 2 else 0
+    if rec != FIXED + c + b + i + lin:
+        raise SystemExit(f"{path}: record_words {rec} != 9 + C {c} + B {b} + I {i} + lineage {lin}")
     types = w[HEADER:HEADER + 3 * n_t].reshape(n_t, 3)
     if int(types[:, 1].sum()) != c:
         raise SystemExit(f"{path}: per-type widths sum {int(types[:, 1].sum())} != C {c}")
@@ -72,7 +75,8 @@ def read_dump(path):
     r = body.reshape(rows, rec)
     return dict(gen=gen, rows=rows, b=b, i=i, c=c, types=types, fixed=r[:, :FIXED],
                 cells=r[:, FIXED:FIXED + c], bag=r[:, FIXED + c:FIXED + c + b],
-                inputs=r[:, FIXED + c + b:].copy().view("<f4"))
+                inputs=r[:, FIXED + c + b:FIXED + c + b + i].copy().view("<f4"),
+                lineage=r[:, FIXED + c + b + i:])
 
 
 def f32(u):

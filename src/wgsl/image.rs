@@ -360,12 +360,93 @@ pub fn tiles(gx: u32, gy: u32, per_submit: Option<u64>) -> Vec<(u32, u32, u32, u
     out
 }
 
+/// A submit rectangle `(x0, y0, w, h)`: in workgroups for [`tiles`], in pixels for a [`SubmitPlan`].
+pub type Rect = (u32, u32, u32, u32);
+
+/// THE SUBMIT PLAN OF A PASS: each submit's rectangle in pixels, clipped to the picture. Two kernels with one plan launch
+/// the same submits over the same pixels whatever their workgroup shapes, so a timed pair under one plan compares the
+/// programs, never the splitting (ST9: a candidate timed in 16 submits against an original in one measured the split).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmitPlan {
+    pub rects: Vec<Rect>,
+}
+
+impl SubmitPlan {
+    /// The plan of workgroup rectangles `tiles` of a `workgroup` dispatch over `width` x `height`.
+    pub fn of_tiles(tiles: &[Rect], workgroup: (u32, u32), width: u32, height: u32) -> SubmitPlan {
+        let (wx, wy) = (workgroup.0.max(1), workgroup.1.max(1));
+        let rects = tiles
+            .iter()
+            .map(|&(x0, y0, w, h)| {
+                let (px, py) = ((x0 * wx).min(width), (y0 * wy).min(height));
+                (px, py, ((x0 + w) * wx).min(width) - px, ((y0 + h) * wy).min(height) - py)
+            })
+            .collect();
+        SubmitPlan { rects }
+    }
+
+    /// One submit over the whole picture.
+    pub fn single(width: u32, height: u32) -> SubmitPlan {
+        SubmitPlan { rects: vec![(0, 0, width, height)] }
+    }
+
+    pub fn submits(&self) -> usize {
+        self.rects.len()
+    }
+
+    /// The workgroup rectangles of a `workgroup` dispatch that launch this plan: each pixel rectangle's workgroups, from
+    /// the one holding its first pixel to the one holding its last. With the workgroup the plan was cut by this is the
+    /// original tiling; with another workgroup shape it is the same submits over the same pixels (a rectangle edge that is
+    /// not on that shape's grid is covered by the workgroup holding it, see [`SubmitPlan::aligned`]).
+    pub fn tiles(&self, workgroup: (u32, u32)) -> Vec<Rect> {
+        let (wx, wy) = (workgroup.0.max(1), workgroup.1.max(1));
+        self.rects.iter().map(|&(x, y, w, h)| (x / wx, y / wy, (x + w).div_ceil(wx) - x / wx, (y + h).div_ceil(wy) - y / wy)).collect()
+    }
+
+    /// Whether this plan (a reference's, dispatched by [`SubmitPlan::tiles`] of `other`) launches `other`'s submits: the
+    /// same count, in order, each of its rectangles holding the matching one of `other` (equal when both workgroup shapes
+    /// are on the plan's grid, larger by the edge workgroups otherwise).
+    pub fn launches(&self, other: &SubmitPlan) -> bool {
+        self.rects.len() == other.rects.len() && self.rects.iter().zip(&other.rects).all(|(a, b)| a.0 <= b.0 && a.1 <= b.1 && a.0 + a.2 >= b.0 + b.2 && a.1 + a.3 >= b.1 + b.3)
+    }
+
+    /// Whether every rectangle of the plan is on the grid of `workgroup` (or ends at the picture's edge), so a dispatch of
+    /// that shape covers exactly the plan's pixels.
+    pub fn aligned(&self, workgroup: (u32, u32), width: u32, height: u32) -> bool {
+        let (wx, wy) = (workgroup.0.max(1), workgroup.1.max(1));
+        self.rects.iter().all(|&(x, y, w, h)| x % wx == 0 && y % wy == 0 && ((x + w) % wx == 0 || x + w == width) && ((y + h) % wy == 0 || y + h == height))
+    }
+}
+
+/// THE TIMING SIZE: the largest power-of-two square side at most `size` at which a kernel of `fuel` and `workgroup` runs a
+/// whole pass in ONE submit under `cap` (the machine's cap at most), so a timed pass is the setting the shipped shader runs
+/// in. None when not even a 1 x 1 picture is one submit. A proven kernel is one submit at every size: `size` itself when
+/// it is a power of two, else the power of two below it.
+pub fn single_submit_size(fuel: &crate::wgsl::work_guard::Fuel, workgroup: (u32, u32), size: u32, cap: u128) -> Result<Option<u32>, String> {
+    let wg = u64::from(workgroup.0.max(1)) * u64::from(workgroup.1.max(1));
+    let mut s = if size == 0 { return Ok(None) } else { 1u32 << (31 - size.leading_zeros()) };
+    loop {
+        let (gx, gy) = (s.div_ceil(workgroup.0.max(1)), s.div_ceil(workgroup.1.max(1)));
+        let fits = match fuel.workgroups_per_submit(wg, cap) {
+            Ok(per) => tiles(gx, gy, per).len() == 1,
+            Err(_) => false,
+        };
+        if fits {
+            return Ok(Some(s));
+        }
+        if s == 1 {
+            return Ok(None);
+        }
+        s /= 2;
+    }
+}
+
 #[cfg(feature = "gpu")]
-pub use device::{ImageKernel, ImageRun};
+pub use device::{timed_pairs, ImageKernel, ImageRun, PairTimes};
 
 #[cfg(feature = "gpu")]
 mod device {
-    use super::{half_to_f32, median, tiles, BindingData, Picture, TILE_GROUP};
+    use super::{half_to_f32, median, tiles, BindingData, Picture, SubmitPlan, TILE_GROUP};
     use crate::wgsl::oracle::device::{Device, ErrorScopes};
     use crate::wgsl::work_guard::{Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
     use std::time::Instant;
@@ -431,7 +512,10 @@ mod device {
         zero_buffers: Vec<wgpu::Buffer>,
     }
 
-    fn target(dev: &Device, layouts: &[wgpu::BindGroupLayout], bindings: &[BindingData], width: u32, height: u32, workgroup: (u32, u32), fuel: &Fuel, cap: u128) -> Result<Target, String> {
+    /// `plan` (None: the kernel's own split, as many whole workgroups a submit as its bound allows under the cap) is a
+    /// [`SubmitPlan`] imposed on the dispatch: its tiles for this workgroup shape, each checked under the guard here, before
+    /// anything is encoded, and again before its submit.
+    fn target(dev: &Device, layouts: &[wgpu::BindGroupLayout], bindings: &[BindingData], width: u32, height: u32, workgroup: (u32, u32), fuel: &Fuel, cap: u128, plan: Option<&SubmitPlan>) -> Result<Target, String> {
         if let Some(b) = bindings.iter().find(|b| b.group() >= TILE_GROUP) {
             return Err(format!("our software has a bug: a case binding in group {} (group {TILE_GROUP} is the dispatch tile's)", b.group()));
         }
@@ -478,9 +562,22 @@ mod device {
         }
         // the submits: whole workgroups, as many as the kernel's bound lets one submit hold under the cap
         let (gx, gy) = (width.div_ceil(workgroup.0), height.div_ceil(workgroup.1));
-        let per_submit = fuel.workgroups_per_submit(u64::from(workgroup.0) * u64::from(workgroup.1), cap)?;
+        let rects = match plan {
+            None => tiles(gx, gy, fuel.workgroups_per_submit(u64::from(workgroup.0) * u64::from(workgroup.1), cap)?),
+            Some(p) => {
+                let t = p.tiles(workgroup);
+                let wg_inv = u64::from(workgroup.0) * u64::from(workgroup.1);
+                for (x0, y0, w, h) in &t {
+                    if x0 + w > gx || y0 + h > gy {
+                        return Err(format!("our software has a bug: a submit plan rectangle of workgroups ({x0}, {y0}, {w}, {h}) outside the {gx} x {gy} grid"));
+                    }
+                    fuel.check_under("a submit of the imposed plan", u64::from(*w) * u64::from(*h) * wg_inv, cap)?;
+                }
+                t
+            }
+        };
         let mut tile_list = Vec::new();
-        for (x0, y0, w, h) in tiles(gx, gy, per_submit) {
+        for (x0, y0, w, h) in rects {
             let words = [x0, y0, 0, 0, gx, gy, 1, 0];
             let buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("dispatch tile"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
             dev.queue.write_buffer(&buf, 0, bytemuck::cast_slice(&words));
@@ -526,7 +623,7 @@ mod device {
                 }
                 layouts.push(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("image bgl"), entries: &entries }));
             }
-            let t = target(dev, &layouts, bindings, width, height, workgroup, &fuel, cap)?;
+            let t = target(dev, &layouts, bindings, width, height, workgroup, &fuel, cap, None)?;
             let scopes = ErrorScopes::push(device);
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("image kernel"), source: wgpu::ShaderSource::Wgsl(source.into()) });
             let layout_refs: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(Some).collect();
@@ -540,7 +637,7 @@ mod device {
 
         /// The same compiled pipeline drawing at another size with another case's bindings (no recompile).
         pub fn resized(&self, bindings: &[BindingData], width: u32, height: u32) -> Result<ImageKernel<'a>, String> {
-            let t = target(self.dev, &self.layouts, bindings, width, height, self.workgroup, &self.fuel, self.cap)?;
+            let t = target(self.dev, &self.layouts, bindings, width, height, self.workgroup, &self.fuel, self.cap, None)?;
             Ok(ImageKernel {
                 dev: self.dev,
                 pipeline: self.pipeline.clone(),
@@ -583,6 +680,44 @@ mod device {
         /// Each submit's rectangle `(x0, y0, w, h)` in workgroups.
         pub fn tile_rects(&self) -> Vec<(u32, u32, u32, u32)> {
             self.tiles.iter().map(|t| (t.x0, t.y0, t.w, t.h)).collect()
+        }
+
+        /// The kernel's workgroup shape `(x, y)`.
+        pub fn workgroup(&self) -> (u32, u32) {
+            self.workgroup
+        }
+
+        /// The picture size `(width, height)`.
+        pub fn size(&self) -> (u32, u32) {
+            (self.width, self.height)
+        }
+
+        /// The submits of one pass as pixel rectangles.
+        pub fn plan(&self) -> SubmitPlan {
+            SubmitPlan::of_tiles(&self.tile_rects(), self.workgroup, self.width, self.height)
+        }
+
+        /// The same compiled pipeline at its own size with the case's bindings, dispatched by `plan` (the submits and the
+        /// pixels each covers) instead of its own split: the reference of a timed pair takes the candidate's plan. Every
+        /// submit of the plan is checked under the work guard before anything is encoded.
+        pub fn with_plan(&self, bindings: &[BindingData], plan: &SubmitPlan) -> Result<ImageKernel<'a>, String> {
+            let t = target(self.dev, &self.layouts, bindings, self.width, self.height, self.workgroup, &self.fuel, self.cap, Some(plan))?;
+            Ok(ImageKernel {
+                dev: self.dev,
+                pipeline: self.pipeline.clone(),
+                layouts: self.layouts.clone(),
+                bind_groups: t.bind_groups,
+                uniforms: t.uniforms,
+                texture: t.texture,
+                width: self.width,
+                height: self.height,
+                workgroup: self.workgroup,
+                fuel: self.fuel.clone(),
+                cap: self.cap,
+                tiles: t.tiles,
+                name: self.name.clone(),
+                zero_buffers: t.zero_buffers,
+            })
         }
 
         /// `warmup` untimed passes, then `repeats` timed ones; the picture is read back after the last. Each pass is
@@ -696,6 +831,40 @@ mod device {
             Ok(Picture { width: self.width, height: self.height, rgba })
         }
     }
+
+    /// The timed pairs of a candidate against a reference and the plan they shared.
+    #[derive(Debug, Clone)]
+    pub struct PairTimes {
+        /// `(candidate GPU ms, reference GPU ms)` of each pair, the reference's pass first.
+        pub times: Vec<(f64, f64)>,
+        /// Submits a pass took, the same for both.
+        pub submits: usize,
+        /// Whether the plan's rectangles are on both kernels' workgroup grids (so both cover exactly the plan's pixels).
+        pub aligned: bool,
+    }
+
+    /// THE TIMED PAIRS: `warmup` untimed passes of each, then `pairs` interleaved passes (the reference first), every pass
+    /// GPU-timed. The two kernels must have ONE submit plan (the same submits over the same pixels; the caller gives the
+    /// reference the candidate's plan with [`ImageKernel::with_plan`]): a pair under two plans would time the splitting, so
+    /// it is our software's bug and nothing is timed.
+    pub fn timed_pairs(candidate: &ImageKernel<'_>, reference: &ImageKernel<'_>, warmup: usize, pairs: usize) -> Result<PairTimes, String> {
+        let (cp, rp) = (candidate.plan(), reference.plan());
+        if !rp.launches(&cp) || candidate.size() != reference.size() {
+            return Err(format!("our software has a bug: a timed pair with two submit plans: candidate {:?} at {:?}, reference {:?} at {:?}", cp.rects, candidate.size(), rp.rects, reference.size()));
+        }
+        let aligned = cp == rp;
+        if warmup > 0 {
+            reference.passes(warmup, 0)?;
+            candidate.passes(warmup, 0)?;
+        }
+        let mut times = Vec::with_capacity(pairs);
+        for _ in 0..pairs {
+            let r = reference.passes(0, 1)?.1[0];
+            let c = candidate.passes(0, 1)?.1[0];
+            times.push((c, r));
+        }
+        Ok(PairTimes { times, submits: cp.submits(), aligned })
+    }
 }
 
 #[cfg(test)]
@@ -796,6 +965,71 @@ mod tests {
             assert!(seen.iter().all(|c| *c == 1), "{gx}x{gy} per {per:?}");
         }
         assert_eq!(tiles(5, 4, None), vec![(0, 0, 5, 4)]);
+    }
+
+    /// A TIMED PAIR GETS ONE SUBMIT PLAN. The reference dispatched by the candidate's plan launches the same submits over
+    /// the same pixels: with the candidate's workgroup shape the reference's workgroup rectangles ARE the candidate's (the
+    /// plan's tiles give the split back exactly), and with any other shape the submit count is the same and each reference
+    /// submit holds the candidate's pixels; a one-submit plan is the whole picture for every shape.
+    #[test]
+    fn a_timed_pair_uses_identical_submit_plans() {
+        let shapes = [(8u32, 8u32), (2, 16), (16, 2), (4, 4), (1, 64), (7, 3)];
+        for (w, h) in [(64u32, 64u32), (256, 256), (200, 136), (77, 33)] {
+            for &cwg in &shapes {
+                let (gx, gy) = (w.div_ceil(cwg.0), h.div_ceil(cwg.1));
+                for per in [None, Some(1u64), Some(3), Some(u64::from(gx)), Some(u64::from(gx) * 2 + 1), Some(1_000_000)] {
+                    let t = tiles(gx, gy, per);
+                    let plan = SubmitPlan::of_tiles(&t, cwg, w, h);
+                    assert_eq!(plan.submits(), t.len());
+                    assert_eq!(plan.tiles(cwg), t, "{w}x{h} wg {cwg:?} per {per:?}: the plan's tiles are the split");
+                    assert_eq!(SubmitPlan::of_tiles(&plan.tiles(cwg), cwg, w, h), plan, "the same shape gives the same plan");
+                    assert!(plan.aligned(cwg, w, h));
+                    let px: u64 = plan.rects.iter().map(|r| u64::from(r.2) * u64::from(r.3)).sum();
+                    assert_eq!(px, u64::from(w) * u64::from(h), "{w}x{h} wg {cwg:?} per {per:?}: the plan covers every pixel once");
+                    for &rwg in &shapes {
+                        let reference = SubmitPlan::of_tiles(&plan.tiles(rwg), rwg, w, h);
+                        assert!(reference.launches(&plan), "{w}x{h} candidate {cwg:?} reference {rwg:?} per {per:?}");
+                        assert_eq!(reference.submits(), plan.submits());
+                        if plan.aligned(rwg, w, h) {
+                            assert_eq!(reference, plan, "on the grid of both shapes the plans are identical");
+                        }
+                    }
+                }
+                let one = SubmitPlan::of_tiles(&tiles(gx, gy, None), cwg, w, h);
+                assert_eq!(one, SubmitPlan::single(w, h), "one submit is the whole picture for every workgroup shape");
+            }
+        }
+        let a = SubmitPlan { rects: vec![(0, 0, 8, 8), (8, 0, 8, 8)] };
+        assert!(!a.launches(&SubmitPlan::single(16, 8)), "two submits do not launch one");
+        assert!(!SubmitPlan { rects: vec![(0, 0, 8, 8), (8, 0, 4, 8)] }.launches(&a), "a smaller rectangle does not hold the candidate's");
+    }
+
+    /// THE TIMING SIZE IS ONE SUBMIT FOR THE ENCODED ORIGINAL. volumepassage read into the true kingdom (its own work bound,
+    /// `Fuel::Tree`, the encoded original's workgroup): at a picture of 256 x 256 the timing size is 64 x 64, the largest
+    /// power-of-two square the guard allows in one submit (128 x 128 needs more than one); at 64 the pass is one submit;
+    /// a proven kernel is one submit at the size itself.
+    #[test]
+    fn the_timing_size_is_single_submit_for_the_encoded_original() {
+        use crate::wgsl::cuneus_originals::{image_dir, volumepassage};
+        use crate::wgsl::true_kingdom::TrueKingdom;
+        use crate::wgsl::work_guard::{Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
+        let kingdom = TrueKingdom::load(&image_dir("volumepassage")).expect("the volumepassage table");
+        let tree = volumepassage(&kingdom).expect("the original reads exactly");
+        let src = kingdom.render(&tree).expect("render");
+        let module = crate::wgsl::naga_shape::parse_unscanned(&src).expect("naga");
+        let ep = module.entry_points.iter().find(|e| e.name == "main").expect("main");
+        let wg = (ep.workgroup_size[0], ep.workgroup_size[1]);
+        let fuel = kingdom.tree_fuel(&tree).expect("fuel");
+        let cap = CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+        let s = single_submit_size(&fuel, wg, 256, cap).expect("size").expect("a single-submit size");
+        assert_eq!(s, 64, "volumepassage: 64 x 64 (bound {:?} an invocation, workgroup {wg:?})", fuel.per_invocation());
+        let per = fuel.workgroups_per_submit(u64::from(wg.0 * wg.1), cap).expect("split");
+        assert_eq!(tiles(s.div_ceil(wg.0), s.div_ceil(wg.1), per).len(), 1, "one submit at the timing size");
+        assert!(tiles(128u32.div_ceil(wg.0), 128u32.div_ceil(wg.1), per).len() > 1, "128 x 128 is more than one submit");
+        assert_eq!(single_submit_size(&fuel, wg, 64, cap).expect("size"), Some(64));
+        assert_eq!(single_submit_size(&fuel, wg, 100, cap).expect("size"), Some(64), "a power of two at most the size");
+        assert_eq!(single_submit_size(&Fuel::Proven("a test"), (8, 8), 256, cap).expect("size"), Some(256));
+        assert_eq!(single_submit_size(&Fuel::Tree { per_invocation: cap + 1 }, (1, 1), 256, cap).expect("size"), None, "not even one invocation fits");
     }
 
     #[test]
