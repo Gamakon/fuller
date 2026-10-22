@@ -242,3 +242,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "wgsl_true_share"
 required-features = ["wgsl"]
+
+[[example]]
+name = "st9_pair_spread"
+required-features = ["gpu", "wgsl"]

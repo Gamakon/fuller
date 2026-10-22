@@ -784,6 +784,42 @@ mod tests {
         }
     }
 
+    /// TIMED PAIRS ON THE DEVICE: the encoded volumepassage against the shipped original, 9 pairs give 9 times above
+    /// zero, the order alternating from the candidate first, and each pair's four timestamps of a submit written by that
+    /// submit's one command buffer; with the encoded original split into submits of three workgroups (and the shipped
+    /// original given its plan) every submit's timestamps still share one command buffer.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn a_timed_pair_is_timed_in_one_command_buffer_on_the_device() {
+        use crate::wgsl::image::{timed_pairs, ImageKernel};
+        use crate::wgsl::oracle::device::{Device, Fuel};
+        let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
+        let tree = volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
+        let src = k.render(&tree).expect("render");
+        let original = std::fs::read_to_string(format!("{}/tests/corpus/cuneus_visual/volumepassage.wgsl", env!("CARGO_MANIFEST_DIR"))).expect("the original");
+        let per = k.tree_work_bound(&tree).expect("bound");
+        let dev = Device::new().expect("device");
+        let (w, h) = (16u32, 16u32);
+        let bindings = case_bindings("volumepassage", 5.0, w, h).expect("bindings");
+        let shipped = ImageKernel::compile(&dev, "volumepassage", &original, "main", &bindings, w, h, Fuel::Proven("cuneus original volumepassage")).expect("the original");
+        let one = ImageKernel::compile(&dev, "encoded", &src, "main", &bindings, w, h, Fuel::Tree { per_invocation: per }).expect("encoded");
+        let tiled = ImageKernel::compile_under(&dev, "encoded", &src, "main", &bindings, w, h, Fuel::Tree { per_invocation: per }, per * 64 * 3).expect("tiled");
+        assert!(tiled.submits() > 1);
+        for cand in [&one, &tiled] {
+            let planned = if shipped.plan() == cand.plan() { None } else { Some(shipped.with_plan(&bindings, &cand.plan()).expect("plan")) };
+            let pt = timed_pairs(cand, planned.as_ref().unwrap_or(&shipped), 1, 9).expect("pairs");
+            assert_eq!(pt.times.len(), 9, "M = 9 gives 9 pairs");
+            assert_eq!(pt.candidate_first, (0..9).map(|p| p % 2 == 0).collect::<Vec<_>>());
+            assert!(pt.times.iter().all(|t| t.0 > 0.0 && t.1 > 0.0), "{:?}", pt.times);
+            for pair in &pt.stamp_buffers {
+                assert_eq!(pair.len(), cand.submits());
+                for (c, idx) in pair.iter().enumerate() {
+                    assert!(idx.iter().all(|b| *b == c), "submit {c}: the pair's timestamps came from command buffers {idx:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_missing_row_is_a_named_gap_never_a_substitute() {
         let k = TrueKingdom::load(&image_dir("volumepassage")).expect("table");
