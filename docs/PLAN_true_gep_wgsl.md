@@ -112,6 +112,24 @@ Measurement expectations, stated 08:38Z before the run: 1,000 children of the vo
 | LEAF Strahler alpha 4 | 0.998 | 1 | 0.97 |
 | LEAF depth alpha 1 / 2 / 4 | 0.998 | 1 | 0.65 / 0.75 / 0.85 |
 
+LEAF changes one node a child, against 207 for LOW. Measured 09:01Z with `examples/st8b_leaf_measure` (phylu), log `/private/tmp/claude-501/st9p3/st8b_measure.log`. The champion has 492 nodes; 280 have a same-signature replacement (191 of them leaves or constants). The LEAF table takes 7.8 ms to build.
+
+| arm | overlap expected | overlap measured | nodes changed (expected, measured) | cells changed | only leaves (expected, measured, % difference) |
+|---|---|---|---|---|---|
+| LOW | 0.5 | 0.589 (+18 %) | 250, 207 (-17 %) | 5,245 | 0.05, 0.158 (+216 %) |
+| LEAF Strahler 0 | 0.998 | 0.998 | 1, 1 | 1 | 0.55, 0.687 (+25 %) |
+| LEAF Strahler 1 | 0.998 | 0.998 | 1, 1 | 1 | 0.75, 0.806 (+7 %) |
+| LEAF Strahler 2 | 0.998 | 0.998 | 1, 1 | 1 | 0.88, 0.831 (-6 %) |
+| LEAF Strahler 4 | 0.998 | 0.998 | 1, 1 | 1 | 0.97, 0.885 (-9 %) |
+| LEAF depth 1 / 2 / 4 | 0.998 | 0.998 | 1, 1 | 1 | 0.65 / 0.75 / 0.85; 0.661 / 0.658 / 0.661 (+2 / -12 / -22 %) |
+
+- Strahler alpha 4 puts 98.0 % of edits on order-1 nodes. 0.885 of edits change only leaves, lower than the 98 % on order-1 nodes, because order 1 also counts unary functions over leaves.
+- Depth weighting does not steer edits to the leaves on this tree: the "only leaves" share stays at 0.66.
+- Tests (09:02Z, host): 10,000 Gram K = 1 genes and 1,000 volumepassage K = 1 genes, with 1 and 3 edits. Every child differs from its parent in exactly the edited nodes; no other cell changes, and no unread cell changes.
+- The draw distribution matches the weights (200,000 draws, within 5 standard deviations).
+- The kernel passes naga validation and the binding contracts.
+- The device == host parity test (`device_leaf_mode_equals_the_host_reference_on_sr_regex_and_two_type`) is written and has NOT been run: it needs the GPU.
+
 Everything below this line is PARKED until ST1 passes its review.
 
 ---
