@@ -13,6 +13,10 @@
 //!   cargo run --release --features gpu,wgsl --example v24_true_read -- --problem problems/v24_ingest_small \
 //!       [--runs 2] <kernel.wgsl>...
 //!
+//! `--random N [--seed S] [--size P]`: instead, N random modules of the K = 1 table (`mod/v24_k1`, program size P a
+//! gene, default 8): each through naga, the device pipeline, and one guarded run on the admission case (the
+//! 1,000-gene loop of UI1: no gene may fail any stage).
+//!
 //! One GPU job at a time, under the GPU lock.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,8 +65,14 @@ fn main() -> Result<(), String> {
         }
         kernels.push(a.clone());
     }
-    let k = Arc::new(TrueKingdom::load(&default_dir().join("mod").join("v24"))?);
     let problem = Problem::load(&problem_dir)?;
+    if let Some(n) = value("--random") {
+        let n: u64 = n.parse().map_err(|e| format!("--random: {e}"))?;
+        let seed: u64 = value("--seed").unwrap_or_else(|| "1".into()).parse().map_err(|e| format!("--seed: {e}"))?;
+        let size: usize = value("--size").unwrap_or_else(|| "8".into()).parse().map_err(|e| format!("--size: {e}"))?;
+        return random_loop(&problem, n, seed, size);
+    }
+    let k = Arc::new(TrueKingdom::load(&default_dir().join("mod").join("v24"))?);
     let contract = Contract::parse(&std::fs::read_to_string(problem_dir.join("safety.contract")).map_err(|e| format!("safety.contract: {e}"))?, &FIELDS)?;
     let case = problem.cases_of("cases/admission.toml")?.into_iter().next().ok_or("no admission case")?;
     let out = problem.pooled_output().cloned().ok_or("the problem has no pooled_recall output")?;
@@ -131,5 +141,64 @@ fn main() -> Result<(), String> {
         }
     }
     println!("[{}] done", stamp());
+    Ok(())
+}
+
+/// The random-gene loop: every module through naga, the pipeline and one guarded run; any failure is printed with its
+/// gene and kernel and counted, never skipped.
+fn random_loop(problem: &Problem, n: u64, seed: u64, size: usize) -> Result<(), String> {
+    let k = Arc::new(TrueKingdom::load(&default_dir().join("mod").join("v24_k1"))?);
+    let m = TrueModule::new(&k, &[size, size])?;
+    let case = problem.cases_of("cases/admission.toml")?.into_iter().next().ok_or("no admission case")?;
+    let dev = Device::new()?;
+    let mut rng = Rng(seed);
+    let (mut naga_fail, mut compile_fail, mut run_fail, mut ok) = (0, 0, 0, 0);
+    let t0 = std::time::Instant::now();
+    println!("[{}] {n} random v24_k1 modules, program size {size} a gene, seed {seed}, on {} {}", stamp(), problem.spec.name, case.label);
+    for i in 0..n {
+        let c = m.random(i, &mut rng, Share::Half, true)?;
+        let trees = m.entry_trees(&c)?;
+        let src = m.render(&c)?;
+        let parsed = fuller::wgsl::naga_shape::parse_unscanned(&src).and_then(|md| fuller::wgsl::target::Target::current().validate(&md, &src).map(|_| ()));
+        if let Err(e) = parsed {
+            naga_fail += 1;
+            println!("gene {i}\tnaga\t{e}\n{src}");
+            continue;
+        }
+        let (kb, tb) = (k.clone(), Arc::new(trees));
+        let bound = move |entry: usize, words: &[u8]| -> Result<u128, String> {
+            let w: Vec<u64> = words.chunks_exact(4).map(|c| u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect();
+            let fields: BTreeMap<String, u64> = FIELDS.iter().zip(&w).map(|(f, v)| (f.to_string(), *v)).collect();
+            kb.tree_work_bound_in(tb.get(entry).ok_or("no tree")?, &fields)
+        };
+        let exec = DeviceExecutor::for_problem(&dev, problem, Fuel::Proven("unused: every dispatch is bounded by with_dispatch_bound")).with_dispatch_bound(Box::new(bound));
+        let limit = exec.binding_limit();
+        let compiled = exec.compile(problem, &src);
+        let (kern, info) = match compiled {
+            Ok(x) => x,
+            Err(e) => {
+                compile_fail += 1;
+                println!("gene {i}\tpipeline\t{e}\n{src}");
+                continue;
+            }
+        };
+        let run = (|| -> Result<(), String> {
+            let data = problem.case_data(&case, limit)?;
+            let plan = problem.plan(&case, limit, Some(&info))?;
+            let (staged, _) = exec.stage(&plan, &data)?;
+            exec.run(&kern, &plan, &data, &staged, true).map(|_| ())
+        })();
+        match run {
+            Ok(()) => ok += 1,
+            Err(e) => {
+                run_fail += 1;
+                println!("gene {i}\trun\t{e}\n{src}");
+            }
+        }
+        if (i + 1) % 100 == 0 {
+            println!("[{}] {} genes: {ok} ran, naga {naga_fail}, pipeline {compile_fail}, run {run_fail} ({:.0} s)", stamp(), i + 1, t0.elapsed().as_secs_f64());
+        }
+    }
+    println!("[{}] done: {n} genes, {ok} through naga, the pipeline and a guarded run; naga {naga_fail}, pipeline {compile_fail}, run {run_fail}", stamp());
     Ok(())
 }

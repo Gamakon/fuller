@@ -35,7 +35,7 @@ def declare_types(iface):
     T("u32.blk_col", "a block factor on the column axis", 1, "1,2,4,8")
     T("grid.grid", "the entry's workgroup shape and block")
     T("u32.ktile", "the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)", 1, "1..=4096")
-    for x, d, k in rungs("LCOWPS"):
+    for x, d, k in rungs("LCOWPSX"):
         T(S(x, d, k), f"one {x}-rung statement at depth {d}, fuel stratum {k}")
         T(B(x, d, k), f"a {x}-rung statement sequence at depth {d}, fuel stratum {k}")
     for d in range(1, 6):
@@ -44,6 +44,7 @@ def declare_types(iface):
             T(WBB(d, k), f"a write-phase loop body that breaks, depth {d}, stratum {k}")
             if d in DEPTH["S"]:
                 T(SBB(d, k), f"a solo-phase loop body that breaks, depth {d}, stratum {k}")
+                T(XBB(d, k), f"a split-phase loop body that breaks, depth {d}, stratum {k}")
     T("vec3<u32>.gid", "global_invocation_id", 3)
     T("vec3<u32>.lid", "local_invocation_id", 3)
     T("vec3<u32>.wid", "workgroup_id", 3)
@@ -195,7 +196,7 @@ def build_module(iface):
 
 def build_rest(iface):
     # ---- the statement rungs
-    for x, d, k in rungs("LCOWPS"):
+    for x, d, k in rungs("LCOWPSX"):
         s, b = S(x, d, k), B(x, d, k)
         sfx = f"_{x}{d}_f{k}"
         R("block.one" + sfx, b, [s if x != "O" else S("O", d, k)], "{0}")
@@ -223,8 +224,8 @@ def build_rest(iface):
             R("stmt.if" + sfx, s, ["bool.flag", B("C", d, k)], "if ({0}) { {1} }", "nesting stays conditional")
         if x == "O":
             R("stmt.if_else" + sfx, s, ["bool.flag", b, b], "if ({0}) { {1} } else { {2} }", "both branches are epilogues so a store happens whichever is taken")
-        if x in "WP":
-            R("stmt.if" + sfx, s, ["bool.flagw", b], "if ({0}) { {1} }", "the body stays W" if x == "W" else "the body stays P")
+        if x in "WPX":
+            R("stmt.if" + sfx, s, ["bool.flagw", b], "if ({0}) { {1} }", "the body stays " + x)
             R("stmt.if_else" + sfx, s, ["bool.flagw", b, b], "if ({0}) { {1} } else { {2} }")
         if x == "S":
             R("stmt.if" + sfx, s, ["bool.flag", b], "if ({0}) { {1} }", "the body stays S: one invocation")
@@ -246,6 +247,8 @@ def build_rest(iface):
             if d in DEPTH["S"]:
                 R(f"own.block_SB{d}_f{k}", SBB(d, k), [], "{}", "an empty solo-phase loop body")
                 R(f"block.brk_SB{d}_f{k}", SBB(d, k), [B("S", d, k), "bool.flag", B("S", d, k)], "{0} if ({1}) { break; } {2}")
+                R(f"own.block_XB{d}_f{k}", XBB(d, k), [], "{}", "an empty split-phase loop body")
+                R(f"block.brk_XB{d}_f{k}", XBB(d, k), [B("X", d, k), "bool.flagw", B("X", d, k)], "{0} if ({1}) { break; } {2}")
 
     # ---- ownership rows, per output binding
     for o in iface["outputs"]:

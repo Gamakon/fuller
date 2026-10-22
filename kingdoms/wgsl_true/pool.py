@@ -47,6 +47,8 @@ REGS = {"u": "reg<u32>.index", "f": "reg<f32>.real", "n": "reg<i32>.int", "v4": 
 
 def declare(iface):
     T("u32.atomicold", "the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position")
+    # an atomic never races, and the atomic pool is not the plain pool a phase writes: its values stand in a phase too
+    register_twin("u32.atomicold")
     T("u32.wgblk", "a region's base in blocks of the workgroup size: a bare literal", 1, "0..=511")
     T("u32.wgbase", "a region's base: a multiple of the workgroup size T, so own writes of two regions never meet")
     T("u32.wgown", "the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it")
@@ -72,6 +74,8 @@ def build(iface):
         R(f"wg.get_own_plain_{key}", vt_, ["u32.wgbase", "u32.wgown"], rd.format(cell), "its plain twin")
     helper("wg_v4", f"fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, {last}u)]), bitcast<f32>(wg_pool[min(b + ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, {last}u)])); }}")
     helper("wg_set_v4", f"fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) {{ if (o < {P_WORDS}u) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < {P_WORDS}u) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < {P_WORDS}u) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < {P_WORDS}u) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sp: u32) {{ if (o < sp) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < sp) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < sp) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < sp) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    helper("wg_v4_above", f"fn wg_v4_above(b: u32, ls: u32, i: u32, sp: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(max(b + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + ls + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + 2u * ls + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + 3u * ls + i, sp), {last}u)])); }}")
     R("wg.get_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.index"], "wg_v4({0}, {1}, {2})", "element i of a vec4 array kept as four lane regions (lane stride the second base)")
     R("wg.get_own_v4", "vec4<f32>.realw", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "an own read: a w value")
     R("wg.get_own_plain_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "its plain twin")
@@ -80,6 +84,13 @@ def build(iface):
         for key, vt_, rd, wr in ELEMS:
             R(f"wg.set_{key}_{x}{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write, guarded by the pool's length (never clamped)")
         R(f"wg.set_v4_{x}{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4({0} + {2}, {1}, {3});", "an own write of a vec4 element: its four lanes, each an own write of its lane region")
+    for x, d, k in rungs("X"):
+        s = S(x, d, k)
+        for key, vt_, rd, wr in ELEMS:
+            R(f"wg.set_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write below the split")
+            R(f"wg.hload_{key}_X{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no write of the phase reaches it")
+        R(f"wg.set_v4_X{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4_below({0} + {2}, {1}, {3}, sp);")
+        R(f"wg.hload_v4_X{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase", "u32.indexw"], "{0} = wg_v4_above({1}, {2}, {3}, sp);")
     for x, d, k in rungs("S"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
@@ -94,18 +105,20 @@ def build(iface):
         s = S("L", d, k)
         R(f"wg.phase_L{d}_f{k}", s, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
         R(f"wg.pair_L{d}_f{k}", s, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")
+        R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
         R(f"wg.solo_L{d}_f{k}", s, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
         R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + str(last) + "u)]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
     R("own.u32_atomicold", "u32.atomicold", [], "lit_u32(0u)", "a value whose consumer discards it")
+    R("own.u32_atomicoldw", "u32.atomicoldw", [], "lit_u32(0u)", "its w twin")
     C("literal.wgabase", "u32.wgabase", "{v}u", [str(i) for i in range(0, A_WORDS)], "?_wgabase: a word of the atomic pool")
     R("own.u32_wgabase", "u32.wgabase", [], "0u")
-    for x, d, k in rungs("LCS"):
-        R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), ["u32.atomicold"], "_ = {0};", "the effect without the value")
+    for x, d, k in rungs("LCSWPX"):
+        R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), [w_of("u32.atomicold") if x in "WPX" else "u32.atomicold"], "_ = {0};", "the effect without the value")
     alast = A_WORDS - 1
     acell = f"&wg_apool[min({{0}} + {{1}}, {alast}u)]"
     for fn, F in ATOMIC_FUNS.items():
-        R(f"atomic.wg_{fn}", "u32.atomicold", ["u32.wgabase", "u32.index", "u32.index"], f"atomic{F}({acell}, {{2}})", "an atomic of the atomic pool: never a race, its old value order-dependent")
-    R("atomic.wg_load", "u32.atomicold", ["u32.wgabase", "u32.index"], f"atomicLoad({acell})", "a relaxed load of the atomic pool")
-    for x, d, k in rungs("LCSWP"):
-        it, vt_ = ("u32.indexw", "u32.indexw") if x in "WP" else ("u32.index", "u32.index")
+        R(f"atomic.wg_{fn}", "u32.atomicold", ["u32.wgabase", "u32.index", "u32.index"], f"atomic{F}({acell}, {{2}})", "an atomic of the atomic pool: never a race, its old value order-dependent", twin=True)
+    R("atomic.wg_load", "u32.atomicold", ["u32.wgabase", "u32.index"], f"atomicLoad({acell})", "a relaxed load of the atomic pool", twin=True)
+    for x, d, k in rungs("LCSWPX"):
+        it, vt_ = ("u32.indexw", "u32.indexw") if x in "WPX" else ("u32.index", "u32.index")
         R(f"atomic.wg_store_{x}{d}_f{k}", S(x, d, k), ["u32.wgabase", it, vt_], "atomicStore(&wg_apool[min({0} + {1}, " + str(alast) + "u)], {2});", "an atomic store at any element: one atomic operation, never a race")

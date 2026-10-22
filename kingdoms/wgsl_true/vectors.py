@@ -42,6 +42,8 @@ def declare(iface):
             T(mat(c, r), f"a matrix of {c} columns and {r} rows", c * r)
             register_twin(mat(c, r))
     T("u32.bits", "a bit field: masks, packed lanes; no position, no size")
+    if iface.get("module"):
+        register_twin("u32.bits")
     T("u32.hash32", "a 32-bit hash state")
     for n in CODES:
         T(f"u32.code{n}", f"a codebook entry below {n}", 1, f"0..={n - 1}")
@@ -132,23 +134,24 @@ def build(iface):
         helper(f"inverse_{c}", INVERSE_HELPERS[c])
         R(f"geom.inverse_{c}", mat(c, c), [mat(c, c)], f"inverse_{c}({{0}})", "square only by signature; a singular matrix's inverse is inf/NaN lanes, scored", twin=True)
     # ---- bits
-    C("literal.bits", "u32.bits", "lit_u32({v}u)", extra(iface, "bits", [str(v) for v in int_values(0, 2**32 - 1, 32, "bits")]), "?_bits")
+    C("literal.bits", "u32.bits", "lit_u32({v}u)", extra(iface, "bits", [str(v) for v in int_values(0, 2**32 - 1, 32, "bits")]), "?_bits", twin=bool(iface.get("module")))
     R("own.u32_bits", "u32.bits", [], "lit_u32(0u)")
+    tw = bool(iface.get("module"))   # a module interface (s9 batch 8) gives the bit-field rows their w twins
     for op, sp in (("and", "({0} & {1})"), ("or", "({0} | {1})"), ("xor", "({0} ^ {1})")):
-        R(f"bits.{op}", "u32.bits", ["u32.bits", "u32.bits"], sp)
-    R("bits.not", "u32.bits", ["u32.bits"], "(~{0})")
-    R("bits.shl", "u32.bits", ["u32.bits", "u32.index"], "({0} << {1})", "WGSL 8.10: modulo 32")
-    R("bits.shr", "u32.bits", ["u32.bits", "u32.index"], "({0} >> {1})")
+        R(f"bits.{op}", "u32.bits", ["u32.bits", "u32.bits"], sp, twin=tw)
+    R("bits.not", "u32.bits", ["u32.bits"], "(~{0})", twin=tw)
+    R("bits.shl", "u32.bits", ["u32.bits", "u32.index"], "({0} << {1})", "WGSL 8.10: modulo 32", twin=tw)
+    R("bits.shr", "u32.bits", ["u32.bits", "u32.index"], "({0} >> {1})", twin=tw)
     for n, f in (("count_ones", "countOneBits"), ("leading_zeros", "countLeadingZeros"), ("trailing_zeros", "countTrailingZeros"), ("find_lsb", "firstTrailingBit"), ("find_msb", "firstLeadingBit")):
-        R(f"bits.{n}", "u32.count", ["u32.bits"], f + "({0})")
-    R("bits.reverse", "u32.bits", ["u32.bits"], "reverseBits({0})")
-    R("bits.extract", "u32.bits", ["u32.bits", "u32.index", "u32.count"], "extractBits({0}, {1}, {2})", "for runtime operands the spec clamps: defined")
-    R("bits.insert", "u32.bits", ["u32.bits", "u32.bits", "u32.index", "u32.count"], "insertBits({0}, {1}, {2}, {3})")
-    R("convert.index_to_bits", "u32.bits", ["u32.index"], "{0}")
-    R("convert.bits_to_index", "u32.index", ["u32.bits"], "{0}")
-    R("convert.count_to_bits", "u32.bits", ["u32.count"], "{0}")
-    R("convert.bitcast_f32_bits", "u32.bits", ["f32.real"], "bitcast<u32>({0})")
-    R("convert.bitcast_bits_f32", "f32.real", ["u32.bits"], "bitcast<f32>({0})", "a bitcast to f32 can make a NaN: a value")
+        R(f"bits.{n}", "u32.count", ["u32.bits"], f + "({0})", twin=tw)
+    R("bits.reverse", "u32.bits", ["u32.bits"], "reverseBits({0})", twin=tw)
+    R("bits.extract", "u32.bits", ["u32.bits", "u32.index", "u32.count"], "extractBits({0}, {1}, {2})", "for runtime operands the spec clamps: defined", twin=tw)
+    R("bits.insert", "u32.bits", ["u32.bits", "u32.bits", "u32.index", "u32.count"], "insertBits({0}, {1}, {2}, {3})", twin=tw)
+    R("convert.index_to_bits", "u32.bits", ["u32.index"], "{0}", twin=tw)
+    R("convert.bits_to_index", "u32.index", ["u32.bits"], "{0}", twin=tw)
+    R("convert.count_to_bits", "u32.bits", ["u32.count"], "{0}", twin=tw)
+    R("convert.bitcast_f32_bits", "u32.bits", ["f32.real"], "bitcast<u32>({0})", twin=tw)
+    R("convert.bitcast_bits_f32", "f32.real", ["u32.bits"], "bitcast<f32>({0})", "a bitcast to f32 can make a NaN: a value", twin=tw)
     for n, src in (("pack4x8snorm", 4), ("pack4x8unorm", 4), ("pack2x16snorm", 2), ("pack2x16unorm", 2), ("pack2x16float", 2)):
         R(f"bits.{n}", "u32.bits", [ft("real", src)], n + "({0})")
         R(f"bits.un{n}", ft("real", src), ["u32.bits"], "un" + n + "({0})")

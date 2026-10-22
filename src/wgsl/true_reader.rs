@@ -271,6 +271,10 @@ enum St {
     WgPut(usize, E, E),
     /// The partner element of array `v` into the register (P).
     PLoad(Reg, usize),
+    /// A split phase: the arrays it reads (placed at or above the split), the statements (X), then the rest.
+    Split(Vec<usize>, Vec<St>),
+    /// Element `i` of array `v`, at or above the split, into the register (X).
+    HLoad(Reg, usize, E),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -330,6 +334,8 @@ enum Local {
     /// A loop's counter variable inside its loop: `start + k` (`k` when start is `None`), or `start >> k` for a halving
     /// loop, `start << k` for a doubling one.
     Counter { loop_id: usize, start: Option<E>, op: CounterOp },
+    /// A temporary naga wrote for a short-circuit `||` / `&&` whose value is stable: the value itself.
+    Known(E),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,6 +416,10 @@ pub struct Reader<'a> {
     /// The value a register is known to hold at the current point of the walk (its last store at this level).
     last_set: HashMap<Reg, E>,
     wgvars: Vec<WgVar>,
+    used: Vec<usize>,
+    blocks: BTreeMap<usize, u32>,
+    /// Every split phase's (written, read) arrays: the placement's constraints.
+    splits: Vec<(Vec<usize>, Vec<usize>)>,
     wg_of: HashMap<Handle<naga::GlobalVariable>, usize>,
     regions: Vec<Region>,
     next_ureg: usize,
@@ -494,6 +504,9 @@ impl<'a> Reader<'a> {
             ssa: std::collections::HashSet::new(),
             last_set: HashMap::new(),
             wgvars: Vec::new(),
+            used: Vec::new(),
+            blocks: BTreeMap::new(),
+            splits: Vec::new(),
             wg_of: HashMap::new(),
             regions: Vec::new(),
             next_ureg: 0,
@@ -861,6 +874,7 @@ impl<'a> Reader<'a> {
             return match l {
                 Local::Reg(r, w) => Ok(E::Reg(r, w)),
                 Local::Counter { loop_id, start, op } => Ok(counter_value(loop_id, start, op)),
+                Local::Known(e) => Ok(e),
                 Local::Parr(..) => gap("a load of a whole private array"),
             };
         }
@@ -869,6 +883,7 @@ impl<'a> Reader<'a> {
                 Some(Local::Reg(r, w)) => Ok(E::Reg(*r, *w)),
                 Some(Local::Counter { loop_id, start, op, .. }) => Ok(counter_value(*loop_id, start.clone(), *op)),
                 Some(Local::Parr(..)) => gap("a load of a whole private array"),
+                Some(Local::Known(e)) => Ok(e.clone()),
                 None => gap("our software has a bug: a local with no register"),
             },
             Expression::Access { base, index } if self.local_of_ptr(fr, *base).is_some() => {
@@ -1049,11 +1064,27 @@ impl<'a> Reader<'a> {
                 TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } => {
                     let w = Wt::of_inner(&self.module.types[*base].inner).ok_or_else(|| ReadError::Gap(format!("a private array of {:?}", self.module.types[*base].inner)))?;
                     let p = self.parr(w, n.get())?;
-                    if lv.init.is_some() {
-                        return gap("a private array with an initialiser");
-                    }
-                    if !entry {
-                        return gap("a private array local of a helper function (re-zeroed at every call)");
+                    match lv.init {
+                        Some(i) => {
+                            // a constant initialiser: each element stored as the function begins
+                            let parts = match &fr.f.expressions[i] {
+                                Expression::Compose { components, .. } => components.clone(),
+                                o => return gap(format!("a private array initialised by {o:?}")),
+                            };
+                            for (j, c) in parts.iter().enumerate() {
+                                let v = self.ex(fr, *c)?;
+                                self.push(out, St::ParrSet(p, E::Lit(Lit::U(j as u32)), v));
+                            }
+                        }
+                        None if !entry => {
+                            // a helper's array is zero at every call: a loop over its elements stores zero
+                            let id = self.next_loop;
+                            self.next_loop += 1;
+                            self.loop_bounds.insert(id, (Some(n.get() as u64), 1));
+                            let body = vec![St::ParrSet(p, E::Counter(id), zero_of_wt(w))];
+                            self.push(out, St::Loop(Box::new(LoopSt { id, bound: E::Lit(Lit::U(n.get())), stride: 1, body })));
+                        }
+                        None => {}
                     }
                     fr.locals.insert(h, Local::Parr(p, w));
                 }
@@ -1100,6 +1131,18 @@ impl<'a> Reader<'a> {
                 Statement::Block(b) => {
                     if self.walk(fr, b, out, depth)? == Flow::Returned {
                         return Ok(Flow::Returned);
+                    }
+                }
+                Statement::If { condition, accept, reject } if self.short_circuit(fr, *condition, accept, reject)?.is_some() => {
+                    // naga's lowering of `a || b` / `a && b`: a temporary set in both branches; it is the value `a || b`
+                    if let Some((l, e)) = self.short_circuit(fr, *condition, accept, reject)? {
+                        if self.stable(&e) {
+                            fr.locals.insert(l, Local::Known(e));
+                        } else {
+                            let Some(Local::Reg(r, _)) = fr.locals.get(&l).cloned() else { return gap("our software has a bug: a short-circuit temporary with no register") };
+                            self.ssa.remove(&r);
+                            self.push(out, St::Set(r, e));
+                        }
                     }
                 }
                 Statement::If { condition, accept, reject } => {
@@ -1237,6 +1280,39 @@ impl<'a> Reader<'a> {
         Ok(Flow::Normal)
     }
 
+    /// naga's lowering of `a || b` (`if (a) { t = true; } else { t = b; }`) and `a && b` (`if (a) { t = b; } else { t =
+    /// false; }`) into an unnamed temporary: the temporary and its value.
+    fn short_circuit(&mut self, fr: &Frame<'a>, c: Handle<Expression>, accept: &'a Block, reject: &'a Block) -> R<Option<(Handle<LocalVariable>, E)>> {
+        let store = |b: &Block| -> Option<(Handle<LocalVariable>, Handle<Expression>)> {
+            let real: Vec<&Statement> = b.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+            match real.as_slice() {
+                [Statement::Store { pointer, value }] => match fr.f.expressions[*pointer] {
+                    Expression::LocalVariable(l) if fr.f.local_variables[l].name.is_none() => Some((l, *value)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let (Some((la, va)), Some((lb, vb))) = (store(accept), store(reject)) else { return Ok(None) };
+        if la != lb || !matches!(fr.locals.get(&la), Some(Local::Reg(..))) {
+            return Ok(None);
+        }
+        let lit = |h: Handle<Expression>| match fr.f.expressions[h] {
+            Expression::Literal(Literal::Bool(b)) => Some(b),
+            _ => None,
+        };
+        let bw = Wt::scalar(Sc::Bool);
+        let not = |e: E| E::Un(UnaryOperator::LogicalNot, Box::new(e), bw);
+        let e = match (lit(va), lit(vb)) {
+            (Some(true), _) => E::Bin(BinaryOperator::LogicalOr, Box::new(self.ex(fr, c)?), Box::new(self.ex(fr, vb)?), bw),
+            (_, Some(false)) => E::Bin(BinaryOperator::LogicalAnd, Box::new(self.ex(fr, c)?), Box::new(self.ex(fr, va)?), bw),
+            (_, Some(true)) => E::Bin(BinaryOperator::LogicalOr, Box::new(not(self.ex(fr, c)?)), Box::new(self.ex(fr, va)?), bw),
+            (Some(false), _) => E::Bin(BinaryOperator::LogicalAnd, Box::new(not(self.ex(fr, c)?)), Box::new(self.ex(fr, vb)?), bw),
+            _ => return Ok(None),
+        };
+        Ok(Some((la, e)))
+    }
+
     /// The arena cell an atomic names.
     fn arena_cell(&mut self, fr: &Frame<'a>, p: Handle<Expression>) -> R<(String, E)> {
         match &fr.f.expressions[p] {
@@ -1277,6 +1353,7 @@ impl<'a> Reader<'a> {
                     Ok(())
                 }
                 Local::Counter { .. } => Err(ReadError::Out("a store to a loop's counter inside its body (the loop's trip count is not the bound's)".into())),
+                Local::Known(_) => gap("a second store to a short-circuit temporary"),
                 Local::Parr(..) => gap("a store of a whole private array"),
             };
         }
@@ -1301,7 +1378,7 @@ impl<'a> Reader<'a> {
                         self.push(out, St::SetLane(r, idx, v));
                         Ok(())
                     }
-                    Local::Counter { .. } => gap("a store into a loop counter"),
+                    Local::Counter { .. } | Local::Known(_) => gap("a store into a loop counter or a short-circuit temporary"),
                 };
             }
         }
@@ -1700,12 +1777,27 @@ impl<'a> Reader<'a> {
                     }
                     if is_break {
                         self.last_set = saved;
-                        self.push(out, St::If(fv.clone(), a, o));
                         if broke {
-                            return gap("a loop body with two break points");
+                            // a second break point: `A; b1 = c1; if (b1) {X1}; B; b2 = c2; if (b2) {X2}; break if b1 || b2`
+                            // is `A; b1 = c1; if (b1) {X1}; b2 = false; if (!b1) { B; b2 = c2; if (b2) {X2} }; break if
+                            // b1 || b2`: B and the second test run only when the first did not break
+                            let p = out.iter().rposition(|x| matches!(x, St::BreakIf(_))).ok_or_else(|| ReadError::Gap("our software has a bug: the first break point is lost".into()))?;
+                            let tail = out.split_off(p + 1);
+                            let Some(St::BreakIf(e1)) = out.pop() else { return gap("our software has a bug: the first break point is lost") };
+                            // the second flag is written twice, so it is not a let's register
+                            self.ssa.remove(&flag);
+                            // the tail ends in the second flag's `b2 = c2`
+                            let mut inner = tail;
+                            inner.push(St::If(fv.clone(), a, o));
+                            out.push(St::Set(flag, E::Lit(Lit::B(false))));
+                            out.push(St::If(E::Un(UnaryOperator::LogicalNot, Box::new(e1.clone()), bool_w), inner, Vec::new()));
+                            self.last_set.remove(&flag);
+                            out.push(St::BreakIf(E::Bin(BinaryOperator::LogicalOr, Box::new(e1), Box::new(fv), bool_w)));
+                        } else {
+                            self.push(out, St::If(fv.clone(), a, o));
+                            broke = true;
+                            out.push(St::BreakIf(fv));
                         }
-                        broke = true;
-                        out.push(St::BreakIf(fv));
                     } else {
                         // `if (c) { X; continue; } rest` is `if (c) { X } else { O; rest }`
                         self.loop_body(fr, &stmts[i + 1..], &mut o, depth)?;
@@ -1876,7 +1968,10 @@ impl<'a> Reader<'a> {
     }
 
     fn note(&mut self, what: String) {
-        self.missing = Some(what);
+        // the first thing found missing is the deepest: the search fails bottom-up
+        if self.missing.is_none() {
+            self.missing = Some(what);
+        }
     }
 
     /// The constant `?_T` of type `ty_name` holding the literal, if `C_T` has it.
@@ -2202,7 +2297,7 @@ impl<'a> Reader<'a> {
     fn need(&self, st: &St) -> R<u32> {
         Ok(match st {
             St::If(_, a, b) => self.need_all(a)?.max(self.need_all(b)?),
-            St::Phase(b) | St::Pair(_, b) | St::Solo(b) => self.need_all(b)?,
+            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) => self.need_all(b)?,
             St::Loop(l) => self.need_all(&l.body)? + self.class_of(l)?.0,
             _ => 0,
         })
@@ -2225,7 +2320,7 @@ impl<'a> Reader<'a> {
         for (i, s) in sts.iter().enumerate() {
             match s {
                 St::BreakIf(_) => return gap("our software has a bug: a break point outside its loop body"),
-                St::Phase(_) | St::Pair(..) | St::Solo(_) => {
+                St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) => {
                     if x != 'L' {
                         return gap("a workgroup phase under divergent control");
                     }
@@ -2245,6 +2340,15 @@ impl<'a> Reader<'a> {
                         St::Solo(b) => {
                             let sb = self.block(b, 'S', d, k)?;
                             Tree { symbol: self.row(&format!("wg.solo_{r}"))?, const_index: None, kids: vec![sb, rest] }
+                        }
+                        St::Split(rd, b) => {
+                            let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
+                                Some(Region::Plain { base, .. }) => Some(*base),
+                                _ => None,
+                            }).min().ok_or_else(|| ReadError::Gap("our software has a bug: a split phase reading no plain array".into()))?;
+                            let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
+                            let xb = self.block(b, 'X', d, k)?;
+                            Tree { symbol: self.row(&format!("wg.split_{r}"))?, const_index: None, kids: vec![spt, xb, rest] }
                         }
                         _ => unreachable_phase()?,
                     };
@@ -2319,9 +2423,6 @@ impl<'a> Reader<'a> {
             }
             St::Store(b, i, e) => self.stmt_row(&format!("store.{b}_{r}"), vec![], &[i, e]),
             St::Discard(e) => {
-                if x == 'W' {
-                    return gap("an atomic read-modify-write inside a write phase");
-                }
                 self.stmt_row(&format!("stmt.discard_u_{r}"), vec![], &[e])
             }
             St::Barrier | St::StorageBarrier => {
@@ -2332,7 +2433,24 @@ impl<'a> Reader<'a> {
                 self.leaf(&format!("stmt.{name}_{r}"))
             }
             St::BreakIf(_) => gap("our software has a bug: a break point outside its loop body"),
-            St::Phase(_) | St::Pair(..) | St::Solo(_) => gap("our software has a bug: a phase spelled as a statement"),
+            St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) => gap("our software has a bug: a phase spelled as a statement"),
+            St::HLoad(reg, v, i) => {
+                let Some(Region::Plain { base, lane, block }) = self.regions.get(*v).copied() else { return gap("our software has a bug: a workgroup array with no region") };
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let (_, prefix, _, _) = REG_KINDS[reg.kind];
+                let mut lead = vec![self.leaf(&format!("reg.{prefix}{}", reg.n))?, self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?];
+                if key == "v4" {
+                    lead.push(self.wg_base(lane).ok_or_else(|| ReadError::Gap(format!("the lane stride {lane}")))?);
+                }
+                let idx = match block {
+                    None => i.clone(),
+                    Some(c) => {
+                        let t = self.threads();
+                        E::Bin(BinaryOperator::Add, u(E::Bin(BinaryOperator::Multiply, u(E::Bin(BinaryOperator::Modulo, u(i.clone()), u(E::Lit(Lit::U(c))), uw())), u(E::Lit(Lit::U(t))), uw())), u(E::Bin(BinaryOperator::Divide, u(i.clone()), u(E::Lit(Lit::U(c))), uw())), uw())
+                    }
+                };
+                self.stmt_row(&format!("wg.hload_{key}_{r}"), lead, &[&idx])
+            }
             St::WgSet(v, i, _) => gap(format!("a write of {}[{i:?}] outside any phase this kingdom spells", self.wgvars[*v].name)),
             St::WgOwnSet(v, m, e) => {
                 let Some(Region::Plain { base, lane, .. }) = self.regions.get(*v).copied() else { return gap("our software has a bug: a workgroup array with no region") };
@@ -2467,20 +2585,20 @@ impl<'a> Reader<'a> {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
         let (row, body_x, div, bound_kids): (String, char, bool, Vec<Tree>) = match (x, lit, brk.is_some()) {
-            ('W', Some(n), false) if stride == 1 => (format!("loop.tile_W{d}_f{kb}"), 'W', true, vec![lit64(self, n)?]),
-            ('W', None, false) if stride == 1 => {
+            ('W' | 'X', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X', None, false) if stride == 1 => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_{c}_W{d}_f{kb}"), 'W', true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
+                (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
             }
-            ('W', Some(n), true) => (format!("loop.tile_brk_W{d}_f{kb}"), 'W', true, vec![lit64(self, n)?]),
-            ('W', None, true) => {
+            ('W' | 'X', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X', None, true) => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_brk_{c}_W{d}_f{kb}"), 'W', true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
+                (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
             }
-            ('W', Some(n), false) => (format!("loop.tile_strided_W{d}_f{kb}"), 'W', true, vec![lit64(self, n)?, lit4096(self, stride)?]),
-            ('W', None, false) => {
+            ('W' | 'X', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
+            ('W' | 'X', None, false) => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_strided_{c}_W{d}_f{kb}"), 'W', true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
+                (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
             ('P', _, _) => return gap("a loop inside a pair phase"),
             ('S', Some(n), true) => (format!("loop.tile_brk_S{d}_f{kb}"), 'S', true, vec![lit64(self, n)?]),
@@ -2550,7 +2668,7 @@ impl<'a> Reader<'a> {
             Some(at) => {
                 let St::BreakIf(flag) = &lp.body[at] else { return gap("our software has a bug: the break point moved") };
                 let (bx, fl) = match x {
-                    'W' => ('W', "bool.flagw"),
+                    'W' | 'X' => (x, "bool.flagw"),
                     'S' => ('S', "bool.flag"),
                     _ => ('C', "bool.flag"),
                 };
@@ -2559,6 +2677,7 @@ impl<'a> Reader<'a> {
                 let c2 = self.block(&lp.body[at + 1..], bx, d1, kb)?;
                 let name = match x {
                     'W' => format!("block.brk_WB{d1}_f{kb}"),
+                    'X' => format!("block.brk_XB{d1}_f{kb}"),
                     'S' => format!("block.brk_SB{d1}_f{kb}"),
                     _ => format!("block.brk_B{d1}_f{kb}"),
                 };
@@ -2600,7 +2719,7 @@ impl<'a> Reader<'a> {
 
 fn needs_l(sts: &[St]) -> bool {
     sts.iter().any(|s| match s {
-        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::ULoad(..) => true,
+        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::ULoad(..) => true,
         St::If(_, a, b) => needs_l(a) || needs_l(b),
         St::Loop(l) => needs_l(&l.body),
         _ => false,
@@ -2630,6 +2749,10 @@ impl<'a> Reader<'a> {
         self.walk(&mut fr, &ep.function.body, &mut out, 0)?;
         self.allocate(&out)?;
         let out = self.structure(out)?;
+        if !self.splits.is_empty() {
+            let pairs: Vec<(usize, usize)> = self.splits.iter().flat_map(|(w, r)| w.iter().flat_map(move |a| r.iter().map(move |b| (*a, *b)))).collect();
+            self.place(&pairs)?;
+        }
         let k = self.k.fuel_budget;
         let need = self.need_all(&out)?;
         if need > k {
@@ -2738,6 +2861,33 @@ mod tests {
         }
         assert!(n > 0, "no seed read");
         println!("{n} seeds round-trip and validate");
+    }
+
+    /// UI1's census: every seed and its status, compared with the recorded table `tests/fixtures/v24_true_read_status.tsv`
+    /// (`set/name`, `reads` or `gap` (our bug: the table lacks a row) or `out` (illegal under its contract), the reason).
+    /// A seed whose status changes fails the test loudly; regenerate the table with `UI1_WRITE_STATUS=1`.
+    #[test]
+    fn every_v24_seed_reads_or_is_named_with_its_reason() {
+        let k = kingdom();
+        let c = contract();
+        let mut table = String::from("seed\tstatus\treason\n");
+        for (set, name, text) in seeds() {
+            let (st, why) = match read_module(&k, &text, &c) {
+                Ok(_) => ("reads", String::new()),
+                Err(ReadError::Gap(g)) => ("gap", g.split(" [value").next().unwrap_or(&g).replace(['\t', '\n'], " ")),
+                Err(ReadError::Out(o)) => ("out", o.replace(['\t', '\n'], " ")),
+            };
+            let why: String = why.chars().take(160).collect();
+            table.push_str(&format!("{set}/{name}\t{st}\t{why}\n"));
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v24_true_read_status.tsv");
+        if std::env::var("UI1_WRITE_STATUS").is_ok() {
+            std::fs::write(&path, &table).expect("write the status table");
+        }
+        let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (run once with UI1_WRITE_STATUS=1)", path.display()));
+        assert_eq!(table, want, "the seeds' statuses changed");
+        let reads = table.lines().filter(|l| l.split('\t').nth(1) == Some("reads")).count();
+        println!("{reads} of {} seeds read", table.lines().count() - 1);
     }
 
     #[test]
@@ -2989,7 +3139,13 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 wg_uses_e(e, out);
                 wg_uses(b, out);
             }
-            St::Phase(b) | St::Solo(b) => wg_uses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) => wg_uses(b, out),
+            St::HLoad(_, v, a) => {
+                if !out.contains(v) {
+                    out.push(*v);
+                }
+                wg_uses_e(a, out);
+            }
             St::PLoad(_, v) => {
                 if !out.contains(v) {
                     out.push(*v);
@@ -3151,11 +3307,25 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        self.used = used;
+        self.blocks = block;
+        self.place(&[])
+    }
+
+    /// Place the regions in first-use order, every array a split phase writes before every array it reads.
+    fn place(&mut self, before: &[(usize, usize)]) -> R<()> {
+        let block = self.blocks.clone();
+        let mut order: Vec<usize> = Vec::new();
+        let mut left: Vec<usize> = self.used.clone();
+        while !left.is_empty() {
+            let pick = left.iter().position(|v| !before.iter().any(|(a, b)| b == v && left.contains(a) && a != v)).ok_or_else(|| ReadError::Gap("split phases whose written and read arrays cannot be ordered in the pool".into()))?;
+            order.push(left.remove(pick));
+        }
         let t = self.threads();
         let pool_blocks = (crate::wgsl::true_reader::P_WORDS / t as u64) as u32;
         self.regions = vec![Region::Atomic { word: 0 }; self.wgvars.len()];
         let (mut next_blk, mut next_word) = (0u32, 0u32);
-        for v in used {
+        for v in order {
             let w = &self.wgvars[v];
             if w.atomic {
                 self.regions[v] = Region::Atomic { word: next_word };
@@ -3270,6 +3440,12 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        // a split phase: the arrays the segment writes are not the arrays it reads foreign elements of
+        if let Ok(Some(body)) = self.try_split(&part) {
+            out.extend(pre.clone());
+            out.push(body);
+            return Ok(());
+        }
         // a write phase: its statements read no workgroup element another invocation may write
         let mut w = Vec::new();
         for s in part.drain(..) {
@@ -3302,6 +3478,128 @@ impl<'a> Reader<'a> {
         out.extend(pre);
         out.push(St::Phase(w));
         Ok(())
+    }
+
+    /// A segment as a split phase: every write an own write of an array the segment never reads a foreign element of;
+    /// every foreign read hoisted into a register just before the statement that reads it.
+    fn try_split(&mut self, part: &[St]) -> R<Option<St>> {
+        let mut wr = Vec::new();
+        let mut ws = Vec::new();
+        wg_writes(part, false, self.wg, &mut ws);
+        for (v, _, _) in &ws {
+            if !wr.contains(v) {
+                wr.push(*v);
+            }
+        }
+        let mut rd = Vec::new();
+        let mut body = Vec::new();
+        for s in part {
+            body.extend(self.x_stmt(s, &wr, &mut rd)?);
+        }
+        if rd.is_empty() || rd.iter().any(|v| wr.contains(v)) {
+            return Ok(None);
+        }
+        self.splits.push((wr, rd.clone()));
+        Ok(Some(St::Split(rd, body)))
+    }
+
+    /// `e` in a split phase: reads of written arrays own reads, foreign reads of other arrays hoisted into `pre`.
+    fn x_e(&mut self, e: &E, wr: &[usize], rd: &mut Vec<usize>, pre: &mut Vec<St>) -> R<E> {
+        Ok(match e {
+            E::Wg(v, i, w) => {
+                let i2 = self.x_e(i, wr, rd, pre)?;
+                if wr.contains(v) {
+                    match self.own_m(*v, &i2) {
+                        Some(m) => E::WgOwn(*v, u(m), *w),
+                        None => return gap(format!("a split phase reading {}[{i2:?}], an element of an array it writes that is not its own", self.wgvars[*v].name)),
+                    }
+                } else {
+                    if !rd.contains(v) {
+                        rd.push(*v);
+                    }
+                    let r = self.reg(*w)?;
+                    pre.push(St::HLoad(r, *v, i2));
+                    E::Reg(r, *w)
+                }
+            }
+            o => {
+                let mut err = None;
+                let mut kids = Vec::new();
+                for k in kids_of(o) {
+                    match self.x_e(k, wr, rd, pre) {
+                        Ok(x) => kids.push(x),
+                        Err(e) => {
+                            err = Some(e);
+                            break;
+                        }
+                    }
+                }
+                if let Some(e) = err {
+                    return Err(e);
+                }
+                if let E::Parr(p, i, w) = o {
+                    let i2 = self.x_e(i, wr, rd, pre)?;
+                    return Ok(E::Parr(*p, u(i2), *w));
+                }
+                if let E::Load(n, i, w) = o {
+                    let i2 = self.x_e(i, wr, rd, pre)?;
+                    return Ok(E::Load(n.clone(), u(i2), *w));
+                }
+                let mut it = kids.into_iter();
+                self.map_kids(o, &mut |_, _| Ok(it.next().unwrap_or(E::Lit(Lit::U(0)))))?
+            }
+        })
+    }
+
+    /// A statement of a split phase, with the hoisted loads it needs before it.
+    fn x_stmt(&mut self, s: &St, wr: &[usize], rd: &mut Vec<usize>) -> R<Vec<St>> {
+        let mut pre = Vec::new();
+        let st = match s {
+            St::WgSet(v, i, x) => {
+                let i2 = self.x_e(i, wr, rd, &mut pre)?;
+                let x2 = self.x_e(x, wr, rd, &mut pre)?;
+                match self.own_m(*v, &i2) {
+                    Some(m) => St::WgOwnSet(*v, m, x2),
+                    None => return gap(format!("a write of {}[{i2:?}], an element another invocation may own", self.wgvars[*v].name)),
+                }
+            }
+            St::Set(r, e) => St::Set(*r, self.x_e(e, wr, rd, &mut pre)?),
+            St::SetLane(r, a, b) => St::SetLane(*r, self.x_e(a, wr, rd, &mut pre)?, self.x_e(b, wr, rd, &mut pre)?),
+            St::ParrSet(p, a, b) => St::ParrSet(*p, self.x_e(a, wr, rd, &mut pre)?, self.x_e(b, wr, rd, &mut pre)?),
+            St::Store(n, a, b) => St::Store(n.clone(), self.x_e(a, wr, rd, &mut pre)?, self.x_e(b, wr, rd, &mut pre)?),
+            St::WgAStore(v, a, b) => St::WgAStore(*v, self.x_e(a, wr, rd, &mut pre)?, self.x_e(b, wr, rd, &mut pre)?),
+            St::Discard(e) => St::Discard(self.x_e(e, wr, rd, &mut pre)?),
+            St::BreakIf(e) => St::BreakIf(self.x_e(e, wr, rd, &mut pre)?),
+            St::If(c, a, b) => {
+                let c2 = self.x_e(c, wr, rd, &mut pre)?;
+                let mut a2 = Vec::new();
+                for x in a {
+                    a2.extend(self.x_stmt(x, wr, rd)?);
+                }
+                let mut b2 = Vec::new();
+                for x in b {
+                    b2.extend(self.x_stmt(x, wr, rd)?);
+                }
+                St::If(c2, a2, b2)
+            }
+            St::Loop(l) => {
+                let mut l2 = (**l).clone();
+                let b2 = self.x_e(&l.bound, wr, rd, &mut pre)?;
+                if !matches!(b2, E::Lit(_)) && b2 != l.bound {
+                    return gap("a split phase loop bounded by a workgroup element");
+                }
+                let mut body = Vec::new();
+                for x in &l.body {
+                    // a break point stays at the body's own level: its hoisted loads go just before it
+                    body.extend(self.x_stmt(x, wr, rd)?);
+                }
+                l2.body = body;
+                St::Loop(Box::new(l2))
+            }
+            o => return gap(format!("the statement {o:?} inside a split phase")),
+        };
+        pre.push(st);
+        Ok(pre)
     }
 
     /// Whether a pair body reads some array's partner element `lidx + s`.
@@ -3365,7 +3663,6 @@ impl<'a> Reader<'a> {
                 Some(m) => E::WgOwn(*v, u(m), *w),
                 None => return gap(format!("{ctx}: a read of {}[{:?}], an element another invocation may write in the phase", self.wgvars[*v].name, i)),
             },
-            E::WgA(..) | E::WgRmw(..) | E::Rmw(..) => return gap(format!("{ctx}: an atomic inside a write phase")),
             o => self.map_kids(o, &mut |s, k| s.own_e(k, ctx))?,
         })
     }
@@ -3426,7 +3723,7 @@ impl<'a> Reader<'a> {
                 St::Loop(Box::new(l2))
             }
             St::BreakIf(e) => St::BreakIf(self.own_e(e, c)?),
-            St::Discard(_) => return gap("an atomic read-modify-write inside a write phase"),
+            St::Discard(e) => St::Discard(self.own_e(e, c)?),
             o => return gap(format!("the statement {o:?} inside a write phase")),
         })
     }
@@ -3552,3 +3849,4 @@ fn elem_key(w: Wt) -> Option<&'static str> {
 fn unreachable_phase() -> R<Tree> {
     gap("our software has a bug: a phase of no kind")
 }
+

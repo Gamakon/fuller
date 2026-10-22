@@ -71,7 +71,7 @@ def declare(iface):
 
 
 def set_rungs():
-    return list(rungs("LCS")) + list(rungs("WP"))
+    return list(rungs("LCS")) + list(rungs("WPX"))
 
 
 def build(iface):
@@ -85,7 +85,7 @@ def build(iface):
             R(f"reg.{prefix}{n}", rt, [], f"{prefix}{n}", "a register is a name, never a value: only a get reads it")
         R(f"reg.get_{key}", vtyp, [rt], "{0}", "a register holds any invocation's value: no row makes a uniform or an ownership type from it", twin=True)
         for x, d, k in set_rungs():
-            if x in "WP":
+            if x in "WPX":
                 R(f"reg.set_{key}_{x}{d}_f{k}", S(x, d, k), [rt, w_of(vtyp)], "{0} = {1};")
             else:
                 R(f"reg.set_{key}_{x}{d}_f{k}", S(x, d, k), [rt, vtyp], "{0} = {1};")
@@ -99,7 +99,7 @@ def build(iface):
             if scalar_t in TYPES:
                 R(f"reg.get_{key}_lane", scalar_t, [rt, "u32.index"], "{0}[({1}) " + mask + "]", "a register's lane at a run-time index, reduced by the row's text", twin=True)
                 for x, d, k in set_rungs():
-                    if x in "WP":
+                    if x in "WPX":
                         R(f"reg.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [rt, "u32.indexw", w_of(scalar_t)], "{0}[({1}) " + mask + "] = {2};")
                     else:
                         R(f"reg.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [rt, "u32.index", scalar_t], "{0}[({1}) " + mask + "] = {2};")
@@ -109,7 +109,7 @@ def build(iface):
             R(f"parr.{prefix}{n}", at, [], f"{prefix}{n}")
         R(f"parr.get_{key}", vtyp, [at, it], "{0}[{1}]", "in range by the index type", twin=True)
         for x, d, k in set_rungs():
-            if x in "WP":
+            if x in "WPX":
                 R(f"parr.set_{key}_{x}{d}_f{k}", S(x, d, k), [at, w_of(it), w_of(vtyp)], "{0}[{1}] = {2};")
             else:
                 R(f"parr.set_{key}_{x}{d}_f{k}", S(x, d, k), [at, it, vtyp], "{0}[{1}] = {2};")
@@ -120,7 +120,7 @@ def build(iface):
             scalar_t = vt(sname, vtyp.split(".")[1])
             R(f"parr.get_{key}_lane", scalar_t, [at, it, "u32.index"], "{0}[{1}][({2}) " + mask + "]", twin=True)
             for x, d, k in set_rungs():
-                if x in "WP":
+                if x in "WPX":
                     R(f"parr.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [at, w_of(it), "u32.indexw", w_of(scalar_t)], "{0}[{1}][({2}) " + mask + "] = {3};")
                 else:
                     R(f"parr.set_{key}_lane_{x}{d}_f{k}", S(x, d, k), [at, it, "u32.index", scalar_t], "{0}[{1}][({2}) " + mask + "] = {3};")

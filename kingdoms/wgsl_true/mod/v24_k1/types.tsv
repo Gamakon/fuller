@@ -128,199 +128,235 @@ T0126	stmt.S5_f0	stmt	S5_f0	1	one S-rung statement at depth 5, fuel stratum 0	-
 T0127	block.S5_f0	block	S5_f0	1	a S-rung statement sequence at depth 5, fuel stratum 0	-
 T0128	stmt.S5_f1	stmt	S5_f1	1	one S-rung statement at depth 5, fuel stratum 1	-
 T0129	block.S5_f1	block	S5_f1	1	a S-rung statement sequence at depth 5, fuel stratum 1	-
-T0130	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
-T0131	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
-T0132	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
-T0133	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
-T0134	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
-T0135	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
-T0136	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
-T0137	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
-T0138	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
-T0139	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
-T0140	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
-T0141	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
-T0142	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
-T0143	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
-T0144	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
-T0145	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
-T0146	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
-T0147	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
-T0148	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
-T0149	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
-T0150	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
-T0151	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
-T0152	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
-T0153	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
-T0154	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
-T0155	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
-T0156	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
-T0157	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
-T0158	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
-T0159	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
-T0160	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
-T0161	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
-T0162	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
-T0163	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
-T0164	u32.lidx	u32	lidx	1	local_invocation_index	-
-T0165	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
-T0166	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
-T0167	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
-T0168	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
-T0169	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
-T0170	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
-T0171	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
-T0172	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
-T0173	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
-T0174	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
-T0175	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
-T0176	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
-T0177	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
-T0178	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
-T0179	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
-T0180	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
-T0181	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
-T0182	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
-T0183	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
-T0184	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
-T0185	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
-T0186	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
-T0187	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
-T0188	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
-T0189	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
-T0190	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
-T0191	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
-T0192	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
-T0193	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
-T0194	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
-T0195	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
-T0196	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
-T0197	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
-T0198	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
-T0199	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
-T0200	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
-T0201	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
-T0202	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
-T0203	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
-T0204	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
-T0205	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
-T0206	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
-T0207	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
-T0208	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
-T0209	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
-T0210	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
-T0211	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
-T0212	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
-T0213	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
-T0214	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
-T0215	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
-T0216	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
-T0217	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
-T0218	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T0219	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T0220	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
-T0221	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
-T0222	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
-T0223	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
-T0224	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0225	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0226	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
-T0227	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
-T0228	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
-T0229	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
-T0230	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
-T0231	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
-T0232	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
-T0233	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
-T0234	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
-T0235	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
-T0236	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
-T0237	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
-T0238	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
-T0239	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
-T0240	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
-T0241	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
-T0242	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
-T0243	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
-T0244	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
-T0245	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
-T0246	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
-T0247	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
-T0248	u32.hash32	u32	hash32	1	a 32-bit hash state	-
-T0249	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
-T0250	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
-T0251	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
-T0252	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
-T0253	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
-T0254	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
-T0255	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
-T0256	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
-T0257	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
-T0258	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
-T0259	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
-T0260	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
-T0261	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
-T0262	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
-T0263	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
-T0264	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
-T0265	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
-T0266	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
-T0267	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
-T0268	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
-T0269	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
-T0270	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
-T0271	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
-T0272	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
-T0273	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
-T0274	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
-T0275	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
-T0276	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
-T0277	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
-T0278	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
-T0279	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
-T0280	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
-T0281	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
-T0282	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
-T0283	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
-T0284	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
-T0285	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
-T0286	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
-T0287	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
-T0288	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
-T0289	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
-T0290	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
-T0291	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
-T0292	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
-T0293	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
-T0294	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
-T0295	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
-T0296	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
-T0297	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
-T0298	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
-T0299	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
-T0300	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
-T0301	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
-T0302	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
-T0303	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
-T0304	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
-T0305	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
-T0306	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
-T0307	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
-T0308	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
-T0309	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
-T0310	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
-T0311	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
-T0312	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
-T0313	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
-T0314	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
-T0315	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
-T0316	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
-T0317	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
-T0318	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
-T0319	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T0320	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T0321	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
-T0322	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
-T0323	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
-T0324	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
-T0325	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2111
+T0130	stmt.X0_f0	stmt	X0_f0	1	one X-rung statement at depth 0, fuel stratum 0	-
+T0131	block.X0_f0	block	X0_f0	1	a X-rung statement sequence at depth 0, fuel stratum 0	-
+T0132	stmt.X0_f1	stmt	X0_f1	1	one X-rung statement at depth 0, fuel stratum 1	-
+T0133	block.X0_f1	block	X0_f1	1	a X-rung statement sequence at depth 0, fuel stratum 1	-
+T0134	stmt.X1_f0	stmt	X1_f0	1	one X-rung statement at depth 1, fuel stratum 0	-
+T0135	block.X1_f0	block	X1_f0	1	a X-rung statement sequence at depth 1, fuel stratum 0	-
+T0136	stmt.X1_f1	stmt	X1_f1	1	one X-rung statement at depth 1, fuel stratum 1	-
+T0137	block.X1_f1	block	X1_f1	1	a X-rung statement sequence at depth 1, fuel stratum 1	-
+T0138	stmt.X2_f0	stmt	X2_f0	1	one X-rung statement at depth 2, fuel stratum 0	-
+T0139	block.X2_f0	block	X2_f0	1	a X-rung statement sequence at depth 2, fuel stratum 0	-
+T0140	stmt.X2_f1	stmt	X2_f1	1	one X-rung statement at depth 2, fuel stratum 1	-
+T0141	block.X2_f1	block	X2_f1	1	a X-rung statement sequence at depth 2, fuel stratum 1	-
+T0142	stmt.X3_f0	stmt	X3_f0	1	one X-rung statement at depth 3, fuel stratum 0	-
+T0143	block.X3_f0	block	X3_f0	1	a X-rung statement sequence at depth 3, fuel stratum 0	-
+T0144	stmt.X3_f1	stmt	X3_f1	1	one X-rung statement at depth 3, fuel stratum 1	-
+T0145	block.X3_f1	block	X3_f1	1	a X-rung statement sequence at depth 3, fuel stratum 1	-
+T0146	stmt.X4_f0	stmt	X4_f0	1	one X-rung statement at depth 4, fuel stratum 0	-
+T0147	block.X4_f0	block	X4_f0	1	a X-rung statement sequence at depth 4, fuel stratum 0	-
+T0148	stmt.X4_f1	stmt	X4_f1	1	one X-rung statement at depth 4, fuel stratum 1	-
+T0149	block.X4_f1	block	X4_f1	1	a X-rung statement sequence at depth 4, fuel stratum 1	-
+T0150	stmt.X5_f0	stmt	X5_f0	1	one X-rung statement at depth 5, fuel stratum 0	-
+T0151	block.X5_f0	block	X5_f0	1	a X-rung statement sequence at depth 5, fuel stratum 0	-
+T0152	stmt.X5_f1	stmt	X5_f1	1	one X-rung statement at depth 5, fuel stratum 1	-
+T0153	block.X5_f1	block	X5_f1	1	a X-rung statement sequence at depth 5, fuel stratum 1	-
+T0154	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
+T0155	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
+T0156	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
+T0157	block.XB1_f0	block	XB1_f0	1	a split-phase loop body that breaks, depth 1, stratum 0	-
+T0158	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
+T0159	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
+T0160	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
+T0161	block.XB1_f1	block	XB1_f1	1	a split-phase loop body that breaks, depth 1, stratum 1	-
+T0162	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
+T0163	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
+T0164	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
+T0165	block.XB2_f0	block	XB2_f0	1	a split-phase loop body that breaks, depth 2, stratum 0	-
+T0166	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
+T0167	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
+T0168	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
+T0169	block.XB2_f1	block	XB2_f1	1	a split-phase loop body that breaks, depth 2, stratum 1	-
+T0170	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
+T0171	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
+T0172	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
+T0173	block.XB3_f0	block	XB3_f0	1	a split-phase loop body that breaks, depth 3, stratum 0	-
+T0174	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
+T0175	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
+T0176	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
+T0177	block.XB3_f1	block	XB3_f1	1	a split-phase loop body that breaks, depth 3, stratum 1	-
+T0178	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
+T0179	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
+T0180	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
+T0181	block.XB4_f0	block	XB4_f0	1	a split-phase loop body that breaks, depth 4, stratum 0	-
+T0182	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
+T0183	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
+T0184	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
+T0185	block.XB4_f1	block	XB4_f1	1	a split-phase loop body that breaks, depth 4, stratum 1	-
+T0186	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
+T0187	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
+T0188	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
+T0189	block.XB5_f0	block	XB5_f0	1	a split-phase loop body that breaks, depth 5, stratum 0	-
+T0190	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
+T0191	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
+T0192	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
+T0193	block.XB5_f1	block	XB5_f1	1	a split-phase loop body that breaks, depth 5, stratum 1	-
+T0194	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
+T0195	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
+T0196	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
+T0197	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
+T0198	u32.lidx	u32	lidx	1	local_invocation_index	-
+T0199	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
+T0200	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
+T0201	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
+T0202	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
+T0203	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
+T0204	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
+T0205	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
+T0206	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
+T0207	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
+T0208	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
+T0209	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
+T0210	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
+T0211	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
+T0212	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
+T0213	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
+T0214	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
+T0215	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
+T0216	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
+T0217	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
+T0218	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
+T0219	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
+T0220	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
+T0221	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
+T0222	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
+T0223	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
+T0224	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
+T0225	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
+T0226	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
+T0227	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
+T0228	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
+T0229	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
+T0230	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
+T0231	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
+T0232	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
+T0233	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
+T0234	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
+T0235	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
+T0236	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
+T0237	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
+T0238	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
+T0239	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
+T0240	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
+T0241	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
+T0242	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
+T0243	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
+T0244	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
+T0245	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
+T0246	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
+T0247	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
+T0248	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
+T0249	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
+T0250	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
+T0251	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
+T0252	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0253	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0254	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
+T0255	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
+T0256	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
+T0257	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
+T0258	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0259	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0260	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
+T0261	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
+T0262	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
+T0263	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
+T0264	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
+T0265	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
+T0266	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
+T0267	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
+T0268	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
+T0269	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
+T0270	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
+T0271	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
+T0272	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
+T0273	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
+T0274	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
+T0275	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
+T0276	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
+T0277	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
+T0278	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
+T0279	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
+T0280	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
+T0281	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
+T0282	u32.bitsw	u32	bitsw	1	the write-phase twin of u32.bits: a value no foreign workgroup read reached	-
+T0283	u32.hash32	u32	hash32	1	a 32-bit hash state	-
+T0284	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
+T0285	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
+T0286	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
+T0287	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
+T0288	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
+T0289	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
+T0290	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
+T0291	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
+T0292	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
+T0293	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
+T0294	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
+T0295	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
+T0296	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
+T0297	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
+T0298	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
+T0299	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
+T0300	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
+T0301	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
+T0302	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
+T0303	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
+T0304	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
+T0305	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
+T0306	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
+T0307	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
+T0308	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
+T0309	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
+T0310	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
+T0311	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
+T0312	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
+T0313	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
+T0314	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
+T0315	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
+T0316	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
+T0317	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
+T0318	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
+T0319	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
+T0320	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
+T0321	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
+T0322	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
+T0323	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
+T0324	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
+T0325	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
+T0326	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
+T0327	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
+T0328	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
+T0329	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
+T0330	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
+T0331	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
+T0332	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
+T0333	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
+T0334	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
+T0335	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
+T0336	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
+T0337	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
+T0338	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
+T0339	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
+T0340	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
+T0341	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
+T0342	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
+T0343	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
+T0344	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
+T0345	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
+T0346	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
+T0347	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
+T0348	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
+T0349	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
+T0350	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
+T0351	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
+T0352	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
+T0353	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
+T0354	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
+T0355	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T0356	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
+T0357	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
+T0358	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
+T0359	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
+T0360	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
+T0361	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2111

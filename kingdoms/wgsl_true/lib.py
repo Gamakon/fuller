@@ -94,9 +94,11 @@ def configure(k, epilogue=True, pools=False):
         # s9 batch 9: the pair phase's body (P, W plus the partner load) and the solo phase's body (S, one invocation)
         DEPTH["P"] = range(0, 6)
         DEPTH["S"] = range(0, 6)
+        # the split phase's body (X): W, writing below the split and reading above it
+        DEPTH["X"] = range(0, 6)
 
 
-DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0)}
+DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0)}
 STRATA = range(0, K + 1)
 
 
@@ -114,6 +116,10 @@ def BB(d, k):
 
 def WBB(d, k):
     return f"block.WB{d}_f{k}"
+
+
+def XBB(d, k):
+    return f"block.XB{d}_f{k}"
 
 
 def SBB(d, k):

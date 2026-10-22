@@ -1,0 +1,68 @@
+seed	status	reason
+seeds5b/seed00.wgsl	reads	
+seeds5b/seed01.wgsl	gap	a row that spells the value as u32.indexw
+seeds5b/seed02.wgsl	gap	a write of wbits[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(31)), Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed03.wgsl	reads	
+seeds5b/seed04.wgsl	reads	
+seeds5b/seed05.wgsl	reads	
+seeds5b/seed06.wgsl	reads	
+seeds5b/seed07.wgsl	reads	
+seeds5b/seed08.wgsl	reads	
+seeds5b/seed09.wgsl	gap	a row that spells the value as u32.indexw
+seeds5b/seed10.wgsl	reads	
+seeds5b/seed11.wgsl	reads	
+seeds5b/seed12.wgsl	gap	a value of type Array { base: [0], size: Constant(8), stride: 4 }
+seeds5b/seed13.wgsl	reads	
+seeds5b/seed14.wgsl	gap	a write of qc[Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed15.wgsl	gap	a write of blen[Lit(U(0))], an element another invocation may own
+seeds5b/seed16.wgsl	gap	a write of wbuf[Bin(Add, Lit(U(1024)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed17.wgsl	gap	a write phase: a read of wp[Counter(7)], an element another invocation may write in the phase
+seeds5b/seed18.wgsl	gap	a write phase: a read of wflip[Counter(8)], an element another invocation may write in the phase
+seeds5b/seed19.wgsl	gap	a write of wwin[Bin(Add, Lit(U(8)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed20.wgsl	gap	a write phase: a read of wy[Bin(And, Bin(InclusiveOr, Bin(ShiftLeft, Bin(ShiftRight, Bin(Add, Bin(Multiply, Counter(2), Lit(U(256)), Wt { s: U32, lanes: 1 }), L
+seeds5b/seed21.wgsl	gap	a write of sh_u[Reg(Reg { kind: 1, n: 26 }, Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed22.wgsl	gap	a write of wmid[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(127)), Wt { s: U32, lanes: 1 })], an element another invocation may own
+seeds5b/seed23.wgsl	gap	a row that spells the value as vec4<f32>.realw
+seeds5b/seed24.wgsl	reads	
+seeds5b/seed25.wgsl	reads	
+seeds5b/seed26.wgsl	reads	
+seeds5b/seed27.wgsl	reads	
+seeds5b/seed28.wgsl	gap	a write phase: a read of wscore[Counter(7)], an element another invocation may write in the phase
+seeds5b/seed29.wgsl	gap	a pair phase writing wred[Bin(Add, Lit(U(256)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], not the own element
+seeds5b/seed30.wgsl	gap	a write phase: a read of wred[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(12), Wt { s: U32, 
+seeds5b/seed31.wgsl	gap	a loop that breaks and holds a barrier
+run1/seed00.wgsl	gap	a write phase: a read of wproj[Bin(Add, Bin(Multiply, Bin(Divide, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(5)), Wt { s: U32, lanes: 1 }), Lit(U(10)), Wt
+run1/seed01.wgsl	reads	
+run1/seed02.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 15 }, Wt { s: U32, lanes: 1 })
+run1/seed03.wgsl	reads	
+run1/seed04.wgsl	reads	
+run1/seed05.wgsl	gap	a write phase: a read of probe[Counter(4)], an element another invocation may write in the phase
+run1/seed06.wgsl	gap	a write of wc[Lit(U(0))], an element another invocation may own
+run1/seed07.wgsl	reads	
+run1/seed08.wgsl	gap	a write phase: a read of cscore[Counter(3)], an element another invocation may write in the phase
+run1/seed09.wgsl	reads	
+run1/seed10.wgsl	gap	a write of red[Bin(Add, Counter(10), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own
+run1/seed11.wgsl	gap	a break or continue nested inside conditionals of a loop body
+run1/seed12.wgsl	reads	
+run1/seed13.wgsl	reads	
+run1/seed14.wgsl	reads	
+run1/seed15.wgsl	gap	a write of sc[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(Multiply, Counter(3), Lit(U(64)), Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
+run1/seed16.wgsl	gap	a write of sel[Counter(2)], an element another invocation may own
+run1/seed17.wgsl	gap	a write phase: a read of pscore[Counter(9)], an element another invocation may write in the phase
+run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Multiply, Bin(Add, Bin(Multiply, Counter(1), Lit(U(32)), Wt { s: U32, lanes: 1 }), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), W
+run1/seed19.wgsl	gap	a write phase: a read of wy[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(ShiftLeft, Lit(U(1)), Counter(4), Wt { s: U32, lanes: 1 }), Wt { s:
+run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
+run1/seed21.wgsl	gap	workgroup array wa of 2048 written in blocks of 4 by 256 invocations
+run1/seed22.wgsl	gap	a strided loop that breaks
+run1/seed23.wgsl	reads	
+run1/seed24.wgsl	reads	
+run1/seed25.wgsl	reads	
+run1/seed26.wgsl	reads	
+run1/seed27.wgsl	gap	a write phase: a read of wsc[Bin(Add, Bin(Multiply, Bin(Divide, Bin(Add, Counter(15), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 }), Bin(S
+run1/seed28.wgsl	gap	a write of wbuf[Bin(And, Bin(Multiply, Bin(Add, Counter(4), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 
+run1/seed29.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
+run1/seed30.wgsl	gap	a write phase: a read of wf[Bin(Add, Bin(Add, Bin(Multiply, Counter(6), Lit(U(64)), Wt { s: U32, lanes: 1 }), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s:
+run1/seed31.wgsl	gap	a write phase: a read of wsf[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(128)), Wt { s: U32, lanes: 1 }), Counter(6), Wt { s: U32, l
+reference/reference.wgsl	reads	
+run4/best.wgsl	gap	a row that spells the value as f32.real
+run5/best.wgsl	gap	a row that spells the value as f32.real

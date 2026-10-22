@@ -94,12 +94,12 @@ def build(iface):
         d1 = d + 1
         for k in STRATA:
             # lit64 bound
-            for x in "LCOW":
+            for x in "LCOWX":
                 if d1 not in DEPTH[x] or k + 1 > K:
                     continue
                 div = x != "L"
                 R(f"loop.tile_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", B(x, d1, k)], loop_text(d1, div), "a literal bound raises the stratum by one")
-                if x != "W" or DEPTH["S"]:
+                if x not in "WX" or DEPTH["S"]:
                     R(f"loop.tile_strided_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", "u32.lit4096", B(x, d1, k)], loop_text(d1, div, stride="{1}", body="{2}"), "the stride form")
             for c in BOUND_CLASSES:
                 cls = c // 6
@@ -118,10 +118,16 @@ def build(iface):
                 for x in "LC":
                     R(f"loop.tilex_brk_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx")
                 R(f"loop.tilex_brk_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", WBB(d1, k)], loop_text(d1, True))
+                if d1 in DEPTH["X"]:
+                    R(f"loop.tilex_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", B("X", d1, k)], loop_text(d1, True))
+                    R(f"loop.tilex_strided_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", "u32.lit4096", B("X", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
+                    R(f"loop.tilex_brk_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", XBB(d1, k)], loop_text(d1, True))
             if k + 1 <= K:
                 for x in "LC":
                     R(f"loop.tile_brk_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx: after it the counter differs between invocations")
                 R(f"loop.tile_brk_W{d}_f{k}", S("W", d, k + 1), ["u32.lit64", WBB(d1, k)], loop_text(d1, True))
+                if d1 in DEPTH["X"]:
+                    R(f"loop.tile_brk_X{d}_f{k}", S("X", d, k + 1), ["u32.lit64", XBB(d1, k)], loop_text(d1, True))
             if d1 in DEPTH["S"]:
                 # the solo phase's loops (s9 batch 9): one invocation, the body stays S
                 if k + 1 <= K:
