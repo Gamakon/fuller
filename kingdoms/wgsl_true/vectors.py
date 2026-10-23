@@ -153,8 +153,8 @@ def build(iface):
     R("convert.bitcast_f32_bits", "u32.bits", ["f32.real"], "bitcast<u32>({0})", twin=tw)
     R("convert.bitcast_bits_f32", "f32.real", ["u32.bits"], "bitcast<f32>({0})", "a bitcast to f32 can make a NaN: a value", twin=tw)
     for n, src in (("pack4x8snorm", 4), ("pack4x8unorm", 4), ("pack2x16snorm", 2), ("pack2x16unorm", 2), ("pack2x16float", 2)):
-        R(f"bits.{n}", "u32.bits", [ft("real", src)], n + "({0})")
-        R(f"bits.un{n}", ft("real", src), ["u32.bits"], "un" + n + "({0})")
+        R(f"bits.{n}", "u32.bits", [ft("real", src)], n + "({0})", twin=tw)
+        R(f"bits.un{n}", ft("real", src), ["u32.bits"], "un" + n + "({0})", twin=tw)
     # ---- hash
     helper("fmix32", "fn fmix32(h0: u32) -> u32 { var h = h0; h = h ^ (h >> 16u); h = h * 0x85ebca6bu; h = h ^ (h >> 13u); h = h * 0xc2b2ae35u; h = h ^ (h >> 16u); return h; }")
     helper("combine_hash", "fn combine_hash(a: u32, b: u32) -> u32 { return fmix32(a ^ (b * 0x9e3779b9u + (a << 6u) + (a >> 2u))); }")

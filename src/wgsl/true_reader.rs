@@ -2146,26 +2146,25 @@ impl<'a> Reader<'a> {
                 return Some(Tree { symbol: *row, const_index: None, kids });
             }
             E::WgA(v, i) => {
+                // a relaxed load of the atomic pool, plain or its `w` twin (atomics stand in a phase)
                 let Region::Atomic { word } = *self.regions.get(*v)? else { return None };
-                let row = *self.rows_by_name.get("atomic.wg_load")?;
-                if self.k.rows[row as usize].out != want {
-                    return None;
+                for (row, args) in self.named_rows(&["atomic.wg_load".to_string(), "atomic.wg_load_w".to_string()], want) {
+                    let Some(base) = self.konst(&self.k.type_name(args[0]), &Lit::U(word)) else { continue };
+                    if let Some(it) = self.val(i, args[1]) {
+                        return Some(Tree { symbol: row, const_index: None, kids: vec![base, it] });
+                    }
                 }
-                let base = self.konst("u32.wgabase", &Lit::U(word))?;
-                let it = self.val(i, self.ty("u32.index").ok()?)?;
-                return Some(Tree { symbol: row, const_index: None, kids: vec![base, it] });
+                return None;
             }
             E::WgRmw(f, v, i, x) => {
                 let Region::Atomic { word } = *self.regions.get(*v)? else { return None };
-                let row = *self.rows_by_name.get(&format!("atomic.wg_{f}"))?;
-                if self.k.rows[row as usize].out != want {
-                    return None;
+                for (row, args) in self.named_rows(&[format!("atomic.wg_{f}"), format!("atomic.wg_{f}_w")], want) {
+                    let Some(base) = self.konst(&self.k.type_name(args[0]), &Lit::U(word)) else { continue };
+                    if let (Some(it), Some(xt)) = (self.val(i, args[1]), self.val(x, args[2])) {
+                        return Some(Tree { symbol: row, const_index: None, kids: vec![base, it, xt] });
+                    }
                 }
-                let base = self.konst("u32.wgabase", &Lit::U(word))?;
-                let ui = self.ty("u32.index").ok()?;
-                let it = self.val(i, ui)?;
-                let xt = self.val(x, ui)?;
-                return Some(Tree { symbol: row, const_index: None, kids: vec![base, it, xt] });
+                return None;
             }
             E::UReg(n) => {
                 let row = *self.rows_by_name.get("uniform.get_U")?;
@@ -3000,8 +2999,7 @@ mod tests {
                 }
                 Err(e) => {
                     let s = e.to_string();
-                    let short: String = s.chars().take(260).collect();
-                    println!("{set}/{name}: {short}");
+                    println!("{set}/{name}: {s}");
                     let key: String = s.split(" [value").next().unwrap_or(&s).chars().take(90).collect();
                     *tally.entry(key).or_default() += 1;
                 }
@@ -3535,11 +3533,21 @@ impl<'a> Reader<'a> {
             }
         }
         // a split phase: the arrays the segment writes are not the arrays it reads foreign elements of
-        if let Ok(Some(body)) = self.try_split(&part) {
-            out.extend(pre.clone());
-            out.push(body);
-            return Ok(());
-        }
+        let split_gap = match self.try_split(&part) {
+            Ok(Some(body)) => {
+                out.extend(pre.clone());
+                out.push(body);
+                return Ok(());
+            }
+            Ok(None) => None,
+            Err(ReadError::Gap(g)) => Some(g),
+            Err(ReadError::Out(o)) => Some(o),
+        };
+        // a write phase's gap names the split phase's too, so the reason is the whole of what the table lacks
+        let both = |e: ReadError| match (e, &split_gap) {
+            (ReadError::Gap(g), Some(s)) => ReadError::Gap(format!("{g}; as a split phase: {s}")),
+            (e, _) => e,
+        };
         // a write phase: its statements read no workgroup element another invocation may write
         let mut w = Vec::new();
         for s in part.drain(..) {
@@ -3553,9 +3561,9 @@ impl<'a> Reader<'a> {
                             pre.push(before);
                             w.push(x);
                         }
-                        Err(_) => return Err(e),
+                        Err(_) => return Err(both(e)),
                     },
-                    None => return Err(e),
+                    None => return Err(both(e)),
                 },
                 Err(e) => {
                     // a statement with no workgroup write that reads foreign elements moves before the phase when nothing
@@ -3564,7 +3572,7 @@ impl<'a> Reader<'a> {
                         pre.push(s);
                         continue;
                     }
-                    return Err(e);
+                    return Err(both(e));
                 }
             }
         }

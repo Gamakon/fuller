@@ -164,7 +164,10 @@ mod tests {
         let k = kingdom("v24_k1");
         let m = TrueModule::new(&k, &[8, 8]).expect("module");
         let mut rng = Rng(11);
-        for i in 0..200u64 {
+        // `UI1_RANDOM_N=1000`: the host half of UI1's 1,000-module loop (naga and the write-back; the device half is
+        // the example `v24_true_read --random`)
+        let n: u64 = std::env::var("UI1_RANDOM_N").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
+        for i in 0..n {
             let c = m.random(i, &mut rng, Share::Half, true).expect("random");
             let src = m.render(&c).expect("render");
             let module = crate::wgsl::naga_shape::parse_unscanned(&src).unwrap_or_else(|e| panic!("gene {i}: naga parse: {e}\n{src}"));
