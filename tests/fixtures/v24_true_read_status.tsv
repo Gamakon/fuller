@@ -42,7 +42,7 @@ run1/seed07.wgsl	reads
 run1/seed08.wgsl	out	a race in its own text: probe[rank] = c & 127u, rank counting v > mine || (v == mine && o < c) over the f32 cscore; a NaN score gives two centres one rank, so t
 run1/seed09.wgsl	reads	
 run1/seed10.wgsl	gap	split phases whose written and read arrays cannot be ordered in the pool
-run1/seed11.wgsl	gap	a break or continue nested inside conditionals of a loop body
+run1/seed11.wgsl	reads	
 run1/seed12.wgsl	reads	
 run1/seed13.wgsl	reads	
 run1/seed14.wgsl	reads	
@@ -51,7 +51,7 @@ run1/seed16.wgsl	out	a race in its own text: score_batch, invocations t < 8 writ
 run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so t
 run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Add, Bin(Multiply, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 }), Lit(U(16)), 
 run1/seed19.wgsl	reads	
-run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
+run1/seed20.wgsl	gap	a write phase: a read of sc[Bin(Add, Bin(ShiftLeft, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(5)), Wt { s: U32, lanes: 1 }), Lit(U(5)), W
 run1/seed21.wgsl	reads	
 run1/seed22.wgsl	reads	
 run1/seed23.wgsl	reads	

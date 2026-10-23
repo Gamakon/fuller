@@ -1878,6 +1878,30 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    /// The index of `if (d) { X; break; }` in `accept` when it is the only jump of `accept` and `reject` has none, its
+    /// own reject empty and X jump-free: the nested break the loop body restructures.
+    fn nested_break(&self, accept: &Block, reject: &Block) -> Option<usize> {
+        if has_jump(reject) {
+            return None;
+        }
+        let pos: Vec<usize> = accept.iter().enumerate().filter(|(_, s)| match s {
+            Statement::Break | Statement::Continue => true,
+            Statement::Block(x) => has_jump(x),
+            Statement::If { accept: a, reject: b, .. } => has_jump(a) || has_jump(b),
+            _ => false,
+        }).map(|(i, _)| i).collect();
+        let [j] = pos[..] else { return None };
+        match &accept[j] {
+            Statement::If { accept: xa, reject: xb, .. } if xb.is_empty() && matches!(xa.last(), Some(Statement::Break)) && !xa.iter().take(xa.len() - 1).any(|x| match x {
+                Statement::Break | Statement::Continue => true,
+                Statement::Block(y) => has_jump(y),
+                Statement::If { accept: a, reject: b, .. } => has_jump(a) || has_jump(b),
+                _ => false,
+            }) => Some(j),
+            _ => None,
+        }
+    }
+
     /// A loop body's own statements: one `break` point (`if (c) { X; break; }`) and `continue`s at this level.
     fn loop_body(&mut self, fr: &mut Frame<'a>, stmts: &[&'a Statement], out: &mut Vec<St>, depth: usize) -> R<()> {
         let mut i = 0;
@@ -1892,6 +1916,42 @@ impl<'a> Reader<'a> {
                         (accept, reject, c)
                     } else if jump_last(reject) && !has_jump(accept) {
                         (reject, accept, E::Un(UnaryOperator::LogicalNot, Box::new(c), bool_w))
+                    } else if let Some(j) = self.nested_break(accept, reject).filter(|_| !broke) {
+                        // `if (c) { P; if (d) { X; break; } S } else { O }` is `f = false; if (c) { P; f = d; if (f) { X }
+                        // if (!f) { S } } else { O }; break if f`: the break point at the body's own level
+                        let Statement::If { condition: dc, accept: xa, .. } = &accept[j] else { return gap("our software has a bug: the nested break moved") };
+                        let flag = self.reg(bool_w)?;
+                        out.push(St::Set(flag, E::Lit(Lit::B(false))));
+                        let fv = E::Reg(flag, bool_w);
+                        let saved = self.last_set.clone();
+                        let mut a = Vec::new();
+                        if self.walk(fr, &accept[..j], &mut a, depth)? == Flow::Returned {
+                            return gap("a return inside a loop");
+                        }
+                        let d = self.ex(fr, *dc)?;
+                        a.push(St::Set(flag, d));
+                        let mut xs = Vec::new();
+                        if self.walk(fr, &xa[..xa.len() - 1], &mut xs, depth)? == Flow::Returned {
+                            return gap("a return inside a loop");
+                        }
+                        a.push(St::If(fv.clone(), xs, Vec::new()));
+                        let mut rest = Vec::new();
+                        if self.walk(fr, &accept[j + 1..], &mut rest, depth)? == Flow::Returned {
+                            return gap("a return inside a loop");
+                        }
+                        a.push(St::If(E::Un(UnaryOperator::LogicalNot, Box::new(fv.clone()), bool_w), rest, Vec::new()));
+                        self.last_set = saved.clone();
+                        let mut o = Vec::new();
+                        if self.walk(fr, reject, &mut o, depth)? == Flow::Returned {
+                            return gap("a return inside a loop");
+                        }
+                        self.last_set = saved;
+                        self.last_set.remove(&flag);
+                        self.push(out, St::If(c, a, o));
+                        broke = true;
+                        out.push(St::BreakIf(fv));
+                        i += 1;
+                        continue;
                     } else {
                         return gap("a break or continue nested inside conditionals of a loop body");
                     };
