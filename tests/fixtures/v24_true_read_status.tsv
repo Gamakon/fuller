@@ -64,5 +64,5 @@ run1/seed29.wgsl	out	not uniform by WGSL's own rule: process_node returns early 
 run1/seed30.wgsl	reads	
 run1/seed31.wgsl	gap	a write phase: a read of worder[Counter(18)], an element another invocation may write in the phase; as a split phase: a write of wcid[Bin(Add, Reg(Reg { kind: 1
 reference/reference.wgsl	reads	
-run4/best.wgsl	gap	a row that spells the value as f32.real
-run5/best.wgsl	gap	a row that spells the value as f32.real
+run4/best.wgsl	reads	
+run5/best.wgsl	reads	

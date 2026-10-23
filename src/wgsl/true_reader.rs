@@ -873,6 +873,10 @@ impl<'a> Reader<'a> {
                 let w = self.wt_of(fr, h)?;
                 let x = Box::new(self.ex(fr, *expr)?);
                 let int = |t: Wt| matches!(t.s, Sc::U32 | Sc::I32);
+                // a conversion to the value's own type (`u32(x)` of a u32) is the value itself
+                if x.wt() == w {
+                    return Ok(*x);
+                }
                 // a bitcast between u32 and i32 is the conversion `u32(x)` / `i32(x)`: both reinterpret the bits
                 if convert.is_some() || (int(w) && int(x.wt()) && w.lanes == x.wt().lanes) {
                     E::Cast(w, x)
@@ -1779,13 +1783,49 @@ impl<'a> Reader<'a> {
         out.push(s);
     }
 
+    /// The value of a call to a function whose body only returns an expression of its arguments (no local variable, no
+    /// pointer argument, no other statement), or `None` for any other callee.
+    fn pure_call(&mut self, fr: &Frame<'a>, function: Handle<naga::Function>, arguments: &[Handle<Expression>]) -> R<Option<E>> {
+        let callee = &self.module.functions[function];
+        if !callee.local_variables.is_empty() {
+            return Ok(None);
+        }
+        let body = flat(&callee.body);
+        let ret = match body.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect::<Vec<_>>()[..] {
+            [Statement::Return { value: Some(v) }] => *v,
+            _ => return Ok(None),
+        };
+        let mut args = Vec::new();
+        for a in arguments {
+            if matches!(self.ty_of(fr, *a), TypeInner::Pointer { .. }) {
+                return Ok(None);
+            }
+            args.push(self.ex(fr, *a)?);
+        }
+        let info: &'a naga::valid::ModuleInfo = self.info;
+        let cf = Frame { f: callee, info: &info[function], args, ptr_args: HashMap::new(), locals: HashMap::new(), values: HashMap::new(), named: callee.named_expressions.keys().copied().collect(), ret: None };
+        Ok(Some(self.ex(&cf, ret)?))
+    }
+
     /// A counted loop: `for (var i = a; i OP n; i = i STEP s)` (or the `while` form with the step last), read as the
     /// kingdom's counted loop over its trip bound.
     fn counted_loop(&mut self, fr: &mut Frame<'a>, body: &'a Block, continuing: &'a Block, out: &mut Vec<St>, depth: usize) -> R<()> {
         let stmts = flat(body);
         let mut j = 0;
-        while matches!(stmts.get(j), Some(Statement::Emit(_))) {
-            j += 1;
+        // a call at the head to a function that only returns a value of its arguments (`fn lit_u32(x: u32) -> u32 {
+        // return x; }` in a bound) is that value: nothing is stored, so the head's condition follows it
+        while let Some(s) = stmts.get(j) {
+            match s {
+                Statement::Emit(_) => j += 1,
+                Statement::Call { function, arguments, result: Some(res) } => match self.pure_call(fr, *function, arguments)? {
+                    Some(v) => {
+                        fr.values.insert(*res, v);
+                        j += 1;
+                    }
+                    None => break,
+                },
+                _ => break,
+            }
         }
         // the kingdom's own counted loop (s9, "the counted loop's spelling"): `loop { k = kc; if (k >= n) { break; }
         // kc = k + step; body }`, the shadow counter kc stepped before the body, k the trip
