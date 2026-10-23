@@ -3328,6 +3328,74 @@ mod tests {
         println!("seed14 search: {per} an invocation, {wg} a workgroup of 32; {plain} entries without a solo phase");
     }
 
+    /// The trips optimiser on the readers (the overnight ingest run's three naga failures, 2026-10-23): 10,000 children
+    /// of every reading seed by repeated fewer-trips rewrites, each well typed node by node (every child's row gives the
+    /// type its parent's slot asks), through the write-back into the module's genes and back, and valid in naga.
+    #[test]
+    fn ten_thousand_trips_children_of_the_readers_are_typed_and_validate() {
+        let k = kingdom();
+        let c = contract();
+        let o = crate::wgsl::true_opt::Optimisers::new(&k).expect("optimisers");
+        fn typed(k: &TrueKingdom, t: &Tree) -> Result<(), String> {
+            let row = &k.rows[t.symbol as usize];
+            if row.args.len() != t.kids.len() {
+                return Err(format!("{} has {} kids for {} arguments", row.name, t.kids.len(), row.args.len()));
+            }
+            for (a, kid) in row.args.iter().zip(&t.kids) {
+                let kr = &k.rows[kid.symbol as usize];
+                if kr.out != *a {
+                    return Err(format!("{} slot {} wants {}, holds {} ({})", row.name, k.type_name(*a), k.type_name(*a), kr.name, k.type_name(kr.out)));
+                }
+                if let Some(ci) = kid.const_index {
+                    if k.constants.get(&kr.out).is_none_or(|v| ci as usize >= v.len()) {
+                        return Err(format!("{}: constant {ci} past C_T of {}", kr.name, k.type_name(kr.out)));
+                    }
+                }
+                typed(k, kid)?;
+            }
+            Ok(())
+        }
+        let mut parents = Vec::new();
+        for (set, name, text) in seeds() {
+            let Ok(trees) = read_module(&k, &text, &c) else { continue };
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &trees.iter().map(|t| functions(t, &k)).collect::<Vec<_>>()).expect("module");
+            if o.trip_sites(&k, &m.module_tree(trees.clone()).expect("tree")) > 0 {
+                parents.push((format!("{set}/{name}"), trees));
+            }
+        }
+        assert!(!parents.is_empty(), "no reader has a literal-bound loop");
+        let mut rng = crate::wgsl::true_kingdom::Rng(7);
+        let every: usize = std::env::var("UI1_TRIPS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(100).max(1);
+        let (mut n, mut validated) = (0usize, 0usize);
+        let mut current: Vec<Tree> = parents.iter().map(|(_, t)| crate::wgsl::true_module::TrueModule::new(&k, &t.iter().map(|x| functions(x, &k)).collect::<Vec<_>>()).expect("module").module_tree(t.clone()).expect("tree")).collect();
+        while n < 10_000 {
+            let i = n % current.len();
+            let Some(child) = o.fewer_trips(&k, &current[i], &mut rng) else {
+                // a seed whose loops are all at the smallest literal starts again from its reading
+                let t = &parents[i].1;
+                current[i] = crate::wgsl::true_module::TrueModule::new(&k, &t.iter().map(|x| functions(x, &k)).collect::<Vec<_>>()).expect("module").module_tree(t.clone()).expect("tree");
+                n += 1;
+                continue;
+            };
+            typed(&k, &child).unwrap_or_else(|e| panic!("{} trips child {n}: {e}", parents[i].0));
+            // every 100th child through the write-back and naga (all 10,000 take hours: UI1_TRIPS_EVERY=1)
+            if n.is_multiple_of(every) {
+                let entries = child.kids.clone();
+                let m = crate::wgsl::true_module::TrueModule::new(&k, &entries.iter().map(|x| functions(x, &k)).collect::<Vec<_>>()).expect("module");
+                let prev = m.random(1, &mut crate::wgsl::true_kingdom::Rng(5), crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let genes = m.encode(&entries, &prev).unwrap_or_else(|e| panic!("{} trips child {n}: encode: {e}", parents[i].0));
+                assert_eq!(m.entry_trees(&genes).expect("express"), entries, "{} trips child {n}: the genes express another tree", parents[i].0);
+                let src = m.render(&genes).expect("render");
+                let module = crate::wgsl::naga_shape::parse_unscanned(&src).unwrap_or_else(|e| panic!("{} trips child {n}: naga parse: {e}", parents[i].0));
+                crate::wgsl::target::Target::current().validate(&module, &src).unwrap_or_else(|e| panic!("{} trips child {n}: naga validate: {e}", parents[i].0));
+                validated += 1;
+            }
+            current[i] = child;
+            n += 1;
+        }
+        println!("{n} trips children of {} readers typed; {validated} through the write-back and naga", parents.len());
+    }
+
     /// `UI1_BOUNDS=1`: every reading seed's per-workgroup work bound per entry, with the 250k problem's largest
     /// fields and with the types' caps alone, against the per-submit cap.
     #[test]
