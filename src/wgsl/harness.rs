@@ -2730,6 +2730,134 @@ impl Executor for CpuExecutor {
     }
 }
 
+/// The bind group of a split dispatch's tile uniform ([`tiled_text`]); a problem's own bindings are group 0.
+pub const HARNESS_TILE_GROUP: u32 = 1;
+
+/// THE TEXT OF A KERNEL DISPATCHED IN SEVERAL SUBMITS (UI1, the multi-entry harness's split of a dispatch over the
+/// per-submit cap into submits of whole workgroups, as `image::tiles` splits an image pass). Every compute entry's
+/// `workgroup_id`, `global_invocation_id` and `num_workgroups` parameters are renamed `<name>_htile` and rebound at the
+/// top of the body as the ids of the whole dispatch: `let wid = wid_htile + harness_tile.origin.xyz;`,
+/// `let gid = gid_htile + harness_tile.origin.xyz * vec3<u32>(X, Y, Z);` (the entry's workgroup size),
+/// `let nwg = harness_tile.grid.xyz;`, where `harness_tile` is the uniform at group [`HARNESS_TILE_GROUP`] the host
+/// writes before each submit (the submit's first workgroup and the whole grid). Every other parameter and every line of
+/// the body is the text's own, so each invocation computes what it computes in one dispatch. The same transform serves
+/// any kernel (a seed's own text and the kingdom's rendering alike); a dispatch under the cap runs the text unchanged.
+/// A builtin passed inside a struct parameter is not rebound: an error, never a silent wrong id.
+pub fn tiled_text(source: &str) -> Result<String, String> {
+    let module = crate::wgsl::naga_shape::parse(source)?;
+    if module.global_variables.iter().any(|(_, g)| g.binding.as_ref().is_some_and(|b| b.group == HARNESS_TILE_GROUP)) {
+        return Err(format!("our software has a bug: the kernel declares a binding in group {HARNESS_TILE_GROUP}, the harness's split-dispatch tile group"));
+    }
+    if source.contains("harness_tile") {
+        return Err("our software has a bug: the kernel names harness_tile, the harness's split-dispatch uniform".into());
+    }
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for ep in module.entry_points.iter().filter(|e| e.stage == naga::ShaderStage::Compute) {
+        for a in &ep.function.arguments {
+            if a.binding.is_none() {
+                if let naga::TypeInner::Struct { members, .. } = &module.types[a.ty].inner {
+                    if members.iter().any(|m| matches!(m.binding, Some(naga::Binding::BuiltIn(naga::BuiltIn::WorkGroupId | naga::BuiltIn::GlobalInvocationId | naga::BuiltIn::NumWorkGroups)))) {
+                        return Err(format!("our software has a bug: entry {} takes a dispatch id inside a struct parameter, which a split dispatch does not rebind", ep.name));
+                    }
+                }
+            }
+        }
+        // the entry's text: `fn <name>` then its parameter list `( .. )` and its body's `{`
+        let mut found = None;
+        let mut from = 0;
+        while let Some(at) = source[from..].find("fn") {
+            let at = from + at;
+            from = at + 2;
+            let before_ok = at == 0 || !source.as_bytes()[at - 1].is_ascii_alphanumeric() && source.as_bytes()[at - 1] != b'_';
+            let rest = &source[at + 2..];
+            let trimmed = rest.trim_start();
+            if !before_ok || trimmed.len() == rest.len() {
+                continue;
+            }
+            let name_at = at + 2 + (rest.len() - trimmed.len());
+            let name_end = name_at + trimmed.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(trimmed.len());
+            if source[name_at..name_end] != ep.name {
+                continue;
+            }
+            let open = name_end + source[name_end..].find(|c: char| !c.is_whitespace()).unwrap_or(0);
+            if source.as_bytes().get(open) != Some(&b'(') {
+                continue;
+            }
+            if found.replace(open).is_some() {
+                return Err(format!("our software has a bug: entry {} is spelled twice in its text", ep.name));
+            }
+        }
+        let open = found.ok_or_else(|| format!("our software has a bug: entry {} is not found in its text", ep.name))?;
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, c) in source[open..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close.ok_or_else(|| format!("our software has a bug: entry {}'s parameter list is not closed", ep.name))?;
+        let brace = close + source[close..].find('{').ok_or_else(|| format!("our software has a bug: entry {} has no body", ep.name))?;
+        // the parameters at depth zero
+        let params = &source[open + 1..close];
+        let mut parts = Vec::new();
+        let (mut d, mut start) = (0usize, 0usize);
+        for (i, c) in params.char_indices() {
+            match c {
+                '(' | '<' => d += 1,
+                ')' | '>' => d = d.saturating_sub(1),
+                ',' if d == 0 => {
+                    parts.push(&params[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(&params[start..]);
+        let [x, y, z] = ep.workgroup_size;
+        let mut rebind = String::new();
+        let mut new_params = Vec::new();
+        for p in parts {
+            let compact: String = p.chars().filter(|c| !c.is_whitespace()).collect();
+            let which = ["workgroup_id", "global_invocation_id", "num_workgroups"].into_iter().find(|b| compact.contains(&format!("@builtin({b})")));
+            let Some(which) = which else {
+                new_params.push(p.to_string());
+                continue;
+            };
+            // `@attr(..) .. name : type`: the name is the identifier before the colon, after the last attribute
+            let colon = p.rfind(':').ok_or_else(|| format!("our software has a bug: entry {}'s parameter {p:?} has no type", ep.name))?;
+            let head = &p[..colon];
+            let name_start = head.trim_end().rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(|i| i + 1).unwrap_or(0);
+            let name = head[name_start..].trim_end();
+            if name.is_empty() {
+                return Err(format!("our software has a bug: entry {}'s parameter {p:?} has no name", ep.name));
+            }
+            new_params.push(format!("{}{name}_htile{}", &p[..name_start], &p[name_start + name.len()..]));
+            rebind.push_str(&match which {
+                "workgroup_id" => format!("\n    let {name}: vec3<u32> = {name}_htile + harness_tile.origin.xyz;"),
+                "global_invocation_id" => format!("\n    let {name}: vec3<u32> = {name}_htile + harness_tile.origin.xyz * vec3<u32>({x}u, {y}u, {z}u);"),
+                _ => format!("\n    let {name}: vec3<u32> = harness_tile.grid.xyz;"),
+            });
+        }
+        edits.push((open + 1, close, new_params.join(",")));
+        edits.push((brace + 1, brace + 1, rebind));
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = source.to_string();
+    for (a, b, t) in edits {
+        out.replace_range(a..b, &t);
+    }
+    out.push_str(&format!("\nstruct HarnessTile {{\n    origin: vec4<u32>,\n    grid: vec4<u32>,\n}};\n@group({HARNESS_TILE_GROUP}) @binding(0) var<uniform> harness_tile: HarnessTile;\n"));
+    Ok(out)
+}
+
 #[cfg(feature = "gpu")]
 pub use device::DeviceExecutor;
 
@@ -2746,10 +2874,11 @@ mod device {
     use crate::wgsl::gram::{adapter_buffer_limit, effective_buffer_limit, wait_gpu, wait_gpu_within};
     use crate::wgsl::oracle::device::{Device, Fuel};
 
-    /// A bound of one dispatch's node executions an invocation, from its entry (index into
-    /// `KernelSpec::entry_names`) and its uniform's words (the run's own field values): the work guard of a kernel of
-    /// the true kingdom read per dispatch (`TrueKingdom::tree_work_bound_in`).
-    pub type DispatchBound = Box<dyn Fn(usize, &[u8]) -> Result<u128, String>>;
+    /// A bound of the node executions of ONE WORKGROUP of a dispatch, from its entry (index into
+    /// `KernelSpec::entry_names`), its uniform's words (the run's own field values) and the entry's invocations a
+    /// workgroup: the work guard of a kernel of the true kingdom read per dispatch
+    /// (`TrueKingdom::tree_work_bound_workgroup_in`, where a solo phase's body counts once a workgroup).
+    pub type DispatchBound = Box<dyn Fn(usize, &[u8], u64) -> Result<u128, String>>;
 
     pub struct DeviceExecutor<'a> {
         pub dev: &'a Device,
@@ -2758,6 +2887,8 @@ mod device {
         /// segment is submitted early (at a dispatch boundary) rather than let its bound pass the cap: the values
         /// are those of one submission a segment, the timings are not. `None`: the segment's bound by [`Fuel`].
         dispatch_bound: Option<DispatchBound>,
+        /// The per-submit cap of a dispatch bound (the machine's; a test lowers it to force a split).
+        cap: u128,
         /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
         /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
         /// before it is made.
@@ -2782,12 +2913,18 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device, fuel: Fuel) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None) }
         }
 
         /// The work guard per dispatch ([`DispatchBound`]), for a value check (one submission a segment is not kept).
         pub fn with_dispatch_bound(mut self, f: DispatchBound) -> DeviceExecutor<'a> {
             self.dispatch_bound = Some(f);
+            self
+        }
+
+        /// A per-submit cap below the machine's (a test that forces a dispatch to split); never above it.
+        pub fn with_cap(mut self, cap: u128) -> DeviceExecutor<'a> {
+            self.cap = cap.min(crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT);
             self
         }
 
@@ -2800,7 +2937,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, dispatch_bound: None, fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None) }
         }
     }
 
@@ -2812,6 +2949,42 @@ mod device {
         workgroup_invocations: Vec<u64>,
         bgl: wgpu::BindGroupLayout,
         period_ns: f32,
+        /// The kernel's text and its entries, for the split dispatch's pipelines ([`super::tiled_text`]).
+        source: String,
+        entry_names: Vec<String>,
+        /// The pipelines of the split dispatch and the tile uniform's layout, made on the first dispatch over the
+        /// per-submit cap.
+        tiled: std::cell::RefCell<Option<std::rc::Rc<Tiled>>>,
+    }
+
+    /// A kernel's split-dispatch pipelines (one per entry, over the problem's group 0 and the tile's group 1).
+    struct Tiled {
+        pipelines: Vec<wgpu::ComputePipeline>,
+        tile_bgl: wgpu::BindGroupLayout,
+    }
+
+    impl DeviceKernel {
+        /// The split-dispatch pipelines, made once from [`super::tiled_text`].
+        fn tiled(&self, device: &wgpu::Device) -> Result<std::rc::Rc<Tiled>, String> {
+            if let Some(t) = self.tiled.borrow().as_ref() {
+                return Ok(t.clone());
+            }
+            let text = super::tiled_text(&self.source)?;
+            let scope = crate::wgsl::oracle::device::ErrorScopes::push(device);
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("harness split dispatch"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&text)) });
+            let tile_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("harness tile"),
+                entries: &[wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None }],
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("harness split dispatch"), bind_group_layouts: &[Some(&self.bgl), Some(&tile_bgl)], immediate_size: 0 });
+            let pipelines = self.entry_names.iter().map(|e| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(e), layout: Some(&layout), module: &shader, entry_point: Some(e), compilation_options: Default::default(), cache: None })).collect();
+            if let Some(e) = scope.pop() {
+                return Err(format!("our software has a bug: the split-dispatch text of the kernel does not compile: {e}"));
+            }
+            let t = std::rc::Rc::new(Tiled { pipelines, tile_bgl });
+            *self.tiled.borrow_mut() = Some(t.clone());
+            Ok(t)
+        }
     }
 
     pub struct DeviceStaged {
@@ -2887,7 +3060,9 @@ mod device {
             // A segment: its encoder, its dispatches' (item, query) and its reads.
             struct Seg {
                 enc: wgpu::CommandEncoder,
-                queries: Vec<usize>,
+                /// Each timed dispatch's item, and whether it is a later submit of one split dispatch (its GPU ms
+                /// is added to the dispatch's first submit's, so a split dispatch is still one timing sample).
+                queries: Vec<(usize, bool)>,
                 reads: Vec<(usize, BufId, u64, usize, u64, u64)>,
                 keep: Vec<wgpu::Buffer>,
                 any: bool,
@@ -2983,10 +3158,14 @@ mod device {
                     {
                         let mapped = crate::gpu_io::mapped(&stamps_read.slice(..8 * u64::from(nq)))?;
                         let stamps: &[u64] = bytemuck::cast_slice(&mapped);
-                        for (q, item) in seg.queries.iter().enumerate() {
+                        for (q, (item, more)) in seg.queries.iter().enumerate() {
                             let ms = stamps[2 * q + 1].wrapping_sub(stamps[2 * q]) as f64 * f64::from(k.period_ns) / 1e6;
                             live[*item].gpu_ms += ms;
-                            live[*item].dispatch_ms.push(ms);
+                            match (more, live[*item].dispatch_ms.last_mut()) {
+                                (true, Some(last)) => *last += ms,
+                                (true, None) => return Err("our software has a bug: a later submit of a split dispatch with no first".into()),
+                                (false, _) => live[*item].dispatch_ms.push(ms),
+                            }
                         }
                     }
                     stamps_read.unmap();
@@ -3023,11 +3202,51 @@ mod device {
                                             _ => None,
                                         })
                                         .unwrap_or(&[]);
-                                    let per = bound(*entry, words)?;
-                                    let this = per.saturating_mul(u128::from(invocations));
-                                    let cap = crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+                                    let wg_inv = k.workgroup_invocations[*entry];
+                                    let per_wg = bound(*entry, words, wg_inv)?;
+                                    let groups = workgroups.iter().fold(1u64, |a, w| a.saturating_mul(u64::from(*w)));
+                                    let this = per_wg.saturating_mul(u128::from(groups));
+                                    let cap = self.cap;
                                     if this > cap {
-                                        return Err(format!("the work guard: a dispatch of entry {} is bounded by {this} node executions ({per} an invocation, {invocations} invocations), over the per-submit cap {cap}; nothing of it was submitted", *entry));
+                                        // THE SPLIT DISPATCH: submits of whole workgroups, as many a submit as the
+                                        // dispatch's own bound of one workgroup lets under the cap (`image::tiles`), each
+                                        // its own submit, over the kernel's split-dispatch text (`tiled_text`)
+                                        if per_wg > cap {
+                                            return Err(format!("the work guard: one workgroup ({wg_inv} invocations) of a dispatch of entry {} is bounded by {per_wg} node executions, over the per-submit cap {cap}: whole workgroups cannot split it; nothing of it was submitted", *entry));
+                                        }
+                                        let per_submit = Some(u64::try_from(cap / per_wg.max(1)).unwrap_or(u64::MAX));
+                                        if workgroups[2] != 1 {
+                                            return Err(format!("our software has a bug: a split of a dispatch of {} workgroups on z", workgroups[2]));
+                                        }
+                                        let tiled = k.tiled(device)?;
+                                        let done = std::mem::replace(&mut seg, new_seg());
+                                        flush(done, live, &mut compute_ms)?;
+                                        let entries: Vec<wgpu::BindGroupEntry> = bind.iter().map(|(b, id)| live[i].buf(*id, "a dispatch").map(|buf| wgpu::BindGroupEntry { binding: *b, resource: buf.as_entire_binding() })).collect::<Result<_, _>>()?;
+                                        let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness bind"), layout, entries: &entries });
+                                        for (n, (x0, y0, w, h)) in crate::wgsl::image::tiles(workgroups[0], workgroups[1], per_submit).into_iter().enumerate() {
+                                            let tile_bound = per_wg.saturating_mul(u128::from(w) * u128::from(h));
+                                            if tile_bound > cap {
+                                                return Err(format!("our software has a bug: a submit of a split dispatch is bounded by {tile_bound}, over the cap {cap}"));
+                                            }
+                                            let words = [x0, y0, 0, 0, workgroups[0], workgroups[1], workgroups[2], 0];
+                                            let tile_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("harness tile"), contents: bytemuck::cast_slice(&words), usage: wgpu::BufferUsages::UNIFORM });
+                                            let tile_group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness tile"), layout: &tiled.tile_bgl, entries: &[wgpu::BindGroupEntry { binding: 0, resource: tile_buf.as_entire_binding() }] });
+                                            let q = seg.queries.len() as u32;
+                                            seg.queries.push((i, n > 0));
+                                            {
+                                                let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(2 * q), end_of_pass_write_index: Some(2 * q + 1) });
+                                                let mut pass = seg.enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("harness split dispatch"), timestamp_writes });
+                                                pass.set_pipeline(&tiled.pipelines[*entry]);
+                                                pass.set_bind_group(0, &group, &[]);
+                                                pass.set_bind_group(1, &tile_group, &[]);
+                                                pass.dispatch_workgroups(w, h, 1);
+                                            }
+                                            seg.any = true;
+                                            seg.keep.push(tile_buf);
+                                            let done = std::mem::replace(&mut seg, new_seg());
+                                            flush(done, live, &mut compute_ms)?;
+                                        }
+                                        continue;
                                     }
                                     if seg.bound.saturating_add(this) > cap {
                                         let done = std::mem::replace(&mut seg, new_seg());
@@ -3039,7 +3258,7 @@ mod device {
                             let entries: Vec<wgpu::BindGroupEntry> = bind.iter().map(|(b, id)| live[i].buf(*id, "a dispatch").map(|buf| wgpu::BindGroupEntry { binding: *b, resource: buf.as_entire_binding() })).collect::<Result<_, _>>()?;
                             let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness bind"), layout, entries: &entries });
                             let q = seg.queries.len() as u32;
-                            seg.queries.push(i);
+                            seg.queries.push((i, false));
                             let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(2 * q), end_of_pass_write_index: Some(2 * q + 1) });
                             let mut pass = seg.enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("harness dispatch"), timestamp_writes });
                             pass.set_pipeline(&k.pipelines[*entry]);
@@ -3200,7 +3419,8 @@ mod device {
                 return Err(format!("pipeline: {e}"));
             }
             let workgroup_invocations = problem.spec.kernel.entry_names().iter().map(|e| Self::entry_invocations(source, e)).collect::<Result<Vec<_>, _>>()?;
-            Ok((DeviceKernel { pipelines, workgroup_invocations, bgl, period_ns: dev.queue.get_timestamp_period() }, info))
+            let entry_names = problem.spec.kernel.entry_names();
+            Ok((DeviceKernel { pipelines, workgroup_invocations, bgl, period_ns: dev.queue.get_timestamp_period(), source: source.to_string(), entry_names, tiled: std::cell::RefCell::new(None) }, info))
         }
 
         fn stage(&self, plan: &Plan, data: &CaseData) -> Result<(DeviceStaged, f64), String> {

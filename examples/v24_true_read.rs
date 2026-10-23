@@ -6,9 +6,10 @@
 //! by row (one stage, seed and query): as sets with the pads dropped (a candidate list is a set, contract rule 4), and
 //! byte for byte. A text whose own runs differ is order-dependent (the relaxed atomics of the contract) and is reported
 //! so. Every dispatch is bounded before it is submitted by the work guard on the read tree
-//! (`TrueKingdom::tree_work_bound_in` with the dispatch's own `cfg`, `DeviceExecutor::with_dispatch_bound`): the seed's
-//! own text has the loops of its exact reading, so the same bound holds for it. A dispatch over the per-submit cap is
-//! not submitted, and the kernel is reported as not checked on the device.
+//! (`TrueKingdom::tree_work_bound_workgroup_in` with the dispatch's own `cfg`, `DeviceExecutor::with_dispatch_bound`):
+//! the seed's own text has the loops of its exact reading, so the same bound holds for it. A dispatch over the
+//! per-submit cap is split into submits of whole workgroups (`harness::tiled_text`, the ids of the whole dispatch
+//! rebound in each); only a single workgroup over the cap is not submitted, and the kernel is reported not run.
 //!
 //!   cargo run --release --features gpu,wgsl --example v24_true_read -- --problem problems/v24_ingest_small \
 //!       [--runs 2] <kernel.wgsl>...
@@ -110,11 +111,11 @@ fn main() -> Result<(), String> {
         }
         let rendered = m.render(&genes)?;
         let (kb, tb) = (k.clone(), Arc::new(trees.clone()));
-        let bound = move |entry: usize, words: &[u8]| -> Result<u128, String> {
+        let bound = move |entry: usize, words: &[u8], invocations: u64| -> Result<u128, String> {
             let w: Vec<u64> = words.chunks_exact(4).map(|c| u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect();
             let fields: BTreeMap<String, u64> = FIELDS.iter().zip(&w).map(|(f, v)| (f.to_string(), *v)).collect();
             let t = tb.get(entry).ok_or_else(|| format!("no tree for entry {entry}"))?;
-            kb.tree_work_bound_in(t, &fields)
+            kb.tree_work_bound_workgroup_in(t, &fields, invocations)
         };
         let exec = DeviceExecutor::for_problem(&dev, &problem, Fuel::Proven("unused: every dispatch is bounded by with_dispatch_bound")).with_dispatch_bound(Box::new(bound));
         let limit = exec.binding_limit();
@@ -175,10 +176,10 @@ fn random_loop(problem: &Problem, n: u64, seed: u64, size: usize) -> Result<(), 
             continue;
         }
         let (kb, tb) = (k.clone(), Arc::new(trees));
-        let bound = move |entry: usize, words: &[u8]| -> Result<u128, String> {
+        let bound = move |entry: usize, words: &[u8], invocations: u64| -> Result<u128, String> {
             let w: Vec<u64> = words.chunks_exact(4).map(|c| u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect();
             let fields: BTreeMap<String, u64> = FIELDS.iter().zip(&w).map(|(f, v)| (f.to_string(), *v)).collect();
-            kb.tree_work_bound_in(tb.get(entry).ok_or("no tree")?, &fields)
+            kb.tree_work_bound_workgroup_in(tb.get(entry).ok_or("no tree")?, &fields, invocations)
         };
         let exec = DeviceExecutor::for_problem(&dev, problem, Fuel::Proven("unused: every dispatch is bounded by with_dispatch_bound")).with_dispatch_bound(Box::new(bound));
         let limit = exec.binding_limit();

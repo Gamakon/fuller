@@ -2908,6 +2908,66 @@ mod tests {
         println!("{reads} of {} seeds read", table.lines().count() - 1);
     }
 
+    /// The split dispatch's text (`harness::tiled_text`) of every seed that reads, and of its expressed module, is a
+    /// kernel naga reads and validates, with every entry's workgroup, global and workgroup-count ids rebound from the
+    /// tile uniform; a tiny kernel's text is checked word for word.
+    #[test]
+    fn the_split_dispatch_text_of_every_read_seed_validates() {
+        let tiny = "@group(0) @binding(0) var<storage, read_write> o: array<u32>;\n@compute @workgroup_size(8, 2)\nfn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) n: vec3<u32>) {\n    o[g.x] = wid.x + n.x + lidx;\n}\n";
+        let t = crate::wgsl::harness::tiled_text(tiny).expect("tiled");
+        assert!(t.contains("fn main(@builtin(workgroup_id) wid_htile: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(global_invocation_id) g_htile: vec3<u32>, @builtin(num_workgroups) n_htile: vec3<u32>) {"), "{t}");
+        assert!(t.contains("let wid: vec3<u32> = wid_htile + harness_tile.origin.xyz;") && t.contains("let g: vec3<u32> = g_htile + harness_tile.origin.xyz * vec3<u32>(8u, 2u, 1u);") && t.contains("let n: vec3<u32> = harness_tile.grid.xyz;"), "{t}");
+        assert!(t.contains("    o[g.x] = wid.x + n.x + lidx;"), "the body is the text's own: {t}");
+        assert!(crate::wgsl::harness::tiled_text(&t).is_err(), "a text that already names the tile uniform");
+        let k = kingdom();
+        let c = contract();
+        let mut n = 0;
+        for (set, name, text) in seeds() {
+            let Ok(trees) = read_module(&k, &text, &c) else { continue };
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &trees.iter().map(|t| functions(t, &k)).collect::<Vec<_>>()).expect("module");
+            let rendered = k.render(&m.module_tree(trees).expect("tree")).expect("render");
+            for (what, src) in [("text", &text), ("expressed", &rendered)] {
+                let t = crate::wgsl::harness::tiled_text(src).unwrap_or_else(|e| panic!("{set}/{name} {what}: {e}"));
+                let module = crate::wgsl::naga_shape::parse_unscanned(&t).unwrap_or_else(|e| panic!("{set}/{name} {what}: naga parse: {e}\n{t}"));
+                crate::wgsl::target::Target::current().validate(&module, &t).unwrap_or_else(|e| panic!("{set}/{name} {what}: naga validate: {e}\n{t}"));
+                assert!(t.contains("harness_tile.origin.xyz"), "{set}/{name} {what}: no id rebound");
+            }
+            n += 1;
+        }
+        assert!(n >= 27, "{n} seeds read");
+    }
+
+    /// One workgroup's bound counts a solo phase's body once: run1 seed14's search (its beam's insertion runs on
+    /// invocation 0 alone) is bounded by 7.3 M node executions an invocation, 234 M for 32 invocations counted each,
+    /// over the 170 M per-submit cap; counted as the workgroup runs it, one workgroup is under the cap. A tree with no
+    /// solo phase is bounded by its invocations times the invocation's bound.
+    #[test]
+    fn a_solo_phase_counts_once_a_workgroup() {
+        let k = kingdom();
+        let c = contract();
+        let fields: BTreeMap<String, u64> = [("seed_slot", 0), ("stage", 2), ("arrived_begin", 32), ("arrived_end", 64), ("n_queries", 16), ("pass_index", 0), ("n_passes", 1), ("c_max", 64)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+        let (_, _, text) = seeds().into_iter().find(|(s, n, _)| s == "run1" && n == "seed14.wgsl").expect("run1 seed14");
+        let trees = read_module(&k, &text, &c).expect("reads");
+        let search = &trees[1];
+        let per = k.tree_work_bound_in(search, &fields).expect("bound");
+        let wg = k.tree_work_bound_workgroup_in(search, &fields, 32).expect("bound");
+        let cap = crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+        assert!(per * 32 > cap && wg <= cap && wg < per * 32 && wg >= per, "per invocation {per}, a workgroup {wg}, cap {cap}");
+        assert_eq!(k.tree_work_bound_workgroup_in(search, &fields, 1).expect("bound"), per);
+        let mut plain = 0;
+        for (_, _, text) in seeds() {
+            let Ok(trees) = read_module(&k, &text, &c) else { continue };
+            for t in &trees {
+                if !t.level_order().iter().any(|(n, _)| k.rows[n.symbol as usize].name.starts_with("wg.solo_")) {
+                    assert_eq!(k.tree_work_bound_workgroup_in(t, &fields, 64).expect("bound"), 64 * k.tree_work_bound_in(t, &fields).expect("bound"));
+                    plain += 1;
+                }
+            }
+        }
+        assert!(plain > 0, "no entry without a solo phase");
+        println!("seed14 search: {per} an invocation, {wg} a workgroup of 32; {plain} entries without a solo phase");
+    }
+
     /// `UI1_DUMP=<set/name>`: print that seed's expressed module (the text its genes render), for reading by eye.
     #[test]
     fn dump_one_seed_when_asked() {

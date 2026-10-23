@@ -276,14 +276,25 @@ impl TrueKingdom {
     /// the cap its types give. A bound whose value the rows do not give (a register, a load) keeps the cap. It is an
     /// upper bound of the node executions of one invocation of that run, never more than the type bound.
     pub fn tree_work_bound_in(&self, tree: &Tree, fields: &BTreeMap<String, u64>) -> Result<u128, String> {
+        self.tree_work_bound_workgroup_in(tree, fields, 1)
+    }
+
+    /// The bound of ONE WORKGROUP of `invocations` invocations of the run [`TrueKingdom::tree_work_bound_in`] bounds:
+    /// every node counts once an invocation, except inside the body of a solo phase (`wg.solo_*`, spelled
+    /// `if (lidx == 0u) { .. }`), which one invocation of the workgroup runs, so it counts once. With one invocation it
+    /// is [`TrueKingdom::tree_work_bound_in`]; it is never more than `invocations` times it.
+    pub fn tree_work_bound_workgroup_in(&self, tree: &Tree, fields: &BTreeMap<String, u64>, invocations: u64) -> Result<u128, String> {
         let mut total = 0u128;
-        let mut stack: Vec<(&Tree, u128)> = vec![(tree, 1)];
+        let all = u128::from(invocations.max(1));
+        let mut stack: Vec<(&Tree, u128)> = vec![(tree, all)];
         while let Some((node, mult)) = stack.pop() {
             let row = self.rows.get(node.symbol as usize).ok_or_else(|| format!("our software has a bug: symbol {} is not a row", node.symbol))?;
             match self.loops.get(node.symbol as usize).and_then(|l| l.as_ref()) {
                 None => {
                     total = total.saturating_add(mult);
-                    stack.extend(node.kids.iter().map(|k| (k, mult)));
+                    // a solo phase's first argument is its body: one invocation of the workgroup runs it
+                    let solo = row.name.starts_with("wg.solo_");
+                    stack.extend(node.kids.iter().enumerate().map(|(i, k)| (k, if solo && i == 0 { (mult / all).max(1) } else { mult })));
                 }
                 Some(l) => {
                     let mut cap = l.cap;
@@ -300,7 +311,6 @@ impl TrueKingdom {
                         let inside = l.inside.get(i).copied().unwrap_or(false);
                         stack.push((k, if inside { mult.saturating_mul(cap) } else { mult }));
                     }
-                    let _ = row;
                 }
             }
         }
