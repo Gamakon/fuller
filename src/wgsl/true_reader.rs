@@ -1157,6 +1157,8 @@ impl<'a> Reader<'a> {
                 m.into_iter().collect::<Option<Vec<u64>>>()?.into_iter().max()?
             }
             E::Call("countOneBits", _, _) => 32,
+            // a - min(a, b): never above a
+            E::Call("sub_floor", v, _) => self.max_of(v.first()?)?,
             E::Sel(a, b, _, w) if w.s == Sc::U32 && w.lanes == 1 => self.max_of(a)?.max(self.max_of(b)?),
             _ => return None,
         };
@@ -1326,8 +1328,29 @@ impl<'a> Reader<'a> {
                     return Ok(Flow::Returned);
                 }
                 Statement::Store { pointer, value } => {
-                    let v = self.ex(fr, *value)?;
-                    self.store(fr, *pointer, v, out)?;
+                    // a whole private array stored from a composed value: each element stored in order
+                    let whole = match fr.f.expressions[*pointer] {
+                        Expression::LocalVariable(lv) => match fr.locals.get(&lv) {
+                            Some(Local::Parr(p, _)) => Some(*p),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let (Some(p), Expression::Compose { components, .. }) = (whole, &fr.f.expressions[*value]) {
+                        let parts = components.clone();
+                        let mut vals = Vec::new();
+                        for c in &parts {
+                            let v = self.ex(fr, *c)?;
+                            // every component is read before any element is stored (a value may read the array)
+                            vals.push(if self.stable(&v) { v } else { self.ssa(v, out)? });
+                        }
+                        for (j, v) in vals.into_iter().enumerate() {
+                            self.push(out, St::ParrSet(p, E::Lit(Lit::U(j as u32)), v));
+                        }
+                    } else {
+                        let v = self.ex(fr, *value)?;
+                        self.store(fr, *pointer, v, out)?;
+                    }
                 }
                 Statement::Call { function, arguments, result } => {
                     if depth >= MAX_INLINE_DEPTH {
