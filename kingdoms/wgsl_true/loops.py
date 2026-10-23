@@ -101,6 +101,9 @@ def build(iface):
                     continue
                 div = x != "L"
                 R(f"loop.tile_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", B(x, d1, k)], loop_text(d1, div), "a literal bound raises the stratum by one")
+                if x == "L" and DEPTH["S"]:
+                    R(f"loop.tile_ubrk_L{d}_f{k}", S("L", d, k + 1), ["u32.lit64", UBB(d1, k)], loop_text(d1, False), "a literal bound and a uniform break")
+                    R(f"loop.tile_strided_ubrk_L{d}_f{k}", S("L", d, k + 1), ["u32.lit64", "u32.lit4096", UBB(d1, k)], loop_text(d1, False, stride="{1}", body="{2}"))
                 if x not in "WXEYA" or DEPTH["S"]:
                     R(f"loop.tile_strided_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", "u32.lit4096", B(x, d1, k)], loop_text(d1, div, stride="{1}", body="{2}"), "the stride form")
             for c in BOUND_CLASSES:
@@ -110,6 +113,10 @@ def build(iface):
                 if d1 in DEPTH["L"]:
                     R(f"loop.tileu_{c}_L{d}_f{k}", S("L", d, k + cls), [f"u32.boundu{c}", B("L", d1, k)], loop_text(d1, False), "a uniform bound: the body keeps the L rung")
                     R(f"loop.tileu_strided_{c}_L{d}_f{k}", S("L", d, k + cls), [f"u32.boundu{c}", "u32.lit4096", B("L", d1, k)], loop_text(d1, False, stride="{1}", body="{2}"))
+                    if DEPTH["S"]:
+                        # a uniform loop that breaks on a uniform condition: its counter stays uniform
+                        R(f"loop.tileu_ubrk_{c}_L{d}_f{k}", S("L", d, k + cls), [f"u32.boundu{c}", UBB(d1, k)], loop_text(d1, False), "a uniform bound and a uniform break: the body keeps the L rung")
+                        R(f"loop.tileu_strided_ubrk_{c}_L{d}_f{k}", S("L", d, k + cls), [f"u32.boundu{c}", "u32.lit4096", UBB(d1, k)], loop_text(d1, False, stride="{1}", body="{2}"))
                 for x in "LC":
                     R(f"loop.tilex_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", B("C", d1, k)], loop_text(d1, True), "an expression bound differs between invocations: the body is a C block")
                     R(f"loop.tilex_strided_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", "u32.lit4096", B("C", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))

@@ -2940,6 +2940,53 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// A uniform loop (L rung) whose body holds a barrier and breaks: the break's condition must be uniform
+    /// (`bool.uflag`), so every invocation leaves on the same trip; the bound a literal or uniform.
+    fn ubrk_loop(&mut self, lp: &LoopSt, d: u8, kb: u32, at: usize) -> R<Tree> {
+        let (_, lit, c) = self.class_of(lp)?;
+        let d1 = d + 1;
+        self.loop_ctx.insert(lp.id, (d1, false));
+        let St::BreakIf(flag) = &lp.body[at] else { return gap("our software has a bug: the break point moved") };
+        // the reader's break flag `f = c; .. break if f`: c itself, when nothing between rewrites f or what c reads
+        let mut flag = flag.clone();
+        if let E::Reg(r, _) = &flag {
+            if let Some(j) = lp.body[..at].iter().rposition(|x| matches!(x, St::Set(r2, _) if r2 == r)) {
+                if let St::Set(_, c) = &lp.body[j] {
+                    let (mut reads, mut written) = (Vec::new(), Vec::new());
+                    e_regs(c, &mut reads);
+                    regs_written(&lp.body[j + 1..at], &mut written);
+                    let mut wg = Vec::new();
+                    wg_uses_e(c, &mut wg);
+                    if !written.contains(r) && !reads.iter().any(|x| written.contains(x)) && wg.is_empty() {
+                        flag = c.clone();
+                    }
+                }
+            }
+        }
+        let f = self.must(&flag, "bool.uflag").map_err(|e| match e {
+            ReadError::Gap(m) => ReadError::Gap(format!("a uniform proof of a break around a barrier: {m}")),
+            o => o,
+        })?;
+        let strided = if lp.stride != 1 { "strided_" } else { "" };
+        let (row, mut kids) = match lit {
+            Some(n) => (format!("loop.tile_{strided}ubrk_L{d}_f{kb}"), vec![self.konst("u32.lit64", &Lit::U(n)).ok_or_else(|| ReadError::Gap(format!("the constant {n} in C_T of u32.lit64")))?]),
+            None => {
+                let b = self.must(&lp.bound, "u32.uniform").map_err(|e| match e {
+                    ReadError::Gap(m) => ReadError::Gap(format!("a uniform proof of the bound of a loop holding a barrier: {m}")),
+                    o => o,
+                })?;
+                (format!("loop.tileu_{strided}ubrk_{c}_L{d}_f{kb}"), vec![Tree { symbol: self.row(&format!("bound.of_uniform_{c}"))?, const_index: None, kids: vec![b] }])
+            }
+        };
+        if lp.stride != 1 {
+            kids.push(self.konst("u32.lit4096", &Lit::U(lp.stride)).ok_or_else(|| ReadError::Gap(format!("the constant {} in C_T of u32.lit4096", lp.stride)))?);
+        }
+        let a = self.block(&lp.body[..at], 'L', d1, kb)?;
+        let b = self.block(&lp.body[at + 1..], 'L', d1, kb)?;
+        kids.push(Tree { symbol: self.row(&format!("block.ubrk_UB{d1}_f{kb}"))?, const_index: None, kids: vec![a, f, b] });
+        Ok(Tree { symbol: self.row(&row)?, const_index: None, kids })
+    }
+
     /// A loop row's bound kids, with the stride literal after them when the loop strides.
     fn with_stride(&mut self, mut kids: Vec<Tree>, stride: u32) -> R<Vec<Tree>> {
         if stride != 1 {
@@ -2965,8 +3012,12 @@ impl<'a> Reader<'a> {
         let lit4096 = |s: &mut Self, n: u32| s.konst("u32.lit4096", &Lit::U(n)).ok_or_else(|| ReadError::Gap(format!("the constant {n} in C_T of u32.lit4096")));
         // a strided loop that breaks: the strided break rows, the stride an argument after the bound
         let sb = if stride != 1 { "strided_brk" } else { "brk" };
+        // a loop that breaks and holds a barrier: only on a uniform condition, every invocation leaving on one trip
+        if let (Some(at), true, 'L') = (brk, nl, x) {
+            return self.ubrk_loop(lp, d, kb, at);
+        }
         if brk.is_some() && nl {
-            return gap("a loop that breaks and holds a barrier");
+            return gap("a loop that breaks and holds a barrier under divergent control");
         }
         // the loop's row, its body's rung and whether its counter is divergent
         let uniform_bound = if lit.is_none() && x == 'L' { self.must(&lp.bound, "u32.uniform").ok() } else { None };

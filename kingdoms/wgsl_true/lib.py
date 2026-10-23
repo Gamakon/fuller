@@ -129,6 +129,10 @@ def XBB(d, k):
     return f"block.XB{d}_f{k}"
 
 
+def UBB(d, k):
+    return f"block.UB{d}_f{k}"
+
+
 def ABB(d, k):
     return f"block.AB{d}_f{k}"
 

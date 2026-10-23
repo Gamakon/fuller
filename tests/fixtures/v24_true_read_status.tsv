@@ -30,7 +30,7 @@ seeds5b/seed27.wgsl	reads
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
 seeds5b/seed29.wgsl	gap	a write of wprobe[Reg(Reg { kind: 1, n: 6 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of wprobe[Reg(Reg { kin
 seeds5b/seed30.wgsl	gap	a loop bound that is not the same on every trip (it reads mutable state)
-seeds5b/seed31.wgsl	gap	a loop that breaks and holds a barrier
+seeds5b/seed31.wgsl	gap	a uniform proof of a break around a barrier: a row that spells the value as bool.uflag
 run1/seed00.wgsl	reads	
 run1/seed01.wgsl	reads	
 run1/seed02.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 15 }, Wt { s: U32, lanes: 1 })
@@ -52,7 +52,7 @@ run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank count
 run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Add, Bin(Multiply, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 }), Lit(U(16)), 
 run1/seed19.wgsl	reads	
 run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
-run1/seed21.wgsl	gap	a loop that breaks and holds a barrier
+run1/seed21.wgsl	reads	
 run1/seed22.wgsl	reads	
 run1/seed23.wgsl	reads	
 run1/seed24.wgsl	reads	
@@ -62,7 +62,7 @@ run1/seed27.wgsl	reads
 run1/seed28.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
 run1/seed29.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
 run1/seed30.wgsl	gap	a write phase: a read of wf[Bin(Add, Bin(Add, Bin(Multiply, Counter(6), Lit(U(64)), Wt { s: U32, lanes: 1 }), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s:
-run1/seed31.wgsl	gap	a loop that breaks and holds a barrier
+run1/seed31.wgsl	gap	a write phase: a read of worder[Counter(18)], an element another invocation may write in the phase; as a split phase: a write of wcid[Bin(Add, Reg(Reg { kind: 1
 reference/reference.wgsl	reads	
 run4/best.wgsl	gap	a row that spells the value as f32.real
 run5/best.wgsl	gap	a row that spells the value as f32.real
