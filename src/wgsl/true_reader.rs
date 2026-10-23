@@ -3827,14 +3827,16 @@ fn uw() -> Wt {
 fn solo_cond(c: &E, wg: [u32; 3]) -> Option<Option<E>> {
     match c {
         E::Bin(BinaryOperator::Equal, a, b, _) if (is_lidx(a, wg) && lit_u(b) == Some(0)) || (is_lidx(b, wg) && lit_u(a) == Some(0)) => Some(None),
-        E::Bin(BinaryOperator::LogicalAnd | BinaryOperator::And, a, b, w) if *w == Wt::scalar(Sc::Bool) => {
-            if let Some(None) = solo_cond(a, wg) {
-                return Some(Some((**b).clone()));
+        E::Bin(op @ (BinaryOperator::LogicalAnd | BinaryOperator::And), a, b, w) if *w == Wt::scalar(Sc::Bool) => {
+            // `lidx == 0u` anywhere in a conjunction: the rest of it as the solo body's own condition
+            let and = |x: E, y: &E| E::Bin(*op, Box::new(x), Box::new(y.clone()), *w);
+            match (solo_cond(a, wg), solo_cond(b, wg)) {
+                (Some(None), _) => Some(Some((**b).clone())),
+                (_, Some(None)) => Some(Some((**a).clone())),
+                (Some(Some(ra)), _) => Some(Some(and(ra, b))),
+                (_, Some(Some(rb))) => Some(Some(and((**a).clone(), &rb))),
+                _ => None,
             }
-            if let Some(None) = solo_cond(b, wg) {
-                return Some(Some((**a).clone()));
-            }
-            None
         }
         _ => None,
     }

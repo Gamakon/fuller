@@ -30,7 +30,7 @@ seeds5b/seed27.wgsl	reads
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
 seeds5b/seed29.wgsl	out	a race in its own text: wprobe[crank] = t, crank counting oc < pen || (oc == pen && c < t) over the f32 wpen; a NaN penalty gives two cells one rank, so two inv
 seeds5b/seed30.wgsl	gap	a loop bound that is not the same on every trip (it reads mutable state)
-seeds5b/seed31.wgsl	gap	a write phase: a read of s_pri[Lit(U(0))], an element another invocation may write in the phase; as a split phase: a split phase reading s_fcnt[Lit(U(0))], an e
+seeds5b/seed31.wgsl	reads	
 run1/seed00.wgsl	reads	
 run1/seed01.wgsl	reads	
 run1/seed02.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 15 }, Wt { s: U32, lanes: 1 })
