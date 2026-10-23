@@ -134,6 +134,13 @@ impl Contract {
                 ["rows", b, width] => {
                     c.rows.insert(b.to_string(), num(width)?);
                 }
+                // `diff a b lo hi`: the run program's a - b, never below lo (so never a wrap) nor above hi; read by the
+                // true reader's loop bounds (`true_reader::Contract`), not a fact this checker's layers use
+                ["diff", _, _, lo, hi] => {
+                    if num(lo)? < 0 || num(hi)? < num(lo)? {
+                        return Err(format!("contract line {}: a diff range {lo}..{hi}", n + 1));
+                    }
+                }
                 [kind @ ("length" | "full-length"), b, expr @ ..] if !expr.is_empty() => {
                     let terms = parse_length(&expr.join(" ")).map_err(|e| format!("contract line {}: {e}", n + 1))?;
                     if *kind == "length" {

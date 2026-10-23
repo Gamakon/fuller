@@ -81,6 +81,13 @@ impl<'k> TrueModule<'k> {
         Ok(Chromosome { chromosome_id, genes, mains: vec![self.linker_words()?] })
     }
 
+    /// A random module whose cells are drawn by row weight (`weight`, one per row of the kingdom) and per-type function
+    /// share: a test that asks for a family's rows often (`true_kingdom::random_gene_weighted`).
+    pub fn random_weighted(&self, chromosome_id: u64, rng: &mut Rng, weight: &[f64], function_p: &BTreeMap<Ty, f64>, root_function: bool) -> Result<Chromosome, String> {
+        let genes = self.layout.normal.genes().iter().map(|g| crate::wgsl::true_kingdom::random_gene_weighted(&self.base, g, &self.const_len, rng, weight, function_p, root_function)).collect();
+        Ok(Chromosome { chromosome_id, genes, mains: vec![self.linker_words()?] })
+    }
+
     /// The expressed module: the linker's tree with every genic terminal inlined by its gene's tree.
     pub fn tree(&self, c: &Chromosome) -> Result<Tree, String> {
         let adfs = AdfSet::new(&self.epoch, Vec::new()).map_err(|e| bug(format!("the empty ADF set: {e}")))?;
@@ -155,6 +162,38 @@ mod tests {
         assert_eq!(k.rows[t.kids[1].symbol as usize].name, "kernel.entry_search");
         let src = m.render(&c).expect("render");
         assert!(src.contains("fn ingest(") && src.contains("fn search(") && src.contains("// passes "), "{src}");
+    }
+
+    /// The UI1 batch 10 phases, drawn often: random K = 1 modules whose swap-pair and slot rows weigh 400 times the
+    /// rest each render to WGSL naga validates and round-trip through the write-back; the families are expressed.
+    #[test]
+    fn random_modules_rich_in_the_batch_10_phases_validate_in_naga() {
+        let k = kingdom("v24_k1");
+        let m = TrueModule::new(&k, &[8, 8]).expect("module");
+        let fam = |n: &str| n.starts_with("wg.xchg_") || n.starts_with("wg.xset_") || n.starts_with("wg.xload_") || n.starts_with("wg.alloc_") || n.starts_with("wg.aset_") || n.starts_with("slot.");
+        let weight: Vec<f64> = k.rows.iter().map(|r| if fam(&r.name) { 400.0 } else { 1.0 }).collect();
+        let mut rng = Rng(23);
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        for i in 0..300u64 {
+            let c = m.random_weighted(i, &mut rng, &weight, &BTreeMap::new(), true).expect("random");
+            let src = m.render(&c).expect("render");
+            let module = crate::wgsl::naga_shape::parse_unscanned(&src).unwrap_or_else(|e| panic!("gene {i}: naga parse: {e}\n{src}"));
+            crate::wgsl::target::Target::current().validate(&module, &src).unwrap_or_else(|e| panic!("gene {i}: naga validate: {e}\n{src}"));
+            let t = m.tree(&c).expect("tree");
+            for (n, _) in t.level_order() {
+                let name = &k.rows[n.symbol as usize].name;
+                if fam(name) {
+                    *seen.entry(name.split('_').next().unwrap_or(name).to_string()).or_default() += 1;
+                }
+            }
+            let trees = m.entry_trees(&c).expect("trees");
+            let back = m.encode(&trees, &m.random(1000 + i, &mut rng, Share::Half, true).expect("random")).expect("encode");
+            assert_eq!(m.tree(&back).expect("tree"), t, "gene {i}");
+        }
+        println!("batch 10 rows expressed: {seen:?}");
+        for f in ["wg.xchg", "wg.xset", "wg.xload"] {
+            assert!(seen.get(f).copied().unwrap_or(0) > 0, "{f} never expressed in 300 modules: {seen:?}");
+        }
     }
 
     /// Every random module at K = 1 renders to WGSL naga reads and validates for the installed target, through the

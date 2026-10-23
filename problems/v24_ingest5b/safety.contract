@@ -13,6 +13,8 @@ param cfg.seed_slot 0 3
 param cfg.stage 1 5
 param cfg.arrived_begin 0 20000
 param cfg.arrived_end 5000 25000
+# the arrived rows of a run: arrived_end - arrived_begin is the run's microbatch (per_section rows), never negative
+diff cfg.arrived_end cfg.arrived_begin 0 5000
 param cfg.n_queries 1 2500
 param cfg.pass_index 0 15
 param cfg.n_passes 1 16

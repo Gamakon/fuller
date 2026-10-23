@@ -47,8 +47,8 @@ def build(iface):
         else:
             R(f"load.{n}", ty, ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read of any cell of the arena (another invocation may be writing it)", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
-        for x, d, k in rungs("LCWSPX"):
-            it, vt_ = ("u32.indexw", w_of(ty)) if x in "WPX" else ("u32.index", ty)
+        for x, d, k in rungs("LCWSPXE"):
+            it, vt_ = ("u32.indexw", w_of(ty)) if x in "WPXE" else ("u32.index", ty)
             cell = f"{n}[min(i, arrayLength(&{n}) - 1u)]"
             text = f"{{ let i = {{0}}; atomicStore(&{cell}, {{1}}); }}" if atomic else f"{{ let i = {{0}}; {cell} = {{1}}; }}"
             R(f"store.{n}_{x}{d}_f{k}", S(x, d, k), [it, vt_], text, "a store at any cell of the arena (the arena policy accepts two invocations storing one cell)")
@@ -59,8 +59,8 @@ def build(iface):
         R("index.of_atomicold", "u32.index", ["u32.atomicold"], "{0}", "relaxed kingdoms only: the design consumes an order-dependent value (slot allocation by atomicAdd)", twin=True)
     for o in iface.get("row_outputs", []):
         n, W = o["name"], o["row"]
-        for x, d, k in rungs("LCWSPX"):
-            it, vt_ = ("u32.indexw", w_of(o["ty"])) if x in "WPX" else ("u32.index", o["ty"])
+        for x, d, k in rungs("LCWSPXE"):
+            it, vt_ = ("u32.indexw", w_of(o["ty"])) if x in "WPXE" else ("u32.index", o["ty"])
             R(f"store.{n}_{x}{d}_f{k}", S(x, d, k), [it, vt_], f"{{ let i = {{0}}; if (i / {W}u == wid.x && i < arrayLength(&{n})) {{ {n}[i] = {{1}}; }} }}",
               f"a store into the workgroup's own row of {W} cells only, by the row's text")
     if iface.get("module"):

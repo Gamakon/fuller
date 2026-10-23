@@ -96,9 +96,11 @@ def configure(k, epilogue=True, pools=False):
         DEPTH["S"] = range(0, 6)
         # the split phase's body (X): W, writing below the split and reading above it
         DEPTH["X"] = range(0, 6)
+        # the swap-pair phase's body (E, UI1 batch 10): W's families with the pair rows in place of own writes
+        DEPTH["E"] = range(0, 6)
 
 
-DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0)}
+DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0)}
 STRATA = range(0, K + 1)
 
 

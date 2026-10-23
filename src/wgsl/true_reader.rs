@@ -61,6 +61,8 @@ pub struct Contract {
     pub fields: Vec<(String, u64)>,
     /// The most workgroups of any dispatch along x.
     pub workgroups_x: u64,
+    /// `diff cfg.<a> cfg.<b> lo hi`: the fields' difference `a - b` in every run, at least 0 and at most hi.
+    pub diffs: Vec<(String, String, u64)>,
 }
 
 impl Contract {
@@ -68,6 +70,7 @@ impl Contract {
     pub fn parse(text: &str, order: &[&str]) -> Result<Contract, String> {
         let mut max: BTreeMap<String, u64> = BTreeMap::new();
         let mut wx = None;
+        let mut diffs = Vec::new();
         for l in text.lines() {
             let w: Vec<&str> = l.split_whitespace().collect();
             match w.as_slice() {
@@ -75,11 +78,12 @@ impl Contract {
                     max.insert(name[4..].to_string(), hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?);
                 }
                 ["workgroups", "x", _, hi] => wx = Some(hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?),
+                ["diff", a, b, _, hi] if a.starts_with("cfg.") && b.starts_with("cfg.") => diffs.push((a[4..].to_string(), b[4..].to_string(), hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?)),
                 _ => {}
             }
         }
         let fields = order.iter().map(|f| max.get(*f).map(|m| (f.to_string(), *m)).ok_or_else(|| format!("the safety contract gives no range for cfg.{f}"))).collect::<Result<_, _>>()?;
-        Ok(Contract { fields, workgroups_x: wx.ok_or("the safety contract gives no workgroups x range")? })
+        Ok(Contract { fields, workgroups_x: wx.ok_or("the safety contract gives no workgroups x range")?, diffs })
     }
 }
 
@@ -277,6 +281,14 @@ enum St {
     Split(Vec<usize>, Vec<St>),
     /// Element `i` of array `v`, at or above the split, into the register (X).
     HLoad(Reg, usize, E),
+    /// A swap-pair phase over array `v`: the uniform power of two `h`, the mode (0: the own element is the pair's low
+    /// element, 1: a zero bit inserted at `h`), the statements (E), then the rest.
+    Xchg(Vec<usize>, E, u32, Vec<St>),
+    /// The low (`false`) or high element of this invocation's pair named by its own element `lidx + m * T`, into the
+    /// register (E).
+    XLoad(Reg, bool, usize, E),
+    /// A write of the low or high element of the pair named by the own element `lidx + m * T` (E).
+    XSet(bool, usize, E, E),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -409,6 +421,8 @@ pub struct Reader<'a> {
     next_loop: usize,
     /// Each loop's trip bound and stride, for the counter's range.
     loop_bounds: HashMap<usize, (Option<u64>, u32)>,
+    /// Each counted loop's bound expression: a counter is below it.
+    loop_bound_e: HashMap<usize, E>,
     /// The entry being read: its workgroup size.
     wg: [u32; 3],
     /// Registers that hold one `let`'s value: its upper bound.
@@ -429,6 +443,10 @@ pub struct Reader<'a> {
     lidx_cap: std::cell::Cell<Option<u64>>,
     /// Under a guard `lidx == 0` (inside a write or split phase): an element `m * T` is invocation 0's own.
     lidx_zero: std::cell::Cell<bool>,
+    /// Upper bounds the conditions being read under prove (`x < c`): consulted by `max_of`.
+    facts: std::cell::RefCell<Vec<(E, u64)>>,
+    /// Each swap-pair array's span (a power of two at least its length): its region starts at a multiple of it.
+    xspans: BTreeMap<usize, u32>,
     // phase 2
     rows_by_name: HashMap<String, u32>,
     by_spelling: HashMap<String, Vec<u32>>,
@@ -503,6 +521,7 @@ impl<'a> Reader<'a> {
             reg_limit,
             next_loop: 0,
             loop_bounds: HashMap::new(),
+            loop_bound_e: HashMap::new(),
             wg: [1, 1, 1],
             reg_max: HashMap::new(),
             ssa: std::collections::HashSet::new(),
@@ -516,6 +535,8 @@ impl<'a> Reader<'a> {
             next_ureg: 0,
             lidx_cap: std::cell::Cell::new(None),
             lidx_zero: std::cell::Cell::new(false),
+            facts: std::cell::RefCell::new(Vec::new()),
+            xspans: BTreeMap::new(),
             rows_by_name,
             by_spelling,
             coercions,
@@ -986,7 +1007,41 @@ impl<'a> Reader<'a> {
 
     /// An upper bound of a u32 value, from the contract's ranges, the workgroup size and literals; `None` when unknown.
     fn max_of(&self, e: &E) -> Option<u64> {
+        let fact = self.facts.borrow().iter().filter(|(x, _)| x == e).map(|(_, m)| *m).min();
+        match (self.max_of_text(e), fact) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// The bound `x < c` (or `c > x`, `x <= c`) conjuncts of a condition give.
+    fn bound_facts(c: &E, out: &mut Vec<(E, u64)>) {
+        match c {
+            E::Bin(BinaryOperator::LogicalAnd | BinaryOperator::And, a, b, w) if *w == Wt::scalar(Sc::Bool) => {
+                Self::bound_facts(a, out);
+                Self::bound_facts(b, out);
+            }
+            E::Bin(BinaryOperator::Less, x, c, _) | E::Bin(BinaryOperator::Greater, c, x, _) => {
+                if let Some(c) = lit_u(c).filter(|c| *c > 0) {
+                    out.push(((**x).clone(), c as u64 - 1));
+                }
+            }
+            E::Bin(BinaryOperator::LessEqual, x, c, _) | E::Bin(BinaryOperator::GreaterEqual, c, x, _) => {
+                if let Some(c) = lit_u(c) {
+                    out.push(((**x).clone(), c as u64));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn max_of_text(&self, e: &E) -> Option<u64> {
         const M: u64 = u32::MAX as u64;
+        // a zero bit inserted into p is at most 2p + 1
+        if let Some((p, _)) = ins_form(e) {
+            let m = self.max_of(p)?.checked_mul(2)? + 1;
+            return (m <= M).then_some(m);
+        }
         let r = match e {
             E::Lit(Lit::U(v)) => *v as u64,
             E::Field(i) => self.contract.fields.get(*i)?.1,
@@ -1010,7 +1065,24 @@ impl<'a> Reader<'a> {
                 match op {
                     BinaryOperator::Add => x? + y?,
                     BinaryOperator::Multiply => x?.checked_mul(y?)?,
-                    BinaryOperator::Subtract => x?,
+                    // u32 subtraction wraps: the bound holds only where a - b cannot go below zero
+                    BinaryOperator::Subtract => {
+                        if let (E::Field(i), E::Field(j)) = (&**a, &**b) {
+                            let (fa, fb) = (&self.contract.fields.get(*i)?.0, &self.contract.fields.get(*j)?.0);
+                            if let Some((_, _, hi)) = self.contract.diffs.iter().find(|(x, y, _)| x == fa && y == fb) {
+                                return Some(*hi);
+                            }
+                        }
+                        let no_wrap = self.min_of(a).zip(y).is_some_and(|(lo, hb)| lo >= hb) || match &**b {
+                            // a counter below its bound n, from n or n - 1
+                            E::Counter(c) => self.loop_bound_e.get(c).is_some_and(|n| **a == *n || matches!(&**a, E::Bin(BinaryOperator::Subtract, n2, one, _) if **n2 == *n && lit_u(one) == Some(1))),
+                            _ => false,
+                        };
+                        if !no_wrap {
+                            return None;
+                        }
+                        x? - self.min_of(b).unwrap_or(0).min(x?)
+                    }
                     BinaryOperator::Divide => x?,
                     BinaryOperator::Modulo => y?.saturating_sub(1).min(x.unwrap_or(M)),
                     BinaryOperator::ShiftRight => x?,
@@ -1043,6 +1115,12 @@ impl<'a> Reader<'a> {
     fn min_of(&self, e: &E) -> Option<u64> {
         match e {
             E::Lit(Lit::U(v)) => Some(*v as u64),
+            E::Bin(BinaryOperator::Add, a, b, w) if *w == uw() => {
+                let (x, y) = (self.min_of(a)?, self.min_of(b)?);
+                let m = x + y;
+                // a wrapped sum is small: only a sum that cannot wrap keeps its least value
+                Some(if self.max_of(e).is_some() { m } else { 0 })
+            }
             _ => Some(0).filter(|_| matches!(e.wt(), Wt { s: Sc::U32, lanes: 1 })),
         }
     }
@@ -1733,6 +1811,7 @@ impl<'a> Reader<'a> {
         let id = self.next_loop;
         self.next_loop += 1;
         self.loop_bounds.insert(id, (self.max_of(&bound), stride));
+        self.loop_bound_e.insert(id, bound.clone());
         fr.locals.insert(var, Local::Counter { loop_id: id, start: cstart.clone(), op: cop });
         let mut b = Vec::new();
         let saved = self.last_set.clone();
@@ -1946,6 +2025,62 @@ fn key_of(e: &E) -> Option<String> {
         E::Compose(w, parts) if parts.len() == 2 => format!("{}({{0}}, {{1}})", w.name()),
         _ => return None,
     })
+}
+
+/// An element of a swap pair: whether the high one, the own multiplier, the low element's expression, the insert
+/// form's `h`, the high form's `h`.
+struct XSide {
+    hi: bool,
+    m: E,
+    lo: E,
+    ins: Option<E>,
+    hh: Option<E>,
+}
+
+/// `e` as `p` with a zero bit inserted at the power of two `h`: `((p >> s) << (s + 1u)) | (p & (h - 1u))` with
+/// `h = 1u << s`, or `(p / h) * 2u * h + (p % h)` (the factors in any order): `(p, h)`.
+fn ins_form(e: &E) -> Option<(&E, E)> {
+    match e {
+        E::Bin(BinaryOperator::InclusiveOr, a, b, _) => {
+            for (x, y) in [(a, b), (b, a)] {
+                let (E::Bin(BinaryOperator::ShiftLeft, sh, s1, _), E::Bin(BinaryOperator::And, p2, hm1, _)) = (&**x, &**y) else { continue };
+                let E::Bin(BinaryOperator::ShiftRight, p1, s0, _) = &**sh else { continue };
+                let s1_ok = matches!(&**s1, E::Bin(BinaryOperator::Add, a1, b1, _) if (**a1 == **s0 && lit_u(b1) == Some(1)) || (**b1 == **s0 && lit_u(a1) == Some(1)));
+                let E::Bin(BinaryOperator::Subtract, h, one, _) = &**hm1 else { continue };
+                let h_ok = lit_u(one) == Some(1) && matches!(&**h, E::Bin(BinaryOperator::ShiftLeft, c, s2, _) if lit_u(c) == Some(1) && **s2 == **s0);
+                if p1 == p2 && s1_ok && h_ok {
+                    return Some((p1, (**h).clone()));
+                }
+            }
+            None
+        }
+        E::Bin(BinaryOperator::Add, a, b, _) => {
+            for (x, y) in [(a, b), (b, a)] {
+                let E::Bin(BinaryOperator::Modulo, p, h, _) = &**y else { continue };
+                fn factors<'e>(e: &'e E, out: &mut Vec<&'e E>) {
+                    match e {
+                        E::Bin(BinaryOperator::Multiply, a, b, _) => {
+                            factors(a, out);
+                            factors(b, out);
+                        }
+                        o => out.push(o),
+                    }
+                }
+                let mut f = Vec::new();
+                factors(x, &mut f);
+                if f.len() != 3 {
+                    continue;
+                }
+                let is_div = |z: &E| matches!(z, E::Bin(BinaryOperator::Divide, p2, h2, _) if **p2 == **p && **h2 == **h);
+                let (nd, n2, nh) = (f.iter().filter(|z| is_div(z)).count(), f.iter().filter(|z| lit_u(z) == Some(2)).count(), f.iter().filter(|z| ***z == **h).count());
+                if nd == 1 && n2 == 1 && nh == 1 {
+                    return Some((p, (**h).clone()));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn kids_of(e: &E) -> Vec<&E> {
@@ -2256,6 +2391,17 @@ impl<'a> Reader<'a> {
         Some(Tree { symbol: row, const_index: None, kids: vec![it, last] })
     }
 
+    /// The swap-pair block of array `v`: its region's first word over its span.
+    fn xblk(&mut self, v: usize) -> R<Tree> {
+        let span = *self.xspans.get(&v).ok_or_else(|| ReadError::Gap("our software has a bug: a swap-pair array with no span".into()))?;
+        let Some(Region::Plain { base, .. }) = self.regions.get(v).copied() else { return gap("our software has a bug: a swap-pair array with no plain region") };
+        let word = base * self.threads();
+        if !word.is_multiple_of(span) {
+            return gap(format!("our software has a bug: the swap-pair array {} at word {word}, not a multiple of its span {span}", self.wgvars[v].name));
+        }
+        self.konst("u32.xblk", &Lit::U(word / span)).ok_or_else(|| ReadError::Gap(format!("the constant {} of u32.xblk", word / span)))
+    }
+
     fn wg_base(&mut self, blocks: u32) -> Option<Tree> {
         let lit = self.konst("u32.wgblk", &Lit::U(blocks))?;
         Some(Tree { symbol: *self.rows_by_name.get("wg.base")?, const_index: None, kids: vec![lit] })
@@ -2312,7 +2458,7 @@ impl<'a> Reader<'a> {
     fn need(&self, st: &St) -> R<u32> {
         Ok(match st {
             St::If(_, a, b) => self.need_all(a)?.max(self.need_all(b)?),
-            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) => self.need_all(b)?,
+            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) => self.need_all(b)?,
             St::Loop(l) => self.need_all(&l.body)? + self.class_of(l)?.0,
             _ => 0,
         })
@@ -2335,7 +2481,7 @@ impl<'a> Reader<'a> {
         for (i, s) in sts.iter().enumerate() {
             match s {
                 St::BreakIf(_) => return gap("our software has a bug: a break point outside its loop body"),
-                St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) => {
+                St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) => {
                     if x != 'L' {
                         return gap("a workgroup phase under divergent control");
                     }
@@ -2364,6 +2510,14 @@ impl<'a> Reader<'a> {
                             let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
                             let xb = self.block(b, 'X', d, k)?;
                             Tree { symbol: self.row(&format!("wg.split_{r}"))?, const_index: None, kids: vec![spt, xb, rest] }
+                        }
+                        St::Xchg(vs, h, mode, b) => {
+                            let span = *self.xspans.get(&vs[0]).ok_or_else(|| ReadError::Gap("our software has a bug: a swap-pair array with no span".into()))?;
+                            let ht = self.must(h, "u32.uniform")?;
+                            let mt = self.konst("u32.xmode", &Lit::U(*mode)).ok_or_else(|| ReadError::Gap("the constant of u32.xmode".into()))?;
+                            let st = self.konst("u32.xspan", &Lit::U(span)).ok_or_else(|| ReadError::Gap(format!("the constant {span} of u32.xspan")))?;
+                            let eb = self.block(b, 'E', d, k)?;
+                            Tree { symbol: self.row(&format!("wg.xchg_{r}"))?, const_index: None, kids: vec![ht, mt, st, eb, rest] }
                         }
                         _ => unreachable_phase()?,
                     };
@@ -2453,7 +2607,23 @@ impl<'a> Reader<'a> {
                 self.leaf(&format!("stmt.{name}_{r}"))
             }
             St::BreakIf(_) => gap("our software has a bug: a break point outside its loop body"),
-            St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) => gap("our software has a bug: a phase spelled as a statement"),
+            St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) => gap("our software has a bug: a phase spelled as a statement"),
+            St::XLoad(reg, hi, v, m) => {
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let (_, prefix, _, _) = REG_KINDS[reg.kind];
+                let leaf = self.leaf(&format!("reg.{prefix}{}", reg.n))?;
+                let blk = self.xblk(*v)?;
+                let own = self.wg_own(m).ok_or_else(|| ReadError::Gap(format!("the own element {m:?}")))?;
+                let side = if *hi { "hi" } else { "lo" };
+                Ok(Tree { symbol: self.row(&format!("wg.xload_{side}_{key}_{r}"))?, const_index: None, kids: vec![leaf, blk, own] })
+            }
+            St::XSet(hi, v, m, e) => {
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let blk = self.xblk(*v)?;
+                let own = self.wg_own(m).ok_or_else(|| ReadError::Gap(format!("the own element {m:?}")))?;
+                let side = if *hi { "hi" } else { "lo" };
+                self.stmt_row(&format!("wg.xset_{side}_{key}_{r}"), vec![blk, own], &[e])
+            }
             St::HLoad(reg, v, i) => {
                 let Some(Region::Plain { base, lane, block }) = self.regions.get(*v).copied() else { return gap("our software has a bug: a workgroup array with no region") };
                 let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
@@ -2605,18 +2775,18 @@ impl<'a> Reader<'a> {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
         let (row, body_x, div, bound_kids): (String, char, bool, Vec<Tree>) = match (x, lit, brk.is_some()) {
-            ('W' | 'X', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
-            ('W' | 'X', None, false) if stride == 1 => {
+            ('W' | 'X' | 'E', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E', None, false) if stride == 1 => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
                 (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
-            ('W' | 'X', None, true) => {
+            ('W' | 'X' | 'E', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E', None, true) => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
                 (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
-            ('W' | 'X', None, false) => {
+            ('W' | 'X' | 'E', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
+            ('W' | 'X' | 'E', None, false) => {
                 let b = self.must(&lp.bound, "u32.indexw")?;
                 (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
@@ -2688,7 +2858,7 @@ impl<'a> Reader<'a> {
             Some(at) => {
                 let St::BreakIf(flag) = &lp.body[at] else { return gap("our software has a bug: the break point moved") };
                 let (bx, fl) = match x {
-                    'W' | 'X' => (x, "bool.flagw"),
+                    'W' | 'X' | 'E' => (x, "bool.flagw"),
                     'S' => ('S', "bool.flag"),
                     _ => ('C', "bool.flag"),
                 };
@@ -2740,7 +2910,7 @@ impl<'a> Reader<'a> {
 /// Whether the statements begin with a barrier (a phase begins with its leading one) on every path.
 fn leads_barrier(sts: &[St]) -> bool {
     match sts.first() {
-        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..)) => true,
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..)) => true,
         Some(St::Loop(l)) => leads_barrier(&l.body),
         Some(St::If(_, a, b)) => leads_barrier(a) && leads_barrier(b),
         _ => false,
@@ -2750,7 +2920,7 @@ fn leads_barrier(sts: &[St]) -> bool {
 /// Whether the statements end with a barrier (a phase as the last statement ends with its middle one) on every path.
 fn ends_barrier(sts: &[St]) -> bool {
     match sts.last() {
-        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..)) => true,
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..)) => true,
         Some(St::Loop(l)) => ends_barrier(&l.body) && !l.body.iter().any(|x| matches!(x, St::BreakIf(_))),
         Some(St::If(_, a, b)) => ends_barrier(a) && ends_barrier(b),
         _ => false,
@@ -2759,7 +2929,7 @@ fn ends_barrier(sts: &[St]) -> bool {
 
 fn needs_l(sts: &[St]) -> bool {
     sts.iter().any(|s| match s {
-        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::ULoad(..) => true,
+        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::ULoad(..) => true,
         St::If(_, a, b) => needs_l(a) || needs_l(b),
         St::Loop(l) => needs_l(&l.body),
         _ => false,
@@ -3202,7 +3372,7 @@ fn e_regs(e: &E, out: &mut Vec<Reg>) {
 fn regs_written(sts: &[St], out: &mut Vec<Reg>) {
     for s in sts {
         match s {
-            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _) | St::HLoad(r, _, _) => out.push(*r),
+            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) => out.push(*r),
             St::If(_, a, b) => {
                 regs_written(a, out);
                 regs_written(b, out);
@@ -3294,7 +3464,12 @@ fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
                 ex(&l.bound, out);
                 wg_accesses(&l.body, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) => wg_accesses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) => wg_accesses(b, out),
+            St::XLoad(_, _, v, _) => out.push((*v, None)),
+            St::XSet(_, v, _, x) => {
+                out.push((*v, None));
+                ex(x, out);
+            }
             St::Barrier | St::StorageBarrier => {}
         }
     }
@@ -3310,7 +3485,8 @@ fn plain_written(sts: &[St], out: &mut Vec<usize>) {
                 plain_written(b, out);
             }
             St::Loop(l) => plain_written(&l.body, out),
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) => plain_written(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) => plain_written(b, out),
+            St::XSet(_, v, _, _) => out.push(*v),
             _ => {}
         }
     }
@@ -3395,12 +3571,23 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 wg_uses_e(e, out);
                 wg_uses(b, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) => wg_uses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) => wg_uses(b, out),
             St::HLoad(_, v, a) => {
                 if !out.contains(v) {
                     out.push(*v);
                 }
                 wg_uses_e(a, out);
+            }
+            St::XLoad(_, _, v, _) => {
+                if !out.contains(v) {
+                    out.push(*v);
+                }
+            }
+            St::XSet(_, v, _, x) => {
+                if !out.contains(v) {
+                    out.push(*v);
+                }
+                wg_uses_e(x, out);
             }
             St::PLoad(_, v) => {
                 if !out.contains(v) {
@@ -3420,7 +3607,7 @@ impl<'a> Reader<'a> {
     /// `e` with every mask that cannot change it removed: `x & (2^j - 1)` when `x < 2^j`.
     fn unmask(&self, e: &E) -> E {
         let e = &self.map_kids(e, &mut |s, k| Ok(s.unmask(k))).unwrap_or_else(|_| e.clone());
-        if let E::Bin(BinaryOperator::And, x, m, w) = e {
+        if let E::Bin(BinaryOperator::And, x, m, _) = e {
             if let Some(m) = lit_u(m) {
                 if m.wrapping_add(1).is_power_of_two() && self.max_of(x).is_some_and(|v| v <= m as u64) {
                     return self.unmask(x);
@@ -3431,7 +3618,6 @@ impl<'a> Reader<'a> {
                     return self.unmask(m);
                 }
             }
-            let _ = w;
         }
         e.clone()
     }
@@ -3600,6 +3786,11 @@ impl<'a> Reader<'a> {
                 continue;
             }
             let blocks = |words: u32| words.div_ceil(t);
+            if let Some(span) = self.xspans.get(&v) {
+                // a swap-pair array starts at a multiple of its span
+                let q = (span / t).max(1);
+                next_blk = next_blk.div_ceil(q) * q;
+            }
             let (reg, size) = match block.get(&v) {
                 Some(c) => {
                     if w.len > c * t {
@@ -3783,6 +3974,17 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        // a swap-pair phase: one array, each write an element of the writer's own pair
+        let xchg_gap = match self.try_exchange(&part) {
+            Ok(Some(body)) => {
+                out.extend(pre.clone());
+                out.push(body);
+                return Ok(());
+            }
+            Ok(None) => None,
+            Err(ReadError::Gap(g)) => Some(g),
+            Err(ReadError::Out(o)) => Some(o),
+        };
         // a split phase: the arrays the segment writes are not the arrays it reads foreign elements of
         let split_gap = match self.try_split(&part) {
             Ok(Some(body)) => {
@@ -3795,9 +3997,11 @@ impl<'a> Reader<'a> {
             Err(ReadError::Out(o)) => Some(o),
         };
         // a write phase's gap names the split phase's too, so the reason is the whole of what the table lacks
-        let both = |e: ReadError| match (e, &split_gap) {
-            (ReadError::Gap(g), Some(s)) => ReadError::Gap(format!("{g}; as a split phase: {s}")),
-            (e, _) => e,
+        let both = |e: ReadError| match (e, &split_gap, &xchg_gap) {
+            (ReadError::Gap(g), Some(s), Some(x)) => ReadError::Gap(format!("{g}; as a split phase: {s}; as a swap-pair phase: {x}")),
+            (ReadError::Gap(g), Some(s), None) => ReadError::Gap(format!("{g}; as a split phase: {s}")),
+            (ReadError::Gap(g), None, Some(x)) => ReadError::Gap(format!("{g}; as a swap-pair phase: {x}")),
+            (e, _, _) => e,
         };
         // a write phase: its statements read no workgroup element another invocation may write
         let mut w = Vec::new();
@@ -3831,6 +4035,291 @@ impl<'a> Reader<'a> {
         out.extend(pre);
         out.push(St::Phase(w));
         Ok(())
+    }
+
+    /// `e` as the low element of a swap pair of array `v`: the own multiplier `m` of the invocation's own element, and
+    /// `h` when `e` is that element with a zero bit inserted at `h` (`((p >> s) << (s + 1u)) | (p & (h - 1u))`,
+    /// `h = 1u << s`); `None` for `h` when `e` is the own element itself.
+    fn x_lo(&self, v: usize, e: &E) -> Option<(E, Option<E>)> {
+        let i = self.unmask(e);
+        if let Some(m) = self.own_m(v, &i) {
+            return Some((m, None));
+        }
+        let (p, h) = ins_form(&i)?;
+        let m = self.own_m(v, p)?;
+        Some((m, Some(h)))
+    }
+
+    /// `e` as an element of a swap pair of `v`: (high, own multiplier, the low element's expression, the insert form's
+    /// `h`, the high form's `h`). The high element is the low one `^`, `+` or `|` `h` (equal when bit `h` of the low
+    /// element is clear), masked by `& M` only when both are at most `M` (`M + 1` a power of two).
+    fn x_side(&self, v: usize, e: &E) -> Option<XSide> {
+        if let Some((m, ins)) = self.x_lo(v, e) {
+            return Some(XSide { hi: false, m, lo: self.unmask(e), ins, hh: None });
+        }
+        let i = self.unmask(e);
+        let (core, mask) = match &i {
+            E::Bin(BinaryOperator::And, x, mm, _) if lit_u(mm).is_some_and(|m| m.wrapping_add(1).is_power_of_two()) => ((**x).clone(), lit_u(mm)),
+            o => (o.clone(), None),
+        };
+        let E::Bin(BinaryOperator::ExclusiveOr | BinaryOperator::Add | BinaryOperator::InclusiveOr, a, b, _) = &core else { return None };
+        for (lo, h) in [(a, b), (b, a)] {
+            if let Some((m, ins)) = self.x_lo(v, lo) {
+                if let Some(mm) = mask {
+                    if !(self.max_of(lo).is_some_and(|x| x <= mm as u64) && self.max_of(h).is_some_and(|x| x <= mm as u64)) {
+                        continue;
+                    }
+                }
+                return Some(XSide { hi: true, m, lo: self.unmask(lo), ins, hh: Some((**h).clone()) });
+            }
+        }
+        None
+    }
+
+    /// Whether `h` is a power of two or zero by its text: a literal, or a power-of-two literal shifted.
+    fn pow2_or_zero(&self, h: &E) -> bool {
+        match h {
+            E::Lit(Lit::U(c)) => *c == 0 || c.is_power_of_two(),
+            E::Bin(BinaryOperator::ShiftLeft, c, _, _) => lit_u(c).is_some_and(|c| c.is_power_of_two()) || matches!(&**c, E::Bin(BinaryOperator::ShiftLeft, ..)) && self.pow2_or_zero(c),
+            E::Bin(BinaryOperator::ShiftRight, c, _, _) => self.pow2_or_zero(c),
+            _ => false,
+        }
+    }
+
+    /// Whether `h` is a nonzero power of two by its text: a literal, `1u << s`, or `(1u << a) >> b` with `b` a loop
+    /// counter's successor below `a`, `a` below 32 (`k >> (j + 1u)` for `j < kk`, `k = 1u << kk`).
+    fn nonzero_pow2(&self, h: &E) -> bool {
+        match h {
+            E::Lit(Lit::U(c)) => c.is_power_of_two(),
+            E::Bin(BinaryOperator::ShiftLeft, c, _, _) => lit_u(c) == Some(1),
+            E::Bin(BinaryOperator::ShiftRight, x, b, _) => {
+                let E::Bin(BinaryOperator::ShiftLeft, c, a, _) = &**x else { return false };
+                if lit_u(c) != Some(1) || self.max_of(a).is_none_or(|m| m >= 32) {
+                    return false;
+                }
+                match &**b {
+                    E::Bin(BinaryOperator::Add, cnt, one, _) if lit_u(one) == Some(1) => matches!(&**cnt, E::Counter(id) if self.loop_bound_e.get(id).is_some_and(|n| *n == **a)),
+                    E::Counter(id) => self.loop_bound_e.get(id).is_some_and(|n| *n == **a),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// The low elements a condition proves have bit `h` clear: its conjuncts `(x ^ h) > x`, `x < (x ^ h)`,
+    /// `(x & h) == 0u`.
+    fn clear_guards(&self, c: &E, h: &E, out: &mut Vec<E>) {
+        match c {
+            E::Bin(BinaryOperator::LogicalAnd | BinaryOperator::And, a, b, w) if *w == Wt::scalar(Sc::Bool) => {
+                self.clear_guards(a, h, out);
+                self.clear_guards(b, h, out);
+            }
+            E::Bin(op @ (BinaryOperator::Greater | BinaryOperator::Less), a, b, _) => {
+                let (big, small) = if *op == BinaryOperator::Greater { (a, b) } else { (b, a) };
+                if let E::Bin(BinaryOperator::ExclusiveOr, x, y, _) = &**big {
+                    for (lo, hh) in [(x, y), (y, x)] {
+                        if **lo == **small && **hh == *h {
+                            out.push(self.unmask(lo));
+                        }
+                    }
+                }
+            }
+            E::Bin(BinaryOperator::Equal, a, b, _) => {
+                for (x, z) in [(a, b), (b, a)] {
+                    if lit_u(z) == Some(0) {
+                        if let E::Bin(BinaryOperator::And, p, q, _) = &**x {
+                            for (lo, hh) in [(p, q), (q, p)] {
+                                if **hh == *h {
+                                    out.push(self.unmask(lo));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A segment as a swap-pair phase (UI1 batch 10): its only workgroup array writes are of one array `v`, each the
+    /// low or the high element of the pair its own element names, with one uniform power of two `h` and one mode.
+    fn try_exchange(&mut self, part: &[St]) -> R<Option<St>> {
+        let mut ws = Vec::new();
+        wg_writes(part, false, self.wg, &mut ws);
+        let mut arrays: Vec<usize> = ws.iter().map(|(v, _, _)| *v).collect();
+        arrays.sort_unstable();
+        arrays.dedup();
+        if arrays.is_empty() || arrays.iter().any(|v| !matches!(self.regions.get(*v), Some(Region::Plain { block: None, .. })) || self.wgvars[*v].elem.lanes != 1) {
+            return Ok(None);
+        }
+        let (mut h, mut mode, mut any_hi) = (None::<E>, None::<u32>, false);
+        let mut sides = Vec::new();
+        for v in &arrays {
+            if !self.x_scan(part, *v, &mut sides) {
+                return Ok(None);
+            }
+        }
+        for (hi, ins, hh) in sides {
+            let md = u32::from(ins.is_some());
+            if mode.replace(md).is_some_and(|o| o != md) {
+                return Ok(None);
+            }
+            for cand in [ins, hh].into_iter().flatten() {
+                if h.as_ref().is_some_and(|o| *o != cand) {
+                    return Ok(None);
+                }
+                h = Some(cand);
+            }
+            any_hi |= hi;
+        }
+        let (true, Some(h), Some(mode)) = (any_hi, h, mode) else { return Ok(None) };
+        if !self.pow2_or_zero(&h) {
+            return gap(format!("a swap-pair phase whose h {h:?} the reader cannot prove a power of two"));
+        }
+        // the inserted bit: a zero h would make the seed's index 0 (p / 0 is p, p % 0 is 0), the row's p
+        let nonzero = self.nonzero_pow2(&h);
+        if mode == 1 && !nonzero {
+            return gap(format!("a swap-pair phase whose inserted bit {h:?} the reader cannot prove nonzero"));
+        }
+        let span = arrays.iter().map(|v| self.wgvars[*v].len.max(2).next_power_of_two()).max().unwrap_or(2);
+        if span > 4096 {
+            return gap(format!("a swap-pair phase over {span} words, over the largest span 4096"));
+        }
+        let mut body = Vec::new();
+        let mut guards = Vec::new();
+        for st in part {
+            body.extend(self.e_stmt(st, &arrays, &h, mode, &mut guards)?);
+        }
+        for v in &arrays {
+            if self.xspans.insert(*v, span).is_some_and(|o| o != span) {
+                return gap(format!("the swap-pair array {} in two spans", self.wgvars[*v].name));
+            }
+        }
+        Ok(Some(St::Xchg(arrays, h, mode, body)))
+    }
+
+    /// Every write of `v` in the statements classified as a pair element (side, insert-form h, high-form h), each read
+    /// under the bounds its enclosing conditions prove; false when one is not a pair element.
+    fn x_scan(&self, sts: &[St], v: usize, out: &mut Vec<(bool, Option<E>, Option<E>)>) -> bool {
+        for st in sts {
+            match st {
+                St::WgSet(v2, i, _) if *v2 == v => match self.x_side(v, i) {
+                    Some(x) => out.push((x.hi, x.ins, x.hh)),
+                    None => return false,
+                },
+                St::If(c, a, b) => {
+                    let fat = self.facts.borrow().len();
+                    Self::bound_facts(c, &mut self.facts.borrow_mut());
+                    let ok = self.x_scan(a, v, out);
+                    self.facts.borrow_mut().truncate(fat);
+                    if !ok || !self.x_scan(b, v, out) {
+                        return false;
+                    }
+                }
+                St::Loop(l) => {
+                    if !self.x_scan(&l.body, v, out) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// An access of the swap-pair array: its side and own multiplier, the pair proven taken where it stands.
+    fn e_access(&self, v: usize, idx: &E, h: &E, mode: u32, guards: &[E]) -> R<(bool, E)> {
+        let Some(XSide { hi, m, lo, ins, hh }) = self.x_side(v, idx) else {
+            return gap(format!("a swap-pair phase touching {}[{idx:?}], not an element of an invocation's own pair", self.wgvars[v].name));
+        };
+        if ins.as_ref().is_some_and(|x| x != h) || hh.as_ref().is_some_and(|x| x != h) || u32::from(ins.is_some()) != mode {
+            return gap(format!("a swap-pair phase touching {}[{idx:?}] with another h", self.wgvars[v].name));
+        }
+        if mode == 0 && !guards.contains(&lo) {
+            return gap(format!("a swap-pair phase touching {}[{idx:?}] where no condition proves bit h of {lo:?} clear", self.wgvars[v].name));
+        }
+        Ok((hi, m))
+    }
+
+    fn e_e(&mut self, e: &E, v: &[usize], h: &E, mode: u32, guards: &[E], pre: &mut Vec<St>) -> R<E> {
+        Ok(match e {
+            E::Wg(v2, i, w) => {
+                if !v.contains(v2) {
+                    return gap(format!("a swap-pair phase reading {}, an array it does not swap", self.wgvars[*v2].name));
+                }
+                let (hi, m) = self.e_access(*v2, i, h, mode, guards)?;
+                let r = self.reg(*w)?;
+                pre.push(St::XLoad(r, hi, *v2, m));
+                E::Reg(r, *w)
+            }
+            E::WgA(..) | E::WgRmw(..) | E::WgOwn(..) => return gap("an atomic or own read inside a swap-pair phase"),
+            o => {
+                let mut kids = Vec::new();
+                for k in kids_of(o) {
+                    kids.push(self.e_e(k, v, h, mode, guards, pre)?);
+                }
+                if let E::Parr(p, i, w) = o {
+                    return Ok(E::Parr(*p, u(self.e_e(i, v, h, mode, guards, pre)?), *w));
+                }
+                if let E::Load(n, i, w) = o {
+                    return Ok(E::Load(n.clone(), u(self.e_e(i, v, h, mode, guards, pre)?), *w));
+                }
+                let mut it = kids.into_iter();
+                self.map_kids(o, &mut |_, _| Ok(it.next().unwrap_or(E::Lit(Lit::U(0)))))?
+            }
+        })
+    }
+
+    fn e_stmt(&mut self, s: &St, v: &[usize], h: &E, mode: u32, guards: &mut Vec<E>) -> R<Vec<St>> {
+        let mut pre = Vec::new();
+        let st = match s {
+            St::WgSet(v2, i, x) => {
+                let x2 = self.e_e(x, v, h, mode, guards, &mut pre)?;
+                if !v.contains(v2) {
+                    return gap("our software has a bug: a swap-pair phase writing an array it does not swap");
+                }
+                let (hi, m) = self.e_access(*v2, i, h, mode, guards)?;
+                St::XSet(hi, *v2, m, x2)
+            }
+            St::Set(r, e) => St::Set(*r, self.e_e(e, v, h, mode, guards, &mut pre)?),
+            St::SetLane(r, a, b) => St::SetLane(*r, self.e_e(a, v, h, mode, guards, &mut pre)?, self.e_e(b, v, h, mode, guards, &mut pre)?),
+            St::ParrSet(p, a, b) => St::ParrSet(*p, self.e_e(a, v, h, mode, guards, &mut pre)?, self.e_e(b, v, h, mode, guards, &mut pre)?),
+            St::Store(n, a, b) => St::Store(n.clone(), self.e_e(a, v, h, mode, guards, &mut pre)?, self.e_e(b, v, h, mode, guards, &mut pre)?),
+            St::If(c, a, b) => {
+                let c2 = self.e_e(c, v, h, mode, guards, &mut pre)?;
+                let at = guards.len();
+                self.clear_guards(c, h, guards);
+                let fat = self.facts.borrow().len();
+                Self::bound_facts(c, &mut self.facts.borrow_mut());
+                let mut a2 = Vec::new();
+                let ra: R<()> = a.iter().try_for_each(|x| self.e_stmt(x, v, h, mode, guards).map(|y| a2.extend(y)));
+                self.facts.borrow_mut().truncate(fat);
+                guards.truncate(at);
+                ra?;
+                let mut b2 = Vec::new();
+                for x in b {
+                    b2.extend(self.e_stmt(x, v, h, mode, guards)?);
+                }
+                St::If(c2, a2, b2)
+            }
+            St::Loop(l) => {
+                let mut l2 = (**l).clone();
+                let b2 = self.e_e(&l.bound, v, h, mode, guards, &mut pre)?;
+                if b2 != l.bound {
+                    return gap("a swap-pair phase loop bounded by a workgroup element");
+                }
+                let mut body = Vec::new();
+                for x in &l.body {
+                    body.extend(self.e_stmt(x, v, h, mode, guards)?);
+                }
+                l2.body = body;
+                St::Loop(Box::new(l2))
+            }
+            o => return gap(format!("the statement {o:?} inside a swap-pair phase")),
+        };
+        pre.push(st);
+        Ok(pre)
     }
 
     /// A segment as a split phase: every write an own write of an array the segment never reads a foreign element of;

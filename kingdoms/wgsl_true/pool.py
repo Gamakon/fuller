@@ -52,6 +52,12 @@ def declare(iface):
     T("u32.wgblk", "a region's base in blocks of the workgroup size: a bare literal", 1, "0..=511")
     T("u32.wgbase", "a region's base: a multiple of the workgroup size T, so own writes of two regions never meet")
     T("u32.wgown", "the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it")
+    T("u32.xblk", "a swap-pair phase's block of xs words: a bare literal", 1, "0..=1023")
+    T("u32.xspan", "a swap-pair phase's block length xs: a bare power of two", 1, "2..=4096")
+    SAFE_ARGS.add("u32.xblk")
+    SAFE_ARGS.add("u32.xspan")
+    T("u32.xmode", "the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h", 1, "0..=1")
+    SAFE_ARGS.add("u32.xmode")
     T("u32.wgabase", "a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)", 1, f"0..={A_WORDS - 1}")
     for t in ("u32.wgblk", "u32.wgbase", "u32.wgown", "u32.wgabase"):
         SAFE_ARGS.add(t)
@@ -101,8 +107,25 @@ def build(iface):
         for key, vt_, rd, wr in ELEMS:
             R(f"wg.pload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase"], "{0} = " + rd.format(f"wg_pool[min({{1}} + lidx + ps, {last}u)]") + ";", "the partner element, lidx + ps: no invocation writes it in a pair phase")
         R(f"wg.pload_v4_P{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase"], "{0} = wg_v4({1}, {2}, lidx + ps);")
+    # ---- the swap-pair phase (UI1 batch 10): sort and butterfly steps. The phase fixes a uniform power of two h (or 0,
+    # `xh`), a mode and a span xs (a power of two). Invocation p's pair in block b is (b * xs + i, b * xs + (i | h)),
+    # i = xidx(p) from its own element p: mode 0, i = p, the pair taken only when bit h of p is clear; mode 1, i is p
+    # with a zero bit inserted at h (p below 2^31), so bit h of i is always clear; an element is touched only when its
+    # index is below xs, so a pair never leaves its block. Either map is injective across invocations and every taken
+    # i has bit h clear, so in one block no element is in two pairs, and two blocks never share an element: the pair
+    # rows are the phase's only workgroup writes and its only pool reads, so nothing is read and written by two
+    # invocations between the phase's barriers, whatever blocks a gene names.
+    helper("xidx", "fn xidx(p: u32, h: u32, m: u32) -> u32 { if (m == 0u) { return p; } let lo = p & (h - 1u); return ((p & ~(h - 1u)) << 1u) | lo; }")
+    helper("xok", "fn xok(p: u32, h: u32, m: u32) -> bool { if (m == 0u) { return (p & h) == 0u; } return p < 2147483648u; }")
+    for x, d, k in rungs("E"):
+        s = S(x, d, k)
+        for key, vt_, rd, wr in ELEMS:
+            for side, at in (("lo", "xidx(p, xh, xm)"), ("hi", "(xidx(p, xh, xm) | xh)")):
+                R(f"wg.xload_{side}_{key}_E{d}_f{k}", s, [REGS[key], "u32.xblk", "u32.wgown"], "{ let p = {2}; let i = " + at + "; {0} = " + rd.format(f"select(0u, wg_pool[min({{1}} * xs + i, {last}u)], xok(p, xh, xm) && i < xs)") + "; }", f"the {side} element of this invocation's pair in block {{1}} (0 when the pair is not taken)")
+                R(f"wg.xset_{side}_{key}_E{d}_f{k}", s, ["u32.xblk", "u32.wgown", w_of(vt_)], "{ let p = {1}; let i = " + at + "; let o = {0} * xs + i; if (xok(p, xh, xm) && i < xs && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", f"a write of the {side} element of this invocation's pair in block {{0}}")
     for x, d, k in rungs("L"):
         s = S("L", d, k)
+        R(f"wg.xchg_L{d}_f{k}", s, ["u32.uniform", "u32.xmode", "u32.xspan", B("E", d, k), B("L", d, k)], "workgroupBarrier(); { let xh0 = {0}; let xh = xh0 & (0u - xh0); let xm = {1}; let xs = {2}; {3} } workgroupBarrier(); {4}", "the swap-pair phase: each invocation writes only the pairs (i, i | h) its own elements name, h a power of two, in blocks of xs words")
         R(f"wg.phase_L{d}_f{k}", s, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
         R(f"wg.pair_L{d}_f{k}", s, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")
         R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
@@ -112,13 +135,19 @@ def build(iface):
     R("own.u32_atomicoldw", "u32.atomicoldw", [], "lit_u32(0u)", "its w twin")
     C("literal.wgabase", "u32.wgabase", "{v}u", [str(i) for i in range(0, A_WORDS)], "?_wgabase: a word of the atomic pool")
     R("own.u32_wgabase", "u32.wgabase", [], "0u")
-    for x, d, k in rungs("LCSWPX"):
-        R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), [w_of("u32.atomicold") if x in "WPX" else "u32.atomicold"], "_ = {0};", "the effect without the value")
+    C("literal.xmode", "u32.xmode", "{v}u", ["0", "1"], "?_xmode")
+    C("literal.xblk", "u32.xblk", "{v}u", [str(i) for i in range(0, 1024)], "?_xblk")
+    R("own.u32_xblk", "u32.xblk", [], "0u")
+    C("literal.xspan", "u32.xspan", "{v}u", [str(1 << j) for j in range(1, 13)], "?_xspan")
+    R("own.u32_xspan", "u32.xspan", [], "2u")
+    R("own.u32_xmode", "u32.xmode", [], "0u")
+    for x, d, k in rungs("LCSWPXE"):
+        R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), [w_of("u32.atomicold") if x in "WPXE" else "u32.atomicold"], "_ = {0};", "the effect without the value")
     alast = A_WORDS - 1
     acell = f"&wg_apool[min({{0}} + {{1}}, {alast}u)]"
     for fn, F in ATOMIC_FUNS.items():
         R(f"atomic.wg_{fn}", "u32.atomicold", ["u32.wgabase", "u32.index", "u32.index"], f"atomic{F}({acell}, {{2}})", "an atomic of the atomic pool: never a race, its old value order-dependent", twin=True)
     R("atomic.wg_load", "u32.atomicold", ["u32.wgabase", "u32.index"], f"atomicLoad({acell})", "a relaxed load of the atomic pool", twin=True)
-    for x, d, k in rungs("LCSWPX"):
-        it, vt_ = ("u32.indexw", "u32.indexw") if x in "WPX" else ("u32.index", "u32.index")
+    for x, d, k in rungs("LCSWPXE"):
+        it, vt_ = ("u32.indexw", "u32.indexw") if x in "WPXE" else ("u32.index", "u32.index")
         R(f"atomic.wg_store_{x}{d}_f{k}", S(x, d, k), ["u32.wgabase", it, vt_], "atomicStore(&wg_apool[min({0} + {1}, " + str(alast) + "u)], {2});", "an atomic store at any element: one atomic operation, never a race")
