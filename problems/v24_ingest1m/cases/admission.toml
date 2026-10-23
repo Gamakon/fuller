@@ -1,0 +1,23 @@
+# THE ADMISSION CASE: no suite of the problem, never judged (its accept sets
+# and today's counts are the stream case's, for sections of per_section rows,
+# so judged with 32-row sections they would count wrongly). It is the
+# smallest run of this problem's program on its own files: 2 stages of 32
+# rows (64 arrived), the first 16 oracles. The index arenas are the
+# problem's own (problem.toml arena_u32, arena_f32: 8,388,608 words, 32 MiB
+# each, the size the designs mask for): this file gives none. phylu's
+# differential admission (a design's text against its rendering, output bytes
+# compared) runs it with fuller harness::cpu_run; Problem::cases_of loads it.
+# Written from cases/stream.toml with stages, per_section and n_queries
+# replaced.
+
+root = "/Users/andrewmorgan/data/arm/v24_case_1m"
+
+# NOT YET FILLED: the 1M set is not built (it waits for the team lead's go). After the build,
+# nnz, accept_n1..5 and today_settle_ms_1..5 are added to params from
+# /Users/andrewmorgan/data/arm/v24_case_1m/case.json, as v24_ingest250k's were.
+
+[[case]]
+name = "admission"
+label = "2 stages of 32 rows, 16 queries"
+params = { stages = 2, per_section = 32, chunk = 32, n_queries = 16, seed0 = 42, seed1 = 137, seed2 = 911, seed3 = 4242, n_stream = 1000000, n_oracle = 2500, n_total = 1002500, sections = 5, d = 2048, c_max = 64 }
+inputs = { rec_offsets = "rec_offsets.u32", rec_indices = "rec_indices.u32", oracle_half = "oracle_half.u32", rec_values = "rec_values.f32", accept_s1_offsets = "accept_s1_offsets.u32", accept_s1_rows = "accept_s1_rows.u32", today_s1_misses = "today_s1_misses.u32", today_s1_pooled = "today_s1_pooled.u32", today_s1_search_ms = "today_s1_search_ms.f32", accept_s2_offsets = "accept_s2_offsets.u32", accept_s2_rows = "accept_s2_rows.u32", today_s2_misses = "today_s2_misses.u32", today_s2_pooled = "today_s2_pooled.u32", today_s2_search_ms = "today_s2_search_ms.f32", accept_s3_offsets = "accept_s3_offsets.u32", accept_s3_rows = "accept_s3_rows.u32", today_s3_misses = "today_s3_misses.u32", today_s3_pooled = "today_s3_pooled.u32", today_s3_search_ms = "today_s3_search_ms.f32", accept_s4_offsets = "accept_s4_offsets.u32", accept_s4_rows = "accept_s4_rows.u32", today_s4_misses = "today_s4_misses.u32", today_s4_pooled = "today_s4_pooled.u32", today_s4_search_ms = "today_s4_search_ms.f32", accept_s5_offsets = "accept_s5_offsets.u32", accept_s5_rows = "accept_s5_rows.u32", today_s5_misses = "today_s5_misses.u32", today_s5_pooled = "today_s5_pooled.u32", today_s5_search_ms = "today_s5_search_ms.f32" }
