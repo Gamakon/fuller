@@ -21,7 +21,7 @@ seeds5b/seed18.wgsl	reads
 seeds5b/seed19.wgsl	reads	
 seeds5b/seed20.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })
 seeds5b/seed21.wgsl	gap	a write phase: a read of sh_small[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(127)), Wt { s: U32, lanes: 1 })], an element another invocation may 
-seeds5b/seed22.wgsl	gap	a write of wleaf[Counter(6)], an element another invocation may own; as a split phase: a write of wleaf[Counter(6)], an element another invocation may own
+seeds5b/seed22.wgsl	reads	
 seeds5b/seed23.wgsl	reads	
 seeds5b/seed24.wgsl	reads	
 seeds5b/seed25.wgsl	reads	

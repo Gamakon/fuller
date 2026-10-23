@@ -624,3 +624,4 @@ Each row family below closes a gap where a V24 seed was legal under its contract
   - A split phase reading its own array: seeds5b seed31.
   - Single gaps of their own: seeds5b seed16 and seed22.
   - Old model-written kernels in the earlier dialect: run4 and run5.
+- **The solo phase of a named lane.** `wg.solo_at_L<d>_f<k>: (u32.uniform u, block.S, block.L)` is spelled `workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}`. `u` is uniform by its type, so exactly one invocation runs the S body, which may write any element. The reader takes `if (t == w) { .. }`, where `w` reads no per-invocation id, as such a phase and proves `w` uniform when it spells it: `w = wred_u[0]` after the argmax's barrier is a uniform load. A loop whose body ends in a barrier counts as that barrier for the reads after it. seeds5b seed22 reads.

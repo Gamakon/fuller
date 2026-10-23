@@ -196,6 +196,7 @@ def build(iface):
         R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qm = KNOB_THREADS; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
         R(f"wg.qsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
         R(f"wg.solo_L{d}_f{k}", s, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
+        R(f"wg.solo_at_L{d}_f{k}", s, ["u32.uniform", B("S", d, k), B("L", d, k)], "workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}", "the phase of the one invocation a uniform value names (lidx == u, the same u in every invocation)")
         R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + str(last) + "u)]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
     R("own.u32_atomicold", "u32.atomicold", [], "lit_u32(0u)", "a value whose consumer discards it")
     R("own.u32_atomicoldw", "u32.atomicoldw", [], "lit_u32(0u)", "its w twin")
