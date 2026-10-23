@@ -1,0 +1,68 @@
+542d541
+< var ru0: u32 = 0u;
+548a548
+> var ru10: u32 = 0u;
+562,563c562
+< } ru0 = kx1;
+< {
+---
+> } {} {
+590c589
+< if ((ru5 < 512u)) {
+---
+> if ((ru10 < 512u)) {
+620,621d618
+< var ru0: u32 = 0u;
+< var ru1: u32 = 0u;
+624d620
+< var ru4: u32 = 0u;
+626d621
+< var ru6: u32 = 0u;
+628d622
+< var ru8: u32 = 0u;
+653,654c647
+< } ru0 = kx1;
+< {
+---
+> } {} {
+661,662c654,655
+< if ((col_axis(wid) < cfg.n_queries)) {
+< nx1 = 64u;
+---
+> if ((col_axis(wid) < lit_u32(1024u))) {
+> nx1 = 63u;
+669,671c662,663
+< rf1 = (rf1 + (bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx1, 6080u)]) * bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx1, 6080u)])));
+< } ru1 = kx1;
+< {
+---
+> rf1 = fma(bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx1, 6080u)]), bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx1, 6080u)]), rf1);
+> } {} {
+676c668
+< rb1 = ((col_axis(wid) < cfg.n_queries) && (bitcast<f32>(wg_pool[min((1u * KNOB_THREADS) + lit_u32(0u), 6080u)]) > 0.0));
+---
+> rb1 = ((col_axis(wid) < cfg.n_queries) && (bitcast<f32>(wg_pool[min((1u * KNOB_THREADS) + ru7, 6080u)]) > 0.0));
+692,693c684
+< } } ru4 = kx1;
+< {
+---
+> } } {} {
+722,723c713
+< ru8 = 0u;
+< {
+---
+> {} {
+732,735c722,724
+< rf4 = (rf4 + (rf7 * bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx2, 6080u)])));
+< rf5 = (rf5 + (rf7 * rf7));
+< } ru8 = kx2;
+< if ((rf5 > 0.0)) {
+---
+> rf4 = fma(rf7, bitcast<f32>(wg_pool[min((0u * KNOB_THREADS) + kx2, 6080u)]), rf4);
+> rf5 = fma(rf7, rf7, rf5);
+> } {} if ((rf5 > 0.0)) {
+740,741c729
+< } } } } } } } ru6 = kx1;
+< if ((ru5 != 4294967295u)) {
+---
+> } } } } } } } {} if ((ru5 != 4294967295u)) {

@@ -1,0 +1,58 @@
+435c435
+< rf0 = (rf0 + (load4v_queries(((col_axis(wid) * 512u) + (kx1 * 8u)))[0] * load4v_queries(((col_axis(wid) * 512u) + (kx1 * 8u)))[0]));
+---
+> rf0 = (rf0 + pow(load4v_queries(((col_axis(wid) * 512u) + (kx1 * 8u)))[0], lit_f32(2.0)));
+446c446
+< { nx2 = 4u;
+---
+> { nx2 = 1u;
+454c454
+< { nx3 = 64u;
+---
+> { nx3 = 62u;
+460,461c460,461
+< rf1 = (rf1 + (load4v_queries(((col_axis(wid) * 512u) + (kx3 * 8u)))[0] * rf8));
+< rf2 = (rf2 + (rf8 * rf8));
+---
+> rf1 = fma(load4v_queries(((col_axis(wid) * 512u) + (kx3 * 8u)))[0], rf8, rf1);
+> rf2 = fma(rf8, rf8, rf2);
+463c463
+< } } ru3 = kx2;
+---
+> } } ru3 = 0u;
+470c470
+< { nx2 = 4u;
+---
+> { nx2 = 1u;
+485c485
+< { nx2 = 4u;
+---
+> { nx2 = 1u;
+490c490
+< if ((rf5 > pf1[min(kx2, 3u)])) { rf11 = pf1[min(kx2, 3u)];
+---
+> if ((rf5 > pf1[min(kx2, 11u)])) { rf11 = pf1[min(kx2, 3u)];
+499c499
+< nx1 = 4u;
+---
+> nx1 = 2u;
+546c546
+< nx1 = 32u;
+---
+> nx1 = 31u;
+554c554
+< { nx1 = 32u;
+---
+> { nx1 = 1u;
+560c560
+< pj0[min(kx1, 31u)] = 4294967295u;
+---
+> pj0[min(kx2, 31u)] = 4294967295u;
+573c573
+< { nx2 = 32u;
+---
+> { nx2 = 30u;
+578c578
+< if ((rf7 > pf2[min(kx2, 31u)])) { rf15 = pf2[min(kx2, 31u)];
+---
+> if ((rf7 > pf0[min(kx2, 31u)])) { rf15 = pf2[min(kx2, 31u)];
