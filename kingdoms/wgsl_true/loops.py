@@ -138,6 +138,22 @@ def build(iface):
                     R(f"loop.tile_brk_X{d}_f{k}", S("X", d, k + 1), ["u32.lit64", XBB(d1, k)], loop_text(d1, True))
                 if d1 in DEPTH["A"]:
                     R(f"loop.tile_brk_A{d}_f{k}", S("A", d, k + 1), ["u32.lit64", ABB(d1, k)], loop_text(d1, True))
+            if DEPTH["S"]:
+                # strided loops that break (UI1 batch 10): a stride only lowers the trip count, so the class is the bound's;
+                # the break body types are the rung's own
+                bodies = [("L", BB(d1, k), "u32.index"), ("C", BB(d1, k), "u32.index"), ("W", WBB(d1, k), "u32.indexw")]
+                if d1 in DEPTH["S"]:
+                    bodies += [("S", SBB(d1, k), "u32.index"), ("X", XBB(d1, k), "u32.indexw")]
+                if d1 in DEPTH["A"]:
+                    bodies.append(("A", ABB(d1, k), "u32.indexa"))
+                for xx, body, _ in bodies:
+                    if k + 1 <= K:
+                        R(f"loop.tile_strided_brk_{xx}{d}_f{k}", S(xx, d, k + 1), ["u32.lit64", "u32.lit4096", body], loop_text(d1, True, stride="{1}", body="{2}"), "a strided loop that breaks binds kx")
+                    for c in BOUND_CLASSES:
+                        cls = c // 6
+                        if k + cls <= K:
+                            bt = fam(xx, f"u32.boundx{c}")
+                            R(f"loop.tilex_strided_brk_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [bt, "u32.lit4096", body], loop_text(d1, True, stride="{1}", body="{2}"))
             if d1 in DEPTH["S"]:
                 # the solo phase's loops (s9 batch 9): one invocation, the body stays S
                 if k + 1 <= K:

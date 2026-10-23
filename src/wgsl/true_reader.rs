@@ -2940,6 +2940,14 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// A loop row's bound kids, with the stride literal after them when the loop strides.
+    fn with_stride(&mut self, mut kids: Vec<Tree>, stride: u32) -> R<Vec<Tree>> {
+        if stride != 1 {
+            kids.push(self.konst("u32.lit4096", &Lit::U(stride)).ok_or_else(|| ReadError::Gap(format!("the constant {stride} in C_T of u32.lit4096")))?);
+        }
+        Ok(kids)
+    }
+
     fn loop_at(&mut self, lp: &LoopSt, x: char, d: u8, k: u32) -> R<Tree> {
         let (class, lit, c) = self.class_of(lp)?;
         let kb = self.need_all(&lp.body)?;
@@ -2955,9 +2963,8 @@ impl<'a> Reader<'a> {
         let stride = lp.stride;
         let lit64 = |s: &mut Self, n: u32| s.konst("u32.lit64", &Lit::U(n)).ok_or_else(|| ReadError::Gap(format!("the constant {n} in C_T of u32.lit64")));
         let lit4096 = |s: &mut Self, n: u32| s.konst("u32.lit4096", &Lit::U(n)).ok_or_else(|| ReadError::Gap(format!("the constant {n} in C_T of u32.lit4096")));
-        if brk.is_some() && stride != 1 {
-            return gap("a strided loop that breaks");
-        }
+        // a strided loop that breaks: the strided break rows, the stride an argument after the bound
+        let sb = if stride != 1 { "strided_brk" } else { "brk" };
         if brk.is_some() && nl {
             return gap("a loop that breaks and holds a barrier");
         }
@@ -2972,10 +2979,10 @@ impl<'a> Reader<'a> {
                 let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
                 (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), x, true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             ('W' | 'X' | 'E' | 'Y' | 'A', None, true) => {
                 let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
-                (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
+                (format!("loop.tilex_{sb}_{c}_{x}{d}_f{kb}"), x, true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
             ('W' | 'X' | 'E' | 'Y' | 'A', None, false) => {
@@ -2983,10 +2990,10 @@ impl<'a> Reader<'a> {
                 (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
             ('P', _, _) => return gap("a loop inside a pair phase"),
-            ('S', Some(n), true) => (format!("loop.tile_brk_S{d}_f{kb}"), 'S', true, vec![lit64(self, n)?]),
+            ('S', Some(n), true) => (format!("loop.tile_{sb}_S{d}_f{kb}"), 'S', true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             ('S', None, true) => {
                 let b = self.must(&lp.bound, "u32.index")?;
-                (format!("loop.tilex_brk_{c}_S{d}_f{kb}"), 'S', true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }])
+                (format!("loop.tilex_{sb}_{c}_S{d}_f{kb}"), 'S', true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('S', Some(n), false) => {
                 if stride == 1 {
@@ -3004,10 +3011,10 @@ impl<'a> Reader<'a> {
                     (format!("loop.tilex_strided_{c}_S{d}_f{kb}"), 'S', true, vec![b, lit4096(self, stride)?])
                 }
             }
-            (_, Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), 'C', true, vec![lit64(self, n)?]),
+            (_, Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), 'C', true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             (_, None, true) => {
                 let b = self.must(&lp.bound, "u32.index")?;
-                (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), 'C', true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }])
+                (format!("loop.tilex_{sb}_{c}_{x}{d}_f{kb}"), 'C', true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('L', Some(n), false) => {
                 if stride == 1 {

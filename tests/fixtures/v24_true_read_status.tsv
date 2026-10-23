@@ -52,8 +52,8 @@ run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank count
 run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Add, Bin(Multiply, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 }), Lit(U(16)), 
 run1/seed19.wgsl	reads	
 run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
-run1/seed21.wgsl	gap	a strided loop that breaks
-run1/seed22.wgsl	gap	a strided loop that breaks
+run1/seed21.wgsl	gap	a loop that breaks and holds a barrier
+run1/seed22.wgsl	reads	
 run1/seed23.wgsl	reads	
 run1/seed24.wgsl	reads	
 run1/seed25.wgsl	reads	
