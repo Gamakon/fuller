@@ -918,6 +918,9 @@ impl<'a> Reader<'a> {
         if !ok {
             return gap(format!("a workgroup array {name} of {}{}", if atomic { "atomic " } else { "" }, elem.name()));
         }
+        // the kingdom's own plain pool (a module this table rendered): its guard words past P_WORDS are never written and
+        // every read clamps onto them, so the array is the pool's P_WORDS words
+        let len = if name == "wg_pool" { len.min(P_WORDS as u32) } else { len };
         let v = self.wgvars.len();
         self.wgvars.push(WgVar { name, elem, len, atomic });
         self.wg_of.insert(g, v);
@@ -1783,6 +1786,32 @@ impl<'a> Reader<'a> {
         while matches!(stmts.get(j), Some(Statement::Emit(_))) {
             j += 1;
         }
+        // the kingdom's own counted loop (s9, "the counted loop's spelling"): `loop { k = kc; if (k >= n) { break; }
+        // kc = k + step; body }`, the shadow counter kc stepped before the body, k the trip
+        let local_ptr = |h: Handle<Expression>| match &fr.f.expressions[h] {
+            Expression::LocalVariable(v) => Some(*v),
+            _ => None,
+        };
+        let load_of = |h: Handle<Expression>| match &fr.f.expressions[h] {
+            Expression::Load { pointer } => local_ptr(*pointer),
+            _ => None,
+        };
+        let next_real = |from: usize| (from..stmts.len()).find(|i| !matches!(stmts[*i], Statement::Emit(_)));
+        let mut kform: Option<(Handle<naga::LocalVariable>, usize, usize)> = None;
+        if let Some(Statement::Store { pointer, value }) = stmts.get(j) {
+            if let (Some(kv), Some(kcv)) = (local_ptr(*pointer), load_of(*value)) {
+                if let Some(ji) = next_real(j + 1) {
+                    if let Some(js) = next_real(ji + 1) {
+                        let test_ok = matches!(stmts[ji], Statement::If { accept, reject, .. } if reject.is_empty() && matches!(&accept[..], [Statement::Break]));
+                        let step_ok = matches!(stmts[js], Statement::Store { pointer: p2, value: v2 } if local_ptr(*p2) == Some(kcv) && matches!(&fr.f.expressions[*v2], Expression::Binary { op: BinaryOperator::Add, left, .. } if load_of(*left) == Some(kv)));
+                        if test_ok && step_ok {
+                            kform = Some((kcv, ji, js));
+                        }
+                    }
+                }
+            }
+        }
+        let j = kform.map_or(j, |(_, ji, _)| ji);
         let (cond_h, negated) = match stmts.get(j) {
             Some(Statement::If { condition, accept, reject }) if accept.is_empty() && matches!(&reject[..], [Statement::Break]) => (*condition, false),
             Some(Statement::If { condition, accept, reject }) if reject.is_empty() && matches!(&accept[..], [Statement::Break]) => (*condition, true),
@@ -1819,7 +1848,17 @@ impl<'a> Reader<'a> {
         };
         let cont = flat(continuing);
         let cont_real: Vec<&&Statement> = cont.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
-        let (step_op, step_h, body_end) = if cont_real.len() == 1 {
+        // the kingdom's form: the step is the shadow counter's store, the body after it
+        let kstep = kform.and_then(|(kcv, _, js)| match stmts[js] {
+            Statement::Store { value, .. } => match &fr.f.expressions[*value] {
+                Expression::Binary { op, right, .. } => Some((*op, *right, kcv, js)),
+                _ => None,
+            },
+            _ => None,
+        });
+        let (step_op, step_h, body_end) = if let (Some((o, h, _, _)), true) = (kstep, cont_real.is_empty()) {
+            (o, h, stmts.len())
+        } else if cont_real.len() == 1 {
             let (o, h) = step_of(cont_real[0]).ok_or_else(|| ReadError::Gap("a loop whose continuing block is not its counter's step".into()))?;
             (o, h, stmts.len())
         } else if cont_real.is_empty() {
@@ -1843,8 +1882,36 @@ impl<'a> Reader<'a> {
         if w.s == Sc::I32 {
             return gap("an i32 loop counter");
         }
-        let start = self.last_set.get(&reg).cloned().unwrap_or(E::Reg(reg, w));
-        let limit = self.ex(fr, limit_h)?;
+        // the kingdom's form starts at its shadow counter's value
+        let start_reg = match kstep {
+            Some((_, _, kcv, _)) => match fr.locals.get(&kcv).cloned() {
+                Some(Local::Reg(r2, _)) => r2,
+                _ => return gap("the kingdom's loop shadow counter that is not a register"),
+            },
+            None => reg,
+        };
+        let start = self.last_set.get(&start_reg).cloned().unwrap_or(E::Reg(start_reg, w));
+        let mut limit = self.ex(fr, limit_h)?;
+        // the kingdom's form: its bound n is a variable set before the loop that no statement of the body writes
+        if let (Some((_, _, _, js)), E::Reg(r, _)) = (kstep, &limit) {
+            let nv = load_of(limit_h);
+            fn stores(b: &[&Statement], v: Handle<naga::LocalVariable>, f: &naga::Function) -> bool {
+                b.iter().any(|s| match s {
+                    Statement::Store { pointer, .. } => matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == v),
+                    Statement::Block(x) => stores(&x.iter().collect::<Vec<_>>(), v, f),
+                    Statement::If { accept, reject, .. } => stores(&accept.iter().collect::<Vec<_>>(), v, f) || stores(&reject.iter().collect::<Vec<_>>(), v, f),
+                    Statement::Loop { body, continuing, .. } => stores(&body.iter().collect::<Vec<_>>(), v, f) || stores(&continuing.iter().collect::<Vec<_>>(), v, f),
+                    _ => false,
+                })
+            }
+            if nv.is_some_and(|nv| !stores(&stmts[js + 1..], nv, fr.f)) {
+                // its value at the loop: what the statement before it stored, or that value kept in a fresh register
+                limit = match self.last_set.get(r).cloned() {
+                    Some(v) => v,
+                    None => self.ssa(limit.clone(), out)?,
+                };
+            }
+        }
         if !self.stable(&limit) {
             return gap("a loop bound that is not the same on every trip (it reads mutable state)");
         }
@@ -1902,7 +1969,8 @@ impl<'a> Reader<'a> {
         fr.locals.insert(var, Local::Counter { loop_id: id, start: cstart.clone(), op: cop });
         let mut b = Vec::new();
         let saved = self.last_set.clone();
-        let res = self.loop_body(fr, &stmts[j + 1..body_end], &mut b, depth);
+        let body_from = kstep.map_or(j + 1, |(_, _, _, js)| js + 1);
+        let res = self.loop_body(fr, &stmts[body_from..body_end], &mut b, depth);
         self.last_set = saved;
         fr.locals.insert(var, Local::Reg(reg, w));
         res?;
@@ -3750,9 +3818,19 @@ mod tests {
         let c = contract();
         let mut reads = 0;
         let mut tally: BTreeMap<String, usize> = BTreeMap::new();
-        // `UI1_ONLY=<set/name>`: that seed alone
+        // `UI1_ONLY=<set/name>`: that seed alone; `UI1_EXTRA=<dir>[:<dir>..]`: every .wgsl there too (set `extra`)
         let only = std::env::var("UI1_ONLY").ok();
-        for (set, name, text) in seeds() {
+        let mut all = seeds();
+        if let Ok(dirs) = std::env::var("UI1_EXTRA") {
+            for d in dirs.split(':') {
+                let mut names: Vec<_> = std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+                names.sort();
+                for p in names {
+                    all.push(("extra".to_string(), p.file_name().unwrap_or_default().to_string_lossy().to_string(), std::fs::read_to_string(&p).expect("kernel")));
+                }
+            }
+        }
+        for (set, name, text) in all {
             if only.as_ref().is_some_and(|o| *o != format!("{set}/{name}")) {
                 continue;
             }
