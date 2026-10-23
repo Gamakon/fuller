@@ -164,13 +164,13 @@ mod tests {
         assert!(src.contains("fn ingest(") && src.contains("fn search(") && src.contains("// passes "), "{src}");
     }
 
-    /// The UI1 batch 10 phases, drawn often: random K = 1 modules whose swap-pair and slot rows weigh 400 times the
+    /// The UI1 batch 10 phases, drawn often: random K = 1 modules whose swap-pair, block-write and slot rows weigh 400 times the
     /// rest each render to WGSL naga validates and round-trip through the write-back; the families are expressed.
     #[test]
     fn random_modules_rich_in_the_batch_10_phases_validate_in_naga() {
         let k = kingdom("v24_k1");
         let m = TrueModule::new(&k, &[8, 8]).expect("module");
-        let fam = |n: &str| n.starts_with("wg.xchg_") || n.starts_with("wg.xset_") || n.starts_with("wg.xload_") || n.starts_with("wg.alloc_") || n.starts_with("wg.aset_") || n.starts_with("slot.");
+        let fam = |n: &str| n.starts_with("wg.xchg_") || n.starts_with("wg.xset_") || n.starts_with("wg.xload_") || n.starts_with("wg.bphase_") || n.starts_with("wg.bset_") || n.starts_with("wg.bload_") || n.starts_with("wg.alloc_") || n.starts_with("wg.aset_") || n.starts_with("slot.");
         let weight: Vec<f64> = k.rows.iter().map(|r| if fam(&r.name) { 400.0 } else { 1.0 }).collect();
         let mut rng = Rng(23);
         let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -191,7 +191,7 @@ mod tests {
             assert_eq!(m.tree(&back).expect("tree"), t, "gene {i}");
         }
         println!("batch 10 rows expressed: {seen:?}");
-        for f in ["wg.xchg", "wg.xset", "wg.xload"] {
+        for f in ["wg.xchg", "wg.xset", "wg.xload", "wg.bphase", "wg.bset", "wg.bload"] {
             assert!(seen.get(f).copied().unwrap_or(0) > 0, "{f} never expressed in 300 modules: {seen:?}");
         }
     }
