@@ -490,9 +490,11 @@ T0488	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size 
 T0489	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
 T0490	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
 T0491	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
-T0492	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
-T0493	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
-T0494	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
-T0495	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2103
-T0496	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
-T0497	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3
+T0492	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
+T0493	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
+T0494	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
+T0495	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
+T0496	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
+T0497	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2103
+T0498	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
+T0499	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3

@@ -16,9 +16,9 @@ seeds5b/seed13.wgsl	reads
 seeds5b/seed14.wgsl	gap	a write of ls[Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of ls[Reg(Reg { kind: 1, n
 seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
 seeds5b/seed16.wgsl	gap	a write phase: a read of sq[Bin(ShiftRight, Reg(Reg { kind: 1, n: 30 }, Wt { s: U32, lanes: 1 }), Lit(U(2)), Wt { s: U32, lanes: 1 })], an element another invoc
-seeds5b/seed17.wgsl	gap	a write phase: a read of wp[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(12)), Wt { s: U32, lanes: 1 }), Counter(5), Wt { s: U32, lan
+seeds5b/seed17.wgsl	reads	
 seeds5b/seed18.wgsl	reads	
-seeds5b/seed19.wgsl	gap	a write of wwin[Bin(Add, Lit(U(8)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phas
+seeds5b/seed19.wgsl	reads	
 seeds5b/seed20.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })
 seeds5b/seed21.wgsl	gap	a write phase: a read of sh_small[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(127)), Wt { s: U32, lanes: 1 })], an element another invocation may 
 seeds5b/seed22.wgsl	gap	a write of wmid[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(127)), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split ph
@@ -29,7 +29,7 @@ seeds5b/seed26.wgsl	reads
 seeds5b/seed27.wgsl	reads	
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
 seeds5b/seed29.wgsl	gap	a write of wprobe[Reg(Reg { kind: 1, n: 6 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of wprobe[Reg(Reg { kin
-seeds5b/seed30.wgsl	gap	a write phase: a read of wred[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(12), Wt { s: U32, 
+seeds5b/seed30.wgsl	gap	a loop bound that is not the same on every trip (it reads mutable state)
 seeds5b/seed31.wgsl	gap	a loop that breaks and holds a barrier
 run1/seed00.wgsl	reads	
 run1/seed01.wgsl	reads	
@@ -62,7 +62,7 @@ run1/seed27.wgsl	reads
 run1/seed28.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
 run1/seed29.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
 run1/seed30.wgsl	gap	a write phase: a read of wf[Bin(Add, Bin(Add, Bin(Multiply, Counter(6), Lit(U(64)), Wt { s: U32, lanes: 1 }), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s:
-run1/seed31.wgsl	gap	a write phase: a read of wsf[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(128)), Wt { s: U32, lanes: 1 }), Counter(6), Wt { s: U32, l
+run1/seed31.wgsl	gap	a loop that breaks and holds a barrier
 reference/reference.wgsl	reads	
 run4/best.wgsl	gap	a row that spells the value as f32.real
 run5/best.wgsl	gap	a row that spells the value as f32.real

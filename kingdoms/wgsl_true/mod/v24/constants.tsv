@@ -6547,6 +6547,17 @@ u32.bblk	1020	1020
 u32.bblk	1021	1021
 u32.bblk	1022	1022
 u32.bblk	1023	1023
+u32.lanes	0	1
+u32.lanes	1	2
+u32.lanes	2	4
+u32.lanes	3	8
+u32.lanes	4	16
+u32.lanes	5	32
+u32.lanes	6	64
+u32.lanes	7	128
+u32.lanes	8	256
+u32.lanes	9	512
+u32.lanes	10	1024
 u32.bcount	0	1
 u32.bcount	1	2
 u32.bcount	2	3
