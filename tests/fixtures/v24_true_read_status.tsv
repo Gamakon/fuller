@@ -14,7 +14,7 @@ seeds5b/seed11.wgsl	reads
 seeds5b/seed12.wgsl	reads	
 seeds5b/seed13.wgsl	reads	
 seeds5b/seed14.wgsl	out	a race in its own text: the merge writes ls[rl] and ls[rc], ranks counting lb > sa || (lb == sa && b < t) and lb >= sc over the f32 lists ls and cs; a NaN score
-seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
+seeds5b/seed15.wgsl	out	a race in its own text: beam zeroes vis[lid * 32u + i] in every invocation and, with no barrier between, invocation 0's tryvisit(self_id) reads and writes vis[(
 seeds5b/seed16.wgsl	reads	
 seeds5b/seed17.wgsl	reads	
 seeds5b/seed18.wgsl	reads	
