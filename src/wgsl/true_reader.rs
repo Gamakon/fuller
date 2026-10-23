@@ -4431,12 +4431,27 @@ impl<'a> Reader<'a> {
         if let Some((c, k)) = mul(e) {
             return Some((c, k, E::Lit(Lit::U(0))));
         }
-        if let E::Bin(BinaryOperator::Add, a, b, _) = e {
-            for (x, y) in [(a, b), (b, a)] {
-                if let Some((c, k)) = mul(x) {
-                    if self.max_of(y).is_some_and(|m| m < c as u64) {
-                        return Some((c, k, (**y).clone()));
-                    }
+        // a sum of terms, one of them the block's start: the others are j, below C
+        fn terms<'e>(e: &'e E, out: &mut Vec<&'e E>) {
+            match e {
+                E::Bin(BinaryOperator::Add, a, b, _) => {
+                    terms(a, out);
+                    terms(b, out);
+                }
+                o => out.push(o),
+            }
+        }
+        let mut ts = Vec::new();
+        terms(e, &mut ts);
+        if ts.len() < 2 {
+            return None;
+        }
+        for (n, x) in ts.iter().enumerate() {
+            if let Some((c, k)) = mul(x) {
+                let rest: Vec<&E> = ts.iter().enumerate().filter(|(m, _)| *m != n).map(|(_, y)| *y).collect();
+                let j = rest[1..].iter().fold(rest[0].clone(), |acc, y| E::Bin(BinaryOperator::Add, u(acc), u((*y).clone()), uw()));
+                if self.max_of(&j).is_some_and(|m| m < c as u64) {
+                    return Some((c, k, j));
                 }
             }
         }

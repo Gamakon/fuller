@@ -8,3 +8,4 @@ seeds5b/seed14.wgsl	a race in its own text: the merge writes ls[rl] and ls[rc], 
 seeds5b/seed29.wgsl	a race in its own text: wprobe[crank] = t, crank counting oc < pen || (oc == pen && c < t) over the f32 wpen; a NaN penalty gives two cells one rank, so two invocations write one element
 run1/seed20.wgsl	a race in its own text: search writes topA[rank] = t, rank counting o > my || (o == my && hb + k < t) over the f32 sc; a NaN score gives two codes one rank, so two invocations write one element
 seeds5b/seed15.wgsl	a race in its own text: beam zeroes vis[lid * 32u + i] in every invocation and, with no barrier between, invocation 0's tryvisit(self_id) reads and writes vis[(h + k) & 2047u], an element another invocation is zeroing
+seeds5b/seed30.wgsl	a race in its own text: search's count-rank writes worder[rank & 511u] = c, rank counting so > sc || (so == sc && o < c) over the f32 wcs; a NaN score gives two centres one rank, so two invocations write one element
