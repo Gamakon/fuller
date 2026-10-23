@@ -3849,6 +3849,17 @@ impl<'a> Reader<'a> {
             let k = if lit_u(&rest) == Some(0) { E::Lit(Lit::U(0)) } else { self.div_t(&rest)? };
             Some((c, k))
         };
+        // ((lidx + k T) * C + j) & M with M + 1 a power of two and a multiple of T * C: group k & (q - 1)
+        if let E::Bin(BinaryOperator::And, x, mm, _) = e {
+            let t = u64::from(self.threads());
+            if let (Some(n), Some((c, k, j))) = (lit_u(mm).map(|m| m as u64 + 1), self.block_form2(x)) {
+                if n.is_power_of_two() && n.is_multiple_of(t * u64::from(c)) {
+                    let q = n / (t * u64::from(c));
+                    let k2 = if q == 1 { E::Lit(Lit::U(0)) } else { E::Bin(BinaryOperator::And, u(k), u(E::Lit(Lit::U((q - 1) as u32))), uw()) };
+                    return Some((c, k2, j));
+                }
+            }
+        }
         if let Some((c, k)) = mul(e) {
             return Some((c, k, E::Lit(Lit::U(0))));
         }
@@ -3884,6 +3895,14 @@ impl<'a> Reader<'a> {
                 (c2 == *c).then_some(j)
             }
             _ => {
+                // (lidx + m T) & M with M + 1 a power of two and a multiple of T: lidx + (m & (q - 1)) T, q = (M + 1) / T
+                if let E::Bin(BinaryOperator::And, x, mm, _) = &i {
+                    let t = u64::from(self.threads());
+                    if let Some(q) = lit_u(mm).map(|m| m as u64 + 1).filter(|n| n.is_power_of_two() && n.is_multiple_of(t)).map(|n| n / t) {
+                        let m = self.own_m(v, x)?;
+                        return Some(if q == 1 { E::Lit(Lit::U(0)) } else { E::Bin(BinaryOperator::And, u(m), u(E::Lit(Lit::U((q - 1) as u32))), uw()) });
+                    }
+                }
                 let rest = self.minus_lidx(&i)?;
                 if lit_u(&rest) == Some(0) {
                     return Some(E::Lit(Lit::U(0)));
@@ -3943,6 +3962,13 @@ impl<'a> Reader<'a> {
                 let l = natural.get(v).copied().unwrap_or(1);
                 natural.insert(*v, l / gcd(l, c) * c);
             }
+        }
+        // an array written in blocks of the same length as a natural one shares its phases: natural too
+        let lens: Vec<u32> = natural.values().copied().collect();
+        let joined: Vec<(usize, u32)> = block.iter().filter(|(_, c)| lens.iter().any(|l| l.is_multiple_of(**c))).map(|(v, c)| (*v, *c)).collect();
+        for (v, c) in joined {
+            block.remove(&v);
+            natural.insert(v, c);
         }
         self.used = used;
         self.blocks = block;
