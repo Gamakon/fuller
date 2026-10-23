@@ -3669,7 +3669,7 @@ impl<'a> Reader<'a> {
             let (l, b) = rest.split_at(1);
             // a side the statement's own barrier already orders needs no proof; a loop that may run no trip leaves the
             // two runs unordered with each other
-            let once = !matches!(&l[0], St::Loop(lp) if !lit_u(&lp.bound).is_some_and(|n| n > 0));
+            let once = !matches!(&l[0], St::Loop(lp) if lit_u(&lp.bound).is_none_or(|n| n == 0));
             if (leads_barrier(l) || self.independent(a, l)) && (ends_barrier(l) || self.independent(l, b)) && (once || self.independent(a, b)) {
                 let mut tried = Vec::new();
                 let at = self.splits.len();
