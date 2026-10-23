@@ -29,7 +29,7 @@ seeds5b/seed26.wgsl	reads
 seeds5b/seed27.wgsl	reads	
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
 seeds5b/seed29.wgsl	out	a race in its own text: wprobe[crank] = t, crank counting oc < pen || (oc == pen && c < t) over the f32 wpen; a NaN penalty gives two cells one rank, so two inv
-seeds5b/seed30.wgsl	gap	a loop bound that is not the same on every trip (it reads mutable state)
+seeds5b/seed30.wgsl	gap	a write phase: a read of wpart[Bin(Add, Bin(Multiply, Bin(Divide, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(8)), Wt { s: U32, lanes: 1 }), Lit(U(8)), Wt 
 seeds5b/seed31.wgsl	reads	
 run1/seed00.wgsl	reads	
 run1/seed01.wgsl	reads	

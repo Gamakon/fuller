@@ -1383,7 +1383,9 @@ impl<'a> Reader<'a> {
                     self.locals(&mut cf, out, false)?;
                     self.walk(&mut cf, &callee.body, out, depth + 1)?;
                     if let (Some(h), Some((r, w))) = (result, ret) {
-                        // the result register is written at every return of the callee: one value a call
+                        // the result register is written at every return of the callee: one value a call, a fresh
+                        // register nothing writes after the call, so it is the same wherever it is read after it
+                        self.ssa.insert(r);
                         fr.values.insert(*h, E::Reg(r, w));
                     }
                 }
@@ -2024,10 +2026,22 @@ impl<'a> Reader<'a> {
                     } else {
                         // `if (c) { X; continue; } rest` is `if (c) { X } else { O; rest }`
                         self.loop_body(fr, &stmts[i + 1..], &mut o, depth)?;
-                        if o.iter().any(|s| matches!(s, St::BreakIf(_))) {
+                        let breaks: Vec<usize> = o.iter().enumerate().filter(|(_, s)| matches!(s, St::BreakIf(_))).map(|(j, _)| j).collect();
+                        if breaks.len() > 1 || broke && !breaks.is_empty() {
                             return gap("a break after a continue in a loop body");
                         }
                         self.last_set = saved;
+                        if let [j] = breaks[..] {
+                            // the rest's break point `B; break if e; C` after the continue: `if (c) { X } else { O; B };
+                            // break if !c && e; if (!c) { C }` (the break's value is read only when the rest ran)
+                            let post = o.split_off(j + 1);
+                            let Some(St::BreakIf(e)) = o.pop() else { return gap("our software has a bug: the break point moved") };
+                            let not_f = E::Un(UnaryOperator::LogicalNot, Box::new(fv.clone()), bool_w);
+                            self.push(out, St::If(fv, a, o));
+                            out.push(St::BreakIf(E::Bin(BinaryOperator::LogicalAnd, Box::new(not_f.clone()), Box::new(e), bool_w)));
+                            out.push(St::If(not_f, post, Vec::new()));
+                            return Ok(());
+                        }
                         self.push(out, St::If(fv, a, o));
                         return Ok(());
                     }
@@ -4517,11 +4531,18 @@ impl<'a> Reader<'a> {
         let block = self.blocks.clone();
         let mut order: Vec<usize> = Vec::new();
         let mut left: Vec<usize> = self.used.clone();
+        let t = self.threads();
+        // the alignment an array asks (in blocks): placed first among the arrays the order allows, so less is padding
+        let align = |s: &Self, v: usize| -> u32 {
+            let qx = s.xspans.get(&v).map_or(1, |span| (span / t).max(1));
+            let qb = s.nat_blocks.get(&v).copied().unwrap_or(1);
+            qx / gcd(qx, qb) * qb
+        };
         while !left.is_empty() {
-            let pick = left.iter().position(|v| !before.iter().any(|(a, b)| b == v && left.contains(a) && a != v)).ok_or_else(|| ReadError::Gap("split phases whose written and read arrays cannot be ordered in the pool".into()))?;
+            let free: Vec<usize> = (0..left.len()).filter(|i| !before.iter().any(|(a, b)| *b == left[*i] && left.contains(a) && *a != left[*i])).collect();
+            let pick = free.iter().copied().max_by_key(|i| (align(self, left[*i]), std::cmp::Reverse(*i))).ok_or_else(|| ReadError::Gap("split phases whose written and read arrays cannot be ordered in the pool".into()))?;
             order.push(left.remove(pick));
         }
-        let t = self.threads();
         let pool_blocks = (crate::wgsl::true_reader::P_WORDS / t as u64) as u32;
         self.regions = vec![Region::Atomic { word: 0 }; self.wgvars.len()];
         let (mut next_blk, mut next_word) = (0u32, 0u32);
