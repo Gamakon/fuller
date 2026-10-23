@@ -50,6 +50,8 @@ def build(iface):
         R(f"bound.of_uniform_{c}", f"u32.boundu{c}", ["u32.uniform"], f"min({{0}}, {cap}u)", "a uniform bound: the trip count is the same in every invocation")
         R(f"own.u32_boundx{c}", f"u32.boundx{c}", [], "1u", "a bound of one trip")
         R(f"own.u32_boundx{c}w", f"u32.boundx{c}w", [], "1u")
+        if DEPTH["A"]:
+            R(f"own.u32_boundx{c}a", f"u32.boundx{c}a", [], "1u")
         R(f"own.u32_boundu{c}", f"u32.boundu{c}", [], "1u")
     # ---- counters
     for d in range(1, 6):
@@ -94,12 +96,12 @@ def build(iface):
         d1 = d + 1
         for k in STRATA:
             # lit64 bound
-            for x in "LCOWXEY":
+            for x in "LCOWXEYA":
                 if d1 not in DEPTH[x] or k + 1 > K:
                     continue
                 div = x != "L"
                 R(f"loop.tile_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", B(x, d1, k)], loop_text(d1, div), "a literal bound raises the stratum by one")
-                if x not in "WXEY" or DEPTH["S"]:
+                if x not in "WXEYA" or DEPTH["S"]:
                     R(f"loop.tile_strided_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", "u32.lit4096", B(x, d1, k)], loop_text(d1, div, stride="{1}", body="{2}"), "the stride form")
             for c in BOUND_CLASSES:
                 cls = c // 6
@@ -118,10 +120,10 @@ def build(iface):
                 for x in "LC":
                     R(f"loop.tilex_brk_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx")
                 R(f"loop.tilex_brk_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", WBB(d1, k)], loop_text(d1, True))
-                for xx in "EY":
+                for xx in "EYA":
                     if d1 in DEPTH[xx]:
-                        R(f"loop.tilex_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [f"u32.boundx{c}w", B(xx, d1, k)], loop_text(d1, True))
-                        R(f"loop.tilex_strided_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [f"u32.boundx{c}w", "u32.lit4096", B(xx, d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
+                        R(f"loop.tilex_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [fam(xx, f"u32.boundx{c}"), B(xx, d1, k)], loop_text(d1, True))
+                        R(f"loop.tilex_strided_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [fam(xx, f"u32.boundx{c}"), "u32.lit4096", B(xx, d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
                 if d1 in DEPTH["X"]:
                     R(f"loop.tilex_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", B("X", d1, k)], loop_text(d1, True))
                     R(f"loop.tilex_strided_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", "u32.lit4096", B("X", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))

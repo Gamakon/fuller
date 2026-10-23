@@ -225,6 +225,8 @@ enum E {
     WgRmw(&'static str, usize, Box<E>, Box<E>),
     /// A uniform register `U<n>` (a `workgroupUniformLoad` result).
     UReg(usize),
+    /// The slot register `rs<n>` (a slot phase's take).
+    Slot(usize),
 }
 
 impl E {
@@ -235,7 +237,7 @@ impl E {
             E::Lit(Lit::F(_)) => Wt::scalar(Sc::F32),
             E::Lit(Lit::B(_)) => Wt::scalar(Sc::Bool),
             E::Zero(w) | E::Reg(_, w) | E::Parr(_, _, w) | E::Load(_, _, w) | E::Bin(_, _, _, w) | E::Un(_, _, w) | E::Sel(_, _, _, w) | E::Call(_, _, w) | E::Cast(w, _) | E::Bitcast(w, _) | E::Compose(w, _) | E::Splat(w, _) | E::Lane(_, _, w) | E::Swz(_, _, w) | E::DynLane(_, _, w) => *w,
-            E::Bi(Bi::Lidx) | E::Field(_) | E::Counter(_) | E::Len(..) | E::Rmw(..) | E::WgA(..) | E::WgRmw(..) | E::UReg(_) => Wt::scalar(Sc::U32),
+            E::Bi(Bi::Lidx) | E::Field(_) | E::Counter(_) | E::Len(..) | E::Rmw(..) | E::WgA(..) | E::WgRmw(..) | E::UReg(_) | E::Slot(_) => Wt::scalar(Sc::U32),
             E::Wg(_, _, w) | E::WgOwn(_, _, w) => *w,
             E::Bi(_) => Wt { s: Sc::U32, lanes: 3 },
             E::LoadV4(..) => Wt { s: Sc::F32, lanes: 4 },
@@ -289,6 +291,15 @@ enum St {
     XLoad(Reg, bool, usize, E),
     /// A write of the low or high element of the pair named by the own element `lidx + m * T` (E).
     XSet(bool, usize, E, E),
+    /// A slot phase over counter `k` with span `ss`: the arrays it reads (placed at or above the split), the statements
+    /// (A), then the rest.
+    SlotPhase(u32, u32, Vec<usize>, Vec<St>),
+    /// `rs<n> = atomicAdd(&counter, 1u)` (A).
+    Take(usize),
+    /// A write of array `v` at element `off + rs<n>` (A).
+    SSet(usize, u32, usize, E),
+    /// Element `i` of array `v`, at or above the split, into the register (A).
+    ALoad(Reg, usize, E),
     /// A split phase within one array `v`: its writes below element `off` (a multiple of T), its reads at or above it.
     SplitAt(usize, u32, Vec<St>),
     /// A block-write phase of block length `C`: the statements (Y), then the rest.
@@ -411,6 +422,8 @@ struct WgVar {
 enum Region {
     Plain { base: u32, lane: u32, block: Option<u32> },
     Atomic { word: u32 },
+    /// A slot counter: word `k` of `wg_scnt`.
+    Counter { k: u32 },
 }
 
 /// The kernel being read: the module, the kingdom, the register allocation.
@@ -462,6 +475,9 @@ pub struct Reader<'a> {
     intra: Option<(usize, u32)>,
     /// The block length of the block-write phase being spelled.
     cur_bc: u32,
+    /// Slot counters: atomic workgroup scalars whose `atomicAdd(&c, 1u)` names the element a write stores to, each a
+    /// word of `wg_scnt`.
+    counters: BTreeMap<usize, u32>,
     // phase 2
     rows_by_name: HashMap<String, u32>,
     by_spelling: HashMap<String, Vec<u32>>,
@@ -483,7 +499,7 @@ const MAX_INLINE_DEPTH: usize = 16;
 
 /// The plain pool's words and the atomic pool's (`kingdoms/wgsl_true/pool.py`).
 pub const P_WORDS: u64 = 6080;
-pub const A_WORDS: u64 = 2108;
+pub const A_WORDS: u64 = 2104;
 
 impl<'a> Reader<'a> {
     fn new(k: &'a TrueKingdom, module: &'a Module, info: &'a naga::valid::ModuleInfo, contract: &'a Contract) -> Reader<'a> {
@@ -555,6 +571,7 @@ impl<'a> Reader<'a> {
             xspans: BTreeMap::new(),
             intra: None,
             cur_bc: 1,
+            counters: BTreeMap::new(),
             rows_by_name,
             by_spelling,
             coercions,
@@ -1011,7 +1028,7 @@ impl<'a> Reader<'a> {
         match e {
             E::Lit(_) | E::Zero(_) | E::Bi(_) | E::Field(_) | E::Counter(_) | E::Len(..) => true,
             E::Reg(r, _) => self.ssa.contains(r),
-            E::Parr(..) | E::Rmw(..) | E::Wg(..) | E::WgOwn(..) | E::WgA(..) | E::WgRmw(..) => false,
+            E::Parr(..) | E::Rmw(..) | E::Wg(..) | E::WgOwn(..) | E::WgA(..) | E::WgRmw(..) | E::Slot(_) => false,
             E::UReg(_) => true,
             E::Load(n, i, _) => role(n) == Role::Input && self.stable(i),
             E::LoadV4(n, i) => role(n) == Role::Input && self.stable(i),
@@ -2198,7 +2215,9 @@ impl<'a> Reader<'a> {
 
     /// The rows named `names` (in order) whose output is `want`, each with its argument types.
     fn named_rows(&self, names: &[String], want: crate::geneframe::Ty) -> Vec<(u32, Vec<crate::geneframe::Ty>)> {
-        names.iter().filter_map(|n| self.rows_by_name.get(n)).filter(|r| self.k.rows[**r as usize].out == want).map(|r| (*r, self.k.rows[*r as usize].args.clone())).collect()
+        // a `w` twin's name stands for the slot phase's `a` twin too
+        let a: Vec<String> = names.iter().filter_map(|n| n.strip_suffix("_w").map(|b| format!("{b}_a"))).collect();
+        names.iter().chain(a.iter()).filter_map(|n| self.rows_by_name.get(n)).filter(|r| self.k.rows[**r as usize].out == want).map(|r| (*r, self.k.rows[*r as usize].args.clone())).collect()
     }
 
     fn with_kids(&mut self, row: u32, args: &[crate::geneframe::Ty], kids: &[&E]) -> Option<Tree> {
@@ -2318,6 +2337,10 @@ impl<'a> Reader<'a> {
                 return Some(Tree { symbol: *row, const_index: None, kids });
             }
             E::WgA(v, i) => {
+                if let Region::Counter { k } = *self.regions.get(*v)? {
+                    let kt = self.konst("u32.slotc", &Lit::U(k))?;
+                    return self.named_rows(&["slot.count".to_string(), "slot.count_w".to_string()], want).first().map(|(row, _)| Tree { symbol: *row, const_index: None, kids: vec![kt] });
+                }
                 // a relaxed load of the atomic pool, plain or its `w` twin (atomics stand in a phase)
                 let Region::Atomic { word } = *self.regions.get(*v)? else { return None };
                 for (row, args) in self.named_rows(&["atomic.wg_load".to_string(), "atomic.wg_load_w".to_string()], want) {
@@ -2337,6 +2360,10 @@ impl<'a> Reader<'a> {
                     }
                 }
                 return None;
+            }
+            E::Slot(n) => {
+                let leaf = self.leaf(&format!("reg.rs{n}")).ok()?;
+                return self.named_rows(&["slot.get".to_string(), "slot.get_w".to_string()], want).first().map(|(row, _)| Tree { symbol: *row, const_index: None, kids: vec![leaf] });
             }
             E::UReg(n) => {
                 let row = *self.rows_by_name.get("uniform.get_U")?;
@@ -2417,11 +2444,11 @@ impl<'a> Reader<'a> {
     /// A private array's index as the kingdom's index type: `min(i, len - 1)`, the device's own restriction.
     fn parr_index(&mut self, idx: &E, pidx: crate::geneframe::Ty, len: u32) -> Option<Tree> {
         let tn = self.k.type_name(pidx);
-        let w = tn.ends_with('w');
-        let j = tn.trim_start_matches("u32.pidx_").trim_end_matches('w');
-        let row = *self.rows_by_name.get(&format!("safe.pidx_c_{j}{}", if w { "_w" } else { "" }))?;
+        let suf = if tn.ends_with('w') { "w" } else if tn.ends_with('a') { "a" } else { "" };
+        let j = tn.trim_start_matches("u32.pidx_").trim_end_matches(['w', 'a']);
+        let row = *self.rows_by_name.get(&format!("safe.pidx_c_{j}{}", if suf.is_empty() { String::new() } else { format!("_{suf}") }))?;
         let last = self.konst(&format!("u32.plast_{j}"), &Lit::U(len.saturating_sub(1)))?;
-        let it = self.val(idx, self.ty(if w { "u32.indexw" } else { "u32.index" }).ok()?)?;
+        let it = self.val(idx, self.ty(&format!("u32.index{suf}")).ok()?)?;
         Some(Tree { symbol: row, const_index: None, kids: vec![it, last] })
     }
 
@@ -2504,7 +2531,7 @@ impl<'a> Reader<'a> {
     fn need(&self, st: &St) -> R<u32> {
         Ok(match st {
             St::If(_, a, b) => self.need_all(a)?.max(self.need_all(b)?),
-            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) => self.need_all(b)?,
+            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) => self.need_all(b)?,
             St::Loop(l) => self.need_all(&l.body)? + self.class_of(l)?.0,
             _ => 0,
         })
@@ -2527,7 +2554,7 @@ impl<'a> Reader<'a> {
         for (i, s) in sts.iter().enumerate() {
             match s {
                 St::BreakIf(_) => return gap("our software has a bug: a break point outside its loop body"),
-                St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) => {
+                St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::SlotPhase(..) => {
                     if x != 'L' {
                         return gap("a workgroup phase under divergent control");
                     }
@@ -2577,6 +2604,18 @@ impl<'a> Reader<'a> {
                             let xb = self.block(b, 'X', d, k)?;
                             let rest = self.block(&sts[i + 1..], 'L', d, k)?;
                             Tree { symbol: self.row(&format!("wg.split_{r}"))?, const_index: None, kids: vec![spt, xb, rest] }
+                        }
+                        St::SlotPhase(kc, span, rd, b) => {
+                            let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
+                                Some(Region::Plain { base, .. }) => Some(*base),
+                                _ => None,
+                            }).min().unwrap_or((P_WORDS / u64::from(self.threads())) as u32);
+                            let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
+                            let kt = self.konst("u32.slotc", &Lit::U(*kc)).ok_or_else(|| ReadError::Gap("the constant of u32.slotc".into()))?;
+                            let st = self.konst("u32.xspan", &Lit::U(*span)).ok_or_else(|| ReadError::Gap(format!("the constant {span} of u32.xspan")))?;
+                            let ab = self.block(b, 'A', d, k)?;
+                            let rest = self.block(&sts[i + 1..], 'L', d, k)?;
+                            Tree { symbol: self.row(&format!("wg.slot_{r}"))?, const_index: None, kids: vec![spt, kt, st, ab, rest] }
                         }
                         St::BPhase(c, b) => {
                             let ct = self.konst("u32.bcount", &Lit::U(*c)).ok_or_else(|| ReadError::Gap(format!("the constant {c} of u32.bcount")))?;
@@ -2673,7 +2712,30 @@ impl<'a> Reader<'a> {
                 self.leaf(&format!("stmt.{name}_{r}"))
             }
             St::BreakIf(_) => gap("our software has a bug: a break point outside its loop body"),
-            St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) => gap("our software has a bug: a phase spelled as a statement"),
+            St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::SlotPhase(..) => gap("our software has a bug: a phase spelled as a statement"),
+            St::Take(n) => {
+                let leaf = self.leaf(&format!("reg.rs{n}"))?;
+                Ok(Tree { symbol: self.row(&format!("slot.take_{r}"))?, const_index: None, kids: vec![leaf] })
+            }
+            St::SSet(v, off, n, e) => {
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let span = *self.xspans.get(v).ok_or_else(|| ReadError::Gap("our software has a bug: a slot array with no span".into()))?;
+                let Some(Region::Plain { base, block: None, .. }) = self.regions.get(*v).copied() else { return gap("a slot write of a transposed array") };
+                let word = base * self.threads() + off;
+                if !word.is_multiple_of(span) {
+                    return gap(format!("our software has a bug: a slot region of {} at word {word}, not a multiple of its span {span}", self.wgvars[*v].name));
+                }
+                let blk = self.konst("u32.xblk", &Lit::U(word / span)).ok_or_else(|| ReadError::Gap(format!("the constant {} of u32.xblk", word / span)))?;
+                let leaf = self.leaf(&format!("reg.rs{n}"))?;
+                self.stmt_row(&format!("wg.sset_{key}_{r}"), vec![blk, leaf], &[e])
+            }
+            St::ALoad(reg, v, i) => {
+                let Some(Region::Plain { base, block: None, .. }) = self.regions.get(*v).copied() else { return gap("a slot-phase read of a transposed array") };
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let (_, prefix, _, _) = REG_KINDS[reg.kind];
+                let lead = vec![self.leaf(&format!("reg.{prefix}{}", reg.n))?, self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?];
+                self.stmt_row(&format!("wg.aload_{key}_{r}"), lead, &[i])
+            }
             St::BLoad(reg, v, kk, j) => {
                 let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
                 let (_, prefix, _, _) = REG_KINDS[reg.kind];
@@ -2748,6 +2810,13 @@ impl<'a> Reader<'a> {
                 self.stmt_row(&format!("wg.put_{key}_{r}"), lead, &[&idx, e])
             }
             St::WgAStore(v, i, e) => {
+                if let Some(Region::Counter { k }) = self.regions.get(*v).copied() {
+                    if lit_u(e) != Some(0) {
+                        return gap(format!("a slot counter {} stored with {e:?}, not reset to 0", self.wgvars[*v].name));
+                    }
+                    let kt = self.konst("u32.slotc", &Lit::U(k)).ok_or_else(|| ReadError::Gap("the constant of u32.slotc".into()))?;
+                    return Ok(Tree { symbol: self.row(&format!("slot.reset_{r}"))?, const_index: None, kids: vec![kt] });
+                }
                 let Some(Region::Atomic { word }) = self.regions.get(*v).copied() else { return gap("our software has a bug: an atomic array with no region") };
                 let base = self.konst("u32.wgabase", &Lit::U(word)).ok_or_else(|| ReadError::Gap(format!("the atomic word {word}")))?;
                 self.stmt_row(&format!("atomic.wg_store_{r}"), vec![base], &[i, e])
@@ -2820,7 +2889,7 @@ impl<'a> Reader<'a> {
                         }
                     }
                     _ => {
-                        let cond = self.must(c, "bool.flagw")?;
+                        let cond = self.must(c, if x == 'A' { "bool.flaga" } else { "bool.flagw" })?;
                         let ta = self.block(a, x, d, k)?;
                         if b.is_empty() {
                             Ok(Tree { symbol: self.row(&format!("stmt.if_{r}"))?, const_index: None, kids: vec![cond, ta] })
@@ -2862,20 +2931,20 @@ impl<'a> Reader<'a> {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
         let (row, body_x, div, bound_kids): (String, char, bool, Vec<Tree>) = match (x, lit, brk.is_some()) {
-            ('W' | 'X' | 'E' | 'Y', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
-            ('W' | 'X' | 'E' | 'Y', None, false) if stride == 1 => {
-                let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
+            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A', None, false) if stride == 1 => {
+                let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
+                (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X' | 'E' | 'Y', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
-            ('W' | 'X' | 'E' | 'Y', None, true) => {
-                let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }])
+            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), true) => (format!("loop.tile_brk_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A', None, true) => {
+                let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
+                (format!("loop.tilex_brk_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X' | 'E' | 'Y', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
-            ('W' | 'X' | 'E' | 'Y', None, false) => {
-                let b = self.must(&lp.bound, "u32.indexw")?;
-                (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_w"))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
+            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A', None, false) => {
+                let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
+                (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
             ('P', _, _) => return gap("a loop inside a pair phase"),
             ('S', Some(n), true) => (format!("loop.tile_brk_S{d}_f{kb}"), 'S', true, vec![lit64(self, n)?]),
@@ -2945,6 +3014,7 @@ impl<'a> Reader<'a> {
             Some(at) => {
                 let St::BreakIf(flag) = &lp.body[at] else { return gap("our software has a bug: the break point moved") };
                 let (bx, fl) = match x {
+                    'A' => (x, "bool.flaga"),
                     'W' | 'X' | 'E' | 'Y' => (x, "bool.flagw"),
                     'S' => ('S', "bool.flag"),
                     _ => ('C', "bool.flag"),
@@ -2997,7 +3067,7 @@ impl<'a> Reader<'a> {
 /// Whether the statements begin with a barrier (a phase begins with its leading one) on every path.
 fn leads_barrier(sts: &[St]) -> bool {
     match sts.first() {
-        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..)) => true,
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::SlotPhase(..)) => true,
         Some(St::Loop(l)) => leads_barrier(&l.body),
         Some(St::If(_, a, b)) => leads_barrier(a) && leads_barrier(b),
         _ => false,
@@ -3007,7 +3077,7 @@ fn leads_barrier(sts: &[St]) -> bool {
 /// Whether the statements end with a barrier (a phase as the last statement ends with its middle one) on every path.
 fn ends_barrier(sts: &[St]) -> bool {
     match sts.last() {
-        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..)) => true,
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::SlotPhase(..)) => true,
         Some(St::Loop(l)) => ends_barrier(&l.body) && !l.body.iter().any(|x| matches!(x, St::BreakIf(_))),
         Some(St::If(_, a, b)) => ends_barrier(a) && ends_barrier(b),
         _ => false,
@@ -3016,7 +3086,7 @@ fn ends_barrier(sts: &[St]) -> bool {
 
 fn needs_l(sts: &[St]) -> bool {
     sts.iter().any(|s| match s {
-        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::ULoad(..) => true,
+        St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::Xchg(..) | St::BPhase(..) | St::SplitAt(..) | St::SlotPhase(..) | St::ULoad(..) => true,
         St::If(_, a, b) => needs_l(a) || needs_l(b),
         St::Loop(l) => needs_l(&l.body),
         _ => false,
@@ -3485,11 +3555,38 @@ fn e_regs(e: &E, out: &mut Vec<Reg>) {
     }
 }
 
+/// Every `r = atomicAdd(&v, 1u)` of the statements: (v, r).
+fn slot_takes(sts: &[St], out: &mut Vec<(usize, Reg)>) {
+    for s in sts {
+        match s {
+            St::Set(r, E::WgRmw("add", v, _, one)) if lit_u(one) == Some(1) => out.push((*v, *r)),
+            St::If(_, a, b) => {
+                slot_takes(a, out);
+                slot_takes(b, out);
+            }
+            St::Loop(l) => slot_takes(&l.body, out),
+            _ => {}
+        }
+    }
+}
+
+/// The register and offset of a slot index `r`, `L + r` or `r + L`.
+fn slot_form(i: &E) -> Option<(Reg, u32)> {
+    match i {
+        E::Reg(r, _) => Some((*r, 0)),
+        E::Bin(BinaryOperator::Add, a, b, _) => match (&**a, &**b) {
+            (E::Reg(r, _), l) | (l, E::Reg(r, _)) => lit_u(l).map(|l| (*r, l)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The registers statements write.
 fn regs_written(sts: &[St], out: &mut Vec<Reg>) {
     for s in sts {
         match s {
-            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) => out.push(*r),
+            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) | St::ALoad(r, _, _) => out.push(*r),
             St::If(_, a, b) => {
                 regs_written(a, out);
                 regs_written(b, out);
@@ -3581,12 +3678,21 @@ fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
                 ex(&l.bound, out);
                 wg_accesses(&l.body, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) => wg_accesses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) => wg_accesses(b, out),
             St::BLoad(_, v, _, _) => out.push((*v, None)),
             St::BSet(v, _, _, x) => {
                 out.push((*v, None));
                 ex(x, out);
             }
+            St::ALoad(_, v, i) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+            }
+            St::SSet(v, _, _, x) => {
+                out.push((*v, None));
+                ex(x, out);
+            }
+            St::Take(_) => {}
             St::XLoad(_, _, v, _) => out.push((*v, None)),
             St::XSet(_, v, _, x) => {
                 out.push((*v, None));
@@ -3607,8 +3713,8 @@ fn plain_written(sts: &[St], out: &mut Vec<usize>) {
                 plain_written(b, out);
             }
             St::Loop(l) => plain_written(&l.body, out),
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) => plain_written(b, out),
-            St::BSet(v, _, _, _) => out.push(*v),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) => plain_written(b, out),
+            St::BSet(v, _, _, _) | St::SSet(v, _, _, _) => out.push(*v),
             St::XSet(_, v, _, _) => out.push(*v),
             _ => {}
         }
@@ -3694,17 +3800,23 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 wg_uses_e(e, out);
                 wg_uses(b, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) => wg_uses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) => wg_uses(b, out),
             St::BLoad(_, v, _, _) => {
                 if !out.contains(v) {
                     out.push(*v);
                 }
             }
-            St::BSet(v, _, _, x) => {
+            St::BSet(v, _, _, x) | St::SSet(v, _, _, x) => {
                 if !out.contains(v) {
                     out.push(*v);
                 }
                 wg_uses_e(x, out);
+            }
+            St::ALoad(_, v, i) => {
+                if !out.contains(v) {
+                    out.push(*v);
+                }
+                wg_uses_e(i, out);
             }
             St::HLoad(_, v, a) => {
                 if !out.contains(v) {
@@ -3728,7 +3840,7 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                     out.push(*v);
                 }
             }
-            St::Barrier | St::StorageBarrier => {}
+            St::Take(_) | St::Barrier | St::StorageBarrier => {}
         }
     }
 }
@@ -3979,6 +4091,24 @@ impl<'a> Reader<'a> {
             block.remove(&v);
             natural.insert(v, c);
         }
+        // slot counters: an atomic scalar whose atomicAdd(&c, 1u) result is part of a workgroup write's index
+        let mut takes = Vec::new();
+        slot_takes(sts, &mut takes);
+        let mut idx_regs = Vec::new();
+        for (_, i, _) in &writes {
+            e_regs(i, &mut idx_regs);
+        }
+        let mut counters = BTreeMap::new();
+        for (v, r) in takes {
+            if self.wgvars[v].atomic && self.wgvars[v].len == 1 && idx_regs.contains(&r) && !counters.contains_key(&v) {
+                let k = counters.len() as u32;
+                if k >= 4 {
+                    return gap("a fifth slot counter (the kingdom has four)");
+                }
+                counters.insert(v, k);
+            }
+        }
+        self.counters = counters;
         self.used = used;
         self.blocks = block;
         self.nat_blocks = natural;
@@ -4000,6 +4130,10 @@ impl<'a> Reader<'a> {
         let (mut next_blk, mut next_word) = (0u32, 0u32);
         for v in order {
             let w = &self.wgvars[v];
+            if let Some(k) = self.counters.get(&v) {
+                self.regions[v] = Region::Counter { k: *k };
+                continue;
+            }
             if w.atomic {
                 self.regions[v] = Region::Atomic { word: next_word };
                 next_word += w.len;
@@ -4210,6 +4344,16 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        // a slot phase: every write at a slot one counter hands out
+        match self.try_slot(&part) {
+            Ok(Some(body)) => {
+                out.extend(pre.clone());
+                out.push(body);
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e),
+        }
         // a block-write phase: every write an element of the writer's own block, the arrays in their natural layout
         match self.try_block(&part) {
             Ok(Some(body)) => {
@@ -4281,6 +4425,195 @@ impl<'a> Reader<'a> {
         out.extend(pre);
         out.push(St::Phase(w));
         Ok(())
+    }
+
+    /// A segment as a slot phase (UI1 batch 10): its workgroup writes store at `L + s` of slots `s` its takes of one
+    /// slot counter hand out; the arrays it reads are not those it writes (placed above the split).
+    fn try_slot(&mut self, part: &[St]) -> R<Option<St>> {
+        let mut takes = Vec::new();
+        slot_takes(part, &mut takes);
+        let takes: Vec<(usize, Reg)> = takes.into_iter().filter(|(v, _)| self.counters.contains_key(v)).collect();
+        let Some((cv, _)) = takes.first().copied() else { return Ok(None) };
+        if takes.iter().any(|(v, _)| *v != cv) {
+            return Ok(None);
+        }
+        let k = self.counters[&cv];
+        let mut rmap: Vec<(Reg, usize)> = Vec::new();
+        for (_, r) in &takes {
+            if !rmap.iter().any(|(x, _)| x == r) {
+                if rmap.len() >= 4 {
+                    return gap("a slot phase with a fifth slot register (the kingdom has four)");
+                }
+                rmap.push((*r, rmap.len()));
+            }
+        }
+        let mut ws = Vec::new();
+        wg_writes(part, false, self.wg, &mut ws);
+        let mut arrays = Vec::new();
+        for (v, i, _) in &ws {
+            let Some((r, _)) = slot_form(&self.unmask(i)) else { return Ok(None) };
+            if !rmap.iter().any(|(x, _)| *x == r) || !matches!(self.regions.get(*v), Some(Region::Plain { block: None, .. })) || self.wgvars[*v].elem.lanes != 1 {
+                return Ok(None);
+            }
+            if !arrays.contains(v) {
+                arrays.push(*v);
+            }
+        }
+        if arrays.is_empty() {
+            return Ok(None);
+        }
+        let (mut rd, mut body, mut most) = (Vec::new(), Vec::new(), Vec::new());
+        for st in part {
+            body.extend(self.a_stmt(st, &arrays, &rmap, cv, &mut rd, &mut most)?);
+        }
+        let top = most.iter().map(|(_, _, m)| *m).max().unwrap_or(0);
+        let span = (top + 1).max(2).next_power_of_two();
+        if span > 4096 {
+            return gap(format!("a slot phase over {span} slots, over the largest span 4096"));
+        }
+        if most.iter().any(|(_, off, _)| !off.is_multiple_of(span as u32)) {
+            return gap(format!("a slot phase writing at an offset that is not a multiple of its span {span}"));
+        }
+        for v in &arrays {
+            if self.xspans.insert(*v, span as u32).is_some_and(|o| o != span as u32) {
+                return gap(format!("the slot array {} in two spans", self.wgvars[*v].name));
+            }
+        }
+        if rd.iter().any(|v| arrays.contains(v)) {
+            return Ok(None);
+        }
+        self.splits.push((arrays, rd.clone()));
+        Ok(Some(St::SlotPhase(k, span as u32, rd, body)))
+    }
+
+    fn a_e(&mut self, e: &E, arrays: &[usize], rd: &mut Vec<usize>, pre: &mut Vec<St>) -> R<E> {
+        Ok(match e {
+            E::Wg(v, i, w) => {
+                if arrays.contains(v) {
+                    return gap(format!("a slot phase reading {}, an array it writes", self.wgvars[*v].name));
+                }
+                let i2 = self.a_e(i, arrays, rd, pre)?;
+                if !rd.contains(v) {
+                    rd.push(*v);
+                }
+                let r = self.reg(*w)?;
+                pre.push(St::ALoad(r, *v, i2));
+                E::Reg(r, *w)
+            }
+            E::WgOwn(..) => return gap("an own read inside a slot phase"),
+            E::WgA(a, i) => E::WgA(*a, u(self.a_e(i, arrays, rd, pre)?)),
+            E::WgRmw(f, a, i, x) => {
+                if self.counters.contains_key(a) {
+                    return gap(format!("a slot counter {} changed by {f} inside its phase", self.wgvars[*a].name));
+                }
+                E::WgRmw(f, *a, u(self.a_e(i, arrays, rd, pre)?), u(self.a_e(x, arrays, rd, pre)?))
+            }
+            o => {
+                let mut kids = Vec::new();
+                for kk in kids_of(o) {
+                    kids.push(self.a_e(kk, arrays, rd, pre)?);
+                }
+                if let E::Parr(p, i, w) = o {
+                    return Ok(E::Parr(*p, u(self.a_e(i, arrays, rd, pre)?), *w));
+                }
+                if let E::Load(n, i, w) = o {
+                    return Ok(E::Load(n.clone(), u(self.a_e(i, arrays, rd, pre)?), *w));
+                }
+                let mut it = kids.into_iter();
+                self.map_kids(o, &mut |_, _| Ok(it.next().unwrap_or(E::Lit(Lit::U(0)))))?
+            }
+        })
+    }
+
+    /// The bounds the negation of a break condition gives the statements after it: `x >= c` broken out of leaves
+    /// `x <= c - 1`.
+    fn after_break_facts(c: &E, out: &mut Vec<(E, u64)>) {
+        match c {
+            E::Bin(BinaryOperator::GreaterEqual, x, l, _) | E::Bin(BinaryOperator::LessEqual, l, x, _) => {
+                if let Some(l) = lit_u(l).filter(|l| *l > 0) {
+                    out.push(((**x).clone(), l as u64 - 1));
+                }
+            }
+            E::Bin(BinaryOperator::Greater, x, l, _) | E::Bin(BinaryOperator::Less, l, x, _) => {
+                if let Some(l) = lit_u(l) {
+                    out.push(((**x).clone(), l as u64));
+                }
+            }
+            E::Bin(BinaryOperator::LogicalOr, a, b, _) => {
+                Self::after_break_facts(a, out);
+                Self::after_break_facts(b, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn a_stmt(&mut self, s: &St, arrays: &[usize], rmap: &[(Reg, usize)], cv: usize, rd: &mut Vec<usize>, most: &mut Vec<(usize, u32, u64)>) -> R<Vec<St>> {
+        let mut pre = Vec::new();
+        let st = match s {
+            St::Set(r, E::WgRmw("add", v, _, one)) if *v == cv && lit_u(one) == Some(1) => {
+                let n = rmap.iter().find(|(x, _)| x == r).map(|(_, n)| *n).ok_or_else(|| ReadError::Gap("our software has a bug: a take with no slot register".into()))?;
+                // the slot in its slot register, and the seed's own register keeps its value for every later use
+                return Ok(vec![St::Take(n), St::Set(*r, E::Slot(n))]);
+            }
+            St::WgSet(v, i, x) => {
+                let x2 = self.a_e(x, arrays, rd, &mut pre)?;
+                let Some((r, off)) = slot_form(&self.unmask(i)) else { return gap("our software has a bug: a slot write lost its form") };
+                let n = rmap.iter().find(|(y, _)| *y == r).map(|(_, n)| *n).ok_or_else(|| ReadError::Gap("a slot write at a register no take set".into()))?;
+                let m = self.max_of(&E::Reg(r, uw())).ok_or_else(|| ReadError::Gap(format!("a slot write of {} where no condition bounds the slot", self.wgvars[*v].name)))?;
+                most.push((*v, off, m));
+                St::SSet(*v, off, n, x2)
+            }
+            St::Set(r, e) => St::Set(*r, self.a_e(e, arrays, rd, &mut pre)?),
+            St::SetLane(r, a, b) => St::SetLane(*r, self.a_e(a, arrays, rd, &mut pre)?, self.a_e(b, arrays, rd, &mut pre)?),
+            St::ParrSet(p, a, b) => St::ParrSet(*p, self.a_e(a, arrays, rd, &mut pre)?, self.a_e(b, arrays, rd, &mut pre)?),
+            St::Store(n, a, b) => St::Store(n.clone(), self.a_e(a, arrays, rd, &mut pre)?, self.a_e(b, arrays, rd, &mut pre)?),
+            St::Discard(e) => St::Discard(self.a_e(e, arrays, rd, &mut pre)?),
+            St::WgAStore(w, a, b) => {
+                if self.counters.contains_key(w) {
+                    return gap(format!("a slot counter {} stored inside its phase", self.wgvars[*w].name));
+                }
+                St::WgAStore(*w, self.a_e(a, arrays, rd, &mut pre)?, self.a_e(b, arrays, rd, &mut pre)?)
+            }
+            St::BreakIf(e) => St::BreakIf(self.a_e(e, arrays, rd, &mut pre)?),
+            St::If(c, a, b) => {
+                let c2 = self.a_e(c, arrays, rd, &mut pre)?;
+                let fat = self.facts.borrow().len();
+                Self::bound_facts(c, &mut self.facts.borrow_mut());
+                let mut a2 = Vec::new();
+                let ra: R<()> = a.iter().try_for_each(|x| self.a_stmt(x, arrays, rmap, cv, rd, most).map(|y| a2.extend(y)));
+                self.facts.borrow_mut().truncate(fat);
+                ra?;
+                let mut b2 = Vec::new();
+                for x in b {
+                    b2.extend(self.a_stmt(x, arrays, rmap, cv, rd, most)?);
+                }
+                St::If(c2, a2, b2)
+            }
+            St::Loop(l) => {
+                let mut l2 = (**l).clone();
+                let b2 = self.a_e(&l.bound, arrays, rd, &mut pre)?;
+                if b2 != l.bound {
+                    return gap("a slot phase loop bounded by a workgroup element");
+                }
+                let fat = self.facts.borrow().len();
+                let mut body = Vec::new();
+                let rb: R<()> = l.body.iter().try_for_each(|x| {
+                    let y = self.a_stmt(x, arrays, rmap, cv, rd, most)?;
+                    if let St::BreakIf(c) = x {
+                        Self::after_break_facts(c, &mut self.facts.borrow_mut());
+                    }
+                    body.extend(y);
+                    Ok(())
+                });
+                self.facts.borrow_mut().truncate(fat);
+                rb?;
+                l2.body = body;
+                St::Loop(Box::new(l2))
+            }
+            o => return gap(format!("the statement {o:?} inside a slot phase")),
+        };
+        pre.push(st);
+        Ok(pre)
     }
 
     /// A segment as a block-write phase (UI1 batch 10): every workgroup write is element `j` of the writer's own block

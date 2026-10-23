@@ -95,6 +95,8 @@ def declare(iface):
         b = T(BARE_NAME[fam], f"a bare literal of {base}: a const-expression, so it stands only where constant evaluation cannot fail", 1, TYPES[base]["literal"])
         BARE[base] = b
         BARE[TWIN[base]] = b
+        if base in TWIN_A:
+            BARE[TWIN_A[base]] = b
         SAFE_ARGS.add(b)
     T("f32.nonneg", "a non-negative width", 1, f"0.0..={F32MAX}")
     T("i32.nonneg", "a non-negative width", 1, "0..=2147483647")

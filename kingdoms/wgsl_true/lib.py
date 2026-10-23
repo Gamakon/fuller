@@ -27,6 +27,7 @@ DECLS = []      # function-scope declarations, in order
 PROLOGUE_TOP = []   # module-scope lines before the helpers
 TWIN = {}       # base type -> w twin type
 BARE = {}       # scalar value type (and its w twin) -> its bare literal type (values.declare)
+TWIN_A = {}     # value type (and its w twin) -> its a twin (slot phase), pool interfaces only
 SAFE_ARGS = set()   # argument types a W twin may keep as they are
 
 PH = re.compile(r"\{(\d+)(?::(\d+))?\}")
@@ -100,9 +101,11 @@ def configure(k, epilogue=True, pools=False):
         DEPTH["E"] = range(0, 6)
         # the block-write phase's body (Y, UI1 batch 10): W's families with the block rows in place of own writes
         DEPTH["Y"] = range(0, 6)
+        # the slot phase's body (A, UI1 batch 10): writes at slots one counter hands out, reads above the split
+        DEPTH["A"] = range(0, 6)
 
 
-DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0), "Y": range(0)}
+DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0), "Y": range(0), "A": range(0)}
 STRATA = range(0, K + 1)
 
 
@@ -145,15 +148,35 @@ def vt(s, form, lanes=1):
 
 
 def register_twin(base, meaning=None):
-    """Declare the `w` twin of a value or helper type."""
+    """Declare the `w` twin of a value or helper type (and, in a pool interface, its `a` twin: a value that read no
+    workgroup element at all, neither a foreign nor an own one, the values of the slot phase)."""
     w = base + "w"
     T(w, meaning or f"the write-phase twin of {base}: a value no foreign workgroup read reached", TYPES[base]["lanes"], "-")
     TWIN[base] = w
+    if DEPTH["A"]:
+        a = base + "a"
+        T(a, f"the slot-phase twin of {base}: a value no workgroup read reached", TYPES[base]["lanes"], "-")
+        TWIN_A[base] = a
+        TWIN_A[w] = a
     return w
 
 
 def w_of(t):
     return TWIN.get(t, t)
+
+
+def a_of(t):
+    return TWIN_A.get(t, t)
+
+
+def fam(x, t):
+    """The value type a statement of rung `x` takes for `t`: the `w` twin at the write-phase rungs, the `a` twin at the
+    slot phase's, `t` itself elsewhere."""
+    if x in "WPXEY":
+        return w_of(t)
+    if x == "A":
+        return a_of(t)
+    return t
 
 
 def extra(iface, fam, base):
@@ -185,6 +208,20 @@ def finish_twins():
         else:
             R(tn, TWIN[r["out"]], args, r["spell"], note="the w twin of " + name, fields=r["fields"])
         made += 1
+    # the a twins (slot phase): the same rows over the a family; no own read has one (an own read is not a twin row)
+    for name, r in list(ROWS.items()):
+        if not TWIN_A or not r["twin"] or r["out"] not in TWIN_A or name.endswith("_w"):
+            continue
+        if not all(a in TWIN_A or a in SAFE_ARGS for a in r["args"]):
+            continue
+        tn = name + "_a"
+        if tn in ROWS:
+            continue
+        if r["values"] is not None:
+            C(tn, TWIN_A[r["out"]], r["spell"], r["values"], note="the a twin of " + name)
+        else:
+            R(tn, TWIN_A[r["out"]], [a_of(a) for a in r["args"]], r["spell"], note="the a twin of " + name, fields=r["fields"])
+        made += 1
     return made
 
 
@@ -198,7 +235,7 @@ def is_value(t):
     """A value type of the families (scalar, vector, matrix; the w twins included): never a const-expression, because
     every literal that produces one is a runtime literal (`lit_*`) and every other producer reads a runtime name."""
     slot, form = t.rsplit(".", 1)
-    return form.removesuffix("w") in VALUE_FORMS and VALUE_SLOT.fullmatch(slot) is not None
+    return (form.removesuffix("w") in VALUE_FORMS or form.removesuffix("a") in VALUE_FORMS) and VALUE_SLOT.fullmatch(slot) is not None
 
 
 # WGSL 8.8 and 8.10: an integer `/` or `%` whose divisor is a const-expression equal to zero, and a shift whose count is

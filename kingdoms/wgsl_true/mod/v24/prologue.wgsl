@@ -7,7 +7,8 @@ struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n
 @group(0) @binding(4) var<storage, read_write> cands: array<u32>;
 @group(0) @binding(5) var<uniform> cfg: Cfg;
 var<workgroup> wg_pool: array<u32, 6084>;
-var<workgroup> wg_apool: array<atomic<u32>, 2108>;
+var<workgroup> wg_apool: array<atomic<u32>, 2104>;
+var<workgroup> wg_scnt: array<atomic<u32>, 4>;
 fn add_sat(a: i32, b: i32) -> i32 { let s = a + b; let ov = ((a ^ s) & (b ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
 fn at2_bool(v: vec2<bool>, i: u32) -> bool { switch i { case 0u: { return v.x; } default: { return v.y; } } }
 fn at2_f16(v: vec2<f16>, i: u32) -> f16 { switch i { case 0u: { return v.x; } default: { return v.y; } } }
