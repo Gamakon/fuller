@@ -13,7 +13,7 @@ seeds5b/seed10.wgsl	reads
 seeds5b/seed11.wgsl	reads	
 seeds5b/seed12.wgsl	gap	a value of type Array { base: [0], size: Constant(8), stride: 4 }
 seeds5b/seed13.wgsl	reads	
-seeds5b/seed14.wgsl	gap	a write of ls[Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of ls[Reg(Reg { kind: 1, n
+seeds5b/seed14.wgsl	out	a race in its own text: the merge writes ls[rl] and ls[rc], ranks counting lb > sa || (lb == sa && b < t) and lb >= sc over the f32 lists ls and cs; a NaN score
 seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
 seeds5b/seed16.wgsl	gap	a write phase: a read of sq[Bin(ShiftRight, Reg(Reg { kind: 1, n: 30 }, Wt { s: U32, lanes: 1 }), Lit(U(2)), Wt { s: U32, lanes: 1 })], an element another invoc
 seeds5b/seed17.wgsl	reads	
@@ -28,7 +28,7 @@ seeds5b/seed25.wgsl	reads
 seeds5b/seed26.wgsl	reads	
 seeds5b/seed27.wgsl	reads	
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
-seeds5b/seed29.wgsl	gap	a write of wprobe[Reg(Reg { kind: 1, n: 6 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of wprobe[Reg(Reg { kin
+seeds5b/seed29.wgsl	out	a race in its own text: wprobe[crank] = t, crank counting oc < pen || (oc == pen && c < t) over the f32 wpen; a NaN penalty gives two cells one rank, so two inv
 seeds5b/seed30.wgsl	gap	a loop bound that is not the same on every trip (it reads mutable state)
 seeds5b/seed31.wgsl	gap	a write phase: a read of s_pri[Lit(U(0))], an element another invocation may write in the phase; as a split phase: a split phase reading s_fcnt[Lit(U(0))], an e
 run1/seed00.wgsl	reads	
