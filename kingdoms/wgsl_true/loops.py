@@ -128,12 +128,16 @@ def build(iface):
                     R(f"loop.tilex_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", B("X", d1, k)], loop_text(d1, True))
                     R(f"loop.tilex_strided_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", "u32.lit4096", B("X", d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
                     R(f"loop.tilex_brk_{c}_X{d}_f{k}", S("X", d, k + cls), [f"u32.boundx{c}w", XBB(d1, k)], loop_text(d1, True))
+                if d1 in DEPTH["A"]:
+                    R(f"loop.tilex_brk_{c}_A{d}_f{k}", S("A", d, k + cls), [f"u32.boundx{c}a", ABB(d1, k)], loop_text(d1, True))
             if k + 1 <= K:
                 for x in "LC":
                     R(f"loop.tile_brk_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx: after it the counter differs between invocations")
                 R(f"loop.tile_brk_W{d}_f{k}", S("W", d, k + 1), ["u32.lit64", WBB(d1, k)], loop_text(d1, True))
                 if d1 in DEPTH["X"]:
                     R(f"loop.tile_brk_X{d}_f{k}", S("X", d, k + 1), ["u32.lit64", XBB(d1, k)], loop_text(d1, True))
+                if d1 in DEPTH["A"]:
+                    R(f"loop.tile_brk_A{d}_f{k}", S("A", d, k + 1), ["u32.lit64", ABB(d1, k)], loop_text(d1, True))
             if d1 in DEPTH["S"]:
                 # the solo phase's loops (s9 batch 9): one invocation, the body stays S
                 if k + 1 <= K:

@@ -45,6 +45,8 @@ def declare_types(iface):
             if d in DEPTH["S"]:
                 T(SBB(d, k), f"a solo-phase loop body that breaks, depth {d}, stratum {k}")
                 T(XBB(d, k), f"a split-phase loop body that breaks, depth {d}, stratum {k}")
+            if d in DEPTH["A"]:
+                T(ABB(d, k), f"a slot-phase loop body that breaks, depth {d}, stratum {k}")
     T("vec3<u32>.gid", "global_invocation_id", 3)
     T("vec3<u32>.lid", "local_invocation_id", 3)
     T("vec3<u32>.wid", "workgroup_id", 3)
@@ -249,6 +251,9 @@ def build_rest(iface):
                 R(f"block.brk_SB{d}_f{k}", SBB(d, k), [B("S", d, k), "bool.flag", B("S", d, k)], "{0} if ({1}) { break; } {2}")
                 R(f"own.block_XB{d}_f{k}", XBB(d, k), [], "{}", "an empty split-phase loop body")
                 R(f"block.brk_XB{d}_f{k}", XBB(d, k), [B("X", d, k), "bool.flagw", B("X", d, k)], "{0} if ({1}) { break; } {2}")
+            if d in DEPTH["A"]:
+                R(f"own.block_AB{d}_f{k}", ABB(d, k), [], "{}", "an empty slot-phase loop body")
+                R(f"block.brk_AB{d}_f{k}", ABB(d, k), [B("A", d, k), "bool.flaga", B("A", d, k)], "{0} if ({1}) { break; } {2}")
 
     # ---- ownership rows, per output binding
     for o in iface["outputs"]:

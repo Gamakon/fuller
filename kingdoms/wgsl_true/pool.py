@@ -167,8 +167,8 @@ def build(iface):
     R("slot.count", "u32.index", ["u32.slotc"], "atomicLoad(&wg_scnt[{0}])", "the counter's value: relaxed, order-dependent within a phase", twin=True)
     C("literal.slotc", "u32.slotc", "{v}u", [str(i) for i in range(4)], "?_slotc")
     R("own.u32_slotc", "u32.slotc", [], "0u")
-    for x, d, k in rungs("LCS"):
-        R(f"slot.reset_{x}{d}_f{k}", S(x, d, k), ["u32.slotc"], "atomicStore(&wg_scnt[{0}], 0u);", "a counter reset outside every slot phase, so no take runs beside it")
+    for x, d, k in rungs("LCSWPXEY"):
+        R(f"slot.reset_{x}{d}_f{k}", S(x, d, k), ["u32.slotc"], "atomicStore(&wg_scnt[{0}], 0u);", "a counter reset outside every slot phase (a take stands only in one), so no take runs beside it")
     for x, d, k in rungs("A"):
         s = S(x, d, k)
         R(f"slot.take_A{d}_f{k}", s, ["reg<u32>.slot"], "{0} = atomicAdd(&wg_scnt[sc], 1u);", "a slot of the phase's counter")

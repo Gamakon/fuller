@@ -17,7 +17,7 @@ seeds5b/seed14.wgsl	gap	a write of ls[Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, l
 seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
 seeds5b/seed16.wgsl	gap	a write phase: a read of sq[Bin(ShiftRight, Reg(Reg { kind: 1, n: 30 }, Wt { s: U32, lanes: 1 }), Lit(U(2)), Wt { s: U32, lanes: 1 })], an element another invoc
 seeds5b/seed17.wgsl	gap	a write phase: a read of wp[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(12)), Wt { s: U32, lanes: 1 }), Counter(5), Wt { s: U32, lan
-seeds5b/seed18.wgsl	gap	a slot write of wrow where no condition bounds the slot
+seeds5b/seed18.wgsl	reads	
 seeds5b/seed19.wgsl	gap	a write of wwin[Bin(Add, Lit(U(8)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phas
 seeds5b/seed20.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })
 seeds5b/seed21.wgsl	gap	a write phase: a read of sh_small[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(127)), Wt { s: U32, lanes: 1 })], an element another invocation may 

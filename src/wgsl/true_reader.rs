@@ -3025,6 +3025,7 @@ impl<'a> Reader<'a> {
                 let name = match x {
                     'W' => format!("block.brk_WB{d1}_f{kb}"),
                     'X' => format!("block.brk_XB{d1}_f{kb}"),
+                    'A' => format!("block.brk_AB{d1}_f{kb}"),
                     'S' => format!("block.brk_SB{d1}_f{kb}"),
                     _ => format!("block.brk_B{d1}_f{kb}"),
                 };
@@ -3565,6 +3566,32 @@ fn slot_takes(sts: &[St], out: &mut Vec<(usize, Reg)>) {
                 slot_takes(b, out);
             }
             St::Loop(l) => slot_takes(&l.body, out),
+            _ => {}
+        }
+    }
+}
+
+/// The disjuncts of a condition `a || b || ..`.
+fn disjuncts(c: &E, out: &mut Vec<E>) {
+    match c {
+        E::Bin(BinaryOperator::LogicalOr, a, b, _) => {
+            disjuncts(a, out);
+            disjuncts(b, out);
+        }
+        o => out.push(o.clone()),
+    }
+}
+
+/// Every value a boolean register is set to in the statements, at any depth: (register, value).
+fn bool_defs(sts: &[St], out: &mut Vec<(Reg, E)>) {
+    for s in sts {
+        match s {
+            St::Set(r, e) if e.wt() == Wt::scalar(Sc::Bool) => out.push((*r, e.clone())),
+            St::If(_, a, b) => {
+                bool_defs(a, out);
+                bool_defs(b, out);
+            }
+            St::Loop(l) => bool_defs(&l.body, out),
             _ => {}
         }
     }
@@ -4597,10 +4624,28 @@ impl<'a> Reader<'a> {
                 }
                 let fat = self.facts.borrow().len();
                 let mut body = Vec::new();
-                let rb: R<()> = l.body.iter().try_for_each(|x| {
+                let rb: R<()> = l.body.iter().enumerate().try_for_each(|(at, x)| {
                     let y = self.a_stmt(x, arrays, rmap, cv, rd, most)?;
                     if let St::BreakIf(c) = x {
-                        Self::after_break_facts(c, &mut self.facts.borrow_mut());
+                        // the reader's merged break point `f || g`: a flag set from a comparison earlier in the body
+                        // (and otherwise only false) is false after it, so the comparison is too
+                        let mut flags = Vec::new();
+                        disjuncts(c, &mut flags);
+                        let mut defs = Vec::new();
+                        bool_defs(&l.body[..at], &mut defs);
+                        let mut f = self.facts.borrow_mut();
+                        for d in &flags {
+                            match d {
+                                E::Reg(r, _) => {
+                                    let mine: Vec<&E> = defs.iter().filter(|(x, _)| x == r).map(|(_, e)| e).collect();
+                                    let compares: Vec<&&E> = mine.iter().filter(|e| !matches!(e, E::Lit(Lit::B(false)))).collect();
+                                    if let [only] = compares[..] {
+                                        Self::after_break_facts(only, &mut f);
+                                    }
+                                }
+                                o => Self::after_break_facts(o, &mut f),
+                            }
+                        }
                     }
                     body.extend(y);
                     Ok(())
