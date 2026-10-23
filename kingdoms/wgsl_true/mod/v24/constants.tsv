@@ -5521,10 +5521,6 @@ u32.wgabase	2104	2104
 u32.wgabase	2105	2105
 u32.wgabase	2106	2106
 u32.wgabase	2107	2107
-u32.wgabase	2108	2108
-u32.wgabase	2109	2109
-u32.wgabase	2110	2110
-u32.wgabase	2111	2111
 u32.xmode	0	0
 u32.xmode	1	1
 u32.bblk	0	0

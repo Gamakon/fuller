@@ -276,7 +276,7 @@ enum St {
     /// The solo invocation's write at any element (S).
     WgPut(usize, E, E),
     /// The partner element of array `v` into the register (P).
-    PLoad(Reg, usize),
+    PLoad(Reg, usize, E),
     /// A split phase: the arrays it reads (placed at or above the split), the statements (X), then the rest.
     Split(Vec<usize>, Vec<St>),
     /// Element `i` of array `v`, at or above the split, into the register (X).
@@ -483,7 +483,7 @@ const MAX_INLINE_DEPTH: usize = 16;
 
 /// The plain pool's words and the atomic pool's (`kingdoms/wgsl_true/pool.py`).
 pub const P_WORDS: u64 = 6080;
-pub const A_WORDS: u64 = 2112;
+pub const A_WORDS: u64 = 2108;
 
 impl<'a> Reader<'a> {
     fn new(k: &'a TrueKingdom, module: &'a Module, info: &'a naga::valid::ModuleInfo, contract: &'a Contract) -> Reader<'a> {
@@ -2758,8 +2758,17 @@ impl<'a> Reader<'a> {
                 let b = self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?;
                 self.stmt_row(&format!("wg.uload_{r}"), vec![leaf, b], &[i])
             }
-            St::PLoad(reg, v) => {
-                let Some(Region::Plain { base, lane, .. }) = self.regions.get(*v).copied() else { return gap("our software has a bug: a workgroup array with no region") };
+            St::PLoad(reg, v, kk) => {
+                let Some(Region::Plain { base, lane, block: None }) = self.regions.get(*v).copied() else { return gap("a pair phase over a transposed array") };
+                // the partner of own element lidx + k T: a base k blocks further on when k is a literal, else the row
+                // that adds k T itself
+                let Some(c) = lit_u(kk) else {
+                    let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                    let (_, prefix, _, _) = REG_KINDS[reg.kind];
+                    let lead = vec![self.leaf(&format!("reg.{prefix}{}", reg.n))?, self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?];
+                    return self.stmt_row(&format!("wg.pload_x_{key}_{r}"), lead, &[kk]);
+                };
+                let base = base + c;
                 let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
                 let (_, prefix, _, _) = REG_KINDS[reg.kind];
                 let mut kids = vec![self.leaf(&format!("reg.{prefix}{}", reg.n))?, self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?];
@@ -3480,7 +3489,7 @@ fn e_regs(e: &E, out: &mut Vec<Reg>) {
 fn regs_written(sts: &[St], out: &mut Vec<Reg>) {
     for s in sts {
         match s {
-            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) => out.push(*r),
+            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) => out.push(*r),
             St::If(_, a, b) => {
                 regs_written(a, out);
                 regs_written(b, out);
@@ -3558,7 +3567,7 @@ fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
                 out.push((*v, None));
                 ex(x, out);
             }
-            St::PLoad(_, v) => out.push((*v, None)),
+            St::PLoad(_, v, _) => out.push((*v, None)),
             St::ULoad(_, v, i) => {
                 out.push((*v, Some(i)));
                 ex(i, out);
@@ -3714,7 +3723,7 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 }
                 wg_uses_e(x, out);
             }
-            St::PLoad(_, v) => {
+            St::PLoad(_, v, _) => {
                 if !out.contains(v) {
                     out.push(*v);
                 }
@@ -4829,6 +4838,34 @@ impl<'a> Reader<'a> {
         Ok(pre)
     }
 
+    /// `k` when `i` is the own element `lidx + k T`.
+    fn own_k(&self, i: &E) -> Option<E> {
+        if is_lidx(i, self.wg) {
+            return Some(E::Lit(Lit::U(0)));
+        }
+        let r = self.minus_lidx(i)?;
+        self.div_t(&r)
+    }
+
+    /// `k` when `i` is the partner element `lidx + k T + s` of a pair phase over `s`.
+    fn partner_k(&self, i: &E, sv: &E) -> Option<E> {
+        let r = self.unmask(&self.minus_lidx(i)?);
+        let s = self.unmask(sv);
+        if r == s {
+            return Some(E::Lit(Lit::U(0)));
+        }
+        if let E::Bin(BinaryOperator::Add, a, b, _) = &r {
+            for (x, y) in [(a, b), (b, a)] {
+                if **x == s {
+                    if let Some(k) = self.div_t(y) {
+                        return Some(k);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Whether a pair body reads some array's partner element `lidx + s`.
     fn reads_partner(&self, sv: &E, body: &[St]) -> bool {
         let mut found = false;
@@ -4836,7 +4873,7 @@ impl<'a> Reader<'a> {
             let mut stack = vec![e];
             while let Some(x) = stack.pop() {
                 if let E::Wg(_, i, _) = x {
-                    if self.minus_lidx(&self.pair_unmask(i)).is_some_and(|r| self.unmask(&r) == self.unmask(sv)) {
+                    if self.partner_k(&self.pair_unmask(i), sv).is_some() {
                         found = true;
                     }
                 }
@@ -4962,11 +4999,11 @@ impl<'a> Reader<'a> {
 
     /// A pair phase's body: partner reads `A[lidx + s]` become registers loaded first, own reads and writes `A[lidx]`.
     fn pair_body(&mut self, sv: &E, body: Vec<St>) -> R<Vec<St>> {
-        let mut partners: Vec<(usize, Reg)> = Vec::new();
+        let mut partners: Vec<((usize, E), Reg)> = Vec::new();
         let mut out = Vec::new();
         let body2 = body.iter().map(|s| self.p_stmt(sv, s, &mut partners)).collect::<R<Vec<_>>>()?;
-        for (v, r) in &partners {
-            out.push(St::PLoad(*r, *v));
+        for ((v, k), r) in &partners {
+            out.push(St::PLoad(*r, *v, k.clone()));
         }
         out.extend(body2);
         Ok(out)
@@ -4985,18 +5022,19 @@ impl<'a> Reader<'a> {
         i2
     }
 
-    fn p_e(&mut self, sv: &E, e: &E, partners: &mut Vec<(usize, Reg)>) -> R<E> {
+    fn p_e(&mut self, sv: &E, e: &E, partners: &mut Vec<((usize, E), Reg)>) -> R<E> {
         Ok(match e {
             E::Wg(v, i, w) => {
                 let i2 = self.pair_unmask(i);
-                if is_lidx(&i2, self.wg) {
-                    E::WgOwn(*v, u(E::Lit(Lit::U(0))), *w)
-                } else if self.minus_lidx(&i2).is_some_and(|r| self.unmask(&r) == self.unmask(sv)) {
-                    let r = match partners.iter().find(|(pv, _)| pv == v) {
+                if let Some(m) = self.own_k(&i2) {
+                    E::WgOwn(*v, u(m), *w)
+                } else if let Some(c) = self.partner_k(&i2, sv) {
+                    let key = (*v, c);
+                    let r = match partners.iter().find(|(pv, _)| *pv == key) {
                         Some((_, r)) => *r,
                         None => {
                             let r = self.reg(*w)?;
-                            partners.push((*v, r));
+                            partners.push((key, r));
                             r
                         }
                     };
@@ -5027,13 +5065,13 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn p_stmt(&mut self, sv: &E, s: &St, partners: &mut Vec<(usize, Reg)>) -> R<St> {
+    fn p_stmt(&mut self, sv: &E, s: &St, partners: &mut Vec<((usize, E), Reg)>) -> R<St> {
         Ok(match s {
             St::WgSet(v, i, x) => {
-                if !is_lidx(&self.pair_unmask(i), self.wg) {
+                let Some(m) = self.own_k(&self.pair_unmask(i)) else {
                     return gap(format!("a pair phase writing {}[{:?}], not the own element", self.wgvars[*v].name, i));
-                }
-                St::WgOwnSet(*v, E::Lit(Lit::U(0)), self.p_e(sv, x, partners)?)
+                };
+                St::WgOwnSet(*v, m, self.p_e(sv, x, partners)?)
             }
             St::Set(r, e) => St::Set(*r, self.p_e(sv, e, partners)?),
             St::ParrSet(p, a, b) => St::ParrSet(*p, self.p_e(sv, a, partners)?, self.p_e(sv, b, partners)?),

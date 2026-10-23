@@ -6,8 +6,8 @@ struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n
 @group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
 @group(0) @binding(4) var<storage, read_write> cands: array<u32>;
 @group(0) @binding(5) var<uniform> cfg: Cfg;
-var<workgroup> wg_pool: array<u32, 6080>;
-var<workgroup> wg_apool: array<atomic<u32>, 2112>;
+var<workgroup> wg_pool: array<u32, 6084>;
+var<workgroup> wg_apool: array<atomic<u32>, 2108>;
 fn add_sat(a: i32, b: i32) -> i32 { let s = a + b; let ov = ((a ^ s) & (b ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
 fn at2_bool(v: vec2<bool>, i: u32) -> bool { switch i { case 0u: { return v.x; } default: { return v.y; } } }
 fn at2_f16(v: vec2<f16>, i: u32) -> f16 { switch i { case 0u: { return v.x; } default: { return v.y; } } }
@@ -101,8 +101,8 @@ fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }
 fn sub_sat(a: i32, b: i32) -> i32 { let s = a - b; let ov = ((a ^ b) & (a ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
 fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) { if (o < 6080u) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls < 6080u) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls < 6080u) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls < 6080u) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
 fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sp: u32) { if (o < sp) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls < sp) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls < sp) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls < sp) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
-fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, 6079u)]), bitcast<f32>(wg_pool[min(b + ls + i, 6079u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, 6079u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, 6079u)])); }
-fn wg_v4_above(b: u32, ls: u32, i: u32, sp: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(max(b + i, sp), 6079u)]), bitcast<f32>(wg_pool[min(max(b + ls + i, sp), 6079u)]), bitcast<f32>(wg_pool[min(max(b + 2u * ls + i, sp), 6079u)]), bitcast<f32>(wg_pool[min(max(b + 3u * ls + i, sp), 6079u)])); }
+fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, 6080u)]), bitcast<f32>(wg_pool[min(b + ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, 6080u)])); }
+fn wg_v4_above(b: u32, ls: u32, i: u32, sp: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(max(b + i, sp), 6080u)]), bitcast<f32>(wg_pool[min(max(b + ls + i, sp), 6080u)]), bitcast<f32>(wg_pool[min(max(b + 2u * ls + i, sp), 6080u)]), bitcast<f32>(wg_pool[min(max(b + 3u * ls + i, sp), 6080u)])); }
 fn xidx(p: u32, h: u32, m: u32) -> u32 { if (m == 0u) { return p; } let lo = p & (h - 1u); return ((p & ~(h - 1u)) << 1u) | lo; }
 fn xok(p: u32, h: u32, m: u32) -> bool { if (m == 0u) { return (p & h) == 0u; } return p < 2147483648u; }
 fn zero_mat2x2() -> mat2x2<f32> { return mat2x2<f32>(); }

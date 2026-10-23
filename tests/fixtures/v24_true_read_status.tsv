@@ -28,7 +28,7 @@ seeds5b/seed25.wgsl	reads
 seeds5b/seed26.wgsl	reads	
 seeds5b/seed27.wgsl	reads	
 seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
-seeds5b/seed29.wgsl	gap	a pair phase writing wred[Bin(Add, Lit(U(256)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], not the own element
+seeds5b/seed29.wgsl	gap	a write of wprobe[Reg(Reg { kind: 1, n: 6 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of wprobe[Reg(Reg { kin
 seeds5b/seed30.wgsl	gap	a write phase: a read of wred[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(12), Wt { s: U32, 
 seeds5b/seed31.wgsl	gap	a loop that breaks and holds a barrier
 run1/seed00.wgsl	gap	a write phase: a read of wproj[Bin(Add, Bin(Multiply, Bin(Divide, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(5)), Wt { s: U32, lanes: 1 }), Lit(U(10)), Wt

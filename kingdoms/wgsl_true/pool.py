@@ -34,7 +34,12 @@ race, its old value order-dependent (`u32.atomicold`). `workgroupUniformLoad` of
 from lib import *
 
 P_WORDS = 6080
-A_WORDS = 2112
+# the guard word (UI1, 2026-10-23): the plain pool holds one word past P_WORDS that no row ever writes (every write is
+# guarded `o < P_WORDS`), and every read is clamped onto it rather than onto the pool's last word. Clamping onto word
+# P_WORDS - 1 let a read past the end inside a phase land on an element another invocation may own (its residue
+# modulo T), a race; the guard word belongs to no one. A workgroup variable's size is rounded to 16 bytes, so the
+# plain pool holds four words past P_WORDS and the atomic pool gives up four, and the two still fill 32 KiB exactly.
+A_WORDS = 2108
 # element families of the plain pool: key, value type, read cast, write cast
 ELEMS = [
     ("u", "u32.index", "{}", "{}"),
@@ -65,7 +70,7 @@ def declare(iface):
     T("u32.wgabase", "a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)", 1, f"0..={A_WORDS - 1}")
     for t in ("u32.wgblk", "u32.wgbase", "u32.wgown", "u32.wgabase"):
         SAFE_ARGS.add(t)
-    PROLOGUE_TOP.append(f"var<workgroup> wg_pool: array<u32, {P_WORDS}>;")
+    PROLOGUE_TOP.append(f"var<workgroup> wg_pool: array<u32, {P_WORDS + 4}>;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_apool: array<atomic<u32>, {A_WORDS}>;")
 
 
@@ -76,7 +81,7 @@ def build(iface):
     R("own.u32_wgbase", "u32.wgbase", [], "0u", "the pool's first region")
     R("wg.own_x", "u32.wgown", ["u32.indexw"], "(lidx + {0} * KNOB_THREADS)", "any per-invocation k: lidx + k * T is injective across invocations")
     R("own.u32_wgown", "u32.wgown", [], "lidx", "each invocation's own element of the region's first T")
-    last = P_WORDS - 1
+    last = P_WORDS  # the guard word: reads clamp onto it, no write reaches it
     for key, vt_, rd, wr in ELEMS:
         cell = f"wg_pool[min({{0}} + {{1}}, {last}u)]"
         R(f"wg.get_{key}", vt_, ["u32.wgbase", "u32.index"], rd.format(cell), "a foreign read of a region's element: an ordinary value outside a phase; no w twin")
@@ -110,6 +115,7 @@ def build(iface):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
             R(f"wg.pload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase"], "{0} = " + rd.format(f"wg_pool[min({{1}} + lidx + ps, {last}u)]") + ";", "the partner element, lidx + ps: no invocation writes it in a pair phase")
+            R(f"wg.pload_x_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{ let o = {1} + {2} * KNOB_THREADS + lidx + ps; {0} = " + rd.format(f"wg_pool[min(o, {last}u)]") + "; }", "the partner of own element lidx + k T: residue lidx + ps modulo T, which no writer of the phase has")
         R(f"wg.pload_v4_P{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase"], "{0} = wg_v4({1}, {2}, lidx + ps);")
     # ---- the swap-pair phase (UI1 batch 10): sort and butterfly steps. The phase fixes a uniform power of two h (or 0,
     # `xh`), a mode and a span xs (a power of two). Invocation p's pair in block b is (b * xs + i, b * xs + (i | h)),
