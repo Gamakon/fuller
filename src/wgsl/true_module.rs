@@ -170,7 +170,7 @@ mod tests {
     fn random_modules_rich_in_the_batch_10_phases_validate_in_naga() {
         let k = kingdom("v24_k1");
         let m = TrueModule::new(&k, &[8, 8]).expect("module");
-        let fam = |n: &str| n.starts_with("wg.xchg_") || n.starts_with("wg.xset_") || n.starts_with("wg.xload_") || n.starts_with("wg.bphase_") || n.starts_with("wg.bset_") || n.starts_with("wg.bload_") || n.starts_with("wg.slot_") || n.starts_with("wg.qsplit_") || n.starts_with("wg.qset_") || n.starts_with("wg.qpair_") || n.starts_with("wg.qload_") || n.starts_with("wg.pload_q_") || n.starts_with("wg.sset_") || n.starts_with("wg.aload_") || n.starts_with("slot.");
+        let fam = |n: &str| n.starts_with("wg.xchg_") || n.starts_with("wg.xset_") || n.starts_with("wg.xload_") || n.starts_with("wg.bphase_") || n.starts_with("wg.bsplit_") || n.starts_with("wg.yload_") || n.starts_with("wg.bset_") || n.starts_with("wg.bload_") || n.starts_with("wg.slot_") || n.starts_with("wg.qsplit_") || n.starts_with("wg.qset_") || n.starts_with("wg.qpair_") || n.starts_with("wg.qload_") || n.starts_with("wg.pload_q_") || n.starts_with("wg.sset_") || n.starts_with("wg.aload_") || n.starts_with("slot.");
         let weight: Vec<f64> = k.rows.iter().map(|r| if fam(&r.name) { 400.0 } else { 1.0 }).collect();
         let mut rng = Rng(23);
         let mut seen: BTreeMap<String, usize> = BTreeMap::new();

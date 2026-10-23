@@ -160,7 +160,8 @@ def build(iface):
     for x, d, k in rungs("Y"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.bset_{key}_Y{d}_f{k}", s, ["u32.bblk", "u32.indexw", "u32.indexw", w_of(vt_)], "{ let g = {1}; let o = ({0} + g) * (KNOB_THREADS * bc) + lidx * bc + min({2}, bc - 1u); if (g < 4096u && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{3}") + "; } }", "a write of element j of this invocation's own block in group b + k")
+            R(f"wg.bset_{key}_Y{d}_f{k}", s, ["u32.bblk", "u32.indexw", "u32.indexw", w_of(vt_)], "{ let g = {1}; let o = ({0} + g) * (KNOB_THREADS * bc) + lidx * bc + min({2}, bc - 1u); if (g < 4096u && o < sp && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{3}") + "; } }", "a write of element j of this invocation's own block in group b + k, below the phase's split")
+            R(f"wg.yload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no block write of the phase reaches it")
             R(f"wg.bload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.bblk", "u32.indexw", "u32.indexw"], "{ let g = {2}; let o = ({1} + g) * (KNOB_THREADS * bc) + lidx * bc + min({3}, bc - 1u); {0} = " + rd.format(f"select(0u, wg_pool[min(o, {last}u)], g < 4096u)") + "; }", "element j of this invocation's own block (0 past the groups)")
     # ---- the slot phase (UI1 batch 10): slot claiming. The phase fixes a split sp, a counter sc of wg_scnt and a span ss
     # (a power of two). Inside it `slot.take` sets a slot register to atomicAdd(&wg_scnt[sc], 1u): every take in the
@@ -186,7 +187,8 @@ def build(iface):
     for x, d, k in rungs("L"):
         s = S("L", d, k)
         R(f"wg.slot_L{d}_f{k}", s, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
-        R(f"wg.bphase_L{d}_f{k}", s, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
+        R(f"wg.bphase_L{d}_f{k}", s, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
+        R(f"wg.bsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let bc = {1}; {2} } workgroupBarrier(); {3}", "the block-write phase with a split: block writes below sp, reads of other arrays at or above it")
         R(f"wg.xchg_L{d}_f{k}", s, ["u32.uniform", "u32.xmode", "u32.xspan", B("E", d, k), B("L", d, k)], "workgroupBarrier(); { let xh0 = {0}; let xh = xh0 & (0u - xh0); let xm = {1}; let xs = {2}; {3} } workgroupBarrier(); {4}", "the swap-pair phase: each invocation writes only the pairs (i, i | h) its own elements name, h a power of two, in blocks of xs words")
         R(f"wg.phase_L{d}_f{k}", s, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
         R(f"wg.pair_L{d}_f{k}", s, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = KNOB_THREADS; let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")

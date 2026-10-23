@@ -41,7 +41,7 @@ run1/seed06.wgsl	gap	a write of wc[Lit(U(0))], an element another invocation may
 run1/seed07.wgsl	reads	
 run1/seed08.wgsl	out	a race in its own text: probe[rank] = c & 127u, rank counting v > mine || (v == mine && o < c) over the f32 cscore; a NaN score gives two centres one rank, so t
 run1/seed09.wgsl	reads	
-run1/seed10.wgsl	gap	a block-write phase reading wsum, an array it does not write
+run1/seed10.wgsl	gap	split phases whose written and read arrays cannot be ordered in the pool
 run1/seed11.wgsl	gap	a break or continue nested inside conditionals of a loop body
 run1/seed12.wgsl	reads	
 run1/seed13.wgsl	reads	

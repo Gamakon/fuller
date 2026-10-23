@@ -311,7 +311,9 @@ enum St {
     /// A split phase within one array `v`: its writes below element `off` (a multiple of T), its reads at or above it.
     SplitAt(usize, u32, Vec<St>),
     /// A block-write phase of block length `C`: the statements (Y), then the rest.
-    BPhase(u32, Vec<St>),
+    BPhase(u32, Vec<usize>, Vec<St>),
+    /// Element `i` of array `v`, at or above a block-write phase's split, into the register (Y).
+    YLoad(Reg, usize, E),
     /// Element `j` of this invocation's own block in group `k` of array `v`, into the register (Y).
     BLoad(Reg, usize, E, E),
     /// A write of element `j` of this invocation's own block in group `k` of array `v` (Y).
@@ -2545,7 +2547,7 @@ impl<'a> Reader<'a> {
     fn need(&self, st: &St) -> R<u32> {
         Ok(match st {
             St::If(_, a, b) => self.need_all(a)?.max(self.need_all(b)?),
-            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => self.need_all(b)?,
+            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => self.need_all(b)?,
             St::Loop(l) => self.need_all(&l.body)? + self.class_of(l)?.0,
             _ => 0,
         })
@@ -2659,12 +2661,21 @@ impl<'a> Reader<'a> {
                             let rest = self.block(&sts[i + 1..], 'L', d, k)?;
                             Tree { symbol: self.row(&format!("wg.slot_{r}"))?, const_index: None, kids: vec![spt, kt, st, ab, rest] }
                         }
-                        St::BPhase(c, b) => {
+                        St::BPhase(c, rd, b) => {
                             let ct = self.konst("u32.bcount", &Lit::U(*c)).ok_or_else(|| ReadError::Gap(format!("the constant {c} of u32.bcount")))?;
                             self.cur_bc = *c;
                             let yb = self.block(b, 'Y', d, k)?;
                             let rest = self.block(&sts[i + 1..], 'L', d, k)?;
-                            Tree { symbol: self.row(&format!("wg.bphase_{r}"))?, const_index: None, kids: vec![ct, yb, rest] }
+                            if rd.is_empty() {
+                                Tree { symbol: self.row(&format!("wg.bphase_{r}"))?, const_index: None, kids: vec![ct, yb, rest] }
+                            } else {
+                                let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
+                                    Some(Region::Plain { base, .. }) => Some(*base),
+                                    _ => None,
+                                }).min().ok_or_else(|| ReadError::Gap("our software has a bug: a block-write split reading no plain array".into()))?;
+                                let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
+                                Tree { symbol: self.row(&format!("wg.bsplit_{r}"))?, const_index: None, kids: vec![spt, ct, yb, rest] }
+                            }
                         }
                         _ => unreachable_phase()?,
                     };
@@ -2782,6 +2793,13 @@ impl<'a> Reader<'a> {
                 let blk = self.konst("u32.xblk", &Lit::U(word / span)).ok_or_else(|| ReadError::Gap(format!("the constant {} of u32.xblk", word / span)))?;
                 let leaf = self.leaf(&format!("reg.rs{n}"))?;
                 self.stmt_row(&format!("wg.sset_{key}_{r}"), vec![blk, leaf], &[e])
+            }
+            St::YLoad(reg, v, i) => {
+                let Some(Region::Plain { base, block: None, .. }) = self.regions.get(*v).copied() else { return gap("a block-write phase reading a transposed array") };
+                let key = elem_key(self.wgvars[*v].elem).ok_or_else(|| ReadError::Gap(format!("a workgroup array of {}", self.wgvars[*v].elem.name())))?;
+                let (_, prefix, _, _) = REG_KINDS[reg.kind];
+                let lead = vec![self.leaf(&format!("reg.{prefix}{}", reg.n))?, self.wg_base(base).ok_or_else(|| ReadError::Gap(format!("the region base {base}")))?];
+                self.stmt_row(&format!("wg.yload_{key}_{r}"), lead, &[i])
             }
             St::ALoad(reg, v, i) => {
                 let Some(Region::Plain { base, block: None, .. }) = self.regions.get(*v).copied() else { return gap("a slot-phase read of a transposed array") };
@@ -3815,7 +3833,7 @@ fn slot_form(i: &E) -> Option<(Reg, u32)> {
 fn regs_written(sts: &[St], out: &mut Vec<Reg>) {
     for s in sts {
         match s {
-            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) | St::ALoad(r, _, _) | St::QLoad(r, _, _) => out.push(*r),
+            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _, _) | St::HLoad(r, _, _) | St::XLoad(r, _, _, _) | St::BLoad(r, _, _, _) | St::ALoad(r, _, _) | St::QLoad(r, _, _) | St::YLoad(r, _, _) => out.push(*r),
             St::If(_, a, b) => {
                 regs_written(a, out);
                 regs_written(b, out);
@@ -3907,13 +3925,13 @@ fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
                 ex(&l.bound, out);
                 wg_accesses(&l.body, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => wg_accesses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => wg_accesses(b, out),
             St::BLoad(_, v, _, _) | St::QLoad(_, v, _) => out.push((*v, None)),
             St::BSet(v, _, _, x) => {
                 out.push((*v, None));
                 ex(x, out);
             }
-            St::ALoad(_, v, i) => {
+            St::ALoad(_, v, i) | St::YLoad(_, v, i) => {
                 out.push((*v, Some(i)));
                 ex(i, out);
             }
@@ -3942,7 +3960,7 @@ fn plain_written(sts: &[St], out: &mut Vec<usize>) {
                 plain_written(b, out);
             }
             St::Loop(l) => plain_written(&l.body, out),
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => plain_written(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => plain_written(b, out),
             St::BSet(v, _, _, _) | St::SSet(v, _, _, _) | St::QOwnSet(v, _, _) => out.push(*v),
             St::XSet(_, v, _, _) => out.push(*v),
             _ => {}
@@ -4029,7 +4047,7 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 wg_uses_e(e, out);
                 wg_uses(b, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => wg_uses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) => wg_uses(b, out),
             St::BLoad(_, v, _, _) => {
                 if !out.contains(v) {
                     out.push(*v);
@@ -4041,7 +4059,7 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 }
                 wg_uses_e(x, out);
             }
-            St::ALoad(_, v, i) => {
+            St::ALoad(_, v, i) | St::YLoad(_, v, i) => {
                 if !out.contains(v) {
                     out.push(*v);
                 }
@@ -5036,10 +5054,14 @@ impl<'a> Reader<'a> {
         let Some(c) = c else { return Ok(None) };
         let arrays: Vec<usize> = ws.iter().map(|(v, _, _)| *v).collect();
         let mut body = Vec::new();
+        let mut rd = Vec::new();
         for st in part {
-            body.extend(self.y_stmt(st, &arrays, c)?);
+            body.extend(self.y_stmt(st, &arrays, c, &mut rd)?);
         }
-        Ok(Some(St::BPhase(c, body)))
+        if !rd.is_empty() {
+            self.splits.push((arrays, rd.clone()));
+        }
+        Ok(Some(St::BPhase(c, rd, body)))
     }
 
     fn y_access(&self, v: usize, i: &E, c: u32) -> R<(E, E)> {
@@ -5049,11 +5071,18 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn y_e(&mut self, e: &E, v: &[usize], c: u32, pre: &mut Vec<St>) -> R<E> {
+    fn y_e(&mut self, e: &E, v: &[usize], c: u32, pre: &mut Vec<St>, rd: &mut Vec<usize>) -> R<E> {
         Ok(match e {
             E::Wg(v2, i, w) => {
                 if !v.contains(v2) {
-                    return gap(format!("a block-write phase reading {}, an array it does not write", self.wgvars[*v2].name));
+                    // a read of another array: at or above the phase's split
+                    let i2 = self.y_e(i, v, c, pre, rd)?;
+                    if !rd.contains(v2) {
+                        rd.push(*v2);
+                    }
+                    let r = self.reg(*w)?;
+                    pre.push(St::YLoad(r, *v2, i2));
+                    return Ok(E::Reg(r, *w));
                 }
                 let (k, j) = self.y_access(*v2, i, c)?;
                 let r = self.reg(*w)?;
@@ -5061,18 +5090,18 @@ impl<'a> Reader<'a> {
                 E::Reg(r, *w)
             }
             E::WgOwn(..) => return gap("an own read inside a block-write phase"),
-            E::WgA(a, i) => E::WgA(*a, u(self.y_e(i, v, c, pre)?)),
-            E::WgRmw(f, a, i, x) => E::WgRmw(f, *a, u(self.y_e(i, v, c, pre)?), u(self.y_e(x, v, c, pre)?)),
+            E::WgA(a, i) => E::WgA(*a, u(self.y_e(i, v, c, pre, rd)?)),
+            E::WgRmw(f, a, i, x) => E::WgRmw(f, *a, u(self.y_e(i, v, c, pre, rd)?), u(self.y_e(x, v, c, pre, rd)?)),
             o => {
                 let mut kids = Vec::new();
                 for k in kids_of(o) {
-                    kids.push(self.y_e(k, v, c, pre)?);
+                    kids.push(self.y_e(k, v, c, pre, rd)?);
                 }
                 if let E::Parr(p, i, w) = o {
-                    return Ok(E::Parr(*p, u(self.y_e(i, v, c, pre)?), *w));
+                    return Ok(E::Parr(*p, u(self.y_e(i, v, c, pre, rd)?), *w));
                 }
                 if let E::Load(n, i, w) = o {
-                    return Ok(E::Load(n.clone(), u(self.y_e(i, v, c, pre)?), *w));
+                    return Ok(E::Load(n.clone(), u(self.y_e(i, v, c, pre, rd)?), *w));
                 }
                 let mut it = kids.into_iter();
                 self.map_kids(o, &mut |_, _| Ok(it.next().unwrap_or(E::Lit(Lit::U(0)))))?
@@ -5080,42 +5109,42 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn y_stmt(&mut self, s: &St, v: &[usize], c: u32) -> R<Vec<St>> {
+    fn y_stmt(&mut self, s: &St, v: &[usize], c: u32, rd: &mut Vec<usize>) -> R<Vec<St>> {
         let mut pre = Vec::new();
         let st = match s {
             St::WgSet(v2, i, x) => {
-                let x2 = self.y_e(x, v, c, &mut pre)?;
+                let x2 = self.y_e(x, v, c, &mut pre, rd)?;
                 let (k, j) = self.y_access(*v2, i, c)?;
                 St::BSet(*v2, k, j, x2)
             }
-            St::Set(r, e) => St::Set(*r, self.y_e(e, v, c, &mut pre)?),
-            St::SetLane(r, a, b) => St::SetLane(*r, self.y_e(a, v, c, &mut pre)?, self.y_e(b, v, c, &mut pre)?),
-            St::ParrSet(p, a, b) => St::ParrSet(*p, self.y_e(a, v, c, &mut pre)?, self.y_e(b, v, c, &mut pre)?),
-            St::Store(n, a, b) => St::Store(n.clone(), self.y_e(a, v, c, &mut pre)?, self.y_e(b, v, c, &mut pre)?),
+            St::Set(r, e) => St::Set(*r, self.y_e(e, v, c, &mut pre, rd)?),
+            St::SetLane(r, a, b) => St::SetLane(*r, self.y_e(a, v, c, &mut pre, rd)?, self.y_e(b, v, c, &mut pre, rd)?),
+            St::ParrSet(p, a, b) => St::ParrSet(*p, self.y_e(a, v, c, &mut pre, rd)?, self.y_e(b, v, c, &mut pre, rd)?),
+            St::Store(n, a, b) => St::Store(n.clone(), self.y_e(a, v, c, &mut pre, rd)?, self.y_e(b, v, c, &mut pre, rd)?),
             // the atomic pool is not the plain pool: an atomic store or read-modify-write never races
-            St::WgAStore(w, a, b) => St::WgAStore(*w, self.y_e(a, v, c, &mut pre)?, self.y_e(b, v, c, &mut pre)?),
-            St::Discard(e) => St::Discard(self.y_e(e, v, c, &mut pre)?),
+            St::WgAStore(w, a, b) => St::WgAStore(*w, self.y_e(a, v, c, &mut pre, rd)?, self.y_e(b, v, c, &mut pre, rd)?),
+            St::Discard(e) => St::Discard(self.y_e(e, v, c, &mut pre, rd)?),
             St::If(cond, a, b) => {
-                let c2 = self.y_e(cond, v, c, &mut pre)?;
+                let c2 = self.y_e(cond, v, c, &mut pre, rd)?;
                 let mut a2 = Vec::new();
                 for x in a {
-                    a2.extend(self.y_stmt(x, v, c)?);
+                    a2.extend(self.y_stmt(x, v, c, rd)?);
                 }
                 let mut b2 = Vec::new();
                 for x in b {
-                    b2.extend(self.y_stmt(x, v, c)?);
+                    b2.extend(self.y_stmt(x, v, c, rd)?);
                 }
                 St::If(c2, a2, b2)
             }
             St::Loop(l) => {
                 let mut l2 = (**l).clone();
-                let b2 = self.y_e(&l.bound, v, c, &mut pre)?;
+                let b2 = self.y_e(&l.bound, v, c, &mut pre, rd)?;
                 if b2 != l.bound {
                     return gap("a block-write phase loop bounded by a workgroup element");
                 }
                 let mut body = Vec::new();
                 for x in &l.body {
-                    body.extend(self.y_stmt(x, v, c)?);
+                    body.extend(self.y_stmt(x, v, c, rd)?);
                 }
                 l2.body = body;
                 St::Loop(Box::new(l2))
