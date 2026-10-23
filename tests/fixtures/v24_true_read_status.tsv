@@ -15,7 +15,7 @@ seeds5b/seed12.wgsl	gap	a value of type Array { base: [0], size: Constant(8), st
 seeds5b/seed13.wgsl	reads	
 seeds5b/seed14.wgsl	gap	a write of ls[Reg(Reg { kind: 1, n: 31 }, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of ls[Reg(Reg { kind: 1, n
 seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
-seeds5b/seed16.wgsl	gap	a write phase: a read of wbuf[Bin(Add, Lit(U(1024)), Counter(9), Wt { s: U32, lanes: 1 })], an element another invocation may write in the phase; as a split pha
+seeds5b/seed16.wgsl	gap	a write phase: a read of sq[Bin(ShiftRight, Reg(Reg { kind: 1, n: 30 }, Wt { s: U32, lanes: 1 }), Lit(U(2)), Wt { s: U32, lanes: 1 })], an element another invoc
 seeds5b/seed17.wgsl	gap	a write phase: a read of wp[Counter(7)], an element another invocation may write in the phase; as a split phase: a write of wv[Reg(Reg { kind: 1, n: 19 }, Wt { 
 seeds5b/seed18.wgsl	gap	a write phase: a read of wflip[Counter(8)], an element another invocation may write in the phase; as a split phase: a write of wrow[Reg(Reg { kind: 1, n: 31 }, 
 seeds5b/seed19.wgsl	gap	a write of wwin[Bin(Add, Lit(U(8)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phas
@@ -50,9 +50,9 @@ run1/seed15.wgsl	gap	a write of sc[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U3
 run1/seed16.wgsl	out	a race in its own text: score_batch, invocations t < 8 write cscore[pend[t]], and pend[t] is a link loaded from the index arena (pend[t] = n); two links may nam
 run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so t
 run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Add, Bin(Multiply, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 }), Lit(U(16)), 
-run1/seed19.wgsl	gap	a row that spells the value as u32.index
+run1/seed19.wgsl	gap	a write of wv[Bin(And, Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(8)), Wt { s: U32, lanes: 1 }), Counter(12), Wt { s: U32, lanes: 1
 run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
-run1/seed21.wgsl	gap	a write of wa[Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split p
+run1/seed21.wgsl	gap	a strided loop that breaks
 run1/seed22.wgsl	gap	a strided loop that breaks
 run1/seed23.wgsl	reads	
 run1/seed24.wgsl	reads	
