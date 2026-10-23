@@ -6,3 +6,4 @@ run1/seed08.wgsl	a race in its own text: probe[rank] = c & 127u, rank counting v
 run1/seed17.wgsl	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so two invocations write one element
 seeds5b/seed14.wgsl	a race in its own text: the merge writes ls[rl] and ls[rc], ranks counting lb > sa || (lb == sa && b < t) and lb >= sc over the f32 lists ls and cs; a NaN score gives two entries one rank, so two invocations write one element
 seeds5b/seed29.wgsl	a race in its own text: wprobe[crank] = t, crank counting oc < pen || (oc == pen && c < t) over the f32 wpen; a NaN penalty gives two cells one rank, so two invocations write one element
+run1/seed20.wgsl	a race in its own text: search writes topA[rank] = t, rank counting o > my || (o == my && hb + k < t) over the f32 sc; a NaN score gives two codes one rank, so two invocations write one element

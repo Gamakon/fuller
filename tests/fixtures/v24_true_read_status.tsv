@@ -51,7 +51,7 @@ run1/seed16.wgsl	out	a race in its own text: score_batch, invocations t < 8 writ
 run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so t
 run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Add, Bin(Multiply, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(4)), Wt { s: U32, lanes: 1 }), Lit(U(16)), 
 run1/seed19.wgsl	reads	
-run1/seed20.wgsl	gap	a write phase: a read of sc[Bin(Add, Bin(ShiftLeft, Bin(ShiftRight, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(5)), Wt { s: U32, lanes: 1 }), Lit(U(5)), W
+run1/seed20.wgsl	out	a race in its own text: search writes topA[rank] = t, rank counting o > my || (o == my && hb + k < t) over the f32 sc; a NaN score gives two codes one rank, so 
 run1/seed21.wgsl	reads	
 run1/seed22.wgsl	reads	
 run1/seed23.wgsl	reads	
