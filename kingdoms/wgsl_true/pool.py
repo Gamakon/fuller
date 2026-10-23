@@ -119,7 +119,7 @@ def build(iface):
     for x, d, k in rungs("S"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.put_{key}_S{d}_f{k}", s, ["u32.wgbase", "u32.index", vt_], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "the solo invocation writes any element: no other invocation touches the pool in a solo phase")
+            R(f"wg.put_{key}_S{d}_f{k}", s, ["u32.wgbase", "u32.index", vt_], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[min(o, " + str(P_WORDS) + "u)] = " + wr.format("{2}") + "; } }", "the solo invocation writes any element: no other invocation touches the pool in a solo phase; the index is clamped inside its guard (an identity there) so a constant base and a bare literal never make a constant index past the pool, a shader-creation error")
         R(f"wg.put_v4_S{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.index", "vec4<f32>.real"], "wg_set_v4({0} + {2}, {1}, {3});")
     for x, d, k in rungs("P"):
         s = S(x, d, k)
