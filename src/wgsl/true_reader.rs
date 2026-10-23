@@ -4779,6 +4779,18 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        // consecutive `if (lidx == 0u) { A } if (lidx == 0u) { B }` (as distribute_ifs makes them) are one
+        if part.len() > 1 && part.iter().all(|x| matches!(x, St::If(c, _, b) if b.is_empty() && solo_cond(c, self.wg) == Some(None))) {
+            let c = match &part[0] {
+                St::If(c, _, _) => c.clone(),
+                _ => return gap("our software has a bug: a solo run lost its condition"),
+            };
+            let body: Vec<St> = part.iter().flat_map(|x| match x {
+                St::If(_, a, _) => a.clone(),
+                _ => Vec::new(),
+            }).collect();
+            part = vec![St::If(c, body, Vec::new())];
+        }
         // a solo phase: `if (lidx == 0u) { ... }`, the segment's only writer
         if let St::If(c, a, b) = &part[0] {
             if let Some(rest) = solo_cond(c, self.wg) {
