@@ -484,6 +484,8 @@ pub struct Reader<'a> {
     counters: BTreeMap<usize, u32>,
     /// Inside a lane-split phase: its lanes (own elements `lidx + k * qm`).
     qm: Option<u32>,
+    /// Registers holding a uniform register's value (`r = U<n>`, a workgroup read every invocation makes alike).
+    ureg_of: HashMap<Reg, usize>,
     // phase 2
     rows_by_name: HashMap<String, u32>,
     by_spelling: HashMap<String, Vec<u32>>,
@@ -579,6 +581,7 @@ impl<'a> Reader<'a> {
             cur_bc: 1,
             counters: BTreeMap::new(),
             qm: None,
+            ureg_of: HashMap::new(),
             rows_by_name,
             by_spelling,
             coercions,
@@ -2886,6 +2889,7 @@ impl<'a> Reader<'a> {
                 let nl = needs_l(a) || needs_l(b);
                 match x {
                     'L' if nl => {
+                        let c = &self.with_uregs(c);
                         let cond = self.must(c, "bool.uflag").map_err(|e| match e {
                             ReadError::Gap(m) => ReadError::Gap(format!("a uniform proof of a condition around a barrier: {m}")),
                             o => o,
@@ -2963,6 +2967,7 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        let flag = self.with_uregs(&flag);
         let f = self.must(&flag, "bool.uflag").map_err(|e| match e {
             ReadError::Gap(m) => ReadError::Gap(format!("a uniform proof of a break around a barrier: {m}")),
             o => o,
@@ -3020,7 +3025,7 @@ impl<'a> Reader<'a> {
             return gap("a loop that breaks and holds a barrier under divergent control");
         }
         // the loop's row, its body's rung and whether its counter is divergent
-        let uniform_bound = if lit.is_none() && x == 'L' { self.must(&lp.bound, "u32.uniform").ok() } else { None };
+        let uniform_bound = if lit.is_none() && x == 'L' { let b = self.with_uregs(&lp.bound); self.must(&b, "u32.uniform").ok() } else { None };
         if x == 'L' && nl && lit.is_none() && uniform_bound.is_none() {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
@@ -4373,6 +4378,84 @@ impl<'a> Reader<'a> {
 
     // ---------------------------------------------------------------- phases
 
+    /// A workgroup read every invocation makes alike, read as a uniform load: `r = v[c]` (a u32 element at a literal
+    /// index) at the L level of a list, in a barrier interval after a barrier, where no statement writes `v`. Every
+    /// invocation reads the same value, so the read is `U<n> = workgroupUniformLoad(&v[c])` (its own barrier changes no
+    /// value: nothing writes `v` in the interval) and `r` holds `U<n>`.
+    fn uniform_reads(&mut self, sts: Vec<St>) -> R<Vec<St>> {
+        let bound = |s: &St| matches!(s, St::Barrier | St::ULoad(..)) || needs_l(std::slice::from_ref(s));
+        let mut out = Vec::new();
+        let mut start = 0;
+        for i in 0..sts.len() {
+            if bound(&sts[i]) {
+                // a uniform branch's condition reading such elements: each read as a uniform load just before it
+                if let St::If(c, a, b) = &sts[i] {
+                    let after_barrier = start > 0 && matches!(sts[start - 1], St::Barrier | St::ULoad(..));
+                    let mut ws = Vec::new();
+                    wg_writes(&sts[start..i], false, self.wg, &mut ws);
+                    let written: Vec<usize> = ws.iter().map(|(v, _, _)| *v).collect();
+                    if after_barrier {
+                        let mut loads = Vec::new();
+                        let c2 = self.ureg_reads(c, &written, &mut loads);
+                        if !loads.is_empty() {
+                            out.extend(loads);
+                            out.push(St::If(c2, a.clone(), b.clone()));
+                            start = i + 1;
+                            continue;
+                        }
+                    }
+                }
+                start = i + 1;
+                out.push(sts[i].clone());
+                continue;
+            }
+            let after_barrier = start > 0 && matches!(sts[start - 1], St::Barrier | St::ULoad(..));
+            if let (true, St::Set(r, E::Wg(v, idx, w))) = (after_barrier, &sts[i]) {
+                let end = (i..sts.len()).find(|j| bound(&sts[*j])).unwrap_or(sts.len());
+                let mut ws = Vec::new();
+                wg_writes(&sts[start..end], false, self.wg, &mut ws);
+                if *w == uw() && lit_u(idx).is_some() && !self.wgvars[*v].atomic && self.wgvars[*v].elem == uw() && !ws.iter().any(|(x, _, _)| x == v) && self.next_ureg < 8 {
+                    let n = self.next_ureg;
+                    self.next_ureg += 1;
+                    out.push(St::ULoad(n, *v, (**idx).clone()));
+                    out.push(St::Set(*r, E::UReg(n)));
+                    self.ureg_of.insert(*r, n);
+                    start = i + 1;
+                    continue;
+                }
+            }
+            out.push(sts[i].clone());
+        }
+        Ok(out)
+    }
+
+    /// `e` with each read `v[c]` (a u32 element at a literal index of an array not in `written`) as a fresh uniform
+    /// register, its uniform load pushed to `loads`.
+    fn ureg_reads(&mut self, e: &E, written: &[usize], loads: &mut Vec<St>) -> E {
+        match e {
+            E::Wg(v, idx, w) if *w == uw() && lit_u(idx).is_some() && !self.wgvars[*v].atomic && self.wgvars[*v].elem == uw() && !written.contains(v) && self.next_ureg < 8 => {
+                let n = self.next_ureg;
+                self.next_ureg += 1;
+                loads.push(St::ULoad(n, *v, (**idx).clone()));
+                E::UReg(n)
+            }
+            o => {
+                let kids: Vec<E> = kids_of(o).into_iter().cloned().collect();
+                let mapped: Vec<E> = kids.iter().map(|k| self.ureg_reads(k, written, loads)).collect();
+                let mut it = mapped.into_iter();
+                self.map_kids(o, &mut |_, _| Ok(it.next().unwrap_or(E::Lit(Lit::U(0))))).unwrap_or_else(|_| o.clone())
+            }
+        }
+    }
+
+    /// `e` with every register that holds a uniform register's value read as that register: the uniform proofs.
+    fn with_uregs(&self, e: &E) -> E {
+        match e {
+            E::Reg(r, _) if self.ssa.contains(r) => self.ureg_of.get(r).map_or_else(|| e.clone(), |n| E::UReg(*n)),
+            o => self.map_kids(o, &mut |s, k| Ok(s.with_uregs(k))).unwrap_or_else(|_| o.clone()),
+        }
+    }
+
     /// The phases of an L-level statement list: each barrier-delimited segment that writes workgroup memory becomes a
     /// solo, a pair or a write phase.
     fn structure(&mut self, sts: Vec<St>) -> R<Vec<St>> {
@@ -4388,6 +4471,7 @@ impl<'a> Reader<'a> {
                 o => o,
             });
         }
+        let inner = self.uniform_reads(inner)?;
         let mut out = Vec::new();
         let mut seg: Vec<St> = Vec::new();
         for s in inner {
