@@ -280,7 +280,7 @@ enum St {
     /// The partner element of array `v` into the register (P).
     PLoad(Reg, usize, E),
     /// A split phase: the arrays it reads (placed at or above the split), the statements (X), then the rest.
-    Split(Vec<usize>, Vec<St>),
+    Split(Vec<usize>, Vec<usize>, Vec<St>),
     /// Element `i` of array `v`, at or above the split, into the register (X).
     HLoad(Reg, usize, E),
     /// A swap-pair phase over array `v`: the uniform power of two `h`, the mode (0: the own element is the pair's low
@@ -477,7 +477,8 @@ pub struct Reader<'a> {
     /// layout, their block writes in block-write phases; each region starts at a multiple of `T * C` words.
     nat_blocks: BTreeMap<usize, u32>,
     /// Every split phase's (written, read) arrays: the placement's constraints.
-    splits: Vec<(Vec<usize>, Vec<usize>)>,
+    /// Each split-like phase's (written, read) arrays, and whether a plain split that may stand in its own window instead
+    splits: Vec<(Vec<usize>, Vec<usize>, bool)>,
     wg_of: HashMap<Handle<naga::GlobalVariable>, usize>,
     regions: Vec<Region>,
     next_ureg: usize,
@@ -2723,7 +2724,7 @@ impl<'a> Reader<'a> {
     fn need(&self, st: &St) -> R<u32> {
         Ok(match st {
             St::If(_, a, b) => self.need_all(a)?.max(self.need_all(b)?),
-            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => self.need_all(b)?,
+            St::Phase(b) | St::Pair(_, b) | St::Solo(b) | St::Split(_, _, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => self.need_all(b)?,
             St::Loop(l) => self.need_all(&l.body)? + self.class_of(l)?.0,
             _ => 0,
         })
@@ -2770,15 +2771,37 @@ impl<'a> Reader<'a> {
                             let rest = self.block(&sts[i + 1..], 'L', d, k)?;
                             Tree { symbol: self.row(&format!("wg.solo_{r}"))?, const_index: None, kids: vec![sb, rest] }
                         }
-                        St::Split(rd, b) => {
-                            let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
-                                Some(Region::Plain { base, .. }) => Some(*base),
-                                _ => None,
-                            }).min().ok_or_else(|| ReadError::Gap("our software has a bug: a split phase reading no plain array".into()))?;
-                            let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
+                        St::Split(wr, rd, b) => {
+                            let t = self.threads();
+                            let extent = |s: &Self, v: usize| -> Option<(u32, u32)> {
+                                match s.regions.get(v) {
+                                    Some(Region::Plain { base, block, .. }) => {
+                                        let w = &s.wgvars[v];
+                                        let size = match block {
+                                            Some(c) => *c * w.elem.lanes as u32,
+                                            None => w.len.div_ceil(t) * w.elem.lanes as u32,
+                                        };
+                                        Some((*base, *base + size))
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            let sp = rd.iter().filter_map(|v| extent(self, *v).map(|e| e.0)).min().ok_or_else(|| ReadError::Gap("our software has a bug: a split phase reading no plain array".into()))?;
+                            let w_end = wr.iter().filter_map(|v| extent(self, *v).map(|e| e.1)).max().unwrap_or(0);
                             let xb = self.block(b, 'X', d, k)?;
                             let rest = self.block(&sts[i + 1..], 'L', d, k)?;
-                            Tree { symbol: self.row(&format!("wg.split_{r}"))?, const_index: None, kids: vec![spt, xb, rest] }
+                            if w_end <= sp {
+                                let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
+                                Tree { symbol: self.row(&format!("wg.split_{r}"))?, const_index: None, kids: vec![spt, xb, rest] }
+                            } else if let [v] = wr[..] {
+                                // the written region below a read one is not possible in this placement: its own window
+                                let (lo, hi) = extent(self, v).ok_or_else(|| ReadError::Gap("our software has a bug: a split array with no region".into()))?;
+                                let lt = self.wg_base(lo).ok_or_else(|| ReadError::Gap(format!("the split base {lo}")))?;
+                                let ht = self.wg_base(hi).ok_or_else(|| ReadError::Gap(format!("the split base {hi}")))?;
+                                Tree { symbol: self.row(&format!("wg.split2_{r}"))?, const_index: None, kids: vec![lt, ht, xb, rest] }
+                            } else {
+                                return gap("split phases whose written and read arrays cannot be ordered in the pool");
+                            }
                         }
                         St::Xchg(vs, h, mode, b) => {
                             let span = *self.xspans.get(&vs[0]).ok_or_else(|| ReadError::Gap("our software has a bug: a swap-pair array with no span".into()))?;
@@ -3493,8 +3516,12 @@ impl<'a> Reader<'a> {
         self.ssa_defs = sets.into_iter().filter(|(r, _)| count[r] == 1 && self.ssa.contains(r)).collect();
         let out = self.structure(out)?;
         if !self.splits.is_empty() {
-            let pairs: Vec<(usize, usize)> = self.splits.iter().flat_map(|(w, r)| w.iter().flat_map(move |a| r.iter().map(move |b| (*a, *b)))).collect();
-            self.place(&pairs)?;
+            let pairs: Vec<(usize, usize)> = self.splits.iter().flat_map(|(w, r, _)| w.iter().flat_map(move |a| r.iter().map(move |b| (*a, *b)))).collect();
+            // split phases asking opposite orders: each one-array split then stands in its own window (wg.split2)
+            if self.place(&pairs).is_err() {
+                let single: Vec<(usize, usize)> = self.splits.iter().filter(|(_, _, window)| !window).flat_map(|(w, r, _)| w.iter().flat_map(move |a| r.iter().map(move |b| (*a, *b)))).collect();
+                self.place(&single)?;
+            }
         }
         let k = self.k.fuel_budget;
         let need = self.need_all(&out)?;
@@ -4185,7 +4212,7 @@ fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
                 ex(&l.bound, out);
                 wg_accesses(&l.body, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => wg_accesses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, _, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => wg_accesses(b, out),
             St::BLoad(_, v, _, _) | St::QLoad(_, v, _) => out.push((*v, None)),
             St::BSet(v, _, _, x) => {
                 out.push((*v, None));
@@ -4220,7 +4247,7 @@ fn plain_written(sts: &[St], out: &mut Vec<usize>) {
                 plain_written(b, out);
             }
             St::Loop(l) => plain_written(&l.body, out),
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => plain_written(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, _, b) | St::Pair(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => plain_written(b, out),
             St::BSet(v, _, _, _) | St::SSet(v, _, _, _) | St::QOwnSet(v, _, _) | St::GSet(v, _, _) => out.push(*v),
             St::XSet(_, v, _, _) => out.push(*v),
             _ => {}
@@ -4307,7 +4334,7 @@ fn wg_uses(sts: &[St], out: &mut Vec<usize>) {
                 wg_uses_e(e, out);
                 wg_uses(b, out);
             }
-            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => wg_uses(b, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, _, b) | St::Xchg(_, _, _, b) | St::BPhase(_, _, b) | St::SplitAt(_, _, b) | St::SlotPhase(_, _, _, b) | St::QSplit(_, _, b) | St::QPair(_, _, b) | St::SoloAt(_, b) | St::GSplit(_, _, b) => wg_uses(b, out),
             St::BLoad(_, v, _, _) => {
                 if !out.contains(v) {
                     out.push(*v);
@@ -5054,7 +5081,7 @@ impl<'a> Reader<'a> {
                     self.lidx_cap.set(saved_cap);
                     self.qm = saved_qm;
                     if r.is_ok() && !rd.iter().any(|v| wr.contains(v)) {
-                        self.splits.push((wr, rd.clone()));
+                        self.splits.push((wr, rd.clone(), false));
                         out.extend(pre.clone());
                         out.push(St::QSplit(m, rd, body));
                         return Ok(());
@@ -5079,7 +5106,7 @@ impl<'a> Reader<'a> {
                 let mut body = Vec::new();
                 let r: R<()> = a.iter().try_for_each(|x| self.g_stmt(x, &wr, g, &mut rd).map(|y| body.extend(y)));
                 if r.is_ok() && !rd.iter().any(|v| wr.contains(v)) {
-                    self.splits.push((wr, rd.clone()));
+                    self.splits.push((wr, rd.clone(), false));
                     out.extend(pre.clone());
                     out.push(St::GSplit(g, rd, body));
                     return Ok(());
@@ -5346,7 +5373,7 @@ impl<'a> Reader<'a> {
         if rd.iter().any(|v| arrays.contains(v)) {
             return Ok(None);
         }
-        self.splits.push((arrays, rd.clone()));
+        self.splits.push((arrays, rd.clone(), false));
         Ok(Some(St::SlotPhase(k, span as u32, rd, body)))
     }
 
@@ -5523,7 +5550,7 @@ impl<'a> Reader<'a> {
             body.extend(self.y_stmt(st, &arrays, c, &mut rd)?);
         }
         if !rd.is_empty() {
-            self.splits.push((arrays, rd.clone()));
+            self.splits.push((arrays, rd.clone(), false));
         }
         Ok(Some(St::BPhase(c, rd, body)))
     }
@@ -5951,8 +5978,9 @@ impl<'a> Reader<'a> {
         if rd.is_empty() || rd.iter().any(|v| wr.contains(v)) {
             return Ok(None);
         }
-        self.splits.push((wr, rd.clone()));
-        Ok(Some(St::Split(rd, body)))
+        let window = wr.len() == 1;
+        self.splits.push((wr.clone(), rd.clone(), window));
+        Ok(Some(St::Split(wr, rd, body)))
     }
 
     /// `e` in a split phase: reads of written arrays own reads, foreign reads of other arrays hoisted into `pre`.

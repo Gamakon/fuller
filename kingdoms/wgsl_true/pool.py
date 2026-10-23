@@ -105,8 +105,12 @@ def build(iface):
         R(f"wg.get_own_plain_{key}", vt_, ["u32.wgbase", "u32.wgown"], rd.format(cell), "its plain twin")
     helper("wg_v4", f"fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, {last}u)]), bitcast<f32>(wg_pool[min(b + ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, {last}u)])); }}")
     helper("wg_set_v4", f"fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) {{ if (o < {P_WORDS}u) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < {P_WORDS}u) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < {P_WORDS}u) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < {P_WORDS}u) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
-    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sp: u32) {{ if (o < sp) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < sp) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < sp) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < sp) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
-    helper("wg_v4_above", f"fn wg_v4_above(b: u32, ls: u32, i: u32, sp: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(max(b + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + ls + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + 2u * ls + i, sp), {last}u)]), bitcast<f32>(wg_pool[min(max(b + 3u * ls + i, sp), {last}u)])); }}")
+    # the split phase's window (UI1 batch 10): its writes stand in [sl, sp), its reads outside it (a read in the window
+    # reads the guard word instead), so with sl = 0 it is the split of batch 9 and with any sl the written region may
+    # stand anywhere in the pool
+    helper("xw", f"fn xw(a: u32, sl: u32, sp: u32) -> u32 {{ return select(min(a, {last}u), {last}u, a >= sl && a < sp); }}")
+    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) {{ if (o >= sl && o < sp) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls >= sl && o + ls < sp) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls >= sl && o + 2u * ls < sp) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls >= sl && o + 3u * ls < sp) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    helper("wg_v4_above", f"fn wg_v4_above(b: u32, ls: u32, i: u32, sl: u32, sp: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[xw(b + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 2u * ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 3u * ls + i, sl, sp)])); }}")
     R("wg.get_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.index"], "wg_v4({0}, {1}, {2})", "element i of a vec4 array kept as four lane regions (lane stride the second base)")
     R("wg.get_own_v4", "vec4<f32>.realw", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "an own read: a w value")
     R("wg.get_own_plain_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "its plain twin")
@@ -118,11 +122,11 @@ def build(iface):
     for x, d, k in rungs("X"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.set_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write below the split")
-            R(f"wg.qset_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write below the split (qm = T in a split phase)")
-            R(f"wg.hload_{key}_X{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no write of the phase reaches it")
-        R(f"wg.set_v4_X{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4_below({0} + {2}, {1}, {3}, sp);")
-        R(f"wg.hload_v4_X{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase", "u32.indexw"], "{0} = wg_v4_above({1}, {2}, {3}, sp);")
+            R(f"wg.set_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write in the split's window")
+            R(f"wg.qset_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write below the split (qm = T in a split phase)")
+            R(f"wg.hload_{key}_X{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format("wg_pool[xw({1} + {2}, sl, sp)]") + ";", "a read at or above the split: no write of the phase reaches it")
+        R(f"wg.set_v4_X{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4_below({0} + {2}, {1}, {3}, sl, sp);")
+        R(f"wg.hload_v4_X{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase", "u32.indexw"], "{0} = wg_v4_above({1}, {2}, {3}, sl, sp);")
     for x, d, k in rungs("S"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
@@ -204,8 +208,9 @@ def build(iface):
         R(f"wg.phase_L{d}_f{k}", s, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
         R(f"wg.pair_L{d}_f{k}", s, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = KNOB_THREADS; let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")
         R(f"wg.qpair_L{d}_f{k}", s, ["u32.uniform", "u32.lanes", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = min({1}, KNOB_THREADS); let ps = min({0}, qm / 2u); if (lidx < ps) { {2} } } workgroupBarrier(); {3}", "the tree step at a granularity of qm lanes (a power of two dividing T): writers below ps <= qm / 2 write lidx + k qm, partners at residue lidx + ps modulo qm")
-        R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qm = KNOB_THREADS; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
-        R(f"wg.qsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
+        R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = KNOB_THREADS; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
+        R(f"wg.split2_L{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = {0}; let sp = {1}; let qm = KNOB_THREADS; {2} } workgroupBarrier(); {3}", "the split phase over a window: writes in [sl, sp), reads outside it, the written region anywhere in the pool")
+        R(f"wg.qsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
         R(f"wg.solo_L{d}_f{k}", s, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
         R(f"wg.solo_at_L{d}_f{k}", s, ["u32.uniform", B("S", d, k), B("L", d, k)], "workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}", "the phase of the one invocation a uniform value names (lidx == u, the same u in every invocation)")
         R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + str(last) + "u)]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
