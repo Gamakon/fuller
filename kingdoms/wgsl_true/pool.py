@@ -39,7 +39,14 @@ P_WORDS = 6080
 # P_WORDS - 1 let a read past the end inside a phase land on an element another invocation may own (its residue
 # modulo T), a race; the guard word belongs to no one. A workgroup variable's size is rounded to 16 bytes, so the
 # plain pool holds four words past P_WORDS and the atomic pool gives up four, and the two still fill 32 KiB exactly.
-A_WORDS = 2104
+A_WORDS = 2068
+# the prefix table (UI1, 2026-10-23): `wg_seg`, 36 words taken from the atomic pool (seeds5b seed10 uses 2,051 atomic words). Words 0..=SEG_N are the table,
+# word SEG_N + 1 its count, word SEG_N + 2 its cap. Only `seg.reset` and `seg.push` write it, and only at the solo
+# rung (one invocation between two barriers): reset sets entry 0, the count and the cap; push appends entry
+# count + 1 = entry count + min(x, cap - entry count). So entries 0..=count never decrease and never pass the cap, and
+# the windows [entry p, entry p + 1) for p below the count are disjoint; a window at or past the count is empty.
+SEG_N = 32
+SEG_WORDS = 36
 # the slot counters (UI1 batch 10): their own atomic array, touched only by the slot rows, so no other atomic row can
 # move a counter while a slot phase hands out slots; four words from the atomic pool
 S_COUNTERS = 4
@@ -82,6 +89,9 @@ def declare(iface):
     PROLOGUE_TOP.append(f"var<workgroup> wg_pool: array<u32, {P_WORDS + 4}>;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_apool: array<atomic<u32>, {A_WORDS}>;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_scnt: array<atomic<u32>, {S_COUNTERS}>;")
+    PROLOGUE_TOP.append(f"var<workgroup> wg_seg: array<u32, {SEG_WORDS}>;")
+    T("u32.zown", "the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)")
+    SAFE_ARGS.add("u32.zown")
     T("reg<u32>.slot", "a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins")
     T("u32.slotc", "a slot counter of wg_scnt: a bare literal", 1, f"0..={S_COUNTERS - 1}")
     for t in ("reg<u32>.slot", "u32.slotc"):
@@ -198,8 +208,28 @@ def build(iface):
         for key, vt_, rd, wr in ELEMS:
             R(f"wg.gset_{key}_G{d}_f{k}", s, ["u32.wgbase", "u32.gown", a_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "a group leader's own write below the split")
             R(f"wg.gload_{key}_G{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
+    # ---- the prefix table and the segment phase (UI1): a solo invocation fills the table (`seg.reset`, `seg.push`);
+    # a segment phase writes element zb * zw + entry p + m of window p (m below the window's length) at a block zb of
+    # zw words below the split, m the invocation's own offset lidx + k T. Two blocks never meet (each write stays below
+    # zw in its block); in one block, two windows never meet; in one window, two own offsets never meet. Reads of the
+    # plain pool are at or above the split; the a family has no other workgroup read.
+    n_, cnt, cap = SEG_N, SEG_N + 1, SEG_N + 2
+    helper("seg_at", f"fn seg_at(i: u32) -> u32 {{ return wg_seg[min(i, {n_}u)]; }}")
+    R("seg.at", "u32.index", ["u32.index"], "seg_at({0})", "an entry of the prefix table: written only by a solo invocation between two barriers, so an ordinary value elsewhere", twin=True)
+    for x, d, k in rungs("S"):
+        s = S(x, d, k)
+        R(f"seg.reset_S{d}_f{k}", s, ["u32.index"], f"{{ wg_seg[0] = 0u; wg_seg[{cnt}u] = 0u; wg_seg[{cap}u] = {{0}}; }}", "the prefix table emptied: entry 0 is 0, the count 0, the cap the value")
+        R(f"seg.push_S{d}_f{k}", s, ["u32.index"], f"{{ let zk = min(wg_seg[{cnt}u], {n_}u); let zt = wg_seg[zk]; let zc = wg_seg[{cap}u]; let zx = min({{0}}, zc - min(zt, zc)); if (zk < {n_}u) {{ wg_seg[zk + 1u] = zt + zx; wg_seg[{cnt}u] = zk + 1u; }} }}", "the next entry: the last plus min(x, cap - last), never below it, never past the cap")
+    for x, d, k in rungs("Z"):
+        s = S(x, d, k)
+        for key, vt_, rd, wr in ELEMS:
+            R(f"wg.zset_{key}_Z{d}_f{k}", s, ["u32.xblk", a_of("u32.index"), "u32.zown", a_of(vt_)], f"{{ let zp = min({{1}}, {n_}u); let zlo = wg_seg[zp]; let zhi = select(zlo, wg_seg[min(zp + 1u, {n_}u)], zp < wg_seg[{cnt}u]); let zm = {{2}}; if (zlo <= zhi && zm < zhi - zlo && zlo + zm < zw) {{ let o = {{0}} * zw + zlo + zm; if (o < sp) {{ wg_pool[o] = " + wr.format("{3}") + "; } } }", "a write at offset m of window p of the prefix table, in block zb of the phase's zw words, below the split")
+            R(f"wg.zload_{key}_Z{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
+    R("wg.zown_x", "u32.zown", ["u32.indexa"], "(lidx + {0} * KNOB_THREADS)", "an own offset: lidx + k * T is injective across invocations")
+    R("own.u32_zown", "u32.zown", [], "lidx", "the invocation's own offset in the window's first T")
     for x, d, k in rungs("L"):
         s = S("L", d, k)
+        R(f"wg.zsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.xspan", B("Z", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let zw = {1}; {2} } workgroupBarrier(); {3}", "the segment phase: writes into the windows of the prefix table, blocks of zw words below sp; reads at or above sp")
         R(f"wg.gsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")
         R(f"wg.slot_L{d}_f{k}", s, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
         R(f"wg.bphase_L{d}_f{k}", s, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
@@ -236,13 +266,13 @@ def build(iface):
     C("literal.xspan", "u32.xspan", "{v}u", [str(1 << j) for j in range(1, 13)], "?_xspan")
     R("own.u32_xspan", "u32.xspan", [], "2u")
     R("own.u32_xmode", "u32.xmode", [], "0u")
-    for x, d, k in rungs("LCSWPXEYAG"):
+    for x, d, k in rungs("LCSWPXEYAGZ"):
         R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), [fam(x, "u32.atomicold")], "_ = {0};", "the effect without the value")
     alast = A_WORDS - 1
     acell = f"&wg_apool[min({{0}} + {{1}}, {alast}u)]"
     for fn, F in ATOMIC_FUNS.items():
         R(f"atomic.wg_{fn}", "u32.atomicold", ["u32.wgabase", "u32.index", "u32.index"], f"atomic{F}({acell}, {{2}})", "an atomic of the atomic pool: never a race, its old value order-dependent", twin=True)
     R("atomic.wg_load", "u32.atomicold", ["u32.wgabase", "u32.index"], f"atomicLoad({acell})", "a relaxed load of the atomic pool", twin=True)
-    for x, d, k in rungs("LCSWPXEYAG"):
+    for x, d, k in rungs("LCSWPXEYAGZ"):
         it, vt_ = (fam(x, "u32.index"), fam(x, "u32.index"))
         R(f"atomic.wg_store_{x}{d}_f{k}", S(x, d, k), ["u32.wgabase", it, vt_], "atomicStore(&wg_apool[min({0} + {1}, " + str(alast) + "u)], {2});", "an atomic store at any element: one atomic operation, never a race")

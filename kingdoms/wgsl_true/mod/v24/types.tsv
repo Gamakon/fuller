@@ -848,438 +848,523 @@ T0846	stmt.G5_f5	stmt	G5_f5	1	one G-rung statement at depth 5, fuel stratum 5	-
 T0847	block.G5_f5	block	G5_f5	1	a G-rung statement sequence at depth 5, fuel stratum 5	-
 T0848	stmt.G5_f6	stmt	G5_f6	1	one G-rung statement at depth 5, fuel stratum 6	-
 T0849	block.G5_f6	block	G5_f6	1	a G-rung statement sequence at depth 5, fuel stratum 6	-
-T0850	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
-T0851	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
-T0852	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
-T0853	block.XB1_f0	block	XB1_f0	1	a split-phase loop body that breaks, depth 1, stratum 0	-
-T0854	block.AB1_f0	block	AB1_f0	1	a slot-phase loop body that breaks, depth 1, stratum 0	-
-T0855	block.UB1_f0	block	UB1_f0	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 0	-
-T0856	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
-T0857	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
-T0858	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
-T0859	block.XB1_f1	block	XB1_f1	1	a split-phase loop body that breaks, depth 1, stratum 1	-
-T0860	block.AB1_f1	block	AB1_f1	1	a slot-phase loop body that breaks, depth 1, stratum 1	-
-T0861	block.UB1_f1	block	UB1_f1	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 1	-
-T0862	block.B1_f2	block	B1_f2	1	a loop body that breaks, depth 1, stratum 2	-
-T0863	block.WB1_f2	block	WB1_f2	1	a write-phase loop body that breaks, depth 1, stratum 2	-
-T0864	block.SB1_f2	block	SB1_f2	1	a solo-phase loop body that breaks, depth 1, stratum 2	-
-T0865	block.XB1_f2	block	XB1_f2	1	a split-phase loop body that breaks, depth 1, stratum 2	-
-T0866	block.AB1_f2	block	AB1_f2	1	a slot-phase loop body that breaks, depth 1, stratum 2	-
-T0867	block.UB1_f2	block	UB1_f2	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 2	-
-T0868	block.B1_f3	block	B1_f3	1	a loop body that breaks, depth 1, stratum 3	-
-T0869	block.WB1_f3	block	WB1_f3	1	a write-phase loop body that breaks, depth 1, stratum 3	-
-T0870	block.SB1_f3	block	SB1_f3	1	a solo-phase loop body that breaks, depth 1, stratum 3	-
-T0871	block.XB1_f3	block	XB1_f3	1	a split-phase loop body that breaks, depth 1, stratum 3	-
-T0872	block.AB1_f3	block	AB1_f3	1	a slot-phase loop body that breaks, depth 1, stratum 3	-
-T0873	block.UB1_f3	block	UB1_f3	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 3	-
-T0874	block.B1_f4	block	B1_f4	1	a loop body that breaks, depth 1, stratum 4	-
-T0875	block.WB1_f4	block	WB1_f4	1	a write-phase loop body that breaks, depth 1, stratum 4	-
-T0876	block.SB1_f4	block	SB1_f4	1	a solo-phase loop body that breaks, depth 1, stratum 4	-
-T0877	block.XB1_f4	block	XB1_f4	1	a split-phase loop body that breaks, depth 1, stratum 4	-
-T0878	block.AB1_f4	block	AB1_f4	1	a slot-phase loop body that breaks, depth 1, stratum 4	-
-T0879	block.UB1_f4	block	UB1_f4	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 4	-
-T0880	block.B1_f5	block	B1_f5	1	a loop body that breaks, depth 1, stratum 5	-
-T0881	block.WB1_f5	block	WB1_f5	1	a write-phase loop body that breaks, depth 1, stratum 5	-
-T0882	block.SB1_f5	block	SB1_f5	1	a solo-phase loop body that breaks, depth 1, stratum 5	-
-T0883	block.XB1_f5	block	XB1_f5	1	a split-phase loop body that breaks, depth 1, stratum 5	-
-T0884	block.AB1_f5	block	AB1_f5	1	a slot-phase loop body that breaks, depth 1, stratum 5	-
-T0885	block.UB1_f5	block	UB1_f5	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 5	-
-T0886	block.B1_f6	block	B1_f6	1	a loop body that breaks, depth 1, stratum 6	-
-T0887	block.WB1_f6	block	WB1_f6	1	a write-phase loop body that breaks, depth 1, stratum 6	-
-T0888	block.SB1_f6	block	SB1_f6	1	a solo-phase loop body that breaks, depth 1, stratum 6	-
-T0889	block.XB1_f6	block	XB1_f6	1	a split-phase loop body that breaks, depth 1, stratum 6	-
-T0890	block.AB1_f6	block	AB1_f6	1	a slot-phase loop body that breaks, depth 1, stratum 6	-
-T0891	block.UB1_f6	block	UB1_f6	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 6	-
-T0892	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
-T0893	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
-T0894	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
-T0895	block.XB2_f0	block	XB2_f0	1	a split-phase loop body that breaks, depth 2, stratum 0	-
-T0896	block.AB2_f0	block	AB2_f0	1	a slot-phase loop body that breaks, depth 2, stratum 0	-
-T0897	block.UB2_f0	block	UB2_f0	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 0	-
-T0898	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
-T0899	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
-T0900	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
-T0901	block.XB2_f1	block	XB2_f1	1	a split-phase loop body that breaks, depth 2, stratum 1	-
-T0902	block.AB2_f1	block	AB2_f1	1	a slot-phase loop body that breaks, depth 2, stratum 1	-
-T0903	block.UB2_f1	block	UB2_f1	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 1	-
-T0904	block.B2_f2	block	B2_f2	1	a loop body that breaks, depth 2, stratum 2	-
-T0905	block.WB2_f2	block	WB2_f2	1	a write-phase loop body that breaks, depth 2, stratum 2	-
-T0906	block.SB2_f2	block	SB2_f2	1	a solo-phase loop body that breaks, depth 2, stratum 2	-
-T0907	block.XB2_f2	block	XB2_f2	1	a split-phase loop body that breaks, depth 2, stratum 2	-
-T0908	block.AB2_f2	block	AB2_f2	1	a slot-phase loop body that breaks, depth 2, stratum 2	-
-T0909	block.UB2_f2	block	UB2_f2	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 2	-
-T0910	block.B2_f3	block	B2_f3	1	a loop body that breaks, depth 2, stratum 3	-
-T0911	block.WB2_f3	block	WB2_f3	1	a write-phase loop body that breaks, depth 2, stratum 3	-
-T0912	block.SB2_f3	block	SB2_f3	1	a solo-phase loop body that breaks, depth 2, stratum 3	-
-T0913	block.XB2_f3	block	XB2_f3	1	a split-phase loop body that breaks, depth 2, stratum 3	-
-T0914	block.AB2_f3	block	AB2_f3	1	a slot-phase loop body that breaks, depth 2, stratum 3	-
-T0915	block.UB2_f3	block	UB2_f3	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 3	-
-T0916	block.B2_f4	block	B2_f4	1	a loop body that breaks, depth 2, stratum 4	-
-T0917	block.WB2_f4	block	WB2_f4	1	a write-phase loop body that breaks, depth 2, stratum 4	-
-T0918	block.SB2_f4	block	SB2_f4	1	a solo-phase loop body that breaks, depth 2, stratum 4	-
-T0919	block.XB2_f4	block	XB2_f4	1	a split-phase loop body that breaks, depth 2, stratum 4	-
-T0920	block.AB2_f4	block	AB2_f4	1	a slot-phase loop body that breaks, depth 2, stratum 4	-
-T0921	block.UB2_f4	block	UB2_f4	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 4	-
-T0922	block.B2_f5	block	B2_f5	1	a loop body that breaks, depth 2, stratum 5	-
-T0923	block.WB2_f5	block	WB2_f5	1	a write-phase loop body that breaks, depth 2, stratum 5	-
-T0924	block.SB2_f5	block	SB2_f5	1	a solo-phase loop body that breaks, depth 2, stratum 5	-
-T0925	block.XB2_f5	block	XB2_f5	1	a split-phase loop body that breaks, depth 2, stratum 5	-
-T0926	block.AB2_f5	block	AB2_f5	1	a slot-phase loop body that breaks, depth 2, stratum 5	-
-T0927	block.UB2_f5	block	UB2_f5	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 5	-
-T0928	block.B2_f6	block	B2_f6	1	a loop body that breaks, depth 2, stratum 6	-
-T0929	block.WB2_f6	block	WB2_f6	1	a write-phase loop body that breaks, depth 2, stratum 6	-
-T0930	block.SB2_f6	block	SB2_f6	1	a solo-phase loop body that breaks, depth 2, stratum 6	-
-T0931	block.XB2_f6	block	XB2_f6	1	a split-phase loop body that breaks, depth 2, stratum 6	-
-T0932	block.AB2_f6	block	AB2_f6	1	a slot-phase loop body that breaks, depth 2, stratum 6	-
-T0933	block.UB2_f6	block	UB2_f6	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 6	-
-T0934	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
-T0935	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
-T0936	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
-T0937	block.XB3_f0	block	XB3_f0	1	a split-phase loop body that breaks, depth 3, stratum 0	-
-T0938	block.AB3_f0	block	AB3_f0	1	a slot-phase loop body that breaks, depth 3, stratum 0	-
-T0939	block.UB3_f0	block	UB3_f0	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 0	-
-T0940	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
-T0941	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
-T0942	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
-T0943	block.XB3_f1	block	XB3_f1	1	a split-phase loop body that breaks, depth 3, stratum 1	-
-T0944	block.AB3_f1	block	AB3_f1	1	a slot-phase loop body that breaks, depth 3, stratum 1	-
-T0945	block.UB3_f1	block	UB3_f1	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 1	-
-T0946	block.B3_f2	block	B3_f2	1	a loop body that breaks, depth 3, stratum 2	-
-T0947	block.WB3_f2	block	WB3_f2	1	a write-phase loop body that breaks, depth 3, stratum 2	-
-T0948	block.SB3_f2	block	SB3_f2	1	a solo-phase loop body that breaks, depth 3, stratum 2	-
-T0949	block.XB3_f2	block	XB3_f2	1	a split-phase loop body that breaks, depth 3, stratum 2	-
-T0950	block.AB3_f2	block	AB3_f2	1	a slot-phase loop body that breaks, depth 3, stratum 2	-
-T0951	block.UB3_f2	block	UB3_f2	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 2	-
-T0952	block.B3_f3	block	B3_f3	1	a loop body that breaks, depth 3, stratum 3	-
-T0953	block.WB3_f3	block	WB3_f3	1	a write-phase loop body that breaks, depth 3, stratum 3	-
-T0954	block.SB3_f3	block	SB3_f3	1	a solo-phase loop body that breaks, depth 3, stratum 3	-
-T0955	block.XB3_f3	block	XB3_f3	1	a split-phase loop body that breaks, depth 3, stratum 3	-
-T0956	block.AB3_f3	block	AB3_f3	1	a slot-phase loop body that breaks, depth 3, stratum 3	-
-T0957	block.UB3_f3	block	UB3_f3	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 3	-
-T0958	block.B3_f4	block	B3_f4	1	a loop body that breaks, depth 3, stratum 4	-
-T0959	block.WB3_f4	block	WB3_f4	1	a write-phase loop body that breaks, depth 3, stratum 4	-
-T0960	block.SB3_f4	block	SB3_f4	1	a solo-phase loop body that breaks, depth 3, stratum 4	-
-T0961	block.XB3_f4	block	XB3_f4	1	a split-phase loop body that breaks, depth 3, stratum 4	-
-T0962	block.AB3_f4	block	AB3_f4	1	a slot-phase loop body that breaks, depth 3, stratum 4	-
-T0963	block.UB3_f4	block	UB3_f4	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 4	-
-T0964	block.B3_f5	block	B3_f5	1	a loop body that breaks, depth 3, stratum 5	-
-T0965	block.WB3_f5	block	WB3_f5	1	a write-phase loop body that breaks, depth 3, stratum 5	-
-T0966	block.SB3_f5	block	SB3_f5	1	a solo-phase loop body that breaks, depth 3, stratum 5	-
-T0967	block.XB3_f5	block	XB3_f5	1	a split-phase loop body that breaks, depth 3, stratum 5	-
-T0968	block.AB3_f5	block	AB3_f5	1	a slot-phase loop body that breaks, depth 3, stratum 5	-
-T0969	block.UB3_f5	block	UB3_f5	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 5	-
-T0970	block.B3_f6	block	B3_f6	1	a loop body that breaks, depth 3, stratum 6	-
-T0971	block.WB3_f6	block	WB3_f6	1	a write-phase loop body that breaks, depth 3, stratum 6	-
-T0972	block.SB3_f6	block	SB3_f6	1	a solo-phase loop body that breaks, depth 3, stratum 6	-
-T0973	block.XB3_f6	block	XB3_f6	1	a split-phase loop body that breaks, depth 3, stratum 6	-
-T0974	block.AB3_f6	block	AB3_f6	1	a slot-phase loop body that breaks, depth 3, stratum 6	-
-T0975	block.UB3_f6	block	UB3_f6	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 6	-
-T0976	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
-T0977	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
-T0978	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
-T0979	block.XB4_f0	block	XB4_f0	1	a split-phase loop body that breaks, depth 4, stratum 0	-
-T0980	block.AB4_f0	block	AB4_f0	1	a slot-phase loop body that breaks, depth 4, stratum 0	-
-T0981	block.UB4_f0	block	UB4_f0	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 0	-
-T0982	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
-T0983	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
-T0984	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
-T0985	block.XB4_f1	block	XB4_f1	1	a split-phase loop body that breaks, depth 4, stratum 1	-
-T0986	block.AB4_f1	block	AB4_f1	1	a slot-phase loop body that breaks, depth 4, stratum 1	-
-T0987	block.UB4_f1	block	UB4_f1	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 1	-
-T0988	block.B4_f2	block	B4_f2	1	a loop body that breaks, depth 4, stratum 2	-
-T0989	block.WB4_f2	block	WB4_f2	1	a write-phase loop body that breaks, depth 4, stratum 2	-
-T0990	block.SB4_f2	block	SB4_f2	1	a solo-phase loop body that breaks, depth 4, stratum 2	-
-T0991	block.XB4_f2	block	XB4_f2	1	a split-phase loop body that breaks, depth 4, stratum 2	-
-T0992	block.AB4_f2	block	AB4_f2	1	a slot-phase loop body that breaks, depth 4, stratum 2	-
-T0993	block.UB4_f2	block	UB4_f2	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 2	-
-T0994	block.B4_f3	block	B4_f3	1	a loop body that breaks, depth 4, stratum 3	-
-T0995	block.WB4_f3	block	WB4_f3	1	a write-phase loop body that breaks, depth 4, stratum 3	-
-T0996	block.SB4_f3	block	SB4_f3	1	a solo-phase loop body that breaks, depth 4, stratum 3	-
-T0997	block.XB4_f3	block	XB4_f3	1	a split-phase loop body that breaks, depth 4, stratum 3	-
-T0998	block.AB4_f3	block	AB4_f3	1	a slot-phase loop body that breaks, depth 4, stratum 3	-
-T0999	block.UB4_f3	block	UB4_f3	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 3	-
-T1000	block.B4_f4	block	B4_f4	1	a loop body that breaks, depth 4, stratum 4	-
-T1001	block.WB4_f4	block	WB4_f4	1	a write-phase loop body that breaks, depth 4, stratum 4	-
-T1002	block.SB4_f4	block	SB4_f4	1	a solo-phase loop body that breaks, depth 4, stratum 4	-
-T1003	block.XB4_f4	block	XB4_f4	1	a split-phase loop body that breaks, depth 4, stratum 4	-
-T1004	block.AB4_f4	block	AB4_f4	1	a slot-phase loop body that breaks, depth 4, stratum 4	-
-T1005	block.UB4_f4	block	UB4_f4	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 4	-
-T1006	block.B4_f5	block	B4_f5	1	a loop body that breaks, depth 4, stratum 5	-
-T1007	block.WB4_f5	block	WB4_f5	1	a write-phase loop body that breaks, depth 4, stratum 5	-
-T1008	block.SB4_f5	block	SB4_f5	1	a solo-phase loop body that breaks, depth 4, stratum 5	-
-T1009	block.XB4_f5	block	XB4_f5	1	a split-phase loop body that breaks, depth 4, stratum 5	-
-T1010	block.AB4_f5	block	AB4_f5	1	a slot-phase loop body that breaks, depth 4, stratum 5	-
-T1011	block.UB4_f5	block	UB4_f5	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 5	-
-T1012	block.B4_f6	block	B4_f6	1	a loop body that breaks, depth 4, stratum 6	-
-T1013	block.WB4_f6	block	WB4_f6	1	a write-phase loop body that breaks, depth 4, stratum 6	-
-T1014	block.SB4_f6	block	SB4_f6	1	a solo-phase loop body that breaks, depth 4, stratum 6	-
-T1015	block.XB4_f6	block	XB4_f6	1	a split-phase loop body that breaks, depth 4, stratum 6	-
-T1016	block.AB4_f6	block	AB4_f6	1	a slot-phase loop body that breaks, depth 4, stratum 6	-
-T1017	block.UB4_f6	block	UB4_f6	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 6	-
-T1018	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
-T1019	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
-T1020	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
-T1021	block.XB5_f0	block	XB5_f0	1	a split-phase loop body that breaks, depth 5, stratum 0	-
-T1022	block.AB5_f0	block	AB5_f0	1	a slot-phase loop body that breaks, depth 5, stratum 0	-
-T1023	block.UB5_f0	block	UB5_f0	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 0	-
-T1024	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
-T1025	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
-T1026	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
-T1027	block.XB5_f1	block	XB5_f1	1	a split-phase loop body that breaks, depth 5, stratum 1	-
-T1028	block.AB5_f1	block	AB5_f1	1	a slot-phase loop body that breaks, depth 5, stratum 1	-
-T1029	block.UB5_f1	block	UB5_f1	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 1	-
-T1030	block.B5_f2	block	B5_f2	1	a loop body that breaks, depth 5, stratum 2	-
-T1031	block.WB5_f2	block	WB5_f2	1	a write-phase loop body that breaks, depth 5, stratum 2	-
-T1032	block.SB5_f2	block	SB5_f2	1	a solo-phase loop body that breaks, depth 5, stratum 2	-
-T1033	block.XB5_f2	block	XB5_f2	1	a split-phase loop body that breaks, depth 5, stratum 2	-
-T1034	block.AB5_f2	block	AB5_f2	1	a slot-phase loop body that breaks, depth 5, stratum 2	-
-T1035	block.UB5_f2	block	UB5_f2	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 2	-
-T1036	block.B5_f3	block	B5_f3	1	a loop body that breaks, depth 5, stratum 3	-
-T1037	block.WB5_f3	block	WB5_f3	1	a write-phase loop body that breaks, depth 5, stratum 3	-
-T1038	block.SB5_f3	block	SB5_f3	1	a solo-phase loop body that breaks, depth 5, stratum 3	-
-T1039	block.XB5_f3	block	XB5_f3	1	a split-phase loop body that breaks, depth 5, stratum 3	-
-T1040	block.AB5_f3	block	AB5_f3	1	a slot-phase loop body that breaks, depth 5, stratum 3	-
-T1041	block.UB5_f3	block	UB5_f3	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 3	-
-T1042	block.B5_f4	block	B5_f4	1	a loop body that breaks, depth 5, stratum 4	-
-T1043	block.WB5_f4	block	WB5_f4	1	a write-phase loop body that breaks, depth 5, stratum 4	-
-T1044	block.SB5_f4	block	SB5_f4	1	a solo-phase loop body that breaks, depth 5, stratum 4	-
-T1045	block.XB5_f4	block	XB5_f4	1	a split-phase loop body that breaks, depth 5, stratum 4	-
-T1046	block.AB5_f4	block	AB5_f4	1	a slot-phase loop body that breaks, depth 5, stratum 4	-
-T1047	block.UB5_f4	block	UB5_f4	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 4	-
-T1048	block.B5_f5	block	B5_f5	1	a loop body that breaks, depth 5, stratum 5	-
-T1049	block.WB5_f5	block	WB5_f5	1	a write-phase loop body that breaks, depth 5, stratum 5	-
-T1050	block.SB5_f5	block	SB5_f5	1	a solo-phase loop body that breaks, depth 5, stratum 5	-
-T1051	block.XB5_f5	block	XB5_f5	1	a split-phase loop body that breaks, depth 5, stratum 5	-
-T1052	block.AB5_f5	block	AB5_f5	1	a slot-phase loop body that breaks, depth 5, stratum 5	-
-T1053	block.UB5_f5	block	UB5_f5	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 5	-
-T1054	block.B5_f6	block	B5_f6	1	a loop body that breaks, depth 5, stratum 6	-
-T1055	block.WB5_f6	block	WB5_f6	1	a write-phase loop body that breaks, depth 5, stratum 6	-
-T1056	block.SB5_f6	block	SB5_f6	1	a solo-phase loop body that breaks, depth 5, stratum 6	-
-T1057	block.XB5_f6	block	XB5_f6	1	a split-phase loop body that breaks, depth 5, stratum 6	-
-T1058	block.AB5_f6	block	AB5_f6	1	a slot-phase loop body that breaks, depth 5, stratum 6	-
-T1059	block.UB5_f6	block	UB5_f6	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 6	-
-T1060	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
-T1061	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
-T1062	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
-T1063	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
-T1064	u32.lidx	u32	lidx	1	local_invocation_index	-
-T1065	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
-T1066	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
-T1067	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
-T1068	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
-T1069	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
-T1070	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
-T1071	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
-T1072	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
-T1073	f32.reala	f32	reala	1	the slot-phase twin of f32.real: a value no workgroup read reached	-
-T1074	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
-T1075	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
-T1076	vec2<f32>.reala	vec2<f32>	reala	2	the slot-phase twin of vec2<f32>.real: a value no workgroup read reached	-
-T1077	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
-T1078	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
-T1079	vec3<f32>.reala	vec3<f32>	reala	3	the slot-phase twin of vec3<f32>.real: a value no workgroup read reached	-
-T1080	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
-T1081	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
-T1082	vec4<f32>.reala	vec4<f32>	reala	4	the slot-phase twin of vec4<f32>.real: a value no workgroup read reached	-
-T1083	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
-T1084	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
-T1085	f16.reala	f16	reala	1	the slot-phase twin of f16.real: a value no workgroup read reached	-
-T1086	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
-T1087	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
-T1088	vec2<f16>.reala	vec2<f16>	reala	2	the slot-phase twin of vec2<f16>.real: a value no workgroup read reached	-
-T1089	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
-T1090	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
-T1091	vec3<f16>.reala	vec3<f16>	reala	3	the slot-phase twin of vec3<f16>.real: a value no workgroup read reached	-
-T1092	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
-T1093	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
-T1094	vec4<f16>.reala	vec4<f16>	reala	4	the slot-phase twin of vec4<f16>.real: a value no workgroup read reached	-
-T1095	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
-T1096	u32.indexa	u32	indexa	1	the slot-phase twin of u32.index: a value no workgroup read reached	-
-T1097	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
-T1098	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
-T1099	vec2<u32>.indexa	vec2<u32>	indexa	2	the slot-phase twin of vec2<u32>.index: a value no workgroup read reached	-
-T1100	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
-T1101	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
-T1102	vec3<u32>.indexa	vec3<u32>	indexa	3	the slot-phase twin of vec3<u32>.index: a value no workgroup read reached	-
-T1103	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
-T1104	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
-T1105	vec4<u32>.indexa	vec4<u32>	indexa	4	the slot-phase twin of vec4<u32>.index: a value no workgroup read reached	-
-T1106	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
-T1107	u32.counta	u32	counta	1	the slot-phase twin of u32.count: a value no workgroup read reached	-
-T1108	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
-T1109	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
-T1110	vec2<u32>.counta	vec2<u32>	counta	2	the slot-phase twin of vec2<u32>.count: a value no workgroup read reached	-
-T1111	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
-T1112	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
-T1113	vec3<u32>.counta	vec3<u32>	counta	3	the slot-phase twin of vec3<u32>.count: a value no workgroup read reached	-
-T1114	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
-T1115	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
-T1116	vec4<u32>.counta	vec4<u32>	counta	4	the slot-phase twin of vec4<u32>.count: a value no workgroup read reached	-
-T1117	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
-T1118	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
-T1119	i32.inta	i32	inta	1	the slot-phase twin of i32.int: a value no workgroup read reached	-
-T1120	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
-T1121	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
-T1122	vec2<i32>.inta	vec2<i32>	inta	2	the slot-phase twin of vec2<i32>.int: a value no workgroup read reached	-
-T1123	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
-T1124	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
-T1125	vec3<i32>.inta	vec3<i32>	inta	3	the slot-phase twin of vec3<i32>.int: a value no workgroup read reached	-
-T1126	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
-T1127	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
-T1128	vec4<i32>.inta	vec4<i32>	inta	4	the slot-phase twin of vec4<i32>.int: a value no workgroup read reached	-
-T1129	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
-T1130	bool.flaga	bool	flaga	1	the slot-phase twin of bool.flag: a value no workgroup read reached	-
-T1131	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
-T1132	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
-T1133	vec2<bool>.flaga	vec2<bool>	flaga	2	the slot-phase twin of vec2<bool>.flag: a value no workgroup read reached	-
-T1134	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
-T1135	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
-T1136	vec3<bool>.flaga	vec3<bool>	flaga	3	the slot-phase twin of vec3<bool>.flag: a value no workgroup read reached	-
-T1137	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
-T1138	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
-T1139	vec4<bool>.flaga	vec4<bool>	flaga	4	the slot-phase twin of vec4<bool>.flag: a value no workgroup read reached	-
-T1140	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
-T1141	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
-T1142	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T1143	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T1144	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
-T1145	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
-T1146	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
-T1147	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
-T1148	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T1149	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T1150	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
-T1151	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
-T1152	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
-T1153	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
-T1154	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
-T1155	mat2x2<f32>.reala	mat2x2<f32>	reala	4	the slot-phase twin of mat2x2<f32>.real: a value no workgroup read reached	-
-T1156	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
-T1157	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
-T1158	mat2x3<f32>.reala	mat2x3<f32>	reala	6	the slot-phase twin of mat2x3<f32>.real: a value no workgroup read reached	-
-T1159	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
-T1160	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
-T1161	mat2x4<f32>.reala	mat2x4<f32>	reala	8	the slot-phase twin of mat2x4<f32>.real: a value no workgroup read reached	-
-T1162	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
-T1163	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
-T1164	mat3x2<f32>.reala	mat3x2<f32>	reala	6	the slot-phase twin of mat3x2<f32>.real: a value no workgroup read reached	-
-T1165	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
-T1166	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
-T1167	mat3x3<f32>.reala	mat3x3<f32>	reala	9	the slot-phase twin of mat3x3<f32>.real: a value no workgroup read reached	-
-T1168	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
-T1169	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
-T1170	mat3x4<f32>.reala	mat3x4<f32>	reala	12	the slot-phase twin of mat3x4<f32>.real: a value no workgroup read reached	-
-T1171	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
-T1172	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
-T1173	mat4x2<f32>.reala	mat4x2<f32>	reala	8	the slot-phase twin of mat4x2<f32>.real: a value no workgroup read reached	-
-T1174	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
-T1175	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
-T1176	mat4x3<f32>.reala	mat4x3<f32>	reala	12	the slot-phase twin of mat4x3<f32>.real: a value no workgroup read reached	-
-T1177	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
-T1178	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
-T1179	mat4x4<f32>.reala	mat4x4<f32>	reala	16	the slot-phase twin of mat4x4<f32>.real: a value no workgroup read reached	-
-T1180	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
-T1181	u32.bitsw	u32	bitsw	1	the write-phase twin of u32.bits: a value no foreign workgroup read reached	-
-T1182	u32.bitsa	u32	bitsa	1	the slot-phase twin of u32.bits: a value no workgroup read reached	-
-T1183	u32.hash32	u32	hash32	1	a 32-bit hash state	-
-T1184	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
-T1185	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
-T1186	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
-T1187	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
-T1188	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
-T1189	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
-T1190	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
-T1191	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
-T1192	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
-T1193	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
-T1194	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
-T1195	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
-T1196	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
-T1197	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
-T1198	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
-T1199	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
-T1200	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
-T1201	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
-T1202	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
-T1203	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
-T1204	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
-T1205	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
-T1206	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
-T1207	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
-T1208	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
-T1209	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
-T1210	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
-T1211	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
-T1212	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
-T1213	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
-T1214	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
-T1215	u32.pidx_4a	u32	pidx_4a	1	the slot-phase twin of u32.pidx_4: a value no workgroup read reached	-
-T1216	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
-T1217	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
-T1218	u32.pidx_6a	u32	pidx_6a	1	the slot-phase twin of u32.pidx_6: a value no workgroup read reached	-
-T1219	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
-T1220	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
-T1221	u32.pidx_7a	u32	pidx_7a	1	the slot-phase twin of u32.pidx_7: a value no workgroup read reached	-
-T1222	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
-T1223	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
-T1224	u32.pidx_8a	u32	pidx_8a	1	the slot-phase twin of u32.pidx_8: a value no workgroup read reached	-
-T1225	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
-T1226	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
-T1227	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
-T1228	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
-T1229	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
-T1230	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
-T1231	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
-T1232	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
-T1233	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
-T1234	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
-T1235	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
-T1236	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
-T1237	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
-T1238	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
-T1239	u32.boundx6a	u32	boundx6a	1	the slot-phase twin of u32.boundx6: a value no workgroup read reached	-
-T1240	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
-T1241	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
-T1242	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
-T1243	u32.boundx12a	u32	boundx12a	1	the slot-phase twin of u32.boundx12: a value no workgroup read reached	-
-T1244	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
-T1245	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
-T1246	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
-T1247	u32.boundx18a	u32	boundx18a	1	the slot-phase twin of u32.boundx18: a value no workgroup read reached	-
-T1248	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
-T1249	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
-T1250	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
-T1251	u32.boundx24a	u32	boundx24a	1	the slot-phase twin of u32.boundx24: a value no workgroup read reached	-
-T1252	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
-T1253	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
-T1254	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
-T1255	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
-T1256	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
-T1257	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
-T1258	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
-T1259	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
-T1260	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
-T1261	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
-T1262	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T1263	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T1264	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
-T1265	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
-T1266	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
-T1267	u32.plast_8	u32	plast_8	1	the last index of a private array held in a 256-element array: a bare literal	0..=255
-T1268	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
-T1269	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
-T1270	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
-T1271	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
-T1272	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
-T1273	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
-T1274	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
-T1275	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
-T1276	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
-T1277	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
-T1278	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
-T1279	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
-T1280	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
-T1281	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
-T1282	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2103
-T1283	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
-T1284	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3
+T0850	stmt.Z0_f0	stmt	Z0_f0	1	one Z-rung statement at depth 0, fuel stratum 0	-
+T0851	block.Z0_f0	block	Z0_f0	1	a Z-rung statement sequence at depth 0, fuel stratum 0	-
+T0852	stmt.Z0_f1	stmt	Z0_f1	1	one Z-rung statement at depth 0, fuel stratum 1	-
+T0853	block.Z0_f1	block	Z0_f1	1	a Z-rung statement sequence at depth 0, fuel stratum 1	-
+T0854	stmt.Z0_f2	stmt	Z0_f2	1	one Z-rung statement at depth 0, fuel stratum 2	-
+T0855	block.Z0_f2	block	Z0_f2	1	a Z-rung statement sequence at depth 0, fuel stratum 2	-
+T0856	stmt.Z0_f3	stmt	Z0_f3	1	one Z-rung statement at depth 0, fuel stratum 3	-
+T0857	block.Z0_f3	block	Z0_f3	1	a Z-rung statement sequence at depth 0, fuel stratum 3	-
+T0858	stmt.Z0_f4	stmt	Z0_f4	1	one Z-rung statement at depth 0, fuel stratum 4	-
+T0859	block.Z0_f4	block	Z0_f4	1	a Z-rung statement sequence at depth 0, fuel stratum 4	-
+T0860	stmt.Z0_f5	stmt	Z0_f5	1	one Z-rung statement at depth 0, fuel stratum 5	-
+T0861	block.Z0_f5	block	Z0_f5	1	a Z-rung statement sequence at depth 0, fuel stratum 5	-
+T0862	stmt.Z0_f6	stmt	Z0_f6	1	one Z-rung statement at depth 0, fuel stratum 6	-
+T0863	block.Z0_f6	block	Z0_f6	1	a Z-rung statement sequence at depth 0, fuel stratum 6	-
+T0864	stmt.Z1_f0	stmt	Z1_f0	1	one Z-rung statement at depth 1, fuel stratum 0	-
+T0865	block.Z1_f0	block	Z1_f0	1	a Z-rung statement sequence at depth 1, fuel stratum 0	-
+T0866	stmt.Z1_f1	stmt	Z1_f1	1	one Z-rung statement at depth 1, fuel stratum 1	-
+T0867	block.Z1_f1	block	Z1_f1	1	a Z-rung statement sequence at depth 1, fuel stratum 1	-
+T0868	stmt.Z1_f2	stmt	Z1_f2	1	one Z-rung statement at depth 1, fuel stratum 2	-
+T0869	block.Z1_f2	block	Z1_f2	1	a Z-rung statement sequence at depth 1, fuel stratum 2	-
+T0870	stmt.Z1_f3	stmt	Z1_f3	1	one Z-rung statement at depth 1, fuel stratum 3	-
+T0871	block.Z1_f3	block	Z1_f3	1	a Z-rung statement sequence at depth 1, fuel stratum 3	-
+T0872	stmt.Z1_f4	stmt	Z1_f4	1	one Z-rung statement at depth 1, fuel stratum 4	-
+T0873	block.Z1_f4	block	Z1_f4	1	a Z-rung statement sequence at depth 1, fuel stratum 4	-
+T0874	stmt.Z1_f5	stmt	Z1_f5	1	one Z-rung statement at depth 1, fuel stratum 5	-
+T0875	block.Z1_f5	block	Z1_f5	1	a Z-rung statement sequence at depth 1, fuel stratum 5	-
+T0876	stmt.Z1_f6	stmt	Z1_f6	1	one Z-rung statement at depth 1, fuel stratum 6	-
+T0877	block.Z1_f6	block	Z1_f6	1	a Z-rung statement sequence at depth 1, fuel stratum 6	-
+T0878	stmt.Z2_f0	stmt	Z2_f0	1	one Z-rung statement at depth 2, fuel stratum 0	-
+T0879	block.Z2_f0	block	Z2_f0	1	a Z-rung statement sequence at depth 2, fuel stratum 0	-
+T0880	stmt.Z2_f1	stmt	Z2_f1	1	one Z-rung statement at depth 2, fuel stratum 1	-
+T0881	block.Z2_f1	block	Z2_f1	1	a Z-rung statement sequence at depth 2, fuel stratum 1	-
+T0882	stmt.Z2_f2	stmt	Z2_f2	1	one Z-rung statement at depth 2, fuel stratum 2	-
+T0883	block.Z2_f2	block	Z2_f2	1	a Z-rung statement sequence at depth 2, fuel stratum 2	-
+T0884	stmt.Z2_f3	stmt	Z2_f3	1	one Z-rung statement at depth 2, fuel stratum 3	-
+T0885	block.Z2_f3	block	Z2_f3	1	a Z-rung statement sequence at depth 2, fuel stratum 3	-
+T0886	stmt.Z2_f4	stmt	Z2_f4	1	one Z-rung statement at depth 2, fuel stratum 4	-
+T0887	block.Z2_f4	block	Z2_f4	1	a Z-rung statement sequence at depth 2, fuel stratum 4	-
+T0888	stmt.Z2_f5	stmt	Z2_f5	1	one Z-rung statement at depth 2, fuel stratum 5	-
+T0889	block.Z2_f5	block	Z2_f5	1	a Z-rung statement sequence at depth 2, fuel stratum 5	-
+T0890	stmt.Z2_f6	stmt	Z2_f6	1	one Z-rung statement at depth 2, fuel stratum 6	-
+T0891	block.Z2_f6	block	Z2_f6	1	a Z-rung statement sequence at depth 2, fuel stratum 6	-
+T0892	stmt.Z3_f0	stmt	Z3_f0	1	one Z-rung statement at depth 3, fuel stratum 0	-
+T0893	block.Z3_f0	block	Z3_f0	1	a Z-rung statement sequence at depth 3, fuel stratum 0	-
+T0894	stmt.Z3_f1	stmt	Z3_f1	1	one Z-rung statement at depth 3, fuel stratum 1	-
+T0895	block.Z3_f1	block	Z3_f1	1	a Z-rung statement sequence at depth 3, fuel stratum 1	-
+T0896	stmt.Z3_f2	stmt	Z3_f2	1	one Z-rung statement at depth 3, fuel stratum 2	-
+T0897	block.Z3_f2	block	Z3_f2	1	a Z-rung statement sequence at depth 3, fuel stratum 2	-
+T0898	stmt.Z3_f3	stmt	Z3_f3	1	one Z-rung statement at depth 3, fuel stratum 3	-
+T0899	block.Z3_f3	block	Z3_f3	1	a Z-rung statement sequence at depth 3, fuel stratum 3	-
+T0900	stmt.Z3_f4	stmt	Z3_f4	1	one Z-rung statement at depth 3, fuel stratum 4	-
+T0901	block.Z3_f4	block	Z3_f4	1	a Z-rung statement sequence at depth 3, fuel stratum 4	-
+T0902	stmt.Z3_f5	stmt	Z3_f5	1	one Z-rung statement at depth 3, fuel stratum 5	-
+T0903	block.Z3_f5	block	Z3_f5	1	a Z-rung statement sequence at depth 3, fuel stratum 5	-
+T0904	stmt.Z3_f6	stmt	Z3_f6	1	one Z-rung statement at depth 3, fuel stratum 6	-
+T0905	block.Z3_f6	block	Z3_f6	1	a Z-rung statement sequence at depth 3, fuel stratum 6	-
+T0906	stmt.Z4_f0	stmt	Z4_f0	1	one Z-rung statement at depth 4, fuel stratum 0	-
+T0907	block.Z4_f0	block	Z4_f0	1	a Z-rung statement sequence at depth 4, fuel stratum 0	-
+T0908	stmt.Z4_f1	stmt	Z4_f1	1	one Z-rung statement at depth 4, fuel stratum 1	-
+T0909	block.Z4_f1	block	Z4_f1	1	a Z-rung statement sequence at depth 4, fuel stratum 1	-
+T0910	stmt.Z4_f2	stmt	Z4_f2	1	one Z-rung statement at depth 4, fuel stratum 2	-
+T0911	block.Z4_f2	block	Z4_f2	1	a Z-rung statement sequence at depth 4, fuel stratum 2	-
+T0912	stmt.Z4_f3	stmt	Z4_f3	1	one Z-rung statement at depth 4, fuel stratum 3	-
+T0913	block.Z4_f3	block	Z4_f3	1	a Z-rung statement sequence at depth 4, fuel stratum 3	-
+T0914	stmt.Z4_f4	stmt	Z4_f4	1	one Z-rung statement at depth 4, fuel stratum 4	-
+T0915	block.Z4_f4	block	Z4_f4	1	a Z-rung statement sequence at depth 4, fuel stratum 4	-
+T0916	stmt.Z4_f5	stmt	Z4_f5	1	one Z-rung statement at depth 4, fuel stratum 5	-
+T0917	block.Z4_f5	block	Z4_f5	1	a Z-rung statement sequence at depth 4, fuel stratum 5	-
+T0918	stmt.Z4_f6	stmt	Z4_f6	1	one Z-rung statement at depth 4, fuel stratum 6	-
+T0919	block.Z4_f6	block	Z4_f6	1	a Z-rung statement sequence at depth 4, fuel stratum 6	-
+T0920	stmt.Z5_f0	stmt	Z5_f0	1	one Z-rung statement at depth 5, fuel stratum 0	-
+T0921	block.Z5_f0	block	Z5_f0	1	a Z-rung statement sequence at depth 5, fuel stratum 0	-
+T0922	stmt.Z5_f1	stmt	Z5_f1	1	one Z-rung statement at depth 5, fuel stratum 1	-
+T0923	block.Z5_f1	block	Z5_f1	1	a Z-rung statement sequence at depth 5, fuel stratum 1	-
+T0924	stmt.Z5_f2	stmt	Z5_f2	1	one Z-rung statement at depth 5, fuel stratum 2	-
+T0925	block.Z5_f2	block	Z5_f2	1	a Z-rung statement sequence at depth 5, fuel stratum 2	-
+T0926	stmt.Z5_f3	stmt	Z5_f3	1	one Z-rung statement at depth 5, fuel stratum 3	-
+T0927	block.Z5_f3	block	Z5_f3	1	a Z-rung statement sequence at depth 5, fuel stratum 3	-
+T0928	stmt.Z5_f4	stmt	Z5_f4	1	one Z-rung statement at depth 5, fuel stratum 4	-
+T0929	block.Z5_f4	block	Z5_f4	1	a Z-rung statement sequence at depth 5, fuel stratum 4	-
+T0930	stmt.Z5_f5	stmt	Z5_f5	1	one Z-rung statement at depth 5, fuel stratum 5	-
+T0931	block.Z5_f5	block	Z5_f5	1	a Z-rung statement sequence at depth 5, fuel stratum 5	-
+T0932	stmt.Z5_f6	stmt	Z5_f6	1	one Z-rung statement at depth 5, fuel stratum 6	-
+T0933	block.Z5_f6	block	Z5_f6	1	a Z-rung statement sequence at depth 5, fuel stratum 6	-
+T0934	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
+T0935	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
+T0936	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
+T0937	block.XB1_f0	block	XB1_f0	1	a split-phase loop body that breaks, depth 1, stratum 0	-
+T0938	block.AB1_f0	block	AB1_f0	1	a slot-phase loop body that breaks, depth 1, stratum 0	-
+T0939	block.UB1_f0	block	UB1_f0	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 0	-
+T0940	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
+T0941	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
+T0942	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
+T0943	block.XB1_f1	block	XB1_f1	1	a split-phase loop body that breaks, depth 1, stratum 1	-
+T0944	block.AB1_f1	block	AB1_f1	1	a slot-phase loop body that breaks, depth 1, stratum 1	-
+T0945	block.UB1_f1	block	UB1_f1	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 1	-
+T0946	block.B1_f2	block	B1_f2	1	a loop body that breaks, depth 1, stratum 2	-
+T0947	block.WB1_f2	block	WB1_f2	1	a write-phase loop body that breaks, depth 1, stratum 2	-
+T0948	block.SB1_f2	block	SB1_f2	1	a solo-phase loop body that breaks, depth 1, stratum 2	-
+T0949	block.XB1_f2	block	XB1_f2	1	a split-phase loop body that breaks, depth 1, stratum 2	-
+T0950	block.AB1_f2	block	AB1_f2	1	a slot-phase loop body that breaks, depth 1, stratum 2	-
+T0951	block.UB1_f2	block	UB1_f2	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 2	-
+T0952	block.B1_f3	block	B1_f3	1	a loop body that breaks, depth 1, stratum 3	-
+T0953	block.WB1_f3	block	WB1_f3	1	a write-phase loop body that breaks, depth 1, stratum 3	-
+T0954	block.SB1_f3	block	SB1_f3	1	a solo-phase loop body that breaks, depth 1, stratum 3	-
+T0955	block.XB1_f3	block	XB1_f3	1	a split-phase loop body that breaks, depth 1, stratum 3	-
+T0956	block.AB1_f3	block	AB1_f3	1	a slot-phase loop body that breaks, depth 1, stratum 3	-
+T0957	block.UB1_f3	block	UB1_f3	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 3	-
+T0958	block.B1_f4	block	B1_f4	1	a loop body that breaks, depth 1, stratum 4	-
+T0959	block.WB1_f4	block	WB1_f4	1	a write-phase loop body that breaks, depth 1, stratum 4	-
+T0960	block.SB1_f4	block	SB1_f4	1	a solo-phase loop body that breaks, depth 1, stratum 4	-
+T0961	block.XB1_f4	block	XB1_f4	1	a split-phase loop body that breaks, depth 1, stratum 4	-
+T0962	block.AB1_f4	block	AB1_f4	1	a slot-phase loop body that breaks, depth 1, stratum 4	-
+T0963	block.UB1_f4	block	UB1_f4	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 4	-
+T0964	block.B1_f5	block	B1_f5	1	a loop body that breaks, depth 1, stratum 5	-
+T0965	block.WB1_f5	block	WB1_f5	1	a write-phase loop body that breaks, depth 1, stratum 5	-
+T0966	block.SB1_f5	block	SB1_f5	1	a solo-phase loop body that breaks, depth 1, stratum 5	-
+T0967	block.XB1_f5	block	XB1_f5	1	a split-phase loop body that breaks, depth 1, stratum 5	-
+T0968	block.AB1_f5	block	AB1_f5	1	a slot-phase loop body that breaks, depth 1, stratum 5	-
+T0969	block.UB1_f5	block	UB1_f5	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 5	-
+T0970	block.B1_f6	block	B1_f6	1	a loop body that breaks, depth 1, stratum 6	-
+T0971	block.WB1_f6	block	WB1_f6	1	a write-phase loop body that breaks, depth 1, stratum 6	-
+T0972	block.SB1_f6	block	SB1_f6	1	a solo-phase loop body that breaks, depth 1, stratum 6	-
+T0973	block.XB1_f6	block	XB1_f6	1	a split-phase loop body that breaks, depth 1, stratum 6	-
+T0974	block.AB1_f6	block	AB1_f6	1	a slot-phase loop body that breaks, depth 1, stratum 6	-
+T0975	block.UB1_f6	block	UB1_f6	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 6	-
+T0976	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
+T0977	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
+T0978	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
+T0979	block.XB2_f0	block	XB2_f0	1	a split-phase loop body that breaks, depth 2, stratum 0	-
+T0980	block.AB2_f0	block	AB2_f0	1	a slot-phase loop body that breaks, depth 2, stratum 0	-
+T0981	block.UB2_f0	block	UB2_f0	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 0	-
+T0982	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
+T0983	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
+T0984	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
+T0985	block.XB2_f1	block	XB2_f1	1	a split-phase loop body that breaks, depth 2, stratum 1	-
+T0986	block.AB2_f1	block	AB2_f1	1	a slot-phase loop body that breaks, depth 2, stratum 1	-
+T0987	block.UB2_f1	block	UB2_f1	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 1	-
+T0988	block.B2_f2	block	B2_f2	1	a loop body that breaks, depth 2, stratum 2	-
+T0989	block.WB2_f2	block	WB2_f2	1	a write-phase loop body that breaks, depth 2, stratum 2	-
+T0990	block.SB2_f2	block	SB2_f2	1	a solo-phase loop body that breaks, depth 2, stratum 2	-
+T0991	block.XB2_f2	block	XB2_f2	1	a split-phase loop body that breaks, depth 2, stratum 2	-
+T0992	block.AB2_f2	block	AB2_f2	1	a slot-phase loop body that breaks, depth 2, stratum 2	-
+T0993	block.UB2_f2	block	UB2_f2	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 2	-
+T0994	block.B2_f3	block	B2_f3	1	a loop body that breaks, depth 2, stratum 3	-
+T0995	block.WB2_f3	block	WB2_f3	1	a write-phase loop body that breaks, depth 2, stratum 3	-
+T0996	block.SB2_f3	block	SB2_f3	1	a solo-phase loop body that breaks, depth 2, stratum 3	-
+T0997	block.XB2_f3	block	XB2_f3	1	a split-phase loop body that breaks, depth 2, stratum 3	-
+T0998	block.AB2_f3	block	AB2_f3	1	a slot-phase loop body that breaks, depth 2, stratum 3	-
+T0999	block.UB2_f3	block	UB2_f3	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 3	-
+T1000	block.B2_f4	block	B2_f4	1	a loop body that breaks, depth 2, stratum 4	-
+T1001	block.WB2_f4	block	WB2_f4	1	a write-phase loop body that breaks, depth 2, stratum 4	-
+T1002	block.SB2_f4	block	SB2_f4	1	a solo-phase loop body that breaks, depth 2, stratum 4	-
+T1003	block.XB2_f4	block	XB2_f4	1	a split-phase loop body that breaks, depth 2, stratum 4	-
+T1004	block.AB2_f4	block	AB2_f4	1	a slot-phase loop body that breaks, depth 2, stratum 4	-
+T1005	block.UB2_f4	block	UB2_f4	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 4	-
+T1006	block.B2_f5	block	B2_f5	1	a loop body that breaks, depth 2, stratum 5	-
+T1007	block.WB2_f5	block	WB2_f5	1	a write-phase loop body that breaks, depth 2, stratum 5	-
+T1008	block.SB2_f5	block	SB2_f5	1	a solo-phase loop body that breaks, depth 2, stratum 5	-
+T1009	block.XB2_f5	block	XB2_f5	1	a split-phase loop body that breaks, depth 2, stratum 5	-
+T1010	block.AB2_f5	block	AB2_f5	1	a slot-phase loop body that breaks, depth 2, stratum 5	-
+T1011	block.UB2_f5	block	UB2_f5	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 5	-
+T1012	block.B2_f6	block	B2_f6	1	a loop body that breaks, depth 2, stratum 6	-
+T1013	block.WB2_f6	block	WB2_f6	1	a write-phase loop body that breaks, depth 2, stratum 6	-
+T1014	block.SB2_f6	block	SB2_f6	1	a solo-phase loop body that breaks, depth 2, stratum 6	-
+T1015	block.XB2_f6	block	XB2_f6	1	a split-phase loop body that breaks, depth 2, stratum 6	-
+T1016	block.AB2_f6	block	AB2_f6	1	a slot-phase loop body that breaks, depth 2, stratum 6	-
+T1017	block.UB2_f6	block	UB2_f6	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 6	-
+T1018	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
+T1019	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
+T1020	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
+T1021	block.XB3_f0	block	XB3_f0	1	a split-phase loop body that breaks, depth 3, stratum 0	-
+T1022	block.AB3_f0	block	AB3_f0	1	a slot-phase loop body that breaks, depth 3, stratum 0	-
+T1023	block.UB3_f0	block	UB3_f0	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 0	-
+T1024	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
+T1025	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
+T1026	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
+T1027	block.XB3_f1	block	XB3_f1	1	a split-phase loop body that breaks, depth 3, stratum 1	-
+T1028	block.AB3_f1	block	AB3_f1	1	a slot-phase loop body that breaks, depth 3, stratum 1	-
+T1029	block.UB3_f1	block	UB3_f1	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 1	-
+T1030	block.B3_f2	block	B3_f2	1	a loop body that breaks, depth 3, stratum 2	-
+T1031	block.WB3_f2	block	WB3_f2	1	a write-phase loop body that breaks, depth 3, stratum 2	-
+T1032	block.SB3_f2	block	SB3_f2	1	a solo-phase loop body that breaks, depth 3, stratum 2	-
+T1033	block.XB3_f2	block	XB3_f2	1	a split-phase loop body that breaks, depth 3, stratum 2	-
+T1034	block.AB3_f2	block	AB3_f2	1	a slot-phase loop body that breaks, depth 3, stratum 2	-
+T1035	block.UB3_f2	block	UB3_f2	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 2	-
+T1036	block.B3_f3	block	B3_f3	1	a loop body that breaks, depth 3, stratum 3	-
+T1037	block.WB3_f3	block	WB3_f3	1	a write-phase loop body that breaks, depth 3, stratum 3	-
+T1038	block.SB3_f3	block	SB3_f3	1	a solo-phase loop body that breaks, depth 3, stratum 3	-
+T1039	block.XB3_f3	block	XB3_f3	1	a split-phase loop body that breaks, depth 3, stratum 3	-
+T1040	block.AB3_f3	block	AB3_f3	1	a slot-phase loop body that breaks, depth 3, stratum 3	-
+T1041	block.UB3_f3	block	UB3_f3	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 3	-
+T1042	block.B3_f4	block	B3_f4	1	a loop body that breaks, depth 3, stratum 4	-
+T1043	block.WB3_f4	block	WB3_f4	1	a write-phase loop body that breaks, depth 3, stratum 4	-
+T1044	block.SB3_f4	block	SB3_f4	1	a solo-phase loop body that breaks, depth 3, stratum 4	-
+T1045	block.XB3_f4	block	XB3_f4	1	a split-phase loop body that breaks, depth 3, stratum 4	-
+T1046	block.AB3_f4	block	AB3_f4	1	a slot-phase loop body that breaks, depth 3, stratum 4	-
+T1047	block.UB3_f4	block	UB3_f4	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 4	-
+T1048	block.B3_f5	block	B3_f5	1	a loop body that breaks, depth 3, stratum 5	-
+T1049	block.WB3_f5	block	WB3_f5	1	a write-phase loop body that breaks, depth 3, stratum 5	-
+T1050	block.SB3_f5	block	SB3_f5	1	a solo-phase loop body that breaks, depth 3, stratum 5	-
+T1051	block.XB3_f5	block	XB3_f5	1	a split-phase loop body that breaks, depth 3, stratum 5	-
+T1052	block.AB3_f5	block	AB3_f5	1	a slot-phase loop body that breaks, depth 3, stratum 5	-
+T1053	block.UB3_f5	block	UB3_f5	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 5	-
+T1054	block.B3_f6	block	B3_f6	1	a loop body that breaks, depth 3, stratum 6	-
+T1055	block.WB3_f6	block	WB3_f6	1	a write-phase loop body that breaks, depth 3, stratum 6	-
+T1056	block.SB3_f6	block	SB3_f6	1	a solo-phase loop body that breaks, depth 3, stratum 6	-
+T1057	block.XB3_f6	block	XB3_f6	1	a split-phase loop body that breaks, depth 3, stratum 6	-
+T1058	block.AB3_f6	block	AB3_f6	1	a slot-phase loop body that breaks, depth 3, stratum 6	-
+T1059	block.UB3_f6	block	UB3_f6	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 6	-
+T1060	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
+T1061	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
+T1062	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
+T1063	block.XB4_f0	block	XB4_f0	1	a split-phase loop body that breaks, depth 4, stratum 0	-
+T1064	block.AB4_f0	block	AB4_f0	1	a slot-phase loop body that breaks, depth 4, stratum 0	-
+T1065	block.UB4_f0	block	UB4_f0	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 0	-
+T1066	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
+T1067	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
+T1068	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
+T1069	block.XB4_f1	block	XB4_f1	1	a split-phase loop body that breaks, depth 4, stratum 1	-
+T1070	block.AB4_f1	block	AB4_f1	1	a slot-phase loop body that breaks, depth 4, stratum 1	-
+T1071	block.UB4_f1	block	UB4_f1	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 1	-
+T1072	block.B4_f2	block	B4_f2	1	a loop body that breaks, depth 4, stratum 2	-
+T1073	block.WB4_f2	block	WB4_f2	1	a write-phase loop body that breaks, depth 4, stratum 2	-
+T1074	block.SB4_f2	block	SB4_f2	1	a solo-phase loop body that breaks, depth 4, stratum 2	-
+T1075	block.XB4_f2	block	XB4_f2	1	a split-phase loop body that breaks, depth 4, stratum 2	-
+T1076	block.AB4_f2	block	AB4_f2	1	a slot-phase loop body that breaks, depth 4, stratum 2	-
+T1077	block.UB4_f2	block	UB4_f2	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 2	-
+T1078	block.B4_f3	block	B4_f3	1	a loop body that breaks, depth 4, stratum 3	-
+T1079	block.WB4_f3	block	WB4_f3	1	a write-phase loop body that breaks, depth 4, stratum 3	-
+T1080	block.SB4_f3	block	SB4_f3	1	a solo-phase loop body that breaks, depth 4, stratum 3	-
+T1081	block.XB4_f3	block	XB4_f3	1	a split-phase loop body that breaks, depth 4, stratum 3	-
+T1082	block.AB4_f3	block	AB4_f3	1	a slot-phase loop body that breaks, depth 4, stratum 3	-
+T1083	block.UB4_f3	block	UB4_f3	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 3	-
+T1084	block.B4_f4	block	B4_f4	1	a loop body that breaks, depth 4, stratum 4	-
+T1085	block.WB4_f4	block	WB4_f4	1	a write-phase loop body that breaks, depth 4, stratum 4	-
+T1086	block.SB4_f4	block	SB4_f4	1	a solo-phase loop body that breaks, depth 4, stratum 4	-
+T1087	block.XB4_f4	block	XB4_f4	1	a split-phase loop body that breaks, depth 4, stratum 4	-
+T1088	block.AB4_f4	block	AB4_f4	1	a slot-phase loop body that breaks, depth 4, stratum 4	-
+T1089	block.UB4_f4	block	UB4_f4	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 4	-
+T1090	block.B4_f5	block	B4_f5	1	a loop body that breaks, depth 4, stratum 5	-
+T1091	block.WB4_f5	block	WB4_f5	1	a write-phase loop body that breaks, depth 4, stratum 5	-
+T1092	block.SB4_f5	block	SB4_f5	1	a solo-phase loop body that breaks, depth 4, stratum 5	-
+T1093	block.XB4_f5	block	XB4_f5	1	a split-phase loop body that breaks, depth 4, stratum 5	-
+T1094	block.AB4_f5	block	AB4_f5	1	a slot-phase loop body that breaks, depth 4, stratum 5	-
+T1095	block.UB4_f5	block	UB4_f5	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 5	-
+T1096	block.B4_f6	block	B4_f6	1	a loop body that breaks, depth 4, stratum 6	-
+T1097	block.WB4_f6	block	WB4_f6	1	a write-phase loop body that breaks, depth 4, stratum 6	-
+T1098	block.SB4_f6	block	SB4_f6	1	a solo-phase loop body that breaks, depth 4, stratum 6	-
+T1099	block.XB4_f6	block	XB4_f6	1	a split-phase loop body that breaks, depth 4, stratum 6	-
+T1100	block.AB4_f6	block	AB4_f6	1	a slot-phase loop body that breaks, depth 4, stratum 6	-
+T1101	block.UB4_f6	block	UB4_f6	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 6	-
+T1102	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
+T1103	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
+T1104	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
+T1105	block.XB5_f0	block	XB5_f0	1	a split-phase loop body that breaks, depth 5, stratum 0	-
+T1106	block.AB5_f0	block	AB5_f0	1	a slot-phase loop body that breaks, depth 5, stratum 0	-
+T1107	block.UB5_f0	block	UB5_f0	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 0	-
+T1108	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
+T1109	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
+T1110	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
+T1111	block.XB5_f1	block	XB5_f1	1	a split-phase loop body that breaks, depth 5, stratum 1	-
+T1112	block.AB5_f1	block	AB5_f1	1	a slot-phase loop body that breaks, depth 5, stratum 1	-
+T1113	block.UB5_f1	block	UB5_f1	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 1	-
+T1114	block.B5_f2	block	B5_f2	1	a loop body that breaks, depth 5, stratum 2	-
+T1115	block.WB5_f2	block	WB5_f2	1	a write-phase loop body that breaks, depth 5, stratum 2	-
+T1116	block.SB5_f2	block	SB5_f2	1	a solo-phase loop body that breaks, depth 5, stratum 2	-
+T1117	block.XB5_f2	block	XB5_f2	1	a split-phase loop body that breaks, depth 5, stratum 2	-
+T1118	block.AB5_f2	block	AB5_f2	1	a slot-phase loop body that breaks, depth 5, stratum 2	-
+T1119	block.UB5_f2	block	UB5_f2	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 2	-
+T1120	block.B5_f3	block	B5_f3	1	a loop body that breaks, depth 5, stratum 3	-
+T1121	block.WB5_f3	block	WB5_f3	1	a write-phase loop body that breaks, depth 5, stratum 3	-
+T1122	block.SB5_f3	block	SB5_f3	1	a solo-phase loop body that breaks, depth 5, stratum 3	-
+T1123	block.XB5_f3	block	XB5_f3	1	a split-phase loop body that breaks, depth 5, stratum 3	-
+T1124	block.AB5_f3	block	AB5_f3	1	a slot-phase loop body that breaks, depth 5, stratum 3	-
+T1125	block.UB5_f3	block	UB5_f3	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 3	-
+T1126	block.B5_f4	block	B5_f4	1	a loop body that breaks, depth 5, stratum 4	-
+T1127	block.WB5_f4	block	WB5_f4	1	a write-phase loop body that breaks, depth 5, stratum 4	-
+T1128	block.SB5_f4	block	SB5_f4	1	a solo-phase loop body that breaks, depth 5, stratum 4	-
+T1129	block.XB5_f4	block	XB5_f4	1	a split-phase loop body that breaks, depth 5, stratum 4	-
+T1130	block.AB5_f4	block	AB5_f4	1	a slot-phase loop body that breaks, depth 5, stratum 4	-
+T1131	block.UB5_f4	block	UB5_f4	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 4	-
+T1132	block.B5_f5	block	B5_f5	1	a loop body that breaks, depth 5, stratum 5	-
+T1133	block.WB5_f5	block	WB5_f5	1	a write-phase loop body that breaks, depth 5, stratum 5	-
+T1134	block.SB5_f5	block	SB5_f5	1	a solo-phase loop body that breaks, depth 5, stratum 5	-
+T1135	block.XB5_f5	block	XB5_f5	1	a split-phase loop body that breaks, depth 5, stratum 5	-
+T1136	block.AB5_f5	block	AB5_f5	1	a slot-phase loop body that breaks, depth 5, stratum 5	-
+T1137	block.UB5_f5	block	UB5_f5	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 5	-
+T1138	block.B5_f6	block	B5_f6	1	a loop body that breaks, depth 5, stratum 6	-
+T1139	block.WB5_f6	block	WB5_f6	1	a write-phase loop body that breaks, depth 5, stratum 6	-
+T1140	block.SB5_f6	block	SB5_f6	1	a solo-phase loop body that breaks, depth 5, stratum 6	-
+T1141	block.XB5_f6	block	XB5_f6	1	a split-phase loop body that breaks, depth 5, stratum 6	-
+T1142	block.AB5_f6	block	AB5_f6	1	a slot-phase loop body that breaks, depth 5, stratum 6	-
+T1143	block.UB5_f6	block	UB5_f6	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 6	-
+T1144	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
+T1145	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
+T1146	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
+T1147	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
+T1148	u32.lidx	u32	lidx	1	local_invocation_index	-
+T1149	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
+T1150	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
+T1151	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
+T1152	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
+T1153	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
+T1154	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
+T1155	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
+T1156	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
+T1157	f32.reala	f32	reala	1	the slot-phase twin of f32.real: a value no workgroup read reached	-
+T1158	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
+T1159	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
+T1160	vec2<f32>.reala	vec2<f32>	reala	2	the slot-phase twin of vec2<f32>.real: a value no workgroup read reached	-
+T1161	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
+T1162	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
+T1163	vec3<f32>.reala	vec3<f32>	reala	3	the slot-phase twin of vec3<f32>.real: a value no workgroup read reached	-
+T1164	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
+T1165	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
+T1166	vec4<f32>.reala	vec4<f32>	reala	4	the slot-phase twin of vec4<f32>.real: a value no workgroup read reached	-
+T1167	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
+T1168	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
+T1169	f16.reala	f16	reala	1	the slot-phase twin of f16.real: a value no workgroup read reached	-
+T1170	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
+T1171	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
+T1172	vec2<f16>.reala	vec2<f16>	reala	2	the slot-phase twin of vec2<f16>.real: a value no workgroup read reached	-
+T1173	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
+T1174	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
+T1175	vec3<f16>.reala	vec3<f16>	reala	3	the slot-phase twin of vec3<f16>.real: a value no workgroup read reached	-
+T1176	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
+T1177	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
+T1178	vec4<f16>.reala	vec4<f16>	reala	4	the slot-phase twin of vec4<f16>.real: a value no workgroup read reached	-
+T1179	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
+T1180	u32.indexa	u32	indexa	1	the slot-phase twin of u32.index: a value no workgroup read reached	-
+T1181	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
+T1182	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
+T1183	vec2<u32>.indexa	vec2<u32>	indexa	2	the slot-phase twin of vec2<u32>.index: a value no workgroup read reached	-
+T1184	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
+T1185	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
+T1186	vec3<u32>.indexa	vec3<u32>	indexa	3	the slot-phase twin of vec3<u32>.index: a value no workgroup read reached	-
+T1187	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
+T1188	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
+T1189	vec4<u32>.indexa	vec4<u32>	indexa	4	the slot-phase twin of vec4<u32>.index: a value no workgroup read reached	-
+T1190	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
+T1191	u32.counta	u32	counta	1	the slot-phase twin of u32.count: a value no workgroup read reached	-
+T1192	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
+T1193	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
+T1194	vec2<u32>.counta	vec2<u32>	counta	2	the slot-phase twin of vec2<u32>.count: a value no workgroup read reached	-
+T1195	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
+T1196	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
+T1197	vec3<u32>.counta	vec3<u32>	counta	3	the slot-phase twin of vec3<u32>.count: a value no workgroup read reached	-
+T1198	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
+T1199	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
+T1200	vec4<u32>.counta	vec4<u32>	counta	4	the slot-phase twin of vec4<u32>.count: a value no workgroup read reached	-
+T1201	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
+T1202	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
+T1203	i32.inta	i32	inta	1	the slot-phase twin of i32.int: a value no workgroup read reached	-
+T1204	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
+T1205	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
+T1206	vec2<i32>.inta	vec2<i32>	inta	2	the slot-phase twin of vec2<i32>.int: a value no workgroup read reached	-
+T1207	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
+T1208	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
+T1209	vec3<i32>.inta	vec3<i32>	inta	3	the slot-phase twin of vec3<i32>.int: a value no workgroup read reached	-
+T1210	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
+T1211	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
+T1212	vec4<i32>.inta	vec4<i32>	inta	4	the slot-phase twin of vec4<i32>.int: a value no workgroup read reached	-
+T1213	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
+T1214	bool.flaga	bool	flaga	1	the slot-phase twin of bool.flag: a value no workgroup read reached	-
+T1215	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
+T1216	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
+T1217	vec2<bool>.flaga	vec2<bool>	flaga	2	the slot-phase twin of vec2<bool>.flag: a value no workgroup read reached	-
+T1218	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
+T1219	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
+T1220	vec3<bool>.flaga	vec3<bool>	flaga	3	the slot-phase twin of vec3<bool>.flag: a value no workgroup read reached	-
+T1221	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
+T1222	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
+T1223	vec4<bool>.flaga	vec4<bool>	flaga	4	the slot-phase twin of vec4<bool>.flag: a value no workgroup read reached	-
+T1224	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
+T1225	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
+T1226	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T1227	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T1228	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
+T1229	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
+T1230	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
+T1231	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
+T1232	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T1233	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T1234	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
+T1235	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
+T1236	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
+T1237	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
+T1238	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
+T1239	mat2x2<f32>.reala	mat2x2<f32>	reala	4	the slot-phase twin of mat2x2<f32>.real: a value no workgroup read reached	-
+T1240	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
+T1241	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
+T1242	mat2x3<f32>.reala	mat2x3<f32>	reala	6	the slot-phase twin of mat2x3<f32>.real: a value no workgroup read reached	-
+T1243	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
+T1244	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
+T1245	mat2x4<f32>.reala	mat2x4<f32>	reala	8	the slot-phase twin of mat2x4<f32>.real: a value no workgroup read reached	-
+T1246	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
+T1247	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
+T1248	mat3x2<f32>.reala	mat3x2<f32>	reala	6	the slot-phase twin of mat3x2<f32>.real: a value no workgroup read reached	-
+T1249	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
+T1250	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
+T1251	mat3x3<f32>.reala	mat3x3<f32>	reala	9	the slot-phase twin of mat3x3<f32>.real: a value no workgroup read reached	-
+T1252	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
+T1253	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
+T1254	mat3x4<f32>.reala	mat3x4<f32>	reala	12	the slot-phase twin of mat3x4<f32>.real: a value no workgroup read reached	-
+T1255	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
+T1256	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
+T1257	mat4x2<f32>.reala	mat4x2<f32>	reala	8	the slot-phase twin of mat4x2<f32>.real: a value no workgroup read reached	-
+T1258	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
+T1259	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
+T1260	mat4x3<f32>.reala	mat4x3<f32>	reala	12	the slot-phase twin of mat4x3<f32>.real: a value no workgroup read reached	-
+T1261	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
+T1262	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
+T1263	mat4x4<f32>.reala	mat4x4<f32>	reala	16	the slot-phase twin of mat4x4<f32>.real: a value no workgroup read reached	-
+T1264	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
+T1265	u32.bitsw	u32	bitsw	1	the write-phase twin of u32.bits: a value no foreign workgroup read reached	-
+T1266	u32.bitsa	u32	bitsa	1	the slot-phase twin of u32.bits: a value no workgroup read reached	-
+T1267	u32.hash32	u32	hash32	1	a 32-bit hash state	-
+T1268	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
+T1269	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
+T1270	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
+T1271	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
+T1272	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
+T1273	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
+T1274	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
+T1275	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
+T1276	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
+T1277	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
+T1278	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
+T1279	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
+T1280	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
+T1281	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
+T1282	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
+T1283	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
+T1284	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
+T1285	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
+T1286	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
+T1287	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
+T1288	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
+T1289	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
+T1290	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
+T1291	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
+T1292	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
+T1293	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
+T1294	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
+T1295	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
+T1296	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
+T1297	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
+T1298	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
+T1299	u32.pidx_4a	u32	pidx_4a	1	the slot-phase twin of u32.pidx_4: a value no workgroup read reached	-
+T1300	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
+T1301	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
+T1302	u32.pidx_6a	u32	pidx_6a	1	the slot-phase twin of u32.pidx_6: a value no workgroup read reached	-
+T1303	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
+T1304	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
+T1305	u32.pidx_7a	u32	pidx_7a	1	the slot-phase twin of u32.pidx_7: a value no workgroup read reached	-
+T1306	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
+T1307	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
+T1308	u32.pidx_8a	u32	pidx_8a	1	the slot-phase twin of u32.pidx_8: a value no workgroup read reached	-
+T1309	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
+T1310	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
+T1311	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
+T1312	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
+T1313	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
+T1314	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
+T1315	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
+T1316	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
+T1317	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
+T1318	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
+T1319	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
+T1320	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
+T1321	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
+T1322	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
+T1323	u32.boundx6a	u32	boundx6a	1	the slot-phase twin of u32.boundx6: a value no workgroup read reached	-
+T1324	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
+T1325	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
+T1326	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
+T1327	u32.boundx12a	u32	boundx12a	1	the slot-phase twin of u32.boundx12: a value no workgroup read reached	-
+T1328	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
+T1329	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
+T1330	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
+T1331	u32.boundx18a	u32	boundx18a	1	the slot-phase twin of u32.boundx18: a value no workgroup read reached	-
+T1332	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
+T1333	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
+T1334	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
+T1335	u32.boundx24a	u32	boundx24a	1	the slot-phase twin of u32.boundx24: a value no workgroup read reached	-
+T1336	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
+T1337	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
+T1338	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
+T1339	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
+T1340	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
+T1341	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
+T1342	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
+T1343	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
+T1344	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
+T1345	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
+T1346	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
+T1347	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T1348	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
+T1349	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
+T1350	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
+T1351	u32.plast_8	u32	plast_8	1	the last index of a private array held in a 256-element array: a bare literal	0..=255
+T1352	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
+T1353	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
+T1354	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
+T1355	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
+T1356	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
+T1357	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
+T1358	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
+T1359	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
+T1360	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
+T1361	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
+T1362	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
+T1363	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
+T1364	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
+T1365	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
+T1366	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2067
+T1367	u32.zown	u32	zown	1	the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)	-
+T1368	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
+T1369	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3

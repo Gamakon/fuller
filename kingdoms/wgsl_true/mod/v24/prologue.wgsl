@@ -7,8 +7,9 @@ struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n
 @group(0) @binding(4) var<storage, read_write> cands: array<u32>;
 @group(0) @binding(5) var<uniform> cfg: Cfg;
 var<workgroup> wg_pool: array<u32, 6084>;
-var<workgroup> wg_apool: array<atomic<u32>, 2104>;
+var<workgroup> wg_apool: array<atomic<u32>, 2068>;
 var<workgroup> wg_scnt: array<atomic<u32>, 4>;
+var<workgroup> wg_seg: array<u32, 36>;
 fn add_sat(a: i32, b: i32) -> i32 { let s = a + b; let ov = ((a ^ s) & (b ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
 fn at2_bool(v: vec2<bool>, i: u32) -> bool { switch i { case 0u: { return v.x; } default: { return v.y; } } }
 fn at2_f16(v: vec2<f16>, i: u32) -> f16 { switch i { case 0u: { return v.x; } default: { return v.y; } } }
@@ -96,6 +97,7 @@ fn outer_4x3(a: vec3<f32>, b: vec4<f32>) -> mat4x3<f32> { return mat4x3<f32>(a *
 fn outer_4x4(a: vec4<f32>, b: vec4<f32>) -> mat4x4<f32> { return mat4x4<f32>(a * b.x, a * b.y, a * b.z, a * b.w); }
 fn row_axis(g: vec3<u32>) -> u32 { return g.y; }
 fn sat_add_u32(x: u32, y: u32) -> u32 { let s = x + y; return select(s, 0xffffffffu, s < x); }
+fn seg_at(i: u32) -> u32 { return wg_seg[min(i, 32u)]; }
 fn sorted(a: f32, b: f32) -> vec2<f32> { return vec2<f32>(min(a, b), max(a, b)); }
 fn sorted_i(a: i32, b: i32) -> vec2<i32> { return vec2<i32>(min(a, b), max(a, b)); }
 fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }

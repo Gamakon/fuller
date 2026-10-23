@@ -36,7 +36,7 @@ run1/seed01.wgsl	reads
 run1/seed02.wgsl	out	a loop whose trip bound is not bounded by the contract's cfg ranges or constants: Reg(Reg { kind: 1, n: 15 }, Wt { s: U32, lanes: 1 })
 run1/seed03.wgsl	reads	
 run1/seed04.wgsl	reads	
-run1/seed05.wgsl	gap	a write phase: a read of probe[Counter(4)], an element another invocation may write in the phase; as a split phase: a write of cs[Bin(Modulo, Bin(Add, Reg(Reg {
+run1/seed05.wgsl	reads	
 run1/seed06.wgsl	gap	a write of wc[Lit(U(0))], an element another invocation may own; as a split phase: a write of wc[Lit(U(0))], an element another invocation may own
 run1/seed07.wgsl	reads	
 run1/seed08.wgsl	out	a race in its own text: probe[rank] = c & 127u, rank counting v > mine || (v == mine && o < c) over the f32 cscore; a NaN score gives two centres one rank, so t

@@ -105,9 +105,11 @@ def configure(k, epilogue=True, pools=False):
         DEPTH["A"] = range(0, 6)
         # the group phase's body (G, UI1 batch 10): the group leaders' writes of their own group elements, a values
         DEPTH["G"] = range(0, 6)
+        # the segment phase's body (Z, UI1): writes into the windows of the prefix table, a values
+        DEPTH["Z"] = range(0, 6)
 
 
-DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0), "Y": range(0), "A": range(0), "G": range(0)}
+DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0), "Y": range(0), "A": range(0), "G": range(0), "Z": range(0)}
 STRATA = range(0, K + 1)
 
 
@@ -184,7 +186,7 @@ def fam(x, t):
     slot phase's, `t` itself elsewhere."""
     if x in "WPXEY":
         return w_of(t)
-    if x in "AG":
+    if x in "AGZ":
         return a_of(t)
     return t
 

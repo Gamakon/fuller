@@ -35,7 +35,7 @@ def declare_types(iface):
     T("u32.blk_col", "a block factor on the column axis", 1, "1,2,4,8")
     T("grid.grid", "the entry's workgroup shape and block")
     T("u32.ktile", "the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)", 1, "1..=4096")
-    for x, d, k in rungs("LCOWPSXEYAG"):
+    for x, d, k in rungs("LCOWPSXEYAGZ"):
         T(S(x, d, k), f"one {x}-rung statement at depth {d}, fuel stratum {k}")
         T(B(x, d, k), f"a {x}-rung statement sequence at depth {d}, fuel stratum {k}")
     for d in range(1, 6):
@@ -200,7 +200,7 @@ def build_module(iface):
 
 def build_rest(iface):
     # ---- the statement rungs
-    for x, d, k in rungs("LCOWPSXEYAG"):
+    for x, d, k in rungs("LCOWPSXEYAGZ"):
         s, b = S(x, d, k), B(x, d, k)
         sfx = f"_{x}{d}_f{k}"
         R("block.one" + sfx, b, [s if x != "O" else S("O", d, k)], "{0}")
@@ -228,7 +228,7 @@ def build_rest(iface):
             R("stmt.if" + sfx, s, ["bool.flag", B("C", d, k)], "if ({0}) { {1} }", "nesting stays conditional")
         if x == "O":
             R("stmt.if_else" + sfx, s, ["bool.flag", b, b], "if ({0}) { {1} } else { {2} }", "both branches are epilogues so a store happens whichever is taken")
-        if x in "WPXEYAG":
+        if x in "WPXEYAGZ":
             R("stmt.if" + sfx, s, [fam(x, "bool.flag"), b], "if ({0}) { {1} }", "the body stays " + x)
             R("stmt.if_else" + sfx, s, [fam(x, "bool.flag"), b, b], "if ({0}) { {1} } else { {2} }")
         if x == "S":
