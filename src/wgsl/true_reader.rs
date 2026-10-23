@@ -492,6 +492,8 @@ pub struct Reader<'a> {
     qm: Option<u32>,
     /// Registers holding a uniform register's value (`r = U<n>`, a workgroup read every invocation makes alike).
     ureg_of: HashMap<Reg, usize>,
+    /// Each single-assignment register's value, for the bounds a condition through a flag gives (`act = go && t < n`).
+    ssa_defs: HashMap<Reg, E>,
     // phase 2
     rows_by_name: HashMap<String, u32>,
     by_spelling: HashMap<String, Vec<u32>>,
@@ -588,6 +590,7 @@ impl<'a> Reader<'a> {
             counters: BTreeMap::new(),
             qm: None,
             ureg_of: HashMap::new(),
+            ssa_defs: HashMap::new(),
             rows_by_name,
             by_spelling,
             coercions,
@@ -3328,6 +3331,13 @@ impl<'a> Reader<'a> {
         self.locals(&mut fr, &mut out, true)?;
         self.walk(&mut fr, &ep.function.body, &mut out, 0)?;
         self.allocate(&out)?;
+        let mut sets = Vec::new();
+        all_sets(&out, &mut sets);
+        let mut count: HashMap<Reg, usize> = HashMap::new();
+        for (r, _) in &sets {
+            *count.entry(*r).or_default() += 1;
+        }
+        self.ssa_defs = sets.into_iter().filter(|(r, _)| count[r] == 1 && self.ssa.contains(r)).collect();
         let out = self.structure(out)?;
         if !self.splits.is_empty() {
             let pairs: Vec<(usize, usize)> = self.splits.iter().flat_map(|(w, r)| w.iter().flat_map(move |a| r.iter().map(move |b| (*a, *b)))).collect();
@@ -3846,6 +3856,22 @@ fn slot_takes(sts: &[St], out: &mut Vec<(usize, Reg)>) {
                 slot_takes(b, out);
             }
             St::Loop(l) => slot_takes(&l.body, out),
+            _ => {}
+        }
+    }
+}
+
+/// Every register assignment of the statements, at any depth: (register, value).
+fn all_sets(sts: &[St], out: &mut Vec<(Reg, E)>) {
+    for s in sts {
+        match s {
+            St::Set(r, e) => out.push((*r, e.clone())),
+            St::SetLane(r, _, _) => out.push((*r, E::Lit(Lit::U(0)))),
+            St::If(_, a, b) => {
+                all_sets(a, out);
+                all_sets(b, out);
+            }
+            St::Loop(l) => all_sets(&l.body, out),
             _ => {}
         }
     }
@@ -4495,6 +4521,19 @@ impl<'a> Reader<'a> {
     }
 
     // ---------------------------------------------------------------- phases
+
+    /// The largest `lidx` a condition allows: its conjuncts `lidx < x` (x bounded), through a single-assignment flag.
+    fn lidx_bound(&self, c: &E, depth: u32) -> Option<u64> {
+        match c {
+            E::Bin(BinaryOperator::LogicalAnd | BinaryOperator::And, a, b, w) if *w == Wt::scalar(Sc::Bool) => match (self.lidx_bound(a, depth), self.lidx_bound(b, depth)) {
+                (Some(x), Some(y)) => Some(x.min(y)),
+                (x, y) => x.or(y),
+            },
+            E::Bin(BinaryOperator::Less, a, x, _) | E::Bin(BinaryOperator::Greater, x, a, _) if is_lidx(a, self.wg) => self.max_of(x).map(|m| m.saturating_sub(1)),
+            E::Reg(r, _) if depth < 4 => self.ssa_defs.get(r).and_then(|d| self.lidx_bound(d, depth + 1)),
+            _ => None,
+        }
+    }
 
     /// A workgroup read every invocation makes alike, read as a uniform load: `r = v[c]` (a u32 element at a literal
     /// index) at the L level of a list, in a barrier interval after a barrier, where no statement writes `v`. Every
@@ -5633,9 +5672,14 @@ impl<'a> Reader<'a> {
                 if solo_cond(c, self.wg).is_some() {
                     self.lidx_zero.set(true);
                 }
+                let cap = self.lidx_cap.get();
+                if let Some(m) = self.lidx_bound(c, 0) {
+                    self.lidx_cap.set(Some(cap.unwrap_or(u64::MAX).min(m)));
+                }
                 let mut a2 = Vec::new();
                 let ra: R<()> = a.iter().try_for_each(|x| self.x_stmt(x, wr, rd).map(|v| a2.extend(v)));
                 self.lidx_zero.set(zero);
+                self.lidx_cap.set(cap);
                 ra?;
                 let mut b2 = Vec::new();
                 for x in b {
@@ -5802,10 +5846,8 @@ impl<'a> Reader<'a> {
             St::Store(n, a, b) => St::Store(n.clone(), self.own_e(a, c)?, self.own_e(b, c)?),
             St::If(e, a, b) => {
                 let saved = self.lidx_cap.get();
-                if let Some((sv, None)) = pair_cond(e, self.wg) {
-                    if let Some(m) = lit_u(&sv) {
-                        self.lidx_cap.set(Some(saved.unwrap_or(u64::MAX).min(m.saturating_sub(1) as u64)));
-                    }
+                if let Some(m) = self.lidx_bound(e, 0) {
+                    self.lidx_cap.set(Some(saved.unwrap_or(u64::MAX).min(m)));
                 }
                 let zero = self.lidx_zero.get();
                 if solo_cond(e, self.wg).is_some() {
