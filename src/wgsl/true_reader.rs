@@ -3030,22 +3030,21 @@ impl<'a> Reader<'a> {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
         let (row, body_x, div, bound_kids): (String, char, bool, Vec<Tree>) = match (x, lit, brk.is_some()) {
-            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
-            ('W' | 'X' | 'E' | 'Y' | 'A', None, false) if stride == 1 => {
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', None, false) if stride == 1 => {
                 let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
                 (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
             }
-            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), x, true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
-            ('W' | 'X' | 'E' | 'Y' | 'A', None, true) => {
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), x, true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', None, true) => {
                 let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
                 (format!("loop.tilex_{sb}_{c}_{x}{d}_f{kb}"), x, true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }], stride)?)
             }
-            ('W' | 'X' | 'E' | 'Y' | 'A', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
-            ('W' | 'X' | 'E' | 'Y' | 'A', None, false) => {
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
+            ('W' | 'X' | 'E' | 'Y' | 'A' | 'P', None, false) => {
                 let b = self.must(&lp.bound, if x == 'A' { "u32.indexa" } else { "u32.indexw" })?;
                 (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if x == 'A' { "a" } else { "w" }))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
-            ('P', _, _) => return gap("a loop inside a pair phase"),
             ('S', Some(n), true) => (format!("loop.tile_{sb}_S{d}_f{kb}"), 'S', true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             ('S', None, true) => {
                 let b = self.must(&lp.bound, "u32.index")?;
@@ -3114,7 +3113,7 @@ impl<'a> Reader<'a> {
                 let St::BreakIf(flag) = &lp.body[at] else { return gap("our software has a bug: the break point moved") };
                 let (bx, fl) = match x {
                     'A' => (x, "bool.flaga"),
-                    'W' | 'X' | 'E' | 'Y' => (x, "bool.flagw"),
+                    'W' | 'X' | 'E' | 'Y' | 'P' => (x, "bool.flagw"),
                     'S' => ('S', "bool.flag"),
                     _ => ('C', "bool.flag"),
                 };
@@ -5568,6 +5567,7 @@ impl<'a> Reader<'a> {
                         walk_st(a, f);
                         walk_st(b, f)
                     }
+                    St::Loop(l) => walk_st(&l.body, f),
                     _ => {}
                 }
             }
@@ -5753,6 +5753,19 @@ impl<'a> Reader<'a> {
                 let a2 = a.iter().map(|x| self.p_stmt(sv, x, partners)).collect::<R<Vec<_>>>()?;
                 let b2 = b.iter().map(|x| self.p_stmt(sv, x, partners)).collect::<R<Vec<_>>>()?;
                 St::If(c2, a2, b2)
+            }
+            St::Loop(l) => {
+                let mut l2 = (**l).clone();
+                if self.p_e(sv, &l.bound, partners)? != l.bound {
+                    return gap("a pair phase loop bounded by a workgroup element");
+                }
+                // the partners a trip reads are loaded at the top of the trip (their index may hold the counter)
+                let mut inner: Vec<((usize, E), Reg)> = Vec::new();
+                let body = l.body.iter().map(|x| self.p_stmt(sv, x, &mut inner)).collect::<R<Vec<_>>>()?;
+                let mut b2: Vec<St> = inner.iter().map(|((v, k), r)| St::PLoad(*r, *v, k.clone())).collect();
+                b2.extend(body);
+                l2.body = b2;
+                St::Loop(Box::new(l2))
             }
             o => return gap(format!("the statement {o:?} inside a pair phase")),
         })

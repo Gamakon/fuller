@@ -96,7 +96,7 @@ def build(iface):
         d1 = d + 1
         for k in STRATA:
             # lit64 bound
-            for x in "LCOWXEYA":
+            for x in "LCOWXEYAP":
                 if d1 not in DEPTH[x] or k + 1 > K:
                     continue
                 div = x != "L"
@@ -104,7 +104,7 @@ def build(iface):
                 if x == "L" and DEPTH["S"]:
                     R(f"loop.tile_ubrk_L{d}_f{k}", S("L", d, k + 1), ["u32.lit64", UBB(d1, k)], loop_text(d1, False), "a literal bound and a uniform break")
                     R(f"loop.tile_strided_ubrk_L{d}_f{k}", S("L", d, k + 1), ["u32.lit64", "u32.lit4096", UBB(d1, k)], loop_text(d1, False, stride="{1}", body="{2}"))
-                if x not in "WXEYA" or DEPTH["S"]:
+                if x not in "WXEYAP" or DEPTH["S"]:
                     R(f"loop.tile_strided_{x}{d}_f{k}", S(x, d, k + 1), ["u32.lit64", "u32.lit4096", B(x, d1, k)], loop_text(d1, div, stride="{1}", body="{2}"), "the stride form")
             for c in BOUND_CLASSES:
                 cls = c // 6
@@ -127,7 +127,7 @@ def build(iface):
                 for x in "LC":
                     R(f"loop.tilex_brk_{c}_{x}{d}_f{k}", S(x, d, k + cls), [f"u32.boundx{c}", BB(d1, k)], loop_text(d1, True), "a loop that breaks binds kx")
                 R(f"loop.tilex_brk_{c}_W{d}_f{k}", S("W", d, k + cls), [f"u32.boundx{c}w", WBB(d1, k)], loop_text(d1, True))
-                for xx in "EYA":
+                for xx in "EYAP":
                     if d1 in DEPTH[xx]:
                         R(f"loop.tilex_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [fam(xx, f"u32.boundx{c}"), B(xx, d1, k)], loop_text(d1, True))
                         R(f"loop.tilex_strided_{c}_{xx}{d}_f{k}", S(xx, d, k + cls), [fam(xx, f"u32.boundx{c}"), "u32.lit4096", B(xx, d1, k)], loop_text(d1, True, stride="{1}", body="{2}"))
