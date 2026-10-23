@@ -60,7 +60,7 @@ run1/seed25.wgsl	reads
 run1/seed26.wgsl	reads	
 run1/seed27.wgsl	reads	
 run1/seed28.wgsl	out	not uniform by WGSL's own rule: the search loop breaks on stop, which reads n = min(atomicLoad(&index_u32[..]), CAP) (an atomic load is not uniform), and its bo
-run1/seed29.wgsl	gap	a uniform proof of a condition around a barrier: a row that spells the value as bool.uflag
+run1/seed29.wgsl	out	not uniform by WGSL's own rule: process_node returns early on u_at(..) = atomicLoad(&index_u32[..]) (an atomic load is not uniform) before power_iter and split_
 run1/seed30.wgsl	reads	
 run1/seed31.wgsl	gap	a write phase: a read of worder[Counter(18)], an element another invocation may write in the phase; as a split phase: a write of wcid[Bin(Add, Reg(Reg { kind: 1
 reference/reference.wgsl	reads	
