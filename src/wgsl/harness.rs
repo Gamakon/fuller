@@ -2898,6 +2898,11 @@ mod device {
         /// uploaded once a case (keyed by the case data's address, which lives
         /// as long as its stage) and reused by every individual.
         judge: std::cell::RefCell<Option<Judge>>,
+        /// A wall budget of one run (UI4): once a run's wall time passes it, no further submit of the run is made (the
+        /// check is at each synchronisation point, after a submit has completed; a submit is never cut). The run
+        /// returns the outputs read so far and the GPU ms of the dispatches done (`RunOut::dispatch_ms` shorter than
+        /// the plan's dispatches says where it stopped). `None`: every submit is made.
+        wall_budget_ms: Option<f64>,
     }
 
     struct Judge {
@@ -2913,12 +2918,18 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device, fuel: Fuel) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
 
         /// The work guard per dispatch ([`DispatchBound`]), for a value check (one submission a segment is not kept).
         pub fn with_dispatch_bound(mut self, f: DispatchBound) -> DeviceExecutor<'a> {
             self.dispatch_bound = Some(f);
+            self
+        }
+
+        /// The wall budget of one run ([`DeviceExecutor`]'s `wall_budget_ms`).
+        pub fn with_wall_budget(mut self, ms: f64) -> DeviceExecutor<'a> {
+            self.wall_budget_ms = Some(ms);
             self
         }
 
@@ -2937,7 +2948,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None) }
+            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
     }
 
@@ -3173,9 +3184,14 @@ mod device {
                 drop(seg.keep);
                 Ok(())
             };
+            let started = Instant::now();
+            let mut over_budget = false;
             for i in 0..live.len() {
                 let run = live[i].plan.run.clone();
                 for c in &run {
+                    if over_budget {
+                        break;
+                    }
                     match c {
                         Cmd::Create(id) => {
                             let b = self.make(live[i].plan, *id, live[i].data)?;
@@ -3280,6 +3296,8 @@ mod device {
                             if !batch {
                                 let done = std::mem::replace(&mut seg, new_seg());
                                 flush(done, live, &mut compute_ms)?;
+                                // THE WALL BUDGET: checked after a completed submit, never inside one
+                                over_budget = self.wall_budget_ms.is_some_and(|b| started.elapsed().as_secs_f64() * 1e3 > b);
                             }
                         }
                     }
