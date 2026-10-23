@@ -427,6 +427,8 @@ pub struct Reader<'a> {
     next_ureg: usize,
     /// The bound `lidx < c` a condition being read under gives (the write phase's own-element proof).
     lidx_cap: std::cell::Cell<Option<u64>>,
+    /// Under a guard `lidx == 0` (inside a write or split phase): an element `m * T` is invocation 0's own.
+    lidx_zero: std::cell::Cell<bool>,
     // phase 2
     rows_by_name: HashMap<String, u32>,
     by_spelling: HashMap<String, Vec<u32>>,
@@ -513,6 +515,7 @@ impl<'a> Reader<'a> {
             regions: Vec::new(),
             next_ureg: 0,
             lidx_cap: std::cell::Cell::new(None),
+            lidx_zero: std::cell::Cell::new(false),
             rows_by_name,
             by_spelling,
             coercions,
@@ -2734,6 +2737,26 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Whether the statements begin with a barrier (a phase begins with its leading one) on every path.
+fn leads_barrier(sts: &[St]) -> bool {
+    match sts.first() {
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..)) => true,
+        Some(St::Loop(l)) => leads_barrier(&l.body),
+        Some(St::If(_, a, b)) => leads_barrier(a) && leads_barrier(b),
+        _ => false,
+    }
+}
+
+/// Whether the statements end with a barrier (a phase as the last statement ends with its middle one) on every path.
+fn ends_barrier(sts: &[St]) -> bool {
+    match sts.last() {
+        Some(St::Barrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..)) => true,
+        Some(St::Loop(l)) => ends_barrier(&l.body) && !l.body.iter().any(|x| matches!(x, St::BreakIf(_))),
+        Some(St::If(_, a, b)) => ends_barrier(a) && ends_barrier(b),
+        _ => false,
+    }
+}
+
 fn needs_l(sts: &[St]) -> bool {
     sts.iter().any(|s| match s {
         St::Barrier | St::StorageBarrier | St::Phase(_) | St::Pair(..) | St::Solo(_) | St::Split(..) | St::ULoad(..) => true,
@@ -3152,6 +3175,137 @@ fn writes_wg(sts: &[St]) -> bool {
     })
 }
 
+/// The registers an expression reads.
+fn e_regs(e: &E, out: &mut Vec<Reg>) {
+    match e {
+        E::Reg(r, _) => out.push(*r),
+        E::Wg(_, i, _) | E::WgOwn(_, i, _) | E::WgA(_, i) | E::Parr(_, i, _) | E::Load(_, i, _) | E::LoadV4(_, i) => e_regs(i, out),
+        E::WgRmw(_, _, i, x) | E::Rmw(_, _, i, x) => {
+            e_regs(i, out);
+            e_regs(x, out);
+        }
+        o => kids_of(o).into_iter().for_each(|k| e_regs(k, out)),
+    }
+}
+
+/// The registers statements write.
+fn regs_written(sts: &[St], out: &mut Vec<Reg>) {
+    for s in sts {
+        match s {
+            St::Set(r, _) | St::SetLane(r, _, _) | St::PLoad(r, _) | St::HLoad(r, _, _) => out.push(*r),
+            St::If(_, a, b) => {
+                regs_written(a, out);
+                regs_written(b, out);
+            }
+            St::Loop(l) => regs_written(&l.body, out),
+            _ => {}
+        }
+    }
+}
+
+/// `if (c) { A B .. }` (no else, a workgroup write inside) as `if (c) { A } if (c) { B } ..` when `c` reads no register
+/// the body writes and no workgroup element: each statement then runs under the same value of `c`.
+fn distribute_ifs(seg: Vec<St>) -> Vec<St> {
+    let mut out = Vec::new();
+    for s in seg {
+        match s {
+            St::If(c, a, b) if b.is_empty() && a.len() > 1 && writes_wg(&a) => {
+                let (mut read, mut written, mut wg) = (Vec::new(), Vec::new(), Vec::new());
+                e_regs(&c, &mut read);
+                regs_written(&a, &mut written);
+                wg_uses_e(&c, &mut wg);
+                if wg.is_empty() && !read.iter().any(|r| written.contains(r)) {
+                    out.extend(distribute_ifs(a).into_iter().map(|x| St::If(c.clone(), vec![x], Vec::new())));
+                } else {
+                    out.push(St::If(c, a, b));
+                }
+            }
+            o => out.push(o),
+        }
+    }
+    out
+}
+
+/// Every workgroup access of the statements: (array, its index), `None` for an access at no index the reader can
+/// name (a pair phase's partner).
+fn wg_accesses<'s>(sts: &'s [St], out: &mut Vec<(usize, Option<&'s E>)>) {
+    fn ex<'s>(e: &'s E, out: &mut Vec<(usize, Option<&'s E>)>) {
+        match e {
+            E::Wg(v, i, _) | E::WgA(v, i) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+            }
+            E::WgOwn(v, _, _) => out.push((*v, None)),
+            E::WgRmw(_, v, i, x) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+                ex(x, out);
+            }
+            E::Parr(_, i, _) | E::Load(_, i, _) | E::LoadV4(_, i) => ex(i, out),
+            E::Rmw(_, _, i, x) => {
+                ex(i, out);
+                ex(x, out);
+            }
+            o => kids_of(o).into_iter().for_each(|k| ex(k, out)),
+        }
+    }
+    for s in sts {
+        match s {
+            St::Set(_, e) | St::Discard(e) | St::BreakIf(e) => ex(e, out),
+            St::SetLane(_, a, b) | St::ParrSet(_, a, b) | St::Store(_, a, b) => {
+                ex(a, out);
+                ex(b, out);
+            }
+            St::WgSet(v, i, x) | St::WgAStore(v, i, x) | St::WgPut(v, i, x) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+                ex(x, out);
+            }
+            St::HLoad(_, v, i) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+            }
+            // an own write `v[lidx + m * T]` and an own read were proven own when they were made
+            St::WgOwnSet(v, _, x) => {
+                out.push((*v, None));
+                ex(x, out);
+            }
+            St::PLoad(_, v) => out.push((*v, None)),
+            St::ULoad(_, v, i) => {
+                out.push((*v, Some(i)));
+                ex(i, out);
+            }
+            St::If(c, a, b) => {
+                ex(c, out);
+                wg_accesses(a, out);
+                wg_accesses(b, out);
+            }
+            St::Loop(l) => {
+                ex(&l.bound, out);
+                wg_accesses(&l.body, out);
+            }
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) => wg_accesses(b, out),
+            St::Barrier | St::StorageBarrier => {}
+        }
+    }
+}
+
+/// The plain workgroup arrays statements write, at any depth and in any phase.
+fn plain_written(sts: &[St], out: &mut Vec<usize>) {
+    for s in sts {
+        match s {
+            St::WgSet(v, _, _) | St::WgOwnSet(v, _, _) | St::WgPut(v, _, _) => out.push(*v),
+            St::If(_, a, b) => {
+                plain_written(a, out);
+                plain_written(b, out);
+            }
+            St::Loop(l) => plain_written(&l.body, out),
+            St::Phase(b) | St::Solo(b) | St::Split(_, b) | St::Pair(_, b) => plain_written(b, out),
+            _ => {}
+        }
+    }
+}
+
 /// Every workgroup write's (array, index, inside a solo condition).
 fn wg_writes<'s>(sts: &'s [St], solo: bool, wg: [u32; 3], out: &mut Vec<(usize, &'s E, bool)>) {
     for s in sts {
@@ -3360,6 +3514,17 @@ impl<'a> Reader<'a> {
     /// The `m` of an own element `lidx + m * T` of array `v`, in its region's layout.
     fn own_m(&self, v: usize, idx: &E) -> Option<E> {
         let i = self.unmask(idx);
+        // under `lidx == 0`, a literal element at invocation 0's residue is its own: `lidx + m * T` with lidx 0
+        if self.lidx_zero.get() {
+            if let Some(c) = lit_u(&i) {
+                let t = self.threads();
+                match self.regions.get(v) {
+                    Some(Region::Plain { block: Some(b), .. }) if c < *b => return Some(E::Lit(Lit::U(c))),
+                    Some(Region::Plain { block: None, .. }) if c.is_multiple_of(t) => return Some(E::Lit(Lit::U(c / t))),
+                    _ => {}
+                }
+            }
+        }
         match self.regions.get(v) {
             Some(Region::Plain { block: Some(c), .. }) => {
                 let (c2, j) = self.block_form(&i)?;
@@ -3479,8 +3644,84 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
-    /// One segment (the statements between two barriers), its barrier consumed by its phase when it has one.
+    /// One segment (the statements between two barriers), its barrier consumed by its phase when it has one. A
+    /// segment that is not one phase may be several: a cut between two runs of its statements that touch no common
+    /// workgroup array (none writes an array the other reads or writes), each run one phase. A barrier added between
+    /// them changes no value: every conflicting pair of accesses is inside one run, so every execution of the phases is
+    /// an execution of the segment. An `if (c) { A B }` whose condition reads no register its body writes is first
+    /// `if (c) { A } if (c) { B }`, the same statements in the same order.
     fn close(&mut self, seg: Vec<St>, barrier: bool, out: &mut Vec<St>) -> R<()> {
+        let mut first = Vec::new();
+        let splits = self.splits.len();
+        let e = match self.close_one(seg.clone(), barrier, &mut first) {
+            Ok(()) => {
+                out.extend(first);
+                return Ok(());
+            }
+            Err(e) => e,
+        };
+        self.splits.truncate(splits);
+        let seg = distribute_ifs(seg);
+        // a statement that already holds barriers (a loop or uniform branch of phases) between two runs it shares no
+        // written array with: the runs close on either side of it
+        if let Some(i) = seg.iter().position(|x| needs_l(std::slice::from_ref(x))) {
+            let (a, rest) = seg.split_at(i);
+            let (l, b) = rest.split_at(1);
+            // a side the statement's own barrier already orders needs no proof; a loop that may run no trip leaves the
+            // two runs unordered with each other
+            let once = !matches!(&l[0], St::Loop(lp) if !lit_u(&lp.bound).is_some_and(|n| n > 0));
+            if (leads_barrier(l) || self.independent(a, l)) && (ends_barrier(l) || self.independent(l, b)) && (once || self.independent(a, b)) {
+                let mut tried = Vec::new();
+                let at = self.splits.len();
+                let ra = if writes_wg(a) { self.close(a.to_vec(), false, &mut tried) } else {
+                    tried.extend(a.iter().cloned());
+                    Ok(())
+                };
+                if ra.is_ok() {
+                    tried.extend(l.iter().cloned());
+                    if self.close(b.to_vec(), barrier, &mut tried).is_ok() {
+                        out.extend(tried);
+                        return Ok(());
+                    }
+                }
+                self.splits.truncate(at);
+            }
+        }
+        for cut in 1..seg.len() {
+            let (a, b) = seg.split_at(cut);
+            if !writes_wg(a) || !writes_wg(b) || !self.independent(a, b) {
+                continue;
+            }
+            let mut tried = Vec::new();
+            let at = self.splits.len();
+            if self.close_one(a.to_vec(), false, &mut tried).is_ok() && self.close(b.to_vec(), barrier, &mut tried).is_ok() {
+                out.extend(tried);
+                return Ok(());
+            }
+            self.splits.truncate(at);
+        }
+        Err(e)
+    }
+
+    /// Whether two runs of statements may run unordered without a race, so a barrier between them changes no value:
+    /// every plain array one writes and the other touches is touched in both only at this invocation's own elements
+    /// (`lidx + m * T`), each the same invocation's in program order. Atomics never race.
+    fn independent(&self, a: &[St], b: &[St]) -> bool {
+        let (mut wa, mut wb) = (Vec::new(), Vec::new());
+        plain_written(a, &mut wa);
+        plain_written(b, &mut wb);
+        let (mut xa, mut xb) = (Vec::new(), Vec::new());
+        wg_accesses(a, &mut xa);
+        wg_accesses(b, &mut xb);
+        let own = |v: usize, i: Option<&E>| match i {
+            None => true,
+            Some(i) => self.own_m(v, i).is_some(),
+        };
+        let shared: Vec<usize> = wa.iter().filter(|v| xb.iter().any(|(u, _)| u == *v)).chain(wb.iter().filter(|v| xa.iter().any(|(u, _)| u == *v))).copied().collect();
+        shared.iter().all(|v| xa.iter().chain(xb.iter()).filter(|(u, _)| u == v).all(|(u, i)| own(*u, *i)))
+    }
+
+    fn close_one(&mut self, seg: Vec<St>, barrier: bool, out: &mut Vec<St>) -> R<()> {
         if !writes_wg(&seg) {
             out.extend(seg);
             if barrier {
@@ -3674,10 +3915,14 @@ impl<'a> Reader<'a> {
             St::BreakIf(e) => St::BreakIf(self.x_e(e, wr, rd, &mut pre)?),
             St::If(c, a, b) => {
                 let c2 = self.x_e(c, wr, rd, &mut pre)?;
-                let mut a2 = Vec::new();
-                for x in a {
-                    a2.extend(self.x_stmt(x, wr, rd)?);
+                let zero = self.lidx_zero.get();
+                if solo_cond(c, self.wg).is_some() {
+                    self.lidx_zero.set(true);
                 }
+                let mut a2 = Vec::new();
+                let ra: R<()> = a.iter().try_for_each(|x| self.x_stmt(x, wr, rd).map(|v| a2.extend(v)));
+                self.lidx_zero.set(zero);
+                ra?;
                 let mut b2 = Vec::new();
                 for x in b {
                     b2.extend(self.x_stmt(x, wr, rd)?);
@@ -3814,7 +4059,12 @@ impl<'a> Reader<'a> {
                         self.lidx_cap.set(Some(saved.unwrap_or(u64::MAX).min(m.saturating_sub(1) as u64)));
                     }
                 }
+                let zero = self.lidx_zero.get();
+                if solo_cond(e, self.wg).is_some() {
+                    self.lidx_zero.set(true);
+                }
                 let ra = a.iter().map(|x| self.write_stmt(x)).collect::<R<Vec<_>>>();
+                self.lidx_zero.set(zero);
                 self.lidx_cap.set(saved);
                 St::If(self.own_e(e, c)?, ra?, b.iter().map(|x| self.write_stmt(x)).collect::<R<_>>()?)
             }

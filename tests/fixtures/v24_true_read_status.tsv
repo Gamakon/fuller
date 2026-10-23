@@ -14,7 +14,7 @@ seeds5b/seed11.wgsl	reads
 seeds5b/seed12.wgsl	gap	a value of type Array { base: [0], size: Constant(8), stride: 4 }
 seeds5b/seed13.wgsl	reads	
 seeds5b/seed14.wgsl	gap	a write of qc[Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split phase: a write of qc[Lane(Bi(Lid), 0, Wt { s: U32, l
-seeds5b/seed15.wgsl	gap	a write of blen[Lit(U(0))], an element another invocation may own; as a split phase: a write of blen[Lit(U(0))], an element another invocation may own
+seeds5b/seed15.wgsl	gap	a write phase: a read of vis[Bin(And, Bin(Add, Bin(ShiftRight, Bin(Multiply, Bin(Add, Field(2), Lane(Bi(Wid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
 seeds5b/seed16.wgsl	gap	a write of wbuf[Bin(Add, Lit(U(1024)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split p
 seeds5b/seed17.wgsl	gap	a write phase: a read of wp[Counter(7)], an element another invocation may write in the phase; as a split phase: a write of wv[Reg(Reg { kind: 1, n: 19 }, Wt { 
 seeds5b/seed18.wgsl	gap	a write phase: a read of wflip[Counter(8)], an element another invocation may write in the phase; as a split phase: a write of wrow[Reg(Reg { kind: 1, n: 31 }, 
@@ -47,9 +47,9 @@ run1/seed12.wgsl	reads
 run1/seed13.wgsl	reads	
 run1/seed14.wgsl	reads	
 run1/seed15.wgsl	gap	a write of sc[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(Multiply, Counter(3), Lit(U(64)), Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
-run1/seed16.wgsl	gap	a write of sel[Counter(2)], an element another invocation may own; as a split phase: a write of sel[Counter(2)], an element another invocation may own
+run1/seed16.wgsl	gap	a write phase: a read of partial[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(9), Wt { s: U32
 run1/seed17.wgsl	gap	a write phase: a read of pscore[Counter(9)], an element another invocation may write in the phase; as a split phase: a write of obucket[Bin(And, Reg(Reg { kind:
-run1/seed18.wgsl	gap	a write phase: a read of red[Bin(Multiply, Bin(Add, Bin(Multiply, Counter(1), Lit(U(32)), Wt { s: U32, lanes: 1 }), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), W
+run1/seed18.wgsl	gap	a write phase: a read of sk_s[Bin(And, Bin(Add, Bin(Multiply, Bin(Multiply, Bin(Divide, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(Multiply, Counte
 run1/seed19.wgsl	gap	a write phase: a read of wy[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(ShiftLeft, Lit(U(1)), Counter(4), Wt { s: U32, lanes: 1 }), Wt { s:
 run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body
 run1/seed21.wgsl	gap	workgroup array wa of 2048 written in blocks of 4 by 256 invocations
