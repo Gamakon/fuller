@@ -1,7 +1,7 @@
 seed	status	reason
 seeds5b/seed00.wgsl	reads	
 seeds5b/seed01.wgsl	reads	
-seeds5b/seed02.wgsl	gap	a write of wbits[Bin(And, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(31)), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split ph
+seeds5b/seed02.wgsl	out	a race in its own text: ingest line 115, wbits[t & 31u] = 0u; runs in all 64 invocations between two barriers, so invocations t and t + 32 write one element (eq
 seeds5b/seed03.wgsl	reads	
 seeds5b/seed04.wgsl	reads	
 seeds5b/seed05.wgsl	reads	
@@ -27,7 +27,7 @@ seeds5b/seed24.wgsl	reads
 seeds5b/seed25.wgsl	reads	
 seeds5b/seed26.wgsl	reads	
 seeds5b/seed27.wgsl	reads	
-seeds5b/seed28.wgsl	gap	a write phase: a read of wscore[Counter(7)], an element another invocation may write in the phase; as a split phase: a write of top_s[Reg(Reg { kind: 1, n: 8 },
+seeds5b/seed28.wgsl	out	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both w
 seeds5b/seed29.wgsl	gap	a pair phase writing wred[Bin(Add, Lit(U(256)), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], not the own element
 seeds5b/seed30.wgsl	gap	a write phase: a read of wred[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(12), Wt { s: U32, 
 seeds5b/seed31.wgsl	gap	a loop that breaks and holds a barrier
@@ -39,7 +39,7 @@ run1/seed04.wgsl	reads
 run1/seed05.wgsl	gap	a write phase: a read of probe[Counter(4)], an element another invocation may write in the phase; as a split phase: a write of cs[Bin(Modulo, Bin(Add, Reg(Reg {
 run1/seed06.wgsl	gap	a write of wc[Lit(U(0))], an element another invocation may own; as a split phase: a write of wc[Lit(U(0))], an element another invocation may own
 run1/seed07.wgsl	reads	
-run1/seed08.wgsl	gap	a write phase: a read of cscore[Counter(3)], an element another invocation may write in the phase; as a split phase: a write of probe[Reg(Reg { kind: 1, n: 3 },
+run1/seed08.wgsl	out	a race in its own text: probe[rank] = c & 127u, rank counting v > mine || (v == mine && o < c) over the f32 cscore; a NaN score gives two centres one rank, so t
 run1/seed09.wgsl	reads	
 run1/seed10.wgsl	gap	a write of red[Bin(Add, Counter(10), Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1 })], an element another invocation may own; as a split pha
 run1/seed11.wgsl	gap	a break or continue nested inside conditionals of a loop body
@@ -47,8 +47,8 @@ run1/seed12.wgsl	reads
 run1/seed13.wgsl	reads	
 run1/seed14.wgsl	reads	
 run1/seed15.wgsl	gap	a write of sc[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(Multiply, Counter(3), Lit(U(64)), Wt { s: U32, lanes: 1 }), Wt { s: U32, lanes: 1
-run1/seed16.wgsl	gap	a write phase: a read of partial[Bin(Add, Bin(Multiply, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Lit(U(32)), Wt { s: U32, lanes: 1 }), Counter(9), Wt { s: U32
-run1/seed17.wgsl	gap	a write phase: a read of pscore[Counter(9)], an element another invocation may write in the phase; as a split phase: a write of obucket[Bin(And, Reg(Reg { kind:
+run1/seed16.wgsl	out	a race in its own text: score_batch, invocations t < 8 write cscore[pend[t]], and pend[t] is a link loaded from the index arena (pend[t] = n); two links may nam
+run1/seed17.wgsl	out	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so t
 run1/seed18.wgsl	gap	a write phase: a read of sk_s[Bin(And, Bin(Add, Bin(Multiply, Bin(Multiply, Bin(Divide, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(Multiply, Counte
 run1/seed19.wgsl	gap	a write phase: a read of wy[Bin(And, Bin(Add, Lane(Bi(Lid), 0, Wt { s: U32, lanes: 1 }), Bin(ShiftLeft, Lit(U(1)), Counter(4), Wt { s: U32, lanes: 1 }), Wt { s:
 run1/seed20.wgsl	gap	a break or continue nested inside conditionals of a loop body

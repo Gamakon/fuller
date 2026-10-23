@@ -1,0 +1,6 @@
+seed	evidence
+seeds5b/seed02.wgsl	a race in its own text: ingest line 115, wbits[t & 31u] = 0u; runs in all 64 invocations between two barriers, so invocations t and t + 32 write one element (equal values, still a race)
+run1/seed16.wgsl	a race in its own text: score_batch, invocations t < 8 write cscore[pend[t]], and pend[t] is a link loaded from the index arena (pend[t] = n); two links may name one centre, then two invocations write one element
+seeds5b/seed28.wgsl	a race in its own text: search writes top_s[rank], rank counting entries with os > s || (os == s && orow < r) over f32 scores; a NaN score compares false both ways, so two entries share a rank and two invocations write one element
+run1/seed08.wgsl	a race in its own text: probe[rank] = c & 127u, rank counting v > mine || (v == mine && o < c) over the f32 cscore; a NaN score gives two centres one rank, so two invocations write one element
+run1/seed17.wgsl	a race in its own text: obucket[rank & 63u] = b, rank counting o < mine || (o == mine && u < t) over the f32 pscore; a NaN score gives two probes one rank, so two invocations write one element

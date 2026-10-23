@@ -2910,9 +2910,19 @@ mod tests {
     fn every_v24_seed_reads_or_is_named_with_its_reason() {
         let k = kingdom();
         let c = contract();
+        // the kernels named outside the kingdom by the evidence of their own text (a race), each with it
+        let outside_text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v24_true_outside.tsv")).expect("v24_true_outside.tsv");
+        let outside: BTreeMap<String, String> = outside_text.lines().skip(1).filter_map(|l| l.split_once('\t')).map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let mut table = String::from("seed\tstatus\treason\n");
         for (set, name, text) in seeds() {
-            let (st, why) = match read_module(&k, &text, &c) {
+            let r = read_module(&k, &text, &c);
+            if let Some(ev) = outside.get(&format!("{set}/{name}")) {
+                assert!(r.is_err(), "{set}/{name} is named outside the kingdom ({ev}) but reads: our software has a bug, a race read as legal");
+                let why: String = ev.chars().take(160).collect();
+                table.push_str(&format!("{set}/{name}\tout\t{why}\n"));
+                continue;
+            }
+            let (st, why) = match r {
                 Ok(_) => ("reads", String::new()),
                 Err(ReadError::Gap(g)) => ("gap", g.split(" [value").next().unwrap_or(&g).replace(['\t', '\n'], " ")),
                 Err(ReadError::Out(o)) => ("out", o.replace(['\t', '\n'], " ")),
