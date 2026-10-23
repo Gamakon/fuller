@@ -68,6 +68,8 @@ def declare(iface):
     T("u32.lanes", "a lane-split phase's active lanes: a bare power of two", 1, "1..=1024")
     SAFE_ARGS.add("u32.qown")
     SAFE_ARGS.add("u32.lanes")
+    T("u32.gown", "a group leader's own element lidx / qg + k * (T / qg) in a group phase")
+    SAFE_ARGS.add("u32.gown")
     T("u32.bblk", "a block-write phase's first group of T * bc words: a bare literal", 1, "0..=1023")
     T("u32.bcount", "a block-write phase's block length bc: a bare literal", 1, "1..=256")
     SAFE_ARGS.add("u32.bblk")
@@ -184,8 +186,17 @@ def build(iface):
         for key, vt_, rd, wr in ELEMS:
             R(f"wg.sset_{key}_A{d}_f{k}", s, ["u32.xblk", "reg<u32>.slot", a_of(vt_)], "{ let s = {1}; let o = {0} * ss + s; if (s < ss && o < sp && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "a write at a slot of the phase, below the split")
             R(f"wg.aload_{key}_A{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no write of the phase reaches it")
+    # ---- the group phase (UI1 batch 10): the leaders lidx % qg == 0 of groups of qg lanes write their own group elements
+    # lidx / qg + k (T / qg), below a split, and read only at or above it; the a family has no workgroup read, so no
+    # element below sp is read in the phase and no two leaders write one element.
+    for x, d, k in rungs("G"):
+        s = S(x, d, k)
+        for key, vt_, rd, wr in ELEMS:
+            R(f"wg.gset_{key}_G{d}_f{k}", s, ["u32.wgbase", "u32.gown", a_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "a group leader's own write below the split")
+            R(f"wg.gload_{key}_G{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
     for x, d, k in rungs("L"):
         s = S("L", d, k)
+        R(f"wg.gsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")
         R(f"wg.slot_L{d}_f{k}", s, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
         R(f"wg.bphase_L{d}_f{k}", s, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
         R(f"wg.bsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let bc = {1}; {2} } workgroupBarrier(); {3}", "the block-write phase with a split: block writes below sp, reads of other arrays at or above it")
@@ -210,6 +221,8 @@ def build(iface):
     R("own.u32_lanes", "u32.lanes", [], "1u")
     R("wg.qown_x", "u32.qown", ["u32.indexw"], "(lidx + {0} * qm)", "an active lane's own element: lidx + k qm is injective over the lanes below qm")
     R("own.u32_qown", "u32.qown", [], "lidx", "the lane's own element of the region's first qm")
+    R("wg.gown_x", "u32.gown", ["u32.indexa"], "(lidx / qg + {0} * (KNOB_THREADS / qg))", "a group leader's own element: lidx / qg is injective over the leaders, lidx % qg == 0")
+    R("own.u32_gown", "u32.gown", [], "(lidx / qg)", "the leader's own element of the region's first T / qg")
     R("own.u32_bblk", "u32.bblk", [], "0u")
     C("literal.bcount", "u32.bcount", "{v}u", [str(i) for i in range(1, 257)], "?_bcount")
     R("own.u32_bcount", "u32.bcount", [], "1u")
@@ -218,13 +231,13 @@ def build(iface):
     C("literal.xspan", "u32.xspan", "{v}u", [str(1 << j) for j in range(1, 13)], "?_xspan")
     R("own.u32_xspan", "u32.xspan", [], "2u")
     R("own.u32_xmode", "u32.xmode", [], "0u")
-    for x, d, k in rungs("LCSWPXEYA"):
+    for x, d, k in rungs("LCSWPXEYAG"):
         R(f"stmt.discard_u_{x}{d}_f{k}", S(x, d, k), [fam(x, "u32.atomicold")], "_ = {0};", "the effect without the value")
     alast = A_WORDS - 1
     acell = f"&wg_apool[min({{0}} + {{1}}, {alast}u)]"
     for fn, F in ATOMIC_FUNS.items():
         R(f"atomic.wg_{fn}", "u32.atomicold", ["u32.wgabase", "u32.index", "u32.index"], f"atomic{F}({acell}, {{2}})", "an atomic of the atomic pool: never a race, its old value order-dependent", twin=True)
     R("atomic.wg_load", "u32.atomicold", ["u32.wgabase", "u32.index"], f"atomicLoad({acell})", "a relaxed load of the atomic pool", twin=True)
-    for x, d, k in rungs("LCSWPXEYA"):
+    for x, d, k in rungs("LCSWPXEYAG"):
         it, vt_ = (fam(x, "u32.index"), fam(x, "u32.index"))
         R(f"atomic.wg_store_{x}{d}_f{k}", S(x, d, k), ["u32.wgabase", it, vt_], "atomicStore(&wg_apool[min({0} + {1}, " + str(alast) + "u)], {2});", "an atomic store at any element: one atomic operation, never a race")

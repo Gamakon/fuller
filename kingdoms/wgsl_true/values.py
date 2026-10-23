@@ -257,6 +257,11 @@ def build(iface):
             R("logic.and", t, [t, t], "({0} && {1})", twin=True)
             R("logic.or", t, [t, t], "({0} || {1})", twin=True)
             R("logic.not", t, [t], "(!{0})", twin=True)
+            if iface.get("module"):
+                # a comparison of two predicates (a seed's `igt == asc`), a module interface only: Gram and the images
+                # keep their tables
+                R("logic.eq", t, [t, t], "({0} == {1})", twin=True)
+                R("logic.ne", t, [t, t], "({0} != {1})", twin=True)
         else:
             R(f"logic.and_v{L}", t, [t, t], "({0} & {1})", twin=True)
             R(f"logic.or_v{L}", t, [t, t], "({0} | {1})", twin=True)
