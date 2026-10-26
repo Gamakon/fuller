@@ -1,0 +1,13 @@
+# The dispatch contract of nluca's generated_step (fuller safety::Contract,
+# the format of tests/corpus/nluca/nluca.contract, from noctiluca-dev
+# rust/nluca/src/gpu.rs and results/nluca/cases/README.md): one thread a
+# row, a 1-D dispatch of ceil(width / X) workgroups of the kernel's own
+# width X over at most 1,048,576 rows (at most 1,048,576 workgroups, X = 1);
+# the width (ints[0], buffer_5) and the band's first row
+# (offset[0], buffer_6) are at most 2^20. The legality checker's layer 7
+# proves a kernel of this problem under it.
+workgroups x 1 1048576
+workgroups y 1 1
+workgroups z 1 1
+param buffer_5_global[0] 0 1048576
+param buffer_6_global[0] 0 1048576

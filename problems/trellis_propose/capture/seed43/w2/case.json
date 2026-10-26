@@ -1,0 +1,14 @@
+{
+  "window": 2,
+  "start": 20000,
+  "end": 30000,
+  "arrived": 20000,
+  "window_rows": 10000,
+  "claimed_slots": 9914,
+  "leaf_slots": 46504,
+  "edges": 276,
+  "cpu_propose_ms_median": 48.779,
+  "cpu_propose_ms": [47.079, 48.072, 48.779, 49.725, 50.548],
+  "cpu_threads": 16,
+  "cpu_recall10": 0.014790
+}

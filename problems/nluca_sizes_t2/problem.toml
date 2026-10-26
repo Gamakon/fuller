@@ -1,0 +1,241 @@
+# nluca's reservoir step (Noctiluca, rust/nluca/src/gpu.rs generated_step,
+# the host loop of gpu_step_matches_a_host_loop) as a dispatch program for
+# the generic harness (src/wgsl/harness.rs; the schema is in its header).
+# The contract is Noctiluca's README (noctiluca-dev/results/nluca/cases/
+# README.md): eight buffers in the kernel's binding order, the kernel run
+# `steps` times, step t reading `state` and writing `out`, step t + 1
+# reading that `out` as its state and writing into the other buffer
+# (ping-pong), offset[3] = t before each step, `out` compared after steps
+# 1, 8 and 64 against the f64 reference's f32 checkpoints: the largest
+# |got - expected| over the RMS of the expected state below the case's
+# tolerance at every checkpoint. One thread per row, workgroup 256.
+#
+# CubeCL declares every binding read_write, so nothing is resident: every
+# buffer is made from the case's files at each run (no kernel can carry a
+# change of an input into the next evaluation). Binding 8, `info`, is
+# CubeCL's metadata array (buffer lengths), unused by generated_step; it is
+# bound to 16 zero words.
+
+name = "nluca_sizes_t2"
+description = "nluca generated_step: the reservoir state over 64 steps, compared at steps 1, 8 and 64"
+work = "width * degree * steps"
+alias = "distinct"
+# Every speed-up ranks (nluca_s2: all 97 feasible kernels were slower than the
+# reference and the clamped reciprocal scored every one HFF pi/3).
+speed_column = "ranked"
+
+[kernel]
+entry = "generated_step"
+reference = "shipped.wgsl"
+
+[[binding]]
+binding = 0
+name = "sources"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 1
+name = "state"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 2
+name = "codebook"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 3
+name = "drive"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 4
+name = "out"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 5
+name = "ints"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 6
+name = "offset"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 7
+name = "reals"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 8
+name = "info"
+kind = "storage_read_write"
+element = "u32"
+
+[[input]]
+name = "sources"
+element = "u32"
+shape = ["width * degree"]
+
+[[input]]
+name = "state"
+element = "f32"
+shape = ["width"]
+
+[[input]]
+name = "codebook"
+element = "f32"
+shape = ["1024"]
+
+[[input]]
+name = "drive"
+element = "f32"
+shape = ["width"]
+
+[[input]]
+name = "ints"
+element = "u32"
+shape = ["4"]
+
+[[input]]
+name = "offset"
+element = "u32"
+shape = ["4"]
+
+[[input]]
+name = "reals"
+element = "f32"
+shape = ["5"]
+
+# The state at the three checkpoints, one row each.
+[[output]]
+name = "trajectory"
+element = "f32"
+shape = ["3", "width"]
+expected_element = "f32"
+points = "3"
+
+[[run]]
+buffer = "src"
+element = "u32"
+elements = "width * degree"
+from = "sources"
+
+[[run]]
+buffer = "cb"
+element = "f32"
+elements = "1024"
+from = "codebook"
+
+[[run]]
+buffer = "drv"
+element = "f32"
+elements = "width"
+from = "drive"
+
+[[run]]
+buffer = "ints"
+element = "u32"
+elements = "4"
+from = "ints"
+
+[[run]]
+buffer = "reals"
+element = "f32"
+elements = "5"
+from = "reals"
+
+[[run]]
+buffer = "info"
+element = "u32"
+elements = "16"
+fill = "zero"
+
+# The ping-pong pair: s0 the starting state, s1 the first step's out.
+[[run]]
+buffer = "s0"
+element = "f32"
+elements = "width"
+from = "state"
+
+[[run]]
+buffer = "s1"
+element = "f32"
+elements = "width"
+fill = "zero"
+
+# The checkpoints, persistent across the steps.
+[[run]]
+buffer = "ckpt"
+element = "f32"
+elements = "3 * width"
+fill = "zero"
+
+[[run]]
+for = "t"
+count = "steps"
+let = ["k = (t + 1 >= 8) + (t + 1 >= 64)"]
+
+# offset = (band offset 0, noise_lo, noise_hi, step t): a buffer a step.
+[[run.body]]
+buffer = "offset{t}"
+element = "u32"
+elements = "4"
+from = "offset"
+set = ["3 = t"]
+
+[[run.body]]
+dispatch = { sources = "src", state = "s{t % 2}", codebook = "cb", drive = "drv", out = "s{(t + 1) % 2}", ints = "ints", offset = "offset{t}", reals = "reals", info = "info" }
+workgroups = ["ceil_div(width, wg_x)", "1", "1"]
+
+[[run.body]]
+if = "(t + 1 == 1) + (t + 1 == 8) + (t + 1 == 64)"
+copy = "s{(t + 1) % 2}"
+to = "ckpt"
+dst_offset = "k * width"
+elements = "width"
+
+[[run]]
+sync = true
+
+[[run]]
+read = "ckpt"
+into = "trajectory"
+elements = "3 * width"
+
+[[suite]]
+name = "constraint"
+role = "constraint"
+cases = "cases/constraint.toml"
+norm = "max_abs_over_rms"
+pass = "tol"
+# Staged (nluca_s1 died at generation 0 on the fit watchdog: all 16 cases,
+# two of them 1,048,576 wide, ran as one submission): one case a submission,
+# the cheapest first (4,096, 65,536, then 1,048,576 rows), each predicted
+# from the rate measured so far against base_ms, stopped at the first failure.
+chunk = 1
+staged = true
+
+[[suite]]
+name = "timing"
+role = "timing"
+cases = "cases/timing.toml"
+
+[budget]
+base_ms = 30000.0
+round_ms = 20000.0
+timing_rounds = 3
+# The fit watchdog (a true runaway only): ten times the reference kernel's
+# measured evaluation, at least 60 s and the gates' own maximum.
+deadline_factor = 10.0
+deadline_floor_ms = 60000.0

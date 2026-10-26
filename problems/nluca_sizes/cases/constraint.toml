@@ -1,0 +1,83 @@
+# nluca_sizes: generated_step over the ESN widths [1000, 10000, 100000, 500000, 1048576] (Noctiluca cases, 2026-10-14)
+root = "/Users/andrewmorgan/Dev/gamakon/noctiluca-dev/results/nluca/cases"
+
+[[case]]
+name = "w1000_k1_leak03_u01"
+label = "w1000_k1_leak03_u01"
+dir = "w1000_k1_leak03_u01"
+params = { width = 1000, degree = 10, steps = 64, tol = 0.0001618 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w1000_k2_leak03_u05"
+label = "w1000_k2_leak03_u05"
+dir = "w1000_k2_leak03_u05"
+params = { width = 1000, degree = 10, steps = 64, tol = 0.0001 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w10000_k1_leak03_u01"
+label = "w10000_k1_leak03_u01"
+dir = "w10000_k1_leak03_u01"
+params = { width = 10000, degree = 10, steps = 64, tol = 0.000456 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w10000_k2_leak03_u05"
+label = "w10000_k2_leak03_u05"
+dir = "w10000_k2_leak03_u05"
+params = { width = 10000, degree = 10, steps = 64, tol = 0.0001 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w100000_k1_leak03_u01"
+label = "w100000_k1_leak03_u01"
+dir = "w100000_k1_leak03_u01"
+params = { width = 100000, degree = 10, steps = 64, tol = 0.000728 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w100000_k2_leak03_u05"
+label = "w100000_k2_leak03_u05"
+dir = "w100000_k2_leak03_u05"
+params = { width = 100000, degree = 10, steps = 64, tol = 0.000131 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w500000_k1_leak03_u01"
+label = "w500000_k1_leak03_u01"
+dir = "w500000_k1_leak03_u01"
+params = { width = 500000, degree = 10, steps = 64, tol = 0.0008672 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w500000_k2_leak03_u05"
+label = "w500000_k2_leak03_u05"
+dir = "w500000_k2_leak03_u05"
+params = { width = 500000, degree = 10, steps = 64, tol = 0.0001596 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w1048576_k1_leak03_u01"
+label = "w1048576_k1_leak03_u01"
+dir = "w1048576_k1_leak03_u01"
+params = { width = 1048576, degree = 10, steps = 64, tol = 0.0009211 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+
+[[case]]
+name = "w1048576_k2_leak03_u05"
+label = "w1048576_k2_leak03_u05"
+dir = "w1048576_k2_leak03_u05"
+params = { width = 1048576, degree = 10, steps = 64, tol = 0.0001487 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+expected = { trajectory = ["expected_step001.f32.bin", "expected_step008.f32.bin", "expected_step064.f32.bin"] }
+

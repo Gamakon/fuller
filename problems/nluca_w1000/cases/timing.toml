@@ -1,0 +1,24 @@
+# nluca_w1000: generated_step at width 1000, timed on three datasets (2026-10-14)
+root = "/Users/andrewmorgan/Dev/gamakon/noctiluca-dev/results/nluca/cases"
+
+[[case]]
+name = "w1000_k1_leak03_u01"
+label = "w1000_k1_leak03_u01"
+dir = "w1000_k1_leak03_u01"
+params = { width = 1000, degree = 10, steps = 64, tol = 0.0001618 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+
+[[case]]
+name = "w1000_k2_leak03_u05"
+label = "w1000_k2_leak03_u05"
+dir = "w1000_k2_leak03_u05"
+params = { width = 1000, degree = 10, steps = 64, tol = 0.0001 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+
+[[case]]
+name = "w1000_k3_leak03_u02"
+label = "w1000_k3_leak03_u02"
+dir = "w1000_k3_leak03_u02"
+params = { width = 1000, degree = 10, steps = 64, tol = 0.0001 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+
