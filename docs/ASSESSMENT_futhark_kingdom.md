@@ -806,10 +806,49 @@ This is also a good candidate for an upstream bug report: the reproducer is
 small, stable, and shows a legal Futhark program whose compilation does not
 terminate.
 
+**It is not a stale-compiler problem.** Three compilers were tried on the
+same program, each with a wall-clock bound and a control program that
+compiles in 0.1 s:
+
+| compiler | the control | the program |
+|---|---|---|
+| Futhark 0.28.1 (the installed one) | 0.1 s | **hangs** (killed at 120 s and at 300 s) |
+| Futhark 0.29.0-prerelease, upstream master, 2026-10-11 (the `nightly` release) | 0.1 s | **hangs** (120 s) |
+| Futhark 0.29.0-prerelease, the `webgpu` branch at `14e9ccbf`, 2026-10-22 (its own CI's build) | 0.1 s | **hangs** (120 s) |
+
+The three reduced programs of the table above (the inner reduce over a plain
+array, the inner reduce removed, the second operand not reversed) compile in
+0.1 s on the branch's compiler too, so the *same* conjunction is the trigger
+in the newest compiler. And the reason the branch does not fix it is visible
+in the diff: between the nightly's tree and the branch head, the only
+changes under `src/Futhark/Optimise/` are a mechanical
+`TraverseOpStms` → `TraverseOpBodies` plumbing refactor, one *narrowing*
+guard added to an `Update` rule the program does not use, and changes to
+`InliningDeadFun.hs` and `ArrayCoalescing.hs` that mention nothing about
+`acc`, scan, reduce or reverse. The optimiser's rules are unchanged.
+
+So the defect is live in upstream master and in the experimental branch: a
+report upstream now has three independent compilers reproducing it. Fuller
+cannot fix it from the outside — no equality-preserving rewrite of the
+program changes the outcome, measured in `docs/RESCUE_futhark.md` §6.1.
+
 ### 10.7 The real WGSL, through the probe
 
-The PR branch (Futhark 0.29.0 prerelease, head `14e9ccb`) is now built, in a
-podman VM (`haskell:9.12-slim-bookworm`, GHC 9.12.4). `futhark webgpu w.fut
+The PR branch (Futhark 0.29.0 prerelease, head `14e9ccb`) was built for this
+probe in a podman VM (`haskell:9.12-slim-bookworm`, GHC 9.12.4). That VM is
+not on the machine any more — `podman machine list` reports
+`podman-machine-default` with `LastUp: 0001-01-01` and no disk — but the
+compiler does not need rebuilding: **the branch's own CI publishes a macOS
+arm64 build as an artifact** on every run
+(`futhark-nightly-macos-arm64.tar.xz`, 33.6 MB), and one command fetches it:
+
+```bash
+gh run download 39795721627 -R diku-dk/futhark -n futhark-nightly-macos-arm64
+```
+
+(run `39795721627` is the branch head `14e9ccb`; the binary reports
+`Futhark 0.29.0 (prerelease)` and its command list contains `webgpu`, which
+master does not have). `futhark webgpu w.fut
 --library -o /tmp/wgpuout` produces real artefacts — `wgpuout.c` (1.7 MB),
 `wgpuout.json` (720 B), `wgpuout.wrapper.js` (12 KB) — before the emcc step
 fails, so they survive.

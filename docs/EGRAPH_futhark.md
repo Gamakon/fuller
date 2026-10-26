@@ -224,20 +224,17 @@ cannot reach.
 
 **The next thing to try**, in order of expected value:
 
-1. **Build the Futhark `webgpu` branch and test the program against it.** The
-   branch is upstream — PR #2140 "Add WebGPU backend" in `diku-dk/futhark`
-   itself, head `webgpu` at `14e9ccbf`, a *draft* with 286 commits, last
-   activity 2026-10-22, and **not** in `master`. It has been *analysed* from
-   source on this machine (its WGSL emission, its `wgpu_kernel_infos[]`
-   metadata, and its three portability risks), but it has **not been built
-   here**: the only Futhark on this machine is 0.28.1, there is no checkout,
-   and the podman machine `podman-machine-default` has never been started
-   (`LastUp: 0001-01-01`). So the step is a *build* — GHC 9.x on the VM's 12
-   cores, then one compile with a watchdog — not a run. It is still the
-   cheapest way to learn whether the optimiser defect survives, because if
-   the hang is already fixed there, the whole rescue question is moot.
+1. ~~**Build the Futhark `webgpu` branch and test the program against it.**~~
+   **Done, and it still hangs.** The branch's own CI publishes a macOS arm64
+   build as an artifact, so no build was needed: Futhark 0.28.1, upstream
+   master's 0.29.0-prerelease and the branch's 0.29.0-prerelease all hang on
+   the program, while a control program compiles in 0.1 s on all three. The
+   optimiser's rules are unchanged in that window (the only changes under
+   `src/Futhark/Optimise/` are a mechanical traversal refactor and one
+   narrowing guard on an `Update` rule the program does not use). The
+   measurements are in `RESCUE_futhark.md` §6.1.
 2. **Report the program upstream.** It is a legal, well-defined program, and
-   Futhark's optimiser should not loop on it. §10.6 of
+   three compilers fail to finish optimising it. §10.6 of
    `ASSESSMENT_futhark_kingdom.md` has the reproducer.
 3. **Go on with Phase 4 regardless.** See §6.
 

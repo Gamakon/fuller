@@ -172,18 +172,71 @@ Futhark 0.28.1's optimiser, in a corner of its `acc` handling.
 
 ## 6. What to do next
 
-1. **Build the Futhark `webgpu` branch and test the program against it.** The
-   branch is upstream — PR #2140 "Add WebGPU backend" in `diku-dk/futhark`,
-   head `webgpu` at `14e9ccbf`, a draft with 286 commits, last activity
-   2026-10-22, not in `master`. It has been *analysed* from source here, but
-   **not built**: the only Futhark on this machine is 0.28.1, there is no
-   checkout, and the podman machine `podman-machine-default` has never been
-   started (`LastUp: 0001-01-01`). The step is a build (GHC 9.x on the VM's
-   12 cores) followed by one compile with a watchdog. If the hang is already
-   fixed there, the whole rescue question is moot.
-2. **Report the program upstream.** It is a legal, well-defined program, and
-   the optimiser should not loop on it. `ASSESSMENT_futhark_kingdom.md` §10.6
-   has the reproducer.
+### 6.1 The experimental branch: measured, and it still hangs
+
+The Futhark `webgpu` branch — PR #2140 "Add WebGPU backend" in
+`diku-dk/futhark`, head `webgpu` at `14e9ccbf` — **still hangs on the
+program**. This is a measurement, not an inference, and it took no build:
+
+* The branch's own CI (run `39795721627`, head `14e9ccbf`, 2026-10-22)
+  uploads a macOS arm64 build as an artifact named
+  `futhark-nightly-macos-arm64.tar.xz` (33.6 MB). Fetch it with
+  `gh run download 39795721627 -R diku-dk/futhark -n futhark-nightly-macos-arm64`
+  (or the artifact API). It is the branch's compiler, not master's: it
+  reports `Futhark 0.29.0 (prerelease)` and its command list contains
+  `webgpu`, which master does not have.
+* The upstream **nightly** (master, 2026-10-11, the same 0.29.0-prerelease)
+  hangs too, and the control program compiles in 0.1 s on both, so the
+  binary is not the problem.
+
+| compiler | the control program | the pathological program |
+|---|---|---|
+| Futhark 0.28.1 (the installed one) | 0.1 s | **hangs** (killed at 120 s and at 300 s) |
+| Futhark 0.29.0-prerelease, upstream master 2026-10-11 | 0.1 s | **hangs** (120 s) |
+| Futhark 0.29.0-prerelease, the `webgpu` branch at `14e9ccbf`, 2026-10-22 | 0.1 s | **hangs** (120 s) |
+
+And the trigger is the *same* conjunction in the branch's compiler — the
+three reduced programs all compile in 0.1 s there:
+
+| the program | the branch's compiler |
+|---|---|
+| the whole program | **hangs** |
+| without the inner `reduce` over the `acc` | 0.1 s |
+| with the inner reduce over a plain array instead | 0.1 s |
+| with the second operand not reversed | 0.1 s |
+
+**The defect is still there.** The branch is 286 commits of *backend* work
+(rebased onto master), and the optimiser's own rules are unchanged in the
+window: between the nightly's tree and the branch head, the only changes
+under `src/Futhark/Optimise/` are a mechanical `TraverseOpStms` →
+`TraverseOpBodies` plumbing refactor, one *narrowing* guard added to an
+`Update` rule the program does not use, and changes to
+`InliningDeadFun.hs` and `ArrayCoalescing.hs` that mention nothing about
+`acc`, scan, reduce or reverse.
+
+So: not a branch-specific problem, and not a stale-compiler problem. It is
+a live defect in the `acc` handling of Futhark's optimiser, present in
+0.28.1, in master's 0.29.0-prerelease, and in the experimental branch.
+
+### 6.2 What to do now
+
+1. **Report it upstream.** It is a legal, well-defined program, and three
+   different compilers — 0.28.1, master's 0.29.0-prerelease, and the
+   experimental branch — all fail to finish optimising it. That is a
+   strong, reproducible report. `ASSESSMENT_futhark_kingdom.md` §10.6 has
+   the reproducer; the shape is "a reduction over an `acc`, a reversed
+   accumulator-derived operand, and an outer reduction, together".
+2. **Stop investing in the rescue.** It is not reachable by equalities that
+   hold for the program, and the compiler that would need fixing is not
+   ours to fix.
 3. **Carry on with the parts of the e-graph that do not depend on the
-   rescue**: the cost model (Phase 4) and the heritable extraction (Phase 5).
-   See `EGGRAPH_futhark.md` §6.
+   rescue**: the cost model (Phase 4) and the heritable extraction
+   (Phase 5). See `EGGRAPH_futhark.md` §6.
+
+### 6.3 A note on getting the branch's compiler
+
+Do not build it. The branch's CI already publishes a macOS arm64 build as
+an artifact on every run (`futhark-nightly-macos-arm64.tar.xz`), and
+`gh run download <run-id> -R diku-dk/futhark -n futhark-nightly-macos-arm64`
+fetches it in one step. A from-source build needs GHC 9.14 plus a cold
+cabal dependency tree — hours — for the same binary.
