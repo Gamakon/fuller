@@ -108,6 +108,14 @@ name = "st4_seeds"
 required-features = ["wgsl"]
 
 [[example]]
+name = "futhark_true_emit"
+required-features = ["wgsl"]
+
+[[example]]
+name = "futhark_wgsl_probe"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_dag_study"
 required-features = ["wgsl"]
 

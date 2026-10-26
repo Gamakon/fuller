@@ -1,0 +1,39 @@
+ref	name	kind	out	args	spelling	note
+F00001	map_a	function	arr.f32	fn.f32_f32;arr.f32	map {0} {1}	apply a function to every element
+F00002	map2_add_a	function	arr.f32	arr.f32;arr.f32	map2 (+) {0} {1}	elementwise sum of two arrays
+F00003	map2_mul_a	function	arr.f32	arr.f32;arr.f32	map2 (*) {0} {1}	elementwise product of two arrays
+F00004	map2_max_a	function	arr.f32	arr.f32;arr.f32	map2 f32.max {0} {1}	elementwise maximum of two arrays
+F00005	map2_min_a	function	arr.f32	arr.f32;arr.f32	map2 f32.min {0} {1}	elementwise minimum of two arrays
+F00006	rev_a	function	arr.f32	arr.f32	reverse {0}	reverse the array
+F00007	map_s	function	scn.f32	fn.f32_f32;scn.f32	map {0} {1}	apply a function to every element of a scan result
+F00008	map2_add_s	function	scn.f32	scn.f32;scn.f32	map2 (+) {0} {1}	elementwise sum of two scan results
+F00009	map2_mul_s	function	scn.f32	scn.f32;scn.f32	map2 (*) {0} {1}	elementwise product of two scan results
+F00010	map2_max_s	function	scn.f32	scn.f32;scn.f32	map2 f32.max {0} {1}	elementwise maximum of two scan results
+F00011	map2_min_s	function	scn.f32	scn.f32;scn.f32	map2 f32.min {0} {1}	elementwise minimum of two scan results
+F00012	rev_s	function	arr.f32	scn.f32	reverse {0}	reverse a scan result; the result is an ordinary array again
+F00013	scan_add_s	function	scn.f32	arr.f32	scan (+) 0.0 {0}	inclusive prefix sum
+F00014	scan_mul_s	function	scn.f32	arr.f32	scan (*) 1.0 {0}	inclusive prefix product
+F00015	reduce_add_a	function	f32.real	arr.f32	reduce (+) 0.0 {0}	sum of the array
+F00016	reduce_mul_a	function	f32.real	arr.f32	reduce (*) 1.0 {0}	product of the array
+F00017	reduce_add_s	function	f32.real	scn.f32	reduce (+) 0.0 {0}	sum of a scan result
+F00018	reduce_mul_s	function	f32.real	scn.f32	reduce (*) 1.0 {0}	product of a scan result
+F00019	fn.f32_f32.neg	function	fn.f32_f32		\x -> -x	negation
+F00020	fn.f32_f32.abs	function	fn.f32_f32		\x -> f32.abs x	absolute value
+F00021	fn.f32_f32.sqrt	function	fn.f32_f32		\x -> f32.sqrt x	square root
+F00022	fn.f32_f32.exp	function	fn.f32_f32		\x -> f32.exp x	exponential
+F00023	fn.f32_f32.log	function	fn.f32_f32		\x -> f32.log x	natural logarithm
+F00024	fn.f32_f32.sin	function	fn.f32_f32		\x -> f32.sin x	sine
+F00025	fn.f32_f32.cos	function	fn.f32_f32		\x -> f32.cos x	cosine
+F00026	fn.f32_f32.tan	function	fn.f32_f32		\x -> f32.tan x	tangent
+F00027	fn.f32_f32.sqr	function	fn.f32_f32		\x -> x * x	square
+F00028	fn.f32_f32.cube	function	fn.f32_f32		\x -> x * x * x	cube
+F00029	fn.f32_f32.recip	function	fn.f32_f32		\x -> 1.0 / x	reciprocal
+F00030	fn.f32_f32.floor	function	fn.f32_f32		\x -> f32.floor x	largest integer below
+F00031	fn.f32_f32.round	function	fn.f32_f32		\x -> f32.round x	nearest integer
+F00032	fn.f32_f32.add_c	function	fn.f32_f32	f32.real	\x -> x + {0}	add a captured literal
+F00033	fn.f32_f32.mul_c	function	fn.f32_f32	f32.real	\x -> x * {0}	multiply by a captured literal
+F00034	fn.f32_f32.sub_c	function	fn.f32_f32	f32.real	\x -> x - {0}	subtract a captured literal
+F00035	?_f32	const	f32.real			a real literal, from the gene's constant array
+F00036	arr.f32.input	terminal	arr.f32		xs	the problem's input array
+F00037	scn.f32.identity	terminal	scn.f32		map (\x -> x) (scan (+) 0.0 xs)	a scan result: the identity scan of the input
+F00038	fn.f32_f32.const	terminal	fn.f32_f32		\x -> 0.0	the constant function

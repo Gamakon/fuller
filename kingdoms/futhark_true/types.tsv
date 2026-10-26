@@ -1,0 +1,5 @@
+ref	dual	slot	form	literals	root	meaning
+T0001	f32.real	f32	real	0.0,1.0,-1.0,0.5,2.0,3.0,0.25,10.0,-0.5,1.5,100.0,0.1,0.75,7.0,-2.5,0.125	yes	a real number
+T0002	arr.f32	arr	f32		yes	a one-dimensional array of reals that is NOT a scan result
+T0003	scn.f32	scn	f32		yes	a one-dimensional array of reals that IS a scan result
+T0004	fn.f32_f32	fn	f32_f32		no	a function from a real to a real
