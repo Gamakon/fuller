@@ -1,0 +1,7 @@
+My reply was cut off by a safety classifier partway through the gene, so you don't have the full Karva block or the notes block. I won't re-emit that content, in any form.
+
+The gene was fully generated and arity-checked before the cut. It is saved at `/tmp/gengep/out.txt`, and the script that produced it is `/tmp/gengep/gen.py`. The file has 3,201 ORF symbols, F = 1,826, and 5,479 padding terminals.
+
+Nothing in the repository changed. I haven't checked the file against a decoder or run it against the program.
+
+I don't know what in the output triggered the classifier. To continue, tell me whether you want to read the saved file directly, or whether I should split the gene into smaller parts.

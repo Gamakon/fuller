@@ -62,17 +62,16 @@ used as a name; D naga rejects it; F1 the body computes one row a thread, the `/
 | tests/fixtures/wgsl_genomes/library_ep/texts | fit_smoke6__g001_r2x_union.fable.wgsl | A | not WGSL: a parse error (model prose, truncation, stray braces) |
 | tests/fixtures/wgsl_genomes/library_ep/texts | fit_smoke6__g001_r8x_union.fable.wgsl | A | not WGSL: a parse error (model prose, truncation, stray braces) |
 
-## Open reader gaps (10): valid WGSL the any-WGSL gate does not read yet
+## Open reader gaps (9): valid WGSL the any-WGSL gate does not read yet
 
 Classes: E a barrier under a condition (needs a uniform-conditional rung); F3 a row held in a variable assigned in a branch
-(ownership of a select of two row forms); K a loop step or nesting depth outside the kingdom; J a struct built from its members.
+(ownership of a select of two row forms); K a loop step or nesting depth outside the kingdom.
 Closed in this task: F (lidx axes, two axes in one array), I (vec4<u32> lane stores), H (a loop entered at a uniform expression),
-G (a stale let held in a register).
+G (a stale let held in a register), J (a struct built from its members).
 
 | directory | kernel | class | why |
 |---|---|---|---|
 | tests/corpus/model_replies | k0245.wgsl | F3 | a row that is a variable assigned in a branch (reader gap: ownership of a select of two row forms) |
-| tests/corpus/model_replies | k1777.wgsl | J | a struct built from members (reader gap: struct constructor and member stores) |
 | tests/corpus/model_replies | k1788.wgsl | K | a loop step or nesting depth outside the kingdom (reader gap) |
 | tests/corpus/cuneus | radix_sort.wgsl | K | a loop step or nesting depth outside the kingdom (reader gap) |
 | tests/fixtures/wgsl_texts/v24_run1_raw | seed28.wgsl | E | a barrier under a condition (reader gap: a uniform-conditional rung) |
