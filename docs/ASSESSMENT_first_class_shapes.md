@@ -1,7 +1,7 @@
 # Assessment: first-class shapes in the multi-typed GEP
 
 **Subject:** `docs/FirstClassShapes.md` (the proposal), read against the built engine.
-**Date:** 2026-10-26 · **Branch:** `feat/futhark-kingdom` · **Status:** assessment only — nothing implemented.
+**Date:** 2026-10-26 · **Branch:** `feat/futhark-kingdom` · **Status:** assessment + **the proof of concept, built** (§15).
 **Reviewed:** adversarially, by `codex exec` on the command line; the review and its disposition are in `docs/reviews/2026-10-26_first_class_shapes_codex.md`.
 
 ---
@@ -14,7 +14,7 @@
 | 2 | Which invariants / assumptions are affected? | The GEP engine's core assumptions are **not** affected. What changes: the *meaning of a type* (base type × shape class), the kingdom's tables (generated per interface), the Futhark rendering (shape-polymorphic source), the e-graph's datatype, rules **and bridge** (all generated), and the interface contract (a first-class artefact). §7. |
 | 3 | Which option is most promising? | **A hybrid of B and C, resolved offline**: option C's *shape-safe primitives* (matmul, transpose, matched-shape zip) instantiated over a *declared, finite set of shape classes* (option B), with the class set emitted by the generator. **Option A is not viable.** |
 | 4 | Can the fixed reading-frame design be retained? | **Yes — the core engine needs no change**, provided the shape class becomes part of the *type key* and a layout is immutably bound to one versioned kingdom/interface (§7). The frame, the FIFO walk, the alphabet rule, the bound table, `validate`, `place`, `fits`, `write_back` all stay as they are. |
-| 5 | What is the minimum PoC? | A **class-specialised** PoC kingdom (not the parametric one the proposal sketches), with the seven experiments re-specified in §10. |
+| 5 | What is the minimum PoC? | A **class-specialised** PoC kingdom (not the parametric one the proposal sketches), with the seven experiments re-specified in §10. **It is built** — §15 records what it corrected. |
 
 **Legality by construction is preservable.** The proposal's central fear — that shape constraints cannot live in a fixed Karva reading frame — is correct *about parametric frames* and wrong *about the frame mechanism*. A frame is a per-type sequence of interchangeable cells; if a shape class is a type, every cell of that frame has a static required class and a static alphabet, exactly as today.
 
@@ -244,7 +244,8 @@ Reading the table:
 2. **The Futhark rendering and the harness.** A class-typed tree must be rendered into shape-polymorphic Futhark: the source becomes `def main [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 = …`, and the `entry` point supplies concrete sizes. `futhark_kingdom.rs`'s `render` emits the *expression*; the wrapper that emits the `def`/`entry` is the harness's job and must learn the interface.
 3. **The e-graph's datatype, ruleset *and* bridge.** §8. The bridge matters: `constructor_of`, `render` and `to_tree` are hard-coded per row name today (`futhark_egraph.rs:298`, `:328`, `:439`), so they must be generated too.
 4. **The interface contract as a first-class artefact.** The class set must be recorded, versioned and shipped with the layout, because it *is* the program signature.
-5. **The interpreter.** `futhark_interp.rs` must model the same shapes, or the differential test that currently proves the kingdom agrees with Futhark will be measuring two different languages.
+5. **The interpreter.** `futhark_interp.rs` must model the same shapes, or the differential test that currently proves the kingdom agrees with Futhark will be measuring two different languages. Concretely, `Value::Arr(Vec<f32>)` carries no dimension, so it must become something like `Value::Arr(Vec<f32>, Shape)`; `as_arr`/`zip` are where the dimension obligations land.
+6. **The kingdom loader.** `src/futhark_kingdom.rs` reads the tables with `include_str!` (compile time) and asserts the kingdom's size in three places: `duals.len() == 4`, `rows.len() == 38`, `roots().len() == 3` (`:305-311`). A second, shape-classed kingdom therefore needs either a second loader or a runtime-loaded table path with per-kingdom assertions — and the existing 1-D kingdom must keep working. This is kingdom-side work, not GEP-core work, but it is a real item of scope that the assessment previously left implicit.
 
 **Not affected but worth naming:** the Futhark `acc` distinction survives untouched. `scn.f32` is a class like any other; adding `mat.n.m` does not disturb it. The e-graph's "the sort *is* the type" principle (§8) is what makes this work.
 
@@ -277,6 +278,13 @@ The measured row counts (§6.2) show the split clearly: the shape-*sensitive* op
 ---
 
 ## 10. The minimum proof of concept
+
+> **As built, with three corrections.** This section is the *specification*. The
+> implementation is §15, and it corrected three things here: Futhark's prelude
+> is rank-1 and has no `matmul` (§15.3a), a function's arity is part of its
+> type (§15.3b), and two kingdoms need two `Ty` families (§15.3c). The class
+> set, the operators and the experiments are as specified; the counts are not
+> (§15.2).
 
 The proposal's §7 PoC is specified in *parametric* terms (`Vector(f32,n)`, `Matrix(f32,n,m)`). That tests option A, which §5 argues cannot work. **The PoC should test the recommended design instead**, which is a different experiment with the same seven measurements.
 
@@ -366,6 +374,99 @@ Stated plainly, so the design can be attacked before it is built.
 
 ---
 
+## 14. Readiness: what is settled, and what is not
+
+**Settled and evidence-backed** — the mechanism (a shape class is a type; the unification happens offline in the generator; the core GEP engine is untouched), the PoC's class set, operators, terminals and rendering, the seven experiments and their pass criteria, the counts, and the limits. A developer can start on it from this document.
+
+**Not yet written** — the parts the design *specifies* but nobody has built. The generator today is a static list of hand-written rows (`gen_tables.py`: `TYPES`, `FUNCTIONS`, `TERMINALS` are literal Python lists; `write_types`/`write_functions` only format them). There is no unification step, no interface declaration and no class enumeration in it — **that step is the first piece of work**, and it is the piece the whole design rests on. Good news from reading it: the *spellings* need no work (a class-specialised `map` has the same Futhark text as the unspecialised one, only its `out`/`args` columns change), and the **TSV format needs no change either** — `types.tsv` gains a row per class and `functions.tsv` a row per class-specialised operator, and the loader and the contract check already read them generically.
+
+**Decided by the user, not by the assessment** — two questions the assessment can only frame:
+
+1. **Are runtime-equality programs in scope?** Two inputs equal in size at run time but unrelated in the type are expressible today (`arr.f32` + `map2`, with Futhark checking the equality at run time) and are *not* expressible under static classes. This decides whether the class kingdom replaces the 1-D kingdom or joins it.
+2. **Is the target workload inside the role ceiling?** Small fixed interfaces (2–5 roles) fit the class scheme; batching, slicing, data-dependent dimensions and reshaping do not, and want the split architecture of §13.
+
+**Not ready at all** — the general case: open-ended shapes, dynamic reshaping, a dimension computed from the data. Those need the runtime shape-carrying design (A2), which gives up compile-time shape checking, and the assessment does not recommend it.
+
+**The first three days of work, in order:** (1) the generator's interface declaration and unification step, emitting `types.tsv`/`functions.tsv` for a declared class set, with a witness test per row; (2) the loader's second-kingdom path and per-kingdom assertions; (3) the shape-polymorphic renderer and harness. Only after those can experiment 1 (zero defects over ≥ 10⁵ genes) mean anything.
+
+---
+
+## 15. The proof of concept, built
+
+**Status:** the class-specialised kingdom is **built**, and its four checks pass. What follows is what the build corrected — three things this assessment got wrong or missed — and one failure that is the design working exactly as intended.
+
+### 15.1 What exists now
+
+| artefact | what it is |
+|---|---|
+| `kingdoms/futhark_shapes/gen_tables.py` | the interface declaration (the dimension roles), the operator templates, **the unification**, and the **witness tests**. 11 types, 70 rows. |
+| `kingdoms/futhark_shapes/{types.tsv,functions.tsv}` | the generated tables — the generator's output, committed like the 1-D kingdom's. |
+| `src/futhark_shapes.rs` | the shape-polymorphic program emitter and the four checks below. |
+| `src/geneframe.rs` | the `Ty::FutharkShape(u16)` family (§15.3c). |
+| `src/futhark_kingdom.rs` | the family-parameterised loader: `from_tables(family, kingdom, …)`. |
+
+The four checks, all passing:
+
+| check | result |
+|---|---|
+| the kingdom passes the kingdom's own contract check | ✓ 11 types, 70 rows |
+| **the engine derives the counts the design predicted** | ✓ 11 root-reachable frames, gene width **322** at N = 3, leaf bound 75 |
+| every random gene expresses | ✓ 500 genes, zero `LayoutDefect`s |
+| **Futhark accepts the rendered programs** | ✓ the real compiler, three programs |
+
+The last one is the decisive check, and it works because the `matmul` helper is **shape-polymorphic**:
+
+```futhark
+def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
+  map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
+```
+
+Futhark's own type checker therefore enforces the inner-dimension relation the class table states. A table and a compiler that disagreed about shapes could not both be right — and when they did disagree, the compiler said so (§15.3b).
+
+### 15.2 The counts, as built
+
+| | types | rows | frames | gene width (N = 3) | L |
+|---|---|---|---|---|---|
+| the 1-D kingdom (shipped) | 4 | 38 | 4 | 40 / 42 / 42 | 9 / 10 |
+| **the class kingdom (built)** | 11 | 70 | 11 | **322** | 75 |
+
+The width cost is **7.7×** the shipped kingdom's, at three roles — inside the ceiling §6.4 predicts, and the price of the class set being *all nine* matrix pairs (the closure of the declared interface under `transpose` and `matmul`).
+
+### 15.3 The three corrections
+
+**(a) Futhark 0.28.1's prelude is rank-1, and it has no `matmul`.** Measured: `map`, `map2` and `reduce` apply to *one-dimensional* arrays whose elements are scalars; `transpose` is the only 2-D primitive in the prelude; `zipWith`, `matmul` and `reshape` do not exist. So the proposal's §7 operator set does not type-check as written, and the kingdom needs its own `matmul` — which is why the helper above exists, and why the matrix operators are spelled with *array-valued* lambdas (`map (\row -> …) A`) rather than scalar ones.
+
+**(b) A function's arity is part of its type.** The first build had one function class, `[]f32 -> []f32`, and `map2_rows` used it. Futhark's `map2 :: (a -> b -> c) -> [a] -> [b] -> [c]` is **curried**, so a one-argument row function does not type-check there — and the compiler rejected the rendered programs:
+
+```
+Cannot apply "map2" to "(m_p_n)" (invalid type).
+Expected: [](b₂₄ -> x₂₅)
+Actual:   [][]f32
+```
+
+The class table was wrong, and it was wrong *in the way the design predicted*: the table is now the trust boundary, so it needs its own checking. The generator's **witness test W9** now checks that every operator takes the function class it declares — the check that would have caught this before the compiler did. The build needs **two** function classes (`[]f32 -> []f32` and `[]f32 -> []f32 -> []f32`), which is one more type and five more rows.
+
+**(c) Two kingdoms need two type families.** The assessment said a layout must be bound to one versioned kingdom/interface (§7), and the PoC shows how to make that *structural* rather than conventional: the shape kingdom gets its own family, `Ty::FutharkShape(u16)`, so `Ty::Futhark(0)` and `Ty::FutharkShape(0)` are different types and `homologous()` cannot confuse them. **This is a change to `geneframe.rs`,** which §10.3 said the PoC must not require — the rule was about the *mechanism* (frames, alphabets, unification), and a type-family namespace is orthogonal to it, but the assessment's wording was too blunt and is corrected here.
+
+### 15.4 The scope decisions, taken
+
+The two decisions §14 left open have been taken:
+
+- **Runtime-equality programs: both kingdoms.** The 1-D kingdom stays and keeps them; the class kingdom covers the fixed-signature half. The two are separate kingdoms in separate type families, and the 1-D kingdom's tests are untouched.
+- **The workload is general array programs with dynamic dimensions.** The class kingdom is the **fixed-signature** half of that workload — it covers programs whose dimensions are the interface's roles, whatever their runtime values. What it does **not** cover is the third piece: dimensions *computed from the data*, and shapes that are not interface roles at all. That needs the shape-aware IR of §13, and it is the next design, not the next step of this one.
+
+So the architecture is now three pieces, not two:
+
+| piece | status | covers |
+|---|---|---|
+| the 1-D kingdom | shipped | runtime-equality programs, shapes equal only at run time |
+| the class kingdom | **built** | fixed-signature array algebra: dimensions are interface roles, related statically |
+| the shape-aware IR | **not designed** | data-dependent dimensions, shapes that are not roles |
+
+The assessment's §13 recommendation — a split — stands, and the third piece is named.
+
+---
+
 ## Appendix A — the measurements behind this document
 
 | measurement | where | how |
@@ -374,6 +475,10 @@ Stated plainly, so the design can be attacked before it is built.
 | The bound formulas, transcribed and validated three ways | §6.2 | `/tmp/shape/poc_counts.py` — against the two-type fixture, the single-type Karva-tail identity, and the engine's own output |
 | The PoC's counts (types, classes, frames, rows, width, L, alphabets) | §6.2 | the same script |
 | The growth in dimension roles (2, 3, 4, 5, 8, 10) and the `P_T`/`t_T` maxima | §6.4 | the same script, `--growth` |
+| **The built PoC's counts (11 types, 70 rows, 11 frames, width 322, L 75)** | §15.2 | `cargo test --release --features wgsl --lib futhark_shapes` — the engine's own bound table — cross-checked against the same script, reading the *generated* tables |
+| **The generator's witness tests** (9 checks, including the function-class one) | §15.3b | `python3 kingdoms/futhark_shapes/gen_tables.py` — it fails loudly and writes no passing summary if a relation is wrong |
+| Futhark's prelude is rank-1, and has no `matmul`/`zipWith`/`reshape` | §15.3a | `/tmp/shape/probes/` — `futhark check` on one-file probes, one name per probe |
+| `map2` is curried, so a one-argument row function does not type-check | §15.3b | the compiler's own error on the rendered program (quoted in §15.3b) |
 | `scalar` is reachable only as an output, so `reduce` can only root a scalar gene | §6.2 | `KingdomContract::reachable` follows argument types only (`kingdom_contract.rs:298`) |
 | Futhark rejects a statically-known size mismatch at compile time | §2 | `/tmp/shape/futhark_shape_transcript.txt`, Futhark 0.28.1 |
 | Futhark accepts dynamic sizes and checks them at runtime | §2 | the same transcript |

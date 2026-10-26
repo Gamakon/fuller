@@ -40,6 +40,7 @@ pub mod population_dag;
 pub mod geneframe;
 pub mod tsr_kingdom;
 pub mod futhark_kingdom;
+pub mod futhark_shapes;
 pub mod futhark_interp;
 pub mod futhark_exec;
 pub mod futhark_egraph;

@@ -1,0 +1,71 @@
+ref	name	kind	out	args	spelling	note
+F00001	map_rows@mat.n.n	function	mat.n.n	fn.arr_f32_arr_f32;mat.n.n	map {0} {1}	map a row function over the rows
+F00002	map2_rows@mat.n.n	function	mat.n.n	fn.arr2_f32_arr_f32_arr_f32;mat.n.n;mat.n.n	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00003	transpose@mat.n.n	function	mat.n.n	mat.n.n	transpose {0}	transpose a matrix
+F00004	map_rows@mat.n.m	function	mat.n.m	fn.arr_f32_arr_f32;mat.n.m	map {0} {1}	map a row function over the rows
+F00005	map2_rows@mat.n.m	function	mat.n.m	fn.arr2_f32_arr_f32_arr_f32;mat.n.m;mat.n.m	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00006	transpose@mat.n.m	function	mat.m.n	mat.n.m	transpose {0}	transpose a matrix
+F00007	map_rows@mat.n.p	function	mat.n.p	fn.arr_f32_arr_f32;mat.n.p	map {0} {1}	map a row function over the rows
+F00008	map2_rows@mat.n.p	function	mat.n.p	fn.arr2_f32_arr_f32_arr_f32;mat.n.p;mat.n.p	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00009	transpose@mat.n.p	function	mat.p.n	mat.n.p	transpose {0}	transpose a matrix
+F00010	map_rows@mat.m.n	function	mat.m.n	fn.arr_f32_arr_f32;mat.m.n	map {0} {1}	map a row function over the rows
+F00011	map2_rows@mat.m.n	function	mat.m.n	fn.arr2_f32_arr_f32_arr_f32;mat.m.n;mat.m.n	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00012	transpose@mat.m.n	function	mat.n.m	mat.m.n	transpose {0}	transpose a matrix
+F00013	map_rows@mat.m.m	function	mat.m.m	fn.arr_f32_arr_f32;mat.m.m	map {0} {1}	map a row function over the rows
+F00014	map2_rows@mat.m.m	function	mat.m.m	fn.arr2_f32_arr_f32_arr_f32;mat.m.m;mat.m.m	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00015	transpose@mat.m.m	function	mat.m.m	mat.m.m	transpose {0}	transpose a matrix
+F00016	map_rows@mat.m.p	function	mat.m.p	fn.arr_f32_arr_f32;mat.m.p	map {0} {1}	map a row function over the rows
+F00017	map2_rows@mat.m.p	function	mat.m.p	fn.arr2_f32_arr_f32_arr_f32;mat.m.p;mat.m.p	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00018	transpose@mat.m.p	function	mat.p.m	mat.m.p	transpose {0}	transpose a matrix
+F00019	map_rows@mat.p.n	function	mat.p.n	fn.arr_f32_arr_f32;mat.p.n	map {0} {1}	map a row function over the rows
+F00020	map2_rows@mat.p.n	function	mat.p.n	fn.arr2_f32_arr_f32_arr_f32;mat.p.n;mat.p.n	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00021	transpose@mat.p.n	function	mat.n.p	mat.p.n	transpose {0}	transpose a matrix
+F00022	map_rows@mat.p.m	function	mat.p.m	fn.arr_f32_arr_f32;mat.p.m	map {0} {1}	map a row function over the rows
+F00023	map2_rows@mat.p.m	function	mat.p.m	fn.arr2_f32_arr_f32_arr_f32;mat.p.m;mat.p.m	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00024	transpose@mat.p.m	function	mat.m.p	mat.p.m	transpose {0}	transpose a matrix
+F00025	map_rows@mat.p.p	function	mat.p.p	fn.arr_f32_arr_f32;mat.p.p	map {0} {1}	map a row function over the rows
+F00026	map2_rows@mat.p.p	function	mat.p.p	fn.arr2_f32_arr_f32_arr_f32;mat.p.p;mat.p.p	map2 {0} {1} {2}	map a binary row function over two matrices of the same class
+F00027	transpose@mat.p.p	function	mat.p.p	mat.p.p	transpose {0}	transpose a matrix
+F00028	matmul@mat.n.nxmat.n.n	function	mat.n.n	mat.n.n;mat.n.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00029	matmul@mat.n.nxmat.n.m	function	mat.n.m	mat.n.n;mat.n.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00030	matmul@mat.n.nxmat.n.p	function	mat.n.p	mat.n.n;mat.n.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00031	matmul@mat.n.mxmat.m.n	function	mat.n.n	mat.n.m;mat.m.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00032	matmul@mat.n.mxmat.m.m	function	mat.n.m	mat.n.m;mat.m.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00033	matmul@mat.n.mxmat.m.p	function	mat.n.p	mat.n.m;mat.m.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00034	matmul@mat.n.pxmat.p.n	function	mat.n.n	mat.n.p;mat.p.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00035	matmul@mat.n.pxmat.p.m	function	mat.n.m	mat.n.p;mat.p.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00036	matmul@mat.n.pxmat.p.p	function	mat.n.p	mat.n.p;mat.p.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00037	matmul@mat.m.nxmat.n.n	function	mat.m.n	mat.m.n;mat.n.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00038	matmul@mat.m.nxmat.n.m	function	mat.m.m	mat.m.n;mat.n.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00039	matmul@mat.m.nxmat.n.p	function	mat.m.p	mat.m.n;mat.n.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00040	matmul@mat.m.mxmat.m.n	function	mat.m.n	mat.m.m;mat.m.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00041	matmul@mat.m.mxmat.m.m	function	mat.m.m	mat.m.m;mat.m.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00042	matmul@mat.m.mxmat.m.p	function	mat.m.p	mat.m.m;mat.m.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00043	matmul@mat.m.pxmat.p.n	function	mat.m.n	mat.m.p;mat.p.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00044	matmul@mat.m.pxmat.p.m	function	mat.m.m	mat.m.p;mat.p.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00045	matmul@mat.m.pxmat.p.p	function	mat.m.p	mat.m.p;mat.p.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00046	matmul@mat.p.nxmat.n.n	function	mat.p.n	mat.p.n;mat.n.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00047	matmul@mat.p.nxmat.n.m	function	mat.p.m	mat.p.n;mat.n.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00048	matmul@mat.p.nxmat.n.p	function	mat.p.p	mat.p.n;mat.n.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00049	matmul@mat.p.mxmat.m.n	function	mat.p.n	mat.p.m;mat.m.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00050	matmul@mat.p.mxmat.m.m	function	mat.p.m	mat.p.m;mat.m.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00051	matmul@mat.p.mxmat.m.p	function	mat.p.p	mat.p.m;mat.m.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00052	matmul@mat.p.pxmat.p.n	function	mat.p.n	mat.p.p;mat.p.n	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00053	matmul@mat.p.pxmat.p.m	function	mat.p.m	mat.p.p;mat.p.m	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00054	matmul@mat.p.pxmat.p.p	function	mat.p.p	mat.p.p;mat.p.p	matmul {0} {1}	matrix multiplication; the inner roles must agree
+F00055	fn.arr_f32_arr_f32.id	function	fn.arr_f32_arr_f32		\xs -> xs	the identity row function
+F00056	fn.arr_f32_arr_f32.add1	function	fn.arr_f32_arr_f32		\xs -> map (+1.0) xs	add one to every element
+F00057	fn.arr_f32_arr_f32.scale2	function	fn.arr_f32_arr_f32		\xs -> map (*2.0) xs	double every element
+F00058	fn.arr2_f32_arr_f32_arr_f32.id	function	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs	the identity binary row function
+F00059	fn.arr2_f32_arr_f32_arr_f32.add1	function	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs	add one to every element, ignoring the second row
+F00060	mat.n.n.input	terminal	mat.n.n		m_n_n	the interface's nxn matrix
+F00061	mat.n.m.input	terminal	mat.n.m		m_n_m	the interface's nxm matrix
+F00062	mat.n.p.input	terminal	mat.n.p		m_n_p	the interface's nxp matrix
+F00063	mat.m.n.input	terminal	mat.m.n		m_m_n	the interface's mxn matrix
+F00064	mat.m.m.input	terminal	mat.m.m		m_m_m	the interface's mxm matrix
+F00065	mat.m.p.input	terminal	mat.m.p		m_m_p	the interface's mxp matrix
+F00066	mat.p.n.input	terminal	mat.p.n		m_p_n	the interface's pxn matrix
+F00067	mat.p.m.input	terminal	mat.p.m		m_p_m	the interface's pxm matrix
+F00068	mat.p.p.input	terminal	mat.p.p		m_p_p	the interface's pxp matrix
+F00069	fn.arr_f32_arr_f32.const	terminal	fn.arr_f32_arr_f32		\xs -> map (+0.0) xs	the constant row function
+F00070	fn.arr2_f32_arr_f32_arr_f32.const	terminal	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+0.0) xs	the constant binary row function

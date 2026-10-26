@@ -1,0 +1,12 @@
+ref	dual	slot	form	literals	root	meaning
+T0001	mat.n.n	mat	n.n		no	a 2-D array whose dims are the interface's n and n
+T0002	mat.n.m	mat	n.m		no	a 2-D array whose dims are the interface's n and m
+T0003	mat.n.p	mat	n.p		yes	a 2-D array whose dims are the interface's n and p
+T0004	mat.m.n	mat	m.n		no	a 2-D array whose dims are the interface's m and n
+T0005	mat.m.m	mat	m.m		no	a 2-D array whose dims are the interface's m and m
+T0006	mat.m.p	mat	m.p		no	a 2-D array whose dims are the interface's m and p
+T0007	mat.p.n	mat	p.n		no	a 2-D array whose dims are the interface's p and n
+T0008	mat.p.m	mat	p.m		no	a 2-D array whose dims are the interface's p and m
+T0009	mat.p.p	mat	p.p		no	a 2-D array whose dims are the interface's p and p
+T0010	fn.arr_f32_arr_f32	fn	arr_f32_arr_f32		no	a row function, []f32 -> []f32
+T0011	fn.arr2_f32_arr_f32_arr_f32	fn	arr2_f32_arr_f32_arr_f32		no	a binary row function, []f32 -> []f32 -> []f32

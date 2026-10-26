@@ -113,6 +113,17 @@ pub enum Ty {
     /// `kingdoms/futhark_true/types.tsv` (ref `T001` → 0). Its device code is
     /// [`Ty::FUTHARK_CODE_BASE`] + the index. Appended last.
     Futhark(u16),
+    /// A dual of the SHAPE-CLASSED Futhark kingdom: the index of its row in
+    /// `kingdoms/futhark_shapes/types.tsv` (ref `T001` → 0). Its device code
+    /// is [`Ty::FUTHARK_SHAPE_CODE_BASE`] + the index.
+    ///
+    /// A SEPARATE family from [`Ty::Futhark`], not another range of the same
+    /// one: the two kingdoms coexist (the 1-D kingdom keeps the programs whose
+    /// shapes are only equal at run time), and a type code must not mean one
+    /// thing in one kingdom and another in the other. Two kingdoms that shared
+    /// a family would make `Ty::Futhark(0)` ambiguous, and `homologous()`
+    /// compares roots -- so the families are kept apart. Appended last.
+    FutharkShape(u16),
 }
 
 impl Ty {
@@ -169,6 +180,14 @@ impl Ty {
                 );
                 Ty::FUTHARK_CODE_BASE + u32::from(i)
             }
+            Ty::FutharkShape(i) => {
+                assert!(
+                    usize::from(i) < Ty::MAX_FUTHARK_SHAPE_DUALS,
+                    "our software has a bug: FutharkShape({i}) is past its {} codes and would read back as itself",
+                    Ty::MAX_FUTHARK_SHAPE_DUALS
+                );
+                Ty::FUTHARK_SHAPE_CODE_BASE + u32::from(i)
+            }
             base => Ty::ALL
                 .iter()
                 .position(|t| *t == base)
@@ -199,6 +218,14 @@ impl Ty {
     /// The most duals a Futhark-style kingdom may number: its index is a `u16`.
     pub const MAX_FUTHARK_DUALS: usize = u16::MAX as usize + 1;
 
+    /// The first code of the shape-classed Futhark family; the 1-D Futhark
+    /// family owns `FUTHARK_CODE_BASE..FUTHARK_SHAPE_CODE_BASE`.
+    pub const FUTHARK_SHAPE_CODE_BASE: u32 = Ty::FUTHARK_CODE_BASE + Ty::MAX_FUTHARK_DUALS as u32;
+
+    /// The most duals a shape-classed Futhark kingdom may number: its index is
+    /// a `u16`.
+    pub const MAX_FUTHARK_SHAPE_DUALS: usize = u16::MAX as usize + 1;
+
     /// Load-time guard for a kingdom's dual numbering: `Err` when `count`
     /// duals exceed the `max` codes of its range, in every build.
     pub fn check_dual_count(kingdom: &str, count: usize, max: usize) -> Result<(), String> {
@@ -211,8 +238,12 @@ impl Ty {
     /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
     /// offset from [`Ty::TABLE_CODE_BASE`], a TSR dual by offset from
     /// [`Ty::TSR_CODE_BASE`], a Futhark-style dual by offset from
-    /// [`Ty::FUTHARK_CODE_BASE`].
+    /// [`Ty::FUTHARK_CODE_BASE`], a shape-classed Futhark dual by offset from
+    /// [`Ty::FUTHARK_SHAPE_CODE_BASE`].
     pub fn from_code(code: u32) -> Option<Ty> {
+        if code >= Ty::FUTHARK_SHAPE_CODE_BASE {
+            return u16::try_from(code - Ty::FUTHARK_SHAPE_CODE_BASE).ok().map(Ty::FutharkShape);
+        }
         if code >= Ty::FUTHARK_CODE_BASE {
             return u16::try_from(code - Ty::FUTHARK_CODE_BASE).ok().map(Ty::Futhark);
         }
@@ -837,8 +868,23 @@ mod tests {
             assert_eq!(Ty::from_code(Ty::Futhark(i).code()), Some(Ty::Futhark(i)));
         }
         assert_eq!(Ty::from_code(Ty::FUTHARK_CODE_BASE), Some(Ty::Futhark(0)));
-        assert_eq!(Ty::from_code(Ty::FUTHARK_CODE_BASE + 65536), None);
         assert!(Ty::Futhark(0) > Ty::Tsr(u16::MAX), "ordered after the TSR family");
+        // The shape-classed Futhark family sits after the 1-D one, so the two
+        // kingdoms' duals cannot be confused for one another.
+        assert_eq!(Ty::FUTHARK_SHAPE_CODE_BASE, Ty::FUTHARK_CODE_BASE + 65536);
+        for i in 0..=u16::MAX {
+            assert_eq!(Ty::from_code(Ty::FutharkShape(i).code()), Some(Ty::FutharkShape(i)));
+        }
+        assert_eq!(Ty::from_code(Ty::FUTHARK_SHAPE_CODE_BASE), Some(Ty::FutharkShape(0)));
+        assert_eq!(Ty::from_code(Ty::FUTHARK_SHAPE_CODE_BASE + 65536), None);
+        assert!(
+            Ty::FutharkShape(0) > Ty::Futhark(u16::MAX),
+            "the shape family is ordered after the 1-D Futhark family"
+        );
+        assert!(
+            Ty::Futhark(u16::MAX) < Ty::FutharkShape(0),
+            "the two Futhark families do not overlap"
+        );
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
         // The depth ladder is unmoved by the numbering.
         assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
