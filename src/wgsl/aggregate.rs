@@ -215,7 +215,7 @@ impl WgslKingdom {
 }
 
 /// How many registers a kernel may name of each kind [`WgslKingdom::extended`] adds.
-pub const REGISTER_COUNT: usize = 4;
+pub const REGISTER_COUNT: usize = 16;
 
 /// The register kind a module's extended kingdom adds for a value dual: its letter and how many registers there are.
 pub fn module_register_of_value(kingdom: &WgslKingdom, dual: &str) -> Option<(char, usize)> {

@@ -561,6 +561,21 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                         return tree_of(ctx, &Node::App { name: format!("agg.member_{m}"), slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
                     }
                 }
+                // A struct built from its members (`Best(-3.4e38, 0u)`, naga's Compose over a declared struct): the aggregate's
+                // zero with each member set, `agg.with_<m>`, in order, as a constant struct is built (`const_tree`).
+                if name.starts_with("naga.Compose.type") {
+                    let shape = ctx.kingdom.duals.iter().position(|d| d.form == "value" && d.slot == slot_of(n)).and_then(|d| ctx.kingdom.shapes.get(&(d as u16)).map(|sh| (d, sh.clone())));
+                    if let Some((d, crate::wgsl::loader::Shape::Struct { members })) = shape {
+                        if members.len() == kids.len() {
+                            let whole = ctx.kingdom.duals[d].ty();
+                            let mut acc = Tree::new("agg.zero", whole, vec![]);
+                            for ((m, _), kid) in members.iter().zip(kids) {
+                                acc = Tree::new(&format!("agg.with_{m}"), whole, vec![acc, tree_of(ctx, kid)?]);
+                            }
+                            return Ok(acc);
+                        }
+                    }
+                }
                 return Err(format!("{name} has no row in the table"));
             }
             // `x & ~(k - 1)` with k a power of two (k16's `m & ~3u`): the mask
@@ -4593,6 +4608,14 @@ impl<'a> Ctx<'a> {
     /// a vector's. None for a dual with no zero (a matrix, an opaque form).
     fn zero_of_dual(&self, dual: &str) -> Result<Option<Tree>, String> {
         let Some((slot, form)) = dual.split_once('.') else { return Ok(None) };
+        // An aggregate (an array or a struct the module declares): its dual's terminal, `agg.zero`.
+        if form == "value" {
+            if let Some(d) = self.kingdom.duals.iter().find(|d| d.dual == dual) {
+                if self.kingdom.rows.iter().any(|r| r.name == "agg.zero" && r.output == d.ty()) {
+                    return Ok(Some(Tree::new("agg.zero", d.ty(), vec![])));
+                }
+            }
+        }
         let (lanes, scalar) = match slot.strip_prefix("vec") {
             Some(r) => (r[..1].parse::<usize>().ok(), r[2..r.len() - 1].to_string()),
             None => (None, slot.to_string()),

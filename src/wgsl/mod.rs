@@ -27,8 +27,8 @@ pub(crate) mod fixture_texts;
 mod reader_census;
 pub mod harness;
 pub mod gram;
-pub mod image;
 pub mod cuneus_originals;
+pub mod image;
 pub mod individual;
 #[cfg(feature = "gpu")]
 pub mod llm;
