@@ -252,6 +252,41 @@ impl FutharkKingdom {
     }
 }
 
+/// A splitmix64: deterministic, no dependency, and the same sequence every
+/// run (so a failure is reproducible).
+///
+/// It lives here, not in an example, because a *reported* failure has to be
+/// reproducible: the gene that made the compiler hang must be regenerable
+/// from its seed alone, by the rescue experiment as well as by the sweep that
+/// found it.
+#[derive(Debug, Clone)]
+pub struct GeneRng(u64);
+
+impl GeneRng {
+    /// A generator with the given seed.
+    pub fn new(seed: u64) -> GeneRng {
+        GeneRng(seed)
+    }
+
+    /// The next number in the sequence.
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A number in `0..n`.
+    pub fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.next_u64() % n as u64) as usize
+        }
+    }
+}
+
 /// The kingdom's relations, loaded.
 pub fn futhark_relations() -> Result<KingdomRelations, String> {
     FutharkKingdom::load().map(|k| k.relations())

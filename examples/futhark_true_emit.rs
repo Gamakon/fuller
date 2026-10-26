@@ -26,32 +26,10 @@ use std::collections::BTreeMap;
 use std::process::Command;
 
 use fuller::futhark_exec::compile_and_run;
-use fuller::futhark_kingdom::FutharkKingdom;
+use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{self, GeneLayout};
-
-/// A splitmix64: deterministic, no dependency, and the same sequence every
-/// run (so a failure is reproducible).
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        if n == 0 {
-            0
-        } else {
-            (self.next() % n as u64) as usize
-        }
-    }
-}
 
 /// The Futhark program around an expression: the input array and the result
 /// type.
@@ -101,7 +79,7 @@ fn main() -> Result<(), String> {
         layout.width
     );
 
-    let mut rng = Rng(0x5EED_1234_ABCD_0001);
+    let mut rng = GeneRng::new(0x5EED_1234_ABCD_0001);
     let mut expressed = 0usize;
     let mut rendered = 0usize;
     let mut compiled = 0usize;
@@ -199,7 +177,7 @@ fn main() -> Result<(), String> {
         if compile {
             let dir = std::env::temp_dir().join("futhark_true_emit");
             std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-            let path = dir.join(format!("p{shown}_{}.fut", rng.next()));
+            let path = dir.join(format!("p{shown}_{}.fut", rng.next_u64()));
             std::fs::write(&path, &source).map_err(|e| format!("write: {e}"))?;
             let out = Command::new("futhark")
                 .args(["c", "--library", path.to_str().unwrap(), "-o", "/tmp/futhark_true_emit.out"])

@@ -34,6 +34,7 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - `src/population_dag.rs` — the population DAG on the host (plan task 3): hash-consed nodes, homeotic rows, memos keyed by node, data version, type and input binding, level schedule, nothing evicted. The device arena (variant B in phylu) is not built.
 - `src/homeotic.rs` — the earlier per-chromosome homeotic tail (fold of a chromosome's shared subtrees into tail slots, encode back to Karva). Its slot-addressed href is superseded by the stable-row-id href of the population design; see its module header.
 - `src/wgsl/` — the WGSL kingdom (feature `wgsl`): naga reader cutting a kernel at its effects into a chromosome over `kingdoms/wgsl` tables, scaffold, interpreter, oracle, mutation, rebuild.
+- `src/futhark_egraph.rs` — the Futhark kingdom inside Fuller's e-graph: **one egglog sort per kingdom type** (`FR`/`FA`/`FS`/`FF`), so the sort IS the type and the `acc` distinction is structural. The 38 rows map one-for-one onto constructors, plus two e-graph-only ones (`FId`, `FCompose`) whose candidates are compilation-only. Every rule was checked bit-identical against Futhark 0.28.1. See `docs/EGRAPH_futhark.md`.
 - `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, **per-family** (`Family::Algebra|Rational|Trig`).
 - `src/python.rs` — PyO3: `denoise`, `denoise_karva`, `physics_mutate`, `physics_mutate_karva`, `master_pset`.
 - `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
@@ -54,6 +55,8 @@ fuller commit, tested here.
 - **`Protected*` are distinct functions** from raw ops (real-domain raw vs the engine's guarded semantics). Never map a protected geppy name to a raw semantic_id — unsound on negatives/zero.
 - **The old "no bare commutativity" advice is nuanced** — egglog's own tests ship bare comm/assoc rewrites; they're fine *bounded*, fatal at unbounded fixpoint with other expand rules. Measured finding: commutativity is NOT the parity wall here (≈2/600 pairs); the gaps are structural.
 - **Determinism**: same input + rng_seed = identical output (tests assert). HashMap iteration order bit us once — sort when choosing among equal-keyed entries.
+- **The Futhark e-graph's `map id` and its fusion rules DIVERGE together.** `map id` puts a class's own `map` node inside that class, and the fusion pattern then matches inside it and builds another one: measured 5 → 7 → 13 → 55 → 1357 e-nodes over five iterations, no convergence after six. Fusion alone is stable. They are in separate rulesets for that reason (`FUTHARK_RULESET` / `FUTHARK_FUSION_RULESET`); do not merge them.
+- **Futhark 0.28.1's optimiser does not converge on one legal program** (a reduction over an `acc`, a reversed accumulator-derived operand, and an outer reduction, together). It is a compiler defect, not an illegal gene. Equality-preserving rewrites of the program do NOT rescue it — measured: the `map id` removal, the `map`/`reverse` commutation and the accumulator-flattening all still hang at 180 s. See `docs/EGRAPH_futhark.md`.
 
 ## Parity status (the SymPy-replacement metric)
 

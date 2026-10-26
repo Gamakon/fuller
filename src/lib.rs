@@ -42,6 +42,7 @@ pub mod tsr_kingdom;
 pub mod futhark_kingdom;
 pub mod futhark_interp;
 pub mod futhark_exec;
+pub mod futhark_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
 pub mod typed_gep;

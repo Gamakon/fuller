@@ -124,23 +124,70 @@ int main(void) {
 }
 "#;
 
+/// The compiler's verdict on a program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// The program compiled.
+    Compiled,
+    /// The compiler refused it, with this message.
+    Refused(String),
+    /// The compiler did not finish within the limit.
+    TimedOut,
+}
+
+/// Compile a Futhark program with the real compiler, and say how long it took.
+///
+/// The verdict is separate from the error string because a compiler that does
+/// not converge is an *outcome*, not a defect: the caller (the e-graph's
+/// rescue experiment) needs to tell "refused" from "did not finish" from
+/// "compiled", and to know how long each took.
+pub fn compile_program(source: &str, dir: &Path, limit: Duration) -> (Verdict, Duration) {
+    let started = Instant::now();
+    let outcome = (|| -> Result<Verdict, String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("mkdir: {e}"))?;
+        let fut = dir.join("prog.fut");
+        std::fs::write(&fut, source).map_err(|e| format!("write: {e}"))?;
+        let out = output_with_timeout(
+            Command::new("futhark")
+                .args(["c", "--library", fut.to_str().unwrap(), "-o", dir.join("prog").to_str().unwrap()]),
+            limit,
+        );
+        Ok(match out {
+            Err(e) if e.contains("no answer within") => Verdict::TimedOut,
+            Err(e) => Verdict::Refused(e),
+            Ok(out) if !out.status.success() => Verdict::Refused(format!(
+                "futhark refused the program:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )),
+            Ok(_) => Verdict::Compiled,
+        })
+    })()
+    .unwrap_or_else(Verdict::Refused);
+    (outcome, started.elapsed())
+}
+
 /// Compile a Futhark program with the real compiler, run it on `input`, and
 /// return what it produced.
 pub fn compile_and_run(source: &str, scalar_root: bool, input: &[f32], dir: &Path) -> Result<Vec<f32>, String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir: {e}"))?;
-    let fut = dir.join("prog.fut");
-    std::fs::write(&fut, source).map_err(|e| format!("write: {e}"))?;
-    let out = output_with_timeout(
-        Command::new("futhark")
-            .args(["c", "--library", fut.to_str().unwrap(), "-o", dir.join("prog").to_str().unwrap()]),
-        COMPILE_TIMEOUT,
-    )?;
-    if !out.status.success() {
-        return Err(format!(
-            "futhark refused the program:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+    let (verdict, _elapsed) = compile_program(source, dir, COMPILE_TIMEOUT);
+    match verdict {
+        Verdict::Compiled => {}
+        Verdict::Refused(e) => return Err(e),
+        Verdict::TimedOut => {
+            return Err(format!("futhark: no answer within {}s", COMPILE_TIMEOUT.as_secs()))
+        }
     }
+    run_compiled(scalar_root, input, dir)
+}
+
+/// Run a program that has already been compiled into `dir`, and return what it
+/// produced.
+///
+/// The C driver and the executable are built from the `prog.c` and `prog.h`
+/// that [`compile_program`] left there, so a caller that has already compiled
+/// does not compile twice.
+pub fn run_compiled(scalar_root: bool, input: &[f32], dir: &Path) -> Result<Vec<f32>, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir: {e}"))?;
     let driver = dir.join("driver.c");
     std::fs::write(&driver, if scalar_root { DRIVER_SCALAR } else { DRIVER_ARRAY })
         .map_err(|e| format!("write: {e}"))?;
