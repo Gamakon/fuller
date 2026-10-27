@@ -55,6 +55,10 @@ pub mod typed_gep;
 pub mod regex_typed;
 #[cfg(test)]
 mod typed_gep_tests;
+/// The documentation index (`docs/index.html`) is generated; this is the check
+/// that keeps it so.
+#[cfg(test)]
+mod docs_index;
 // GPU batch evaluator. The module (opcodes, batch layout, WGSL source) always
 // compiles so its tests run on any machine; only the wgpu device code is
 // behind `feature = "gpu"`.
