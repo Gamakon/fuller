@@ -14,6 +14,9 @@
 //!   the best enter) and the SATURATED FOLD in the loop (every `--fold-every` generations, the jointly extracted forms
 //!   of the population enter);
 //! * `C`, the random-search control: a fresh random gene per evaluation, the same budget, no selection;
+//! * with `--stop-at-exact` (R and C only), a discovery run stops at the first program exact on every case and
+//!   reports that evaluation (`early_stop`): it answers H1 and H2 and never enters stage 2, so speed is measured
+//!   in P alone;
 //! * `P`, from the published program toward faster: the reference gene (`--start published`) or the planted slowdown
 //!   (`--start planted`, the control), its e-graph variants and the saturated fold's forms make the population; it
 //!   starts in stage 2 (the reference is exact).
@@ -225,6 +228,11 @@ impl Judge<'_> {
     /// One process's time on the timing case: the fastest of `runs` runs' GPU-timed passes, in nanoseconds.
     fn time_once(&self, exe: &Path) -> Result<f64, String> {
         let (_, report) = run_program_bytes(exe, &self.cases[self.timing_case].stdin, true, self.runs)?;
+        if report.dispatches == 0 && report.passes.is_empty() && report.backend == "Metal" {
+            // No GPU work at all (a constant output: measured 2026-10-27, 18 of reduce's first 48 programs): the GPU
+            // time is not a measure of it, so it earns no speed credit (ratio infinite, speed input 1), never a bug.
+            return Ok(f64::INFINITY);
+        }
         report.fastest_run_ns(self.runs)
     }
 
@@ -567,6 +575,11 @@ fn real_main() -> Result<(), String> {
     let marriage: f64 = num(&args, "--marriage", 0.3)?;
     let checkpoint_every: u32 = num(&args, "--checkpoint-every", 5)?;
     let resume = args.iter().any(|a| a == "--resume");
+    // Discovery runs (R, C) answer H1 and H2: they stop at the first program exact on every case, never timing.
+    let stop_at_exact = args.iter().any(|a| a == "--stop-at-exact");
+    if stop_at_exact && regime == "P" {
+        return Err("--stop-at-exact is for the discovery regimes R and C; P starts exact and measures speed".into());
+    }
     let out = PathBuf::from(arg(&args, "--out").ok_or("--out DIR")?);
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let started = Instant::now();
@@ -613,7 +626,7 @@ fn real_main() -> Result<(), String> {
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
-    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": "staged: TrueNorth(quality) until exact on every case, then TrueNorth(theta_q/(pi/2), theta_s/(pi/2))"});
+    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": "staged: TrueNorth(quality) until exact on every case, then TrueNorth(theta_q/(pi/2), theta_s/(pi/2))"});
     let tel = RunTelemetry::start(
         &out,
         format!("futhark-{pname}-{regime}-seed{seed}"),
@@ -765,6 +778,7 @@ fn real_main() -> Result<(), String> {
         // ---- evaluate ----
         let mut next = Vec::with_capacity(cands.len());
         let mut timed_out = false;
+        let mut exact_stop = false;
         for mut c in std::mem::take(&mut cands) {
             if started.elapsed() > limit {
                 timed_out = true;
@@ -775,9 +789,17 @@ fn real_main() -> Result<(), String> {
             }
             run.score(generation, &mut c)?;
             next.push(c);
+            if stop_at_exact && run.first_exact.is_some() {
+                exact_stop = true;
+                break;
+            }
         }
         if timed_out {
             stopped_by = "time";
+        }
+        if exact_stop {
+            stopped_by = "early_stop";
+            println!("# {} --stop-at-exact: stopping at the first exact program (evaluation {})", utc(), run.judge.evaluations);
         }
         if next.is_empty() {
             break;
@@ -787,7 +809,7 @@ fn real_main() -> Result<(), String> {
         // ---- the stage: quality only until the best is exact on every case, then quality and speed ----
         let best_perfect = population[0].eval.as_ref().is_some_and(|e| e.quality.perfect());
         let new_stage = run.stage.next(best_perfect);
-        if new_stage != run.stage && !timed_out {
+        if new_stage != run.stage && !timed_out && !exact_stop {
             if backend == Backend::C {
                 return Err("the best is exact on every case: stage 2 needs GPU timing, which the c backend does not have (run with --backend gpu)".into());
             }
@@ -876,7 +898,7 @@ fn real_main() -> Result<(), String> {
         }
         run.ledger.flush()?;
         last_generation = generation;
-        if timed_out {
+        if timed_out || exact_stop {
             break;
         }
 
