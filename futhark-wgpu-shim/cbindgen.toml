@@ -23,8 +23,10 @@ rename_args = "CamelCase"
 rename_fields = "CamelCase"
 
 [export]
-# emscripten_sleep is declared by include/emscripten.h, not by webgpu.h.
-exclude = ["emscripten_sleep"]
+# emscripten_sleep is declared by include/emscripten.h, not by webgpu.h. The
+# shim's own pass query (src/report.rs) is not WebGPU: fuller's batch driver
+# declares it itself, and webgpu.h stays exactly the surface.
+exclude = ["emscripten_sleep", "futhark_wgpu_shim_timed_passes", "futhark_wgpu_shim_pass_ns", "futhark_wgpu_shim_dispatches"]
 include = [
   "WGPUBufferBindingType", "WGPUCallbackMode", "WGPUSType", "WGPUFeatureName",
   "WGPUCompilationMessageType", "WGPUErrorType", "WGPUShaderStage",

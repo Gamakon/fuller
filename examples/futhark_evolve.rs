@@ -50,24 +50,41 @@
 //! it against the shim and runs it on our wgpu/Metal path; `--backend c` compiles with `futhark c` and runs on the
 //! host, for host-only measurement; it has no GPU timing, so stage 2 cannot be entered with it (an error, named).
 //!
+//! EVALUATION, `--eval batch` (the default since 2026-10-28) or `--eval single`:
+//! * batch (`fuller::futhark_batch`): every program of a generation not seen before is one entry point of ONE
+//!   Futhark program, compiled once as a library and run in ONE process by a driver that sets the device up once,
+//!   runs each quality entry on every case and, in stage 2, each timed entry's pairs against the published program's
+//!   entry in the same process (the same scheme: `--pairs` pairs, each its own speed input, the first
+//!   process-equivalent of a fresh program discarded). A program the branch compiler refuses is found by halving the
+//!   batch, logged in `bugs.log` and scored worst; the rest are scored from their batches. The A/A sets and the
+//!   champion's re-time run in batch processes too. The results are taken when each program is scored, so selection,
+//!   the counts and the bugs are the single path's (checked bit for bit, `docs/PLAN_futhark_wgpu_host.md` §13);
+//! * single: each program its own compile and its own processes, the path before.
+//!
+//! Where the time goes: every ledger line carries its evaluation's path, its batch's size and each stage's
+//! milliseconds (render, futhark, port, cc, check, link, start, device, pipelines, runs, timing; in batch mode its
+//! share of its batch), then its quality and speed inputs exactly; each generation's stage seconds and evaluation
+//! rate are in the stream's extras (`stage_*_s`, `gen_seconds`, `evaluations_per_second`) and in `OUT/stages.tsv`.
+//!
 //! The standard (`docs/STANDARD_runners.md`): the stream (`OUT/stream.jsonl`), the staged two-level HFF,
 //! checkpoints (`OUT/checkpoint.json`, `--resume`), the kill trigger (`OUT/killme.trigger`), the guards, the hall of
 //! fame (`OUT/hall_of_fame/`), the ledger with lineage (`OUT/ledger.tsv`), mutation events (`egraph_exact`, `pump`,
 //! `saturated_fold`, `marriage`, `stage_change`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
-use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, quality_inputs, random_gene, read_binary, sexp, QUALITY_INPUTS, signature, variants, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
-use fuller::futhark_wgpu_host::{compile_program_prebuilt, prebuild_shim, run_program_bytes};
+use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step};
+use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, quality_inputs, random_gene, read_binary, sexp, QUALITY_INPUTS, signature, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
+use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, TimingSlots};
+use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -113,6 +130,104 @@ enum Backend {
     C,
 }
 
+/// How the new programs of a generation are evaluated (`--eval`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvalMode {
+    /// Each program its own compile and its own processes (the path before 2026-10-28).
+    Single,
+    /// Every new program of a generation in one compiled program and one process (`fuller::futhark_batch`).
+    Batch,
+}
+
+/// Where an evaluation's wall time went, in seconds: rendering the program text, the Futhark compiler, the WGSL port,
+/// `cc`, the surface check, the link, the processes' start, device set-up and pipeline creation, the runs on the
+/// stored cases, and the speed timing (stage 2). In batch mode a program's share of its batch: the batch's shared
+/// stages divided among its programs, its own runs and timing.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Stages {
+    render: f64,
+    futhark: f64,
+    port: f64,
+    cc: f64,
+    check: f64,
+    link: f64,
+    start: f64,
+    device: f64,
+    pipelines: f64,
+    runs: f64,
+    timing: f64,
+}
+
+impl Stages {
+    const NAMES: [&'static str; 11] = ["render", "futhark", "port", "cc", "check", "link", "start", "device", "pipelines", "runs", "timing"];
+
+    fn values(&self) -> [f64; 11] {
+        [self.render, self.futhark, self.port, self.cc, self.check, self.link, self.start, self.device, self.pipelines, self.runs, self.timing]
+    }
+
+    fn of(v: [f64; 11]) -> Stages {
+        Stages { render: v[0], futhark: v[1], port: v[2], cc: v[3], check: v[4], link: v[5], start: v[6], device: v[7], pipelines: v[8], runs: v[9], timing: v[10] }
+    }
+
+    fn add(&mut self, o: &Stages) {
+        let (a, b) = (self.values(), o.values());
+        *self = Stages::of(std::array::from_fn(|i| a[i] + b[i]));
+    }
+
+    fn scaled(&self, f: f64) -> Stages {
+        let a = self.values();
+        Stages::of(std::array::from_fn(|i| a[i] * f))
+    }
+
+    fn compiled(c: &CompileStages) -> Stages {
+        Stages { futhark: c.futhark, port: c.port, cc: c.cc, check: c.check, link: c.link, ..Stages::default() }
+    }
+
+    fn ran(r: &RunStages) -> Stages {
+        Stages { start: r.start, device: r.device, pipelines: r.pipelines, runs: r.runs, ..Stages::default() }
+    }
+
+    fn total(&self) -> f64 {
+        self.values().iter().sum()
+    }
+}
+
+/// The steps of a program's timed pairs (`missing` of them) in a batch: the process-equivalent the per-candidate path
+/// discards for a freshly compiled executable (`fresh`), then each pair, its order alternating, as `Judge::time_pairs`.
+fn pair_steps(missing: usize, fresh: bool, runs: usize) -> Vec<Step> {
+    let own = Step::Time { yardstick: false, runs };
+    let yard = Step::Time { yardstick: true, runs };
+    let mut v = Vec::with_capacity(2 * missing + 1);
+    if fresh {
+        v.push(own);
+    }
+    for i in 0..missing {
+        if i % 2 == 0 {
+            v.extend([own, yard]);
+        } else {
+            v.extend([yard, own]);
+        }
+    }
+    v
+}
+
+/// The ratios candidate / yardstick of [`pair_steps`]' outcomes: an error anywhere is the timing's error, as one
+/// process's error is on the per-candidate path.
+fn pair_ratios(outs: &[Outcome], missing: usize, fresh: bool) -> Result<Vec<f64>, String> {
+    let mut o = outs.iter();
+    if fresh {
+        o.next().ok_or("our software has a bug: no discarded timing")?.fastest_ns()?;
+    }
+    let mut r = Vec::with_capacity(missing);
+    for i in 0..missing {
+        let a = o.next().ok_or("our software has a bug: a pair cut short")?.fastest_ns()?;
+        let b = o.next().ok_or("our software has a bug: a pair cut short")?.fastest_ns()?;
+        let (c, y) = if i % 2 == 0 { (a, b) } else { (b, a) };
+        r.push(c / y);
+    }
+    Ok(r)
+}
+
 /// The input the speed is timed on.
 #[derive(Debug, Clone)]
 struct TimingInput {
@@ -142,6 +257,19 @@ impl TimingInput {
         format!("{} ({})", self.name, sizes.join(", "))
     }
 }
+
+/// The A/A sets of the batch path: the published program against itself, the published program as a member against
+/// it, and single timings of the published program (ns).
+struct AaSets {
+    noise: Vec<f64>,
+    inrun: Vec<f64>,
+    rounds: Vec<f64>,
+}
+
+/// The ledger's columns after the text: how the program was evaluated, its batch's size, each stage's milliseconds.
+/// Then the fitness inputs, each exactly (Rust's shortest round-trip form, comma-separated): the quality inputs in case
+/// order and the speed inputs (stage 2), so two runs' inputs can be compared bit for bit.
+const LEDGER_STAGE_COLUMNS: [&str; 15] = ["eval", "batch_size", "render_ms", "futhark_ms", "port_ms", "cc_ms", "check_ms", "link_ms", "start_ms", "device_ms", "pipelines_ms", "runs_ms", "timing_ms", "quality_inputs", "speed_inputs"];
 
 /// What a program measured on the stored cases (independent of the stage).
 #[derive(Debug, Clone)]
@@ -199,6 +327,10 @@ impl Individual {
     }
 }
 
+/// A batched program's quality outputs (or the failure that names it), its share of its batch's stages, and the
+/// batch's size.
+type Batched = (Result<Vec<Array>, String>, Stages, usize);
+
 /// The fitness machinery: the cases, the yardstick's executable, the caches by program text.
 struct Judge<'a> {
     k: &'a FutharkKingdom,
@@ -232,39 +364,196 @@ struct Judge<'a> {
     setmem: u64,
     bug_log: PathBuf,
     max_work: u128,
+    mode: EvalMode,
+    /// The batch host (`--eval batch`).
+    host: Option<Host<'a>>,
+    /// Batch mode: the quality outputs of the programs batched this generation, by text, with each one's share of its
+    /// batch's stages and the batch's size; taken when the program is scored (so the counts, the bugs and the ledger
+    /// are the per-candidate path's).
+    batched_q: HashMap<String, Batched>,
+    /// Batch mode: the timed pairs of the programs batched this generation, by text, with each one's timing seconds.
+    batched_t: HashMap<String, (Result<Vec<f64>, String>, f64)>,
+    /// The stages of this generation (the batches' and the single evaluations' wall time).
+    gen_stages: Stages,
+    /// The last evaluation's path (`single`, `batch`, `hit`), its batch's size and its stages, for the ledger.
+    last: (&'static str, usize, Stages),
 }
 
-impl Judge<'_> {
+impl<'a> Judge<'a> {
     fn compile(&self, source: &str, dir: &Path) -> Result<PathBuf, String> {
+        self.compile_staged(source, dir).map(|(e, _)| e)
+    }
+
+    /// [`Judge::compile`] with each stage's wall time (the c backend's compile is all `futhark`).
+    fn compile_staged(&self, source: &str, dir: &Path) -> Result<(PathBuf, Stages), String> {
         match self.backend {
-            Backend::Gpu => compile_program_prebuilt(source, dir, &self.shim),
-            Backend::C => compile_c(source, dir),
+            Backend::Gpu => compile_program_prebuilt_staged(source, dir, &self.shim).map(|(e, c)| (e, Stages::compiled(&c))),
+            Backend::C => {
+                let t = Instant::now();
+                let e = compile_c(source, dir)?;
+                Ok((e, Stages { futhark: t.elapsed().as_secs_f64(), ..Stages::default() }))
+            }
         }
     }
 
-    /// Run the quality program (every case in one process) and read the outputs, one a case.
-    fn run_all(&self, exe: &Path) -> Result<Vec<fuller::futhark_sig::Array>, String> {
-        let raw = match self.backend {
+    /// Run the quality program (every case in one process) and read the outputs, one a case, with the process's
+    /// stages.
+    fn run_all(&self, exe: &Path) -> Result<(Vec<Array>, Stages), String> {
+        let (raw, stages) = match self.backend {
             Backend::Gpu => {
-                let (out, report) = run_program_bytes(exe, &self.all_stdin, false, 1)?;
+                let (out, report, rs) = run_program_bytes_staged(exe, &self.all_stdin, false, 1)?;
                 if report.backend != "Metal" {
                     return Err(format!("the program ran on {}, not Metal", report.backend));
                 }
-                out
+                (out, Stages::ran(&rs))
             }
             Backend::C => {
+                let t = Instant::now();
                 let out = output_with_timeout_bytes(std::process::Command::new(exe).arg("-b"), std::time::Duration::from_secs(120), Some(&self.all_stdin))?;
                 if !out.status.success() {
                     return Err(format!("{} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
                 }
-                out.stdout
+                (out.stdout, Stages { runs: t.elapsed().as_secs_f64(), ..Stages::default() })
             }
         };
         let v = read_binary(&raw)?;
         if v.len() != self.cases.len() {
             return Err(format!("the quality program wrote {} values for {} cases", v.len(), self.cases.len()));
         }
-        Ok(v)
+        Ok((v, stages))
+    }
+
+    /// The most node executions of a tree on any stored case.
+    fn work_of(&self, tree: &Tree) -> Result<u128, String> {
+        let mut work = 0u128;
+        for s in &self.sizes {
+            work = work.max(self.interp.work(tree, s)?);
+        }
+        Ok(work)
+    }
+
+    /// BATCH MODE: every program of `items` that will need a compile this generation — its quality not yet known,
+    /// or (in a stage with speed) its timing slots not yet filled — in one batch (`fuller::futhark_batch`): one
+    /// compile and one process (more only when the halving must find a program the compiler refuses). The results are
+    /// kept by text and taken when each program is scored, so selection, the counts and the bugs are the
+    /// per-candidate path's. Programs over the work cap are left out: scoring them stops the run, as before.
+    fn prefetch(&mut self, items: &[(&Tree, &str)], stage: FitnessStage) -> Result<(), String> {
+        if self.mode != EvalMode::Batch {
+            return Ok(());
+        }
+        let t0 = Instant::now();
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut members: Vec<Member> = Vec::new();
+        let mut keys: Vec<(String, bool, usize, bool)> = Vec::new();
+        for (tree, source) in items {
+            if !seen.insert(source) {
+                continue;
+            }
+            let mut steps = Vec::new();
+            let quality = !self.quality_cache.contains_key(*source) && !self.batched_q.contains_key(*source) && self.work_of(tree)? <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+            if quality {
+                steps.push(Step::Quality);
+            }
+            let (mut missing, mut fresh) = (0, false);
+            if stage.measures_speed() && self.backend == Backend::Gpu && !self.batched_t.contains_key(*source) {
+                let m = self.slots.missing(source);
+                if m > 0 && self.interp.work(tree, &self.timing.sizes)? <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+                    (missing, fresh) = (m, m == self.slots.slots());
+                    steps.extend(pair_steps(missing, fresh, self.runs));
+                }
+            }
+            if steps.is_empty() {
+                continue;
+            }
+            members.push(Member { program: Program::Tree(tree), steps });
+            keys.push((source.to_string(), quality, missing, fresh));
+        }
+        if members.is_empty() {
+            return Ok(());
+        }
+        let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
+        let r = host.run(&members)?;
+        let n = members.len();
+        let c = &r.cost;
+        // The batch's own wall time: the compiles (a halving's failed ones in `futhark`) and the processes; the
+        // commands' time is each member's own (quality in `runs`, pairs in `timing`), the processes' rest shared.
+        let own_q: f64 = c.member_quality_seconds.iter().sum();
+        let own_t: f64 = c.member_timing_seconds.iter().sum();
+        let mut shared = Stages::compiled(&c.compile);
+        shared.render = c.render;
+        shared.futhark += c.failed_compile_seconds;
+        shared.start = c.run.start;
+        shared.device = c.run.device;
+        shared.pipelines = c.run.pipelines;
+        shared.runs = (c.run.runs - own_q - own_t).max(0.0);
+        let mut whole = shared;
+        whole.runs += own_q;
+        whole.timing = own_t;
+        self.gen_stages.add(&whole);
+        let share = shared.scaled(1.0 / n as f64);
+        for (i, (key, quality, missing, fresh)) in keys.into_iter().enumerate() {
+            let outs = &r.outcomes[i];
+            let mut mine = share;
+            mine.runs += c.member_quality_seconds[i];
+            mine.timing = c.member_timing_seconds[i];
+            let mut at = 0;
+            if quality {
+                let q = match &outs[0] {
+                    Outcome::Quality(v) => Ok(v.clone()),
+                    Outcome::Failed(e) => Err(format!("{e}\n(in a batch of {n}: the halving found this program at fault)")),
+                    other => return Err(format!("our software has a bug: a quality step's outcome {other:?}")),
+                };
+                // The timing seconds are taken with the pairs (`evaluate`), never twice.
+                let mut qs = mine;
+                qs.timing = 0.0;
+                self.batched_q.insert(key.clone(), (q, qs, n));
+                at = 1;
+            }
+            if missing > 0 {
+                self.batched_t.insert(key, (pair_ratios(&outs[at..], missing, fresh), mine.timing));
+            }
+        }
+        println!("# {} batch: {n} programs, {} compile(s) ({} failed), {} process(es), {:.1} s", utc(), c.compiles, c.failed_compiles, c.processes, t0.elapsed().as_secs_f64());
+        Ok(())
+    }
+
+    /// BATCH MODE: the A/A sets in one process: the published program against itself (a discarded pair, then 11),
+    /// and, for P, the published program as a member (wrapped as a candidate's text is) against it through the
+    /// slots' scheme (`inrun_pairs`, the first process-equivalent discarded); with `rounds`, that many single timings
+    /// of the published program (the gate's). Returns (noise, in-run A/A, rounds in ns).
+    fn aa_batch(&self, yardstick: &str, inrun_pairs: usize, rounds: usize) -> Result<AaSets, String> {
+        let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
+        let y = Step::Time { yardstick: true, runs: self.runs };
+        let mut steps = vec![y; 2 + 2 * 11];
+        steps.extend(vec![y; rounds]);
+        let mut members = vec![Member { program: Program::Text(yardstick), steps }];
+        if inrun_pairs > 0 {
+            members.push(Member { program: Program::Text(yardstick), steps: pair_steps(inrun_pairs, true, self.runs) });
+        }
+        let r = host.run(&members)?;
+        let o = &r.outcomes[0];
+        let mut noise = Vec::with_capacity(11);
+        for i in 0..11 {
+            noise.push(o[2 + 2 * i].fastest_ns()? / o[3 + 2 * i].fastest_ns()?);
+        }
+        let rounds = o[24..].iter().map(Outcome::fastest_ns).collect::<Result<Vec<_>, _>>()?;
+        let inrun = if inrun_pairs > 0 { pair_ratios(&r.outcomes[1], inrun_pairs, true)? } else { Vec::new() };
+        Ok(AaSets { noise, inrun, rounds })
+    }
+
+    /// BATCH MODE: the champion's re-time (`pairs`, the first process-equivalent discarded) and its output on the
+    /// timing input, in one process.
+    fn champion_batch(&self, tree: &Tree, pairs: usize) -> Result<(Vec<f64>, Array), String> {
+        let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
+        let mut steps = pair_steps(pairs, true, self.runs);
+        steps.push(Step::Output);
+        let r = host.run(&[Member { program: Program::Tree(tree), steps }])?;
+        let o = &r.outcomes[0];
+        let out = match o.last() {
+            Some(Outcome::Output(a)) => a.clone(),
+            other => return Err(format!("the champion's output on the timing input: {other:?}")),
+        };
+        Ok((pair_ratios(&o[..o.len() - 1], pairs, true)?, out))
     }
 
     /// One process's time on the timing case: the fastest of `runs` runs' GPU-timed passes, in nanoseconds.
@@ -315,19 +604,38 @@ impl Judge<'_> {
         }
     }
 
-    /// The work guard, then compile the quality program and run every case in one process.
+    /// The work guard, then the quality program's outputs: its own compile and process (single mode), or its batch's
+    /// (batch mode, `Judge::prefetch`).
     fn quality(&mut self, tree: &Tree, source: &str) -> Result<Quality, String> {
-        let mut work = 0u128;
-        for s in &self.sizes {
-            work = work.max(self.interp.work(tree, s)?);
-        }
+        let work = self.work_of(tree)?;
         if work > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
             return Err(format!("THE WORK GUARD: a candidate runs {work} node executions on a case, over the per-submit cap {CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT}; the experiment's sizes are misconfigured for this layout\n{source}"));
         }
         self.max_work = self.max_work.max(work);
+        let t = Instant::now();
         let batch = program_cases(self.k, self.sig, tree, self.cases.len())?;
-        let dir = self.work_dir.join("quality");
-        let outs = match self.compile(&batch, &dir).and_then(|exe| self.run_all(&exe)) {
+        let render = t.elapsed().as_secs_f64();
+        let got = match self.mode {
+            EvalMode::Single => {
+                let dir = self.work_dir.join("quality");
+                let mut st = Stages { render, ..Stages::default() };
+                let r = self.compile_staged(&batch, &dir).and_then(|(exe, cs)| {
+                    st.add(&cs);
+                    let (o, rs) = self.run_all(&exe)?;
+                    st.add(&rs);
+                    Ok(o)
+                });
+                self.gen_stages.add(&st);
+                self.last = ("single", 1, st);
+                r
+            }
+            EvalMode::Batch => {
+                let (r, st, n) = self.batched_q.remove(source).ok_or_else(|| format!("our software has a bug: a program scored in batch mode that no batch held\n{source}"))?;
+                self.last = ("batch", n, st);
+                r
+            }
+        };
+        let outs = match got {
             Ok(o) => o,
             Err(e) => {
                 self.log_bug(&e, &batch);
@@ -352,6 +660,7 @@ impl Judge<'_> {
     /// Score one individual in a stage.
     fn evaluate(&mut self, tree: &Tree, source: &str, stage: FitnessStage) -> Result<Eval, String> {
         self.evaluations += 1;
+        self.last = ("hit", 0, Stages::default());
         let q = if let Some(q) = self.quality_cache.get(source) {
             self.hits += 1;
             q.clone()
@@ -375,7 +684,29 @@ impl Judge<'_> {
                 self.slots.add(source, &vec![f64::INFINITY; missing])?;
             } else if missing > 0 {
                 // The timed program is the plain one (the declared signature, one case); its empty slots are filled.
-                let r = match self.compile(source, &self.work_dir.join("timed")).and_then(|e| if missing == self.slots.slots() { self.time_fresh(&e, missing) } else { self.time_pairs(&e, missing) }) {
+                let got = match self.mode {
+                    EvalMode::Single => {
+                        let t = Instant::now();
+                        let r = self.compile_staged(source, &self.work_dir.join("timed")).and_then(|(e, cs)| if missing == self.slots.slots() { self.time_fresh(&e, missing).map(|r| (r, cs)) } else { self.time_pairs(&e, missing).map(|r| (r, cs)) });
+                        let mut st = match &r {
+                            Ok((_, cs)) => *cs,
+                            Err(_) => Stages::default(),
+                        };
+                        st.timing = t.elapsed().as_secs_f64() - st.total();
+                        self.gen_stages.add(&st);
+                        self.last.2.add(&st);
+                        r.map(|(r, _)| r)
+                    }
+                    EvalMode::Batch => {
+                        let (r, secs) = self.batched_t.remove(source).ok_or_else(|| format!("our software has a bug: a program timed in batch mode that no batch held\n{source}"))?;
+                        if self.last.0 == "hit" {
+                            self.last.0 = "batch";
+                        }
+                        self.last.2.timing += secs;
+                        r
+                    }
+                };
+                let r = match got {
                     Ok(r) => r,
                     Err(err) => {
                         self.log_bug(&format!("timing: {err}"), source);
@@ -578,7 +909,13 @@ impl Run<'_> {
             println!("# {} FIRST EXACT on every case at evaluation {}, generation {generation}: {}", utc(), self.judge.evaluations, sexp(self.gen.k, &ind.tree));
         }
         let text = sexp(self.gen.k, &ind.tree);
-        self.ledger.record(generation, ind.id, &ind.parents, &ind.operator, e.fitness, &text)?;
+        let (path, batch, st) = self.judge.last;
+        let mut cols = vec![path.to_string(), batch.to_string()];
+        cols.extend(st.values().iter().map(|v| format!("{:.1}", v * 1e3)));
+        let exact = |v: &[f64]| if v.is_empty() { "-".to_string() } else { v.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>().join(",") };
+        cols.push(exact(&e.quality.inputs));
+        cols.push(exact(&e.speed));
+        self.ledger.record_line(&LedgerLine { generation, id: ind.id, parents: &ind.parents, operator: &ind.operator, fitness: e.fitness, text: &text, extra: &cols })?;
         let mut extras = BTreeMap::new();
         extras.insert("theta_quality".to_string(), e.theta_q);
         extras.insert("theta_speed".to_string(), e.theta_s);
@@ -625,6 +962,13 @@ fn real_main() -> Result<(), String> {
         "gpu" => Backend::Gpu,
         "c" => Backend::C,
         o => return Err(format!("--backend {o}: gpu or c")),
+    };
+    // A generation's new programs in one compiled program and one process (batch, the default since 2026-10-28), or
+    // each program its own compile and processes (single).
+    let mode = match arg(&args, "--eval").as_deref().unwrap_or("batch") {
+        "batch" => EvalMode::Batch,
+        "single" => EvalMode::Single,
+        o => return Err(format!("--eval {o}: batch or single")),
     };
     let minutes: f64 = num(&args, "--minutes", 60.0)?;
     let budget: u64 = num(&args, "--evaluations", 6000)?;
@@ -673,7 +1017,7 @@ fn real_main() -> Result<(), String> {
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
     let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
     println!(
-        "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out), timing on {}{}",
+        "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, eval {mode:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out), timing on {}{}",
         utc(),
         if regime == "P" { format!(" from the {start} program") } else { String::new() },
         layout.width,
@@ -694,7 +1038,7 @@ fn real_main() -> Result<(), String> {
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
-    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": "staged: TrueNorth(quality) until exact on every case, then TrueNorth(theta_q/(pi/2), theta_s/(pi/2))"});
+    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": "staged: TrueNorth(quality) until exact on every case, then TrueNorth(theta_q/(pi/2), theta_s/(pi/2))"});
     let tel = RunTelemetry::start(
         &out,
         format!("futhark-{pname}-{regime}-seed{seed}"),
@@ -714,13 +1058,21 @@ fn real_main() -> Result<(), String> {
     // The shim is built once, here (under the cargo lock); no candidate's link runs cargo or takes the lock.
     let shim = if backend == Backend::Gpu { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
     let yard_exe = if backend == Backend::Gpu { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
+    let host = match mode {
+        EvalMode::Batch => {
+            let b = if backend == Backend::Gpu { fuller::futhark_batch::Backend::Gpu { shim: shim.clone() } } else { fuller::futhark_batch::Backend::C };
+            let timing_stdin = if backend == Backend::Gpu { Some(timing.stdin.as_slice()) } else { None };
+            Some(Host::new(&k, &sig, cases.len(), b, &out.join("batch_build"), Inputs { cases_stdin: &all_stdin, timing_stdin, yardstick: Some(p.yardstick) })?)
+        }
+        EvalMode::Single => None,
+    };
     let mut run = Run {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), last: ("hit", 0, Stages::default()) },
         tel,
-        ledger: Ledger::open(&out, resume)?,
+        ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
         hof: HallOfFame::new(5),
         stage: if regime == "P" { FitnessStage::QualityAndSpeed } else { FitnessStage::Quality },
@@ -729,11 +1081,22 @@ fn real_main() -> Result<(), String> {
 
     // The A/A noise floor: the yardstick against itself (one warm-up pair discarded, then 11).
     let mut noise = Vec::new();
+    // Batch mode: both A/A sets (and the gate's single timings) in one batch process, as every candidate is timed.
+    let mut batch_aa: Option<AaSets> = None;
     if backend == Backend::Gpu {
-        let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
-        run.judge.time_pairs(&y, 1)?;
-        noise = run.judge.time_pairs(&y, 11)?;
-        let msg = format!("A/A noise floor, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        match mode {
+            EvalMode::Single => {
+                let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
+                run.judge.time_pairs(&y, 1)?;
+                noise = run.judge.time_pairs(&y, 11)?;
+            }
+            EvalMode::Batch => {
+                let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
+                noise = a.noise.clone();
+                batch_aa = Some(a);
+            }
+        }
+        let msg = format!("A/A noise floor{}, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode == EvalMode::Batch { " (in one batch process)" } else { "" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -746,6 +1109,7 @@ fn real_main() -> Result<(), String> {
         println!("# {} control: the yardstick on the GPU gives futhark c's output on {} (GPU)", utc(), run.judge.timing.label());
     }
     let ref_source = program(&k, &sig, &reference)?;
+    run.judge.prefetch(&[(&reference, ref_source.as_str())], FitnessStage::Quality)?;
     let ref_q = run.judge.quality(&reference, &ref_source)?;
     if !ref_q.perfect() {
         return Err(format!("our software has a bug: the compiled reference is not exact ({:?})", ref_q.raw));
@@ -755,11 +1119,16 @@ fn real_main() -> Result<(), String> {
     // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots.
     let mut inrun_aa: Vec<f64> = Vec::new();
     if regime == "P" && backend == Backend::Gpu {
-        let exe = run.judge.compile(p.yardstick, &out.join("candidate_build").join("timed"))?;
-        let r = run.judge.time_fresh(&exe, pairs)?;
+        let r = match &batch_aa {
+            Some(a) => a.inrun.clone(),
+            None => {
+                let exe = run.judge.compile(p.yardstick, &out.join("candidate_build").join("timed"))?;
+                run.judge.time_fresh(&exe, pairs)?
+            }
+        };
         run.judge.slots.add(p.yardstick, &r)?;
         inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
-        let msg = format!("in-run A/A, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode == EvalMode::Batch { " (in the batch process)" } else { "" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -770,9 +1139,14 @@ fn real_main() -> Result<(), String> {
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
         let within = all.iter().filter(|r| (0.95..=1.05).contains(*r)).count();
-        let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
-        let one: Vec<f64> = (0..3).map(|_| run.judge.time_once(&y)).collect::<Result<_, _>>()?;
-        let rep = format!("problem\t{pname}\ntiming_input\t{}\npublished_gpu_us_fastest_run_3_processes\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n", run.judge.timing.label(), one.iter().map(|ns| format!("{:.1}", ns / 1e3)).collect::<Vec<_>>().join(","), fmt(&noise), fmt(&inrun_aa), all.len(), if within == all.len() && !all.is_empty() { "pass" } else { "fail" });
+        let (one, unit) = match &batch_aa {
+            Some(a) => (a.rounds.clone(), "rounds_in_one_batch_process"),
+            None => {
+                let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
+                ((0..3).map(|_| run.judge.time_once(&y)).collect::<Result<_, _>>()?, "processes")
+            }
+        };
+        let rep = format!("problem\t{pname}\ntiming_input\t{}\npublished_gpu_us_fastest_run_3_{unit}\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n", run.judge.timing.label(), one.iter().map(|ns| format!("{:.1}", ns / 1e3)).collect::<Vec<_>>().join(","), fmt(&noise), fmt(&inrun_aa), all.len(), if within == all.len() && !all.is_empty() { "pass" } else { "fail" });
         std::fs::write(out.join("aa_gate.tsv"), &rep).map_err(|e| e.to_string())?;
         print!("{rep}");
         run.tel.end("early_stop", 0, None)?;
@@ -865,6 +1239,7 @@ fn real_main() -> Result<(), String> {
     if series.is_empty() {
         series = String::from("generation\tutc\tseconds\tevaluations\tcompiled\tcache_hits\tbugs\tstage\tbest_hff\tbest_theta_q\tbest_theta_s\tmedian_hff\tbest_ratio\tbest_exact_train\tbest_exact_held\tbest_nodes\tbest_work\tdistinct\tgen_seconds\n");
     }
+    let mut stages_tsv = if resume { std::fs::read_to_string(out.join("stages.tsv")).unwrap_or_default() } else { String::new() };
     let mut population: Vec<Individual> = Vec::new();
     let mut stopped_by = "early_stop";
     let mut last_generation = generation;
@@ -878,7 +1253,13 @@ fn real_main() -> Result<(), String> {
             break;
         }
         let gen_start = Instant::now();
-        // ---- evaluate ----
+        run.judge.gen_stages = Stages::default();
+        let evals_before = run.judge.evaluations;
+        // ---- evaluate (batch mode: every new program of the generation in one batch first) ----
+        {
+            let items: Vec<(&Tree, &str)> = cands.iter().map(|c| (&c.tree, c.source.as_str())).collect();
+            run.judge.prefetch(&items, run.stage)?;
+        }
         let mut next = Vec::with_capacity(cands.len());
         let mut timed_out = false;
         let mut exact_stop = false;
@@ -920,6 +1301,10 @@ fn real_main() -> Result<(), String> {
             println!("# {} {msg}", utc());
             run.tel.writer().event(generation, EventKind::StageChange, msg, None, Some(2.0))?;
             run.stage = new_stage;
+            {
+                let items: Vec<(&Tree, &str)> = population.iter().map(|c| (&c.tree, c.source.as_str())).collect();
+                run.judge.prefetch(&items, run.stage)?;
+            }
             // The population is re-scored in stage 2 so that selection compares like with like (not new evaluations).
             for ind in population.iter_mut() {
                 let e = run.judge.evaluate(&ind.tree, &ind.source, run.stage)?;
@@ -953,6 +1338,16 @@ fn real_main() -> Result<(), String> {
         extras.insert("cache_hits".to_string(), run.judge.hits as f64);
         extras.insert("bugs".to_string(), run.judge.bugs as f64);
         extras.insert("max_work".to_string(), run.judge.max_work as f64);
+        // Where the generation's wall time went (seconds a stage) and the evaluation rate.
+        let gen_wall = gen_start.elapsed().as_secs_f64();
+        let gen_evals = run.judge.evaluations - evals_before;
+        for (name, v) in Stages::NAMES.iter().zip(run.judge.gen_stages.values()) {
+            extras.insert(format!("stage_{name}_s"), v);
+        }
+        extras.insert("stage_all_s".to_string(), run.judge.gen_stages.total());
+        extras.insert("gen_seconds".to_string(), gen_wall);
+        extras.insert("evaluations_per_second".to_string(), gen_evals as f64 / gen_wall.max(1e-9));
+        extras.insert("batched".to_string(), f64::from(u8::from(mode == EvalMode::Batch)));
         let before = run.tel.individuals();
         run.tel.generation(GenerationStats { generation, fitness: &fits, distinct: Some(distinct as u32), angle_groups: groups, extras, evaluated: run.judge.evaluations.saturating_sub(before) })?;
         let gen_seconds = gen_start.elapsed().as_secs_f64();
@@ -976,6 +1371,17 @@ fn real_main() -> Result<(), String> {
             be.quality.work,
         ));
         std::fs::write(out.join("series.tsv"), &series).map_err(|e| e.to_string())?;
+        if stages_tsv.is_empty() {
+            stages_tsv = format!("generation\tutc\teval\tevaluations\tgen_seconds\tevaluations_per_second\t{}\tall\n", Stages::NAMES.join("\t"));
+        }
+        stages_tsv.push_str(&format!(
+            "{generation}\t{}\t{mode:?}\t{gen_evals}\t{gen_seconds:.3}\t{:.4}\t{}\t{:.3}\n",
+            utc(),
+            gen_evals as f64 / gen_seconds.max(1e-9),
+            run.judge.gen_stages.values().iter().map(|v| format!("{v:.3}")).collect::<Vec<_>>().join("\t"),
+            run.judge.gen_stages.total()
+        ));
+        std::fs::write(out.join("stages.tsv"), &stages_tsv).map_err(|e| e.to_string())?;
         println!(
             "{} gen {generation}: stage {}, best HFF {:.5} (q {:.5}, s {:.5}, ratio {:.3}), exact {}+{} of {}, median {:.5}, {distinct} distinct; {} evaluations ({} compiled, {} hits, {} bugs); {gen_seconds:.1} s",
             utc(),
@@ -1165,7 +1571,7 @@ fn real_main() -> Result<(), String> {
     let be = best.eval.clone().ok_or("an unscored best")?;
     std::fs::write(out.join("best.fut"), &best.source).map_err(|e| e.to_string())?;
     let mut rep = format!(
-        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
+        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\neval\t{mode:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
         seconds / 60.0,
         run.judge.evaluations,
         run.judge.compiled,
@@ -1197,11 +1603,17 @@ fn real_main() -> Result<(), String> {
         rep.push_str(&format!("timing_input\t{}\nover_cap_untimed\t{}\n", run.judge.timing.label(), run.judge.over_cap_untimed));
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
-            let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
-            let ratios = run.judge.time_fresh(&exe, 11)?;
+            let (ratios, got) = match mode {
+                EvalMode::Single => {
+                    let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
+                    let ratios = run.judge.time_fresh(&exe, 11)?;
+                    let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
+                    (ratios, fuller::futhark_sig::read_one(&got)?)
+                }
+                EvalMode::Batch => run.judge.champion_batch(&best.tree, 11)?,
+            };
             if let Some(want) = &run.judge.timing.output {
-                let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
-                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
+                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
             // A speed claim counts only below the noise floor: the least ratio of both A/A sets.

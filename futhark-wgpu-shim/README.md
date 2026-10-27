@@ -98,6 +98,21 @@ by mode, the `wgpuInstanceWaitAny` and `emscripten_sleep` calls.
 evidence that a kernel was dispatched, not merely built. Timing waits for each
 submission, so it is a diagnostic mode, not the mode results are taken in.
 
+The report also carries the **stage clocks** (UNIX nanoseconds): the
+instance's creation, the device's readiness, the time spent creating shader
+modules and compute pipelines (where Metal compiles them), and the exit. With
+the caller's spawn time they split a process into its start, its device
+set-up, its pipelines and its runs (`fuller::futhark_wgpu_host::RunStages`).
+
+**The pass query** — `futhark_wgpu_shim_timed_passes()`,
+`futhark_wgpu_shim_pass_ns(i)` (-1 for a pass the GPU did not really time),
+`futhark_wgpu_shim_dispatches()` — is the shim's own, not WebGPU's: a host
+that runs many entry points in one process (fuller's batch driver,
+`src/futhark_batch.rs`) reads which passes were one call's. It is left out of
+`webgpu.h` (`cbindgen.toml`), which stays exactly the surface; the driver
+declares it itself, and the link step's surface check (which looks at
+`wgpu*`/`emscripten*` names) does not see it.
+
 ## What the runtime leaves behind
 
 Futhark's runtime never releases a handle (the surface has no

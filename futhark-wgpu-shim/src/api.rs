@@ -127,6 +127,7 @@ pub unsafe extern "C" fn wgpu_create_instance(descriptor: *const WGPUInstanceDes
         no_chain(d.next_in_chain, "wgpuCreateInstance");
     }
     report::at_exit();
+    report::instance_created();
     make(WGPUInstanceImpl { instance: wgpu::Instance::default(), registry: Rc::new(Registry::default()) })
 }
 
@@ -301,6 +302,7 @@ unsafe fn request_device(
     };
     let s = slot();
     let r = pollster::block_on(a.adapter.request_device(&desc)).map_err(|e| e.to_string());
+    report::device_ready();
     fill(&s, Completion::Device(r));
     a.registry.start(
         info.mode,
@@ -392,10 +394,12 @@ pub unsafe extern "C" fn wgpu_device_create_shader_module(
     // at offset 0 of a WGPUShaderSourceWGSL (both are #[repr(C)]).
     let wgsl = unsafe { &*(chain as *const WGPUChainedStruct).cast::<WGPUShaderSourceWGSL>() };
     let code = unsafe { text(wgsl.code) }.unwrap_or_else(|| crate::fatal("a WGSL shader source with no code"));
+    let t = std::time::Instant::now();
     let module = d.device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: unsafe { label(desc.label) },
         source: wgpu::ShaderSource::Wgsl(Cow::Owned(code.to_string())),
     });
+    report::count_pipeline(t.elapsed().as_nanos());
     make(WGPUShaderModuleImpl { module, registry: Rc::clone(&d.registry) })
 }
 
@@ -502,6 +506,7 @@ pub unsafe extern "C" fn wgpu_device_create_compute_pipeline(
             (unsafe { text(c.key) }.unwrap_or_else(|| crate::fatal("a pipeline constant with no key")), c.value)
         })
         .collect();
+    let t = std::time::Instant::now();
     let pipeline = d.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: unsafe { label(desc.label) },
         layout,
@@ -510,6 +515,7 @@ pub unsafe extern "C" fn wgpu_device_create_compute_pipeline(
         compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
         cache: None,
     });
+    report::count_pipeline(t.elapsed().as_nanos());
     make(WGPUComputePipelineImpl { pipeline })
 }
 

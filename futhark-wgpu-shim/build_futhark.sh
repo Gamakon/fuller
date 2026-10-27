@@ -23,6 +23,9 @@
 #      emscripten_sleep): the surface cannot quietly grow (criterion 3);
 #   6. cc links.
 #
+# Each step's wall time (seconds) is written to <output>.stages.tsv: port, cc, check (the surface check) and link,
+# one line each, for the caller's per-stage timing.
+#
 # Builds run under /private/tmp/claude-501/locks/cargo (mkdir lock), held only
 # while cargo or cc runs. A caller that already holds that lock (a test run
 # under a lock wrapper reaches this script through the futhark_wgpu_host test)
@@ -56,6 +59,10 @@ fi
 
 work="$exe.build"
 mkdir -p "$work"
+now() { perl -MTime::HiRes=time -e 'printf "%.6f", time'; }
+stages="$exe.stages.tsv"
+: >"$stages"
+since() { perl -e 'printf "%s\t%.6f\n", $ARGV[0], $ARGV[2] - $ARGV[1]' "$1" "$2" "$(now)" >>"$stages"; }
 
 # 1. the shim, and where its generated header is. With FUTHARK_SHIM_PREBUILT=<dir> (written once by
 # `prebuild_shim.sh <dir>`), the library and the generated header are read from <dir>: no cargo runs and no lock is
@@ -108,19 +115,24 @@ fi
 
 # 3. the WGSL port.
 ported="$work/$(basename "${src%.c}").ported.c"
+t=$(now)
 python3 -I "$here/tools/port_futhark_c.py" "$src" "$ported" >"$exe.port.log"
+since port "$t"
 
 # 4. compile.
 objs=()
 take_lock
+t=$(now)
 for c in "$ported" ${extra[@]+"${extra[@]}"}; do
   o="$work/$(basename "${c%.c}").o"
   cc -O2 ${dawn[@]+"${dawn[@]}"} -I"$out_dir/include" -I"$here/include" -I"$(dirname "$src")" -c "$c" -o "$o"
   objs+=("$o")
 done
 drop_lock
+since cc "$t"
 
 # 5. the surface check.
+t=$(now)
 /usr/bin/nm -u "${objs[@]}" 2>/dev/null | grep -oE '_(wgpu[A-Za-z0-9]+|emscripten_[a-z_]+)$' | sed 's/^_//' | sort -u >"$work/undefined.txt"
 /usr/bin/nm -gU "$lib" 2>/dev/null | grep -oE ' T _(wgpu[A-Za-z0-9]+|emscripten_[a-z_]+)$' | sed 's/^ T _//' | sort -u >"$work/exported.txt"
 { cat "$here/surface/wgpu_functions.txt"; echo emscripten_sleep; } | sort -u >"$work/surface.txt"
@@ -132,11 +144,14 @@ if [ -n "$missing" ] || [ -n "$outside" ]; then
   [ -n "$outside" ] && echo "  not in surface/wgpu_functions.txt: $outside" >&2
   exit 1
 fi
+since check "$t"
 
 # 6. link.
 take_lock
+t=$(now)
 cc -o "$exe" "${objs[@]}" "$lib" \
   -framework QuartzCore -framework CoreGraphics -liconv -framework Metal \
   -framework Foundation -framework CoreFoundation -lobjc -lm
 drop_lock
+since link "$t"
 echo "built $exe ($(wc -l <"$work/undefined.txt" | tr -d ' ') shim symbols used; port: $(tail -1 "$exe.port.log"))"

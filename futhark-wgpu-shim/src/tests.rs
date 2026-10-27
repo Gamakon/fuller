@@ -209,3 +209,25 @@ fn the_future_model_holds_through_the_c_entry_points() {
         wgpu_device_destroy(device);
     }
 }
+
+/// The pass query a batch host reads: the count grows by the passes recorded, each pass's GPU nanoseconds come back,
+/// and a pass the GPU did not really time (a zero begin, or an end not after the begin) or one past the end is -1.
+/// (No GPU: the passes are recorded as `wgpuQueueSubmit` records them.)
+#[test]
+fn the_pass_query_reads_back_each_recorded_pass() {
+    let before = crate::report::futhark_wgpu_shim_timed_passes();
+    crate::report::record_pass(100, 250, 150.0, 1);
+    crate::report::record_pass(0, 10, 10.0, 1);
+    crate::report::record_pass(300, 300, 0.0, 1);
+    assert_eq!(crate::report::futhark_wgpu_shim_timed_passes(), before + 3);
+    assert_eq!(crate::report::futhark_wgpu_shim_pass_ns(before), 150.0);
+    assert_eq!(crate::report::futhark_wgpu_shim_pass_ns(before + 1), -1.0, "a zero begin is no evidence");
+    assert_eq!(crate::report::futhark_wgpu_shim_pass_ns(before + 2), -1.0, "an end not after the begin is no evidence");
+    assert_eq!(crate::report::futhark_wgpu_shim_pass_ns(before + 3), -1.0, "no such pass");
+}
+
+/// The pass query is the shim's own, never part of the WebGPU header.
+#[test]
+fn the_pass_query_is_not_in_the_header() {
+    assert!(!GENERATED.contains("futhark_wgpu_shim"), "the shim's own pass query leaked into webgpu.h");
+}

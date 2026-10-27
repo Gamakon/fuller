@@ -408,11 +408,17 @@ pub fn read_one(raw: &[u8]) -> Result<Array, String> {
 /// input as an `i32` parameter rebound as the size `i64.i32` of it), the zero array of every rank-1 class bound once,
 /// around the rendered tree.
 pub fn program(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<String, String> {
+    program_named(k, sig, tree, "main")
+}
+
+/// [`program`] with its entry point named `entry` (a member of a batch program, `crate::futhark_batch`): the text is
+/// [`program`]'s but for the name.
+pub fn program_named(k: &FutharkKingdom, sig: &Signature, tree: &Tree, entry: &str) -> Result<String, String> {
     let root = k.rows.get(tree.symbol as usize).ok_or("the root is not a row")?;
     if !k.dual(root.output).is_some_and(|d| d.root) {
         return Err(format!("the root {} is not the declared output", root.name));
     }
-    let mut s = format!("entry main {} ", sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
+    let mut s = format!("entry {entry} {} ", sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
     for p in &sig.inputs {
         s.push_str(&format!("({}: {}) ", p.name, sig.futhark_type(p, "")));
     }
@@ -427,24 +433,42 @@ pub fn program(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<Strin
     Ok(s)
 }
 
+/// An entry point `entry` with the declared signature that returns `callee` applied to its parameters, in order (its
+/// output's sizes left to the callee): how a program given as text, wrapped in a module so its own definitions cannot
+/// clash with another copy's, becomes a member of a batch (`crate::futhark_batch`).
+pub fn entry_calling(sig: &Signature, entry: &str, callee: &str) -> String {
+    let mut s = format!("entry {entry} {}", sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
+    for p in &sig.inputs {
+        s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
+    }
+    let args: Vec<&str> = sig.inputs.iter().map(|p| p.name.as_str()).collect();
+    format!("{s} : {}{} =\n  {callee} {}\n", "[]".repeat(sig.output.dims.len()), sig.output.elem, args.join(" "))
+}
+
 /// THE QUALITY PROGRAM: the tree as a function of the declared signature (`#[noinline]`, so it is compiled once), and
 /// an entry point that applies it to `n` cases at once, each with its own sizes, returning the `n` outputs. A GPU
 /// process costs about 0.25 s to start whatever it runs (measured 2026-10-27, M3 Max), so one process for every case
 /// instead of one a case is what makes the evaluation rate. The function's text is [`program`]'s body unchanged;
 /// the timed program is [`program`] itself.
 pub fn program_cases(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize) -> Result<String, String> {
+    program_cases_named(k, sig, tree, n, "kernel", "main")
+}
+
+/// [`program_cases`] with its function named `kernel` and its entry point `entry` (a member of a batch program,
+/// `crate::futhark_batch`): the text is [`program_cases`]'s but for the two names.
+pub fn program_cases_named(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize, kernel: &str, entry: &str) -> Result<String, String> {
     if n == 0 {
         return Err("a quality program of no cases".into());
     }
     let single = program(k, sig, tree)?;
     let body = single.split_once("=\n").map(|(_, b)| b).ok_or("our software has a bug: the program has no body")?;
     let ty = |p: &Param, i: usize| sig.futhark_type(p, &i.to_string());
-    let mut s = String::from("#[noinline]\ndef kernel ");
+    let mut s = format!("#[noinline]\ndef {kernel} ");
     s.push_str(&sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
     for p in &sig.inputs {
         s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
     }
-    s.push_str(&format!(" : {} =\n{body}\nentry main ", sig.futhark_type(&sig.output, "")));
+    s.push_str(&format!(" : {} =\n{body}\nentry {entry} ", sig.futhark_type(&sig.output, "")));
     for i in 0..n {
         s.push_str(&sig.shape_dims().map(|d| format!("[{d}{i}]")).collect::<String>());
     }
@@ -454,7 +478,7 @@ pub fn program_cases(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize)
         }
     }
     let outs: Vec<String> = (0..n).map(|i| ty(&sig.output, i)).collect();
-    let calls: Vec<String> = (0..n).map(|i| format!("kernel {}", sig.inputs.iter().map(|p| format!("{}{i}", p.name)).collect::<Vec<_>>().join(" "))).collect();
+    let calls: Vec<String> = (0..n).map(|i| format!("{kernel} {}", sig.inputs.iter().map(|p| format!("{}{i}", p.name)).collect::<Vec<_>>().join(" "))).collect();
     s.push_str(&format!(" : ({}) =\n  ({})\n", outs.join(", "), calls.join(", ")));
     Ok(s)
 }

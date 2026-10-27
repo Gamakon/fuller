@@ -78,10 +78,123 @@ pub struct ShimReport {
     /// The compute passes the GPU timed: (begin tick, end tick, nanoseconds).
     /// Empty unless timestamps were asked for.
     pub passes: Vec<(u64, u64, f64)>,
+    /// The shim's stage clocks, when it reports them.
+    pub clocks: Option<ShimClocks>,
+}
+
+/// The shim's stage clocks (wall time, UNIX nanoseconds; `futhark-wgpu-shim/src/report.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShimClocks {
+    /// The instance's creation: the runtime's first call into the shim.
+    pub instance_unix_ns: u128,
+    /// The device's readiness.
+    pub device_unix_ns: u128,
+    /// The time spent creating shader modules and compute pipelines (Metal compiles them there), and how many.
+    pub pipeline_ns: u128,
+    pub pipelines: u64,
+    /// The report's writing, at exit.
+    pub exit_unix_ns: u128,
+}
+
+/// Seconds between two UNIX-nanosecond clocks (0 when either is unset or they are out of order).
+fn secs_between(from: u128, to: u128) -> f64 {
+    if from == 0 || to < from {
+        0.0
+    } else {
+        (to - from) as f64 / 1e9
+    }
+}
+
+/// Now, in UNIX nanoseconds.
+pub fn unix_ns() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
+}
+
+/// Where a GPU process's wall time went, in seconds: from the spawn to the shim's first call (the process's start:
+/// exec, loading, the runtime's set-up before the device), the device's set-up, the shader and pipeline creation
+/// (Metal's compiles), and the rest (the runs: inputs, kernels, outputs, exit). `total` is the wall time the caller
+/// measured. A process whose shim reported no clocks has its whole time in `runs`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RunStages {
+    pub start: f64,
+    pub device: f64,
+    pub pipelines: f64,
+    pub runs: f64,
+    pub total: f64,
+}
+
+impl RunStages {
+    /// The stages of a process spawned at `spawn` (UNIX ns) that took `total` seconds, from its shim's clocks.
+    pub fn of(spawn: u128, total: f64, clocks: Option<&ShimClocks>) -> RunStages {
+        match clocks {
+            Some(c) if c.instance_unix_ns > 0 => {
+                let start = secs_between(spawn, c.instance_unix_ns);
+                let device = secs_between(c.instance_unix_ns, c.device_unix_ns);
+                let pipelines = c.pipeline_ns as f64 / 1e9;
+                RunStages { start, device, pipelines, runs: (total - start - device - pipelines).max(0.0), total }
+            }
+            _ => RunStages { runs: total, total, ..RunStages::default() },
+        }
+    }
+
+    pub fn add(&mut self, o: &RunStages) {
+        self.start += o.start;
+        self.device += o.device;
+        self.pipelines += o.pipelines;
+        self.runs += o.runs;
+        self.total += o.total;
+    }
+}
+
+/// Where a compile's wall time went, in seconds: the Futhark compiler, the WGSL port, `cc`, the surface check and the
+/// link (`build_futhark.sh` writes the last four to `<exe>.stages.tsv`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CompileStages {
+    pub futhark: f64,
+    pub port: f64,
+    pub cc: f64,
+    pub check: f64,
+    pub link: f64,
+}
+
+impl CompileStages {
+    pub fn total(&self) -> f64 {
+        self.futhark + self.port + self.cc + self.check + self.link
+    }
+
+    pub fn add(&mut self, o: &CompileStages) {
+        self.futhark += o.futhark;
+        self.port += o.port;
+        self.cc += o.cc;
+        self.check += o.check;
+        self.link += o.link;
+    }
+
+    /// Read the link step's stage file (a missing stage is an error: the script writes every one it ran).
+    fn read_link_stages(&mut self, path: &Path) -> Result<(), String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("the link step wrote no stage times ({}): {e}", path.display()))?;
+        let mut seen = 0;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let (name, v) = line.split_once('\t').ok_or_else(|| format!("a stage line {line:?}"))?;
+            let v: f64 = v.trim().parse().map_err(|_| format!("a stage time {v:?}"))?;
+            match name {
+                "port" => self.port = v,
+                "cc" => self.cc = v,
+                "check" => self.check = v,
+                "link" => self.link = v,
+                other => return Err(format!("an unknown stage {other} in {}", path.display())),
+            }
+            seen += 1;
+        }
+        if seen != 4 {
+            return Err(format!("{} holds {seen} of the 4 stage times", path.display()));
+        }
+        Ok(())
+    }
 }
 
 impl ShimReport {
-    fn parse(text: &str) -> Result<ShimReport, String> {
+    pub fn parse(text: &str) -> Result<ShimReport, String> {
         let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("the shim's report is not JSON: {e}"))?;
         let num = |k: &str| v[k].as_u64().ok_or_else(|| format!("the shim's report has no {k}"));
         let txt = |k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| format!("the shim's report has no {k}"));
@@ -97,6 +210,12 @@ impl ShimReport {
                 ))
             })
             .collect::<Result<Vec<_>, &str>>()?;
+        // The stage clocks are u128 nanoseconds in the shim; JSON numbers up to 2^64 read as u64 here.
+        let big = |k: &str| v[k].as_u64().map(u128::from);
+        let clocks = match (big("instance_unix_ns"), big("device_unix_ns"), big("pipeline_ns"), v["pipelines"].as_u64(), big("exit_unix_ns")) {
+            (Some(instance_unix_ns), Some(device_unix_ns), Some(pipeline_ns), Some(pipelines), Some(exit_unix_ns)) => Some(ShimClocks { instance_unix_ns, device_unix_ns, pipeline_ns, pipelines, exit_unix_ns }),
+            _ => None,
+        };
         Ok(ShimReport {
             adapter: txt("adapter")?,
             backend: txt("backend")?,
@@ -104,6 +223,7 @@ impl ShimReport {
             submits: num("submits")?,
             emscripten_sleep_calls: num("emscripten_sleep_calls")?,
             passes,
+            clocks,
         })
     }
 
@@ -163,7 +283,44 @@ pub fn compile_program_prebuilt(source: &str, dir: &Path, shim: &Path) -> Result
     compile_with(source, dir, Some(shim))
 }
 
+/// [`compile_program_prebuilt`] with each stage's wall time.
+pub fn compile_program_prebuilt_staged(source: &str, dir: &Path, shim: &Path) -> Result<(PathBuf, CompileStages), String> {
+    let mut stages = CompileStages::default();
+    let exe = compile_staged(source, dir, Some(shim), &Build { library: None, timeout: COMPILE_TIMEOUT }, &mut stages)?;
+    Ok((exe, stages))
+}
+
+/// The C of a library build's driver, written from the compiler's manifest (`prog.json`: the entry points' C types).
+pub type DriverOf<'a> = &'a dyn Fn(&serde_json::Value) -> Result<String, String>;
+
+/// A LIBRARY build for a host of our own (`crate::futhark_batch`): the branch compiler's `--library` C (no `main`;
+/// the entry points as C functions), compiled and linked with the driver `driver_c` writes from the compiler's
+/// manifest, a C program that calls them, against a shim [`prebuild_shim`] wrote. `timeout` bounds the Futhark
+/// compiler (a batch of `n` programs gets `n` times one program's bound). Returns the executable and each stage's
+/// wall time.
+pub fn compile_library_prebuilt(source: &str, driver_c: DriverOf, dir: &Path, shim: &Path, timeout: Duration) -> Result<(PathBuf, CompileStages), String> {
+    let mut stages = CompileStages::default();
+    let exe = compile_staged(source, dir, Some(shim), &Build { library: Some(driver_c), timeout }, &mut stages)?;
+    Ok((exe, stages))
+}
+
+/// One program's compile bound (the batch host scales it by the programs in a batch).
+pub fn compile_timeout() -> Duration {
+    COMPILE_TIMEOUT
+}
+
+/// What kind of executable a compile makes.
+struct Build<'a> {
+    /// A library build's driver, from the manifest; `None` is the compiler's own executable (Futhark's command line).
+    library: Option<DriverOf<'a>>,
+    timeout: Duration,
+}
+
 fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<PathBuf, String> {
+    compile_staged(source, dir, prebuilt, &Build { library: None, timeout: COMPILE_TIMEOUT }, &mut CompileStages::default())
+}
+
+fn compile_staged(source: &str, dir: &Path, prebuilt: Option<&Path>, build: &Build, stages: &mut CompileStages) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let fut = dir.join("prog.fut");
     let c = dir.join("prog.c");
@@ -172,11 +329,14 @@ fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<Pat
         std::fs::remove_file(&c).map_err(|e| format!("remove the stale {}: {e}", c.display()))?;
     }
     let compiler = branch_compiler();
-    let out = output_with_timeout(
-        Command::new(&compiler).arg("webgpu").arg(&fut).arg("-o").arg(dir.join("prog")),
-        COMPILE_TIMEOUT,
-        None,
-    )?;
+    let mut cmd = Command::new(&compiler);
+    cmd.arg("webgpu");
+    if build.library.is_some() {
+        cmd.arg("--library");
+    }
+    let t = std::time::Instant::now();
+    let out = output_with_timeout(cmd.arg(&fut).arg("-o").arg(dir.join("prog")), build.timeout, None)?;
+    stages.futhark = t.elapsed().as_secs_f64();
     // The compiler writes prog.c and then fails at its emcc step: there is no
     // Emscripten here, by design. The C is the product; no C is the failure.
     // An EMPTY prog.c is no C too: measured 2026-10-27, the branch compiler's
@@ -194,6 +354,14 @@ fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<Pat
     // exports CARGO_TARGET_DIR, and the shim is not part of fuller's build.
     let mut cmd = Command::new(shim_dir().join("build_futhark.sh"));
     cmd.arg(&c).arg(&exe).env_remove("CARGO_TARGET_DIR");
+    if let Some(driver) = build.library {
+        let m = dir.join("prog.json");
+        let manifest = std::fs::read_to_string(&m).map_err(|e| format!("the compiler wrote no manifest {}: {e}", m.display()))?;
+        let manifest: serde_json::Value = serde_json::from_str(&manifest).map_err(|e| format!("{}: {e}", m.display()))?;
+        let d = dir.join("driver.c");
+        std::fs::write(&d, driver(&manifest)?).map_err(|e| format!("write {}: {e}", d.display()))?;
+        cmd.arg(&d);
+    }
     if let Some(p) = prebuilt {
         cmd.env("FUTHARK_SHIM_PREBUILT", p);
     }
@@ -205,6 +373,7 @@ fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<Pat
             String::from_utf8_lossy(&link.stderr)
         ));
     }
+    stages.read_link_stages(&dir.join("prog_wgpu.stages.tsv"))?;
     Ok(exe)
 }
 
@@ -271,6 +440,11 @@ pub fn run_program_times(exe: &Path, input: &[f32], timestamps: bool, runs: usiz
 /// in either of Futhark's value formats, and the result is its output in the
 /// binary format, as bytes, with the shim's report.
 pub fn run_program_bytes(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize) -> Result<(Vec<u8>, ShimReport), String> {
+    run_program_bytes_staged(exe, stdin, timestamps, runs).map(|(o, r, _)| (o, r))
+}
+
+/// [`run_program_bytes`] with the process's stages ([`RunStages`]).
+pub fn run_program_bytes_staged(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize) -> Result<(Vec<u8>, ShimReport, RunStages), String> {
     if runs == 0 {
         return Err("a program run zero times has no result".into());
     }
@@ -287,12 +461,22 @@ pub fn run_program_bytes(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize
     if timestamps {
         cmd.env("FUTHARK_WGPU_SHIM_TIMESTAMPS", "1");
     }
+    let spawn = unix_ns();
+    let t = std::time::Instant::now();
     let out = output_with_timeout_bytes(&mut cmd, RUN_TIMEOUT, Some(stdin))?;
+    let total = t.elapsed().as_secs_f64();
     if !out.status.success() {
         return Err(format!("the program failed on the GPU:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
     let report = std::fs::read_to_string(&report_path).map_err(|e| format!("the shim wrote no report: {e}"))?;
-    Ok((out.stdout, ShimReport::parse(&report)?))
+    let report = ShimReport::parse(&report)?;
+    let stages = RunStages::of(spawn, total, report.clocks.as_ref());
+    Ok((out.stdout, report, stages))
+}
+
+/// How long one program may run on the GPU (the batch host scales it by the commands of a process).
+pub fn run_timeout() -> Duration {
+    RUN_TIMEOUT
 }
 
 /// Compile a program for the GPU, run it on `input`, and read the result back.
@@ -310,7 +494,7 @@ mod tests {
 
     fn report_of(ns: &[f64]) -> ShimReport {
         let passes = ns.iter().enumerate().map(|(i, t)| (1000 * (i as u64 + 1), 1000 * (i as u64 + 1) + 1, *t)).collect();
-        ShimReport { adapter: "test".into(), backend: "Metal".into(), dispatches: 0, submits: 0, emscripten_sleep_calls: 0, passes }
+        ShimReport { adapter: "test".into(), backend: "Metal".into(), dispatches: 0, submits: 0, emscripten_sleep_calls: 0, passes, clocks: None }
     }
 
     /// A once-a-process pass before the first run (the reduce yardstick's, 22 passes for 21 runs) is the warm-up's:
@@ -374,6 +558,21 @@ mod tests {
         assert!(exe.is_file(), "no executable");
         assert!(secs < 60.0, "the link took {secs:.1} s with the lock held: it waited on the lock");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A process's stages from the shim's clocks: the start is spawn to the instance, the device is the instance to
+    /// the device, the pipelines are their own sum, the runs are the rest; a report with no clocks (an older shim)
+    /// is all runs. The clocks parse from the report's JSON.
+    #[test]
+    fn a_process_splits_into_its_stages() {
+        let ms = 1_000_000u128;
+        let c = ShimClocks { instance_unix_ns: 1000 * ms + 50 * ms, device_unix_ns: 1000 * ms + 80 * ms, pipeline_ns: 120 * ms, pipelines: 30, exit_unix_ns: 1000 * ms + 400 * ms };
+        let s = RunStages::of(1000 * ms, 0.5, Some(&c));
+        assert!((s.start - 0.05).abs() < 1e-9 && (s.device - 0.03).abs() < 1e-9 && (s.pipelines - 0.12).abs() < 1e-9, "{s:?}");
+        assert!((s.runs - 0.30).abs() < 1e-9 && s.total == 0.5, "{s:?}");
+        assert_eq!(RunStages::of(1000 * ms, 0.5, None), RunStages { runs: 0.5, total: 0.5, ..RunStages::default() });
+        let json = r#"{"adapter":"A","backend":"Metal","dispatches":2,"submits":3,"emscripten_sleep_calls":0,"instance_unix_ns":1050000000,"device_unix_ns":1080000000,"pipeline_ns":120000000,"pipelines":30,"exit_unix_ns":1400000000,"passes":[]}"#;
+        assert_eq!(ShimReport::parse(json).unwrap().clocks, Some(c));
     }
 
     #[test]

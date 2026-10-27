@@ -54,6 +54,7 @@ pub mod futhark_shapes_interp;
 pub mod futhark_interp;
 pub mod futhark_exec;
 pub mod futhark_wgpu_host;
+pub mod futhark_batch;
 pub mod futhark_pixel;
 pub mod futhark_sig;
 pub mod futhark_egraph;

@@ -179,6 +179,18 @@ pub fn load_checkpoint<T: DeserializeOwned>(out: &Path) -> Result<T, String> {
 /// The ledger's file name inside a run's output directory.
 pub const LEDGER_FILE: &str = "ledger.tsv";
 
+/// One line of the ledger ([`Ledger::record_line`]).
+pub struct LedgerLine<'a> {
+    pub generation: u32,
+    pub id: u64,
+    pub parents: &'a [u64],
+    pub operator: &'a str,
+    pub fitness: f64,
+    pub text: &'a str,
+    /// The values of the extra columns ([`Ledger::open_with`]), in order.
+    pub extra: &'a [String],
+}
+
 /// THE LEDGER AND LINEAGE: one line per scored individual — the generation, its id, its parents' ids, the operator
 /// that made it, its fitness and its text — so any individual can be traced to where it came from.
 pub struct Ledger {
@@ -203,11 +215,36 @@ impl Ledger {
         Ok(Ledger { file })
     }
 
+    /// [`Ledger::open`] with `extra` columns after the text (a runner's own measurements of each individual, such as
+    /// the time each stage of its evaluation took); every line then carries them ([`Ledger::record_with`]).
+    pub fn open_with(out: &Path, resume: bool, extra: &[&str]) -> Result<Ledger, String> {
+        let path = out.join(LEDGER_FILE);
+        let fresh = !resume || !path.exists();
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(!fresh)
+            .truncate(fresh)
+            .open(&path)
+            .map_err(|e| format!("ledger {}: {e}", path.display()))?;
+        if fresh {
+            let more: String = extra.iter().map(|c| format!("\t{c}")).collect();
+            writeln!(file, "generation\tid\tparents\toperator\tfitness\ttext{more}").map_err(|e| format!("ledger: {e}"))?;
+        }
+        Ok(Ledger { file })
+    }
+
     /// One individual. Tabs and newlines in the text are written as spaces.
     pub fn record(&mut self, generation: u32, id: u64, parents: &[u64], operator: &str, fitness: f64, text: &str) -> Result<(), String> {
-        let parents = parents.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
-        let text = text.replace(['\t', '\n', '\r'], " ");
-        writeln!(self.file, "{generation}\t{id}\t{}\t{operator}\t{fitness}\t{text}", if parents.is_empty() { "-" } else { &parents }).map_err(|e| format!("ledger: {e}"))
+        self.record_line(&LedgerLine { generation, id, parents, operator, fitness, text, extra: &[] })
+    }
+
+    /// One individual with the values of the extra columns of [`Ledger::open_with`], in order.
+    pub fn record_line(&mut self, l: &LedgerLine) -> Result<(), String> {
+        let parents = l.parents.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let text = l.text.replace(['\t', '\n', '\r'], " ");
+        let more: String = l.extra.iter().map(|v| format!("\t{}", v.replace(['\t', '\n', '\r'], " "))).collect();
+        writeln!(self.file, "{}\t{}\t{}\t{}\t{}\t{text}{more}", l.generation, l.id, if parents.is_empty() { "-" } else { &parents }, l.operator, l.fitness).map_err(|e| format!("ledger: {e}"))
     }
 
     /// Flush at the end of a generation.
