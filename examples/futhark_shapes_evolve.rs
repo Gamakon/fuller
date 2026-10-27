@@ -16,8 +16,14 @@
 //! asks for, and the number of kernels.
 //!
 //! ```text
-//! cargo run --release --features wgsl --example futhark_shapes_evolve
+//! cargo run --release --features wgsl --example futhark_shapes_evolve -- \
+//!     [--out DIR] [--generations 8] [--population 32] [--seed N] [--seconds 3600] [--resume] [--no-gpu]
 //! ```
+//!
+//! The run writes the runner standard's outputs into `--out` (default `logs/futhark_shapes_evolve`,
+//! `docs/STANDARD_runners.md`): `stream.jsonl` (watch it with `evowatch DIR`), `killme.trigger`
+//! (delete it to stop after the current generation), `checkpoint.json` (`--resume` continues from it),
+//! `ledger.tsv` and `hall_of_fame/`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -155,6 +161,9 @@ fn main() {
     let mut population = 32usize;
     let mut seed = 0x5EED_1234_ABCD_0010u64;
     let mut measure_gpu = true;
+    let mut out = std::path::PathBuf::from("logs/futhark_shapes_evolve");
+    let mut resume = false;
+    let mut seconds = 3600.0f64;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
@@ -175,6 +184,18 @@ fn main() {
                 measure_gpu = false;
                 i += 1;
             }
+            "--out" => {
+                out = std::path::PathBuf::from(&args[i + 1]);
+                i += 2;
+            }
+            "--seconds" => {
+                seconds = args[i + 1].parse().expect("--seconds takes a number");
+                i += 2;
+            }
+            "--resume" => {
+                resume = true;
+                i += 1;
+            }
             other => {
                 eprintln!("unknown flag {other}");
                 std::process::exit(2);
@@ -187,7 +208,7 @@ fn main() {
     let table = CostTable::load(&k).expect("the cost table loads");
     let reference_tree = reference(&k);
     let (layout, size) = layout_for(&k, &reference_tree).expect("a layout holds the reference");
-    let mut cfg = Config { generations, population, seed, measure_gpu, ..Config::default() };
+    let mut cfg = Config { generations, population, seed, measure_gpu, resume, seconds, ..Config::default() };
     cfg.program_size = size;
     // A REALISTIC size: at 2x3x4 the fixed overhead of a GPU program (the
     // counters, the tiling parameters) swamps the traffic, and the win the
@@ -236,7 +257,8 @@ fn main() {
 
     // The loop.
     println!("\n== the search ==");
-    let report = evolve(&reference_tree, &suite, &cfg).expect("the loop runs");
+    println!("output        {}   watch: evowatch {}   tail -f {}/stream.jsonl", out.display(), out.display(), out.display());
+    let report = evolve(&reference_tree, &suite, &cfg, &out).expect("the loop runs");
     println!(
         "{:>4}  {:>7}  {:>10}  {:>8}  {:>9}  {:>10}  {:>9}  {:>7}  {:>9}",
         "gen", "correct", "traffic", "alloc", "polished", "improved", "measured", "tiled", "no-gpu"
@@ -354,7 +376,8 @@ fn main() {
     }
 
     // The determinism check: the same seed, the same run.
-    let again = evolve(&reference_tree, &suite, &cfg).expect("the loop runs again");
+    let again_cfg = Config { resume: false, ..cfg.clone() };
+    let again = evolve(&reference_tree, &suite, &again_cfg, &out.join("determinism")).expect("the loop runs again");
     let same = again
         .best
         .as_ref()

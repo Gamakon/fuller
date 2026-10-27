@@ -514,6 +514,11 @@ impl GeneRng {
         GeneRng(seed)
     }
 
+    /// The generator's state: `GeneRng::new(rng.state())` continues the sequence exactly (a checkpoint keeps it).
+    pub fn state(&self) -> u64 {
+        self.0
+    }
+
     /// The next number in the sequence.
     pub fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);

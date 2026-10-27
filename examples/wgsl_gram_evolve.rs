@@ -13,6 +13,12 @@
 //!
 //!   cargo run --release --features gpu,wgsl --example wgsl_gram_evolve -- \
 //!       [--pop 32] [--gens 30] [--seed 1] [--sample 4 (training pairs, fixed)] [--seed-shipped | --damaged k] [--out logs/WGSL_GRAM/evolve]
+//!       [--seconds 14400] [--resume]
+//!
+//! The runner standard (`docs/STANDARD_runners.md`) in `--out`: `stream.jsonl` (`evowatch DIR`),
+//! `killme.trigger` (delete it to stop after the current generation), `checkpoint.json` (every generation;
+//! `--resume` continues from it), `ledger.tsv` (every evaluation, its origin naming its parents' ids), and
+//! `hall_of_fame/` (the kernels' text). The fitness is one HFF group, quality (no performance measure is in it).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -28,6 +34,45 @@ use fuller::wgsl::probes::{probes, run_probes, Probe, PASS};
 use fuller::wgsl::oracle::device::Device;
 use fuller::wgsl::render::{cost, dual_ty, gram_role, gram_shipped_tree, sample, Renderer, Tree};
 use fuller::wgsl::table::FunctionTable;
+use fuller::runner::{load_checkpoint, save_checkpoint, FameEntry, HallOfFame};
+use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
+use serde::{Deserialize, Serialize};
+
+/// A tree as the checkpoint holds it (the kingdom's type by its code).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SavedTree {
+    name: String,
+    ty: u32,
+    konst: f64,
+    kids: Vec<SavedTree>,
+}
+
+impl SavedTree {
+    fn of(t: &Tree) -> SavedTree {
+        SavedTree { name: t.name.clone(), ty: t.ty.code(), konst: t.konst, kids: t.kids.iter().map(SavedTree::of).collect() }
+    }
+    fn tree(&self) -> Result<Tree, String> {
+        Ok(Tree {
+            name: self.name.clone(),
+            ty: Ty::from_code(self.ty).ok_or_else(|| format!("resume: type code {} is not a type", self.ty))?,
+            konst: self.konst,
+            kids: self.kids.iter().map(SavedTree::tree).collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+/// The run's checkpoint: the next generation, the generator, the population (tree, origin) and the best.
+#[derive(Serialize, Deserialize)]
+struct Checkpoint {
+    next: usize,
+    state: u64,
+    population: Vec<(SavedTree, String)>,
+    best: Option<(f64, SavedTree)>,
+    hall_of_fame: HallOfFame,
+    best_ever: Option<f64>,
+    individuals: u64,
+    seconds: f64,
+}
 
 fn stamp() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -271,6 +316,8 @@ fn main() -> Result<(), String> {
     let mut seed_shipped = false;
     let mut damaged = 0usize;
     let mut out_dir = PathBuf::from("logs/WGSL_GRAM/evolve");
+    let mut seconds = 14_400.0f64;
+    let mut resume = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -282,6 +329,8 @@ fn main() -> Result<(), String> {
             "--out" => out_dir = PathBuf::from(value("--out")?),
             "--seed-shipped" => seed_shipped = true,
             "--damaged" => damaged = value("--damaged")?.parse().map_err(|e| format!("--damaged: {e}"))?,
+            "--seconds" => seconds = value("--seconds")?.parse().map_err(|e| format!("--seconds: {e}"))?,
+            "--resume" => resume = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -311,8 +360,30 @@ fn main() -> Result<(), String> {
     start_watchdog();
     let shipped_gram = Gram::compile(&dev, SHIPPED, fuller::wgsl::oracle::device::Fuel::Proven("the shipped Gram kernel"))?;
 
-    let mut ledger = std::fs::File::create(out_dir.join("ledger.tsv")).map_err(|e| format!("ledger: {e}"))?;
-    writeln!(ledger, "gen\tid\torigin\tnodes\tcorrect\tpassed_train\tpassed_val\ttrain_mean\tval_mean\tangle\trefused\tsexpr").map_err(|e| e.to_string())?;
+    let resumed: Option<Checkpoint> = if resume { Some(load_checkpoint(&out_dir)?) } else { None };
+    let mut run = RunTelemetry::start(
+        &out_dir,
+        format!("wgsl_gram-seed{seed}"),
+        RunInfo {
+            kingdom: "wgsl_gram".to_string(),
+            dataset: "gram".to_string(),
+            seed: seed as u32,
+            population: pop as u32,
+            max_generations: gens as u32,
+            budget_ms: (seconds * 1e3) as u64,
+            hff_objectives: vec!["quality: the training probes' distances to the correct kernel".to_string()],
+            config_json: Some(format!("{{\"pop\":{pop},\"gens\":{gens},\"seed\":{seed},\"sample\":{sample_n},\"seed_shipped\":{seed_shipped},\"damaged\":{damaged}}}")),
+            resume,
+            already_spent_seconds: resumed.as_ref().map_or(0.0, |c| c.seconds),
+        },
+    )?;
+    println!("[{}] watch: evowatch {}   tail -f {}/stream.jsonl   stop: rm {}/killme.trigger", stamp(), out_dir.display(), out_dir.display(), out_dir.display());
+    let ledger_path = out_dir.join("ledger.tsv");
+    let ledger_fresh = !resume || !ledger_path.exists();
+    let mut ledger = std::fs::OpenOptions::new().create(true).write(true).append(!ledger_fresh).truncate(ledger_fresh).open(&ledger_path).map_err(|e| format!("ledger: {e}"))?;
+    if ledger_fresh {
+        writeln!(ledger, "gen\tid\torigin\tnodes\tcorrect\tpassed_train\tpassed_val\ttrain_mean\tval_mean\tangle\trefused\tsexpr").map_err(|e| e.to_string())?;
+    }
 
     // The population: random trees (the learning proof), or the shipped
     // tree and its mutants, or a damaged shipped tree and its mutants.
@@ -351,7 +422,33 @@ fn main() -> Result<(), String> {
     println!("[{}] the shipped tree: passes {}/{} training and {}/{} validation probes in {:.1} s (correct {})", stamp(), shipped_score.passed_train, set.train.len(), shipped_score.passed_val, set.val.len(), t.elapsed().as_secs_f64(), shipped_score.correct);
     let mut memo: BTreeMap<String, Score> = BTreeMap::new();
     let mut best: Option<(f64, Tree, Score)> = None;
-    for gen in 0..gens {
+    let mut fame = HallOfFame::new(8);
+    let mut first = 0usize;
+    if let Some(c) = resumed {
+        population = c.population.iter().map(|(t, o)| Ok((t.tree()?, o.clone()))).collect::<Result<_, String>>()?;
+        state = c.state;
+        first = c.next;
+        fame = c.hall_of_fame;
+        run.restore(c.best_ever, c.individuals);
+        if let Some((_, t)) = &c.best {
+            let tree = t.tree()?;
+            let s = score(&dev, &rr, &tree, &set, &bound);
+            best = Some((if s.refused.is_some() { f64::INFINITY } else { angle(&columns(&s)) }, tree, s));
+        }
+        println!("[{}] resumed at generation {first} from {}", stamp(), out_dir.join("checkpoint.json").display());
+    }
+    let mut stopped_by = "n_gen";
+    let mut done = 0u32;
+    for gen in first..gens {
+        if run.stop_requested() {
+            stopped_by = "killed";
+            break;
+        }
+        if run.out_of_time((seconds * 1e3) as u64) {
+            stopped_by = "time";
+            break;
+        }
+        done += 1;
         let t_gen = Instant::now();
         let mut scores: Vec<Score> = vec![Score::default(); population.len()];
         let mut order: Vec<usize> = (0..population.len()).collect();
@@ -405,9 +502,38 @@ fn main() -> Result<(), String> {
             let out = rr.kernel(&population[top].0)?;
             std::fs::write(out_dir.join(format!("best_g{gen}.wgsl")), &out.text).map_err(|e| e.to_string())?;
         }
-        if gen + 1 == gens {
-            break;
+        // The generation on the stream: the generic view, the hall of fame.
+        let mut fame_changed = false;
+        for &i in ranked.iter().take(8) {
+            let s = &scores[i];
+            if s.refused.is_some() {
+                continue;
+            }
+            let text = rr.kernel(&population[i].0).map_or_else(|e| format!("(the kernel does not render: {e})\n{}", population[i].0.to_sexpr()), |k| k.text);
+            fame_changed |= fame.offer(FameEntry {
+                key: population[i].0.to_sexpr(),
+                fitness: s.angle,
+                born: gen as u32,
+                text,
+                nodes: Some(population[i].0.size() as u32),
+                picture: None,
+                extras: [("passed_train".to_string(), s.passed_train as f64), ("passed_val".to_string(), s.passed_val as f64), ("correct".to_string(), f64::from(u8::from(s.correct)))].into_iter().collect(),
+            });
         }
+        if fame_changed {
+            let rows = fame.write(&out_dir)?;
+            run.hall_of_fame(gen as u32, rows)?;
+        }
+        let fitness: Vec<f64> = scores.iter().map(|s| s.angle).collect();
+        let distinct = { let mut k: Vec<String> = population.iter().map(|(t, _)| t.to_sexpr()).collect(); k.sort(); k.dedup(); k.len() as u32 };
+        run.generation(GenerationStats {
+            generation: gen as u32,
+            fitness: &fitness,
+            distinct: Some(distinct),
+            angle_groups: if b.angle.is_finite() { [("quality".to_string(), b.angle)].into_iter().collect() } else { BTreeMap::new() },
+            extras: [("correct", correct as f64), ("refused", refused as f64), ("memo_hits", memo_hits as f64), ("built", built as f64), ("best_passed_train", b.passed_train as f64), ("best_passed_val", b.passed_val as f64), ("wall_ms", t_gen.elapsed().as_secs_f64() * 1e3)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            evaluated: built as u64,
+        })?;
         // The next generation: 4 elites, the rest by tournament of 3 with crossover then mutation.
         let mut next_pop: Vec<(Tree, String)> = ranked[..4.min(ranked.len())].iter().map(|&i| (population[i].0.clone(), format!("elite({i})"))).collect();
         let tournament = |state: &mut u64| -> usize {
@@ -427,7 +553,16 @@ fn main() -> Result<(), String> {
             let child = if next(&mut state).is_multiple_of(2) {
                 let b = tournament(&mut state);
                 match crossover(&population[a].0, &population[b].0, &mut state) {
-                    Some(c) => (c, format!("x({a},{b})")),
+                    Some(c) => {
+                        let mut m = Mutation::new(EventKind::SubtreeCrossover, "typed_subtree_crossover", format!("x({a},{b}) of generation {gen}"));
+                        m.row = Some(next_pop.len() as u32);
+                        m.parents = vec![a as u64, b as u64];
+                        m.text_before = Some(population[a].0.to_sexpr());
+                        m.text_after = Some(c.to_sexpr());
+                        m.fitness_before = Some(scores[a].angle).filter(|v| v.is_finite());
+                        run.mutation(gen as u32, m)?;
+                        (c, format!("x({a},{b})"))
+                    }
                     None => continue,
                 }
             } else {
@@ -443,7 +578,21 @@ fn main() -> Result<(), String> {
             }
         }
         population = next_pop;
+        save_checkpoint(
+            &out_dir,
+            &Checkpoint {
+                next: gen + 1,
+                state,
+                population: population.iter().map(|(t, o)| (SavedTree::of(t), o.clone())).collect(),
+                best: best.as_ref().map(|(a, t, _)| (*a, SavedTree::of(t))),
+                hall_of_fame: fame.clone(),
+                best_ever: run.best_ever(),
+                individuals: run.individuals(),
+                seconds: run.writer().elapsed_ms() as f64 / 1e3,
+            },
+        )?;
     }
+    run.end(stopped_by, done, best.as_ref().map(|b| b.0))?;
 
     // The elites on every pair of every split, five paired rounds for time on three train pairs.
     let Some((best_angle, best_tree, best_score)) = best else {

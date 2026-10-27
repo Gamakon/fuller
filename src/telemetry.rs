@@ -1,6 +1,6 @@
 //! THE TELEMETRY STREAM — the one format every evolution run in fuller and phylu
 //! writes to `OUT/stream.jsonl`, and the one the watchers read
-//! (`phylu-sr-watch --follow OUT`, `scripts/phylu_web_watch.py --stream OUT/stream.jsonl`).
+//! (`evowatch OUT` in a terminal, `evowatch OUT --web PORT` in a browser).
 //!
 //! It lives in fuller because fuller and phylu are one system: phylu depends on
 //! fuller, so a runner in either crate writes the stream through these types,
@@ -14,7 +14,7 @@
 //! 450-second fit cannot read it. That log stays exactly as it is — it is what
 //! an offline diagnosis reads. This module adds a SECOND, separate stream: one
 //! compact JSON object per line, versioned, numeric, written at the beat the
-//! progress report already runs on. `phylu-sr-watch` repaints from it.
+//! progress report already runs on. `evowatch` repaints from it.
 //!
 //! Three rules shape every decision here, and they are the reason the module
 //! looks the way it does.
@@ -761,7 +761,7 @@ pub struct RunEnd {
 /// is deliberate and measured. If the beat ever rises, the channel goes here and
 /// nothing outside this file changes.
 ///
-/// Flushing every line is what makes `phylu-sr-watch --follow` work at all: an
+/// Flushing every line is what makes `evowatch` work at all: an
 /// unflushed line is not a line, and a viewer tailing a buffered file would show
 /// a frame that is minutes old and call it live.
 pub struct Writer {
@@ -1310,6 +1310,12 @@ impl RunTelemetry {
     /// generations and ends with [`RunTelemetry::end`]`("killed", …)`.
     pub fn stop_requested(&self) -> bool {
         !self.run_file.present()
+    }
+
+    /// THE WALL-CLOCK GUARD: whether the run has spent its `budget_ms` (never, with no budget). A loop checks this
+    /// between generations and ends with [`RunTelemetry::end`]`("time", …)`.
+    pub fn out_of_time(&self, budget_ms: u64) -> bool {
+        budget_ms > 0 && self.writer.elapsed_ms() >= budget_ms
     }
 
     /// The writer, for the records a kingdom writes beyond the generic ones (events, discoveries, models, a

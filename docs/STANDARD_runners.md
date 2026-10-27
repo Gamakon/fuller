@@ -7,7 +7,7 @@ the same way.
 **The standard.**
 
 1. **Telemetry stream**: `OUT/stream.jsonl`, written through `fuller::telemetry` (`RunTelemetry`), the one format the
-   watchers read (`phylu-sr-watch --follow OUT`, `scripts/phylu_web_watch.py --stream OUT/stream.jsonl`).
+   watcher reads (`evowatch OUT` in a terminal, `evowatch OUT --web PORT` in a browser; phylu `docs/WATCHER.md`).
 2. **Two-level HFF** from the hff library: one TrueNorth angle over the quality inputs, one over the speed inputs,
    then HFF of the two angles. A runner with no speed inputs carries one group.
 3. **Checkpoints and resume.**

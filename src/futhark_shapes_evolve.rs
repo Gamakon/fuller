@@ -51,6 +51,9 @@ use crate::futhark_shapes_gpu::{measure, GpuMeasurement};
 use crate::futhark_shapes_interp::{identical, Mat, MValue};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;
+use crate::runner::{load_checkpoint, log_scaled, save_checkpoint, two_level_hff, FameEntry, HallOfFame, Ledger, TwoLevel};
+use crate::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
+use serde::{Deserialize, Serialize};
 use crate::typed_gep::{express, write_back, GeneLayout, Tree};
 
 /// How the loop runs.
@@ -91,6 +94,12 @@ pub struct Config {
     /// GPU pipeline is seconds per program — so it is for the elites, not
     /// for every child.
     pub measure_gpu: bool,
+    /// Continue from the output directory's `checkpoint.json` (the stream is appended to).
+    pub resume: bool,
+    /// The wall-clock guard, seconds (0: none): the run ends `time` between generations once it is spent.
+    pub seconds: f64,
+    /// How many distinct individuals the hall of fame keeps.
+    pub hall_of_fame: usize,
 }
 
 impl Default for Config {
@@ -110,6 +119,9 @@ impl Default for Config {
             require_runnable: true,
             seed_with_reference: true,
             measure_gpu: true,
+            resume: false,
+            seconds: 3600.0,
+            hall_of_fame: 8,
         }
     }
 }
@@ -130,6 +142,9 @@ pub struct Individual {
     /// *nearly* equal, and the closer it is the more likely the next
     /// mutation is to land on the reference.
     pub agreement: f64,
+    /// The share of the value that DISAGREES with the reference's, one per input set of the suite: the quality
+    /// group of the two-level HFF ([`two_level`]), each its own input.
+    pub disagreement: Vec<f64>,
     /// The cheap cost.
     pub score: Score,
     /// The measured GPU cost, when it was measured.
@@ -257,15 +272,69 @@ pub fn product_twice(k: &FutharkKingdom) -> Tree {
     )
 }
 
-/// Run the loop against a reference kernel.
+/// One member of the population: its gene and its lineage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Member {
+    gene: Vec<u32>,
+    /// The individual's id, unique in the run.
+    id: u64,
+    /// Its parents' ids.
+    parents: Vec<u64>,
+    /// The operator that made it: `init`, `reference`, `elite`, `crossover`, `mutation`, `egraph_exact`.
+    operator: String,
+}
+
+/// A scored member.
+#[derive(Debug, Clone)]
+struct Ranked {
+    individual: Individual,
+    hff: TwoLevel,
+    member: Member,
+}
+
+/// What the run's checkpoint holds: enough to continue exactly where it stopped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Checkpoint {
+    /// The next generation to run.
+    next: usize,
+    rng: u64,
+    population: Vec<Member>,
+    next_id: u64,
+    hall_of_fame: HallOfFame,
+    /// The run's best gene (re-scored on resume; its GPU measurement is taken again when the run measures).
+    best_gene: Option<Vec<u32>>,
+    best_ever: Option<f64>,
+    individuals: u64,
+    seconds: f64,
+}
+
+/// A gene's identity in the hall of fame: a hash of its words, as hex.
+fn gene_key(gene: &[u32]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in gene {
+        for b in w.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{h:016x}")
+}
+
+/// The loop's own name for the kingdom on the stream.
+pub const KINGDOM: &str = "futhark_shapes";
+
+/// Run the loop against a reference kernel, writing the run's standard outputs into `out`
+/// (`docs/STANDARD_runners.md`): `stream.jsonl`, `killme.trigger` (delete it to stop after the current generation),
+/// `checkpoint.json` (every generation; `cfg.resume` continues from it), `ledger.tsv` (every scored individual and its
+/// parents) and `hall_of_fame/`.
 ///
-/// The `inputs` are the **suite**: the correctness of every candidate is
-/// decided on all of them, so a program that coincides with the reference
-/// on one sample does not get in.
+/// The fitness is the [`two_level`] HFF. The `inputs` are the **suite**: the correctness of every candidate is
+/// decided on all of them, so a program that coincides with the reference on one sample does not get in.
 pub fn evolve(
     reference: &Tree,
     inputs: &[BTreeMap<Ty, Mat>],
     cfg: &Config,
+    out: &Path,
 ) -> Result<Report, String> {
     let kingdom = FutharkKingdom::load_shapes()?;
     let contract = kingdom
@@ -278,7 +347,28 @@ pub fn evolve(
     let const_len = kingdom.const_len();
     let table = CostTable::load(&kingdom)?;
     let bridge = Bridge::load();
-    let mut rng = GeneRng::new(cfg.seed);
+
+    let resumed: Option<Checkpoint> = if cfg.resume { Some(load_checkpoint(out)?) } else { None };
+    let mut run = RunTelemetry::start(
+        out,
+        format!("{KINGDOM}-seed{:x}", cfg.seed),
+        RunInfo {
+            kingdom: KINGDOM.to_string(),
+            dataset: "product_twice".to_string(),
+            seed: cfg.seed as u32,
+            population: cfg.population as u32,
+            max_generations: cfg.generations as u32,
+            budget_ms: (cfg.seconds * 1e3) as u64,
+            hff_objectives: (0..inputs.len())
+                .map(|i| format!("quality: disagreement on input set {i} (log)"))
+                .chain(["speed: traffic / (traffic + reference)", "speed: allocations / (allocations + reference)", "speed: depth / (depth + reference)"].map(String::from))
+                .collect(),
+            config_json: Some(format!("{cfg:?}")),
+            resume: cfg.resume,
+            already_spent_seconds: resumed.as_ref().map_or(0.0, |c| c.seconds),
+        },
+    )?;
+    let mut ledger = Ledger::open(out, cfg.resume)?;
 
     // The target: the reference's own value, on each input set.
     let mut wants = Vec::with_capacity(inputs.len());
@@ -296,8 +386,10 @@ pub fn evolve(
         wants: &wants,
         sizes: &cfg.sizes,
     };
+    let source_of = |tree: &Tree| program(&kingdom, root, tree, &cfg.sizes);
 
     let reference_individual = evaluate(reference, &[], &context)?;
+    let reference_score = reference_individual.score;
     let dir = run_dir();
     let reference_gpu = if cfg.measure_gpu {
         match measure_program(reference, &kingdom, cfg, &dir) {
@@ -317,54 +409,95 @@ pub fn evolve(
         population: Vec::new(),
     };
 
-    // The population: the reference — the incumbent the search has to beat
-    // — and then random genes, most of which are wrong.
-    let mut population: Vec<Vec<u32>> = Vec::with_capacity(cfg.population);
-    if cfg.seed_with_reference {
-        // The gene the reference is written onto must be a LEGAL gene: every
-        // cell holds a symbol of its own domain's type. A blank gene is not
-        // — its zero is only the right symbol for the first row of the
-        // first type — so the reference is written onto a random legal gene.
-        let carrier = random_gene(&layout, &contract, &const_len, &mut rng);
-        if let Ok(gene) = write_back(&contract, &layout, &carrier, reference) {
-            population.push(gene);
+    let (mut population, mut rng, mut next_id, mut fame, first) = match resumed {
+        Some(c) => {
+            run.restore(c.best_ever, c.individuals);
+            if let Some(gene) = &c.best_gene {
+                let tree = express(&contract, &layout, gene, &const_len).map_err(|e| format!("resume: the best gene does not express: {e}"))?.tree();
+                report.best = Some(evaluate(&tree, gene, &context)?);
+            }
+            (c.population, GeneRng::new(c.rng), c.next_id, c.hall_of_fame, c.next)
         }
-    }
-    while population.len() < cfg.population {
-        population.push(random_gene(&layout, &contract, &const_len, &mut rng));
-    }
+        None => {
+            let mut rng = GeneRng::new(cfg.seed);
+            // The population: the reference — the incumbent the search has to beat
+            // — and then random genes, most of which are wrong.
+            let mut population: Vec<Member> = Vec::with_capacity(cfg.population);
+            if cfg.seed_with_reference {
+                // The gene the reference is written onto must be a LEGAL gene: every
+                // cell holds a symbol of its own domain's type. A blank gene is not
+                // — its zero is only the right symbol for the first row of the
+                // first type — so the reference is written onto a random legal gene.
+                let carrier = random_gene(&layout, &contract, &const_len, &mut rng);
+                if let Ok(gene) = write_back(&contract, &layout, &carrier, reference) {
+                    population.push(Member { gene, id: 0, parents: Vec::new(), operator: "reference".to_string() });
+                }
+            }
+            while population.len() < cfg.population {
+                let id = population.len() as u64;
+                population.push(Member { gene: random_gene(&layout, &contract, &const_len, &mut rng), id, parents: Vec::new(), operator: "init".to_string() });
+            }
+            let next_id = population.len() as u64;
+            (population, rng, next_id, HallOfFame::new(cfg.hall_of_fame), 0)
+        }
+    };
 
-    for number in 0..cfg.generations {
+    let mut stopped_by = "n_gen";
+    for number in first..cfg.generations {
+        // ---- 0. the stop: the kill trigger, then the wall-clock guard ------
+        if run.stop_requested() {
+            stopped_by = "killed";
+            break;
+        }
+        if run.out_of_time((cfg.seconds * 1e3) as u64) {
+            stopped_by = "time";
+            break;
+        }
+        let g = number as u32;
         // ---- 1. everyone is evaluated ------------------------------------
-        let mut scored: Vec<Individual> = Vec::with_capacity(population.len());
-        for gene in &population {
-            let tree = express(&contract, &layout, gene, &const_len)
+        let mut scored: Vec<Ranked> = Vec::with_capacity(population.len());
+        for member in &population {
+            let tree = express(&contract, &layout, &member.gene, &const_len)
                 .map_err(|e| format!("a gene does not express: {e}"))?
                 .tree();
-            scored.push(evaluate(&tree, gene, &context)?);
+            let individual = evaluate(&tree, &member.gene, &context)?;
+            let hff = two_level(&individual, &reference_score);
+            ledger.record(g, member.id, &member.parents, &member.operator, hff.fitness, &source_of(&individual.tree)?)?;
+            scored.push(Ranked { individual, hff, member: member.clone() });
         }
         scored.sort_by(order);
-        report.population = scored.iter().map(|s| s.gene.clone()).collect();
+        report.population = scored.iter().map(|s| s.individual.gene.clone()).collect();
 
-        let correct = scored.iter().filter(|s| s.correct).count();
+        let correct = scored.iter().filter(|s| s.individual.correct).count();
 
         // ---- 2. the elites are polished by the e-graph ---------------------
-        let elites: Vec<Individual> = scored
+        let elites: Vec<Ranked> = scored
             .iter()
-            .filter(|s| s.correct)
+            .filter(|s| s.individual.correct)
             .take(cfg.elites)
             .cloned()
             .collect();
         let mut polished_total = 0usize;
+        let mut polish_evaluated = 0usize;
         let mut improved = 0usize;
         let mut pool = scored.clone();
-        let mut seen: Vec<Vec<u32>> = pool.iter().map(|s| s.gene.clone()).collect();
+        let mut seen: Vec<Vec<u32>> = pool.iter().map(|s| s.individual.gene.clone()).collect();
         for elite in &elites {
-            let sat = saturate_tree(&elite.tree, &kingdom, &bridge, cfg.candidates, cfg.iters)?;
+            let sat = saturate_tree(&elite.individual.tree, &kingdom, &bridge, cfg.candidates, cfg.iters)?;
             for candidate in sat.heritable() {
                 polished_total += 1;
                 let Some(tree) = candidate.gene.as_ref() else { continue };
-                let Ok(gene) = write_back(&contract, &layout, &elite.gene, tree) else { continue };
+                let gene = match write_back(&contract, &layout, &elite.individual.gene, tree) {
+                    Ok(gene) => gene,
+                    Err(e) => {
+                        let mut m = Mutation::new(EventKind::WriteBackDefect, "egraph_exact", format!("the e-graph's form does not fit the layout: {e}"));
+                        m.id = Some(elite.member.id);
+                        m.text_before = Some(source_of(&elite.individual.tree)?);
+                        m.text_after = source_of(tree).ok();
+                        run.mutation(g, m)?;
+                        continue;
+                    }
+                };
                 // A candidate the layout cannot express is not a candidate.
                 let Ok(expressed) = express(&contract, &layout, &gene, &const_len) else { continue };
                 // The same child is offered every generation; taking it once
@@ -372,16 +505,32 @@ pub fn evolve(
                 if seen.iter().any(|g| g == &gene) {
                     continue;
                 }
+                polish_evaluated += 1;
                 let child = evaluate(&expressed.tree(), &gene, &context)?;
                 if !child.correct {
                     continue;
                 }
                 seen.push(gene.clone());
-                // The polish only counts when it is actually cheaper.
-                if child.score < elite.score {
+                let hff = two_level(&child, &reference_score);
+                // The polish only counts when it is actually better.
+                let better = hff.fitness < elite.hff.fitness;
+                if better {
                     improved += 1;
                 }
-                pool.push(child);
+                let member = Member { gene, id: next_id, parents: vec![elite.member.id], operator: "egraph_exact".to_string() };
+                next_id += 1;
+                let mut m = Mutation::new(EventKind::EgraphExact, "egraph_exact", format!("e-graph polish of #{}: traffic {} -> {}", elite.member.id, elite.individual.score.traffic, child.score.traffic));
+                m.id = Some(member.id);
+                m.parents = member.parents.clone();
+                m.text_before = Some(source_of(&elite.individual.tree)?);
+                m.text_after = Some(source_of(&child.tree)?);
+                m.fitness_before = Some(elite.hff.fitness);
+                m.fitness_after = Some(hff.fitness);
+                m.entered = Some(true);
+                m.improved = Some(better);
+                run.mutation(g, m)?;
+                ledger.record(g, member.id, &member.parents, &member.operator, hff.fitness, &source_of(&child.tree)?)?;
+                pool.push(Ranked { individual: child, hff, member });
             }
         }
         pool.sort_by(order);
@@ -392,13 +541,13 @@ pub fn evolve(
         // the truth. So the measured cost is what the elites are chosen by,
         // and a candidate the compiler no longer tiles is not eligible: a
         // form the tiler does not fire on is a different program on the GPU.
-        let mut measured: Vec<(Individual, GpuMeasurement)> = Vec::new();
+        let mut measured: Vec<(Ranked, GpuMeasurement)> = Vec::new();
         let mut tiled = 0usize;
         let mut not_runnable = 0usize;
         if cfg.measure_gpu {
             let text = input_text(&kingdom, &context.inputs[0])?;
-            for individual in pool.iter().filter(|s| s.correct).take(cfg.elites * 2) {
-                let source = program(&kingdom, root, &individual.tree, &cfg.sizes)?;
+            for ranked in pool.iter().filter(|s| s.individual.correct).take(cfg.elites * 2) {
+                let source = source_of(&ranked.individual.tree)?;
                 // A program the GPU pipeline will not compile is not a
                 // candidate: it is skipped, not a crash.
                 let Ok(cost) = measure(&source, &dir) else { continue };
@@ -410,32 +559,32 @@ pub fn evolve(
                 // twice is one, its OpenCL kernel is too big — is not a
                 // program, however cheap it looks.
                 if !cfg.require_runnable {
-                    measured.push((individual.clone(), cost));
+                    measured.push((ranked.clone(), cost));
                     continue;
                 }
-                let run = crate::futhark_exec::run_text_program_on(
+                let ran = crate::futhark_exec::run_text_program_on(
                     crate::futhark_exec::Backend::OpenCl,
                     &source,
                     &text,
                     &dir,
                     Duration::from_secs(120),
                 );
-                match run {
-                    Ok(_) => measured.push((individual.clone(), cost)),
+                match ran {
+                    Ok(_) => measured.push((ranked.clone(), cost)),
                     Err(_) => not_runnable += 1,
                 }
             }
         }
         measured.sort_by(|a, b| a.1.cost.cmp(&b.1.cost));
 
-        // The best: by the measured cost when there is one, by the static
-        // cost otherwise.
-        let best: Option<Individual> = if let Some((individual, cost)) = measured.first() {
-            let mut best = individual.clone();
+        // The best: by the measured cost when there is one, by the two-level
+        // HFF otherwise.
+        let best: Option<Individual> = if let Some((ranked, cost)) = measured.first() {
+            let mut best = ranked.individual.clone();
             best.gpu = Some(*cost);
             Some(best)
         } else {
-            pool.iter().find(|s| s.correct).cloned()
+            pool.iter().find(|s| s.individual.correct).map(|s| s.individual.clone())
         };
         let best_gpu = measured.first().map(|(_, cost)| *cost);
 
@@ -457,7 +606,7 @@ pub fn evolve(
                     (Some(a), Some(b)) => a.cost < b.cost,
                     (Some(_), None) => true,
                     (None, Some(_)) => false,
-                    (None, None) => best.score < previous.score,
+                    (None, None) => two_level(best, &reference_score).fitness < two_level(previous, &reference_score).fitness,
                 },
             };
             if better {
@@ -465,57 +614,123 @@ pub fn evolve(
             }
         }
 
+        // ---- the generation's record: hall of fame, stream ------------------
+        let mut fame_changed = false;
+        for r in &pool {
+            fame_changed |= fame.offer(FameEntry {
+                key: gene_key(&r.individual.gene),
+                fitness: r.hff.fitness,
+                born: g,
+                text: source_of(&r.individual.tree)?,
+                nodes: Some(tree_nodes(&r.individual.tree) as u32),
+                picture: None,
+                extras: [("traffic".to_string(), r.individual.score.traffic as f64), ("correct".to_string(), f64::from(u8::from(r.individual.correct)))].into_iter().collect(),
+            });
+        }
+        if fame_changed {
+            let rows = fame.write(out)?;
+            run.hall_of_fame(g, rows)?;
+        }
+        let fitness: Vec<f64> = pool.iter().map(|r| r.hff.fitness).collect();
+        let distinct = {
+            let mut genes: Vec<&Vec<u32>> = pool.iter().map(|r| &r.individual.gene).collect();
+            genes.sort();
+            genes.dedup();
+            genes.len() as u32
+        };
+        let head = &pool[0];
+        let extras: BTreeMap<String, f64> = [
+            ("correct", correct as f64),
+            ("polished", polished_total as f64),
+            ("improved", improved as f64),
+            ("measured", measured.len() as f64),
+            ("tiled", tiled as f64),
+            ("not_runnable", not_runnable as f64),
+            ("best_traffic", head.individual.score.traffic as f64),
+            ("reference_traffic", reference_score.traffic as f64),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        run.generation(GenerationStats {
+            generation: g,
+            fitness: &fitness,
+            distinct: Some(distinct),
+            angle_groups: [("quality".to_string(), head.hff.quality), ("speed".to_string(), head.hff.speed)].into_iter().collect(),
+            extras,
+            evaluated: (scored.len() + polish_evaluated) as u64,
+        })?;
+        ledger.flush()?;
+
         // ---- 4. the next generation ---------------------------------------
-        // The elites are the measured best, then the static best, and they
+        // The elites are the measured best, then the two-level best, and they
         // are distinct genes.
-        population = Vec::with_capacity(cfg.population);
+        let mut next: Vec<Member> = Vec::with_capacity(cfg.population);
         let mut taken: Vec<Vec<u32>> = Vec::new();
-        for individual in measured.iter().map(|(i, _)| i).chain(pool.iter()) {
-            if !individual.correct {
+        for ranked in measured.iter().map(|(r, _)| r).chain(pool.iter()) {
+            if !ranked.individual.correct {
                 continue;
             }
-            if taken.iter().any(|g| g == &individual.gene) {
+            if taken.iter().any(|g| g == &ranked.individual.gene) {
                 continue;
             }
-            taken.push(individual.gene.clone());
-            population.push(individual.gene.clone());
-            if population.len() >= cfg.elites {
+            taken.push(ranked.individual.gene.clone());
+            next.push(Member { gene: ranked.individual.gene.clone(), id: ranked.member.id, parents: ranked.member.parents.clone(), operator: "elite".to_string() });
+            if next.len() >= cfg.elites {
                 break;
             }
         }
-        while population.len() < cfg.population {
+        while next.len() < cfg.population {
             let a = tournament(&pool, &mut rng);
             let b = tournament(&pool, &mut rng);
-            let mut child = a.gene.clone();
-            if rng.next_u64().is_multiple_of(2) {
+            let mut child = a.individual.gene.clone();
+            let (operator, parents) = if rng.next_u64().is_multiple_of(2) {
                 // A crossover: a range of one domain, exchanged.
                 if let Some((lo, hi)) = a_range(&layout, &mut rng) {
-                    let mut other = b.gene.clone();
+                    let mut other = b.individual.gene.clone();
                     let _ = layout.swap_range(&layout, &mut child, &mut other, lo, hi);
                 }
+                ("crossover", vec![a.member.id, b.member.id])
             } else {
                 // A point mutation: the cell's own alphabet says what it may
                 // hold, so the child is legal by construction.
                 let _ = mutate(&mut child, &contract, &layout, &const_len, &mut rng);
-            }
-            population.push(child);
+                ("mutation", vec![a.member.id])
+            };
+            next.push(Member { gene: child, id: next_id, parents, operator: operator.to_string() });
+            next_id += 1;
         }
+        population = next;
+        save_checkpoint(
+            out,
+            &Checkpoint {
+                next: number + 1,
+                rng: rng.state(),
+                population: population.clone(),
+                next_id,
+                hall_of_fame: fame.clone(),
+                best_gene: report.best.as_ref().map(|b| b.gene.clone()),
+                best_ever: run.best_ever(),
+                individuals: run.individuals(),
+                seconds: run.writer().elapsed_ms() as f64 / 1e3,
+            },
+        )?;
     }
 
+    let done = report.generations.len() as u32;
+    let best = report.best.as_ref().map(|b| two_level(b, &reference_score).fitness);
+    run.end(stopped_by, done, best)?;
     Ok(report)
 }
 
-/// The order the population is ranked in: correct first, then the closer to
-/// the reference, then the cheaper.
-fn order(a: &Individual, b: &Individual) -> std::cmp::Ordering {
-    b.correct
-        .cmp(&a.correct)
-        .then_with(|| {
-            b.agreement
-                .partial_cmp(&a.agreement)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .then_with(|| a.score.cmp(&b.score))
+/// The nodes of a tree.
+fn tree_nodes(tree: &Tree) -> usize {
+    1 + tree.kids.iter().map(tree_nodes).sum::<usize>()
+}
+
+/// The order the population is ranked in: the two-level HFF, lower first; a tie keeps the earlier member.
+fn order(a: &Ranked, b: &Ranked) -> std::cmp::Ordering {
+    a.hff.fitness.total_cmp(&b.hff.fitness)
 }
 
 /// The directory this run measures in.
@@ -539,6 +754,7 @@ fn run_dir() -> std::path::PathBuf {
 fn evaluate(tree: &Tree, gene: &[u32], context: &Context<'_>) -> Result<Individual, String> {
     let mut correct = true;
     let mut agreement = 0.0f64;
+    let mut disagreement = Vec::with_capacity(context.wants.len());
     for (inputs, want) in context.inputs.iter().zip(context.wants.iter()) {
         let value = context.kingdom.eval_matrices(tree, inputs)?;
         match &value {
@@ -550,12 +766,18 @@ fn evaluate(tree: &Tree, gene: &[u32], context: &Context<'_>) -> Result<Individu
                     .filter(|(a, b)| identical(**a, **b))
                     .count();
                 let total = want.data.len().max(1);
-                agreement += agreeing as f64 / total as f64;
+                let share = agreeing as f64 / total as f64;
+                agreement += share;
                 if !matrices_agree(m, want, identical) {
                     correct = false;
                 }
+                // A matrix of the wrong shape agrees nowhere it does not overlap.
+                disagreement.push(if matrices_agree(m, want, identical) { 0.0 } else { (1.0 - share).max(1.0 / total as f64) });
             }
-            _ => correct = false,
+            _ => {
+                correct = false;
+                disagreement.push(1.0);
+            }
         }
     }
     if !context.wants.is_empty() {
@@ -568,6 +790,7 @@ fn evaluate(tree: &Tree, gene: &[u32], context: &Context<'_>) -> Result<Individu
         tree: tree.clone(),
         correct,
         agreement,
+        disagreement,
         score,
         gpu: None,
     })
@@ -640,25 +863,14 @@ fn a_range(layout: &GeneLayout, rng: &mut GeneRng) -> Option<(usize, usize)> {
     Some((lo, hi))
 }
 
-/// A tournament: the better of two draws.
-///
-/// The order is the same as the sort's: correct first, then the closer to
-/// the reference, then the cheaper. The graded measure is what the GEP
-/// hill-climbs on, and most of the population is *wrong*, so the agreement
-/// has to be compared between two wrong programs too.
-fn tournament(pool: &[Individual], rng: &mut GeneRng) -> Individual {
+/// A tournament: the better of two draws, by the two-level HFF.
+fn tournament<'a>(pool: &'a [Ranked], rng: &mut GeneRng) -> &'a Ranked {
     let a = &pool[rng.below(pool.len())];
     let b = &pool[rng.below(pool.len())];
-    if b.correct && !a.correct {
-        return b.clone();
-    }
-    if a.correct && !b.correct {
-        return a.clone();
-    }
-    if b.agreement > a.agreement || (b.agreement == a.agreement && b.score < a.score) {
-        b.clone()
+    if b.hff.fitness < a.hff.fitness {
+        b
     } else {
-        a.clone()
+        a
     }
 }
 
@@ -720,8 +932,6 @@ pub struct Scorer {
     inputs: Vec<BTreeMap<Ty, Mat>>,
     wants: Vec<Mat>,
     sizes: BTreeMap<String, usize>,
-    /// The reference's own traffic: the unit the cost is measured in.
-    reference_traffic: u64,
     /// The reference's own cost: what a win is a win against.
     reference_score: Score,
 }
@@ -764,7 +974,6 @@ impl Scorer {
         }
         let reference_cost = program_cost(&reference, &kingdom, &table)?;
         let reference_score = score_at(&reference_cost, &sizes)?;
-        let reference_traffic = reference_score.traffic;
         Ok(Scorer {
             kingdom,
             contract,
@@ -775,7 +984,6 @@ impl Scorer {
             inputs,
             wants,
             sizes,
-            reference_traffic,
             reference_score,
         })
     }
@@ -825,7 +1033,7 @@ impl Scorer {
     ///
     /// See [`fitness_of`] for what the number means.
     pub fn fitness(&self, individuals: &[Individual]) -> Vec<f32> {
-        individuals.iter().map(|i| fitness_of(i, self.reference_traffic)).collect()
+        individuals.iter().map(|i| fitness_of(i, &self.reference_score)).collect()
     }
 
     /// The reference's own gene: the reference written onto a LEGAL gene.
@@ -871,42 +1079,30 @@ impl Scorer {
     }
 }
 
-/// The fitness a GPU-resident population selects on.
+/// THE TWO-LEVEL HFF of a program (`docs/STANDARD_runners.md`; [`crate::runner::two_level_hff`]).
 ///
-/// phylu reads a fitness as an angle in `[0, pi/2]` — 0 is perfect, and the
-/// parent-selection weight is `pi/2` less the fitness — so the value stays
-/// inside that band.
+/// * **Quality:** one input per input set of the suite, the share of the value that disagrees with the reference's,
+///   on HFF's log scale ([`crate::runner::log_scaled`]): a correct program is 0 in every input, and a program wrong
+///   in one element of thousands is already far from 0, so being nearly right is not being right.
+/// * **Speed:** one input per cost term, the program's over the program's plus the reference's (`x / (x + ref)`):
+///   traffic, allocations, serial depth. The reference itself is 0.5 in each; strictly increasing and bounded by 1.
 ///
-/// The two bands are the two questions, in order:
-///
-/// * **Is it right?** A correct program is in `[0, 0.49)`, ranked by its
-///   cost: the traffic over the traffic plus the reference's own traffic.
-///   That transform is *strictly increasing* in the traffic — so no two
-///   correct programs tie for want of precision, however far apart they are —
-///   and *bounded* by one — so the band never crosses into the incorrect one.
-///   The reference, whose traffic is its own, sits at half the band.
-/// * **If not, how close?** An incorrect program is in `[0.5, 1.0]`, ranked by
-///   the graded agreement: `1` less the share of the value that agrees with
-///   the reference's, exactly.
-///
-/// The COST does not enter the incorrect band. An incorrect program is not a
-/// candidate however cheap it is — it cannot be shipped — so ranking it by
-/// cost would only spend the search's attention on the wrong axis. The
-/// agreement is the graded signal a mutation can hill-climb on, and it is
-/// what the incorrect band ranks.
-///
-/// The traffic is the cost's FIRST key; the allocations and the depth are
-/// reported with it, but they cannot be a tie-breaker here: the band is an
-/// `f32`, and the traffic's own resolution would not leave room for them.
-pub fn fitness_of(individual: &Individual, reference_traffic: u64) -> f32 {
-    const CORRECT_BAND: f32 = 0.49;
-    if individual.correct {
-        let traffic = individual.score.traffic as f64;
-        let reference = reference_traffic.max(1) as f64;
-        CORRECT_BAND * (traffic / (traffic + reference)) as f32
-    } else {
-        0.5 + 0.5 * (1.0 - individual.agreement.clamp(0.0, 1.0)) as f32
-    }
+/// The fitness is the hff library's TrueNorth over the two group angles, each divided by π/2.
+pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
+    let quality: Vec<f64> = individual.disagreement.iter().map(|d| log_scaled(*d)).collect();
+    let ratio = |x: u64, r: u64| {
+        let (x, r) = (x as f64, r.max(1) as f64);
+        x / (x + r)
+    };
+    let s = &individual.score;
+    let speed = [ratio(s.traffic, reference.traffic), ratio(s.alloc, reference.alloc), ratio(s.depth, reference.depth)];
+    two_level_hff(&quality, &speed)
+}
+
+/// The fitness a GPU-resident population selects on: the [`two_level`] HFF, as phylu's device reads a fitness (an
+/// angle, 0 perfect, lower fitter).
+pub fn fitness_of(individual: &Individual, reference: &Score) -> f32 {
+    two_level(individual, reference).fitness as f32
 }
 
 /// One set of inputs, drawn from a seed.
@@ -966,6 +1162,13 @@ mod tests {
 
     fn kingdom() -> FutharkKingdom {
         FutharkKingdom::load_shapes().expect("the shape tables load")
+    }
+
+    /// A run's own output directory.
+    fn out(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fuller_shapes_evolve_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
     }
 
     /// A small configuration: the loop must be quick in a test.
@@ -1034,7 +1237,7 @@ mod tests {
         let reference = product_twice(&k);
         let cfg = config();
         let input = suite(&k, &cfg.sizes, cfg.samples);
-        let report = evolve(&reference, &input, &cfg).expect("the loop runs");
+        let report = evolve(&reference, &input, &cfg, &out("cheaper")).expect("the loop runs");
         let best = report.best.expect("the loop found a correct program");
         assert!(best.correct, "the best program is correct");
         let reference = report.reference.expect("the reference was measured");
@@ -1053,8 +1256,8 @@ mod tests {
         let reference = product_twice(&k);
         let cfg = config();
         let input = suite(&k, &cfg.sizes, cfg.samples);
-        let first = evolve(&reference, &input, &cfg).expect("the loop runs");
-        let second = evolve(&reference, &input, &cfg).expect("the loop runs again");
+        let first = evolve(&reference, &input, &cfg, &out("det1")).expect("the loop runs");
+        let second = evolve(&reference, &input, &cfg, &out("det2")).expect("the loop runs again");
         let a = first.best.expect("a best");
         let b = second.best.expect("a best");
         assert_eq!(a.gene, b.gene, "the two runs found different programs");
@@ -1118,11 +1321,11 @@ mod tests {
         assert_eq!(expressed.tree(), reference, "the seed gene IS the reference");
     }
 
-    /// The fitness a device selects on: two bands, and no overlap between
-    /// them. A correct program is always fitter than an incorrect one, and a
-    /// correct program is ranked by its cost.
+    /// The fitness a device selects on is the two-level HFF: a correct program has a quality angle of 0 and is
+    /// ranked by its cost; an incorrect one is ranked by how much of its value disagrees; and at the same cost a
+    /// correct program is always fitter than an incorrect one, however nearly right.
     #[test]
-    fn the_fitness_is_two_bands_and_they_do_not_overlap() {
+    fn the_fitness_is_the_two_level_hff() {
         let k = kingdom();
         let reference = product_twice(&k);
         let cfg = config();
@@ -1138,43 +1341,31 @@ mod tests {
             .collect();
         let scored = scorer.score(&genes).expect("scored");
         let fitness = scorer.fitness(&scored);
-        assert_eq!(fitness.len(), scored.len());
+        let r = *scorer.reference_score();
         for (individual, f) in scored.iter().zip(&fitness) {
-            assert!((0.0..=1.0).contains(f), "the fitness is inside the band: {f}");
-            if individual.correct {
-                assert!(*f < 0.5, "a correct program is in the lower band: {f}");
-            } else {
-                assert!(*f >= 0.5, "an incorrect program is in the upper band: {f}");
-            }
+            assert!((0.0..=std::f32::consts::FRAC_PI_2).contains(f), "the fitness is an angle: {f}");
+            assert_eq!(individual.disagreement.len(), cfg.samples, "one quality input per input set");
+            assert_eq!(two_level(individual, &r).quality == 0.0, individual.correct, "a quality angle of 0 is correctness");
         }
 
-        // The reference itself is correct, and its own traffic is the unit:
-        // it sits at half the lower band.
+        // The reference itself is correct and sits at 0.5 in every speed input.
         let seed = scorer.seed_gene(7).expect("the reference fits the layout");
         let reference_individual = scorer.score(&[seed]).expect("scored").remove(0);
         assert!(reference_individual.correct, "the reference is correct");
-        let reference_traffic = scorer.reference_score().traffic;
-        assert!((fitness_of(&reference_individual, reference_traffic) - 0.245).abs() < 1e-6);
+        assert_eq!(reference_individual.disagreement, vec![0.0; cfg.samples]);
 
-        // A cheap correct program is fitter than an expensive one, and the
-        // order is STRICT: two correct programs never tie for want of
-        // precision, however far apart they are.
-        let cheap = Individual { score: Score { traffic: 1, alloc: 0, depth: 0 }, ..reference_individual.clone() };
-        let dear = Individual { score: Score { traffic: 100, alloc: 0, depth: 0 }, ..reference_individual.clone() };
-        let dearer = Individual { score: Score { traffic: 1_000_000, alloc: 0, depth: 0 }, ..reference_individual.clone() };
-        assert!(fitness_of(&cheap, 100) < fitness_of(&dear, 100));
-        assert!(fitness_of(&dear, 100) < fitness_of(&dearer, 100));
-        // And a dearer correct program is still fitter than an incorrect one.
-        assert!(fitness_of(&dearer, 100) < 0.5);
-        assert!(fitness_of(&dearer, 100) > 0.48, "a very dear correct program is near the top of its band");
+        // A cheap correct program is fitter than a dear one, strictly.
+        let at = |traffic: u64| Individual { score: Score { traffic, ..r }, ..reference_individual.clone() };
+        let (cheap, dear, dearer) = (at(1), at(r.traffic), at(1_000 * r.traffic));
+        assert!(fitness_of(&cheap, &r) < fitness_of(&dear, &r));
+        assert!(fitness_of(&dear, &r) < fitness_of(&dearer, &r));
 
-        // An incorrect program is ranked by its agreement, and the cost does
-        // not enter the band.
-        let near = Individual { correct: false, agreement: 0.9, ..reference_individual.clone() };
-        let far = Individual { correct: false, agreement: 0.1, ..reference_individual.clone() };
-        assert!(fitness_of(&near, 100) < fitness_of(&far, 100));
-        let near_but_dear = Individual { score: Score { traffic: 10_000, alloc: 0, depth: 0 }, ..near.clone() };
-        assert_eq!(fitness_of(&near, 100), fitness_of(&near_but_dear, 100));
+        // An incorrect program is ranked by its disagreement, and at the same cost a correct program beats it,
+        // however nearly right it is (one element of a matrix).
+        let wrong = |d: f64| Individual { correct: false, agreement: 1.0 - d, disagreement: vec![d, 0.0, 0.0], ..reference_individual.clone() };
+        let one_element = 1.0 / (8.0 * 8.0);
+        assert!(fitness_of(&wrong(one_element), &r) < fitness_of(&wrong(0.9), &r));
+        assert!(fitness_of(&dear, &r) < fitness_of(&wrong(one_element), &r));
     }
 
     /// The premise of the transposed-product rule: the product computed the
@@ -1257,7 +1448,7 @@ mod tests {
         let reference = product_twice(&k);
         let cfg = config();
         let input = suite(&k, &cfg.sizes, cfg.samples);
-        let report = evolve(&reference, &input, &cfg).expect("the loop runs");
+        let report = evolve(&reference, &input, &cfg, &out("legal")).expect("the loop runs");
         let contract = k.relations().check().map_err(|bad| bad.join("; ")).expect("the contract");
         let root = k.ty("mat.n.p").expect("the root class");
         let layout = GeneLayout::from_program_size(&contract, root, cfg.program_size).expect("layout");

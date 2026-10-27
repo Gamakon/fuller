@@ -41,6 +41,7 @@ pub mod population_fold;
 pub mod saturated_fold;
 pub mod telemetry;
 pub mod run_file;
+pub mod runner;
 pub mod geneframe;
 pub mod tsr_kingdom;
 pub mod futhark_kingdom;
