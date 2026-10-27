@@ -105,6 +105,49 @@ pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result
     }
 }
 
+/// THE TIMING SLOTS (the scheme of phylu `evolve::image_fitness::TimingStore`): every timed pair a program has had,
+/// kept by its text, up to `slots` of them. A program scored again adds pairs to its old ones (never replaces them),
+/// and its HFF reads exactly `slots` speed inputs, one a pair: the scorer times [`TimingSlots::missing`] more pairs
+/// before it scores, so no slot is padded and no mean or median is taken before HFF. A full program is never timed
+/// again, so re-scoring it across generations gives the same speed inputs.
+#[derive(Debug, Clone, Default)]
+pub struct TimingSlots {
+    slots: usize,
+    by_text: std::collections::HashMap<String, Vec<f64>>,
+}
+
+impl TimingSlots {
+    pub fn new(slots: usize) -> TimingSlots {
+        TimingSlots { slots, by_text: std::collections::HashMap::new() }
+    }
+
+    pub fn slots(&self) -> usize {
+        self.slots
+    }
+
+    /// The pairs `text` still needs to fill its slots.
+    pub fn missing(&self, text: &str) -> usize {
+        self.slots - self.by_text.get(text).map_or(0, Vec::len)
+    }
+
+    /// Add newly timed pairs (the ratios candidate / yardstick) of `text`; more than its empty slots is our bug.
+    pub fn add(&mut self, text: &str, ratios: &[f64]) -> Result<(), String> {
+        if ratios.len() > self.missing(text) {
+            return Err(format!("our software has a bug: {} new timed pairs for a program with {} empty slots", ratios.len(), self.missing(text)));
+        }
+        self.by_text.entry(text.to_string()).or_default().extend_from_slice(ratios);
+        Ok(())
+    }
+
+    /// The ratios of `text` when every slot is filled; a program with an empty slot is our software's bug here.
+    pub fn full(&self, text: &str) -> Result<&[f64], String> {
+        match self.by_text.get(text) {
+            Some(r) if r.len() == self.slots => Ok(r),
+            r => Err(format!("our software has a bug: a program scored with {} of {} timing slots filled", r.map_or(0, Vec::len), self.slots)),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Checkpoint
 // ---------------------------------------------------------------------------
@@ -247,6 +290,26 @@ impl HallOfFame {
 
 #[cfg(test)]
 mod tests {
+
+    /// The slots fill, accumulate and stop: a new program misses every slot, pairs added in two batches are kept in
+    /// order, a full program reads the same ratios again and takes no more.
+    #[test]
+    fn timing_slots_accumulate_to_the_cap_and_a_full_program_reads_the_same() {
+        let mut s = TimingSlots::new(11);
+        assert_eq!(s.missing("p"), 11);
+        assert!(s.full("p").is_err(), "0 of 11 slots is not a score");
+        s.add("p", &[1.0, 0.9, 1.1]).unwrap();
+        assert_eq!(s.missing("p"), 8);
+        assert!(s.full("p").is_err(), "3 of 11 slots is not a score");
+        s.add("p", &[1.0; 8]).unwrap();
+        assert_eq!(s.missing("p"), 0);
+        let r = s.full("p").unwrap().to_vec();
+        assert_eq!(r.len(), 11);
+        assert_eq!(&r[..3], &[1.0, 0.9, 1.1]);
+        assert_eq!(s.full("p").unwrap(), &r[..]);
+        assert!(s.add("p", &[1.0]).is_err(), "a full program takes no more pairs");
+        assert_eq!(s.missing("q"), 11, "slots are kept by text");
+    }
 
     #[test]
     fn stage_one_ranks_on_quality_alone_and_the_switch_is_one_way() {

@@ -28,11 +28,18 @@
 //!   pairs in the wrong order. (The pilot of 2026-10-27 used three inputs on HFF's log scale, which put every inexact
 //!   program within 0.03 of 1, and ranked its whole population alike for 26 generations.)
 //! * stage 2, once the best is exact on every case (a `stage_change` event, never back): the two-level HFF of that
-//!   quality group and the speed group, `--pairs` interleaved timed pairs against the published program (the
-//!   yardstick) on the largest training case, each `r/(1+r)` with `r` the candidate's GPU time over the yardstick's.
+//!   quality group and the speed group: the program's TIMING SLOTS (`fuller::runner::TimingSlots`, `--pairs` of
+//!   them, 11 by default), interleaved timed pairs against the published program (the yardstick) on the largest
+//!   training case, kept by the program's text and filled before it is scored, so a program re-scored in a later
+//!   generation reads the same pairs and is never timed again; each pair is its own speed input, `r/(1+r)` with `r`
+//!   the candidate's GPU time over the yardstick's, never averaged. (Three pairs a candidate, before 2026-10-27
+//!   21:00Z, ranked one program at 1.287 in the run and 1.000 in an 11-pair re-time.)
 //!   Each side of a pair is one process running the program `--runs` times (Futhark's `-r`, after its warm-up run);
 //!   its time is the fastest run's sum of GPU-timed passes (the GPU's clock ramps within a process). The A/A noise
-//!   floor (the yardstick against itself, 11 pairs) is measured at the start.
+//!   floor (the yardstick against itself, 11 pairs) is measured at the start; in P the published program is also
+//!   timed against itself THROUGH THE SLOT PATH (compiled as a candidate, `--pairs` pairs), the in-run A/A. A speed
+//!   claim counts only when the champion's 11-pair re-time at the end has its median below the least ratio of both
+//!   A/A sets (`speed_claim_beats_noise_floor` in the report).
 //!
 //! The BUDGET is `--evaluations` fitness evaluations (an individual scored, a cache hit included, so R and C are
 //! counted alike); the wall clock (`--minutes`) is a guard. The work guard: every candidate's exact node executions
@@ -60,7 +67,7 @@ use fuller::futhark_wgpu_host::{compile_program_prebuilt, prebuild_shim, run_pro
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger};
+use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -174,14 +181,14 @@ struct Judge<'a> {
     /// The case the speed is timed on (the largest training case).
     timing_case: usize,
     backend: Backend,
-    pairs: usize,
     runs: usize,
     yard_exe: Option<PathBuf>,
     /// The shim, built once at the start: every candidate links with plain cc, no cargo, no lock.
     shim: PathBuf,
     work_dir: PathBuf,
     quality_cache: HashMap<String, Quality>,
-    speed_cache: HashMap<String, Vec<f64>>,
+    /// The timing slots, kept by program text (`--pairs` of them, each its own speed input).
+    slots: TimingSlots,
     /// Fitness evaluations (the budget's unit): every individual scored, cache hits included.
     evaluations: u64,
     /// Programs compiled and run (cache misses).
@@ -312,21 +319,19 @@ impl Judge<'_> {
             if self.backend == Backend::C {
                 return Err("stage 2 times on the GPU: the c backend cannot enter it (run with --backend gpu)".into());
             }
-            let ratios = match self.speed_cache.get(source) {
-                Some(r) => r.clone(),
-                None => {
-                    // The timed program is the plain one (the declared signature, one case).
-                    let r = match self.compile(source, &self.work_dir.join("timed")).and_then(|e| self.time_pairs(&e, self.pairs)) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            self.log_bug(&format!("timing: {err}"), source);
-                            vec![f64::INFINITY; self.pairs]
-                        }
-                    };
-                    self.speed_cache.insert(source.to_string(), r.clone());
-                    r
-                }
-            };
+            let missing = self.slots.missing(source);
+            if missing > 0 {
+                // The timed program is the plain one (the declared signature, one case); its empty slots are filled.
+                let r = match self.compile(source, &self.work_dir.join("timed")).and_then(|e| self.time_pairs(&e, missing)) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        self.log_bug(&format!("timing: {err}"), source);
+                        vec![f64::INFINITY; missing]
+                    }
+                };
+                self.slots.add(source, &r)?;
+            }
+            let ratios = self.slots.full(source)?.to_vec();
             speed = ratios.iter().map(|r| if r.is_finite() { r / (1.0 + r) } else { 1.0 }).collect();
             ratio = median(&ratios);
         }
@@ -567,7 +572,10 @@ fn real_main() -> Result<(), String> {
     let budget: u64 = num(&args, "--evaluations", 6000)?;
     let pop: usize = num(&args, "--pop", 24)?;
     let seed: u64 = num(&args, "--seed", 1)?;
-    let pairs: usize = num(&args, "--pairs", 3)?;
+    let pairs: usize = num(&args, "--pairs", 11)?;
+    if pairs == 0 {
+        return Err("--pairs 0: stage 2 needs at least one timing slot".into());
+    }
     let runs: usize = num(&args, "--runs", 20)?;
     let elites: usize = num(&args, "--elites", 2)?;
     let pump_every: u32 = num(&args, "--pump-every", 5)?;
@@ -650,7 +658,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing_case, backend, pairs, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), speed_cache: HashMap::new(), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing_case, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
         tel,
         ledger: Ledger::open(&out, resume)?,
         next_id: 0,
@@ -676,6 +684,17 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
     std::fs::write(out.join("reference.fut"), &ref_source).map_err(|e| e.to_string())?;
+    // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots.
+    let mut inrun_aa: Vec<f64> = Vec::new();
+    if regime == "P" && backend == Backend::Gpu {
+        let exe = run.judge.compile(p.yardstick, &out.join("candidate_build").join("timed"))?;
+        let r = run.judge.time_pairs(&exe, pairs)?;
+        run.judge.slots.add(p.yardstick, &r)?;
+        inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
+        let msg = format!("in-run A/A, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
+        println!("# {} {msg}", utc());
+        run.tel.note(0, msg)?;
+    }
 
     let bridge = Bridge::load(&run.inst)?;
     let mut rng0 = GeneRng::new(seed);
@@ -1087,11 +1106,17 @@ fn real_main() -> Result<(), String> {
     if backend == Backend::Gpu {
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         rep.push_str(&format!("noise_floor_ratios_published_vs_itself\t{}\nnoise_floor_median\t{:.4}\n", fmt(&noise), median(&noise)));
+        if !inrun_aa.is_empty() {
+            rep.push_str(&format!("inrun_aa_ratios\t{}\ninrun_aa_median\t{:.4}\n", fmt(&inrun_aa), median(&inrun_aa)));
+        }
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
             let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
             let ratios = run.judge.time_pairs(&exe, 11)?;
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
+            // A speed claim counts only below the noise floor: the least ratio of both A/A sets.
+            let floor = noise.iter().chain(inrun_aa.iter()).cloned().fold(f64::INFINITY, f64::min);
+            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\n", if median(&ratios) < floor { "yes" } else { "no" }));
         }
     }
     std::fs::write(out.join("report.tsv"), &rep).map_err(|e| e.to_string())?;
