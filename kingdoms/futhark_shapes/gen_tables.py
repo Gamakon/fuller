@@ -1176,9 +1176,16 @@ PIXEL_COUNTS = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 25, 32, 40, 50, 64)
 # The generic part of the constant pool, before the instance's own literals.
 PIXEL_GENERIC_LITERALS = ("0.0", "1.0", "-1.0", "0.5", "2.0", "3.0", "0.25", "10.0", "0.1")
 
+# An image target's own literals (it has no shader to read them from): the tenths of the unit interval, so a colour
+# channel is a constant of the pool.
+PIXEL_IMAGE_LITERALS = ("0.2", "0.3", "0.4", "0.6", "0.7", "0.8", "0.9")
+
 # The instances: the WGSL source of each, relative to the repository root.
 PIXEL_INSTANCES = {
     "cuneus": "tests/corpus/cuneus_visual/cuneus.wgsl",
+    # An IMAGE TARGET: no shader, no uniforms, no time -- a picture is a function of the pixel's position and the
+    # picture's size. Any picture file is then a target with no hand work (the runner loads it).
+    "image": None,
     "volumepassage": "tests/corpus/cuneus_visual/volumepassage.wgsl",
 }
 
@@ -1287,12 +1294,14 @@ def body_dual(s, d, k):
     return f"body{s}.d{d}.s{k}"
 
 
-def pixel_rows(interface):
+def pixel_rows(interface, image=False):
     """Every row of the family, with its output and argument duals. The
     duals are named, not enumerated: the types are the duals the rows
     mention, and the witness tests re-derive every relation from the names."""
     rows = []
     inputs = ["px", "py", "u_width", "u_height"] + [f["spelling"] for f in interface]
+    # An image target also reads the position as a fraction of the picture: nx, ny in [0, 1).
+    fractions = [("nx", "(px / u_width)"), ("ny", "(py / u_height)")] if image else []
     for k in range(PIXEL_SCOPES + 1):
         e = s_dual(k)
         for name, arity, spelling in PIXEL_OPERATORS:
@@ -1365,10 +1374,19 @@ def pixel_rows(interface):
         for i in range(k):
             rows.append({"name": f"v{i}@{e}", "kind": "terminal", "out": e, "args": [], "spelling": f"v{i}",
                          "note": f"the bound variable v{i}"})
+        for name, spelling in fractions:
+            rows.append({"name": f"{name}@{e}", "kind": "terminal", "out": e, "args": [], "spelling": spelling,
+                         "note": "the pixel's position as a fraction of the picture"})
         rows.append({"name": f"?_{e}", "kind": "const", "out": e, "args": [], "spelling": "",
                      "note": "a literal of the constant pool"})
-        rows.append({"name": f"black@{blk_dual(k)}", "kind": "terminal", "out": blk_dual(k), "args": [],
-                     "spelling": "[0f32, 0f32, 0f32]", "note": "the black pixel"})
+        if image:
+            # An image target's block terminal is the position's colour, not black: a random program whose root
+            # block is a terminal then draws a gradient, and black is a colour the target need not hold.
+            rows.append({"name": f"coord@{blk_dual(k)}", "kind": "terminal", "out": blk_dual(k), "args": [],
+                         "spelling": "[px / u_width, py / u_height, 0.5f32]", "note": "the position's colour"})
+        else:
+            rows.append({"name": f"black@{blk_dual(k)}", "kind": "terminal", "out": blk_dual(k), "args": [],
+                         "spelling": "[0f32, 0f32, 0f32]", "note": "the black pixel"})
     for dual in sorted(done, key=parse_body):
         s, _, _ = parse_body(dual)
         rows.append({"name": f"zero@{dual}", "kind": "terminal", "out": dual, "args": [],
@@ -1432,10 +1450,15 @@ def pixel_types(rows, literals):
 
 def pixel_tables(instance):
     """The text of every artefact of one instance."""
-    shader = os.path.join(REPO, PIXEL_INSTANCES[instance])
-    interface = pixel_interface(shader)
-    literals = pixel_literals(shader)
-    rows = pixel_rows(interface)
+    if PIXEL_INSTANCES[instance] is None:
+        interface = []
+        literals = [f"{t}f32" for t in PIXEL_GENERIC_LITERALS + PIXEL_IMAGE_LITERALS]
+        rows = pixel_rows(interface, image=True)
+    else:
+        shader = os.path.join(REPO, PIXEL_INSTANCES[instance])
+        interface = pixel_interface(shader)
+        literals = pixel_literals(shader)
+        rows = pixel_rows(interface)
     types = pixel_types(rows, literals)
     ttext = ["ref\tdual\tslot\tform\tliterals\troot\tmeaning"]
     for i, t in enumerate(types, start=1):
@@ -1617,7 +1640,8 @@ def witness_pixel(dir_path, instance):
             bad.append(f"P7 the dual {t[1]} has no terminal")
     # P8: the constant pool parses as f32, holds each value once, and every
     # literal past the generic ones appears in the shader's source.
-    src = strip_comments(open(os.path.join(REPO, PIXEL_INSTANCES[instance])).read())
+    shader = PIXEL_INSTANCES[instance]
+    src = strip_comments(open(os.path.join(REPO, shader)).read()) if shader else " ".join(PIXEL_IMAGE_LITERALS)
     for t in types:
         if t[2] != "f32":
             continue

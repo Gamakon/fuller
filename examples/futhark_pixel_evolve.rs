@@ -55,7 +55,7 @@ use fuller::telemetry::{EventKind, GenerationStats, HofRow, Mutation, RunInfo, R
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
 use fuller::wgsl::cuneus_originals::case_bindings;
 use fuller::wgsl::gram::truenorth;
-use fuller::wgsl::image::{compare, ocr_word, side_by_side, srgb_display, write_png, BindingData, Difference, ImageKernel, Ocr, Picture};
+use fuller::wgsl::image::{compare, largest_colour_share, ocr_word, quality_inputs, read_ppm, side_by_side, write_png, BindingData, Difference, ImageKernel, Ocr, Picture};
 use fuller::wgsl::oracle::device::{Device, Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -212,12 +212,10 @@ impl Judge<'_> {
         let mut quality = Vec::new();
         let mut diff = None;
         for case in &self.cases {
-            let (pic, _) = self.picture(&exe, &plan, case, 1)?;
-            let d = compare(&pic, &case.original)?;
-            let channels = (d.pixels * 4) as f64;
-            let (o_max, o_mean, o_rms) = scale(&case.original);
-            let rel = |e: f64| if e.is_finite() { e / (1.0 + e) } else { 1.0 };
-            quality.extend([d.differing_channels as f64 / channels, rel(d.max_abs / o_max), rel(d.mean_abs / o_mean), rel(d.rmse / o_rms), d.pixels_over_one_step as f64 / d.pixels as f64, d.non_finite_mismatch as f64 / channels]);
+            let case_plan = tiles(work, case.width, case.height, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT)?;
+            let (pic, _) = self.picture(&exe, &case_plan, case, 1)?;
+            let (q, d) = quality_inputs(&pic, &case.original)?;
+            quality.extend(q);
             if diff.is_none() {
                 diff = Some(d);
             }
@@ -229,17 +227,6 @@ impl Judge<'_> {
         let theta = truenorth(&[theta_q / FRAC_PI_2, theta_s / FRAC_PI_2]);
         Ok(Eval { theta, theta_q, theta_s, quality, speed, ratio: median(&ratios), diff, work, tiles: plan.len() })
     }
-}
-
-/// The original's own magnitude over its colour channels in display space (as `compare` measures): the largest,
-/// the mean and the root mean square. An error statistic divided by it is the error relative to drawing nothing.
-fn scale(p: &Picture) -> (f64, f64, f64) {
-    let c: Vec<f64> = p.rgba.chunks_exact(4).flat_map(|px| px[..3].iter().map(|v| f64::from(srgb_display(*v)))).filter(|v| v.is_finite()).collect();
-    let n = c.len().max(1) as f64;
-    let max = c.iter().cloned().fold(0.0, f64::max);
-    let mean = c.iter().map(|v| v.abs()).sum::<f64>() / n;
-    let rms = (c.iter().map(|v| v * v).sum::<f64>() / n).sqrt();
-    (max.max(f64::MIN_POSITIVE), mean.max(f64::MIN_POSITIVE), rms.max(f64::MIN_POSITIVE))
 }
 
 fn median(v: &[f64]) -> f64 {
@@ -322,6 +309,24 @@ impl Genetics<'_> {
         let mut other = b.to_vec();
         self.layout.swap_range(self.layout, a, &mut other, lo, hi).map_err(|e| format!("crossover: {e}"))
     }
+}
+
+/// An image target's pictures (`tests/corpus/targets/<name>_<w>x<h>.ppm`): the training case, the held-out case
+/// (both fitness cases, the held-out one the validation inputs) and the report case; the largest colour's share of
+/// each is logged (a target whose one colour covers most of the picture lets a flat program score well).
+fn target_cases(name: &str, train: (u32, u32), held: (u32, u32), report: (u32, u32)) -> Result<(Vec<Case>, Vec<Case>, Case), String> {
+    let load = |(w, h): (u32, u32)| -> Result<Case, String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/corpus/targets/{name}_{w}x{h}.ppm"));
+        let original = read_ppm(&path)?;
+        if (original.width, original.height) != (w, h) {
+            return Err(format!("{} is {}x{}, not {w}x{h}", path.display(), original.width, original.height));
+        }
+        let (share, bins) = largest_colour_share(&original, 4);
+        println!("# target {}: largest colour {:.1} % of the pixels, {bins} of 64 colour bins", path.display(), share * 100.0);
+        Ok(Case { time: 0.0, width: w, height: h, blocks: Vec::new(), original })
+    };
+    let check = load(held)?;
+    Ok((vec![load(train)?, load(held)?], vec![load(report)?], check))
 }
 
 /// The original's pictures, drawn by the image harness; the device is dropped on return.
@@ -482,12 +487,17 @@ fn real_main() -> Result<(), String> {
         return Err(format!("--regime {regime}: petri or champion"));
     }
     let wide = shader == "cuneus";
+    let image_target = shader == "image";
+    let target = arg(&args, "--target").unwrap_or_else(|| "bugberman".into());
+    if image_target && regime == "champion" {
+        return Err("the image target has no reference: the champion regime needs one".into());
+    }
     let minutes: f64 = num(&args, "--minutes", 30.0)?;
     let pop: usize = num(&args, "--pop", 16)?;
     let seed: u64 = num(&args, "--seed", 1)?;
-    let train = size_arg(&args, "--train", if wide { (96, 48) } else { (64, 64) })?;
-    let report = size_arg(&args, "--report", if wide { (512, 256) } else { (128, 128) })?;
-    let check = size_arg(&args, "--check", if wide { (256, 128) } else { (128, 128) })?;
+    let train = size_arg(&args, "--train", if image_target { (96, 88) } else if wide { (96, 48) } else { (64, 64) })?;
+    let report = size_arg(&args, "--report", if image_target { (512, 469) } else if wide { (512, 256) } else { (128, 128) })?;
+    let check = size_arg(&args, "--check", if image_target { (128, 117) } else if wide { (256, 128) } else { (128, 128) })?;
     let pairs: usize = num(&args, "--pairs", 3)?;
     let runs: usize = num(&args, "--runs", 40)?;
     let elites: usize = num(&args, "--elites", 2)?;
@@ -509,17 +519,19 @@ fn real_main() -> Result<(), String> {
     let limit = std::time::Duration::from_secs_f64((minutes * 60.0 - spent).max(0.0));
     println!("# {} futhark_pixel_evolve: {shader}, regime {regime}, {minutes} min, population {pop}, seed {seed}, train {}x{}, {pairs} timed pairs of {runs} runs, elites {elites}{}", utc(), train.0, train.1, if resume { ", RESUMED" } else { "" });
 
-    let (train_cases, report_cases, check_case) = originals(&shader, train, report, check)?;
+    let (train_cases, report_cases, check_case) = if image_target { target_cases(&target, train, check, report)? } else { originals(&shader, train, report, check)? };
     println!("# {} the original drawn: training {}x{} at t = 5, 8; report {}x{}; checkpoint pictures {}x{}; the device is dropped", utc(), train.0, train.1, report.0, report.1, check.0, check.1);
 
     let (inst, ref_text) = instance(&shader)?;
     let k = load(&inst)?;
     let iface = interface(&inst)?;
     let contract = k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
-    let reference = build(&k, ref_text)?;
+    // The reference: the hand-written program for a shader; for an image target, which has none, the speed group's
+    // yardstick is the simplest picture, the position's colour (`coord`), and the program size defaults to 60.
+    let reference = build(&k, ref_text.unwrap_or("(image coord)"))?;
     let n_funcs = reference.level_order().iter().filter(|(t, _)| !k.rows[t.symbol as usize].inputs.is_empty()).count();
     let root = k.ty("image").ok_or("no image dual")?;
-    let program_size: usize = num(&args, "--program-size", n_funcs)?;
+    let program_size: usize = num(&args, "--program-size", if image_target { 60 } else { n_funcs })?;
     if regime == "champion" && program_size < n_funcs {
         return Err(format!("--program-size {program_size}: the champion regime needs the reference's {n_funcs} functions"));
     }
@@ -531,9 +543,10 @@ fn real_main() -> Result<(), String> {
     let ref_exe = compile_program(&ref_source, &out.join("reference_build"))?;
     let ref_plan = tiles(work_per_pixel(&k, &reference)?, train.0, train.1, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT)?;
     let mut objectives = Vec::new();
-    for t in [5, 8] {
+    let case_names: Vec<String> = if image_target { vec![format!("train {}x{}", train.0, train.1), format!("held-out {}x{}", check.0, check.1)] } else { vec!["t=5".into(), "t=8".into()] };
+    for c in &case_names {
         for m in ["differing", "max_abs_rel", "mean_abs_rel", "rmse_rel", "over_1_255", "non_finite"] {
-            objectives.push(format!("quality t={t} {m}"));
+            objectives.push(format!("quality {c} {m}"));
         }
     }
     for p in 0..pairs {
@@ -545,7 +558,7 @@ fn real_main() -> Result<(), String> {
         format!("futhark-pixel-{shader}-{regime}-seed{seed}"),
         RunInfo {
             kingdom: "futhark_pixel".into(),
-            dataset: format!("{shader} {}x{}", train.0, train.1),
+            dataset: if image_target { format!("image target {target} {}x{}", train.0, train.1) } else { format!("{shader} {}x{}", train.0, train.1) },
             seed: seed as u32,
             population: pop as u32,
             max_generations,

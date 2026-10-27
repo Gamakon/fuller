@@ -339,6 +339,78 @@ pub fn write_png(path: &std::path::Path, p: &Picture) -> Result<(), String> {
     std::fs::write(path, png_bytes(p)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The linear value of an sRGB display value in [0, 1] (the inverse of [`srgb_display`] on [0, 1]).
+pub fn srgb_linear(v: f32) -> f32 {
+    let v = f64::from(v.clamp(0.0, 1.0));
+    (if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }) as f32
+}
+
+/// A picture file as a target: a binary PPM (`P6`, 8-bit), its bytes taken as sRGB display values (as a PNG's are)
+/// and stored as the linear values a shader would write, so [`compare`] and the PNG writer show the file's own colours.
+pub fn read_ppm(path: &std::path::Path) -> Result<Picture, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut fields = Vec::new();
+    let mut i = 0;
+    while fields.len() < 4 {
+        while i < raw.len() && raw[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i < raw.len() && raw[i] == b'#' {
+            while i < raw.len() && raw[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        let start = i;
+        while i < raw.len() && !raw[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if start == i {
+            return Err(format!("{}: the PPM header ends early", path.display()));
+        }
+        fields.push(String::from_utf8_lossy(&raw[start..i]).to_string());
+    }
+    i += 1;
+    let num = |s: &str| s.parse::<u32>().map_err(|e| format!("{}: the PPM header {s:?}: {e}", path.display()));
+    if fields[0] != "P6" || num(&fields[3])? != 255 {
+        return Err(format!("{}: not an 8-bit binary PPM ({} {})", path.display(), fields[0], fields[3]));
+    }
+    let (w, h) = (num(&fields[1])?, num(&fields[2])?);
+    let px = raw.get(i..i + (w * h * 3) as usize).ok_or_else(|| format!("{}: the PPM holds fewer than {w}x{h} pixels", path.display()))?;
+    let rgba = px.chunks_exact(3).flat_map(|c| [srgb_linear(f32::from(c[0]) / 255.0), srgb_linear(f32::from(c[1]) / 255.0), srgb_linear(f32::from(c[2]) / 255.0), 1.0]).collect();
+    Ok(Picture { width: w, height: h, rgba })
+}
+
+/// The share of the picture's pixels in its most common colour, the display colour quantised to `levels` steps a
+/// channel (4 steps: 64 bins), and the number of bins used.
+pub fn largest_colour_share(p: &Picture, levels: u32) -> (f64, usize) {
+    let mut bins: std::collections::HashMap<(u32, u32, u32), usize> = std::collections::HashMap::new();
+    let q = |v: f32| ((srgb_display(v).clamp(0.0, 1.0) * levels as f32) as u32).min(levels - 1);
+    for c in p.rgba.chunks_exact(4) {
+        *bins.entry((q(c[0]), q(c[1]), q(c[2]))).or_default() += 1;
+    }
+    let n = (p.width * p.height).max(1) as f64;
+    (bins.values().copied().max().unwrap_or(0) as f64 / n, bins.len())
+}
+
+/// The picture-quality inputs of a fitness (one HFF group), each in [0, 1], 0 best, all in display space: the
+/// differing channel fraction; max |d|, mean |d| and rmse, each divided by the original's own max, mean and rms (so
+/// drawing nothing is an error of 1) and mapped e -> e / (1 + e) (drawing nothing scores 0.5, a picture far off the
+/// original's scale approaches 1, and there is a gradient at every magnitude); the fraction of pixels over 1/255;
+/// the fraction of non-finite mismatches.
+pub fn quality_inputs(got: &Picture, want: &Picture) -> Result<([f64; 6], Difference), String> {
+    let d = compare(got, want)?;
+    let c: Vec<f64> = want.rgba.chunks_exact(4).flat_map(|px| px[..3].iter().map(|v| f64::from(srgb_display(*v)))).filter(|v| v.is_finite()).collect();
+    let n = c.len().max(1) as f64;
+    let o_max = c.iter().cloned().fold(0.0, f64::max).max(f64::MIN_POSITIVE);
+    let o_mean = (c.iter().map(|v| v.abs()).sum::<f64>() / n).max(f64::MIN_POSITIVE);
+    let o_rms = (c.iter().map(|v| v * v).sum::<f64>() / n).sqrt().max(f64::MIN_POSITIVE);
+    let rel = |e: f64| if e.is_finite() { e / (1.0 + e) } else { 1.0 };
+    let channels = (d.pixels * 4) as f64;
+    let q = [d.differing_channels as f64 / channels, rel(d.max_abs / o_max), rel(d.mean_abs / o_mean), rel(d.rmse / o_rms), d.pixels_over_one_step as f64 / d.pixels as f64, d.non_finite_mismatch as f64 / channels];
+    Ok((q, d))
+}
+
 /// The picture enlarged by the smallest whole factor that makes it at least `min_width` pixels wide (each pixel a
 /// square block), for a reader such as OCR that needs letters a few dozen pixels tall.
 pub fn upscaled(p: &Picture, min_width: u32) -> Picture {
@@ -1299,6 +1371,22 @@ mod tests {
         // A 10 x 1 stroke with a margin of 2: 14 x 5, enlarged by 8 to 112 x 40.
         assert_eq!((q.width, q.height), (112, 40));
         assert!(ocr_prepared(&Picture { width: 4, height: 4, rgba: vec![0.0; 64] }, 0.5, 10).is_none());
+    }
+
+    #[test]
+    fn a_ppm_target_reads_back_as_its_own_display_colours() {
+        let dir = std::env::temp_dir().join(format!("ppm_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.ppm");
+        let mut f = b"P6\n# a comment\n2 1\n255\n".to_vec();
+        f.extend_from_slice(&[0, 48, 255, 128, 128, 128]);
+        std::fs::write(&path, f).unwrap();
+        let p = read_ppm(&path).unwrap();
+        assert_eq!((p.width, p.height), (2, 1));
+        let shown: Vec<u8> = p.rgba.iter().enumerate().filter(|(i, _)| i % 4 != 3).map(|(_, v)| (srgb_display(*v) * 255.0 + 0.5) as u8).collect();
+        assert_eq!(shown, vec![0, 48, 255, 128, 128, 128]);
+        assert_eq!(largest_colour_share(&p, 4), (0.5, 2));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -74,11 +74,24 @@ pub const CUNEUS: Instance = Instance {
     egraph_rows: include_str!("../kingdoms/futhark_shapes/pixel/cuneus/egraph.rows"),
 };
 
-/// An instance and its hand-written reference, by the shader's name.
-pub fn instance(shader: &str) -> Result<(Instance, &'static str), String> {
+/// The IMAGE TARGET instance: no shader and no uniforms; a program is a function of the pixel's position (`px`,
+/// `py`, and `nx`, `ny` as fractions of the picture) and the picture's size. Any picture file is a target of it.
+pub const IMAGE: Instance = Instance {
+    name: "image",
+    types: include_str!("../kingdoms/futhark_shapes/pixel/image/types.tsv"),
+    functions: include_str!("../kingdoms/futhark_shapes/pixel/image/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark_shapes/pixel/image/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark_shapes/pixel/image/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark_shapes/pixel/image/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark_shapes/pixel/image/egraph.rows"),
+};
+
+/// An instance and its hand-written reference (None for the image target, which has none), by name.
+pub fn instance(shader: &str) -> Result<(Instance, Option<&'static str>), String> {
     match shader {
-        "volumepassage" => Ok((VOLUMEPASSAGE, VOLUMEPASSAGE_REFERENCE)),
-        "cuneus" => Ok((CUNEUS, CUNEUS_REFERENCE)),
+        "volumepassage" => Ok((VOLUMEPASSAGE, Some(VOLUMEPASSAGE_REFERENCE))),
+        "cuneus" => Ok((CUNEUS, Some(CUNEUS_REFERENCE))),
+        "image" => Ok((IMAGE, None)),
         other => Err(format!("no pixel instance for {other}")),
     }
 }
@@ -404,6 +417,141 @@ pub fn draw(exe: &std::path::Path, gpu: bool, ps_of: &dyn Fn(Tile) -> Result<Vec
         place(&mut rgba, width, tile, &values)?;
     }
     Ok((rgba, ns))
+}
+
+// ---- the host interpreter: what a gene means, as a test oracle ---------------
+
+/// The value of an expressed `image` tree at one pixel, on the host: the family's meaning written out row by row
+/// (a test oracle and a host-side measurement, never the fitness path, which runs the compiled program on the GPU).
+/// `ps` is the input vector of [`inputs`] (its interface inputs from word [`HEADER`] on); `px`, `py` the pixel.
+/// The arithmetic is f32 as Futhark's: `%` truncated, `**` `powf`, `f32.max`/`min` ignoring a NaN operand.
+pub fn eval_pixel(k: &FutharkKingdom, iface: &[Input], tree: &Tree, ps: &[f32], px: f32, py: f32) -> Result<[f32; 3], String> {
+    let root = &k.rows[tree.symbol as usize];
+    if root.name == "image.black" {
+        return Ok([0.0; 3]);
+    }
+    let block = tree.kids.first().ok_or("an image row with no block")?;
+    let mut env = Env { k, iface, ps, px, py, vars: vec![f32::NAN; 128] };
+    let v = env.block(block)?;
+    match v.as_slice() {
+        [r, g, b] => Ok([*r, *g, *b]),
+        other => Err(format!("a pixel block gave {} values", other.len())),
+    }
+}
+
+struct Env<'a> {
+    k: &'a FutharkKingdom,
+    iface: &'a [Input],
+    ps: &'a [f32],
+    px: f32,
+    py: f32,
+    vars: Vec<f32>,
+}
+
+fn scope_of_dual(dual: &str) -> Result<usize, String> {
+    dual.rsplit(".s").next().and_then(|s| s.parse().ok()).ok_or_else(|| format!("{dual} has no scope"))
+}
+
+impl Env<'_> {
+    fn block(&mut self, t: &Tree) -> Result<Vec<f32>, String> {
+        let row = &self.k.rows[t.symbol as usize];
+        let (op, dual) = row.name.split_once('@').ok_or_else(|| format!("{} is not a block row", row.name))?;
+        let k0 = scope_of_dual(dual)?;
+        match op {
+            "let" => {
+                let v = self.scalar(&t.kids[0])?;
+                self.vars[k0] = v;
+                self.block(&t.kids[1])
+            }
+            "rgb" | "tuple" => t.kids.iter().map(|c| self.scalar(c)).collect(),
+            "black" => Ok(vec![0.0; 3]),
+            "coord" => Ok(vec![self.px / self.ps[0], self.py / self.ps[1], 0.5]),
+            "zero" => Ok(vec![0.0; dual[4..].split('.').next().and_then(|s| s.parse().ok()).ok_or("a zero tuple's arity")?]),
+            o if o.starts_with("block") => {
+                let s: usize = o[5..].parse().map_err(|_| o.to_string())?;
+                let vals = self.block(&t.kids[0])?;
+                if vals.len() != s {
+                    return Err(format!("{o} got {} values", vals.len()));
+                }
+                self.vars[k0..k0 + s].copy_from_slice(&vals);
+                self.block(&t.kids[1])
+            }
+            o if o.starts_with("loop") => {
+                let s: usize = o[4..].parse().map_err(|_| o.to_string())?;
+                let mut state: Vec<f32> = t.kids[..s].iter().map(|c| self.scalar(c)).collect::<Result<_, _>>()?;
+                let n: usize = self.k.rows[t.kids[s].symbol as usize].spelling.parse().map_err(|e| format!("a count: {e}"))?;
+                for i in 0..n {
+                    self.vars[k0..k0 + s].copy_from_slice(&state);
+                    self.vars[k0 + s] = i as f32;
+                    state = self.block(&t.kids[s + 1])?;
+                    if state.len() != s {
+                        return Err(format!("{o}'s body gave {} values", state.len()));
+                    }
+                }
+                self.vars[k0..k0 + s].copy_from_slice(&state);
+                self.block(&t.kids[s + 2])
+            }
+            other => Err(format!("{other} is not a block row the interpreter knows")),
+        }
+    }
+
+    fn scalar(&mut self, t: &Tree) -> Result<f32, String> {
+        let row = &self.k.rows[t.symbol as usize];
+        if row.kind == FutharkKind::Const {
+            let dual = self.k.dual(row.output).ok_or("a constant with no dual")?;
+            let text = dual.literals.get(t.const_index.ok_or("a constant with no index")? as usize).ok_or("a constant past the pool")?;
+            return text.trim_end_matches("f32").parse::<f32>().map_err(|e| format!("the literal {text}: {e}"));
+        }
+        let (op, _) = row.name.split_once('@').ok_or_else(|| format!("{} is not a scalar row", row.name))?;
+        if t.kids.is_empty() {
+            return match op {
+                "px" => Ok(self.px),
+                "py" => Ok(self.py),
+                "u_width" => Ok(self.ps[0]),
+                "u_height" => Ok(self.ps[1]),
+                "nx" => Ok(self.px / self.ps[0]),
+                "ny" => Ok(self.py / self.ps[1]),
+                v if v.starts_with('v') && v[1..].parse::<usize>().is_ok() => Ok(self.vars[v[1..].parse::<usize>().map_err(|e| e.to_string())?]),
+                u => {
+                    let i = self.iface.iter().position(|x| x.spelling == u).ok_or_else(|| format!("the terminal {u} is not an input"))?;
+                    Ok(self.ps[HEADER + i])
+                }
+            };
+        }
+        let a = self.scalar(&t.kids[0])?;
+        if t.kids.len() == 3 {
+            // sel: if a >= 0 then b else c (only the taken branch is evaluated, as Futhark's `if`).
+            return if a >= 0.0 { self.scalar(&t.kids[1]) } else { self.scalar(&t.kids[2]) };
+        }
+        if t.kids.len() == 2 {
+            let b = self.scalar(&t.kids[1])?;
+            return Ok(match op {
+                "add" => a + b,
+                "sub" => a - b,
+                "mul" => a * b,
+                "div" => a / b,
+                "max" => a.max(b),
+                "min" => a.min(b),
+                "pow" => a.powf(b),
+                "mod" => a % b,
+                o => return Err(format!("{o} is not a binary row")),
+            });
+        }
+        Ok(match op {
+            "neg" => -a,
+            "abs" => a.abs(),
+            "sqrt" => a.sqrt(),
+            "sin" => a.sin(),
+            "cos" => a.cos(),
+            "tan" => a.tan(),
+            "tanh" => a.tanh(),
+            "exp" => a.exp(),
+            "log" => a.ln(),
+            "floor" => a.floor(),
+            "trunc" => a.trunc(),
+            o => return Err(format!("{o} is not a unary row")),
+        })
+    }
 }
 
 // ---- a program written by hand, as a tree of rows ---------------------------
@@ -1167,6 +1315,139 @@ mod tests {
         let mut s: Vec<f64> = times.iter().map(|t| t.0).collect();
         s.sort_by(|a, b| a.total_cmp(b));
         eprintln!("20 half-draw cuneus candidates compiled and linked on the host: seconds min {:.2}, median {:.2}, max {:.2}; (seconds, nodes) {:?}", s[0], s[10], s[19], times.iter().map(|(a, b)| (format!("{a:.2}"), *b)).collect::<Vec<_>>());
+    }
+
+    /// The interpreter means what Futhark's C backend computes: 12 random image-target genes (half draw, program
+    /// size 24) and the volumepassage reference, drawn both ways at 16 x 12, agree to 1e-4 relative (libm and
+    /// Futhark's `sin`/`pow` are not bit-identical), a NaN where the other is a NaN.
+    #[test]
+    fn the_interpreter_agrees_with_futhark_c() {
+        if !have("futhark") || !have("cc") {
+            eprintln!("skipped: futhark or cc is not installed");
+            return;
+        }
+        let dir = std::env::temp_dir().join("futhark_pixel_interp").join(format!("t{}", std::process::id()));
+        let mut checked = 0;
+        for (inst, shader_case) in [(IMAGE, false), (VOLUMEPASSAGE, true)] {
+            let k = load(&inst).unwrap();
+            let contract = k.relations().check().unwrap();
+            let iface = interface(&inst).unwrap();
+            let root = k.ty("image").unwrap();
+            let layout = GeneLayout::from_program_size(&contract, root, 24).unwrap();
+            let const_len = k.const_len();
+            let mut rng = crate::futhark_kingdom::GeneRng::new(0x1A7E);
+            let blocks = case(5.0);
+            let b: Vec<(u32, u32, &[u8])> = blocks.iter().map(|(g, b, v)| (*g, *b, v.as_slice())).collect();
+            let trees: Vec<Tree> = if shader_case {
+                vec![build(&k, VOLUMEPASSAGE_REFERENCE).unwrap()]
+            } else {
+                (0..12).map(|_| express(&contract, &layout, &random_gene(&k, &contract, &layout, &const_len, HeadDraw::Half, &mut rng).unwrap(), &const_len).unwrap().tree()).collect()
+            };
+            for t in &trees {
+                let (w, h) = (16u32, 12u32);
+                let tile = Tile { col0: 0, row0: 0, cols: w, rows: h };
+                let ps = inputs(&iface, if shader_case { &b } else { &[] }, w, h, tile).unwrap();
+                let got = run_exe(&compile_c(&program(&k, &iface, t).unwrap(), &dir.join(format!("p{checked}"))).unwrap(), &ps).unwrap();
+                for y in 0..h {
+                    for x in 0..w {
+                        let want = eval_pixel(&k, &iface, t, &ps, x as f32, y as f32).unwrap();
+                        for c in 0..3 {
+                            let (g, e) = (got[((y * w + x) * 3 + c) as usize], want[c as usize]);
+                            let ok = (g.is_nan() && e.is_nan()) || g == e || (g - e).abs() <= 1e-4 * g.abs().max(e.abs()).max(1e-3);
+                            assert!(ok, "pixel ({x}, {y}) channel {c}: futhark c {g}, the interpreter {e}\n{}", program(&k, &iface, t).unwrap());
+                        }
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 13);
+    }
+
+    /// THE GATE for an image target (bugberman, `tests/corpus/targets`): 1,000 random genes of the image instance
+    /// (half head draw, program size 60), drawn by the interpreter at 24 x 22, must draw something other than
+    /// uniform black at least half the time, and a constant colour equal to the target's mean (to the nearest pool
+    /// expression) must be expressible and score clearly better than black on the quality inputs.
+    #[cfg(feature = "wgsl")]
+    #[test]
+    fn random_image_programs_draw_colour_and_the_mean_colour_beats_black() {
+        use crate::wgsl::image::{largest_colour_share, quality_inputs, read_ppm, srgb_display, Picture};
+        let target = read_ppm(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/targets/bugberman_24x22.ppm")).unwrap();
+        let (w, h) = (target.width, target.height);
+        let (share, bins) = largest_colour_share(&target, 4);
+        eprintln!("bugberman at {w}x{h}: largest colour {:.1} % of the pixels, {bins} of 64 bins", share * 100.0);
+        let k = load(&IMAGE).unwrap();
+        let contract = k.relations().check().unwrap();
+        let iface = interface(&IMAGE).unwrap();
+        let root = k.ty("image").unwrap();
+        let layout = GeneLayout::from_program_size(&contract, root, 60).unwrap();
+        let const_len = k.const_len();
+        let ps = inputs(&iface, &[], w, h, Tile { col0: 0, row0: 0, cols: w, rows: h }).unwrap();
+        let draw_tree = |t: &Tree| -> Picture {
+            let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let c = eval_pixel(&k, &iface, t, &ps, x as f32, y as f32).unwrap();
+                    rgba.extend_from_slice(&[c[0], c[1], c[2], 1.0]);
+                }
+            }
+            Picture { width: w, height: h, rgba }
+        };
+        let theta = |p: &Picture| crate::score::truenorth_angle(&quality_inputs(p, &target).unwrap().0);
+        let mut rng = crate::futhark_kingdom::GeneRng::new(0xB06B);
+        let (mut not_black, mut varied, mut skipped) = (0usize, 0usize, 0usize);
+        let mut colours = Vec::new();
+        for _ in 0..1000 {
+            let g = random_gene(&k, &contract, &layout, &const_len, HeadDraw::Half, &mut rng).unwrap();
+            let t = express(&contract, &layout, &g, &const_len).unwrap().tree();
+            // The host draws only what the GPU guard would let through in one submit of this small picture.
+            if work_per_pixel(&k, &t).unwrap() * u128::from(w * h) > 170_000_000 {
+                skipped += 1;
+                continue;
+            }
+            let p = draw_tree(&t);
+            let shown: Vec<u8> = p.rgba.chunks_exact(4).flat_map(|c| c[..3].iter().map(|v| (srgb_display(*v).max(0.0) * 255.0 + 0.5) as u8).collect::<Vec<_>>()).collect();
+            if shown.iter().any(|v| *v > 1) {
+                not_black += 1;
+            }
+            let (_, used) = largest_colour_share(&p, 4);
+            if used > 1 {
+                varied += 1;
+            }
+            colours.push(used);
+        }
+        colours.sort_unstable();
+        let drawn = 1000 - skipped;
+        eprintln!(
+            "1000 random image genes (half draw, N = 60): {drawn} drawn ({skipped} over the work bound at {w}x{h}); not uniform black {not_black} ({:.1} %); more than one of 64 colour bins {varied} ({:.1} %); bins used median {}, p90 {}, max {}",
+            100.0 * not_black as f64 / drawn as f64,
+            100.0 * varied as f64 / drawn as f64,
+            colours[colours.len() / 2],
+            colours[colours.len() * 9 / 10],
+            colours[colours.len() - 1]
+        );
+        assert!(not_black * 2 >= drawn, "only {not_black} of {drawn} random programs draw something other than black");
+        // The target's mean colour (linear), and the nearest constant the pool spells: a literal, or a product or a
+        // quotient of two.
+        let mean: Vec<f64> = (0..3).map(|c| target.rgba.chunks_exact(4).map(|p| f64::from(p[c])).sum::<f64>() / f64::from(w * h)).collect();
+        let pool: Vec<(String, f64)> = k.dual(k.ty("f32.s0").unwrap()).unwrap().literals.iter().map(|l| (l.trim_end_matches("f32").to_string(), l.trim_end_matches("f32").parse::<f64>().unwrap())).collect();
+        let mut forms: Vec<(String, f64)> = pool.clone();
+        for (a, x) in &pool {
+            for (b, y) in &pool {
+                forms.push((format!("(mul {a} {b})"), x * y));
+                if *y != 0.0 {
+                    forms.push((format!("(div {a} {b})"), x / y));
+                }
+            }
+        }
+        let pick = |m: f64| forms.iter().min_by(|p, q| (p.1 - m).abs().total_cmp(&(q.1 - m).abs())).unwrap().clone();
+        let chosen: Vec<(String, f64)> = mean.iter().map(|m| pick(*m)).collect();
+        let text = format!("(image (rgb {} {} {}))", chosen[0].0, chosen[1].0, chosen[2].0);
+        let mean_tree = build(&k, &text).unwrap();
+        let black_tree = Tree { symbol: k.rows.iter().position(|r| r.name == "image.black").unwrap() as u32, const_index: None, kids: vec![] };
+        let (tm, tb) = (theta(&draw_tree(&mean_tree)), theta(&draw_tree(&black_tree)));
+        eprintln!("the target's mean colour (linear) {mean:.4?} spelled {text} = {:.4?}; quality angle {tm:.4} against black's {tb:.4}", chosen.iter().map(|c| c.1).collect::<Vec<_>>());
+        assert!(tm + 0.1 < tb, "the mean colour ({tm}) does not score clearly better than black ({tb})");
     }
 
     #[test]

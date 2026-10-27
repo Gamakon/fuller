@@ -85,7 +85,7 @@ fn real_main() -> Result<(), String> {
     let (inst, reference) = instance(&shader)?;
     let k = load(&inst)?;
     let iface = interface(&inst)?;
-    let tree = build(&k, reference)?;
+    let tree = build(&k, reference.ok_or_else(|| format!("{shader} has no hand-written reference"))?)?;
     let source = program(&k, &iface, &tree)?;
     std::fs::write(out.join("reference.fut"), &source).map_err(|e| e.to_string())?;
     let work = work_per_pixel(&k, &tree)?;
