@@ -1178,6 +1178,7 @@ PIXEL_GENERIC_LITERALS = ("0.0", "1.0", "-1.0", "0.5", "2.0", "3.0", "0.25", "10
 
 # The instances: the WGSL source of each, relative to the repository root.
 PIXEL_INSTANCES = {
+    "cuneus": "tests/corpus/cuneus_visual/cuneus.wgsl",
     "volumepassage": "tests/corpus/cuneus_visual/volumepassage.wgsl",
 }
 
@@ -1220,20 +1221,34 @@ def strip_comments(src):
 def pixel_interface(shader_path):
     """The interface of an instance, read from its WGSL source: every f32
     field of every uniform block, in declaration order, with the block's
-    group and binding and the field's word offset. A field whose name starts
-    with `_` is padding and is not an input. A field that is not a 4-byte
-    scalar is a finding: the offsets below would be wrong."""
+    group and binding and the field's word offset under WGSL's uniform layout
+    (a scalar is 4 bytes aligned to 4, a vec2 8 aligned to 8, a vec3 12 and a
+    vec4 16 aligned to 16). A `vecN<f32>` field is N inputs, `name_x`,
+    `name_y`, `name_z`, `name_w`. A field whose name starts with `_` is padding
+    and is not an input. Any other field type is a finding: the offsets would
+    be wrong."""
     src = strip_comments(open(shader_path).read())
     structs = {m.group(1): FIELD_RE.findall(m.group(2)) for m in STRUCT_RE.finditer(src)}
+    layout = {"f32": (4, 4, 1), "u32": (4, 4, 0), "i32": (4, 4, 0),
+              "vec2<f32>": (8, 8, 2), "vec3<f32>": (12, 16, 3), "vec4<f32>": (16, 16, 4)}
     out = []
     for g, b, _var, ty in UNIFORM_RE.findall(src):
         if ty not in structs:
             raise ValueError(f"the uniform block type {ty} has no struct in {shader_path}")
-        for word, (name, fty) in enumerate(structs[ty]):
-            if fty not in ("f32", "u32", "i32"):
-                raise ValueError(f"the uniform field {ty}.{name} is a {fty}, not a 4-byte scalar")
-            if fty == "f32" and not name.startswith("_"):
-                out.append({"name": name, "group": int(g), "binding": int(b), "word": word, "spelling": f"u_{name}"})
+        offset = 0
+        for name, fty in structs[ty]:
+            if fty not in layout:
+                raise ValueError(f"the uniform field {ty}.{name} is a {fty}, which the interface does not lay out")
+            size, align, lanes = layout[fty]
+            offset = (offset + align - 1) // align * align
+            if not name.startswith("_"):
+                if fty == "f32":
+                    out.append({"name": name, "group": int(g), "binding": int(b), "word": offset // 4, "spelling": f"u_{name}"})
+                for i in range(lanes if fty.startswith("vec") else 0):
+                    lane = "xyzw"[i]
+                    out.append({"name": f"{name}.{lane}", "group": int(g), "binding": int(b), "word": offset // 4 + i,
+                                "spelling": f"u_{name}_{lane}"})
+            offset += size
     names = [f["spelling"] for f in out]
     if len(set(names)) != len(names):
         raise ValueError(f"two uniform fields share a name in {shader_path}: {names}")
@@ -1292,6 +1307,17 @@ def pixel_rows(interface):
             out.append({"name": f"let@{out_of(k)}", "kind": "function", "out": out_of(k),
                         "args": [s_dual(k), rest_of(k + 1)],
                         "spelling": f"let v{k} = {{0}} in {{1}}", "note": f"bind v{k}"})
+        # A block: a let-chain of its own that returns S values and releases
+        # its scope. It adds no loop depth and no trips, so the work bound is
+        # unchanged; its body is a body type at the SAME depth.
+        for s in PIXEL_ARITIES:
+            if k + s > PIXEL_SCOPES:
+                continue
+            state = ", ".join(f"v{k + i}" for i in range(s))
+            out.append({"name": f"block{s}@{out_of(k)}", "kind": "function", "out": out_of(k),
+                        "args": [body_dual(s, d, k), rest_of(k + s)],
+                        "spelling": f"let ({state}) = {{0}} in {{1}}",
+                        "note": f"a block of {s} values binding v{k}..v{k + s - 1}; its own bindings end with it"})
         if d < PIXEL_DEPTH:
             for s in PIXEL_ARITIES:
                 if k + s + 1 > PIXEL_SCOPES:
@@ -1321,7 +1347,7 @@ def pixel_rows(interface):
         here = binders(lambda kk, s=s, d=d: body_dual(s, d, kk), k, d, lambda kk, s=s, d=d: body_dual(s, d, kk))
         here.append({"name": f"tuple@{dual}", "kind": "function", "out": dual, "args": [s_dual(k)] * s,
                      "spelling": "(" + ", ".join(f"{{{i}}}" for i in range(s)) + ")",
-                     "note": f"the loop's next state, {s} values"})
+                     "note": f"the {s} values a loop body or a block returns"})
         rows += here
         for r in here:
             for a in r["args"]:
@@ -1571,6 +1597,13 @@ def witness_pixel(dir_path, instance):
                 bad.append(f"P5 the loop {name} does not bind v{k}..v{k + s - 1} and its counter v{k + s}: {spelling!r}")
             if depth + 1 > PIXEL_DEPTH:
                 bad.append(f"P6 the loop {name} nests deeper than {PIXEL_DEPTH}")
+        if name.startswith("block"):
+            s = int(name[5:name.index("@")])
+            depth = 0 if out.startswith("blk") else parse_body(out)[1]
+            state = ", ".join(f"v{k + i}" for i in range(s))
+            if (len(args) != 2 or parse_body(args[0]) != (s, depth, k) or scope_of(args[1]) != k + s
+                    or args[1].split(".s")[0] != out.split(".s")[0] or spelling != f"let ({state}) = {{0}} in {{1}}"):
+                bad.append(f"P5 the block {name} does not bind v{k}..v{k + s - 1} from a body of its own depth: {args} {spelling!r}")
         if name.startswith("tuple@"):
             s = parse_body(out)[0]
             if len(args) != s:

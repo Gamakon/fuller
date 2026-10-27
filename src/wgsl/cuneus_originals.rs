@@ -59,6 +59,18 @@ pub fn case_bindings(shader: &str, time: f32, width: u32, height: u32) -> Result
                 BindingData::ZeroStorage { group: 2, binding: 0, bytes: 3 * u64::from(width) * u64::from(height) * 4 },
             ])
         }
+        // Params (cuneus `examples/cuneus.rs` defaults): background_color 0.4, 3 pads, hue_color (1, 2, 3) + pad,
+        // light_intensity 1.8, rim_power 3, ao_strength 0.1, env_light_strength 0.5, iridescence_power 0.2,
+        // falloff_distance 1, global_light 1, alpha_threshold 1, mix_factor_scale 0.3, then the host's 11 pads.
+        "cuneus" => {
+            let mut w = vec![0.4f32, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 1.8, 3.0, 0.1, 0.5, 0.2, 1.0, 1.0, 1.0, 0.3];
+            w.resize(28, 0.0);
+            Ok(vec![
+                BindingData::Uniform { group: 0, binding: 0, bytes: time_block },
+                BindingData::Output { group: 1, binding: 0 },
+                BindingData::Uniform { group: 1, binding: 1, bytes: words_f32(&w) },
+            ])
+        }
         other => Err(format!("no case for {other}")),
     }
 }

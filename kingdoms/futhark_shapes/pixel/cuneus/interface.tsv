@@ -1,0 +1,17 @@
+# input	group	binding	word	spelling
+time	0	0	0	u_time
+delta	0	0	1	u_delta
+background_color	1	1	0	u_background_color
+hue_color.x	1	1	4	u_hue_color_x
+hue_color.y	1	1	5	u_hue_color_y
+hue_color.z	1	1	6	u_hue_color_z
+hue_color.w	1	1	7	u_hue_color_w
+light_intensity	1	1	8	u_light_intensity
+rim_power	1	1	9	u_rim_power
+ao_strength	1	1	10	u_ao_strength
+env_light_strength	1	1	11	u_env_light_strength
+iridescence_power	1	1	12	u_iridescence_power
+falloff_distance	1	1	13	u_falloff_distance
+global_light	1	1	14	u_global_light
+alpha_threshold	1	1	15	u_alpha_threshold
+mix_factor_scale	1	1	16	u_mix_factor_scale

@@ -339,6 +339,125 @@ pub fn write_png(path: &std::path::Path, p: &Picture) -> Result<(), String> {
     std::fs::write(path, png_bytes(p)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The picture enlarged by the smallest whole factor that makes it at least `min_width` pixels wide (each pixel a
+/// square block), for a reader such as OCR that needs letters a few dozen pixels tall.
+pub fn upscaled(p: &Picture, min_width: u32) -> Picture {
+    let f = min_width.div_ceil(p.width.max(1)).max(1);
+    let (w, h) = (p.width * f, p.height * f);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let at = (((y / f) * p.width + x / f) * 4) as usize;
+            rgba.extend_from_slice(&p.rgba[at..at + 4]);
+        }
+    }
+    Picture { width: w, height: h, rgba }
+}
+
+/// What OCR read in a picture: the words, tesseract's mean word confidence (0 to 100; -1 when it read no word),
+/// whether the letters equal the word wanted (case-insensitive, anything but letters and digits ignored), and the
+/// edit distance (Levenshtein, on those letters) from the word wanted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ocr {
+    pub text: String,
+    pub confidence: f64,
+    pub matches: bool,
+    pub distance: usize,
+}
+
+fn levenshtein(a: &[char], b: &[char]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1; b.len() + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur[j + 1] = (prev[j] + usize::from(ca != cb)).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Read the text of a PNG with `tesseract` (`psm` its page segmentation: 7 one line, 8 one word) and compare it with
+/// `want`. A report measurement, not a fitness input.
+pub fn ocr(png: &std::path::Path, want: &str, psm: u32) -> Result<Ocr, String> {
+    let out = std::process::Command::new("tesseract")
+        .arg(png)
+        .arg("-")
+        .args(["--psm", &psm.to_string(), "tsv"])
+        .output()
+        .map_err(|e| format!("tesseract: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("tesseract failed on {}: {}", png.display(), String::from_utf8_lossy(&out.stderr)));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut words = Vec::new();
+    let mut confs = Vec::new();
+    for line in text.lines().skip(1) {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() == 12 && f[0] == "5" {
+            let w = f[11].trim();
+            if !w.is_empty() {
+                words.push(w.to_string());
+                confs.push(f[10].parse::<f64>().map_err(|e| format!("a tesseract confidence {:?}: {e}", f[10]))?);
+            }
+        }
+    }
+    let joined = words.join(" ");
+    let letters: Vec<char> = joined.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase().chars().collect();
+    let wanted: Vec<char> = want.to_uppercase().chars().collect();
+    let confidence = if confs.is_empty() { -1.0 } else { confs.iter().sum::<f64>() / confs.len() as f64 };
+    Ok(Ocr { text: joined, confidence, matches: letters == wanted, distance: levenshtein(&letters, &wanted) })
+}
+
+/// The picture prepared for OCR of bright text: the display grey (`0.299 R + 0.587 G + 0.114 B` of the sRGB
+/// values) thresholded at `threshold` (bright = ink, drawn black on white), cropped to the ink's bounding box with a
+/// margin of a tenth of the picture's height, and enlarged to at least `min_width` pixels. `None` when no pixel is
+/// that bright.
+pub fn ocr_prepared(p: &Picture, threshold: f32, min_width: u32) -> Option<Picture> {
+    let grey = |i: usize| {
+        let c = |k: usize| srgb_display(p.rgba[i * 4 + k]);
+        0.299 * c(0) + 0.587 * c(1) + 0.114 * c(2)
+    };
+    let (w, h) = (p.width as usize, p.height as usize);
+    let ink: Vec<bool> = (0..w * h).map(|i| grey(i) > threshold).collect();
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            if ink[y * w + x] {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+        }
+    }
+    if x0 == usize::MAX {
+        return None;
+    }
+    let m = (h / 10).max(2);
+    let (cx0, cy0) = (x0.saturating_sub(m), y0.saturating_sub(m));
+    let (cx1, cy1) = ((x1 + m).min(w - 1), (y1 + m).min(h - 1));
+    let (cw, ch) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
+    let mut rgba = Vec::with_capacity(cw * ch * 4);
+    for y in cy0..=cy1 {
+        for x in cx0..=cx1 {
+            // Linear 0 and 1 are display 0 and 1, so the PNG holds pure black ink on white.
+            let v = if ink[y * w + x] { 0.0 } else { 1.0 };
+            rgba.extend_from_slice(&[v, v, v, 1.0]);
+        }
+    }
+    Some(upscaled(&Picture { width: cw as u32, height: ch as u32, rgba }, min_width))
+}
+
+/// The OCR reading of a picture for the report: prepared ([`ocr_prepared`], threshold 200/255, at least 1024 wide),
+/// written to `png`, and read as one word. A picture with no bright pixel reads as nothing.
+pub fn ocr_word(p: &Picture, png: &std::path::Path, want: &str) -> Result<Ocr, String> {
+    match ocr_prepared(p, 200.0 / 255.0, 1024) {
+        Some(q) => {
+            write_png(png, &q)?;
+            ocr(png, want, 8)
+        }
+        None => Ok(Ocr { text: String::new(), confidence: -1.0, matches: false, distance: want.len() }),
+    }
+}
+
 /// The median of a list (the mean of the middle two for an even count).
 pub fn median(v: &[f64]) -> f64 {
     let mut s = v.to_vec();
@@ -1162,6 +1281,24 @@ mod tests {
         let black = Picture { width: 1, height: 1, rgba: vec![0.0, 0.0, 0.0, 1.0] };
         let d = compare(&black, &p).expect("same size");
         assert!((d.max_abs - f64::from(srgb_display(0.03))).abs() < 1e-9 && d.max_abs > 0.18, "{d:?}");
+    }
+
+    #[test]
+    fn the_ocr_helpers_measure_edit_distance_and_crop_the_ink() {
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert_eq!(levenshtein(&c("CUNELS"), &c("CUNEUS")), 1);
+        assert_eq!(levenshtein(&c(""), &c("CUNEUS")), 6);
+        assert_eq!(levenshtein(&c("CUNEUS"), &c("CUNEUS")), 0);
+        let mut p = Picture { width: 40, height: 20, rgba: vec![0.1; 40 * 20 * 4] };
+        for x in 10..20 {
+            for k in 0..3 {
+                p.rgba[(10 * 40 + x) * 4 + k] = 1.0;
+            }
+        }
+        let q = ocr_prepared(&p, 200.0 / 255.0, 100).expect("ink");
+        // A 10 x 1 stroke with a margin of 2: 14 x 5, enlarged by 8 to 112 x 40.
+        assert_eq!((q.width, q.height), (112, 40));
+        assert!(ocr_prepared(&Picture { width: 4, height: 4, rgba: vec![0.0; 64] }, 0.5, 10).is_none());
     }
 
     #[test]
