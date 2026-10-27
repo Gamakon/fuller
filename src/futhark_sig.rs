@@ -109,6 +109,30 @@ pub struct Problem {
     pub planted: &'static str,
     /// Relative to the crate's root.
     pub corpus: &'static str,
+    /// THE TIMING INPUT's size (`n`; 0: time on the largest training case). A micro benchmark is timed on its own
+    /// large input ([`timing_input`]), used only for timing and never as a quality case: measured 2026-10-27, reduce
+    /// timed on its 1,000-element training case gave A/A ratios in three clusters (0.30, 1.00, 3.3), the GPU's clock
+    /// states on a 10-30 us kernel, so selection in stage 2 chose on noise.
+    pub timing_n: usize,
+}
+
+/// The timing input of a problem with `timing_n > 0`, in Futhark's binary format (the entry point's parameters):
+/// `n` values uniform over the whole `i32` range (the histogram: k = 100, indices and values so drawn), a fixed seed.
+pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
+    let n = p.timing_n;
+    if n == 0 {
+        return Ok(None);
+    }
+    let mut rng = GeneRng::new(0x7131_6E00 ^ n as u64);
+    let mut any = |n: usize| Array { dims: vec![n], data: (0..n).map(|_| rng.next_u64() as u32 as i32).collect() };
+    match p.name {
+        "reduce" | "scan" => Ok(Some(write_binary(&[&any(n)]))),
+        "histogram" => {
+            let (is, vs) = (any(n), any(n));
+            Ok(Some(write_binary(&[&Array { dims: vec![], data: vec![100] }, &is, &vs])))
+        }
+        other => Err(format!("no timing input recipe for {other}")),
+    }
 }
 
 /// Pathfinder's published algorithm (`rodinia/pathfinder/pathfinder.fut`) as a gene: the state starts as row 0 of
@@ -134,6 +158,7 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/pathfinder/yardstick.fut"),
     planted: PATHFINDER_PLANTED,
     corpus: "tests/corpus/futhark_problems/pathfinder",
+    timing_n: 0,
 };
 
 /// Reduce's published program, `i32.sum` (`reduce (+) 0`), as a gene.
@@ -149,6 +174,7 @@ pub const REDUCE_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/reduce/yardstick.fut"),
     planted: REDUCE_PLANTED,
     corpus: "tests/corpus/futhark_problems/reduce",
+    timing_n: 1 << 24,
 };
 
 /// Scan's published program, `scan (+) 0`, as a gene.
@@ -163,6 +189,7 @@ pub const SCAN_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/scan/yardstick.fut"),
     planted: SCAN_PLANTED,
     corpus: "tests/corpus/futhark_problems/scan",
+    timing_n: 1 << 24,
 };
 
 /// The histogram's published program, `hist (+) 0 k (map (% k) is) vs`, as a gene: the bins are the indices modulo
@@ -178,6 +205,7 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/histogram/yardstick.fut"),
     planted: HISTOGRAM_PLANTED,
     corpus: "tests/corpus/futhark_problems/histogram",
+    timing_n: 1 << 24,
 };
 
 /// A problem by name.

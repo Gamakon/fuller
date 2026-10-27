@@ -113,6 +113,36 @@ enum Backend {
     C,
 }
 
+/// The input the speed is timed on.
+#[derive(Debug, Clone)]
+struct TimingInput {
+    name: String,
+    stdin: Vec<u8>,
+    sizes: BTreeMap<String, usize>,
+    /// The published program's output on it, when the problem has its own timing input.
+    output: Option<Vec<u8>>,
+}
+
+impl TimingInput {
+    /// The problem's own timing input (`futhark_sig::timing_input`, `Problem::timing_n`) with the published
+    /// program's output on it (the yardstick through `futhark c`), or the largest training case.
+    fn of(p: &fuller::futhark_sig::Problem, sig: &Signature, cases: &[Case], build_dir: &Path) -> Result<TimingInput, String> {
+        if let Some(stdin) = fuller::futhark_sig::timing_input(p)? {
+            let inputs = read_binary(&stdin)?;
+            let exe = compile_c(p.yardstick, build_dir)?;
+            let output = fuller::futhark_sig::run_exe(&exe, &stdin)?;
+            return Ok(TimingInput { name: format!("{}'s timing input", p.name), sizes: sig.sizes(&inputs)?, stdin, output: Some(fuller::futhark_sig::write_binary(&[&output])) });
+        }
+        let i = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.data.len() * cases[*i].inputs.iter().map(|a| a.data.len()).sum::<usize>()).ok_or("no training case")?;
+        Ok(TimingInput { name: cases[i].name.clone(), stdin: cases[i].stdin.clone(), sizes: sig.sizes(&cases[i].inputs)?, output: None })
+    }
+
+    fn label(&self) -> String {
+        let sizes: Vec<String> = self.sizes.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+        format!("{} ({})", self.name, sizes.join(", "))
+    }
+}
+
 /// What a program measured on the stored cases (independent of the stage).
 #[derive(Debug, Clone)]
 struct Quality {
@@ -178,8 +208,11 @@ struct Judge<'a> {
     interp: Interp<'a>,
     cases: Vec<Case>,
     sizes: Vec<BTreeMap<String, usize>>,
-    /// The case the speed is timed on (the largest training case).
-    timing_case: usize,
+    /// The input the speed is timed on: the problem's own large timing input (never a quality case) or, without one,
+    /// the largest training case.
+    timing: TimingInput,
+    /// Programs over the work cap at the timing size, not timed (no speed credit).
+    over_cap_untimed: u64,
     backend: Backend,
     runs: usize,
     yard_exe: Option<PathBuf>,
@@ -234,13 +267,21 @@ impl Judge<'_> {
 
     /// One process's time on the timing case: the fastest of `runs` runs' GPU-timed passes, in nanoseconds.
     fn time_once(&self, exe: &Path) -> Result<f64, String> {
-        let (_, report) = run_program_bytes(exe, &self.cases[self.timing_case].stdin, true, self.runs)?;
+        let (_, report) = run_program_bytes(exe, &self.timing.stdin, true, self.runs)?;
         if report.dispatches == 0 && report.passes.is_empty() && report.backend == "Metal" {
             // No GPU work at all (a constant output: measured 2026-10-27, 18 of reduce's first 48 programs): the GPU
             // time is not a measure of it, so it earns no speed credit (ratio infinite, speed input 1), never a bug.
             return Ok(f64::INFINITY);
         }
         report.fastest_run_ns(self.runs)
+    }
+
+    /// The pairs of a FRESHLY COMPILED executable: one process of it run first and discarded, then the pairs. Measured
+    /// 2026-10-27 on reduce's timing input: the first process of a new executable took 3.16x the yardstick's time
+    /// (the in-run A/A's first pair), the next 10 pairs 0.994 to 1.010.
+    fn time_fresh(&self, exe: &Path, pairs: usize) -> Result<Vec<f64>, String> {
+        self.time_once(exe)?;
+        self.time_pairs(exe, pairs)
     }
 
     /// Interleaved pairs, candidate against the yardstick, the order alternating: the ratios candidate / yardstick.
@@ -320,9 +361,14 @@ impl Judge<'_> {
                 return Err("stage 2 times on the GPU: the c backend cannot enter it (run with --backend gpu)".into());
             }
             let missing = self.slots.missing(source);
-            if missing > 0 {
+            let timing_work = self.interp.work(tree, &self.timing.sizes)?;
+            if missing > 0 && timing_work > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+                // Over the per-submit cap at the timing size: never dispatched (the work guard), no speed credit.
+                self.over_cap_untimed += 1;
+                self.slots.add(source, &vec![f64::INFINITY; missing])?;
+            } else if missing > 0 {
                 // The timed program is the plain one (the declared signature, one case); its empty slots are filled.
-                let r = match self.compile(source, &self.work_dir.join("timed")).and_then(|e| self.time_pairs(&e, missing)) {
+                let r = match self.compile(source, &self.work_dir.join("timed")).and_then(|e| if missing == self.slots.slots() { self.time_fresh(&e, missing) } else { self.time_pairs(&e, missing) }) {
                     Ok(r) => r,
                     Err(err) => {
                         self.log_bug(&format!("timing: {err}"), source);
@@ -585,6 +631,8 @@ fn real_main() -> Result<(), String> {
     let resume = args.iter().any(|a| a == "--resume");
     // Discovery runs (R, C) answer H1 and H2: they stop at the first program exact on every case, never timing.
     let stop_at_exact = args.iter().any(|a| a == "--stop-at-exact");
+    // The timing gate (P): measure the two A/A sets and stop, before any search.
+    let aa_only = args.iter().any(|a| a == "--aa-only");
     if stop_at_exact && regime == "P" {
         return Err("--stop-at-exact is for the discovery regimes R and C; P starts exact and measures speed".into());
     }
@@ -611,7 +659,7 @@ fn real_main() -> Result<(), String> {
     let cases = load_cases(&p)?;
     let sizes: Vec<BTreeMap<String, usize>> = cases.iter().map(|c| sig.sizes(&c.inputs)).collect::<Result<_, _>>()?;
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
-    let timing_case = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.data.len() * cases[*i].inputs.iter().map(|a| a.data.len()).sum::<usize>()).ok_or("no training case")?;
+    let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
     println!(
         "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out), timing on {}{}",
         utc(),
@@ -619,7 +667,7 @@ fn real_main() -> Result<(), String> {
         layout.width,
         cases.len(),
         cases.iter().filter(|c| c.split == Split::Held).count(),
-        cases[timing_case].name,
+        timing.label(),
         if resume { "; RESUMED" } else { "" }
     );
     // Control: the reference gene is exact on every case (interpreted), so the kingdom expresses the published program.
@@ -658,7 +706,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing_case, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
         tel,
         ledger: Ledger::open(&out, resume)?,
         next_id: 0,
@@ -673,9 +721,17 @@ fn real_main() -> Result<(), String> {
         let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
         run.judge.time_pairs(&y, 1)?;
         noise = run.judge.time_pairs(&y, 11)?;
-        let msg = format!("A/A noise floor, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", run.judge.cases[timing_case].name, median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("A/A noise floor, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
+    }
+    if let (Some(want), Some(y)) = (&run.judge.timing.output, &run.judge.yard_exe) {
+        // Control: the yardstick's GPU output on the timing input is the stored one (futhark c).
+        let (got, _) = run_program_bytes(y, &run.judge.timing.stdin, false, 1)?;
+        if read_binary(&got)? != read_binary(want)? {
+            return Err("our software has a bug: the yardstick on the GPU does not give futhark c's output on the timing input".into());
+        }
+        println!("# {} control: the yardstick on the GPU gives futhark c's output on {} (GPU)", utc(), run.judge.timing.label());
     }
     let ref_source = program(&k, &sig, &reference)?;
     let ref_q = run.judge.quality(&reference, &ref_source)?;
@@ -688,12 +744,27 @@ fn real_main() -> Result<(), String> {
     let mut inrun_aa: Vec<f64> = Vec::new();
     if regime == "P" && backend == Backend::Gpu {
         let exe = run.judge.compile(p.yardstick, &out.join("candidate_build").join("timed"))?;
-        let r = run.judge.time_pairs(&exe, pairs)?;
+        let r = run.judge.time_fresh(&exe, pairs)?;
         run.judge.slots.add(p.yardstick, &r)?;
         inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
         let msg = format!("in-run A/A, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
+    }
+    if aa_only {
+        if regime != "P" {
+            return Err("--aa-only measures the two A/A sets of regime P".into());
+        }
+        let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
+        let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
+        let within = all.iter().filter(|r| (0.95..=1.05).contains(*r)).count();
+        let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
+        let one: Vec<f64> = (0..3).map(|_| run.judge.time_once(&y)).collect::<Result<_, _>>()?;
+        let rep = format!("problem\t{pname}\ntiming_input\t{}\npublished_gpu_us_fastest_run_3_processes\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n", run.judge.timing.label(), one.iter().map(|ns| format!("{:.1}", ns / 1e3)).collect::<Vec<_>>().join(","), fmt(&noise), fmt(&inrun_aa), all.len(), if within == all.len() && !all.is_empty() { "pass" } else { "fail" });
+        std::fs::write(out.join("aa_gate.tsv"), &rep).map_err(|e| e.to_string())?;
+        print!("{rep}");
+        run.tel.end("early_stop", 0, None)?;
+        return Ok(());
     }
 
     let bridge = Bridge::load(&run.inst)?;
@@ -1109,10 +1180,15 @@ fn real_main() -> Result<(), String> {
         if !inrun_aa.is_empty() {
             rep.push_str(&format!("inrun_aa_ratios\t{}\ninrun_aa_median\t{:.4}\n", fmt(&inrun_aa), median(&inrun_aa)));
         }
+        rep.push_str(&format!("timing_input\t{}\nover_cap_untimed\t{}\n", run.judge.timing.label(), run.judge.over_cap_untimed));
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
             let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
-            let ratios = run.judge.time_pairs(&exe, 11)?;
+            let ratios = run.judge.time_fresh(&exe, 11)?;
+            if let Some(want) = &run.judge.timing.output {
+                let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
+                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
+            }
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
             // A speed claim counts only below the noise floor: the least ratio of both A/A sets.
             let floor = noise.iter().chain(inrun_aa.iter()).cloned().fold(f64::INFINITY, f64::min);
