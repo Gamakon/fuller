@@ -64,6 +64,19 @@ pub fn half_to_f32(h: u16) -> f32 {
     }
 }
 
+/// The display value of a linear colour channel: clamped to [0, 1] and sRGB-encoded, as the screen shows it. The
+/// cuneus host draws into an sRGB surface (`Bgra8UnormSrgb`, cuneus `src/renderkit.rs`), so the hardware encodes the
+/// shader's stored value on the way to the screen; a linear 0.03 is shown as about 48/255, not 8/255. A non-finite
+/// value is returned unchanged (the comparison counts it as a non-finite mismatch). The alpha channel is not encoded.
+pub fn srgb_display(x: f32) -> f32 {
+    if !x.is_finite() {
+        return x;
+    }
+    // In f64, so the ends are exact (1.055 - 0.055 is not 1 in f32).
+    let l = f64::from(x.clamp(0.0, 1.0));
+    (if l <= 0.003_130_8 { 12.92 * l } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 }) as f32
+}
+
 /// How two pictures of one size differ: every statistic is over the RGB channels of every pixel (the alpha is 1 in
 /// the cuneus shaders and is compared too, in `max_abs`).
 #[derive(Debug, Clone, PartialEq)]
@@ -81,7 +94,10 @@ pub struct Difference {
     pub non_finite_mismatch: usize,
 }
 
-/// The per-pixel error statistics of `got` against `want`. A size mismatch is an error.
+/// The per-pixel error statistics of `got` against `want`, measured in DISPLAY space: each colour channel of both
+/// pictures goes through [`srgb_display`] first (identically), so the error is the one a person sees on the cuneus
+/// host's sRGB surface; the alpha channel is compared as stored. Before 2026-10-27 the statistics were on the stored
+/// (linear) values. A size mismatch is an error.
 pub fn compare(got: &Picture, want: &Picture) -> Result<Difference, String> {
     if got.width != want.width || got.height != want.height {
         return Err(format!("pictures of different sizes: {}x{} against {}x{}", got.width, got.height, want.width, want.height));
@@ -92,6 +108,7 @@ pub fn compare(got: &Picture, want: &Picture) -> Result<Difference, String> {
         let mut worst = 0f64;
         for c in 0..4 {
             let (a, b) = (got.rgba[p * 4 + c], want.rgba[p * 4 + c]);
+            let (a, b) = if c < 3 { (srgb_display(a), srgb_display(b)) } else { (a, b) };
             if a.to_bits() != b.to_bits() {
                 differing += 1;
             }
@@ -157,7 +174,8 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
 }
 
 /// The picture's 8-bit RGB scanlines as a zlib stream of stored (uncompressed) deflate blocks: each channel clamped
-/// to [0, 1] and rounded, NaN as 0.
+/// to [0, 1], sRGB-encoded as the screen shows it ([`srgb_display`]) and rounded, NaN as 0. The picture's own `rgba`
+/// keeps the stored (linear) values.
 fn zlib_rgb(p: &Picture) -> Vec<u8> {
     let (w, h) = (p.width as usize, p.height as usize);
     let mut raw = Vec::with_capacity(h * (w * 3 + 1));
@@ -166,7 +184,7 @@ fn zlib_rgb(p: &Picture) -> Vec<u8> {
         for x in 0..w {
             for c in 0..3 {
                 let v = p.rgba[(y * w + x) * 4 + c];
-                let v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+                let v = if v.is_nan() { 0.0 } else { srgb_display(v.clamp(0.0, 1.0)) };
                 raw.push((v * 255.0 + 0.5) as u8);
             }
         }
@@ -193,7 +211,7 @@ fn png_head(out: &mut Vec<u8>, width: u32, height: u32) {
 }
 
 /// The picture as an 8-bit RGB PNG (stored, uncompressed deflate blocks): each channel clamped to [0, 1] and rounded.
-/// No gamma is applied: the cuneus shaders write their display value (`pow(c, 1/gamma)`), which is what their host shows.
+/// The sRGB transfer is applied ([`srgb_display`]), as the cuneus host's sRGB surface applies it on the way to the screen.
 pub fn png_bytes(p: &Picture) -> Vec<u8> {
     let mut out = Vec::new();
     png_head(&mut out, p.width, p.height);
@@ -1124,6 +1142,28 @@ mod device {
 mod tests {
     use super::*;
 
+    /// The planted picture: a linear 0.03 is shown, and saved, as about 48/255 (the sRGB transfer), not 8/255; the
+    /// encoding is clamped, monotone, exact at 0 and 1, and leaves a NaN to the comparison.
+    #[test]
+    fn a_dark_linear_value_is_saved_and_compared_as_the_screen_shows_it() {
+        assert_eq!((srgb_display(0.03) * 255.0 + 0.5) as u8, 48);
+        assert_eq!((srgb_display(0.0), srgb_display(1.0), srgb_display(-0.5), srgb_display(7.0)), (0.0, 1.0, 0.0, 1.0));
+        assert!(srgb_display(f32::NAN).is_nan());
+        let mut last = 0.0;
+        for i in 1..=1000 {
+            let v = srgb_display(i as f32 / 1000.0);
+            assert!(v > last, "not increasing at {i}");
+            last = v;
+        }
+        let p = Picture { width: 1, height: 1, rgba: vec![0.03, 0.03, 0.03, 1.0] };
+        let z = zlib_rgb(&p);
+        // zlib header (2), stored-block header (5), the filter byte, then the three channels.
+        assert_eq!(&z[8..11], &[48, 48, 48]);
+        let black = Picture { width: 1, height: 1, rgba: vec![0.0, 0.0, 0.0, 1.0] };
+        let d = compare(&black, &p).expect("same size");
+        assert!((d.max_abs - f64::from(srgb_display(0.03))).abs() < 1e-9 && d.max_abs > 0.18, "{d:?}");
+    }
+
     #[test]
     fn half_floats_decode() {
         assert_eq!(half_to_f32(0x3c00), 1.0);
@@ -1196,7 +1236,10 @@ mod tests {
         b.rgba[4] = 0.75;
         let d = compare(&a, &b).expect("same size");
         assert_eq!((d.differing_channels, d.pixels_over_one_step), (1, 1));
-        assert!((d.max_abs - 0.25).abs() < 1e-9 && (d.mean_abs - 0.25 / 6.0).abs() < 1e-9);
+        // In display space: the difference of the two encoded values.
+        let shown = f64::from(srgb_display(0.75) - srgb_display(0.5));
+        assert!((shown - 0.1455).abs() < 1e-3, "{shown}");
+        assert!((d.max_abs - shown).abs() < 1e-9 && (d.mean_abs - shown / 6.0).abs() < 1e-9);
         assert!(compare(&a, &Picture { width: 1, height: 2, rgba: vec![0.0; 8] }).is_err());
     }
 
