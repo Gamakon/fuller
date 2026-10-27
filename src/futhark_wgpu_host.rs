@@ -179,7 +179,10 @@ fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<Pat
     )?;
     // The compiler writes prog.c and then fails at its emcc step: there is no
     // Emscripten here, by design. The C is the product; no C is the failure.
-    if !c.exists() {
+    // An EMPTY prog.c is no C too: measured 2026-10-27, the branch compiler's
+    // "Known compiler limitation" (a SetMem statement in a GPU kernel) leaves
+    // a 0-byte prog.c, and the link step then stopped with no message.
+    if std::fs::metadata(&c).map_or(true, |m| m.len() == 0) {
         return Err(format!(
             "{} wrote no C for the program:\n{}",
             compiler.display(),
@@ -327,6 +330,22 @@ mod tests {
         r.passes[2].0 = 0;
         assert!(r.fastest_run_ns(3).is_err());
         assert!(report_of(&[]).fastest_run_ns(3).is_err());
+    }
+
+    /// A program the branch compiler cannot handle ("Known compiler limitation": a SetMem statement in a GPU kernel,
+    /// met by histogram R seed 1 on 2026-10-27) leaves an EMPTY prog.c; that is no C, named with the compiler's own
+    /// message, never a link step that stops with none. (Needs the branch compiler; no GPU, no link.)
+    #[test]
+    fn an_empty_generated_c_is_no_c_with_the_compilers_message() {
+        if !Command::new(branch_compiler()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+            eprintln!("skipped: the branch compiler is not installed");
+            return;
+        }
+        let src = "entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [i64.i32 k]i32 =\n  let k = i64.i32 k\n  in tabulate k (\\j1 -> i32.minimum (hist (+) 0i32 k (map i64.i32 vs) (map2 i32.min is vs)))\n";
+        let dir = std::env::temp_dir().join(format!("futhark_wgpu_empty_c_{}", std::process::id()));
+        let err = compile_program_prebuilt(src, &dir, &dir.join("no_shim")).unwrap_err();
+        assert!(err.contains("wrote no C") && err.contains("SetMem"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A candidate links against the prebuilt shim while the cargo lock is held by someone else: the per-candidate
