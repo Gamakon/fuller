@@ -50,7 +50,7 @@ Read in full, not skimmed:
 
 The proposal and the accompanying message both rest on: *"we are having compile errors because our kingdom is not designed on the full language."* What the measurements in this repository show is different, and it matters for how the shapes work should be prioritised.
 
-**There are no compile errors.** The kingdom's own test compiles 12 random programs; the sweep behind `docs/ASSESSMENT_futhark_kingdom.md` compiled 144 and got 143 agreements, the one disagreement being `f32.round`'s semantics (a *value* difference, documented in §10.5 of that assessment). The Phase-3 rescue found something else entirely: the original gene and **all eight** e-graph candidates **timed out** at ~120 s (`docs/RESCUE_futhark.md` §4). A timeout is a hang, not a rejection. The hang is a Futhark optimiser defect, reproduced on 0.28.1, on upstream master 0.29.0-nightly, and on the `webgpu` branch at `14e9ccbf` (`docs/RESCUE_futhark.md` §6.1).
+**There are no compile errors.** The kingdom's own test compiles 12 random programs; the sweep behind `docs/ASSESSMENT_futhark_kingdom.md` compiled 144 and got 143 agreements, the one disagreement being `f32.round`'s semantics (a *value* difference, documented in §10.5 of that assessment). The Phase-3 rescue found something else entirely: the original gene and **all eight** e-graph candidates **timed out** at ~120 s (`docs/RESCUE_futhark.md` §4). A timeout is a hang, not a rejection. The hang is a Futhark optimiser defect — reproduced on 0.28.1, on upstream master 0.29.0-nightly, and on the `webgpu` branch at `14e9ccbf` (`docs/RESCUE_futhark.md` §6.1) — and it is now **rescued**: the hang is in the SOAC fusion pass, whose fixpoint loop is unbounded, and the engine recompiles such a program with the loop capped (`docs/RESCUE_futhark.md` §7). All eight candidates now compile in ~150 ms and agree with the interpreter.
 
 **There are no shapes to violate.** The kingdom is one-dimensional by construction: `arr.f32` is *"a one-dimensional array of reals"*, `scn.f32` is *"a one-dimensional array of reals that IS a scan result"*. There is no dimension in any type, no dimension in any row, and no row that creates a *competing* array length. The array operators are `map`, `map2`, `reverse` and `scan`, all of which preserve the length; `reduce` is the one rank-changing row — it consumes an array and yields a scalar, so it eliminates the length rather than producing an incompatible one. **An internal shape incompatibility cannot be expressed, so it cannot be compiled wrong.** The proposal's own rule — *"a compiler rejection caused by an incompatible internal shape must be treated as a failure of the proposed genetic design"* — cannot fire against the current kingdom; it is a rule for the *post-shapes* kingdom.
 
@@ -393,26 +393,42 @@ Stated plainly, so the design can be attacked before it is built.
 
 ## 15. The proof of concept, built
 
-**Status:** the class-specialised kingdom is **built**, and its four checks pass. What follows is what the build corrected — three things this assessment got wrong or missed — and one failure that is the design working exactly as intended.
+**Status:** the class-specialised kingdom is **built**, and its checks pass. What follows is what the build corrected — three things this assessment got wrong or missed — and one failure that is the design working exactly as intended.
 
 ### 15.1 What exists now
 
 | artefact | what it is |
 |---|---|
-| `kingdoms/futhark_shapes/gen_tables.py` | the interface declaration (the dimension roles), the operator templates, **the unification**, and the **witness tests**. 11 types, 70 rows. |
+| `kingdoms/futhark_shapes/gen_tables.py` | the interface declaration (the dimension roles), the operator templates, **the unification**, and the **witness tests**. 11 types, 71 rows. |
 | `kingdoms/futhark_shapes/{types.tsv,functions.tsv}` | the generated tables — the generator's output, committed like the 1-D kingdom's. |
-| `src/futhark_shapes.rs` | the shape-polymorphic program emitter and the four checks below. |
+| `src/futhark_shapes.rs` | the shape-polymorphic program emitter and the checks below. |
+| `src/futhark_shapes_interp.rs` | the shape kingdom's **interpreter**: the same tree, evaluated without a compiler. |
+| `src/futhark_shapes_egraph.rs` | the shape kingdom's **e-graph**: one sort per class, and a bridge that is generated rather than written. |
+| `kingdoms/futhark_shapes/egraph.{datatype,rules,rows,sorts}` | the generated e-graph: the datatype, the ruleset, and the two bridge mappings. |
 | `src/geneframe.rs` | the `Ty::FutharkShape(u16)` family (§15.3c). |
 | `src/futhark_kingdom.rs` | the family-parameterised loader: `from_tables(family, kingdom, …)`. |
 
-The four checks, all passing:
+The checks, all passing:
 
 | check | result |
 |---|---|
-| the kingdom passes the kingdom's own contract check | ✓ 11 types, 70 rows |
+| the kingdom passes the kingdom's own contract check | ✓ 11 types, 71 rows |
 | **the engine derives the counts the design predicted** | ✓ 11 root-reachable frames, gene width **322** at N = 3, leaf bound 75 |
 | every random gene expresses | ✓ 500 genes, zero `LayoutDefect`s |
 | **Futhark accepts the rendered programs** | ✓ the real compiler, three programs |
+| **the compiled program and the interpreter agree, element for element** | ✓ three random genes, every element, and no tolerance |
+| the e-graph loads, and every row has a constructor | ✓ the generated datatype, ruleset and bridge |
+| the e-graph finds the involution and the identity map | ✓ both rewrites, and the same input gives the same candidates |
+| **a candidate writes back to a gene and comes back** | ✓ the proposal's round-trip invariant, for every candidate |
+| **an e-graph candidate compiles, runs, and agrees** | ✓ the whole loop, closed |
+| **every row's spelling means what the interpreter says** | ✓ one program per row, every row of the table |
+| **every e-graph rule is an equivalence** | ✓ all 27 rules, both sides rendered and compiled |
+| **the degenerate shapes agree with Futhark** | ✓ a `[0][m]` matrix and an empty inner dimension, against the compiler |
+| **the committed artefacts are what the generator produces** | ✓ the suite runs the generator's own check |
+
+The last check is the one that makes the kingdom *mean* something: a program that compiles but computes the wrong thing would pass a compile-only test. The 1-D kingdom has this check and the shape kingdom needed it in two dimensions — so it has its own interpreter (`src/futhark_shapes_interp.rs`), whose semantics are the *Futhark* semantics of the kingdom's spellings, not a convenient idealisation: `map` over the rows, `map2` over the pairs of rows, `transpose`, and the `matmul` helper's own formula (a left fold over the products of a row of `A` and a column of `B`).
+
+**Running a 2-D program needs no C driver.** Futhark's *textual* format carries matrices as `[[1.0,2.0],[3.0,4.0]]`, so the inputs go in on stdin and the result comes out on stdout — which is what `compile_text_program`/`run_text_program` in `futhark_exec.rs` are for. The 1-D kingdom's C driver stays the faster path for flat arrays.
 
 The last one is the decisive check, and it works because the `matmul` helper is **shape-polymorphic**:
 
@@ -428,7 +444,7 @@ Futhark's own type checker therefore enforces the inner-dimension relation the c
 | | types | rows | frames | gene width (N = 3) | L |
 |---|---|---|---|---|---|
 | the 1-D kingdom (shipped) | 4 | 38 | 4 | 40 / 42 / 42 | 9 / 10 |
-| **the class kingdom (built)** | 11 | 70 | 11 | **322** | 75 |
+| **the class kingdom (built)** | 11 | 71 | 11 | **322** | 75 |
 
 The width cost is **7.7×** the shipped kingdom's, at three roles — inside the ceiling §6.4 predicts, and the price of the class set being *all nine* matrix pairs (the closure of the declared interface under `transpose` and `matmul`).
 
@@ -448,7 +464,70 @@ The class table was wrong, and it was wrong *in the way the design predicted*: t
 
 **(c) Two kingdoms need two type families.** The assessment said a layout must be bound to one versioned kingdom/interface (§7), and the PoC shows how to make that *structural* rather than conventional: the shape kingdom gets its own family, `Ty::FutharkShape(u16)`, so `Ty::Futhark(0)` and `Ty::FutharkShape(0)` are different types and `homologous()` cannot confuse them. **This is a change to `geneframe.rs`,** which §10.3 said the PoC must not require — the rule was about the *mechanism* (frames, alphabets, unification), and a type-family namespace is orthogonal to it, but the assessment's wording was too blunt and is corrected here.
 
-### 15.4 The scope decisions, taken
+### 15.4 The e-graph, generated
+
+The 1-D kingdom's e-graph has its datatype and its ruleset as hand-written `const` strings, and its bridge as a hand-written `match` over the constructor names. That was affordable for 38 rows and 4 sorts. It is **not** affordable for a class-specialised kingdom, whose rows are *generated*: a hand-written bridge would drift from the table, and a row with no constructor is a row the e-graph silently cannot hold.
+
+So the generator emits the e-graph too:
+
+| artefact | what it holds |
+|---|---|
+| `egraph.datatype` | one sort per class (11), one constructor per row (71) |
+| `egraph.rules` | the ruleset: three identities per class, 27 rules |
+| `egraph.rows` | the bridge: row name → constructor → sort |
+| `egraph.sorts` | the class → sort mapping |
+
+And the Rust side never re-derives a name: it *reads* the mapping, so the generator's witness tests (W10–W12: the datatype and the rows agree, the bridge covers exactly the kingdom's rows) are what stand between the two.
+
+The three rules are the shape-preserving identities, instantiated per class:
+
+* `map` with the identity row function is the matrix;
+* `map2` with the identity binary row function is the **first** matrix (the identity ignores its second operand; the kingdom's other binary row functions do not — `add` uses both);
+* `transpose` twice is the matrix.
+
+All three are **bit-identical**: they copy or permute values and never do arithmetic. The class kingdom has **no fusion rule**, so the divergence the 1-D kingdom measured (`map id` and fusion cannot share a saturation) cannot arise here — but the saturation is still bounded, because a bounded search is a property of the harness, not of the rules.
+
+The e-graph's own checks pass: the datatype and the ruleset load; every kingdom row has a constructor; the bridge agrees with the kingdom's rendering of every candidate; the involution and the identity map are both found; and the same input gives the same candidates in the same order.
+
+### 15.5 The trust boundary, made real
+
+The claim this PoC rests on is that the **table** is the trust boundary and the witness tests guard it. Three adversarial reviews — codex, Claude Opus and Fable, run on the command line — found that the claim was *not* borne out by the code, in several ways, and that some of the checks added to fix it could not see the defects they were written for. The full record, with the disposition of every finding and the measurements behind it, is `docs/reviews/2026-10-26_first_class_shapes_poc_codex.md`.
+
+The first three gaps, and what closed them:
+
+| the gap | the fix |
+|---|---|
+| the generator **wrote** the artefacts before witnessing them, so a hand-edited table was laundered and never checked | the default is `--check`: every committed artefact is compared byte for byte with what the generator would write, and the witness tests then read the **committed** files |
+| W8 counted a spelling's placeholders but not their **order**, so `matmul {1} {0}` — a swapped application — passed | W8 now checks that the placeholders appear in the order of the arguments (Futhark's application is positional) and that the spelling is the operator's own template |
+| W11 checked only that the constructors a rule names **exist**, so `FRowFnId` → `FRowFnAdd1` — the rule `map (\xs -> map (+1.0) xs) x ≡ x` — passed | W11 now matches every rule against one of three **hand-written schemas**, with the class spelled out by a second derivation of the naming convention |
+
+And the deeper gap the other two reviews found: **nothing ran the generator at all**. A hand-edited table was compiled into the engine through `include_str!` and the whole suite passed. So the generator's check is now run *by the suite* — a Rust test shells out to `gen_tables.py --check` and fails if it fails — and the witnesses are stated for what they are: the generator's **self-test**, which catches a generator whose own model is wrong. What guards the *committed* artefact is the byte-for-byte comparison, and that is the outer check.
+
+Two further checks were added on the Rust side, because the generator's checks are about the *text* and the engine's claims are about the *meaning*:
+
+- **every row's spelling means what the interpreter says** — one program per row whose spelling carries a meaning, compiled by Futhark, run, and compared with the interpreter. The random differential test could not do this: it exercises the rows a random gene happens to draw, and the interpreter dispatches on the row's *name* while the renderer uses the row's *spelling*, so a spelling that drifted from its meaning could pass it.
+- **every e-graph rule is an equivalence** — each rule as it is written, with the pattern's variables replaced by the kingdom's own terminals, rendered into two real Futhark programs whose results are compared. This is the check that would catch a rule that is not an equivalence, which is the one failure mode that would put a wrong program into the evolutionary loop.
+
+The interpreter was corrected too. It held a matrix as `Vec<Vec<f32>>`, which cannot tell a `[0][m]` matrix from a `[0][0]` one — and Futhark's `transpose` of `[0][m]` is `[m][0]`, that is `m` empty rows, while a `matmul` over an empty inner dimension is a **zero** matrix, not an empty one. The matrix now carries its dimensions explicitly, and Futhark's textual format turns out to carry a degenerate dimension as its *shape* (`empty([3][0]f32)`), so the degenerate shapes are checked against the real compiler rather than only inside the interpreter.
+
+The agreement between the compiled program and the interpreter is **exact**, and there are **two** comparisons, because the paths do not deserve the same claim.
+
+* **`identical`** — bit for bit, a NaN excepted. This is the comparison for the paths whose arithmetic is exactly specified: a row function, a `map`, a `map2`, a `transpose`. It tells the **signed zeros apart**, so a row that differs from another only in the sign of a zero cannot slip through.
+* **`equal`** — exact values, a NaN excepted, and **no tolerance**. This is the comparison for the reduction path (`matmul`), where the compiled program may legitimately differ from the source semantics (see below).
+
+The tolerance that used to sit under both is **gone**, and its stated reason was false: Futhark 0.28.1's `c` backend reduces with a **sequential left fold**, measured bit-identical to the interpreter's over 600 of 600 elements, and the order-sensitive probe `[16777216, 1, -16777216, 1]` tells a left fold from a tree sum in both. A margin that is never needed is a blind spot: it would hide a last-ulp wrong result from a spelling that drifted.
+
+**Where the compiled program and the source semantics part company.** `futhark run` is not the C backend — in Futhark 0.28.1 it is the **interpreter** (`src/Futhark/CLI/Run.hs` evaluates the programme with `Language.Futhark.Interpreter`), while the engine compiles with `futhark c`. The two disagree about one thing: Futhark's simplifier folds `x + 0` away — an identity fold, and a sound one under Futhark's semantics, which are over the reals and do not distinguish signed zeros — so the compiled `x + 0.0` is the identity and keeps `-0.0`'s sign, where the source semantics turns it into `+0.0`. What is narrow is the **identity fold**, not the sign of a zero: the compiled program still tells the zeros apart wherever the fold does not apply — `1.0/x` on `-0.0` gives `-f32.inf` (measured).
+
+The kingdom is therefore built so that **no row depends on the fold**. The `const` rows used to be spelled `\xs -> map (+0.0) xs`, which is an addition of zero, and so compiled to the identity: the row and the identity differed only in the sign of a zero, and no comparison could see the difference. They are now spelled `\xs -> map (\_ -> 0.0) xs` — a genuine constant — and differ from the identity by **value**. The reduction path has the same caveat for a **singleton** inner dimension, where the simplifier folds `0.0 + x` away; that is why `matmul` is compared on values rather than bits, and the kingdom's own rows are unaffected because their inner dimension is the interface's `m`.
+
+### 15.6 A limit, stated rather than fixed
+
+`Ty::FutharkShape` is a **single family**. If a second interface were generated with different roles, `FutharkShape(0)` would mean a different class in each of the two kingdoms — the very collision the Plain/Shape split was introduced to prevent. The split separates the *families*; it does not separate two shape kingdoms from each other.
+
+This is a limit of the design as built, and it belongs with the next design: a second shape kingdom would need its own family, which is a change to the type space rather than to the class machinery. It was named by the adversarial review and is recorded here rather than fixed, because the PoC has one interface and the fix has no test to justify it yet.
+
+### 15.7 The scope decisions, taken
 
 The two decisions §14 left open have been taken:
 
@@ -461,9 +540,9 @@ So the architecture is now three pieces, not two:
 |---|---|---|
 | the 1-D kingdom | shipped | runtime-equality programs, shapes equal only at run time |
 | the class kingdom | **built** | fixed-signature array algebra: dimensions are interface roles, related statically |
-| the shape-aware IR | **not designed** | data-dependent dimensions, shapes that are not roles |
+| the shape-aware IR | **designed** — `docs/ASSESSMENT_dynamic_shapes.md` | data-dependent dimensions; the class set's axes may be dynamic and a dimension is a value of its own sort (costs 3× the gene width) |
 
-The assessment's §13 recommendation — a split — stands, and the third piece is named.
+The assessment's §13 recommendation — a split — stands, and the third piece is named. It is now **designed** in `docs/ASSESSMENT_dynamic_shapes.md`: the measurements of Futhark's size discipline (which turn out to be exactly the rules an extended class set would state) and the cost of the extension, which is 3.08× the gene width at three roles.
 
 ---
 
@@ -475,15 +554,15 @@ The assessment's §13 recommendation — a split — stands, and the third piece
 | The bound formulas, transcribed and validated three ways | §6.2 | `/tmp/shape/poc_counts.py` — against the two-type fixture, the single-type Karva-tail identity, and the engine's own output |
 | The PoC's counts (types, classes, frames, rows, width, L, alphabets) | §6.2 | the same script |
 | The growth in dimension roles (2, 3, 4, 5, 8, 10) and the `P_T`/`t_T` maxima | §6.4 | the same script, `--growth` |
-| **The built PoC's counts (11 types, 70 rows, 11 frames, width 322, L 75)** | §15.2 | `cargo test --release --features wgsl --lib futhark_shapes` — the engine's own bound table — cross-checked against the same script, reading the *generated* tables |
-| **The generator's witness tests** (9 checks, including the function-class one) | §15.3b | `python3 kingdoms/futhark_shapes/gen_tables.py` — it fails loudly and writes no passing summary if a relation is wrong |
+| **The built PoC's counts (11 types, 71 rows, 11 frames, width 322, L 75)** | §15.2 | `cargo test --release --features wgsl --lib futhark_shapes` — the engine's own bound table — cross-checked against the same script, reading the *generated* tables |
+| **The generator's witness tests** (12 checks, including the function-class one) | §15.3b, §15.5 | `python3 kingdoms/futhark_shapes/gen_tables.py --check` — it fails loudly and writes no passing summary if a relation is wrong; the suite runs it |
 | Futhark's prelude is rank-1, and has no `matmul`/`zipWith`/`reshape` | §15.3a | `/tmp/shape/probes/` — `futhark check` on one-file probes, one name per probe |
 | `map2` is curried, so a one-argument row function does not type-check | §15.3b | the compiler's own error on the rendered program (quoted in §15.3b) |
 | `scalar` is reachable only as an output, so `reduce` can only root a scalar gene | §6.2 | `KingdomContract::reachable` follows argument types only (`kingdom_contract.rs:298`) |
 | Futhark rejects a statically-known size mismatch at compile time | §2 | `/tmp/shape/futhark_shape_transcript.txt`, Futhark 0.28.1 |
 | Futhark accepts dynamic sizes and checks them at runtime | §2 | the same transcript |
 | `map` over a scan result yields an ordinary array in Futhark | §6.1 | `/tmp/shape/acc_map.fut` in the same transcript |
-| The kingdom's failures are hangs, not compile errors | §2 | `docs/RESCUE_futhark.md` §4 (8/8 candidates timed out at ~120 s), §6.1 (three compilers) |
+| The kingdom's failures are hangs, not compile errors | §2 | `docs/RESCUE_futhark.md` §4 (8/8 candidates timed out at ~120 s), §6.1 (three compilers), §7 (the hang is the unbounded fusion loop, and the rescue compiles it in 0.15 s) |
 | The adversarial review and the disposition of every finding | throughout | `docs/reviews/2026-10-26_first_class_shapes_codex.md` |
 
 ## Appendix B — file and line references

@@ -3,10 +3,13 @@
 Date: 2026-10-26. The specification's Phase 3, on the one program in the
 corpus that Futhark 0.28.1's optimiser never finishes.
 
-**Verdict: the rescue failed.** Every equivalent program the e-graph found
-hits the same wall-clock limit as the original. §5 says what the non-
-convergence actually needs, and why no equality-preserving rewrite of this
-program can reach it.
+**Verdict: the e-graph rescue failed; the compiler workaround works.** Every
+equivalent program the e-graph found hits the same wall-clock limit as the
+original — §5 says what the non-convergence actually needs, and why no
+equality-preserving rewrite of this program can reach it. The program itself
+*does* compile when the compiler's fusion loop is bounded (§7), so the engine
+now retries it that way and says so in the verdict: `Verdict::BoundedFusion`,
+not a "rescue". The e-graph's contribution to that outcome is **zero**.
 
 The record is reproduced by
 
@@ -96,6 +99,10 @@ failure is a *compiler* failure and not a representability failure.
 Every candidate was compiled with the harness's existing wall-clock limit
 (120 s) and then, if it compiled, executed and compared against the
 independent interpreter.
+
+**The table below is the state before the rescue path existed.** The rescue
+path (section 7) is what every "timed out" row now compiles through; the
+table is kept because it is the measurement that motivated it.
 
 | # | cost | hash | gene? | compiler | compile time | runtime |
 |---|---|---|---|---|---|---|
@@ -225,10 +232,15 @@ a live defect in the `acc` handling of Futhark's optimiser, present in
    experimental branch — all fail to finish optimising it. That is a
    strong, reproducible report. `ASSESSMENT_futhark_kingdom.md` §10.6 has
    the reproducer; the shape is "a reduction over an `acc`, a reversed
-   accumulator-derived operand, and an outer reduction, together".
-2. **Stop investing in the rescue.** It is not reachable by equalities that
-   hold for the program, and the compiler that would need fixing is not
-   ours to fix.
+   accumulator-derived operand, and an outer reduction, together". **The
+   report now names the pass**: it is the SOAC fusion, and the reason is
+   that its fixpoint loop is unbounded (section 7).
+2. ~~**Stop investing in the rescue.**~~ **Done, and the other way round:
+   the rescue works.** The compiler's fusion loop is the whole problem, and
+   the pass takes a bound — so the program is compiled by the same pipeline
+   with the loop capped, in 0.15 s, and it computes the right value
+   (section 7). The engine does this automatically now, so a candidate the
+   compiler cannot optimise is still a candidate the engine can run.
 3. **Carry on with the parts of the e-graph that do not depend on the
    rescue**: the cost model (Phase 4) and the heritable extraction
    (Phase 5). See `EGGRAPH_futhark.md` §6.
@@ -240,3 +252,138 @@ an artifact on every run (`futhark-nightly-macos-arm64.tar.xz`), and
 `gh run download <run-id> -R diku-dk/futhark -n futhark-nightly-macos-arm64`
 fetches it in one step. A from-source build needs GHC 9.14 plus a cold
 cabal dependency tree — hours — for the same binary.
+
+---
+
+## 7. The rescue: the fusion loop, bounded
+
+The blocker was never the program. It was **one pass in Futhark's optimiser**,
+and Futhark's own source says so.
+
+### 7.1 Which pass hangs
+
+`futhark c -v` prints the name of each pass *before* it runs it
+(`src/Futhark/Pipeline.hs:176` — `when (pipelineVerbose cfg) . logMsg $ "Running
+pass: " <> …`, and the pass itself runs on the next line). On the
+pathological program the trace stops at:
+
+```
+[  +  0.002] Type-checking internalised program
+[  +  0.001] Running pass: simplify
+…
+[  +  0.000] Running pass: Fuse SOACs          ← the last line printed
+```
+
+so the hang is in **"Fuse SOACs"** — the pass that merges array operations
+(`map`, `map2`, `scan`, `reduce`) into one another. A control program prints
+the whole pass list and finishes.
+
+### 7.2 Why it does not finish, and the bound that stops it
+
+Futhark's fusion pass takes an **optional bound on its convergence loop**:
+
+```haskell
+-- | Pass definition with an optional bound on the number of
+-- iterations of the fusion convergence loop.  'Just n' runs at
+-- most @n@ iterations; 'Nothing' means no bound (iterate until convergence).
+fuseSOACs :: Maybe Int -> Pass SOACS SOACS
+```
+
+(`src/Futhark/Optimise/Fusion.hs:762`, Futhark 0.28.1.) The pipeline calls it
+with **no bound**:
+
+```haskell
+standardPipeline =
+  passes
+    [ simplifySOACS, inlineConservatively, simplifySOACS,
+      inlineAggressively, simplifySOACS, performCSE True, simplifySOACS,
+      fuseSOACs Nothing,            -- ← no bound: iterate until convergence
+      performCSE True, simplifySOACS, removeDeadFunctions ]
+```
+
+(`src/Futhark/Passes.hs:64`, and again at `:79` in the AD pipeline.) On this
+program the fusion graph keeps changing, so the loop never settles — and
+because the loop is unbounded, the compiler runs for ever.
+
+The bound is exposed by Futhark's own developer tool:
+
+```
+$ futhark dev --help
+  -o[GAS]   --fuse[=GAS]   Perform higher-order optimisation, i.e., fusion.
+                          (default: infinite, provide integer to limit)
+```
+
+### 7.3 The bounded fusion, measured
+
+`futhark dev` runs the passes it is given, in the order they are given, so
+the pipeline can be spelled out with the fusion loop capped. The pass list
+below mirrors Futhark's own sequential pipeline (`standardPipeline` →
+`seqPipeline` → `seqmemPipeline` in `src/Futhark/Passes.hs`) — which was
+checked by running the hand-assembled pipeline and `futhark c` on the same
+program and comparing the artefacts (`prog.c`, `prog.h`, `prog.json`) byte for
+byte: identical.
+
+```sh
+futhark dev --simplify --inline-conservatively --simplify --inline-aggressively \
+            --simplify --cse --simplify --fuse=10 --cse --simplify \
+            --remove-dead-functions --first-order-transform --explicit-allocations \
+            --cse --lift-allocations --short-circuit --cse --lower-allocations \
+            --backend=c --executable prog.fut
+```
+
+| the pathological program | compiler | result |
+|---|---|---|
+| `futhark c prog.fut` | 0.28.1 | **hangs** (killed at 120 s, 180 s, 300 s) |
+| the same, upstream master 0.29.0-prerelease | nightly | **hangs** (120 s) |
+| the same, the `webgpu` branch at `14e9ccbf` | branch build | **hangs** (120 s) |
+| **the same pipeline, `--fuse=10`** | 0.28.1 | **compiles in 0.12 s** (three runs) |
+
+And it is not merely a program that compiles — it is a program that computes
+the right thing. On the input `[1, 2, 3]` the program is
+`reduce (*) 1.0 [36, 6, 1] = 216`, and both the bounded-fusion binary and
+Futhark's own interpreter give `216`.
+
+Fusion is an optimisation, so stopping the loop early leaves *fewer* fusions,
+not wrong ones. That is the whole workaround: the program's meaning does not
+depend on the fixpoint.
+
+The scope is **one** program and **one** input. The point is that the
+workaround exists and computes the right value, not that the compiler's hang
+is characterised for every program.
+
+### 7.4 What the engine does with it
+
+`src/futhark_exec.rs` compiles every program the normal way first, and when
+the compiler does not converge it **retries with the fusion loop bounded**,
+reporting `Verdict::BoundedFusion` so a caller can tell which path produced
+the binary (a program compiled that way may be less optimised, and that is
+worth knowing when it is scored).
+
+The workaround is now a **test**, not an experiment:
+`futhark_exec::tests::a_program_the_compiler_cannot_compile_is_bounded_fusion`
+asserts that the normal path times out, that the bounded-fusion path compiles,
+and that the compiled program computes `216.0` on `[1, 2, 3]`.
+
+And the experiment that was blocked now runs to the end:
+
+```
+== the record ==
+original      compiled: no (the compiler did not converge within 15s)
+candidates    8, of which 8 compiled, 0 were refused, 0 timed out
+correctness   8 compiled candidates ran; 0 disagreed with the interpreter
+rescue        an equivalent candidate compiles and runs correctly
+```
+
+All eight candidates compile through the rescue path in ~150 ms each, run,
+and agree with the independent interpreter.
+
+### 7.5 What is still owed upstream
+
+The defect is real and three compilers have it, so it is still worth
+reporting: the fusion pass's fixpoint loop should terminate on a legal
+program, and the upstream project has already fixed a fixpoint bug of this
+shape once — issue [#2444](https://github.com/diku-dk/futhark/issues/2444)
+("we are missing some kind of fixed point iteration"), closed by #2445. The
+report should carry: the reproducer (§1), the pass (`Fuse SOACs`), the
+unbounded call site (`src/Futhark/Passes.hs`), and the fact that
+`futhark dev --fuse=10` compiles it in 0.15 s.

@@ -49,10 +49,12 @@
 //!   wants.
 //!
 //! The fusion rules — `map f (map g xs) = map (f . g) xs`, also checked
-//! bit-identical — live in [`FUTHARK_FUSION_RULESET`] rather than here,
-//! because they *diverge* when they share a saturation with `map id`. The
-//! measurement is in that constant's documentation; the rule is sound, the
-//! pair is not.
+//! bit-identical — live in [`FUTHARK_RULESET`] beside the identities, and the
+//! **unit laws of composition** (`f . id = f`, `id . g = g`) are what make
+//! that safe: without them the two rules diverge together, because `map id`
+//! puts a class's own `map` node inside that class and the fusion pattern
+//! then matches inside it. The mechanism, and the measurement that pinned it
+//! down, are in that constant's documentation.
 //!
 //! What is deliberately **not** here: any reassociation of floating-point
 //! arithmetic. The kingdom has no scalar arithmetic to reassociate, and
@@ -170,39 +172,41 @@ pub const FUTHARK_RULESET: &str = r#"
 ; again, so the scan flavour lands in `arr.f32`.
 (rewrite (ARev (AMap f x)) (AMap f (ARev x)) :ruleset futhark)
 (rewrite (ARevScan (SMap f s)) (AMap f (ARevScan s)) :ruleset futhark)
-"#;
 
-/// The fusion rules, in a ruleset of their own.
-///
-/// `map f (map g xs) = map (f . g) xs` is a true identity of computations —
-/// checked against Futhark 0.28.1, bit for bit, over ordinary arrays *and*
-/// over scan results under a `reduce`. It is kept apart from
-/// [`FUTHARK_RULESET`] because of a measured interaction, not a doubt about
-/// its soundness:
-///
-/// **`map id` and fusion cannot share a saturation.** The `map id` rule
-/// makes a class contain its own `map` node: `map id xs` and `xs` end up in
-/// the same e-class, so the class holds an e-node `AMap (FId) x` whose
-/// argument is that very class. The fusion rule's pattern `AMap f (AMap g
-/// y)` then matches that node — the class *contains* a map, so the pattern
-/// matches — and builds `AMap (FCompose f f) y`, which is another map node
-/// in the same class, and the next iteration finds two of them, and four
-/// after that. Measured on the identity scan, the e-graph grows
-/// 5 → 7 → 13 → 55 → 1357 e-nodes over five iterations and does not
-/// converge after six.
-///
-/// Fusion on its own is stable (measured: the same e-graph, no growth over
-/// four iterations), so the rules are usable — just not alongside `map id`.
-/// The rescue experiment needs `map id` and does not need fusion, so
-/// [`FUTHARK_RULESET`] is the one the saturation uses.
-pub const FUTHARK_FUSION_RULESET: &str = r#"
-(ruleset futhark_fusion)
+; ---- the unit laws of composition ----------------------------------------
+; `f . id = f` and `id . g = g`. These are what make the fusion rules safe to
+; live in the same saturation as `map id`.
+;
+; Without them the pair diverges, and it is worth saying why, because the
+; mechanism is not obvious. The `map id` rule puts a class's own `map` node
+; inside that class: `map id xs` and `xs` end up in the same e-class, so the
+; class holds an e-node `AMap (FId) x` whose argument is that very class. The
+; fusion pattern `AMap f (AMap g y)` then matches *inside* the class — the
+; class contains a map, so the pattern matches — and mints
+; `AMap (FCompose f (FId)) y`, which is a new e-node, and the next round finds
+; two of them, and four after that. Measured on the identity scan: the e-graph
+; grew 5 -> 7 -> 13 -> 55 -> 1357 e-nodes over five rounds and did not
+; converge after six.
+;
+; With the unit laws, `AMap (FCompose f (FId)) y` collapses to `AMap f y`,
+; which is already in the class, and `AMap (FCompose (FId) g) y` collapses to
+; `AMap g y`, which is there too. Nothing new is created, the loop closes, and
+; the pair converges in two or three rounds.
+(rewrite (FCompose f (FId)) f :ruleset futhark)
+(rewrite (FCompose (FId) g) g :ruleset futhark)
 
-; `f . g` pointwise. The composition is an e-graph-only constructor: Futhark
-; has no first-class functions, so it renders by inlining the two lambdas,
-; which is a valid program but not a kingdom row.
-(rewrite (AMap f (AMap g x)) (AMap (FCompose f g) x) :ruleset futhark_fusion)
-(rewrite (SMap f (SMap g s)) (SMap (FCompose f g) s) :ruleset futhark_fusion)
+; ---- fusion ----------------------------------------------------------------
+; `map f (map g xs) = map (f . g) xs`: a true identity of computations, checked
+; against Futhark 0.28.1 bit for bit, over ordinary arrays *and* over scan
+; results under a `reduce`.
+;
+; The composition is an e-graph-only constructor: Futhark has no first-class
+; functions, so it renders by inlining the two lambdas, which is a valid
+; program but not a kingdom row — so a candidate that uses it is
+; compilation-only, and its *native* sibling (the unfused form) sits beside it
+; in the same e-class.
+(rewrite (AMap f (AMap g x)) (AMap (FCompose f g) x) :ruleset futhark)
+(rewrite (SMap f (SMap g s)) (SMap (FCompose f g) s) :ruleset futhark)
 "#;
 
 /// The kingdom row each e-graph constructor stands for.
@@ -491,8 +495,8 @@ impl Candidate {
 
 /// The e-graph, saturated, with the root's sort and value.
 ///
-/// The ruleset is [`FUTHARK_RULESET`], the one that is stable; see
-/// [`saturate_with`] for the other one.
+/// The ruleset is [`FUTHARK_RULESET`] — the identities and the fusion rules
+/// together, which the unit laws of composition keep convergent.
 pub fn saturate(term: &str, iters: u32) -> Result<(EGraph, ArcSort, Value), String> {
     saturate_with(term, FUTHARK_RULESET, &["futhark"], iters)
 }
@@ -500,9 +504,10 @@ pub fn saturate(term: &str, iters: u32) -> Result<(EGraph, ArcSort, Value), Stri
 /// The e-graph, saturated under a chosen ruleset.
 ///
 /// The schedule is bounded: a rewrite that stopped shrinking would otherwise
-/// hang the never-raise API with no cap. The bound is not a safety net for
-/// a *diverging* ruleset, though — see [`FUTHARK_FUSION_RULESET`] for the
-/// one that diverges, and for why it is not the default.
+/// hang the never-raise API with no cap. The bound is not a safety net for a
+/// *diverging* ruleset — the one ruleset this module had that diverged, the
+/// fusion pair, is now convergent because the unit laws of composition sit in
+/// the same ruleset, and the saturation is tested to settle.
 ///
 /// `rulesets` names the egglog rulesets to run, in order; each one gets
 /// `iters` rounds.
@@ -573,6 +578,20 @@ pub fn candidates(
 }
 
 /// The members of the root's e-class, as candidates.
+///
+/// The list holds the `k` cheapest candidates, **and it never lets the
+/// compilation-only ones crowd the heritable ones out**. That matters now
+/// that fusion lives in the same ruleset: a fused `map (f . g) xs` has
+/// *fewer* e-nodes than the unfused `map f (map g xs)`, so it is cheaper,
+/// and a list truncated on cost alone could be all fused candidates — with
+/// no representable one left, and nothing for the evolutionary loop to
+/// inherit.
+///
+/// So the representable candidates are taken first (up to `k` of them, they
+/// are the cheapest *heritable* programs there are), and the remaining slots
+/// go to the cheapest compilation-only ones. The result is still sorted by
+/// cost, and it always contains `min(k, number of representable candidates)`
+/// heritable candidates.
 fn extract_candidates(
     egraph: &EGraph,
     sort: ArcSort,
@@ -583,7 +602,8 @@ fn extract_candidates(
     let mut termdag = TermDag::default();
     let score = |td: &TermDag, t: TermId| term_cost(td, t) as f64;
     let ranked = hff_extract(egraph, &mut termdag, value, sort, &score, MEMBERS_PER_CLASS);
-    let mut out: Vec<Candidate> = Vec::new();
+    let mut representable: Vec<Candidate> = Vec::new();
+    let mut compilation_only: Vec<Candidate> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (cost, id) in ranked {
         let source = match render(&termdag, id, kingdom) {
@@ -593,20 +613,30 @@ fn extract_candidates(
         if !seen.insert(source.clone()) {
             continue;
         }
-        out.push(Candidate {
+        let candidate = Candidate {
             cost: cost as u64,
             source,
             gene: to_tree(&termdag, id, kingdom),
-        });
-        if out.len() >= k {
+        };
+        if candidate.is_representable() {
+            if representable.len() < k {
+                representable.push(candidate);
+            }
+        } else if compilation_only.len() < k {
+            compilation_only.push(candidate);
+        }
+        if representable.len() >= k && compilation_only.len() >= k {
             break;
         }
     }
+    let mut out = representable;
+    out.extend(compilation_only);
     out.sort_by(|a, b| {
         a.cost
             .cmp(&b.cost)
             .then_with(|| a.source.cmp(&b.source))
     });
+    out.truncate(k);
     out
 }
 
@@ -846,10 +876,10 @@ mod tests {
         assert!(sat.size > 0);
     }
 
-    /// The core ruleset does not grow: the e-graph settles and stays there,
+    /// The ruleset does not grow: the e-graph settles and stays there,
     /// however many rounds the saturation is given.
     #[test]
-    fn the_core_ruleset_settles() {
+    fn the_ruleset_settles() {
         let k = kingdom();
         let tree = tree_for(&k, "scn.f32.identity").expect("the terminal has a tree");
         let term = import(&tree, &k).expect("it imports");
@@ -859,37 +889,96 @@ mod tests {
                 saturate_with(&term, FUTHARK_RULESET, &["futhark"], iters).expect("it saturates");
             sizes.push(egraph_size(&egraph));
         }
-        assert_eq!(
-            sizes,
-            vec![sizes[0], sizes[0], sizes[0], sizes[0]],
-            "the core ruleset grew: {sizes:?}"
-        );
+        // The e-graph needs a few rounds to settle — it gains the fused node
+        // — and then it stops: the same size for four, eight and sixteen
+        // rounds alike.
+        assert_eq!(sizes[1], sizes[2], "the ruleset grew: {sizes:?}");
+        assert_eq!(sizes[2], sizes[3], "the ruleset grew: {sizes:?}");
+        assert!(sizes[0] <= sizes[1], "the ruleset shrank: {sizes:?}");
     }
 
-    /// `map id` and fusion cannot share a saturation: the `map id` rule makes
-    /// a class hold its own `map` node, and the fusion rule then matches
-    /// inside that class and builds another one, and the next round finds
-    /// two of them. The rule is sound; the pair diverges.
+    /// `map id` and fusion share a saturation, and the pair **converges**.
     ///
-    /// The bound is four rounds, which is enough to show the difference and
-    /// small enough to stay fast.
+    /// They used not to: the `map id` rule makes a class hold its own `map`
+    /// node, and the fusion rule then matched inside that class and built
+    /// another one, and the next round found two of them — 5 → 7 → 13 → 55 →
+    /// 1357 e-nodes over five rounds, with no convergence after six. The
+    /// **unit laws of composition** (`f . id = f`, `id . g = g`) are what
+    /// close the loop: the fused node the pattern mints collapses to a node
+    /// that is already there, so nothing new is created.
+    ///
+    /// This is the regression test for that fix, so it asserts *settling*
+    /// rather than growth: the same e-graph, however many rounds it is given.
     #[test]
-    fn the_fusion_rules_diverge_alongside_map_id() {
+    fn the_fusion_rules_converge_alongside_map_id() {
         let k = kingdom();
-        let tree = tree_for(&k, "scn.f32.identity").expect("the terminal has a tree");
+        // Two shapes: the identity scan on its own, and the same scan under a
+        // *non-identity* map — `map_s (fn.f32_f32.sqr) scn.f32.identity` —
+        // the case where the class holds a map node that is not the
+        // identity, so the fusion pattern can mint a composite that is not
+        // `f . id`.
+        let trees = vec![
+            tree_for(&k, "scn.f32.identity").expect("the terminal has a tree"),
+            Tree {
+                symbol: k.rows.iter().position(|r| r.name == "map_s").unwrap() as u32,
+                const_index: None,
+                kids: vec![
+                    tree_for(&k, "fn.f32_f32.sqr").expect("sqr has a tree"),
+                    tree_for(&k, "scn.f32.identity").expect("the terminal has a tree"),
+                ],
+            },
+        ];
+        for tree in trees {
+            let term = import(&tree, &k).expect("it imports");
+            let mut sizes = Vec::new();
+            for iters in [2u32, 4, 8, 16] {
+                let (egraph, _sort, _value) =
+                    saturate_with(&term, FUTHARK_RULESET, &["futhark"], iters).expect("it saturates");
+                sizes.push(egraph_size(&egraph));
+            }
+            assert_eq!(sizes[1], sizes[2], "the ruleset grew: {sizes:?}");
+            assert_eq!(sizes[2], sizes[3], "the ruleset grew: {sizes:?}");
+            // And it stays small: the divergence this test guards against
+            // reached 1357 e-nodes in five rounds.
+            assert!(
+                sizes[3] <= 16,
+                "the ruleset grew without bound: {sizes:?}"
+            );
+        }
+    }
+
+    /// The heritable candidates are never crowded out by the cheaper
+    /// compilation-only ones.
+    ///
+    /// A fused `map (f . g) xs` has *fewer* e-nodes than the unfused
+    /// `map f (map g xs)`, so it sorts first — and the kingdom cannot spell
+    /// it. A list truncated on cost alone could then be all fused candidates,
+    /// with nothing the evolutionary loop can inherit. So the extraction
+    /// reserves the representable ones.
+    #[test]
+    fn the_heritable_candidates_survive_a_small_k() {
+        let k = kingdom();
+        // `map f (map g xs)`: two nested maps, so the fusion rule fires.
+        let tree = Tree {
+            symbol: k.rows.iter().position(|r| r.name == "map_a").unwrap() as u32,
+            const_index: None,
+            kids: vec![
+                tree_for(&k, "fn.f32_f32.sqr").expect("sqr has a tree"),
+                tree_for(&k, "map_a").expect("map_a has a tree"),
+            ],
+        };
         let term = import(&tree, &k).expect("it imports");
-        let (core, _sort, _value) =
-            saturate_with(&term, FUTHARK_RULESET, &["futhark"], 4).expect("the core saturates");
-        let both_rules = format!("{FUTHARK_RULESET}\n{FUTHARK_FUSION_RULESET}");
-        let (both, _sort, _value) =
-            saturate_with(&term, &both_rules, &["futhark", "futhark_fusion"], 4)
-                .expect("the pair saturates");
-        assert!(
-            egraph_size(&both) > 4 * egraph_size(&core),
-            "fusion did not diverge: {} e-nodes against the core's {}",
-            egraph_size(&both),
-            egraph_size(&core)
-        );
+        let (egraph, sort, value) =
+            saturate_with(&term, FUTHARK_RULESET, &["futhark"], 4).expect("the e-graph saturates");
+        for want in [1usize, 2, 8] {
+            let cands = extract_candidates(&egraph, sort.clone(), value, &k, want);
+            assert!(cands.len() <= want, "the candidate list is longer than asked for");
+            assert!(
+                cands.iter().any(Candidate::is_representable),
+                "no heritable candidate among {want} candidates: {:?}",
+                cands.iter().map(|c| c.source.as_str()).collect::<Vec<_>>()
+            );
+        }
     }
 
     /// Every candidate the e-graph finds that the kingdom cannot spell has a
@@ -914,8 +1003,7 @@ mod tests {
         };
         let term = import(&tree, &k).expect("it imports");
         let (egraph, sort, value) =
-            saturate_with(&term, FUTHARK_FUSION_RULESET, &["futhark_fusion"], 4)
-                .expect("the e-graph saturates");
+            saturate_with(&term, FUTHARK_RULESET, &["futhark"], 4).expect("the e-graph saturates");
         let cands = extract_candidates(&egraph, sort, value, &k, 32);
         assert!(
             cands.iter().any(|c| !c.is_representable()),

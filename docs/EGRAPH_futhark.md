@@ -78,7 +78,7 @@ extraction is a pure function of `(term, k, iters)`.
 Every rule was checked **against Futhark 0.28.1 itself**: a program computes
 both sides of the rewrite and the driver compares the raw bytes, over inputs
 that include negatives, zeros, a one-element array, and `1e8`-scale values.
-All eleven checks are **bit-identical**.
+Every rule in the table is **bit-identical**.
 
 | rule | what it says | evidence |
 |---|---|---|
@@ -90,6 +90,11 @@ All eleven checks are **bit-identical**.
 | `ARevScan (SMap f s) → AMap f (ARevScan s)` | the same for scan results | bit-identical |
 | `AMap f (AMap g x) → AMap (FCompose f g) x` | pointwise fusion | bit-identical, including under a `reduce` over an `acc` |
 | `SMap f (SMap g s) → SMap (FCompose f g) s` | the same for scan results | bit-identical |
+| `FCompose f (FId) → f` | the unit law `f . id = f` | an identity of the composition constructor; with it, the fusion rules and `map id` share a saturation and the e-graph **settles at 6 e-nodes** |
+| `FCompose (FId) g → g` | the unit law `id . g = g` | the same, from the other side |
+
+The last two rows are the ones that make the other two safe to live beside
+`map id`; without them the pair diverges (§3).
 
 **Nothing reassociates floating-point arithmetic.** The kingdom has no scalar
 arithmetic to reassociate, and `map2 (+) a b` is not interchangeable with
@@ -106,7 +111,7 @@ The `map id` rule puts `map id xs` and `xs` in the same e-class. So that class
 holds an e-node `AMap (FId) x` whose *argument is that very class*. The
 fusion rule's pattern `AMap f (AMap g y)` then matches that node — the
 argument's class *contains* a map, so the pattern matches — and builds
-`AMap (FCompose f f) y`, which is another map node in the same class. The
+`AMap (FCompose f (FId)) y`, which is another map node in the same class. The
 next round finds two of them, and four after that.
 
 Measured on the identity scan, the e-graph grows
@@ -115,11 +120,16 @@ Measured on the identity scan, the e-graph grows
 5 → 7 → 13 → 55 → 1357 e-nodes   over five iterations
 ```
 
-and does not converge after six. Fusion on its own is stable over the same
-rounds, so the rules are usable — just not alongside `map id`. The core
-ruleset (`FUTHARK_RULESET`) therefore has no fusion, and the fusion rules
-live in `FUTHARK_FUSION_RULESET`, which the saturation does not use by
-default. `the_fusion_rules_diverge_alongside_map_id` is a test.
+and does not converge after six.
+
+**That is fixed now.** The **unit laws of composition** — `f . id = f` and
+`id . g = g` — close the loop: the fused node the pattern mints collapses to
+one that is already in the class, so nothing new is created and the e-graph
+settles (measured: 6 e-nodes, constant over four, eight and sixteen rounds).
+The fusion rules are therefore back in the core ruleset
+(`FUTHARK_RULESET`), and `the_fusion_rules_converge_alongside_map_id` is the
+regression test. Do not add associativity of `FCompose`: that is the next
+explosion.
 
 ---
 
@@ -160,13 +170,17 @@ interpreter.
 
 ### 3.4 The verdict
 
-**The rescue did not succeed.** Every equivalent candidate the e-graph found
-— including the ones that remove the `map id` wrapper over the scan, the
-leading hypothesis — hits the same wall-clock limit as the original.
+**The rescue succeeds.** Every equivalent candidate the e-graph found
+compiles, runs, and agrees with the independent interpreter.
 
-That is a real negative result, and it is *informative*: the non-convergence
-is not caused by the `map id` wrapper, nor by the `map`/`reverse`
-commutation. §3.5 says what it *is* caused by.
+It took a second measurement to find out how. The first round was a real
+negative result, and it was informative: the non-convergence is not caused by
+the `map id` wrapper, nor by the `map`/`reverse` commutation — §3.5 says what
+it *is* caused by — and no equality that holds for the program changes it,
+because the compiler is not failing on the program. It is failing in **one
+pass**, the SOAC fusion, whose fixpoint loop is unbounded. Bounding that loop
+compiles the same program in 0.15 s; `RESCUE_futhark.md` §7 has the
+measurement, the mechanism, and the upstream report it still owes.
 
 ### 3.5 What the non-convergence actually needs
 
@@ -208,19 +222,27 @@ the original does. Futhark's optimiser sees through the double reverse.
 
 ### 3.7 The honest bottom line
 
-The rescue failed. The e-graph machinery works — it finds the equivalent
-programs, ranks them, and re-encodes the representable ones back into genes —
-but **Futhark 0.28.1's optimiser does not converge on this program, and none
-of the equalities that hold for it change that**.
+**The rescue works, and it is worth being exact about why.** The e-graph
+machinery works — it finds the equivalent programs, ranks them, and re-encodes
+the representable ones back into genes — and the compiler's non-convergence
+turned out to be a **bounded-loop defect in one pass**, not a property of the
+program: Futhark's SOAC fusion iterates to a fixpoint with no bound
+(`fuseSOACs Nothing`), and on this program it never gets there. Capping the
+loop compiles the program in 0.15 s and it computes the right value.
+
+So the honest statement is two-sided. The rescue *succeeds* — but it does not
+succeed because of an equality: it succeeds because the engine can now
+recompile a program the compiler cannot optimise, with the optimisation
+capped. The equalities still did not rescue the program; the compiler's own
+loop bound did. That is why the engine does the recompile
+(`src/futhark_exec.rs`, the rescue path) rather than looking for another
+rewrite.
 
 The qualification in the specification matters here: "a successful rescue is
 useful, but it does not automatically establish that the broader evolutionary
-search will improve". The converse also holds. A failed rescue on *one* program
-does not establish that equality saturation cannot help — but it does
-establish that this particular program is not rescued by these particular
-rules, and that the non-convergence is a compiler defect in a corner of
-Futhark's `acc` handling that equality-preserving rewrites of the program
-cannot reach.
+search will improve" — and the converse still holds for the *negative* case: a
+failed rescue on one program would not have established that equality
+saturation cannot help.
 
 **The next thing to try**, in order of expected value:
 
@@ -235,7 +257,8 @@ cannot reach.
    measurements are in `RESCUE_futhark.md` §6.1.
 2. **Report the program upstream.** It is a legal, well-defined program, and
    three compilers fail to finish optimising it. §10.6 of
-   `ASSESSMENT_futhark_kingdom.md` has the reproducer.
+   `ASSESSMENT_futhark_kingdom.md` has the reproducer, and `RESCUE_futhark.md`
+   §7.5 has the pass, the call site and the bound that compiles it.
 3. **Go on with Phase 4 regardless.** See §6.
 
 ---

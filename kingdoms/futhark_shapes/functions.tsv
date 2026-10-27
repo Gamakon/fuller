@@ -58,14 +58,15 @@ F00056	fn.arr_f32_arr_f32.add1	function	fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
 F00057	fn.arr_f32_arr_f32.scale2	function	fn.arr_f32_arr_f32		\xs -> map (*2.0) xs	double every element
 F00058	fn.arr2_f32_arr_f32_arr_f32.id	function	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs	the identity binary row function
 F00059	fn.arr2_f32_arr_f32_arr_f32.add1	function	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs	add one to every element, ignoring the second row
-F00060	mat.n.n.input	terminal	mat.n.n		m_n_n	the interface's nxn matrix
-F00061	mat.n.m.input	terminal	mat.n.m		m_n_m	the interface's nxm matrix
-F00062	mat.n.p.input	terminal	mat.n.p		m_n_p	the interface's nxp matrix
-F00063	mat.m.n.input	terminal	mat.m.n		m_m_n	the interface's mxn matrix
-F00064	mat.m.m.input	terminal	mat.m.m		m_m_m	the interface's mxm matrix
-F00065	mat.m.p.input	terminal	mat.m.p		m_m_p	the interface's mxp matrix
-F00066	mat.p.n.input	terminal	mat.p.n		m_p_n	the interface's pxn matrix
-F00067	mat.p.m.input	terminal	mat.p.m		m_p_m	the interface's pxm matrix
-F00068	mat.p.p.input	terminal	mat.p.p		m_p_p	the interface's pxp matrix
-F00069	fn.arr_f32_arr_f32.const	terminal	fn.arr_f32_arr_f32		\xs -> map (+0.0) xs	the constant row function
-F00070	fn.arr2_f32_arr_f32_arr_f32.const	terminal	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+0.0) xs	the constant binary row function
+F00060	fn.arr2_f32_arr_f32_arr_f32.add	function	fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys	add the two rows elementwise -- a genuinely binary row function
+F00061	mat.n.n.input	terminal	mat.n.n		m_n_n	the interface's nxn matrix
+F00062	mat.n.m.input	terminal	mat.n.m		m_n_m	the interface's nxm matrix
+F00063	mat.n.p.input	terminal	mat.n.p		m_n_p	the interface's nxp matrix
+F00064	mat.m.n.input	terminal	mat.m.n		m_m_n	the interface's mxn matrix
+F00065	mat.m.m.input	terminal	mat.m.m		m_m_m	the interface's mxm matrix
+F00066	mat.m.p.input	terminal	mat.m.p		m_m_p	the interface's mxp matrix
+F00067	mat.p.n.input	terminal	mat.p.n		m_p_n	the interface's pxn matrix
+F00068	mat.p.m.input	terminal	mat.p.m		m_p_m	the interface's pxm matrix
+F00069	mat.p.p.input	terminal	mat.p.p		m_p_p	the interface's pxp matrix
+F00070	fn.arr_f32_arr_f32.const	terminal	fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs	the constant zero row function
+F00071	fn.arr2_f32_arr_f32_arr_f32.const	terminal	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs	the constant zero binary row function

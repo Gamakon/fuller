@@ -133,6 +133,7 @@ fn main() -> Result<(), String> {
     let (verdict, elapsed) = compile_program(&source, &dir, Duration::from_secs(limit));
     match &verdict {
         Verdict::Compiled => println!("compiled in {elapsed:?}"),
+        Verdict::BoundedFusion => println!("compiled in {elapsed:?} by the bounded-fusion path (the fusion loop capped)"),
         Verdict::Refused(m) => println!("refused after {elapsed:?}: {}", m.lines().next().unwrap_or("")),
         Verdict::TimedOut => println!("did not converge: killed after {elapsed:?}"),
     }
@@ -158,7 +159,7 @@ fn main() -> Result<(), String> {
         Value::Fun(_) => return Err("the root of a program is not a function".to_string()),
     };
 
-    let mut rescued: Option<String> = None;
+    let mut equivalent: Option<String> = None;
     let mut compiled_ok = 0usize;
     let mut timed_out = 0usize;
     let mut refused = 0usize;
@@ -173,6 +174,10 @@ fn main() -> Result<(), String> {
                 compiled_ok += 1;
                 "compiled".to_string()
             }
+            Verdict::BoundedFusion => {
+                compiled_ok += 1;
+                "bounded fusion (the fusion loop capped)".to_string()
+            }
             Verdict::Refused(m) => {
                 refused += 1;
                 format!("refused: {}", m.lines().next().unwrap_or(""))
@@ -183,7 +188,7 @@ fn main() -> Result<(), String> {
             }
         };
         let mut run_text = String::new();
-        if verdict == Verdict::Compiled {
+        if matches!(verdict, Verdict::Compiled | Verdict::BoundedFusion) {
             match run_compiled(scalar, &input, &cand_dir) {
                 Ok(got) => {
                     let same = got.len() == want_value.len()
@@ -192,8 +197,8 @@ fn main() -> Result<(), String> {
                         });
                     if same {
                         run_text = format!("runs, agrees with the interpreter ({got:?})");
-                        if rescued.is_none() && cand.source != expr {
-                            rescued = Some(cand.source.clone());
+                        if equivalent.is_none() && cand.source != expr {
+                            equivalent = Some(cand.source.clone());
                         }
                     } else {
                         wrong += 1;
@@ -214,19 +219,26 @@ fn main() -> Result<(), String> {
     }
 
     println!("\n== the record ==");
-    println!("original      compiled: no (the compiler did not converge within {limit}s)");
+    match &verdict {
+        Verdict::Compiled => println!("original      compiled: yes, in {elapsed:?}"),
+        Verdict::BoundedFusion => {
+            println!("original      compiled: yes, in {elapsed:?} (the fusion loop capped)")
+        }
+        Verdict::Refused(m) => println!("original      refused: {}", m.lines().next().unwrap_or("")),
+        Verdict::TimedOut => println!("original      did not converge within {limit}s"),
+    }
     println!(
         "candidates    {}, of which {compiled_ok} compiled, {refused} were refused, {timed_out} timed out",
         sat.candidates.len()
     );
     println!("correctness   {compiled_ok} compiled candidates ran; {wrong} disagreed with the interpreter");
-    match &rescued {
+    match &equivalent {
         Some(src) => {
-            println!("rescue        an equivalent candidate compiles and runs correctly:");
+            println!("e-graph       an equivalent candidate compiled and ran correctly:");
             println!("              {src}");
             println!("              hash {}", hash(src));
         }
-        None => println!("rescue        NONE: no equivalent candidate compiled and ran correctly"),
+        None => println!("e-graph       no equivalent candidate compiled and ran correctly"),
     }
     if keep {
         println!("kept          {}", dir.display());

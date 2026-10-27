@@ -47,9 +47,110 @@ ordinary flat typed kingdom, and **legality by construction is unchanged**.
 | | `futhark_true` | `futhark_shapes` |
 |---|---:|---:|
 | types | 4 | **11** |
-| symbol rows | 38 | **70** |
+| symbol rows | 38 | **71** |
+| e-graph constructors | 40 | **71** |
+| e-graph rules | 9 | **27** |
 | dimensions | none (1-D) | 3 roles, 9 matrix classes |
 | gene width (N = 3) | 40–42 words | **322 words** |
+
+## The e-graph, generated
+
+The 1-D kingdom's e-graph has its datatype and its ruleset as hand-written
+constants, and its bridge as a hand-written `match` over the constructor
+names. That was affordable for 38 rows and 4 sorts; it is not affordable for a
+kingdom whose rows are *generated*. So the generator emits the e-graph too:
+
+| artefact | what it holds |
+|---|---|
+| `egraph.datatype` | one sort per class (11), one constructor per row (71) |
+| `egraph.rules` | the ruleset: three identities per class, 27 rules |
+| `egraph.rows` | the bridge: row name → constructor → sort |
+| `egraph.sorts` | the class → sort mapping |
+
+The Rust side never re-derives a name — it *reads* the mapping — so the
+witness tests (W10–W12) are what stand between the kingdom and its e-graph.
+
+**One sort per class: the sort IS the class.** Egglog then refuses an
+ill-shaped term by itself, and the class relation cannot be broken by a
+rewrite: a rewrite cannot change a node's class.
+
+Three rules, one per shape-preserving operator, instantiated per class:
+
+* `map` with the identity row function is the matrix;
+* `map2` with the identity binary row function is the **first** matrix (the
+  identity ignores its second operand; the kingdom's other binary row
+  functions do not — `add` uses both);
+* `transpose` twice is the matrix.
+
+All three are **bit-identical** — they copy or permute values and never do
+arithmetic — and there is **no fusion rule**, so the divergence the 1-D
+kingdom measured cannot arise here.
+
+## The checks
+
+Twelve, and the last three are the ones that matter:
+
+| check | what it proves |
+|---|---|
+| the kingdom passes the kingdom's own contract check | the tables are well formed |
+| the engine derives the counts the design predicted | 11 frames, gene width 322 at N = 3, leaf bound 75 |
+| every random gene expresses | legality by construction — 500 genes, zero defects |
+| Futhark accepts the rendered programs | the class table and the compiler agree |
+| **the compiled program and the interpreter agree, element by element** | the programs compute the *right* thing |
+| the e-graph loads; every row has a constructor | the generated e-graph and the kingdom agree |
+| the e-graph finds the involution and the identity map | the rules fire, and the search is deterministic |
+| **a candidate writes back to a gene and comes back** | the round-trip invariant: a candidate is heritable |
+| **an e-graph candidate compiles, runs, and agrees** | the whole loop, closed |
+| **every row's spelling means what the interpreter says** | no row's spelling has drifted from its meaning |
+| **every e-graph rule is an equivalence** | no rule can justify a candidate that computes something else |
+| the committed artefacts match the generator | the table has not been hand-edited behind the engine's back |
+
+The interpreter (`src/futhark_shapes_interp.rs`) is the shape kingdom's own:
+`map` over the rows, `map2` over the pairs of rows, `transpose`, and the
+`matmul` helper's own formula — a left fold over the products of one row of
+`A` and one column of `B`. A program that compiles but computes the wrong
+thing would pass every other check.
+
+Two details the interpreter gets right that a `Vec<Vec<f32>>` cannot:
+
+* **the dimensions are explicit**, so a `[0][m]` matrix is not a `[0][0]` one.
+  Futhark's `transpose` of `[0][m]` is `[m][0]` — `m` empty rows — and a
+  `matmul` over an empty inner dimension is a zero matrix, not an empty one;
+* **the agreement is exact**, and there are two comparisons because the paths do
+  not deserve the same claim. `identical` is bit for bit (a NaN excepted) and is
+  used for the paths whose arithmetic is exactly specified — a row function, a
+  `map`, a `map2`, a `transpose`; it tells the **signed zeros apart**. `equal`
+  is exact values (a NaN excepted) with **no tolerance**, and is used for the
+  reduction path, where the compiled program may legitimately differ from the
+  source semantics.
+
+  There is no tolerance because the tolerance's stated reason was false:
+  Futhark 0.28.1's `c` backend reduces with a **sequential left fold**,
+  measured bit-identical to the interpreter's over 600 of 600 elements, and the
+  order-sensitive probe `[16777216, 1, -16777216, 1]` tells a left fold from a
+  tree sum in both. A margin that is never needed is a blind spot.
+
+  The one place the compiled program and the source semantics differ is
+  Futhark's **identity fold**: the simplifier folds `x + 0` away, so the
+  compiled `x + 0.0` is the identity and keeps `-0.0`'s sign, where the source
+  semantics turns it into `+0.0`. (`futhark run` is Futhark's *interpreter*, so
+  it shows the source semantics; the engine compiles with `futhark c`.) What is
+  narrow is the fold, not the sign of a zero — the compiled program still tells
+  the zeros apart where the fold does not apply, `1.0/x` on `-0.0` giving
+  `-f32.inf`.
+
+  **No row depends on the fold.** The `const` rows used to be spelled
+  `map (+0.0)`, which compiles to the identity, so they differed from the
+  identity only in the sign of a zero — a difference no comparison could see.
+  They are now spelled `map (\_ -> 0.0)`, a genuine constant, and differ from
+  the identity by **value**. A reduction over a *singleton* inner dimension has
+  the same caveat, which is why `matmul` is compared on values and not on bits.
+
+Running a 2-D program needs no C driver: Futhark's textual format carries a
+matrix as `[[1.0,2.0],[3.0,4.0]]`, so the inputs go in on stdin and the result
+comes out on stdout. The format carries a matrix with no elements as
+`empty([rows][cols]f32)`, so even a degenerate dimension survives the round
+trip — the shape is never lost in the text.
 
 ## The witness tests
 
@@ -60,17 +161,42 @@ relation model written separately from the enumeration code: the `matmul`
 rows' inner roles agree, the `transpose` rows' result is the swap, the
 `map2_rows` rows' two arrays share a class, every demanded class has a
 terminal, the class set is closed under `transpose` and `matmul`, every
-operator takes the function class it declares, and every spelling mentions
-each argument exactly once.
+operator takes the function class it declares, every spelling mentions each
+argument exactly once **and uses the arguments in the order Futhark's
+positional application needs**, every spelling is the operator's own template,
+and every e-graph rule matches one of three hand-written schemas.
 
-Nine checks. They run on every generation of the tables, and they fail loudly:
+Twelve checks, and the suite runs them: a Rust test shells out to
+`gen_tables.py --check`, so a hand edit to a committed table fails
+`cargo test` rather than waiting to be noticed. (A missing `python3` is a
+failure, not a skip.)
+
+The checks are the generator's **self-test**: they re-derive the shape
+relations from the emitted text and compare them with a relation model written
+separately from the enumeration code. What guards the *committed* artefacts is
+the byte-for-byte comparison — a hand edit is a finding even when the edited
+table is self-consistent, which is why the comparison is the outer check and
+the witnesses are the inner one.
+
+They fail loudly:
 
 ```
-$ python3 kingdoms/futhark_shapes/gen_tables.py
+$ python3 kingdoms/futhark_shapes/gen_tables.py --check
 types.tsv: 11 types (9 matrix classes + 2 function classes)
-functions.tsv: 70 rows
+functions.tsv: 71 rows
+…
+committed artefacts: MATCH the generator (6 files)
 witness tests: PASS
 ```
+
+**The default is `--check`, not `--write`.** The trust boundary is the
+*committed* table, so the generator's job is to say whether the committed
+table is still what the generator would produce. Writing first and checking
+afterwards would launder any hand edit: the witness tests would only ever see
+the generator's own output, and the corruption would be gone by the time they
+ran. So `--check` compares every committed artefact byte for byte with what
+the generator would write, and the witness tests then read the **committed**
+files — the ones the engine's `include_str!` will load.
 
 The ninth check exists because the Futhark compiler caught the class table
 being wrong about a function's arity: `map2` is curried, so `map2_rows` takes
@@ -117,8 +243,11 @@ They coexist, and they are separate kingdoms in separate `Ty` families
 ## Regenerating
 
 ```
-python3 kingdoms/futhark_shapes/gen_tables.py
+python3 kingdoms/futhark_shapes/gen_tables.py            # check the committed artefacts
+python3 kingdoms/futhark_shapes/gen_tables.py --write    # regenerate them, then check
 ```
 
 The tables are committed, like the 1-D kingdom's, so the loader's
-`include_str!` sees them.
+`include_str!` sees them. The default is to **check** them, because the
+committed table is the trust boundary; `--write` regenerates and then runs the
+same checks.

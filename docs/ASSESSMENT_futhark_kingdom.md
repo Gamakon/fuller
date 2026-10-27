@@ -829,8 +829,11 @@ guard added to an `Update` rule the program does not use, and changes to
 
 So the defect is live in upstream master and in the experimental branch: a
 report upstream now has three independent compilers reproducing it. Fuller
-cannot fix it from the outside — no equality-preserving rewrite of the
-program changes the outcome, measured in `docs/RESCUE_futhark.md` §6.1.
+cannot fix it by rewriting the program — no equality-preserving rewrite of the
+program changes the outcome, measured in `docs/RESCUE_futhark.md` §6.1 — but
+it can *work around* it: the hang is in the SOAC fusion pass, whose fixpoint
+loop is unbounded, and the same pipeline with that loop capped compiles the
+program in 0.15 s (`docs/RESCUE_futhark.md` §7).
 
 ### 10.7 The real WGSL, through the probe
 

@@ -1,0 +1,12 @@
+# class	sort
+mat.n.n	FMatNN
+mat.n.m	FMatNM
+mat.n.p	FMatNP
+mat.m.n	FMatMN
+mat.m.m	FMatMM
+mat.m.p	FMatMP
+mat.p.n	FMatPN
+mat.p.m	FMatPM
+mat.p.p	FMatPP
+fn.arr_f32_arr_f32	FRowFn
+fn.arr2_f32_arr_f32_arr_f32	FRow2Fn
