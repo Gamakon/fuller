@@ -50,6 +50,12 @@
   - **(C) random-search control:** the same evaluation budget, 5 seeds.
   - **(P) from the published program toward faster:** 1–3 seeds. It starts in stage 2.
 - **Budget:** a fixed number of fitness evaluations per run, the same across R and C, with wall clock as a guard only. The value is set from the pilot's measured evaluation rate.
+- **Change, 2026-10-27 20:40Z (before any study run but reduce R seed 1):**
+  - R and C answer H1 and H2, which are about discovery. They stop at the first program exact on every case, training and held-out (`--stop-at-exact`, fuller b1fe8606), and they record the evaluation at which it was found.
+  - A run with no exact program goes on to its budget of 1,400 evaluations, with the 60-minute guard.
+  - Speed (stage 2) is measured only in P, which answers H3. P keeps stage 2, capped by its budget and the guard.
+  - The reason: in stage 2 every candidate is timed (about 10 s each on reduce), so an R or C run that had already found an exact program spent its hour answering a question that only P asks.
+  - Reduce R seed 1 ran before the change. It counts as exact at evaluation 19.
 - **Machinery, the same for all:**
   - the general Futhark signature kingdom;
   - marriage with distinct parents;
