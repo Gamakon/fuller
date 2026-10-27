@@ -23,6 +23,9 @@
 //! * speed group: `--pairs` interleaved timed pairs at t = 5 against the reference program, each `r / (1 + r)` with
 //!   `r` the candidate's GPU time over the reference's; each side is one process running the program `--runs`
 //!   times, its time the fastest run's (the GPU's clock ramps up within a process, see `futhark_pixel::draw`);
+//!   for an image target (`--shader image --target NAME`, a picture file) the yardstick is the position's colour
+//!   (`coord`), and the ratio is floored at 1: a program faster than the simplest varying picture is a constant
+//!   picture Futhark compiles to a fill, and speed earns it nothing;
 //! * fitness = TrueNorth(theta_quality / (pi/2), theta_speed / (pi/2)).
 //!
 //! OCR (cuneus): the hall of fame's pictures are read by tesseract at every checkpoint and at the end
@@ -144,6 +147,8 @@ struct Judge<'a> {
     pairs: usize,
     /// Runs a timed process makes (Futhark's `-r`); its time is the fastest run.
     runs: usize,
+    /// The speed ratio is floored at 1 (an image target: see `measure`).
+    floor_at_yardstick: bool,
     ref_exe: PathBuf,
     ref_plan: Vec<Tile>,
     work_dir: PathBuf,
@@ -221,7 +226,11 @@ impl Judge<'_> {
             }
         }
         let ratios = self.time_pairs(&exe, &plan, self.pairs)?;
-        let speed: Vec<f64> = ratios.iter().map(|r| r / (1.0 + r)).collect();
+        // An image target's yardstick is the simplest picture that varies with the position (`coord`): a program
+        // faster than it is one Futhark turns into a constant (a picture that does not depend on the pixel compiles
+        // to a fill, measured 4x faster on 2026-10-27, and black then won on speed alone). Being faster than the
+        // yardstick earns nothing: the ratio is floored at 1, so the speed group only charges a slower program.
+        let speed: Vec<f64> = ratios.iter().map(|r| if self.floor_at_yardstick { r.max(1.0) } else { *r }).map(|r| r / (1.0 + r)).collect();
         let theta_q = truenorth(&quality);
         let theta_s = truenorth(&speed);
         let theta = truenorth(&[theta_q / FRAC_PI_2, theta_s / FRAC_PI_2]);
@@ -576,7 +585,7 @@ fn real_main() -> Result<(), String> {
         regime: regime.clone(),
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
+        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, floor_at_yardstick: image_target, ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
         tel,
         ledger,
         next_id: 0,
