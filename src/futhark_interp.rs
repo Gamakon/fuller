@@ -35,6 +35,7 @@
 //! `f32::round` rounds a half away from zero. See [`Unary::Round`].
 
 use crate::futhark_kingdom::FutharkKingdom;
+use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// A value of the kingdom.
@@ -112,6 +113,13 @@ impl FutharkKingdom {
     /// array roots, a real for the reduction root.
     pub fn eval(&self, tree: &Tree, input: &[f32]) -> Result<Value, String> {
         self.eval_at(tree, input)
+    }
+
+    /// The value of a FOLDED tree (over the epoch alphabet): its ADF
+    /// references are unfolded first, so the interpreter only ever sees the
+    /// kingdom's rows.
+    pub fn eval_folded(&self, epoch: &Epoch, adfs: &AdfSet, tree: &Tree, input: &[f32]) -> Result<Value, String> {
+        self.eval_at(&adfs.unfold(epoch, tree), input)
     }
 
     fn eval_at(&self, tree: &Tree, input: &[f32]) -> Result<Value, String> {

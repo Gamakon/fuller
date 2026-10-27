@@ -37,6 +37,8 @@ pub mod extract_dag;
 pub mod homeotic;
 pub mod infix;
 pub mod population_dag;
+pub mod population_fold;
+pub mod saturated_fold;
 pub mod geneframe;
 pub mod tsr_kingdom;
 pub mod futhark_kingdom;
@@ -56,6 +58,8 @@ pub mod typed_gep;
 pub mod regex_typed;
 #[cfg(test)]
 mod typed_gep_tests;
+#[cfg(test)]
+mod futhark_adf_tests;
 /// The documentation index (`docs/index.html`) is generated; this is the check
 /// that keeps it so.
 #[cfg(test)]

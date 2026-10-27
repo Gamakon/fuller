@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 
 use crate::futhark_kingdom::{FutharkKingdom, FutharkKind, FutharkRow};
 use crate::geneframe::Ty;
+use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// Futhark's textual form for a matrix with no elements: `empty([3][0]f32)`.
@@ -329,6 +330,12 @@ impl FutharkKingdom {
     /// function class is the constant function of that class.
     pub fn eval_matrices(&self, tree: &Tree, inputs: &BTreeMap<Ty, Mat>) -> Result<MValue, String> {
         self.eval_matrix_at(tree, inputs)
+    }
+
+    /// Evaluate a FOLDED tree (over the epoch alphabet): its ADF references
+    /// are unfolded first, so the interpreter only ever sees the kingdom's rows.
+    pub fn eval_matrices_folded(&self, epoch: &Epoch, adfs: &AdfSet, tree: &Tree, inputs: &BTreeMap<Ty, Mat>) -> Result<MValue, String> {
+        self.eval_matrix_at(&adfs.unfold(epoch, tree), inputs)
     }
 
     fn eval_matrix_at(&self, tree: &Tree, inputs: &BTreeMap<Ty, Mat>) -> Result<MValue, String> {

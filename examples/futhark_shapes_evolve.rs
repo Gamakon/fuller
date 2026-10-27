@@ -22,15 +22,19 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use fuller::futhark_exec::{run_text_program_on, Backend};
+use fuller::futhark_exec::{run_text_program, run_text_program_on, Backend};
+use fuller::futhark_shapes::program_folded;
+use fuller::futhark_shapes_egraph::{Bridge, FoldEgraph};
+use fuller::population_fold::AdfTable;
+use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::futhark_kingdom::FutharkKingdom;
 use fuller::futhark_shapes::program;
 use fuller::futhark_shapes_cost::{program_cost, score_at, CostTable};
 use fuller::futhark_shapes_evolve::{evolve, Config};
 use fuller::futhark_shapes_gpu::measure;
-use fuller::futhark_shapes_interp::{format_matrix, parse_matrix, Mat, MValue};
+use fuller::futhark_shapes_interp::{format_matrix, identical, parse_matrix, Mat, MValue};
 use fuller::geneframe::Ty;
-use fuller::typed_gep::{fits, GeneLayout, Tree};
+use fuller::typed_gep::{express, fits, GeneLayout, Tree};
 
 /// A tree of one row over the given trees.
 fn tree_with(k: &FutharkKingdom, name: &str, kids: Vec<Tree>) -> Tree {
@@ -311,6 +315,42 @@ fn main() {
             }
         }
         Err(e) => println!("the GPU run failed: {e}"),
+    }
+
+    // The final population, folded into ADFs by the saturated share-equivalence.
+    println!("\n== the final population, folded ==");
+    let contract = k.relations().check().expect("the contract");
+    let const_len = k.const_len();
+    let trees: Vec<Tree> = report
+        .population
+        .iter()
+        .map(|g| express(&contract, &layout, g, &const_len).expect("a gene expresses").tree())
+        .collect();
+    let bridge = Bridge::load();
+    let eg = FoldEgraph { kingdom: &k, bridge: &bridge };
+    let folded = fold_saturated(&mut AdfTable::default(), &eg, &contract, &layout, &const_len, &report.population, &trees, &Budget::default())
+        .expect("the population folds");
+    println!("individuals   {} ({} distinct trees)", trees.len(), folded.distinct);
+    println!("shared parts  structural hashing {}   saturated share-equivalence {}", folded.structural.adfs, folded.used.len());
+    println!(
+        "genes         {} rewritten, {} hold a form the e-graph found, {} kept their own spelling, {} references",
+        folded.rewritten, folded.reformed, folded.kept, folded.references
+    );
+    println!("e-graph       {} -> {} tuples in {} iterations{}", folded.tuples_asserted, folded.tuples_saturated, folded.iterations, if folded.stopped_by_size { " (size guard)" } else { "" });
+    let first = &folded.folded[0];
+    let folded_source = program_folded(&k, root, &folded.epoch, &folded.adfs, first, &cfg.sizes).expect("the folded program renders");
+    println!("-- the best individual, folded --\n{}", folded_source.trim());
+    match run_text_program(&folded_source, &input_text, &dir, Duration::from_secs(180)) {
+        Ok(out) => {
+            let got = parse_matrix(&out).expect("the output is a matrix");
+            let want = match k.eval_matrices(&trees[0], &input_matrices).expect("the interpreter evaluates") {
+                MValue::Mat(m) => m,
+                other => panic!("the value is not a matrix: {other:?}"),
+            };
+            let same = got.rows == want.rows && got.cols == want.cols && got.data.iter().zip(&want.data).all(|(a, b)| identical(*a, *b));
+            println!("futhark c ran the folded program: bit for bit the interpreter's value on the submitted gene: {same}");
+        }
+        Err(e) => println!("futhark c did not run the folded program: {e}"),
     }
 
     // The determinism check: the same seed, the same run.

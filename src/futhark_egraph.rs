@@ -77,6 +77,9 @@ use egglog::prelude::exprs;
 use egglog::{ArcSort, EGraph, Term, TermDag, TermId, Value};
 
 use crate::futhark_kingdom::{FutharkKingdom, FutharkKind};
+use crate::kingdom_contract::SymbolId;
+use crate::saturated_fold::EgraphKingdom;
+use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// The e-graph's sorts, one per kingdom type.
@@ -702,6 +705,45 @@ pub fn saturate_tree(
         elapsed: started.elapsed(),
         candidates,
     })
+}
+
+/// Saturate a FOLDED tree (over the epoch alphabet): the e-graph works on
+/// the unfolded tree, and its candidates are folded again by the next fold.
+pub fn saturate_folded(epoch: &Epoch, adfs: &AdfSet, tree: &Tree, kingdom: &FutharkKingdom, k: usize, iters: u32) -> Result<Saturation, String> {
+    saturate_tree(&adfs.unfold(epoch, tree), kingdom, k, iters)
+}
+
+/// The 1-D kingdom's e-graph as the population fold needs it
+/// ([`crate::saturated_fold`]): the datatype, [`FUTHARK_RULESET`], and the
+/// constructor-to-row bridge. `FId` and `FCompose` have no row, so the fold's
+/// extractor never chooses them; an `RNum` whose value is not in `C_T` is not
+/// a row either.
+pub struct FoldEgraph<'a> {
+    pub kingdom: &'a FutharkKingdom,
+}
+
+impl EgraphKingdom for FoldEgraph<'_> {
+    fn programs(&self) -> Vec<&str> {
+        vec![FUTHARK_DATATYPE, FUTHARK_RULESET]
+    }
+    fn rulesets(&self) -> Vec<&str> {
+        vec!["futhark"]
+    }
+    fn import(&self, tree: &Tree) -> Result<String, String> {
+        import(tree, self.kingdom)
+    }
+    fn row(&self, constructor: &str, literals: &[&str]) -> Option<(SymbolId, Option<u32>)> {
+        let name = row_of(constructor)?;
+        let symbol = self.kingdom.rows.iter().position(|r| r.name == name)? as SymbolId;
+        if constructor != "RNum" {
+            return literals.is_empty().then_some((symbol, None));
+        }
+        let [text] = literals else { return None };
+        let value = text.parse::<f64>().ok()? as f32;
+        let dual = self.kingdom.dual(self.kingdom.rows[symbol as usize].output)?;
+        let index = dual.literals.iter().position(|l| l.parse::<f32>().map(f32::to_bits) == Ok(value.to_bits()))?;
+        Some((symbol, Some(index as u32)))
+    }
 }
 
 /// Every constructor the e-graph can hold.

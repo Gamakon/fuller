@@ -174,6 +174,8 @@ pub struct Report {
     pub reference: Option<Individual>,
     /// The reference's own measured GPU cost, for comparison.
     pub reference_gpu: Option<GpuMeasurement>,
+    /// The final population: the genes the last generation evaluated, best first.
+    pub population: Vec<Vec<u32>>,
 }
 
 /// The interface's inputs, in the order the entry point takes them, in
@@ -312,6 +314,7 @@ pub fn evolve(
         best: None,
         reference: Some(reference_individual),
         reference_gpu,
+        population: Vec::new(),
     };
 
     // The population: the reference — the incumbent the search has to beat
@@ -341,6 +344,7 @@ pub fn evolve(
             scored.push(evaluate(&tree, gene, &context)?);
         }
         scored.sort_by(order);
+        report.population = scored.iter().map(|s| s.gene.clone()).collect();
 
         let correct = scored.iter().filter(|s| s.correct).count();
 

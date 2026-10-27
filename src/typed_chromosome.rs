@@ -376,7 +376,16 @@ impl AdfSet {
     }
 
     /// Each ADF's tree with every reference to a lower ADF replaced by its tree.
-    fn expanded(&self, epoch: &Epoch) -> BTreeMap<AdfId, Tree> {
+    /// Unfold: `tree` (over the epoch alphabet, holding no genic terminal) with
+    /// every ADF reference inlined by its body, recursively, so the result holds
+    /// kingdom symbols only. An interpreter or an e-graph evaluates this, never
+    /// the references.
+    pub fn unfold(&self, epoch: &Epoch, tree: &Tree) -> Tree {
+        unfold_with(epoch, &self.expanded(epoch), tree)
+    }
+
+    /// Every ADF's body with its own references inlined: kingdom symbols only.
+    pub fn expanded(&self, epoch: &Epoch) -> BTreeMap<AdfId, Tree> {
         let mut out: BTreeMap<AdfId, Tree> = BTreeMap::new();
         for (id, _) in self.schedule() {
             let t = expand(&self.adfs[&id].tree(), epoch, &out, &BTreeMap::new());
@@ -400,6 +409,12 @@ impl AdfSet {
 
 /// `t` with every ADF reference replaced by that ADF's tree and every genic
 /// terminal by its gene's tree.
+/// [`AdfSet::unfold`] with the bodies [`AdfSet::expanded`] gave, for a caller
+/// that unfolds many trees against one ADF set.
+pub fn unfold_with(epoch: &Epoch, bodies: &BTreeMap<AdfId, Tree>, tree: &Tree) -> Tree {
+    expand(tree, epoch, bodies, &BTreeMap::new())
+}
+
 fn expand(t: &Tree, epoch: &Epoch, adfs: &BTreeMap<AdfId, Tree>, genes: &BTreeMap<u64, Tree>) -> Tree {
     match epoch.reference(t.symbol) {
         Some(RefKind::Adf { adf_id }) => {

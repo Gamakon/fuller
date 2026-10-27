@@ -97,13 +97,23 @@ struct Candidate {
 /// returns `Err` naming the exact missing class otherwise, never
 /// silently stops early).
 fn reach_from(ser: &SerEGraph, best: &BTreeMap<ClassId, Candidate>, start: &ClassId) -> Result<BTreeSet<ClassId>, String> {
+    reach_from_with(ser, best, None, start)
+}
+
+/// [`reach_from`] with `over` (a class and a candidate) read in place of that class's entry in `best`: the same walk
+/// as over a copy of `best` with `over` inserted, without the copy.
+fn reach_from_with(ser: &SerEGraph, best: &BTreeMap<ClassId, Candidate>, over: Option<(&ClassId, &Candidate)>, start: &ClassId) -> Result<BTreeSet<ClassId>, String> {
     let mut reachable = BTreeSet::new();
     let mut stack = vec![start.clone()];
     while let Some(cid) = stack.pop() {
         if !reachable.insert(cid.clone()) {
             continue;
         }
-        let cand = best.get(&cid).ok_or_else(|| format!("reach_from: class {cid} has no settled candidate (reachable from {start})"))?;
+        let cand = match over {
+            Some((c, cand)) if *c == cid => Some(cand),
+            _ => best.get(&cid),
+        };
+        let cand = cand.ok_or_else(|| format!("reach_from: class {cid} has no settled candidate (reachable from {start})"))?;
         let node = &ser.nodes[&cand.node];
         for child in &node.children {
             stack.push(ser.nodes[child].eclass.clone());
@@ -192,9 +202,9 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &BTreeMap<Clas
     // for `own_class`, rather than a cached-set membership test.
     let try_candidate = |best: &BTreeMap<ClassId, Candidate>, node_id: &NodeId| -> Option<Candidate> {
         let node = &ser.nodes[node_id];
-        if node.subsumed {
-            return None;
-        }
+        // A node `op_cost` skips (subsumed, or a non-finite cost: a node the caller has excluded) is never a
+        // candidate, so no chosen node is ever one `rank` cannot cost.
+        op_cost(node)?;
         let own_class = node.eclass.clone();
         let mut child_classes: BTreeSet<ClassId> = BTreeSet::new();
         for child in &node.children {
@@ -277,7 +287,10 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &BTreeMap<Clas
         }
     }
 
-    for cid in &reachable_classes {
+    // Only the roots must have a candidate. A class reachable only through members no candidate uses (the 1-D
+    // Futhark kingdom's `FId` class, reached through `map id x`, a member of `x`'s class, when the caller excludes
+    // its e-graph-only nodes) needs none: every candidate's children have one by `try_candidate`.
+    for cid in roots {
         if !best.contains_key(cid) {
             return Err(format!("class {cid} has no leaf-bottomed path: fully cyclic, no candidate found"));
         }
@@ -309,23 +322,22 @@ fn is_free_to(root_reach: &BTreeMap<ClassId, BTreeSet<ClassId>>, k: &ClassId, c:
 /// Reach is computed FRESH here (`reach_from`), never read from a cache
 /// on `cand` — `cand` doesn't carry one (see `Candidate`'s doc for why a
 /// cached reach was the actual bug this module had). `target_class`
-/// itself is temporarily inserted into a scratch `best` so `reach_from`
-/// can walk through it consistently with every other class's CURRENT
-/// settled entry. Returns `None` only if some class in the reach has no
+/// itself is read as `cand` (`reach_from_with`, the walk over `best` with
+/// that one entry overridden, without copying `best`) so the walk goes
+/// through it consistently with every other class's CURRENT settled
+/// entry. Returns `None` only if some class in the reach has no
 /// settled entry at all (an invariant violation, named by `reach_from`'s
 /// own error) — propagated as `None` here (via `rank`'s `?` caller sites)
 /// rather than silently excluded from the cost sum, which is exactly the
 /// "silent degradation" this module no longer does anywhere.
 fn rank(ser: &SerEGraph, best: &BTreeMap<ClassId, Candidate>, cand: &Candidate, target_class: &ClassId, root_reach: &BTreeMap<ClassId, BTreeSet<ClassId>>) -> Option<u64> {
-    let mut scratch = best.clone();
-    scratch.insert(target_class.clone(), cand.clone());
-    let reach = reach_from(ser, &scratch, target_class).ok()?;
+    let reach = reach_from_with(ser, best, Some((target_class, cand)), target_class).ok()?;
     let mut total = 0u64;
     for cid in &reach {
         if cid != target_class && is_free_to(root_reach, cid, target_class) {
             continue;
         }
-        let nid = &scratch.get(cid)?.node;
+        let nid = if cid == target_class { &cand.node } else { &best.get(cid)?.node };
         total += op_cost(&ser.nodes[nid])?;
     }
     Some(total)

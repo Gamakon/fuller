@@ -41,6 +41,9 @@ use egglog::prelude::exprs;
 use egglog::{ArcSort, EGraph, Term, TermDag, TermId, Value};
 
 use crate::futhark_kingdom::FutharkKingdom;
+use crate::kingdom_contract::SymbolId;
+use crate::saturated_fold::EgraphKingdom;
+use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// The generated datatype: one sort per class, one constructor per row.
@@ -365,6 +368,40 @@ pub fn saturate_tree(
     let size = egraph_size(&egraph, bridge);
     let candidates = extract_candidates(&egraph, sort.clone(), value, kingdom, bridge, k);
     Ok(Saturation { term, sort: sort.name().to_string(), size, elapsed: started.elapsed(), candidates })
+}
+
+/// Saturate a FOLDED tree (over the epoch alphabet): the e-graph works on
+/// the unfolded tree, and its candidates are folded again by the next fold.
+pub fn saturate_folded(epoch: &Epoch, adfs: &AdfSet, tree: &Tree, kingdom: &FutharkKingdom, bridge: &Bridge, k: usize, iters: u32) -> Result<Saturation, String> {
+    saturate_tree(&adfs.unfold(epoch, tree), kingdom, bridge, k, iters)
+}
+
+/// The shape kingdom's e-graph as the population fold needs it
+/// ([`crate::saturated_fold`]): the generated datatype, the generated ruleset
+/// and the generated bridge.
+pub struct FoldEgraph<'a> {
+    pub kingdom: &'a FutharkKingdom,
+    pub bridge: &'a Bridge,
+}
+
+impl EgraphKingdom for FoldEgraph<'_> {
+    fn programs(&self) -> Vec<&str> {
+        vec![SHAPE_DATATYPE, SHAPE_RULESET]
+    }
+    fn rulesets(&self) -> Vec<&str> {
+        vec!["futhark_shape"]
+    }
+    fn import(&self, tree: &Tree) -> Result<String, String> {
+        import(tree, self.kingdom, self.bridge)
+    }
+    fn row(&self, constructor: &str, literals: &[&str]) -> Option<(SymbolId, Option<u32>)> {
+        if !literals.is_empty() {
+            return None;
+        }
+        let name = self.bridge.row_of(constructor)?;
+        let symbol = self.kingdom.rows.iter().position(|r| r.name == name)? as SymbolId;
+        Some((symbol, None))
+    }
 }
 
 /// The number of e-nodes in an e-graph: the size of the search space the

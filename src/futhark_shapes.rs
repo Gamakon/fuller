@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use crate::futhark_kingdom::{FutharkDual, FutharkKingdom, FutharkKind};
 use crate::geneframe::Ty;
+use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// The helper the `matmul` row needs.
@@ -86,7 +87,33 @@ pub fn program(
     tree: &Tree,
     sizes: &BTreeMap<String, usize>,
 ) -> Result<String, String> {
-    let expr = k.render(tree)?;
+    program_text(k, root, "", &k.render(tree)?, sizes)
+}
+
+/// The whole Futhark source for a FOLDED program (a tree of the epoch
+/// alphabet): the helper, each ADF the tree calls as a top-level
+/// `def adf_<id>` in level order, the kernel calling them, and the entry
+/// point.
+pub fn program_folded(
+    k: &FutharkKingdom,
+    root: Ty,
+    epoch: &Epoch,
+    adfs: &AdfSet,
+    tree: &Tree,
+    sizes: &BTreeMap<String, usize>,
+) -> Result<String, String> {
+    let f = k.adf_functions_for(epoch, adfs, tree)?;
+    let expr = k.render_folded(epoch, &f, tree)?;
+    program_text(k, root, &f.definitions, &expr, sizes)
+}
+
+fn program_text(
+    k: &FutharkKingdom,
+    root: Ty,
+    definitions: &str,
+    expr: &str,
+    sizes: &BTreeMap<String, usize>,
+) -> Result<String, String> {
     let root_dims = dims_of(k.dual(root).ok_or_else(|| "the root has no dual".to_string())?);
     let ins = inputs(k);
     // A role with no size is a mistake, not a default: the sizes are what
@@ -116,7 +143,7 @@ pub fn program(
     let args = ins.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>().join(" ");
 
     Ok(format!(
-        "{MATMUL_HELPER}\n-- the kernel: shape-polymorphic over the interface's roles\n\
+        "{MATMUL_HELPER}\n{definitions}-- the kernel: shape-polymorphic over the interface's roles\n\
          def kernel {dims} {params} : {result} =\n  {expr}\n\n\
          -- the entry point: concrete sizes\n\
          entry main {entry_params} : {entry_result} = kernel {args}\n"

@@ -25,11 +25,12 @@
 //! rendering of the expressed tree -- regenerated on every evaluation, never
 //! read back into the genome.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geneframe::Ty;
 use crate::kingdom_contract::SymbolId;
 use crate::kingdom_contract::{relations_from_rows, KingdomRelations};
+use crate::typed_chromosome::{AdfId, AdfSet, Epoch, RefKind};
 use crate::typed_gep::Tree;
 
 /// The kingdom's name in the symbol table.
@@ -267,10 +268,15 @@ impl FutharkKingdom {
     /// names; every other row's spelling has its `{0}`, `{1}`, ... replaced by
     /// the children's renderings, in order.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
-        self.render_at(tree)
+        self.render_at(tree, &|_| None)
     }
 
-    fn render_at(&self, tree: &Tree) -> Result<String, String> {
+    /// `render_at` with `call` deciding a node that is not a row of this kingdom
+    /// (an ADF reference of the epoch alphabet): `Some` is its text.
+    fn render_at(&self, tree: &Tree, call: &dyn Fn(&Tree) -> Option<String>) -> Result<String, String> {
+        if let Some(text) = call(tree) {
+            return Ok(text);
+        }
         let row = self
             .rows
             .get(tree.symbol as usize)
@@ -290,7 +296,7 @@ impl FutharkKingdom {
             }
             _ => {
                 let kids: Vec<String> =
-                    tree.kids.iter().map(|k| self.render_at(k)).collect::<Result<Vec<_>, _>>()?;
+                    tree.kids.iter().map(|k| self.render_at(k, call)).collect::<Result<Vec<_>, _>>()?;
                 let mut out = row.spelling.clone();
                 for (i, kid) in kids.iter().enumerate() {
                     let placeholder = format!("{{{i}}}");
@@ -313,6 +319,182 @@ impl FutharkKingdom {
                 Ok(out)
             }
         }
+    }
+}
+
+/// A parameter of a generated Futhark function: the variable, its type, and
+/// the size variables the type names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FutharkParam {
+    pub name: String,
+    pub ty: String,
+    pub sizes: Vec<String>,
+}
+
+/// A program's ADFs as Futhark: the `def adf_<id>` functions, lowest level
+/// first, and each ADF's parameters (indices into
+/// [`FutharkKingdom::adf_params`]).
+#[derive(Debug, Clone)]
+pub struct FutharkAdfs {
+    pub definitions: String,
+    pub params: BTreeMap<AdfId, Vec<usize>>,
+}
+
+fn identifiers(text: &str) -> BTreeSet<&str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect()
+}
+
+impl FutharkKingdom {
+    /// The entry point's inputs, as an ADF may take them: the 1-D kingdom's
+    /// array `xs: [n]f32`, the shape kingdom's one matrix per class
+    /// (`m_n_m: [n][m]f32`), in the kingdom's own order. A terminal's spelling
+    /// names the inputs it reads.
+    pub fn adf_params(&self) -> Vec<FutharkParam> {
+        match self.family {
+            FutharkFamily::Plain => vec![FutharkParam { name: "xs".to_string(), ty: "[n]f32".to_string(), sizes: vec!["n".to_string()] }],
+            FutharkFamily::Shape => self
+                .duals
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| d.slot == "mat")
+                .filter_map(|(i, d)| {
+                    let ty = self.family.ty(i as u16);
+                    let term = self.rows.iter().find(|r| r.kind == FutharkKind::Terminal && r.output == ty)?;
+                    let dims: Vec<String> = d.form.split('.').map(str::to_string).collect();
+                    Some(FutharkParam { name: term.spelling.clone(), ty: format!("[{}]f32", dims.join("][")), sizes: dims })
+                })
+                .collect(),
+        }
+    }
+
+    /// The Futhark type of an ADF whose root is `ty`, and the size variables it
+    /// names. A function-valued ADF is annotated, so its literals are `f32`.
+    pub fn adf_type(&self, ty: Ty) -> Result<(String, Vec<String>), String> {
+        let d = self.dual(ty).ok_or_else(|| format!("our software has a bug: {ty:?} is not a type of {}", self.kingdom))?;
+        Ok(match (self.family, d.slot.as_str(), d.form.as_str()) {
+            (FutharkFamily::Plain, "f32", _) => ("f32".to_string(), Vec::new()),
+            (FutharkFamily::Plain, "arr" | "scn", "f32") => ("[n]f32".to_string(), vec!["n".to_string()]),
+            (FutharkFamily::Plain, "fn", "f32_f32") => ("f32 -> f32".to_string(), Vec::new()),
+            (FutharkFamily::Shape, "mat", form) => {
+                let dims: Vec<String> = form.split('.').map(str::to_string).collect();
+                (format!("[{}]f32", dims.join("][")), dims)
+            }
+            // The shape kingdom's row-function classes hold no function (every row of them is a leaf), so no fold
+            // makes an ADF of one; meeting one here is a bug in the fold.
+            _ => return Err(format!("our software has a bug: no ADF can have the type {} of {}", d.dual, self.kingdom)),
+        })
+    }
+
+    /// The ADFs of `adfs` as Futhark functions, in level order (a definition
+    /// after everything it calls): `def adf_<id> [sizes] (params) : type =
+    /// body`. An ADF over the entry's inputs takes the inputs its body reads;
+    /// a closed one takes none.
+    pub fn adf_functions(&self, epoch: &Epoch, adfs: &AdfSet) -> Result<FutharkAdfs, String> {
+        self.adf_functions_where(epoch, adfs, &|_| true)
+    }
+
+    /// [`Self::adf_functions`] for the ADFs `tree` calls, directly or through
+    /// another ADF: the definitions one program needs.
+    pub fn adf_functions_for(&self, epoch: &Epoch, adfs: &AdfSet, tree: &Tree) -> Result<FutharkAdfs, String> {
+        let mut needed = BTreeSet::new();
+        let mut stack = vec![tree.clone()];
+        while let Some(t) = stack.pop() {
+            if let Some(RefKind::Adf { adf_id }) = epoch.reference(t.symbol) {
+                if needed.insert(adf_id) {
+                    stack.push(adfs.get(adf_id).ok_or_else(|| format!("our software has a bug: A{adf_id} names no ADF of the set"))?.tree());
+                }
+            }
+            stack.extend(t.kids);
+        }
+        self.adf_functions_where(epoch, adfs, &|id| needed.contains(&id))
+    }
+
+    fn adf_functions_where(&self, epoch: &Epoch, adfs: &AdfSet, keep: &dyn Fn(AdfId) -> bool) -> Result<FutharkAdfs, String> {
+        let params = self.adf_params();
+        let bodies = adfs.expanded(epoch);
+        let mut uses: BTreeMap<AdfId, Vec<usize>> = BTreeMap::new();
+        for (id, body) in &bodies {
+            let mut names = BTreeSet::new();
+            fn walk<'a>(k: &'a FutharkKingdom, t: &Tree, out: &mut BTreeSet<&'a str>) {
+                if let Some(r) = k.rows.get(t.symbol as usize) {
+                    out.extend(identifiers(&r.spelling));
+                }
+                for c in &t.kids {
+                    walk(k, c, out);
+                }
+            }
+            walk(self, body, &mut names);
+            uses.insert(*id, params.iter().enumerate().filter(|(_, p)| names.contains(p.name.as_str())).map(|(i, _)| i).collect());
+        }
+        let mut definitions = String::new();
+        for (id, _) in adfs.schedule().into_iter().filter(|(id, _)| keep(*id)) {
+            let adf = adfs.get(id).ok_or_else(|| format!("our software has a bug: ADF {id} is scheduled but has no body"))?;
+            let (ty, result_sizes) = self.adf_type(adf.root_type)?;
+            let mine: Vec<&FutharkParam> = uses[&id].iter().map(|i| &params[*i]).collect();
+            let mut sizes: Vec<&str> = Vec::new();
+            for p in &mine {
+                for s in &p.sizes {
+                    if !sizes.contains(&s.as_str()) {
+                        sizes.push(s);
+                    }
+                }
+            }
+            if let Some(s) = result_sizes.iter().find(|s| !sizes.contains(&s.as_str())) {
+                return Err(format!("our software has a bug: ADF {id}'s result names the size {s}, which none of its inputs has"));
+            }
+            sizes.sort_unstable();
+            let size_text: String = sizes.iter().map(|s| format!(" [{s}]")).collect();
+            let param_text: String = mine.iter().map(|p| format!(" ({}: {})", p.name, p.ty)).collect();
+            let body = self.render_called(epoch, &uses, &params, &adf.tree())?;
+            definitions.push_str(&format!("def adf_{id}{size_text}{param_text} : {ty} =\n  {body}\n\n"));
+        }
+        Ok(FutharkAdfs { definitions, params: uses })
+    }
+
+    /// Render a tree of the epoch alphabet: a kingdom row as [`Self::render`]
+    /// spells it, an ADF reference `A_d` as the call `adf_<d> <its inputs>`.
+    pub fn render_folded(&self, epoch: &Epoch, adfs: &FutharkAdfs, tree: &Tree) -> Result<String, String> {
+        self.render_called(epoch, &adfs.params, &self.adf_params(), tree)
+    }
+
+    fn render_called(&self, epoch: &Epoch, uses: &BTreeMap<AdfId, Vec<usize>>, params: &[FutharkParam], tree: &Tree) -> Result<String, String> {
+        let bad = std::cell::RefCell::new(None);
+        let call = |t: &Tree| -> Option<String> {
+            match epoch.reference(t.symbol) {
+                Some(RefKind::Adf { adf_id }) => match uses.get(&adf_id) {
+                    Some(u) => Some(std::iter::once(format!("adf_{adf_id}")).chain(u.iter().map(|i| params[*i].name.clone())).collect::<Vec<_>>().join(" ")),
+                    None => {
+                        *bad.borrow_mut() = Some(format!("our software has a bug: A{adf_id} names no ADF of the set"));
+                        Some(String::new())
+                    }
+                },
+                Some(RefKind::Genic { gene_id }) => {
+                    *bad.borrow_mut() = Some(format!("our software has a bug: a genic terminal G{gene_id} in a Futhark program"));
+                    Some(String::new())
+                }
+                None => None,
+            }
+        };
+        let text = self.render_at(tree, &call)?;
+        match bad.into_inner() {
+            Some(e) => Err(e),
+            None => Ok(text),
+        }
+    }
+
+    /// The 1-D kingdom's whole program for a folded tree: its ADFs, then
+    /// `entry main (xs: []f32) : <result> = <body>`.
+    pub fn plain_program_folded(&self, epoch: &Epoch, adfs: &AdfSet, root: Ty, tree: &Tree) -> Result<String, String> {
+        if self.family != FutharkFamily::Plain {
+            return Err(format!("our software has a bug: {} is not the 1-D kingdom", self.kingdom));
+        }
+        let f = self.adf_functions_for(epoch, adfs, tree)?;
+        let result = match self.dual(root).map(|d| d.slot.as_str()) {
+            Some("f32") => "f32",
+            Some("arr" | "scn") => "[]f32",
+            _ => return Err(format!("our software has a bug: {root:?} is not a program root")),
+        };
+        Ok(format!("{}entry main (xs: []f32) : {result} = {}\n", f.definitions, self.render_folded(epoch, &f, tree)?))
     }
 }
 
