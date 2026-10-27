@@ -154,6 +154,10 @@ pub struct Generation {
     /// How many correct individuals were measured on the GPU.
     pub measured: usize,
     /// How many of them the compiler tiles with the block+register tiler.
+    ///
+    /// It is a REPORT, never a filter: the reference's kernel is tiled and
+    /// the winner's is not, so a rule that credited only a tiled form would
+    /// have rejected the only win.
     pub tiled: usize,
     /// How many of them the GPU could not run at all.
     pub not_runnable: usize,
@@ -385,7 +389,7 @@ pub fn evolve(
         // and a candidate the compiler no longer tiles is not eligible: a
         // form the tiler does not fire on is a different program on the GPU.
         let mut measured: Vec<(Individual, GpuMeasurement)> = Vec::new();
-        let mut skipped_untiled = 0usize;
+        let mut tiled = 0usize;
         let mut not_runnable = 0usize;
         if cfg.measure_gpu {
             let text = input_text(&kingdom, &context.inputs[0])?;
@@ -395,7 +399,7 @@ pub fn evolve(
                 // candidate: it is skipped, not a crash.
                 let Ok(cost) = measure(&source, &dir) else { continue };
                 if cost.is_tiled() {
-                    skipped_untiled += 1;
+                    tiled += 1;
                 }
                 // The hard gate: the program has to RUN on the GPU. A
                 // kernel the device cannot compile — the product computed
@@ -439,7 +443,7 @@ pub fn evolve(
             polished: polished_total,
             improved,
             measured: measured.len(),
-            tiled: cfg.elites * 2 - skipped_untiled - not_runnable,
+            tiled,
             not_runnable,
         });
         if let Some(best) = &best {

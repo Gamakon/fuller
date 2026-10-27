@@ -27,9 +27,9 @@ GPU cost      15 device allocations (2 of a computed size), 188416 bytes literal
 
 == the search ==
  gen  correct     traffic     alloc  polished    improved   measured    tiled     no-gpu
-   0        1       20480      4096          4           1          2        5          2
-   1        7       20480      4096         10           0          3        1          4
-   2        8       20480      4096          4           0          6        5          2
+   0        1       20480      4096          4           1          2        1          2
+   1        7       20480      4096         10           0          3        3          4
+   2        8       20480      4096          4           0          6        1          2
 
 == the best ==
 cheap cost    traffic 20480   alloc 4096   depth 64
@@ -65,6 +65,12 @@ failed`, error −48 — while the winner runs ✓. The "no-gpu" column counts t
 candidates the device refused. So the hard gate is not the cost: it is
 whether the program *runs*, and the search's win is turning a kernel the GPU
 cannot compile into one it can.
+
+**The "tiled" column was wrong when this was first captured** (2026-10-27, later
+the same day): it reported the candidates that were *not* tiled, because the
+count subtracted the tiled ones from a fixed denominator. It now reports the
+candidates the compiler tiles, and the table above is the re-run. The numbers
+that decide — the allocations, the bytes, the run — were never affected.
 
 **The tiling and the allocations pull in opposite directions.** The
 reference's kernel is block+register tiled; the winner's is not. So the
