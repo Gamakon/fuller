@@ -52,7 +52,7 @@ use std::time::Instant;
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
 use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, random_gene, read_binary, sexp, signature, variants, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
-use fuller::futhark_wgpu_host::{compile_program, run_program_bytes};
+use fuller::futhark_wgpu_host::{compile_program_prebuilt, prebuild_shim, run_program_bytes};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
@@ -171,6 +171,8 @@ struct Judge<'a> {
     pairs: usize,
     runs: usize,
     yard_exe: Option<PathBuf>,
+    /// The shim, built once at the start: every candidate links with plain cc, no cargo, no lock.
+    shim: PathBuf,
     work_dir: PathBuf,
     quality_cache: HashMap<String, Quality>,
     speed_cache: HashMap<String, Vec<f64>>,
@@ -187,7 +189,7 @@ struct Judge<'a> {
 impl Judge<'_> {
     fn compile(&self, source: &str, dir: &Path) -> Result<PathBuf, String> {
         match self.backend {
-            Backend::Gpu => compile_program(source, dir),
+            Backend::Gpu => compile_program_prebuilt(source, dir, &self.shim),
             Backend::C => compile_c(source, dir),
         }
     }
@@ -630,12 +632,14 @@ fn real_main() -> Result<(), String> {
             already_spent_seconds: spent,
         },
     )?;
-    let yard_exe = if backend == Backend::Gpu { Some(compile_program(p.yardstick, &out.join("yardstick_build"))?) } else { None };
+    // The shim is built once, here (under the cargo lock); no candidate's link runs cargo or takes the lock.
+    let shim = if backend == Backend::Gpu { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
+    let yard_exe = if backend == Backend::Gpu { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
     let mut run = Run {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing_case, backend, pairs, runs, yard_exe, work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), speed_cache: HashMap::new(), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing_case, backend, pairs, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), speed_cache: HashMap::new(), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
         tel,
         ledger: Ledger::open(&out, resume)?,
         next_id: 0,
@@ -1065,7 +1069,7 @@ fn real_main() -> Result<(), String> {
         rep.push_str(&format!("noise_floor_ratios_published_vs_itself\t{}\nnoise_floor_median\t{:.4}\n", fmt(&noise), median(&noise)));
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
-            let exe = compile_program(&best.source, &out.join("best_build"))?;
+            let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
             let ratios = run.judge.time_pairs(&exe, 11)?;
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
         }

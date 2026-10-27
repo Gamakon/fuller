@@ -57,7 +57,20 @@ fi
 work="$exe.build"
 mkdir -p "$work"
 
-# 1. the shim, and where its generated header is.
+# 1. the shim, and where its generated header is. With FUTHARK_SHIM_PREBUILT=<dir> (written once by
+# `prebuild_shim.sh <dir>`), the library and the generated header are read from <dir>: no cargo runs and no lock is
+# taken, so a running evolution never waits on a build (the pathfinder pilot of 2026-10-27 stalled 14 minutes on a
+# lock another job had left behind).
+if [ -n "${FUTHARK_SHIM_PREBUILT:-}" ]; then
+  take_lock() { :; }
+  drop_lock() { :; }
+  out_dir=$FUTHARK_SHIM_PREBUILT
+  lib=$FUTHARK_SHIM_PREBUILT/libfuthark_wgpu_shim.a
+  if [ ! -f "$lib" ] || [ ! -f "$out_dir/include/webgpu/webgpu.h" ]; then
+    echo "build_futhark.sh: FUTHARK_SHIM_PREBUILT=$out_dir holds no libfuthark_wgpu_shim.a and include/webgpu/webgpu.h (run prebuild_shim.sh)" >&2
+    exit 1
+  fi
+else
 take_lock
 (cd "$here" && RUSTFLAGS="-D warnings" cargo build --release --message-format=json-render-diagnostics) >"$work/cargo.json"
 drop_lock
@@ -84,6 +97,7 @@ print(out_dir, lib)
 if [ -z "${out_dir:-}" ] || [ -z "${lib:-}" ]; then
   echo "build_futhark.sh: cargo reported no header directory or static library for the shim" >&2
   exit 1
+fi
 fi
 
 # 2. the generated header is the committed one.

@@ -122,9 +122,31 @@ pub struct GpuRun {
     pub report: ShimReport,
 }
 
+/// Build the shim once and copy its static library and generated header into
+/// `dir` (`futhark-wgpu-shim/prebuild_shim.sh`, under the cargo lock), for
+/// [`compile_program_prebuilt`]. Returns `dir`.
+pub fn prebuild_shim(dir: &Path) -> Result<PathBuf, String> {
+    let out = output_with_timeout(Command::new(shim_dir().join("prebuild_shim.sh")).arg(dir).env_remove("CARGO_TARGET_DIR"), LINK_TIMEOUT, None)?;
+    if !out.status.success() {
+        return Err(format!("prebuilding the shim failed:\n{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(dir.to_path_buf())
+}
+
 /// Compile a Futhark program for the GPU: the branch compiler's C, then the
 /// link step. Returns the executable.
 pub fn compile_program(source: &str, dir: &Path) -> Result<PathBuf, String> {
+    compile_with(source, dir, None)
+}
+
+/// [`compile_program`] linking against a shim [`prebuild_shim`] wrote: the link
+/// step is plain `cc`, with no cargo and no lock, so an evolution's candidates
+/// never wait on a build.
+pub fn compile_program_prebuilt(source: &str, dir: &Path, shim: &Path) -> Result<PathBuf, String> {
+    compile_with(source, dir, Some(shim))
+}
+
+fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let fut = dir.join("prog.fut");
     let c = dir.join("prog.c");
@@ -150,11 +172,12 @@ pub fn compile_program(source: &str, dir: &Path) -> Result<PathBuf, String> {
     let exe = dir.join("prog_wgpu");
     // The shim builds in its own target directory: a `cargo test` of fuller
     // exports CARGO_TARGET_DIR, and the shim is not part of fuller's build.
-    let link = output_with_timeout(
-        Command::new(shim_dir().join("build_futhark.sh")).arg(&c).arg(&exe).env_remove("CARGO_TARGET_DIR"),
-        LINK_TIMEOUT,
-        None,
-    )?;
+    let mut cmd = Command::new(shim_dir().join("build_futhark.sh"));
+    cmd.arg(&c).arg(&exe).env_remove("CARGO_TARGET_DIR");
+    if let Some(p) = prebuilt {
+        cmd.env("FUTHARK_SHIM_PREBUILT", p);
+    }
+    let link = output_with_timeout(&mut cmd, LINK_TIMEOUT, None)?;
     if !link.status.success() {
         return Err(format!(
             "the link step failed:\n{}{}",
@@ -264,6 +287,34 @@ mod tests {
     use crate::futhark_interp::Value;
     use crate::futhark_kingdom::FutharkKingdom;
     use crate::typed_gep::{express, GeneLayout, Tree};
+
+    /// A candidate links against the prebuilt shim while the cargo lock is held by someone else: the per-candidate
+    /// step runs no cargo and takes no lock. (Needs the branch compiler and `cc`; no GPU.)
+    #[test]
+    fn a_candidate_links_while_the_cargo_lock_is_held() {
+        let have = |p: &Path| Command::new(p).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !have(&branch_compiler()) || !have(Path::new("cc")) {
+            eprintln!("skipped: the branch compiler or cc is not installed");
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("futhark_wgpu_prebuilt_{}", std::process::id()));
+        let shim = prebuild_shim(&base.join("shim")).unwrap();
+        // Hold the lock (or find it held by someone else already: then it is theirs, and left alone).
+        let lock = Path::new("/private/tmp/claude-501/locks/cargo");
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let ours = std::fs::create_dir(lock).is_ok();
+        assert!(lock.is_dir());
+        let t = std::time::Instant::now();
+        let got = compile_program_prebuilt("entry main (xs: []f32) : []f32 = map (+1f32) xs\n", &base.join("prog"), &shim);
+        let secs = t.elapsed().as_secs_f64();
+        if ours {
+            std::fs::remove_dir(lock).unwrap();
+        }
+        let exe = got.unwrap();
+        assert!(exe.is_file(), "no executable");
+        assert!(secs < 60.0, "the link took {secs:.1} s with the lock held: it waited on the lock");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn the_value_formats_round_trip() {
