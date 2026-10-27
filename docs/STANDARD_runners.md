@@ -21,13 +21,13 @@ the same way.
 **Home of each shared piece.** fuller, because phylu depends on fuller and fuller never on phylu. phylu re-uses it and
 keeps no second copy.
 
-| piece | home | status (2026-10-27) |
+| piece | home | status (2026-10-27, evening) |
 |---|---|---|
-| telemetry stream | `fuller::telemetry` | moving now |
-| two-level HFF | hff library; the grouping is phylu `evolve::image_fitness::HffGroups` | to move to fuller |
-| checkpoints | phylu `evolve::checkpoint` (engine), `true_wgsl_fit` own | to unify |
-| kill trigger | phylu `evolve::engine::{RUN_FILE_ENV, run_file_present}` | to move to fuller |
-| guards, hall of fame, ledger | each runner its own | to unify |
+| telemetry stream | `fuller::telemetry` | moved; phylu re-exports it |
+| two-level HFF | hff library's TrueNorth; the grouping is phylu `evolve::image_fitness::HffGroups` (WGSL), `futhark_shapes_evolve` and `shape_typed::two_level` (shapes), `futhark_pixel` (pixels) | every runner with speed inputs is two-level; the grouping code is not yet one piece |
+| checkpoints | phylu `evolve::checkpoint` (engine), `true_wgsl_fit`, the shape loops, `futhark_pixel_evolve` each their own | every runnable runner writes them by default and resumes only on `--resume` |
+| kill trigger | `fuller::run_file`; phylu re-exports it | moved |
+| guards, hall of fame, ledger | each runner its own | every runnable runner has them |
 
 ## Inventory, 2026-10-27 (before the work)
 
@@ -50,16 +50,36 @@ Y = meets it; opt-in = only when an environment variable or flag names a path; N
 
 ## Inventory, 2026-10-27 (after the work)
 
+Every runner meets every item, or the cell gives the written reason it does not.
+
 | runner | stream | two-level HFF | checkpoint + resume | kill trigger | guards | hall of fame | ledger / lineage | mutation events |
 |---|---|---|---|---|---|---|---|---|
 | fuller `futhark_shapes_evolve` | Y | Y (quality: disagreement per input set; speed: traffic, allocations, depth) | Y (`--resume`) | Y | Y (`--seconds`, generations) | text | Y (`ledger.tsv`, parents) | `egraph_exact`, `write_back_defect` |
-| fuller `wgsl_gram_evolve` | Y | one group (quality; no speed input by design) | Y | Y | Y | text (kernel) | Y (own `ledger.tsv`, origins name parents) | `subtree_crossover`; CANNOT RUN: the work guard refuses the unported legacy kingdom |
-| fuller `futhark_pixel_evolve` | Y (adopted by its own agent) | Y | — | — | — | text + pictures | — | — |
+| fuller `futhark_pixel_evolve` | Y | Y (θ_quality: the picture; θ_speed: the timed pairs) | Y (`OUT/checkpoint.json`, `--resume`) | Y | Y (`--minutes`, the work bound) | text + pictures + OCR | Y (`ledger.tsv`, parents) | `egraph_exact`, `saturated_fold`, `pump` |
 | phylu `shape_fit` (`shape_typed`) | Y | Y (as `futhark_shapes_evolve`) | Y (`--resume`) | Y | Y | text | Y (the device's parent buffer) | `egraph_exact`, `write_back_defect` |
-| phylu `wgsl_true_fit`, `wgsl_true_image_fit`, `wgsl_true_ingest_fit` (`true_wgsl_fit`) | Y | image and ingest Y; `wgsl_true_fit` one group | Y | Y (in the library now) | Y | text (+ pictures, image) | Y (`lineage.tsv` on every run) | every optimiser (`cleanse`, `egraph_exact`, `egraph_real`, `hoist`, `trips`, `snap`), `adf_fold`, `marriage`, `pump`, `write_back_defect` |
-| phylu `evolve_fit`, `regex_fit` (engine) | Y (default `EVOLVE_OUT`) | N (one flat HFF) | opt-in: the engine resumes ANY checkpoint in its directory, so a default one would make a rerun resume the last run | Y (default) | Y | text | opt-in (genealogy: its cost at production size is not measured) | the engine's `snap`, `fold`, `typed_snap`, `regex_simplify`, `pump` events |
-| phylu `wgsl_fit`, `wgsl_tune` | — | — | — | Y | Y | — | Y | CANNOT RUN: the work guard refuses the unported legacy kingdom |
-| phylu `kernel_time` | N on purpose: a timing harness with every stop and the stream off | | | | | | | |
+| phylu `wgsl_true_fit` (the Gram problem) | Y | Y (`--hff-groups quality,speed`, the default since 2026-10-27: θ_quality over the three tolerance ratios, θ_speed over `r/(1+r)` of the device time against the shipped kernel; `flat` is the old one TrueNorth) | Y (`--resume`) | Y | Y | text | Y (`lineage.tsv`) | every optimiser, `adf_fold`, `marriage`, `pump`, `write_back_defect` |
+| phylu `wgsl_true_image_fit`, `wgsl_true_ingest_fit` | Y | Y | Y (`--resume`) | Y | Y | text (+ pictures, image) | Y (`lineage.tsv`) | as `wgsl_true_fit` |
+| phylu `evolve_fit` (SR), `regex_fit` (engine) | Y (`EVOLVE_OUT`) | NOT APPLICABLE: one quality group. Andrew's rule, "Quality first; HFF selects on quality only": the engine has no speed input, and speed is a second phase on settled models, never an HFF column | Y: `OUT/checkpoint/` by default (every 60 s, `EVOLVE_CHECKPOINT_EVERY`); resumed ONLY with `--resume` (an error when there is nothing to resume); a fresh run moves an earlier run's slots to `checkpoint/superseded/<UTC>/` | Y | Y (seconds, 1M evaluations) | text | Y: the genealogy by default (`OUT/genealogy.tsv`; `EVOLVE_GENEALOGY=0` turns it off), measured below | the engine's `snap`, `fold`, `typed_snap`, `regex_simplify`, `pump` |
+| phylu `kernel_time` | EXEMPT: a timing harness, not a search; every stop and the stream are off on purpose so the kernel's time is measured alone | | | | | | | |
+| fuller `wgsl_gram_evolve`, phylu `wgsl_fit`, phylu `wgsl_tune` | LEGACY: runners of the old WGSL kingdom, which has no work bound; fuller's work guard refuses every device dispatch of it (`Fuel::Unported`), so they cannot run. `wgsl_tune` drives the `wgsl_fit` binary. The Gram problem runs on the true kingdom (`wgsl_true_fit`) | | | | | | | |
+
+The standard's tests name every exclusion: fuller `tests/runner_standard.rs` (`LEGACY`) and phylu
+`tests/runner_standard.rs` (`LEGACY`, `EXEMPT`), each with its reason and the line in the runner's source that stops
+it, so the day that line goes the test fails until the runner is brought to the standard. phylu's registry also
+records each runner's HFF: two-level (with the source marker that selects it) or one quality group with its reason.
+
+**The genealogy's cost (2026-10-27, measured; the gate was 5 % of wall time).** Full population (2000 + 2000), M-series
+laptop, genealogy on and off alternated, the same seed; the search is bit for bit the same either way (same model,
+same fitness, same counts).
+
+| run | measurement | genealogy on | genealogy off | the genealogy's own timer |
+|---|---|---|---|---|
+| SR, `feynman_III_9_52`, 200 generations, 6 pairs | ms per generation | 106.6, 107.0, 110.2, 113.1, 129.7, 132.6 | 106.5, 113.0, 108.1, 128.3, 119.6, 128.8 | 0.20 to 0.39 s of 21 to 27 s: 1.0 to 1.5 % |
+| regex, `uk_postcode`, 60 generations, 4 pairs | seconds | 70.7, 59.3, 107.7, 75.3 | 72.7, 58.2, 82.0, 84.4 | 0.44 to 0.79 s: 0.6 to 1.0 % |
+
+The on/off wall times differ by less than the machine's run-to-run spread (other work shared it: the first two pairs
+of each ran beside it), and the genealogy's own timer puts it at 1.5 % at most, under the 5 % gate, so it is on by
+default.
 
 LEAF is a mutation mode of the device's own variation; the device does not report which rows it made, so there is no
 `leaf` event yet (its share is in every WGSL snapshot). The tests that fail when a runner leaves the standard:
