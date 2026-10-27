@@ -210,3 +210,25 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
     let small = vs.iter().map(|v| interp.work(v, &sizes).unwrap()).min().unwrap();
     assert!(small <= wr, "the smallest variant's work {small}, the reference's {wr}");
 }
+
+/// The quality inputs give partial correctness a slope: on every pathfinder case, an output right on half the cells
+/// scores clearly better than one right on none, an output off by one everywhere better still than all zero, and
+/// the answer is 0 on every input.
+#[test]
+fn the_quality_inputs_give_partial_correctness_a_slope() {
+    let angle = |q: &[f64]| crate::runner::staged_hff(crate::runner::FitnessStage::Quality, q, &[]).unwrap().quality;
+    for c in load_cases(&PATHFINDER_PROBLEM).unwrap() {
+        let w = &c.output;
+        let with = |f: &dyn Fn(usize, i32) -> i32| Array { dims: w.dims.clone(), data: w.data.iter().enumerate().map(|(i, x)| f(i, *x)).collect() };
+        assert_eq!(quality_inputs(w, w), vec![0.0; QUALITY_INPUTS.len()], "{}: the answer is not 0", c.name);
+        let zero = angle(&quality_inputs(&with(&|_, _| 0), w));
+        if w.data.len() >= 2 {
+            let half = angle(&quality_inputs(&with(&|i, x| if i % 2 == 0 { x } else { 0 }), w));
+            assert!(half < zero - 0.2, "{}: half right {half:.4}, none right {zero:.4}", c.name);
+        }
+        let near = angle(&quality_inputs(&with(&|_, x| x + 1), w));
+        // A margin of 0.1: on held_1x37 (walls 0..9, the answer is row 0) one off is up to 100 % of a cell.
+        assert!(near < zero - 0.1, "{}: off by one {near:.4}, all zero {zero:.4}", c.name);
+        assert_eq!(quality_inputs(&Array { dims: vec![w.data.len() + 1], data: vec![0; w.data.len() + 1] }, w), vec![1.0; QUALITY_INPUTS.len()]);
+    }
+}

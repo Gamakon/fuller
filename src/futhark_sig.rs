@@ -1060,6 +1060,54 @@ pub fn compare(got: &Array, want: &Array) -> [f64; 3] {
     [differ as f64 / n, squash(sum / n / mean_mag), squash(max / max_mag)]
 }
 
+/// The names of [`quality_inputs`], in order (one set a case).
+pub const QUALITY_INPUTS: [&str; 7] = ["wrong_share", "outside_1pct", "outside_10pct", "outside_50pct", "mean_abs_over_scale", "max_abs_over_scale", "order_wrong"];
+
+/// THE QUALITY INPUTS of one case, each its own input on `[0, 1]`, 0 exact, linear (no log scale, which put every
+/// inexact program within 0.03 of 1: the pathfinder pilot of 2026-10-27 ranked its whole population alike for 26
+/// generations). With `d` the absolute error of a cell and `scale` the correct output's own range (its largest value
+/// less its smallest; for a constant output its largest magnitude; at least 1):
+///
+/// * the share of cells not exactly right;
+/// * the shares of cells whose error is over 1 %, 10 % and 50 % of the correct value's magnitude (at least 1);
+/// * the mean and the largest `d / scale`, each mapped `e -> e / (1 + e)`;
+/// * the share of neighbouring pairs of cells in the wrong order (the sign of the step differs from the correct
+///   output's; 0 for an output of fewer than two cells).
+///
+/// An output of the wrong shape is 1 everywhere.
+pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
+    if got.dims != want.dims {
+        return vec![1.0; QUALITY_INPUTS.len()];
+    }
+    let n = want.data.len().max(1) as f64;
+    let lo = want.data.iter().copied().min().unwrap_or(0);
+    let hi = want.data.iter().copied().max().unwrap_or(0);
+    let range = (i64::from(hi) - i64::from(lo)) as f64;
+    let mag = want.data.iter().map(|w| f64::from(*w).abs()).fold(0.0, f64::max);
+    let scale = if range > 0.0 { range } else { mag }.max(1.0);
+    let (mut wrong, mut o1, mut o10, mut o50, mut sum, mut max) = (0.0, 0.0, 0.0, 0.0, 0.0, 0f64);
+    for (g, w) in got.data.iter().zip(&want.data) {
+        let d = (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64;
+        let rel = d / f64::from(*w).abs().max(1.0);
+        wrong += f64::from(u8::from(d > 0.0));
+        o1 += f64::from(u8::from(rel > 0.01));
+        o10 += f64::from(u8::from(rel > 0.10));
+        o50 += f64::from(u8::from(rel > 0.50));
+        sum += d;
+        max = max.max(d);
+    }
+    let squash = |e: f64| e / (1.0 + e);
+    let steps = want.data.len().saturating_sub(1);
+    let order = if steps == 0 {
+        0.0
+    } else {
+        let sign = |a: i32, b: i32| (i64::from(b) - i64::from(a)).signum();
+        let bad = (0..steps).filter(|&j| sign(got.data[j], got.data[j + 1]) != sign(want.data[j], want.data[j + 1])).count();
+        bad as f64 / steps as f64
+    };
+    vec![wrong / n, o1 / n, o10 / n, o50 / n, squash(sum / n / scale), squash(max / scale), order]
+}
+
 // ---- the instance's e-graph -------------------------------------------------------------------------------------
 
 /// The row <-> constructor mapping (`egraph.rows`).

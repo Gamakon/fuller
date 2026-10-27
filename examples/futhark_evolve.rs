@@ -19,10 +19,11 @@
 //!   starts in stage 2 (the reference is exact).
 //!
 //! FITNESS, staged (`fuller::runner::FitnessStage`, `staged_hff`):
-//! * stage 1, quality only, no timing: for every stored case, training and held-out alike, three inputs, each its
-//!   own: the share of output elements that differ, the mean absolute error over the expected mean magnitude, the
-//!   largest absolute error over the expected largest magnitude (the last two `e/(1+e)`), each on HFF's log scale
-//!   (`runner::log_scaled`). An output of the wrong shape is 1, 1, 1.
+//! * stage 1, quality only, no timing: for every stored case, training and held-out alike, the seven inputs of
+//!   `futhark_sig::quality_inputs`, each its own, linear: the share of cells not exact; the shares off by over 1 %,
+//!   10 % and 50 %; the mean and largest error over the correct output's range (`e/(1+e)`); the share of neighbouring
+//!   pairs in the wrong order. (The pilot of 2026-10-27 used three inputs on HFF's log scale, which put every inexact
+//!   program within 0.03 of 1, and ranked its whole population alike for 26 generations.)
 //! * stage 2, once the best is exact on every case (a `stage_change` event, never back): the two-level HFF of that
 //!   quality group and the speed group, `--pairs` interleaved timed pairs against the published program (the
 //!   yardstick) on the largest training case, each `r/(1+r)` with `r` the candidate's GPU time over the yardstick's.
@@ -51,12 +52,12 @@ use std::time::Instant;
 
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
-use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, random_gene, read_binary, sexp, signature, variants, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
+use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, quality_inputs, random_gene, read_binary, sexp, QUALITY_INPUTS, signature, variants, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, prebuild_shim, run_program_bytes};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{log_scaled, save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger};
+use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -105,8 +106,10 @@ enum Backend {
 /// What a program measured on the stored cases (independent of the stage).
 #[derive(Debug, Clone)]
 struct Quality {
-    /// Three raw inputs a case (differing share, mean, max), in case order.
+    /// Three raw measurements a case (differing share, mean, max), in case order: exactness.
     raw: Vec<[f64; 3]>,
+    /// The quality inputs (`futhark_sig::quality_inputs`, seven a case), in case order.
+    inputs: Vec<f64>,
     exact_train: usize,
     exact_held: usize,
     /// The most node executions on any case.
@@ -118,11 +121,11 @@ impl Quality {
         self.raw.iter().all(|r| *r == [0.0; 3])
     }
     fn inputs(&self) -> Vec<f64> {
-        self.raw.iter().flat_map(|r| r.iter().map(|x| log_scaled(*x))).collect()
+        self.inputs.clone()
     }
     /// A legal gene's program that did not compile or run (our software has a bug, logged): wrong everywhere.
     fn worst(cases: usize) -> Quality {
-        Quality { raw: vec![[1.0; 3]; cases], exact_train: 0, exact_held: 0, work: 0 }
+        Quality { raw: vec![[1.0; 3]; cases], inputs: vec![1.0; cases * QUALITY_INPUTS.len()], exact_train: 0, exact_held: 0, work: 0 }
     }
 }
 
@@ -274,9 +277,10 @@ impl Judge<'_> {
                 return Ok(Quality::worst(self.cases.len()));
             }
         };
-        let mut q = Quality { raw: Vec::with_capacity(self.cases.len()), exact_train: 0, exact_held: 0, work };
+        let mut q = Quality { raw: Vec::with_capacity(self.cases.len()), inputs: Vec::new(), exact_train: 0, exact_held: 0, work };
         for (i, got) in outs.iter().enumerate() {
             let r = compare(got, &self.cases[i].output);
+            q.inputs.extend(quality_inputs(got, &self.cases[i].output));
             if r == [0.0; 3] {
                 match self.cases[i].split {
                     Split::Train => q.exact_train += 1,
@@ -611,7 +615,7 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
 
-    let mut objectives: Vec<String> = cases.iter().flat_map(|c| ["differing_share", "mean_abs_rel", "max_abs_rel"].map(|m| format!("quality {} {m}", c.name))).collect();
+    let mut objectives: Vec<String> = cases.iter().flat_map(|c| QUALITY_INPUTS.map(|m| format!("quality {} {m}", c.name))).collect();
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
