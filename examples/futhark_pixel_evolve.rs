@@ -15,18 +15,16 @@
 //!   forms make the population, and the search looks for an equivalent that is faster; every `--pump-every`
 //!   generations the e-graph variants of the best replace the worst.
 //!
-//! Fitness, the two-level HFF (hff library TrueNorth, every measurement its own input, 0 best, pi/2 worst):
-//! * quality group, for each training case (t = 5 and 8, `--train` size): the differing channel fraction; max |d|,
-//!   mean |d| and rmse, each divided by the original's own max, mean and rms (drawing nothing is an error of 1) and
-//!   mapped e -> e / (1 + e); the fraction of pixels over 1/255; the fraction of non-finite mismatches. All in sRGB
-//!   display space (`image::compare`), as the cuneus host shows the picture;
-//! * speed group: `--pairs` interleaved timed pairs at t = 5 against the reference program, each `r / (1 + r)` with
-//!   `r` the candidate's GPU time over the reference's; each side is one process running the program `--runs`
-//!   times, its time the fastest run's (the GPU's clock ramps up within a process, see `futhark_pixel::draw`);
-//!   for an image target (`--shader image --target NAME`, a picture file) the yardstick is the position's colour
-//!   (`coord`), and the ratio is floored at 1: a program faster than the simplest varying picture is a constant
-//!   picture Futhark compiles to a fill, and speed earns it nothing;
-//! * fitness = TrueNorth(theta_quality / (pi/2), theta_speed / (pi/2)).
+//! Fitness, in two stages (`fuller::runner::FitnessStage`; Andrew, 2026-10-27: quality only until the picture is
+//! perfect, then performance), the hff library's TrueNorth, every measurement its own input, 0 best, pi/2 worst:
+//! * quality group, for each quality case (a shader: t = 5 and 8 at `--train`; an image target: the training and the
+//!   held-out picture), the six display-space inputs of `image::quality_inputs`;
+//! * stage 1: the quality group's angle alone, with no timing runs;
+//! * stage 2, from the generation after the best individual is perfect (`perfect`: no pixel over 1/255 in display
+//!   space and no non-finite channel, on every quality case), logged as a `stage_change` event: the two-level HFF,
+//!   TrueNorth(theta_quality / (pi/2), theta_speed / (pi/2)), the speed group `--pairs` interleaved timed pairs
+//!   against the reference (an image target's: the position's colour, `coord`), each `r / (1 + r)`, each side one
+//!   process running the program `--runs` times, its time the fastest run's.
 //!
 //! OCR (cuneus): the hall of fame's pictures are read by tesseract at every checkpoint and at the end
 //! (`image::ocr_word`), a report measurement, not a fitness input.
@@ -57,7 +55,7 @@ use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, HofRow, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
 use fuller::wgsl::cuneus_originals::case_bindings;
-use fuller::wgsl::gram::truenorth;
+use fuller::runner::{staged_hff, FitnessStage};
 use fuller::wgsl::image::{compare, largest_colour_share, ocr_word, quality_inputs, read_ppm, side_by_side, write_png, BindingData, Difference, ImageKernel, Ocr, Picture};
 use fuller::wgsl::oracle::device::{Device, Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
 
@@ -117,13 +115,24 @@ struct Eval {
     diff: Option<Difference>,
     work: u128,
     tiles: usize,
+    /// Every quality case drawn to the tolerance (`PERFECT_*`): the stage-2 trigger.
+    perfect: bool,
+}
+
+/// THE PERFECT PICTURE (the stage switch's tolerance): on every quality case (training and held-out), no pixel whose
+/// largest channel difference in display space exceeds 1/255 (one step of the 8-bit picture the target is) and no
+/// non-finite channel. The fast-math differences of the WGSL originals' hand-written Futhark references were up to a
+/// few hundredths at a few edge pixels, so a compiled program can be exact to this tolerance; a picture file target
+/// is 8-bit, so 1/255 is its own resolution.
+fn perfect(d: &Difference) -> bool {
+    d.pixels_over_one_step == 0 && d.non_finite_mismatch == 0
 }
 
 impl Eval {
     /// A legal gene's program that did not compile or run: our software has a bug (logged in full in `bugs.log`),
     /// and the individual takes the worst place.
     fn worst() -> Eval {
-        Eval { theta: FRAC_PI_2, theta_q: FRAC_PI_2, theta_s: FRAC_PI_2, quality: vec![], speed: vec![], ratio: f64::INFINITY, diff: None, work: 0, tiles: 0 }
+        Eval { theta: FRAC_PI_2, theta_q: FRAC_PI_2, theta_s: FRAC_PI_2, quality: vec![], speed: vec![], ratio: f64::INFINITY, diff: None, work: 0, tiles: 0, perfect: false }
     }
 }
 
@@ -147,8 +156,8 @@ struct Judge<'a> {
     pairs: usize,
     /// Runs a timed process makes (Futhark's `-r`); its time is the fastest run.
     runs: usize,
-    /// The speed ratio is floored at 1 (an image target: see `measure`).
-    floor_at_yardstick: bool,
+    /// The fitness stage (`runner::FitnessStage`): stage 1 measures quality only, with no timing runs.
+    stage: FitnessStage,
     ref_exe: PathBuf,
     ref_plan: Vec<Tile>,
     work_dir: PathBuf,
@@ -216,25 +225,22 @@ impl Judge<'_> {
         let exe = compile_program(source, &self.work_dir)?;
         let mut quality = Vec::new();
         let mut diff = None;
+        let mut all_perfect = true;
         for case in &self.cases {
             let case_plan = tiles(work, case.width, case.height, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT)?;
             let (pic, _) = self.picture(&exe, &case_plan, case, 1)?;
             let (q, d) = quality_inputs(&pic, &case.original)?;
             quality.extend(q);
+            all_perfect &= perfect(&d);
             if diff.is_none() {
                 diff = Some(d);
             }
         }
-        let ratios = self.time_pairs(&exe, &plan, self.pairs)?;
-        // An image target's yardstick is the simplest picture that varies with the position (`coord`): a program
-        // faster than it is one Futhark turns into a constant (a picture that does not depend on the pixel compiles
-        // to a fill, measured 4x faster on 2026-10-27, and black then won on speed alone). Being faster than the
-        // yardstick earns nothing: the ratio is floored at 1, so the speed group only charges a slower program.
-        let speed: Vec<f64> = ratios.iter().map(|r| if self.floor_at_yardstick { r.max(1.0) } else { *r }).map(|r| r / (1.0 + r)).collect();
-        let theta_q = truenorth(&quality);
-        let theta_s = truenorth(&speed);
-        let theta = truenorth(&[theta_q / FRAC_PI_2, theta_s / FRAC_PI_2]);
-        Ok(Eval { theta, theta_q, theta_s, quality, speed, ratio: median(&ratios), diff, work, tiles: plan.len() })
+        // Stage 1 runs no timing at all; stage 2 times interleaved pairs against the reference.
+        let ratios = if self.stage.measures_speed() { self.time_pairs(&exe, &plan, self.pairs)? } else { Vec::new() };
+        let speed: Vec<f64> = ratios.iter().map(|r| r / (1.0 + r)).collect();
+        let f = staged_hff(self.stage, &quality, &speed)?;
+        Ok(Eval { theta: f.fitness, theta_q: f.quality, theta_s: f.speed, quality, speed, ratio: median(&ratios), diff, work, tiles: plan.len(), perfect: all_perfect })
     }
 }
 
@@ -478,7 +484,7 @@ impl Run<'_> {
         let ind = |i: &Individual| serde_json::json!({"id": i.id, "parents": i.parents, "born": i.born, "operator": i.operator, "tree": tree_json(&i.tree)});
         let v = serde_json::json!({
             "shader": self.shader, "regime": self.regime, "generation": generation, "seconds": seconds, "next_id": self.next_id,
-            "evaluated": self.judge.evaluated, "hits": self.judge.hits, "bugs": self.judge.bugs, "best_ever": self.tel.best_ever(),
+            "evaluated": self.judge.evaluated, "hits": self.judge.hits, "bugs": self.judge.bugs, "best_ever": self.tel.best_ever(), "stage": self.judge.stage,
             "population": population.iter().map(ind).collect::<Vec<_>>(),
             "hof": self.hof.iter().map(ind).collect::<Vec<_>>(),
         });
@@ -585,7 +591,7 @@ fn real_main() -> Result<(), String> {
         regime: regime.clone(),
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, floor_at_yardstick: image_target, ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
+        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, stage: checkpoint.as_ref().and_then(|c| serde_json::from_value::<FitnessStage>(c["stage"].clone()).ok()).unwrap_or(FitnessStage::Quality), ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
         tel,
         ledger,
         next_id: 0,
@@ -596,10 +602,17 @@ fn real_main() -> Result<(), String> {
         writeln!(run.ledger, "id\tgeneration\tparents\toperator\ttheta\ttheta_q\ttheta_s\tratio\tdiffering_t5\tnodes\twork\tprogram_hash").map_err(|e| e.to_string())?;
     }
 
-    // One pair to warm the GPU after the image harness, discarded (the first pair of a trial measured 2.36).
-    run.judge.time_pairs(&run.judge.ref_exe.clone(), &run.judge.ref_plan.clone(), 1)?;
-    let noise = run.judge.time_pairs(&run.judge.ref_exe.clone(), &run.judge.ref_plan.clone(), 11)?;
-    println!("# {} the timing's noise floor, the reference against itself, 11 pairs of {runs} runs: ratio median {:.4}, min {:.4}, max {:.4}", utc(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+    // The timing's noise floor (the reference against itself) is measured when timing starts: at once in stage 2,
+    // at the stage switch otherwise.
+    let noise_floor = |judge: &Judge<'_>| -> Result<Vec<f64>, String> {
+        // One pair to warm the GPU, discarded (the first pair of a trial measured 2.36).
+        judge.time_pairs(&judge.ref_exe, &judge.ref_plan, 1)?;
+        let noise = judge.time_pairs(&judge.ref_exe, &judge.ref_plan, 11)?;
+        println!("# {} the timing's noise floor, the reference against itself, 11 pairs of {runs} runs: ratio median {:.4}, min {:.4}, max {:.4}", utc(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        Ok(noise)
+    };
+    let mut noise = if run.judge.stage.measures_speed() { noise_floor(&run.judge)? } else { Vec::new() };
+    println!("# fitness stage {} ({})", run.judge.stage.number(), if run.judge.stage.measures_speed() { "quality and speed" } else { "quality only until the best picture is perfect" });
     let ref_eval = run.judge.evaluate(&reference, &ref_source);
     println!("# {} the reference: HFF {:.5} (quality {:.5}, speed {:.5}), ratio {:.4}, {} node executions a pixel, {} tile(s); differing channels {}", utc(), ref_eval.theta, ref_eval.theta_q, ref_eval.theta_s, ref_eval.ratio, ref_eval.work, ref_eval.tiles, ref_eval.diff.as_ref().map_or(0, |d| d.differing_channels));
 
@@ -758,6 +771,8 @@ fn real_main() -> Result<(), String> {
         extras.insert("mean_abs".to_string(), d.map_or(f64::NAN, |d| d.mean_abs));
         extras.insert("cache_hits".to_string(), run.judge.hits as f64);
         extras.insert("bugs".to_string(), run.judge.bugs as f64);
+        extras.insert("stage".to_string(), f64::from(run.judge.stage.number()));
+        extras.insert("best_perfect".to_string(), f64::from(u8::from(best.eval.perfect)));
         if let Some(o) = &ocr {
             extras.insert("ocr_match".to_string(), f64::from(u8::from(o.matches)));
             extras.insert("ocr_distance".to_string(), o.distance as f64);
@@ -800,6 +815,26 @@ fn real_main() -> Result<(), String> {
             run.judge.bugs,
             ocr.as_ref().map_or(String::new(), |o| format!("; OCR of the best {:?} (distance {})", o.text, o.distance))
         );
+        // ---- the stage switch: quality only until the best picture is perfect, then quality and speed ----
+        let next_stage = run.judge.stage.next(best.eval.perfect);
+        if next_stage != run.judge.stage {
+            let msg = format!(
+                "stage {} -> {}: the best (id {}) is perfect on every quality case (no pixel over 1/255 in display space, no non-finite channel); speed joins the fitness from generation {}",
+                run.judge.stage.number(),
+                next_stage.number(),
+                best.id,
+                generation + 1
+            );
+            println!("# {} {msg}", utc());
+            let mut m = Mutation::new(EventKind::StageChange, "stage_change", msg);
+            m.id = Some(best.id);
+            m.fitness_before = Some(best.eval.theta);
+            run.tel.mutation(generation, m)?;
+            run.judge.stage = next_stage;
+            // Every score so far is a stage-1 score: the population is measured again, with timing.
+            run.judge.cache.clear();
+            noise = noise_floor(&run.judge)?;
+        }
         if checkpoint_now {
             run.checkpoint(generation, &population, spent + started.elapsed().as_secs_f64())?;
         }

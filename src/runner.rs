@@ -52,6 +52,59 @@ pub fn two_level_hff(quality: &[f64], speed: &[f64]) -> TwoLevel {
     TwoLevel { fitness, quality, speed }
 }
 
+/// THE FITNESS STAGES (Andrew, 2026-10-27): evolve on QUALITY ONLY until the picture (the answer) is perfect, and
+/// only then add performance. Stage 1 ranks on the quality group's angle alone, with no speed inputs and no timing
+/// runs; stage 2 is the two-level HFF. The switch is made for the whole population once the best individual is
+/// perfect on every quality case (training and held-out), to the runner's stated tolerance, and is logged as a
+/// `stage_change` event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub enum FitnessStage {
+    /// Stage 1: the quality group alone.
+    Quality,
+    /// Stage 2: the two-level HFF of the quality and speed groups.
+    QualityAndSpeed,
+}
+
+impl FitnessStage {
+    /// 1 or 2, for the stream's extras.
+    pub fn number(self) -> u32 {
+        match self {
+            FitnessStage::Quality => 1,
+            FitnessStage::QualityAndSpeed => 2,
+        }
+    }
+
+    /// Whether this stage measures speed at all (stage 1 runs no timing).
+    pub fn measures_speed(self) -> bool {
+        self == FitnessStage::QualityAndSpeed
+    }
+
+    /// The stage after this generation: stage 2 once the best individual is perfect on every quality case; a
+    /// stage never goes back.
+    pub fn next(self, best_is_perfect: bool) -> FitnessStage {
+        if best_is_perfect {
+            FitnessStage::QualityAndSpeed
+        } else {
+            self
+        }
+    }
+}
+
+/// The fitness of a stage: stage 1 is TrueNorth over the quality inputs (the speed inputs must be empty, and the
+/// speed angle is 0); stage 2 is [`two_level_hff`].
+pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
+    match stage {
+        FitnessStage::Quality => {
+            if !speed.is_empty() {
+                return Err("our software has a bug: speed inputs in stage 1 (quality only)".into());
+            }
+            let q = if quality.is_empty() { 0.0 } else { crate::score::truenorth_angle(quality) };
+            Ok(TwoLevel { fitness: q, quality: q, speed: 0.0 })
+        }
+        FitnessStage::QualityAndSpeed => Ok(two_level_hff(quality, speed)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Checkpoint
 // ---------------------------------------------------------------------------
@@ -194,6 +247,23 @@ impl HallOfFame {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn stage_one_ranks_on_quality_alone_and_the_switch_is_one_way() {
+        let q = [0.2, 0.0, 0.4];
+        let one = staged_hff(FitnessStage::Quality, &q, &[]).unwrap();
+        assert_eq!(one.fitness, crate::score::truenorth_angle(&q));
+        assert_eq!((one.quality, one.speed), (one.fitness, 0.0));
+        assert!(staged_hff(FitnessStage::Quality, &q, &[0.5]).is_err(), "stage 1 takes no speed inputs");
+        let two = staged_hff(FitnessStage::QualityAndSpeed, &q, &[0.5, 0.5]).unwrap();
+        assert_eq!(two, two_level_hff(&q, &[0.5, 0.5]));
+        assert_eq!(FitnessStage::Quality.next(false), FitnessStage::Quality);
+        assert_eq!(FitnessStage::Quality.next(true), FitnessStage::QualityAndSpeed);
+        assert_eq!(FitnessStage::QualityAndSpeed.next(false), FitnessStage::QualityAndSpeed);
+        assert_eq!((FitnessStage::Quality.number(), FitnessStage::QualityAndSpeed.number()), (1, 2));
+        assert!(!FitnessStage::Quality.measures_speed() && FitnessStage::QualityAndSpeed.measures_speed());
+    }
+
     use super::*;
 
     /// A perfect individual is 0; each group's error moves its own angle; worse in either group is a worse fitness.

@@ -682,6 +682,9 @@ pub enum EventKind {
     ModelRewrite,
     /// A rewrite the gene could not hold: written back with a defect (the message names it).
     WriteBackDefect,
+    /// The fitness moved to its next stage (`runner::FitnessStage`): quality only until the best individual is
+    /// perfect, then quality and speed. `message` says why; the snapshot's extras carry `stage`.
+    StageChange,
     /// Something the engine wants an operator to see that is not one of the above.
     #[default]
     Note,
