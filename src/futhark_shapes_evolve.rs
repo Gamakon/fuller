@@ -687,39 +687,267 @@ pub fn score_population(
     inputs: &[BTreeMap<Ty, Mat>],
     cfg: &Config,
 ) -> Result<Vec<Individual>, String> {
-    let kingdom = FutharkKingdom::load_shapes()?;
-    let contract = kingdom
-        .relations()
-        .check()
-        .map_err(|bad| bad.join("; "))?;
-    let root = kingdom.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
-    let layout = GeneLayout::from_program_size(&contract, root, cfg.program_size)
-        .map_err(|e| format!("the layout: {e}"))?;
-    let const_len = kingdom.const_len();
-    let table = CostTable::load(&kingdom)?;
+    Scorer::new(reference.clone(), inputs.to_vec(), cfg.sizes.clone(), cfg.program_size)?.score(genes)
+}
 
-    let mut wants = Vec::with_capacity(inputs.len());
-    for sample in inputs {
-        match kingdom.eval_matrices(reference, sample)? {
-            MValue::Mat(m) => wants.push(m),
-            other => return Err(format!("the reference is not a matrix: {other:?}")),
+/// The shape kingdom's evaluation service, PREPARED ONCE.
+///
+/// [`score_population`] builds the kingdom, the contract, the layout, the cost
+/// table and the reference's own value on every call. That is right for a
+/// one-shot call and wrong for a GPU-resident population, which scores once a
+/// generation and would rebuild the tables every time.
+///
+/// So the prepared form is here: one object, built once, asked for a
+/// population's scores as often as the population changes. The tables it
+/// holds are the same ones the loop above uses, and the scores it returns are
+/// the same scores — [`score_population`] is a one-line wrapper over it, so
+/// there is only one implementation to be right.
+pub struct Scorer {
+    kingdom: FutharkKingdom,
+    contract: KingdomContract,
+    layout: GeneLayout,
+    const_len: BTreeMap<Ty, u32>,
+    table: CostTable,
+    reference: Tree,
+    inputs: Vec<BTreeMap<Ty, Mat>>,
+    wants: Vec<Mat>,
+    sizes: BTreeMap<String, usize>,
+    /// The reference's own traffic: the unit the cost is measured in.
+    reference_traffic: u64,
+    /// The reference's own cost: what a win is a win against.
+    reference_score: Score,
+}
+
+impl Scorer {
+    /// Prepare the service.
+    ///
+    /// `reference` is the kernel the population is trying to reproduce, and
+    /// `inputs` is the suite the correctness is decided on — every set counts,
+    /// and one set is not enough. `sizes` gives the roles their sizes and
+    /// `program_size` the layout's program size `N`.
+    pub fn new(
+        reference: Tree,
+        inputs: Vec<BTreeMap<Ty, Mat>>,
+        sizes: BTreeMap<String, usize>,
+        program_size: usize,
+    ) -> Result<Scorer, String> {
+        // An empty suite decides nothing: every program would agree with the
+        // reference vacuously, and every one of them would be called correct.
+        if inputs.is_empty() {
+            return Err("the evaluation service needs at least one input set: an empty suite decides nothing".into());
         }
-    }
-    let context = Context {
-        kingdom: &kingdom,
-        table: &table,
-        inputs,
-        wants: &wants,
-        sizes: &cfg.sizes,
-    };
+        let kingdom = FutharkKingdom::load_shapes()?;
+        let contract = kingdom
+            .relations()
+            .check()
+            .map_err(|bad| bad.join("; "))?;
+        let root = kingdom.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
+        let layout = GeneLayout::from_program_size(&contract, root, program_size)
+            .map_err(|e| format!("the layout: {e}"))?;
+        let const_len = kingdom.const_len();
+        let table = CostTable::load(&kingdom)?;
 
-    let mut out = Vec::with_capacity(genes.len());
-    for gene in genes {
-        let expressed = express(&contract, &layout, gene, &const_len)
-            .map_err(|e| format!("a gene does not express: {e}"))?;
-        out.push(evaluate(&expressed.tree(), gene, &context)?);
+        let mut wants = Vec::with_capacity(inputs.len());
+        for sample in &inputs {
+            match kingdom.eval_matrices(&reference, sample)? {
+                MValue::Mat(m) => wants.push(m),
+                other => return Err(format!("the reference is not a matrix: {other:?}")),
+            }
+        }
+        let reference_cost = program_cost(&reference, &kingdom, &table)?;
+        let reference_score = score_at(&reference_cost, &sizes)?;
+        let reference_traffic = reference_score.traffic;
+        Ok(Scorer {
+            kingdom,
+            contract,
+            layout,
+            const_len,
+            table,
+            reference,
+            inputs,
+            wants,
+            sizes,
+            reference_traffic,
+            reference_score,
+        })
     }
-    Ok(out)
+
+    /// Score a population of genes, in the order the genes were given.
+    ///
+    /// A gene the layout cannot express is an error: the layout says what a
+    /// cell may hold, so it should not happen.
+    pub fn score(&self, genes: &[Vec<u32>]) -> Result<Vec<Individual>, String> {
+        let mut out = Vec::with_capacity(genes.len());
+        for (i, gene) in genes.iter().enumerate() {
+            match self.score_one(gene)? {
+                Some(individual) => out.push(individual),
+                None => return Err(format!("gene {i} does not express")),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Score a population, tolerating a gene that does not express.
+    ///
+    /// `Ok(Some(individual))` is a score, `Ok(None)` is a gene the layout
+    /// cannot express, and `Err` is a real failure. The layout says what a
+    /// cell may hold, so an inexpressible gene should not happen — but a
+    /// generation must not be lost to one row of it.
+    pub fn score_lenient(&self, genes: &[Vec<u32>]) -> Result<Vec<Option<Individual>>, String> {
+        genes.iter().map(|gene| self.score_one(gene)).collect()
+    }
+
+    /// Score one gene: `None` when it does not express.
+    fn score_one(&self, gene: &[u32]) -> Result<Option<Individual>, String> {
+        let context = Context {
+            kingdom: &self.kingdom,
+            table: &self.table,
+            inputs: &self.inputs,
+            wants: &self.wants,
+            sizes: &self.sizes,
+        };
+        let Ok(expressed) = express(&self.contract, &self.layout, gene, &self.const_len) else {
+            return Ok(None);
+        };
+        Ok(Some(evaluate(&expressed.tree(), gene, &context)?))
+    }
+
+    /// The fitness a GPU-resident population selects on: one `f32` per
+    /// individual, lower is fitter.
+    ///
+    /// See [`fitness_of`] for what the number means.
+    pub fn fitness(&self, individuals: &[Individual]) -> Vec<f32> {
+        individuals.iter().map(|i| fitness_of(i, self.reference_traffic)).collect()
+    }
+
+    /// The reference's own gene: the reference written onto a LEGAL gene.
+    ///
+    /// A blank gene is not a legal one — its zero is only the right symbol for
+    /// the first row of the first type — so the reference is written onto a
+    /// random legal gene. `None` when the layout cannot hold the reference,
+    /// which is a named size, not a failure.
+    pub fn seed_gene(&self, seed: u64) -> Option<Vec<u32>> {
+        let mut rng = GeneRng::new(seed);
+        let carrier = random_gene(&self.layout, &self.contract, &self.const_len, &mut rng);
+        write_back(&self.contract, &self.layout, &carrier, &self.reference).ok()
+    }
+
+    /// The contract the population is typed by.
+    pub fn contract(&self) -> &KingdomContract {
+        &self.contract
+    }
+
+    /// The kingdom the tables came from.
+    pub fn kingdom(&self) -> &FutharkKingdom {
+        &self.kingdom
+    }
+
+    /// The layout the genes are words of.
+    pub fn layout(&self) -> &GeneLayout {
+        &self.layout
+    }
+
+    /// The constant lengths, per type.
+    pub fn const_len(&self) -> &BTreeMap<Ty, u32> {
+        &self.const_len
+    }
+
+    /// The reference kernel.
+    pub fn reference(&self) -> &Tree {
+        &self.reference
+    }
+
+    /// The reference's own cost: what a win is a win against.
+    pub fn reference_score(&self) -> &Score {
+        &self.reference_score
+    }
+}
+
+/// The fitness a GPU-resident population selects on.
+///
+/// phylu reads a fitness as an angle in `[0, pi/2]` — 0 is perfect, and the
+/// parent-selection weight is `pi/2` less the fitness — so the value stays
+/// inside that band.
+///
+/// The two bands are the two questions, in order:
+///
+/// * **Is it right?** A correct program is in `[0, 0.49)`, ranked by its
+///   cost: the traffic over the traffic plus the reference's own traffic.
+///   That transform is *strictly increasing* in the traffic — so no two
+///   correct programs tie for want of precision, however far apart they are —
+///   and *bounded* by one — so the band never crosses into the incorrect one.
+///   The reference, whose traffic is its own, sits at half the band.
+/// * **If not, how close?** An incorrect program is in `[0.5, 1.0]`, ranked by
+///   the graded agreement: `1` less the share of the value that agrees with
+///   the reference's, exactly.
+///
+/// The COST does not enter the incorrect band. An incorrect program is not a
+/// candidate however cheap it is — it cannot be shipped — so ranking it by
+/// cost would only spend the search's attention on the wrong axis. The
+/// agreement is the graded signal a mutation can hill-climb on, and it is
+/// what the incorrect band ranks.
+///
+/// The traffic is the cost's FIRST key; the allocations and the depth are
+/// reported with it, but they cannot be a tie-breaker here: the band is an
+/// `f32`, and the traffic's own resolution would not leave room for them.
+pub fn fitness_of(individual: &Individual, reference_traffic: u64) -> f32 {
+    const CORRECT_BAND: f32 = 0.49;
+    if individual.correct {
+        let traffic = individual.score.traffic as f64;
+        let reference = reference_traffic.max(1) as f64;
+        CORRECT_BAND * (traffic / (traffic + reference)) as f32
+    } else {
+        0.5 + 0.5 * (1.0 - individual.agreement.clamp(0.0, 1.0)) as f32
+    }
+}
+
+/// One set of inputs, drawn from a seed.
+///
+/// The values are in `[-8, 8]`, and the first of every matrix is `-0.0`, so
+/// the suite exercises the sign of zero as well as the magnitudes.
+pub fn input_set(
+    k: &FutharkKingdom,
+    sizes: &BTreeMap<String, usize>,
+    seed: u64,
+) -> BTreeMap<Ty, Mat> {
+    let mut map: BTreeMap<Ty, Mat> = BTreeMap::new();
+    let mut rng: u64 = seed;
+    for d in &k.duals {
+        if d.slot != "mat" {
+            continue;
+        }
+        let dims: Vec<usize> = d.form.split('.').map(|r| *sizes.get(r).unwrap_or(&1)).collect();
+        let mut data = Vec::with_capacity(dims[0] * dims[1]);
+        for _ in 0..dims[0] * dims[1] {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            data.push(((rng >> 40) as f32) / 16777216.0 * 16.0 - 8.0);
+        }
+        if !data.is_empty() {
+            data[0] = -0.0;
+        }
+        let mat = Mat::new(dims[0], dims[1], data).expect("the shape matches the values");
+        let ty = k.ty(&d.dual).expect("a dual's own type");
+        map.insert(ty, mat);
+    }
+    map
+}
+
+/// A suite of independent input sets, drawn deterministically.
+///
+/// Every set is drawn from its own seed, so the sets do not agree with one
+/// another by construction, and the suite is the same for the same count and
+/// the same sizes.
+pub fn suite(
+    k: &FutharkKingdom,
+    sizes: &BTreeMap<String, usize>,
+    count: usize,
+) -> Vec<BTreeMap<Ty, Mat>> {
+    (0..count)
+        .map(|i| {
+            let step = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            input_set(k, sizes, 0x1234_5678_9ABC_DEF0u64.wrapping_add(step))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -730,44 +958,6 @@ mod tests {
 
     fn kingdom() -> FutharkKingdom {
         FutharkKingdom::load_shapes().expect("the shape tables load")
-    }
-
-    /// A suite of independent input sets, drawn deterministically.
-    fn suite(k: &FutharkKingdom, sizes: &BTreeMap<String, usize>, count: usize) -> Vec<BTreeMap<Ty, Mat>> {
-        (0..count)
-            .map(|i| {
-            let step = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            input_set(k, sizes, 0x1234_5678_9ABC_DEF0u64.wrapping_add(step))
-        })
-            .collect()
-    }
-
-    /// One set of inputs, drawn from a seed.
-    fn input_set(
-        k: &FutharkKingdom,
-        sizes: &BTreeMap<String, usize>,
-        seed: u64,
-    ) -> BTreeMap<Ty, Mat> {
-        let mut map: BTreeMap<Ty, Mat> = BTreeMap::new();
-        let mut rng: u64 = seed;
-        for d in &k.duals {
-            if d.slot != "mat" {
-                continue;
-            }
-            let dims: Vec<usize> = d.form.split('.').map(|r| *sizes.get(r).unwrap_or(&1)).collect();
-            let mut data = Vec::with_capacity(dims[0] * dims[1]);
-            for _ in 0..dims[0] * dims[1] {
-                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                data.push(((rng >> 40) as f32) / 16777216.0 * 16.0 - 8.0);
-            }
-            if !data.is_empty() {
-                data[0] = -0.0;
-            }
-            let mat = Mat::new(dims[0], dims[1], data).expect("the shape matches the values");
-            let ty = k.ty(&d.dual).expect("a dual's own type");
-            map.insert(ty, mat);
-        }
-        map
     }
 
     /// A small configuration: the loop must be quick in a test.
@@ -883,6 +1073,100 @@ mod tests {
         for (individual, gene) in scored.iter().zip(&genes) {
             assert_eq!(&individual.gene, gene, "the scores keep the genes' order");
         }
+    }
+
+    /// The PREPARED service scores exactly what the one-shot one scores, and
+    /// its seed gene is the reference written onto a legal gene — so a
+    /// GPU-resident population can start from the incumbent.
+    #[test]
+    fn the_prepared_service_is_the_one_shot_service() {
+        let k = kingdom();
+        let reference = product_twice(&k);
+        let cfg = config();
+        let input = suite(&k, &cfg.sizes, cfg.samples);
+        let contract = k.relations().check().map_err(|bad| bad.join("; ")).expect("the contract");
+        let root = k.ty("mat.n.p").expect("the root class");
+        let layout = GeneLayout::from_program_size(&contract, root, cfg.program_size).expect("layout");
+        let const_len = k.const_len();
+        let mut rng = GeneRng::new(0x5EED_1234_ABCD_0033);
+        let genes: Vec<Vec<u32>> = (0..4)
+            .map(|_| random_gene(&layout, &contract, &const_len, &mut rng))
+            .collect();
+
+        let one_shot = score_population(&reference, &genes, &input, &cfg).expect("scored");
+        let scorer = Scorer::new(reference.clone(), input.clone(), cfg.sizes.clone(), cfg.program_size).expect("prepared");
+        let prepared = scorer.score(&genes).expect("scored");
+        assert_eq!(one_shot.len(), prepared.len());
+        for (a, b) in one_shot.iter().zip(&prepared) {
+            assert_eq!(a.correct, b.correct);
+            assert_eq!(a.agreement, b.agreement);
+            assert_eq!(a.score, b.score);
+        }
+
+        // The seed gene expresses to the reference.
+        let seed = scorer.seed_gene(0xA5A5_1234_5678_9ABC).expect("the reference fits the layout");
+        assert_eq!(seed.len(), layout.width, "a gene is a row of the layout");
+        let expressed = express(&contract, &layout, &seed, &const_len).expect("the seed expresses");
+        assert_eq!(expressed.tree(), reference, "the seed gene IS the reference");
+    }
+
+    /// The fitness a device selects on: two bands, and no overlap between
+    /// them. A correct program is always fitter than an incorrect one, and a
+    /// correct program is ranked by its cost.
+    #[test]
+    fn the_fitness_is_two_bands_and_they_do_not_overlap() {
+        let k = kingdom();
+        let reference = product_twice(&k);
+        let cfg = config();
+        let input = suite(&k, &cfg.sizes, cfg.samples);
+        let scorer = Scorer::new(reference.clone(), input.clone(), cfg.sizes.clone(), cfg.program_size).expect("prepared");
+        let contract = k.relations().check().map_err(|bad| bad.join("; ")).expect("the contract");
+        let root = k.ty("mat.n.p").expect("the root class");
+        let layout = GeneLayout::from_program_size(&contract, root, cfg.program_size).expect("layout");
+        let const_len = k.const_len();
+        let mut rng = GeneRng::new(0xC0FF_EE00_1122_3344);
+        let genes: Vec<Vec<u32>> = (0..12)
+            .map(|_| random_gene(&layout, &contract, &const_len, &mut rng))
+            .collect();
+        let scored = scorer.score(&genes).expect("scored");
+        let fitness = scorer.fitness(&scored);
+        assert_eq!(fitness.len(), scored.len());
+        for (individual, f) in scored.iter().zip(&fitness) {
+            assert!((0.0..=1.0).contains(f), "the fitness is inside the band: {f}");
+            if individual.correct {
+                assert!(*f < 0.5, "a correct program is in the lower band: {f}");
+            } else {
+                assert!(*f >= 0.5, "an incorrect program is in the upper band: {f}");
+            }
+        }
+
+        // The reference itself is correct, and its own traffic is the unit:
+        // it sits at half the lower band.
+        let seed = scorer.seed_gene(7).expect("the reference fits the layout");
+        let reference_individual = scorer.score(&[seed]).expect("scored").remove(0);
+        assert!(reference_individual.correct, "the reference is correct");
+        let reference_traffic = scorer.reference_score().traffic;
+        assert!((fitness_of(&reference_individual, reference_traffic) - 0.245).abs() < 1e-6);
+
+        // A cheap correct program is fitter than an expensive one, and the
+        // order is STRICT: two correct programs never tie for want of
+        // precision, however far apart they are.
+        let cheap = Individual { score: Score { traffic: 1, alloc: 0, depth: 0 }, ..reference_individual.clone() };
+        let dear = Individual { score: Score { traffic: 100, alloc: 0, depth: 0 }, ..reference_individual.clone() };
+        let dearer = Individual { score: Score { traffic: 1_000_000, alloc: 0, depth: 0 }, ..reference_individual.clone() };
+        assert!(fitness_of(&cheap, 100) < fitness_of(&dear, 100));
+        assert!(fitness_of(&dear, 100) < fitness_of(&dearer, 100));
+        // And a dearer correct program is still fitter than an incorrect one.
+        assert!(fitness_of(&dearer, 100) < 0.5);
+        assert!(fitness_of(&dearer, 100) > 0.48, "a very dear correct program is near the top of its band");
+
+        // An incorrect program is ranked by its agreement, and the cost does
+        // not enter the band.
+        let near = Individual { correct: false, agreement: 0.9, ..reference_individual.clone() };
+        let far = Individual { correct: false, agreement: 0.1, ..reference_individual.clone() };
+        assert!(fitness_of(&near, 100) < fitness_of(&far, 100));
+        let near_but_dear = Individual { score: Score { traffic: 10_000, alloc: 0, depth: 0 }, ..near.clone() };
+        assert_eq!(fitness_of(&near, 100), fitness_of(&near_but_dear, 100));
     }
 
     /// The premise of the transposed-product rule: the product computed the

@@ -334,41 +334,80 @@ the machine, the Futhark version and the command.
 * **The population DAG** is not needed at this size: 322-word genes, and no
   shared homeotic definitions to fold. It arrives if shared matmul helpers
   across the population become the bottleneck.
-* **The loop runs on the host.** The population machinery — the decode, the
-  variation, the selection — belongs in phylu's GPU typed engine, and that
-  is **not** built yet. What *is* built is the seam it needs:
-  `futhark_shapes_evolve::score_population` scores a population of genes
-  against a reference, exactly as the loop does, and
-  `futhark_shapes_gpu::measure` gives a program's measured GPU cost. A
-  GPU-resident population calls those two.
+* **The loop runs on the host — but the population does not.** *This was
+  written before the phylu half existed; it is now BUILT, and it is worth
+  recording how, because the answer was not the one this section predicted.*
 
-  The rest of the phylu work, in order:
+  The prediction was that the shape kingdom needed a new operator family in
+  phylu's symbol table (`SymbolTable::tsr` is the pattern), a decode stage
+  built from it, and a fit driver. **All three predictions were wrong, for
+  one reason: phylu's typed core is driven by the KINGDOM CONTRACT, not by
+  the symbol table.** `Symbol::Fn` — the extension point designed for "a row
+  of a kingdom the evaluator's closed `Op` does not name" — is matched in
+  eleven places and constructed in *zero*. The WGSL kingdom bypasses
+  `SymbolTable` entirely.
 
-  1. **A `SymbolTable` for the shape kingdom.** phylu's `engine.rs` has
-     `SymbolTable::tsr` for its second kingdom, and it is the pattern to
-     follow — but the pattern's *payload* does not fit: phylu's `Symbol`
-     is a Karva operator (`Symbol::Function(op)`, `Symbol::Input`,
-     `Symbol::Rnc`, `Symbol::Compound`), and the shape kingdom's rows —
-     `map_rows`, `map2_rows`, `transpose`, `matmul` — are not Karva
-     operators at all. So the shape kingdom needs a new operator family in
-     phylu's symbol table, and the `KingdomTypes` it carries (the root
-     type, the leaf types, the function types) has to carry the shape
-     *classes*, not Karva's duals.
-  2. **A decode stage** for it. phylu's typed device decodes a gene into a
-     tree on the GPU, and the decode is type-driven, so it may work as it
-     is — but it is built from the symbol table, so it has to be checked
-     against the shape kingdom's classes rather than assumed.
-  3. **An evaluator, or rather the absence of one.** The device's evaluator
-     is the Karva/WGSL one, and it cannot evaluate Futhark programs — the
-     shape kingdom's semantics are a matmul with a particular reduction
-     order, and a WGSL evaluator would have to reproduce it bit for bit. So
-     the shape kingdom's device is a *population without an evaluator*: the
-     decode and the variation run on the GPU, and the scoring comes back to
-     the host through the seam above. That is the whole reason the seam
-     exists.
-  4. **A fit driver** in phylu, modelled on `wgsl_typed_fit.rs`, that fills
-     the device's fitness buffer from the host's scores.
+  What the shape kingdom actually needed was much smaller:
 
-  The cost of this, in one sentence: the population's *mechanics* move to
-  the GPU, and its *evaluation* cannot, because the evaluation is a
-  compiler.
+  1. **A contract, not a symbol table.** `futhark_kingdom::relations()` already
+     yields a `KingdomRelations` that checks, and the shape kingdom's one
+     root class (`mat.n.p`) is a `Ty::FutharkShape(u16)` dual that the layout
+     machinery is generic over. Nothing in `typed_layout.rs` names a `Ty`
+     family.
+  2. **The walk-only decode stage**, which already existed — it is the stage
+     for a kingdom WITHOUT an evaluator, and the WGSL kingdom is one. It was
+     named `wgsl_typed_stage` and gated behind the `wgsl` feature for no
+     deeper reason than that it was written for the WGSL kingdom; it is now
+     `walk_stage`, gated behind `gpu` only.
+  3. **A fit driver** — `phylu::evolve::shape_typed` — that fills the device's
+     fitness buffer from the host's scores, and one new host-side service
+     (`futhark_shapes_evolve::Scorer`) that scores a population of genes
+     against the reference.
+
+  So the answer to "an evaluator, or rather the absence of one" is what the
+  plan said — with one correction that the reviews forced, and it is worth
+  being exact about. The shape kingdom's device is a **population whose
+  evaluation comes back from the host**, and that is *not* the same as "a
+  population without an evaluator":
+
+  * **On the device:** the population is drawn, varied and selected, and the
+    genes are WALKED — the typed walk, which is how the core checks that a
+    gene is well formed. The walk's node count is compared with the host's
+    own expression of the same gene, every run.
+  * **On the host:** the genes are expressed, INTERPRETED (the shape
+    kingdom's own interpreter, which is the oracle), and costed (the static
+    polynomial). The correctness is decided interpreter against interpreter,
+    bit for bit.
+  * **The compile** happens only where the MEASURED cost is wanted — the top
+    correct individuals of a generation, and the final best. It is *not* on
+    the scoring path, and it was never claimed to be.
+
+  The reason the interpreter is on the host and not the device is the
+  bit-exactness, not the arithmetic: a device evaluator would have to
+  reproduce the interpreter's reduction order *and* avoid the FMA contraction
+  naga/Metal does not promise, and the alternative is a tolerance — which this
+  design refuses throughout. What genuinely needs a compiler is the *measured*
+  cost, and that is why the measured tier exists at all.
+
+  The fitness is one `f32`, because that is what the device's selection
+  kernel reads. `futhark_shapes_evolve::fitness_of` packs the three signals
+  into two bands that cannot overlap: a **correct** program in `[0, 0.49)`,
+  ranked by `traffic / (traffic + reference_traffic)` — strictly increasing,
+  so no two correct programs tie, and bounded, so the band never crosses into
+  the other one — and an **incorrect** one in `[0.5, 1.0]`, ranked by the
+  graded agreement. The cost does not enter the incorrect band: an incorrect
+  program is not a candidate however cheap it is.
+
+  The measured run (phylu, `examples/shape_fit.rs`, size 6, 16 individuals):
+
+      reference  map2 (add) (A.B) ((B'.A')')   traffic 396, 13 device allocations
+      winner     map2 (add) (A.B) (A.B)        traffic 180,  9 device allocations
+
+  The winner is the same one fuller's host-side loop found: the e-graph's
+  transposed-product rule rewrites the second operand into the first, and the
+  compiler's own CSE removes the duplicate. The population was made on the
+  GPU; the polish and the scoring were made on the host, and the device
+  selected on what the host wrote.
+
+  The reviews of this half, and every finding's disposition, are in
+  `docs/reviews/2026-10-27_shape_typed_phylu_codex_fable.md`.
