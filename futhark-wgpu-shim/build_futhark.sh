@@ -24,7 +24,11 @@
 #   6. cc links.
 #
 # Builds run under /private/tmp/claude-501/locks/cargo (mkdir lock), held only
-# while cargo or cc runs.
+# while cargo or cc runs. A caller that already holds that lock (a test run
+# under a lock wrapper reaches this script through the futhark_wgpu_host test)
+# says so with CARGO_LOCK_HELD=<the lock's path>; the script then does not take
+# it again, which would wait on its own caller until the test's 900 s guard
+# fired (the futhark_wgpu_host failure of 2026-10-27).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 dawn=()
@@ -42,8 +46,13 @@ shift 2
 extra=("$@")
 
 lock=/private/tmp/claude-501/locks/cargo
-take_lock() { until mkdir "$lock" 2>/dev/null; do sleep 2; done; trap 'rmdir "$lock" 2>/dev/null || true' EXIT; }
-drop_lock() { rmdir "$lock"; trap - EXIT; }
+if [ "${CARGO_LOCK_HELD:-}" = "$lock" ]; then
+  take_lock() { :; }
+  drop_lock() { :; }
+else
+  take_lock() { until mkdir "$lock" 2>/dev/null; do sleep 2; done; trap 'rmdir "$lock" 2>/dev/null || true' EXIT; }
+  drop_lock() { rmdir "$lock"; trap - EXIT; }
+fi
 
 work="$exe.build"
 mkdir -p "$work"
