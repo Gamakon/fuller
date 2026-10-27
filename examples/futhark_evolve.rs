@@ -228,6 +228,8 @@ struct Judge<'a> {
     compiled: u64,
     hits: u64,
     bugs: u64,
+    /// Of the bugs, the branch compiler's "Cannot handle SetMem statement" (a known compiler limitation).
+    setmem: u64,
     bug_log: PathBuf,
     max_work: u128,
 }
@@ -303,6 +305,11 @@ impl Judge<'_> {
 
     fn log_bug(&mut self, msg: &str, source: &str) {
         self.bugs += 1;
+        // The branch compiler's own limitation, its own category: a SetMem statement in a GPU kernel (the gap of
+        // docs/PROPOSAL_memory_views_setmem.md).
+        if msg.contains("Cannot handle SetMem statement") {
+            self.setmem += 1;
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
             let _ = writeln!(f, "==== {} our software has a bug: a legal gene's program failed\n{msg}\n---- program\n{source}", utc());
         }
@@ -590,7 +597,7 @@ impl Run<'_> {
         let ind = |i: &Individual| serde_json::json!({"id": i.id, "parents": i.parents, "born": i.born, "operator": i.operator, "tree": tree_json(&i.tree)});
         let v = serde_json::json!({
             "problem": self.inst.name, "regime": regime, "generation": generation, "seconds": seconds, "next_id": self.next_id,
-            "evaluations": self.judge.evaluations, "compiled": self.judge.compiled, "hits": self.judge.hits, "bugs": self.judge.bugs,
+            "evaluations": self.judge.evaluations, "compiled": self.judge.compiled, "hits": self.judge.hits, "bugs": self.judge.bugs, "setmem": self.judge.setmem,
             "stage": self.stage, "first_exact": self.first_exact, "best_ever": self.tel.best_ever(), "rng": rng_state,
             "population": population.iter().map(ind).collect::<Vec<_>>(), "hof": self.hof,
         });
@@ -605,10 +612,15 @@ fn real_main() -> Result<(), String> {
     if !["R", "C", "P"].contains(&regime.as_str()) {
         return Err(format!("--regime {regime}: R (from random), C (random-search control) or P (from the published program)"));
     }
-    let start = arg(&args, "--start").unwrap_or_else(|| "published".into());
-    if regime == "P" && start != "published" && start != "planted" {
-        return Err(format!("--start {start}: published or planted"));
-    }
+    // R and C start from random genes; only P has a start program (the record said "published" for R and C until
+    // 2026-10-28, a default of the flag, never used by them: their generation 0 is all `random` in every ledger).
+    let start = match (regime.as_str(), arg(&args, "--start")) {
+        ("P", None) => "published".to_string(),
+        ("P", Some(s)) if s == "published" || s == "planted" => s,
+        ("P", Some(s)) => return Err(format!("--start {s}: published or planted")),
+        (_, None) => "random".to_string(),
+        (r, Some(s)) => return Err(format!("--start {s}: regime {r} starts from random genes; --start is for P")),
+    };
     let backend = match arg(&args, "--backend").as_deref().unwrap_or("gpu") {
         "gpu" => Backend::Gpu,
         "c" => Backend::C,
@@ -706,7 +718,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log"), max_work: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0 },
         tel,
         ledger: Ledger::open(&out, resume)?,
         next_id: 0,
@@ -778,6 +790,7 @@ fn real_main() -> Result<(), String> {
         run.judge.compiled = c["compiled"].as_u64().unwrap_or(0);
         run.judge.hits = c["hits"].as_u64().unwrap_or(0);
         run.judge.bugs = c["bugs"].as_u64().unwrap_or(0);
+        run.judge.setmem = c["setmem"].as_u64().unwrap_or(0);
         run.stage = serde_json::from_value(c["stage"].clone()).map_err(|e| format!("checkpoint stage: {e}"))?;
         run.first_exact = serde_json::from_value(c["first_exact"].clone()).map_err(|e| format!("checkpoint first_exact: {e}"))?;
         run.hof = serde_json::from_value(c["hof"].clone()).map_err(|e| format!("checkpoint hof: {e}"))?;
@@ -1152,12 +1165,13 @@ fn real_main() -> Result<(), String> {
     let be = best.eval.clone().ok_or("an unscored best")?;
     std::fs::write(out.join("best.fut"), &best.source).map_err(|e| e.to_string())?;
     let mut rep = format!(
-        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
+        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
         seconds / 60.0,
         run.judge.evaluations,
         run.judge.compiled,
         run.judge.hits,
         run.judge.bugs,
+        run.judge.setmem,
         run.judge.evaluations as f64 / seconds.max(1e-9),
         run.stage.number(),
         run.first_exact.map_or("-".to_string(), |f| f.0.to_string()),
