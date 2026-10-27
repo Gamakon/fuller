@@ -36,7 +36,7 @@ part once: image, device, concurrency, outputs, collection.
 | diversity telemetry (`EVOLVE_DIVERSITY=1`) | c49f9de, 48bc3b8 | on for this trial |
 | `EVOLVE_WRAPPERS=identity` | 78c549f4 | plain OLS |
 | A/B driver (`logs/AB_TYPED/sweep.sh`) | — | laptop form; the container form is step 2 |
-| `scripts/phylu_web_watch.py --port` | d5c60f37 | the page we watch |
+| `evowatch STREAM --web PORT` (was `scripts/phylu_web_watch.py`, d5c60f37) | phylu `docs/WATCHER.md` | the page we watch |
 | checkpoint / resume | — | not needed at 90 s fits |
 
 ## Gaps, in build order

@@ -52,6 +52,10 @@ Every evolution loop, in fuller or phylu, writes `OUT/stream.jsonl` through `ful
 honours `OUT/killme.trigger` (`fuller::run_file`), and emits a mutation event for every operator outside plain GEP
 variation. The standard, the event schema and the inventory of runners: `docs/STANDARD_runners.md`.
 
+**Watch any run with ONE app, `evowatch`** (built in phylu: `cargo build --release --bin evowatch`):
+`../phylu/target/release/evowatch OUT` in a terminal, `evowatch OUT --web 8787` in a browser, `--compare OUT2` for
+an A/B. Every kingdom, no change needed for a new one. Manual: `../phylu/docs/WATCHER.md`. There is no other watcher.
+
 ## The evolution engine moved to phylu
 
 `src/evolve/`, the viewer, `evolve_fit` and the fit runbook now live in

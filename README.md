@@ -226,7 +226,7 @@ networks, compiler IR).
 
 The GPU evolutionary engine that drives fuller inside a search — GEP
 populations, HFF selection, the pump, the in-search fold/snap editors,
-telemetry and the `phylu-sr-watch` viewer — lives in its own repository,
+telemetry and the `evowatch` viewer (every kingdom's runs, terminal and browser) — lives in its own repository,
 [phylu](https://github.com/Gamakon/phylu). phylu depends on fuller; fuller
 depends on nothing of phylu's.
 

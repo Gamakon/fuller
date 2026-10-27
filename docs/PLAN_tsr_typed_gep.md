@@ -477,7 +477,7 @@ nohup python3 scripts/sr_old_new.py --binary logs/TSR_TYPES/bin/evolve_fit_tsr_2
   --laws experiments/order133.txt --limit 40 --seeds 7001,7002,7003,7004,7005,7006,7007,7008,7009,7010 \
   --evaluations 1000000 --seconds 600 --out logs/TSR_TYPES/run1 > logs/TSR_TYPES/run1.out 2>&1 &
 tail -f logs/TSR_TYPES/run1/sweep.log
-./target/release/phylu-sr-watch --follow logs/TSR_TYPES/run1/stream.jsonl
+./target/release/evowatch logs/TSR_TYPES/run1
 ```
 
 Run 2, all 133 laws, with the arms that pass the rule of 7.6 plus A, D-old and D-raw: the same command with `--limit 0` and `--out logs/TSR_TYPES/run2`.

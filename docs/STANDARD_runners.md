@@ -48,6 +48,24 @@ Y = meets it; opt-in = only when an environment variable or flag names a path; N
 | `examples/wgsl_gram_evolve` | fuller | its own | N | N | N | N | Y (build watchdog) | N | Y (`ledger.tsv`) |
 | `examples/futhark_pixel_evolve` | fuller | `futhark_pixel` (another agent) | N | Y | N | N | N | text + pictures | N (series only) |
 
+## Inventory, 2026-10-27 (after the work)
+
+| runner | stream | two-level HFF | checkpoint + resume | kill trigger | guards | hall of fame | ledger / lineage | mutation events |
+|---|---|---|---|---|---|---|---|---|
+| fuller `futhark_shapes_evolve` | Y | Y (quality: disagreement per input set; speed: traffic, allocations, depth) | Y (`--resume`) | Y | Y (`--seconds`, generations) | text | Y (`ledger.tsv`, parents) | `egraph_exact`, `write_back_defect` |
+| fuller `wgsl_gram_evolve` | Y | one group (quality; no speed input by design) | Y | Y | Y | text (kernel) | Y (own `ledger.tsv`, origins name parents) | `subtree_crossover`; CANNOT RUN: the work guard refuses the unported legacy kingdom |
+| fuller `futhark_pixel_evolve` | Y (adopted by its own agent) | Y | — | — | — | text + pictures | — | — |
+| phylu `shape_fit` (`shape_typed`) | Y | Y (as `futhark_shapes_evolve`) | Y (`--resume`) | Y | Y | text | Y (the device's parent buffer) | `egraph_exact`, `write_back_defect` |
+| phylu `wgsl_true_fit`, `wgsl_true_image_fit`, `wgsl_true_ingest_fit` (`true_wgsl_fit`) | Y | image and ingest Y; `wgsl_true_fit` one group | Y | Y (in the library now) | Y | text (+ pictures, image) | Y (`lineage.tsv` on every run) | every optimiser (`cleanse`, `egraph_exact`, `egraph_real`, `hoist`, `trips`, `snap`), `adf_fold`, `marriage`, `pump`, `write_back_defect` |
+| phylu `evolve_fit`, `regex_fit` (engine) | Y (default `EVOLVE_OUT`) | N (one flat HFF) | opt-in: the engine resumes ANY checkpoint in its directory, so a default one would make a rerun resume the last run | Y (default) | Y | text | opt-in (genealogy: its cost at production size is not measured) | the engine's `snap`, `fold`, `typed_snap`, `regex_simplify`, `pump` events |
+| phylu `wgsl_fit`, `wgsl_tune` | — | — | — | Y | Y | — | Y | CANNOT RUN: the work guard refuses the unported legacy kingdom |
+| phylu `kernel_time` | N on purpose: a timing harness with every stop and the stream off | | | | | | | |
+
+LEAF is a mutation mode of the device's own variation; the device does not report which rows it made, so there is no
+`leaf` event yet (its share is in every WGSL snapshot). The tests that fail when a runner leaves the standard:
+fuller `tests/runner_standard.rs`, phylu `tests/runner_standard.rs` and phylu `shape_typed`'s
+`the_shape_run_meets_the_standard` (GPU).
+
 Not runners (no generation loop over a population, checked): phylu `wgsl_typed_probe`, `init_size_study`,
 `order_study`, `population_dag_ab`, `fold_to_dag_measure`, `st8b_leaf_measure`, `st13_rescore`,
 `regex_holdout_score`, `kitchen_sink`; fuller `wgsl_gram_hgp` (one round of model calls), `population_*`,
