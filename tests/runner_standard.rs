@@ -23,6 +23,7 @@ const RUNNERS: &[(&str, &str, &str)] = &[
     // the loop's two-level HFF is checked on its stream by `the_shape_loop_meets_the_standard`
     ("futhark_shapes_evolve", "use fuller::futhark_shapes_evolve::{evolve", "use fuller::futhark_shapes_evolve::{evolve"),
     ("futhark_pixel_evolve", "RunTelemetry::start", "groups.insert(\"speed\""),
+    ("futhark_evolve", "RunTelemetry::start", "groups.insert(\"speed\""),
 ];
 
 /// LEGACY, EXCLUDED FROM THE STANDARD BY NAME: (example, why, the guard in its source that stops it running). The day

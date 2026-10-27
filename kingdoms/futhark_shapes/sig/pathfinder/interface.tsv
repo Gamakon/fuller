@@ -1,0 +1,6 @@
+# kind	name	element	dims
+# Rodinia pathfinder, diku-dk/futhark-benchmarks rodinia/pathfinder/pathfinder.fut
+input	walls	i32	rows,cols
+output	main	i32	cols
+depth	2		
+dims	rows,cols		

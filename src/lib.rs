@@ -55,6 +55,7 @@ pub mod futhark_interp;
 pub mod futhark_exec;
 pub mod futhark_wgpu_host;
 pub mod futhark_pixel;
+pub mod futhark_sig;
 pub mod futhark_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;

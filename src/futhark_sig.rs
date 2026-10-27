@@ -1,0 +1,998 @@
+//! The SIGNATURE FAMILY of the shape kingdom's generator: a Futhark kingdom whose interface is generated from a
+//! program's declared signature (`kingdoms/futhark_shapes/gen_tables.py`, section "THE SIGNATURE FAMILY"; one instance
+//! a problem, under `kingdoms/futhark_shapes/sig/<problem>/`), in the direction of "any Futhark program: inputs and
+//! outputs are any typed values".
+//!
+//! An instance declares its inputs and output as typed arrays over named dimensions — Rodinia's pathfinder is
+//! `walls: [rows][cols]i32 -> [cols]i32` — and the generator derives the rest, every rule of a legal program a type:
+//! a class (`a.rows.cols`, `a.cols`, `ix.cols`, `i32`) in a context (the binders around the node: `tabulate`, a
+//! `loop` over a dimension carrying a state, the same loop from 1). An index is in range by its type (its terminals
+//! are `0`, `D - 1` and the counters of binders over `D`; its functions clamp), a variable is read only in a context
+//! that binds it, and a binder, a reduction or a `replicate` exists only above the family's depth, so a node runs at
+//! most `max(D) ** depth` times. Every gene expresses a program Futhark accepts; the tests here check that Futhark
+//! agrees and that the compiled program computes what the host interpreter says.
+//!
+//! What this module holds: the loader and the declared signature, Futhark's binary value format for the cases, the
+//! program around an expressed tree (the entry point binding the interface), the host interpreter (the meaning of a
+//! gene, a test oracle, exact `i32` arithmetic as Futhark's: wrapping), the exact work of a tree on given sizes, a
+//! builder that writes a program given as an s-expression of the family's rows as a tree, the problem registry (the
+//! instance, its reference written as a gene, the published program as the speed yardstick, and its stored cases),
+//! and the instance's e-graph (one sort a type, constants by their pool index).
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use egglog::extract::hff_extract;
+use egglog::prelude::exprs;
+use egglog::{EGraph, Term, TermDag, TermId};
+
+use crate::futhark_kingdom::{FutharkFamily, FutharkKind, FutharkKingdom, GeneRng};
+use crate::geneframe::Ty;
+use crate::kingdom_contract::{KingdomContract, SymbolId};
+use crate::saturated_fold::EgraphKingdom;
+use crate::typed_gep::{Domain, GeneLayout, Tree};
+
+/// One instance of the family: the generated artefacts of one declared signature.
+#[derive(Debug, Clone, Copy)]
+pub struct Instance {
+    pub name: &'static str,
+    types: &'static str,
+    functions: &'static str,
+    interface: &'static str,
+    pub datatype: &'static str,
+    pub rules: &'static str,
+    egraph_rows: &'static str,
+}
+
+/// Rodinia pathfinder: `walls: [rows][cols]i32 -> [cols]i32`.
+pub const PATHFINDER: Instance = Instance {
+    name: "pathfinder",
+    types: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/types.tsv"),
+    functions: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.rows"),
+};
+
+/// The ruleset name the generated rules are in.
+pub const RULESET: &str = "futhark_sig";
+
+/// A problem: a signature instance, its published program written as a gene of the kingdom (an s-expression of the
+/// family's rows, for [`build`]), the published program itself as the speed yardstick (a Futhark source whose `main`
+/// has the declared signature), and the directory of its stored cases.
+#[derive(Debug, Clone, Copy)]
+pub struct Problem {
+    pub name: &'static str,
+    pub instance: Instance,
+    pub reference: &'static str,
+    pub yardstick: &'static str,
+    /// THE PLANTED SLOWDOWN (a control of regime P): an equal program that does the work twice, which the search must
+    /// recover from. For pathfinder: the elementwise least of the reference and its re-associated twin (the `min`s
+    /// grouped the other way), which Futhark cannot merge and the e-graph can (associativity puts the twins in one
+    /// class, and `min a a = a` removes the `map2`).
+    pub planted: &'static str,
+    /// Relative to the crate's root.
+    pub corpus: &'static str,
+}
+
+/// Pathfinder's published algorithm (`rodinia/pathfinder/pathfinder.fut`) as a gene: the state starts as row 0 of
+/// the walls; for each later row `i` (1 .. rows-1), each column `j` becomes the wall plus the least of the state's
+/// `j`, `j - 1` and `j + 1`, the published order of the two `min`s. The published kernel skips a neighbour that is off
+/// the edge; here the index is clamped, so the off-edge neighbour is `j` itself, which the least already holds.
+pub const PATHFINDER_REFERENCE: &str = "(loop1.rows (row.rows.cols walls zero)
+  (tab (add (get.cols (row.rows.cols walls i1) j2)
+            (min (min (get.cols s1 j2) (get.cols s1 (prev j2))) (get.cols s1 (next j2))))))";
+
+pub const PATHFINDER_PLANTED: &str = "(map2.min
+  (loop1.rows (row.rows.cols walls zero)
+    (tab (add (get.cols (row.rows.cols walls i1) j2)
+              (min (min (get.cols s1 j2) (get.cols s1 (prev j2))) (get.cols s1 (next j2))))))
+  (loop1.rows (row.rows.cols walls zero)
+    (tab (add (get.cols (row.rows.cols walls i1) j2)
+              (min (get.cols s1 j2) (min (get.cols s1 (prev j2)) (get.cols s1 (next j2))))))))";
+
+pub const PATHFINDER_PROBLEM: Problem = Problem {
+    name: "pathfinder",
+    instance: PATHFINDER,
+    reference: PATHFINDER_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/pathfinder/yardstick.fut"),
+    planted: PATHFINDER_PLANTED,
+    corpus: "tests/corpus/futhark_problems/pathfinder",
+};
+
+/// A problem by name.
+pub fn problem(name: &str) -> Result<Problem, String> {
+    match name {
+        "pathfinder" => Ok(PATHFINDER_PROBLEM),
+        other => Err(format!("no Futhark signature problem {other} (pathfinder)")),
+    }
+}
+
+/// Load an instance's tables.
+pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {
+    FutharkKingdom::from_tables(FutharkFamily::Shape, &format!("Futhark Sig {}", inst.name), inst.types, inst.functions)
+}
+
+// ---- the declared signature -------------------------------------------------------------------------------------
+
+/// A typed array of the signature: its name, element type and dimension roles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Param {
+    pub name: String,
+    pub elem: String,
+    pub dims: Vec<String>,
+}
+
+/// The declared signature, read from `interface.tsv`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    pub inputs: Vec<Param>,
+    pub output: Param,
+    /// The family's binder depth: a node runs at most `max(D) ** depth` times.
+    pub depth: u32,
+    /// Every dimension role, in order of first appearance.
+    pub dims: Vec<String>,
+}
+
+pub fn signature(inst: &Instance) -> Result<Signature, String> {
+    let mut inputs = Vec::new();
+    let (mut output, mut depth, mut dims) = (None, None, None);
+    for line in inst.interface.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() != 4 {
+            return Err(format!("{}: the interface line {line:?} has {} fields, wants 4", inst.name, f.len()));
+        }
+        let list = |s: &str| s.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
+        match f[0] {
+            "input" => inputs.push(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
+            "output" => output = Some(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
+            "depth" => depth = Some(f[1].parse::<u32>().map_err(|e| format!("{}: depth: {e}", inst.name))?),
+            "dims" => dims = Some(list(f[1])),
+            other => return Err(format!("{}: an interface line of kind {other}", inst.name)),
+        }
+    }
+    Ok(Signature {
+        inputs,
+        output: output.ok_or_else(|| format!("{}: the interface has no output", inst.name))?,
+        depth: depth.ok_or_else(|| format!("{}: the interface has no depth", inst.name))?,
+        dims: dims.ok_or_else(|| format!("{}: the interface has no dims", inst.name))?,
+    })
+}
+
+impl Signature {
+    /// The sizes of every dimension role, bound from the inputs (each input's shape must have its declared rank;
+    /// a role named twice must have one size; every size is at least 1, the family's precondition).
+    pub fn sizes(&self, inputs: &[Array]) -> Result<BTreeMap<String, usize>, String> {
+        if inputs.len() != self.inputs.len() {
+            return Err(format!("{} inputs, the signature has {}", inputs.len(), self.inputs.len()));
+        }
+        let mut out = BTreeMap::new();
+        for (p, a) in self.inputs.iter().zip(inputs) {
+            if a.dims.len() != p.dims.len() {
+                return Err(format!("the input {} has rank {}, declared {}", p.name, a.dims.len(), p.dims.len()));
+            }
+            for (d, &n) in p.dims.iter().zip(&a.dims) {
+                if n == 0 {
+                    return Err(format!("the input {} has an empty dimension {d}: every dimension is at least 1", p.name));
+                }
+                if let Some(old) = out.insert(d.clone(), n) {
+                    if old != n {
+                        return Err(format!("the dimension {d} is {old} and {n}"));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+// ---- values: Futhark's binary format ----------------------------------------------------------------------------
+
+/// An `i32` array of any rank (a scalar has no dims), row-major.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Array {
+    pub dims: Vec<usize>,
+    pub data: Vec<i32>,
+}
+
+/// Values in Futhark's binary format (`b`, version 2, rank, ` i32`, the dims as `i64`, the data), one after another:
+/// what a Futhark executable reads on stdin for its entry point's parameters, in order.
+pub fn write_binary(values: &[&Array]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for v in values {
+        out.extend_from_slice(&[b'b', 2, v.dims.len() as u8]);
+        out.extend_from_slice(b" i32");
+        for &d in &v.dims {
+            out.extend_from_slice(&(d as i64).to_le_bytes());
+        }
+        for x in &v.data {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    out
+}
+
+/// Every value of a stream in Futhark's binary format (`i32` only; whitespace between values is skipped).
+pub fn read_binary(raw: &[u8]) -> Result<Vec<Array>, String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    loop {
+        while i < raw.len() && raw[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i == raw.len() {
+            return Ok(out);
+        }
+        let head = raw.get(i..i + 7).ok_or("a value ends inside its header")?;
+        if head[0] != b'b' || head[1] != 2 {
+            return Err(format!("not Futhark's binary format: {:?}", &head[..2]));
+        }
+        if &head[3..7] != b" i32" {
+            return Err(format!("a value that is not i32: {:?}", String::from_utf8_lossy(&head[3..7])));
+        }
+        let rank = head[2] as usize;
+        i += 7;
+        let mut dims = Vec::with_capacity(rank);
+        for _ in 0..rank {
+            let d = raw.get(i..i + 8).ok_or("a value ends inside its shape")?;
+            let n = i64::from_le_bytes(d.try_into().map_err(|_| "a shape that is not 8 bytes")?);
+            dims.push(usize::try_from(n).map_err(|_| format!("a negative dimension {n}"))?);
+            i += 8;
+        }
+        let n: usize = dims.iter().product();
+        let data = raw.get(i..i + 4 * n).ok_or("a value ends inside its data")?;
+        out.push(Array { dims, data: data.chunks_exact(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() });
+        i += 4 * n;
+    }
+}
+
+/// The one value of a program's output.
+pub fn read_one(raw: &[u8]) -> Result<Array, String> {
+    let mut v = read_binary(raw)?;
+    if v.len() != 1 {
+        return Err(format!("the program wrote {} values, wants 1", v.len()));
+    }
+    Ok(v.remove(0))
+}
+
+// ---- the program ------------------------------------------------------------------------------------------------
+
+/// The whole program: the entry point with the declared signature (the dimension roles as size parameters), the
+/// zero array of every rank-1 class bound once, around the rendered tree.
+pub fn program(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<String, String> {
+    let root = k.rows.get(tree.symbol as usize).ok_or("the root is not a row")?;
+    if !k.dual(root.output).is_some_and(|d| d.root) {
+        return Err(format!("the root {} is not the declared output", root.name));
+    }
+    let ty = |p: &Param| format!("{}{}", p.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), p.elem);
+    let mut s = format!("entry main {} ", sig.dims.iter().map(|d| format!("[{d}]")).collect::<String>());
+    for p in &sig.inputs {
+        s.push_str(&format!("({}: {}) ", p.name, ty(p)));
+    }
+    s.push_str(&format!(": {} =\n", ty(&sig.output)));
+    for d in &sig.dims {
+        s.push_str(&format!("  let zeros_{d} = replicate {d} 0{}\n", sig.output.elem));
+    }
+    s.push_str(&format!("  in {}\n", k.render(tree)?));
+    Ok(s)
+}
+
+/// THE QUALITY PROGRAM: the tree as a function of the declared signature (`#[noinline]`, so it is compiled once), and
+/// an entry point that applies it to `n` cases at once, each with its own sizes, returning the `n` outputs. A GPU
+/// process costs about 0.25 s to start whatever it runs (measured 2026-10-27, M3 Max), so one process for every case
+/// instead of one a case is what makes the evaluation rate. The function's text is [`program`]'s body unchanged;
+/// the timed program is [`program`] itself.
+pub fn program_cases(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize) -> Result<String, String> {
+    if n == 0 {
+        return Err("a quality program of no cases".into());
+    }
+    let single = program(k, sig, tree)?;
+    let body = single.split_once("=\n").map(|(_, b)| b).ok_or("our software has a bug: the program has no body")?;
+    let ty = |p: &Param, i: usize| format!("{}{}", p.dims.iter().map(|d| format!("[{d}{i}]")).collect::<String>(), p.elem);
+    let mut s = String::from("#[noinline]\ndef kernel ");
+    s.push_str(&sig.dims.iter().map(|d| format!("[{d}]")).collect::<String>());
+    for p in &sig.inputs {
+        s.push_str(&format!(" ({}: {}{})", p.name, p.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), p.elem));
+    }
+    s.push_str(&format!(" : {}{} =\n{body}\nentry main ", sig.output.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), sig.output.elem));
+    for i in 0..n {
+        s.push_str(&sig.dims.iter().map(|d| format!("[{d}{i}]")).collect::<String>());
+    }
+    for i in 0..n {
+        for p in &sig.inputs {
+            s.push_str(&format!(" ({}{i}: {})", p.name, ty(p, i)));
+        }
+    }
+    let outs: Vec<String> = (0..n).map(|i| ty(&sig.output, i)).collect();
+    let calls: Vec<String> = (0..n).map(|i| format!("kernel {}", sig.inputs.iter().map(|p| format!("{}{i}", p.name)).collect::<Vec<_>>().join(" "))).collect();
+    s.push_str(&format!(" : ({}) =\n  ({})\n", outs.join(", "), calls.join(", ")));
+    Ok(s)
+}
+
+// ---- the host interpreter ---------------------------------------------------------------------------------------
+
+/// What a row does, parsed once from its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Min,
+    Max,
+    Neg,
+    Abs,
+    Sel,
+    Get,
+    Sum,
+    Minimum,
+    Maximum,
+    /// An index as a value.
+    Ival,
+    /// The size of a dimension as a value.
+    DimVal(usize),
+    Const,
+    /// The state of frame k.
+    State(usize),
+    /// The index of frame k (a tabulate's `jk`, a loop's `ik`).
+    Index(usize),
+    Prev,
+    Next(usize),
+    Clamp(usize),
+    Zero,
+    Last(usize),
+    /// A tabulate over a dimension, binding frame k.
+    Tab(usize, usize),
+    Replicate(usize),
+    /// An elementwise operation of two arrays of one class (`map2`): add, sub, min, max.
+    Map2(Bin),
+    /// The row of an array.
+    Row,
+    Input(usize),
+    Zeros(usize),
+    /// A loop over a dimension binding frame k; `from1` runs its counter over 1 .. D-1.
+    Loop { dim: usize, k: usize, from1: bool },
+}
+
+/// The elementwise operations of `map2`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bin {
+    Add,
+    Sub,
+    Min,
+    Max,
+}
+
+impl Bin {
+    fn apply(self, a: i32, b: i32) -> i32 {
+        match self {
+            Bin::Add => a.wrapping_add(b),
+            Bin::Sub => a.wrapping_sub(b),
+            Bin::Min => a.min(b),
+            Bin::Max => a.max(b),
+        }
+    }
+}
+
+/// The interpreter of one instance: each row's meaning, parsed once.
+pub struct Interp<'a> {
+    k: &'a FutharkKingdom,
+    sig: &'a Signature,
+    ops: Vec<Op>,
+    literals: Vec<Option<Vec<i32>>>,
+}
+
+/// An array value as a view: shared data, an offset, the dims.
+#[derive(Debug, Clone)]
+struct View {
+    data: Rc<Vec<i32>>,
+    off: usize,
+    dims: Vec<usize>,
+}
+
+impl View {
+    fn len(&self) -> usize {
+        self.dims.iter().product()
+    }
+    fn slice(&self) -> &[i32] {
+        &self.data[self.off..self.off + self.len()]
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Val {
+    S(i32),
+    I(i64),
+    A(View),
+}
+
+/// The frames' variables: a state and an index a frame (frame 0 is unused).
+struct Env {
+    sizes: Vec<usize>,
+    inputs: Vec<View>,
+    zeros: Vec<View>,
+    state: Vec<Option<Val>>,
+    index: Vec<i64>,
+}
+
+fn depth_of(dual: &str) -> usize {
+    dual.split_once(':').map_or(0, |(_, ctx)| ctx.matches('/').count())
+}
+
+impl<'a> Interp<'a> {
+    pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Interp<'a>, String> {
+        let dim = |d: &str| sig.dims.iter().position(|x| x == d).ok_or_else(|| format!("no dimension {d}"));
+        let class_dim = |dual: &str, prefix: &str| -> Result<usize, String> {
+            let cls = dual.split(':').next().unwrap_or("");
+            dim(cls.strip_prefix(prefix).ok_or_else(|| format!("{dual} is not a {prefix} class"))?)
+        };
+        let mut ops = Vec::with_capacity(k.rows.len());
+        let mut literals = Vec::with_capacity(k.duals.len());
+        for d in &k.duals {
+            literals.push(if d.literals.is_empty() {
+                None
+            } else {
+                Some(d.literals.iter().map(|l| l.trim_end_matches(sig.output.elem.as_str()).parse::<i32>().map_err(|e| format!("the literal {l}: {e}"))).collect::<Result<Vec<_>, _>>()?)
+            });
+        }
+        for r in &k.rows {
+            let out = &k.dual(r.output).ok_or("a row with no dual")?.dual;
+            let (op, _) = r.name.split_once('@').unwrap_or((r.name.as_str(), ""));
+            let kk = depth_of(out) + 1;
+            let num = |s: &str| s.get(1..).and_then(|n| n.parse::<usize>().ok());
+            let o = match op {
+                "add" => Op::Add,
+                "sub" => Op::Sub,
+                "mul" => Op::Mul,
+                "min" => Op::Min,
+                "max" => Op::Max,
+                "neg" => Op::Neg,
+                "abs" => Op::Abs,
+                "sel" => Op::Sel,
+                "prev" => Op::Prev,
+                "next" => Op::Next(class_dim(out, "ix.")?),
+                "clamp" => Op::Clamp(class_dim(out, "ix.")?),
+                "zero" => Op::Zero,
+                "last" => Op::Last(class_dim(out, "ix.")?),
+                "tab" => Op::Tab(class_dim(out, "a.")?, kk),
+                "replicate" => Op::Replicate(class_dim(out, "a.")?),
+                "zeros" => Op::Zeros(class_dim(out, "a.")?),
+                _ if r.kind == FutharkKind::Const => Op::Const,
+                _ if op.starts_with("get.") => Op::Get,
+                _ if op.starts_with("sum.") => Op::Sum,
+                _ if op.starts_with("minimum.") => Op::Minimum,
+                _ if op.starts_with("maximum.") => Op::Maximum,
+                _ if op.starts_with("ival.") => Op::Ival,
+                _ if op.starts_with("row.") => Op::Row,
+                "map2.add" => Op::Map2(Bin::Add),
+                "map2.sub" => Op::Map2(Bin::Sub),
+                "map2.min" => Op::Map2(Bin::Min),
+                "map2.max" => Op::Map2(Bin::Max),
+                _ if op.starts_with("loop1.") => Op::Loop { dim: dim(&op[6..])?, k: kk, from1: true },
+                _ if op.starts_with("loop.") => Op::Loop { dim: dim(&op[5..])?, k: kk, from1: false },
+                _ if op.starts_with('s') && num(op).is_some() => Op::State(num(op).unwrap_or(0)),
+                _ if (op.starts_with('i') || op.starts_with('j')) && num(op).is_some() => Op::Index(num(op).unwrap_or(0)),
+                _ => {
+                    if let Some(i) = sig.inputs.iter().position(|p| p.name == op) {
+                        Op::Input(i)
+                    } else if let Ok(d) = dim(op) {
+                        Op::DimVal(d)
+                    } else {
+                        return Err(format!("our software has a bug: the row {} has no meaning in the interpreter", r.name));
+                    }
+                }
+            };
+            ops.push(o);
+        }
+        Ok(Interp { k, sig, ops, literals })
+    }
+
+    /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
+    pub fn eval(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
+        let sizes_map = self.sig.sizes(inputs)?;
+        let sizes: Vec<usize> = self.sig.dims.iter().map(|d| sizes_map[d]).collect();
+        let depth = self.sig.depth as usize + 2;
+        let mut env = Env {
+            inputs: inputs.iter().map(|a| View { data: Rc::new(a.data.clone()), off: 0, dims: a.dims.clone() }).collect(),
+            zeros: sizes.iter().map(|&n| View { data: Rc::new(vec![0; n]), off: 0, dims: vec![n] }).collect(),
+            sizes,
+            state: vec![None; depth],
+            index: vec![0; depth],
+        };
+        match self.at(tree, &mut env)? {
+            Val::A(v) => Ok(Array { dims: v.dims.clone(), data: v.slice().to_vec() }),
+            Val::S(x) => Ok(Array { dims: vec![], data: vec![x] }),
+            Val::I(_) => Err("our software has a bug: a program whose value is an index".into()),
+        }
+    }
+
+    fn s(&self, t: &Tree, env: &mut Env) -> Result<i32, String> {
+        match self.at(t, env)? {
+            Val::S(x) => Ok(x),
+            other => Err(format!("our software has a bug: a scalar slot holds {other:?}")),
+        }
+    }
+    fn i(&self, t: &Tree, env: &mut Env) -> Result<i64, String> {
+        match self.at(t, env)? {
+            Val::I(x) => Ok(x),
+            other => Err(format!("our software has a bug: an index slot holds {other:?}")),
+        }
+    }
+    fn a(&self, t: &Tree, env: &mut Env) -> Result<View, String> {
+        match self.at(t, env)? {
+            Val::A(x) => Ok(x),
+            other => Err(format!("our software has a bug: an array slot holds {other:?}")),
+        }
+    }
+
+    fn at(&self, t: &Tree, env: &mut Env) -> Result<Val, String> {
+        let op = *self.ops.get(t.symbol as usize).ok_or("a symbol that is not a row")?;
+        let kid = |i: usize| t.kids.get(i).ok_or_else(|| format!("{} lacks argument {i}", self.k.rows[t.symbol as usize].name));
+        Ok(match op {
+            Op::Add => Val::S(self.s(kid(0)?, env)?.wrapping_add(self.s(kid(1)?, env)?)),
+            Op::Sub => Val::S(self.s(kid(0)?, env)?.wrapping_sub(self.s(kid(1)?, env)?)),
+            Op::Mul => Val::S(self.s(kid(0)?, env)?.wrapping_mul(self.s(kid(1)?, env)?)),
+            Op::Min => Val::S(self.s(kid(0)?, env)?.min(self.s(kid(1)?, env)?)),
+            Op::Max => Val::S(self.s(kid(0)?, env)?.max(self.s(kid(1)?, env)?)),
+            Op::Neg => Val::S(self.s(kid(0)?, env)?.wrapping_neg()),
+            Op::Abs => Val::S(self.s(kid(0)?, env)?.wrapping_abs()),
+            Op::Sel => {
+                // Futhark evaluates only the branch taken.
+                let c = self.s(kid(0)?, env)?;
+                Val::S(if c < 0 { self.s(kid(1)?, env)? } else { self.s(kid(2)?, env)? })
+            }
+            Op::Get => {
+                let a = self.a(kid(0)?, env)?;
+                let i = self.i(kid(1)?, env)?;
+                let n = a.len();
+                if a.dims.len() != 1 || i < 0 || i as usize >= n {
+                    return Err(format!("our software has a bug: the index {i} is out of range for {:?}", a.dims));
+                }
+                Val::S(a.data[a.off + i as usize])
+            }
+            Op::Sum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(0i32, |s, x| s.wrapping_add(*x))),
+            Op::Minimum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(i32::MAX, |s, x| s.min(*x))),
+            Op::Maximum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(i32::MIN, |s, x| s.max(*x))),
+            Op::Ival => Val::S(self.i(kid(0)?, env)? as i32),
+            Op::DimVal(d) => Val::S(env.sizes[d] as i32),
+            Op::Const => {
+                let row = &self.k.rows[t.symbol as usize];
+                let ty = match row.output {
+                    Ty::FutharkShape(i) => i as usize,
+                    _ => return Err("a constant outside the family".into()),
+                };
+                let pool = self.literals[ty].as_ref().ok_or("a constant of a type with no pool")?;
+                Val::S(*pool.get(t.const_index.ok_or("a constant with no index")? as usize).ok_or("a constant index past the pool")?)
+            }
+            Op::State(k) => env.state.get(k).cloned().flatten().ok_or_else(|| format!("our software has a bug: s{k} is read unbound"))?,
+            Op::Index(k) => Val::I(*env.index.get(k).ok_or("an index frame past the depth")?),
+            Op::Prev => Val::I((self.i(kid(0)?, env)? - 1).max(0)),
+            Op::Next(d) => Val::I((self.i(kid(0)?, env)? + 1).min(env.sizes[d] as i64 - 1)),
+            Op::Clamp(d) => Val::I(i64::from(self.s(kid(0)?, env)?).min(env.sizes[d] as i64 - 1).max(0)),
+            Op::Zero => Val::I(0),
+            Op::Last(d) => Val::I(env.sizes[d] as i64 - 1),
+            Op::Tab(d, k) => {
+                let n = env.sizes[d];
+                let mut out = Vec::with_capacity(n);
+                for j in 0..n {
+                    env.index[k] = j as i64;
+                    out.push(self.s(kid(0)?, env)?);
+                }
+                Val::A(View { data: Rc::new(out), off: 0, dims: vec![n] })
+            }
+            Op::Replicate(d) => {
+                let n = env.sizes[d];
+                let x = self.s(kid(0)?, env)?;
+                Val::A(View { data: Rc::new(vec![x; n]), off: 0, dims: vec![n] })
+            }
+            Op::Map2(b) => {
+                let x = self.a(kid(0)?, env)?;
+                let y = self.a(kid(1)?, env)?;
+                if x.dims != y.dims || x.dims.len() != 1 {
+                    return Err(format!("our software has a bug: map2 over {:?} and {:?}", x.dims, y.dims));
+                }
+                let out: Vec<i32> = x.slice().iter().zip(y.slice()).map(|(p, q)| b.apply(*p, *q)).collect();
+                Val::A(View { data: Rc::new(out), off: 0, dims: x.dims.clone() })
+            }
+            Op::Row => {
+                let m = self.a(kid(0)?, env)?;
+                let i = self.i(kid(1)?, env)?;
+                if m.dims.len() < 2 || i < 0 || i as usize >= m.dims[0] {
+                    return Err(format!("our software has a bug: the row {i} is out of range for {:?}", m.dims));
+                }
+                let dims = m.dims[1..].to_vec();
+                let stride: usize = dims.iter().product();
+                Val::A(View { data: m.data.clone(), off: m.off + i as usize * stride, dims })
+            }
+            Op::Input(i) => Val::A(env.inputs[i].clone()),
+            Op::Zeros(d) => Val::A(env.zeros[d].clone()),
+            Op::Loop { dim, k, from1 } => {
+                let mut state = self.at(kid(0)?, env)?;
+                let n = env.sizes[dim];
+                let trips = if from1 { n.saturating_sub(1) } else { n };
+                for t in 0..trips {
+                    env.index[k] = (t + usize::from(from1)) as i64;
+                    env.state[k] = Some(state);
+                    state = self.at(kid(1)?, env)?;
+                }
+                env.state[k] = None;
+                state
+            }
+        })
+    }
+
+    /// The node executions of a tree on given sizes: every node once, times the trips of the binders it is inside
+    /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length.
+    pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
+        let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
+        fn walk(me: &Interp<'_>, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
+            let op = me.ops[t.symbol as usize];
+            let (body_mult, own) = match op {
+                Op::Tab(d, _) => (n[d], 1),
+                Op::Loop { dim, from1, .. } => (n[dim].saturating_sub(u128::from(from1)), 1),
+                Op::Replicate(d) => (1, 1 + n[d]),
+                _ => (1, 1),
+            };
+            let mut sum = mult * own;
+            if let (Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_), Some(kid)) = (op, t.kids.first()) {
+                // The array reduced has the length of its class's dimension.
+                let dual = &me.k.dual(me.k.rows[kid.symbol as usize].output).ok_or("a row with no dual")?.dual;
+                let cls = dual.split(':').next().unwrap_or("");
+                let d = me.sig.dims.iter().position(|x| Some(x.as_str()) == cls.strip_prefix("a.")).ok_or("a reduction of a non-array")?;
+                sum += mult * n[d];
+            }
+            let last = t.kids.len().saturating_sub(1);
+            for (i, kid) in t.kids.iter().enumerate() {
+                let binder = matches!(op, Op::Tab(..) | Op::Loop { .. }) && i == last;
+                sum += walk(me, kid, if binder { mult * body_mult } else { mult }, n)?;
+            }
+            Ok(sum)
+        }
+        walk(self, tree, 1, &n)
+    }
+
+    /// The bound on any tree of a layout: its most nodes, each run at most `max(D) ** depth` times and each costing at
+    /// most `1 + max(D)` (a reduction, a `map2` or a replicate), on the given largest dimension.
+    pub fn layout_bound(&self, layout: &GeneLayout, max_dim: usize) -> u128 {
+        let d = max_dim as u128;
+        layout.max_nodes() as u128 * d.pow(self.sig.depth) * (1 + d)
+    }
+}
+
+// ---- the builder ------------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+enum Sexp {
+    Atom(String),
+    List(Vec<Sexp>),
+}
+
+fn parse_sexp(text: &str) -> Result<Sexp, String> {
+    let spaced = text.replace('(', " ( ").replace(')', " ) ");
+    let tokens: Vec<&str> = spaced.split_whitespace().collect();
+    let mut pos = 0;
+    let out = parse_at(&tokens, &mut pos)?;
+    if pos != tokens.len() {
+        return Err(format!("text after the expression: {:?}", &tokens[pos..tokens.len().min(pos + 5)]));
+    }
+    Ok(out)
+}
+
+fn parse_at(tokens: &[&str], pos: &mut usize) -> Result<Sexp, String> {
+    let t = *tokens.get(*pos).ok_or("the expression ends early")?;
+    *pos += 1;
+    match t {
+        "(" => {
+            let mut items = Vec::new();
+            loop {
+                match tokens.get(*pos) {
+                    None => return Err("an unclosed (".into()),
+                    Some(&")") => {
+                        *pos += 1;
+                        return Ok(Sexp::List(items));
+                    }
+                    Some(_) => items.push(parse_at(tokens, pos)?),
+                }
+            }
+        }
+        ")" => Err("an unopened )".into()),
+        _ => Ok(Sexp::Atom(t.to_string())),
+    }
+}
+
+/// A program written as an s-expression of the family's rows, as a tree of the root type. A head `op` in a slot of
+/// dual `T` is the row `op@T` (its arguments' duals are the row's own), an atom is the terminal `atom@T`, and an
+/// integer is the literal of `T`'s pool. A construct with no row is an error that names it, never a substitute.
+pub fn build(k: &FutharkKingdom, text: &str) -> Result<Tree, String> {
+    let root = *k.roots().first().ok_or("the kingdom has no root")?;
+    let by_name: HashMap<&str, u32> = k.rows.iter().enumerate().map(|(i, r)| (r.name.as_str(), i as u32)).collect();
+    build_at(k, &by_name, &parse_sexp(text)?, root)
+}
+
+fn build_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty: Ty) -> Result<Tree, String> {
+    let dual = k.dual(ty).ok_or("a slot of no dual")?;
+    let row = |op: &str| -> Result<u32, String> { by_name.get(format!("{op}@{}", dual.dual).as_str()).copied().ok_or_else(|| format!("the kingdom has no row {op}@{}", dual.dual)) };
+    match e {
+        Sexp::Atom(a) => {
+            if let Ok(v) = a.parse::<i64>() {
+                let i = dual.literals.iter().position(|l| l.trim_end_matches(dual.slot.as_str()).parse::<i64>() == Ok(v)).ok_or_else(|| format!("the literal {a} is not in the pool of {}", dual.dual))?;
+                let sym = by_name.get(format!("?_{}", dual.dual).as_str()).copied().ok_or_else(|| format!("{} has no constant", dual.dual))?;
+                return Ok(Tree { symbol: sym, const_index: Some(i as u32), kids: vec![] });
+            }
+            Ok(Tree { symbol: row(a)?, const_index: None, kids: vec![] })
+        }
+        Sexp::List(items) => {
+            let Some(Sexp::Atom(head)) = items.first() else { return Err(format!("a list with no head in {}", dual.dual)) };
+            let sym = row(head)?;
+            let inputs = k.rows[sym as usize].inputs.clone();
+            if inputs.len() != items.len() - 1 {
+                return Err(format!("{head}@{} takes {} arguments, given {}", dual.dual, inputs.len(), items.len() - 1));
+            }
+            let kids = items[1..].iter().zip(inputs).map(|(a, t)| build_at(k, by_name, a, t)).collect::<Result<Vec<_>, _>>()?;
+            Ok(Tree { symbol: sym, const_index: None, kids })
+        }
+    }
+}
+
+/// A tree as the builder's s-expression (the inverse of [`build`]): for the hall of fame and the reports.
+pub fn sexp(k: &FutharkKingdom, t: &Tree) -> String {
+    let row = &k.rows[t.symbol as usize];
+    let op = row.name.split_once('@').map_or(row.name.as_str(), |(o, _)| o);
+    if row.kind == FutharkKind::Const {
+        let lit = k.dual(row.output).and_then(|d| t.const_index.and_then(|i| d.literals.get(i as usize)).map(|l| l.trim_end_matches(d.slot.as_str()).to_string()));
+        return lit.unwrap_or_else(|| "?".into());
+    }
+    if t.kids.is_empty() {
+        return op.to_string();
+    }
+    format!("({op} {})", t.kids.iter().map(|c| sexp(k, c)).collect::<Vec<_>>().join(" "))
+}
+
+// ---- random genes -----------------------------------------------------------------------------------------------
+
+/// A random gene of the layout: each head cell a function with probability one half and a terminal otherwise (each
+/// uniform over its kind; a cell whose alphabet has one kind draws from it), tail and Dc cells uniform; the root cell
+/// is a function of the root type (phylu's `root_function`: a root that is a terminal is a constant program).
+pub fn random_gene(contract: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMap<Ty, u32>, rng: &mut GeneRng) -> Result<Vec<u32>, String> {
+    let mut gene = vec![0u32; layout.width];
+    for span in layout.spans() {
+        let a = layout.alphabet(contract, span.off, const_len);
+        if a.is_empty() {
+            return Err(format!("our software has a bug: the span at {} has an empty alphabet", span.off));
+        }
+        let (f, t): (Vec<u32>, Vec<u32>) = a.iter().partition(|s| !contract.is_terminal(**s));
+        let split = span.domain == Domain::Head && !f.is_empty() && !t.is_empty();
+        for cell in &mut gene[span.off..span.off + span.len] {
+            *cell = if split {
+                let pick = if rng.below(2) == 0 { &f } else { &t };
+                pick[rng.below(pick.len())]
+            } else {
+                a[rng.below(a.len())]
+            };
+        }
+    }
+    let pos = layout.frame(layout.root).and_then(|f| f.row_pos(0)).ok_or("the root has no first row")?;
+    let a = layout.alphabet(contract, pos, const_len);
+    let f: Vec<u32> = a.into_iter().filter(|s| !contract.is_terminal(*s)).collect();
+    if !f.is_empty() {
+        gene[pos] = f[rng.below(f.len())];
+    }
+    Ok(gene)
+}
+
+// ---- the stored cases and the executables -------------------------------------------------------------------------
+
+/// Which part of the fitness a case is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Split {
+    Train,
+    /// Held out from the training sizes; a fitness input all the same (Andrew's rule: the quality group holds the
+    /// held-out cases).
+    Held,
+}
+
+/// One stored case: the inputs and the published program's output on them.
+#[derive(Debug, Clone)]
+pub struct Case {
+    pub name: String,
+    pub split: Split,
+    pub inputs: Vec<Array>,
+    pub output: Array,
+    /// The inputs in Futhark's binary format, as the executable reads them.
+    pub stdin: Vec<u8>,
+}
+
+/// The case directory of a problem.
+pub fn corpus_dir(p: &Problem) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(p.corpus)
+}
+
+/// The stored cases (`cases.tsv`: name, split, then `<name>.in` and `<name>.out` in Futhark's binary format).
+pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
+    let dir = corpus_dir(p);
+    let index = std::fs::read_to_string(dir.join("cases.tsv")).map_err(|e| format!("{}: {e}", dir.join("cases.tsv").display()))?;
+    let mut out = Vec::new();
+    for line in index.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        let f: Vec<&str> = line.split('\t').collect();
+        let [name, split, ..] = f.as_slice() else { return Err(format!("the case line {line:?}")) };
+        let split = match *split {
+            "train" => Split::Train,
+            "held" => Split::Held,
+            other => return Err(format!("the case {name} has the split {other}")),
+        };
+        let stdin = std::fs::read(dir.join(format!("{name}.in"))).map_err(|e| format!("{name}.in: {e}"))?;
+        let inputs = read_binary(&stdin)?;
+        let output = read_one(&std::fs::read(dir.join(format!("{name}.out"))).map_err(|e| format!("{name}.out: {e}"))?)?;
+        out.push(Case { name: name.to_string(), split, inputs, output, stdin });
+    }
+    Ok(out)
+}
+
+/// Compile a program with Futhark's sequential C backend (`futhark c`, the released compiler) into `dir`.
+pub fn compile_c(source: &str, dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let fut = dir.join("prog.fut");
+    std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
+    let exe = dir.join("prog_c");
+    let out = crate::futhark_exec::output_with_timeout(
+        std::process::Command::new("futhark").arg("c").arg(&fut).arg("-o").arg(&exe),
+        std::time::Duration::from_secs(120),
+        None,
+    )?;
+    if !out.status.success() {
+        return Err(format!("futhark c failed:\n{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(exe)
+}
+
+/// Run a compiled executable (either backend's) on a case's binary input and read its one output value.
+pub fn run_exe(exe: &Path, stdin: &[u8]) -> Result<Array, String> {
+    let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b"), std::time::Duration::from_secs(120), Some(stdin))?;
+    if !out.status.success() {
+        return Err(format!("{} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
+    }
+    read_one(&out.stdout)
+}
+
+/// What a program's output is against the expected one, each on `[0, 1]`, 0 exact: the share of elements that
+/// differ; the mean absolute error over the expected values' mean magnitude, and the largest absolute error over
+/// their largest magnitude, each mapped `e -> e / (1 + e)`. An output of another shape differs everywhere (1, 1, 1).
+pub fn compare(got: &Array, want: &Array) -> [f64; 3] {
+    if got.dims != want.dims {
+        return [1.0; 3];
+    }
+    let n = want.data.len().max(1) as f64;
+    let (mut differ, mut sum, mut max) = (0usize, 0f64, 0f64);
+    for (g, w) in got.data.iter().zip(&want.data) {
+        let d = (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64;
+        differ += usize::from(d > 0.0);
+        sum += d;
+        max = max.max(d);
+    }
+    let mean_mag = (want.data.iter().map(|w| f64::from(*w).abs()).sum::<f64>() / n).max(1.0);
+    let max_mag = want.data.iter().map(|w| f64::from(*w).abs()).fold(1.0, f64::max);
+    let squash = |e: f64| e / (1.0 + e);
+    [differ as f64 / n, squash(sum / n / mean_mag), squash(max / max_mag)]
+}
+
+// ---- the instance's e-graph -------------------------------------------------------------------------------------
+
+/// The row <-> constructor mapping (`egraph.rows`).
+#[derive(Debug, Clone)]
+pub struct Bridge {
+    ctor_of_row: BTreeMap<String, String>,
+    row_of_ctor: BTreeMap<String, String>,
+}
+
+impl Bridge {
+    /// Read an instance's mapping; a repeated row or constructor is an error (the generator's witness refuses one).
+    pub fn load(inst: &Instance) -> Result<Bridge, String> {
+        let mut ctor_of_row = BTreeMap::new();
+        let mut row_of_ctor = BTreeMap::new();
+        for line in inst.egraph_rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() != 3 {
+                return Err(format!("the mapping line {line:?} is malformed"));
+            }
+            if ctor_of_row.insert(f[0].to_string(), f[1].to_string()).is_some() || row_of_ctor.insert(f[1].to_string(), f[0].to_string()).is_some() {
+                return Err(format!("the mapping line {line:?} repeats a row or a constructor"));
+            }
+        }
+        Ok(Bridge { ctor_of_row, row_of_ctor })
+    }
+}
+
+/// An expressed tree as an egglog term; a constant placeholder is its constructor applied to the pool index.
+pub fn import(tree: &Tree, k: &FutharkKingdom, bridge: &Bridge) -> Result<String, String> {
+    let row = k.rows.get(tree.symbol as usize).ok_or_else(|| format!("symbol {} is not a row", tree.symbol))?;
+    let ctor = bridge.ctor_of_row.get(&row.name).ok_or_else(|| format!("the row {} has no constructor", row.name))?;
+    if row.kind == FutharkKind::Const {
+        return Ok(format!("({ctor} {})", tree.const_index.ok_or_else(|| format!("{} has no constant index", row.name))?));
+    }
+    let kids = tree.kids.iter().map(|t| import(t, k, bridge)).collect::<Result<Vec<_>, _>>()?;
+    Ok(if kids.is_empty() { format!("({ctor})") } else { format!("({ctor} {})", kids.join(" ")) })
+}
+
+/// An egglog term as a tree of the kingdom's rows; `None` when it is not one.
+pub fn to_tree(termdag: &TermDag, id: TermId, k: &FutharkKingdom, bridge: &Bridge, symbols: &HashMap<String, u32>) -> Option<Tree> {
+    let Term::App(op, kids) = termdag.get(id) else { return None };
+    let symbol = *symbols.get(bridge.row_of_ctor.get(op.as_str())?)?;
+    if k.rows[symbol as usize].kind == FutharkKind::Const {
+        let [kid] = kids.as_slice() else { return None };
+        let Term::Lit(egglog::ast::Literal::Int(i)) = termdag.get(*kid) else { return None };
+        return Some(Tree { symbol, const_index: Some(u32::try_from(*i).ok()?), kids: vec![] });
+    }
+    let kids = kids.iter().map(|t| to_tree(termdag, *t, k, bridge, symbols)).collect::<Option<Vec<_>>>()?;
+    Some(Tree { symbol, const_index: None, kids })
+}
+
+fn term_cost(termdag: &TermDag, id: TermId) -> u64 {
+    match termdag.get(id) {
+        Term::App(_, kids) => 1 + kids.iter().map(|k| term_cost(termdag, *k)).sum::<u64>(),
+        _ => 1,
+    }
+}
+
+/// The e-graph variants of a tree: `iters` iterations of the instance's ruleset, the ranked members of the root's
+/// class (HFF extraction, `members` a class), up to `n` distinct trees other than the tree itself, smallest first and
+/// then by their rendered text, so the order is deterministic. Every rule is an identity of wrapping `i32`
+/// arithmetic and of `min`/`max`, so every variant computes the same values.
+pub fn variants(inst: &Instance, k: &FutharkKingdom, bridge: &Bridge, tree: &Tree, iters: u32, members: usize, n: usize) -> Result<Vec<Tree>, String> {
+    let term = import(tree, k, bridge)?;
+    let mut egraph = EGraph::default();
+    egraph.parse_and_run_program(None, inst.datatype).map_err(|e| format!("the datatype does not load: {e}"))?;
+    egraph.parse_and_run_program(None, inst.rules).map_err(|e| format!("the ruleset does not load: {e}"))?;
+    egraph.parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule (repeat {iters} (run {RULESET})))")).map_err(|e| format!("the term does not load: {e}"))?;
+    let (sort, value) = egraph.eval_expr(&exprs::var("__root")).map_err(|e| format!("the root does not evaluate: {e}"))?;
+    let mut termdag = TermDag::default();
+    let score = |td: &TermDag, t: TermId| term_cost(td, t) as f64;
+    let ranked = hff_extract(&egraph, &mut termdag, value, sort, &score, members);
+    let symbols: HashMap<String, u32> = k.rows.iter().enumerate().map(|(i, r)| (r.name.clone(), i as u32)).collect();
+    let mut out: Vec<(u64, String, Tree)> = Vec::new();
+    for (cost, id) in ranked {
+        let Some(t) = to_tree(&termdag, id, k, bridge, &symbols) else { continue };
+        if &t == tree {
+            continue;
+        }
+        let text = k.render(&t)?;
+        if out.iter().any(|(_, s, _)| s == &text) {
+            continue;
+        }
+        out.push((cost as u64, text, t));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    out.truncate(n);
+    Ok(out.into_iter().map(|(_, _, t)| t).collect())
+}
+
+/// The instance's e-graph as the saturated fold needs it.
+pub struct FoldEgraph<'a> {
+    pub inst: &'a Instance,
+    pub kingdom: &'a FutharkKingdom,
+    pub bridge: &'a Bridge,
+}
+
+impl EgraphKingdom for FoldEgraph<'_> {
+    fn programs(&self) -> Vec<&str> {
+        vec![self.inst.datatype, self.inst.rules]
+    }
+    fn rulesets(&self) -> Vec<&str> {
+        vec![RULESET]
+    }
+    fn import(&self, tree: &Tree) -> Result<String, String> {
+        import(tree, self.kingdom, self.bridge)
+    }
+    fn row(&self, constructor: &str, literals: &[&str]) -> Option<(SymbolId, Option<u32>)> {
+        let name = self.bridge.row_of_ctor.get(constructor)?;
+        let symbol = self.kingdom.rows.iter().position(|r| &r.name == name)? as SymbolId;
+        if self.kingdom.rows[symbol as usize].kind == FutharkKind::Const {
+            let [text] = literals else { return None };
+            return Some((symbol, Some(text.parse().ok()?)));
+        }
+        literals.is_empty().then_some((symbol, None))
+    }
+}
+
+#[cfg(test)]
+mod tests;

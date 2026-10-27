@@ -101,3 +101,11 @@ kingdoms/wgsl_true/__pycache__/
 
 # untracked run output is never scanned (2026-10-21: a 17.7 GB git status after the crash)
 logs/
+
+# A local build directory, and the stray artefacts of a run: the empty
+# per-pid logs a run leaves in the root, and a failed download. (The rule is
+# root-level and numeric on purpose: the repo TRACKS .log files -- the
+# measurements under docs/reports and logs/ are evidence.)
+target-check/
+/[0-9]*.log
+cabal.tar.xz

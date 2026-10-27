@@ -256,6 +256,10 @@ name = "futhark_pixel_evolve"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "futhark_evolve"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "st9_champion_time"
 required-features = ["gpu", "wgsl"]
 

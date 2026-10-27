@@ -33,7 +33,7 @@
 //! differences are the device's and the algorithm's; this module reports the
 //! values as the GPU computed them and never adjusts them.
 
-use crate::futhark_exec::output_with_timeout;
+use crate::futhark_exec::{output_with_timeout, output_with_timeout_bytes};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -220,6 +220,14 @@ pub fn run_program(exe: &Path, input: &[f32], timestamps: bool) -> Result<GpuRun
 /// (Futhark's `-r`): the values are the last run's, and the report holds the
 /// passes of every run, in order.
 pub fn run_program_times(exe: &Path, input: &[f32], timestamps: bool, runs: usize) -> Result<GpuRun, String> {
+    let (stdout, report) = run_program_bytes(exe, input_text(input)?.as_bytes(), timestamps, runs)?;
+    Ok(GpuRun { values: read_binary_f32(&stdout)?, report })
+}
+
+/// [`run_program_times`] for a program of any signature: `stdin` is its input
+/// in either of Futhark's value formats, and the result is its output in the
+/// binary format, as bytes, with the shim's report.
+pub fn run_program_bytes(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize) -> Result<(Vec<u8>, ShimReport), String> {
     if runs == 0 {
         return Err("a program run zero times has no result".into());
     }
@@ -236,13 +244,12 @@ pub fn run_program_times(exe: &Path, input: &[f32], timestamps: bool, runs: usiz
     if timestamps {
         cmd.env("FUTHARK_WGPU_SHIM_TIMESTAMPS", "1");
     }
-    let out = output_with_timeout(&mut cmd, RUN_TIMEOUT, Some(&input_text(input)?))?;
+    let out = output_with_timeout_bytes(&mut cmd, RUN_TIMEOUT, Some(stdin))?;
     if !out.status.success() {
         return Err(format!("the program failed on the GPU:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
-    let values = read_binary_f32(&out.stdout)?;
     let report = std::fs::read_to_string(&report_path).map_err(|e| format!("the shim wrote no report: {e}"))?;
-    Ok(GpuRun { values, report: ShimReport::parse(&report)? })
+    Ok((out.stdout, ShimReport::parse(&report)?))
 }
 
 /// Compile a program for the GPU, run it on `input`, and read the result back.

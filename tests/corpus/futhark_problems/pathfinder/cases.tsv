@@ -1,0 +1,9 @@
+# name	split	rows	cols	seed (walls uniform 0..9; outputs by yardstick.fut through futhark c)
+train_64x64_s1	train	64	64	1
+train_64x64_s2	train	64	64	2
+train_256x256_s3	train	256	256	3
+train_16x100_s4	train	16	100	4
+held_128x512_s5	held	128	512	5
+held_512x128_s6	held	512	128	6
+held_1x37_s7	held	1	37	7
+held_37x1_s8	held	37	1	8

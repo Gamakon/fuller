@@ -37,6 +37,12 @@ const COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 /// child's own output — a program that died early is more informative in its
 /// stderr than in a broken pipe.
 pub fn output_with_timeout(cmd: &mut Command, limit: Duration, stdin_data: Option<&str>) -> Result<Output, String> {
+    output_with_timeout_bytes(cmd, limit, stdin_data.map(str::as_bytes))
+}
+
+/// [`output_with_timeout`] with the input as bytes (Futhark's binary value
+/// format is not text).
+pub fn output_with_timeout_bytes(cmd: &mut Command, limit: Duration, stdin_data: Option<&[u8]>) -> Result<Output, String> {
     use std::io::{Read, Write};
 
     let program = cmd.get_program().to_string_lossy().to_string();
@@ -62,13 +68,13 @@ pub fn output_with_timeout(cmd: &mut Command, limit: Duration, stdin_data: Optio
     // The input goes in on its own thread, now that the drains are running.
     let writer = stdin_data.map(|data| {
         let program = program.clone();
-        let data = data.to_string();
+        let data = data.to_vec();
         let mut si = child.stdin.take();
         std::thread::spawn(move || {
             let Some(mut si) = si.take() else {
                 return Ok::<(), String>(());
             };
-            si.write_all(data.as_bytes())
+            si.write_all(&data)
                 .map_err(|e| format!("write to {program}: {e}"))?;
             drop(si);
             Ok(())
