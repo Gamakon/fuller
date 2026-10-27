@@ -52,21 +52,30 @@ mkdir -p "$work"
 take_lock
 (cd "$here" && RUSTFLAGS="-D warnings" cargo build --release --message-format=json-render-diagnostics) >"$work/cargo.json"
 drop_lock
-out_dir=$(python3 -I -c '
+# Both paths come from cargo's own messages, so a caller's CARGO_TARGET_DIR
+# (a cargo test inherits one) is honoured rather than guessed past.
+read -r out_dir lib < <(python3 -I -c '
 import json, sys
+out_dir = lib = ""
 for line in open(sys.argv[1]):
     try:
         m = json.loads(line)
     except ValueError:
         continue
-    if m.get("reason") == "build-script-executed" and "futhark-wgpu-shim" in m.get("package_id", ""):
-        print(m["out_dir"])
-' "$work/cargo.json" | tail -1)
-if [ -z "$out_dir" ]; then
-  echo "build_futhark.sh: cargo reported no build-script output directory for the shim" >&2
+    if "futhark-wgpu-shim" not in m.get("package_id", ""):
+        continue
+    if m.get("reason") == "build-script-executed":
+        out_dir = m["out_dir"]
+    if m.get("reason") == "compiler-artifact":
+        for f in m.get("filenames", []):
+            if f.endswith(".a"):
+                lib = f
+print(out_dir, lib)
+' "$work/cargo.json")
+if [ -z "${out_dir:-}" ] || [ -z "${lib:-}" ]; then
+  echo "build_futhark.sh: cargo reported no header directory or static library for the shim" >&2
   exit 1
 fi
-lib="$here/target/release/libfuthark_wgpu_shim.a"
 
 # 2. the generated header is the committed one.
 if ! cmp -s "$out_dir/include/webgpu/webgpu.h" "$here/include/webgpu/webgpu.h"; then

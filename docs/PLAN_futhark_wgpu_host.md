@@ -1,6 +1,6 @@
 # PLAN: the Futhark WGSL host on wgpu — a C-ABI shim over `wgpu-rs`
 
-**Status:** S1–S5 built and measured 2026-10-27 (§12); S6 in progress. The §10 questions are decided. **Parent:** `docs/ASSESSMENT_futhark_kingdom.md` §3 (question A) and §6 build-plan item 6, where the host is left as *"H2: C-ABI shim, 35 functions, or H1: launch-plan interpreter"* — **this plan closes that choice in favour of H2.**
+**Status:** S1–S5 built and measured 2026-10-27 (§12); S6 written and passing, waiting to be wired into `src/lib.rs`. The §10 questions are decided. **Parent:** `docs/ASSESSMENT_futhark_kingdom.md` §3 (question A) and §6 build-plan item 6, where the host is left as *"H2: C-ABI shim, 35 functions, or H1: launch-plan interpreter"* — **this plan closes that choice in favour of H2.**
 
 ---
 
@@ -331,4 +331,16 @@ undefined is exported by the library **and** listed in the surface; a Rust
 test checks the header declares exactly the 34. 4: a Rust test checks the
 committed header is byte-identical to the one the build generated. 5: plain
 `cc`.
+
+**S6** — `src/futhark_wgpu_host.rs`: a gene goes express → render → the branch
+compiler → `build_futhark.sh` → run on Metal → read back. Its test draws genes
+from the 1-D kingdom with a fixed seed, keeps those built only from exactly
+computed rows (no multiply, no scan or reduction of reals, no
+transcendental), and checks all **4** of 4 genes, 1 000 values each,
+**bit-identical to the interpreter and to Futhark's C backend**, each with its
+kernel timed by the GPU (4–10 µs), `emscripten_sleep` never called. Clippy
+clean. Verified in a scratch worktree with the module line added there; the
+module is not yet in `src/lib.rs`, because another session holds uncommitted
+edits to that file. Wiring it is the one line `pub mod futhark_wgpu_host;`
+after `pub mod futhark_exec;`.
 
