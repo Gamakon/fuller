@@ -2,8 +2,9 @@
 //! standard piece.
 //!
 //! 1. `every_example_with_a_generation_loop_is_a_registered_runner`: every example whose source has a generation
-//!    loop is in [`RUNNERS`], and every registered runner reaches the standard through `RunTelemetry` (directly, or
-//!    through a library loop that creates one).
+//!    loop is in [`RUNNERS`] or, excluded by name with its reason and its guard, in [`LEGACY`]; every registered
+//!    runner reaches the standard through `RunTelemetry` (directly, or through a library loop that creates one) and
+//!    carries the two-level HFF.
 //! 2. `the_shape_loop_meets_the_standard`: `futhark_shapes_evolve::evolve` runs 2 generations and its directory
 //!    holds the stream (run_start, a snapshot a generation with the generic view's numbers, a hall of fame, mutation
 //!    events, run_end), the ledger with lineage and the checkpoint; a resume continues it to generation 3 on the
@@ -15,13 +16,22 @@ use fuller::futhark_kingdom::FutharkKingdom;
 use fuller::futhark_shapes_evolve::{evolve, product_twice, suite, Config};
 use fuller::telemetry::{parse_stream, EventKind, Record, STREAM_FILE};
 
-/// Every runner in fuller's examples, and how it reaches the standard: `RunTelemetry::start` in its own source, or a
-/// library loop that creates one.
-const RUNNERS: &[(&str, &str)] = &[
-    ("futhark_shapes_evolve", "use fuller::futhark_shapes_evolve::{evolve"),
-    ("wgsl_gram_evolve", "RunTelemetry::start"),
-    ("futhark_pixel_evolve", "RunTelemetry::start"),
+/// Every runner in fuller's examples, how it reaches the standard (`RunTelemetry::start` in its own source, or a
+/// library loop that creates one), and the source marker of its two-level HFF (θ_quality, θ_speed; every runner here
+/// has speed inputs).
+const RUNNERS: &[(&str, &str, &str)] = &[
+    // the loop's two-level HFF is checked on its stream by `the_shape_loop_meets_the_standard`
+    ("futhark_shapes_evolve", "use fuller::futhark_shapes_evolve::{evolve", "use fuller::futhark_shapes_evolve::{evolve"),
+    ("futhark_pixel_evolve", "RunTelemetry::start", "groups.insert(\"speed\""),
 ];
+
+/// LEGACY, EXCLUDED FROM THE STANDARD BY NAME: (example, why, the guard in its source that stops it running). The day
+/// the guard goes, the test fails until the runner is brought to the standard.
+const LEGACY: &[(&str, &str, &str)] = &[(
+    "wgsl_gram_evolve",
+    "the legacy WGSL kingdom, which has no work bound: the work guard refuses every device dispatch of it",
+    "Fuel::Unported.refuse_unported()?",
+)];
 
 /// A generation loop, as the examples write one.
 fn has_generation_loop(src: &str) -> bool {
@@ -40,14 +50,23 @@ fn every_example_with_a_generation_loop_is_a_registered_runner() {
         }
         let name = path.file_stem().expect("a stem").to_string_lossy().into_owned();
         let src = std::fs::read_to_string(&path).expect("the source");
-        if has_generation_loop(&src) && !RUNNERS.iter().any(|(n, _)| *n == name) {
+        if has_generation_loop(&src) && !RUNNERS.iter().chain(LEGACY).any(|(n, _, _)| *n == name) {
             problems.push(format!("examples/{name}.rs has a generation loop and is not a registered runner"));
         }
     }
-    for (name, via) in RUNNERS {
-        let src = std::fs::read_to_string(root.join(format!("examples/{name}.rs"))).unwrap_or_default();
+    let source = |name: &str| std::fs::read_to_string(root.join(format!("examples/{name}.rs"))).unwrap_or_default();
+    for (name, via, hff) in RUNNERS {
+        let src = source(name);
         if !src.contains(via) {
             problems.push(format!("examples/{name}.rs does not write the standard stream: it does not use {via}"));
+        }
+        if !src.contains(hff) {
+            problems.push(format!("examples/{name}.rs has speed inputs and its source lacks the two-level HFF's {hff:?}"));
+        }
+    }
+    for (name, why, guard) in LEGACY {
+        if !source(name).contains(guard) {
+            problems.push(format!("examples/{name}.rs is excluded from the standard ({why}) and no longer holds {guard:?}: bring it to the standard"));
         }
     }
     assert!(problems.is_empty(), "runners below the standard (docs/STANDARD_runners.md):\n  {}", problems.join("\n  "));
