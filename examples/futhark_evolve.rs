@@ -398,7 +398,7 @@ impl Genetics<'_> {
     /// MARRIAGE, typed subtree crossover: the domain is every pair (node of A, node of B) of one output type, not the
     /// two roots, not identical subtrees, whose two offspring both write back into the parents' genes (enumerated
     /// before the draw); one pair is drawn uniformly. Returns the two offspring genes, or None for an empty domain.
-    fn marry(&self, a: &Individual, b: &Individual, rng: &mut GeneRng) -> Result<Option<(Vec<u32>, Vec<u32>)>, String> {
+    fn marry(&self, a: &Individual, b: &Individual, rng: &mut GeneRng) -> Result<Option<Offspring>, String> {
         let na = a.tree.level_order();
         let nb = b.tree.level_order();
         let mut domain = Vec::new();
@@ -427,6 +427,9 @@ impl Genetics<'_> {
         Ok(Some(fitting.swap_remove(rng.below(fitting.len()))))
     }
 }
+
+/// A marriage's two offspring genes.
+type Offspring = (Vec<u32>, Vec<u32>);
 
 /// `t` with the subtree at `path` replaced.
 fn replace(t: &Tree, path: &[u32], with: &Tree) -> Tree {
