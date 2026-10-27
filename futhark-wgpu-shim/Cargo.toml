@@ -1,0 +1,29 @@
+[package]
+name = "futhark-wgpu-shim"
+version = "0.1.0"
+edition = "2021"
+description = "The WebGPU C API that Futhark's webgpu host runtime calls, implemented over wgpu-rs"
+license = "MIT"
+build = "build.rs"
+
+# Its own workspace root: this crate is NOT a member of fuller's build, so
+# fuller's crate types (the maturin/PyO3 cdylib) are untouched, and fuller
+# never links it (docs/PLAN_futhark_wgpu_host.md §5).
+[workspace]
+
+[lib]
+name = "futhark_wgpu_shim"
+# staticlib: what Futhark's generated C links against. rlib: the crate's own
+# Rust tests.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# The same wgpu as fuller (Cargo.toml: wgpu 30.0.1), so the GPU work lands on
+# the path everything else in the repo uses.
+wgpu = "=30.0.1"
+pollster = "0.3"
+
+[build-dependencies]
+# The header is generated from the Rust on every build, so it cannot drift
+# from the implementation.
+cbindgen = { version = "=0.29.2", default-features = false }
