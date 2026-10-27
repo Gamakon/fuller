@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
-use fuller::futhark_pixel::{build, draw, inputs, instance, interface, load, program, tiles, variants, work_per_pixel, Bridge, FoldEgraph, Input, Instance, Tile};
+use fuller::futhark_pixel::{build, draw, inputs, instance, interface, load, program, random_gene, tiles, variants, work_per_pixel, Bridge, FoldEgraph, HeadDraw, Input, Instance, Tile};
 use fuller::futhark_wgpu_host::compile_program;
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
@@ -261,19 +261,11 @@ struct Genetics<'a> {
 }
 
 impl Genetics<'_> {
+    /// A random gene: head cells by the half draw (`futhark_pixel::HeadDraw::Half`); drawn uniformly over the whole
+    /// alphabet a block's head is 8 functions in 9 and a random tree fills the layout (about 8,000 nodes at program
+    /// size 60, 2026-10-27), which no compile keeps up with.
     fn random_gene(&self, rng: &mut GeneRng) -> Vec<u32> {
-        let mut gene: Vec<u32> = (0..self.layout.width)
-            .map(|p| {
-                let a = self.layout.alphabet(self.contract, p, self.const_len);
-                a[rng.below(a.len())]
-            })
-            .collect();
-        // The root cell is the image row (phylu's root_function): the root type has one function, and a gene
-        // whose root is the black-picture terminal draws nothing to evolve from.
-        let image = self.k.rows.iter().position(|r| r.name == "image").expect("the image row") as u32;
-        let root_frame = self.layout.frame(self.layout.root).expect("the root's frame");
-        gene[root_frame.row_pos(0).expect("the root's first row")] = image;
-        gene
+        random_gene(self.k, self.contract, self.layout, self.const_len, HeadDraw::Half, rng).expect("a random gene of the layout")
     }
 
     fn tree(&self, gene: &[u32]) -> Result<Tree, String> {
@@ -730,7 +722,7 @@ fn real_main() -> Result<(), String> {
             s.dedup();
             s.len()
         };
-        let checkpoint_now = generation % checkpoint_every.max(1) == 0;
+        let checkpoint_now = generation.is_multiple_of(checkpoint_every.max(1));
         let ocr = if checkpoint_now { run.hof_checkpoint(generation)? } else { None };
         let best = population[0].clone();
         let d = best.eval.diff.as_ref();

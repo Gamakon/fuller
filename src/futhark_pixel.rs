@@ -296,6 +296,45 @@ mod crate_half {
     }
 }
 
+/// How a random gene draws its head cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadDraw {
+    /// Uniform over the cell's whole alphabet (functions and terminals alike).
+    Uniform,
+    /// A function with probability one half, a terminal otherwise, each uniform over its kind (phylu's
+    /// `FunctionShare::half`). A cell whose alphabet has only one kind draws from it.
+    Half,
+}
+
+/// A random gene of the layout: head cells by `draw`, tail and Dc cells uniform; the root cell is the image row
+/// (phylu's `root_function`: the root type has one function, and a gene whose root is the black-picture terminal
+/// draws nothing to evolve from).
+pub fn random_gene(k: &FutharkKingdom, contract: &crate::kingdom_contract::KingdomContract, layout: &crate::typed_gep::GeneLayout, const_len: &BTreeMap<crate::geneframe::Ty, u32>, draw: HeadDraw, rng: &mut crate::futhark_kingdom::GeneRng) -> Result<Vec<u32>, String> {
+    let mut gene = vec![0u32; layout.width];
+    // One alphabet a span (every cell of a span has its alphabet): a head alphabet is a scan of every symbol, and a
+    // cuneus gene has hundreds of thousands of cells.
+    for span in layout.spans() {
+        let a = layout.alphabet(contract, span.off, const_len);
+        if a.is_empty() {
+            return Err(format!("our software has a bug: the span at {} has an empty alphabet", span.off));
+        }
+        let (f, t): (Vec<u32>, Vec<u32>) = a.iter().partition(|s| !contract.is_terminal(**s));
+        let split = draw == HeadDraw::Half && span.domain == crate::typed_gep::Domain::Head && !f.is_empty() && !t.is_empty();
+        for cell in &mut gene[span.off..span.off + span.len] {
+            *cell = if split {
+                let pick = if rng.below(2) == 0 { &f } else { &t };
+                pick[rng.below(pick.len())]
+            } else {
+                a[rng.below(a.len())]
+            };
+        }
+    }
+    let image = k.rows.iter().position(|r| r.name == "image").ok_or("no image row")? as u32;
+    let pos = layout.frame(layout.root).and_then(|f| f.row_pos(0)).ok_or("the root has no first row")?;
+    gene[pos] = image;
+    Ok(gene)
+}
+
 /// Compile a program with Futhark's sequential C backend (`futhark c`, the
 /// released compiler) into `dir`; returns the executable. The reference
 /// path beside the GPU's (`futhark_wgpu_host`).
@@ -1069,6 +1108,65 @@ mod tests {
         assert_eq!(values.len(), (w * h * 3) as usize);
         let finite: Vec<f32> = values.iter().cloned().filter(|v| v.is_finite()).collect();
         assert!(finite.len() > values.len() / 2 && finite.iter().any(|v| (v - finite[0]).abs() > 0.01), "the picture is not a picture: {:?}", &values[..12]);
+    }
+
+    /// The head draw decides how big a random tree is. Measured on 1,000 random genes of the cuneus instance at
+    /// program size 60, each draw: the half draw's trees must be smaller (the uniform draw fills the layout), and
+    /// every tree expresses. The numbers are printed for the report.
+    #[test]
+    fn the_half_head_draw_makes_smaller_random_trees() {
+        let k = load(&CUNEUS).unwrap();
+        let contract = k.relations().check().unwrap();
+        let root = k.ty("image").unwrap();
+        let layout = GeneLayout::from_program_size(&contract, root, 60).unwrap();
+        let const_len = k.const_len();
+        let mut medians = Vec::new();
+        for draw in [HeadDraw::Uniform, HeadDraw::Half] {
+            let mut rng = crate::futhark_kingdom::GeneRng::new(0x51DE);
+            let mut sizes: Vec<usize> = (0..1000)
+                .map(|_| {
+                    let g = random_gene(&k, &contract, &layout, &const_len, draw, &mut rng).unwrap();
+                    express(&contract, &layout, &g, &const_len).unwrap().nodes.len()
+                })
+                .collect();
+            sizes.sort_unstable();
+            let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+            eprintln!("{draw:?}: 1000 random cuneus genes at N = 60 ({} words): nodes min {}, median {}, mean {mean:.0}, p90 {}, max {}", layout.width, sizes[0], sizes[500], sizes[900], sizes[999]);
+            medians.push(sizes[500]);
+        }
+        assert!(medians[1] < medians[0], "the half draw's median tree {} is not below the uniform draw's {}", medians[1], medians[0]);
+    }
+
+    /// The host side of a candidate's cost: 20 half-draw cuneus genes at program size 60 rendered, compiled by the
+    /// branch compiler's webgpu backend and linked against the shim (no GPU run). Every one must compile (a legal
+    /// gene), and the times are printed for the report.
+    #[test]
+    fn half_draw_candidates_compile_for_the_gpu_on_the_host() {
+        let have_branch = Command::new(crate::futhark_wgpu_host::branch_compiler()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !have_branch || !have("cc") {
+            eprintln!("skipped: the branch compiler or cc is not installed");
+            return;
+        }
+        let k = load(&CUNEUS).unwrap();
+        let contract = k.relations().check().unwrap();
+        let iface = interface(&CUNEUS).unwrap();
+        let root = k.ty("image").unwrap();
+        let layout = GeneLayout::from_program_size(&contract, root, 60).unwrap();
+        let const_len = k.const_len();
+        let mut rng = crate::futhark_kingdom::GeneRng::new(0xC0DE);
+        let dir = std::env::temp_dir().join("futhark_pixel_compile").join(format!("t{}", std::process::id()));
+        let mut times = Vec::new();
+        for i in 0..20 {
+            let g = random_gene(&k, &contract, &layout, &const_len, HeadDraw::Half, &mut rng).unwrap();
+            let tree = express(&contract, &layout, &g, &const_len).unwrap().tree();
+            let src = program(&k, &iface, &tree).unwrap();
+            let t = std::time::Instant::now();
+            crate::futhark_wgpu_host::compile_program(&src, &dir.join(format!("g{i}"))).unwrap_or_else(|e| panic!("gene {i} did not compile: {e}\n{src}"));
+            times.push((t.elapsed().as_secs_f64(), tree.level_order().len()));
+        }
+        let mut s: Vec<f64> = times.iter().map(|t| t.0).collect();
+        s.sort_by(|a, b| a.total_cmp(b));
+        eprintln!("20 half-draw cuneus candidates compiled and linked on the host: seconds min {:.2}, median {:.2}, max {:.2}; (seconds, nodes) {:?}", s[0], s[10], s[19], times.iter().map(|(a, b)| (format!("{a:.2}"), *b)).collect::<Vec<_>>());
     }
 
     #[test]
