@@ -46,6 +46,12 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
 - `nucleotable/` — subsumed design source of truth (referenced by `geneframe.rs`). `stale/` — delivered briefs, history only.
 
+## Every evolution runner meets one standard
+
+Every evolution loop, in fuller or phylu, writes `OUT/stream.jsonl` through `fuller::telemetry` (`RunTelemetry`),
+honours `OUT/killme.trigger` (`fuller::run_file`), and emits a mutation event for every operator outside plain GEP
+variation. The standard, the event schema and the inventory of runners: `docs/STANDARD_runners.md`.
+
 ## The evolution engine moved to phylu
 
 `src/evolve/`, the viewer, `evolve_fit` and the fit runbook now live in
