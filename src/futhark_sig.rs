@@ -56,6 +56,40 @@ pub const PATHFINDER: Instance = Instance {
     egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.rows"),
 };
 
+/// The study's micro benchmark reduce (`micro/reduce.fut`, `sum_i32`): `xs: [n]i32 -> i32`.
+pub const REDUCE: Instance = Instance {
+    name: "reduce",
+    types: include_str!("../kingdoms/futhark_shapes/sig/reduce/types.tsv"),
+    functions: include_str!("../kingdoms/futhark_shapes/sig/reduce/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark_shapes/sig/reduce/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.rows"),
+};
+
+/// The study's micro benchmark scan (`micro/scan.fut`, `sum_i32`): `xs: [n]i32 -> [n]i32`, inclusive prefix sums.
+pub const SCAN: Instance = Instance {
+    name: "scan",
+    types: include_str!("../kingdoms/futhark_shapes/sig/scan/types.tsv"),
+    functions: include_str!("../kingdoms/futhark_shapes/sig/scan/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark_shapes/sig/scan/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.rows"),
+};
+
+/// The study's histogram (`micro/reduce_by_index.fut`, `sum_i32`): `(k: i32) (is: [n]i32) (vs: [n]i32) -> [k]i32`,
+/// the sum of the values in each bin `is % k`.
+pub const HISTOGRAM: Instance = Instance {
+    name: "histogram",
+    types: include_str!("../kingdoms/futhark_shapes/sig/histogram/types.tsv"),
+    functions: include_str!("../kingdoms/futhark_shapes/sig/histogram/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark_shapes/sig/histogram/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.rows"),
+};
+
 /// The ruleset name the generated rules are in.
 pub const RULESET: &str = "futhark_sig";
 
@@ -102,11 +136,58 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     corpus: "tests/corpus/futhark_problems/pathfinder",
 };
 
+/// Reduce's published program, `i32.sum` (`reduce (+) 0`), as a gene.
+pub const REDUCE_REFERENCE: &str = "(sum.n xs)";
+/// Reduce's planted slowdown: the sum of the elementwise least of the input and itself (a `map2` Futhark keeps; the
+/// e-graph's `map2 min a a = a` removes it).
+pub const REDUCE_PLANTED: &str = "(sum.n (map2.min xs xs))";
+
+pub const REDUCE_PROBLEM: Problem = Problem {
+    name: "reduce",
+    instance: REDUCE,
+    reference: REDUCE_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/reduce/yardstick.fut"),
+    planted: REDUCE_PLANTED,
+    corpus: "tests/corpus/futhark_problems/reduce",
+};
+
+/// Scan's published program, `scan (+) 0`, as a gene.
+pub const SCAN_REFERENCE: &str = "(scan.add xs)";
+/// Scan's planted slowdown: the scan of the elementwise greatest of the input and itself.
+pub const SCAN_PLANTED: &str = "(scan.add (map2.max xs xs))";
+
+pub const SCAN_PROBLEM: Problem = Problem {
+    name: "scan",
+    instance: SCAN,
+    reference: SCAN_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/scan/yardstick.fut"),
+    planted: SCAN_PLANTED,
+    corpus: "tests/corpus/futhark_problems/scan",
+};
+
+/// The histogram's published program, `hist (+) 0 k (map (% k) is) vs`, as a gene: the bins are the indices modulo
+/// `k`, tabulated over `n`, and the values are summed into them.
+pub const HISTOGRAM_REFERENCE: &str = "(hist.add.n (tab (mod.k (get.n is j1))) vs)";
+/// The histogram's planted slowdown: the values replaced by the elementwise least of the values and themselves.
+pub const HISTOGRAM_PLANTED: &str = "(hist.add.n (tab (mod.k (get.n is j1))) (map2.min vs vs))";
+
+pub const HISTOGRAM_PROBLEM: Problem = Problem {
+    name: "histogram",
+    instance: HISTOGRAM,
+    reference: HISTOGRAM_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/histogram/yardstick.fut"),
+    planted: HISTOGRAM_PLANTED,
+    corpus: "tests/corpus/futhark_problems/histogram",
+};
+
 /// A problem by name.
 pub fn problem(name: &str) -> Result<Problem, String> {
     match name {
         "pathfinder" => Ok(PATHFINDER_PROBLEM),
-        other => Err(format!("no Futhark signature problem {other} (pathfinder)")),
+        "reduce" => Ok(REDUCE_PROBLEM),
+        "scan" => Ok(SCAN_PROBLEM),
+        "histogram" => Ok(HISTOGRAM_PROBLEM),
+        other => Err(format!("no Futhark signature problem {other} (pathfinder, reduce, scan, histogram)")),
     }
 }
 
@@ -134,10 +215,14 @@ pub struct Signature {
     pub depth: u32,
     /// Every dimension role, in order of first appearance.
     pub dims: Vec<String>,
+    /// The SIZE INPUTS: dimensions given as an `i32` value parameter of the entry point (a `size` line of the
+    /// interface; the parameter is in `inputs`, a scalar), rather than by an array's shape.
+    pub size_inputs: Vec<String>,
 }
 
 pub fn signature(inst: &Instance) -> Result<Signature, String> {
     let mut inputs = Vec::new();
+    let mut size_inputs = Vec::new();
     let (mut output, mut depth, mut dims) = (None, None, None);
     for line in inst.interface.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
         let f: Vec<&str> = line.split('\t').collect();
@@ -147,6 +232,13 @@ pub fn signature(inst: &Instance) -> Result<Signature, String> {
         let list = |s: &str| s.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
         match f[0] {
             "input" => inputs.push(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
+            "size" => {
+                if f[2] != "i32" || !f[3].is_empty() {
+                    return Err(format!("{}: the size input {} is not an i32 scalar", inst.name, f[1]));
+                }
+                inputs.push(Param { name: f[1].into(), elem: "i32".into(), dims: vec![] });
+                size_inputs.push(f[1].to_string());
+            }
             "output" => output = Some(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
             "depth" => depth = Some(f[1].parse::<u32>().map_err(|e| format!("{}: depth: {e}", inst.name))?),
             "dims" => dims = Some(list(f[1])),
@@ -158,6 +250,7 @@ pub fn signature(inst: &Instance) -> Result<Signature, String> {
         output: output.ok_or_else(|| format!("{}: the interface has no output", inst.name))?,
         depth: depth.ok_or_else(|| format!("{}: the interface has no depth", inst.name))?,
         dims: dims.ok_or_else(|| format!("{}: the interface has no dims", inst.name))?,
+        size_inputs,
     })
 }
 
@@ -170,6 +263,18 @@ impl Signature {
         }
         let mut out = BTreeMap::new();
         for (p, a) in self.inputs.iter().zip(inputs) {
+            if self.size_inputs.contains(&p.name) {
+                let n = match (a.dims.as_slice(), a.data.as_slice()) {
+                    ([], [n]) if *n >= 1 => *n as usize,
+                    _ => return Err(format!("the size input {} is {:?} {:?}, not one i32 of at least 1", p.name, a.dims, a.data)),
+                };
+                if let Some(old) = out.insert(p.name.clone(), n) {
+                    if old != n {
+                        return Err(format!("the dimension {} is {old} and {n}", p.name));
+                    }
+                }
+                continue;
+            }
             if a.dims.len() != p.dims.len() {
                 return Err(format!("the input {} has rank {}, declared {}", p.name, a.dims.len(), p.dims.len()));
             }
@@ -185,6 +290,18 @@ impl Signature {
             }
         }
         Ok(out)
+    }
+
+    /// The dimensions bound by an array's shape (the entry point's size parameters): every one but the size inputs.
+    fn shape_dims(&self) -> impl Iterator<Item = &String> {
+        self.dims.iter().filter(|d| !self.size_inputs.contains(d))
+    }
+
+    /// A parameter's or the output's Futhark type, its dimensions suffixed with `i` (a case of the quality program;
+    /// empty for the plain program); a size input's dimension is `i64.i32` of its parameter.
+    fn futhark_type(&self, p: &Param, i: &str) -> String {
+        let dim = |d: &String| if self.size_inputs.contains(d) { format!("[i64.i32 {d}{i}]") } else { format!("[{d}{i}]") };
+        format!("{}{}", p.dims.iter().map(dim).collect::<String>(), p.elem)
     }
 }
 
@@ -259,19 +376,22 @@ pub fn read_one(raw: &[u8]) -> Result<Array, String> {
 
 // ---- the program ------------------------------------------------------------------------------------------------
 
-/// The whole program: the entry point with the declared signature (the dimension roles as size parameters), the
-/// zero array of every rank-1 class bound once, around the rendered tree.
+/// The whole program: the entry point with the declared signature (the dimension roles as size parameters, a size
+/// input as an `i32` parameter rebound as the size `i64.i32` of it), the zero array of every rank-1 class bound once,
+/// around the rendered tree.
 pub fn program(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<String, String> {
     let root = k.rows.get(tree.symbol as usize).ok_or("the root is not a row")?;
     if !k.dual(root.output).is_some_and(|d| d.root) {
         return Err(format!("the root {} is not the declared output", root.name));
     }
-    let ty = |p: &Param| format!("{}{}", p.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), p.elem);
-    let mut s = format!("entry main {} ", sig.dims.iter().map(|d| format!("[{d}]")).collect::<String>());
+    let mut s = format!("entry main {} ", sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
     for p in &sig.inputs {
-        s.push_str(&format!("({}: {}) ", p.name, ty(p)));
+        s.push_str(&format!("({}: {}) ", p.name, sig.futhark_type(p, "")));
     }
-    s.push_str(&format!(": {} =\n", ty(&sig.output)));
+    s.push_str(&format!(": {} =\n", sig.futhark_type(&sig.output, "")));
+    for d in &sig.size_inputs {
+        s.push_str(&format!("  let {d} = i64.i32 {d}\n"));
+    }
     for d in &sig.dims {
         s.push_str(&format!("  let zeros_{d} = replicate {d} 0{}\n", sig.output.elem));
     }
@@ -290,15 +410,15 @@ pub fn program_cases(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize)
     }
     let single = program(k, sig, tree)?;
     let body = single.split_once("=\n").map(|(_, b)| b).ok_or("our software has a bug: the program has no body")?;
-    let ty = |p: &Param, i: usize| format!("{}{}", p.dims.iter().map(|d| format!("[{d}{i}]")).collect::<String>(), p.elem);
+    let ty = |p: &Param, i: usize| sig.futhark_type(p, &i.to_string());
     let mut s = String::from("#[noinline]\ndef kernel ");
-    s.push_str(&sig.dims.iter().map(|d| format!("[{d}]")).collect::<String>());
+    s.push_str(&sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
     for p in &sig.inputs {
-        s.push_str(&format!(" ({}: {}{})", p.name, p.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), p.elem));
+        s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
     }
-    s.push_str(&format!(" : {}{} =\n{body}\nentry main ", sig.output.dims.iter().map(|d| format!("[{d}]")).collect::<String>(), sig.output.elem));
+    s.push_str(&format!(" : {} =\n{body}\nentry main ", sig.futhark_type(&sig.output, "")));
     for i in 0..n {
-        s.push_str(&sig.dims.iter().map(|d| format!("[{d}{i}]")).collect::<String>());
+        s.push_str(&sig.shape_dims().map(|d| format!("[{d}{i}]")).collect::<String>());
     }
     for i in 0..n {
         for p in &sig.inputs {
@@ -347,6 +467,12 @@ enum Op {
     Replicate(usize),
     /// An elementwise operation of two arrays of one class (`map2`): add, sub, min, max.
     Map2(Bin),
+    /// The inclusive scan of an array (the `scan` family): add, min, max.
+    Scan(Bin),
+    /// The histogram into a dimension's array of values at indices (the `hist` family): add, min, max.
+    Hist(Bin, usize),
+    /// A value modulo a dimension's size (the `mod` family), Futhark's `%`: in `[0, D)`.
+    Mod(usize),
     /// The row of an array.
     Row,
     Input(usize),
@@ -365,6 +491,25 @@ enum Bin {
 }
 
 impl Bin {
+    /// The neutral element Futhark's `scan` and `hist` start from (`sub` has none and is no scan or histogram).
+    fn neutral(self) -> i32 {
+        match self {
+            Bin::Add | Bin::Sub => 0,
+            Bin::Min => i32::MAX,
+            Bin::Max => i32::MIN,
+        }
+    }
+
+    fn of(name: &str) -> Option<Bin> {
+        match name {
+            "add" => Some(Bin::Add),
+            "sub" => Some(Bin::Sub),
+            "min" => Some(Bin::Min),
+            "max" => Some(Bin::Max),
+            _ => None,
+        }
+    }
+
     fn apply(self, a: i32, b: i32) -> i32 {
         match self {
             Bin::Add => a.wrapping_add(b),
@@ -469,6 +614,14 @@ impl<'a> Interp<'a> {
                 "map2.sub" => Op::Map2(Bin::Sub),
                 "map2.min" => Op::Map2(Bin::Min),
                 "map2.max" => Op::Map2(Bin::Max),
+                _ if op.starts_with("scan.") => Op::Scan(Bin::of(&op[5..]).filter(|b| *b != Bin::Sub).ok_or_else(|| format!("our software has a bug: the scan row {}", r.name))?),
+                _ if op.starts_with("hist.") => {
+                    let b = op.split('.').nth(1).and_then(Bin::of).filter(|b| *b != Bin::Sub).ok_or_else(|| format!("our software has a bug: the histogram row {}", r.name))?;
+                    Op::Hist(b, class_dim(out, "a.")?)
+                }
+                _ if op.starts_with("mod.") => Op::Mod(dim(&op[4..])?),
+                // A size input's row is its dimension as a value, not an input array.
+                _ if sig.size_inputs.iter().any(|d| d == op) => Op::DimVal(dim(op)?),
                 _ if op.starts_with("loop1.") => Op::Loop { dim: dim(&op[6..])?, k: kk, from1: true },
                 _ if op.starts_with("loop.") => Op::Loop { dim: dim(&op[5..])?, k: kk, from1: false },
                 _ if op.starts_with('s') && num(op).is_some() => Op::State(num(op).unwrap_or(0)),
@@ -595,6 +748,37 @@ impl<'a> Interp<'a> {
                 let out: Vec<i32> = x.slice().iter().zip(y.slice()).map(|(p, q)| b.apply(*p, *q)).collect();
                 Val::A(View { data: Rc::new(out), off: 0, dims: x.dims.clone() })
             }
+            Op::Scan(b) => {
+                let x = self.a(kid(0)?, env)?;
+                let out: Vec<i32> = x
+                    .slice()
+                    .iter()
+                    .scan(b.neutral(), |acc, v| {
+                        *acc = b.apply(*acc, *v);
+                        Some(*acc)
+                    })
+                    .collect();
+                Val::A(View { data: Rc::new(out), off: 0, dims: x.dims.clone() })
+            }
+            Op::Hist(b, d) => {
+                let is = self.a(kid(0)?, env)?;
+                let vs = self.a(kid(1)?, env)?;
+                if is.dims != vs.dims || is.dims.len() != 1 {
+                    return Err(format!("our software has a bug: a histogram of {:?} at {:?}", vs.dims, is.dims));
+                }
+                let n = env.sizes[d];
+                let mut out = vec![b.neutral(); n];
+                for (i, v) in is.slice().iter().zip(vs.slice()) {
+                    // Futhark's hist ignores an index outside [0, n).
+                    if let Ok(i) = usize::try_from(*i) {
+                        if i < n {
+                            out[i] = b.apply(out[i], *v);
+                        }
+                    }
+                }
+                Val::A(View { data: Rc::new(out), off: 0, dims: vec![n] })
+            }
+            Op::Mod(d) => Val::S(self.s(kid(0)?, env)?.rem_euclid(env.sizes[d] as i32)),
             Op::Row => {
                 let m = self.a(kid(0)?, env)?;
                 let i = self.i(kid(1)?, env)?;
@@ -631,11 +815,11 @@ impl<'a> Interp<'a> {
             let (body_mult, own) = match op {
                 Op::Tab(d, _) => (n[d], 1),
                 Op::Loop { dim, from1, .. } => (n[dim].saturating_sub(u128::from(from1)), 1),
-                Op::Replicate(d) => (1, 1 + n[d]),
+                Op::Replicate(d) | Op::Hist(_, d) => (1, 1 + n[d]),
                 _ => (1, 1),
             };
             let mut sum = mult * own;
-            if let (Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_), Some(kid)) = (op, t.kids.first()) {
+            if let (Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_) | Op::Scan(_) | Op::Hist(..), Some(kid)) = (op, t.kids.first()) {
                 // The array reduced has the length of its class's dimension.
                 let dual = &me.k.dual(me.k.rows[kid.symbol as usize].output).ok_or("a row with no dual")?.dual;
                 let cls = dual.split(':').next().unwrap_or("");
@@ -996,3 +1180,5 @@ impl EgraphKingdom for FoldEgraph<'_> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_micro;

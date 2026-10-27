@@ -1,0 +1,6 @@
+# kind	name	element	dims
+# futhark-benchmarks micro/scan.fut, entry sum_i32 (scan (+) 0, inclusive)
+input	xs	i32	n
+output	main	i32	n
+depth	2		
+dims	n		

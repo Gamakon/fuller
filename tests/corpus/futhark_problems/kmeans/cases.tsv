@@ -1,0 +1,6 @@
+# name	split	n	d	k	seed (futhark dataset -s seed; points and centres U[0,1]; outputs by yardstick.fut through futhark c)
+train_n200_d4_k5_s1	train	200	4	5	1
+train_n200_d4_k5_s2	train	200	4	5	2
+train_n500_d8_k10_s3	train	500	8	10	3
+held_n777_d6_k7_s4	held	777	6	7	4
+held_n1_d1_k1_s5	held	1	1	1	5

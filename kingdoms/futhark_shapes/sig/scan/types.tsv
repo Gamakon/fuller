@@ -1,0 +1,74 @@
+ref	dual	slot	form	literals	root	meaning
+T0001	a.n:c	arr	a.n		yes	a [n]i32, in the context c
+T0002	i32:c	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c
+T0003	ix.n:c	ix	ix.n		no	an index in range for [n], in the context c
+T0004	a.n:c/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/F-n-a.n
+T0005	a.n:c/F-n-i32	arr	a.n		no	a [n]i32, in the context c/F-n-i32
+T0006	a.n:c/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/L-n-a.n
+T0007	a.n:c/L-n-i32	arr	a.n		no	a [n]i32, in the context c/L-n-i32
+T0008	a.n:c/T-n	arr	a.n		no	a [n]i32, in the context c/T-n
+T0009	i32:c/F-n-a.n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-a.n
+T0010	i32:c/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-i32
+T0011	i32:c/L-n-a.n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-a.n
+T0012	i32:c/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-i32
+T0013	i32:c/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/T-n
+T0014	ix.n:c/F-n-a.n	ix	ix.n		no	an index in range for [n], in the context c/F-n-a.n
+T0015	ix.n:c/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/F-n-i32
+T0016	ix.n:c/L-n-a.n	ix	ix.n		no	an index in range for [n], in the context c/L-n-a.n
+T0017	ix.n:c/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/L-n-i32
+T0018	ix.n:c/T-n	ix	ix.n		no	an index in range for [n], in the context c/T-n
+T0019	a.n:c/F-n-a.n/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/F-n-a.n/F-n-a.n
+T0020	a.n:c/F-n-a.n/F-n-i32	arr	a.n		no	a [n]i32, in the context c/F-n-a.n/F-n-i32
+T0021	a.n:c/F-n-a.n/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/F-n-a.n/L-n-a.n
+T0022	a.n:c/F-n-a.n/L-n-i32	arr	a.n		no	a [n]i32, in the context c/F-n-a.n/L-n-i32
+T0023	a.n:c/F-n-a.n/T-n	arr	a.n		no	a [n]i32, in the context c/F-n-a.n/T-n
+T0024	a.n:c/F-n-i32/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/F-n-i32/F-n-a.n
+T0025	a.n:c/F-n-i32/F-n-i32	arr	a.n		no	a [n]i32, in the context c/F-n-i32/F-n-i32
+T0026	a.n:c/F-n-i32/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/F-n-i32/L-n-a.n
+T0027	a.n:c/F-n-i32/L-n-i32	arr	a.n		no	a [n]i32, in the context c/F-n-i32/L-n-i32
+T0028	a.n:c/F-n-i32/T-n	arr	a.n		no	a [n]i32, in the context c/F-n-i32/T-n
+T0029	a.n:c/L-n-a.n/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/L-n-a.n/F-n-a.n
+T0030	a.n:c/L-n-a.n/F-n-i32	arr	a.n		no	a [n]i32, in the context c/L-n-a.n/F-n-i32
+T0031	a.n:c/L-n-a.n/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/L-n-a.n/L-n-a.n
+T0032	a.n:c/L-n-a.n/L-n-i32	arr	a.n		no	a [n]i32, in the context c/L-n-a.n/L-n-i32
+T0033	a.n:c/L-n-a.n/T-n	arr	a.n		no	a [n]i32, in the context c/L-n-a.n/T-n
+T0034	a.n:c/L-n-i32/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/L-n-i32/F-n-a.n
+T0035	a.n:c/L-n-i32/F-n-i32	arr	a.n		no	a [n]i32, in the context c/L-n-i32/F-n-i32
+T0036	a.n:c/L-n-i32/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/L-n-i32/L-n-a.n
+T0037	a.n:c/L-n-i32/L-n-i32	arr	a.n		no	a [n]i32, in the context c/L-n-i32/L-n-i32
+T0038	a.n:c/L-n-i32/T-n	arr	a.n		no	a [n]i32, in the context c/L-n-i32/T-n
+T0039	a.n:c/T-n/F-n-a.n	arr	a.n		no	a [n]i32, in the context c/T-n/F-n-a.n
+T0040	a.n:c/T-n/F-n-i32	arr	a.n		no	a [n]i32, in the context c/T-n/F-n-i32
+T0041	a.n:c/T-n/L-n-a.n	arr	a.n		no	a [n]i32, in the context c/T-n/L-n-a.n
+T0042	a.n:c/T-n/L-n-i32	arr	a.n		no	a [n]i32, in the context c/T-n/L-n-i32
+T0043	a.n:c/T-n/T-n	arr	a.n		no	a [n]i32, in the context c/T-n/T-n
+T0044	i32:c/F-n-a.n/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-a.n/F-n-i32
+T0045	i32:c/F-n-a.n/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-a.n/L-n-i32
+T0046	i32:c/F-n-a.n/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-a.n/T-n
+T0047	i32:c/F-n-i32/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-i32/F-n-i32
+T0048	i32:c/F-n-i32/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-i32/L-n-i32
+T0049	i32:c/F-n-i32/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/F-n-i32/T-n
+T0050	i32:c/L-n-a.n/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-a.n/F-n-i32
+T0051	i32:c/L-n-a.n/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-a.n/L-n-i32
+T0052	i32:c/L-n-a.n/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-a.n/T-n
+T0053	i32:c/L-n-i32/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-i32/F-n-i32
+T0054	i32:c/L-n-i32/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-i32/L-n-i32
+T0055	i32:c/L-n-i32/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/L-n-i32/T-n
+T0056	i32:c/T-n/F-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/T-n/F-n-i32
+T0057	i32:c/T-n/L-n-i32	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/T-n/L-n-i32
+T0058	i32:c/T-n/T-n	i32	i32	0i32,1i32,2i32,-1i32,10i32	no	an i32, in the context c/T-n/T-n
+T0059	ix.n:c/F-n-a.n/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/F-n-a.n/F-n-i32
+T0060	ix.n:c/F-n-a.n/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/F-n-a.n/L-n-i32
+T0061	ix.n:c/F-n-a.n/T-n	ix	ix.n		no	an index in range for [n], in the context c/F-n-a.n/T-n
+T0062	ix.n:c/F-n-i32/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/F-n-i32/F-n-i32
+T0063	ix.n:c/F-n-i32/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/F-n-i32/L-n-i32
+T0064	ix.n:c/F-n-i32/T-n	ix	ix.n		no	an index in range for [n], in the context c/F-n-i32/T-n
+T0065	ix.n:c/L-n-a.n/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/L-n-a.n/F-n-i32
+T0066	ix.n:c/L-n-a.n/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/L-n-a.n/L-n-i32
+T0067	ix.n:c/L-n-a.n/T-n	ix	ix.n		no	an index in range for [n], in the context c/L-n-a.n/T-n
+T0068	ix.n:c/L-n-i32/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/L-n-i32/F-n-i32
+T0069	ix.n:c/L-n-i32/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/L-n-i32/L-n-i32
+T0070	ix.n:c/L-n-i32/T-n	ix	ix.n		no	an index in range for [n], in the context c/L-n-i32/T-n
+T0071	ix.n:c/T-n/F-n-i32	ix	ix.n		no	an index in range for [n], in the context c/T-n/F-n-i32
+T0072	ix.n:c/T-n/L-n-i32	ix	ix.n		no	an index in range for [n], in the context c/T-n/L-n-i32
+T0073	ix.n:c/T-n/T-n	ix	ix.n		no	an index in range for [n], in the context c/T-n/T-n

@@ -1,0 +1,6 @@
+# name	split	rows	cols	iterations	seed (futhark dataset -s seed; temperatures U[320,340], power U[0,0.005]; outputs by yardstick.fut through futhark c)
+train_64x64_i10_s1	train	64	64	10	1
+train_64x64_i10_s2	train	64	64	10	2
+train_32x100_i5_s3	train	32	100	5	3
+held_96x128_i7_s4	held	96	128	7	4
+held_2x2_i3_s5	held	2	2	3	5

@@ -1727,7 +1727,59 @@ SIG_INSTANCES = {
         "output": ("i32", ("cols",)),
         "literals": ("0", "1", "2", "-1", "10"),
     },
+    # The study's micro benchmarks (docs/STUDY_evolving_benchmarks.md). Each published program is an entry of
+    # diku-dk/futhark-benchmarks, copied under tests/corpus/futhark_problems/<problem>/published/.
+    "reduce": {
+        "source": "futhark-benchmarks micro/reduce.fut, entry sum_i32 (i32.sum: reduce (+) 0)",
+        "inputs": [("xs", "i32", ("n",))],
+        "output": ("i32", ()),
+        "literals": ("0", "1", "2", "-1", "10"),
+    },
+    "scan": {
+        "source": "futhark-benchmarks micro/scan.fut, entry sum_i32 (scan (+) 0, inclusive)",
+        "inputs": [("xs", "i32", ("n",))],
+        "output": ("i32", ("n",)),
+        "literals": ("0", "1", "2", "-1", "10"),
+        "families": ("scan",),
+    },
+    "histogram": {
+        "source": "futhark-benchmarks micro/reduce_by_index.fut, entry sum_i32 (hist (+) 0 k (is % k) vs)",
+        "inputs": [("k", "size", ()), ("is", "i32", ("n",)), ("vs", "i32", ("n",))],
+        "output": ("i32", ("k",)),
+        "literals": ("0", "1", "2", "-1", "10"),
+        "families": ("hist", "mod"),
+    },
 }
+
+# THE OPTIONAL FAMILIES, carried by an instance that names them in "families" (an instance that names none, such
+# as pathfinder, is unchanged by their existence). Each is general: its rows are made for every class and context
+# the instance has, and its legality is carried by the types as the core rows' is.
+#
+# * `scan`: the inclusive prefix scans of a rank-1 array, `scan op ne xs` with its neutral element. A heavy row
+#   (it costs its array's length), so only a context shallower than the depth holds one.
+# * `hist`: the histogram of a rank-1 array of values `vs: [m]` at a rank-1 array of indices `is: [m]` of the
+#   same class (so of the same length, by its type) into a `[d]` array, every pair of rank-1 classes:
+#   `hist op ne d (map i64.i32 is) vs`. An index outside `[0, d)` is ignored (Futhark's `hist` is total), so every
+#   index array is legal. Heavy.
+# * `mod`: a value modulo a dimension's size, `x % i32.i64 D` (Futhark's `%` rounds toward negative infinity, so
+#   the value is in `[0, D)`; total, since every dimension is at least 1): how a value becomes a bin.
+#
+# A SIZE INPUT (element "size", no dims) is a dimension given as an `i32` value parameter of the entry point,
+# rather than by an array's shape, as the published histogram's `k`: the entry point binds `let k = i64.i32 k`, so
+# in the body it is a size like any other.
+#
+# A scan's array is spelled `opaque`: Futhark 0.28.1's "Fuse SOACs" pass breaks on a scan whose input is a scan (or
+# a map of one): `scan (+) 0 (scan (+) 0 xs)` is an internal compiler error ("Name ... bound twice", measured
+# 2026-10-27 on every pair of the three operators), and `opaque` (the prelude's identity that the optimiser does not
+# see through) stops that fusion. A legal gene must compile, so every scan carries it; the cost is the fusion of a
+# scan with its producer, which a timed candidate pays and the e-graph cannot remove.
+SIG_SCANS = {"i32": [("add", "scan (+) 0i32 (opaque {0})"), ("min", "scan i32.min i32.highest (opaque {0})"),
+                     ("max", "scan i32.max i32.lowest (opaque {0})")]}
+SIG_HISTS = {"i32": [("add", "hist (+) 0i32 {D} (map i64.i32 {0}) {1}"),
+                     ("min", "hist i32.min i32.highest {D} (map i64.i32 {0}) {1}"),
+                     ("max", "hist i32.max i32.lowest {D} (map i64.i32 {0}) {1}")]}
+SIG_MOD = "{0} % i32.i64 {D}"
+SIG_FAMILIES = ("scan", "hist", "mod")
 
 # The element operators, by element type: (name, arity, spelling). Every one
 # is total on its type (i32 arithmetic wraps; no division, which traps on 0).
@@ -1769,21 +1821,29 @@ def sig_class_dims(cls):
 
 def sig_signature(inst):
     """The instance's element, dims (in order of first appearance), classes and
-    rank-1 classes. One element type an instance (the family holds one)."""
-    elems = {e for _, e, _ in inst["inputs"]} | {inst["output"][0]}
+    rank-1 classes. One element type an instance (the family holds one); a size input (element "size") is a
+    dimension, not a value of the element type."""
+    elems = {e for _, e, _ in inst["inputs"] if e != "size"} | {inst["output"][0]}
     if len(elems) != 1 or next(iter(elems)) not in SIG_ELEMENT_OPS:
         raise ValueError(f"the signature family holds one element type of {sorted(SIG_ELEMENT_OPS)}: {sorted(elems)}")
     elem = next(iter(elems))
+    unknown = [f for f in inst.get("families", ()) if f not in SIG_FAMILIES]
+    if unknown:
+        raise ValueError(f"the families {unknown} are not of {SIG_FAMILIES}")
     dims = []
-    for _, _, ds in inst["inputs"]:
+    for name, e, ds in inst["inputs"]:
+        if e == "size":
+            if ds or name in dims:
+                raise ValueError(f"the size input {name} has dims {ds} or repeats a dimension")
+            dims.append(name)
         for d in ds:
             if d not in dims:
                 dims.append(d)
     out_dims = inst["output"][1]
     if any(d not in dims for d in out_dims):
         raise ValueError(f"the output's dims {out_dims} are not all dims of an input {dims}: its size would be unknown")
-    if not out_dims or len(out_dims) > 1:
-        raise ValueError("the family produces rank-1 outputs (a scalar or rank-2 output is not yet a family row)")
+    if len(out_dims) > 1:
+        raise ValueError("the family produces scalar and rank-1 outputs (a rank-2 output is not yet a family row)")
     for d in dims:
         if not re.fullmatch(r"[a-z][a-z0-9]*", d) or d in ("c",):
             raise ValueError(f"the dim {d} is not a plain lower-case name")
@@ -1796,8 +1856,9 @@ def sig_signature(inst):
             if len(ds) >= 2:
                 add(sig_class(elem, ds[1:]))
 
-    for _, _, ds in inst["inputs"]:
-        add(sig_class(elem, ds))
+    for _, e, ds in inst["inputs"]:
+        if e != "size":
+            add(sig_class(elem, ds))
     add(sig_class(elem, out_dims))
     for d in dims:
         add(sig_class(elem, (d,)))
@@ -1835,6 +1896,7 @@ def sig_rows(name):
     """Every row of an instance, before the closure from the root."""
     inst = SIG_INSTANCES[name]
     elem, dims, classes, rank1 = sig_signature(inst)
+    fams = inst.get("families", ())
     states = [elem] + rank1
     produced = set(rank1) | {elem}
     free = [c for c in classes if c not in produced]  # rank >= 2 with no producer: context-free
@@ -1878,6 +1940,8 @@ def sig_rows(name):
         for d in dims:
             fn(f"ival.{d}", e, [dual(f"ix.{d}", ctx)], f"{elem}.i64 {{0}}", f"an index into [{d}] as a value")
             term(d, e, f"{elem}.i64 {d}", f"the size {d} as a value")
+            if "mod" in fams:
+                fn(f"mod.{d}", e, [e], SIG_MOD.replace("{D}", d), f"a value modulo the size {d}, in [0, {d})")
         term(f"?_{e}", e, "", "a literal of the constant pool", kind="const")
         for v, c in vs:
             if c == elem:
@@ -1900,6 +1964,15 @@ def sig_rows(name):
                 fn("replicate", a, [e], f"replicate {d} {{0}}", f"a [{d}] array of one value")
                 for m, spelling in SIG_MAP2[elem]:
                     fn(f"map2.{m}", a, [a, a], spelling, f"elementwise {m} of two [{d}] arrays")
+                if "scan" in fams:
+                    for m, spelling in SIG_SCANS[elem]:
+                        fn(f"scan.{m}", a, [a], spelling, f"the inclusive {m} scan of a [{d}] array")
+                if "hist" in fams:
+                    for c2 in rank1:
+                        (m2,) = sig_class_dims(c2)
+                        for m, spelling in SIG_HISTS[elem]:
+                            fn(f"hist.{m}.{m2}", a, [dual(c2, ctx), dual(c2, ctx)], spelling.replace("{D}", d),
+                               f"the {m} histogram into [{d}] of [{m2}] values at [{m2}] indices (outside [0, {d}) ignored)")
             for y in classes:
                 ys = sig_class_dims(y)
                 if len(ys) >= 2 and sig_class(elem, ys[1:]) == c:
@@ -2040,7 +2113,10 @@ def sig_tables(name):
         ftext.append(f"F{i:05d}\t{r['name']}\t{r['kind']}\t{r['out']}\t{';'.join(r['args'])}\t{r['spelling']}\t{r['note']}")
     itext = ["# kind\tname\telement\tdims", f"# {inst['source']}"]
     for iname, ielem, ids in inst["inputs"]:
-        itext.append(f"input\t{iname}\t{ielem}\t{','.join(ids)}")
+        if ielem == "size":
+            itext.append(f"size\t{iname}\ti32\t")
+        else:
+            itext.append(f"input\t{iname}\t{ielem}\t{','.join(ids)}")
     itext.append(f"output\tmain\t{inst['output'][0]}\t{','.join(inst['output'][1])}")
     itext.append(f"depth\t{SIG_DEPTH}\t\t")
     itext.append(f"dims\t{','.join(dims)}\t\t")
@@ -2094,11 +2170,12 @@ def witness_sig(dir_path, name):
     types, funcs = read_tables(os.path.join(dir_path, "types.tsv"), os.path.join(dir_path, "functions.tsv"))
     declared = {t[1] for t in types}
     roots = [t[1] for t in types if t[5] == "yes"]
-    want_root = f"a.{'.'.join(inst['output'][1])}:c"
+    want_root = f"{sig_class(elem, inst['output'][1])}:c"
     if roots != [want_root]:
         bad.append(f"S1 the roots are {roots}, the declared output is {want_root}")
-    inputs = {n: f"a.{'.'.join(ds)}" for n, _, ds in inst["inputs"]}
-    dims = [d for _, _, ds in inst["inputs"] for d in ds]
+    inputs = {n: f"a.{'.'.join(ds)}" for n, e, ds in inst["inputs"] if e != "size"}
+    dims = [n for n, e, _ in inst["inputs"] if e == "size"] + [d for _, _, ds in inst["inputs"] for d in ds]
+    fams = inst.get("families", ())
     parsed = {}
     for t in types:
         try:
@@ -2178,7 +2255,24 @@ def witness_sig(dir_path, name):
             if spelling != want:
                 bad.append(f"S5 the binder {rname} is spelled {spelling!r}, not {want!r}")
         # S6: the work bound -- binders, reductions and replicates only above the depth.
-        heavy = binder or op == "replicate" or op.startswith("map2.") or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS[elem]}
+        heavy = (binder or op == "replicate" or op.startswith("map2.") or op.startswith("scan.") or op.startswith("hist.")
+                 or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS[elem]})
+        # S10: an optional family's row only in an instance that carries the family, and of its template.
+        fam = op.split(".")[0]
+        if fam in SIG_FAMILIES and fam not in fams:
+            bad.append(f"S10 the row {rname} is of the family {fam}, which {name} does not carry")
+        if fam == "scan" and (args != [out] or (op[5:], spelling) not in set(SIG_SCANS[elem])):
+            bad.append(f"S10 the scan row {rname} does not take one array of its own class: {args} {spelling!r}")
+        if fam == "hist":
+            parts = op.split(".")
+            want = {m: t.replace("{D}", cls[2:]) for m, t in SIG_HISTS[elem]}.get(parts[1] if len(parts) == 3 else "")
+            if (len(parts) != 3 or not cls.startswith("a.") or cls.count(".") != 1 or spelling != want or len(args) != 2
+                    or args[0] != args[1] or parsed.get(args[0], ("",))[0] != f"a.{parts[2]}"):
+                bad.append(f"S10 the histogram row {rname} is not two [{parts[-1]}] arrays of one type into its class: "
+                           f"{args} {spelling!r}")
+        if fam == "mod" and (args != [out] or cls != elem or op[4:] not in dims
+                             or spelling != SIG_MOD.replace("{D}", op[4:])):
+            bad.append(f"S10 the modulo row {rname} is not a value modulo a dimension: {args} {spelling!r}")
         if op.startswith("map2.") and (args != [out, out] or (op[5:], spelling) not in set(SIG_MAP2[elem])):
             bad.append(f"S7 the elementwise row {rname} does not take two arrays of its own class: {args} {spelling!r}")
         if heavy and depth >= SIG_DEPTH:

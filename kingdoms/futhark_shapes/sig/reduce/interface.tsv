@@ -1,0 +1,6 @@
+# kind	name	element	dims
+# futhark-benchmarks micro/reduce.fut, entry sum_i32 (i32.sum: reduce (+) 0)
+input	xs	i32	n
+output	main	i32	
+depth	2		
+dims	n		

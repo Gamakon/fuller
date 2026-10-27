@@ -1,0 +1,6 @@
+# name	split	k	n	seed (histogram: i32 values uniform over the whole range; outputs by yardstick.fut through futhark c)
+train_k10_n500_s1	train	10	500	1
+train_k10_n500_s2	train	10	500	2
+train_k37_n1000_s3	train	37	1000	3
+held_k100_n777_s4	held	100	777	4
+held_k1_n13_s5	held	1	13	5

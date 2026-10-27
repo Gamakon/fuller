@@ -1,0 +1,6 @@
+# name	split	k	n	seed (scan: i32 values uniform over the whole range; outputs by yardstick.fut through futhark c)
+train_n64_s1	train	0	64	1
+train_n64_s2	train	0	64	2
+train_n1000_s3	train	0	1000	3
+held_n777_s4	held	0	777	4
+held_n1_s5	held	0	1	5
