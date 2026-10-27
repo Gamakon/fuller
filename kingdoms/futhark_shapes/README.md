@@ -251,3 +251,34 @@ The tables are committed, like the 1-D kingdom's, so the loader's
 `include_str!` sees them. The default is to **check** them, because the
 committed table is the trust boundary; `--write` regenerates and then runs the
 same checks.
+
+## The pixel family (`pixel/<shader>/`)
+
+A second family from the same generator: a picture as a map over the pixels of
+a scalar program, for the cuneus image shaders. The image row is
+`map (\yi -> map (\xi -> let px = .. in let py = .. in <block>) (iota cols)) (iota rows)`
+over a tile, and a pixel block is a chain of `let`s and bounded `loop`s over
+`f32` ending in `[r, g, b]`. Every rule is a type:
+
+| rule | the type that carries it |
+|---|---|
+| a variable is bound before it is read | `f32.s{k}`: an f32 in scope k; its terminals are `v0 .. v{k-1}` and the interface's inputs |
+| `let` binds the next variable | `let@blk.s{k}` takes `f32.s{k}` and a block of scope k+1 |
+| a loop binds its state and its counter | `loopS` binds `v{k} .. v{k+S-1}`, its body is `bodyS.d{d+1}.s{k+S+1}` (counter `v{k+S}`), the rest scope k+S |
+| a loop is bounded | trip counts are `count` literals (at most 64), nesting depth at most 2 (`PIXEL_DEPTH`) |
+| a loop body returns its state | `bodyS.*` ends in an S-tuple |
+
+An instance is declared by its WGSL source: the uniform blocks' f32 fields
+become the inputs (`interface.tsv`), and the source's float literals join the
+generic constant pool. `volumepassage`: 300 types, 3,651 rows, scopes s0..s40,
+loop arities 1, 3 and 5. The e-graph (one sort a dual, constants by their pool
+index) holds IEEE identities that are bit-identical: commutativity of `+`, `*`,
+`max`, `min`; `a - b = a + (-b)`; `-(-a) = a`; `|-a| = |a|`; `a * 2 = a + a`;
+`a * 1 = a`; `a / 2 = a * 0.5`; `a / 4 = a * 0.25`.
+
+The witness tests P1-P9 re-read the emitted text: the root, the declared duals,
+the placeholders, every variable's scope, every let and loop binding, the loop
+bound, a terminal for every dual, the literal pool against the shader's source,
+and the e-graph mapping. The Rust side is `src/futhark_pixel.rs`
+(loader, program, work bound and tiles, the hand-written reference, the
+e-graph), and the examples `futhark_pixel_reference` and `futhark_pixel_evolve`.

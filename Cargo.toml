@@ -248,6 +248,14 @@ name = "cuneus_image"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "futhark_pixel_reference"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "futhark_pixel_evolve"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "st9_champion_time"
 required-features = ["gpu", "wgsl"]
 

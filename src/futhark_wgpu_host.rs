@@ -168,7 +168,7 @@ pub fn compile_program(source: &str, dir: &Path) -> Result<PathBuf, String> {
 /// The input array in Futhark's textual value format. `{:?}` prints the
 /// shortest decimal that reads back as the same `f32`, so the program sees
 /// exactly these values.
-fn input_text(input: &[f32]) -> Result<String, String> {
+pub fn input_text(input: &[f32]) -> Result<String, String> {
     if input.is_empty() {
         return Ok("empty([0]f32)\n".to_string());
     }
@@ -183,7 +183,7 @@ fn input_text(input: &[f32]) -> Result<String, String> {
 }
 
 /// One value of Futhark's binary format holding `f32`s, as written by `-b`.
-fn read_binary_f32(raw: &[u8]) -> Result<Vec<f32>, String> {
+pub fn read_binary_f32(raw: &[u8]) -> Result<Vec<f32>, String> {
     let mut i = 0;
     while i < raw.len() && raw[i].is_ascii_whitespace() {
         i += 1;
@@ -213,6 +213,16 @@ fn read_binary_f32(raw: &[u8]) -> Result<Vec<f32>, String> {
 /// for each submission, so it is a diagnostic mode, not the mode a fitness
 /// should be taken in.
 pub fn run_program(exe: &Path, input: &[f32], timestamps: bool) -> Result<GpuRun, String> {
+    run_program_times(exe, input, timestamps, 1)
+}
+
+/// [`run_program`] with the entry point run `runs` times in the one process
+/// (Futhark's `-r`): the values are the last run's, and the report holds the
+/// passes of every run, in order.
+pub fn run_program_times(exe: &Path, input: &[f32], timestamps: bool, runs: usize) -> Result<GpuRun, String> {
+    if runs == 0 {
+        return Err("a program run zero times has no result".into());
+    }
     let dir = exe.parent().ok_or("an executable with no directory")?;
     let report_path = dir.join("shim_report.json");
     if report_path.exists() {
@@ -220,6 +230,9 @@ pub fn run_program(exe: &Path, input: &[f32], timestamps: bool) -> Result<GpuRun
     }
     let mut cmd = Command::new(exe);
     cmd.arg("-b").env("FUTHARK_WGPU_SHIM_REPORT", &report_path);
+    if runs > 1 {
+        cmd.arg("-r").arg(runs.to_string());
+    }
     if timestamps {
         cmd.env("FUTHARK_WGPU_SHIM_TIMESTAMPS", "1");
     }

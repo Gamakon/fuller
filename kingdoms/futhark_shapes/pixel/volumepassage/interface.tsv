@@ -1,0 +1,16 @@
+# input	group	binding	word	spelling
+time	0	0	0	u_time
+delta	0	0	1	u_delta
+speed	1	1	0	u_speed
+intensity	1	1	1	u_intensity
+color1_r	1	1	2	u_color1_r
+color1_g	1	1	3	u_color1_g
+color1_b	1	1	4	u_color1_b
+color2_r	1	1	5	u_color2_r
+color2_g	1	1	6	u_color2_g
+color2_b	1	1	7	u_color2_b
+color3_r	1	1	8	u_color3_r
+color3_g	1	1	9	u_color3_g
+color3_b	1	1	10	u_color3_b
+gamma	1	1	11	u_gamma
+zoom	1	1	12	u_zoom
