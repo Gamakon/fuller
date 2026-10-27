@@ -225,13 +225,7 @@ impl Judge<'_> {
     /// One process's time on the timing case: the fastest of `runs` runs' GPU-timed passes, in nanoseconds.
     fn time_once(&self, exe: &Path) -> Result<f64, String> {
         let (_, report) = run_program_bytes(exe, &self.cases[self.timing_case].stdin, true, self.runs)?;
-        let passes = &report.passes;
-        let total = self.runs + usize::from(self.runs > 1);
-        if report.backend != "Metal" || passes.is_empty() || report.timed_passes() != passes.len() || passes.len() % total != 0 {
-            return Err(format!("a timing did not run timed on Metal, {total} runs of equal passes: {report:?}"));
-        }
-        let per = passes.len() / total;
-        Ok(passes[(total - self.runs) * per..].chunks_exact(per).map(|c| c.iter().map(|p| p.2).sum::<f64>()).fold(f64::INFINITY, f64::min))
+        report.fastest_run_ns(self.runs)
     }
 
     /// Interleaved pairs, candidate against the yardstick, the order alternating: the ratios candidate / yardstick.

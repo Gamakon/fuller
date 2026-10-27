@@ -112,6 +112,23 @@ impl ShimReport {
     pub fn timed_passes(&self) -> usize {
         self.passes.iter().filter(|(b, e, _)| *b > 0 && e > b).count()
     }
+
+    /// The fastest timed run's GPU nanoseconds (the sum of its passes) of a process that ran the program `runs`
+    /// times (Futhark's `-r`; for `runs > 1` it runs once more first, a warm-up whose passes are dropped).
+    ///
+    /// A program may run passes ONCE A PROCESS, at its first use (measured 2026-10-27: the reduce and histogram
+    /// yardsticks each run one 10 us pass before the first run, 22 passes for 21 runs of one and 85 for 21 runs of
+    /// four). Those belong to the first run, so with `total` runs the passes a run is `len / total` and the
+    /// `len % total` extra passes are the warm-up's. With one run (no warm-up) every pass is that run's.
+    pub fn fastest_run_ns(&self, runs: usize) -> Result<f64, String> {
+        let total = runs + usize::from(runs > 1);
+        let len = self.passes.len();
+        let per = if total == 0 { 0 } else { len / total };
+        if runs == 0 || self.backend != "Metal" || per == 0 || self.timed_passes() != len {
+            return Err(format!("the program did not run timed on Metal, {total} runs (one a warm-up when runs > 1) of equal passes: {self:?}"));
+        }
+        Ok(self.passes[len - runs * per..].chunks_exact(per).map(|c| c.iter().map(|p| p.2).sum::<f64>()).fold(f64::INFINITY, f64::min))
+    }
 }
 
 /// A program's result on the GPU, with the shim's report.
@@ -287,6 +304,30 @@ mod tests {
     use crate::futhark_interp::Value;
     use crate::futhark_kingdom::FutharkKingdom;
     use crate::typed_gep::{express, GeneLayout, Tree};
+
+    fn report_of(ns: &[f64]) -> ShimReport {
+        let passes = ns.iter().enumerate().map(|(i, t)| (1000 * (i as u64 + 1), 1000 * (i as u64 + 1) + 1, *t)).collect();
+        ShimReport { adapter: "test".into(), backend: "Metal".into(), dispatches: 0, submits: 0, emscripten_sleep_calls: 0, passes }
+    }
+
+    /// A once-a-process pass before the first run (the reduce yardstick's, 22 passes for 21 runs) is the warm-up's:
+    /// the timed runs are the last ones, and the fastest is their least.
+    #[test]
+    fn a_once_a_process_pass_belongs_to_the_warm_up() {
+        // runs = 3: a once-a-process pass (99), the warm-up (50), then three runs of one pass.
+        assert_eq!(report_of(&[99.0, 50.0, 7.0, 5.0, 6.0]).fastest_run_ns(3), Ok(5.0));
+        // Two passes a run, one extra before: 1 + 4 * 2 passes; the runs are (3+4), (2+2), (5+1).
+        assert_eq!(report_of(&[99.0, 9.0, 9.0, 3.0, 4.0, 2.0, 2.0, 5.0, 1.0]).fastest_run_ns(3), Ok(4.0));
+        // No extra pass: pathfinder's case is unchanged.
+        assert_eq!(report_of(&[50.0, 7.0, 5.0, 6.0]).fastest_run_ns(3), Ok(5.0));
+        // One run has no warm-up: every pass is that run's.
+        assert_eq!(report_of(&[1.0, 2.0]).fastest_run_ns(1), Ok(3.0));
+        // An untimed pass, or no pass at all, is an error.
+        let mut r = report_of(&[50.0, 7.0, 5.0, 6.0]);
+        r.passes[2].0 = 0;
+        assert!(r.fastest_run_ns(3).is_err());
+        assert!(report_of(&[]).fastest_run_ns(3).is_err());
+    }
 
     /// A candidate links against the prebuilt shim while the cargo lock is held by someone else: the per-candidate
     /// step runs no cargo and takes no lock. (Needs the branch compiler and `cc`; no GPU.)
