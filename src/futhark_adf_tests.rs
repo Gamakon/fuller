@@ -109,8 +109,8 @@ fn fold_population(table: &mut AdfTable, eg: &dyn EgraphKingdom, c: &KingdomCont
     let f = fold_saturated(table, eg, c, layout, cl, &genes, &trees, &Budget::default()).unwrap_or_else(|e| panic!("{e}"));
     assert_fold(&f, layout, cl);
     eprintln!(
-        "  population of {n}: {} distinct, tuples {} -> {} in {} iterations{}, {} ADFs (structural {}), {} kept their spelling; structural {:.0} ms, saturate {:.0} ms, extract {:.0} ms, write-back {:.0} ms",
-        f.distinct, f.tuples_asserted, f.tuples_saturated, f.iterations, if f.stopped_by_size { " (size guard)" } else { "" }, f.used.len(), f.structural.adfs, f.kept,
+        "  population of {n}: {} distinct, tuples {} -> {} in {} iterations{}, {} ADFs (structural {}), {} refitted to their layout ({} subtrees took their joint form); structural {:.0} ms, saturate {:.0} ms, extract {:.0} ms, write-back {:.0} ms",
+        f.distinct, f.tuples_asserted, f.tuples_saturated, f.iterations, if f.stopped_by_size { " (size guard)" } else { "" }, f.used.len(), f.structural.adfs, f.refitted, f.refit_adopted,
         f.timings[0].as_secs_f64() * 1e3, f.timings[1].as_secs_f64() * 1e3, f.timings[2].as_secs_f64() * 1e3, f.timings[3].as_secs_f64() * 1e3
     );
     (trees, f)
@@ -322,4 +322,40 @@ fn shape_programs_with_adfs_compile_and_agree_bit_for_bit() {
         }
     }
     eprintln!("shapes: {checked} folded programs compiled and agreed bit for bit, {:.1} s", started.elapsed().as_secs_f64());
+}
+
+/// The comparison of the two folds on the same populations: the shared parts each finds, the DAG the population
+/// needs (distinct nodes, and the functions among them: the cost both minimise), and what became of every part
+/// structural hashing shares. Saturation only adds equivalences and the joint extraction minimises the DAG's
+/// function count, so the saturated DAG is never more expensive than the submitted one; a population where it is
+/// would be a bug.
+fn compare(name: &str, eg: &dyn EgraphKingdom, c: &KingdomContract, layouts: &[GeneLayout], cl: &BTreeMap<Ty, u32>, seed: u64) {
+    let mut rng = GeneRng::new(seed);
+    let mut table = AdfTable::default();
+    eprintln!("{name}: population | parts structural / saturated | DAG nodes structural / saturated | DAG functions structural / saturated | structural parts: matched merged collapsed unshared unreached | refitted, size guard");
+    let mut sum = [0u64; 6];
+    for p in 0..10 {
+        let layout = &layouts[p % layouts.len()];
+        let (_, f) = fold_population(&mut table, eg, c, layout, cl, POPULATION, &mut rng);
+        let s = f.fate;
+        eprintln!(
+            "  {p:>2} | {:>4} / {:>4} | {:>5} / {:>5} | {:>5} / {:>5} | {:>4} {:>4} {:>4} {:>4} {:>4} | {}, {}",
+            f.structural.adfs, f.used.len(), f.structural_dag.0, f.dag.0, f.structural_dag.1, f.dag.1, s.matched, s.merged, s.collapsed, s.unshared, s.unreached, f.refitted, f.stopped_by_size
+        );
+        assert_eq!(s.matched + s.merged + s.collapsed + s.unshared + s.unreached, f.structural.adfs);
+        assert!(f.dag.1 <= f.structural_dag.1, "{name} population {p}: the saturated DAG costs {} functions, the submitted one {}", f.dag.1, f.structural_dag.1);
+        for (i, v) in [f.structural.adfs, f.used.len(), f.structural_dag.0, f.dag.0, f.structural_dag.1 as usize, f.dag.1 as usize].iter().enumerate() {
+            sum[i] += *v as u64;
+        }
+    }
+    eprintln!("  all | {} / {} | {} / {} | {} / {}", sum[0], sum[1], sum[2], sum[3], sum[4], sum[5]);
+}
+
+#[test]
+fn the_saturated_dag_is_never_larger_than_the_structural_one() {
+    let (k, c, cl, layouts) = plain();
+    let layouts: Vec<GeneLayout> = layouts.into_iter().map(|(_, l)| l).collect();
+    compare("1-D", &PlainFold { kingdom: &k }, &c, &layouts, &cl, 0xADF0_0006);
+    let (k, bridge, c, cl, _, layout) = shapes();
+    compare("shapes", &ShapeFold { kingdom: &k, bridge: &bridge }, &c, &[layout], &cl, 0xADF0_0007);
 }

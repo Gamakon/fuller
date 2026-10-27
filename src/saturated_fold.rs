@@ -106,8 +106,11 @@ pub struct SaturatedFold {
     pub rewritten: usize,
     /// Individuals whose gene holds a form that is not the tree they were submitted with.
     pub reformed: usize,
-    /// Individuals whose extracted form did not fit their layout, so their own spelling was folded instead.
-    pub kept: usize,
+    /// Individuals whose jointly extracted form did not fit their layout, so their form was searched among the
+    /// forms of their e-class that fit.
+    pub refitted: usize,
+    /// The subtrees of those genes that took their class's joint form or reference.
+    pub refit_adopted: usize,
     /// References written into the genes.
     pub references: usize,
     /// The structural-hashing baseline on the same population (its `adfs` is the count to compare with `used`).
@@ -120,9 +123,31 @@ pub struct SaturatedFold {
     pub tuples_saturated: usize,
     pub stopped_by_size: bool,
     pub total_cost: u64,
+    /// The DAG the population needs, as the submitted trees spell it (hash-consed: distinct subtrees, and those
+    /// whose root is a function) and as the extraction chose it (extracted e-classes, and those holding a function).
+    /// The second number of each is the cost both extractions minimise.
+    pub structural_dag: (usize, u64),
+    /// What became of each part structural hashing shares.
+    pub fate: StructuralFate,
+    pub dag: (usize, u64),
     /// Wall-clock time of the structural baseline, the saturation, the joint extraction, and the ADFs with the
     /// write-back.
     pub timings: [std::time::Duration; 4],
+}
+
+/// What became, in the saturated fold, of each part structural hashing shares (its e-class, found from its body).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StructuralFate {
+    /// Its e-class is a shared part, and no other structural part's is.
+    pub matched: usize,
+    /// Its e-class is a shared part another structural part also maps to: two spellings of one part.
+    pub merged: usize,
+    /// Its e-class's chosen form holds no function (`transpose (transpose A)` is `A`), so it is no part at all.
+    pub collapsed: usize,
+    /// Its e-class holds a function but is no longer shared: the extraction reached it fewer ways.
+    pub unshared: usize,
+    /// No root's chosen form reaches its e-class.
+    pub unreached: usize,
 }
 
 /// The `(constructor Name` declarations of the programs.
@@ -158,8 +183,21 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
     }
     // The baseline, on a scratch table so the caller's ids are not spent on it.
     let clock = std::time::Instant::now();
-    let structural = AdfTable::default().fold(base, layout, const_len, genes, trees)?.stats;
+    let structural_fold = AdfTable::default().fold(base, layout, const_len, genes, trees)?;
+    let structural = structural_fold.stats.clone();
     let t_structural = clock.elapsed();
+    let structural_dag = {
+        let mut seen: std::collections::HashSet<&Tree> = std::collections::HashSet::new();
+        let mut stack: Vec<&Tree> = trees.iter().collect();
+        let mut functions = 0u64;
+        while let Some(t) = stack.pop() {
+            if seen.insert(t) {
+                functions += u64::from(!base.is_terminal(t.symbol));
+                stack.extend(t.kids.iter());
+            }
+        }
+        (seen.len(), functions)
+    };
 
     // ---- 1. the equivalent forms --------------------------------------------------------------------------------
     let mut distinct: Vec<&Tree> = Vec::new();
@@ -300,7 +338,25 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
             *individuals.entry(c).or_insert(0) += multiplicity[d];
         }
     }
+    let dag_size = (order.len(), order.iter().filter(|c| !base.is_terminal(nodes[*c].symbol)).count() as u64);
     let shared: BTreeSet<&ClassId> = order.iter().filter(|c| functions[c] >= 1 && edges.get(c).copied().unwrap_or(0) >= 2 && individuals.get(c).copied().unwrap_or(0) >= 2).collect();
+    // What became of each part structural hashing shares.
+    let mut fate = StructuralFate::default();
+    let mut seen_classes: BTreeSet<ClassId> = BTreeSet::new();
+    for body in structural_fold.adfs.expanded(&structural_fold.epoch).values() {
+        let c = class_of_term(&parse_sexpr(&kingdom.import(body)?)?, &|op, kids| class_of.get(&(op.to_string(), kids)).cloned())?.ok_or_else(|| bug("a structural part has no e-class"))?;
+        if !nodes.contains_key(&c) {
+            fate.unreached += 1;
+        } else if functions[&c] == 0 {
+            fate.collapsed += 1;
+        } else if !shared.contains(&c) {
+            fate.unshared += 1;
+        } else if !seen_classes.insert(c) {
+            fate.merged += 1;
+        } else {
+            fate.matched += 1;
+        }
+    }
     // The expanded tree of every class.
     let mut expanded: BTreeMap<&ClassId, Tree> = BTreeMap::new();
     for c in &order {
@@ -356,7 +412,8 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
     let adfs = AdfSet::new(&epoch, bodies).map_err(|e| e.to_string())?;
     let cl = ChromosomeLayout { normal: Layout::new(0, vec![layout.clone()]), mains: Vec::new() };
     let (mut out_genes, mut out_folded, mut forms) = (Vec::with_capacity(genes.len()), Vec::with_capacity(genes.len()), Vec::with_capacity(genes.len()));
-    let (mut references, mut rewritten, mut reformed, mut kept) = (0usize, 0usize, 0usize, 0usize);
+    let (mut references, mut rewritten, mut reformed, mut refitted) = (0usize, 0usize, 0usize, 0usize);
+    let mut refit_adopted = 0usize;
     let bodies_expanded = adfs.expanded(&epoch);
     for (i, (g, t)) in genes.iter().zip(trees).enumerate() {
         let r = &roots[root_of[i]];
@@ -365,16 +422,35 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         // The write-back's domain is the forms that fit the gene's layout (section 5: encodable exactly when
         // `j_T <= h_T` for every type). An extracted form that does not fit is outside it, so the gene keeps its own
         // spelling with its shared parts as references: a removal-only rewrite, which always fits.
+        // The domain of a root is the forms of its e-class that fit its layout (section 5: encodable exactly when
+        // `j_T <= h_T` for every type); a form that does not fit costs infinity for this root, and the other roots
+        // keep the joint choice. The joint form is the best when it fits. When it does not, the root's form is
+        // searched among the forms of its class that do: starting from the form it was submitted with (one of its
+        // class's forms, and one that fits), every subtree, top down, takes its class's joint form, or its reference
+        // when the class is shared, whenever the whole still fits. Every step is checked before it is taken, so no
+        // form outside the domain is ever written.
         let words = match write_back(epoch.kingdom(), layout, g, &f) {
             Ok(w) => w,
             Err(_) => {
                 let sexpr = parse_sexpr(&kingdom.import(t)?)?;
-                let (own, m) = fold_submitted(t, &sexpr, true, &|op, kids| class_of.get(&(op.to_string(), kids)).cloned(), &adf_of, &epoch)?;
-                kept += 1;
-                f = own;
-                n = m;
+                let start = annotate(t, &sexpr, &|op, kids| class_of.get(&(op.to_string(), kids)).cloned())?;
+                let joint = |c: &ClassId| -> Result<Option<Tree>, String> {
+                    if adf_of.contains_key(c) {
+                        let a = adf_of[c];
+                        return Ok(Some(Tree { symbol: epoch.adf_terminal(a).ok_or_else(|| bug(format!("ADF {a} has no reference terminal")))?, const_index: None, kids: Vec::new() }));
+                    }
+                    if nodes.contains_key(c) {
+                        return Ok(Some(folded(c, false, &nodes, &adf_of, &epoch)?.0));
+                    }
+                    Ok(None)
+                };
+                let (tree, adopted) = refit(start, epoch.kingdom(), layout, &joint)?;
+                refitted += 1;
+                refit_adopted += adopted;
+                n = count_refs(&epoch, &tree);
+                f = tree;
                 form = crate::typed_chromosome::unfold_with(&epoch, &bodies_expanded, &f);
-                write_back(epoch.kingdom(), layout, g, &f).map_err(|e| bug(format!("individual {i}: the removal-only write-back did not fit: {e}")))?
+                write_back(epoch.kingdom(), layout, g, &f).map_err(|e| bug(format!("individual {i}: a form checked to fit the layout did not write back: {e}")))?
             }
         };
         let c = Chromosome { chromosome_id: i as u64, genes: vec![words.clone()], mains: Vec::new() };
@@ -390,7 +466,7 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         out_folded.push(f);
         forms.push(form);
     }
-    Ok(SaturatedFold { epoch, adfs, used, genes: out_genes, folded: out_folded, forms, rewritten, reformed, kept, references, structural, distinct: distinct.len(), iterations, tuples_asserted, tuples_saturated, stopped_by_size, total_cost: extracted.total_cost, timings: [t_structural, t_saturate - t_structural, t_extract - t_saturate, clock.elapsed() - t_extract] })
+    Ok(SaturatedFold { epoch, adfs, used, genes: out_genes, folded: out_folded, forms, rewritten, reformed, refitted, refit_adopted, references, structural, distinct: distinct.len(), iterations, tuples_asserted, tuples_saturated, stopped_by_size, total_cost: extracted.total_cost, structural_dag, fate, dag: dag_size, timings: [t_structural, t_saturate - t_structural, t_extract - t_saturate, clock.elapsed() - t_extract] })
 }
 
 /// A literal child's key: its value when it is a number, so `0.5` asserted and `0.5` serialized agree however each
@@ -430,41 +506,104 @@ fn parse_sexpr(text: &str) -> Result<Sexpr, String> {
     one(first, &mut tokens)
 }
 
-/// A submitted tree (walked with its imported term) with every subtree whose e-class is shared replaced by that
-/// ADF's reference: the e-class of a node is found by its constructor and its children's classes.
-fn fold_submitted(t: &Tree, s: &Sexpr, top_too: bool, class: &dyn Fn(&str, Vec<String>) -> Option<ClassId>, adf_of: &BTreeMap<&ClassId, AdfId>, epoch: &Epoch) -> Result<(Tree, usize), String> {
-    fn class_of_term(s: &Sexpr, class: &dyn Fn(&str, Vec<String>) -> Option<ClassId>) -> Result<Option<ClassId>, String> {
-        let Sexpr::App(op, kids) = s else { return Ok(None) };
-        let mut keys = Vec::with_capacity(kids.len());
-        for k in kids {
-            match k {
-                Sexpr::Atom(a) => keys.push(literal_key(a)),
-                Sexpr::App(..) => match class_of_term(k, class)? {
-                    Some(c) => keys.push(format!("class {c}")),
-                    None => return Err(bug(format!("a submitted subtree of {op} has no e-class"))),
-                },
-            }
+/// The e-class of a submitted term: found by its constructor and its children's classes.
+fn class_of_term(s: &Sexpr, class: &dyn Fn(&str, Vec<String>) -> Option<ClassId>) -> Result<Option<ClassId>, String> {
+    let Sexpr::App(op, kids) = s else { return Ok(None) };
+    let mut keys = Vec::with_capacity(kids.len());
+    for k in kids {
+        match k {
+            Sexpr::Atom(a) => keys.push(literal_key(a)),
+            Sexpr::App(..) => match class_of_term(k, class)? {
+                Some(c) => keys.push(format!("class {c}")),
+                None => return Err(bug(format!("a submitted subtree of {op} has no e-class"))),
+            },
         }
-        Ok(class(op, keys))
     }
+    Ok(class(op, keys))
+}
+
+
+/// A tree with each node's e-class (`None` for a reference).
+#[derive(Clone)]
+struct ATree {
+    symbol: SymbolId,
+    const_index: Option<u32>,
+    class: Option<ClassId>,
+    kids: Vec<ATree>,
+}
+
+impl ATree {
+    fn tree(&self) -> Tree {
+        Tree { symbol: self.symbol, const_index: self.const_index, kids: self.kids.iter().map(ATree::tree).collect() }
+    }
+}
+
+/// A submitted tree with the e-class of every node.
+fn annotate(t: &Tree, s: &Sexpr, class: &dyn Fn(&str, Vec<String>) -> Option<ClassId>) -> Result<ATree, String> {
+    let c = class_of_term(s, class)?.ok_or_else(|| bug("a submitted subtree has no e-class"))?;
     let Sexpr::App(_, kids) = s else { return Err(bug("a submitted tree is an atom")) };
-    if top_too {
-        let c = class_of_term(s, class)?.ok_or_else(|| bug("a submitted subtree has no e-class"))?;
-        if let Some(a) = adf_of.get(&c) {
-            let r = epoch.adf_terminal(*a).ok_or_else(|| bug(format!("ADF {a} has no reference terminal")))?;
-            return Ok((Tree { symbol: r, const_index: None, kids: Vec::new() }, 1));
-        }
-    }
     let program: Vec<&Sexpr> = kids.iter().filter(|k| matches!(k, Sexpr::App(..))).collect();
     if program.len() != t.kids.len() {
         return Err(bug("a submitted tree and its term differ in arity"));
     }
-    let mut n = 0;
-    let mut out = Vec::with_capacity(t.kids.len());
-    for (kt, ks) in t.kids.iter().zip(program) {
-        let (f, m) = fold_submitted(kt, ks, true, class, adf_of, epoch)?;
-        n += m;
-        out.push(f);
+    let kids = t.kids.iter().zip(program).map(|(kt, ks)| annotate(kt, ks, class)).collect::<Result<Vec<_>, _>>()?;
+    Ok(ATree { symbol: t.symbol, const_index: t.const_index, class: Some(c), kids })
+}
+
+/// The refit search: from `start` (which fits), each subtree in level order takes `joint(its class)` (fixed from
+/// then on) when the whole tree still fits the layout; otherwise its children are tried. Returns the tree and how
+/// many subtrees took their joint form.
+fn refit(start: ATree, k: &KingdomContract, layout: &GeneLayout, joint: &dyn Fn(&ClassId) -> Result<Option<Tree>, String>) -> Result<(Tree, usize), String> {
+    crate::typed_gep::fits(k, layout, &start.tree()).map_err(|e| bug(format!("the submitted form does not fit its own layout: {e}")))?;
+    /// A tree whose fixed parts are plain trees and whose open parts are still annotated.
+    #[derive(Clone)]
+    enum Part {
+        Fixed(Tree),
+        Open(SymbolId, Option<u32>, Option<ClassId>, Vec<Part>),
     }
-    Ok((Tree { symbol: t.symbol, const_index: t.const_index, kids: out }, n))
+    fn tree(p: &Part) -> Tree {
+        match p {
+            Part::Fixed(t) => t.clone(),
+            Part::Open(s, c, _, kids) => Tree { symbol: *s, const_index: *c, kids: kids.iter().map(tree).collect() },
+        }
+    }
+    fn open(a: &ATree) -> Part {
+        Part::Open(a.symbol, a.const_index, a.class.clone(), a.kids.iter().map(open).collect())
+    }
+    fn at<'a>(p: &'a mut Part, path: &[usize]) -> &'a mut Part {
+        match (path.split_first(), p) {
+            (None, p) => p,
+            (Some((i, rest)), Part::Open(_, _, _, kids)) => at(&mut kids[*i], rest),
+            (Some(_), p) => p,
+        }
+    }
+    let mut whole = open(&start);
+    let mut adopted = 0;
+    let mut queue: std::collections::VecDeque<Vec<usize>> = std::collections::VecDeque::from([Vec::new()]);
+    while let Some(path) = queue.pop_front() {
+        let here = at(&mut whole, &path).clone();
+        let Part::Open(_, _, class, kids) = &here else { continue };
+        let Some(c) = class else { continue };
+        if let Some(j) = joint(c)? {
+            if j != tree(&here) {
+                let mut trial = whole.clone();
+                *at(&mut trial, &path) = Part::Fixed(j);
+                if crate::typed_gep::fits(k, layout, &tree(&trial)).is_ok() {
+                    whole = trial;
+                    adopted += 1;
+                    continue;
+                }
+            }
+        }
+        for i in 0..kids.len() {
+            let mut p = path.clone();
+            p.push(i);
+            queue.push_back(p);
+        }
+    }
+    Ok((tree(&whole), adopted))
+}
+
+fn count_refs(epoch: &Epoch, t: &Tree) -> usize {
+    usize::from(epoch.reference(t.symbol).is_some()) + t.kids.iter().map(|k| count_refs(epoch, k)).sum::<usize>()
 }

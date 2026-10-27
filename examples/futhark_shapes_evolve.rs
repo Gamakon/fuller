@@ -333,8 +333,8 @@ fn main() {
     println!("individuals   {} ({} distinct trees)", trees.len(), folded.distinct);
     println!("shared parts  structural hashing {}   saturated share-equivalence {}", folded.structural.adfs, folded.used.len());
     println!(
-        "genes         {} rewritten, {} hold a form the e-graph found, {} kept their own spelling, {} references",
-        folded.rewritten, folded.reformed, folded.kept, folded.references
+        "genes         {} rewritten, {} hold a form the e-graph found, {} refitted to their layout, {} references",
+        folded.rewritten, folded.reformed, folded.refitted, folded.references
     );
     println!("e-graph       {} -> {} tuples in {} iterations{}", folded.tuples_asserted, folded.tuples_saturated, folded.iterations, if folded.stopped_by_size { " (size guard)" } else { "" });
     let first = &folded.folded[0];
