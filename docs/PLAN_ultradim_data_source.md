@@ -1,4 +1,4 @@
-# PLAN: UltraDim as a data source, Futhark as its procedure language
+# PLAN: Futhark as UltraDim's procedure language, run server-side
 
 ## Context
 
@@ -14,20 +14,27 @@
 - A collection's schema becomes a Futhark signature, and the signature becomes a kingdom: the signature family of
   `src/futhark_sig.rs`, generated from a schema rather than from a hand-declared interface.
 - Observations are drawn from the stored rows, with held-out cases drawn apart from them.
-- A procedure's data is FETCHED from UltraDim through its gRPC API, by row id or by facet query, into our own GPU
-  buffers, and the procedure runs there through the rust-wgpu backend (`futhark-rust-rt`). There is no zero-copy and
-  no access to UltraDim's buffers (Andrew's ruling, 2026-10-28).
+- A procedure runs SERVER-SIDE, as a stored procedure does in PL/SQL or T-SQL:
+  - inside the UltraDim server process, on the server's GPU;
+  - over data the server loads from its own sidecar stores and index;
+  - in buffers the server owns, within the server's configured limits.
+- **The procedure engine.** A procedure engine embedded in the server holds a catalogue of registered Futhark
+  procedures (Rust+WGSL modules from the rust-wgpu backend, loaded in-process).
+- **gRPC is only the call.** A client invokes a procedure by name (the CALL statement) and receives its result.
+- **Evolution is a server-side job.** Candidate procedures are compiled, run and scored inside the server, against
+  UltraDim's own kernel, on the server's data.
 - Fitness is staged: exact against UltraDim's existing kernel first, then speed, under the runner standard.
 
 **What is unique.**
 
 - The procedures are typed programs that evolution writes and improves, not hand-written stored procedures.
 - Every candidate is legal by its types, the kingdom is made from the data's own schema, and the judge is the
-  kernel the database ships today, run on the same fetched data.
+  kernel the database ships today, run beside the candidate on the server's own data.
 
 **Status (2026-10-28).**
 
-- A plan, nothing built for it.
+- A plan, nothing built for it. Every UltraDim change it needs is listed file by file in §9, each marked "needs
+  Andrew's approval". None is built.
 - Its first procedure, the k-means centroid update, is already a benchmark in the WGSL kingdom
   (`docs/kmeans_update_dropin.md`, fuller 4f54a507 and 1e840384).
 - Two facts measured there carry over:
@@ -71,6 +78,8 @@ Read in part (named where used):
   - `template_ops.rs` 1680-1710 (the facet RPC);
   - `ultradim.proto`: `GetUltradimV23Keys`, `GetUltradimV23RowIdsByFacet`, `GetUltradimV23RowByContentKey`,
     `GetCollectionVectors`.
+  - `service.rs` 1-40 (how an RPC routes to its handler);
+  - `device/device_manager.rs` 200-225 (the device request: no features).
 - **fuller:**
   - `examples/futhark_evolve.rs` (its header, the method, 1-200);
   - `docs/PLAN_futhark_wgpu_host.md` §1-4.5.
@@ -131,7 +140,7 @@ instances byte for byte as before:
    contexts. The centroid update's gather needs depth 3 (`tab k` / `tab d` / `sum (tab n)`). The family therefore
    needs a per-instance depth and a per-instance binder set; a tabulate-only set at depth 3 is 40 contexts at three
    dimensions.
-6. **A float tolerance as the exactness rule** (§5), in place of `compare`'s integer equality.
+6. **A float tolerance as the exactness rule** (§7), in place of `compare`'s integer equality.
 7. **No f16.** UltraDim computes in f32, with Kahan correction for accuracy.
    - The kingdom for UltraDim procedures has no f16 type and no f16 row. It is an option of the generation, not an
      edit of a shared table: the WGSL kingdom's interfaces already do this (`has_f16=False`, `lib.drop_f16`), and
@@ -143,89 +152,135 @@ instances byte for byte as before:
 **Not yet covered.** Trellis structures and stored centroids are not mapped here: their code has not been read
 (Sources).
 
-## 2. Observations and held-out cases from the stored data
+## 2. Observations and held-out cases, read on the server
 
-**A case.** A case is a slice of the family's rows: an id range or a seeded sample. The case's inputs are the
-procedure's inputs on that slice, and its expected output is UltraDim's existing kernel run on the same slice
-(§5). Nothing is synthesised: the inputs are the stored rows.
+**A case.** A case is a slice of a family's rows, read by the server from its own stores:
+
+- the row ids come from the index: a facet query (`facet_index::rows_matching`, liveness from the CSR's
+  `is_live`, as `template_ops.rs` applies it), a content key, or a seeded sample of ids below the committed count;
+- the data comes from the sidecars by those ids:
+  - keys: `key_sidecar::read_seed_keys_rows`, ascending unique ids;
+  - dense rows: `DenseSidecar::get_row` and `get_row_range`;
+  - facets: `payload_sidecar::read_payloads_at_rows`.
+
+The case's expected output is UltraDim's existing kernel run on the same slice (§7). Nothing is synthesised: the
+inputs are the stored rows.
 
 - **Training cases:** seeded samples at two or more sizes.
 - **Held-out cases:** drawn with a seed and a rule the training draws never see. The rule follows UltraDim's own
   `holdout_split_ops.rs`:
   - deterministic: a stable hash of `(split_seed, row_id)` orders the rows;
   - content-addressed: the split id is a hash of the family's generation fingerprint and the parameters;
-  - persisted, and refused when the family has changed under it (a stored fingerprint that no longer matches).
+  - persisted, and refused when the family has changed under it.
+- **Edge cases from the data's own shape:** an empty cluster, n = 1, a width d not a multiple of the workgroup. Each
+  must be a real slice, not generated values.
+- **The timing input:** a large slice, never a quality case, sized under the work guard and under the server's
+  limits.
 
-  The held-out ids are a fixed partition of the family, so a procedure is never judged on a row it was trained on.
-- **Edge cases from the data's own shape:** an empty cluster, n = 1, a width d not a multiple of the workgroup.
-  Each must be a real slice (a sample that leaves a cluster empty), not generated values.
-- **The timing input:** a large slice, never a quality case, sized under the work guard.
-  - The k-means benchmark found the limit: one workgroup of A7's form at n = 8,192 is about 8e7 node executions,
-    under the 1.7e8 cap a submit.
+## 3. The procedure engine, in the server
 
-Today fuller draws cases from files (`tests/corpus/futhark_problems/<name>/cases.tsv`). The data source adds a case
-source that reads a family by name and writes the same `Case` records, so the runner is unchanged.
+**The catalogue.** A registry in `CoreService`, as the server keeps its other resident engines (`core.rs`: one map
+a kind, a cache over an on-disk store, never the source of truth). It holds the registered procedures:
 
-## 3. Fetching the data, then running the procedure on our own buffers
+- each a module the rust-wgpu backend generated from a Futhark program: WGSL kernels, a kernel table, host code over
+  `futhark-rust-rt`, typed entry points (`EntryDesc`: inputs, outputs, the call);
+- its name, its signature (the schema-made kingdom's, §1), the family it is over, and the UltraDim kernel it
+  replaces or extends;
+- its provenance: hand-written or evolved, the run that found it, its measured exactness and speed against that
+  kernel.
 
-**No zero-copy, no access to UltraDim's buffers (Andrew's ruling).** The procedure's inputs are fetched from
-UltraDim's sidecar stores through its gRPC API (`ultradim.proto`, the only interface: Rules.md), loaded into
-buffers on our own `wgpu::Device`, and the procedure runs there. UltraDim's data, devices and kernels are never
-touched.
+A procedure is persisted under the storage root with its source, generated module and metadata. The catalogue
+survives a restart, as the other registries do.
 
-**What UltraDim serves today (read in its source):**
+**Loading.** Registered modules are compiled into the server or loaded as dylibs. `futhark-rust-rt/src/host.rs`
+already loads a generation's module as a dylib, with one copy of the runtime and of wgpu in the process.
 
-| need | RPC | what it returns |
-|---|---|---|
-| rows by facet query (a window, a label, a keyword) | `GetUltradimV23RowIdsByFacet` (`template_ops.rs`) | every LIVE row id whose payload satisfies the filter, ascending, and the committed payload count |
-| one row by its content key | `GetUltradimV23RowByContentKey` | the row id of the exact content-key facet value |
-| a row's projected keys | `GetUltradimV23Keys` (`family_ops.rs`) | for the given row ids and seeds, each row's unit `D_proj` keys, row-major, with the row ids |
-| a family's metadata | `GetUltradimV23CollectionInfo` | dims, substrate, seeds, shard readiness |
+**The device.**
 
-The row ids are UltraDim's index keys:
+- A procedure runs on a server `wgpu::Device` made by UltraDim's own device manager (`device_manager.rs`), with the
+  server's limits (`gpu_limits.rs`):
+  - `apply_auto_limits` and `ULTRADIM_GPU_BUFFER_LIMIT_GB`;
+  - `effective_buffer_limit`, 128 MiB a buffer on the M3 Max, "the single authoritative source";
+  - `GPU_STORAGE_BUFFERS_PER_STAGE`.
+- The adapter's maxima are never used.
+- The engine checks every buffer against `effective_buffer_limit` before creating it, and bands what is larger, as
+  UltraDim's kernels do.
 
-- contiguous from 0;
-- every store contiguity-gated (`dense_sidecar.rs`, `key_sidecar.rs`, `payload_sidecar.rs`);
-- the facet index answers from sorted columns (`facet_index.rs` `rows_matching`), with liveness applied by the
-  caller from the CSR.
+**Buffers.** The engine loads a call's inputs from the stores (§2) into buffers it creates on the server's device.
+They are uploaded in writes under the 256 MB Metal `write_buffer` limit (`QUEUE_WRITE_BUFFER_LIMIT`). It hands them
+to the procedure as `futhark-rust-rt` arrays (`Array::from_buffer`) and reads the result back, or keeps it resident
+for the next call.
 
-**The flow of a case.**
+**No f16** (§1 item 7). The runtime must run a program that uses no f16 on a device without `SHADER_F16`, which
+UltraDim's device manager does not request.
 
-1. Select rows: a facet query, or a seeded sample of ids from the committed count.
-2. Fetch their keys with `GetUltradimV23Keys`. These are the canonical-seed keys `GpuKmeansCluster` clusters with
-   A7 today (`gpu_cluster_ops.rs`), so the first procedure's data is fully served.
-3. Upload them into our own buffers, each under UltraDim's per-binding limit (below), banded when larger.
-4. Run the procedure and UltraDim's kernel (the judge, §5) on the same uploaded data.
+**The work guard** (fuller's, ours to add). Every launch of an EVOLVED candidate is bounded by the work guard in the
+backend's launch (`futhark-rust-rt` `program.rs` `launch` has none today). A registered procedure has passed it.
 
-**The one gap.** No RPC serves a family's raw dense rows by id. The dense sidecar holds them (`TRLDNSE1`, read by
-`DenseSidecar::get_row` and `get_row_range` in-process only), and `GetCollectionVectors` serves Blue World worlds,
-not UDV23 families.
+## 4. CALL: invoking a procedure by name
 
-- Procedures over keys need nothing new.
-- Procedures over raw rows need an RPC that returns them by id, which is an UltraDim change and Andrew's to decide.
-- Until then, the catalogue starts on keys.
+One gRPC call, the CALL statement:
 
-**UltraDim's configured limits, never the adapter's.** A procedure's buffers respect the limits UltraDim sets
-(`gpu_limits.rs`), read from its own code and configuration:
+```proto
+rpc CallProcedure (CallProcedureRequest) returns (CallProcedureResponse) {}
 
-- `ULTRADIM_GPU_BUFFER_LIMIT_GB`: the buffer ceiling, else two-thirds of system RAM, clamped to the adapter.
-- `effective_buffer_limit`: half of the lesser of the device's binding size and the 256 MB Metal
-  `write_buffer` limit, so 128 MiB on the M3 Max. UltraDim's code calls it "the single authoritative source".
-- `GPU_STORAGE_BUFFERS_PER_STAGE`: 16 by default.
-- A7's own 128 MiB check on its buffers.
+message CallProcedureRequest {
+  string procedure = 1;            // the catalogue name
+  string family = 2;               // the family it runs over
+  UdV23Filter rows = 3;            // the rows, by facet (the WHERE clause), or
+  repeated uint64 row_ids = 4;     //   by id; one of the two
+  repeated ProcedureArg args = 5;  // scalar and small array arguments (k, a seed, initial centroids)
+  bool keep_result = 6;            // keep the result resident under a handle for a later CALL
+}
+message ProcedureArg { string name = 1; oneof v { int64 i = 2; double f = 3; FloatArray fa = 4; IntArray ia = 5; string handle = 6; } }
+message CallProcedureResponse {
+  bool success = 1;
+  repeated ProcedureResult results = 2;   // each output: its shape and values, or a handle
+  double load_ms = 3; double gpu_ms = 4;  // the server's own timings
+  optional string error_message = 5;
+}
+```
 
-Our device is requested with those limits, and every procedure's buffer is checked against
-`effective_buffer_limit` as UltraDim checks it. The adapter's maxima (4 GiB on the M3 Max) are never used.
+The arguments are typed by the procedure's signature: a family-bound input is named by the call and loaded by the
+server, never sent. A result is returned, or kept as a handle, so a pipeline of procedures (assign, then update)
+runs without the data leaving the server.
 
-- The k-means benchmark harness plans by fuller's own `effective_buffer_limit`, not UltraDim's. Its largest buffer
-  (the wide-d timing input's points, 8,192 × 4,096 f32) is exactly 128 MiB: at UltraDim's limit, not over it. The
-  harness must read UltraDim's limit before any run that claims UltraDim's conditions.
+Beside it:
 
-**The work guard is ours.** fuller's work guard runs on every evolved candidate. It is added in the Futhark-to-Rust
-backend's launch (`futhark-rust-rt` `program.rs` `launch` submits with no bound today) for evolution's random
-candidates. It is not an UltraDim matter.
+- `RegisterProcedure`: a module and its metadata into the catalogue;
+- `ListProcedures`;
+- `DropProcedure`.
 
-## 4. The procedure catalogue
+## 5. Evolution as a server-side job
+
+**The job.** An evolution run is a job the server runs, started by `StartProcedureEvolution`:
+
+- the family;
+- the procedure's signature;
+- the UltraDim kernel to beat;
+- the regime (R, C or P), the seed and the budget.
+
+The job runs `examples/futhark_evolve.rs`'s loop, the same machinery, inside the server:
+
+- every candidate is compiled by the rust-wgpu backend, loaded in-process (`host.rs`), and run on the server's
+  device;
+- the candidates are scored on the server's cases (§2) against UltraDim's kernel (§7), under the work guard.
+
+Only the champion is registered, and only on a request.
+
+**The runner standard holds** (§8):
+
+- the stream `OUT/stream.jsonl`, under the server's storage root;
+- `OUT/killme.trigger`, also exposed as `StopProcedureEvolution`;
+- the guards: the budget, the wall clock, the work guard;
+- checkpoints, the hall of fame and the ledger.
+
+`GetProcedureEvolutionStatus` returns the job's state and the stream's path, which `evowatch` reads.
+
+**One GPU job at a time.** An evolution job and the server's live work share one GPU. The job yields to live calls,
+or runs only when the server is idle, as Andrew sets.
+
+## 6. The procedure catalogue
 
 | order | procedure | UltraDim's kernel (the judge) | why first |
 |---|---|---|---|
@@ -239,7 +294,7 @@ candidates. It is not an UltraDim matter.
 Later, once their code is read: the trellis kernels and the UMAP epoch (A11). The HNSW shaders (A5) are retired and
 are never a judge.
 
-## 5. Staged fitness against UltraDim's kernel
+## 7. Staged fitness against UltraDim's kernel, measured on the server
 
 This is the method of `examples/futhark_evolve.rs` and `phylu/examples/wgsl_true_case_fit.rs`, unchanged.
 
@@ -273,7 +328,7 @@ input bytes (`harness::oracle_fill`).
 - A speed claim counts only when the champion's re-time median is below the least A/A ratio.
 - UltraDim's own kernel text is timed against the yardstick, so the final comparison is against UltraDim itself.
 
-## 6. The runner standard
+## 8. The runner standard
 
 Every runner of this programme meets `docs/STANDARD_runners.md`:
 
@@ -287,8 +342,25 @@ Every runner of this programme meets `docs/STANDARD_runners.md`:
 - the mutation events.
 
 It is registered in the standard's tests (fuller and phylu `tests/runner_standard.rs`). The Futhark runner
-(`examples/futhark_evolve.rs`) already meets it; the data source changes where its cases come from (§2) and where a
+(`examples/futhark_evolve.rs`) already meets it; the server-side job changes where its cases come from (§2) and where a
 candidate runs (§3), not the runner.
+
+## 9. The UltraDim changes this needs (each needs Andrew's approval; none is built)
+
+| file (qdrant) | change |
+|---|---|
+| `ultradimdb/Cargo.toml` | depend on `futhark-rust-rt`, and on fuller's runner pieces for the evolution job |
+| `Cargo.lock` / `lib/projection-voting-kmeans/Cargo.toml` | ONE wgpu: UltraDim is on wgpu 27.0.1, `futhark-rust-rt` pins `=30.0.1`. Either UltraDim moves to 30, or the runtime builds against 27 (our change, not UltraDim's) |
+| `ultradimdb/proto/ultradim.proto` | `CallProcedure`, `RegisterProcedure`, `ListProcedures`, `DropProcedure`, `StartProcedureEvolution`, `StopProcedureEvolution`, `GetProcedureEvolutionStatus` and their messages (§4, §5) |
+| `ultradimdb/src/service.rs` | one arm a new RPC, routing to its handler, as every arm does |
+| `ultradimdb/src/core.rs` | `CoreService` gains the procedure catalogue (`procedures`), the resident result handles, and the evolution jobs, each a map like the others |
+| `ultradimdb/src/procedure_ops.rs` (new) | the handlers: load a call's rows from the stores (§2), run the module on the server's device, return or keep the result; register, list, drop |
+| `ultradimdb/src/procedure_store.rs` (new) | the catalogue's on-disk store under the storage root: source, module, metadata; rehydrated at boot |
+| `ultradimdb/src/procedure_evolution.rs` (new) | the evolution job: the runner on the server's data, its stream and kill trigger under the storage root, one job at a time |
+| `ultradimdb/src/lib.rs` | the three new modules |
+| `lib/projection-voting-kmeans/src/device/device_manager.rs` | for the evolution job only: request `TIMESTAMP_QUERY` when the adapter has it (the GPU timing of the speed inputs). The live device's features are unchanged. No `SHADER_F16`: the runtime runs without it (§3) |
+
+No change is needed to the stores, the facet index or the limits: the engine calls them as they are.
 
 ## Order of work
 
@@ -298,14 +370,14 @@ Each step ends in a test or a measurement, before the next starts:
    Test: generator `--check`, witness tests.
 2. **The signature family's f32 extension** (§1, items 1-6). Test: the centroid update's gather and scatter as genes,
    both exact against A7 on every case, interpreted and compiled.
-3. **The case source** draws training and held-out slices from a family (§2). Test: a split is reproducible and is
-   refused after the family changes.
-4. **The fetch-and-run path** (§3).
-   - The gRPC client: facet query, keys by row id.
-   - Upload under UltraDim's configured limits.
-   - The no-f16 runtime.
-   - The work guard in the backend's launch.
-   - Test: the fetched keys equal the sidecar's, bit for bit; a procedure and UltraDim's kernel agree on them.
+3. **The case source** reads training and held-out slices through the stores' own functions (§2). Test: a split is
+   reproducible and is refused after the family changes.
+4. **The engine, outside the server first.** The engine runs as a library that opens a storage root read-only,
+   against a copy of a family.
+   - This needs no UltraDim change: catalogue, load from the stores, run under the server's limits, no f16, the work
+     guard.
+   - Test: a procedure's output equals UltraDim's kernel's on the same rows, per backend.
+   - Moving it into the server (§9) waits for Andrew's approval.
 5. **The centroid update** in the Futhark kingdom, R/C/P runs prepared, not launched; the per-backend check against
    A7 (Metal here, Vulkan on the NVIDIA/RunPod stage). Then the catalogue in order.
 
