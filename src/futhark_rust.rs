@@ -285,10 +285,12 @@ mod tests {
         out
     }
 
-    /// THE BENCHMARKS' GATE, on the GPU: every case of the five benchmarks (reduce, scan, histogram, pathfinder, the
-    /// k-means step), through the rust-wgpu path (the published program compiled to Rust, run in this process),
-    /// gives output bytes identical to Futhark's C backend (the corpus's `.out`, written by `futhark c`) and to the
-    /// shim path (the branch compiler's webgpu C over the shim, its own process). It prints each benchmark's GPU time
+    /// THE BENCHMARKS' GATE, on the GPU: every case of the four integer benchmarks (reduce, scan, histogram,
+    /// pathfinder), through the rust-wgpu path (the published program compiled to Rust, run in this process), gives
+    /// output bytes identical to Futhark's C backend (the corpus's `.out`, written by `futhark c`) and to the shim path
+    /// (the branch compiler's webgpu C over the shim, its own process). The k-means step is not repeatable on the GPU
+    /// on either path (f32 atomics): on each of its cases that the shim repeats, the rust path must repeat exactly
+    /// the shim's output; the counts are printed. It prints each benchmark's GPU time
     /// a call on both paths (the fastest of 20 runs after a warm-up, GPU timestamps) and the rust path's wall time a
     /// call. (The fork compiler, rustc, the branch compiler, cc, the GPU; run under the GPU lock.)
     #[test]
@@ -316,6 +318,7 @@ mod tests {
             let (mut same_c, mut same_shim) = (0, 0);
             let (mut rust_gpu, mut shim_gpu, mut rust_wall) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
             let (mut rust_launches, mut shim_dispatches) = (0.0, 0.0);
+            let mut kmeans_repeatable = 0;
             for input in &inputs {
                 let stdin = std::fs::read(input).expect("a case's input");
                 let want = std::fs::read(input.with_extension("out")).expect("a case's output");
@@ -351,10 +354,28 @@ mod tests {
                 }
                 same_c += usize::from(v(&o.3) == v(&want));
                 same_shim += usize::from(v(&o.3) == v(&shim_out));
+                if name == "kmeans" {
+                    // The k-means step's cluster sums are f32 additions done with atomics: not repeatable on either
+                    // path (on_the_gpu_the_kmeans_step_s_repeatability_on_each_path). Where the shim repeats one output
+                    // over three runs, the rust path must give exactly it, three times.
+                    let shim3: Vec<Vec<u8>> = (0..3).map(|_| v(&crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim's run").0)).collect();
+                    if shim3.iter().all(|x| *x == shim3[0]) {
+                        for _ in 0..3 {
+                            let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&stdin)).expect("the rust path's run");
+                            let r = payloads(&raw).into_iter().find(|r| r.0 == "o" && r.1).expect("an output").3;
+                            assert_eq!(v(&r), shim3[0], "kmeans {}: the shim repeats one output, the rust path gives another", input.display());
+                        }
+                        kmeans_repeatable += 1;
+                    }
+                }
             }
             table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\t{rust_launches:.1}\t{shim_dispatches:.1}\n", inputs.len()));
-            assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
-            assert_eq!(same_c, inputs.len(), "{name}: the rust path and futhark c differ\n{table}");
+            if name == "kmeans" {
+                table.push_str(&format!("kmeans: {kmeans_repeatable} of {} cases repeatable on the shim, and on each the rust path gave its output three times\n", inputs.len()));
+            } else {
+                assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
+                assert_eq!(same_c, inputs.len(), "{name}: the rust path and futhark c differ\n{table}");
+            }
         }
         eprintln!("{table}devices made: {}", session.devices_made());
         let _ = std::fs::remove_dir_all(&base);
