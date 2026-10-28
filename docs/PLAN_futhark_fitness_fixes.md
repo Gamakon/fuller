@@ -75,6 +75,30 @@
 
 **Measured before any run:** the share of random-from-pool programs giving the all-zeros output (now 44–49 %), the number of distinct outputs per 1,400 draws (now 189–208), and the check of section A.
 
+**Built (2026-10-28, commit 50e91778 and after).**
+- The reader, `src/futhark_reader.rs`: Futhark text to a tree of the kingdom, typed, each row's spelling used as a pattern. Round trip: 1,600 rendered random genes (400 in each of the four kingdoms) read back to the same program text. 5 of them read to a different tree with the same text, because the kingdom spells `zero` and `prev` the same in every index class. Pathfinder's published kernel does not read: it uses a tuple, `map5` and `rotate`.
+- The pool, `examples/futhark_pool.rs`, committed under `kingdoms/futhark_shapes/sig/<benchmark>/pool/`. `manifest.tsv` holds the counts and the gaps by construct; `bench_functions.tsv` and `llm_programs.tsv` hold every function and program, read or gap.
+  - **Benchmarks:** only 10 of the 1,575 functions in the 221 files read, mostly `i32` constants. The kingdom has only `i32` arrays and no tuples, so f32 code (158 float literals), tuples (324), type parameters (76) and records are outside it. These are gaps in the kingdom. Fixing the reader would not close them. The leave-one-out rule takes the benchmark's own file out of the discovery rings: `micro/reduce_by_index.fut`, `rodinia/pathfinder/pathfinder.fut`.
+  - **Topic programs (Andrew's correction, 2026-10-28):** Sonnet was given one topic per call from 60 unrelated topics (blur, hash, Kadane, Horner, game of life, ...), the kingdom's operations, and the entry signature, with no description of the benchmark's task. Histogram: 48 of 60 read. Pathfinder: 45 of 60 read. 120 calls, $1.74. Many histogram topic programs work on `hist.add.n is vs` (no `% k`), because the contract lists `hist`.
+  - An earlier set of programs written for the benchmark's task (histogram 124 calls, pathfinder 34, $4.77) was stopped and is not used: the rings must not look like the task.
+- The rings, the canvas, ring walk and growth, `src/futhark_rings.rs`. Empty rings are filled from the same class in other scopes, or from the slot family when a whole class is a gap (`OUT/rings.tsv` lists every fill).
+- Wiring, `examples/futhark_evolve.rs`: `--start llm-ring --pool DIR --ring-sources bench|llm|both` (generation 0 = the pool's topic programs on canvases, every fresh gene a canvas); `--measure grow|point|walk --count N` (one operator application per child, on the GPU path).
+
+**Andrew's clarification (2026-10-29): the canvas and the population are different things.**
+- **The canvas is general and permanent.** It is one large store of real programs on unrelated topics, kept for ever and grown over time, whatever the problem. Its job is only to fill the open reading frames, so an unread cell may hold a fragment of any real program. Today the topic programs are written per benchmark kingdom, because a kingdom's types include its own inputs. The store keeps the programs themselves, and each new problem's rings are made from them by reading them into that problem's kingdom.
+- **The population is the problem's.** For a problem with a reference program: the reference goes code → AST → Karva and is written onto the canvas. The other 15 to 20 individuals are Sonnet's high-perplexity alternatives FOR THE SAME TASK, each written onto the canvas the same way. (The 124 task programs for histogram belong here, not in the rings.) Without a reference (discovery), all individuals are Sonnet's alternatives.
+- **No near copies.** An alternative within a few edits of another individual (one symbol apart, say), or with the same outputs, is not an individual. It is thrown away and replaced by a new, genuinely different alternative from Sonnet. The bar (a minimum tree edit distance, and distinct outputs) is stated and recorded before the population is built.
+- So generation 0 is the reference plus distinct alternatives on canvases, never the topic programs themselves.
+
+**Expectations, stated before the measurement (GPU, `--eval rust`).**
+
+| measurement | random padding (today) | expected, ring canvas |
+|---|---|---|
+| all-zero share of 1,400 fresh genes (`--check`'s random genes) | 44 % histogram, 49 % pathfinder (study ledgers) | under 20 % |
+| distinct outputs of 1,400 fresh genes | 189–208 | more than 400 |
+| growth mutation of a topic program: all-zero share of children | about the fresh-gene share | under half of random padding's |
+| growth mutation: children with an unseen output | | more than random padding's |
+
 ### I. Reading-frame operators, once the open reading frames are real (Andrew, 2026-10-28)
 With random padding, an operator that moves unread cells into the reading frame brings in junk, which is why only point mutation on coding cells is used today (`futhark_evolve.rs:798`). With ring padding, the unread cells are real sequences, so such operators become worth having. Each works inside one type's frame, so every symbol stays a legal row of its own type, and a tail cell keeps a terminal.
 1. **Ring walk:** advance one type's head or tail window by k positions along its ring. The reading frame takes in the next real symbols, and the rest shifts along.
@@ -116,8 +140,11 @@ Expectations, stated before each measurement; results after.
 
 | # | measurement (GPU, `--eval rust`, 1,400 random genes) | fitness, cases | expected | measured |
 |---|---|---|---|---|
-| A1 | histogram (N = 8), the fitness of the study | 7 inputs a case, the 5 stored cases | fail: the median neighbour beats under 99 % of random genes (the review puts neighbours at 1.03 to 1.32, inside random search's band); Spearman positive or near 0 (unlike the ledgers, random genes do not bloat) | |
+| A1 | histogram (N = 8), the fitness of the study | 7 inputs a case, the 5 stored cases | fail: the median neighbour beats under 99 % of random genes (the review puts neighbours at 1.03 to 1.32, inside random search's band); Spearman positive or near 0 (unlike the ledgers, random genes do not bloat) | **fail**: median neighbour beats 98.86 % of random genes; Spearman −0.080 (random genes alone −0.215); 66.7 % of neighbours better than the median random gene, 15.9 % better than the best; all-zeros share 44.2 %; 209 distinct outputs in 1,400 draws (1,039 distinct programs) |
+| A1′ | A1's GPU outputs re-scored with graded per-cell inputs (offline, 20 variants of scale, shape and exactness inputs) | old cases | Spearman positive; neighbours still tied with random genes, because whole-range values wrap | Spearman +0.18 to +0.31 in every variant; median neighbour beats 40 to 52 % of random genes: **fail**. The old cases give no partial credit (fault 4); section C is needed |
 | A2 | pathfinder (N = 13), the fitness of the study | 7 inputs a case, the 8 stored cases | fail, as A1 | |
+| A3 | histogram, the fitness of the study | the new cases (11 training with stepping stones, 4 held-out, 4 test never in the fitness) | the stepping stones let partial programs be exact on some cases: the median neighbour beats more random genes than in A1; Spearman still not clearly positive (the step inputs) | |
+| A4 | pathfinder, the fitness of the study | the new cases (10 training with 2- and 3-row stepping stones, 5 held-out, 4 test) | as A2, slightly better | |
 
 ## Expectations, stated before any run
 | measurement | expected |
