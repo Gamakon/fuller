@@ -55,9 +55,12 @@
 **The fix.**
 1. **Generate:** language models write many real Futhark programs for the benchmark's signature.
 2. **Read:** a reader parses Futhark source into the kingdom's AST. It does not exist yet for the general signature kingdom and is the first piece to build. A program the reader cannot express is a kingdom gap, recorded, never routed around.
-3. **Pool:** every subtree of every read program goes into one common store, keyed by its type. It is a store of real sequences, shared across the population and across runs.
-4. **Pad from the pool:** when a program is written into a gene (`write_back`), every unread cell is filled, in the order the walk would read it, with a subtree sampled from the pool for that cell's type. Whatever a later mutation exposes is then a whole real snippet, not random symbols.
-5. **Grow from the pool:** a mutation that needs a new subtree samples it from the pool too.
+3. **The rings (Andrew's method, agreed 2026-10-28):** each read program goes to Karva, and its coding symbols, unpadded, are split by type and appended to that type's ring. The programs are added one by one, until the rings are full. Each type has three rings: one of head symbols (functions and terminals), one of terminals (for tail cells, which take terminals only), and one of constants (for the constant cells).
+4. **The canvas:** a new gene starts as a window of each type's rings, each from its own random start point. It is a blank open reading frame made of real sequences.
+5. **Overwrite:** the next LLM program goes code → AST → Karva and is written onto the canvas (`write_back`), replacing only the cells the walk reads. Every unread cell stays a real sequence, so whatever a later mutation exposes is real symbols in real proportions.
+6. **Two checks:**
+   - Karva lays a tree out level by level, so exposed ring cells decode to a mix of real fragments, not one whole snippet. The measurements below say whether that is good enough.
+   - Types LLM programs never reach (our 607 types are basic shapes inside scopes): a type's ring is built from the same operations recorded at its basic shape in other scopes, each written as a legal row of its own type. A type with no recorded operation at all is a kingdom gap to fix, never filled at random.
 
 **Not done:** next-symbol probabilities. They would need a model trained (LoRA) to predict the next Karva symbol, which we will not do. The pool of real sequences replaces them.
 
