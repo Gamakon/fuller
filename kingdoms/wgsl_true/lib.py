@@ -366,7 +366,33 @@ def declares_of(spell):
 BINDINGS = set()   # the interface's module-scope variable names (write_all)
 
 
+F16 = re.compile(r"\bf16\b|<f16[,>]|\d\.?\d*h\b")
+
+
+def drop_f16():
+    """An interface with `has_f16=False` (a host that requests no SHADER_F16 feature, such as UltraDim's device
+    manager): every type whose slot is or holds f16 goes, with every row that gives or takes one, every declaration
+    and helper that names f16. The other families are generated as for every interface, so a table with f16 differs
+    from one without it only by the f16 rows. Returns the rows removed."""
+    bad = {t for t in TYPES if F16.search(t.rsplit(".", 1)[0])}
+    gone = [n for n, r in ROWS.items() if r["out"] in bad or any(a in bad for a in r["args"]) or F16.search(r["spell"])]
+    for n in gone:
+        del ROWS[n]
+    for t in bad:
+        del TYPES[t]
+    DECLS[:] = [d for d in DECLS if not F16.search(d)]
+    for n in [n for n, h in HELPERS.items() if F16.search(h)]:
+        del HELPERS[n]
+    for d in (TWIN, BARE, TWIN_A):
+        for k in [k for k, v in d.items() if k in bad or v in bad]:
+            del d[k]
+    return len(gone)
+
+
 def write_all(outdir, root, iface):
+    if not iface.get("has_f16", True):
+        assert not F16.search(iface["prologue_top"]), "an interface without f16 enables no f16"
+        drop_f16()
     BINDINGS.update(re.findall(r"var(?:<[^>]*>)?\s+(\w+)\s*:", iface["prologue_top"]))
     problems, produced, consumed = check()
     names = [re.match(r"var (\w+):", d).group(1) for d in DECLS]

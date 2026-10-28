@@ -1,0 +1,24 @@
+# The timing shapes, never quality cases (timing cases are not judged, so no
+# oracle run). Every candidate runs under the work guard (fuller
+# wgsl::work_guard: at most 1.7e8 node executions a submit, the dispatch split
+# into submits of whole workgroups), and ONE workgroup of A7's form is bounded
+# by 256 invocations x n trips x the loop body's nodes: at n = 8,192 that is
+# about 8e7, under the cap, so the timing inputs hold n at 8,192 and vary k
+# and d (A7 is O(k n d); a scatter by label is O(n d)):
+# - n 8,192, d 256, k 1,024: many clusters at the width of D_proj 256;
+# - n 8,192, d 4,096, k 64: wide d, where the inventory calls A7
+#   "pathological" (B3);
+# - n 8,192, d 1,024, k 256: between.
+# Each holds k * d = 262,144 cells (1,024 workgroups of 256).
+
+[[case]]
+name = "n8192_d256_k1024"
+params = { n = 8192, d = 256, k = 1024 }
+
+[[case]]
+name = "n8192_d4096_k64"
+params = { n = 8192, d = 4096, k = 64 }
+
+[[case]]
+name = "n8192_d1024_k256"
+params = { n = 8192, d = 1024, k = 256 }

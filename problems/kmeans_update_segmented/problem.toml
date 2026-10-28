@@ -1,0 +1,170 @@
+# THE SCATTER FORM of UltraDim's k-means centroid update (fuller problems/kmeans_update is A7, the gather) as a
+# module of five entry points UltraDim can dispatch in order (segmented.wgsl, its header): A6's stable counting sort by
+# label (qdrant lib/projection-voting-kmeans/src/lib.rs gpu_group_ids, lines 2072-2190: block_histogram,
+# cluster_offsets, scatter_ids) and the segmented sum (mean_update, pass B), with A7's semantics: Kahan sums in
+# ascending point order, the count as divisor, an empty cluster left as it was. Bindings 0-3 are A7's; binding 4 is
+# the module's scratch (n + 2 k + 2 nb k u32 words, nb = ceil(n / 256)), a buffer UltraDim's driver would add.
+#
+# THE ORACLE is the module itself (`segmented.wgsl`), whose outputs equal A7's bit for bit on every case of
+# problems/kmeans_update (the same case names and input names, so the same generated inputs; checked by
+# fuller examples/wgsl_case_check, docs/kmeans_update_dropin.md).
+
+name = "kmeans_update_segmented"
+description = "UltraDim k-means centroid update in the scatter form: a stable counting sort by label, then a segmented Kahan sum per (cluster, dim) cell, A7's semantics"
+work = "n * k * d"
+alias = "distinct"
+speed_column = "ranked"
+
+[params]
+# the clusters given no point: labels are drawn in [0, k - empty)
+empty = "0"
+
+[oracle]
+mode = "shipped"
+on = "executor"
+
+[kernel]
+entry = "hist"
+entries = ["offsets", "starts", "scatter", "mean"]
+reference = "segmented.wgsl"
+
+[[binding]]
+binding = 0
+name = "vectors"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "assignments"
+kind = "storage_read"
+element = "u32"
+
+[[binding]]
+binding = 2
+name = "centroids"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 4
+name = "scratch"
+kind = "storage_read_write"
+element = "u32"
+
+# params: x = n_vectors, y = n_centroids, z = dimensions, w = iteration (0, as
+# update_centroids_gpu sets it).
+[[binding]]
+binding = 3
+name = "params"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
+[[input]]
+name = "vectors"
+element = "f32"
+shape = ["n * d"]
+generate = { dist = "normal", mean = "0", std = "1" }
+
+[[input]]
+name = "assignments"
+element = "u32"
+shape = ["n"]
+generate = { dist = "index", lo = "0", hi = "k - empty" }
+
+# The previous iteration's centroids: what an empty cluster keeps.
+[[input]]
+name = "old"
+element = "f32"
+shape = ["k * d"]
+generate = { dist = "normal", mean = "0", std = "1" }
+
+[[output]]
+name = "centroids"
+element = "f32"
+shape = ["k", "d"]
+
+[[setup]]
+buffer = "vec"
+element = "f32"
+elements = "n * d"
+from = "vectors"
+
+[[setup]]
+buffer = "asg"
+element = "u32"
+elements = "n"
+from = "assignments"
+
+[[setup]]
+uniform = "u"
+of = "params"
+words = ["n", "k", "d", "0"]
+
+# The centroids buffer holds the old centroids when the kernel runs, as in the
+# cluster loop; the scratch is zero.
+[[run]]
+buffer = "cen"
+element = "f32"
+elements = "k * d"
+from = "old"
+
+[[run]]
+buffer = "scr"
+element = "u32"
+elements = "n + 2 * k + 2 * ceil_div(n, 256) * k"
+fill = "zero"
+
+[[run]]
+dispatch = { entry = "hist", vectors = "vec", assignments = "asg", centroids = "cen", params = "u", scratch = "scr" }
+workgroups = ["ceil_div(ceil_div(n, 256) * k, wg_x_hist)", "1", "1"]
+
+[[run]]
+dispatch = { entry = "offsets", vectors = "vec", assignments = "asg", centroids = "cen", params = "u", scratch = "scr" }
+workgroups = ["ceil_div(k, wg_x_offsets)", "1", "1"]
+
+[[run]]
+dispatch = { entry = "starts", vectors = "vec", assignments = "asg", centroids = "cen", params = "u", scratch = "scr" }
+workgroups = ["1", "1", "1"]
+
+[[run]]
+dispatch = { entry = "scatter", vectors = "vec", assignments = "asg", centroids = "cen", params = "u", scratch = "scr" }
+workgroups = ["ceil_div(n, wg_x_scatter)", "1", "1"]
+
+[[run]]
+dispatch = { entry = "mean", vectors = "vec", assignments = "asg", centroids = "cen", params = "u", scratch = "scr" }
+workgroups = ["ceil_div(k * d, wg_x_mean)", "1", "1"]
+
+[[run]]
+sync = true
+
+[[run]]
+read = "cen"
+into = "centroids"
+elements = "k * d"
+
+[[suite]]
+name = "constraint"
+role = "constraint"
+cases = "cases/constraint.toml"
+norm = "max_abs_over_rms"
+# THE TOLERANCE (PROVISIONAL until the probes of problems/kmeans_update/variants/ are measured on the device):
+# the largest cell error over the expected output's RMS at most (n + 2) f32 epsilons, the bound on any order of
+# summing a cluster's points (Higham's gamma_n) at the cluster means' scale. A kernel that drops one point of a
+# cluster of 100 is off by about 1e-2 of the RMS, far outside it.
+pass = "(n + 2) * eps_f32"
+chunk = 1
+staged = true
+
+[[suite]]
+name = "timing"
+role = "timing"
+cases = "cases/timing.toml"
+
+[budget]
+base_ms = 30000.0
+round_ms = 600000.0
+timing_rounds = 1
+gpu_wait_ms = 60000.0
+deadline_factor = 10.0
+deadline_floor_ms = 120000.0

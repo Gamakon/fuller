@@ -62,7 +62,7 @@ def build(iface):
         R(f"uniform.of_tcounter{d}", "u32.uniform", [f"u32.tcounter{d}"], "{0}", "the counter of a literal- or uniform-bounded loop is the same in every invocation")
     # ---- uniform provenance
     for f in iface["fields"]:
-        R(f"uniform.{f}", "u32.uniform", [], f"cfg.{f}", "a field is the same in every invocation")
+        R(f"uniform.{f}", "u32.uniform", [], f"{iface.get('uniform', 'cfg')}.{f}", "a field is the same in every invocation")
     R("uniform.lit", "u32.uniform", ["u32.lit4096"], "lit_u32({0})", "the runtime literal: a u32.uniform is never a const-expression (uniform arithmetic of literals could overflow at shader creation)")
     for c in "xyz":
         R(f"uniform.wid_{c}", "u32.uniform", ["vec3<u32>.wid"], "{0}." + c, "the workgroup id is uniform")

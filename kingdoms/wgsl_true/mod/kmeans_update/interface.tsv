@@ -1,0 +1,6 @@
+key	value
+root	kernel.module
+fuel_budget	4
+interface	kmeans_update
+gene_roots	kernel.update_centroids
+linker	kernel.module_kmeans_update

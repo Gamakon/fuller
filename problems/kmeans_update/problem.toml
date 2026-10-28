@@ -1,0 +1,159 @@
+# UltraDim's dense k-means centroid update (inventory A7: qdrant
+# lib/projection-voting-kmeans/src/gpu_kmeans.rs, the kernel
+# `update_centroids` of create_centroid_update_pipeline, lines 654-715; its
+# driver update_centroids_gpu, lines 1457-1528; the cluster loop that calls it,
+# lines 398-407; qdrant ab6d0ee3) as a dispatch program for the generic
+# harness (src/wgsl/harness.rs; the schema is in its header).
+#
+# THE SEMANTICS (read from the kernel; contract.md states them in full): one
+# invocation per (centroid, dim) cell, global_id.x = c * d + j; it scans every
+# assignment v in index order and, for v with assignments[v] == c, adds
+# vectors[v * d + j] with Kahan compensation and counts it; then, when the
+# count is above 0, centroids[c * d + j] = sum / f32(count). An EMPTY cluster's
+# cells are NOT written: the buffer keeps the previous iteration's centroid
+# (the cluster loop passes the same centroids buffer it read the assignment
+# against). So the old centroids are an input here, uploaded into the output
+# buffer before the dispatch. No normalisation (the Euclidean mean).
+#
+# THE DRIVER (update_centroids_gpu): bindings 0 vectors (n x d f32, the whole
+# matrix, no banding), 1 assignments (n u32), 2 centroids (k x d f32,
+# read_write), 3 params (a uniform vec4<u32> = GpuParams { n_vectors,
+# n_centroids, dimensions, iteration = 0 }); one dispatch of
+# ceil(k * d / 256) x 1 x 1 workgroups. Here the workgroup count is
+# ceil(k * d / wg_x): the shipped kernel's wg_x is 256, so its dispatch is
+# UltraDim's exactly; a kernel of another workgroup size gets the same cell
+# count (the drop-in note, docs/kmeans_update_dropin.md, says so).
+#
+# THE SHIPPED KERNEL IS THE ORACLE ([oracle], the default): the expected
+# centroids are A7's own output, on this device, cached under oracle/.
+
+name = "kmeans_update"
+description = "UltraDim k-means centroid update (A7 update_centroids): the mean of each cluster's points, an empty cluster keeping its old centroid"
+work = "n * k * d"
+alias = "distinct"
+speed_column = "ranked"
+
+[params]
+# the clusters given no point: labels are drawn in [0, k - empty)
+empty = "0"
+
+[oracle]
+mode = "shipped"
+on = "executor"
+
+[kernel]
+entry = "update_centroids"
+reference = "shipped.wgsl"
+
+[[binding]]
+binding = 0
+name = "vectors"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "assignments"
+kind = "storage_read"
+element = "u32"
+
+[[binding]]
+binding = 2
+name = "centroids"
+kind = "storage_read_write"
+element = "f32"
+
+# params: x = n_vectors, y = n_centroids, z = dimensions, w = iteration (0, as
+# update_centroids_gpu sets it).
+[[binding]]
+binding = 3
+name = "params"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
+[[input]]
+name = "vectors"
+element = "f32"
+shape = ["n * d"]
+generate = { dist = "normal", mean = "0", std = "1" }
+
+[[input]]
+name = "assignments"
+element = "u32"
+shape = ["n"]
+generate = { dist = "index", lo = "0", hi = "k - empty" }
+
+# The previous iteration's centroids: what an empty cluster keeps.
+[[input]]
+name = "old"
+element = "f32"
+shape = ["k * d"]
+generate = { dist = "normal", mean = "0", std = "1" }
+
+[[output]]
+name = "centroids"
+element = "f32"
+shape = ["k", "d"]
+
+[[setup]]
+buffer = "vec"
+element = "f32"
+elements = "n * d"
+from = "vectors"
+
+[[setup]]
+buffer = "asg"
+element = "u32"
+elements = "n"
+from = "assignments"
+
+[[setup]]
+uniform = "u"
+of = "params"
+words = ["n", "k", "d", "0"]
+
+# The centroids buffer holds the old centroids when the kernel runs, as in the
+# cluster loop.
+[[run]]
+buffer = "cen"
+element = "f32"
+elements = "k * d"
+from = "old"
+
+[[run]]
+dispatch = { vectors = "vec", assignments = "asg", centroids = "cen", params = "u" }
+workgroups = ["ceil_div(k * d, wg_x)", "1", "1"]
+
+[[run]]
+sync = true
+
+[[run]]
+read = "cen"
+into = "centroids"
+elements = "k * d"
+
+[[suite]]
+name = "constraint"
+role = "constraint"
+cases = "cases/constraint.toml"
+norm = "max_abs_over_rms"
+# THE TOLERANCE (PROVISIONAL until the probes of problems/kmeans_update/variants/ are measured on the device):
+# the largest cell error over the expected output's RMS at most (n + 2) f32 epsilons, the bound on any order of
+# summing a cluster's points (Higham's gamma_n) at the cluster means' scale. A kernel that drops one point of a
+# cluster of 100 is off by about 1e-2 of the RMS, far outside it.
+pass = "(n + 2) * eps_f32"
+chunk = 1
+staged = true
+
+[[suite]]
+name = "timing"
+role = "timing"
+cases = "cases/timing.toml"
+
+[budget]
+base_ms = 30000.0
+round_ms = 600000.0
+timing_rounds = 1
+gpu_wait_ms = 60000.0
+deadline_factor = 10.0
+deadline_floor_ms = 120000.0

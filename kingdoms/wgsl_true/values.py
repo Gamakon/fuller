@@ -147,7 +147,7 @@ def build(iface):
     R("index.of_lidx", "u32.index", ["u32.lidx"], "{0}", twin=True)
     # ---- loads
     for f in iface["fields"]:
-        R(f"load.{f}", "u32.count", [], f"cfg.{f}", "a field of the uniform block is a size", twin=True)
+        R(f"load.{f}", "u32.count", [], f"{iface.get('uniform', 'cfg')}.{f}", "a field of the uniform block is a size", twin=True)
     for i in iface["inputs"]:
         n = i["name"]
         if i.get("kind") == "atomic_u32":

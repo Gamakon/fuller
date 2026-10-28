@@ -1,0 +1,6 @@
+key	value
+root	kernel.module
+fuel_budget	4
+interface	kmeans_update_segmented
+gene_roots	kernel.hist;kernel.offsets;kernel.starts;kernel.scatter;kernel.mean
+linker	kernel.module_kmeans_update_segmented

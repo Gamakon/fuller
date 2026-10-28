@@ -1,0 +1,45 @@
+# The correctness cases: generated inputs (problem.toml [[input]] generate),
+# A7's own outputs as the expected (the oracle). A name starting `train_` is a
+# training case, `held_` a held-out one (sizes the training cases do not have):
+# the runner keeps the two apart as the quality group's training and
+# validation inputs. `empty = E` leaves the last E clusters with no point
+# (labels in [0, k - E)); k > n leaves clusters empty at random. Wide d is
+# UltraDim's case the inventory names (d of 1,024 and 2,048).
+
+[[case]]
+name = "train_n2000_d64_k16"
+params = { n = 2000, d = 64, k = 16 }
+
+[[case]]
+name = "train_n1000_d128_k40_e8"
+label = "n 1000 d 128 k 40, the last 8 clusters empty"
+params = { n = 1000, d = 128, k = 40, empty = 8 }
+
+[[case]]
+name = "train_n500_d32_k300"
+label = "n 500 d 32 k 300 (more clusters than points: empty ones at random)"
+params = { n = 500, d = 32, k = 300 }
+
+[[case]]
+name = "train_n4000_d1024_k8_e2"
+label = "n 4000 d 1024 k 8, the last 2 empty (wide d)"
+params = { n = 4000, d = 1024, k = 8, empty = 2 }
+
+[[case]]
+name = "held_n3000_d2048_k12_e3"
+label = "n 3000 d 2048 k 12, the last 3 empty (wide d, held out)"
+params = { n = 3000, d = 2048, k = 12, empty = 3 }
+
+[[case]]
+name = "held_n777_d7_k13"
+label = "n 777 d 7 k 13 (k * d = 91: one partial workgroup)"
+params = { n = 777, d = 7, k = 13 }
+
+[[case]]
+name = "held_n50_d300_k200"
+label = "n 50 d 300 k 200 (mostly empty)"
+params = { n = 50, d = 300, k = 200 }
+
+[[case]]
+name = "held_n1_d1_k1"
+params = { n = 1, d = 1, k = 1 }

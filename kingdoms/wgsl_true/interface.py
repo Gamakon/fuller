@@ -175,4 +175,50 @@ struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n
 # The same interface at K = 1, for the random-gene loop (the work guard bounds every random gene's submit).
 V24_K1 = dict(V24, name="v24_k1", fuel_budget=1)
 
-INTERFACES = {"img_nebula": NEBULA, "gram": GRAM, "img_volumepassage": VOLUMEPASSAGE, "img_volumepassage_k1": VOLUMEPASSAGE_K1, "v24": V24, "v24_k1": V24_K1}
+# UltraDim's dense k-means centroid update (qdrant lib/projection-voting-kmeans/src/gpu_kmeans.rs, inventory A7:
+# `update_centroids`, its driver update_centroids_gpu; fuller problems/kmeans_update). A module of ONE entry point,
+# `update_centroids`, so every kernel of the table is a drop-in for A7's pipeline: the bindings are A7's own text (group 0:
+# vectors, assignments, centroids read_write, the uniform `params: vec4<u32>` whose lanes x, y, z, w are n_vectors,
+# n_centroids, dimensions, iteration), and no f16 (UltraDim's device manager requests no feature, so `enable f16;` would
+# not compile there). The output is the k x d centroid matrix read as one row of k * d cells (A7's invocation owns the cell
+# global_id.x = c * d + j): a module has no epilogue, so a cell may be stored conditionally (A7 stores only when its
+# cluster has a point; an empty cluster keeps the old centroid the buffer holds). K = 4: A7 has one counted loop (over the
+# points), whose trip count n reaches 2^20 = stratum 4 (each stratum holds 2^6 times the trips of the one below). The vec4 view of `vectors` lets a kernel read four lanes at once.
+KMEANS_UPDATE = dict(
+    name="kmeans_update",
+    module=[("update_centroids", False)],
+    fuel_budget=4,
+    uniform="params",
+    fields=["x", "y", "z", "w"],
+    inputs=[dict(name="vectors", e="f32", ty="f32.real", vec4_view=True), dict(name="assignments", e="u32", ty="u32.index")],
+    outputs=[dict(name="centroids", e="f32", ty="f32.real", rows="1u", cols="(params.y * params.z)")],
+    primary=None,
+    default_grid=(256, 1, 1, 1),
+    max_invocations=256,
+    subgroup_sizes=(32,),
+    has_subgroups=False,
+    has_subgroup_barrier=False,
+    has_f16=False,
+    workgroup_bytes=32768,
+    extra_constants={"index": ["0", "1"], "count": ["0", "1"], "real": ["0.0"]},
+    prologue_top="""@group(0) @binding(0) var<storage, read> vectors: array<f32>;
+@group(0) @binding(1) var<storage, read> assignments: array<u32>;
+@group(0) @binding(2) var<storage, read_write> centroids: array<f32>;
+@group(0) @binding(3) var<uniform> params: vec4<u32>;
+""",
+)
+
+# The same centroid update in the SCATTER FORM (fuller problems/kmeans_update_segmented): a module of five entries in
+# dispatch order, A6's stable counting sort by label (hist, offsets, starts, scatter) and the segmented Kahan sum (mean),
+# A7's bindings plus binding 4, the module's u32 scratch, an arena (the counting sort's counts, prefixes, lengths, starts
+# and grouped ids live in it; a store at any cell is the arena policy's).
+KMEANS_UPDATE_SEGMENTED = dict(
+    KMEANS_UPDATE,
+    name="kmeans_update_segmented",
+    module=[("hist", False), ("offsets", False), ("starts", False), ("scatter", False), ("mean", False)],
+    arenas=[dict(name="scratch", e="u32", ty="u32.index")],
+    extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"]},
+    prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",
+)
+
+INTERFACES = {"img_nebula": NEBULA, "gram": GRAM, "img_volumepassage": VOLUMEPASSAGE, "img_volumepassage_k1": VOLUMEPASSAGE_K1, "v24": V24, "v24_k1": V24_K1, "kmeans_update": KMEANS_UPDATE, "kmeans_update_segmented": KMEANS_UPDATE_SEGMENTED}

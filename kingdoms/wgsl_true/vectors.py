@@ -211,8 +211,11 @@ def build(iface):
         n = i["name"]
         if i.get("kind") == "atomic_u32":
             continue   # no vector read of atomics
-        helper(f"load4_{n}", f"fn load4_{n}(k: u32) -> vec4<f32> {{ let m = arrayLength(&{n}) - 1u; return vec4<f32>({n}[min(k, m)], {n}[min(k + 1u, m)], {n}[min(k + 2u, m)], {n}[min(k + 3u, m)]); }}")
-        R(f"load.{n}4", "vec4<f32>.real", ["u32.index"], f"load4_{n}({{0}})", "four consecutive elements, each read clamped in the helper", twin=True)
+        # the vector of the input's own element: an f32 input's four reals, a u32 input's (k-means labels) four positions
+        e = i.get("e", "f32")
+        vty = {"f32": "vec4<f32>.real", "u32": "vec4<u32>.index"}[e]
+        helper(f"load4_{n}", f"fn load4_{n}(k: u32) -> vec4<{e}> {{ let m = arrayLength(&{n}) - 1u; return vec4<{e}>({n}[min(k, m)], {n}[min(k + 1u, m)], {n}[min(k + 2u, m)], {n}[min(k + 3u, m)]); }}")
+        R(f"load.{n}4", vty, ["u32.index"], f"load4_{n}({{0}})", "four consecutive elements, each read clamped in the helper", twin=True)
     # ---- the knob references (batch 6)
     T("u32.payload", "a knob reference's multiplier, a literal 1..=2^20 in units of 1/256", 1, "1..=1048576")
     SAFE_ARGS.add("u32.payload")

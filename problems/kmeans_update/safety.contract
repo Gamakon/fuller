@@ -1,0 +1,16 @@
+# The dispatch contract of UltraDim's centroid update (A7), from qdrant
+# lib/projection-voting-kmeans/src/gpu_kmeans.rs update_centroids_gpu
+# (1457-1528): ONE dispatch of ceil(k * d / 256) x 1 x 1 workgroups (here
+# ceil(k * d / wg_x)) with params = (n_vectors, n_centroids, dimensions, 0).
+# The bounds are this problem's cases' (problems/kmeans_update/cases): n up to
+# 1,048,576, k up to 1,024, d up to 4,096, k * d up to 1,048,576 cells, so at
+# a workgroup of 16 or more invocations the dispatch is at most 65,535
+# workgroups along x. The work guard bounds A7's loop over the points by
+# params.x.
+workgroups x 1 65535
+workgroups y 1 1
+workgroups z 1 1
+param params.x 1 1048576
+param params.y 1 1024
+param params.z 1 4096
+param params.w 0 0

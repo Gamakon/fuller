@@ -61,6 +61,8 @@ pub struct Contract {
     pub fields: Vec<(String, u64)>,
     /// The most workgroups of any dispatch along x.
     pub workgroups_x: u64,
+    /// The most along y (`workgroups y lo hi`; 1 when the contract gives none).
+    pub workgroups_y: u64,
     /// `diff cfg.<a> cfg.<b> lo hi`: the fields' difference `a - b` in every run, at least 0 and at most hi.
     pub diffs: Vec<(String, String, u64)>,
 }
@@ -70,20 +72,24 @@ impl Contract {
     pub fn parse(text: &str, order: &[&str]) -> Result<Contract, String> {
         let mut max: BTreeMap<String, u64> = BTreeMap::new();
         let mut wx = None;
+        let mut wy = 1u64;
         let mut diffs = Vec::new();
         for l in text.lines() {
             let w: Vec<&str> = l.split_whitespace().collect();
             match w.as_slice() {
-                ["param", name, _, hi] if name.starts_with("cfg.") => {
-                    max.insert(name[4..].to_string(), hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?);
+                // `param <uniform>.<field> lo hi`: the uniform block's name is the interface's (`cfg`, `params`)
+                ["param", name, _, hi] if name.contains('.') => {
+                    let field = name.split_once('.').map_or("", |(_, f)| f);
+                    max.insert(field.to_string(), hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?);
                 }
                 ["workgroups", "x", _, hi] => wx = Some(hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?),
+                ["workgroups", "y", _, hi] => wy = hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?,
                 ["diff", a, b, _, hi] if a.starts_with("cfg.") && b.starts_with("cfg.") => diffs.push((a[4..].to_string(), b[4..].to_string(), hi.parse().map_err(|e| format!("safety contract: {l}: {e}"))?)),
                 _ => {}
             }
         }
-        let fields = order.iter().map(|f| max.get(*f).map(|m| (f.to_string(), *m)).ok_or_else(|| format!("the safety contract gives no range for cfg.{f}"))).collect::<Result<_, _>>()?;
-        Ok(Contract { fields, workgroups_x: wx.ok_or("the safety contract gives no workgroups x range")?, diffs })
+        let fields = order.iter().map(|f| max.get(*f).map(|m| (f.to_string(), *m)).ok_or_else(|| format!("the safety contract gives no range for the uniform field {f}"))).collect::<Result<_, _>>()?;
+        Ok(Contract { fields, workgroups_x: wx.ok_or("the safety contract gives no workgroups x range")?, workgroups_y: wy, diffs })
     }
 }
 
@@ -460,6 +466,9 @@ pub struct Reader<'a> {
     contract: &'a Contract,
     /// The uniform field names in block order.
     fields: Vec<String>,
+    /// The interface's group 0 bindings ([`iface_bindings`]) and its uniform block's name.
+    bindings: Vec<IfaceBinding>,
+    uniform: String,
     parrs: Vec<(String, String, Wt, u32, String)>,
     next_reg: Vec<usize>,
     reg_limit: Vec<usize>,
@@ -577,12 +586,15 @@ impl<'a> Reader<'a> {
             }
         }
         let types_by_name = k.types.iter().map(|d| (d.dual.clone(), d.ty())).collect();
+        let bindings = iface_bindings(k);
         Reader {
             k,
             module,
             info,
             contract,
             fields: contract.fields.iter().map(|(f, _)| f.clone()).collect(),
+            uniform: bindings.iter().find(|b| b.role == Role::Uniform).map_or_else(|| "cfg".to_string(), |b| b.name.clone()),
+            bindings,
             parr_limit,
             next_parr: vec![0; parrs.len()],
             parrs,
@@ -674,23 +686,64 @@ enum Bound {
     Cfg,
 }
 
-/// The interface's group 0 bindings (contract.md's table): binding number, name, what the kingdom declares.
-const V24_BINDINGS: &[(u32, &str)] = &[(0, "keys"), (1, "queries"), (2, "index_u32"), (3, "index_f32"), (4, "cands"), (5, "cfg")];
-
-/// What a binding of the interface is: an input (read-only), an arena, the row output.
+/// What a binding of the interface is: an input (read-only), an arena, the row output, an output owned cell by cell
+/// (the kingdom's `store.<b>` rows take this invocation's row and column of it), the uniform block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
     Input,
     Arena,
     Rows,
+    Output,
+    Uniform,
 }
 
-fn role(name: &str) -> Role {
-    match name {
-        "keys" | "queries" => Role::Input,
-        "cands" => Role::Rows,
-        _ => Role::Arena,
+/// One group 0 binding of the interface, as the kingdom's prologue declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IfaceBinding {
+    binding: u32,
+    name: String,
+    role: Role,
+    /// The storage array's scalar (an atomic's its own), u32 or f32 for a uniform's field.
+    elem: Sc,
+}
+
+/// The interface's group 0 bindings: every `@group(0) @binding(n) var<space[, access]> name: type;` line of the
+/// kingdom's prologue (the interface's own text). A uniform is the uniform block; a read-only storage binding an input;
+/// a read_write binding the kingdom owns cell by cell (it has `safe.thread_row_<b>` rows) an output, one whose stores
+/// the kingdom guards to the workgroup's own row (`store.<b>_L0_f0` spelled with `== wid.x`) the row output, and any
+/// other read_write binding an arena. (The v24 table is keys, queries: inputs; index_u32, index_f32: arenas; cands:
+/// the row output; cfg: the uniform block, as contract.md's table lists them.)
+fn iface_bindings(k: &TrueKingdom) -> Vec<IfaceBinding> {
+    let mut out = Vec::new();
+    for line in k.prologue.lines() {
+        let l = line.trim();
+        let Some(rest) = l.strip_prefix("@group(0) @binding(") else { continue };
+        let Some((num, rest)) = rest.split_once(')') else { continue };
+        let Ok(binding) = num.trim().parse::<u32>() else { continue };
+        let Some(rest) = rest.trim().strip_prefix("var") else { continue };
+        let (space, rest) = match rest.split_once('>') {
+            Some((sp, r)) if rest.starts_with('<') => (sp.trim_start_matches('<').to_string(), r),
+            _ => (String::new(), rest),
+        };
+        let Some((name, ty)) = rest.split_once(':') else { continue };
+        let name = name.trim().to_string();
+        let ty = ty.trim().trim_end_matches(';');
+        let elem = if ty.contains("f32") { Sc::F32 } else if ty.contains("i32") { Sc::I32 } else { Sc::U32 };
+        let has = |row: &str| k.rows.iter().any(|r| r.name == row);
+        let role = if space == "uniform" {
+            Role::Uniform
+        } else if !space.contains("read_write") {
+            Role::Input
+        } else if has(&format!("safe.thread_row_{name}")) {
+            Role::Output
+        } else if k.rows.iter().any(|r| r.name == format!("store.{name}_L0_f0") && r.spelling.contains("== wid.x")) {
+            Role::Rows
+        } else {
+            Role::Arena
+        };
+        out.push(IfaceBinding { binding, name, role, elem });
     }
+    out
 }
 
 fn atomic_fun(f: &naga::AtomicFunction) -> R<&'static str> {
@@ -779,6 +832,17 @@ enum Flow {
 impl<'a> Reader<'a> {
     // ---------------------------------------------------------------- values
 
+    /// The role of the interface's binding `name` (an arena when it is not one: the reader names only bindings
+    /// [`Self::binding_of`] found).
+    fn role(&self, name: &str) -> Role {
+        self.bindings.iter().find(|b| b.name == name).map_or(Role::Arena, |b| b.role)
+    }
+
+    /// The scalar of the interface's binding `name`.
+    fn elem_of(&self, name: &str) -> Sc {
+        self.bindings.iter().find(|b| b.name == name).map_or(Sc::F32, |b| b.elem)
+    }
+
     fn global_lit(&self, h: Handle<Expression>) -> R<E> {
         match &self.module.global_expressions[h] {
             Expression::Literal(l) => lit_of(l),
@@ -792,10 +856,11 @@ impl<'a> Reader<'a> {
     fn binding_of(&self, g: Handle<naga::GlobalVariable>) -> R<Bound> {
         let gv = &self.module.global_variables[g];
         let Some(rb) = &gv.binding else { return gap(format!("the module-scope variable {:?} (workgroup memory)", gv.name.as_deref().unwrap_or("?"))) };
-        let name = V24_BINDINGS.iter().find(|(b, _)| rb.group == 0 && *b == rb.binding).map(|(_, n)| *n).ok_or_else(|| ReadError::Out(format!("binding ({}, {}), which the contract's table does not list", rb.group, rb.binding)))?;
-        if name == "cfg" {
+        let ib = self.bindings.iter().find(|b| rb.group == 0 && b.binding == rb.binding).ok_or_else(|| ReadError::Out(format!("binding ({}, {}), which the interface does not declare", rb.group, rb.binding)))?;
+        if ib.role == Role::Uniform {
             return Ok(Bound::Cfg);
         }
+        let name = ib.name.as_str();
         let inner = &self.module.types[gv.ty].inner;
         let TypeInner::Array { base, .. } = inner else { return gap(format!("binding {name} of type {inner:?}")) };
         match &self.module.types[*base].inner {
@@ -1022,10 +1087,10 @@ impl<'a> Reader<'a> {
                     let idx = self.ex(fr, *index)?;
                     match self.binding_of(*g)? {
                         Bound::Plain(n) => {
-                            if role(&n) == Role::Rows {
+                            if self.role(&n) == Role::Rows {
                                 return gap(format!("a read of the row output {n}"));
                             }
-                            Ok(E::Load(n.clone(), Box::new(idx), if n == "index_u32" { Wt::scalar(Sc::U32) } else { Wt::scalar(Sc::F32) }))
+                            Ok(E::Load(n.clone(), Box::new(idx), Wt::scalar(self.elem_of(&n))))
                         }
                         Bound::Vec4(n) => Ok(E::LoadV4(n, Box::new(idx))),
                         Bound::Cfg => gap("a dynamic access of the uniform block"),
@@ -1042,7 +1107,7 @@ impl<'a> Reader<'a> {
                             gap(format!("uniform field {index}"))
                         }
                     }
-                    Bound::Plain(n) => Ok(E::Load(n.clone(), Box::new(E::Lit(Lit::U(*index))), if n == "index_u32" { Wt::scalar(Sc::U32) } else { Wt::scalar(Sc::F32) })),
+                    Bound::Plain(n) => Ok(E::Load(n.clone(), Box::new(E::Lit(Lit::U(*index))), Wt::scalar(self.elem_of(&n)))),
                     Bound::Vec4(n) => Ok(E::LoadV4(n, Box::new(E::Lit(Lit::U(*index))))),
                 },
                 Expression::LocalVariable(_) | Expression::FunctionArgument(_) => match self.local_of_ptr(fr, *base) {
@@ -1079,8 +1144,8 @@ impl<'a> Reader<'a> {
             E::Reg(r, _) => self.ssa.contains(r),
             E::Parr(..) | E::Rmw(..) | E::Wg(..) | E::WgOwn(..) | E::WgA(..) | E::WgRmw(..) | E::Slot(_) => false,
             E::UReg(_) => true,
-            E::Load(n, i, _) => role(n) == Role::Input && self.stable(i),
-            E::LoadV4(n, i) => role(n) == Role::Input && self.stable(i),
+            E::Load(n, i, _) => self.role(n) == Role::Input && self.stable(i),
+            E::LoadV4(n, i) => self.role(n) == Role::Input && self.stable(i),
             E::Bin(_, a, b, _) => self.stable(a) && self.stable(b),
             E::Un(_, a, _) | E::Cast(_, a) | E::Bitcast(_, a) | E::Splat(_, a) | E::Lane(a, _, _) | E::Swz(a, _, _) => self.stable(a),
             E::DynLane(a, b, _) => self.stable(a) && self.stable(b),
@@ -1510,14 +1575,14 @@ impl<'a> Reader<'a> {
         match &fr.f.expressions[p] {
             Expression::Access { base, index } => match &fr.f.expressions[*base] {
                 Expression::GlobalVariable(g) => match self.binding_of(*g)? {
-                    Bound::Plain(n) if n == "index_u32" => Ok((n, self.ex(fr, *index)?)),
+                    Bound::Plain(n) if self.role(&n) == Role::Arena && self.elem_of(&n) == Sc::U32 => Ok((n, self.ex(fr, *index)?)),
                     o => gap(format!("an atomic on {o:?}")),
                 },
                 o => gap(format!("an atomic through {o:?}")),
             },
             Expression::AccessIndex { base, index } => match &fr.f.expressions[*base] {
                 Expression::GlobalVariable(g) => match self.binding_of(*g)? {
-                    Bound::Plain(n) if n == "index_u32" => Ok((n, E::Lit(Lit::U(*index)))),
+                    Bound::Plain(n) if self.role(&n) == Role::Arena && self.elem_of(&n) == Sc::U32 => Ok((n, E::Lit(Lit::U(*index)))),
                     o => gap(format!("an atomic on {o:?}")),
                 },
                 o => gap(format!("an atomic through {o:?}")),
@@ -1607,7 +1672,7 @@ impl<'a> Reader<'a> {
                     let idx = self.ex(fr, *index)?;
                     match self.binding_of(*g)? {
                         Bound::Plain(n) => {
-                            if role(&n) == Role::Input {
+                            if self.role(&n) == Role::Input {
                                 return Err(ReadError::Out(format!("a store into the read-only binding {n}")));
                             }
                             out.push(St::Store(n, idx, v));
@@ -1634,7 +1699,7 @@ impl<'a> Reader<'a> {
                     _ => gap("a store into a lane of a loop counter"),
                 },
                 Expression::GlobalVariable(g) => match self.binding_of(*g)? {
-                    Bound::Plain(n) if role(&n) != Role::Input => {
+                    Bound::Plain(n) if self.role(&n) != Role::Input => {
                         out.push(St::Store(n, E::Lit(Lit::U(*index)), v));
                         Ok(())
                     }
@@ -2496,7 +2561,7 @@ impl<'a> Reader<'a> {
                 return self.by_spelling.get(sp).cloned().unwrap_or_default().into_iter().find(|r| self.k.rows[*r as usize].out == want && self.k.rows[*r as usize].args.is_empty()).map(|r| Tree { symbol: r, const_index: None, kids: Vec::new() });
             }
             E::Field(i) => {
-                let sp = format!("cfg.{}", self.fields[*i]);
+                let sp = format!("{}.{}", self.uniform, self.fields[*i]);
                 return self.by_spelling.get(&sp).cloned().unwrap_or_default().into_iter().find(|r| self.k.rows[*r as usize].out == want && self.k.rows[*r as usize].args.is_empty()).map(|r| Tree { symbol: r, const_index: None, kids: Vec::new() });
             }
             E::Reg(r, _) => {
@@ -3000,6 +3065,20 @@ impl<'a> Reader<'a> {
         Ok(t)
     }
 
+    /// The row and the column of output `b` a store at index `i` names, as the kingdom's ownership rows: a store at
+    /// the invocation's own `global_invocation_id.x` into an output of ONE row (its store row guards `r < 1u`) is the
+    /// cell (row `row_axis(gid) * KNOB_BROW`, column `col_axis(gid) * KNOB_BCOL`), the same cell when the entry's
+    /// workgroup and every dispatch are one invocation and one workgroup deep in y (the reader's grid has block
+    /// factors 1), so `gid.y` is 0. Any other index is a store this reading does not prove the invocation's own.
+    fn own_cell(&self, b: &str, i: &E) -> R<(Tree, Tree)> {
+        let gid_x = matches!(i, E::Lane(v, 0, _) if matches!(**v, E::Bi(Bi::Gid)));
+        let one_row = self.k.rows.iter().any(|r| r.name == format!("store.{b}_L0_f0") && r.spelling.contains("(r < 1u &&"));
+        if !(gid_x && one_row && self.wg[1] == 1 && self.contract.workgroups_y <= 1) {
+            return gap(format!("a store into the output {b} at {i:?}, which the reading does not prove the invocation's own cell (the own column of a one-row output, gid.y 0)"));
+        }
+        Ok((self.leaf(&format!("own.u32_threadrow_{b}"))?, self.leaf(&format!("own.u32_threadcol_{b}"))?))
+    }
+
     /// The statement row `name` with its first arguments `leading` given and the rest the values `vals`.
     fn stmt_row(&mut self, name: &str, leading: Vec<Tree>, vals: &[&E]) -> R<Tree> {
         let row = self.row(name)?;
@@ -3037,6 +3116,10 @@ impl<'a> Reader<'a> {
                 self.memo.clear();
                 let it = self.parr_index(i, pidx, p.len).ok_or_else(|| ReadError::Gap(format!("the private array index {i:?}")))?;
                 self.stmt_row(&name, vec![leaf, it], &[e])
+            }
+            St::Store(b, i, e) if self.role(b) == Role::Output => {
+                let (row, col) = self.own_cell(b, i)?;
+                self.stmt_row(&format!("store.{b}_{r}"), vec![row, col], &[e])
             }
             St::Store(b, i, e) => self.stmt_row(&format!("store.{b}_{r}"), vec![], &[i, e]),
             St::Discard(e) => {
@@ -3725,6 +3808,72 @@ mod tests {
         }
         assert!(n > 0, "no seed read");
         println!("{n} seeds round-trip and validate");
+    }
+
+    /// UltraDim's k-means centroid update (inventory A7, problems/kmeans_update) and its scatter form (A6's counting
+    /// sort and segmented sum, problems/kmeans_update_segmented) read EXACTLY into their interfaces (the bindings and
+    /// the uniform `params: vec4<u32>` A7's own), round-trip through their genes, validate, and spell no f16 (UltraDim
+    /// requests no feature): the starts and yardsticks of the k-means runs. The device half (the expressed text
+    /// equals the kernel's own, bit for bit, on every case) is `examples/wgsl_true_read`.
+    #[test]
+    fn ultradim_kmeans_update_kernels_read_exactly_into_their_interfaces() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let fields = ["x", "y", "z", "w"];
+        for (iface, problem, kernels) in [
+            ("kmeans_update", "problems/kmeans_update", vec!["shipped.wgsl", "planted.wgsl", "variants/plain.wgsl"]),
+            ("kmeans_update_segmented", "problems/kmeans_update_segmented", vec!["segmented.wgsl", "gather.wgsl"]),
+        ] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            assert!(!k.prologue.contains("f16"), "{iface}: the prologue names f16");
+            let text = std::fs::read_to_string(root.join(problem).join("safety.contract")).expect("safety contract");
+            let c = Contract::parse(&text, &fields).expect("contract");
+            assert_eq!(c.workgroups_y, 1, "{iface}: one workgroup deep in y");
+            for name in kernels {
+                let src = std::fs::read_to_string(root.join(problem).join(name)).expect("kernel");
+                let trees = read_module(&k, &src, &c).unwrap_or_else(|e| panic!("{iface}/{name}: {e}"));
+                let sizes: Vec<usize> = trees.iter().map(|t| functions(t, &k)).collect();
+                let m = crate::wgsl::true_module::TrueModule::new(&k, &sizes).expect("module");
+                let prev = m.random(1, &mut crate::wgsl::true_kingdom::Rng(5), crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let ch = m.encode(&trees, &prev).expect("encode");
+                assert_eq!(m.entry_trees(&ch).expect("express"), trees, "{iface}/{name}: the genes express another tree");
+                let out = m.render(&ch).expect("render");
+                assert!(!out.contains("f16"), "{iface}/{name}: the expressed text names f16");
+                let module = crate::wgsl::naga_shape::parse_unscanned(&out).unwrap_or_else(|e| panic!("{iface}/{name}: naga parse: {e}"));
+                crate::wgsl::target::Target::current().validate(&module, &out).unwrap_or_else(|e| panic!("{iface}/{name}: naga validate: {e}"));
+            }
+        }
+    }
+
+    /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and
+    /// validates and that names no f16: legality by the types, with A7's bindings.
+    #[test]
+    fn random_kmeans_update_modules_validate() {
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let entries = k.gene_roots.len();
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; entries]).expect("module");
+            let mut rng = crate::wgsl::true_kingdom::Rng(0x6B6D);
+            for i in 0..300 {
+                let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let src = m.render(&ch).expect("render");
+                assert!(!src.contains("f16"), "{iface} gene {i}: names f16");
+                let module = crate::wgsl::naga_shape::parse_unscanned(&src).unwrap_or_else(|e| panic!("{iface} gene {i}: naga parse: {e}\n{src}"));
+                crate::wgsl::target::Target::current().validate(&module, &src).unwrap_or_else(|e| panic!("{iface} gene {i}: naga validate: {e}"));
+            }
+        }
+    }
+
+    /// A store into an output at an index the reading does not prove the invocation's own cell is named, never read.
+    #[test]
+    fn a_store_into_the_output_at_another_cell_is_named() {
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update")).expect("the table");
+        let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/kmeans_update/safety.contract")).expect("safety contract");
+        let c = Contract::parse(&text, &["x", "y", "z", "w"]).expect("contract");
+        let src = "@group(0) @binding(0) var<storage, read> vectors: array<f32>;\n@group(0) @binding(1) var<storage, read> assignments: array<u32>;\n@group(0) @binding(2) var<storage, read_write> centroids: array<f32>;\n@group(0) @binding(3) var<uniform> params: vec4<u32>;\n@compute @workgroup_size(256, 1, 1)\nfn update_centroids(@builtin(global_invocation_id) global_id: vec3<u32>) {\n    if (global_id.x >= params.y * params.z) { return; }\n    centroids[global_id.x + 1u] = 0.0;\n}\n";
+        match read_module(&k, src, &c) {
+            Err(ReadError::Gap(m)) => assert!(m.contains("the output centroids"), "{m}"),
+            o => panic!("a store at another cell was not named: {o:?}"),
+        }
     }
 
     /// UI1's census: every seed and its status, compared with the recorded table `tests/fixtures/v24_true_read_status.tsv`

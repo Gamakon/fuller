@@ -26,6 +26,8 @@ pub(crate) mod fixture_texts;
 #[cfg(test)]
 mod reader_census;
 pub mod harness;
+#[cfg(feature = "gpu")]
+pub mod case_set;
 pub mod gram;
 pub mod cuneus_originals;
 pub mod image;

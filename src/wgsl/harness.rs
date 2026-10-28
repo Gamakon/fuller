@@ -1588,6 +1588,13 @@ impl Problem {
         Ok(if d.len() == 1 { (1, d[0] as usize) } else { (d[0] as usize, d[1] as usize) })
     }
 
+    /// A judged case's expected outputs its manifest gives no file for, by the oracle (the shipped kernel's own
+    /// outputs on `exec`, cached under `[oracle] cache`; [`oracle_fill`]), into `data.expected`: for a runner that
+    /// judges the cases one by one (`crate::wgsl::case_set`).
+    pub fn oracle_expected<E: Executor>(&self, exec: &E, shipped: &E::Kernel, info: &KernelInfo, case: &Case, data: &mut CaseData, staged: &E::Staged) -> Result<(), String> {
+        oracle_fill(self, exec, shipped, info, case, data, staged)
+    }
+
     pub fn output_elems(&self, o: &OutputSpec, env: &Env) -> Result<u64, String> {
         let (r, c) = self.output_dims(o, env)?;
         Ok((r * c) as u64)
