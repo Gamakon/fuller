@@ -1,7 +1,7 @@
 From 103e69a521a482ce37c195848b12a5d907c9a419 Mon Sep 17 00:00:00 2001
 From: andrew-gamakon <andrew@gamakon.ai>
 Date: Wed, 28 Oct 2026 11:51:42 +0100
-Subject: [PATCH 2/2] feat(webgpu): SetMem of register memory in a kernel is a
+Subject: [PATCH 2/3] feat(webgpu): SetMem of register memory in a kernel is a
  WGSL value copy, wherever it is
 
 ---

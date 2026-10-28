@@ -259,7 +259,7 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
     };
 
     let device = ctx.device();
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = crate::compat::push_scope(device, wgpu::ErrorFilter::Validation);
     ctx.queue().write_buffer(&k.scalars, 0, &scalars);
     let mut entries = vec![wgpu::BindGroupEntry {
         binding: info.scalars_binding,
@@ -279,7 +279,7 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
         pass.dispatch_workgroups(grid[0], grid[1], grid[2]);
     }
     ctx.queue().submit(Some(enc.finish()));
-    if let Some(e) = pollster::block_on(scope.pop()) {
+    if let Some(e) = scope.pop() {
         return Err(Error::new(format!("the launch of kernel {} failed: {e}", info.name)));
     }
     ctx.count(|s| {

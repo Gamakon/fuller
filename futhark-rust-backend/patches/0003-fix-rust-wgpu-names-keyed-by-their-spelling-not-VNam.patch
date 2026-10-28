@@ -1,0 +1,296 @@
+From d7e70ba553bcfad0bc127a1582a0ee1274ac7f15 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Wed, 28 Oct 2026 12:01:01 +0100
+Subject: [PATCH 3/3] fix(rust-wgpu): names keyed by their spelling, not VName
+ (tag-only equality): a constant and a local can share a tag
+
+---
+ src/Futhark/CodeGen/Backends/RustWGPU.hs | 135 +++++++++++++----------
+ 1 file changed, 78 insertions(+), 57 deletions(-)
+
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index c7e224d..1ee1bc7 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -56,15 +56,15 @@ compileProg version prog = do
+ 
+ data Env = Env
+   { -- | The program's constants: referred to through the state, @st.@.
+-    envConsts :: S.Set VName,
++    envConsts :: S.Set T.Text,
+     envFuns :: M.Map Name (Function HostOp),
+     envKernelIdx :: M.Map Name Int,
+     envTuning :: M.Map Name Int,
+     -- | Every name mentioned in the function being generated, other than at
+     -- its declaration.
+-    envMentioned :: S.Set VName,
++    envMentioned :: S.Set T.Text,
+     -- | The declared scalar types of the function being generated.
+-    envTypes :: M.Map VName PrimType
++    envTypes :: M.Map T.Text PrimType
+   }
+ 
+ data GenS = GenS
+@@ -162,7 +162,7 @@ vname v = "v_" <> (if T.null b then "" else b <> "_") <> showT (baseTag v)
+ varRef :: VName -> GenM T.Text
+ varRef v = do
+   cs <- asks envConsts
+-  if v `S.member` cs
++  if key v `S.member` cs
+     then (<> ("." <> vname v)) <$> stRef
+     else pure $ vname v
+ 
+@@ -357,7 +357,7 @@ bare t
+ compileExpP :: Exp -> GenM T.Text
+ compileExpP = compilePE $ \v t -> do
+   v' <- varRef v
+-  declared <- asks $ M.lookup v . envTypes
++  declared <- asks $ M.lookup (key v) . envTypes
+   -- A variable read at another type than it was declared with: C's implicit conversion.
+   pure $ maybe id (convertTo t) declared (v' <> ".get()")
+ 
+@@ -413,73 +413,94 @@ convertFromI64 t e = "(" <> e <> " as " <> rustPrim t <> ")"
+ 
+ -- * Free names
+ 
++-- | The key of a name: its full spelling. Futhark's 'VName' compares by its
++-- tag alone, and a program's constants and a function's locals can share a
++-- tag (a batch's @counters_mem_13190@ and @segred_tmp_mem_13190@), as can
++-- Futhark's 'Names' (keyed by tag); the C backend keeps them apart by
++-- spelling them, and so does this one.
++key :: VName -> T.Text
++key = prettyText
++
++-- | The names an expression mentions.
++expNames :: (Foldable f) => f VName -> S.Set T.Text
++expNames = foldMap (S.singleton . key)
++
++texpNames :: TExp t -> S.Set T.Text
++texpNames = expNames . untyped
++
++countNames :: Count u (TExp t) -> S.Set T.Text
++countNames = texpNames . unCount
++
++keys :: [VName] -> S.Set T.Text
++keys = S.fromList . map key
++
+ -- | Every name mentioned anywhere in the code other than at its declaration.
+-mentioned :: Code HostOp -> S.Set VName
++mentioned :: Code HostOp -> S.Set T.Text
+ mentioned (x :>>: y) = mentioned x <> mentioned y
+-mentioned (For _ bound body) = names (freeIn bound) <> mentioned body
+-mentioned (While cond body) = names (freeIn cond) <> mentioned body
+-mentioned (If cond t f) = names (freeIn cond) <> mentioned t <> mentioned f
++mentioned (For _ bound body) = expNames bound <> mentioned body
++mentioned (While cond body) = texpNames cond <> mentioned body
++mentioned (If cond t f) = texpNames cond <> mentioned t <> mentioned f
+ mentioned DeclareMem {} = mempty
+ mentioned DeclareScalar {} = mempty
+ mentioned DeclareArray {} = mempty
+ mentioned (Op op) = hostOpNames op
+-mentioned (Allocate v size _) = S.insert v (names (freeIn size))
+-mentioned (Free v _) = S.singleton v
++mentioned (Allocate v size _) = S.insert (key v) (countNames size)
++mentioned (Free v _) = S.singleton (key v)
+ mentioned (Copy _ shape (dst, _) (doff, dstrides) (src, _) (soff, sstrides)) =
+-  S.fromList [dst, src] <> names (freeIn shape <> freeIn doff <> freeIn dstrides <> freeIn soff <> freeIn sstrides)
+-mentioned (Write v i _ _ _ e) = S.insert v (names (freeIn i <> freeIn e))
+-mentioned (Read x v i _ _ _) = S.fromList [x, v] <> names (freeIn i)
+-mentioned (SetScalar x e) = S.insert x (names (freeIn e))
+-mentioned (SetMem x y _) = S.fromList [x, y]
+-mentioned (Call dests _ args) = S.fromList dests <> names (freeIn args)
+-mentioned (Assert e msg _) = names (freeIn e <> foldMap freeIn msg)
+-mentioned (TracePrint msg) = names (foldMap freeIn msg)
+-mentioned (GetUserParam v _ def) = S.insert v (names (freeIn def))
++  keys [dst, src] <> foldMap countNames (shape <> dstrides <> sstrides) <> countNames doff <> countNames soff
++mentioned (Write v i _ _ _ e) = S.insert (key v) (countNames i <> expNames e)
++mentioned (Read x v i _ _ _) = keys [x, v] <> countNames i
++mentioned (SetScalar x e) = S.insert (key x) (expNames e)
++mentioned (SetMem x y _) = keys [x, y]
++mentioned (Call dests _ args) = keys dests <> foldMap argNames args
++  where
++    argNames (ExpArg e) = expNames e
++    argNames (MemArg v) = S.singleton (key v)
++mentioned (Assert e msg _) = expNames e <> foldMap expNames msg
++mentioned (TracePrint msg) = foldMap expNames msg
++mentioned (GetUserParam v _ def) = S.insert (key v) (texpNames def)
+ mentioned Skip = mempty
+ mentioned Meta {} = mempty
+ mentioned DebugPrint {} = mempty
+ 
+-names :: Names -> S.Set VName
+-names = S.fromList . namesToList
+-
+-hostOpNames :: HostOp -> S.Set VName
++hostOpNames :: HostOp -> S.Set T.Text
+ hostOpNames (LaunchKernel _ _ shared args grid block_dims) =
+-  names (freeIn shared <> foldMap argNames args <> freeIn grid <> foldMap blockNames block_dims)
++  countNames shared <> foldMap argNames args <> foldMap expNames grid <> foldMap blockNames block_dims
+   where
+-    argNames (ValueKArg e _) = freeIn e
+-    argNames (MemKArg v) = oneName v
+-    blockNames (Left e) = freeIn e
++    argNames (ValueKArg e _) = expNames e
++    argNames (MemKArg v) = S.singleton (key v)
++    blockNames (Left e) = expNames e
+     blockNames (Right _) = mempty
+-hostOpNames (GetSize v _) = S.singleton v
+-hostOpNames (CmpSizeLe v _ x) = S.insert v (names (freeIn x))
+-hostOpNames (GetSizeMax v _) = S.singleton v
++hostOpNames (GetSize v _) = S.singleton (key v)
++hostOpNames (CmpSizeLe v _ x) = S.insert (key v) (expNames x)
++hostOpNames (GetSizeMax v _) = S.singleton (key v)
+ 
+ -- | The declared scalar types of a body.
+-declarations :: Code a -> M.Map VName PrimType
++declarations :: Code a -> M.Map T.Text PrimType
+ declarations (x :>>: y) = declarations x <> declarations y
+-declarations (For i bound body) = M.singleton i (primExpType bound) <> declarations body
++declarations (For i bound body) = M.singleton (key i) (primExpType bound) <> declarations body
+ declarations (While _ body) = declarations body
+ declarations (If _ t f) = declarations t <> declarations f
+-declarations (DeclareScalar v _ t) = M.singleton v t
++declarations (DeclareScalar v _ t) = M.singleton (key v) t
+ declarations _ = mempty
+ 
+-paramDecls :: [Param] -> M.Map VName PrimType
++paramDecls :: [Param] -> M.Map T.Text PrimType
+ paramDecls = foldMap one
+   where
+-    one (ScalarParam v t) = M.singleton v t
++    one (ScalarParam v t) = M.singleton (key v) t
+     one MemParam {} = mempty
+ 
+ -- * Statements
+ 
+ isMentioned :: VName -> GenM Bool
+-isMentioned v = asks $ S.member v . envMentioned
++isMentioned v = asks $ S.member (key v) . envMentioned
+ 
+ compileCode :: Code HostOp -> GenM ()
+ compileCode Skip = pure ()
+ compileCode (x :>>: y) = compileCode x >> compileCode y
+ compileCode (For i bound body) = do
+   b <- compileExp bound
+-  let used = i `S.member` mentioned body
++  let used = key i `S.member` mentioned body
+       t = rustPrim (primExpType bound)
+       range = zeroOf (primExpType bound) <> ".." <> b
+   if used
+@@ -713,7 +734,7 @@ compileHostOp (LaunchKernel _safety kname _shared args grid block_dims) = do
+ scalarType :: VName -> GenM PrimType
+ scalarType v = do
+   m <- asks envTypes
+-  case M.lookup v m of
++  case M.lookup (key v) m of
+     Just t -> pure t
+     Nothing -> compilerLimitation $ "The rust-wgpu backend does not know the type of " <> prettyText v
+ 
+@@ -743,11 +764,11 @@ genFunction fname fun = withFunction (functionInput fun <> functionOutput fun) (
+   (bodyLines, usesCtx, usesSt) <- capture $ indented $ do
+     forM_ (functionInput fun) $ \case
+       ScalarParam v t
+-        | v `S.member` ment ->
++        | key v `S.member` ment ->
+             line $ "let " <> vname v <> " = rt::Var::<" <> rustPrim t <> ">::new(" <> vname v <> ");"
+         | otherwise -> pure ()
+       MemParam v _
+-        | v `S.member` ment -> line $ "let " <> vname v <> " = " <> vname v <> ".clone();"
++        | key v `S.member` ment -> line $ "let " <> vname v <> " = " <> vname v <> ".clone();"
+         | otherwise -> pure ()
+     forM_ (functionOutput fun) $ \case
+       ScalarParam v t -> line $ "let " <> vname v <> " = rt::Var::<" <> rustPrim t <> ">::new(" <> zeroOf t <> ");"
+@@ -757,10 +778,10 @@ genFunction fname fun = withFunction (functionInput fun <> functionOutput fun) (
+         ret (MemParam v _) = vname v
+     line $ "Ok(" <> (if null (functionOutput fun) then "()" else "(" <> T.intercalate ", " (map ret (functionOutput fun)) <> ",)") <> ")"
+   let param (ScalarParam v t)
+-        | v `S.member` ment = vname v <> ": " <> rustPrim t
++        | key v `S.member` ment = vname v <> ": " <> rustPrim t
+         | otherwise = "_: " <> rustPrim t
+       param (MemParam v space)
+-        | v `S.member` ment = vname v <> ": &" <> memType space
++        | key v `S.member` ment = vname v <> ": &" <> memType space
+         | otherwise = "_: &" <> memType space
+       params =
+         [ (if usesCtx then "ctx" else "_") <> ": &rt::FutharkCtx",
+@@ -781,8 +802,8 @@ genFunction fname fun = withFunction (functionInput fun <> functionOutput fun) (
+ -- * Entry points
+ 
+ data ArgBind = ArgBind
+-  { abMem :: M.Map VName T.Text,
+-    abScalar :: M.Map VName T.Text
++  { abMem :: M.Map T.Text T.Text,
++    abScalar :: M.Map T.Text T.Text
+   }
+ 
+ -- | The typed API type of an external value.
+@@ -816,28 +837,28 @@ genEntry fname fun ep = do
+     line "let st = state(ctx)?;"
+     bind <- foldM bindArg (ArgBind mempty mempty) (zip [0 ..] (map snd args))
+     inArgs <- forM (functionInput fun) $ \case
+-      MemParam v _ -> case M.lookup v (abMem bind) of
++      MemParam v _ -> case M.lookup (key v) (abMem bind) of
+         Just e -> pure e
+         Nothing -> compilerLimitation $ "The rust-wgpu backend cannot bind the memory parameter " <> prettyText v
+-      ScalarParam v _ -> case M.lookup v (abScalar bind) of
++      ScalarParam v _ -> case M.lookup (key v) (abScalar bind) of
+         Just e -> pure e
+         Nothing -> compilerLimitation $ "The rust-wgpu backend cannot bind the scalar parameter " <> prettyText v
+     let outs = functionOutput fun
+-        outIdx = M.fromList $ zip (map paramName outs) [(0 :: Int) ..]
++        outIdx = M.fromList $ zip (map (key . paramName) outs) [(0 :: Int) ..]
+         callText = funName fname <> "(" <> T.intercalate ", " ("ctx" : "&st" : inArgs) <> ")?"
+     line $ (if null outs then "" else "let r = ") <> callText <> ";"
+     let dimExp (Constant (IntValue v)) = pure $ showT (valueIntegral v :: Integer) <> "i64"
+         dimExp (Constant v) = compilerLimitation $ "The rust-wgpu backend found a non-integer dimension " <> prettyText v
+-        dimExp (Var v) = case M.lookup v outIdx of
++        dimExp (Var v) = case M.lookup (key v) outIdx of
+           Just k -> pure $ "r." <> showT k
+-          Nothing -> case M.lookup v (abScalar bind) of
++          Nothing -> case M.lookup (key v) (abScalar bind) of
+             Just e -> pure e
+             Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the dimension " <> prettyText v
+-        scalarOut v = case M.lookup v outIdx of
++        scalarOut v = case M.lookup (key v) outIdx of
+           Just k -> pure $ "r." <> showT k
+           Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the result " <> prettyText v
+         resultOf (ArrayValue mem _ pt s dims) = do
+-          k <- case M.lookup mem outIdx of
++          k <- case M.lookup (key mem) outIdx of
+             Just k -> pure k
+             Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the result memory " <> prettyText mem
+           dims' <- mapM dimExp dims
+@@ -879,17 +900,17 @@ genEntry fname fun ep = do
+     bindArg bind (i, TransparentValue (ArrayValue mem _ _ _ dims)) = do
+       let a = "a" <> showT (i :: Int)
+       bind' <- foldM (bindDim a) bind (zip [0 :: Int ..] dims)
+-      pure bind' {abMem = M.insert mem (a <> ".mem()") (abMem bind')}
++      pure bind' {abMem = M.insert (key mem) (a <> ".mem()") (abMem bind')}
+     bindArg bind (i, TransparentValue (ScalarValue pt s v)) = do
+       let a = "a" <> showT (i :: Int)
+           e = if rustExtPrim s pt /= rustPrim pt then "(" <> a <> " as " <> rustPrim pt <> ")" else a
+-      pure bind {abScalar = M.insert v e (abScalar bind)}
++      pure bind {abScalar = M.insert (key v) e (abScalar bind)}
+     bindArg _ (_, OpaqueValue {}) = compilerLimitation "The rust-wgpu backend does not support opaque entry point arguments."
+     bindDim a bind (d, dim) = do
+       let shape = a <> ".shape()[" <> showT d <> "]"
+       case dim of
+-        Var v -> case M.lookup v (abScalar bind) of
+-          Nothing -> pure bind {abScalar = M.insert v shape (abScalar bind)}
++        Var v -> case M.lookup (key v) (abScalar bind) of
++          Nothing -> pure bind {abScalar = M.insert (key v) shape (abScalar bind)}
+           Just e -> do
+             line $ "rt::check_dim(" <> strLit (nameToText (entryPointName ep)) <> ", " <> shape <> ", " <> e <> ")?;"
+             pure bind
+@@ -979,7 +1000,7 @@ generate version wgsl prelude macros kernels (Definitions params _types consts (
+     kernel_idx = M.fromList $ zip (map fst all_kernels) [0 ..]
+     tuning = M.toList params
+     tuning_idx = M.fromList $ zip (map fst tuning) [0 ..]
+-    const_names = S.fromList $ map paramName (constsDecl consts)
++    const_names = S.fromList $ map (key . paramName) (constsDecl consts)
+     const_types = paramDecls (constsDecl consts)
+     env =
+       Env
+-- 
+2.50.1 (Apple Git-155)
+

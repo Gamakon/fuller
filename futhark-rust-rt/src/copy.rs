@@ -79,7 +79,7 @@ impl PassTimer {
         ctx.queue().submit(Some(enc.finish()));
         ctx.map_read(&self.read, 16)?;
         let ticks: [u64; 2] = {
-            let view = self.read.get_mapped_range(..).map_err(|e| Error::new(format!("a mapped buffer's view: {e}")))?;
+            let view = crate::compat::mapped(&self.read, 0..16)?;
             let word = |i: usize| {
                 let mut b = [0u8; 8];
                 b.copy_from_slice(&view[i * 8..i * 8 + 8]);
@@ -113,7 +113,7 @@ pub fn read_scalar<T: crate::Elem>(ctx: &FutharkCtx, mem: &DevMem, i: i64) -> Re
     ctx.count(|s| s.submits += 1);
     ctx.map_read(ctx.readback(), len)?;
     let v = {
-        let view = ctx.readback().get_mapped_range(0..len).map_err(|e| Error::new(format!("a mapped buffer's view: {e}")))?;
+        let view = crate::compat::mapped(ctx.readback(), 0..len)?;
         let at = (off - start) as usize;
         T::read_le(&view[at..at + T::SIZE])
     };
@@ -160,7 +160,7 @@ fn copy_dev2host_bytes(ctx: &FutharkCtx, dst: &mut [u8], src: &wgpu::Buffer, src
     ctx.count(|s| s.submits += 1);
     ctx.map_read(&readback, size)?;
     {
-        let view = readback.get_mapped_range(0..size).map_err(|e| Error::new(format!("a mapped buffer's view: {e}")))?;
+        let view = crate::compat::mapped(&readback, 0..size)?;
         let n = dst.len();
         dst.copy_from_slice(&view[..n]);
     }

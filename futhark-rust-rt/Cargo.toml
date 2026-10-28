@@ -15,8 +15,14 @@ name = "futhark_rust_rt"
 # that the in-process evaluation host and every generation's module share (docs/PLAN_futhark_rust_wgpu.md §5).
 crate-type = ["rlib", "dylib"]
 
+[features]
+# One wgpu (src/compat.rs): 30.0.1, fuller's and the shim's, or 27.0.1, UltraDim's (default-features = false).
+default = ["wgpu30"]
+wgpu30 = ["dep:wgpu"]
+wgpu27 = ["dep:wgpu27"]
+
 [dependencies]
-# The same wgpu as fuller and the shim.
-wgpu = "=30.0.1"
+wgpu = { version = "=30.0.1", optional = true }
+wgpu27 = { package = "wgpu", version = "=27.0.1", optional = true }
 pollster = "0.3"
 regex = "1"

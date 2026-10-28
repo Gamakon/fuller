@@ -14,6 +14,16 @@
 //! * a scalar read or write at an offset that is not a multiple of 4 is done on the aligned word around it (WebGPU's
 //!   copies need 4-byte alignment; the C runtime issues the unaligned copy, which WebGPU rejects).
 
+#[cfg(all(feature = "wgpu27", feature = "wgpu30"))]
+compile_error!("futhark-rust-rt: choose one wgpu, the feature wgpu30 (the default) or wgpu27 (with default-features = false)");
+#[cfg(not(any(feature = "wgpu27", feature = "wgpu30")))]
+compile_error!("futhark-rust-rt: choose a wgpu, the feature wgpu30 (the default) or wgpu27");
+/// The wgpu this runtime is built on (27.0.1, UltraDim's), under the name the runtime's code uses, for a caller that
+/// must name the same types.
+#[cfg(feature = "wgpu27")]
+pub extern crate wgpu27 as wgpu;
+
+mod compat;
 pub mod copy;
 pub mod ctx;
 pub mod host;
@@ -28,7 +38,8 @@ pub use ctx::{CtxStats, FutharkCtx};
 pub use mem::{DevMem, HostMem};
 pub use program::{launch, BuiltinSource, KArg, KernelInfo, Program, ProgramDesc, TuningParam};
 pub use values::{check_arity, check_dim, Array, Elem, ElemType, EntryDesc, IntoValues, Opaque, TypeDesc, Value};
-/// The wgpu this runtime is built on, for a caller that must name the same types.
+/// The wgpu this runtime is built on (30.0.1), for a caller that must name the same types.
+#[cfg(feature = "wgpu30")]
 pub use wgpu;
 
 /// A scalar variable of the generated host code: set and read, never borrowed.

@@ -197,14 +197,14 @@ impl FutharkCtx {
 
     /// `gpu_alloc_actual`: a storage buffer the runtime owns.
     pub(crate) fn new_storage(&self, size: u64) -> Result<wgpu::Buffer, Error> {
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let scope = crate::compat::push_scope(&self.device, wgpu::ErrorFilter::OutOfMemory);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("futhark"),
             size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        if let Some(e) = pollster::block_on(scope.pop()) {
+        if let Some(e) = scope.pop() {
             return Err(Error::new(format!("Failed to allocate {size} bytes of GPU memory: {e}")));
         }
         self.count(|s| s.buffers_created += 1);
@@ -223,12 +223,12 @@ impl FutharkCtx {
         }
         let ported = crate::port::port_module(wgsl)?;
         let t = Instant::now();
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::compat::push_scope(&self.device, wgpu::ErrorFilter::Validation);
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(ported.text.into()),
         });
-        if let Some(e) = pollster::block_on(scope.pop()) {
+        if let Some(e) = scope.pop() {
             return Err(Error::new(format!("the WGSL of {label} does not validate: {e}")));
         }
         let id = self.modules.borrow().len() as u64;
@@ -272,11 +272,7 @@ impl FutharkCtx {
             });
         }
         let bind_group = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("futhark kernel"), entries: &entries });
-        let pipeline = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("futhark kernel"),
-            bind_group_layouts: &[Some(&bind_group)],
-            immediate_size: 0,
-        });
+        let pipeline = crate::compat::pipeline_layout(&self.device, &bind_group, "futhark kernel");
         let l = Rc::new(Layouts { bind_group, pipeline });
         self.layouts.borrow_mut().insert(key, l.clone());
         l
@@ -297,7 +293,7 @@ impl FutharkCtx {
             return Ok(p.clone());
         }
         let t = Instant::now();
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::compat::push_scope(&self.device, wgpu::ErrorFilter::Validation);
         let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
             layout: Some(&layouts.pipeline),
@@ -306,7 +302,7 @@ impl FutharkCtx {
             compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
             cache: None,
         });
-        if let Some(e) = pollster::block_on(scope.pop()) {
+        if let Some(e) = scope.pop() {
             return Err(Error::new(format!("the pipeline of kernel {entry} could not be made: {e}")));
         }
         let ns = t.elapsed().as_nanos();
