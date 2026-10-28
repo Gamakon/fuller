@@ -72,6 +72,15 @@
     - A generation is one Futhark program in one process (`--eval batch`).
     - It gives bit-identical quality inputs and the same selection as the per-candidate path, tested on the GPU. Earlier runs used the per-candidate path, so the two sets of results are comparable.
     - The shim now caches Metal pipelines. Before that, histogram candidates spent most of their time creating a pipeline at every kernel launch (6,210 creations, 14.5 s, in one process).
+- **Change to the verdict rule, 2026-10-28 13:10Z, made AFTER a result was seen.** It applies to every verdict, the earlier ones included.
+  - **The rule.** A champion counts as "faster" only if BOTH:
+    1. its 11-pair re-time median is below the least ratio of both A/A sets;
+    2. at least 9 of its 11 pairs are below 1 (a sign test, one-sided p = 0.033).
+    Otherwise an exact champion is "matched", or "exact but slower" when its median is above the greatest A/A ratio.
+  - **The reason.** The old rule had condition 1 alone, and it gave a false "beat" on reduce R seed 1. That champion, (sum.n xs), is the published program itself. Its re-time pairs were 0.97, 0.70, 0.71, 0.99, 1.19, 0.98, 1.00, 1.02, 1.00, 0.97, 1.38, with median 0.985; the least A/A ratio, from a quiet A/A set, was 0.9936. Only 6 of the 11 pairs were below 1.
+  - **Reduce.** No speed claim either way, and reduce gets no P run, because its A/A gate failed: 21 of 22 pairs within 5 % at --runs 60. The published program takes 1.47 ms, and the dispatch limit (65,535 x 256) caps n. Reduce P is to be rerun when multi-dispatch timing is in the rust-wgpu runtime.
+  - **Timing input.** The micro timing input is n = 15 x 2^20 (fuller 3b470301), not 2^24. At 2^24, any elementwise map over n dispatches 65,536 workgroups, one over wgpu's limit, so a champion with a map failed to run.
+  - **Gates on the batched path.** P runs use `--eval single`. On the batched path (50339252) every A/A gate failed: reduce 13 of 22 pairs, scan 20, histogram 19, pathfinder 19.
 - **Machinery, the same for all:**
   - the general Futhark signature kingdom;
   - marriage with distinct parents;
