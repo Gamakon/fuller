@@ -62,7 +62,8 @@
 //! * rust (`fuller::futhark_rust`, `docs/PLAN_futhark_rust_wgpu.md`): the same batch, compiled by our Futhark fork's
 //!   rust-wgpu backend into ONE Rust module (WGSL kernels and a host over wgpu-rs), built by `rustc` into a dylib and
 //!   run IN THIS PROCESS by the runtime `futhark-rust-rt` on one device: no C, no shim, no process. The same commands,
-//!   records and halving as batch; what is scored is the code that ships;
+//!   records and halving as batch; what is scored is the code that ships. In the ledger its `eval` is `rust`, its
+//!   `futhark_ms` the fork compiler and its `cc_ms` rustc (no port, check or link stage);
 //! * single: each program its own compile and its own processes, the path before.
 //!
 //! Where the time goes: every ledger line carries its evaluation's path, its batch's size and each stage's
