@@ -282,8 +282,18 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         };
         let p0 = c.stats().pipeline_ns;
         let t0 = Instant::now();
+        // One bound on the whole command, as the driver's `alarm(bound)`: every wait respects the deadline, and a
+        // command that ends past it is a failure too.
+        c.set_deadline(Some(t0 + s.wait));
         let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, &cases, timing.as_deref(), inputs.n_cases)));
+        c.set_deadline(None);
         let ns = t0.elapsed().as_nanos();
+        let over = t0.elapsed() >= s.wait;
+        let got = match got {
+            Ok(Ok((tag, _))) if over => Ok(Err((tag, Error::device(format!("the command ran past its bound of {} s", s.wait.as_secs()))))),
+            Ok(Err((tag, e))) if e.is_device_failure() && over => Ok(Err((tag, Error::device(format!("the command ran past its bound of {} s: {}", s.wait.as_secs(), e.message()))))),
+            g => g,
+        };
         let pns = c.stats().pipeline_ns - p0;
         match got {
             Ok(Ok((tag, payload))) => {

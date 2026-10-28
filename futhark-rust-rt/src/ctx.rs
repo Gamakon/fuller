@@ -66,6 +66,7 @@ pub struct FutharkCtx {
     timing: Cell<bool>,
     passes: RefCell<Vec<f64>>,
     wait_timeout: Cell<Option<Duration>>,
+    deadline: Cell<Option<Instant>>,
     stats: Cell<CtxStats>,
     trace: Cell<bool>,
 }
@@ -96,6 +97,7 @@ impl FutharkCtx {
             timing: Cell::new(false),
             passes: RefCell::new(Vec::new()),
             wait_timeout: Cell::new(None),
+            deadline: Cell::new(None),
             stats: Cell::new(CtxStats::default()),
             trace: Cell::new(false),
         })
@@ -138,6 +140,12 @@ impl FutharkCtx {
     /// be used again. `None` (the default) waits as long as the device takes.
     pub fn set_wait_timeout(&self, t: Option<Duration>) {
         self.wait_timeout.set(t);
+    }
+
+    /// A deadline every wait for the device respects (the in-process host's bound on one command, as the batch
+    /// driver's `alarm` bounds one command): a wait that reaches it is a device failure.
+    pub fn set_deadline(&self, d: Option<Instant>) {
+        self.deadline.set(d);
     }
 
     /// Print the program's trace messages (`TracePrint`) on standard error.
@@ -316,8 +324,16 @@ impl FutharkCtx {
 
     /// `futhark_context_sync`: wait until the device has done everything submitted.
     pub fn sync(&self) -> Result<(), Error> {
+        let left = self.deadline.get().map(|d| d.saturating_duration_since(Instant::now()));
+        let timeout = match (self.wait_timeout.get(), left) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if timeout == Some(Duration::ZERO) {
+            return Err(Error::device("the command ran past its bound (a wait at the deadline)"));
+        }
         self.device
-            .poll(wgpu::PollType::Wait { submission_index: None, timeout: self.wait_timeout.get() })
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout })
             .map(|_| ())
             .map_err(|e| Error::device(format!("Failed to wait for work to be done: {e}")))
     }
