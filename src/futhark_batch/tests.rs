@@ -323,3 +323,48 @@ fn on_the_gpu_the_rust_backend_equals_the_batch_backend() {
     }
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// THE KINGDOM COMPILES TO RUST, without the GPU: for each of the study's four problems, a batch of 24 random programs
+/// of the signature kingdom and the published reference (each a quality and a timed entry) compiles through the fork's
+/// rust-wgpu backend and rustc (`-D warnings`) into one module. The branch compiler's webgpu build of the same batch
+/// (C, the shim's link) is timed beside it, and its failure, if any, printed: it is the path the rust backend replaces.
+/// (The fork compiler, rustc, the branch compiler, cc; no device.)
+#[test]
+fn every_problems_random_programs_compile_to_rust() {
+    if !crate::futhark_rust::compiler().is_file() || !have(crate::futhark_wgpu_host::branch_compiler().to_str().unwrap()) || !have("cc") {
+        eprintln!("skipped: the fork compiler, the branch compiler or cc is not installed");
+        return;
+    }
+    let base = scratch("kingdom_rust");
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).unwrap();
+    for (pi, name) in ["reduce", "scan", "histogram", "pathfinder"].into_iter().enumerate() {
+        let p = problem(name).unwrap();
+        let k = load(&p.instance).unwrap();
+        let sig = signature(&p.instance).unwrap();
+        let cases = load_cases(&p).unwrap();
+        let inputs = Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&cases[0].stdin), yardstick: Some(p.yardstick) };
+        let mut ts = trees(&k, 24, 0xC0DE_0100 + pi as u64);
+        ts.push(crate::futhark_sig::build(&k, p.reference).unwrap());
+        let members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Time { yardstick: false, runs: 1 }] }).collect();
+        let idx: Vec<usize> = (0..members.len()).collect();
+        let rust = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: rt.clone() }, &base.join(format!("{name}_rust")), inputs).unwrap();
+        let (_, _, rs) = rust.compile(&members, &idx, &mut Cost::default()).unwrap_or_else(|e| panic!("{name}: the rust-wgpu batch of {} programs did not compile:\n{e}", members.len()));
+        let gpu = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join(format!("{name}_gpu")), inputs).unwrap();
+        let t = std::time::Instant::now();
+        let c = gpu.compile(&members, &idx, &mut Cost::default());
+        let cs = t.elapsed().as_secs_f64();
+        eprintln!(
+            "{name}: {} programs; rust-wgpu: futhark {:.2} s + rustc {:.2} s; webgpu + cc: {:.2} s{}",
+            members.len(),
+            rs.futhark,
+            rs.cc,
+            cs,
+            match c {
+                Ok(_) => String::new(),
+                Err(e) => format!(", FAILED: {}", e.lines().find(|l| l.contains("limitation") || l.contains("rror")).unwrap_or("")),
+            }
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
