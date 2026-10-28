@@ -49,6 +49,20 @@
 - All seeds of a comparison run on one binary. One verdict function on both the run and `--rescore` paths.
 - SetMem: the rust-wgpu backend's patches (`futhark-rust-backend/`) and `docs/PROPOSAL_memory_views_setmem.md`. Each internal compiler error is recorded as a kingdom bug.
 
+### H. Sample where real programs are: a pool of LLM-written Futhark (Andrew, 2026-10-28)
+**The failing.** Random programs are dense at one dead point: in random search, 44 % (histogram) and 49 % (pathfinder) of programs output all zeros. LLM-written seeds would fix generation 0 only. When a gene is written, its unread cells are padded with random symbols. A mutation that grows the tree (a terminal turned function, or a function with more arguments) then exposes those random cells, so random junk returns within a few generations.
+
+**The fix.**
+1. **Generate:** language models write many real Futhark programs for the benchmark's signature.
+2. **Read:** a reader parses Futhark source into the kingdom's AST. It does not exist yet for the general signature kingdom and is the first piece to build. A program the reader cannot express is a kingdom gap, recorded, never routed around.
+3. **Pool:** every subtree of every read program goes into one common store, keyed by its type. It is a store of real sequences, shared across the population and across runs.
+4. **Pad from the pool:** when a program is written into a gene (`write_back`), every unread cell is filled, in the order the walk would read it, with a subtree sampled from the pool for that cell's type. Whatever a later mutation exposes is then a whole real snippet, not random symbols.
+5. **Grow from the pool:** a mutation that needs a new subtree samples it from the pool too.
+
+**Not done:** next-symbol probabilities. They would need a model trained (LoRA) to predict the next Karva symbol, which we will not do. The pool of real sequences replaces them.
+
+**Measured before any run:** the share of random-from-pool programs giving the all-zeros output (now 44–49 %), the number of distinct outputs per 1,400 draws (now 189–208), and the check of section A.
+
 ## Order and cost
 1. A and B together, until histogram and pathfinder pass the check (about a day).
 2. C, then E, then D, then F.
