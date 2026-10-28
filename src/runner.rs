@@ -149,6 +149,138 @@ impl TimingSlots {
 }
 
 // ---------------------------------------------------------------------------
+// The slope check (docs/PLAN_futhark_fitness_fixes.md, section A)
+// ---------------------------------------------------------------------------
+
+/// Ranks from 1, ties sharing their average rank.
+pub fn ranks(v: &[f64]) -> Vec<f64> {
+    let mut idx: Vec<usize> = (0..v.len()).collect();
+    idx.sort_by(|a, b| v[*a].total_cmp(&v[*b]));
+    let mut out = vec![0.0; v.len()];
+    let mut i = 0;
+    while i < idx.len() {
+        let mut j = i;
+        while j + 1 < idx.len() && v[idx[j + 1]] == v[idx[i]] {
+            j += 1;
+        }
+        let r = (i + j) as f64 / 2.0 + 1.0;
+        for k in &idx[i..=j] {
+            out[*k] = r;
+        }
+        i = j + 1;
+    }
+    out
+}
+
+/// Pearson's correlation; `None` when either side is constant or the lengths differ or are under 2.
+pub fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
+    if x.len() != y.len() || x.len() < 2 {
+        return None;
+    }
+    let n = x.len() as f64;
+    let (mx, my) = (x.iter().sum::<f64>() / n, y.iter().sum::<f64>() / n);
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (a, b) in x.iter().zip(y) {
+        sxy += (a - mx) * (b - my);
+        sxx += (a - mx) * (a - mx);
+        syy += (b - my) * (b - my);
+    }
+    (sxx > 0.0 && syy > 0.0).then(|| (sxy / (sxx * syy).sqrt()).clamp(-1.0, 1.0))
+}
+
+/// Spearman's rank correlation (Pearson's on the average ranks); `None` as [`pearson`].
+pub fn spearman(x: &[f64], y: &[f64]) -> Option<f64> {
+    pearson(&ranks(x), &ranks(y))
+}
+
+/// THE SLOPE CHECK's verdict: whether a fitness (lower is better, 0 exact) has a slope toward the target, from the
+/// fitness and the tree distance to the target of every one-edit neighbour of the target's gene and of random genes.
+/// It passes only if BOTH:
+///
+/// * the neighbours rank above the random genes: the median inexact neighbour is better than at least
+///   [`SLOPE_RANDOM_BEATEN`] of the random genes (ties count as not beaten); random search's best of its draws sets the
+///   plateau a population sits on, so a step from the target must look better than nearly all of them;
+/// * the fitness-distance correlation, Spearman's over every program of the check, is positive (further is worse).
+///
+/// A neighbour exact on every case (an equal program) has fitness 0 whatever the fitness is; it is in the
+/// correlation but not in the neighbours' ranking.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub struct SlopeCheck {
+    pub neighbours: usize,
+    pub exact_neighbours: usize,
+    pub random: usize,
+    pub median_neighbour: f64,
+    pub median_random: f64,
+    pub best_random: f64,
+    /// The share of random genes strictly worse than the median inexact neighbour.
+    pub random_beaten_by_median_neighbour: f64,
+    /// The shares of inexact neighbours strictly better than the median random gene and than the best one.
+    pub neighbours_above_median_random: f64,
+    pub neighbours_above_best_random: f64,
+    /// The probability that an inexact neighbour is better than a random gene, ties counted a half.
+    pub auc: f64,
+    /// Spearman(fitness, distance) over every program, and over the random genes alone.
+    pub fdc: f64,
+    pub fdc_random: f64,
+    pub pass: bool,
+}
+
+/// The share of random genes the median neighbour must beat ([`SlopeCheck`]).
+pub const SLOPE_RANDOM_BEATEN: f64 = 0.99;
+
+/// [`SlopeCheck`] of `(fitness, distance)` pairs: the target's one-edit neighbours and the random genes.
+pub fn slope_check(neighbours: &[(f64, usize)], random: &[(f64, usize)]) -> Result<SlopeCheck, String> {
+    let inexact: Vec<f64> = neighbours.iter().map(|n| n.0).filter(|f| *f > 0.0).collect();
+    let rnd: Vec<f64> = random.iter().map(|r| r.0).collect();
+    if inexact.is_empty() || rnd.is_empty() {
+        return Err(format!("the slope check needs inexact neighbours and random genes ({} and {})", inexact.len(), rnd.len()));
+    }
+    if inexact.iter().chain(&rnd).any(|f| !f.is_finite()) {
+        return Err("our software has a bug: a fitness in the slope check is not finite".into());
+    }
+    let median = |v: &[f64]| {
+        let mut s = v.to_vec();
+        s.sort_by(f64::total_cmp);
+        let n = s.len();
+        if n % 2 == 1 {
+            s[n / 2]
+        } else {
+            0.5 * (s[n / 2 - 1] + s[n / 2])
+        }
+    };
+    let share = |n: usize, of: usize| n as f64 / of as f64;
+    let (mn, mr) = (median(&inexact), median(&rnd));
+    let best = rnd.iter().cloned().fold(f64::INFINITY, f64::min);
+    let beaten = share(rnd.iter().filter(|r| **r > mn).count(), rnd.len());
+    let mut wins = 0.0;
+    for a in &inexact {
+        for b in &rnd {
+            wins += if a < b { 1.0 } else if a == b { 0.5 } else { 0.0 };
+        }
+    }
+    let all: Vec<(f64, usize)> = neighbours.iter().chain(random).copied().collect();
+    let fit: Vec<f64> = all.iter().map(|p| p.0).collect();
+    let dist: Vec<f64> = all.iter().map(|p| p.1 as f64).collect();
+    let fdc = spearman(&fit, &dist).unwrap_or(0.0);
+    let fdc_random = spearman(&rnd, &random.iter().map(|r| r.1 as f64).collect::<Vec<_>>()).unwrap_or(0.0);
+    Ok(SlopeCheck {
+        neighbours: inexact.len(),
+        exact_neighbours: neighbours.len() - inexact.len(),
+        random: rnd.len(),
+        median_neighbour: mn,
+        median_random: mr,
+        best_random: best,
+        random_beaten_by_median_neighbour: beaten,
+        neighbours_above_median_random: share(inexact.iter().filter(|n| **n < mr).count(), inexact.len()),
+        neighbours_above_best_random: share(inexact.iter().filter(|n| **n < best).count(), inexact.len()),
+        auc: wins / (inexact.len() * rnd.len()) as f64,
+        fdc,
+        fdc_random,
+        pass: beaten >= SLOPE_RANDOM_BEATEN && fdc > 0.0,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Checkpoint
 // ---------------------------------------------------------------------------
 
@@ -394,6 +526,40 @@ mod tests {
         let rows = h.write(&dir).expect("written");
         assert_eq!((rows[0].rank, rows.len()), (1, 2));
         assert!(std::fs::read_to_string(dir.join("hall_of_fame/rank1.txt")).expect("text").contains("fitness 0.1"));
+    }
+
+    /// Ranks share ties; Spearman is 1 for any increasing map, -1 for a decreasing one, and `None` for a constant.
+    #[test]
+    fn the_rank_statistics_are_the_textbook_ones() {
+        assert_eq!(ranks(&[3.0, 1.0, 3.0, 2.0]), vec![3.5, 1.0, 3.5, 2.0]);
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert_eq!(spearman(&x, &[1.0, 8.0, 27.0, 64.0, 125.0]), Some(1.0));
+        assert_eq!(spearman(&x, &[5.0, 4.0, 3.0, 2.0, 1.0]), Some(-1.0));
+        assert_eq!(spearman(&x, &[2.0; 5]), None);
+        let r = pearson(&[1.0, 2.0, 3.0], &[1.0, 2.0, 4.0]).unwrap();
+        assert!((r - 0.981_980_506_061_965_7).abs() < 1e-12, "{r}");
+    }
+
+    /// The slope check passes a fitness whose neighbours beat the random genes and whose fitness grows with the
+    /// distance, and fails one whose neighbours sit in the random genes' band or that improves with distance.
+    #[test]
+    fn the_slope_check_passes_a_slope_and_fails_a_plateau_or_a_reversed_slope() {
+        let random: Vec<(f64, usize)> = (0..200).map(|i| (1.0 + i as f64 / 1000.0, 10 + i / 10)).collect();
+        let near: Vec<(f64, usize)> = (0..20).map(|i| (0.3 + i as f64 / 100.0, 1)).chain([(0.0, 1)]).collect();
+        let c = slope_check(&near, &random).unwrap();
+        assert!(c.pass && c.exact_neighbours == 1 && c.neighbours == 20, "{c:?}");
+        assert_eq!((c.random_beaten_by_median_neighbour, c.neighbours_above_best_random, c.auc), (1.0, 1.0, 1.0));
+        assert!(c.fdc > 0.5 && c.fdc_random > 0.9, "{c:?}");
+        // The neighbours in the random genes' band: the median neighbour beats about half of them.
+        let plateau: Vec<(f64, usize)> = (0..20).map(|i| (1.0 + i as f64 / 100.0, 1)).collect();
+        let c = slope_check(&plateau, &random).unwrap();
+        assert!(!c.pass && c.random_beaten_by_median_neighbour < 0.6, "{c:?}");
+        // Better with distance (the review's fault 1), however good the neighbours are.
+        let reversed: Vec<(f64, usize)> = (0..200).map(|i| (1.0 - i as f64 / 1000.0, 10 + i / 10)).collect();
+        let far: Vec<(f64, usize)> = (0..20).map(|i| (0.5 + i as f64 / 100.0, 60)).collect();
+        let c = slope_check(&far, &reversed).unwrap();
+        assert!(!c.pass && c.fdc < 0.0, "{c:?}");
+        assert!(slope_check(&[(0.0, 1)], &random).is_err(), "no inexact neighbour is no check");
     }
 
     #[test]

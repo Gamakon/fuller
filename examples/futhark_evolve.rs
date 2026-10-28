@@ -84,12 +84,12 @@ use std::time::Instant;
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
 use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step};
-use fuller::futhark_sig::{build, compare, compile_c, load, load_cases, problem, program, program_cases, quality_inputs, random_gene, read_binary, sexp, QUALITY_INPUTS, signature, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
+use fuller::futhark_sig::{build, cases_fingerprint, compare, quality_fingerprint, compile_c, load, load_cases, problem, program, program_cases, quality_input_names, quality_inputs, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{save_checkpoint, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, TimingSlots};
+use fuller::runner::{save_checkpoint, slope_check, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -121,9 +121,14 @@ fn median(v: &[f64]) -> f64 {
 
 /// The hash of a program's text, as its identity in the stream and the hall of fame.
 fn text_hash(s: &str) -> String {
+    text_hash_bytes(s.as_bytes())
+}
+
+/// FNV-1a of bytes, 16 hex digits.
+fn text_hash_bytes(s: &[u8]) -> String {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for b in s.bytes() {
-        h ^= u64::from(b);
+    for b in s {
+        h ^= u64::from(*b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")
@@ -297,14 +302,21 @@ const LEDGER_STAGE_COLUMNS: [&str; 15] = ["eval", "batch_size", "render_ms", "fu
 /// What a program measured on the stored cases (independent of the stage).
 #[derive(Debug, Clone)]
 struct Quality {
-    /// Three raw measurements a case (differing share, mean, max), in case order: exactness.
+    /// Three raw measurements a fitness case (differing share, mean, max), in case order: exactness.
     raw: Vec<[f64; 3]>,
     /// The quality inputs (`futhark_sig::quality_inputs`, seven a case), in case order.
     inputs: Vec<f64>,
     exact_train: usize,
     exact_held: usize,
+    /// The test cases it is exact on (reported only: a test case is never a fitness input).
+    exact_test: usize,
     /// The most node executions on any case.
     work: u128,
+    /// The outputs on every case, in case order (empty for a program that did not run).
+    outputs: Vec<Array>,
+    /// The program's BEHAVIOUR: the hash of its outputs on every case (two programs with the same outputs are one
+    /// behaviour, whatever their texts); every program that did not run is the one behaviour `failed`.
+    behaviour: String,
 }
 
 impl Quality {
@@ -314,9 +326,37 @@ impl Quality {
     fn inputs(&self) -> Vec<f64> {
         self.inputs.clone()
     }
+    /// Every output is all zeros (the dead point random programs crowd at, plan section H).
+    fn all_zero(&self) -> bool {
+        !self.outputs.is_empty() && self.outputs.iter().all(|a| a.data.iter().all(|x| *x == 0))
+    }
     /// A legal gene's program that did not compile or run (our software has a bug, logged): wrong everywhere.
-    fn worst(cases: usize) -> Quality {
-        Quality { raw: vec![[1.0; 3]; cases], inputs: vec![1.0; cases * QUALITY_INPUTS.len()], exact_train: 0, exact_held: 0, work: 0 }
+    fn worst(cases: &[Case]) -> Quality {
+        let fit: Vec<&Case> = cases.iter().filter(|c| c.split.in_fitness()).collect();
+        let inputs = fit.iter().flat_map(|c| vec![1.0; quality_input_names(&c.output).len()]).collect();
+        Quality { raw: vec![[1.0; 3]; fit.len()], inputs, exact_train: 0, exact_held: 0, exact_test: 0, work: 0, outputs: Vec::new(), behaviour: "failed".into() }
+    }
+    /// The quality of a program's outputs on the cases: the fitness's inputs and exactness from the training and
+    /// held-out cases alone; the test cases only counted (`exact_test`).
+    fn of(outs: Vec<Array>, cases: &[Case], work: u128) -> Quality {
+        let mut q = Quality { raw: Vec::with_capacity(cases.len()), inputs: Vec::new(), exact_train: 0, exact_held: 0, exact_test: 0, work, outputs: Vec::new(), behaviour: String::new() };
+        for (got, c) in outs.iter().zip(cases) {
+            let r = compare(got, &c.output);
+            if c.split.in_fitness() {
+                q.inputs.extend(quality_inputs(got, &c.output));
+                q.raw.push(r);
+            }
+            if r == [0.0; 3] {
+                match c.split {
+                    Split::Train => q.exact_train += 1,
+                    Split::Held => q.exact_held += 1,
+                    Split::Test => q.exact_test += 1,
+                }
+            }
+        }
+        q.behaviour = text_hash_bytes(&fuller::futhark_sig::write_binary(&outs.iter().collect::<Vec<_>>()));
+        q.outputs = outs;
+        q
     }
 }
 
@@ -348,6 +388,15 @@ impl Individual {
     fn fit(&self) -> f64 {
         self.eval.as_ref().map_or(f64::INFINITY, |e| e.fitness)
     }
+    /// The identity diversity is kept on (plan section D, faults 6 and 21): in stage 1 the program's BEHAVIOUR (its
+    /// outputs), so two programs with the same outputs are one parent, one elite; in stage 2 every program is exact
+    /// and has the same outputs, and its text is the identity, as before.
+    fn identity(&self, stage: FitnessStage) -> &str {
+        match (&self.eval, stage.measures_speed()) {
+            (Some(e), false) => e.quality.behaviour.as_str(),
+            _ => self.source.as_str(),
+        }
+    }
 }
 
 /// A batched program's quality outputs (or the failure that names it), its share of its batch's stages, and the
@@ -377,8 +426,11 @@ struct Judge<'a> {
     quality_cache: HashMap<String, Quality>,
     /// The timing slots, kept by program text (`--pairs` of them, each its own speed input).
     slots: TimingSlots,
-    /// Fitness evaluations (the budget's unit): every individual scored, cache hits included.
+    /// FITNESS EVALUATIONS, the budget's unit (plan section E, faults 7 and 8): programs not scored before, by text.
+    /// An elite carried over, a repeat and a pump child equal to a program already scored are free.
     evaluations: u64,
+    /// Every individual scored, repeats included (reported beside `evaluations`).
+    scored: u64,
     /// Programs compiled and run (cache misses).
     compiled: u64,
     hits: u64,
@@ -671,36 +723,24 @@ impl<'a> Judge<'a> {
                 r
             }
         };
-        let outs = match got {
-            Ok(o) => o,
+        match got {
+            Ok(o) => Ok(Quality::of(o, &self.cases, work)),
             Err(e) => {
                 self.log_bug(&e, &batch);
-                return Ok(Quality::worst(self.cases.len()));
+                Ok(Quality::worst(&self.cases))
             }
-        };
-        let mut q = Quality { raw: Vec::with_capacity(self.cases.len()), inputs: Vec::new(), exact_train: 0, exact_held: 0, work };
-        for (i, got) in outs.iter().enumerate() {
-            let r = compare(got, &self.cases[i].output);
-            q.inputs.extend(quality_inputs(got, &self.cases[i].output));
-            if r == [0.0; 3] {
-                match self.cases[i].split {
-                    Split::Train => q.exact_train += 1,
-                    Split::Held => q.exact_held += 1,
-                }
-            }
-            q.raw.push(r);
         }
-        Ok(q)
     }
 
     /// Score one individual in a stage.
     fn evaluate(&mut self, tree: &Tree, source: &str, stage: FitnessStage) -> Result<Eval, String> {
-        self.evaluations += 1;
+        self.scored += 1;
         self.last = ("hit", 0, Stages::default());
         let q = if let Some(q) = self.quality_cache.get(source) {
             self.hits += 1;
             q.clone()
         } else {
+            self.evaluations += 1;
             self.compiled += 1;
             let q = self.quality(tree, source)?;
             self.quality_cache.insert(source.to_string(), q.clone());
@@ -814,8 +854,32 @@ impl Genetics<'_> {
         Ok(())
     }
 
-    /// Homologous crossover: a range of the domain that holds one of `a`'s expressed cells, exchanged with `b`.
-    fn crossover(&self, a: &mut [u32], b: &[u32], rng: &mut GeneRng) -> Result<(), String> {
+    /// THE ONE-EDIT NEIGHBOURS of a gene: every expressed cell set to every other member of its own alphabet (the
+    /// point mutations of [`Genetics::mutate`]), each child's tree once, the gene's own tree left out. Returns each
+    /// with the cell it changed.
+    fn neighbours(&self, gene: &[u32]) -> Result<Vec<(usize, Tree)>, String> {
+        let own = self.tree(gene)?;
+        let mut seen: HashSet<Tree> = HashSet::new();
+        let mut out = Vec::new();
+        for pos in self.coding_cells(gene)? {
+            for v in self.layout.alphabet(self.contract, pos, self.const_len) {
+                if v == gene[pos] {
+                    continue;
+                }
+                let mut g = gene.to_vec();
+                self.layout.mutate(self.contract, &mut g, pos, v, self.const_len).map_err(|e| format!("a neighbour: {e}"))?;
+                let t = self.tree(&g)?;
+                if t != own && seen.insert(t.clone()) {
+                    out.push((pos, t));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Homologous crossover: a range of the domain that holds one of `a`'s expressed cells, exchanged between `a`
+    /// and `b` (both children kept).
+    fn crossover(&self, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<(), String> {
         let cells = self.coding_cells(a)?;
         let pos = cells[rng.below(cells.len())];
         let span = self.layout.spans().into_iter().find(|s| s.off <= pos && pos < s.off + s.len).ok_or("a cell in no span")?;
@@ -824,13 +888,12 @@ impl Genetics<'_> {
         }
         let lo = span.off + rng.below(pos - span.off + 1);
         let hi = (pos + 1 + rng.below(span.off + span.len - pos)).min(span.off + span.len);
-        let mut other = b.to_vec();
-        self.layout.swap_range(self.layout, a, &mut other, lo, hi).map_err(|e| format!("crossover: {e}"))
+        self.layout.swap_range(self.layout, a, b, lo, hi).map_err(|e| format!("crossover: {e}"))
     }
 
     /// MARRIAGE, typed subtree crossover: the domain is every pair (node of A, node of B) of one output type, not the
-    /// two roots, not identical subtrees, whose two offspring both write back into the parents' genes (enumerated
-    /// before the draw); one pair is drawn uniformly. Returns the two offspring genes, or None for an empty domain.
+    /// two roots, not identical subtrees, whose two offspring both write back into the parents' genes; one pair is
+    /// drawn uniformly. Returns the two offspring genes, or None for an empty domain.
     fn marry(&self, a: &Individual, b: &Individual, rng: &mut GeneRng) -> Result<Option<Offspring>, String> {
         let na = a.tree.level_order();
         let nb = b.tree.level_order();
@@ -843,21 +906,19 @@ impl Genetics<'_> {
                 domain.push((pa.clone(), pb.clone(), (*sa).clone(), (*sb).clone()));
             }
         }
-        let mut fitting = Vec::new();
+        // Uniform over the fitting pairs of the WHOLE domain (plan section F, fault 19): the domain in a random order
+        // (Fisher-Yates), the first pair whose two offspring both write back.
+        for i in (1..domain.len()).rev() {
+            domain.swap(i, rng.below(i + 1));
+        }
         for (pa, pb, sa, sb) in domain {
             let ca = replace(&a.tree, &pa, &sb);
             let cb = replace(&b.tree, &pb, &sa);
             if let (Ok(ga), Ok(gb)) = (write_back(self.contract, self.layout, &a.gene, &ca), write_back(self.contract, self.layout, &b.gene, &cb)) {
-                fitting.push((ga, gb));
-                if fitting.len() >= 256 {
-                    break;
-                }
+                return Ok(Some((ga, gb)));
             }
         }
-        if fitting.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(fitting.swap_remove(rng.below(fitting.len()))))
+        Ok(None)
     }
 }
 
@@ -887,6 +948,173 @@ fn tree_of_json(v: &serde_json::Value) -> Result<Tree, String> {
         const_index: a[1].as_u64().map(|c| c as u32),
         kids: a[2].as_array().ok_or("checkpoint kids")?.iter().map(tree_of_json).collect::<Result<_, _>>()?,
     })
+}
+
+/// The tag of the random-search control's own random stream (regime C): `seed ^ REGIME_C_TAG`.
+const REGIME_C_TAG: u64 = 0x5245_4749_4D45_5F43;
+
+/// The tag of the slope check's own random stream (`--check`): its genes are never a run's generation 0.
+const CHECK_TAG: u64 = 0x534C_4F50_4543_4845;
+
+/// The first line of a check's stored outputs (`check_outputs.bin`).
+const CHECK_OUTPUTS_MAGIC: &str = "fuller-futhark-check-outputs v1";
+
+/// THE SLOPE CHECK (`--check`, docs/PLAN_futhark_fitness_fixes.md section A), a gate before any run: the fitness
+/// (stage 1, the quality angle) of every one-edit neighbour of the reference gene and of `n_random` random genes,
+/// scored on the run's evaluation path (the GPU with `--eval rust` or `--eval batch`), each beside its tree edit
+/// distance to the reference ([`tree_distance`]). The verdict is `fuller::runner::slope_check`'s. It writes
+/// `OUT/check.tsv` (one line a program), `OUT/check_summary.tsv` (the verdict and the identities of the cases and
+/// of the quality inputs' formula, which a run's `--gate` compares) and `OUT/check_outputs.bin` (every program's
+/// outputs on every case, as the GPU gave them). With `--check-replay FILE` the outputs are read from such a file
+/// (the same cases, checked by their fingerprint) instead of run again, so a change to the quality inputs alone is
+/// re-checked on the GPU's own outputs.
+fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: usize, n_random: usize, seed: u64, replay: Option<&Path>, program_size: usize) -> Result<(), String> {
+    let t0 = Instant::now();
+    let fp_cases = cases_fingerprint(&run.judge.cases);
+    let stored: Option<HashMap<String, Vec<Array>>> = match replay {
+        Some(f) => Some(read_check_outputs(f, &fp_cases)?),
+        None => None,
+    };
+    let mut rng = GeneRng::new(seed ^ CHECK_TAG);
+    let ref_gene = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut rng)?, reference).map_err(|e| format!("the reference's write-back: {e}"))?;
+    let mut progs: Vec<(&'static str, Option<usize>, Tree)> = vec![("reference", None, reference.clone())];
+    for (pos, t) in run.gen.neighbours(&ref_gene)? {
+        progs.push(("neighbour", Some(pos), t));
+    }
+    let n_neigh = progs.len() - 1;
+    for _ in 0..n_random {
+        let g = run.gen.random_gene(&mut rng)?;
+        progs.push(("random", None, run.gen.tree(&g)?));
+    }
+    println!("# {} slope check: the reference, {n_neigh} one-edit neighbours of its gene, {n_random} random genes; program size N = {program_size}; {}", utc(), if replay.is_some() { "outputs replayed from the stored GPU outputs" } else { "scored on the run's evaluation path" });
+    let sources: Vec<String> = progs.iter().map(|p| program(run.gen.k, sig, &p.2)).collect::<Result<_, _>>()?;
+    let mut scored: Vec<(f64, Quality)> = Vec::with_capacity(progs.len());
+    for (ci, idx) in (0..progs.len()).collect::<Vec<_>>().chunks(chunk.max(1)).enumerate() {
+        if stored.is_none() {
+            let items: Vec<(&Tree, &str)> = idx.iter().map(|i| (&progs[*i].2, sources[*i].as_str())).collect();
+            run.judge.prefetch(&items, FitnessStage::Quality)?;
+        }
+        for &i in idx {
+            let (tree, source) = (&progs[i].2, &sources[i]);
+            let e = match &stored {
+                Some(m) => {
+                    let text = sexp(run.gen.k, tree);
+                    let outs = m.get(&text).ok_or_else(|| format!("the stored outputs have no program {text}"))?;
+                    let q = if outs.is_empty() { Quality::worst(&run.judge.cases) } else { Quality::of(outs.clone(), &run.judge.cases, run.judge.work_of(tree)?) };
+                    (staged_hff(FitnessStage::Quality, &q.inputs, &[])?.fitness, q)
+                }
+                None => {
+                    let e = run.judge.evaluate(tree, source, FitnessStage::Quality)?;
+                    (e.fitness, e.quality)
+                }
+            };
+            scored.push(e);
+        }
+        if ci % 10 == 0 {
+            println!("# {} slope check: {} of {} programs scored, {:.0} s", utc(), scored.len(), progs.len(), t0.elapsed().as_secs_f64());
+        }
+    }
+    if scored[0].0 != 0.0 {
+        return Err(format!("our software has a bug: the reference scores {} in the slope check", scored[0].0));
+    }
+    // The table, one line a program; the stored outputs.
+    let mut tsv = String::from("kind\tcell\tfitness\tdistance\tnodes\texact_train\texact_held\tall_zero\tbehaviour\tprogram\n");
+    let mut bin: Vec<u8> = format!("{CHECK_OUTPUTS_MAGIC}\t{fp_cases}\n").into_bytes();
+    let mut written: HashSet<String> = HashSet::new();
+    let (mut neigh, mut rand) = (Vec::new(), Vec::new());
+    for (p, (f, q)) in progs.iter().zip(&scored) {
+        let d = tree_distance(&p.2, reference);
+        let text = sexp(run.gen.k, &p.2);
+        tsv.push_str(&format!("{}\t{}\t{f:?}\t{d}\t{}\t{}\t{}\t{}\t{}\t{text}\n", p.0, p.1.map_or("-".to_string(), |c| c.to_string()), p.2.level_order().len(), q.exact_train, q.exact_held, u8::from(q.all_zero()), q.behaviour));
+        if written.insert(text.clone()) {
+            let raw = if q.outputs.is_empty() { Vec::new() } else { fuller::futhark_sig::write_binary(&q.outputs.iter().collect::<Vec<_>>()) };
+            bin.extend_from_slice(text.as_bytes());
+            bin.push(b'\n');
+            bin.extend_from_slice(&(raw.len() as u64).to_le_bytes());
+            bin.extend_from_slice(&raw);
+        }
+        match p.0 {
+            "neighbour" => neigh.push((*f, d)),
+            "random" => rand.push((*f, d)),
+            _ => {}
+        }
+    }
+    std::fs::write(run.out.join("check.tsv"), &tsv).map_err(|e| e.to_string())?;
+    if stored.is_none() {
+        std::fs::write(run.out.join("check_outputs.bin"), &bin).map_err(|e| e.to_string())?;
+    }
+    let c = slope_check(&neigh, &rand)?;
+    let random_q: Vec<&Quality> = progs.iter().zip(&scored).filter(|(p, _)| p.0 == "random").map(|(_, s)| &s.1).collect();
+    let behaviours: HashSet<&str> = random_q.iter().map(|q| q.behaviour.as_str()).collect();
+    let zeros = random_q.iter().filter(|q| q.all_zero()).count();
+    let distinct_random: HashSet<&Tree> = progs.iter().filter(|p| p.0 == "random").map(|p| &p.2).collect();
+    let verdict = if c.pass { "pass" } else { "fail" };
+    let rep = format!(
+        "problem\t{}\nprogram_size\t{program_size}\neval\t{}\nreplayed\t{}\ncases\t{}\ncases_fingerprint\t{fp_cases}\nquality_fingerprint\t{}\nquality_inputs\t{}\nneighbours_inexact\t{}\nneighbours_exact\t{}\nrandom_genes\t{}\nrandom_distinct_programs\t{}\nrandom_distinct_outputs\t{}\nrandom_all_zero_share\t{:.4}\nmedian_neighbour\t{:.6}\nmedian_random\t{:.6}\nbest_random\t{:.6}\nrandom_beaten_by_median_neighbour\t{:.4}\nrequired_random_beaten\t{}\nneighbours_above_median_random\t{:.4}\nneighbours_above_best_random\t{:.4}\nauc_neighbour_beats_random\t{:.4}\nspearman_fitness_distance\t{:.4}\nspearman_fitness_distance_random_only\t{:.4}\nseconds\t{:.1}\nverdict\t{verdict}\n",
+        run.inst.name,
+        run.judge.mode.label(),
+        if replay.is_some() { "yes" } else { "no" },
+        run.judge.cases.len(),
+        quality_fingerprint(),
+        run.judge.cases.iter().map(|k| quality_input_names(&k.output).len()).sum::<usize>(),
+        c.neighbours,
+        c.exact_neighbours,
+        c.random,
+        distinct_random.len(),
+        behaviours.len(),
+        zeros as f64 / random_q.len().max(1) as f64,
+        c.median_neighbour,
+        c.median_random,
+        c.best_random,
+        c.random_beaten_by_median_neighbour,
+        fuller::runner::SLOPE_RANDOM_BEATEN,
+        c.neighbours_above_median_random,
+        c.neighbours_above_best_random,
+        c.auc,
+        c.fdc,
+        c.fdc_random,
+        t0.elapsed().as_secs_f64(),
+    );
+    std::fs::write(run.out.join("check_summary.tsv"), &rep).map_err(|e| e.to_string())?;
+    print!("{rep}");
+    run.tel.note(0, format!("slope check: {verdict}; the median neighbour beats {:.1} % of random genes, Spearman(fitness, distance) {:.3}", 100.0 * c.random_beaten_by_median_neighbour, c.fdc))?;
+    Ok(())
+}
+
+/// The stored outputs of a check (`check_outputs.bin`), by program text; a file of other cases is an error.
+fn read_check_outputs(path: &Path, fp_cases: &str) -> Result<HashMap<String, Vec<Array>>, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let nl = raw.iter().position(|b| *b == b'\n').ok_or("the stored outputs have no header")?;
+    let head = String::from_utf8_lossy(&raw[..nl]).to_string();
+    if head != format!("{CHECK_OUTPUTS_MAGIC}\t{fp_cases}") {
+        return Err(format!("{}: stored for other cases or another format ({head}); these cases are {fp_cases}", path.display()));
+    }
+    let mut out = HashMap::new();
+    let mut i = nl + 1;
+    while i < raw.len() {
+        let e = i + raw[i..].iter().position(|b| *b == b'\n').ok_or("a stored program with no end of line")?;
+        let text = String::from_utf8_lossy(&raw[i..e]).to_string();
+        let n = u64::from_le_bytes(raw.get(e + 1..e + 9).ok_or("a stored program cut short")?.try_into().map_err(|_| "a length")?) as usize;
+        let body = raw.get(e + 9..e + 9 + n).ok_or("a stored program's outputs cut short")?;
+        out.insert(text, if n == 0 { Vec::new() } else { read_binary(body)? });
+        i = e + 9 + n;
+    }
+    Ok(out)
+}
+
+/// THE GATE (`--gate DIR`): a discovery run (R, C) starts only after the slope check of the same problem, program
+/// size, cases and quality inputs passed (`DIR/check_summary.tsv`).
+fn gate_passed(dir: &Path, problem: &str, program_size: usize, fp_cases: &str) -> Result<(), String> {
+    let path = dir.join("check_summary.tsv");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("the gate {}: {e}", path.display()))?;
+    let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(&format!("{k}\t"))).unwrap_or("").to_string();
+    let want = [("problem", problem.to_string()), ("program_size", program_size.to_string()), ("cases_fingerprint", fp_cases.to_string()), ("quality_fingerprint", quality_fingerprint()), ("verdict", "pass".to_string())];
+    for (k, v) in want {
+        if get(k) != v {
+            return Err(format!("the gate {}: {k} is {:?}, this run needs {v:?}; a discovery run starts only after the slope check passes for its problem, program size, cases and quality inputs (--check)", path.display(), get(k)));
+        }
+    }
+    Ok(())
 }
 
 const CHART: &str = r##"
@@ -970,7 +1198,7 @@ impl Run<'_> {
         let ind = |i: &Individual| serde_json::json!({"id": i.id, "parents": i.parents, "born": i.born, "operator": i.operator, "tree": tree_json(&i.tree)});
         let v = serde_json::json!({
             "problem": self.inst.name, "regime": regime, "generation": generation, "seconds": seconds, "next_id": self.next_id,
-            "evaluations": self.judge.evaluations, "compiled": self.judge.compiled, "hits": self.judge.hits, "bugs": self.judge.bugs, "setmem": self.judge.setmem,
+            "evaluations": self.judge.evaluations, "scored": self.judge.scored, "compiled": self.judge.compiled, "hits": self.judge.hits, "bugs": self.judge.bugs, "setmem": self.judge.setmem,
             "stage": self.stage, "first_exact": self.first_exact, "best_ever": self.tel.best_ever(), "rng": rng_state,
             "population": population.iter().map(ind).collect::<Vec<_>>(), "hof": self.hof,
         });
@@ -981,8 +1209,15 @@ impl Run<'_> {
 fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     let pname = arg(&args, "--problem").unwrap_or_else(|| "pathfinder".into());
-    let regime = arg(&args, "--regime").ok_or("--regime R|C|P")?;
-    if !["R", "C", "P"].contains(&regime.as_str()) {
+    // THE SLOPE CHECK (plan section A): a gate before any discovery run, not a run (regime "A").
+    let check = args.iter().any(|a| a == "--check");
+    let regime = match arg(&args, "--regime") {
+        Some(_) if check => return Err("--check is not a run: it takes no --regime".into()),
+        Some(r) => r,
+        None if check => "A".to_string(),
+        None => return Err("--regime R|C|P (or --check, the slope check)".into()),
+    };
+    if !check && !["R", "C", "P"].contains(&regime.as_str()) {
         return Err(format!("--regime {regime}: R (from random), C (random-search control) or P (from the published program)"));
     }
     // R and C start from random genes; only P has a start program (the record said "published" for R and C until
@@ -1029,6 +1264,8 @@ fn real_main() -> Result<(), String> {
     // THE RELATIVE SCORE of one program (`--rescore SEXP`, regime P): its quality inputs on every stored case beside
     // the published program's (all 0), and, when exact, its 11-pair re-time against the published program next to
     // both A/A sets, with the verdict (beat / matched / exact but slower / not reached). Writes OUT/rescore.tsv.
+    let check_random: usize = num(&args, "--check-random", 1400)?;
+    let check_replay = arg(&args, "--check-replay").map(PathBuf::from);
     let rescore = arg(&args, "--rescore");
     if rescore.is_some() && regime != "P" {
         return Err("--rescore needs --regime P (its in-run A/A set is the noise floor beside the re-time)".into());
@@ -1056,17 +1293,26 @@ fn real_main() -> Result<(), String> {
     let start_tree = if start == "planted" { planted.clone() } else { reference.clone() };
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], program_size).map_err(|e| e.to_string())?;
     let const_len = k.const_len();
+    // Every stored case: the fitness's (training and held-out) and the TEST SET (plan section G), run in the same
+    // quality program but never a fitness input, so selection never sees it; an exactness claim is made on it.
     let cases = load_cases(&p)?;
+    let n_test = cases.iter().filter(|c| !c.split.in_fitness()).count();
     let sizes: Vec<BTreeMap<String, usize>> = cases.iter().map(|c| sig.sizes(&c.inputs)).collect::<Result<_, _>>()?;
+    if regime == "R" || regime == "C" {
+        let g = arg(&args, "--gate").ok_or("--gate DIR: a discovery run (R, C) starts only after the slope check passes (--check --out DIR)")?;
+        gate_passed(Path::new(&g), &pname, program_size, &cases_fingerprint(&cases))?;
+        println!("# {} the gate: the slope check in {g} passed for these cases and quality inputs", utc());
+    }
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
     let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
     println!(
-        "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, eval {mode:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out), timing on {}{}",
+        "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, eval {mode:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out, {} test cases never in the fitness), timing on {}{}",
         utc(),
         if regime == "P" { format!(" from the {start} program") } else { String::new() },
         layout.width,
         cases.len(),
         cases.iter().filter(|c| c.split == Split::Held).count(),
+        n_test,
         timing.label(),
         if resume { "; RESUMED" } else { "" }
     );
@@ -1078,7 +1324,7 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
 
-    let mut objectives: Vec<String> = cases.iter().flat_map(|c| QUALITY_INPUTS.map(|m| format!("quality {} {m}", c.name))).collect();
+    let mut objectives: Vec<String> = cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| quality_input_names(&c.output).into_iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect();
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
@@ -1124,7 +1370,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -1137,7 +1383,7 @@ fn real_main() -> Result<(), String> {
     let mut noise = Vec::new();
     // Batch mode: both A/A sets (and the gate's single timings) in one batch process, as every candidate is timed.
     let mut batch_aa: Option<AaSets> = None;
-    if backend == Backend::Gpu {
+    if backend == Backend::Gpu && !check {
         match mode {
             EvalMode::Single => {
                 let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
@@ -1154,7 +1400,7 @@ fn real_main() -> Result<(), String> {
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
-    if let (Some(want), Some(y)) = (&run.judge.timing.output, &run.judge.yard_exe) {
+    if let (Some(want), Some(y), false) = (&run.judge.timing.output, &run.judge.yard_exe, check) {
         // Control: the yardstick's GPU output on the timing input is the stored one (futhark c).
         let (got, _) = run_program_bytes(y, &run.judge.timing.stdin, false, 1)?;
         if read_binary(&got)? != read_binary(want)? {
@@ -1170,6 +1416,11 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
     std::fs::write(out.join("reference.fut"), &ref_source).map_err(|e| e.to_string())?;
+    if check {
+        slope_check_command(&mut run, &sig, &reference, pop, check_random, seed, check_replay.as_deref(), program_size)?;
+        run.tel.end("early_stop", 0, None)?;
+        return Ok(());
+    }
     // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots.
     let mut inrun_aa: Vec<f64> = Vec::new();
     if regime == "P" && backend == Backend::Gpu {
@@ -1193,14 +1444,16 @@ fn real_main() -> Result<(), String> {
         let q = run.judge.quality(&tree, &source)?;
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         let mut rep = format!("problem\t{pname}\nprogram\t{}\nexact_on_every_case\t{}\nexact_train\t{}\nexact_held\t{}\n", sexp(&k, &tree), if q.perfect() { "yes" } else { "no" }, q.exact_train, q.exact_held);
-        rep.push_str(&format!("quality_inputs\tcase\tsplit\t{}\n", QUALITY_INPUTS.join("\t")));
-        let n = QUALITY_INPUTS.len();
-        for (i, c) in run.judge.cases.iter().enumerate() {
-            rep.push_str(&format!("quality\t{}\t{:?}\t{}\n", c.name, c.split, q.inputs[i * n..(i + 1) * n].iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join("\t")));
+        // Each case's inputs by name (a report: the fitness takes every input on its own).
+        let mut at = 0;
+        for c in run.judge.cases.iter().filter(|c| c.split.in_fitness()) {
+            let names = quality_input_names(&c.output);
+            let vals = &q.inputs[at..at + names.len()];
+            at += names.len();
+            let cells: Vec<String> = names.iter().zip(vals).map(|(n, v)| format!("{n}={v:.6}")).collect();
+            rep.push_str(&format!("quality\t{}\t{:?}\t{}\n", c.name, c.split, cells.join("\t")));
         }
-        let cases = run.judge.cases.len() as f64;
-        let means: Vec<String> = (0..n).map(|j| format!("{:.6}", (0..run.judge.cases.len()).map(|i| q.inputs[i * n + j]).sum::<f64>() / cases)).collect();
-        rep.push_str(&format!("quality_mean_over_cases\t{}\npublished_quality_inputs\tall 0\n", means.join("\t")));
+        rep.push_str(&format!("published_quality_inputs\tall 0\nexact_test\t{} of {}\n", q.exact_test, run.judge.cases.iter().filter(|c| !c.split.in_fitness()).count()));
         let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
         let floor = all.iter().cloned().fold(f64::INFINITY, f64::min);
         let ceiling = all.iter().cloned().fold(0.0, f64::max);
@@ -1252,13 +1505,16 @@ fn real_main() -> Result<(), String> {
     }
 
     let bridge = Bridge::load(&run.inst)?;
-    let mut rng0 = GeneRng::new(seed);
+    // Each regime its own random stream (plan section E, fault 10): R and C with one seed never share generation 0.
+    let stream = if regime == "C" { seed ^ REGIME_C_TAG } else { seed };
+    let mut rng0 = GeneRng::new(stream);
     let mut generation: u32;
     let mut cands: Vec<Individual> = Vec::new();
     if let Some(c) = &checkpoint {
         generation = c["generation"].as_u64().ok_or("checkpoint generation")? as u32 + 1;
         run.next_id = c["next_id"].as_u64().ok_or("checkpoint next_id")?;
         run.judge.evaluations = c["evaluations"].as_u64().unwrap_or(0);
+        run.judge.scored = c["scored"].as_u64().unwrap_or(0);
         run.judge.compiled = c["compiled"].as_u64().unwrap_or(0);
         run.judge.hits = c["hits"].as_u64().unwrap_or(0);
         run.judge.bugs = c["bugs"].as_u64().unwrap_or(0);
@@ -1335,12 +1591,14 @@ fn real_main() -> Result<(), String> {
 
     let mut series = if resume { std::fs::read_to_string(out.join("series.tsv")).unwrap_or_default() } else { String::new() };
     if series.is_empty() {
-        series = String::from("generation\tutc\tseconds\tevaluations\tcompiled\tcache_hits\tbugs\tstage\tbest_hff\tbest_theta_q\tbest_theta_s\tmedian_hff\tbest_ratio\tbest_exact_train\tbest_exact_held\tbest_nodes\tbest_work\tdistinct\tgen_seconds\n");
+        series = String::from("generation\tutc\tseconds\tevaluations\tcompiled\tcache_hits\tbugs\tstage\tbest_hff\tbest_theta_q\tbest_theta_s\tmedian_hff\tbest_ratio\tbest_exact_train\tbest_exact_held\tbest_nodes\tbest_work\tdistinct\tdistinct_outputs\tscored\tgen_seconds\n");
     }
     let mut stages_tsv = if resume { std::fs::read_to_string(out.join("stages.tsv")).unwrap_or_default() } else { String::new() };
     let mut population: Vec<Individual> = Vec::new();
     let mut stopped_by = "early_stop";
     let mut last_generation = generation;
+    // The best the pump last fired on.
+    let mut last_pumped: Option<String> = None;
     loop {
         if run.tel.stop_requested() {
             stopped_by = "killed";
@@ -1404,9 +1662,9 @@ fn real_main() -> Result<(), String> {
                 run.judge.prefetch(&items, run.stage)?;
             }
             // The population is re-scored in stage 2 so that selection compares like with like (not new evaluations).
+            // (Their quality is known, so none of them is a new evaluation.)
             for ind in population.iter_mut() {
                 let e = run.judge.evaluate(&ind.tree, &ind.source, run.stage)?;
-                run.judge.evaluations -= 1;
                 ind.eval = Some(e);
             }
             population.sort_by(|a, b| a.fit().total_cmp(&b.fit()));
@@ -1418,6 +1676,7 @@ fn real_main() -> Result<(), String> {
             s.dedup();
             s.len()
         };
+        let distinct_outputs = population.iter().filter_map(|i| i.eval.as_ref().map(|e| e.quality.behaviour.as_str())).collect::<HashSet<_>>().len();
         let best = population[0].clone();
         let be = best.eval.clone().ok_or("an unscored best")?;
         let mut groups = BTreeMap::new();
@@ -1432,6 +1691,8 @@ fn real_main() -> Result<(), String> {
             extras.insert("speed_ratio".to_string(), be.ratio);
         }
         extras.insert("evaluations".to_string(), run.judge.evaluations as f64);
+        extras.insert("scored".to_string(), run.judge.scored as f64);
+        extras.insert("distinct_outputs".to_string(), distinct_outputs as f64);
         extras.insert("compiled".to_string(), run.judge.compiled as f64);
         extras.insert("cache_hits".to_string(), run.judge.hits as f64);
         extras.insert("bugs".to_string(), run.judge.bugs as f64);
@@ -1451,7 +1712,7 @@ fn real_main() -> Result<(), String> {
         run.tel.generation(GenerationStats { generation, fitness: &fits, distinct: Some(distinct as u32), angle_groups: groups, extras, evaluated: run.judge.evaluations.saturating_sub(before) })?;
         let gen_seconds = gen_start.elapsed().as_secs_f64();
         series.push_str(&format!(
-            "{generation}\t{}\t{:.1}\t{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.4}\t{}\t{}\t{}\t{}\t{distinct}\t{gen_seconds:.2}\n",
+            "{generation}\t{}\t{:.1}\t{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.4}\t{}\t{}\t{}\t{}\t{distinct}\t{distinct_outputs}\t{}\t{gen_seconds:.2}\n",
             utc(),
             spent + started.elapsed().as_secs_f64(),
             run.judge.evaluations,
@@ -1468,6 +1729,7 @@ fn real_main() -> Result<(), String> {
             be.quality.exact_held,
             best.tree.level_order().len(),
             be.quality.work,
+            run.judge.scored,
         ));
         std::fs::write(out.join("series.tsv"), &series).map_err(|e| e.to_string())?;
         if stages_tsv.is_empty() {
@@ -1482,7 +1744,7 @@ fn real_main() -> Result<(), String> {
         ));
         std::fs::write(out.join("stages.tsv"), &stages_tsv).map_err(|e| e.to_string())?;
         println!(
-            "{} gen {generation}: stage {}, best HFF {:.5} (q {:.5}, s {:.5}, ratio {:.3}), exact {}+{} of {}, median {:.5}, {distinct} distinct; {} evaluations ({} compiled, {} hits, {} bugs); {gen_seconds:.1} s",
+            "{} gen {generation}: stage {}, best HFF {:.5} (q {:.5}, s {:.5}, ratio {:.3}), exact {}+{} of {}, median {:.5}, {distinct} distinct texts, {distinct_outputs} distinct outputs; {} evaluations ({} compiled, {} hits, {} bugs); {gen_seconds:.1} s",
             utc(),
             run.stage.number(),
             be.fitness,
@@ -1491,14 +1753,14 @@ fn real_main() -> Result<(), String> {
             be.ratio,
             be.quality.exact_train,
             be.quality.exact_held,
-            run.judge.cases.len(),
+            run.judge.cases.iter().filter(|c| c.split.in_fitness()).count(),
             median(&fits),
             run.judge.evaluations,
             run.judge.compiled,
             run.judge.hits,
             run.judge.bugs
         );
-        let rng_state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(generation + 1);
+        let rng_state = stream.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(generation + 1);
         if generation.is_multiple_of(checkpoint_every.max(1)) {
             let rows = run.hof.write(&out)?;
             run.tel.hall_of_fame(generation, rows)?;
@@ -1524,25 +1786,33 @@ fn real_main() -> Result<(), String> {
             generation += 1;
             continue;
         }
+        // At most one elite an identity (a behaviour in stage 1): an elite is carried over, never a new evaluation.
+        let stage = run.stage;
         let mut taken: Vec<String> = Vec::new();
         for ind in &population {
             if children.len() >= elites {
                 break;
             }
-            if !taken.contains(&ind.source) {
-                taken.push(ind.source.clone());
+            if !taken.iter().any(|t| t == ind.identity(stage)) {
+                taken.push(ind.identity(stage).to_string());
                 let mut e = ind.clone();
                 e.operator = "elite".into();
                 children.push(e);
             }
         }
         let g1 = generation + 1;
-        if pump_every > 0 && generation > 0 && generation.is_multiple_of(pump_every) {
-            // The pump: the e-graph variants of the best enter.
+        if pump_every > 0 && generation > 0 && generation.is_multiple_of(pump_every) && last_pumped.as_deref() != Some(population[0].source.as_str()) {
+            // The pump: the e-graph variants of the best enter, only when the best has changed since the last pump
+            // (plan section F, fault 9: on a plateau it sent the same variants again), and only variants not scored
+            // before (a repeat would take a child's place for nothing).
             let b = population[0].clone();
+            last_pumped = Some(b.source.clone());
             for v in variants(&run.inst, &k, &bridge, &b.tree, 2, 16, 4)? {
                 if children.len() >= pop {
                     break;
+                }
+                if run.judge.quality_cache.contains_key(&program(&k, &sig, &v)?) {
+                    continue;
                 }
                 if let Ok(g) = write_back(&contract, &layout, &b.gene, &v) {
                     let ind = run.fresh(&sig, vec![b.id], "pump_egraph", g, g1)?;
@@ -1599,7 +1869,7 @@ fn real_main() -> Result<(), String> {
         let (mut married, mut no_partner, mut no_operator) = (0u32, 0u32, 0u32);
         for _ in 0..n_pairs {
             let a = tournament(&mut rng);
-            let pool: Vec<usize> = (0..population.len()).filter(|i| population[*i].source != population[a].source).collect();
+            let pool: Vec<usize> = (0..population.len()).filter(|i| population[*i].identity(stage) != population[a].identity(stage)).collect();
             if pool.is_empty() {
                 no_partner += 1;
                 continue;
@@ -1624,32 +1894,48 @@ fn real_main() -> Result<(), String> {
             }
         }
         if n_pairs > 0 {
-            let mut m = Mutation::new(EventKind::Marriage, "subtree", format!("{married} pairs made {} offspring (typed subtree crossover, distinct parents); {no_partner} without a partner, {no_operator} with an empty domain", 2 * married));
+            let mut m = Mutation::new(EventKind::Marriage, "subtree", format!("{married} pairs made {} offspring (typed subtree crossover, parents of different outputs in stage 1, texts in stage 2); {no_partner} without a partner, {no_operator} with an empty domain", 2 * married));
             m.count = Some(married);
             run.tel.mutation(generation, m)?;
         }
+        // Half the rest from crossover (both children kept; each then mutated or not, a separate recorded choice:
+        // plan section F, fault 20), half from mutation alone. A crossover pair's parents differ in identity.
         while children.len() < pop {
             let a = tournament(&mut rng);
-            let mut gene = population[a].gene.clone();
-            let mut parents = vec![population[a].id];
-            let mut op = String::from("mutation");
+            let m_of = |rng: &mut GeneRng| if regime == "P" { 1 + rng.below(2) } else { 1 + rng.below(4) };
             if rng.below(2) == 0 {
                 let mut b = tournament(&mut rng);
                 for _ in 0..8 {
-                    if population[b].source != population[a].source {
+                    if population[b].identity(stage) != population[a].identity(stage) {
                         break;
                     }
                     b = tournament(&mut rng);
                 }
-                if population[b].source != population[a].source {
-                    run.gen.crossover(&mut gene, &population[b].gene, &mut rng)?;
-                    parents.push(population[b].id);
-                    op = "crossover+mutation".into();
+                if population[b].identity(stage) != population[a].identity(stage) {
+                    let (mut ga, mut gb) = (population[a].gene.clone(), population[b].gene.clone());
+                    run.gen.crossover(&mut ga, &mut gb, &mut rng)?;
+                    for g in [ga, gb] {
+                        if children.len() >= pop {
+                            break;
+                        }
+                        let mut g = g;
+                        let op = if rng.below(2) == 0 {
+                            let m = m_of(&mut rng);
+                            run.gen.mutate(&mut g, m, &mut rng)?;
+                            "crossover+mutation"
+                        } else {
+                            "crossover"
+                        };
+                        let ind = run.fresh(&sig, vec![population[a].id, population[b].id], op, g, g1)?;
+                        children.push(ind);
+                    }
+                    continue;
                 }
             }
-            let m = if regime == "P" { 1 + rng.below(2) } else { 1 + rng.below(4) };
+            let mut gene = population[a].gene.clone();
+            let m = m_of(&mut rng);
             run.gen.mutate(&mut gene, m, &mut rng)?;
-            let ind = run.fresh(&sig, parents, &op, gene, g1)?;
+            let ind = run.fresh(&sig, vec![population[a].id], "mutation", gene, g1)?;
             children.push(ind);
         }
         children.truncate(pop);

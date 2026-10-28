@@ -1027,8 +1027,18 @@ pub fn random_gene(contract: &KingdomContract, layout: &GeneLayout, const_len: &
 pub enum Split {
     Train,
     /// Held out from the training sizes; a fitness input all the same (Andrew's rule: the quality group holds the
-    /// held-out cases).
+    /// held-out cases, its validation column).
     Held,
+    /// THE TEST SET: never a fitness input, never seen by selection; an exactness claim is made on it (fault 11 of
+    /// `docs/reviews/2026-10-28_futhark_evolve_faults.md`).
+    Test,
+}
+
+impl Split {
+    /// Whether the case is a fitness input (training or held-out).
+    pub fn in_fitness(self) -> bool {
+        self != Split::Test
+    }
 }
 
 /// One stored case: the inputs and the published program's output on them.
@@ -1058,6 +1068,7 @@ pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
         let split = match *split {
             "train" => Split::Train,
             "held" => Split::Held,
+            "test" => Split::Test,
             other => return Err(format!("the case {name} has the split {other}")),
         };
         let stdin = std::fs::read(dir.join(format!("{name}.in"))).map_err(|e| format!("{name}.in: {e}"))?;
@@ -1118,6 +1129,11 @@ pub fn compare(got: &Array, want: &Array) -> [f64; 3] {
 /// The names of [`quality_inputs`], in order (one set a case).
 pub const QUALITY_INPUTS: [&str; 7] = ["wrong_share", "outside_1pct", "outside_10pct", "outside_50pct", "mean_abs_over_scale", "max_abs_over_scale", "order_wrong"];
 
+/// The names of [`quality_inputs`] against a correct output `want`, in order.
+pub fn quality_input_names(want: &Array) -> Vec<String> {
+    QUALITY_INPUTS.iter().take(if want.dims.len() < 8 { QUALITY_INPUTS.len() } else { 0 }).map(|s| s.to_string()).collect()
+}
+
 /// THE QUALITY INPUTS of one case, each its own input on `[0, 1]`, 0 exact, linear (no log scale, which put every
 /// inexact program within 0.03 of 1: the pathfinder pilot of 2026-10-27 ranked its whole population alike for 26
 /// generations). With `d` the absolute error of a cell and `scale` the correct output's own range (its largest value
@@ -1161,6 +1177,107 @@ pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
         bad as f64 / steps as f64
     };
     vec![wrong / n, o1 / n, o10 / n, o50 / n, squash(sum / n / scale), squash(max / scale), order]
+}
+
+// ---- the slope check's measures (docs/PLAN_futhark_fitness_fixes.md, section A) -----------------------------------
+
+/// THE TREE EDIT DISTANCE between two expressed trees (Zhang and Shasha, 1989): the least number of node relabels,
+/// deletions and insertions, each of cost 1, that turn one tree into the other. A node's label is its row and, for a
+/// constant, its pool index. The distance of a program to the reference gene's tree is the slope check's distance.
+pub fn tree_distance(a: &Tree, b: &Tree) -> usize {
+    /// A tree in postorder: each node's label, its leftmost leaf's postorder index, and the keyroots (the highest
+    /// node of each leftmost leaf), ascending.
+    struct Post {
+        labels: Vec<(u32, Option<u32>)>,
+        leftmost: Vec<usize>,
+        keyroots: Vec<usize>,
+    }
+    fn walk(t: &Tree, labels: &mut Vec<(u32, Option<u32>)>, leftmost: &mut Vec<usize>) -> usize {
+        let mut first = None;
+        for k in &t.kids {
+            let i = walk(k, labels, leftmost);
+            first.get_or_insert(leftmost[i]);
+        }
+        let me = labels.len();
+        labels.push((t.symbol, t.const_index));
+        leftmost.push(first.unwrap_or(me));
+        me
+    }
+    fn post(t: &Tree) -> Post {
+        let (mut labels, mut leftmost) = (Vec::new(), Vec::new());
+        walk(t, &mut labels, &mut leftmost);
+        let mut seen = std::collections::HashSet::new();
+        let mut keyroots: Vec<usize> = (0..labels.len()).rev().filter(|i| seen.insert(leftmost[*i])).collect();
+        keyroots.sort_unstable();
+        Post { labels, leftmost, keyroots }
+    }
+    let (pa, pb) = (post(a), post(b));
+    let (na, nb) = (pa.labels.len(), pb.labels.len());
+    let mut tree = vec![vec![0usize; nb]; na];
+    for &i in &pa.keyroots {
+        for &j in &pb.keyroots {
+            let (li, lj) = (pa.leftmost[i], pb.leftmost[j]);
+            let (m, n) = (i - li + 2, j - lj + 2);
+            let mut forest = vec![vec![0usize; n]; m];
+            for x in 1..m {
+                forest[x][0] = forest[x - 1][0] + 1;
+            }
+            for y in 1..n {
+                forest[0][y] = forest[0][y - 1] + 1;
+            }
+            for x in 1..m {
+                for y in 1..n {
+                    let (u, v) = (li + x - 1, lj + y - 1);
+                    let edit = (forest[x - 1][y] + 1).min(forest[x][y - 1] + 1);
+                    if pa.leftmost[u] == li && pb.leftmost[v] == lj {
+                        forest[x][y] = edit.min(forest[x - 1][y - 1] + usize::from(pa.labels[u] != pb.labels[v]));
+                        tree[u][v] = forest[x][y];
+                    } else {
+                        forest[x][y] = edit.min(forest[pa.leftmost[u] - li][pb.leftmost[v] - lj] + tree[u][v]);
+                    }
+                }
+            }
+        }
+    }
+    tree[na - 1][nb - 1]
+}
+
+/// FNV-1a over bytes, as 16 hex digits.
+fn fnv(parts: &[&[u8]]) -> String {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for p in parts {
+        for b in p.iter().chain(&[0xff]) {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{h:016x}")
+}
+
+/// The identity of a problem's stored cases: every case's name, split, inputs and output.
+pub fn cases_fingerprint(cases: &[Case]) -> String {
+    let mut parts: Vec<Vec<u8>> = Vec::new();
+    for c in cases {
+        parts.push(format!("{}\t{:?}", c.name, c.split).into_bytes());
+        parts.push(c.stdin.clone());
+        parts.push(write_binary(&[&c.output]));
+    }
+    fnv(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>())
+}
+
+/// The identity of the quality inputs' formula: their values, exactly, on fixed outputs against fixed answers (a
+/// level shift, a reversal, a constant, a shape mismatch, a near miss), so any change to the formula changes it.
+pub fn quality_fingerprint() -> String {
+    let want = Array { dims: vec![7], data: vec![3, -40, 900, 7, 7, 0, 123_456] };
+    let probes = [
+        Array { dims: vec![7], data: want.data.iter().map(|x| x + 5).collect() },
+        Array { dims: vec![7], data: want.data.iter().rev().copied().collect() },
+        Array { dims: vec![7], data: vec![0; 7] },
+        Array { dims: vec![6], data: vec![1; 6] },
+        Array { dims: vec![7], data: vec![3, -40, 901, 7, 7, 0, 123_456] },
+    ];
+    let text: String = probes.iter().flat_map(|g| quality_inputs(g, &want)).map(|x| format!("{x:?},")).collect();
+    fnv(&[text.as_bytes()])
 }
 
 // ---- the instance's e-graph -------------------------------------------------------------------------------------

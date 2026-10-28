@@ -232,3 +232,27 @@ fn the_quality_inputs_give_partial_correctness_a_slope() {
         assert_eq!(quality_inputs(&Array { dims: vec![w.data.len() + 1], data: vec![0; w.data.len() + 1] }, w), vec![1.0; QUALITY_INPUTS.len()]);
     }
 }
+
+/// The tree edit distance: 0 to itself, 1 a relabel, 1 a leaf inserted, symmetric; the textbook example of Zhang and
+/// Shasha (f(d(a c(b)) e) against f(c(d(a b)) e)) is 2; and on the histogram, one-symbol edits of the reference are
+/// at distance 1 and the program putting every value in bin 0 is a relabel and four deletions away.
+#[test]
+fn the_tree_edit_distance_counts_relabels_insertions_and_deletions() {
+    let l = |s: u32| Tree { symbol: s, const_index: None, kids: vec![] };
+    let n = |s: u32, kids: Vec<Tree>| Tree { symbol: s, const_index: None, kids };
+    let (a, b, c, d, e, f) = (0, 1, 2, 3, 4, 5);
+    let t1 = n(f, vec![n(d, vec![l(a), n(c, vec![l(b)])]), l(e)]);
+    let t2 = n(f, vec![n(c, vec![n(d, vec![l(a), l(b)])]), l(e)]);
+    assert_eq!(tree_distance(&t1, &t1), 0);
+    assert_eq!(tree_distance(&t1, &t2), 2);
+    assert_eq!(tree_distance(&t2, &t1), 2);
+    assert_eq!(tree_distance(&l(a), &l(b)), 1);
+    assert_eq!(tree_distance(&n(a, vec![l(b)]), &n(a, vec![l(b), l(c)])), 1);
+    assert_eq!(tree_distance(&Tree { symbol: a, const_index: Some(1), kids: vec![] }, &Tree { symbol: a, const_index: Some(2), kids: vec![] }), 1);
+    let k = load(&HISTOGRAM).unwrap();
+    let r = build(&k, HISTOGRAM_REFERENCE).unwrap();
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (mod.k (get.n vs j1))) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.min.n (tab (mod.k (get.n is j1))) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (get.n is j1)) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n zeros vs)").unwrap()), 5);
+}
