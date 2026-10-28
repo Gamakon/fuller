@@ -1716,10 +1716,19 @@ fn real_main() -> Result<(), String> {
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
-            // A speed claim counts only below the noise floor: the least ratio of both A/A sets.
+            // A speed claim counts only below the noise floor (the least ratio of both A/A sets) AND with at least 9
+            // of 11 pairs faster (a sign test, one-sided p = 0.033): the rule of the study plan, 2026-10-28 13:10Z,
+            // after a quiet A/A set beside a noisy re-time made the published program itself "faster".
             let floor = noise.iter().chain(inrun_aa.iter()).cloned().fold(f64::INFINITY, f64::min);
-            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\n", if median(&ratios) < floor { "yes" } else { "no" }));
+            let faster = ratios.iter().filter(|r| **r < 1.0).count();
+            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\n", if median(&ratios) < floor && faster >= 9 { "yes" } else { "no" }));
         }
+    }
+    // The best-ever program (the hall of fame's rank 1). For C, which has no selection, the best above is only the
+    // best of the last random batch, and the best-ever is the run's champion (measured 2026-10-28: pathfinder C seed
+    // 2's last batch was at 1.207, its best-ever at 1.076).
+    if let Some(h) = run.hof.entries().first() {
+        rep.push_str(&format!("best_ever_hff\t{:.6}\nbest_ever_born\t{}\nbest_ever_program\t{}\n", h.fitness, h.born, h.text.lines().next().unwrap_or("")));
     }
     std::fs::write(out.join("report.tsv"), &rep).map_err(|e| e.to_string())?;
     print!("{rep}");
