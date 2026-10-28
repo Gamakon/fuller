@@ -20,6 +20,15 @@
 - A run may start only if the neighbours rank above the random genes and the fitness-distance correlation is positive.
 - This is a gate, like the A/A timing gate. A fitness that fails it cannot guide a search.
 
+**Built (2026-10-28).** `futhark_evolve --check --problem P --program-size N --eval rust --out DIR` (the GPU evaluation path; `--eval batch` also works, quality is bit-identical). The verdict is `fuller::runner::slope_check`, tested in `runner::tests::the_slope_check_passes_a_slope_and_fails_a_plateau_or_a_reversed_slope`; the distance is `futhark_sig::tree_distance` (Zhang and Shasha). A discovery run (R, C) now needs `--gate DIR` of a passing check of the same problem, program size, cases and quality-input formula.
+- **The programs.** The reference gene (the reference written back into a random gene of the check's own seed stream); every one-edit neighbour of it (each expressed cell set to each other member of its alphabet, each tree once); 1,400 random genes (`--check-random`), every draw, repeats included.
+- **The gate passes only if both:**
+  1. the neighbours rank above the random genes: the median inexact neighbour is better than at least 99 % of the random genes (ties count as not beaten). Random search's best of its draws sets the plateau a population sits on, so a step from the target must look better than nearly all random programs;
+  2. Spearman(fitness, tree distance to the reference) over every program of the check is positive.
+- Neighbours exact on every case (equal programs) score 0 whatever the fitness; they are counted apart and are not in the ranking.
+- Also reported: the share of neighbours better than the median random gene (the expectation below) and than the best one, the probability a neighbour beats a random gene, Spearman over the random genes alone, the all-zeros share, distinct outputs among the random genes.
+- `OUT/check_outputs.bin` keeps every program's GPU outputs; `--check-replay FILE` re-scores them, so a change to the quality inputs alone is re-checked on the GPU's own outputs without running the programs again.
+
 ### B. The quality inputs (faults 1, 2, 3)
 1. **Graded per-cell inputs:** each output cell's error is its own input, scaled by the magnitude of the correct value (not the output's range), with no thresholds.
 2. **Drop the duplicate thresholds:** keep one share of wrong cells; drop `outside_1pct` and `outside_10pct`, which copy it.
@@ -80,6 +89,13 @@ Each operator is recorded as its own mutation event and measured on its own:
 
 They are built after section H, once its rings exist, and measured on the GPU before they enter a run.
 
+**One at a time (Andrew, 2026-10-28).** Each step changes one thing, and is tested before the next:
+1. **Baseline:** the fixed fitness (A to G), the ring canvas (H) and today's point mutation. R and C on histogram and pathfinder, 3 seeds each.
+2. **Ring walk replaces point mutation:** the same runs, the same seeds and the same budget, with ring walk as the only mutation. Crossover and marriage are unchanged.
+3. **Then transposition, then inversion, then sorting,** each added alone, each with the same runs, and kept only if it measures better than the step before.
+
+Each step reports its per-operator measurements and R against C, as a table in this plan, before the next step is built.
+
 ## Order agreed with Andrew (2026-10-28)
 1. Fix all the fitness: A to G. The check of section A passes on histogram and pathfinder.
 2. The canvas: section H.
@@ -93,6 +109,15 @@ All measurement is on the GPU. The CPU interpreter is a test reference only.
 2. C, then E, then D, then F.
 3. Rerun R and C for histogram and pathfinder, 3 seeds each (about 6 h of GPU).
 4. G before any further speed claim.
+
+## Measurements of the check
+
+Expectations, stated before each measurement; results after.
+
+| # | measurement (GPU, `--eval rust`, 1,400 random genes) | fitness, cases | expected | measured |
+|---|---|---|---|---|
+| A1 | histogram (N = 8), the fitness of the study | 7 inputs a case, the 5 stored cases | fail: the median neighbour beats under 99 % of random genes (the review puts neighbours at 1.03 to 1.32, inside random search's band); Spearman positive or near 0 (unlike the ledgers, random genes do not bloat) | |
+| A2 | pathfinder (N = 13), the fitness of the study | 7 inputs a case, the 8 stored cases | fail, as A1 | |
 
 ## Expectations, stated before any run
 | measurement | expected |
