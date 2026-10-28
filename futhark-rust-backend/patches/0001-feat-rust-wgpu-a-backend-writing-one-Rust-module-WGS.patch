@@ -1,0 +1,1431 @@
+From 8286b270e3ac3bfbcc479d8eec33b52c2b24f3c9 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Wed, 28 Oct 2026 11:25:18 +0100
+Subject: [PATCH 1/2] feat(rust-wgpu): a backend writing one Rust module (WGSL
+ kernels, host over wgpu-rs); SetMem in kernels resolved by renaming outside
+ loops and conditionals
+
+---
+ .gitignore                               |    2 +
+ README.rust-wgpu.md                      |   17 +
+ build_rust_wgpu.sh                       |   16 +
+ futhark.cabal                            |    2 +
+ src/Futhark/Actions.hs                   |   20 +
+ src/Futhark/CLI/Main.hs                  |    2 +
+ src/Futhark/CLI/RustWGPU.hs              |   17 +
+ src/Futhark/CodeGen/Backends/CWebGPU.hs  |    5 +-
+ src/Futhark/CodeGen/Backends/RustWGPU.hs | 1115 ++++++++++++++++++++++
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs     |   48 +-
+ 10 files changed, 1232 insertions(+), 12 deletions(-)
+ create mode 100644 README.rust-wgpu.md
+ create mode 100755 build_rust_wgpu.sh
+ create mode 100644 src/Futhark/CLI/RustWGPU.hs
+ create mode 100644 src/Futhark/CodeGen/Backends/RustWGPU.hs
+
+diff --git a/.gitignore b/.gitignore
+index 995d8ff..077fad8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -53,3 +53,5 @@ testparser/
+ 
+ # Ignore macOS system files.
+ .DS_Store
++bin/
++dist-newstyle/
+diff --git a/README.rust-wgpu.md b/README.rust-wgpu.md
+new file mode 100644
+index 0000000..846a547
+--- /dev/null
++++ b/README.rust-wgpu.md
+@@ -0,0 +1,17 @@
++# Futhark fork: the `rust-wgpu` backend
++
++A LOCAL fork of Futhark's `webgpu` branch (PR "Add WebGPU backend", head `14e9ccb`), never pushed anywhere. It adds
++one backend, `futhark rust-wgpu prog.fut -o prog`, which writes `prog.rs`: one Rust module holding the program's WGSL
++kernels, its kernel table and its host code over wgpu-rs, against the runtime crate `futhark-rust-rt` in fuller
++(`fuller/futhark-rust-rt`). The design is `fuller/docs/PLAN_futhark_rust_wgpu.md`.
++
++| change | where |
++|---|---|
++| the backend: ImpCode WebGPU (`ImpGen.WebGPU.compileProg`, the webgpu backend's input) to Rust | `src/Futhark/CodeGen/Backends/RustWGPU.hs` |
++| the command and the action | `src/Futhark/CLI/RustWGPU.hs`, `src/Futhark/CLI/Main.hs`, `src/Futhark/Actions.hs`, `futhark.cabal` |
++| `builtinKernels` exported (the copies and transpositions, described the same way for Rust) | `src/Futhark/CodeGen/Backends/CWebGPU.hs` |
++| `SetMem` in a GPU kernel resolved by renaming when it is outside every loop and conditional of the kernel (the webgpu backend's "Cannot handle SetMem" limitation; inside a loop or conditional it remains a compiler limitation, named) | `src/Futhark/CodeGen/ImpGen/WebGPU.hs` |
++
++Build: `./build_rust_wgpu.sh` (GHC 9.14.1 and cabal 3.18 from Homebrew; it sets the PATH and the ffi header the
++Homebrew GHC needs) installs `bin/futhark`. The SetMem change is in the shared WGSL kernel generator, so it also
++changes what this fork's `webgpu` backend emits; fuller's shim path uses the pinned upstream CI binary, not this fork.
+diff --git a/build_rust_wgpu.sh b/build_rust_wgpu.sh
+new file mode 100755
+index 0000000..93dc396
+--- /dev/null
++++ b/build_rust_wgpu.sh
+@@ -0,0 +1,16 @@
++#!/bin/bash
++# Build this fork (cabal, GHC 9.14.1) and install its compiler as bin/futhark, the path fuller's rust-wgpu path uses
++# by default (fuller src/futhark_rust.rs; FUTHARK_RUST_WGPU overrides it). Run at nice 10.
++set -euo pipefail
++here=$(cd "$(dirname "$0")" && pwd)
++cd "$here"
++# Xcode's ld ahead of an older one on the PATH (anaconda's ld64-530 cannot read GHC's response files), and the SDK's
++# ffi.h, which Homebrew's GHC needs for its rts headers.
++export PATH=/usr/bin:/opt/homebrew/bin:$PATH
++export C_INCLUDE_PATH=$(xcrun --show-sdk-path)/usr/include/ffi
++nice -n 10 cabal build -j6 exe:futhark
++mkdir -p bin
++cp "$(cabal list-bin exe:futhark)" bin/futhark.new
++mv bin/futhark.new bin/futhark
++git rev-parse HEAD > bin/futhark.commit
++echo "installed $here/bin/futhark ($(cat bin/futhark.commit); uncommitted changes: $(git status --porcelain -- src | wc -l | tr -d ' '))"
+diff --git a/futhark.cabal b/futhark.cabal
+index 6977c7c..2a7b948 100644
+--- a/futhark.cabal
++++ b/futhark.cabal
+@@ -203,9 +203,11 @@ library
+       Futhark.CLI.Test
+       Futhark.CLI.WASM
+       Futhark.CLI.WebGPU
++      Futhark.CLI.RustWGPU
+       Futhark.CodeGen.Backends.CCUDA
+       Futhark.CodeGen.Backends.COpenCL
+       Futhark.CodeGen.Backends.CWebGPU
++      Futhark.CodeGen.Backends.RustWGPU
+       Futhark.CodeGen.Backends.HIP
+       Futhark.CodeGen.Backends.GenericC
+       Futhark.CodeGen.Backends.GenericC.CLI
+diff --git a/src/Futhark/Actions.hs b/src/Futhark/Actions.hs
+index b0feee3..438b565 100644
+--- a/src/Futhark/Actions.hs
++++ b/src/Futhark/Actions.hs
+@@ -28,6 +28,7 @@ module Futhark.Actions
+     compilePythonAction,
+     compilePyOpenCLAction,
+     compileWebGPUAction,
++    compileRustWGPUAction,
+     runSOACSAction,
+     runGPUAction,
+   )
+@@ -53,6 +54,7 @@ import Futhark.Analysis.Metrics
+ import Futhark.CodeGen.Backends.CCUDA qualified as CCUDA
+ import Futhark.CodeGen.Backends.COpenCL qualified as COpenCL
+ import Futhark.CodeGen.Backends.CWebGPU qualified as CWebGPU
++import Futhark.CodeGen.Backends.RustWGPU qualified as RustWGPU
+ import Futhark.CodeGen.Backends.HIP qualified as HIP
+ import Futhark.CodeGen.Backends.MulticoreC qualified as MulticoreC
+ import Futhark.CodeGen.Backends.MulticoreISPC qualified as MulticoreISPC
+@@ -553,6 +555,24 @@ compilePyOpenCLAction fcfg mode outpath =
+       actionProcedure = pythonCommon PyOpenCL.compileProg fcfg mode outpath
+     }
+ 
++-- | The @futhark rust-wgpu@ action: one Rust module, @<out>.rs@, whatever
++-- the compiler mode (a Rust module is always a library).
++compileRustWGPUAction :: FutharkConfig -> FilePath -> Action GPUMem
++compileRustWGPUAction fcfg tgtpath =
++  Action
++    { actionName = "Compile to Rust over wgpu-rs",
++      actionDescription = "Compile to a Rust module of WGSL kernels and host code over wgpu-rs",
++      actionProcedure = helper
++    }
++  where
++    helper prog = do
++      rust <- handleWarnings fcfg $ RustWGPU.compileProg versionString prog
++      let outpath =
++            if takeExtension tgtpath == ".rs"
++              then tgtpath
++              else tgtpath `addExtension` "rs"
++      liftIO $ T.writeFile outpath rust
++
+ -- | The @futhark webgpu@ action.
+ compileWebGPUAction :: FutharkConfig -> CompilerMode -> FilePath -> Action GPUMem
+ compileWebGPUAction fcfg mode tgtpath =
+diff --git a/src/Futhark/CLI/Main.hs b/src/Futhark/CLI/Main.hs
+index 57e2de0..9e1b6c2 100644
+--- a/src/Futhark/CLI/Main.hs
++++ b/src/Futhark/CLI/Main.hs
+@@ -37,6 +37,7 @@ import Futhark.CLI.Run qualified as Run
+ import Futhark.CLI.Test qualified as Test
+ import Futhark.CLI.WASM qualified as WASM
+ import Futhark.CLI.WebGPU qualified as WebGPU
++import Futhark.CLI.RustWGPU qualified as RustWGPU
+ import Futhark.Error
+ import Futhark.Util (maxinum, showText)
+ import Futhark.Util.Options
+@@ -69,6 +70,7 @@ commands =
+       ("wasm", (WASM.main, "Compile to WASM with sequential C")),
+       ("wasm-multicore", (MulticoreWASM.main, "Compile to WASM with multicore C")),
+       ("webgpu", (WebGPU.main, "Compile to JS/WASM calling WebGPU.")),
++      ("rust-wgpu", (RustWGPU.main, "Compile to a Rust module (WGSL kernels, host over wgpu-rs).")),
+       ("ispc", (MulticoreISPC.main, "Compile to multicore ISPC")),
+       ("test", (Test.main, "Test Futhark programs.")),
+       ("bench", (Bench.main, "Benchmark Futhark programs.")),
+diff --git a/src/Futhark/CLI/RustWGPU.hs b/src/Futhark/CLI/RustWGPU.hs
+new file mode 100644
+index 0000000..4b683b1
+--- /dev/null
++++ b/src/Futhark/CLI/RustWGPU.hs
+@@ -0,0 +1,17 @@
++-- | @futhark rust-wgpu@
++module Futhark.CLI.RustWGPU (main) where
++
++import Futhark.Actions (compileRustWGPUAction)
++import Futhark.Compiler.CLI
++import Futhark.Passes (gpumemPipeline)
++
++-- | Run @futhark rust-wgpu@.
++main :: String -> [String] -> IO ()
++main = compilerMain
++  ()
++  []
++  "Compile to Rust over wgpu-rs"
++  "Generate a Rust module (WGSL kernels and a host over wgpu-rs) from an optimised Futhark program."
++  gpumemPipeline
++  $ \fcfg () _mode outpath prog ->
++    actionProcedure (compileRustWGPUAction fcfg outpath) prog
+diff --git a/src/Futhark/CodeGen/Backends/CWebGPU.hs b/src/Futhark/CodeGen/Backends/CWebGPU.hs
+index e5b81b1..aa3bee7 100644
+--- a/src/Futhark/CodeGen/Backends/CWebGPU.hs
++++ b/src/Futhark/CodeGen/Backends/CWebGPU.hs
+@@ -8,6 +8,7 @@ module Futhark.CodeGen.Backends.CWebGPU
+     GC.asExecutable,
+     GC.asServer,
+     asJSServer,
++    builtinKernels,
+   )
+ where
+ 
+@@ -131,7 +132,9 @@ mkKernelInfos kernels = do
+                    }|]
+     info_inits = map info_init (M.toList kernels)
+ 
+--- We need to generate kernel_infos for built-in kernels as well.
++-- | The built-in kernels (copies and transpositions), whose kernel_infos
++-- must be generated as well. Exported for the rust-wgpu backend, which
++-- describes the same kernels.
+ builtinKernels :: M.Map Name KernelInterface
+ builtinKernels =
+   M.fromList $ concatMap generateKernels builtinKernelTemplates
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+new file mode 100644
+index 0000000..c7e224d
+--- /dev/null
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -0,0 +1,1115 @@
++{-# LANGUAGE LambdaCase #-}
++
++-- | Code generation for Rust over wgpu-rs: the @rust-wgpu@ backend.
++--
++-- The input is the same ImpCode the @webgpu@ backend consumes
++-- ('Futhark.CodeGen.ImpGen.WebGPU.compileProg'): host code calling WGSL
++-- kernels, the WGSL program, every kernel's interface and the macro
++-- definitions. Where the @webgpu@ backend writes C against the WebGPU C API,
++-- this one writes ONE Rust module against the @futhark-rust-rt@ crate, which
++-- runs on a @wgpu::Device@ and @wgpu::Queue@ the caller gives it:
++--
++-- * every ImpCode function is a @pub fn@ taking the context and the module's
++--   state;
++-- * every entry point is a @pub fn@ taking @&rt::FutharkCtx@ and typed array
++--   handles (@rt::Array<T, R>@, over @wgpu::Buffer@s the caller may own),
++--   plus a dynamic adapter over @rt::Value@s and a table of them all
++--   (@ENTRIES@), for a host that loads a module it was not compiled with;
++-- * the WGSL, the kernel table, the tuning parameters and the built-in
++--   kernels' templates are statics of the module.
++--
++-- The host semantics are the C runtime's (@rts/c/gpu.h@,
++-- @rts/c/backends/webgpu.h@), reimplemented in the runtime crate: the same
++-- launches, the same scalar layout, the same overrides, the same copies.
++module Futhark.CodeGen.Backends.RustWGPU
++  ( compileProg,
++  )
++where
++
++import Control.Monad
++import Control.Monad.RWS.Strict
++import Data.Char (isAsciiLower, isDigit, ord)
++import Data.Map qualified as M
++import Data.Maybe (fromMaybe, mapMaybe)
++import Data.Set qualified as S
++import Data.Text qualified as T
++import Futhark.CodeGen.Backends.CWebGPU (builtinKernels)
++import Futhark.CodeGen.ImpCode.WebGPU
++import Futhark.CodeGen.ImpGen.WebGPU qualified as ImpGen
++import Futhark.CodeGen.RTS.WGSL qualified as RTS
++import Futhark.Error (compilerLimitation)
++import Futhark.IR.GPUMem (GPUMem, Prog)
++import Futhark.MonadFreshNames
++import Futhark.Util (hashText, zEncodeText)
++import GHC.Float (castDoubleToWord64, castFloatToWord32)
++import Language.Futhark.Warnings (Warnings)
++import Numeric (showHex)
++
++-- | Compile the program to one Rust module.
++compileProg :: (MonadFreshNames m) => T.Text -> Prog GPUMem -> m (Warnings, T.Text)
++compileProg version prog = do
++  (ws, Program wgsl_code wgsl_prelude macros kernels _failures defs) <-
++    ImpGen.compileProg prog
++  pure (ws, generate version (wgsl_prelude <> wgsl_code) wgsl_prelude macros kernels defs)
++
++-- * The generator's monad
++
++data Env = Env
++  { -- | The program's constants: referred to through the state, @st.@.
++    envConsts :: S.Set VName,
++    envFuns :: M.Map Name (Function HostOp),
++    envKernelIdx :: M.Map Name Int,
++    envTuning :: M.Map Name Int,
++    -- | Every name mentioned in the function being generated, other than at
++    -- its declaration.
++    envMentioned :: S.Set VName,
++    -- | The declared scalar types of the function being generated.
++    envTypes :: M.Map VName PrimType
++  }
++
++data GenS = GenS
++  { gsLines :: [T.Text],
++    gsIndent :: Int,
++    gsCounter :: Int,
++    gsUsesCtx :: Bool,
++    gsUsesSt :: Bool
++  }
++
++type GenM = RWS Env () GenS
++
++line :: T.Text -> GenM ()
++line t = modify $ \s -> s {gsLines = (T.replicate (gsIndent s) "    " <> t) : gsLines s}
++
++indented :: GenM a -> GenM a
++indented m = do
++  modify $ \s -> s {gsIndent = gsIndent s + 1}
++  x <- m
++  modify $ \s -> s {gsIndent = gsIndent s - 1}
++  pure x
++
++block :: T.Text -> GenM () -> GenM ()
++block hdr body = do
++  line $ hdr <> " {"
++  indented body
++  line "}"
++
++fresh :: T.Text -> GenM T.Text
++fresh base = do
++  n <- gets gsCounter
++  modify $ \s -> s {gsCounter = n + 1}
++  pure $ base <> "_" <> showT n
++
++-- | Generate into a separate buffer; return the lines and whether the
++-- context and the state were referred to.
++capture :: GenM () -> GenM ([T.Text], Bool, Bool)
++capture m = do
++  s0 <- get
++  put s0 {gsLines = [], gsUsesCtx = False, gsUsesSt = False}
++  m
++  s1 <- get
++  put s1 {gsLines = gsLines s0, gsUsesCtx = gsUsesCtx s0, gsUsesSt = gsUsesSt s0}
++  pure (reverse (gsLines s1), gsUsesCtx s1, gsUsesSt s1)
++
++emitLines :: [T.Text] -> GenM ()
++emitLines ls = do
++  i <- gets gsIndent
++  modify $ \s -> s {gsLines = reverse (map (T.replicate i "    " <>) ls) <> gsLines s}
++
++ctxRef :: GenM T.Text
++ctxRef = do
++  modify $ \s -> s {gsUsesCtx = True}
++  pure "ctx"
++
++stRef :: GenM T.Text
++stRef = do
++  modify $ \s -> s {gsUsesSt = True}
++  pure "st"
++
++showT :: (Show a) => a -> T.Text
++showT = T.pack . show
++
++-- * Names
++
++-- | Any text as the characters of a Rust snake-case identifier: letters
++-- lower-cased, digits kept, every run of anything else one @_@, none at
++-- either end. Lossy: 'unique' adds what makes it injective.
++snake :: T.Text -> T.Text
++snake = T.intercalate "_" . filter (not . T.null) . T.split (== '_') . T.map one . T.toLower
++  where
++    one c
++      | isAsciiLower c || isDigit c = c
++      | otherwise = '_'
++
++-- | 'snake', with a hash of the original when the spelling changed it, so
++-- that two names never meet.
++unique :: T.Text -> T.Text
++unique t
++  | snake t == t = t
++  | otherwise = (if T.null (snake t) then "x" else snake t) <> "_" <> T.take 8 (hashText t)
++
++-- | A name that is already a Rust snake-case identifier as itself, any other
++-- made one by 'unique'.
++snakeOrEscape :: T.Text -> T.Text
++snakeOrEscape = unique
++
++-- | A local variable.
++vname :: VName -> T.Text
++vname v = "v_" <> (if T.null b then "" else b <> "_") <> showT (baseTag v)
++  where
++    b = snake (nameToText (baseName v))
++
++-- | A variable, through the state when it is one of the program's constants.
++varRef :: VName -> GenM T.Text
++varRef v = do
++  cs <- asks envConsts
++  if v `S.member` cs
++    then (<> ("." <> vname v)) <$> stRef
++    else pure $ vname v
++
++funName :: Name -> T.Text
++funName n = "f_" <> unique (nameToText n)
++
++rustKeywords :: S.Set T.Text
++rustKeywords =
++  S.fromList $
++    T.words
++      "as break const continue crate else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn abstract become box do final macro override priv typeof unsized virtual yield try gen union"
++
++-- | The public name of an entry point, as Futhark spells it where that is a
++-- Rust identifier.
++entryName :: Name -> T.Text
++entryName n
++  | valid t = if t `S.member` rustKeywords then "r#" <> t else t
++  | otherwise = "e_" <> unique t
++  where
++    t = nameToText n
++    valid x =
++      not (T.null x)
++        && T.all (\c -> isAsciiLower c || isDigit c || c == '_') x
++        && not (isDigit (T.head x))
++
++-- | A Rust string literal.
++strLit :: T.Text -> T.Text
++strLit t = "\"" <> T.concatMap esc t <> "\""
++  where
++    esc '"' = "\\\""
++    esc '\\' = "\\\\"
++    esc '\n' = "\\n"
++    esc '\r' = "\\r"
++    esc '\t' = "\\t"
++    esc c
++      | ord c < 32 || ord c == 127 = "\\u{" <> T.pack (showHex (ord c) "") <> "}"
++      | otherwise = T.singleton c
++
++-- | A raw string literal holding any text.
++rawLit :: T.Text -> T.Text
++rawLit t = "r" <> hashes <> "\"" <> t <> "\"" <> hashes
++  where
++    hashes = T.replicate (longestRun + 1) "#"
++    longestRun = maximum $ 0 : map (T.length . T.takeWhile (== '#')) (drop 1 (T.splitOn "\"" t))
++
++-- * Types
++
++rustPrim :: PrimType -> T.Text
++rustPrim (IntType Int8) = "i8"
++rustPrim (IntType Int16) = "i16"
++rustPrim (IntType Int32) = "i32"
++rustPrim (IntType Int64) = "i64"
++rustPrim (FloatType Float16) = compilerLimitation "The rust-wgpu backend does not support f16 on the host."
++rustPrim (FloatType Float32) = "f32"
++rustPrim (FloatType Float64) = "f64"
++rustPrim Bool = "bool"
++rustPrim Unit = "()"
++
++-- | The external (API) type of a value of this type and signedness.
++rustExtPrim :: Signedness -> PrimType -> T.Text
++rustExtPrim Unsigned (IntType Int8) = "u8"
++rustExtPrim Unsigned (IntType Int16) = "u16"
++rustExtPrim Unsigned (IntType Int32) = "u32"
++rustExtPrim Unsigned (IntType Int64) = "u64"
++rustExtPrim _ t = rustPrim t
++
++-- | The runtime's element type tag.
++elemTag :: Signedness -> PrimType -> T.Text
++elemTag s t = "rt::ElemType::" <> tag
++  where
++    tag = case rustExtPrim s t of
++      "i8" -> "I8"
++      "i16" -> "I16"
++      "i32" -> "I32"
++      "i64" -> "I64"
++      "u8" -> "U8"
++      "u16" -> "U16"
++      "u32" -> "U32"
++      "u64" -> "U64"
++      "f32" -> "F32"
++      "f64" -> "F64"
++      "bool" -> "Bool"
++      other -> compilerLimitation $ "The rust-wgpu backend has no element type for " <> other
++
++zeroOf :: PrimType -> T.Text
++zeroOf Bool = "false"
++zeroOf Unit = "()"
++zeroOf t = "0" <> rustPrim t
++
++memType :: Space -> T.Text
++memType (Space "device") = "rt::DevMem"
++memType DefaultSpace = "rt::HostMem"
++memType s = compilerLimitation $ "The rust-wgpu backend does not support the memory space " <> prettyText s
++
++-- * Expressions
++
++intLit :: (Integral a) => T.Text -> a -> a -> T.Text
++intLit ty x mn
++  | x == mn = ty <> "::MIN"
++  | x < 0 = "(" <> showT (toInteger x) <> ty <> ")"
++  | otherwise = showT (toInteger x) <> ty
++
++primLit :: PrimValue -> T.Text
++primLit (IntValue (Int8Value x)) = intLit "i8" x (minBound :: Int8)
++primLit (IntValue (Int16Value x)) = intLit "i16" x (minBound :: Int16)
++primLit (IntValue (Int32Value x)) = intLit "i32" x (minBound :: Int32)
++primLit (IntValue (Int64Value x)) = intLit "i64" x (minBound :: Int64)
++primLit (FloatValue (Float16Value _)) = compilerLimitation "The rust-wgpu backend does not support f16 on the host."
++primLit (FloatValue (Float32Value x)) =
++  "f32::from_bits(0x" <> T.pack (showHex (castFloatToWord32 x) "") <> "u32)"
++primLit (FloatValue (Float64Value x)) =
++  "f64::from_bits(0x" <> T.pack (showHex (castDoubleToWord64 x) "") <> "u64)"
++primLit (BoolValue b) = if b then "true" else "false"
++primLit UnitValue = "()"
++
++call :: T.Text -> [T.Text] -> T.Text
++call f args = "rt::sc::" <> f <> "(" <> T.intercalate ", " (map bare args) <> ")"
++
++infixOp :: T.Text -> T.Text -> T.Text -> T.Text
++infixOp op x y = "(" <> x <> " " <> op <> " " <> y <> ")"
++
++-- | Compile a 'PrimExp', given how to compile a leaf (with its type). Every
++-- operand is converted to the type its operator takes, as C's implicit
++-- conversions do it: Futhark's ImpCode relies on them (an @i64@ operation on
++-- an @i32@ operand, @sitofp_i32_f64@ of an @i64@).
++compilePE :: (Monad m) => (v -> PrimType -> m T.Text) -> PrimExp v -> m T.Text
++compilePE _ (ValueExp v) = pure $ primLit v
++compilePE f (LeafExp v t) = f v t
++compilePE f (UnOpExp op x) = do
++  x' <- operandAs f (unOpType op) x
++  pure $ case op of
++    Complement _ -> "(!" <> x' <> ")"
++    Neg Bool -> "(!" <> x' <> ")"
++    Neg (IntType t) -> call (prettyText (Sub t OverflowWrap)) [zeroOf (IntType t), x']
++    Neg (FloatType _) -> "(-" <> x' <> ")"
++    Neg Unit -> x'
++    _ -> call (prettyText op) [x']
++compilePE f (CmpOpExp cmp x y) = do
++  x' <- operandAs f (cmpOpType cmp) x
++  y' <- operandAs f (cmpOpType cmp) y
++  pure $ case cmp of
++    CmpEq _ -> infixOp "==" x' y'
++    FCmpLt _ -> infixOp "<" x' y'
++    FCmpLe _ -> infixOp "<=" x' y'
++    CmpLlt -> infixOp "<" x' y'
++    CmpLle -> infixOp "<=" x' y'
++    _ -> call (prettyText cmp) [x', y']
++compilePE f (ConvOpExp conv x) = do
++  x' <- operandAs f (fst (convOpType conv)) x
++  pure $ call (prettyText conv) [x']
++compilePE f (BinOpExp bop x y) = do
++  x' <- operandAs f (binOpType bop) x
++  y' <- operandAs f (binOpType bop) y
++  pure $ case bop of
++    FAdd _ -> infixOp "+" x' y'
++    FSub _ -> infixOp "-" x' y'
++    FMul _ -> infixOp "*" x' y'
++    FDiv _ -> infixOp "/" x' y'
++    And _ -> infixOp "&" x' y'
++    Or _ -> infixOp "|" x' y'
++    Xor _ -> infixOp "^" x' y'
++    LogAnd -> infixOp "&&" x' y'
++    LogOr -> infixOp "||" x' y'
++    _ -> call (prettyText bop) [x', y']
++compilePE f (FunExp h args _) = do
++  args' <- case M.lookup h primFuns of
++    Just (ts, _, _) | length ts == length args -> zipWithM (operandAs f) ts args
++    _ -> mapM (compilePE f) args
++  pure $ call ("fun_" <> snakeOrEscape h) args'
++
++-- | An operand as a value of the type its operator takes.
++operandAs :: (Monad m) => (v -> PrimType -> m T.Text) -> PrimType -> PrimExp v -> m T.Text
++operandAs f t x = convertTo t (primExpType x) <$> compilePE f x
++
++-- | An expression standing alone (an argument, a condition, a value): with
++-- the parentheses that enclose all of it removed, which Rust's
++-- @unused_parens@ lint asks for. Inside an operator's operand the
++-- parenthesised form ('compileExpP') is used.
++bare :: T.Text -> T.Text
++bare t
++  | T.length t >= 2 && T.head t == '(' && T.last t == ')' && closesAtEnd = bare (T.init (T.tail t))
++  | otherwise = t
++  where
++    closesAtEnd = go (0 :: Int) (T.unpack (T.init t))
++    go d [] = d > 0
++    go d (c : cs)
++      | c == '(' = go (d + 1) cs
++      | c == ')' = d - 1 > 0 && go (d - 1) cs
++      | otherwise = go d cs
++
++-- | An expression, parenthesised when it is compound (an operand).
++compileExpP :: Exp -> GenM T.Text
++compileExpP = compilePE $ \v t -> do
++  v' <- varRef v
++  declared <- asks $ M.lookup v . envTypes
++  -- A variable read at another type than it was declared with: C's implicit conversion.
++  pure $ maybe id (convertTo t) declared (v' <> ".get()")
++
++compileExp :: Exp -> GenM T.Text
++compileExp = fmap bare . compileExpP
++
++compileTExp :: TExp t -> GenM T.Text
++compileTExp = compileExp . untyped
++
++-- | A tuning parameter's value, as an @i64@.
++tuningIdx :: Name -> GenM Int
++tuningIdx key = do
++  m <- asks envTuning
++  case M.lookup key m of
++    Just i -> pure i
++    Nothing -> compilerLimitation $ "The rust-wgpu backend found no tuning parameter " <> nameToText key
++
++-- | Compile a 'KernelConstExp'. @tuning@ and @set@ are the Rust expressions
++-- of the tuning values (@&[i64]@) and of whether each was set by the user.
++compileConstExp :: T.Text -> T.Text -> KernelConstExp -> GenM T.Text
++compileConstExp tuning set = compilePE leaf
++  where
++    leaf (SizeConst key _) t = do
++      i <- tuningIdx key
++      pure $ convertFromI64 t $ tuning <> "[" <> showT i <> "]"
++    leaf (SizeMaxConst cls) t = do
++      c <- ctxRef
++      pure $ convertFromI64 t $ c <> ".size_max(" <> strLit (prettyText cls) <> ")"
++    leaf (SizeUserParam key def) t = do
++      i <- tuningIdx key
++      def' <- compileConstExp tuning set def
++      pure $
++        "(if " <> set <> "[" <> showT i <> "] { " <> convertFromI64 t (tuning <> "[" <> showT i <> "]") <> " } else { " <> def' <> " })"
++
++-- | An expression of one type as a value of another, as C's implicit
++-- conversion does it (Futhark's C relies on it, e.g. an @int64_t@ variable
++-- set from an @int32_t@ expression).
++convertTo :: PrimType -> PrimType -> T.Text -> T.Text
++convertTo to from e
++  | to == from = e
++  | to == Bool = "(" <> e <> " != " <> zeroOf from <> ")"
++  | otherwise = "(" <> e <> " as " <> rustPrim to <> ")"
++
++-- | Compile an expression as a value of the given type.
++compileExpAs :: PrimType -> Exp -> GenM T.Text
++compileExpAs t e = bare . convertTo t (primExpType e) <$> compileExpP e
++
++-- | An @i64@ expression as a value of the given type, as C's implicit
++-- conversion of an @int64_t@ does it.
++convertFromI64 :: PrimType -> T.Text -> T.Text
++convertFromI64 (IntType Int64) e = e
++convertFromI64 t e = "(" <> e <> " as " <> rustPrim t <> ")"
++
++-- * Free names
++
++-- | Every name mentioned anywhere in the code other than at its declaration.
++mentioned :: Code HostOp -> S.Set VName
++mentioned (x :>>: y) = mentioned x <> mentioned y
++mentioned (For _ bound body) = names (freeIn bound) <> mentioned body
++mentioned (While cond body) = names (freeIn cond) <> mentioned body
++mentioned (If cond t f) = names (freeIn cond) <> mentioned t <> mentioned f
++mentioned DeclareMem {} = mempty
++mentioned DeclareScalar {} = mempty
++mentioned DeclareArray {} = mempty
++mentioned (Op op) = hostOpNames op
++mentioned (Allocate v size _) = S.insert v (names (freeIn size))
++mentioned (Free v _) = S.singleton v
++mentioned (Copy _ shape (dst, _) (doff, dstrides) (src, _) (soff, sstrides)) =
++  S.fromList [dst, src] <> names (freeIn shape <> freeIn doff <> freeIn dstrides <> freeIn soff <> freeIn sstrides)
++mentioned (Write v i _ _ _ e) = S.insert v (names (freeIn i <> freeIn e))
++mentioned (Read x v i _ _ _) = S.fromList [x, v] <> names (freeIn i)
++mentioned (SetScalar x e) = S.insert x (names (freeIn e))
++mentioned (SetMem x y _) = S.fromList [x, y]
++mentioned (Call dests _ args) = S.fromList dests <> names (freeIn args)
++mentioned (Assert e msg _) = names (freeIn e <> foldMap freeIn msg)
++mentioned (TracePrint msg) = names (foldMap freeIn msg)
++mentioned (GetUserParam v _ def) = S.insert v (names (freeIn def))
++mentioned Skip = mempty
++mentioned Meta {} = mempty
++mentioned DebugPrint {} = mempty
++
++names :: Names -> S.Set VName
++names = S.fromList . namesToList
++
++hostOpNames :: HostOp -> S.Set VName
++hostOpNames (LaunchKernel _ _ shared args grid block_dims) =
++  names (freeIn shared <> foldMap argNames args <> freeIn grid <> foldMap blockNames block_dims)
++  where
++    argNames (ValueKArg e _) = freeIn e
++    argNames (MemKArg v) = oneName v
++    blockNames (Left e) = freeIn e
++    blockNames (Right _) = mempty
++hostOpNames (GetSize v _) = S.singleton v
++hostOpNames (CmpSizeLe v _ x) = S.insert v (names (freeIn x))
++hostOpNames (GetSizeMax v _) = S.singleton v
++
++-- | The declared scalar types of a body.
++declarations :: Code a -> M.Map VName PrimType
++declarations (x :>>: y) = declarations x <> declarations y
++declarations (For i bound body) = M.singleton i (primExpType bound) <> declarations body
++declarations (While _ body) = declarations body
++declarations (If _ t f) = declarations t <> declarations f
++declarations (DeclareScalar v _ t) = M.singleton v t
++declarations _ = mempty
++
++paramDecls :: [Param] -> M.Map VName PrimType
++paramDecls = foldMap one
++  where
++    one (ScalarParam v t) = M.singleton v t
++    one MemParam {} = mempty
++
++-- * Statements
++
++isMentioned :: VName -> GenM Bool
++isMentioned v = asks $ S.member v . envMentioned
++
++compileCode :: Code HostOp -> GenM ()
++compileCode Skip = pure ()
++compileCode (x :>>: y) = compileCode x >> compileCode y
++compileCode (For i bound body) = do
++  b <- compileExp bound
++  let used = i `S.member` mentioned body
++      t = rustPrim (primExpType bound)
++      range = zeroOf (primExpType bound) <> ".." <> b
++  if used
++    then block ("for " <> vname i <> "_i in " <> range) $ do
++      line $ "let " <> vname i <> " = rt::Var::<" <> t <> ">::new(" <> vname i <> "_i);"
++      compileCode body
++    else block ("for _ in " <> range) $ compileCode body
++compileCode (While cond body) = do
++  c <- compileTExp cond
++  block ("while " <> c) $ compileCode body
++compileCode (If cond t f) = do
++  c <- compileTExp cond
++  line $ "if " <> c <> " {"
++  indented $ compileCode t
++  case f of
++    Skip -> line "}"
++    _ -> do
++      line "} else {"
++      indented $ compileCode f
++      line "}"
++compileCode (Meta (MetaComment c)) =
++  forM_ (T.lines c) $ \l -> line $ "// " <> l
++compileCode (Meta MetaProvenance {}) = pure ()
++compileCode (DeclareMem v space) = do
++  used <- isMentioned v
++  when used $ line $ "let " <> vname v <> " = " <> memType space <> "::new();"
++compileCode (DeclareScalar v _ t) = do
++  used <- isMentioned v
++  when used $ line $ "let " <> vname v <> " = rt::Var::<" <> rustPrim t <> ">::new(" <> zeroOf t <> ");"
++compileCode (DeclareArray v t contents) = do
++  used <- isMentioned v
++  when used $ case contents of
++    ArrayValues vs ->
++      line $ "let " <> vname v <> " = rt::HostMem::from_values::<" <> rustPrim t <> ">(&[" <> T.intercalate ", " (map primLit vs) <> "]);"
++    ArrayZeros n ->
++      line $ "let " <> vname v <> " = rt::HostMem::zeros(" <> showT (n * primByteSize t) <> ");"
++compileCode (Allocate v (Count size) space) = do
++  v' <- varRef v
++  size' <- compileTExp size
++  case space of
++    Space "device" -> do
++      c <- ctxRef
++      line $ v' <> ".alloc(" <> c <> ", " <> size' <> ", " <> strLit (prettyText v) <> ")?;"
++    DefaultSpace -> line $ v' <> ".alloc(" <> size' <> ");"
++    _ -> compilerLimitation $ "The rust-wgpu backend does not support the memory space " <> prettyText space
++compileCode (Free v _) = do
++  v' <- varRef v
++  line $ v' <> ".free();"
++compileCode (Copy t shape (dst, dspace) (Count doff, dstrides) (src, sspace) (Count soff, sstrides))
++  | t == Unit = pure ()
++  | otherwise = do
++      dst' <- varRef dst
++      src' <- varRef src
++      doff' <- compileTExp doff
++      soff' <- compileTExp soff
++      dstrides' <- mapM (compileTExp . unCount) dstrides
++      sstrides' <- mapM (compileTExp . unCount) sstrides
++      shape' <- mapM (compileTExp . unCount) shape
++      let arr xs = "&[" <> T.intercalate ", " xs <> "]"
++          lmad m o ss = "rt::Lmad::new(&" <> m <> ", " <> o <> ", " <> arr ss <> ")"
++          rest =
++            T.intercalate
++              ", "
++              [showT (primByteSize t :: Int), lmad dst' doff' dstrides', lmad src' soff' sstrides', arr shape']
++      case (dspace, sspace) of
++        (Space "device", Space "device") -> do
++          c <- ctxRef
++          s <- stRef
++          line $ "rt::lmad_copy_dev2dev(" <> c <> ", &" <> s <> ".prog, " <> rest <> ")?;"
++        (Space "device", DefaultSpace) -> do
++          c <- ctxRef
++          line $ "rt::lmad_copy_host2dev(" <> c <> ", " <> rest <> ")?;"
++        (DefaultSpace, Space "device") -> do
++          c <- ctxRef
++          line $ "rt::lmad_copy_dev2host(" <> c <> ", " <> rest <> ")?;"
++        (DefaultSpace, DefaultSpace) ->
++          line $ "rt::lmad_copy_host2host(" <> rest <> ")?;"
++        _ -> compilerLimitation $ "The rust-wgpu backend cannot copy from " <> prettyText sspace <> " to " <> prettyText dspace
++compileCode (Write _ _ Unit _ _ _) = pure ()
++compileCode (Write mem (Count i) t space _ e) = do
++  mem' <- varRef mem
++  i' <- compileTExp i
++  e' <- compileExpAs t e
++  case space of
++    Space "device" -> do
++      c <- ctxRef
++      line $ "rt::write_scalar::<" <> rustPrim t <> ">(" <> c <> ", &" <> mem' <> ", " <> i' <> ", " <> e' <> ")?;"
++    DefaultSpace -> line $ mem' <> ".write::<" <> rustPrim t <> ">(" <> i' <> ", " <> e' <> ")?;"
++    _ -> compilerLimitation $ "The rust-wgpu backend does not support the memory space " <> prettyText space
++compileCode (SetScalar x e) = do
++  x' <- varRef x
++  t <- scalarType x
++  e' <- compileExpAs t e
++  line $ x' <> ".set(" <> e' <> ");"
++compileCode (Read x mem (Count i) t space _) = do
++  x' <- varRef x
++  mem' <- varRef mem
++  i' <- compileTExp i
++  case (t, space) of
++    (Unit, _) -> line $ x' <> ".set(());"
++    (_, Space "device") -> do
++      c <- ctxRef
++      line $ x' <> ".set(rt::read_scalar::<" <> rustPrim t <> ">(" <> c <> ", &" <> mem' <> ", " <> i' <> ")?);"
++    (_, DefaultSpace) -> line $ x' <> ".set(" <> mem' <> ".read::<" <> rustPrim t <> ">(" <> i' <> ")?);"
++    _ -> compilerLimitation $ "The rust-wgpu backend does not support the memory space " <> prettyText space
++compileCode (SetMem x y _) = do
++  x' <- varRef x
++  y' <- varRef y
++  line $ x' <> ".set_from(&" <> y' <> ");"
++compileCode (Call dests fname args) = do
++  funs <- asks envFuns
++  callee <- case M.lookup fname funs of
++    Just f -> pure f
++    Nothing -> compilerLimitation $ "The rust-wgpu backend found no function " <> nameToText fname
++  c <- ctxRef
++  s <- stRef
++  args' <- forM (zip args (functionInput callee)) $ \case
++    (ExpArg e, ScalarParam _ t) -> compileExpAs t e
++    (ExpArg e, MemParam {}) -> compileExp e
++    (MemArg v, _) -> ("&" <>) <$> varRef v
++  let callText = funName fname <> "(" <> T.intercalate ", " (c : s : args') <> ")?"
++      outs = functionOutput callee
++  if null outs
++    then line $ callText <> ";"
++    else do
++      r <- fresh "r"
++      line $ "let " <> r <> " = " <> callText <> ";"
++      forM_ (zip3 [(0 :: Int) ..] dests outs) $ \(k, d, p) -> do
++        d' <- varRef d
++        case p of
++          ScalarParam _ pt -> do
++            dt <- scalarType d
++            line $ d' <> ".set(" <> bare (convertTo dt pt (r <> "." <> showT k)) <> ");"
++          MemParam {} -> line $ d' <> ".set_from(&" <> r <> "." <> showT k <> ");"
++compileCode (Assert e msg _) = do
++  e' <- compileExpP e
++  msg' <- errorMsg msg
++  block ("if !" <> e') $
++    line $ "return Err(rt::Error::new(" <> msg' <> "));"
++compileCode DebugPrint {} = pure ()
++compileCode (TracePrint msg) = do
++  msg' <- errorMsg msg
++  c <- ctxRef
++  line $ c <> ".trace(&" <> msg' <> ");"
++compileCode (GetUserParam v key def) = do
++  v' <- varRef v
++  i <- tuningIdx key
++  s <- stRef
++  def' <- compileTExp def
++  line $ v' <> ".set(if " <> s <> ".prog.tuning_set(" <> showT i <> ") { " <> s <> ".prog.tuning(" <> showT i <> ") } else { " <> def' <> " });"
++compileCode (Op op) = compileHostOp op
++
++-- | A @format!@ expression for an error message.
++errorMsg :: ErrorMsg Exp -> GenM T.Text
++errorMsg (ErrorMsg parts) = do
++  (fmts, args) <- unzip <$> mapM onPart parts
++  pure $ "format!(" <> T.intercalate ", " (strLit (mconcat fmts) : concat args) <> ")"
++  where
++    onPart (ErrorString s) = pure (T.replace "{" "{{" (T.replace "}" "}}" s), [])
++    onPart (ErrorVal Unit _) = pure ("()", [])
++    onPart (ErrorVal _ e) = do
++      e' <- compileExp e
++      pure ("{}", [e'])
++
++compileHostOp :: HostOp -> GenM ()
++compileHostOp (GetSize v key) = do
++  v' <- varRef v
++  i <- tuningIdx key
++  s <- stRef
++  t <- scalarType v
++  line $ v' <> ".set(" <> bare (convertFromI64 t (s <> ".prog.tuning(" <> showT i <> ")")) <> ");"
++compileHostOp (CmpSizeLe v key x) = do
++  v' <- varRef v
++  i <- tuningIdx key
++  s <- stRef
++  x' <- compileExpP x
++  line $ v' <> ".set(" <> s <> ".prog.tuning(" <> showT i <> ") <= " <> x' <> ");"
++compileHostOp (GetSizeMax v cls) = do
++  v' <- varRef v
++  c <- ctxRef
++  t <- scalarType v
++  line $ v' <> ".set(" <> bare (convertFromI64 t (c <> ".size_max(" <> strLit (prettyText cls) <> ")")) <> ");"
++compileHostOp (LaunchKernel _safety kname _shared args grid block_dims) = do
++  idxs <- asks envKernelIdx
++  idx <- case M.lookup kname idxs of
++    Just i -> pure i
++    Nothing -> compilerLimitation $ "The rust-wgpu backend found no kernel " <> nameToText kname
++  c <- ctxRef
++  s <- stRef
++  grid' <- mapM compileExpP grid
++  block' <- forM block_dims $ \case
++    Left e -> compileExpP e
++    Right ke -> compileConstExp (s <> ".prog.tunings()") (s <> ".prog.tunings_set()") ke
++  let dims [] = ["0", "0", "0"]
++      dims [x] = [x, "1", "1"]
++      dims [x, y] = [x, y, "1"]
++      dims xs = take 3 xs
++      asU32 x = if x `elem` ["0", "1"] then x <> "u32" else x <> " as u32"
++      triple xs = "[" <> T.intercalate ", " (map asU32 (dims xs)) <> "]"
++  vals <- fmap concat $ forM args $ \case
++    ValueKArg e t -> do
++      e' <- compileExpAs t e
++      pure [karg t e']
++    MemKArg _ -> pure []
++  mems <- fmap concat $ forM args $ \case
++    ValueKArg {} -> pure []
++    MemKArg v -> (\x -> ["&" <> x]) <$> varRef v
++  line $
++    "rt::launch("
++      <> T.intercalate
++        ", "
++        [ c,
++          "&" <> s <> ".prog",
++          showT idx,
++          triple grid',
++          triple block',
++          "&[" <> T.intercalate ", " vals <> "]",
++          "&[" <> T.intercalate ", " mems <> "]"
++        ]
++      <> ")?;"
++  where
++    karg (IntType Int8) e = "rt::KArg::I8(" <> e <> ")"
++    karg (IntType Int16) e = "rt::KArg::I16(" <> e <> ")"
++    karg (IntType Int32) e = "rt::KArg::I32(" <> e <> ")"
++    karg (IntType Int64) e = "rt::KArg::I64(" <> e <> ")"
++    karg (FloatType Float32) e = "rt::KArg::F32(" <> e <> ")"
++    karg (FloatType Float64) e = "rt::KArg::F64(" <> e <> ")"
++    karg Bool e = "rt::KArg::Bool(" <> e <> ")"
++    karg t _ = compilerLimitation $ "The rust-wgpu backend cannot pass a kernel argument of type " <> prettyText t
++
++scalarType :: VName -> GenM PrimType
++scalarType v = do
++  m <- asks envTypes
++  case M.lookup v m of
++    Just t -> pure t
++    Nothing -> compilerLimitation $ "The rust-wgpu backend does not know the type of " <> prettyText v
++
++-- * Functions
++
++-- | The environment of a function body.
++withFunction :: [Param] -> Code HostOp -> GenM a -> GenM a
++withFunction params body =
++  local $ \env ->
++    let ts = paramDecls params <> declarations body
++     in env
++          { envMentioned = mentioned body,
++            envTypes = ts <> envTypes env
++          }
++
++outType :: Param -> T.Text
++outType (ScalarParam _ t) = rustPrim t
++outType (MemParam _ space) = memType space
++
++tupleType :: [T.Text] -> T.Text
++tupleType [] = "()"
++tupleType ts = "(" <> T.intercalate ", " ts <> ",)"
++
++genFunction :: Name -> Function HostOp -> GenM ()
++genFunction fname fun = withFunction (functionInput fun <> functionOutput fun) (functionBody fun) $ do
++  ment <- asks envMentioned
++  (bodyLines, usesCtx, usesSt) <- capture $ indented $ do
++    forM_ (functionInput fun) $ \case
++      ScalarParam v t
++        | v `S.member` ment ->
++            line $ "let " <> vname v <> " = rt::Var::<" <> rustPrim t <> ">::new(" <> vname v <> ");"
++        | otherwise -> pure ()
++      MemParam v _
++        | v `S.member` ment -> line $ "let " <> vname v <> " = " <> vname v <> ".clone();"
++        | otherwise -> pure ()
++    forM_ (functionOutput fun) $ \case
++      ScalarParam v t -> line $ "let " <> vname v <> " = rt::Var::<" <> rustPrim t <> ">::new(" <> zeroOf t <> ");"
++      MemParam v space -> line $ "let " <> vname v <> " = " <> memType space <> "::new();"
++    compileCode (functionBody fun)
++    let ret (ScalarParam v _) = vname v <> ".get()"
++        ret (MemParam v _) = vname v
++    line $ "Ok(" <> (if null (functionOutput fun) then "()" else "(" <> T.intercalate ", " (map ret (functionOutput fun)) <> ",)") <> ")"
++  let param (ScalarParam v t)
++        | v `S.member` ment = vname v <> ": " <> rustPrim t
++        | otherwise = "_: " <> rustPrim t
++      param (MemParam v space)
++        | v `S.member` ment = vname v <> ": &" <> memType space
++        | otherwise = "_: &" <> memType space
++      params =
++        [ (if usesCtx then "ctx" else "_") <> ": &rt::FutharkCtx",
++          (if usesSt then "st" else "_") <> ": &State"
++        ]
++          <> map param (functionInput fun)
++  line $
++    "pub fn "
++      <> funName fname
++      <> "("
++      <> T.intercalate ", " params
++      <> ") -> Result<"
++      <> tupleType (map outType (functionOutput fun))
++      <> ", rt::Error> {"
++  emitLines bodyLines
++  line "}"
++
++-- * Entry points
++
++data ArgBind = ArgBind
++  { abMem :: M.Map VName T.Text,
++    abScalar :: M.Map VName T.Text
++  }
++
++-- | The typed API type of an external value.
++extType :: ExternalValue -> T.Text
++extType (TransparentValue (ArrayValue _ _ pt s dims)) =
++  "rt::Array<" <> rustExtPrim s pt <> ", " <> showT (length dims) <> ">"
++extType (TransparentValue (ScalarValue pt s _)) = rustExtPrim s pt
++extType OpaqueValue {} = "rt::Opaque"
++
++typeDesc :: ValueDesc -> T.Text
++typeDesc (ArrayValue _ _ pt s dims) = "rt::TypeDesc { elem: " <> elemTag s pt <> ", rank: " <> showT (length dims) <> " }"
++typeDesc (ScalarValue pt s _) = "rt::TypeDesc { elem: " <> elemTag s pt <> ", rank: 0 }"
++
++valueDescs :: ExternalValue -> [ValueDesc]
++valueDescs (TransparentValue vd) = [vd]
++valueDescs (OpaqueValue _ vds) = vds
++
++genEntry :: Name -> Function HostOp -> EntryPoint -> GenM ()
++genEntry fname fun ep = do
++  let ename = entryName (entryPointName ep)
++      args = entryPointArgs ep
++      argName i = "a" <> showT (i :: Int)
++  forM_ args $ \case
++    (_, OpaqueValue {}) -> compilerLimitation "The rust-wgpu backend does not support opaque entry point arguments."
++    _ -> pure ()
++  let params = "ctx: &rt::FutharkCtx" : [argName i <> ": " <> (case ev of TransparentValue ArrayValue {} -> "&"; _ -> "") <> extType ev | (i, (_, ev)) <- zip [0 ..] args]
++      (_, result) = entryPointResults ep
++  line $ "/// The entry point `" <> nameToText (entryPointName ep) <> "`."
++  line $ "pub fn " <> ename <> "(" <> T.intercalate ", " params <> ") -> Result<" <> extType result <> ", rt::Error> {"
++  indented $ do
++    line "let st = state(ctx)?;"
++    bind <- foldM bindArg (ArgBind mempty mempty) (zip [0 ..] (map snd args))
++    inArgs <- forM (functionInput fun) $ \case
++      MemParam v _ -> case M.lookup v (abMem bind) of
++        Just e -> pure e
++        Nothing -> compilerLimitation $ "The rust-wgpu backend cannot bind the memory parameter " <> prettyText v
++      ScalarParam v _ -> case M.lookup v (abScalar bind) of
++        Just e -> pure e
++        Nothing -> compilerLimitation $ "The rust-wgpu backend cannot bind the scalar parameter " <> prettyText v
++    let outs = functionOutput fun
++        outIdx = M.fromList $ zip (map paramName outs) [(0 :: Int) ..]
++        callText = funName fname <> "(" <> T.intercalate ", " ("ctx" : "&st" : inArgs) <> ")?"
++    line $ (if null outs then "" else "let r = ") <> callText <> ";"
++    let dimExp (Constant (IntValue v)) = pure $ showT (valueIntegral v :: Integer) <> "i64"
++        dimExp (Constant v) = compilerLimitation $ "The rust-wgpu backend found a non-integer dimension " <> prettyText v
++        dimExp (Var v) = case M.lookup v outIdx of
++          Just k -> pure $ "r." <> showT k
++          Nothing -> case M.lookup v (abScalar bind) of
++            Just e -> pure e
++            Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the dimension " <> prettyText v
++        scalarOut v = case M.lookup v outIdx of
++          Just k -> pure $ "r." <> showT k
++          Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the result " <> prettyText v
++        resultOf (ArrayValue mem _ pt s dims) = do
++          k <- case M.lookup mem outIdx of
++            Just k -> pure k
++            Nothing -> compilerLimitation $ "The rust-wgpu backend cannot find the result memory " <> prettyText mem
++          dims' <- mapM dimExp dims
++          pure $
++            "rt::Array::<"
++              <> rustExtPrim s pt
++              <> ", "
++              <> showT (length dims)
++              <> ">::from_mem(r."
++              <> showT k
++              <> ".clone(), ["
++              <> T.intercalate ", " dims'
++              <> "])"
++        resultOf (ScalarValue pt s v) = do
++          e <- scalarOut v
++          pure $ if rustExtPrim s pt /= rustPrim pt then "(" <> e <> " as " <> rustExtPrim s pt <> ")" else e
++    case result of
++      TransparentValue vd -> do
++        e <- resultOf vd
++        line $ "Ok(" <> e <> ")"
++      OpaqueValue oname vds -> do
++        es <- mapM resultOf vds
++        line $ "Ok(rt::Opaque::new(" <> strLit (nameToText oname) <> ", vec![" <> T.intercalate ", " (map (\e -> "rt::Value::from(" <> e <> ")") es) <> "]))"
++  line "}"
++  -- The dynamic adapter.
++  let dname = "dyn_" <> unique (nameToText (entryPointName ep))
++  line $ "/// The entry point `" <> nameToText (entryPointName ep) <> "` over dynamic values."
++  block ("pub fn " <> dname <> "(ctx: &rt::FutharkCtx, args: &[rt::Value]) -> Result<Vec<rt::Value>, rt::Error>") $ do
++    line $ "rt::check_arity(" <> strLit (nameToText (entryPointName ep)) <> ", args, " <> showT (length args) <> ")?;"
++    argExps <- forM (zip [0 :: Int ..] args) $ \(i, (_, ev)) -> case ev of
++      TransparentValue (ArrayValue _ _ pt s dims) ->
++        pure $ "&args[" <> showT i <> "].as_array::<" <> rustExtPrim s pt <> ", " <> showT (length dims) <> ">()?"
++      TransparentValue (ScalarValue pt s _) ->
++        pure $ "args[" <> showT i <> "].as_scalar::<" <> rustExtPrim s pt <> ">()?"
++      OpaqueValue {} -> compilerLimitation "The rust-wgpu backend does not support opaque entry point arguments."
++    line $ "let r = " <> ename <> "(" <> T.intercalate ", " ("ctx" : argExps) <> ")?;"
++    line "Ok(rt::IntoValues::into_values(r))"
++  where
++    bindArg bind (i, TransparentValue (ArrayValue mem _ _ _ dims)) = do
++      let a = "a" <> showT (i :: Int)
++      bind' <- foldM (bindDim a) bind (zip [0 :: Int ..] dims)
++      pure bind' {abMem = M.insert mem (a <> ".mem()") (abMem bind')}
++    bindArg bind (i, TransparentValue (ScalarValue pt s v)) = do
++      let a = "a" <> showT (i :: Int)
++          e = if rustExtPrim s pt /= rustPrim pt then "(" <> a <> " as " <> rustPrim pt <> ")" else a
++      pure bind {abScalar = M.insert v e (abScalar bind)}
++    bindArg _ (_, OpaqueValue {}) = compilerLimitation "The rust-wgpu backend does not support opaque entry point arguments."
++    bindDim a bind (d, dim) = do
++      let shape = a <> ".shape()[" <> showT d <> "]"
++      case dim of
++        Var v -> case M.lookup v (abScalar bind) of
++          Nothing -> pure bind {abScalar = M.insert v shape (abScalar bind)}
++          Just e -> do
++            line $ "rt::check_dim(" <> strLit (nameToText (entryPointName ep)) <> ", " <> shape <> ", " <> e <> ")?;"
++            pure bind
++        Constant (IntValue c) -> do
++          line $ "rt::check_dim(" <> strLit (nameToText (entryPointName ep)) <> ", " <> shape <> ", " <> showT (valueIntegral c :: Integer) <> "i64)?;"
++          pure bind
++        Constant c -> compilerLimitation $ "The rust-wgpu backend found a non-integer dimension " <> prettyText c
++
++-- * The module
++
++-- | The built-in kernels, as the runtime instantiates them: a template, the
++-- element name and type, and whether the element is atomic. Checked against
++-- the interfaces 'builtinKernels' builds, so the two cannot disagree.
++builtinTemplates :: [(T.Text, T.Text, T.Text)]
++builtinTemplates =
++  [ ("lmad_copy_NAME", "TEMPLATE_LMAD_COPY", RTS.lmadCopy),
++    ("map_transpose_NAME", "TEMPLATE_MAP_TRANSPOSE", RTS.mapTranspose),
++    ("map_transpose_NAME_low_height", "TEMPLATE_MAP_TRANSPOSE_LOW_HEIGHT", RTS.mapTransposeLowHeight),
++    ("map_transpose_NAME_low_width", "TEMPLATE_MAP_TRANSPOSE_LOW_WIDTH", RTS.mapTransposeLowWidth),
++    ("map_transpose_NAME_small", "TEMPLATE_MAP_TRANSPOSE_SMALL", RTS.mapTransposeSmall),
++    ("map_transpose_NAME_large", "TEMPLATE_MAP_TRANSPOSE_LARGE", RTS.mapTransposeLarge)
++  ]
++
++builtinElems :: [(T.Text, T.Text, Bool)]
++builtinElems = [("1b", "i8", True), ("2b", "i16", True), ("4b", "i32", False), ("8b", "i64", False)]
++
++-- | The runtime's description of a built-in kernel, or nothing for one of the
++-- program's own.
++builtinSource :: Name -> KernelInterface -> Maybe T.Text
++builtinSource n k =
++  case [ (const_name, tmpl, ename, ety, atomic)
++       | (pattern, const_name, tmpl) <- builtinTemplates,
++         (ename, ety, atomic) <- builtinElems,
++         T.replace "NAME" ename pattern == nameToText n
++       ] of
++    [(const_name, tmpl, ename, ety, atomic)]
++      | gpuProgram k == instantiate tmpl ename ety atomic ->
++          Just $
++            "Some(rt::BuiltinSource { template: "
++              <> const_name
++              <> ", name: "
++              <> strLit ename
++              <> ", elem: "
++              <> strLit ety
++              <> ", atomic: "
++              <> (if atomic then "true" else "false")
++              <> " })"
++      | otherwise ->
++          compilerLimitation $ "The rust-wgpu backend's instantiation of " <> nameToText n <> " differs from the webgpu backend's."
++    _ -> Nothing
++  where
++    instantiate kernel name elemType atomic =
++      let baseKernel =
++            if atomic
++              then T.replace "<ELEM_TYPE>" "<atomic<ELEM_TYPE>>" kernel
++              else kernel
++       in RTS.wgslPrelude <> T.replace "NAME" name (T.replace "ELEM_TYPE" elemType baseKernel)
++
++kernelInfo :: (Name, KernelInterface) -> T.Text
++kernelInfo (n, k) =
++  T.unlines
++    [ "    rt::KernelInfo {",
++      "        name: " <> strLit (zEncodeText (nameToText n)) <> ",",
++      "        scalars_binding: " <> showT (scalarsBindSlot k) <> ",",
++      "        scalars_size: " <> showT (scalarsSize k) <> ",",
++      "        scalar_offsets: &[" <> T.intercalate ", " (map showT (scalarsOffsets k)) <> "],",
++      "        binding_indices: &[" <> T.intercalate ", " (map showT (memBindSlots k)) <> "],",
++      "        used_overrides: &[" <> T.intercalate ", " (map strLit (overrideNames k)) <> "],",
++      "        dynamic_block_dims: &[" <> T.intercalate ", " ["(" <> showT i <> ", " <> strLit d <> ")" | (i, d) <- dynamicBlockDims k] <> "],",
++      "        shared_mem_overrides: &[" <> T.intercalate ", " (map strLit (sharedMemoryOverrides k)) <> "],",
++      "        builtin: " <> fromMaybe "None" (builtinSource n k) <> ",",
++      "    },"
++    ]
++
++generate ::
++  T.Text ->
++  T.Text ->
++  T.Text ->
++  [(Name, KernelConstExp)] ->
++  M.Map Name KernelInterface ->
++  Definitions HostOp ->
++  T.Text
++generate version wgsl prelude macros kernels (Definitions params _types consts (Functions funs)) =
++  T.unlines (reverse (gsLines final))
++  where
++    all_kernels = M.toList (M.union kernels builtinKernels)
++    kernel_idx = M.fromList $ zip (map fst all_kernels) [0 ..]
++    tuning = M.toList params
++    tuning_idx = M.fromList $ zip (map fst tuning) [0 ..]
++    const_names = S.fromList $ map paramName (constsDecl consts)
++    const_types = paramDecls (constsDecl consts)
++    env =
++      Env
++        { envConsts = const_names,
++          envFuns = M.fromList funs,
++          envKernelIdx = kernel_idx,
++          envTuning = tuning_idx,
++          envMentioned = mempty,
++          envTypes = const_types
++        }
++    (_, final, ()) = runRWS gen env (GenS [] 0 0 False False)
++    gen = do
++      line "// Generated by Futhark's rust-wgpu backend. Do not edit."
++      forM_ (T.lines version) $ \l -> line $ "// " <> l
++      line "//"
++      line "// One program: its entry points are `pub fn`s over `rt::FutharkCtx`; `ENTRIES` lists them with"
++      line "// their types for a host that loads this module dynamically."
++      line ""
++      line "use futhark_rust_rt as rt;"
++      line ""
++      line $ "/// The program's WGSL: the prelude and every kernel, one module."
++      line $ "pub const WGSL_PROGRAM: &str = " <> rawLit wgsl <> ";"
++      line ""
++      line "/// The WGSL prelude the built-in kernels are instantiated with."
++      line $ "pub const WGSL_PRELUDE: &str = " <> rawLit prelude <> ";"
++      forM_ builtinTemplates $ \(_, const_name, tmpl) -> do
++        line ""
++        line $ "pub const " <> const_name <> ": &str = " <> rawLit tmpl <> ";"
++      line ""
++      line "/// Every kernel: the program's own and the built-in copies and transpositions."
++      line "pub static KERNELS: &[rt::KernelInfo] = &["
++      mapM_ (mapM_ line . T.lines . kernelInfo) all_kernels
++      line "];"
++      line ""
++      line "/// The tuning parameters: name, class, default."
++      line "pub static TUNING: &[rt::TuningParam] = &["
++      forM_ tuning $ \(n, (cls, _)) ->
++        line $
++          "    rt::TuningParam { name: "
++            <> strLit (prettyText n)
++            <> ", class: "
++            <> strLit (maybe "custom" prettyText cls)
++            <> ", default: "
++            <> showT (maybe 0 (fromMaybe 0 . sizeDefault) cls)
++            <> " },"
++      line "];"
++      line ""
++      line "/// The macro definitions: override constants, evaluated once per context."
++      line $ "pub static MACRO_NAMES: &[&str] = &[" <> T.intercalate ", " (map (strLit . nameToText . fst) macros) <> "];"
++      line ""
++      (macroLines, macroCtx, _) <- capture $ indented $ do
++        es <- forM macros $ \(_, e) -> do
++          e' <- compileConstExp "tuning" "set" e
++          pure $ e' <> " as i64 as f64"
++        line $ "vec![" <> T.intercalate ", " es <> "]"
++      let usesTuning = any (T.isInfixOf "tuning[") macroLines
++          usesSet = any (T.isInfixOf "set[") macroLines
++      line $
++        "pub fn macro_values("
++          <> (if macroCtx then "ctx" else "_")
++          <> ": &rt::FutharkCtx, "
++          <> (if usesTuning then "tuning" else "_")
++          <> ": &[i64], "
++          <> (if usesSet then "set" else "_")
++          <> ": &[bool]) -> Vec<f64> {"
++      emitLines macroLines
++      line "}"
++      line ""
++      line "pub static PROGRAM: rt::ProgramDesc = rt::ProgramDesc {"
++      line "    wgsl: WGSL_PROGRAM,"
++      line "    prelude: WGSL_PRELUDE,"
++      line "    kernels: KERNELS,"
++      line "    tuning: TUNING,"
++      line "    macro_names: MACRO_NAMES,"
++      line "    macro_values,"
++      line "};"
++      line ""
++      line "/// The program's state in one context: its tuning, its pipelines' overrides, its constants."
++      block "pub struct State" $ do
++        line "pub prog: rt::Program,"
++        forM_ (constsDecl consts) $ \p -> line $ "pub " <> vname (paramName p) <> ": " <> outType' p <> ","
++      line ""
++      line "/// The program's state in this context, made (and its constants initialised) on first use."
++      line "pub fn state(ctx: &rt::FutharkCtx) -> Result<std::rc::Rc<State>, rt::Error> {"
++      line "    ctx.module_state::<State, _>(|ctx| {"
++      line "        let st = State {"
++      line "            prog: rt::Program::new(ctx, &PROGRAM),"
++      forM_ (constsDecl consts) $ \p -> line $ "            " <> vname (paramName p) <> ": " <> constInit p <> ","
++      line "        };"
++      line "        init_constants(ctx, &st)?;"
++      line "        Ok(st)"
++      line "    })"
++      line "}"
++      line ""
++      withFunction [] (constsInit consts) $ do
++        (initLines, initCtx, initSt) <- capture $ indented $ do
++          compileCode (constsInit consts)
++          line "Ok(())"
++        line $
++          "pub fn init_constants("
++            <> (if initCtx then "ctx" else "_")
++            <> ": &rt::FutharkCtx, "
++            <> (if initSt then "st" else "_")
++            <> ": &State) -> Result<(), rt::Error> {"
++        emitLines initLines
++        line "}"
++      forM_ funs $ \(n, f) -> do
++        line ""
++        genFunction n f
++      forM_ funs $ \(n, f) -> forM_ (functionEntry f) $ \ep -> do
++        line ""
++        genEntry n f ep
++      line ""
++      line "/// Every entry point, with its types, over dynamic values."
++      line "pub static ENTRIES: &[rt::EntryDesc] = &["
++      forM_ (mapMaybe functionEntry (map snd funs)) $ \ep -> do
++        let ins = concatMap (valueDescs . snd) (entryPointArgs ep)
++            outs = valueDescs (snd (entryPointResults ep))
++        line $
++          "    rt::EntryDesc { name: "
++            <> strLit (nameToText (entryPointName ep))
++            <> ", inputs: &["
++            <> T.intercalate ", " (map typeDesc ins)
++            <> "], outputs: &["
++            <> T.intercalate ", " (map typeDesc outs)
++            <> "], call: dyn_"
++            <> unique (nameToText (entryPointName ep))
++            <> " },"
++      line "];"
++    outType' (ScalarParam _ t) = "rt::Var<" <> rustPrim t <> ">"
++    outType' (MemParam _ space) = memType space
++    constInit (ScalarParam _ t) = "rt::Var::<" <> rustPrim t <> ">::new(" <> zeroOf t <> ")"
++    constInit (MemParam _ space) = memType space <> "::new()"
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index 54f4f32..ea6f965 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -75,7 +75,10 @@ data KernelState = KernelState
+     ksSharedMem :: [(WGSL.Ident, Exp)],
+     ksAtomicMem :: [WGSL.Ident],
+     ksScalars :: [WGSL.PrimType],
+-    ksBindSlots :: [Int]
++    ksBindSlots :: [Int],
++    -- | How many loops and conditionals enclose the statement being
++    -- translated. A 'SetMem' is resolved by renaming only at depth 0.
++    ksControlDepth :: Int
+   }
+ 
+ type KernelM = RWST KernelR () KernelState WebGPUM
+@@ -192,7 +195,8 @@ genKernel kernel = do
+             ksAtomicMem = mempty,
+             ksSharedMem = mempty,
+             ksScalars = mempty,
+-            ksBindSlots = mempty
++            ksBindSlots = mempty,
++            ksControlDepth = 0
+           }
+ 
+   ((), s, ()) <- runRWST gen (KernelR kernel) initial
+@@ -617,6 +621,14 @@ genCopy pt shape (dst, dst_space) (dst_offset, dst_strides) (src, src_space) (sr
+         (WGSL.Assign i $ wgslBinOp (Add Int64 OverflowWrap) (WGSL.VarExp i) one)
+         (loops ins body)
+ 
++-- | Translate code nested one level deeper in the kernel's control flow.
++underControl :: KernelM a -> KernelM a
++underControl m = do
++  modify $ \s -> s {ksControlDepth = ksControlDepth s + 1}
++  x <- m
++  modify $ \s -> s {ksControlDepth = ksControlDepth s - 1}
++  pure x
++
+ unsupported :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
+ unsupported stmt = pure $ WGSL.Comment $ "Unsupported stmt: " <> prettyText stmt
+ 
+@@ -632,7 +644,7 @@ genWGSLStm Skip = pure WGSL.Skip
+ genWGSLStm (s1 :>>: s2) = liftM2 WGSL.Seq (genWGSLStm s1) (genWGSLStm s2)
+ genWGSLStm (For iName bound body) = do
+   boundExp <- genWGSLExp bound
+-  bodyStm <- genWGSLStm body
++  bodyStm <- underControl $ genWGSLStm body
+   pure $
+     WGSL.For
+       i
+@@ -654,7 +666,7 @@ genWGSLStm (While cond body) =
+   liftM2
+     WGSL.While
+     (genWGSLExp $ untyped cond)
+-    (genWGSLStm body)
++    (underControl $ genWGSLStm body)
+ genWGSLStm (DeclareMem name (Space "shared")) = do
+   let name' = nameToIdent name
+   moduleName <- mkGlobalIdent name'
+@@ -710,11 +722,25 @@ genWGSLStm (Read tgt mem i t s _) = do
+   if atomic
+     then genArrayRead t s tgt mem i
+     else pure $ WGSL.Assign tgt' (WGSL.IndexExp mem' i')
+-genWGSLStm stm@(SetMem {}) =
+-  compilerLimitation . docText $
+-    "WebGPU backend Cannot handle SetMem statement"
+-      </> indent 2 (align (pretty stm))
+-      </> "in GPU kernel."
++-- A memory block in a kernel is a module-scope WGSL binding (or a workgroup
++-- array), never a runtime value, so @SetMem x y@ is resolved at code
++-- generation: every later use of @x@ is spelled with the binding @y@ names
++-- now. That is exact for every statement translated after this one, which is
++-- every statement executed after it, as long as the SetMem is not inside a
++-- loop or a conditional of the kernel (where the binding @x@ stands for could
++-- differ between iterations or branches).
++genWGSLStm stm@(SetMem x y _) = do
++  depth <- gets ksControlDepth
++  if depth == 0
++    then do
++      y' <- getIdent y
++      addRename (nameToIdent x) y'
++      pure $ WGSL.Comment $ "setmem resolved by renaming: " <> prettyText stm
++    else
++      compilerLimitation . docText $
++        "WebGPU backend cannot resolve a SetMem statement inside a loop or conditional"
++          </> indent 2 (align (pretty stm))
++          </> "in GPU kernel."
+ genWGSLStm (Call [dest] f args) = do
+   fun <- WGSL.CallExp . ("futrts_" <>) <$> getIdent f
+   let getArg (ExpArg e) = genWGSLExp e
+@@ -736,8 +762,8 @@ genWGSLStm (If cond cThen cElse) =
+   liftM3
+     WGSL.If
+     (genWGSLExp $ untyped cond)
+-    (genWGSLStm cThen)
+-    (genWGSLStm cElse)
++    (underControl $ genWGSLStm cThen)
++    (underControl $ genWGSLStm cElse)
+ genWGSLStm s@(Assert {}) = pure $ WGSL.Comment $ "assert: " <> prettyText s
+ genWGSLStm (Meta (MetaComment c)) =
+   pure $ WGSL.Comment c
+-- 
+2.50.1 (Apple Git-155)
+

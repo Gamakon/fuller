@@ -1,0 +1,22 @@
+[package]
+name = "futhark-rust-rt"
+version = "0.1.0"
+edition = "2021"
+description = "The runtime of Futhark's rust-wgpu backend: memory, pipelines, launches, copies and values over a caller's wgpu device"
+license = "MIT"
+
+# Its own workspace root, as futhark-wgpu-shim: not a member of fuller's build, so fuller's crate types are untouched.
+# fuller reaches the in-process evaluation host (src/host.rs) through its C entry points only (docs/PLAN_futhark_rust_wgpu.md).
+[workspace]
+
+[lib]
+name = "futhark_rust_rt"
+# rlib: what a crate that ships generated modules (UltraDim) links. dylib: the one copy of this runtime, wgpu and std
+# that the in-process evaluation host and every generation's module share (docs/PLAN_futhark_rust_wgpu.md §5).
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+# The same wgpu as fuller and the shim.
+wgpu = "=30.0.1"
+pollster = "0.3"
+regex = "1"

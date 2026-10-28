@@ -1,0 +1,38 @@
+From 103e69a521a482ce37c195848b12a5d907c9a419 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Wed, 28 Oct 2026 11:51:42 +0100
+Subject: [PATCH 2/2] feat(webgpu): SetMem of register memory in a kernel is a
+ WGSL value copy, wherever it is
+
+---
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index ea6f965..00ad26a 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -729,6 +729,20 @@ genWGSLStm (Read tgt mem i t s _) = do
+ -- every statement executed after it, as long as the SetMem is not inside a
+ -- loop or a conditional of the kernel (where the binding @x@ stands for could
+ -- differ between iterations or branches).
++--
++-- Register memory ('ScalarSpace') is a function-scope WGSL array, a value,
++-- so there @SetMem x y@ is the value copy @x = y@ wherever it is (a loop's
++-- memory parameter rotated in the kernel's loop, as in Futhark's register
++-- tiling). It is exact under Futhark's value semantics: after the SetMem the
++-- array is reached through @x@, and nothing writes @y@ while @x@ is live
++-- (that would update a consumed array).
++genWGSLStm stm@(SetMem x y (ScalarSpace _ _)) = do
++  x' <- getIdent x
++  y' <- getIdent y
++  pure $
++    WGSL.Seq
++      (WGSL.Comment $ "setmem of register memory, a value copy: " <> prettyText stm)
++      (WGSL.Assign x' (WGSL.VarExp y'))
+ genWGSLStm stm@(SetMem x y _) = do
+   depth <- gets ksControlDepth
+   if depth == 0
+-- 
+2.50.1 (Apple Git-155)
+
