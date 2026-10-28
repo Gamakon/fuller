@@ -66,7 +66,15 @@
 
 **Measured before any run:** the share of random-from-pool programs giving the all-zeros output (now 44–49 %), the number of distinct outputs per 1,400 draws (now 189–208), and the check of section A.
 
-## Order and cost
+## Order agreed with Andrew (2026-10-28)
+1. Fix all the fitness: A to G. The check of section A passes on histogram and pathfinder.
+2. The canvas: section H.
+3. Rerun histogram and pathfinder, R and C. The goal is to prove the search learns: evolution beats random search.
+4. Then the k-means centroid update (UltraDim's A7 against the A6 segmented form), not the trellis: it fits the kingdom better.
+
+All measurement is on the GPU. The CPU interpreter is a test reference only.
+
+## Order and cost (first draft)
 1. A and B together, until histogram and pathfinder pass the check (about a day).
 2. C, then E, then D, then F.
 3. Rerun R and C for histogram and pathfinder, 3 seeds each (about 6 h of GPU).
