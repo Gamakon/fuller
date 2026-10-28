@@ -156,6 +156,10 @@ impl Program {
     pub fn desc(&self) -> &'static ProgramDesc {
         self.desc
     }
+    /// The program's WGSL as its module is made: specialised ([`specialise`]).
+    pub fn wgsl(&self) -> &str {
+        &self.wgsl
+    }
     pub fn tuning(&self, i: usize) -> i64 {
         self.tuning[i]
     }

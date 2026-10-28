@@ -258,7 +258,11 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
     let program = m.program;
     // The device's set-up, and the program's own WGSL module: one shared module for every member, so a module that
     // does not validate fails them all (the driver's set-up fails, and the batch is halved).
-    let setup = s.ctx(timed).and_then(|ctx| ctx.module_check(program.wgsl).map(|()| ctx));
+    // It is checked as it will be made: specialised by the program's own macro values in this context.
+    let setup = s.ctx(timed).and_then(|ctx| {
+        let p = crate::Program::new(&ctx, program)?;
+        ctx.module_check(p.wgsl()).map(|()| ctx)
+    });
     let mut ctx = match setup {
         Ok(c) => Some(c),
         Err(e) => {

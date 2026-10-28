@@ -324,12 +324,16 @@ mod tests {
                 assert!(o.1, "{name} {}: the rust path failed: {}", input.display(), String::from_utf8_lossy(&o.3));
                 let t = recs.iter().find(|r| r.0 == "t").expect("a time record");
                 assert!(t.1, "{name} {}: the rust path's timing failed: {}", input.display(), String::from_utf8_lossy(&t.3));
-                let times: Vec<f64> = String::from_utf8_lossy(&t.3).split(' ').skip(1).map(|w| w.parse().expect("a GPU time")).collect();
+                // A run with no GPU pass (a case so small the program launches nothing) is `none`: no time to take.
+                let times: Vec<f64> = String::from_utf8_lossy(&t.3).split(' ').skip(1).filter(|w| *w != "none").map(|w| w.parse().expect("a GPU time")).collect();
                 rust_gpu = rust_gpu.min(times.iter().cloned().fold(f64::INFINITY, f64::min) / 1e3);
                 rust_wall = rust_wall.min(t.2 as f64 / (runs + 1) as f64 / 1e3);
                 let (shim_out, _) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim path's run");
                 let (_, report) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, true, runs).expect("the shim path's timed run");
-                shim_gpu = shim_gpu.min(report.fastest_run_ns(runs).expect("the shim's GPU time") / 1e3);
+                // A case with no GPU pass has no GPU time on the shim either (an error there, not a time).
+                if let Ok(ns) = report.fastest_run_ns(runs) {
+                    shim_gpu = shim_gpu.min(ns / 1e3);
+                }
                 // Futhark's binary format allows whitespace after a value, and an executable's standard output ends
                 // with a newline: the values are compared, the trailing whitespace is not.
                 let v = |b: &[u8]| b.trim_ascii_end().to_vec();
