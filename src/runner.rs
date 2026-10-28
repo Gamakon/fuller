@@ -444,7 +444,12 @@ impl HallOfFame {
 
     /// Write every entry's text to `out/hall_of_fame/rank<N>.txt` and return the stream's rows.
     pub fn write(&self, out: &Path) -> Result<Vec<HofRow>, String> {
-        let dir: PathBuf = out.join("hall_of_fame");
+        self.write_in(out, "hall_of_fame")
+    }
+
+    /// [`HallOfFame::write`] into `out/<name>/` (a staged runner keeps one hall of fame a stage).
+    pub fn write_in(&self, out: &Path, name: &str) -> Result<Vec<HofRow>, String> {
+        let dir: PathBuf = out.join(name);
         std::fs::create_dir_all(&dir).map_err(|e| format!("hall of fame {}: {e}", dir.display()))?;
         let mut rows = Vec::with_capacity(self.entries.len());
         for (i, e) in self.entries.iter().enumerate() {

@@ -437,6 +437,8 @@ struct Judge<'a> {
     bugs: u64,
     /// Of the bugs, the branch compiler's "Cannot handle SetMem statement" (a known compiler limitation).
     setmem: u64,
+    /// Of the bugs, Futhark's internal compiler errors (each a kingdom bug, logged with its program).
+    ice: u64,
     bug_log: PathBuf,
     max_work: u128,
     mode: EvalMode,
@@ -686,6 +688,9 @@ impl<'a> Judge<'a> {
         // docs/PROPOSAL_memory_views_setmem.md).
         if msg.contains("Cannot handle SetMem statement") {
             self.setmem += 1;
+        }
+        if msg.to_lowercase().contains("internal compiler error") {
+            self.ice += 1;
         }
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
             let _ = writeln!(f, "==== {} our software has a bug: a legal gene's program failed\n{msg}\n---- program\n{source}", utc());
@@ -950,6 +955,33 @@ fn tree_of_json(v: &serde_json::Value) -> Result<Tree, String> {
     })
 }
 
+/// THE VERDICT of an exact champion's re-time against the published program (one function for the run's report and
+/// `--rescore`, plan section G, fault 12): "beat" needs the median below the least A/A ratio AND at least 9 of 11
+/// pairs faster (a sign test, one-sided p = 0.033; the study plan's rule of 2026-10-28 13:10Z); "exact but slower"
+/// the median above the greatest A/A ratio; otherwise "matched".
+fn speed_verdict(ratios: &[f64], aa: &[f64]) -> &'static str {
+    let floor = aa.iter().cloned().fold(f64::INFINITY, f64::min);
+    let ceiling = aa.iter().cloned().fold(0.0, f64::max);
+    let m = median(ratios);
+    let faster = ratios.iter().filter(|r| **r < 1.0).count();
+    if m < floor && faster * 11 >= 9 * ratios.len() {
+        "beat (exact and faster: the median below the least A/A ratio and at least 9 of 11 pairs faster)"
+    } else if m > ceiling {
+        "exact but slower (the median above the greatest A/A ratio)"
+    } else {
+        "matched (exact, within the A/A noise)"
+    }
+}
+
+/// The running executable's identity (its path and the hash of its bytes), so every seed of a comparison can be
+/// shown to have run on one binary (plan section G, fault 17).
+fn binary_identity() -> String {
+    match std::env::current_exe() {
+        Ok(p) => format!("{} {}", p.display(), std::fs::read(&p).map(|b| text_hash_bytes(&b)).unwrap_or_else(|e| format!("unreadable: {e}"))),
+        Err(e) => format!("unknown: {e}"),
+    }
+}
+
 /// The tag of the random-search control's own random stream (regime C): `seed ^ REGIME_C_TAG`.
 const REGIME_C_TAG: u64 = 0x5245_4749_4D45_5F43;
 
@@ -1154,6 +1186,11 @@ struct Run<'a> {
     stage: FitnessStage,
     /// The evaluation at which an individual was first exact on every case (training and held-out).
     first_exact: Option<(u64, u32, u64)>,
+    /// The first exact program's test cases exact (of the test set, never in the fitness).
+    first_exact_test: Option<usize>,
+    /// THE CHAMPION: the best individual scored in the current stage, the hall of fame's rank 1 (plan section G,
+    /// faults 15 and 16): every champion field of the report and its re-time come from it, never the last batch.
+    champion: Option<Individual>,
 }
 
 impl Run<'_> {
@@ -1169,6 +1206,7 @@ impl Run<'_> {
         let e = self.judge.evaluate(&ind.tree, &ind.source, self.stage)?;
         if e.quality.perfect() && self.first_exact.is_none() {
             self.first_exact = Some((self.judge.evaluations, generation, ind.id));
+            self.first_exact_test = Some(e.quality.exact_test);
             self.tel.note(generation, format!("first exact program on every case (training and held-out): evaluation {}, generation {generation}, id {}", self.judge.evaluations, ind.id))?;
             println!("# {} FIRST EXACT on every case at evaluation {}, generation {generation}: {}", utc(), self.judge.evaluations, sexp(self.gen.k, &ind.tree));
         }
@@ -1191,7 +1229,15 @@ impl Run<'_> {
         extras.insert("stage".to_string(), f64::from(self.stage.number()));
         self.hof.offer(FameEntry { key: text_hash(&ind.source), fitness: e.fitness, born: ind.born, text: format!("{text}\n\n{}", ind.source), nodes: Some(ind.tree.level_order().len() as u32), picture: None, extras });
         ind.eval = Some(e);
+        self.offer_champion(ind);
         Ok(())
+    }
+
+    /// The champion of the stage: strictly better replaces it (ties keep the earlier, as the hall of fame does).
+    fn offer_champion(&mut self, ind: &Individual) {
+        if self.champion.as_ref().is_none_or(|c| ind.fit() < c.fit()) {
+            self.champion = Some(ind.clone());
+        }
     }
 
     fn checkpoint(&self, generation: u32, population: &[Individual], seconds: f64, regime: &str, rng_state: u64) -> Result<(), String> {
@@ -1370,13 +1416,15 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
         hof: HallOfFame::new(5),
         stage: if regime == "P" { FitnessStage::QualityAndSpeed } else { FitnessStage::Quality },
         first_exact: None,
+        first_exact_test: None,
+        champion: None,
     };
 
     // The A/A noise floor: the yardstick against itself (one warm-up pair discarded, then 11).
@@ -1462,18 +1510,12 @@ fn real_main() -> Result<(), String> {
             let exe = compile_program_prebuilt(&source, &out.join("rescore_build"), &shim)?;
             let ratios = run.judge.time_fresh(&exe, 11)?;
             let m = median(&ratios);
-            rep.push_str(&format!("champion_vs_published_ratios\t{}\nchampion_vs_published_median\t{m:.4}\n", fmt(&ratios)));
+            rep.push_str(&format!("champion_vs_published_ratios\t{}\nchampion_vs_published_median\t{m:.4}\npairs_faster\t{} of {}\n", fmt(&ratios), ratios.iter().filter(|r| **r < 1.0).count(), ratios.len()));
             if let Some(want) = &run.judge.timing.output {
                 let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
             }
-            if m < floor {
-                "beat (exact and faster: the median below the least A/A ratio)"
-            } else if m <= ceiling {
-                "matched (exact, within the A/A noise)"
-            } else {
-                "exact but slower (the median above the greatest A/A ratio)"
-            }
+            speed_verdict(&ratios, &all)
         } else {
             "not reached (not exact)"
         };
@@ -1663,9 +1705,18 @@ fn real_main() -> Result<(), String> {
             }
             // The population is re-scored in stage 2 so that selection compares like with like (not new evaluations).
             // (Their quality is known, so none of them is a new evaluation.)
+            // One hall of fame a stage (fault 16): stage 1's is kept in hall_of_fame_stage1/, and stage 2's starts
+            // from the re-scored population, so its rank 1 is the fastest exact program, not the first one.
+            let rows = run.hof.write_in(&out, "hall_of_fame_stage1")?;
+            run.tel.note(generation, format!("stage 1's hall of fame ({} entries) is in hall_of_fame_stage1/", rows.len()))?;
+            run.hof = HallOfFame::new(5);
+            run.champion = None;
             for ind in population.iter_mut() {
                 let e = run.judge.evaluate(&ind.tree, &ind.source, run.stage)?;
-                ind.eval = Some(e);
+                ind.eval = Some(e.clone());
+                let text = sexp(&k, &ind.tree);
+                run.hof.offer(FameEntry { key: text_hash(&ind.source), fitness: e.fitness, born: ind.born, text: format!("{text}\n\n{}", ind.source), nodes: Some(ind.tree.level_order().len() as u32), picture: None, extras: BTreeMap::new() });
+                run.offer_champion(ind);
             }
             population.sort_by(|a, b| a.fit().total_cmp(&b.fit()));
         }
@@ -1951,12 +2002,12 @@ fn real_main() -> Result<(), String> {
     run.tel.hall_of_fame(last_generation, rows)?;
     println!("# {} stopped ({stopped_by}) after generation {last_generation}, {:.1} min; {} evaluations ({} compiled, {} cache hits, {} bugs); {:.2} evaluations a second", utc(), seconds / 60.0, run.judge.evaluations, run.judge.compiled, run.judge.hits, run.judge.bugs, run.judge.evaluations as f64 / seconds.max(1e-9));
 
-    // ---- the report ----
-    let best = population[0].clone();
+    // ---- the report: every champion field from the champion, the hall of fame's rank 1 ----
+    let best = run.champion.clone().unwrap_or_else(|| population[0].clone());
     let be = best.eval.clone().ok_or("an unscored best")?;
     std::fs::write(out.join("best.fut"), &best.source).map_err(|e| e.to_string())?;
     let mut rep = format!(
-        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\neval\t{mode:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nbatch_halvings\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
+        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\neval\t{mode:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nbatch_halvings\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\nscored\t{}\nbest_exact_test\t{} of {n_test}\nfirst_exact_test\t{}\nbugs_internal_compiler_error\t{}\nbinary\t{}\n",
         seconds / 60.0,
         run.judge.evaluations,
         run.judge.compiled,
@@ -1979,6 +2030,11 @@ fn real_main() -> Result<(), String> {
         ref_q.work,
         sexp(&k, &best.tree),
         run.judge.max_work,
+        run.judge.scored,
+        be.quality.exact_test,
+        run.first_exact_test.map_or("-".to_string(), |t| format!("{t} of {n_test}")),
+        run.judge.ice,
+        binary_identity(),
     );
     if backend == Backend::Gpu {
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
@@ -2005,9 +2061,10 @@ fn real_main() -> Result<(), String> {
             // A speed claim counts only below the noise floor (the least ratio of both A/A sets) AND with at least 9
             // of 11 pairs faster (a sign test, one-sided p = 0.033): the rule of the study plan, 2026-10-28 13:10Z,
             // after a quiet A/A set beside a noisy re-time made the published program itself "faster".
-            let floor = noise.iter().chain(inrun_aa.iter()).cloned().fold(f64::INFINITY, f64::min);
-            let faster = ratios.iter().filter(|r| **r < 1.0).count();
-            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\n", if median(&ratios) < floor && faster >= 9 { "yes" } else { "no" }));
+            let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
+            let floor = all.iter().cloned().fold(f64::INFINITY, f64::min);
+            let v = speed_verdict(&ratios, &all);
+            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\nverdict\t{v}\n", if v.starts_with("beat") { "yes" } else { "no" }));
         }
     }
     // The best-ever program (the hall of fame's rank 1). For C, which has no selection, the best above is only the
