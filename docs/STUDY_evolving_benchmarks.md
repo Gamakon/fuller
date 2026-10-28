@@ -56,6 +56,22 @@
   - Speed (stage 2) is measured only in P, which answers H3. P keeps stage 2, capped by its budget and the guard.
   - The reason: in stage 2 every candidate is timed (about 10 s each on reduce), so an R or C run that had already found an exact program spent its hour answering a question that only P asks.
   - Reduce R seed 1 ran before the change. It counts as exact at evaluation 19.
+- **Changes, 2026-10-27 21:00Z to 2026-10-28 05:00Z (all before any P run that counts):**
+  - **Timing (H3).**
+    - A program's timed pairs are kept by its text in 11 slots (`runner::TimingSlots`). Each pair is its own speed input; they are never averaged.
+    - The micro benchmarks are timed on their own input of n = 2^24 (`Problem::timing_n`), never a quality case. On the 1,000-element training case, reduce's A/A ratios fell in three clusters (0.30, 1.00, 3.3), the GPU's clock states.
+    - The first process of a freshly compiled executable is discarded.
+    - Micro P runs use `--runs 60`.
+    - Every P run is gated first: both A/A sets (22 pairs) must be within ±5 %.
+    - A speed claim counts only when the champion's 11-pair re-time median is below the least A/A ratio.
+  - **Budget.**
+    - R and C get a guard large enough for 1,400 evaluations (180 min), so H2 compares equal budgets.
+    - Histogram R seed 1 was rerun at the full budget. Histogram R seed 2 (1,176 evaluations, stopped) is a short run and is replaced.
+    - Pathfinder R seed 1 (the pilot: 1,000 evaluations) was rerun at 1,400.
+  - **Batched evaluation (fuller 50339252; from the first run after pathfinder R seed 1, about 05:15Z 2026-10-28).**
+    - A generation is one Futhark program in one process (`--eval batch`).
+    - It gives bit-identical quality inputs and the same selection as the per-candidate path, tested on the GPU. Earlier runs used the per-candidate path, so the two sets of results are comparable.
+    - The shim now caches Metal pipelines. Before that, histogram candidates spent most of their time creating a pipeline at every kernel launch (6,210 creations, 14.5 s, in one process).
 - **Machinery, the same for all:**
   - the general Futhark signature kingdom;
   - marriage with distinct parents;
