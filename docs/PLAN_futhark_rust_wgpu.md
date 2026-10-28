@@ -202,4 +202,52 @@ has a translation, except the stated limitations below.
 | 3 runtime | every benchmark's output bit-identical to `futhark c` on its cases, on Metal; the time a call no worse than the shim path's | `futhark_rust::tests::on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim` (table below) |
 | 4 evolution | `--eval rust`: quality inputs bit-identical to `--eval batch` over 3 generations; evaluations per second against batch | `futhark_batch::tests::on_the_gpu_the_rust_backend_equals_the_batch_backend` and the paired runs (below) |
 
-Results are filled in from the runs; each table states its conditions.
+### Measured (2026-10-28, Apple M3 Max, wgpu 30.0.1 on Metal)
+
+**Step 2: compiles.** The fork writes all five benchmark modules (130–254 KB of Rust each). With `-D warnings` they
+compile against the runtime on wgpu 30.0.1 and on 27.0.1.
+
+| set | rust-wgpu compiles | webgpu (pinned branch binary) compiles |
+|---|---|---|
+| the five benchmarks' published programs | 5 of 5 | 5 of 5 |
+| 24 random kingdom programs and the reference, for each of the four problems (`every_problems_random_programs_compile_to_rust`) | 100 of 100, in 4 of 4 batches | 4 of 4 batches |
+| the A7 shape programs (`futhark-wgpu-shim/tests/s5/a7_*.fut`) | 2 of 2, both naga-valid | 0 of 2 ("Cannot handle SetMem statement in GPU kernel") |
+
+A7 needed three fork changes:
+- SetMem of register memory as a value copy (patch 0002);
+- a register tile sized by a specialisation constant (0004);
+- an upstream defect: a boolean kernel constant was declared `i64`, so `if` on it was invalid WGSL (0006).
+
+**Compile time, a batch of 25 programs (seconds):**
+
+| problem | fork compiler | rustc | webgpu + port + cc + link |
+|---|---|---|---|
+| reduce | 0.27 | 2.49 | 1.66 |
+| scan | 0.46 | 2.37 | 2.86 |
+| histogram | 0.91 | 5.76 | 5.76 |
+| pathfinder | 0.33 | 2.30 | 1.88 |
+
+`rustc` at opt-level 0 instead of 1 saved 0.03 s of 0.21 s on a reduce generation, so 1 is kept.
+
+**Step 4: backend equivalence (GPU).** `futhark_batch::tests::on_the_gpu_the_rust_backend_equals_the_batch_backend`
+runs, for each problem, 8 random programs, the reference and the published program as members. Every outcome is
+identical between `Backend::Rust` and `Backend::Gpu`: every quality output, the published program's output, and timed
+pairs on both.
+
+| problem | batch compile s | batch run s | rust compile s (fork + rustc) | rust run s (of it pipelines) |
+|---|---|---|---|---|
+| reduce | 1.15 | 3.25 | 1.53 (0.20 + 1.33) | 3.19 (0.22) |
+| scan | 1.20 | 3.55 | 0.86 (0.21 + 0.66) | 3.47 (0.64) |
+| histogram | 2.96 | 25.38 | 2.83 (0.45 + 2.38) | 25.49 (2.66) |
+| pathfinder | 1.30 | 1.57 | 1.06 (0.23 + 0.83) | 1.53 (0.11) |
+
+**Step 3: the benchmarks against `futhark c`, and the GPU time a call.** On reduce: 5 of 5 cases bit-identical to C;
+the fastest GPU time a call is 8.3 µs on the rust path against 12.6 µs on the shim. The full table (five benchmarks,
+the shim comparison with trailing whitespace stripped) and the A7 values against C come from GPU session 5.
+
+**What the first sessions found and fixed:**
+- the runtime's rpath must be the toolchain's libstd directory (`<sysroot>/lib/rustlib/<host>/lib`), now covered by a
+  CPU test;
+- the in-process host must bound a whole command, as the driver's `alarm` does, not each wait. A slow reduce program
+  that the batch driver's 120 s alarm stopped finished on the rust path, the only difference in 72 ledger rows;
+- a session's binaries must be its own copies: an installed fork compiler rebuilt mid-session invalidated a run.
