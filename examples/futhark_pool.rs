@@ -121,6 +121,30 @@ const TOPICS: [&str; 60] = [
     "a peak detector (greater than both neighbours)", "a flood fill step (spread the minimum to neighbours)", "a two-player score table (pairwise max minus min)", "a mirrored padding by clamped indices",
 ];
 
+/// THE ANGLES: other problem statements of the same task, for alternatives genuinely different from those before.
+const ANGLES: [&str; 20] = [
+    "compute every output element independently with tabulate, no histogram operation",
+    "a sequential loop over the input carrying the whole output array",
+    "a loop over the output positions with a reduction over the input inside",
+    "an algorithm built from map2 over whole arrays, no explicit indexing",
+    "an arithmetic masking formulation: multiply by 0 or 1 instead of choosing",
+    "a formulation with conditionals of the form if e < 0 then a else b",
+    "a two-pass algorithm: first a transformed array, then the combination",
+    "a formulation with a loop from 1 over a dimension",
+    "a formulation using scalar loops nested inside tabulate",
+    "a formulation that reuses one intermediate array several times",
+    "a divide-and-combine formulation with partial results combined by map2",
+    "a formulation using i32.min and i32.max in an essential way",
+    "a formulation that counts first and then scales",
+    "a formulation using the sizes of the arrays as values",
+    "a formulation that transforms the indices before use",
+    "a formulation using subtraction and negation instead of addition where possible",
+    "a deliberately unusual but correct algorithm",
+    "the simplest correct program written in a style unlike the obvious one",
+    "a formulation with the loop structure reversed (outer and inner swapped)",
+    "a formulation that builds the answer element by element in a loop with an index-dependent update",
+];
+
 const TOPIC_RULE: &str = "THE TOPIC is given in each request. Your program computes that topic, its own result, on the entry's inputs, read as data of that topic in any sensible way, with a result of the entry's output type. It does not compute anything else.";
 
 /// THE CONTRACT: the entry signature, every operation of the kingdom's top context in Futhark spelling (a
@@ -197,6 +221,8 @@ fn code_blocks(reply: &str) -> Vec<String> {
 }
 
 struct Ctx {
+    /// Each call's problem statement takes its own angle (`ANGLES`).
+    angles: bool,
     /// The programs are on topics of their own, never the benchmark's task (`topics`).
     topics: bool,
     pname: String,
@@ -472,7 +498,17 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
                     } else {
                         format!("Write {PROGRAMS_PER_CALL} distinct programs. Strategy for this batch: {}. (Batch {i}.)", STRATEGIES[i % STRATEGIES.len()])
                     };
-                    let r = one_call(&system, &prompt, &dir, i);
+                    // `--angles`: the problem statement itself changes from call to call (a different algorithm family,
+                    // data layout or loop structure), recorded beside the call (Andrew, 2026-10-29: when the
+                    // alternatives are not different enough, change the statement, never re-ask the same prompt).
+                    let system_i = if c.angles {
+                        let a = ANGLES[i % ANGLES.len()];
+                        let _ = write(&dir.join(format!("call_{i:03}.statement.txt")), a);
+                        format!("{system}\n\nTHE ANGLE of this request, which your programs must take: {a}")
+                    } else {
+                        system.clone()
+                    };
+                    let r = one_call(&system_i, &prompt, &dir, i);
                     let d = done.fetch_add(1, Ordering::SeqCst) + 1;
                     let fit = [if r.is_ok() { 0.0 } else { 1.0 }];
                     if let Ok(mut t) = tel_m.lock() {
@@ -545,7 +581,7 @@ fn real_main() -> Result<(), String> {
     for d in [&out, &run] {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
-    let c = Ctx { topics: cmd == "topics" || (cmd == "reread" && args.iter().any(|a| a == "--topics")), pname, k, sig, out, run };
+    let c = Ctx { angles: args.iter().any(|a| a == "--angles"), topics: cmd == "topics" || (cmd == "reread" && args.iter().any(|a| a == "--topics")), pname, k, sig, out, run };
     match cmd.as_str() {
         "bench" => bench(&c, &PathBuf::from(arg(&args, "--benchmarks").ok_or("--benchmarks DIR")?)),
         "llm" => {
