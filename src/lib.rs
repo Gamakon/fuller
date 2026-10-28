@@ -58,6 +58,8 @@ pub mod futhark_batch;
 pub mod futhark_rust;
 pub mod futhark_pixel;
 pub mod futhark_sig;
+pub mod futhark_reader;
+pub mod futhark_rings;
 pub mod futhark_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
