@@ -1002,6 +1002,13 @@ fn real_main() -> Result<(), String> {
     let stop_at_exact = args.iter().any(|a| a == "--stop-at-exact");
     // The timing gate (P): measure the two A/A sets and stop, before any search.
     let aa_only = args.iter().any(|a| a == "--aa-only");
+    // THE RELATIVE SCORE of one program (`--rescore SEXP`, regime P): its quality inputs on every stored case beside
+    // the published program's (all 0), and, when exact, its 11-pair re-time against the published program next to
+    // both A/A sets, with the verdict (beat / matched / exact but slower / not reached). Writes OUT/rescore.tsv.
+    let rescore = arg(&args, "--rescore");
+    if rescore.is_some() && regime != "P" {
+        return Err("--rescore needs --regime P (its in-run A/A set is the noise floor beside the re-time)".into());
+    }
     if stop_at_exact && regime == "P" {
         return Err("--stop-at-exact is for the discovery regimes R and C; P starts exact and measures speed".into());
     }
@@ -1144,6 +1151,50 @@ fn real_main() -> Result<(), String> {
         let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode == EvalMode::Batch { " (in the batch process)" } else { "" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
+    }
+    if let Some(text) = &rescore {
+        let tree = build(&k, text)?;
+        let source = program(&k, &sig, &tree)?;
+        run.judge.prefetch(&[(&tree, source.as_str())], FitnessStage::Quality)?;
+        let q = run.judge.quality(&tree, &source)?;
+        let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
+        let mut rep = format!("problem\t{pname}\nprogram\t{}\nexact_on_every_case\t{}\nexact_train\t{}\nexact_held\t{}\n", sexp(&k, &tree), if q.perfect() { "yes" } else { "no" }, q.exact_train, q.exact_held);
+        rep.push_str(&format!("quality_inputs\tcase\tsplit\t{}\n", QUALITY_INPUTS.join("\t")));
+        let n = QUALITY_INPUTS.len();
+        for (i, c) in run.judge.cases.iter().enumerate() {
+            rep.push_str(&format!("quality\t{}\t{:?}\t{}\n", c.name, c.split, q.inputs[i * n..(i + 1) * n].iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join("\t")));
+        }
+        let cases = run.judge.cases.len() as f64;
+        let means: Vec<String> = (0..n).map(|j| format!("{:.6}", (0..run.judge.cases.len()).map(|i| q.inputs[i * n + j]).sum::<f64>() / cases)).collect();
+        rep.push_str(&format!("quality_mean_over_cases\t{}\npublished_quality_inputs\tall 0\n", means.join("\t")));
+        let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
+        let floor = all.iter().cloned().fold(f64::INFINITY, f64::min);
+        let ceiling = all.iter().cloned().fold(0.0, f64::max);
+        rep.push_str(&format!("timing_input\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nnoise_floor_least_ratio\t{floor:.4}\nnoise_floor_greatest_ratio\t{ceiling:.4}\n", run.judge.timing.label(), fmt(&noise), fmt(&inrun_aa)));
+        let verdict = if q.perfect() && backend == Backend::Gpu {
+            let exe = compile_program_prebuilt(&source, &out.join("rescore_build"), &shim)?;
+            let ratios = run.judge.time_fresh(&exe, 11)?;
+            let m = median(&ratios);
+            rep.push_str(&format!("champion_vs_published_ratios\t{}\nchampion_vs_published_median\t{m:.4}\n", fmt(&ratios)));
+            if let Some(want) = &run.judge.timing.output {
+                let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
+                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
+            }
+            if m < floor {
+                "beat (exact and faster: the median below the least A/A ratio)"
+            } else if m <= ceiling {
+                "matched (exact, within the A/A noise)"
+            } else {
+                "exact but slower (the median above the greatest A/A ratio)"
+            }
+        } else {
+            "not reached (not exact)"
+        };
+        rep.push_str(&format!("verdict\t{verdict}\n"));
+        std::fs::write(out.join("rescore.tsv"), &rep).map_err(|e| e.to_string())?;
+        print!("{rep}");
+        run.tel.end("early_stop", 0, None)?;
+        return Ok(());
     }
     if aa_only {
         if regime != "P" {
