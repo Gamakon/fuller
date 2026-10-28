@@ -1,0 +1,56 @@
+From f924d43d9461d001ac18d1ecc15d1e4b471bb132 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Wed, 28 Oct 2026 12:35:03 +0100
+Subject: [PATCH 6/6] fix(webgpu): a boolean kernel constant is a WGSL bool (it
+ was declared an i64, so an if on it was invalid); the unused wgslProduct
+ removed
+
+---
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs | 20 +++++++++-----------
+ 1 file changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index a672040..76ecc4e 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -665,12 +665,6 @@ scalarSpaceSize vs = foldr1 (WGSL.BinOpExp "*") <$> mapM dim vs
+       pure $ WGSL.VarExp c
+     dim d = compilerLimitation $ "WebGPU backend cannot size a register array by " <> prettyText d
+ 
+-wgslProduct :: [SubExp] -> WGSL.Exp
+-wgslProduct [] = WGSL.IntExp 1
+-wgslProduct [Constant (IntValue v)] = WGSL.IntExp $ valueIntegral v
+-wgslProduct ((Constant (IntValue v)) : vs) =
+-  wgslBinOp (Mul Int32 OverflowWrap) (WGSL.IntExp $ valueIntegral v) (wgslProduct vs)
+-wgslProduct _ = error "wgslProduct: non-constant product"
+ 
+ genWGSLStm :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
+ genWGSLStm Skip = pure WGSL.Skip
+@@ -1298,15 +1292,19 @@ genConstAndBuiltinDecls = do
+                 ( WGSL.Assign n $
+                     WGSL.CallExp "i64" [WGSL.VarExp lo, WGSL.VarExp hi]
+                 )
+-          _ -> do
++          -- A boolean constant is a bool (it used to be declared an i64 like
++          -- the integers, which made an `if` on it invalid WGSL); every
++          -- integer constant is an i64, the type the kernel code reads it at.
++          t -> do
+             addOverride lo (WGSL.Prim WGSL.Int32) zeroInit
+             lift $ addMacroDef (nameFromText lo) e
++            (typ, value) <- case t of
++              Bool -> pure (WGSL.Bool, WGSL.BinOpExp "!=" (WGSL.VarExp lo) (WGSL.IntExp 0))
++              _ -> pure (wgslInt64, WGSL.CallExp "i64" [WGSL.VarExp lo, WGSL.IntExp 0])
+             addInitStmt $
+               WGSL.Seq
+-                (WGSL.DeclareVar n (WGSL.Prim wgslInt64))
+-                ( WGSL.Assign n $
+-                    WGSL.CallExp "i64" [WGSL.VarExp lo, WGSL.IntExp 0]
+-                )
++                (WGSL.DeclareVar n (WGSL.Prim typ))
++                (WGSL.Assign n value)
+ 
+   mapM_ mkConst consts
+   where
+-- 
+2.50.1 (Apple Git-155)
+

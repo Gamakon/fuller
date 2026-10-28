@@ -1,7 +1,7 @@
 From c48e4a353b94b49521b6230ba89ab1cc5e48c97d Mon Sep 17 00:00:00 2001
 From: andrew-gamakon <andrew@gamakon.ai>
 Date: Wed, 28 Oct 2026 12:14:08 +0100
-Subject: [PATCH 5/5] fix(rust-wgpu): the name-key helper renamed nameKey (it
+Subject: [PATCH 5/6] fix(rust-wgpu): the name-key helper renamed nameKey (it
  shadowed local bindings named key)
 
 ---

@@ -1,7 +1,7 @@
 From 8286b270e3ac3bfbcc479d8eec33b52c2b24f3c9 Mon Sep 17 00:00:00 2001
 From: andrew-gamakon <andrew@gamakon.ai>
 Date: Wed, 28 Oct 2026 11:25:18 +0100
-Subject: [PATCH 1/5] feat(rust-wgpu): a backend writing one Rust module (WGSL
+Subject: [PATCH 1/6] feat(rust-wgpu): a backend writing one Rust module (WGSL
  kernels, host over wgpu-rs); SetMem in kernels resolved by renaming outside
  loops and conditionals
 

@@ -330,8 +330,14 @@ mod tests {
                 let (shim_out, _) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim path's run");
                 let (_, report) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, true, runs).expect("the shim path's timed run");
                 shim_gpu = shim_gpu.min(report.fastest_run_ns(runs).expect("the shim's GPU time") / 1e3);
-                same_c += usize::from(o.3 == want);
-                same_shim += usize::from(o.3 == shim_out);
+                // Futhark's binary format allows whitespace after a value, and an executable's standard output ends
+                // with a newline: the values are compared, the trailing whitespace is not.
+                let v = |b: &[u8]| b.trim_ascii_end().to_vec();
+                if v(&shim_out) != v(&o.3) {
+                    eprintln!("{name} {}: the shim's {} bytes against the rust path's {}: first difference at {:?}", input.display(), shim_out.len(), o.3.len(), shim_out.iter().zip(&o.3).position(|(a, b)| a != b));
+                }
+                same_c += usize::from(v(&o.3) == v(&want));
+                same_shim += usize::from(v(&o.3) == v(&shim_out));
             }
             table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\n", inputs.len()));
             assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
@@ -371,7 +377,9 @@ mod tests {
             let want = crate::futhark_exec::output_with_timeout_bytes(Command::new(&c).arg("-b"), Duration::from_secs(120), Some(&input)).expect("the C run").stdout;
             let (dylib, _) = compile_module(&src, &base.join(format!("{name}_rust")), &rt, &format!("a7_{name}"), Duration::from_secs(600)).expect("the rust-wgpu compile");
             let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&input)).expect("the rust path's run");
-            let o = payloads(&raw).into_iter().find(|r| r.0 == "o").expect("an output record");
+            let recs = payloads(&raw);
+            let failed: Vec<String> = recs.iter().filter(|r| !r.1).map(|r| format!("{}: {}", r.0, String::from_utf8_lossy(&r.3))).collect();
+            let o = recs.into_iter().find(|r| r.0 == "o").unwrap_or_else(|| panic!("{name}: no output record; the failures: {failed:?}"));
             assert!(o.1, "{name}: the rust path failed: {}", String::from_utf8_lossy(&o.3));
             assert_eq!(o.3.len(), want.len(), "{name}: the output's size");
             // Past the 7-byte header and two dimensions: the f32 values.
