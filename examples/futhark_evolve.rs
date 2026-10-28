@@ -375,6 +375,8 @@ struct Judge<'a> {
     batched_t: HashMap<String, (Result<Vec<f64>, String>, f64)>,
     /// The stages of this generation (the batches' and the single evaluations' wall time).
     gen_stages: Stages,
+    /// Batches halved although no program in them was at fault (a limit of the batch, logged in `bugs.log`).
+    batch_splits: u64,
     /// The last evaluation's path (`single`, `batch`, `hit`), its batch's size and its stages, for the ledger.
     last: (&'static str, usize, Stages),
 }
@@ -475,27 +477,38 @@ impl<'a> Judge<'a> {
         let r = host.run(&members)?;
         let n = members.len();
         let c = &r.cost;
-        // The batch's own wall time: the compiles (a halving's failed ones in `futhark`) and the processes; the
-        // commands' time is each member's own (quality in `runs`, pairs in `timing`), the processes' rest shared.
-        let own_q: f64 = c.member_quality_seconds.iter().sum();
-        let own_t: f64 = c.member_timing_seconds.iter().sum();
+        // The batch's wall time: the compiles (a halving's failed ones in `futhark`) and the processes (their start,
+        // device set-up, shader and pipeline creation, and the rest). The commands' time is each member's own: its
+        // quality run in `runs`, its pairs in `timing`, the pipelines created inside them in `pipelines`.
+        let sum = |v: &[f64]| v.iter().sum::<f64>();
+        let (own_q, own_t) = (sum(&c.member_quality_seconds), sum(&c.member_timing_seconds));
+        let (pipe_q, pipe_t) = (sum(&c.member_quality_pipeline_seconds), sum(&c.member_timing_pipeline_seconds));
         let mut shared = Stages::compiled(&c.compile);
         shared.render = c.render;
         shared.futhark += c.failed_compile_seconds;
         shared.start = c.run.start;
         shared.device = c.run.device;
-        shared.pipelines = c.run.pipelines;
-        shared.runs = (c.run.runs - own_q - own_t).max(0.0);
+        shared.pipelines = (c.run.pipelines - pipe_q - pipe_t).max(0.0);
+        shared.runs = (c.run.runs - (own_q - pipe_q) - (own_t - pipe_t)).max(0.0);
         let mut whole = shared;
-        whole.runs += own_q;
-        whole.timing = own_t;
+        whole.pipelines = c.run.pipelines;
+        whole.timing = (own_t - pipe_t).max(0.0);
+        whole.runs = (c.run.runs - whole.timing).max(0.0);
         self.gen_stages.add(&whole);
+        self.batch_splits += c.splits.len() as u64;
+        for why in &c.splits {
+            // Not a candidate's bug (every program of the halves was scored): our software's limit on a batch, named.
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
+                let _ = writeln!(f, "==== {} our software has a bug: a batch had to be halved (no candidate is charged; the halves were scored)\n{why}", utc());
+            }
+        }
         let share = shared.scaled(1.0 / n as f64);
         for (i, (key, quality, missing, fresh)) in keys.into_iter().enumerate() {
             let outs = &r.outcomes[i];
             let mut mine = share;
-            mine.runs += c.member_quality_seconds[i];
-            mine.timing = c.member_timing_seconds[i];
+            mine.runs += c.member_quality_seconds[i] - c.member_quality_pipeline_seconds[i];
+            mine.pipelines += c.member_quality_pipeline_seconds[i] + c.member_timing_pipeline_seconds[i];
+            mine.timing = c.member_timing_seconds[i] - c.member_timing_pipeline_seconds[i];
             let mut at = 0;
             if quality {
                 let q = match &outs[0] {
@@ -513,7 +526,7 @@ impl<'a> Judge<'a> {
                 self.batched_t.insert(key, (pair_ratios(&outs[at..], missing, fresh), mine.timing));
             }
         }
-        println!("# {} batch: {n} programs, {} compile(s) ({} failed), {} process(es), {:.1} s", utc(), c.compiles, c.failed_compiles, c.processes, t0.elapsed().as_secs_f64());
+        println!("# {} batch: {n} programs, {} compile(s) ({} failed), {} process(es), {} halving(s), {:.1} s", utc(), c.compiles, c.failed_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -1070,7 +1083,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -1348,6 +1361,7 @@ fn real_main() -> Result<(), String> {
         extras.insert("gen_seconds".to_string(), gen_wall);
         extras.insert("evaluations_per_second".to_string(), gen_evals as f64 / gen_wall.max(1e-9));
         extras.insert("batched".to_string(), f64::from(u8::from(mode == EvalMode::Batch)));
+        extras.insert("batch_halvings".to_string(), run.judge.batch_splits as f64);
         let before = run.tel.individuals();
         run.tel.generation(GenerationStats { generation, fitness: &fits, distinct: Some(distinct as u32), angle_groups: groups, extras, evaluated: run.judge.evaluations.saturating_sub(before) })?;
         let gen_seconds = gen_start.elapsed().as_secs_f64();
@@ -1571,13 +1585,14 @@ fn real_main() -> Result<(), String> {
     let be = best.eval.clone().ok_or("an unscored best")?;
     std::fs::write(out.join("best.fut"), &best.source).map_err(|e| e.to_string())?;
     let mut rep = format!(
-        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\neval\t{mode:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
+        "problem\t{pname}\nregime\t{regime}\nstart\t{start}\nseed\t{seed}\nbackend\t{backend:?}\neval\t{mode:?}\nstopped_by\t{stopped_by}\nlast_generation\t{last_generation}\nminutes\t{:.2}\nevaluations\t{}\nbudget\t{budget}\ncompiled\t{}\ncache_hits\t{}\nbugs\t{}\nbugs_setmem_compiler_limitation\t{}\nbatch_halvings\t{}\nevaluations_per_second\t{:.3}\nstage\t{}\nfirst_exact_evaluation\t{}\nfirst_exact_generation\t{}\nbest_hff\t{:.6}\nbest_theta_quality\t{:.6}\nbest_theta_speed\t{:.6}\nbest_exact_train\t{}\nbest_exact_held\t{}\nbest_nodes\t{}\nreference_nodes\t{}\nbest_work\t{}\nreference_work\t{}\nbest_program\t{}\nmax_work_seen\t{}\n",
         seconds / 60.0,
         run.judge.evaluations,
         run.judge.compiled,
         run.judge.hits,
         run.judge.bugs,
         run.judge.setmem,
+        run.judge.batch_splits,
         run.judge.evaluations as f64 / seconds.max(1e-9),
         run.stage.number(),
         run.first_exact.map_or("-".to_string(), |f| f.0.to_string()),

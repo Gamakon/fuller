@@ -54,6 +54,8 @@ struct Stats {
     device_unix_ns: u128,
     pipeline_ns: u128,
     pipelines: u64,
+    /// Compute pipelines answered from the device's cache (`handles::WGPUDeviceImpl::pipelines`).
+    pipelines_cached: u64,
     /// Each timed pass: its GPU begin and end ticks, its GPU nanoseconds, and
     /// the dispatches in it.
     timed: Vec<(u64, u64, f64, u64)>,
@@ -73,6 +75,7 @@ static STATS: Mutex<Stats> = Mutex::new(Stats {
     device_unix_ns: 0,
     pipeline_ns: 0,
     pipelines: 0,
+    pipelines_cached: 0,
     timed: Vec::new(),
 });
 
@@ -101,6 +104,18 @@ pub fn count_pipeline(ns: u128) {
         s.pipeline_ns += ns;
         s.pipelines += 1;
     });
+}
+
+/// A compute pipeline was answered from the device's cache.
+pub fn count_cached_pipeline() {
+    with(|s| s.pipelines_cached += 1);
+}
+
+/// The nanoseconds spent creating shader modules and compute pipelines so far (a batch host reads it around each
+/// call, so a call's pipeline creation is not counted as its run).
+#[no_mangle]
+pub extern "C" fn futhark_wgpu_shim_pipeline_ns() -> u64 {
+    with(|s| u64::try_from(s.pipeline_ns).unwrap_or(u64::MAX))
 }
 
 /// The timed passes recorded so far.
@@ -180,7 +195,7 @@ fn json() -> String {
             out,
             "{{\"adapter\":\"{}\",\"backend\":\"{}\",\"dispatches\":{},\"workgroups\":{},\"submits\":{},\
              \"spontaneous_futures\":{},\"wait_any_only_futures\":{},\"wait_any_calls\":{},\
-             \"emscripten_sleep_calls\":{},\"instance_unix_ns\":{},\"device_unix_ns\":{},\"pipeline_ns\":{},\"pipelines\":{},\
+             \"emscripten_sleep_calls\":{},\"instance_unix_ns\":{},\"device_unix_ns\":{},\"pipeline_ns\":{},\"pipelines\":{},\"pipelines_cached\":{},\
              \"exit_unix_ns\":{},\"timed_passes\":{},\"timed_dispatches\":{},\"gpu_ns_total\":{:.1},\"passes\":[",
             esc(&s.adapter),
             esc(&s.backend),
@@ -195,6 +210,7 @@ fn json() -> String {
             s.device_unix_ns,
             s.pipeline_ns,
             s.pipelines,
+            s.pipelines_cached,
             unix_ns(),
             s.timed.len(),
             timed_dispatches,

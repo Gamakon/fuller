@@ -131,6 +131,11 @@ pub struct Cost {
     pub member_quality_seconds: Vec<f64>,
     /// The seconds each member's timing and output commands took inside the driver, by member.
     pub member_timing_seconds: Vec<f64>,
+    /// Of those, the seconds spent creating shaders and pipelines (quality, timing), by member.
+    pub member_quality_pipeline_seconds: Vec<f64>,
+    pub member_timing_pipeline_seconds: Vec<f64>,
+    /// Why each halving happened (a batch that did not compile or whose device set-up failed), with its size.
+    pub splits: Vec<String>,
 }
 
 /// A batch's results: every member's outcomes, aligned with its steps, and the cost.
@@ -217,14 +222,15 @@ const DRIVER: &str = r#"/* THE BATCH DRIVER, written by fuller::futhark_batch fo
  *
  * commands, one a line: `q E` (quality entry E on every case), `t E RUNS` (timed entry E, RUNS + 1 runs on the timing
  * input, the first a warm-up, each run's GPU nanoseconds), `o E` (timed entry E once on the timing input, its output).
- * results: records `TAG INDEX STATUS NANOSECONDS BYTES\n` then BYTES of payload; TAG is start, ctx, q, t, o or end. */
+ * results: records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then BYTES of payload; TAG is start,
+ * ctx, q, t, o or end; PIPELINE_NANOSECONDS is the shader and pipeline creation inside the record's span (GPU). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
+@TIMING_DECLS@
 struct futhark_context_config;
 struct futhark_context;
 struct futhark_context_config *futhark_context_config_new(void);
@@ -254,8 +260,11 @@ static uint64_t mono_ns(void) {
 }
 
 static FILE *results;
+static uint64_t pipe_mark;
 static void record(const char *tag, long index, const char *status, uint64_t ns, const void *payload, size_t bytes) {
-    fprintf(results, "%s %ld %s %llu %zu\n", tag, index, status, (unsigned long long)ns, bytes);
+    uint64_t p = PIPELINE_NS();
+    fprintf(results, "%s %ld %s %llu %llu %zu\n", tag, index, status, (unsigned long long)ns, (unsigned long long)(p - pipe_mark), bytes);
+    pipe_mark = p;
     if (bytes > 0) fwrite(payload, 1, bytes, results);
     fflush(results);
 }
@@ -355,7 +364,6 @@ static int call_t(int e, struct futhark_context *ctx, dval *out, dval *in) {
 @CALL_T@    default: return -1;
     }
 }
-@TIMING_DECLS@
 int main(int argc, char **argv) {
     if (argc != 6) { fprintf(stderr, "usage: %s <commands> <cases.bin> <timing.bin|-> <results> <seconds>\n", argv[0]); return 2; }
     unsigned bound = (unsigned)atoi(argv[5]);
@@ -382,6 +390,7 @@ int main(int argc, char **argv) {
     long index = 0;
     while (fscanf(cmds, "%7s %d", kind, &entry) == 2) {
         alarm(bound);
+        pipe_mark = PIPELINE_NS();
         uint64_t t0 = mono_ns();
         if (strcmp(kind, "q") == 0) {
             dval in[NCASES * NIN], out[NCASES];
@@ -475,6 +484,8 @@ struct Record {
     index: i64,
     ok: bool,
     ns: u64,
+    /// The shader and pipeline creation inside the record's span.
+    pipeline_ns: u64,
     payload: Vec<u8>,
 }
 
@@ -492,7 +503,7 @@ fn parse_records(raw: &[u8]) -> Result<Vec<Record>, String> {
         let nl = raw[i..].iter().position(|b| *b == b'\n').ok_or("a results record with no end of line")? + i;
         let head = std::str::from_utf8(&raw[i..nl]).map_err(|_| "a results record that is not text")?;
         let f: Vec<&str> = head.split(' ').collect();
-        let [tag, index, status, ns, bytes] = f.as_slice() else { return Err(format!("a results record {head:?}")) };
+        let [tag, index, status, ns, pipeline_ns, bytes] = f.as_slice() else { return Err(format!("a results record {head:?}")) };
         let bytes: usize = bytes.parse().map_err(|_| format!("a results record {head:?}"))?;
         let payload = raw.get(nl + 1..nl + 1 + bytes).ok_or("a results record cut short")?.to_vec();
         out.push(Record {
@@ -500,6 +511,7 @@ fn parse_records(raw: &[u8]) -> Result<Vec<Record>, String> {
             index: index.parse().map_err(|_| format!("a results record {head:?}"))?,
             ok: *status == "ok",
             ns: ns.parse().map_err(|_| format!("a results record {head:?}"))?,
+            pipeline_ns: pipeline_ns.parse().map_err(|_| format!("a results record {head:?}"))?,
             payload,
         });
         i = nl + 1 + bytes;
@@ -696,9 +708,9 @@ impl<'a> Host<'a> {
         }
         let gpu = matches!(self.backend, Backend::Gpu { .. });
         let timing_decls = if gpu {
-            "uint64_t futhark_wgpu_shim_timed_passes(void);\ndouble futhark_wgpu_shim_pass_ns(uint64_t index);\n#define TIMED_PASSES 1\n#define PASSES() futhark_wgpu_shim_timed_passes()\n#define PASS_NS(p) futhark_wgpu_shim_pass_ns(p)\n"
+            "uint64_t futhark_wgpu_shim_timed_passes(void);\ndouble futhark_wgpu_shim_pass_ns(uint64_t index);\nuint64_t futhark_wgpu_shim_pipeline_ns(void);\n#define TIMED_PASSES 1\n#define PASSES() futhark_wgpu_shim_timed_passes()\n#define PASS_NS(p) futhark_wgpu_shim_pass_ns(p)\n#define PIPELINE_NS() futhark_wgpu_shim_pipeline_ns()\n"
         } else {
-            "#define TIMED_PASSES 0\n#define PASSES() 0\n#define PASS_NS(p) ((void)(p), -1.0)\n"
+            "#define TIMED_PASSES 0\n#define PASSES() 0\n#define PASS_NS(p) ((void)(p), -1.0)\n#define PIPELINE_NS() 0ull\n"
         };
         let shape = if out_rank > 0 { format!("futhark_shape_i32_{out_rank}d") } else { "(void)".into() };
         let values = if out_rank > 0 { format!("futhark_values_i32_{out_rank}d") } else { "(void)".into() };
@@ -794,7 +806,8 @@ impl<'a> Host<'a> {
     /// halving. Every step gets an outcome.
     pub fn run(&self, members: &[Member]) -> Result<BatchResult, String> {
         let mut outcomes: Vec<Vec<Option<Outcome>>> = members.iter().map(|m| vec![None; m.steps.len()]).collect();
-        let mut cost = Cost { member_quality_seconds: vec![0.0; members.len()], member_timing_seconds: vec![0.0; members.len()], ..Cost::default() };
+        let n = members.len();
+        let mut cost = Cost { member_quality_seconds: vec![0.0; n], member_timing_seconds: vec![0.0; n], member_quality_pipeline_seconds: vec![0.0; n], member_timing_pipeline_seconds: vec![0.0; n], ..Cost::default() };
         let all: Vec<usize> = (0..members.len()).filter(|i| !members[*i].steps.is_empty()).collect();
         if !all.is_empty() {
             self.group(members, &all, &mut outcomes, &mut cost)?;
@@ -848,8 +861,10 @@ impl<'a> Host<'a> {
                 let c = cmds.get(from + r.index as usize).ok_or("a results record of no command")?;
                 if r.tag == "q" {
                     cost.member_quality_seconds[c.member] += r.ns as f64 / 1e9;
+                    cost.member_quality_pipeline_seconds[c.member] += r.pipeline_ns as f64 / 1e9;
                 } else {
                     cost.member_timing_seconds[c.member] += r.ns as f64 / 1e9;
+                    cost.member_timing_pipeline_seconds[c.member] += r.pipeline_ns as f64 / 1e9;
                 }
                 let o = if !r.ok {
                     Outcome::Failed(String::from_utf8_lossy(&r.payload).to_string())
@@ -906,6 +921,7 @@ impl<'a> Host<'a> {
             self.fail_member(members, idx[0], why, outcomes);
             return Ok(());
         }
+        cost.splits.push(format!("a batch of {} programs was halved: {why}", idx.len()));
         let (a, b) = idx.split_at(idx.len() / 2);
         self.group(members, a, outcomes, cost)?;
         self.group(members, b, outcomes, cost)

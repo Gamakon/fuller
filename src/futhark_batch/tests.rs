@@ -154,14 +154,15 @@ fn a_timing_is_the_fastest_run_after_the_warm_up() {
 /// The results file's records, payloads of any bytes included.
 #[test]
 fn the_results_records_parse() {
-    let mut raw = b"start -1 ok 17 0\nctx -1 ok 18 0\nq 0 ok 5 3\n".to_vec();
+    let mut raw = b"start -1 ok 17 0 0\nctx -1 ok 18 9 0\nq 0 ok 5 2 3\n".to_vec();
     raw.extend_from_slice(b"a\nb");
-    raw.extend_from_slice(b"t 1 err 0 4\noops");
+    raw.extend_from_slice(b"t 1 err 0 0 4\noops");
     let r = parse_records(&raw).unwrap();
     assert_eq!(r.len(), 4);
-    assert_eq!((r[2].tag.as_str(), r[2].index, r[2].ok, r[2].ns, r[2].payload.as_slice()), ("q", 0, true, 5, &b"a\nb"[..]));
+    assert_eq!((r[2].tag.as_str(), r[2].index, r[2].ok, r[2].ns, r[2].pipeline_ns, r[2].payload.as_slice()), ("q", 0, true, 5, 2, &b"a\nb"[..]));
+    assert_eq!(r[1].pipeline_ns, 9);
     assert_eq!((r[3].tag.as_str(), r[3].ok, r[3].payload.as_slice()), ("t", false, &b"oops"[..]));
-    assert!(parse_records(b"q 0 ok 5 9\nab").is_err(), "a record cut short");
+    assert!(parse_records(b"q 0 ok 5 0 9\nab").is_err(), "a record cut short");
 }
 
 /// The GPU backend's build, without the GPU: a batch of programs, timed pairs and the published program as a member

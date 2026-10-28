@@ -37,7 +37,18 @@ pub struct WGPUDeviceImpl {
     pub queue_handle: RefCell<Option<*mut WGPUQueueImpl>>,
     /// The cell the uncaptured-error callback's `WGPUDevice const *` points at.
     pub self_cell: Box<*mut WGPUDeviceImpl>,
+    /// THE PIPELINE CACHE: the pipeline made for each compute-pipeline descriptor, by its layout, its module, its
+    /// entry point and its constants (bit for bit). Futhark's runtime creates the pipeline of a kernel with dynamic
+    /// block sizes AT EVERY LAUNCH (measured 2026-10-28: 6,210 creations, 14.5 s, in one process of 12 histogram
+    /// programs), always from the same few descriptors; an identical descriptor gets the pipeline already made,
+    /// which is the same program with the same constants. Safe because the runtime never releases a pipeline (the
+    /// surface has no `wgpuComputePipelineRelease`), so a shared handle is never freed under another user.
+    pub pipelines: RefCell<std::collections::HashMap<PipelineKey, *mut WGPUComputePipelineImpl>>,
 }
+
+/// A compute-pipeline descriptor's identity: the layout and module handles, the entry point, each constant's key and
+/// value bits, in the descriptor's order.
+pub type PipelineKey = (usize, usize, Option<String>, Vec<(String, u64)>);
 
 pub struct WGPUQueueImpl {
     pub queue: wgpu::Queue,

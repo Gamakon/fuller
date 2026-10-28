@@ -312,6 +312,7 @@ impl Registry {
             timestamps,
             queue_handle: RefCell::new(None),
             self_cell: Box::new(std::ptr::null_mut()),
+            pipelines: RefCell::new(std::collections::HashMap::new()),
         });
         // SAFETY: `handle` was made just above and is never freed.
         let cell: *const WGPUDevice = unsafe {

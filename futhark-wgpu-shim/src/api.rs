@@ -506,17 +506,25 @@ pub unsafe extern "C" fn wgpu_device_create_compute_pipeline(
             (unsafe { text(c.key) }.unwrap_or_else(|| crate::fatal("a pipeline constant with no key")), c.value)
         })
         .collect();
+    let entry = unsafe { text(desc.compute.entry_point) };
+    let key: PipelineKey = (desc.layout as usize, desc.compute.module as usize, entry.map(str::to_string), constants.iter().map(|(k, v)| (k.to_string(), v.to_bits())).collect());
+    if let Some(p) = d.pipelines.borrow().get(&key) {
+        report::count_cached_pipeline();
+        return *p;
+    }
     let t = std::time::Instant::now();
     let pipeline = d.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: unsafe { label(desc.label) },
         layout,
         module,
-        entry_point: unsafe { text(desc.compute.entry_point) },
+        entry_point: entry,
         compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
         cache: None,
     });
     report::count_pipeline(t.elapsed().as_nanos());
-    make(WGPUComputePipelineImpl { pipeline })
+    let h = make(WGPUComputePipelineImpl { pipeline });
+    d.pipelines.borrow_mut().insert(key, h);
+    h
 }
 
 /// # Safety
