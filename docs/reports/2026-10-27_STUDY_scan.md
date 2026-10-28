@@ -20,7 +20,7 @@ Study plan: `docs/STUDY_evolving_benchmarks.md`. Runs: `/private/tmp/claude-501/
 | H2, evolution sooner than random search | (expected wherever H1 holds) | random search: exact in 3 of 3 seeds at 42, 46 and 28 (median 42, against evolution's 57) | **not supported**: random search is as good or better |
 | H3, a faster exact variant | unlikely | P: 119 evaluations in 61 min. Champion `(scan.add (loop1.n xs xs))`: 11-pair re-time median 1.0000, 6 of 11 pairs below 1, least A/A ratio 0.9990 | **not supported**: matched, as expected |
 
-**The A/A gate (before P):** 22 of 22 pairs within 5 %. The published program takes 12.7 ms per run on n = 15 x 2^20.
+**The A/A gate (before P):** 22 of 22 pairs within 5 %. The published program takes 11.9 ms per run on n = 15 x 2^20.
 
 **The planted control:**
 - Start program: `(scan.add (map2.max xs xs))`.
@@ -130,6 +130,6 @@ Each child is compared with its best parent in the same stage.
 1. **H2 fails.** On a 2-node target, a random gene of program size 8 is exact often enough: in 28 to 46 draws for random search. Selection did not help.
 2. **P had little to work with.**
    - The e-graph has no rewrite of `scan (+) 0 xs` itself (0 variants), so P's population came from mutation of one program.
-   - Timing every new program in 11 pairs of 60 runs of a 12.7 ms program costs about 50 s, so P scored 119 programs in its hour.
+   - Timing every new program in 11 pairs of 60 runs of a 11.9 ms program costs about 50 s, so P scored 119 programs in its hour.
    - 21 candidates were over the work cap at the timing size; they were never dispatched and got no speed credit.
 3. **Earlier P runs used void timing.** Before the timing fixes (study plan §3), scan's planted control ran on the void timing. It is kept in `fbench/superseded_P_old_timing/` and does not count.
