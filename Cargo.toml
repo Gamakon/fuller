@@ -160,6 +160,14 @@ name = "wgsl_problem"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "wgsl_true_read"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "wgsl_case_check"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_problem_gram_cases"
 required-features = ["wgsl"]
 
