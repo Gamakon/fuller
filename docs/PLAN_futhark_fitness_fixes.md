@@ -90,6 +90,15 @@
 - **No near copies.** An alternative within a few edits of another individual (one symbol apart, say), or with the same outputs, is not an individual. It is thrown away and replaced by a new, genuinely different alternative from Sonnet. The bar (a minimum tree edit distance, and distinct outputs) is stated and recorded before the population is built.
 - So generation 0 is the reference plus distinct alternatives on canvases, never the topic programs themselves.
 
+**The canvas is a table with a WHERE clause (Andrew, 2026-10-29).**
+- The canvas is a general-purpose, high-diversity store of real program fragments: every Futhark program we can get (the benchmarks, Sonnet's topic programs, and others), in every type (f32, f64, i32, tuples, records). Its size does not matter: a trillion rows is fine.
+- Each row carries its metadata: the types it produces and consumes, the operations it uses, its topic and its source.
+- For a problem, a filter (the WHERE clause) selects the rows whose types and operations the problem's kingdom has, and the problem's rings are built from that subset.
+- So a program in f32 is never a "gap": it is a row this problem's filter does not select. The reader's job is to read all of Futhark into the store, not only what one kingdom can express.
+- The initial population is then high-diversity targeted solutions. If Sonnet's alternatives cannot be made different enough, the problem statement given to it is changed and a different program is asked for.
+- The fitness work (A to G) goes on alongside, so the search can find great things in what it is given.
+- Built tonight: per-kingdom rings (the subset for histogram and pathfinder). The general store and its filter are the next build.
+
 **Expectations, stated before the measurement (GPU, `--eval rust`).**
 
 | measurement | random padding (today) | expected, ring canvas |
