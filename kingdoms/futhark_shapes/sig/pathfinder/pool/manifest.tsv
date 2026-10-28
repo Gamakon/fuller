@@ -1,0 +1,467 @@
+key	value
+bench.benchmarks_commit	c9e2ccca7cf3efa698519f59b9adbf626b98098f
+bench.excluded_for_discovery	rodinia/pathfinder/pathfinder.fut (leave one out: the benchmark's own published program and file are excluded from the rings of its R and C runs; P may include them)
+bench.files	221
+bench.files_with_a_function_read	5
+bench.functions	1575
+bench.functions_gap	1566
+bench.functions_read	9
+bench.gap MM	1
+bench.gap array literal	38
+bench.gap block_householder.qr	1
+bench.gap cast_ray	2
+bench.gap check_ray	2
+bench.gap common_main	5
+bench.gap computeTreeShape	1
+bench.gap f32_kernels.mul	1
+bench.gap f32_kernels.nstream	1
+bench.gap f32_kernels.triad	1
+bench.gap f64_kernels.mul	1
+bench.gap f64_kernels.nstream	1
+bench.gap f64_kernels.triad	1
+bench.gap field access	73
+bench.gap float literal	158
+bench.gap hist	1
+bench.gap i32.bool	1
+bench.gap i32.u32	3
+bench.gap i64.u8	1
+bench.gap if with condition < an expression	1
+bench.gap if with condition > an expression	1
+bench.gap in-place update (let a[i] = ...)	1
+bench.gap in-place update (with)	7
+bench.gap lambda	19
+bench.gap lerpI	1
+bench.gap linalg_f64.matcomp	1
+bench.gap linalg_f64.matop	1
+bench.gap linalg_f64.matunary	1
+bench.gap literal	7
+bench.gap literal 100	1
+bench.gap literal 101	1
+bench.gap literal 102	1
+bench.gap literal 103	1
+bench.gap literal 104	1
+bench.gap literal 105	1
+bench.gap literal 106	1
+bench.gap literal 107	1
+bench.gap literal 1073741881	1
+bench.gap literal 1073741882	1
+bench.gap literal 1073741883	1
+bench.gap literal 1073741884	1
+bench.gap literal 1073741885	1
+bench.gap literal 1073741886	1
+bench.gap literal 1073741887	1
+bench.gap literal 1073741888	1
+bench.gap literal 1073741889	1
+bench.gap literal 1073741890	1
+bench.gap literal 1073741891	1
+bench.gap literal 1073741892	1
+bench.gap literal 1073741893	1
+bench.gap literal 1073741894	1
+bench.gap literal 1073741895	1
+bench.gap literal 1073741896	1
+bench.gap literal 1073741897	1
+bench.gap literal 1073741898	1
+bench.gap literal 1073741899	1
+bench.gap literal 1073741901	1
+bench.gap literal 1073741902	1
+bench.gap literal 1073741903	1
+bench.gap literal 1073741904	1
+bench.gap literal 1073741905	1
+bench.gap literal 1073741906	1
+bench.gap literal 1073741907	1
+bench.gap literal 1073741908	1
+bench.gap literal 1073741909	1
+bench.gap literal 1073741910	1
+bench.gap literal 1073741911	1
+bench.gap literal 1073741912	1
+bench.gap literal 1073741913	1
+bench.gap literal 1073741914	1
+bench.gap literal 1073741915	1
+bench.gap literal 1073741916	1
+bench.gap literal 1073741917	1
+bench.gap literal 1073741918	1
+bench.gap literal 1073741919	1
+bench.gap literal 1073741920	1
+bench.gap literal 1073741921	1
+bench.gap literal 1073741922	1
+bench.gap literal 1073741923	1
+bench.gap literal 1073741925	1
+bench.gap literal 1073741926	1
+bench.gap literal 1073741927	1
+bench.gap literal 1073741928	1
+bench.gap literal 1073741929	1
+bench.gap literal 1073741930	1
+bench.gap literal 1073741931	1
+bench.gap literal 1073741932	1
+bench.gap literal 1073741933	1
+bench.gap literal 1073741934	1
+bench.gap literal 1073741935	1
+bench.gap literal 1073741936	1
+bench.gap literal 1073741937	1
+bench.gap literal 1073741938	1
+bench.gap literal 1073741939	1
+bench.gap literal 1073741940	1
+bench.gap literal 1073741941	1
+bench.gap literal 1073741942	1
+bench.gap literal 1073741943	1
+bench.gap literal 1073741944	1
+bench.gap literal 1073741945	1
+bench.gap literal 1073741946	1
+bench.gap literal 1073741947	1
+bench.gap literal 1073741948	1
+bench.gap literal 1073741949	1
+bench.gap literal 1073741950	1
+bench.gap literal 1073741951	1
+bench.gap literal 1073741952	1
+bench.gap literal 1073741953	1
+bench.gap literal 1073741957	1
+bench.gap literal 1073741958	1
+bench.gap literal 1073741977	1
+bench.gap literal 1073741978	1
+bench.gap literal 1073741979	1
+bench.gap literal 1073741980	1
+bench.gap literal 1073741981	1
+bench.gap literal 1073741982	1
+bench.gap literal 1073741983	1
+bench.gap literal 1073741984	1
+bench.gap literal 1073741985	1
+bench.gap literal 1073741986	1
+bench.gap literal 1073741987	1
+bench.gap literal 1073741988	1
+bench.gap literal 1073742000	1
+bench.gap literal 1073742001	1
+bench.gap literal 1073742002	1
+bench.gap literal 1073742003	1
+bench.gap literal 1073742004	1
+bench.gap literal 1073742005	1
+bench.gap literal 1073742006	1
+bench.gap literal 1073742007	1
+bench.gap literal 1073742008	1
+bench.gap literal 1073742009	1
+bench.gap literal 1073742010	1
+bench.gap literal 1073742011	1
+bench.gap literal 1073742012	1
+bench.gap literal 1073742013	1
+bench.gap literal 1073742014	1
+bench.gap literal 1073742015	1
+bench.gap literal 1073742016	1
+bench.gap literal 1073742017	1
+bench.gap literal 1073742018	1
+bench.gap literal 1073742019	1
+bench.gap literal 1073742020	1
+bench.gap literal 1073742021	1
+bench.gap literal 1073742022	1
+bench.gap literal 1073742023	1
+bench.gap literal 1073742024	1
+bench.gap literal 1073742025	1
+bench.gap literal 1073742026	1
+bench.gap literal 1073742027	1
+bench.gap literal 1073742028	1
+bench.gap literal 1073742029	1
+bench.gap literal 1073742030	1
+bench.gap literal 1073742031	1
+bench.gap literal 1073742032	1
+bench.gap literal 1073742033	1
+bench.gap literal 1073742034	1
+bench.gap literal 1073742035	1
+bench.gap literal 1073742036	1
+bench.gap literal 1073742037	1
+bench.gap literal 1073742038	1
+bench.gap literal 1073742039	1
+bench.gap literal 1073742040	1
+bench.gap literal 1073742041	1
+bench.gap literal 1073742042	1
+bench.gap literal 1073742043	1
+bench.gap literal 1073742044	1
+bench.gap literal 1073742045	1
+bench.gap literal 1073742048	1
+bench.gap literal 1073742049	1
+bench.gap literal 1073742050	1
+bench.gap literal 1073742051	1
+bench.gap literal 1073742052	1
+bench.gap literal 1073742053	1
+bench.gap literal 1073742054	1
+bench.gap literal 1073742055	1
+bench.gap literal 1073742081	1
+bench.gap literal 1073742082	1
+bench.gap literal 1073742083	1
+bench.gap literal 1073742084	1
+bench.gap literal 1073742085	1
+bench.gap literal 1073742086	1
+bench.gap literal 1073742087	1
+bench.gap literal 1073742088	1
+bench.gap literal 1073742089	1
+bench.gap literal 1073742090	1
+bench.gap literal 1073742091	1
+bench.gap literal 1073742092	1
+bench.gap literal 1073742093	1
+bench.gap literal 1073742094	1
+bench.gap literal 1073742095	1
+bench.gap literal 1073742096	1
+bench.gap literal 1073742097	1
+bench.gap literal 1073742098	1
+bench.gap literal 1073742099	1
+bench.gap literal 1073742100	1
+bench.gap literal 1073742101	1
+bench.gap literal 1073742102	1
+bench.gap literal 1073742103	1
+bench.gap literal 1073742104	1
+bench.gap literal 1073742105	1
+bench.gap literal 1073742106	1
+bench.gap literal 108	1
+bench.gap literal 109	1
+bench.gap literal 11	1
+bench.gap literal 110	1
+bench.gap literal 111	1
+bench.gap literal 112	1
+bench.gap literal 113	1
+bench.gap literal 114	1
+bench.gap literal 115	1
+bench.gap literal 116	1
+bench.gap literal 117	1
+bench.gap literal 118	1
+bench.gap literal 119	1
+bench.gap literal 12	1
+bench.gap literal 120	9
+bench.gap literal 121	1
+bench.gap literal 122	1
+bench.gap literal 127	1
+bench.gap literal 128	1
+bench.gap literal 13	2
+bench.gap literal 14	1
+bench.gap literal 15	1
+bench.gap literal 150	2
+bench.gap literal 16	1
+bench.gap literal 17	1
+bench.gap literal 18	1
+bench.gap literal 19	1
+bench.gap literal 192	1
+bench.gap literal 20	2
+bench.gap literal 2000	1
+bench.gap literal 255	1
+bench.gap literal 27	1
+bench.gap literal 3	4
+bench.gap literal 32	1
+bench.gap literal 33	1
+bench.gap literal 34	1
+bench.gap literal 35	1
+bench.gap literal 36	1
+bench.gap literal 37	1
+bench.gap literal 38	1
+bench.gap literal 39	1
+bench.gap literal 4	2
+bench.gap literal 40	1
+bench.gap literal 41	1
+bench.gap literal 42	1
+bench.gap literal 43	1
+bench.gap literal 44	1
+bench.gap literal 45	1
+bench.gap literal 46	1
+bench.gap literal 47	1
+bench.gap literal 48	1
+bench.gap literal 49	1
+bench.gap literal 5	2
+bench.gap literal 50	1
+bench.gap literal 51	1
+bench.gap literal 52	1
+bench.gap literal 53	1
+bench.gap literal 54	1
+bench.gap literal 55	1
+bench.gap literal 56	1
+bench.gap literal 57	1
+bench.gap literal 58	1
+bench.gap literal 59	1
+bench.gap literal 6	1
+bench.gap literal 60	1
+bench.gap literal 61	1
+bench.gap literal 62	1
+bench.gap literal 63	1
+bench.gap literal 64	2
+bench.gap literal 7	1
+bench.gap literal 8	2
+bench.gap literal 9	2
+bench.gap literal 91	1
+bench.gap literal 92	1
+bench.gap literal 93	1
+bench.gap literal 94	1
+bench.gap literal 95	1
+bench.gap literal 96	1
+bench.gap literal 97	1
+bench.gap literal 98	1
+bench.gap literal 99	1
+bench.gap logical not	4
+bench.gap map	4
+bench.gap map1	1
+bench.gap match	3
+bench.gap name arraymap_tests.test_dedup	1
+bench.gap name arraymap_tests.test_does_not_find	1
+bench.gap name arraymap_tests.test_does_not_find_dups	1
+bench.gap name arraymap_tests.test_find_all	1
+bench.gap name arraymap_tests.test_find_all_dups	1
+bench.gap name arraymap_tests.test_hist	1
+bench.gap name arraymap_tests.test_insert	1
+bench.gap name arraymap_tests.test_insert_hist	1
+bench.gap name arraymap_tests.test_map	2
+bench.gap name eytzinger_tests.test_dedup	1
+bench.gap name eytzinger_tests.test_does_not_find	1
+bench.gap name eytzinger_tests.test_does_not_find_dups	1
+bench.gap name eytzinger_tests.test_find_all	1
+bench.gap name eytzinger_tests.test_find_all_dups	1
+bench.gap name eytzinger_tests.test_hist	1
+bench.gap name eytzinger_tests.test_insert	1
+bench.gap name eytzinger_tests.test_insert_hist	1
+bench.gap name eytzinger_tests.test_map	2
+bench.gap name f32.abs	1
+bench.gap name f32.max	1
+bench.gap name f32.min	1
+bench.gap name f32.pi	1
+bench.gap name f32.sqrt	1
+bench.gap name f32_kernels.add	1
+bench.gap name f32_kernels.copy	1
+bench.gap name f32_kernels.dot	1
+bench.gap name f64.abs	1
+bench.gap name f64.max	1
+bench.gap name f64.min	1
+bench.gap name f64.sqrt	1
+bench.gap name f64_kernels.add	1
+bench.gap name f64_kernels.copy	1
+bench.gap name f64_kernels.dot	1
+bench.gap name gram_schmidt.qr	1
+bench.gap name hashmap_tests.test_dedup	1
+bench.gap name hashmap_tests.test_does_not_find	1
+bench.gap name hashmap_tests.test_does_not_find_dups	1
+bench.gap name hashmap_tests.test_find_all	1
+bench.gap name hashmap_tests.test_find_all_dups	1
+bench.gap name hashmap_tests.test_hist	1
+bench.gap name hashmap_tests.test_insert	1
+bench.gap name hashmap_tests.test_insert_hist	1
+bench.gap name hashmap_tests.test_map	2
+bench.gap name i32.f32	1
+bench.gap name i32.sum	1
+bench.gap name linalg_f64.block	1
+bench.gap name linalg_f64.cross	1
+bench.gap name linalg_f64.dotprod	1
+bench.gap name linalg_f64.eye	1
+bench.gap name linalg_f64.fromdiag	1
+bench.gap name linalg_f64.kronecker	1
+bench.gap name linalg_f64.linspace	1
+bench.gap name linalg_f64.matadd	1
+bench.gap name linalg_f64.matdiag	1
+bench.gap name linalg_f64.matmul	2
+bench.gap name linalg_f64.matones	1
+bench.gap name linalg_f64.matscale	1
+bench.gap name linalg_f64.matsqrt	1
+bench.gap name linalg_f64.matsub	1
+bench.gap name linalg_f64.matzeros	1
+bench.gap name linalg_f64.ols	1
+bench.gap name linalg_f64.outer	1
+bench.gap name linalg_f64.todiag	1
+bench.gap name linalg_f64.vecnorm	1
+bench.gap name linalg_f64.vecones	1
+bench.gap name linalg_f64.vecscale	1
+bench.gap name linalg_f64.veczeros	1
+bench.gap name linhashmap_tests.test_dedup	1
+bench.gap name linhashmap_tests.test_does_not_find	1
+bench.gap name linhashmap_tests.test_does_not_find_dups	1
+bench.gap name linhashmap_tests.test_find_all	1
+bench.gap name linhashmap_tests.test_find_all_dups	1
+bench.gap name linhashmap_tests.test_hist	1
+bench.gap name linhashmap_tests.test_insert	1
+bench.gap name linhashmap_tests.test_insert_hist	1
+bench.gap name linhashmap_tests.test_map	2
+bench.gap name lu64.backsolve	1
+bench.gap name lu64.forsolve	1
+bench.gap name lu64.lu	1
+bench.gap name lu64.ols	1
+bench.gap name lup64.lup	1
+bench.gap name nmf64.nmf	1
+bench.gap name particleFilter	1
+bench.gap operator /	4
+bench.gap operator >=	1
+bench.gap operator ^	1
+bench.gap operator definition	3
+bench.gap opt.add_identity	1
+bench.gap parameter [][]i32 (no input of rank 2 left)	1
+bench.gap parameter []i32 (no input of rank 1 left)	27
+bench.gap parameter i32 (no scalar terminal left)	4
+bench.gap parameter of type DTYPE	1
+bench.gap parameter of type [][][]f32	1
+bench.gap parameter of type [][]bool	1
+bench.gap parameter of type [][]conway.cell	3
+bench.gap parameter of type [][]f32	10
+bench.gap parameter of type [][]f64	7
+bench.gap parameter of type [][]t	1
+bench.gap parameter of type [][]u32	1
+bench.gap parameter of type [][]u64	1
+bench.gap parameter of type [][]u8	3
+bench.gap parameter of type []argb.colour	1
+bench.gap parameter of type []bool	7
+bench.gap parameter of type []f32	8
+bench.gap parameter of type []f64	6
+bench.gap parameter of type []i64	22
+bench.gap parameter of type []link	2
+bench.gap parameter of type []point	2
+bench.gap parameter of type []u8	2
+bench.gap parameter of type cimage	1
+bench.gap parameter of type f32	20
+bench.gap parameter of type f64	4
+bench.gap parameter of type function	1
+bench.gap parameter of type point_2d	1
+bench.gap parameter of type rotation	1
+bench.gap parameter of type state	3
+bench.gap parameter of type u32	3
+bench.gap parameter of type u8	1
+bench.gap parameter shapes	1
+bench.gap radix_sort	2
+bench.gap radix_sort_float	1
+bench.gap radix_sort_int	2
+bench.gap result of type [][]f32	1
+bench.gap result of type [][]i32	1
+bench.gap result of type []argb.colour	1
+bench.gap result of type []f32	1
+bench.gap result of type []f64	1
+bench.gap result of type bool	5
+bench.gap result of type function	7
+bench.gap result of type i64	13
+bench.gap result of type region	3
+bench.gap result of type u32	1
+bench.gap slice	3
+bench.gap token #	7
+bench.gap token (	19
+bench.gap token +	7
+bench.gap token .	22
+bench.gap token ..	1
+bench.gap token ...	2
+bench.gap token :	9
+bench.gap token [	39
+bench.gap token `	4
+bench.gap token bool	1
+bench.gap token frac	2
+bench.gap token i32	1
+bench.gap token i64	5
+bench.gap token let	1
+bench.gap token nelr	1
+bench.gap token {	42
+bench.gap tuple	110
+bench.gap tuple parameter	12
+bench.gap tuple pattern	214
+bench.gap type parameter	76
+bench.gap u32.i32	1
+bench.gap unit	12
+bench.gap unit pattern	11
+bench.gap untyped parameter	56
+bench.gap while loop	6
+llm.calls	60
+llm.cost_usd	0.90
+llm.gap i32.sum	2
+llm.gap if with condition < an expression	1
+llm.gap if with condition > an expression	1
+llm.gap literal 3	1
+llm.gap loop	5
+llm.gap tabulate	4
+llm.gap token )	1
+llm.model	claude sonnet (claude -p --model sonnet), the contract in llm/contract.txt of the run
+llm.programs	60
+llm.programs_gap	15
+llm.programs_read	45
+llm.run	/private/tmp/claude-501/fpool/pathfinder_topics

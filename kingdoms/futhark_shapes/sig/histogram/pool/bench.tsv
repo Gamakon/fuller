@@ -1,0 +1,11 @@
+seq	source	origin	function	dual	sexp
+1	bench	accelerate/canny/canny.fut	orientUndef	i32:c	0
+2	bench	lib/github.com/diku-dk/lys/lys.fut	SDLK_UNKNOWN	i32:c	0
+3	bench	micro/reduce_by_index.fut	sum_i32	a.k:c	(hist.add.n (tab (mod.k (get.n is j1))) vs)
+4	bench	parboil/lbm/lbm.fut	C	i32:c	0
+5	bench	parboil/lbm/lbm.fut	S	i32:c	1
+6	bench	parboil/lbm/lbm.fut	N	i32:c	2
+7	bench	parboil/lbm/lbm.fut	NE	i32:c	10
+8	bench	rodinia/cfd/cfd.fut	var_density	i32:c	0
+9	bench	rodinia/cfd/cfd.fut	var_momentum	i32:c	1
+10	bench	rodinia/nw/nw.fut	fInd	i32:c	(add (mul k (add k 1)) n)

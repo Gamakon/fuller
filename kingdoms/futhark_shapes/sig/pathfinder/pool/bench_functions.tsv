@@ -1,0 +1,1576 @@
+file	function	status	dual	sexp_or_construct	dual_of_gap	detail
+accelerate/canny/canny.fut	luminanceOfRGBA32	gap		float literal		0.3
+accelerate/canny/canny.fut	clamp	gap		tuple pattern		lower
+accelerate/canny/canny.fut	orientUndef	read	i32:c	0		
+accelerate/canny/canny.fut	orientPosD	gap		literal 64	i32:c	no row of this type reads it
+accelerate/canny/canny.fut	orientVert	gap		literal 128	i32:c	no row of this type reads it
+accelerate/canny/canny.fut	orientNegD	gap		literal 192	i32:c	no row of this type reads it
+accelerate/canny/canny.fut	orientHoriz	gap		literal 255	i32:c	no row of this type reads it
+accelerate/canny/canny.fut	edgeNone	gap		float literal		0.0
+accelerate/canny/canny.fut	edgeWeak	gap		float literal		0.5
+accelerate/canny/canny.fut	edgeStrong	gap		float literal		1.0
+accelerate/canny/canny.fut	toGreyscale	gap		float literal		255.0
+accelerate/canny/canny.fut	gaussianX	gap		tuple		
+accelerate/canny/canny.fut	gaussianY	gap		tuple		
+accelerate/canny/canny.fut	gradiantMagDir	gap		tuple		
+accelerate/canny/canny.fut	nonMaximumSuppression	gap		tuple pattern		let (a, b) = ...
+accelerate/canny/canny.fut	selectStrong	gap		tuple pattern		let (a, b) = ...
+accelerate/canny/canny.fut	main	gap		parameter of type f32		low
+accelerate/crystal/crystal.fut	odd	gap		result of type bool		odd
+accelerate/crystal/crystal.fut	point	gap		tuple pattern		scale
+accelerate/crystal/crystal.fut	rampColour	gap		float literal		1.0
+accelerate/crystal/crystal.fut	wrap	gap		float literal		1.0
+accelerate/crystal/crystal.fut	wave	gap		tuple pattern		th
+accelerate/crystal/crystal.fut	waver	gap		tuple pattern		th
+accelerate/crystal/crystal.fut	waves	gap		tuple pattern		degree
+accelerate/crystal/crystal.fut	quasicrystal	gap		tuple pattern		scale
+accelerate/crystal/crystal.fut	normalize_index	gap		tuple pattern		i
+accelerate/crystal/crystal.fut	render_frame	gap		tuple		
+accelerate/crystal/crystal.fut	main	gap		array literal		
+accelerate/fft/fft.fut	tabmap	gap		type parameter		tabmap
+accelerate/fft/fft.fut	centre_2d	gap		field access		
+accelerate/fft/fft.fut	transform	gap		float literal		0f32
+accelerate/fft/fft.fut	unpack_rgb	gap		tuple		
+accelerate/fft/fft.fut	main	gap		tuple pattern		let (a, b) = ...
+accelerate/fft/fft.fut	pack_rgb	gap		token (		expected a name
+accelerate/fft/fft.fut	highpass_filter	gap		tuple pattern		let (a, b) = ...
+accelerate/fluid/fluid.fut	clamp	gap		float literal		0.0
+accelerate/fluid/fluid.fut	inside	gap		parameter i32 (no scalar terminal left)		g
+accelerate/fluid/fluid.fut	in_outside_corner	gap		parameter i32 (no scalar terminal left)		g
+accelerate/fluid/fluid.fut	lin_solve	gap		float literal		0.0
+accelerate/fluid/fluid.fut	diffuse	gap		float literal		1.0
+accelerate/fluid/fluid.fut	advect	gap		tuple		
+accelerate/fluid/fluid.fut	project	gap		tuple		
+accelerate/fluid/fluid.fut	step	gap		tuple pattern		let (a, b) = ...
+accelerate/fluid/fluid.fut	draw_densities	gap		token ..		a let with no body
+accelerate/fluid/fluid.fut	draw_one_frame	gap		tuple pattern		let (a, b) = ...
+accelerate/fluid/fluid.fut	draw_one_frame_raw	gap		parameter of type [][]f32		u0
+accelerate/fluid/fluid.fut	get_end_frame	gap		tuple pattern		loop (a, b) = ...
+accelerate/fluid/fluid.fut	main	gap		parameter of type [][]f32		u0
+accelerate/fluid/fluid.fut	poke	gap		in-place update (with)		text after the body
+accelerate/hashcat/hashcat.fut	us32	gap		u32.i32	i32:c	no row of this type reads it
+accelerate/hashcat/hashcat.fut	rs	gap		array literal		
+accelerate/hashcat/hashcat.fut	ks	gap		array literal		
+accelerate/hashcat/hashcat.fut	rotate_left	gap		tuple pattern		x
+accelerate/hashcat/hashcat.fut	bytes	gap		array literal		
+accelerate/hashcat/hashcat.fut	unbytes	gap		float literal		integer of type u32
+accelerate/hashcat/hashcat.fut	md5_chunk	gap		token (		expected a name
+accelerate/hashcat/hashcat.fut	initial_chunk	gap		float literal		integer of type u32
+accelerate/hashcat/hashcat.fut	md5s	gap		parameter of type [][]u32		bs
+accelerate/hashcat/hashcat.fut	first_true	gap		tuple pattern		i
+accelerate/hashcat/hashcat.fut	mk_block	gap		token (		expected a name
+accelerate/hashcat/hashcat.fut	md5_blocks	gap		tuple pattern		i
+accelerate/hashcat/hashcat.fut	mk_dict	gap		token [		expected =
+accelerate/hashcat/hashcat.fut	main	gap		tuple		
+accelerate/julia/julia.fut	dot	gap		token (		expected a name
+accelerate/julia/julia.fut	julia	gap		tuple pattern		loop (a, b) = ...
+accelerate/julia/julia.fut	escape_to_rgba	gap		token (		expected a name
+accelerate/julia/julia.fut	render	gap		parameter of type []argb.colour		palette
+accelerate/julia/julia.fut	cubic	gap		tuple pattern		x0
+accelerate/julia/julia.fut	interp	gap		tuple pattern		x0
+accelerate/julia/julia.fut	ultra	gap		float literal		0.0
+accelerate/julia/julia.fut	ultra_palette	gap		result of type []argb.colour		ultra_palette
+accelerate/julia/julia.fut	golden	gap		operator /	i32:c	no row of this type reads it
+accelerate/julia/julia.fut	next	gap		token {		expected a name
+accelerate/julia/julia.fut	presets	gap		tuple pattern		a
+accelerate/kmeans/kmeans.fut	add_points	gap		token (		expected a name
+accelerate/kmeans/kmeans.fut	scale_point	gap		token (		expected a name
+accelerate/kmeans/kmeans.fut	euclid_dist_2	gap		token (		expected a name
+accelerate/kmeans/kmeans.fut	closest_point	gap		field access		
+accelerate/kmeans/kmeans.fut	find_nearest_point	gap		tuple pattern		let (a, b) = ...
+accelerate/kmeans/kmeans.fut	centroids_of	gap		tuple		
+accelerate/kmeans/kmeans.fut	continue	gap		token (		expected a name
+accelerate/kmeans/kmeans.fut	main	gap		tuple		
+accelerate/mandelbrot/mandelbrot-gui.fut	cfg	gap		tuple parameter		cfg
+accelerate/mandelbrot/mandelbrot-gui.fut	presets	gap		array literal		
+accelerate/mandelbrot/mandelbrot.fut	main	gap		parameter of type f32		xcentre
+accelerate/mandelbrot/mandelbrot32.fut	render_mandelbrot	gap		parameter of type f64		xcentre
+accelerate/mandelbrot/mandelbrot64.fut	render_mandelbrot	gap		parameter of type f64		xcentre
+accelerate/nbody/nbody-bh.fut	move	gap		tuple pattern		t
+accelerate/nbody/nbody-bh.fut	calc_accels	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody-bh.fut	advance_bodies	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody-bh.fut	advance_bodies_steps	gap		parameter of type f32		theta
+accelerate/nbody/nbody-bh.fut	wrap_body	gap		tuple pattern		posx
+accelerate/nbody/nbody-bh.fut	unwrap_body	gap		tuple		
+accelerate/nbody/nbody-bh.fut	main	gap		float literal		0.5
+accelerate/nbody/nbody-gui.fut	rotate_point	gap		token {		expected a name
+accelerate/nbody/nbody-gui.fut	rotate_points	gap		parameter of type rotation		rotation
+accelerate/nbody/nbody-gui.fut	rotate_x_matrix	gap		float literal		1f32
+accelerate/nbody/nbody-gui.fut	rotate_y_matrix	gap		tuple		
+accelerate/nbody/nbody-gui.fut	rotmult	gap		field access		
+accelerate/nbody/nbody-gui.fut	rotation	gap		parameter of type f32		x_rotation
+accelerate/nbody/nbody-gui.fut	inverse_rotation	gap		parameter of type f32		x_rotation
+accelerate/nbody/nbody-gui.fut	render_point	gap		token {		expected =
+accelerate/nbody/nbody-gui.fut	mk_body_cloud	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody-gui.fut	mk_body_spiral	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody-gui.fut	mk_body_orbit	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody-gui.fut	mk_bodies	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/nbody.fut	calc_accels	gap		field access		
+accelerate/nbody/nbody.fut	advance_bodies	gap		parameter of type f32		epsilon
+accelerate/nbody/nbody.fut	advance_bodies_steps	gap		parameter of type f32		epsilon
+accelerate/nbody/nbody.fut	wrap_body	gap		tuple pattern		posx
+accelerate/nbody/nbody.fut	unwrap_body	gap		tuple		
+accelerate/nbody/nbody.fut	main	gap		tuple pattern		let (a, b) = ...
+accelerate/nbody/octree.fut	vec	gap		tuple parameter		vec
+accelerate/nbody/octree.fut	mk_octree	gap		field access		
+accelerate/nbody/octree.fut	expand_bits	gap		parameter of type u32		v
+accelerate/nbody/octree.fut	morton_3D	gap		token {		expected =
+accelerate/nbody/octree.fut	mk_accelerator	gap		token .		an expression
+accelerate/nbody/physics.fut	pointmass	gap		token {		expected a name
+accelerate/nbody/physics.fut	accel	gap		field access		
+accelerate/nbody/physics.fut	advance_body	gap		field access		
+accelerate/nbody/radixtree.fut	div_rounding_up	gap		untyped parameter		x
+accelerate/nbody/radixtree.fut	mk_radix_tree	gap		tuple pattern		i
+accelerate/pagerank/pagerank.fut	calculate_dangling_ranks	gap		tuple pattern		size
+accelerate/pagerank/pagerank.fut	calculate_page_ranks	gap		float literal		0f32
+accelerate/pagerank/pagerank.fut	calculate_ranks	gap		parameter of type []link		links
+accelerate/pagerank/pagerank.fut	sort_by_to	gap		radix_sort	i32:c	no row of this type reads it
+accelerate/pagerank/pagerank.fut	sort_by_from	gap		radix_sort	i32:c	no row of this type reads it
+accelerate/pagerank/pagerank.fut	compute_sizes	gap		tuple pattern		let (a, b) = ...
+accelerate/pagerank/pagerank.fut	preprocess_graph	gap		token {		an expression
+accelerate/pagerank/pagerank.fut	initial_ranks	gap		result of type []f32		initial_ranks
+accelerate/pagerank/pagerank.fut	process_graph	gap		parameter of type []link		links
+accelerate/pagerank/pagerank.fut	main	gap		tuple pattern		from
+accelerate/ray/intersection.fut	cast_ray	gap		type parameter		cast_ray
+accelerate/ray/intersection.fut	cast_ray_sphere	gap		cast_ray	i32:c	no row of this type reads it
+accelerate/ray/intersection.fut	cast_ray_plane	gap		cast_ray	i32:c	no row of this type reads it
+accelerate/ray/intersection.fut	check_ray	gap		type parameter		check_ray
+accelerate/ray/intersection.fut	check_ray_sphere	gap		check_ray	i32:c	no row of this type reads it
+accelerate/ray/intersection.fut	check_ray_plane	gap		check_ray	i32:c	no row of this type reads it
+accelerate/ray/lights.fut	apply_light	gap		token {		expected a name
+accelerate/ray/lights.fut	apply_lights	gap		token [		expected )
+accelerate/ray/objects.fut	sphere_normal	gap		field access		
+accelerate/ray/objects.fut	checkers	gap		token {		expected a name
+accelerate/ray/trace.fut	cast_view_rays	gap		field access		
+accelerate/ray/trace.fut	hit_sphere	gap		field access		
+accelerate/ray/trace.fut	hit_plane	gap		field access		
+accelerate/ray/trace.fut	trace_ray	gap		token {		expected a name
+accelerate/ray/trace.fut	make_objects	gap		token [		expected =
+accelerate/ray/trace.fut	main	gap		token {		an expression
+accelerate/smoothlife/smoothlife.fut	default_conf	gap		token {		an expression
+accelerate/smoothlife/smoothlife.fut	make_conf_simple	gap		in-place update (with)		text after the body
+accelerate/smoothlife/smoothlife.fut	make_conf	gap		match		a let with no body
+accelerate/smoothlife/smoothlife.fut	generate_world	gap		tuple pattern		let (a, b) = ...
+accelerate/smoothlife/smoothlife.fut	sl_init	gap		token [		expected =
+accelerate/smoothlife/smoothlife.fut	apply_sigmoid	gap		float literal		2.0
+accelerate/smoothlife/smoothlife.fut	snm	gap		tuple pattern		let (a, b) = ...
+accelerate/smoothlife/smoothlife.fut	step	gap		token [		expected )
+accelerate/smoothlife/smoothlife.fut	sl_render	gap		token [		expected )
+accelerate/smoothlife/smoothlife.fut	to_pow2	gap		untyped parameter		x
+accelerate/smoothlife/smoothlife.fut	main	gap		float literal		0.1
+accelerate/tunnel/tunnel.fut	fract	gap		parameter of type f32		x
+accelerate/tunnel/tunnel.fut	clamp	gap		tuple pattern		lower
+accelerate/tunnel/tunnel.fut	smoothstep	gap		tuple pattern		edge0
+accelerate/tunnel/tunnel.fut	rand2	gap		token {		an expression
+accelerate/tunnel/tunnel.fut	rand1	gap		token {		an expression
+accelerate/tunnel/tunnel.fut	sample	gap		tuple pattern		irregular
+accelerate/tunnel/tunnel.fut	voronoise	gap		tuple pattern		xy
+accelerate/tunnel/tunnel.fut	mod'	gap		tuple pattern		n
+accelerate/tunnel/tunnel.fut	tunnel	gap		token {		an expression
+accelerate/tunnel/tunnel.fut	render	gap		parameter of type f32		time
+accelerate/tunnel/tunnel.fut	main	gap		parameter of type f32		time
+adbench/ba.fut	point_3d	gap		token {		an expression
+adbench/ba.fut	point_2d	gap		token {		an expression
+adbench/ba.fut	rodrigues_rotate_point	gap		field access		
+adbench/ba.fut	radial_distort	gap		parameter of type point_2d		rad_params
+adbench/ba.fut	project	gap		field access		
+adbench/ba.fut	compute_reproj_err	gap		field access		
+adbench/ba.fut	compute_zach_weight_error	gap		untyped parameter		w
+adbench/ba.fut	ba_objective	gap		tuple		
+adbench/ba.fut	grad	gap		float literal		1f64
+adbench/ba.fut	ba_diff	gap		tuple pattern		cam
+adbench/ba.fut	idx_cam	gap		match		text after the body
+adbench/ba.fut	unpack_cam	gap		token {		an expression
+adbench/ba.fut	calculate_objective	gap		token {		an expression
+adbench/ba.fut	calculate_jacobian	gap		token {		an expression
+adbench/gmm.fut	fst	gap		tuple parameter		fst
+adbench/gmm.fut	snd	gap		tuple parameter		snd
+adbench/gmm.fut	sumBy	gap		type parameter		sumBy
+adbench/gmm.fut	l2normSq	gap		parameter of type []f64		v
+adbench/gmm.fut	logsumexp	gap		lambda	i32:c	no row of this type reads it
+adbench/gmm.fut	vMinus	gap		tuple pattern		x
+adbench/gmm.fut	frobeniusNormSq	gap		parameter of type [][]f64		mat
+adbench/gmm.fut	unpackQ	gap		parameter of type []f64		logdiag
+adbench/gmm.fut	logGammaDistrib	gap		float literal		0.25
+adbench/gmm.fut	logsumexp_DArray	gap		parameter of type []f64		arr
+adbench/gmm.fut	logWishartPrior	gap		float literal		0.5
+adbench/gmm.fut	gmmObjective	gap		float literal		0.5
+adbench/gmm.fut	grad	gap		float literal		1f64
+adbench/gmm.fut	calculate_objective	gap		parameter of type []f64		alphas
+adbench/gmm.fut	calculate_jacobian	gap		tuple pattern		a
+adbench/hand.fut	matmul	gap		name linalg_f64.matmul	i32:c	no row of this type reads it
+adbench/hand.fut	matadd	gap		field access		
+adbench/hand.fut	identity	gap		untyped parameter		n
+adbench/hand.fut	angle_axis_to_rotation_matrix	gap		float literal		0.0001
+adbench/hand.fut	apply_global_transform	gap		token `		expected )
+adbench/hand.fut	relatives_to_absolutes	gap		token :		expected for
+adbench/hand.fut	euler_angles_to_rotation_matrix	gap		array literal		
+adbench/hand.fut	get_posed_relatives	gap		token [		expected )
+adbench/hand.fut	get_skinned_vertex_positions	gap		token [		expected )
+adbench/hand.fut	to_pose_params	gap		match		expected )
+adbench/hand.fut	(	gap		operator definition		
+adbench/hand.fut	theta_count	gap		result of type i64		theta_count
+adbench/hand.fut	objective	gap		token [		expected )
+adbench/hand.fut	calculate_objective	gap		token [		expected =
+adbench/hand.fut	calculate_jacobian	gap		token [		expected =
+adbench/lstm.fut	dotproduct	gap		parameter of type []f64		a
+adbench/lstm.fut	sigmoid	gap		float literal		1.0f64
+adbench/lstm.fut	lstmModel	gap		tuple		
+adbench/lstm.fut	lstmPredict	gap		float literal		0f64
+adbench/lstm.fut	lstmObjective	gap		tuple pattern		let (a, b) = ...
+adbench/lstm.fut	calculate_objective	gap		parameter of type [][]f64		mainParams0
+adbench/lstm.fut	calculate_jacobian	gap		tuple pattern		let (a, b) = ...
+babelstream/babelstream.fut	f32_start_scalar	gap		float literal		0.4
+babelstream/babelstream.fut	f32_copy	gap		name f32_kernels.copy	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f32_mul	gap		f32_kernels.mul	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f32_add	gap		name f32_kernels.add	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f32_triad	gap		f32_kernels.triad	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f32_nstream	gap		f32_kernels.nstream	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f32_dot	gap		name f32_kernels.dot	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_start_scalar	gap		float literal		0.4
+babelstream/babelstream.fut	f64_copy	gap		name f64_kernels.copy	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_mul	gap		f64_kernels.mul	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_add	gap		name f64_kernels.add	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_triad	gap		f64_kernels.triad	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_nstream	gap		f64_kernels.nstream	i32:c	no row of this type reads it
+babelstream/babelstream.fut	f64_dot	gap		name f64_kernels.dot	i32:c	no row of this type reads it
+financebench/black-scholes.fut	cnd	gap		float literal		0.5f32
+financebench/black-scholes.fut	black_scholes	gap		float literal		0.5f32
+financebench/black-scholes.fut	option_data	gap		array literal		
+financebench/black-scholes.fut	main	gap		tuple pattern		let (a, b) = ...
+financebench/bonds.fut	days_between	gap		parameter i32 (no scalar terminal left)		y1
+financebench/bonds.fut	year_fraction	gap		float literal		360.0f32
+financebench/bonds.fut	discount_factor	gap		float literal		1.0f32
+financebench/bonds.fut	bond_dirty_price	gap		float literal		0.0f32
+financebench/bonds.fut	accrued_interest	gap		parameter of type f32		rate
+financebench/bonds.fut	lcg	gap		float literal		integer of type u32
+financebench/bonds.fut	gen_bond_params	gap		float literal		integer of type u32
+financebench/bonds.fut	main	gap		tuple pattern		let (a, b) = ...
+financebench/monte-carlo.fut	risk_val	gap		float literal		0.06f32
+financebench/monte-carlo.fut	div_val	gap		float literal		0.0f32
+financebench/monte-carlo.fut	volt_val	gap		float literal		0.200f32
+financebench/monte-carlo.fut	underlying_val	gap		float literal		30.0f32
+financebench/monte-carlo.fut	strike_val	gap		float literal		40.0f32
+financebench/monte-carlo.fut	discount_val	gap		float literal		0.94176453358424872f32
+financebench/monte-carlo.fut	sequence_length	gap		result of type i64		sequence_length
+financebench/monte-carlo.fut	inv_norm_cdf	gap		float literal		-39.696830286653757f32
+financebench/monte-carlo.fut	forward_rate	gap		float literal		1.0f32
+financebench/monte-carlo.fut	process_drift	gap		float literal		0.0001f32
+financebench/monte-carlo.fut	lcg_next	gap		float literal		integer of type u32
+financebench/monte-carlo.fut	mc_path	gap		float literal		1.0f32
+financebench/monte-carlo.fut	main	gap		float literal		integer of type u32
+financebench/repo.fut	discount_factor	gap		float literal		1.0f32
+financebench/repo.fut	simple_compound_factor	gap		float literal		1.0f32
+financebench/repo.fut	bond_dirty_price	gap		float literal		0.0f32
+financebench/repo.fut	forward_spot_income	gap		float literal		1.0f32
+financebench/repo.fut	repo_forward_value	gap		float literal		2.0f32
+financebench/repo.fut	lcg	gap		float literal		integer of type u32
+financebench/repo.fut	gen_repo_params	gap		float literal		integer of type u32
+financebench/repo.fut	main	gap		tuple pattern		let (a, b) = ...
+finpar/InterestCalib.fut	eps0	gap		float literal		1.0e-3
+finpar/InterestCalib.fut	eps	gap		float literal		1.0e-5
+finpar/InterestCalib.fut	is_cauchy_llhood	gap		result of type bool		is_cauchy_llhood
+finpar/InterestCalib.fut	llhood_cauchy_offs	gap		float literal		5.0
+finpar/InterestCalib.fut	llhood_normal_offs	gap		float literal		1.0
+finpar/InterestCalib.fut	r	gap		float literal		0.03
+finpar/InterestCalib.fut	equal	gap		tuple pattern		x1
+finpar/InterestCalib.fut	date_act_365	gap		tuple pattern		t1
+finpar/InterestCalib.fut	add_years	gap		tuple pattern		date
+finpar/InterestCalib.fut	max_date	gap		tuple		
+finpar/InterestCalib.fut	min_date	gap		tuple		
+finpar/InterestCalib.fut	today	gap		tuple		
+finpar/InterestCalib.fut	iota32	gap		untyped parameter		n
+finpar/InterestCalib.fut	zc	gap		tuple		
+finpar/InterestCalib.fut	erf	gap		float literal		0.3275911
+finpar/InterestCalib.fut	erff_poly_only	gap		float literal		0.3275911
+finpar/InterestCalib.fut	uGaussian_P	gap		float literal		2.0
+finpar/InterestCalib.fut	uGaussian_P_withExpFactor	gap		tuple pattern		x
+finpar/InterestCalib.fut	to_solve	gap		tuple pattern		fid
+finpar/InterestCalib.fut	rootFinding_Brent	gap		tuple pattern		fid
+finpar/InterestCalib.fut	sobolInd	gap		float literal		1.0
+finpar/InterestCalib.fut	makeSummary	gap		tuple pattern		let (a, b) = ...
+finpar/InterestCalib.fut	genomeBounds	gap		array literal		
+finpar/InterestCalib.fut	initGenome	gap		token let		expected a name
+finpar/InterestCalib.fut	selectMoveType	gap		float literal		0.2
+finpar/InterestCalib.fut	moves_unif_ampl_ratio	gap		unit pattern		()
+finpar/InterestCalib.fut	mutateHelper	gap		tuple pattern		ampl_ratio
+finpar/InterestCalib.fut	constrainDim	gap		tuple pattern		gene
+finpar/InterestCalib.fut	perturbation	gap		tuple pattern		gamma1
+finpar/InterestCalib.fut	mutate_dims_all	gap		tuple pattern		let (a, b) = ...
+finpar/InterestCalib.fut	mutate_dims_one	gap		tuple pattern		let (a, b) = ...
+finpar/InterestCalib.fut	mcmc_DE	gap		tuple pattern		r01
+finpar/InterestCalib.fut	b_fun	gap		tuple pattern		z
+finpar/InterestCalib.fut	t_fun	gap		tuple pattern		sigma
+finpar/InterestCalib.fut	bigv	gap		tuple pattern		genome
+finpar/InterestCalib.fut	bigmx	gap		tuple pattern		genome
+finpar/InterestCalib.fut	bigmy	gap		tuple pattern		genome
+finpar/InterestCalib.fut	exactYhat	gap		tuple pattern		n_schedi
+finpar/InterestCalib.fut	evalGenomeOnSwap	gap		tuple pattern		genomea
+finpar/InterestCalib.fut	normalPdf	gap		tuple pattern		z
+finpar/InterestCalib.fut	logLikeNormal	gap		tuple pattern		y_ref
+finpar/InterestCalib.fut	cauchyPdf	gap		tuple pattern		z
+finpar/InterestCalib.fut	logLikeCauchy	gap		tuple pattern		y_ref
+finpar/InterestCalib.fut	logLikelihood	gap		tuple pattern		y_ref
+finpar/InterestCalib.fut	interestCalibKernel	gap		tuple pattern		pop
+finpar/InterestCalib.fut	extended_swaption_of_swaption	gap		tuple pattern		let (a, b) = ...
+finpar/InterestCalib.fut	black_price	gap		tuple pattern		today
+finpar/InterestCalib.fut	pricer_of_swaption	gap		tuple pattern		today
+finpar/InterestCalib.fut	main	gap		tuple		
+finpar/LocVolCalib.fut	initGrid	gap		float literal		1.0
+finpar/LocVolCalib.fut	initOperator	gap		array literal		
+finpar/LocVolCalib.fut	setPayoff	gap		tuple pattern		strike
+finpar/LocVolCalib.fut	updateParams	gap		tuple pattern		myX
+finpar/LocVolCalib.fut	tridagPar	gap		tuple pattern		a
+finpar/LocVolCalib.fut	explicitMethod	gap		tuple pattern		myD
+finpar/LocVolCalib.fut	implicitMethod	gap		tuple pattern		let (a, b) = ...
+finpar/LocVolCalib.fut	rollback	gap		tuple pattern		tnow
+finpar/LocVolCalib.fut	value	gap		tuple pattern		numX
+finpar/LocVolCalib.fut	main	gap		float literal		0.001
+finpar/OptionPricing.fut	grayCode	gap		operator ^	i32:c	no row of this type reads it
+finpar/OptionPricing.fut	testBit	gap		tuple pattern		n
+finpar/OptionPricing.fut	xorInds	gap		tuple		
+finpar/OptionPricing.fut	sobolIndI	gap		tuple pattern		dir_vs
+finpar/OptionPricing.fut	sobolIndR	gap		float literal		2.0
+finpar/OptionPricing.fut	polyAppr	gap		tuple pattern		x
+finpar/OptionPricing.fut	smallcase	gap		float literal		0.180625
+finpar/OptionPricing.fut	intermediate	gap		float literal		1.6
+finpar/OptionPricing.fut	tail	gap		float literal		5.0
+finpar/OptionPricing.fut	ugaussianEl	gap		float literal		0.5
+finpar/OptionPricing.fut	ugaussian	gap		parameter of type []f32		ps
+finpar/OptionPricing.fut	brownianBridgeDates	gap		float literal		0.0
+finpar/OptionPricing.fut	brownianBridge	gap		parameter of type [][]f32		bb_data
+finpar/OptionPricing.fut	correlateDeltas	gap		tuple pattern		md_c
+finpar/OptionPricing.fut	combineVs	gap		parameter of type []f32		n_row
+finpar/OptionPricing.fut	mkPrices	gap		tuple pattern		md_starts
+finpar/OptionPricing.fut	blackScholes	gap		tuple		
+finpar/OptionPricing.fut	fminPayoff	gap		tuple pattern		let (a, b) = ...
+finpar/OptionPricing.fut	trajInner	gap		tuple pattern		amount
+finpar/OptionPricing.fut	payoff1	gap		tuple pattern		md_disct
+finpar/OptionPricing.fut	payoff2	gap		tuple pattern		md_disc
+finpar/OptionPricing.fut	payoff3	gap		tuple pattern		md_disct
+finpar/OptionPricing.fut	genericPayoff	gap		tuple		
+finpar/OptionPricing.fut	main	gap		float literal		0.0
+jgf/crypt/crypt.fut	mk16b	gap		tuple pattern		upper
+jgf/crypt/crypt.fut	cipher_idea_block	gap		tuple		
+jgf/crypt/crypt.fut	cipher_idea	gap		tuple pattern		key
+jgf/crypt/crypt.fut	main	gap		tuple		
+jgf/crypt/keys.fut	inv	gap		tuple pattern		let (a, b) = ...
+jgf/crypt/keys.fut	encryptionKey	gap		float literal		integer of type i16
+jgf/crypt/keys.fut	decryptionKey	gap		float literal		integer of type i16
+jgf/crypt/keys.fut	main	gap		tuple		
+jgf/series/series.fut	thefunction	gap		tuple pattern		x
+jgf/series/series.fut	TrapezoidIntegrate	gap		tuple pattern		x0
+jgf/series/series.fut	main	gap		float literal		3.1415926535897932
+lib/github.com/athas/matte/colour_test.fut	basic_mix	gap		float literal		0.5f32
+lib/github.com/athas/matte/colour_test.fut	is_argb	gap		result of type u32		is_argb
+lib/github.com/athas/vector/vector_test.fut	main	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vector_test.fut	error	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vector_test.fut	foldl_add	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vector_test.fut	foldr_add	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vector_test.fut	foldl_sub	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vector_test.fut	foldr_sub	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/athas/vector/vspace_tests.fut	unvec3	gap		token {		expected a name
+lib/github.com/athas/vector/vspace_tests.fut	test_add	gap		token {		an expression
+lib/github.com/athas/vector/vspace_tests.fut	test_sub	gap		token {		an expression
+lib/github.com/athas/vector/vspace_tests.fut	test_dot	gap		token {		text after the body
+lib/github.com/athas/vector/vspace_tests.fut	test_scale	gap		token {		expected )
+lib/github.com/athas/vector/vspace_tests.fut	test_norm	gap		token {		text after the body
+lib/github.com/athas/vector/vspace_tests.fut	test_normalise	gap		token {		expected )
+lib/github.com/athas/vector/vspace_tests.fut	test_zero	gap		token {		an expression
+lib/github.com/athas/vector/vspace_tests.fut	test_one	gap		token {		expected )
+lib/github.com/athas/vector/vspace_tests.fut	test_rot_x	gap		token {		expected )
+lib/github.com/athas/vector/vspace_tests.fut	test_rot_y	gap		token {		expected )
+lib/github.com/athas/vector/vspace_tests.fut	test_rot_z	gap		token {		expected )
+lib/github.com/diku-dk/autodiff/autodiff.fut	singular	gap		type parameter		singular
+lib/github.com/diku-dk/autodiff/autodiff.fut	grad_unit	gap		untyped parameter		gen
+lib/github.com/diku-dk/autodiff/autodiff.fut	grad32	gap		lambda	i32:c	no row of this type reads it
+lib/github.com/diku-dk/autodiff/autodiff.fut	grad64	gap		lambda	i32:c	no row of this type reads it
+lib/github.com/diku-dk/autodiff/autodiff.fut	grad_rev	gap		untyped parameter		gen
+lib/github.com/diku-dk/autodiff/onehot.fut	onehots	gap		type parameter		onehots
+lib/github.com/diku-dk/autodiff/onehot.fut	grad	gap		untyped parameter		gen
+lib/github.com/diku-dk/autodiff/onehot_tests.fut	test_arr_pair	gap		field access		
+lib/github.com/diku-dk/autodiff/onehot_tests.fut	test_cycle	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_mag	gap		parameter of type f32		a
+lib/github.com/diku-dk/complex/complex_tests.fut	test_arg	gap		parameter of type f32		a
+lib/github.com/diku-dk/complex/complex_tests.fut	test_add	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_sub	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_mul	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_div	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_sqrt	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_exp	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_log	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_conj	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_neg	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_abs	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_pow	gap		field access		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_fma	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_sum	gap		tuple		
+lib/github.com/diku-dk/complex/complex_tests.fut	test_i64	gap		tuple		
+lib/github.com/diku-dk/containers/array/array_test.fut	seed	gap		array literal		
+lib/github.com/diku-dk/containers/array/array_test.fut	count_occourences_sort	gap		tuple		
+lib/github.com/diku-dk/containers/array/array_test.fut	dedup_sort	gap		token .		an expression
+lib/github.com/diku-dk/containers/array/array_test.fut	count_occourences	gap		unit		()
+lib/github.com/diku-dk/containers/array/array_test.fut	test_reduce_by_key	gap		token .		an expression
+lib/github.com/diku-dk/containers/array/array_test.fut	test_dedup	gap		unit		()
+lib/github.com/diku-dk/containers/array/array_test.fut	partition_unordered_true_elems	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/containers/array/array_test.fut	partition_unordered_false_elems	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/containers/array/array_test.fut	partition_at_dest_true_elems	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/containers/array/array_test.fut	partition_at_dest_false_elems	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	backwards_linear_search	gap		type parameter		backwards_linear_search
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	linear_search	gap		type parameter		linear_search
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_mintree_previous	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_mintree_next	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_mintree_strict_previous	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_mintree_strict_next	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_maxtree_previous	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_maxtree_next	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_maxtree_strict_previous	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/reduction_tree_test.fut	test_maxtree_strict_next	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	height	gap		result of type i64		height
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	size_from_height	gap		result of type i64		size_from_height
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	size	gap		result of type i64		size
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	sibling	gap		result of type i64		sibling
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	parent	gap		result of type i64		parent
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	is_left	gap		result of type bool		is_left
+lib/github.com/diku-dk/containers/array/transparent_reduction_tree.fut	is_right	gap		result of type bool		is_right
+lib/github.com/diku-dk/containers/core/hash.fut	(file)	gap		literal		FFFFFFFFFFFFFFFF: number too large to fit in target type
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_from_opt_none	gap		token i64		expected =
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_from_opt_some	gap		token i64		expected =
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_map_opt_none	gap		token i64		expected =
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_map_opt_some	gap		token i64		expected =
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_equal_opt	gap		token i64		expected =
+lib/github.com/diku-dk/containers/core/opt_test.fut	combine	gap		field access		
+lib/github.com/diku-dk/containers/core/opt_test.fut	combine'	gap		opt.add_identity	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_add_identity	gap		token #		text after the body
+lib/github.com/diku-dk/containers/core/opt_test.fut	test_first_some	gap		token i32		expected ->
+lib/github.com/diku-dk/containers/map/arraymap.fut	binary_search	gap		type parameter		binary_search
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_find_all	gap		name hashmap_tests.test_find_all	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_find_all	gap		name linhashmap_tests.test_find_all	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_find_all	gap		name arraymap_tests.test_find_all	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_find_all	gap		name eytzinger_tests.test_find_all	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_does_not_find	gap		name hashmap_tests.test_does_not_find	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_does_not_find	gap		name linhashmap_tests.test_does_not_find	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_does_not_find	gap		name arraymap_tests.test_does_not_find	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_does_not_find	gap		name eytzinger_tests.test_does_not_find	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_find_all_dups	gap		name hashmap_tests.test_find_all_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_find_all_dups	gap		name linhashmap_tests.test_find_all_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_find_all_dups	gap		name arraymap_tests.test_find_all_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_find_all_dups	gap		name eytzinger_tests.test_find_all_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_does_not_find_dups	gap		name hashmap_tests.test_does_not_find_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_does_not_find_dups	gap		name linhashmap_tests.test_does_not_find_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_does_not_find_dups	gap		name arraymap_tests.test_does_not_find_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_does_not_find_dups	gap		name eytzinger_tests.test_does_not_find_dups	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_dedup	gap		name hashmap_tests.test_dedup	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_dedup	gap		name linhashmap_tests.test_dedup	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_dedup	gap		name arraymap_tests.test_dedup	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_dedup	gap		name eytzinger_tests.test_dedup	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_hist	gap		name hashmap_tests.test_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_hist	gap		name linhashmap_tests.test_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_hist	gap		name arraymap_tests.test_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_hist	gap		name eytzinger_tests.test_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_map	gap		name hashmap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_map	gap		name linhashmap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_map	gap		name arraymap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_map	gap		name eytzinger_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_update	gap		name hashmap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_update	gap		name linhashmap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_update	gap		name arraymap_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_update	gap		name eytzinger_tests.test_map	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_insert	gap		name hashmap_tests.test_insert	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_insert	gap		name linhashmap_tests.test_insert	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_insert	gap		name arraymap_tests.test_insert	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_insert	gap		name eytzinger_tests.test_insert	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	hashmap_insert_hist	gap		name hashmap_tests.test_insert_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	linhashmap_insert_hist	gap		name linhashmap_tests.test_insert_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	arraymap_insert_hist	gap		name arraymap_tests.test_insert_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/map/map_test.fut	eytzinger_insert_hist	gap		name eytzinger_tests.test_insert_hist	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_rev	gap		tuple		
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_sub	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_concat	gap		field access		
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_scan	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_reduce	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/diku-dk/containers/pointer/list_test.fut	test_reduce_comm	gap		parameter []i32 (no input of rank 1 left)		xs
+lib/github.com/diku-dk/containers/set/bitset.fut	cap	gap		result of type i64		cap
+lib/github.com/diku-dk/containers/set/bitset_test.fut	capacity	gap		i64.u8	i32:c	no row of this type reads it
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_is_empty_success	gap		parameter of type []u8		arr
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_is_empty_fail	gap		parameter of type [][]u8		arr
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_complement	gap		parameter of type u8		c
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_equality	gap		field access		
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_singleton	gap		parameter of type []u8		arr
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_delete_success	gap		array literal		
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_delete_fail	gap		token ...		expected )
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_member_success	gap		parameter of type [][]u8		arr
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_member_fail	gap		parameter of type [][]u8		arr
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_insert	gap		token ...		expected )
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_union	gap		field access		
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_intersection	gap		field access		
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_difference	gap		field access		
+lib/github.com/diku-dk/containers/set/bitset_test.fut	test_is_subset	gap		parameter of type []i64		a
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_find_all	gap		unit		()
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_does_not_find	gap		unit		()
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_find_all_dups	gap		unit		()
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_does_not_find_dups	gap		unit		()
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_dedup	gap		unit		()
+lib/github.com/diku-dk/containers/set/hashset_test.fut	test_insert	gap		unit		()
+lib/github.com/diku-dk/containers/set/setops_test.fut	test_intersect	gap		parameter of type []i64		a
+lib/github.com/diku-dk/containers/set/setops_test.fut	test_union	gap		parameter of type []i64		a
+lib/github.com/diku-dk/containers/set/setops_test.fut	test_diff	gap		parameter of type []i64		a
+lib/github.com/diku-dk/containers/set/setops_test.fut	test_elimdups	gap		parameter of type []i64		a
+lib/github.com/diku-dk/containers/set/unionfind.fut	both	gap		tuple parameter		both
+lib/github.com/diku-dk/containers/set/unionfind.fut	bimap	gap		tuple parameter		bimap
+lib/github.com/diku-dk/containers/set/unionfind.fut	swap	gap		type parameter		swap
+lib/github.com/diku-dk/containers/set/unionfind.fut	hash	gap		field access		
+lib/github.com/diku-dk/containers/set/unionfind.fut	find_by_vector	gap		tuple		
+lib/github.com/diku-dk/containers/set/unionfind.fut	find_by_vector'	gap		while loop		
+lib/github.com/diku-dk/containers/set/unionfind.fut	compression_step	gap		tuple		
+lib/github.com/diku-dk/containers/set/unionfind.fut	compression	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/containers/set/unionfind_test.fut	(file)	gap		literal		8422d1795f837e8b: number too large to fit in target type
+lib/github.com/diku-dk/containers/stream/bloom_filter.fut	(file)	gap		literal		bf58476d1ce4e5b9: number too large to fit in target type
+lib/github.com/diku-dk/containers/stream/count_min_sketch.fut	(file)	gap		literal		bf58476d1ce4e5b9: number too large to fit in target type
+lib/github.com/diku-dk/containers/stream/hyperloglog_data.fut	bias_data	gap		array literal		
+lib/github.com/diku-dk/containers/stream/hyperloglog_data.fut	raw_estimate_data	gap		array literal		
+lib/github.com/diku-dk/containers/stream/hyperloglog_data.fut	shape	gap		array literal		
+lib/github.com/diku-dk/containers/stream/hyperloglog_data.fut	offsets	gap		array literal		
+lib/github.com/diku-dk/containers/stream/hyperloglog_data.fut	threshold_data	gap		array literal		
+lib/github.com/diku-dk/containers/tree/euler_tour.fut	wyllie_scan_step	gap		type parameter		wyllie_scan_step
+lib/github.com/diku-dk/containers/tree/euler_tour.fut	wyllie_scan	gap		type parameter		wyllie_scan
+lib/github.com/diku-dk/containers/tree/euler_tour.fut	preorder_pos	gap		token .		an expression
+lib/github.com/diku-dk/containers/tree/euler_tour.fut	euler_tour	gap		type parameter		euler_tour
+lib/github.com/diku-dk/containers/tree/euler_tour_test.fut	euler_tour	gap		tuple pattern		x
+lib/github.com/diku-dk/containers/tree/euler_tour_test.fut	random_P	gap		array literal		
+lib/github.com/diku-dk/containers/tree/euler_tour_test.fut	prop_euler_tour	gap		tuple pattern		l
+lib/github.com/diku-dk/cpprandom/random.fut	hash	gap		i32.u32	i32:c	no row of this type reads it
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_i32_rand	gap		tuple		
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_i64_rand	gap		tuple		
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_i32_ranlux24_base	gap		tuple		
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_i32_ranlux24	gap		tuple		
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_i32_pcg32	gap		tuple		
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_f32_rand	gap		float literal		1f32
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_f32_normal	gap		token {		text after the body
+lib/github.com/diku-dk/cpprandom/random_tests.fut	test_f32_shuffle	gap		token {		text after the body
+lib/github.com/diku-dk/cpprandom/romu.fut	(file)	gap		literal		15241094284759029579: number too large to fit in target type
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_quad	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_trio	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_duo	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_duo_jr	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_quad32	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_trio32	gap		tuple		
+lib/github.com/diku-dk/cpprandom/romu_tests.fut	test_romu_mono32	gap		tuple		
+lib/github.com/diku-dk/cpprandom/shuffle_tests.fut	test_shuffle	gap		array literal		
+lib/github.com/diku-dk/date/date_tests.fut	date_triples_inv	gap		tuple		
+lib/github.com/diku-dk/date/date_tests.fut	check_date	gap		tuple		
+lib/github.com/diku-dk/date/date_tests.fut	add_days	gap		tuple		
+lib/github.com/diku-dk/date/date_tests.fut	sub_days	gap		tuple		
+lib/github.com/diku-dk/date/date_tests.fut	diff_dates	gap		tuple		
+lib/github.com/diku-dk/date/date_tests.fut	add_months	gap		tuple		
+lib/github.com/diku-dk/fft/stockham-radix-2_tests.fut	test_fft	gap		parameter of type []f32		res
+lib/github.com/diku-dk/fft/stockham-radix-2_tests.fut	test_ifft	gap		parameter of type []f32		res
+lib/github.com/diku-dk/fft/stockham-radix-2_tests.fut	test_fft2	gap		parameter of type [][]f32		res
+lib/github.com/diku-dk/fft/stockham-radix-2_tests.fut	test_ifft2	gap		parameter of type [][]f32		res
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	bellman	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_sa	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	bellman_j	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_poly	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	idd	gap		untyped parameter		n
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	wrapj	gap		tuple		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_poly_jvp	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_polyad	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	bellmanr	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	linspace	gap		parameter of type f64		start
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_polyr	gap		in-place update (with)		a let with no body
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_poly1d	gap		in-place update (with)		a let with no body
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_sqrt	gap		in-place update (with)		a let with no body
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	dotprod	gap		float literal		0.0
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	matvecmul	gap		parameter of type [][]f64		A
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	matmul	gap		parameter of type [][]f64		us
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	binop	gap		parameter of type function		f
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	diag_ex	gap		parameter of type [][]f64		A
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	diag	gap		float literal		0.0
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	jacobi	gap		float literal		1.0
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	eqv_eps	gap		parameter of type f64		eps
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_jacobi	gap		float literal		1f64
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_jacobi_ok	gap		array literal		
+lib/github.com/diku-dk/linalg/dpsolve_tests.fut	test_jacobi_polyad	gap		array literal		
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_veczeros	gap		name linalg_f64.veczeros	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_vecones	gap		name linalg_f64.vecones	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_linspace	gap		name linalg_f64.linspace	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_eye	gap		name linalg_f64.eye	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matzeros	gap		name linalg_f64.matzeros	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matones	gap		name linalg_f64.matones	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_dotprod	gap		name linalg_f64.dotprod	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_outer	gap		name linalg_f64.outer	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_cross	gap		name linalg_f64.cross	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_inv	gap		parameter of type [][]f64		A
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matmul	gap		name linalg_f64.matmul	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_kronecker	gap		name linalg_f64.kronecker	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_ols	gap		name linalg_f64.ols	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_block	gap		name linalg_f64.block	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matunary_neg	gap		linalg_f64.matunary	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matop_plus	gap		linalg_f64.matop	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matcomp_lessthan	gap		linalg_f64.matcomp	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_vecscale	gap		name linalg_f64.vecscale	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matscale	gap		name linalg_f64.matscale	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matsub	gap		name linalg_f64.matsub	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matadd	gap		name linalg_f64.matadd	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_vecnorm	gap		name linalg_f64.vecnorm	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matdiag	gap		name linalg_f64.matdiag	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_todiag	gap		name linalg_f64.todiag	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_fromdiag	gap		name linalg_f64.fromdiag	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_househess_Q	gap		token .		an expression
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_househess_H	gap		token .		an expression
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_eig_D	gap		token .		an expression
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_eig	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/linalg/linalg_tests.fut	test_matsqrt	gap		name linalg_f64.matsqrt	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_lu	gap		name lu64.lu	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_lu2_l	gap		field access		
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_lu2_u	gap		field access		
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_forsolve	gap		name lu64.forsolve	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_backsolve	gap		name lu64.backsolve	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lu_tests.fut	test_ols	gap		name lu64.ols	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lup_tests.fut	test_lup	gap		name lup64.lup	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/lup_tests.fut	test_solve	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/linalg/lup_tests.fut	test_ols	gap		parameter of type [][]t		a
+lib/github.com/diku-dk/linalg/lup_tests.fut	veccomp	gap		type parameter		veccomp
+lib/github.com/diku-dk/linalg/lup_tests.fut	test_ols_eq	gap		float literal		0.00005
+lib/github.com/diku-dk/linalg/nmf_tests.fut	nmf	gap		name nmf64.nmf	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/nmf_tests.fut	matsub	gap		field access		
+lib/github.com/diku-dk/linalg/nmf_tests.fut	matprod	gap		field access		
+lib/github.com/diku-dk/linalg/nmf_tests.fut	matmean	gap		parameter of type [][]f64		xss
+lib/github.com/diku-dk/linalg/nmf_tests.fut	nmf_test	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/linalg/perm_tests.fut	eqvi	gap		field access		
+lib/github.com/diku-dk/linalg/perm_tests.fut	test	gap		array literal		
+lib/github.com/diku-dk/linalg/qr.fut	zero_below_main_diag	gap		type parameter		zero_below_main_diag
+lib/github.com/diku-dk/linalg/qr_tests.fut	test_householder	gap		block_householder.qr	i32:c	no row of this type reads it
+lib/github.com/diku-dk/linalg/qr_tests.fut	test_gram_schmidt	gap		name gram_schmidt.qr	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/genlys.fut	init	gap		parameter of type u32		seed
+lib/github.com/diku-dk/lys/genlys.fut	grab_mouse	gap		result of type bool		grab_mouse
+lib/github.com/diku-dk/lys/genlys.fut	resize	gap		parameter of type state		s
+lib/github.com/diku-dk/lys/genlys.fut	key	gap		token #		an expression
+lib/github.com/diku-dk/lys/genlys.fut	mouse	gap		token #		an expression
+lib/github.com/diku-dk/lys/genlys.fut	wheel	gap		token #		an expression
+lib/github.com/diku-dk/lys/genlys.fut	step	gap		token #		an expression
+lib/github.com/diku-dk/lys/genlys.fut	render	gap		parameter of type state		s
+lib/github.com/diku-dk/lys/genlys.fut	text_colour	gap		parameter of type state		s
+lib/github.com/diku-dk/lys/genlys.fut	text_format	gap		unit		()
+lib/github.com/diku-dk/lys/genlys.fut	text_content	gap		parameter of type f32		render_duration
+lib/github.com/diku-dk/lys/lys.fut	SDLK_UNKNOWN	read	i32:c	0		
+lib/github.com/diku-dk/lys/lys.fut	SDLK_BACKSPACE	gap		literal 8	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_TAB	gap		literal 9	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RETURN	gap		literal 13	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_ESCAPE	gap		literal 27	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SPACE	gap		literal 32	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_EXCLAIM	gap		literal 33	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_QUOTEDBL	gap		literal 34	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_HASH	gap		literal 35	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_DOLLAR	gap		literal 36	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PERCENT	gap		literal 37	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AMPERSAND	gap		literal 38	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_QUOTE	gap		literal 39	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LEFTPAREN	gap		literal 40	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RIGHTPAREN	gap		literal 41	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_ASTERISK	gap		literal 42	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PLUS	gap		literal 43	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_COMMA	gap		literal 44	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MINUS	gap		literal 45	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PERIOD	gap		literal 46	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SLASH	gap		literal 47	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_0	gap		literal 48	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_1	gap		literal 49	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_2	gap		literal 50	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_3	gap		literal 51	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_4	gap		literal 52	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_5	gap		literal 53	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_6	gap		literal 54	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_7	gap		literal 55	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_8	gap		literal 56	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_9	gap		literal 57	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_COLON	gap		literal 58	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SEMICOLON	gap		literal 59	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LESS	gap		literal 60	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_EQUALS	gap		literal 61	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_GREATER	gap		literal 62	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_QUESTION	gap		literal 63	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AT	gap		literal 64	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LEFTBRACKET	gap		literal 91	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_BACKSLASH	gap		literal 92	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RIGHTBRACKET	gap		literal 93	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CARET	gap		literal 94	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_UNDERSCORE	gap		literal 95	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_BACKQUOTE	gap		literal 96	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_a	gap		literal 97	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_b	gap		literal 98	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_c	gap		literal 99	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_d	gap		literal 100	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_e	gap		literal 101	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_f	gap		literal 102	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_g	gap		literal 103	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_h	gap		literal 104	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_i	gap		literal 105	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_j	gap		literal 106	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_k	gap		literal 107	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_l	gap		literal 108	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_m	gap		literal 109	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_n	gap		literal 110	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_o	gap		literal 111	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_p	gap		literal 112	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_q	gap		literal 113	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_r	gap		literal 114	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_s	gap		literal 115	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_t	gap		literal 116	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_u	gap		literal 117	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_v	gap		literal 118	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_w	gap		literal 119	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_x	gap		literal 120	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_y	gap		literal 121	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_z	gap		literal 122	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_DELETE	gap		literal 127	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CAPSLOCK	gap		literal 1073741881	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F1	gap		literal 1073741882	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F2	gap		literal 1073741883	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F3	gap		literal 1073741884	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F4	gap		literal 1073741885	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F5	gap		literal 1073741886	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F6	gap		literal 1073741887	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F7	gap		literal 1073741888	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F8	gap		literal 1073741889	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F9	gap		literal 1073741890	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F10	gap		literal 1073741891	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F11	gap		literal 1073741892	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F12	gap		literal 1073741893	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PRINTSCREEN	gap		literal 1073741894	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SCROLLLOCK	gap		literal 1073741895	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PAUSE	gap		literal 1073741896	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_INSERT	gap		literal 1073741897	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_HOME	gap		literal 1073741898	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PAGEUP	gap		literal 1073741899	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_END	gap		literal 1073741901	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PAGEDOWN	gap		literal 1073741902	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RIGHT	gap		literal 1073741903	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LEFT	gap		literal 1073741904	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_DOWN	gap		literal 1073741905	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_UP	gap		literal 1073741906	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_NUMLOCKCLEAR	gap		literal 1073741907	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_DIVIDE	gap		literal 1073741908	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MULTIPLY	gap		literal 1073741909	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MINUS	gap		literal 1073741910	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_PLUS	gap		literal 1073741911	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_ENTER	gap		literal 1073741912	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_1	gap		literal 1073741913	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_2	gap		literal 1073741914	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_3	gap		literal 1073741915	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_4	gap		literal 1073741916	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_5	gap		literal 1073741917	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_6	gap		literal 1073741918	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_7	gap		literal 1073741919	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_8	gap		literal 1073741920	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_9	gap		literal 1073741921	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_0	gap		literal 1073741922	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_PERIOD	gap		literal 1073741923	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_APPLICATION	gap		literal 1073741925	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_POWER	gap		literal 1073741926	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_EQUALS	gap		literal 1073741927	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F13	gap		literal 1073741928	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F14	gap		literal 1073741929	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F15	gap		literal 1073741930	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F16	gap		literal 1073741931	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F17	gap		literal 1073741932	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F18	gap		literal 1073741933	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F19	gap		literal 1073741934	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F20	gap		literal 1073741935	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F21	gap		literal 1073741936	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F22	gap		literal 1073741937	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F23	gap		literal 1073741938	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_F24	gap		literal 1073741939	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_EXECUTE	gap		literal 1073741940	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_HELP	gap		literal 1073741941	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MENU	gap		literal 1073741942	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SELECT	gap		literal 1073741943	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_STOP	gap		literal 1073741944	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AGAIN	gap		literal 1073741945	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_UNDO	gap		literal 1073741946	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CUT	gap		literal 1073741947	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_COPY	gap		literal 1073741948	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PASTE	gap		literal 1073741949	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_FIND	gap		literal 1073741950	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MUTE	gap		literal 1073741951	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_VOLUMEUP	gap		literal 1073741952	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_VOLUMEDOWN	gap		literal 1073741953	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_COMMA	gap		literal 1073741957	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_EQUALSAS400	gap		literal 1073741958	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_ALTERASE	gap		literal 1073741977	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SYSREQ	gap		literal 1073741978	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CANCEL	gap		literal 1073741979	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CLEAR	gap		literal 1073741980	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_PRIOR	gap		literal 1073741981	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RETURN2	gap		literal 1073741982	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SEPARATOR	gap		literal 1073741983	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_OUT	gap		literal 1073741984	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_OPER	gap		literal 1073741985	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CLEARAGAIN	gap		literal 1073741986	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CRSEL	gap		literal 1073741987	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_EXSEL	gap		literal 1073741988	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_00	gap		literal 1073742000	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_000	gap		literal 1073742001	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_THOUSANDSSEPARATOR	gap		literal 1073742002	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_DECIMALSEPARATOR	gap		literal 1073742003	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CURRENCYUNIT	gap		literal 1073742004	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CURRENCYSUBUNIT	gap		literal 1073742005	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_LEFTPAREN	gap		literal 1073742006	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_RIGHTPAREN	gap		literal 1073742007	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_LEFTBRACE	gap		literal 1073742008	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_RIGHTBRACE	gap		literal 1073742009	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_TAB	gap		literal 1073742010	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_BACKSPACE	gap		literal 1073742011	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_A	gap		literal 1073742012	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_B	gap		literal 1073742013	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_C	gap		literal 1073742014	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_D	gap		literal 1073742015	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_E	gap		literal 1073742016	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_F	gap		literal 1073742017	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_XOR	gap		literal 1073742018	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_POWER	gap		literal 1073742019	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_PERCENT	gap		literal 1073742020	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_LESS	gap		literal 1073742021	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_GREATER	gap		literal 1073742022	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_AMPERSAND	gap		literal 1073742023	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_DBLAMPERSAND	gap		literal 1073742024	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_VERTICALBAR	gap		literal 1073742025	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_DBLVERTICALBAR	gap		literal 1073742026	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_COLON	gap		literal 1073742027	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_HASH	gap		literal 1073742028	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_SPACE	gap		literal 1073742029	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_AT	gap		literal 1073742030	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_EXCLAM	gap		literal 1073742031	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMSTORE	gap		literal 1073742032	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMRECALL	gap		literal 1073742033	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMCLEAR	gap		literal 1073742034	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMADD	gap		literal 1073742035	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMSUBTRACT	gap		literal 1073742036	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMMULTIPLY	gap		literal 1073742037	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_MEMDIVIDE	gap		literal 1073742038	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_PLUSMINUS	gap		literal 1073742039	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_CLEAR	gap		literal 1073742040	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_CLEARENTRY	gap		literal 1073742041	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_BINARY	gap		literal 1073742042	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_OCTAL	gap		literal 1073742043	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_DECIMAL	gap		literal 1073742044	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KP_HEXADECIMAL	gap		literal 1073742045	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LCTRL	gap		literal 1073742048	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LSHIFT	gap		literal 1073742049	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LALT	gap		literal 1073742050	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_LGUI	gap		literal 1073742051	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RCTRL	gap		literal 1073742052	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RSHIFT	gap		literal 1073742053	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RALT	gap		literal 1073742054	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_RGUI	gap		literal 1073742055	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MODE	gap		literal 1073742081	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AUDIONEXT	gap		literal 1073742082	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AUDIOPREV	gap		literal 1073742083	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AUDIOSTOP	gap		literal 1073742084	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AUDIOPLAY	gap		literal 1073742085	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AUDIOMUTE	gap		literal 1073742086	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MEDIASELECT	gap		literal 1073742087	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_WWW	gap		literal 1073742088	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_MAIL	gap		literal 1073742089	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_CALCULATOR	gap		literal 1073742090	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_COMPUTER	gap		literal 1073742091	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_SEARCH	gap		literal 1073742092	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_HOME	gap		literal 1073742093	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_BACK	gap		literal 1073742094	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_FORWARD	gap		literal 1073742095	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_STOP	gap		literal 1073742096	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_REFRESH	gap		literal 1073742097	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_AC_BOOKMARKS	gap		literal 1073742098	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_BRIGHTNESSDOWN	gap		literal 1073742099	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_BRIGHTNESSUP	gap		literal 1073742100	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_DISPLAYSWITCH	gap		literal 1073742101	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KBDILLUMTOGGLE	gap		literal 1073742102	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KBDILLUMDOWN	gap		literal 1073742103	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_KBDILLUMUP	gap		literal 1073742104	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_EJECT	gap		literal 1073742105	i32:c	no row of this type reads it
+lib/github.com/diku-dk/lys/lys.fut	SDLK_SLEEP	gap		literal 1073742106	i32:c	no row of this type reads it
+lib/github.com/diku-dk/segmented/segmented.fut	segmented_scan	gap		type parameter		segmented_scan
+lib/github.com/diku-dk/segmented/segmented.fut	segmented_reduce	gap		type parameter		segmented_reduce
+lib/github.com/diku-dk/segmented/segmented.fut	replicated_iota	gap		parameter of type []i64		reps
+lib/github.com/diku-dk/segmented/segmented.fut	segmented_iota	gap		parameter of type []bool		flags
+lib/github.com/diku-dk/segmented/segmented.fut	repl_segm_iota	gap		tuple		
+lib/github.com/diku-dk/segmented/segmented.fut	expand	gap		type parameter		expand
+lib/github.com/diku-dk/segmented/segmented.fut	expand_reduce	gap		type parameter		expand_reduce
+lib/github.com/diku-dk/segmented/segmented.fut	expand_outer_reduce	gap		type parameter		expand_outer_reduce
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_segmented_scan	gap		parameter of type []bool		flags
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_segmented_reduce	gap		parameter of type []bool		flags
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_replicated_iota	gap		parameter of type []i64		repl
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_repl_segm_iota	gap		parameter of type []i64		repl
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_segmented_iota	gap		parameter of type []bool		flags
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_expand	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_expand_reduce	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/segmented/segmented_tests.fut	test_expand_outer_reduce	gap		parameter of type []i64		arr
+lib/github.com/diku-dk/sorts/bitonic_sort.fut	log2	gap		tuple pattern		let (a, b) = ...
+lib/github.com/diku-dk/sorts/bitonic_sort.fut	ensure_pow_2	gap		type parameter		ensure_pow_2
+lib/github.com/diku-dk/sorts/bitonic_sort.fut	kernel_par	gap		type parameter		kernel_par
+lib/github.com/diku-dk/sorts/bitonic_sort.fut	bitonic_sort	gap		type parameter		bitonic_sort
+lib/github.com/diku-dk/sorts/bitonic_sort.fut	bitonic_sort_by_key	gap		type parameter		bitonic_sort_by_key
+lib/github.com/diku-dk/sorts/bitonic_sort_tests.fut	sort_i32	gap		field access		
+lib/github.com/diku-dk/sorts/bitonic_sort_tests.fut	sort_u16	gap		field access		
+lib/github.com/diku-dk/sorts/bitonic_sort_tests.fut	sort_f32	gap		field access		
+lib/github.com/diku-dk/sorts/bitonic_sort_tests.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/bitonic_sort_tests.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/bubble_sort.fut	bubble_sort	gap		type parameter		bubble_sort
+lib/github.com/diku-dk/sorts/bubble_sort.fut	bubble_sort_by_key	gap		type parameter		bubble_sort_by_key
+lib/github.com/diku-dk/sorts/bubble_sort_tests.fut	sort_i32	gap		field access		
+lib/github.com/diku-dk/sorts/bubble_sort_tests.fut	sort_u16	gap		field access		
+lib/github.com/diku-dk/sorts/bubble_sort_tests.fut	sort_f32	gap		field access		
+lib/github.com/diku-dk/sorts/bubble_sort_tests.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/bubble_sort_tests.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/bucket_sort.fut	bucket_sort	gap		type parameter		bucket_sort
+lib/github.com/diku-dk/sorts/bucket_sort.fut	bucket_sort_max8bit	gap		type parameter		bucket_sort_max8bit
+lib/github.com/diku-dk/sorts/bucket_sort.fut	bucket_sort_max16bit	gap		type parameter		bucket_sort_max16bit
+lib/github.com/diku-dk/sorts/bucket_sort.fut	bucket_sort_max32bit	gap		type parameter		bucket_sort_max32bit
+lib/github.com/diku-dk/sorts/bucket_sort.fut	bucket_sort_max63bit	gap		type parameter		bucket_sort_max63bit
+lib/github.com/diku-dk/sorts/bucket_sort_tests.fut	hash	gap		i32.u32	i32:c	no row of this type reads it
+lib/github.com/diku-dk/sorts/bucket_sort_tests.fut	mk_input	gap		tuple		
+lib/github.com/diku-dk/sorts/bucket_sort_tests.fut	is_sorted	gap		tuple pattern		num_buckets
+lib/github.com/diku-dk/sorts/insertion_sort.fut	swap	gap		type parameter		swap
+lib/github.com/diku-dk/sorts/insertion_sort.fut	insertion_sort	gap		type parameter		insertion_sort
+lib/github.com/diku-dk/sorts/insertion_sort.fut	insertion_sort_by_key	gap		type parameter		insertion_sort_by_key
+lib/github.com/diku-dk/sorts/insertion_sort_tests.fut	sort_i32	gap		field access		
+lib/github.com/diku-dk/sorts/insertion_sort_tests.fut	sort_u16	gap		field access		
+lib/github.com/diku-dk/sorts/insertion_sort_tests.fut	sort_f32	gap		field access		
+lib/github.com/diku-dk/sorts/insertion_sort_tests.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/insertion_sort_tests.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/merge_sort.fut	split_count	gap		type parameter		split_count
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_sequential	gap		type parameter		merge_sequential
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_adjacent	gap		type parameter		merge_adjacent
+lib/github.com/diku-dk/sorts/merge_sort.fut	small_insertion_sort	gap		type parameter		small_insertion_sort
+lib/github.com/diku-dk/sorts/merge_sort.fut	smallest_pow_2_geq_than	gap		while loop		
+lib/github.com/diku-dk/sorts/merge_sort.fut	greatest_divisor_leq_than	gap		while loop		
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_sort_with_params	gap		type parameter		merge_sort_with_params
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_sort	gap		type parameter		merge_sort
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_sort_by_key	gap		type parameter		merge_sort_by_key
+lib/github.com/diku-dk/sorts/merge_sort.fut	merge_sort_with_params_by_key	gap		type parameter		merge_sort_with_params_by_key
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	params	gap		token {		an expression
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	sort_i32	gap		field access		
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	sort_u16	gap		field access		
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	sort_f32	gap		field access		
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/merge_sort_tests.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/quick_sort.fut	segmented_replicate	gap		type parameter		segmented_replicate
+lib/github.com/diku-dk/sorts/quick_sort.fut	info	gap		type parameter		info
+lib/github.com/diku-dk/sorts/quick_sort.fut	tripit	gap		tuple		
+lib/github.com/diku-dk/sorts/quick_sort.fut	tripadd	gap		tuple pattern		a1
+lib/github.com/diku-dk/sorts/quick_sort.fut	step	gap		type parameter		step
+lib/github.com/diku-dk/sorts/quick_sort.fut	qsort	gap		type parameter		qsort
+lib/github.com/diku-dk/sorts/quick_sort.fut	qsort_by_key	gap		type parameter		qsort_by_key
+lib/github.com/diku-dk/sorts/quick_sort_test.fut	sort_i32	gap		field access		
+lib/github.com/diku-dk/sorts/quick_sort_test.fut	sort_u16	gap		field access		
+lib/github.com/diku-dk/sorts/quick_sort_test.fut	sort_f32	gap		field access		
+lib/github.com/diku-dk/sorts/quick_sort_test.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/quick_sort_test.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_step	gap		type parameter		radix_sort_step
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort	gap		type parameter		radix_sort
+lib/github.com/diku-dk/sorts/radix_sort.fut	with_indices	gap		type parameter		with_indices
+lib/github.com/diku-dk/sorts/radix_sort.fut	by_key_wrapper	gap		type parameter		by_key_wrapper
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_by_key	gap		type parameter		radix_sort_by_key
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_int	gap		type parameter		radix_sort_int
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_int_by_key	gap		type parameter		radix_sort_int_by_key
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_float	gap		type parameter		radix_sort_float
+lib/github.com/diku-dk/sorts/radix_sort.fut	radix_sort_float_by_key	gap		type parameter		radix_sort_float_by_key
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	sort_i32	gap		radix_sort_int	i32:c	no row of this type reads it
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	sort_u16	gap		radix_sort_int	i32:c	no row of this type reads it
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	sort_f32	gap		radix_sort_float	i32:c	no row of this type reads it
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	sort_perm_i32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	sort_perm_f32	gap		token .		an expression
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	is_sorted	gap		parameter of type [][]u64		arrs
+lib/github.com/diku-dk/sorts/radix_sort_tests.fut	is_stable	gap		tuple pattern		let (a, b) = ...
+micro/copy.fut	slice_2d	gap		token :		an expression
+micro/copy.fut	slice_3d	gap		token :		an expression
+micro/copy.fut	strided_1d	gap		token :		an expression
+micro/copy.fut	reversed_rows	gap		map	i32:c	no row of this type reads it
+micro/copy.fut	transposed_slice	gap		slice		
+micro/intra.fut	scan_reduce	gap		map	i32:c	no row of this type reads it
+micro/mmm/lud-internal.fut	main	gap		tuple pattern		mat_arr
+micro/mmm/mmm-batch.fut	main	gap		float literal		0.0f32
+micro/mmm/mmm.fut	main	gap		float literal		0.0f32
+micro/mmm/mmm.fut	main_inst	gap		float literal		0.0f32
+micro/mmm/sgemm.fut	main	gap		float literal		0.0f32
+micro/reduce-segmented.fut	array	gap		untyped parameter		f
+micro/reduce-segmented.fut	sum_iota_i32	gap		untyped parameter		n
+micro/reduce-segmented.fut	sum_i8	gap		untyped parameter		n
+micro/reduce-segmented.fut	sum_i16	gap		untyped parameter		n
+micro/reduce-segmented.fut	sum_i32	gap		untyped parameter		n
+micro/reduce-segmented.fut	sum_i64	gap		untyped parameter		n
+micro/reduce-segmented.fut	mat4_mul	gap		token +		expected a name
+micro/reduce-segmented.fut	mat4'	gap		tuple		
+micro/reduce-segmented.fut	prod_mat4_i32	gap		field access		
+micro/reduce.fut	sum_iota_i8	gap		untyped parameter		n
+micro/reduce.fut	sum_iota_i32	gap		untyped parameter		n
+micro/reduce.fut	sum_iota_f32	gap		untyped parameter		n
+micro/reduce.fut	sum_iota_f64	gap		untyped parameter		n
+micro/reduce.fut	sum_i8	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	sum_i32	gap		name i32.sum	i32:c	no row of this type reads it
+micro/reduce.fut	sum_f32	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	sum_f64	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	sum_scaled_i8	gap		tuple		
+micro/reduce.fut	sum_scaled_i32	gap		tuple		
+micro/reduce.fut	sum_scaled_f32	gap		tuple		
+micro/reduce.fut	sum_scaled_f64	gap		tuple		
+micro/reduce.fut	mat4_mul	gap		token +		expected a name
+micro/reduce.fut	mat4	gap		tuple		
+micro/reduce.fut	mat4'	gap		tuple		
+micro/reduce.fut	prod_iota_mat4_i8	gap		field access		
+micro/reduce.fut	prod_iota_mat4_i32	gap		field access		
+micro/reduce.fut	prod_iota_mat4_f32	gap		field access		
+micro/reduce.fut	prod_iota_mat4_f64	gap		field access		
+micro/reduce.fut	prod_mat4_i8	gap		field access		
+micro/reduce.fut	prod_mat4_i32	gap		field access		
+micro/reduce.fut	prod_mat4_f32	gap		field access		
+micro/reduce.fut	prod_mat4_f64	gap		field access		
+micro/reduce.fut	lss	gap		type parameter		lss
+micro/reduce.fut	lss_iota_i8	gap		untyped parameter		n
+micro/reduce.fut	lss_iota_i32	gap		untyped parameter		n
+micro/reduce.fut	lss_iota_f32	gap		untyped parameter		n
+micro/reduce.fut	lss_iota_f64	gap		untyped parameter		n
+micro/reduce.fut	lss_i8	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	lss_i32	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	lss_f32	gap		lambda	i32:c	no row of this type reads it
+micro/reduce.fut	lss_f64	gap		lambda	i32:c	no row of this type reads it
+micro/reduce_by_index-segmented.fut	bins	gap		untyped parameter		k
+micro/reduce_by_index-segmented.fut	sum_i32	gap		parameter [][]i32 (no input of rank 2 left)		vss
+micro/reduce_by_index.fut	replicate32	gap		untyped parameter		n
+micro/reduce_by_index.fut	bins	gap		untyped parameter		k
+micro/reduce_by_index.fut	sum_i32	gap		parameter []i32 (no input of rank 1 left)		is
+micro/reduce_by_index.fut	sum_f32	gap		parameter []i32 (no input of rank 1 left)		is
+micro/reduce_by_index.fut	sum_i32_f32	gap		tuple		
+micro/reduce_by_index.fut	absmax	gap		if with condition < an expression	i32:c	no row of this type reads it
+micro/reduce_by_index.fut	absmax_i32	gap		parameter []i32 (no input of rank 1 left)		is
+micro/reduce_by_index.fut	sum_vec_i32	gap		parameter []i32 (no input of rank 1 left)		is
+micro/reduce_by_index.fut	argmax_op	gap		token (		expected a name
+micro/reduce_by_index.fut	argmax_i32	gap		tuple		
+micro/reduce_by_index.fut	sum_f16	gap		parameter []i32 (no input of rank 1 left)		is
+micro/reduce_by_index.fut	sum_i8	gap		parameter []i32 (no input of rank 1 left)		is
+micro/scan-segmented.fut	array	gap		untyped parameter		f
+micro/scan-segmented.fut	sum_iota_i32	gap		untyped parameter		n
+micro/scan-segmented.fut	sum_i32	gap		map	i32:c	no row of this type reads it
+micro/scan-weird.fut	scan_vector	gap		in-place update (with)		expected )
+micro/scan-weird.fut	vecadd	gap		in-place update (with)		text after the body
+micro/scan-weird.fut	scan_arr	gap		parameter []i32 (no input of rank 1 left)		a
+micro/scan-weird.fut	scan_fanin	gap		parameter []i32 (no input of rank 1 left)		a
+micro/scan.fut	sum_iota_i8	gap		untyped parameter		n
+micro/scan.fut	sum_iota_i32	gap		untyped parameter		n
+micro/scan.fut	sum_iota_f32	gap		untyped parameter		n
+micro/scan.fut	sum_iota_f64	gap		untyped parameter		n
+micro/scan.fut	sum_i8	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	sum_i32	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	sum_i64	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	sum_f32	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	sum_f64	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	sum_scaled_i8	gap		tuple		
+micro/scan.fut	sum_scaled_i32	gap		tuple		
+micro/scan.fut	sum_scaled_f32	gap		tuple		
+micro/scan.fut	sum_scaled_f64	gap		tuple		
+micro/scan.fut	mat4_mul	gap		token +		expected a name
+micro/scan.fut	mat4	gap		tuple		
+micro/scan.fut	mat4'	gap		tuple		
+micro/scan.fut	prod_iota_mat4_i8	gap		field access		
+micro/scan.fut	prod_iota_mat4_i32	gap		field access		
+micro/scan.fut	prod_iota_mat4_f32	gap		field access		
+micro/scan.fut	prod_iota_mat4_f64	gap		field access		
+micro/scan.fut	prod_mat4_i8	gap		field access		
+micro/scan.fut	prod_mat4_i32	gap		field access		
+micro/scan.fut	prod_mat4_f32	gap		field access		
+micro/scan.fut	prod_mat4_f64	gap		field access		
+micro/scan.fut	lss	gap		type parameter		lss
+micro/scan.fut	lss_iota_i8	gap		untyped parameter		n
+micro/scan.fut	lss_iota_i32	gap		untyped parameter		n
+micro/scan.fut	lss_iota_f32	gap		untyped parameter		n
+micro/scan.fut	lss_iota_f64	gap		untyped parameter		n
+micro/scan.fut	lss_i8	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	lss_i32	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	lss_f32	gap		lambda	i32:c	no row of this type reads it
+micro/scan.fut	lss_f64	gap		lambda	i32:c	no row of this type reads it
+micro/transpose.fut	unpack_2d	gap		untyped parameter		n
+micro/transpose.fut	transpose_i8	gap		untyped parameter		n
+micro/transpose.fut	transpose_i32	gap		untyped parameter		n
+micro/transpose.fut	transpose_i64	gap		untyped parameter		n
+micro/transpose.fut	unpack_3d	gap		untyped parameter		k
+micro/transpose.fut	map_transpose_i8	gap		untyped parameter		k
+micro/transpose.fut	map_transpose_i32	gap		untyped parameter		k
+micro/transpose.fut	map_transpose_i64	gap		untyped parameter		k
+misc/bfast/bfast-cloudy.fut	isnan32new	gap		parameter of type f32		x
+misc/bfast/bfast-cloudy.fut	logplus	gap		parameter of type f32		x
+misc/bfast/bfast-cloudy.fut	adjustValInds	gap		parameter i32 (no scalar terminal left)		Ns
+misc/bfast/bfast-cloudy.fut	filterPadWithKeys	gap		type parameter		filterPadWithKeys
+misc/bfast/bfast-cloudy.fut	mkX_with_trend	gap		float literal		1f32
+misc/bfast/bfast-cloudy.fut	mkX_no_trend	gap		float literal		1f32
+misc/bfast/bfast-cloudy.fut	gauss_jordan	gap		tuple pattern		let (a, b) = ...
+misc/bfast/bfast-cloudy.fut	mat_inv	gap		tuple pattern		let (a, b) = ...
+misc/bfast/bfast-cloudy.fut	dotprod	gap		float literal		0.0
+misc/bfast/bfast-cloudy.fut	matvecmul_row	gap		parameter of type [][]f32		xss
+misc/bfast/bfast-cloudy.fut	dotprod_filt	gap		float literal		0.0
+misc/bfast/bfast-cloudy.fut	matvecmul_row_filt	gap		parameter of type [][]f32		xss
+misc/bfast/bfast-cloudy.fut	matmul_filt	gap		parameter of type [][]f32		xss
+misc/bfast/bfast-cloudy.fut	main	gap		token :		an expression
+misc/bfast/bfast.fut	rint	gap		float literal		0.5
+misc/bfast/bfast.fut	logplus	gap		parameter of type f32		x
+misc/bfast/bfast.fut	mkX	gap		array literal		
+misc/bfast/bfast.fut	findSplit	gap		tuple pattern		i
+misc/bfast/bfast.fut	gauss_jordan	gap		tuple pattern		let (a, b) = ...
+misc/bfast/bfast.fut	mat_inv	gap		tuple pattern		let (a, b) = ...
+misc/bfast/bfast.fut	dotprod_filt	gap		parameter of type []bool		flgs
+misc/bfast/bfast.fut	matsqr	gap		parameter of type []bool		flgs
+misc/bfast/bfast.fut	matvecmul_row_filt	gap		parameter of type []bool		flgs
+misc/bfast/bfast.fut	bfast	gap		logical not		
+misc/bfast/bfast.fut	main	gap		parameter of type f32		freq
+misc/bfast/perf-calculator.fut	main	gap		tuple		
+misc/buddhabrot/buddhabrot.fut	divergence	gap		float literal		0.0
+misc/buddhabrot/buddhabrot.fut	trajectories	gap		tuple pattern		let (a, b) = ...
+misc/buddhabrot/buddhabrot.fut	colourise	gap		float literal		255.0
+misc/buddhabrot/buddhabrot.fut	pixel_pos	gap		tuple pattern		let (a, b) = ...
+misc/buddhabrot/buddhabrot.fut	row_major	gap		tuple parameter		row_major
+misc/buddhabrot/buddhabrot.fut	new_state	gap		token [		expected =
+misc/buddhabrot/buddhabrot.fut	visualise	gap		token [		expected )
+misc/buddhabrot/buddhabrot.fut	main	gap		token [		expected )
+misc/buddhabrot/buddhabrot.fut	frob	gap		token [		expected )
+misc/functional-images/images.fut	fcolorToColour	gap		tuple parameter		fcolorToColour
+misc/functional-images/images.fut	boolToColour	gap		result of type function		boolToColour
+misc/functional-images/images.fut	cimage_to_argb	gap		result of type function		cimage_to_argb
+misc/functional-images/images.fut	region_to_argb	gap		result of type function		region_to_argb
+misc/functional-images/images.fut	fairlyClose	gap		token (		expected a name
+misc/functional-images/images.fut	mandelbrotNext	gap		field access		
+misc/functional-images/images.fut	mandelbrotEscapes	gap		token (		expected =
+misc/functional-images/images.fut	juliaEscapes	gap		token (		expected =
+misc/functional-images/images.fut	mandelbrotSet	gap		tuple pattern		%s1
+misc/functional-images/images.fut	mandelbrotImage	gap		type parameter		mandelbrotImage
+misc/functional-images/images.fut	mandelbrotGreyscale	gap		tuple pattern		%s1
+misc/functional-images/images.fut	visualise_argb_image	gap		tuple pattern		let (a, b) = ...
+misc/functional-images/images.fut	visualise_cimage	gap		parameter of type cimage		img
+misc/functional-images/images.fut	juliaGreyscale	gap		tuple pattern		%s1
+misc/functional-images/images.fut	cubic	gap		tuple pattern		x0
+misc/functional-images/images.fut	interp	gap		tuple pattern		x0
+misc/functional-images/images.fut	mk_palette	gap		float literal		0.0
+misc/functional-images/images.fut	log2	gap		float literal		2.0
+misc/functional-images/images.fut	escape_to_colour	gap		tuple pattern		z
+misc/functional-images/images.fut	mandelbrot_greyscale	gap		untyped parameter		t
+misc/functional-images/images.fut	julia_greyscale	gap		tuple		
+misc/functional-images/images.fut	mandelbrot_colour	gap		untyped parameter		t
+misc/functional-images/images.fut	julia_colour	gap		tuple		
+misc/functional-images/images.fut	figure_7_15	gap		float literal		0.05f32
+misc/functional-images/images.fut	fancy	gap		float literal		0.05f32
+misc/functional-images/pan.fut	vstrip	gap		tuple pattern		x
+misc/functional-images/pan.fut	even	gap		untyped parameter		x
+misc/functional-images/pan.fut	floori	gap		name i32.f32	i32:c	no row of this type reads it
+misc/functional-images/pan.fut	checker	gap		tuple pattern		x
+misc/functional-images/pan.fut	distO	gap		tuple parameter		distO
+misc/functional-images/pan.fut	altRings	gap		result of type region		altRings
+misc/functional-images/pan.fut	pi	gap		name f32.pi	i32:c	no row of this type reads it
+misc/functional-images/pan.fut	fromPolar	gap		tuple parameter		fromPolar
+misc/functional-images/pan.fut	toPolar	gap		tuple parameter		toPolar
+misc/functional-images/pan.fut	polarChecker	gap		tuple pattern		r
+misc/functional-images/pan.fut	wavDist	gap		token frac		expected =
+misc/functional-images/pan.fut	boolToFColor	gap		float literal		0f32
+misc/functional-images/pan.fut	fracToFColor	gap		tuple		
+misc/functional-images/pan.fut	lerpC	gap		token (		expected a name
+misc/functional-images/pan.fut	bilerpC	gap		untyped parameter		w
+misc/functional-images/pan.fut	overC	gap		token (		expected a name
+misc/functional-images/pan.fut	lift1	gap		untyped parameter		h
+misc/functional-images/pan.fut	lift2	gap		untyped parameter		h
+misc/functional-images/pan.fut	lift3	gap		untyped parameter		h
+misc/functional-images/pan.fut	over	gap		result of type function		over
+misc/functional-images/pan.fut	cond	gap		type parameter		cond
+misc/functional-images/pan.fut	lerpI	gap		token frac		expected =
+misc/functional-images/pan.fut	blueI	gap		float literal		0f32
+misc/functional-images/pan.fut	redI	gap		float literal		1f32
+misc/functional-images/pan.fut	greenI	gap		float literal		0f32
+misc/functional-images/pan.fut	yellowI	gap		float literal		0f32
+misc/functional-images/pan.fut	rbRings	gap		lerpI	i32:c	no row of this type reads it
+misc/functional-images/pan.fut	mystique	gap		float literal		0.2f32
+misc/functional-images/pan.fut	(	gap		operator definition		
+misc/functional-images/pan.fut	f	gap		tuple pattern		x
+misc/functional-images/pan.fut	(	gap		operator definition		
+misc/functional-images/pan.fut	coord	gap		tuple pattern		x
+misc/functional-images/pan.fut	circ	gap		tuple pattern		x
+misc/functional-images/pan.fut	invY	gap		type parameter		invY
+misc/functional-images/pan.fut	translateP	gap		token (		expected a name
+misc/functional-images/pan.fut	scaleP	gap		token (		expected a name
+misc/functional-images/pan.fut	uscaleP	gap		tuple		
+misc/functional-images/pan.fut	rotateP	gap		tuple pattern		x
+misc/functional-images/pan.fut	udisk	gap		float literal		1f32
+misc/functional-images/pan.fut	translate	gap		type parameter		translate
+misc/functional-images/pan.fut	scale	gap		type parameter		scale
+misc/functional-images/pan.fut	uscale	gap		type parameter		uscale
+misc/functional-images/pan.fut	rotate'	gap		type parameter		rotate'
+misc/functional-images/pan.fut	swirlP	gap		float literal		2f32
+misc/functional-images/pan.fut	swirl	gap		type parameter		swirl
+misc/functional-images/pan.fut	universeR	gap		result of type region		universeR
+misc/functional-images/pan.fut	emptyR	gap		result of type region		emptyR
+misc/functional-images/pan.fut	compR	gap		logical not		
+misc/functional-images/pan.fut	intersectR	gap		result of type function		intersectR
+misc/functional-images/pan.fut	unionR	gap		result of type function		unionR
+misc/functional-images/pan.fut	xorR	gap		result of type function		xorR
+misc/functional-images/pan.fut	subtractR	gap		token `		text after the body
+misc/functional-images/pan.fut	annulus	gap		token `		text after the body
+misc/functional-images/pan.fut	radReg	gap		tuple pattern		%s1
+misc/functional-images/pan.fut	wedgeAnnulus	gap		token `		text after the body
+misc/functional-images/pan.fut	shiftXor	gap		token bool		expected =
+misc/heston/heston32.fut	main	gap		token #		an expression
+misc/heston/heston64.fut	main	gap		token #		an expression
+misc/knn-by-kdtree/brute-force.fut	sumSqrsSeq	gap		float literal		0.0f32
+misc/knn-by-kdtree/brute-force.fut	bruteForce	gap		tuple pattern		beg
+misc/knn-by-kdtree/buildKDtree.fut	iota32	gap		untyped parameter		n
+misc/knn-by-kdtree/buildKDtree.fut	closestLog2	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/buildKDtree.fut	computeTreeShape	gap		tuple		
+misc/knn-by-kdtree/buildKDtree.fut	updateBounds	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/buildKDtree.fut	findClosestMed	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/buildKDtree.fut	mkKDtree	gap		token +		an expression
+misc/knn-by-kdtree/buildKDtree.fut	main0	gap		computeTreeShape	i32:c	no row of this type reads it
+misc/knn-by-kdtree/buildKDtree.fut	main	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/driver-knn.fut	k	gap		literal 5	i32:c	no row of this type reads it
+misc/knn-by-kdtree/driver-knn.fut	propagate	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/driver-knn.fut	hash	gap		i32.u32	i32:c	no row of this type reads it
+misc/knn-by-kdtree/driver-knn.fut	mk_input	gap		tuple		
+misc/knn-by-kdtree/driver-knn.fut	main	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/kd-traverse.fut	findLeaf	gap		while loop		
+misc/knn-by-kdtree/kd-traverse.fut	traverseOnce	gap		tuple pattern		query
+misc/knn-by-kdtree/knn-iteration.fut	sortQueriesByLeavesRadix	gap		tuple pattern		l
+misc/knn-by-kdtree/knn-iteration.fut	iterationSorted	gap		tuple pattern		let (a, b) = ...
+misc/knn-by-kdtree/util.fut	log2	gap		tuple pattern		loop (a, b) = ...
+misc/knn-by-kdtree/util.fut	partition2Ind	gap		tuple		
+misc/knn-by-kdtree/util.fut	sumSqrs	gap		float literal		0.0f32
+misc/knn-by-kdtree/util.fut	sumSqrsSeq	gap		float literal		0.0f32
+misc/knn-by-kdtree/util.fut	gather1D	gap		type parameter		gather1D
+misc/knn-by-kdtree/util.fut	gather2D	gap		type parameter		gather2D
+misc/knn-by-kdtree/util.fut	scatter2D	gap		type parameter		scatter2D
+misc/knn-by-kdtree/util.fut	getParent	gap		operator /	i32:c	no row of this type reads it
+misc/knn-by-kdtree/util.fut	isLeaf	gap		operator >=	i32:c	no row of this type reads it
+misc/knn-by-kdtree/util.fut	compute_Kth_ancestor	gap		operator /	i32:c	no row of this type reads it
+misc/knn-by-kdtree/util.fut	findNodeLevel	gap		tuple pattern		loop (a, b) = ...
+misc/knn-by-kdtree/util.fut	findClosestCommonAncestor	gap		tuple pattern		let (a, b) = ...
+misc/life/life.fut	conway_init	gap		parameter of type [][]bool		bs
+misc/life/life.fut	conway_steps	gap		parameter of type [][]conway.cell		world
+misc/life/life.fut	conway_render	gap		parameter of type [][]conway.cell		world
+misc/life/life.fut	conway_uninit	gap		parameter of type [][]conway.cell		world
+misc/life/life.fut	conway_fading_init	gap		token [		expected =
+misc/life/life.fut	conway_fading_steps	gap		token [		expected )
+misc/life/life.fut	conway_fading_render	gap		token [		expected )
+misc/life/life.fut	conway_fading_uninit	gap		token [		expected )
+misc/life/life.fut	quad_init	gap		token [		expected =
+misc/life/life.fut	quad_steps	gap		token [		expected )
+misc/life/life.fut	quad_render	gap		token [		expected )
+misc/life/life.fut	quad_uninit	gap		token [		expected )
+misc/life/life.fut	quad_fading_init	gap		token [		expected =
+misc/life/life.fut	quad_fading_steps	gap		token [		expected )
+misc/life/life.fut	quad_fading_render	gap		token [		expected )
+misc/life/life.fut	quad_fading_uninit	gap		token [		expected )
+misc/life/life.fut	quad2_init	gap		token [		expected =
+misc/life/life.fut	quad2_steps	gap		token [		expected )
+misc/life/life.fut	quad2_render	gap		token [		expected )
+misc/life/life.fut	quad2_uninit	gap		token [		expected )
+misc/life/life.fut	rule101_init	gap		token [		expected =
+misc/life/life.fut	rule101_steps	gap		token [		expected )
+misc/life/life.fut	rule101_render	gap		token [		expected )
+misc/life/life.fut	rule101_uninit	gap		token [		expected )
+misc/life/life.fut	main	gap		i32.bool	i32:c/T-cols	no row of this type reads it
+misc/ocean-sim/tke.fut	tridiag	gap		tuple		
+misc/ocean-sim/tke.fut	limiter	gap		parameter of type DTYPE		cr
+misc/ocean-sim/tke.fut	calcflux	gap		float literal		0.00000000000000000001
+misc/ocean-sim/tke.fut	map3D	gap		type parameter		map3D
+misc/ocean-sim/tke.fut	main	gap		float literal		0.1
+misc/ocean-sim/tridiag-test.fut	INNER_DIM	gap		result of type i64		INNER_DIM
+misc/ocean-sim/tridiag-test.fut	tridagNested	gap		tuple		
+misc/ocean-sim/tridiag-test.fut	tridagNestedConst	gap		tuple		
+misc/ocean-sim/tridiag-test.fut	tridagNestedSeq	gap		tuple		
+misc/ocean-sim/tridiag-test.fut	tridagNestedSeqConst	gap		tuple		
+misc/ocean-sim/tridiag.fut	tridagPar	gap		tuple pattern		a
+misc/ocean-sim/tridiag.fut	tridagSeq	gap		tuple pattern		a
+misc/ocean-sim/typeinst32.fut	real_min	gap		name f32.min	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst32.fut	real_max	gap		name f32.max	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst32.fut	real_abs	gap		name f32.abs	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst32.fut	real_sqrt	gap		name f32.sqrt	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst64.fut	real_min	gap		name f64.min	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst64.fut	real_max	gap		name f64.max	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst64.fut	real_abs	gap		name f64.abs	i32:c	no row of this type reads it
+misc/ocean-sim/typeinst64.fut	real_sqrt	gap		name f64.sqrt	i32:c	no row of this type reads it
+parboil/histo/histo.fut	sat_add_u8	gap		if with condition > an expression	i32:c	no row of this type reads it
+parboil/histo/histo.fut	main	gap		hist	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	OMEGA	gap		float literal		1.95f32
+parboil/lbm/lbm.fut	DFL1	gap		float literal		1.0f32
+parboil/lbm/lbm.fut	DFL2	gap		float literal		1.0f32
+parboil/lbm/lbm.fut	DFL3	gap		float literal		1.0f32
+parboil/lbm/lbm.fut	C	read	i32:c	0		
+parboil/lbm/lbm.fut	S	read	i32:c	1		
+parboil/lbm/lbm.fut	N	read	i32:c	2		
+parboil/lbm/lbm.fut	W	gap		literal 3	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	E	gap		literal 4	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	B	gap		literal 5	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	T	gap		literal 6	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	SW	gap		literal 7	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	SE	gap		literal 8	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	NW	gap		literal 9	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	NE	read	i32:c	10		
+parboil/lbm/lbm.fut	SB	gap		literal 11	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	ST	gap		literal 12	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	NB	gap		literal 13	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	NT	gap		literal 14	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	WB	gap		literal 15	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	WT	gap		literal 16	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	EB	gap		literal 17	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	ET	gap		literal 18	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	FLAG	gap		literal 19	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	N_CELL_ENTRIES	gap		literal 20	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	FLUID	gap		float literal		0.00f32
+parboil/lbm/lbm.fut	OBSTACLE	gap		float literal		1.00f32
+parboil/lbm/lbm.fut	ACCEL	gap		float literal		2.00f32
+parboil/lbm/lbm.fut	SIZE	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	SIZE_X	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	SIZE_Y	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	SIZE_Z	gap		literal 150	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	PADDING_Z	gap		literal 4	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	PADDED_X	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	PADDED_Y	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	PADDED_Z	gap		literal 150	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	TOTAL_CELLS	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	TOTAL_PADDED_CELLS	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	REAL_SIZE	gap		literal 120	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	MARGIN	gap		operator /	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	ds	gap		array literal		
+parboil/lbm/lbm.fut	transvec	gap		array literal		
+parboil/lbm/lbm.fut	dotprod	gap		parameter of type []i64		x
+parboil/lbm/lbm.fut	ind_offsets	gap		map	i32:c	no row of this type reads it
+parboil/lbm/lbm.fut	speeds	gap		tuple		
+parboil/lbm/lbm.fut	perform_collision	gap		array literal		
+parboil/lbm/lbm.fut	collide	gap		token :		an expression
+parboil/lbm/lbm.fut	gather_collide	gap		token :		an expression
+parboil/lbm/lbm.fut	gather	gap		token :		an expression
+parboil/lbm/lbm.fut	lbm	gap		parameter of type []f32		grid_init
+parboil/lbm/lbm.fut	main	gap		parameter of type []f32		input
+parboil/mri-q/mri-q.fut	main	gap		float literal		2.0f32
+parboil/sgemm/sgemm.fut	mult	gap		tuple pattern		xss
+parboil/sgemm/sgemm.fut	add	gap		tuple pattern		xss
+parboil/sgemm/sgemm.fut	scale	gap		tuple pattern		xss
+parboil/sgemm/sgemm.fut	main	gap		tuple		
+parboil/stencil/stencil.fut	next	gap		parameter of type f32		c0
+parboil/stencil/stencil.fut	main	gap		float literal		1.0f32
+parboil/tpacf/tpacf.fut	dec2rad	gap		float literal		180.0
+parboil/tpacf/tpacf.fut	rad2dec	gap		float literal		180.0f64
+parboil/tpacf/tpacf.fut	min_arcmin	gap		float literal		1.0
+parboil/tpacf/tpacf.fut	max_arcmin	gap		float literal		10000.0
+parboil/tpacf/tpacf.fut	bins_per_dec	gap		float literal		5.0
+parboil/tpacf/tpacf.fut	numBins	gap		literal 20	i32:c	no row of this type reads it
+parboil/tpacf/tpacf.fut	iota32	gap		result of type []f64		iota32
+parboil/tpacf/tpacf.fut	sumBins	gap		map1	a.cols:c	no row of this type reads it
+parboil/tpacf/tpacf.fut	log10	gap		float literal		10.0
+parboil/tpacf/tpacf.fut	doCompute	gap		tuple pattern		let (a, b) = ...
+parboil/tpacf/tpacf.fut	doComputeSelf	gap		tuple pattern		let (a, b) = ...
+parboil/tpacf/tpacf.fut	fixPoints	gap		tuple		
+parboil/tpacf/tpacf.fut	main	gap		float literal		10.0
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	remove_duplicates	gap		token .		an expression
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	update_parents	gap		parameter []i32 (no input of rank 1 left)		parents
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	edges_of_vertex	gap		token +		an expression
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	get_ith_edge_from_vert	gap		token {		an expression
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	BFS	gap		tuple pattern		let (a, b) = ...
+pbbs/breadthFirstSearch/breadthFirstSearch.fut	main	gap		array literal		
+pbbs/comparisonSort/merge_sort.fut	sort_f64	gap		field access		
+pbbs/comparisonSort/merge_sort.fut	sort_f64_pair	gap		tuple		
+pbbs/comparisonSort/quick_sort.fut	sort_f64	gap		field access		
+pbbs/comparisonSort/quick_sort.fut	sort_f64_pair	gap		tuple		
+pbbs/convexHull/convexhull.fut	sort_by	gap		untyped parameter		f
+pbbs/convexHull/convexhull.fut	clockwise	gap		token .		an expression
+pbbs/convexHull/convexhull.fut	main	gap		token {		an expression
+pbbs/histogram/histogram.fut	main	gap		untyped parameter		m
+pbbs/integerSort/radix_sort.fut	sort_i32	gap		untyped parameter		b
+pbbs/integerSort/radix_sort.fut	sort_i32_pair	gap		tuple		
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	valid_neighbour	gap		parameter of type []i64		random_state
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	edges_of_vertex	gap		token +		an expression
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	edges_of_vertex_or_0	gap		parameter []i32 (no input of rank 1 left)		verts
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	can_add	gap		slice		
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	mark_neighbour	gap		parameter []i32 (no input of rank 1 left)		vertexes
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	remove_neighbour_and_self	gap		parameter of type []i64		marked
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	MIS	gap		tuple pattern		let (a, b) = ...
+pbbs/maximalIndependentSet/maximalIndependentSet.fut	main	gap		array literal		
+pbbs/maximalMatching/maximalMatching.fut	getSmallestPairs	gap		array literal		
+pbbs/maximalMatching/maximalMatching.fut	getMMEdges	gap		tuple		
+pbbs/maximalMatching/maximalMatching.fut	update	gap		tuple pattern		let (a, b) = ...
+pbbs/maximalMatching/maximalMatching.fut	removeMarked	gap		tuple pattern		v
+pbbs/maximalMatching/maximalMatching.fut	resetsmallestEdgeId	gap		parameter []i32 (no input of rank 1 left)		smallestEdgeId
+pbbs/maximalMatching/maximalMatching.fut	MM	gap		tuple pattern		let (a, b) = ...
+pbbs/maximalMatching/maximalMatching.fut	main	gap		MM	i32:c	no row of this type reads it
+pbbs/minSpanningForest/minSpanningForest.fut	is_root	gap		parameter []i32 (no input of rank 1 left)		UFparents
+pbbs/minSpanningForest/minSpanningForest.fut	is_root32	gap		parameter []i32 (no input of rank 1 left)		UFparents
+pbbs/minSpanningForest/minSpanningForest.fut	find	gap		while loop		
+pbbs/minSpanningForest/minSpanningForest.fut	find2	gap		field access		
+pbbs/minSpanningForest/minSpanningForest.fut	update_once	gap		parameter []i32 (no input of rank 1 left)		UFparents
+pbbs/minSpanningForest/minSpanningForest.fut	link	gap		parameter []i32 (no input of rank 1 left)		UFparents
+pbbs/minSpanningForest/minSpanningForest.fut	ltm	gap		field access		
+pbbs/minSpanningForest/minSpanningForest.fut	getLowestIndexes	gap		array literal		
+pbbs/minSpanningForest/minSpanningForest.fut	getMSFEdges	gap		field access		
+pbbs/minSpanningForest/minSpanningForest.fut	update	gap		tuple pattern		let (a, b) = ...
+pbbs/minSpanningForest/minSpanningForest.fut	MSF	gap		tuple pattern		let (a, b) = ...
+pbbs/minSpanningForest/minSpanningForest.fut	main	gap		tuple		
+pbbs/rangeQuery2d/naive.fut	naive	gap		parameter of type []point		points
+pbbs/rangeQuery2d/naive.fut	main	gap		tuple pattern		let (a, b) = ...
+pbbs/rangeQuery2d/range.fut	ilog2	gap		result of type i64		ilog2
+pbbs/rangeQuery2d/range.fut	lsb	gap		result of type i64		lsb
+pbbs/rangeQuery2d/range.fut	sort_point_by_x	gap		parameter of type []point		ps
+pbbs/rangeQuery2d/range.fut	sort	gap		parameter of type []f64		arr
+pbbs/rangeQuery2d/range.fut	mkFlagArray	gap		type parameter		mkFlagArray
+pbbs/rangeQuery2d/range.fut	lower_bound	gap		type parameter		lower_bound
+pbbs/rangeQuery2d/range.fut	compress_y	gap		tuple		
+pbbs/rangeQuery2d/range.fut	build	gap		tuple pattern		let (a, b) = ...
+pbbs/rangeQuery2d/range.fut	rank	gap		tuple pattern		let (a, b) = ...
+pbbs/rangeQuery2d/range.fut	points_coord	gap		tuple		
+pbbs/rangeQuery2d/range.fut	rectangles_coord	gap		tuple		
+pbbs/rangeQuery2d/range.fut	range	gap		tuple pattern		let (a, b) = ...
+pbbs/rangeQuery2d/range.fut	main	gap		tuple pattern		let (a, b) = ...
+pbbs/rangeQuery2d/util.fut	build_rectangle	gap		array literal		
+pbbs/rangeQuery2d/util.fut	split_input	gap		tuple		
+pbbs/ray/bvh.fut	expand_bits	gap		parameter of type u32		v
+pbbs/ray/bvh.fut	morton_3D	gap		token {		expected =
+pbbs/ray/bvh.fut	bvh_mk	gap		type parameter		bvh_mk
+pbbs/ray/bvh.fut	bvh_fold	gap		type parameter		bvh_fold
+pbbs/ray/prim.fut	vec	gap		tuple parameter		vec
+pbbs/ray/prim.fut	surrounding_box	gap		tuple		
+pbbs/ray/prim.fut	aabb_center	gap		token {		expected a name
+pbbs/ray/radixtree.fut	div_rounding_up	gap		untyped parameter		x
+pbbs/ray/radixtree.fut	mk_radix_tree	gap		tuple pattern		i
+pbbs/ray/ray.fut	aabb_hit	gap		token {		expected a name
+pbbs/ray/ray.fut	EPSILON	gap		float literal		0.0001
+pbbs/ray/ray.fut	triangle_hit	gap		token {		expected a name
+pbbs/ray/ray.fut	triangle_aabb	gap		token {		expected a name
+pbbs/ray/ray.fut	bvh_hit	gap		token [		expected )
+pbbs/ray/ray.fut	main	gap		token {		an expression
+pbbs/removeDuplicates/prut.fut	sort_dedup_str	gap		tuple		
+pbbs/removeDuplicates/removeDuplicates.fut	hash_dedup_int	gap		unit		()
+pbbs/removeDuplicates/removeDuplicates.fut	sort_dedup_int	gap		token .		an expression
+pbbs/removeDuplicates/removeDuplicates.fut	mk_slices	gap		tuple pattern		strings
+pbbs/removeDuplicates/removeDuplicates.fut	hash_dedup_str	gap		unit		()
+pbbs/removeDuplicates/removeDuplicates.fut	sort_dedup_str	gap		tuple		
+rodinia/backprop/backprop.fut	eta	gap		unit pattern		()
+rodinia/backprop/backprop.fut	momentum	gap		unit pattern		()
+rodinia/backprop/backprop.fut	init_zero	gap		unit pattern		()
+rodinia/backprop/backprop.fut	squash	gap		float literal		1.0
+rodinia/backprop/backprop.fut	fabs	gap		float literal		0.0
+rodinia/backprop/backprop.fut	bpnn_output_error	gap		tuple pattern		target
+rodinia/backprop/backprop.fut	bpnn_hidden_error	gap		tuple pattern		delta_o
+rodinia/backprop/backprop.fut	bpnn_adjust_weights	gap		tuple pattern		delta
+rodinia/backprop/backprop.fut	bpnn_layerforward_GOOD	gap		tuple pattern		l1
+rodinia/backprop/backprop.fut	bpnn_layerforward	gap		tuple pattern		l1
+rodinia/backprop/backprop.fut	bpnn_train_kernel	gap		tuple pattern		input_units
+rodinia/backprop/backprop.fut	sobolIndR	gap		float literal		1.0
+rodinia/backprop/backprop.fut	bpnn_randomize_weights	gap		tuple		
+rodinia/backprop/backprop.fut	bpnn_randomize_row	gap		parameter []i32 (no input of rank 1 left)		dirVct
+rodinia/backprop/backprop.fut	bpnn_constant_row	gap		parameter of type f32		value
+rodinia/backprop/backprop.fut	bpnn_zero_weights	gap		float literal		0.0
+rodinia/backprop/backprop.fut	bpnn_create	gap		float literal		0.1
+rodinia/backprop/backprop.fut	consColumn	gap		tuple pattern		mat
+rodinia/backprop/backprop.fut	main	gap		tuple pattern		let (a, b) = ...
+rodinia/bfs/bfs_asympt_ok_but_slow.fut	step	gap		token [		expected a name
+rodinia/bfs/bfs_asympt_ok_but_slow.fut	main	gap		common_main	i32:c	no row of this type reads it
+rodinia/bfs/bfs_filt_padded_fused.fut	step	gap		token [		expected a name
+rodinia/bfs/bfs_filt_padded_fused.fut	main	gap		common_main	i32:c	no row of this type reads it
+rodinia/bfs/bfs_heuristic.fut	core_step	gap		logical not		
+rodinia/bfs/bfs_heuristic.fut	step	gap		tuple pattern		let (a, b) = ...
+rodinia/bfs/bfs_heuristic.fut	main	gap		common_main	i32:c	no row of this type reads it
+rodinia/bfs/bfs_iter_work_ok.fut	core_step	gap		logical not		
+rodinia/bfs/bfs_iter_work_ok.fut	step	gap		tuple pattern		let (a, b) = ...
+rodinia/bfs/bfs_iter_work_ok.fut	main	gap		common_main	i32:c	no row of this type reads it
+rodinia/bfs/bfs_sequential.fut	node_work	gap		in-place update (let a[i] = ...)		graph_mask
+rodinia/bfs/bfs_sequential.fut	step	gap		tuple pattern		let (a, b) = ...
+rodinia/bfs/bfs_sequential.fut	main	gap		common_main	i32:c	no row of this type reads it
+rodinia/bfs/common.fut	common_main	gap		token [		expected )
+rodinia/cfd/cfd.fut	gamma	gap		float literal		1.4
+rodinia/cfd/cfd.fut	iterations	gap		literal 2000	i32:c	no row of this type reads it
+rodinia/cfd/cfd.fut	rk	gap		literal 3	i32:c	no row of this type reads it
+rodinia/cfd/cfd.fut	ff_mach	gap		float literal		1.2
+rodinia/cfd/cfd.fut	deg_angle_of_attack	gap		float literal		0.0
+rodinia/cfd/cfd.fut	var_density	read	i32:c	0		
+rodinia/cfd/cfd.fut	var_momentum	read	i32:c	1		
+rodinia/cfd/cfd.fut	var_density_energy	gap		literal 3	i32:c	no row of this type reads it
+rodinia/cfd/cfd.fut	nvar	gap		literal 3	i32:c	no row of this type reads it
+rodinia/cfd/cfd.fut	compute_velocity	gap		tuple pattern		density
+rodinia/cfd/cfd.fut	compute_speed_sqd	gap		tuple pattern		let (a, b) = ...
+rodinia/cfd/cfd.fut	compute_pressure	gap		tuple pattern		density
+rodinia/cfd/cfd.fut	compute_speed_of_sound	gap		tuple pattern		density
+rodinia/cfd/cfd.fut	initialize_variables	gap		token nelr		expected ->
+rodinia/cfd/cfd.fut	compute_flux_contribution	gap		tuple pattern		_density
+rodinia/cfd/cfd.fut	compute_step_factor	gap		tuple pattern		variables
+rodinia/cfd/cfd.fut	compute_flux	gap		tuple pattern		elements_surrounding_elements
+rodinia/cfd/cfd.fut	time_step	gap		tuple pattern		j
+rodinia/cfd/cfd.fut	main	gap		float literal		3.1415926535897931
+rodinia/hotspot/hotspot.fut	max_pd	gap		float literal		3.0e6
+rodinia/hotspot/hotspot.fut	precision	gap		float literal		0.001
+rodinia/hotspot/hotspot.fut	spec_heat_si	gap		float literal		1.75e6
+rodinia/hotspot/hotspot.fut	k_si	gap		float literal		100.0
+rodinia/hotspot/hotspot.fut	factor_chip	gap		float literal		0.5
+rodinia/hotspot/hotspot.fut	t_chip	gap		float literal		0.0005
+rodinia/hotspot/hotspot.fut	chip_height	gap		float literal		0.016
+rodinia/hotspot/hotspot.fut	chip_width	gap		float literal		0.016
+rodinia/hotspot/hotspot.fut	amb_temp	gap		float literal		80.0
+rodinia/hotspot/hotspot.fut	single_iteration	gap		tuple pattern		temp
+rodinia/hotspot/hotspot.fut	compute_tran_temp	gap		tuple		
+rodinia/hotspot/hotspot.fut	ambient_temps	gap		result of type [][]f32		ambient_temps
+rodinia/hotspot/hotspot.fut	render_frame	gap		float literal		400f32
+rodinia/hotspot/hotspot.fut	main	gap		parameter of type [][]f32		temp
+rodinia/kmeans/kmeans.fut	euclid_dist_2	gap		parameter of type []f32		pt1
+rodinia/kmeans/kmeans.fut	closest_point	gap		field access		
+rodinia/kmeans/kmeans.fut	find_nearest_point	gap		tuple pattern		let (a, b) = ...
+rodinia/kmeans/kmeans.fut	centroids_of	gap		parameter of type [][]f32		points
+rodinia/kmeans/kmeans.fut	main	gap		tuple pattern		let (a, b) = ...
+rodinia/lavaMD/lavaMD-input.fut	sobolDirVcts	gap		unit pattern		()
+rodinia/lavaMD/lavaMD-input.fut	sobolInd	gap		tuple pattern		dirVct
+rodinia/lavaMD/lavaMD-input.fut	main	gap		float literal		0.5
+rodinia/lavaMD/lavaMD.fut	dot	gap		token (		expected a name
+rodinia/lavaMD/lavaMD.fut	main	gap		float literal		2.0
+rodinia/lud/lud-input.fut	main	gap		float literal		-0.001
+rodinia/lud/lud.fut	dotprod	gap		parameter of type []f32		a
+rodinia/lud/lud.fut	lud_diagonal	gap		token :		an expression
+rodinia/lud/lud.fut	lud_perimeter_upper	gap		token (		expected ->
+rodinia/lud/lud.fut	lud_perimeter_lower	gap		float literal		0.0f32
+rodinia/lud/lud.fut	lud_internal	gap		parameter of type [][][]f32		top_per
+rodinia/lud/lud.fut	block_size	gap		result of type i64		block_size
+rodinia/lud/lud.fut	pad_to	gap		type parameter		pad_to
+rodinia/lud/lud.fut	main	gap		token +		an expression
+rodinia/myocyte/myocyte.fut	pow	gap		tuple pattern		x
+rodinia/myocyte/myocyte.fut	log10	gap		float literal		10.0f32
+rodinia/myocyte/myocyte.fut	fmod	gap		tuple pattern		a
+rodinia/myocyte/myocyte.fut	fabs	gap		float literal		0.0f32
+rodinia/myocyte/myocyte.fut	ecc	gap		float literal		3.1416f32
+rodinia/myocyte/myocyte.fut	cam	gap		float literal		135.0f32
+rodinia/myocyte/myocyte.fut	fin	gap		float literal		2.1454e-11f32
+rodinia/myocyte/myocyte.fut	master	gap		tuple pattern		timeinst
+rodinia/myocyte/myocyte.fut	embedded_fehlberg_7_8	gap		tuple pattern		timeinst
+rodinia/myocyte/myocyte.fut	min_scale_factor	gap		unit pattern		()
+rodinia/myocyte/myocyte.fut	max_scale_factor	gap		unit pattern		()
+rodinia/myocyte/myocyte.fut	attempts	gap		unit pattern		()
+rodinia/myocyte/myocyte.fut	solver	gap		tuple pattern		xmax
+rodinia/myocyte/myocyte.fut	equations	gap		unit pattern		()
+rodinia/myocyte/myocyte.fut	parameters	gap		unit pattern		()
+rodinia/myocyte/myocyte.fut	main	gap		tuple pattern		let (a, b) = ...
+rodinia/nn/nn.fut	emptyRecord	gap		tuple		
+rodinia/nn/nn.fut	main	gap		tuple pattern		lat_i
+rodinia/nw/nw.fut	B0	gap		result of type i64		B0
+rodinia/nw/nw.fut	fInd	read	i32:c	(add (mul rows (add rows 1)) cols)		
+rodinia/nw/nw.fut	max3	gap		tuple pattern		x
+rodinia/nw/nw.fut	mkVal	gap		tuple		
+rodinia/nw/nw.fut	intraBlockPar	gap		slice		
+rodinia/nw/nw.fut	updateBlocks	gap		tuple pattern		let (a, b) = ...
+rodinia/nw/nw.fut	main	gap		parameter shapes		the dimension len is two dimensions of the signature
+rodinia/particlefilter/particlefilter.fut	strelDisk	gap		result of type [][]i32		strelDisk
+rodinia/particlefilter/particlefilter.fut	getneighbors	gap		tuple		
+rodinia/particlefilter/particlefilter.fut	findIndex	gap		while loop		
+rodinia/particlefilter/particlefilter.fut	particleFilter	gap		array literal		
+rodinia/particlefilter/particlefilter.fut	main	gap		name particleFilter	i32:c	no row of this type reads it
+rodinia/pathfinder/pathfinder.fut	in_range	gap		tuple pattern		x
+rodinia/pathfinder/pathfinder.fut	clamp_range	gap		tuple pattern		x
+rodinia/pathfinder/pathfinder.fut	min	gap		tuple pattern		a
+rodinia/pathfinder/pathfinder.fut	sobolDirVcts	gap		unit pattern		()
+rodinia/pathfinder/pathfinder.fut	sobolInd	gap		tuple pattern		dirVct
+rodinia/pathfinder/pathfinder.fut	main	gap		unit		()
+rodinia/srad/srad.fut	indexN	gap		tuple pattern		_rows
+rodinia/srad/srad.fut	indexS	gap		tuple pattern		rows
+rodinia/srad/srad.fut	indexW	gap		tuple pattern		_cols
+rodinia/srad/srad.fut	indexE	gap		tuple pattern		cols
+rodinia/srad/srad.fut	do_srad	gap		tuple pattern		niter
+rodinia/srad/srad.fut	main	gap		float literal		0.5
+rodinia/srad/srad.fut	srad	gap		tuple		
+rsbench/rsbench.fut	(file)	gap		literal		9223372036854775808: number too large to fit in target type
+xsbench/xsbench.fut	(file)	gap		literal		9223372036854775808: number too large to fit in target type

@@ -101,9 +101,31 @@ const STRATEGIES: [&str; 30] = [
     "programs that combine two different approaches in one",
 ];
 
+/// THE TOPICS (Andrew, 2026-10-28): the rings must carry many unrelated real structures, so each program computes
+/// its own topic on the benchmark's inputs, never the benchmark's task (which the model is not told).
+const TOPICS: [&str; 60] = [
+    "image blur (a box filter over neighbours)", "edge detection (differences of neighbours)", "a hash function mixing the elements", "a sorting network of compare-exchange steps",
+    "a prefix sum", "a run-length encoding (the length of each run)", "a game of life step", "a 1-D convolution with a small kernel",
+    "the maximum subarray sum (Kadane)", "a moving average", "polynomial evaluation (Horner)", "bit counting (population count by arithmetic)",
+    "histogram equalisation", "a distance transform (distance to the nearest zero)", "an elementary cellular automaton step", "matrix transpose (or its 1-D analogue)",
+    "a dot product", "clamping values into a range", "normalisation (subtract the minimum, scale)", "a breadth-first search frontier step",
+    "a Mandelbrot-style iteration count", "a running maximum", "the second largest element", "counting inversions between neighbours",
+    "a checksum (Adler or Fletcher style)", "a linear congruential random number generator", "the greatest common divisor by subtraction", "integer square root by iteration",
+    "a Fibonacci sequence", "a Collatz step count", "a triangular number table", "a pairwise difference (discrete derivative)",
+    "a discrete integral with a decay", "a stencil of a heat equation step", "thresholding into 0 and 1", "a majority vote of neighbours",
+    "the longest increasing run", "an argmax (index of the largest)", "a rank (how many elements are smaller)", "a reversal by index arithmetic",
+    "a cyclic shift by index arithmetic", "a cumulative product with wrapping", "a min-plus matrix-vector step", "a knapsack-style dynamic programming row",
+    "an edit-distance-style dynamic programming row", "a longest-common-subsequence-style dynamic programming row", "a parity bit of each element", "a saturating add",
+    "an absolute deviation from the mean", "a variance (sum of squared deviations)", "a weighted sum with positional weights", "a sawtooth or triangle wave by modulo",
+    "a bucket count of values modulo a size", "a sieve-like marking of multiples", "a binary counter's carry propagation", "a sum of absolute differences between two arrays",
+    "a peak detector (greater than both neighbours)", "a flood fill step (spread the minimum to neighbours)", "a two-player score table (pairwise max minus min)", "a mirrored padding by clamped indices",
+];
+
+const TOPIC_RULE: &str = "THE TOPIC is given in each request. Your program computes that topic, its own result, on the entry's inputs, read as data of that topic in any sensible way, with a result of the entry's output type. It does not compute anything else.";
+
 /// THE CONTRACT: the entry signature, every operation of the kingdom's top context in Futhark spelling (a
 /// placeholder `<class>` for each argument), the rules a program the kingdom can read must keep, and the task.
-fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str) -> Result<String, String> {
+fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str, topics: bool) -> Result<String, String> {
     let dims = |d: &[String]| d.iter().map(|x| if sig.size_inputs.contains(x) { format!("[i64.i32 {x}]") } else { format!("[{x}]") }).collect::<String>();
     let mut entry = format!("entry main {}", sig.dims.iter().filter(|d| !sig.size_inputs.contains(d)).map(|d| format!("[{d}]")).collect::<String>());
     for p in &sig.inputs {
@@ -145,10 +167,11 @@ fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str) -> Result<String, 
     };
     let classes = sig.dims.iter().map(|d| format!("<a.{d}> is a [{d}]i32 array, <ix.{d}> an i64 index in range for [{d}]")).collect::<Vec<_>>().join("; ");
     Ok(format!(
-        "You write programs in Futhark (version 0.28). Every program you write must be a complete Futhark program with exactly this entry point:\n\n  {entry}\n\nTHE TASK. {}\n\nYOUR PROGRAMS ARE READ INTO A RESTRICTED KINGDOM OF FUTHARK, which has only these operations (Futhark spelling; <i32> is an i32 value, {classes}; inside a binder the binder's own variables, under any names you choose, are values of those classes).{sizes}\n{}\n\nRULES a program must keep, or it cannot be read:\n- i32 values only: no floats, no bool values other than the condition below, no tuples, no records, no array literals, no in-place updates (with), no while loops, no filter, scatter, zip, rotate, reverse, iota-based arithmetic on i64 values.\n- Integer literals only {lits}.\n- A conditional only as: if e < 0 then a else b.\n- An index into an array must be in range by construction: a loop or tabulate counter over that array's size, 0, the size minus 1, i64.max 0 (j - 1), i64.min (D - 1) (j + 1), or i64.max 0 (i64.min (D - 1) (i64.i32 e)).\n- At most {} nested binders (tabulate, loop, or the lambda of a map).\n- You may use let bindings, def helper functions, map and map2 with lambdas, reduce (+) 0, reduce i32.min i32.highest, reduce i32.max i32.lowest, and |>.\n\nAnswer with {PROGRAMS_PER_CALL} DISTINCT correct programs, each complete, each in its own ```futhark code block, and nothing else.",
-        description(pname)?,
+        "You write programs in Futhark (version 0.28). Every program you write must be a complete Futhark program with exactly this entry point:\n\n  {entry}\n\n{}\n\nYOUR PROGRAMS ARE READ INTO A RESTRICTED KINGDOM OF FUTHARK, which has only these operations (Futhark spelling; <i32> is an i32 value, {classes}; inside a binder the binder's own variables, under any names you choose, are values of those classes).{sizes}\n{}\n\nRULES a program must keep, or it cannot be read:\n- i32 values only: no floats, no bool values other than the condition below, no tuples, no records, no array literals, no in-place updates (with), no while loops, no filter, scatter, zip, rotate, reverse, iota-based arithmetic on i64 values.\n- Integer literals only {lits}.\n- A conditional only as: if e < 0 then a else b.\n- An index into an array must be in range by construction: a loop or tabulate counter over that array's size, 0, the size minus 1, i64.max 0 (j - 1), i64.min (D - 1) (j + 1), or i64.max 0 (i64.min (D - 1) (i64.i32 e)).\n- At most {} nested binders (tabulate, loop, or the lambda of a map).\n- You may use let bindings, def helper functions, map and map2 with lambdas, reduce (+) 0, reduce i32.min i32.highest, reduce i32.max i32.lowest, and |>.\n\n{}",
+        if topics { TOPIC_RULE.to_string() } else { format!("THE TASK. {}", description(pname)?) },
         ops.join("\n"),
         sig.depth,
+        if topics { "Answer with ONE correct program on the topic you are given, complete, in one ```futhark code block, and nothing else.".to_string() } else { format!("Answer with {PROGRAMS_PER_CALL} DISTINCT correct programs, each complete, each in its own ```futhark code block, and nothing else.") },
     ))
 }
 
@@ -174,6 +197,8 @@ fn code_blocks(reply: &str) -> Vec<String> {
 }
 
 struct Ctx {
+    /// The programs are on topics of their own, never the benchmark's task (`topics`).
+    topics: bool,
     pname: String,
     k: FutharkKingdom,
     sig: Signature,
@@ -354,7 +379,11 @@ fn read_replies(c: &Ctx, tel: &mut RunTelemetry, generation: u32) -> Result<(usi
         let reply = r["result"].as_str().unwrap_or("").to_string();
         for (b, src) in code_blocks(&reply).iter().enumerate() {
             programs += 1;
-            let origin = format!("call_{i:03}#{b}");
+            let topic = std::fs::read_to_string(dir.join(format!("call_{i:03}.topic.txt"))).ok();
+            let origin = match &topic {
+                Some(t) => format!("call_{i:03}#{b} topic: {}", t.replace(['\t', '\n'], " ")),
+                None => format!("call_{i:03}#{b}"),
+            };
             match reader.read_program(src) {
                 Ok(t) => {
                     let s = sexp(&c.k, &t);
@@ -404,7 +433,10 @@ fn read_replies(c: &Ctx, tel: &mut RunTelemetry, generation: u32) -> Result<(usi
 fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), String> {
     let dir = c.run.join("llm");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let system = contract(&c.k, &c.sig, &c.pname)?;
+    let system = contract(&c.k, &c.sig, &c.pname, c.topics)?;
+    if c.topics && calls > TOPICS.len() {
+        return Err(format!("--calls {calls}: there are {} topics", TOPICS.len()));
+    }
     write(&dir.join("contract.txt"), &system)?;
     let mut tel = RunTelemetry::start(
         &c.run,
@@ -431,7 +463,12 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
                     if tel_m.lock().map(|t| t.stop_requested()).unwrap_or(true) {
                         break;
                     }
-                    let prompt = format!("Write {PROGRAMS_PER_CALL} distinct programs. Strategy for this batch: {}. (Batch {i}.)", STRATEGIES[i % STRATEGIES.len()]);
+                    let prompt = if c.topics {
+                        let _ = write(&dir.join(format!("call_{i:03}.topic.txt")), TOPICS[i]);
+                        format!("Write one program on the topic: {}.", TOPICS[i])
+                    } else {
+                        format!("Write {PROGRAMS_PER_CALL} distinct programs. Strategy for this batch: {}. (Batch {i}.)", STRATEGIES[i % STRATEGIES.len()])
+                    };
                     let r = one_call(&system, &prompt, &dir, i);
                     let d = done.fetch_add(1, Ordering::SeqCst) + 1;
                     let fit = [if r.is_ok() { 0.0 } else { 1.0 }];
@@ -470,7 +507,7 @@ fn real_main() -> Result<(), String> {
     let k = load(&p.instance)?;
     let sig = signature(&p.instance)?;
     if cmd == "contract" {
-        println!("{}", contract(&k, &sig, &pname)?);
+        println!("{}", contract(&k, &sig, &pname, args.iter().any(|a| a == "--topics"))?);
         return Ok(());
     }
     let out = PathBuf::from(arg(&args, "--out").ok_or("--out POOLDIR")?);
@@ -478,7 +515,7 @@ fn real_main() -> Result<(), String> {
     for d in [&out, &run] {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
-    let c = Ctx { pname, k, sig, out, run };
+    let c = Ctx { topics: cmd == "topics" || (cmd == "reread" && args.iter().any(|a| a == "--topics")), pname, k, sig, out, run };
     match cmd.as_str() {
         "bench" => bench(&c, &PathBuf::from(arg(&args, "--benchmarks").ok_or("--benchmarks DIR")?)),
         "llm" => {
@@ -486,11 +523,15 @@ fn real_main() -> Result<(), String> {
             let parallel: usize = arg(&args, "--parallel").map_or(Ok(4), |v| v.parse()).map_err(|_| "--parallel N")?;
             llm(&c, calls, parallel, true)
         }
+        "topics" => {
+            let parallel: usize = arg(&args, "--parallel").map_or(Ok(4), |v| v.parse()).map_err(|_| "--parallel N")?;
+            llm(&c, TOPICS.len(), parallel, true)
+        }
         "reread" => {
             let calls = calls_made(&c.run.join("llm")).len();
             llm(&c, calls, 1, false)
         }
-        o => Err(format!("{o}: bench, llm, reread or contract")),
+        o => Err(format!("{o}: bench, llm, topics, reread or contract")),
     }
 }
 

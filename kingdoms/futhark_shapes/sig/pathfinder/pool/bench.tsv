@@ -1,0 +1,10 @@
+seq	source	origin	function	dual	sexp
+1	bench	accelerate/canny/canny.fut	orientUndef	i32:c	0
+2	bench	lib/github.com/diku-dk/lys/lys.fut	SDLK_UNKNOWN	i32:c	0
+3	bench	parboil/lbm/lbm.fut	C	i32:c	0
+4	bench	parboil/lbm/lbm.fut	S	i32:c	1
+5	bench	parboil/lbm/lbm.fut	N	i32:c	2
+6	bench	parboil/lbm/lbm.fut	NE	i32:c	10
+7	bench	rodinia/cfd/cfd.fut	var_density	i32:c	0
+8	bench	rodinia/cfd/cfd.fut	var_momentum	i32:c	1
+9	bench	rodinia/nw/nw.fut	fInd	i32:c	(add (mul rows (add rows 1)) cols)
