@@ -16,7 +16,7 @@ Study plan: `docs/STUDY_evolving_benchmarks.md`. Runs: `/private/tmp/claude-501/
 | hypothesis | expected | measured | verdict |
 |---|---|---|---|
 | H1, discovery from random | possible | no exact program in 3 of 3 seeds. Best quality angle 1.207, 1.031, 1.015 | **not supported** |
-| H2, evolution sooner than random search | (expected wherever H1 holds) | no exact program either way. Evolution got closer in 2 of 3 seeds: quality angle 1.031 and 1.015 against C's best of 1.207. Cells off by more than half the range: 6 % and 13 % (R seeds 2 and 3) against 26–87 % (C) | **undecided** on exact programs; evolution made real progress on the error that random search did not |
+| H2, evolution sooner than random search | (expected wherever H1 holds) | no exact program either way. Best-ever quality angle: R 1.207, 1.031, 1.015; C 1.105, 1.076, 1.085. R seeds 2 and 3 got closer than every C seed, and R seed 1 got less close than every C seed. Cells off by more than half the range: R 87 %, 6 %, 13 %; C 23 %, 15 %, 24 % | **undecided** on exact programs. On closeness, mixed: evolution's best two seeds beat random search, its worst seed is the worst of all six. (Corrected 2026-10-28 16:50Z: the first version compared against C's last batch; see Failures 6.) |
 | H3, a faster exact variant (expected: "possible: fusion of the row loop") | possible | P's champion: 0.9705 (11 of 11 pairs faster, least A/A ratio 0.9888) at the end of the run, and 0.9699 in an independent re-time (11 of 11 faster, least A/A ratio 0.9671). The unevolved reference gene: 0.9473 and 0.9434 | **supported against the published program, but not by evolution**: the starting point already beat it, and evolution did not improve on the starting point |
 
 **The A/A gate (before P):** 22 of 22 pairs within 5 %. The published program runs in about 0.96 ms per run on 256 x 256.
@@ -34,15 +34,15 @@ Study plan: `docs/STUDY_evolving_benchmarks.md`. Runs: `/private/tmp/claude-501/
 | R | 1 | 10-28T04:27:50Z | 10-28T05:11:00Z | 1400 | no | - | 1.207037 | n_gen | 43.16 | 14 (24) | 1 (0) |
 | R | 2 | 10-28T05:11:08Z | 10-28T05:20:24Z | 1400 | no | - | 1.030623 | n_gen | 9.25 | 94 (24) | 0 (0) |
 | R | 3 | 10-28T05:20:24Z | 10-28T05:28:33Z | 1400 | no | - | 1.015466 | n_gen | 8.14 | 46 (24) | 2 (2) |
-| C | 1 | 10-28T05:28:33Z | 10-28T05:33:33Z | 1400 | no | - | 1.215311 | n_gen | 5.00 | 2 (24) | 2 (2) |
-| C | 2 | 10-28T05:33:33Z | 10-28T05:39:59Z | 1400 | no | - | 1.207317 | n_gen | 6.44 | 4 (24) | 0 (0) |
-| C | 3 | 10-28T05:39:59Z | 10-28T05:46:50Z | 1400 | no | - | 1.243769 | n_gen | 6.83 | 14 (24) | 1 (1) |
+| C | 1 | 10-28T05:28:33Z | 10-28T05:33:33Z | 1400 | no | - | 1.104754 (best-ever) | n_gen | 5.00 | 2 (24) | 2 (2) |
+| C | 2 | 10-28T05:33:33Z | 10-28T05:39:59Z | 1400 | no | - | 1.075944 (best-ever) | n_gen | 6.44 | 4 (24) | 0 (0) |
+| C | 3 | 10-28T05:39:59Z | 10-28T05:46:50Z | 1400 | no | - | 1.084535 (best-ever) | n_gen | 6.83 | 14 (24) | 1 (1) |
 | P-planted | 1 | 10-28T14:36:21Z | 10-28T14:57:54Z | 20 | yes | 1 | 0.451133 | time | 20.56 | 24 (24) | 0 (0) |
 | P | 1 | 10-28T14:57:54Z | 10-28T15:59:51Z | 62 | yes | 1 | 0.449366 | time | 60.96 | 24 (24) | 0 (0) |
 
 ![HFF against generation](2026-10-27_STUDY_pathfinder_hff.png)
 
-Left panel: the best quality angle so far (0 is exact on every case), 24 evaluations per generation. R seeds 2 and 3 keep improving to the end of the budget; R seed 1 (the per-candidate path) and all C seeds stay near 1.21. Right panel: the stage-2 HFF of P and of the planted control.
+Left panel: the best quality angle so far (0 is exact on every case), 24 evaluations per generation. R seeds 2 and 3 keep improving to the end of the budget. R seed 1 stays at 1.207. C's best-so-far falls in steps to 1.08–1.10. Right panel: the stage-2 HFF of P and of the planted control.
 
 ## The relative score: each champion against the published program
 
@@ -56,7 +56,11 @@ How to read this table:
 | R | 1 | `(row.rows.cols walls (next (prev (clamp (add (loop1.rows rows 10) (mul (ival.cols (clamp cols)) cols …` | no | 0.8750 | 0.8750 | 0.8750 | 0.8750 | 0.6329 | 0.6549 | 0.1198 | - | - (0 of 0 below 1) | 0.9790 | **not reached** |
 | R | 2 | `(loop1.cols (map2.sub (loop.cols (replicate (add (add (max (min (loop1.cols rows s1) (sum.rows zeros …` | no | 0.9849 | 0.9829 | 0.7088 | 0.0630 | 0.3847 | 0.4801 | 0.5495 | - | - (0 of 0 below 1) | 0.9650 | **not reached** |
 | R | 3 | `(map2.add (row.rows.cols walls last) (replicate (get.rows (loop.rows (loop1.rows (loop1.rows zeros ( …` | no | 0.8712 | 0.8712 | 0.8650 | 0.1275 | 0.4517 | 0.5191 | 0.1198 | - | - (0 of 0 below 1) | 0.9664 | **not reached** |
-| C | 1 | `(tab rows)` | no | 0.9932 | 0.9932 | 0.9920 | 0.2572 | 0.5097 | 0.5965 | 0.8025 | - | - (0 of 0 below 1) | 0.97 …`(row.rows.cols walls (next last))` | no | 0.8750 | 0.8750 | 0.8750 | 0.8750 | 0.6338 | 0.6558 | 0.1198 | - | - (0 of 0 below 1) | 0.96 …`(row.rows.cols walls (clamp (min (loop.cols (add 0 cols) (loop1.rows cols (min s2 s1))) 10)))` | no | 0.8750 | 0.8750 | 0.8750 | 0.8738 | 0.6345 | 0.6588 | 0.4391 | - | - (0 of 0 below 1) | 0.97 …`(loop1.rows (row.rows.cols walls zero) (tab (add (get.cols (row.rows.cols walls i1) j2) (min (min (get.cols s1 (prev j2)) (get.cols s1 (next j2))) (get.cols s1 j2)))))` | yes | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.9663 | 0.9901, 0.9457, 0.9 …`(loop1.rows (row.rows.cols walls zero) (tab (add (min (min (get.cols s1 (prev j2)) (get.cols s1 (next j2))) (get.cols s1 j2)) (get.cols (row.rows.cols walls i1) j2))))` | yes | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.9705 | 0.9713, 0.9857, 0.9695, 0.9439, 0.9776, 0.9862, 0.9705, 0.9716, 0.9684, 0.9693, 0.9364 (11 of 11 below 1) | 0.9888 | **beat** |
+| C | 1 | `(map2.add (map2.add (loop.rows zeros (loop1.rows zeros (row.rows.cols walls last))) (loop.rows (loop …` | no | 0.9895 | 0.9895 | 0.9795 | 0.2297 | 0.4829 | 0.5741 | 0.2309 | - | - (0 of 0 below 1) | 0.9668 | **not reached** |
+| C | 2 | `(map2.max (map2.add (row.rows.cols walls last) (tab rows)) zeros)` | no | 0.9962 | 0.9962 | 0.9862 | 0.1486 | 0.4582 | 0.5277 | 0.1198 | - | - (0 of 0 below 1) | 0.9766 | **not reached** |
+| C | 3 | `(map2.sub (loop.cols (loop.rows (map2.add zeros (row.rows.cols walls (prev zero))) (map2.add (map2.m …` | no | 0.9794 | 0.9794 | 0.9731 | 0.2356 | 0.4936 | 0.5816 | 0.1198 | - | - (0 of 0 below 1) | 0.9598 | **not reached** |
+| P-planted | 1 | `(loop1.rows (row.rows.cols walls zero) (tab (add (get.cols (row.rows.cols walls i1) j2) (min (min (g …` | yes | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.9663 | 0.9901, 0.9457, 0.9663, 0.9687, 0.9452, 0.9965, 0.9633, 0.9576, 0.9761, 0.9619, 0.9749 (11 of 11 below 1) | 0.9632 | **matched** |
+| P | 1 | `(loop1.rows (row.rows.cols walls zero) (tab (add (min (min (get.cols s1 (prev j2)) (get.cols s1 (nex …` | yes | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.9705 | 0.9713, 0.9857, 0.9695, 0.9439, 0.9776, 0.9862, 0.9705, 0.9716, 0.9684, 0.9693, 0.9364 (11 of 11 below 1) | 0.9888 | **beat** |
 
 The decomposition that decides what "beat" means here. Every row is exact; the re-times were made one after another, 16:21–16:30Z:
 
@@ -80,12 +84,12 @@ A/A sets:
 | R s2 | the published program compiled as a candidate | 11 | 0.9856 | 0.9661 | 1.0519 |
 | R s3 | yardstick vs itself | 11 | 0.9931 | 0.9664 | 1.0375 |
 | R s3 | the published program compiled as a candidate | 11 | 0.9923 | 0.9751 | 1.0176 |
-| C s1 | yardstick vs itself | 11 | 0.9964 | 0.9830 | 1.0195 |
-| C s1 | the published program compiled as a candidate | 11 | 0.9950 | 0.9716 | 1.0374 |
-| C s2 | yardstick vs itself | 11 | 1.0014 | 0.9804 | 1.0196 |
-| C s2 | the published program compiled as a candidate | 11 | 0.9994 | 0.9644 | 1.0391 |
-| C s3 | yardstick vs itself | 11 | 1.0107 | 0.9848 | 1.0277 |
-| C s3 | the published program compiled as a candidate | 11 | 0.9978 | 0.9795 | 1.0141 |
+| C s1 | yardstick vs itself | 11 | 0.9980 | 0.9668 | 1.0302 |
+| C s1 | the published program compiled as a candidate | 11 | 1.0093 | 0.9724 | 1.0376 |
+| C s2 | yardstick vs itself | 11 | 1.0061 | 0.9766 | 1.0338 |
+| C s2 | the published program compiled as a candidate | 11 | 1.0149 | 0.9820 | 1.0309 |
+| C s3 | yardstick vs itself | 11 | 0.9979 | 0.9598 | 1.0240 |
+| C s3 | the published program compiled as a candidate | 11 | 1.0098 | 0.9887 | 1.0344 |
 | P-planted s1 | yardstick vs itself | 11 | 1.0026 | 0.9632 | 1.0195 |
 | P-planted s1 | the published program compiled as a candidate | 11 | 0.9922 | 0.9720 | 1.0365 |
 | P s1 | yardstick vs itself | 11 | 1.0035 | 0.9888 | 1.0273 |
@@ -127,7 +131,7 @@ The kingdom's form differs from the published program in three ways, and all thr
 - it uses `tabulate` with direct indexing instead of `map5` over `iota` and two `rotate`s;
 - it uses `i32.min` instead of a user `min` on a tuple.
 
-The R and C champions are not exact. The closest, R seed 3 (46 nodes), is wrong in 87 % of cells, but only 13 % are off by more than half the range.
+The R and C champions are not exact. The closest, R seed 3 (46 nodes), is wrong in 87 % of cells, but only 13 % are off by more than half the range. C's best-ever champions are simpler, e.g. seed 2's `(map2.max (map2.add (row.rows.cols walls last) (tab rows)) zeros)`: the last row of walls plus `rows`, floored at 0.
 
 ## Operator effectiveness
 
@@ -146,9 +150,8 @@ Each R child is compared with its best parent in the same stage.
 | P+P-planted | marriage | 14 | 0 (0 %) | 0 (0 %) | 14 (100 %) | 0 | 0 |
 | P+P-planted | mutation | 13 | 0 (0 %) | 0 (0 %) | 13 (100 %) | 0 | 0 |
 | P+P-planted | crossover+mutation | 13 | 0 (0 %) | 0 (0 %) | 13 (100 %) | 0 | 0 |
-## Failures, honestly
 
-1. **No exact program from examples** (H1, H2), although evolution clearly beat random search on how close it got.
+1. **No exact program from examples** (H1, H2). On closeness, evolution's best two seeds beat random search, and its worst seed (R seed 1, on the per-candidate path) did not move from 1.207.
 2. **Selection in P chose on timing noise.**
    - Eleven slots per program, each its own HFF input, did not stop a champion that re-times about 2.5 % slower than its parent from winning the run.
    - The in-run medians were 0.940 for the champion and 0.955 for the reference, but the reference re-times at 0.943–0.947 and the champion at 0.970.
@@ -156,3 +159,7 @@ Each R child is compared with its best parent in the same stage.
 3. **The speed win belongs to the kingdom's expression of the algorithm, not to the search.** It is a real, repeatable 5 % against the published port: 22 of 22 pairs faster over two re-times. It is not evidence that evolution improves GPU code.
 4. **P is slow.** Timing a new program in 11 pairs costs about a minute, so P scored 62 programs in its hour.
 5. **Bugs** (compile failures of legal programs, each scored worst and logged): in the counted runs, 5 SetMem compiler limitations (R seed 3: 2, C seed 1: 2, C seed 3: 1) and 1 other compile failure with no C (R seed 1). The superseded pilot also hit a Futhark internal compiler error ("Use of unknown variable" after the "reduce device synchronizations" pass).
+6. **A measurement fault, found and fixed after the first version of this report.**
+   - For C, `report.tsv`'s `best_hff`/`best_program` was the last random batch's best, not the best of the run.
+   - The first version said "evolution got closer in 2 of 3 seeds against C's best of 1.207". C's best-ever is in fact 1.076–1.105. R seeds 2 and 3 are still closer, R seed 1 is not.
+   - The C champions were rescored from hall-of-fame rank 1. The runner now reports `best_ever_*` for every regime (fuller f8409a2f).
