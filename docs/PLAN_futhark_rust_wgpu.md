@@ -21,8 +21,7 @@ what evolution scores is exactly what ships. There is no C, no shim, and no proc
 gives it. The batch path scores a C program that runs through a WebGPU C shim in a child process.
 
 **Status (2026-10-28).**
-- Steps 1–4 built.
-- The gates, with their measurements, are in §7.
+- Steps 1–4 built; every gate is passed and measured (§7).
 - The UltraDim demonstration is out of scope (Andrew, 2026-10-28): this is fuller/phylu tooling for the Futhark
   kingdom.
 
@@ -241,9 +240,58 @@ pairs on both.
 | histogram | 2.96 | 25.38 | 2.83 (0.45 + 2.38) | 25.49 (2.66) |
 | pathfinder | 1.30 | 1.57 | 1.06 (0.23 + 0.83) | 1.53 (0.11) |
 
-**Step 3: the benchmarks against `futhark c`, and the GPU time a call.** On reduce: 5 of 5 cases bit-identical to C;
-the fastest GPU time a call is 8.3 µs on the rust path against 12.6 µs on the shim. The full table (five benchmarks,
-the shim comparison with trailing whitespace stripped) and the A7 values against C come from GPU session 5.
+**Step 3: the benchmarks against `futhark c` and the shim (GPU session 8, 13:12Z).**
+`futhark_rust::tests::on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`. GPU µs a call is the fastest of 20 runs
+after a warm-up, the sum of the passes' GPU timestamps, the least over the cases. Launches a call are taken on the
+last case.
+
+| benchmark | cases | bit-identical to C | bit-identical to the shim | rust GPU µs/call | shim GPU µs/call | launches/call, rust / shim |
+|---|---|---|---|---|---|---|
+| reduce | 5 | 5 | 5 | 8.5 | 27.6 | 1 / 1 |
+| scan | 5 | 5 | 5 | 16.8 | 17.4 | 3 / 3 |
+| histogram | 5 | 5 | 5 | 23.3 | 11.0 | 4 / 4 |
+| pathfinder | 8 | 8 | 8 | 56.2 | 57.8 | 63 / 63 |
+| kmeans | 5 | 1 | 2 | 43.5 | 43.7 | 10 / 10.1 |
+
+- **The integer benchmarks are exact on both paths.**
+- **The time a call is the same within noise.** The two paths make the same launches. The 10–60 µs kernels sit in the
+  GPU's clock states: in session 7 histogram was 22.7 against 23.1 µs and reduce 8.4 against 27.5 µs, so a pair's
+  sign flips between sessions.
+- **The k-means step is not repeatable on either path.** Its cluster sums are f32 additions made with atomics.
+  `on_the_gpu_the_kmeans_step_s_repeatability_on_each_path` measured 3 of 5 cases changing from run to run on the rust
+  path and on the shim alike. So no GPU path can be bit-identical to C there.
+- The gate asserts the k-means step precisely: on every case the shim repeats over three runs, the rust path repeats
+  exactly that output three times (1 of 5 such cases in session 8, 2 in session 7).
+
+**The A7 shape programs on the GPU (session 7).** Both compile and run through the rust path (`futhark c` input:
+nine 64×64 f32 matrices, `futhark dataset -s 7`).
+
+| program | values bit-identical to `futhark c` | largest gap |
+|---|---|---|
+| a7_reference | 1157 of 4096 | 6 ulp |
+| a7_winner | 1157 of 4096 | 6 ulp |
+
+The gaps are f32 arithmetic: Metal contracts multiply-adds (fast math, measured by the shim's S5) and the tiled
+reduction adds in another order. The shim path cannot compile either program, so there is no second GPU path to
+compare with.
+
+**Step 4: `futhark_evolve --eval rust` against `--eval batch` (session 5, 12:39–12:50Z).** R regime, seed 2,
+3 generations of 24 (72 evaluations), program size 8. Compared with `compare_paths.py`: every ledger row's
+generation, id, parents, operator, fitness, text and quality inputs; the series' selection columns; the final
+population.
+
+| problem | batch vs rust | gen seconds, batch | gen seconds, rust | evaluations/s, batch | evaluations/s, rust |
+|---|---|---|---|---|---|
+| reduce | EQUIVALENT (72 rows, 0 mismatches) | 2.6, 3.1, 117.9 | 2.1, 2.6, 116.9 | 0.54 | 0.55 |
+| scan | EQUIVALENT | 7.8, 10.9, 11.8 | 7.2, 10.6, 11.6 | 1.54 | 1.62 |
+| histogram | EQUIVALENT | 11.4, 13.6, 31.8 | 11.3, 13.6, 31.8 | 0.98 | 1.00 |
+| pathfinder | EQUIVALENT | 3.4, 3.5, 3.1 | 3.6, 3.6, 2.6 | 1.05 | 1.10 |
+
+The rust path is as fast as the batch path, by 0–5 %.
+- It removes the WGSL port, the check, the link, the process start and the device set-up.
+- It pays `rustc` instead of `cc`; on histogram's last generation `rustc` took 12.2 s against `cc`'s 7.0 s plus the
+  port's 2.9 s.
+- The GPU work (pipelines, runs) is the same on both paths, and it dominates the generations.
 
 **What the first sessions found and fixed:**
 - the runtime's rpath must be the toolchain's libstd directory (`<sysroot>/lib/rustlib/<host>/lib`), now covered by a
