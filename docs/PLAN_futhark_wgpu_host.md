@@ -344,3 +344,59 @@ module is not yet in `src/lib.rs`, because another session holds uncommitted
 edits to that file. Wiring it is the one line `pub mod futhark_wgpu_host;`
 after `pub mod futhark_exec;`.
 
+
+## 13. The batch host: a generation in one program and one process (2026-10-28)
+
+`src/futhark_batch.rs`; `futhark_evolve --eval batch` (the default; `--eval single` is the old path).
+
+**What.** Every new program of a generation is an entry point of one Futhark program: its quality entry
+(`program_cases`' text, renamed), its timed entry in stage 2 (`program`'s text), and the published program last.
+The branch compiler builds it as a library (`--library`). A C driver, written from the compiler's manifest (`prog.json`;
+a quality entry returns its cases' tuple as an opaque value with a projection per field), sets the device up once and
+runs each command. A quality command runs the quality entry on every case. A time command makes `runs + 1` calls on the
+timing input, each one as `-r` does it. Its GPU time is read with the shim's pass query
+(`futhark_wgpu_shim_timed_passes` / `_pass_ns`, not in `webgpu.h`). One file holds all the results.
+
+Failures:
+* a batch that does not compile, or that cannot set its device up, is halved until the program at fault stands alone;
+  that program is logged in `bugs.log` and scored worst;
+* a command that fails while it runs fails only its own step, and a new process runs the commands after it;
+* each command has the single path's 120 s bound (`alarm`).
+
+The results are taken when each program is scored, so the counts, the bugs and the ledger are the single path's.
+
+**Found on the way.**
+1. Futhark's runtime creates the pipeline of a kernel with dynamic block sizes at EVERY launch. One process of 12
+   histogram programs made 6,210 pipelines, which took 14.5 s. The shim now caches pipelines by descriptor; the
+   runtime never releases a pipeline, so a shared handle is safe. This cost was most of histogram's time on both paths.
+2. Futhark's webgpu code numbers bindings across the whole program, and wgpu's limit is 1000. A batch of 24 histogram
+   programs reached index 1011, and its device set-up failed. The highest index is read from the generated C, and a
+   batch over the limit is halved before it runs.
+
+**Equivalence** (GPU, Apple M3 Max; 3 generations of 24; `compare_paths.py`: the ledger's generation, id, parents,
+operator, fitness, text and every quality input, bit for bit; the series' selection columns; the final population):
+
+| run | 96ed0dae, single vs batch |
+|---|---|
+| reduce R seed 2 | 72 of 72 rows identical; selection identical |
+| histogram R seed 1 | 72 of 72 rows identical; selection identical |
+| reduce A/A gate (batch process) | 22 of 22 pairs within 5 % (0.997 to 1.003) |
+| reduce P, generation 0 | quality inputs identical; speed ratio median 1.0002 single, 1.0004 batch |
+
+**Seconds per generation of 24** (stage columns are the generation's sums):
+
+| problem | path | gen s | futhark | port | cc | check | link | start | device | pipelines | runs | evaluations/s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| reduce | single, before | 38.6 | 5.1 | 6.8 | 5.0 | 2.1 | 2.1 | 7.9 | 5.5 | 1.9 | 0.7 | 0.62 |
+| reduce | batch + cache | 2.5 | 0.4 | 0.3 | 0.4 | 0.1 | 0.1 | 0.3 | 0.2 | 0.6 | 0.1 | 9.5 |
+| histogram | single, before | 82.6 | 6.6 | 7.7 | 8.1 | 2.2 | 2.2 | 8.8 | 6.0 | 37.0 | 2.5 | 0.29 |
+| histogram | single + cache | 55.4 | 6.6 | 7.7 | 8.2 | 2.2 | 2.1 | 9.4 | 6.0 | 7.1 | 4.5 | 0.43 |
+| histogram | batch + cache | 25-41 | 2.9-5.7 | 2.2-4.3 | 5.4-10.1 | 0.3-0.5 | 0.3-0.5 | 1.1-1.9 | 0.7-1.3 | 7.6-12.2 | 3.8-4.8 | 0.58-0.96 |
+
+The histogram batch ranges include the halvings at the binding limit (one or two extra compiles a generation), which
+9cc9b88d moves before the run. Reduce's third generation takes about 116 s on both paths, all of it in its runs (one
+program's own work).
+
+**Next.** The next generation cannot be compiled while the current one runs, because its programs come from the
+current generation's scores. The step that would use the idle cores is to compile a batch in parallel chunks under
+the binding limit (cc is the largest stage left: one 12 MB C file).
