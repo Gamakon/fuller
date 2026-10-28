@@ -34,7 +34,9 @@ if [ "${CARGO_LOCK_HELD:-}" != "$lock" ]; then
   trap - EXIT
 fi
 deps="$here/target-dylib/release/deps"
-sys=$(rustc --print sysroot)/lib
+# The toolchain's libstd dylib (prefer-dynamic links it): <sysroot>/lib/rustlib/<host>/lib.
+sys=$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/lib
+[ -n "$(ls "$sys"/libstd-*.dylib 2>/dev/null)" ] || { echo "prebuild_rt.sh: no libstd dylib in $sys" >&2; exit 1; }
 cp "$deps"/*.rlib "$dir/deps/"
 for f in "$deps"/*.dylib; do
   [ "$(basename "$f")" = libfuthark_rust_rt.dylib ] || cp "$f" "$dir/deps/"

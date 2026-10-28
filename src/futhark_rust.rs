@@ -341,6 +341,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// THE A7 PROGRAMS on the GPU (`futhark-wgpu-shim/tests/s5/a7_*.fut`, which Futhark's webgpu backend does not
+    /// compile: SetMem in a kernel loop, a register array sized at run time): both compile to Rust+WGSL and run in
+    /// this process. Measured against `futhark c` on seeded inputs (`futhark dataset -s 7`, nine 64x64 f32 matrices):
+    /// the count of bit-identical values and the largest gap in units in the last place, printed. Not asserted equal:
+    /// f32 multiply-adds on Metal are contracted (fast math; the shim's S5 measured it), which is to be measured.
+    /// (The fork compiler, rustc, the released futhark, the GPU; run under the GPU lock.)
+    #[test]
+    fn on_the_gpu_the_a7_programs_run_through_the_rust_path() {
+        if !compiler().is_file() {
+            eprintln!("skipped: the fork compiler is not installed");
+            return;
+        }
+        let _gpu = crate::gpu_test_lock::acquire();
+        let base = scratch("a7");
+        std::fs::create_dir_all(&base).expect("a scratch directory");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let session = Session::new(&rt, Duration::from_secs(120)).expect("a session");
+        let mut ds = Command::new("futhark");
+        ds.args(["dataset", "-s", "7", "-b"]);
+        for _ in 0..9 {
+            ds.args(["-g", "[64][64]f32"]);
+        }
+        let input = output_with_timeout(&mut ds, Duration::from_secs(60), None).expect("futhark dataset").stdout;
+        let s5 = Path::new(env!("CARGO_MANIFEST_DIR")).join("futhark-wgpu-shim/tests/s5");
+        for name in ["a7_reference", "a7_winner"] {
+            let src = std::fs::read_to_string(s5.join(format!("{name}.fut"))).expect("the program");
+            let c = crate::futhark_sig::compile_c(&src, &base.join(format!("{name}_c"))).expect("futhark c");
+            let want = crate::futhark_exec::output_with_timeout_bytes(Command::new(&c).arg("-b"), Duration::from_secs(120), Some(&input)).expect("the C run").stdout;
+            let (dylib, _) = compile_module(&src, &base.join(format!("{name}_rust")), &rt, &format!("a7_{name}"), Duration::from_secs(600)).expect("the rust-wgpu compile");
+            let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&input)).expect("the rust path's run");
+            let o = payloads(&raw).into_iter().find(|r| r.0 == "o").expect("an output record");
+            assert!(o.1, "{name}: the rust path failed: {}", String::from_utf8_lossy(&o.3));
+            assert_eq!(o.3.len(), want.len(), "{name}: the output's size");
+            // Past the 7-byte header and two dimensions: the f32 values.
+            let (g, w) = (&o.3[23..], &want[23..]);
+            let vals = |b: &[u8]| b.chunks(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect::<Vec<_>>();
+            let (g, w) = (vals(g), vals(w));
+            let same = g.iter().zip(&w).filter(|(a, b)| a == b).count();
+            let ulp = g.iter().zip(&w).map(|(a, b)| (i64::from(*a) - i64::from(*b)).abs()).max().unwrap_or(0);
+            eprintln!("{name}: {same} of {} values bit-identical to futhark c, the largest gap {ulp} ulp", w.len());
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The prebuilt runtime loads in this process (dlopen: its libstd found by its rpath) and makes a session. No device:
+    /// a session makes one only when a command runs.
+    #[test]
+    fn the_runtime_loads_in_process() {
+        let base = scratch("load");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let s = Session::new(&rt, Duration::from_secs(5)).expect("a session");
+        assert_eq!(s.devices_made(), 0);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn the_binding_index_is_read_from_the_generated_module() {
         let m = "    rt::KernelInfo {\n        scalars_binding: 12,\n        binding_indices: &[13, 1011, 14],\n    },\n        binding_indices: &[],\n";
