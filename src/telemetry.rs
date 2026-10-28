@@ -685,6 +685,9 @@ pub enum EventKind {
     /// The fitness moved to its next stage (`runner::FitnessStage`): quality only until the best individual is
     /// perfect, then quality and speed. `message` says why; the snapshot's extras carry `stage`.
     StageChange,
+    /// RING WALK (`fuller::futhark_rings::Rings::walk`, plan section I.1): one type's head or tail window advanced
+    /// along its ring, so the reading frame takes in the next real symbols.
+    RingWalk,
     /// Something the engine wants an operator to see that is not one of the above.
     #[default]
     Note,

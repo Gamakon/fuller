@@ -231,7 +231,7 @@ fn gap_counts(gaps: &[Gap]) -> Vec<(String, usize)> {
 }
 
 fn bench(c: &Ctx, root: &Path) -> Result<(), String> {
-    let reader = Reader::new(&c.k, &c.sig)?;
+    let reader = Reader::for_pool(&c.k, &c.sig)?;
     let mut files = Vec::new();
     fn walk(d: &Path, root: &Path, out: &mut Vec<String>) -> Result<(), String> {
         for e in std::fs::read_dir(d).map_err(|e| format!("{}: {e}", d.display()))? {
@@ -364,7 +364,7 @@ fn result_of(v: &serde_json::Value) -> Option<&serde_json::Value> {
 
 /// Read every saved reply into `llm.tsv` and `llm_programs.tsv`, in call order.
 fn read_replies(c: &Ctx, tel: &mut RunTelemetry, generation: u32) -> Result<(usize, usize, usize), String> {
-    let reader = Reader::new(&c.k, &c.sig)?;
+    let reader = Reader::for_pool(&c.k, &c.sig)?;
     let dir = c.run.join("llm");
     let mut pool = vec![POOL_HEADER.to_string()];
     let mut all = vec!["reply\tprogram\tstatus\tdual\tsexp_or_construct\tdual_of_gap\tdetail".to_string()];
@@ -408,21 +408,24 @@ fn read_replies(c: &Ctx, tel: &mut RunTelemetry, generation: u32) -> Result<(usi
             }
         }
     }
-    write(&c.out.join("llm.tsv"), &(pool.join("\n") + "\n"))?;
-    write(&c.out.join("llm_programs.tsv"), &(all.join("\n") + "\n"))?;
+    // The topic programs are the canvas's rings (`llm.tsv`); the task programs are the population's alternatives
+    // (`alternatives.tsv`, Andrew's clarification of 2026-10-29), never in the rings.
+    let (file, every, px) = if c.topics { ("llm.tsv", "llm_programs.tsv", "llm") } else { ("alternatives.tsv", "alternatives_programs.tsv", "alt") };
+    write(&c.out.join(file), &(pool.join("\n") + "\n"))?;
+    write(&c.out.join(every), &(all.join("\n") + "\n"))?;
     let mut m = vec![
-        ("llm.model".to_string(), "claude sonnet (claude -p --model sonnet), the contract in llm/contract.txt of the run".to_string()),
-        ("llm.calls".into(), calls.len().to_string()),
-        ("llm.cost_usd".into(), format!("{cost:.2}")),
-        ("llm.programs".into(), programs.to_string()),
-        ("llm.programs_read".into(), read.to_string()),
-        ("llm.programs_gap".into(), gaps.len().to_string()),
-        ("llm.run".into(), c.run.display().to_string()),
+        (format!("{px}.model"), "claude sonnet (claude -p --model sonnet), the contract in llm/contract.txt of the run".to_string()),
+        (format!("{px}.calls"), calls.len().to_string()),
+        (format!("{px}.cost_usd"), format!("{cost:.2}")),
+        (format!("{px}.programs"), programs.to_string()),
+        (format!("{px}.programs_read"), read.to_string()),
+        (format!("{px}.programs_gap"), gaps.len().to_string()),
+        (format!("{px}.run"), c.run.display().to_string()),
     ];
     for (construct, n) in gap_counts(&gaps) {
-        m.push((format!("llm.gap {construct}"), n.to_string()));
+        m.push((format!("{px}.gap {construct}"), n.to_string()));
     }
-    update_manifest(&c.out, "llm.", m)?;
+    update_manifest(&c.out, &format!("{px}."), m)?;
     println!("# {} {}: {} calls (${cost:.2}), {programs} programs, {read} read, {} gaps", utc(), c.pname, calls.len(), gaps.len());
     for (construct, n) in gap_counts(&gaps).into_iter().take(15) {
         println!("  gap {n:5}  {construct}");
@@ -499,6 +502,33 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
     tel.end(stopped, calls as u32, None)
 }
 
+/// How many task alternatives (`alternatives.tsv`) pass the population's distance bar, greedily in order: a tree edit
+/// distance of at least `bar` to the reference and to every alternative kept (the output bar is the runner's, on the
+/// GPU). With the distribution of the distances to the reference, to choose the bar from the data.
+fn distinct(c: &Ctx, bar: usize) -> Result<(), String> {
+    let p = problem(&c.pname)?;
+    let reference = fuller::futhark_sig::build(&c.k, p.reference)?;
+    let alts = fuller::futhark_rings::load_pool(&c.out.join("alternatives.tsv"))?;
+    let trees: Vec<fuller::typed_gep::Tree> = alts.iter().map(|e| fuller::futhark_rings::build_at(&c.k, &e.sexp, &e.dual)).collect::<Result<_, _>>()?;
+    let mut hist: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut kept: Vec<&fuller::typed_gep::Tree> = Vec::new();
+    let (mut near_ref, mut near_other) = (0, 0);
+    for t in &trees {
+        let d = fuller::futhark_sig::tree_distance(t, &reference);
+        *hist.entry(d).or_default() += 1;
+        if d < bar {
+            near_ref += 1;
+        } else if kept.iter().any(|o| fuller::futhark_sig::tree_distance(t, o) < bar) {
+            near_other += 1;
+        } else {
+            kept.push(t);
+        }
+    }
+    println!("{}: {} alternatives; bar {bar}: {} kept, {near_ref} near the reference, {near_other} near another kept", c.pname, trees.len(), kept.len());
+    println!("distance to the reference: {}", hist.iter().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" "));
+    Ok(())
+}
+
 fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).cloned().ok_or("futhark_pool bench|llm|reread|contract --problem P ...")?;
@@ -531,7 +561,11 @@ fn real_main() -> Result<(), String> {
             let calls = calls_made(&c.run.join("llm")).len();
             llm(&c, calls, 1, false)
         }
-        o => Err(format!("{o}: bench, llm, topics, reread or contract")),
+        "distinct" => {
+            let bar: usize = arg(&args, "--bar").map_or(Ok(5), |v| v.parse()).map_err(|_| "--bar N")?;
+            distinct(&c, bar)
+        }
+        o => Err(format!("{o}: bench, llm, topics, reread, distinct or contract")),
     }
 }
 

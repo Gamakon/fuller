@@ -1,4 +1,18 @@
 key	value
+alt.calls	34
+alt.cost_usd	0.88
+alt.gap i32.maximum	2
+alt.gap i32.sum	2
+alt.gap if with condition < an expression	1
+alt.gap literal 1000000000	1
+alt.gap loop	1
+alt.gap tabulate	9
+alt.gap token )	1
+alt.model	claude sonnet (claude -p --model sonnet), the contract in llm/contract.txt of the run
+alt.programs	170
+alt.programs_gap	17
+alt.programs_read	153
+alt.run	/private/tmp/claude-501/fpool/pathfinder_llm
 bench.benchmarks_commit	c9e2ccca7cf3efa698519f59b9adbf626b98098f
 bench.excluded_for_discovery	rodinia/pathfinder/pathfinder.fut (leave one out: the benchmark's own published program and file are excluded from the rings of its R and C runs; P may include them)
 bench.files	221

@@ -924,6 +924,8 @@ struct Norm<'a> {
     input_dims: &'a BTreeMap<String, Vec<String>>,
     fresh: usize,
     steps: usize,
+    /// `replicate D 0` anywhere is the kingdom's `zeros_D` ([`Reader::for_pool`]).
+    zeros_everywhere: bool,
 }
 
 const NORM_STEPS: usize = 2_000_000;
@@ -1057,6 +1059,9 @@ impl Norm<'_> {
                         }
                     }
                     "opaque" if one => return Ok(args.remove(0)),
+                    "replicate" if self.zeros_everywhere && args.len() == 2 && args[1] == E::Int(0) && self.is_dim(&args[0]).is_some() => {
+                        return Ok(var(&format!("zeros_{}", self.is_dim(&args[0]).unwrap_or_default())));
+                    }
                     "i32.i64" if one => {
                         if let E::App(g, a) = &args[0] {
                             if **g == var("i64.i32") && a.len() == 1 {
@@ -1112,6 +1117,8 @@ pub struct Reader<'a> {
     consts: BTreeMap<Ty, u32>,
     input_dims: BTreeMap<String, Vec<String>>,
     steps: std::cell::Cell<usize>,
+    /// Read every `replicate D 0` as the kingdom's `zeros_D` (the same value): set by [`Reader::for_pool`].
+    zeros_everywhere: bool,
 }
 
 /// The most pattern matches one read may try (a guard: reading a program always ends).
@@ -1130,11 +1137,20 @@ impl<'a> Reader<'a> {
             by_ty.entry(r.output).or_default().push((i as u32, p));
         }
         let input_dims = sig.inputs.iter().filter(|p| !sig.size_inputs.contains(&p.name)).map(|p| (p.name.clone(), p.dims.clone())).collect();
-        Ok(Reader { k, sig, by_ty, consts, input_dims, steps: std::cell::Cell::new(0) })
+        Ok(Reader { k, sig, by_ty, consts, input_dims, steps: std::cell::Cell::new(0), zeros_everywhere: false })
+    }
+
+    /// The reader of the pool's programs (`examples/futhark_pool.rs`): as [`Reader::new`], and every `replicate D 0`
+    /// is read as the kingdom's `zeros_D`, the same array, so the rings hold the zero arrays programs build (the zero
+    /// array is the only terminal of a computed array's type: measured 2026-10-28, without this no topic program put
+    /// a terminal in the `a.k` rings of histogram). The round trip uses [`Reader::new`], which keeps an inline
+    /// `replicate D 0` as `replicate`.
+    pub fn for_pool(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Reader<'a>, String> {
+        Ok(Reader { zeros_everywhere: true, ..Reader::new(k, sig)? })
     }
 
     fn norm(&self) -> Norm<'_> {
-        Norm { dims: &self.sig.dims, input_dims: &self.input_dims, fresh: 0, steps: 0 }
+        Norm { dims: &self.sig.dims, input_dims: &self.input_dims, fresh: 0, steps: 0, zeros_everywhere: self.zeros_everywhere }
     }
 
     /// A whole program with the declared signature (its entry `main`, or its only entry), read at the root type.

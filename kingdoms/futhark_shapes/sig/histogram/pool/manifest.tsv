@@ -1,4 +1,20 @@
 key	value
+alt.calls	124
+alt.cost_usd	3.89
+alt.gap end of text	3
+alt.gap hist	9
+alt.gap i32.sum	19
+alt.gap name i32.lowest	1
+alt.gap operator %	4
+alt.gap tabulate	3
+alt.gap token )	3
+alt.gap token =	1
+alt.gap token loop	2
+alt.model	claude sonnet (claude -p --model sonnet), the contract in llm/contract.txt of the run
+alt.programs	622
+alt.programs_gap	45
+alt.programs_read	577
+alt.run	/private/tmp/claude-501/fpool/histogram_llm
 bench.benchmarks_commit	c9e2ccca7cf3efa698519f59b9adbf626b98098f
 bench.excluded_for_discovery	micro/reduce_by_index.fut (leave one out: the benchmark's own published program and file are excluded from the rings of its R and C runs; P may include them)
 bench.files	221

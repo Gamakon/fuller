@@ -93,6 +93,7 @@ use fuller::runner::{save_checkpoint, slope_check, staged_hff, FameEntry, Fitnes
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
+use fuller::futhark_rings::{build_at, grow, load_pool, published_source, Rings, Source};
 use fuller::wgsl::oracle::device::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -811,11 +812,52 @@ struct Genetics<'a> {
     contract: &'a KingdomContract,
     layout: &'a GeneLayout,
     const_len: &'a BTreeMap<Ty, u32>,
+    /// THE RING CANVAS (`--start llm-ring`, plan section H): every fresh gene is a canvas of these rings, not random.
+    canvas: Option<&'a Rings>,
+    /// `--mutation ring-walk` (plan section I.1): ring walk replaces point mutation.
+    ring_walk: bool,
 }
 
 impl Genetics<'_> {
+    /// A FRESH gene: a ring canvas with `--start llm-ring` (`fuller::futhark_rings::Rings::canvas`), else a random
+    /// gene. Every fresh gene of a run comes from here: generation 0's padding, C's draws, a resumed tree's padding,
+    /// the slope check's draws.
     fn random_gene(&self, rng: &mut GeneRng) -> Result<Vec<u32>, String> {
-        random_gene(self.contract, self.layout, self.const_len, rng)
+        match self.canvas {
+            Some(r) => r.canvas(self.contract, self.layout, rng),
+            None => random_gene(self.contract, self.layout, self.const_len, rng),
+        }
+    }
+
+    /// THE MUTATION of the loop (`--mutation`): `point`, today's point mutation of `m` coding cells; `ring-walk`, one
+    /// ring walk of one type's head or tail window by `k` in `1 ..= m` positions (`Rings::walk`), returned so the
+    /// caller records it as a `ring_walk` event.
+    fn mutation(&self, gene: &mut [u32], m: usize, rng: &mut GeneRng) -> Result<Option<fuller::futhark_rings::Walk>, String> {
+        if !self.ring_walk {
+            self.mutate(gene, m, rng)?;
+            return Ok(None);
+        }
+        let rings = self.canvas.ok_or("our software has a bug: ring walk with no rings")?;
+        let coding = self.coding_cells(gene)?;
+        rings.walk(self.layout, gene, &coding, m, rng)
+    }
+
+    /// The event of a ring walk on a child.
+    fn walk_event(&self, w: &fuller::futhark_rings::Walk, child: &Individual, parent: u64) -> Mutation {
+        let mut m = Mutation::new(EventKind::RingWalk, "ring_walk", format!("{} {} advanced {} along its ring", self.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k));
+        m.id = Some(child.id);
+        m.parents = vec![parent];
+        m.text_after = Some(sexp(self.k, &child.tree));
+        m
+    }
+
+    /// The operator name of a fresh gene in the ledger.
+    fn fresh_label(&self) -> &'static str {
+        if self.canvas.is_some() {
+            "canvas"
+        } else {
+            "random"
+        }
     }
 
     fn tree(&self, gene: &[u32]) -> Result<Tree, String> {
@@ -987,6 +1029,258 @@ const REGIME_C_TAG: u64 = 0x5245_4749_4D45_5F43;
 
 /// The tag of the slope check's own random stream (`--check`): its genes are never a run's generation 0.
 const CHECK_TAG: u64 = 0x534C_4F50_4543_4845;
+
+/// THE RING CANVAS of a run (`--start llm-ring`, plan section H): the pool's programs (`DIR/bench.tsv`, the published
+/// benchmarks' functions, then `DIR/llm.tsv`, the topic programs, written by `examples/futhark_pool.rs`) of the chosen
+/// sources, in order, into the rings; the problem's own published file is left out (leave one out: its R and C runs
+/// and its measurements must not have the answer in the canvas); the empty rings filled (`Rings::complete`). Writes
+/// `OUT/rings.tsv` (what went in, every fill and gap). Returns the rings and the TASK ALTERNATIVES (`DIR/alternatives.tsv`,
+/// Sonnet's programs for the benchmark's own task, Andrew's clarification of 2026-10-29): the population's material,
+/// never the rings', in order, those of the root type that fit the layout.
+fn ring_canvas(k: &FutharkKingdom, contract: &KingdomContract, layout: &GeneLayout, dir: &Path, pname: &str, sources: &[Source], out: &Path) -> Result<(Rings, Vec<Tree>), String> {
+    let mut entries = Vec::new();
+    for f in ["bench.tsv", "llm.tsv"] {
+        if dir.join(f).is_file() {
+            entries.extend(load_pool(&dir.join(f))?);
+        }
+    }
+    let excluded = published_source(pname).unwrap_or("");
+    let mut rings = Rings::default();
+    let (mut used, mut left_out, mut by_source) = (0usize, 0usize, BTreeMap::<&str, usize>::new());
+    for e in &entries {
+        if !sources.contains(&e.source) {
+            continue;
+        }
+        if e.source == Source::Bench && e.origin == excluded {
+            left_out += 1;
+            continue;
+        }
+        let t = build_at(k, &e.sexp, &e.dual).map_err(|x| format!("the pool line {} {} {}: {x}", e.source.name(), e.origin, e.function))?;
+        rings.add(contract, &t);
+        used += 1;
+        *by_source.entry(e.source.name()).or_default() += 1;
+    }
+    let root = k.dual(layout.root).map(|d| d.dual.clone()).unwrap_or_default();
+    let (mut alternatives, mut unfit) = (Vec::new(), 0usize);
+    if dir.join("alternatives.tsv").is_file() {
+        for e in load_pool(&dir.join("alternatives.tsv"))? {
+            if e.dual != root {
+                continue;
+            }
+            let t = build_at(k, &e.sexp, &e.dual).map_err(|x| format!("the alternative {}: {x}", e.origin))?;
+            if fuller::typed_gep::fits(contract, layout, &t).is_ok() {
+                alternatives.push(t);
+            } else {
+                unfit += 1;
+            }
+        }
+    }
+    let (full, fills) = rings.complete(k, contract, layout)?;
+    let (by_class, by_slot) = (fills.iter().filter(|f| f.from == "class").count(), fills.iter().filter(|f| f.from != "class").count());
+    let mut tsv = format!("key\tvalue\npool\t{}\nsources\t{}\nprograms\t{used}\n", dir.display(), sources.iter().map(|s| s.name()).collect::<Vec<_>>().join(","));
+    for (s, n) in &by_source {
+        tsv.push_str(&format!("programs_{s}\t{n}\n"));
+    }
+    tsv.push_str(&format!("left_out_published_file\t{excluded} ({left_out} functions)\ntask_alternatives_that_fit\t{}\ntask_alternatives_too_big_for_the_layout\t{unfit}\nrings_filled_from_their_class\t{by_class}\nrings_filled_from_their_slot_family_class_gap\t{by_slot}\n", alternatives.len()));
+    for f in &fills {
+        tsv.push_str(&format!("fill\t{} {} from {} ({} symbols)\n", f.dual, f.ring.name(), f.from, f.len));
+    }
+    std::fs::write(out.join("rings.tsv"), &tsv).map_err(|e| e.to_string())?;
+    println!("# {} ring canvas: {used} pool programs ({by_source:?}), {left_out} left out ({excluded}), {by_class} rings filled from their class, {by_slot} from their slot family (class gaps); {} task alternatives fit the layout, {unfit} too big", utc(), alternatives.len());
+    Ok((full, alternatives))
+}
+
+/// GENERATION 0 of `--start llm-ring` in a discovery run (R, C; Andrew's clarification of 2026-10-29): Sonnet's task
+/// alternatives only, in the pool's order, each on its own ring canvas, with NO NEAR COPIES. The bar, stated before
+/// the population is built and recorded in `OUT/population.tsv`: a tree edit distance of at least `bar` to every
+/// other individual and to the reference (leave one out: an alternative within the bar of the published program is
+/// the answer planted), and an output (on every case, the GPU path) no other individual has. An alternative below the
+/// bar is thrown away and the next one taken; too few distinct alternatives is an error asking for more, never a
+/// random fill.
+fn alternatives_population(run: &mut Run, sig: &Signature, alternatives: &[Tree], reference: &Tree, pop: usize, bar: usize, rng: &mut GeneRng) -> Result<Vec<Individual>, String> {
+    let (mut near_reference, mut near_other, mut same_output) = (0usize, 0usize, 0usize);
+    let mut taken: Vec<Tree> = Vec::new();
+    let mut behaviours: HashSet<String> = HashSet::new();
+    let mut out: Vec<Individual> = Vec::new();
+    let mut lines = String::from("alternative\tverdict\tdistance_to_reference\tleast_distance_to_an_individual\tprogram\n");
+    let mut next = 0usize;
+    while out.len() < pop && next < alternatives.len() {
+        // Candidates by distance, a batch at a time; then their outputs on the run's path.
+        let mut batch: Vec<(usize, Tree)> = Vec::new();
+        while batch.len() + out.len() < pop && next < alternatives.len() {
+            let t = &alternatives[next];
+            let dr = tree_distance(t, reference);
+            let d_other = taken.iter().chain(batch.iter().map(|b| &b.1)).map(|o| tree_distance(t, o)).min().unwrap_or(usize::MAX);
+            let verdict = if dr < bar {
+                near_reference += 1;
+                "thrown: near the reference"
+            } else if d_other < bar {
+                near_other += 1;
+                "thrown: near another individual"
+            } else {
+                batch.push((next, t.clone()));
+                "kept by distance"
+            };
+            lines.push_str(&format!("{next}\t{verdict}\t{dr}\t{}\t{}\n", if d_other == usize::MAX { "-".to_string() } else { d_other.to_string() }, sexp(run.gen.k, t)));
+            next += 1;
+        }
+        let sources: Vec<String> = batch.iter().map(|b| program(run.gen.k, sig, &b.1)).collect::<Result<_, _>>()?;
+        let items: Vec<(&Tree, &str)> = batch.iter().zip(&sources).map(|(b, s)| (&b.1, s.as_str())).collect();
+        run.judge.prefetch(&items, FitnessStage::Quality)?;
+        for ((i, t), src) in batch.iter().zip(&sources) {
+            let e = run.judge.evaluate(t, src, FitnessStage::Quality)?;
+            if !behaviours.insert(e.quality.behaviour.clone()) {
+                same_output += 1;
+                lines.push_str(&format!("{i}\tthrown: the output of another individual\t-\t-\t{}\n", sexp(run.gen.k, t)));
+                continue;
+            }
+            taken.push(t.clone());
+            let g = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(rng)?, t).map_err(|e| format!("an alternative's write-back: {e}"))?;
+            let ind = run.fresh(sig, vec![], "llm_alternative", g, 0)?;
+            let mut m = Mutation::new(EventKind::ModelRewrite, "llm_alternative", format!("generation 0: Sonnet's task alternative {i} on a ring canvas"));
+            m.id = Some(ind.id);
+            m.text_after = Some(sexp(run.gen.k, &ind.tree));
+            m.entered = Some(true);
+            run.tel.mutation(0, m)?;
+            out.push(ind);
+        }
+    }
+    let summary = format!("bar_least_tree_edit_distance\t{bar}\nbar_distinct_outputs\tyes\nalternatives_seen\t{next}\nkept\t{}\nthrown_near_the_reference\t{near_reference}\nthrown_near_another_individual\t{near_other}\nthrown_same_output\t{same_output}\n", out.len());
+    std::fs::write(run.out.join("population.tsv"), format!("{summary}\n{lines}")).map_err(|e| e.to_string())?;
+    let msg = format!("generation 0 from Sonnet's task alternatives: {} kept of {next} seen; thrown: {near_reference} near the reference, {near_other} near another individual (tree edit distance under {bar}), {same_output} with another's output", out.len());
+    println!("# {} {msg}", utc());
+    run.tel.note(0, msg)?;
+    if out.len() < pop {
+        return Err(format!("only {} distinct task alternatives of {} wanted (bar: distance {bar}, distinct outputs; OUT/population.tsv): Sonnet must write more, different alternatives (examples/futhark_pool.rs llm)", out.len(), pop));
+    }
+    Ok(out)
+}
+
+const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
+
+/// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
+/// children, each ONE application of the operator to a parent, the parents Sonnet's task alternatives in order
+/// (`ring_canvas`), none within `--distinct-edits` of the reference or of another parent, each written onto a fresh gene (a ring canvas with `--start llm-ring`, else random padding).
+/// KIND: `grow` (`fuller::futhark_rings::grow`: a coding head cell given more arguments, so cells the padding holds
+/// are read), `point` (today's point mutation, `Genetics::mutate`, one cell), `walk` (`Rings::walk`, ring walk, k at
+/// most 4; it needs the rings). Measured, the children's: the share whose output is all zeros; the share with an
+/// output not seen before in the measurement (parents' included); the share better than their parent (stage-1
+/// fitness); the share equal to their parent's output; distinct outputs. Writes `OUT/measure.tsv` (one line a child)
+/// and `OUT/measure_summary.tsv`; every child is a mutation event (`ring_walk` for the walk).
+fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree], count: usize, chunk: usize, seed: u64) -> Result<(), String> {
+    if parents.is_empty() {
+        return Err("--measure: the pool has no model-written program that fits the layout".into());
+    }
+    if !["grow", "point", "walk"].contains(&kind) {
+        return Err(format!("--measure {kind}: grow, point or walk"));
+    }
+    if kind == "walk" && run.gen.canvas.is_none() {
+        return Err("--measure walk needs the rings: --start llm-ring".into());
+    }
+    let t0 = Instant::now();
+    let (mut pad, mut op) = (GeneRng::new(seed ^ MEASURE_TAG), GeneRng::new(seed ^ MEASURE_TAG ^ 1));
+    let mut children: Vec<(usize, Tree, String)> = Vec::with_capacity(count);
+    let mut skipped = 0usize;
+    let mut i = 0usize;
+    while children.len() < count {
+        let pi = i % parents.len();
+        i += 1;
+        let mut g = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[pi]).map_err(|e| format!("a parent's write-back: {e}"))?;
+        let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &g, run.gen.const_len)?;
+        let what = match kind {
+            "grow" => grow(run.gen.contract, run.gen.layout, &mut g, &coding, run.gen.const_len, &mut op).map(|(p, a, b)| format!("cell {p}: {} -> {}", run.gen.k.rows[a as usize].name, run.gen.k.rows[b as usize].name)),
+            "point" => {
+                run.gen.mutate(&mut g, 1, &mut op)?;
+                Some("one coding cell".to_string())
+            }
+            _ => run.gen.canvas.ok_or("no rings")?.walk(run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
+        };
+        match what {
+            Some(w) => children.push((pi, run.gen.tree(&g)?, w)),
+            None => {
+                skipped += 1;
+                if skipped > 100 * count {
+                    return Err(format!("--measure {kind}: no parent admits the operator"));
+                }
+            }
+        }
+    }
+    let padding = if run.gen.canvas.is_some() { "ring canvas" } else { "random padding" };
+    println!("# {} measure {kind} on {padding}: {count} children of {} parents ({skipped} parents the operator could not change)", utc(), parents.len());
+    // Score the parents, then the children, on the run's path.
+    let mut progs: Vec<&Tree> = parents.iter().collect();
+    progs.extend(children.iter().map(|c| &c.1));
+    let sources: Vec<String> = progs.iter().map(|t| program(run.gen.k, sig, t)).collect::<Result<_, _>>()?;
+    let mut scored: Vec<(f64, Quality)> = Vec::with_capacity(progs.len());
+    for (ci, idx) in (0..progs.len()).collect::<Vec<_>>().chunks(chunk.max(1)).enumerate() {
+        let items: Vec<(&Tree, &str)> = idx.iter().map(|i| (progs[*i], sources[*i].as_str())).collect();
+        run.judge.prefetch(&items, FitnessStage::Quality)?;
+        for &i in idx {
+            let e = run.judge.evaluate(progs[i], &sources[i], FitnessStage::Quality)?;
+            scored.push((e.fitness, e.quality));
+        }
+        if ci % 10 == 0 {
+            println!("# {} measure: {} of {} programs scored, {:.0} s", utc(), scored.len(), progs.len(), t0.elapsed().as_secs_f64());
+        }
+    }
+    let np = parents.len();
+    let mut seen: HashSet<String> = scored[..np].iter().map(|s| s.1.behaviour.clone()).collect();
+    let (mut zero, mut unseen, mut better, mut same) = (0usize, 0usize, 0usize, 0usize);
+    let mut distinct: HashSet<&str> = HashSet::new();
+    let mut tsv = String::from("child	parent	edit	fitness	parent_fitness	all_zero	unseen	same_as_parent	behaviour	program
+");
+    for (j, (pi, tree, what)) in children.iter().enumerate() {
+        let (f, q) = &scored[np + j];
+        let (pf, pq) = &scored[*pi];
+        let is_new = seen.insert(q.behaviour.clone());
+        zero += usize::from(q.all_zero());
+        unseen += usize::from(is_new);
+        better += usize::from(f < pf);
+        same += usize::from(q.behaviour == pq.behaviour);
+        distinct.insert(q.behaviour.as_str());
+        tsv.push_str(&format!("{j}	{pi}	{what}	{f:?}	{pf:?}	{}	{}	{}	{}	{}
+", u8::from(q.all_zero()), u8::from(is_new), u8::from(q.behaviour == pq.behaviour), q.behaviour, sexp(run.gen.k, tree)));
+        let mut m = Mutation::new(if kind == "walk" { EventKind::RingWalk } else { EventKind::Note }, &format!("measure_{kind}"), format!("{what}: fitness {pf:.4} -> {f:.4}{}", if is_new { ", an unseen output" } else { "" }));
+        m.fitness_before = Some(*pf);
+        m.fitness_after = Some(*f);
+        m.improved = Some(f < pf);
+        m.text_before = Some(sexp(run.gen.k, &parents[*pi]));
+        m.text_after = Some(sexp(run.gen.k, tree));
+        run.tel.mutation(0, m)?;
+    }
+    std::fs::write(run.out.join("measure.tsv"), &tsv).map_err(|e| e.to_string())?;
+    let n = children.len().max(1) as f64;
+    let parent_zero = scored[..np].iter().filter(|s| s.1.all_zero()).count();
+    let rep = format!(
+        "problem	{}
+operator	{kind}
+padding	{padding}
+eval	{}
+parents	{np}
+parents_all_zero	{parent_zero}
+children	{}
+parents_the_operator_could_not_change	{skipped}
+all_zero_share	{:.4}
+unseen_output_share	{:.4}
+better_than_parent_share	{:.4}
+same_output_as_parent_share	{:.4}
+distinct_outputs	{}
+seconds	{:.1}
+",
+        run.inst.name,
+        run.judge.mode.label(),
+        children.len(),
+        zero as f64 / n,
+        unseen as f64 / n,
+        better as f64 / n,
+        same as f64 / n,
+        distinct.len(),
+        t0.elapsed().as_secs_f64()
+    );
+    std::fs::write(run.out.join("measure_summary.tsv"), &rep).map_err(|e| e.to_string())?;
+    print!("{rep}");
+    Ok(())
+}
 
 /// The first line of a check's stored outputs (`check_outputs.bin`).
 const CHECK_OUTPUTS_MAGIC: &str = "fuller-futhark-check-outputs v1";
@@ -1256,7 +1550,10 @@ fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     let pname = arg(&args, "--problem").unwrap_or_else(|| "pathfinder".into());
     // THE SLOPE CHECK (plan section A): a gate before any discovery run, not a run (regime "A").
-    let check = args.iter().any(|a| a == "--check");
+    // THE OPERATOR MEASUREMENT (`--measure grow|point|walk`, plan sections H and I): a measurement, not a run, like
+    // the slope check (regime "A", no timing).
+    let measure = arg(&args, "--measure");
+    let check = args.iter().any(|a| a == "--check") || measure.is_some();
     let regime = match arg(&args, "--regime") {
         Some(_) if check => return Err("--check is not a run: it takes no --regime".into()),
         Some(r) => r,
@@ -1273,7 +1570,10 @@ fn real_main() -> Result<(), String> {
         ("P", Some(s)) if s == "published" || s == "planted" => s,
         ("P", Some(s)) => return Err(format!("--start {s}: published or planted")),
         (_, None) => "random".to_string(),
-        (r, Some(s)) => return Err(format!("--start {s}: regime {r} starts from random genes; --start is for P")),
+        // R, C and the measurements (plan section H): generation 0 is the pool's model-written programs, each on a
+        // ring canvas, and every fresh gene is a ring canvas (`--pool DIR`, `--ring-sources bench|llm|both`).
+        (_, Some(s)) if s == "llm-ring" => s,
+        (r, Some(s)) => return Err(format!("--start {s}: regime {r} starts from random genes or llm-ring; published and planted are for P")),
     };
     let backend = match arg(&args, "--backend").as_deref().unwrap_or("gpu") {
         "gpu" => Backend::Gpu,
@@ -1301,6 +1601,12 @@ fn real_main() -> Result<(), String> {
     let pump_every: u32 = num(&args, "--pump-every", 5)?;
     let fold_every: u32 = num(&args, "--fold-every", 10)?;
     let marriage: f64 = num(&args, "--marriage", 0.3)?;
+    // THE MUTATION (plan section I, one operator at a time): `point` (the baseline) or `ring-walk` (needs the rings).
+    let ring_walk = match arg(&args, "--mutation").as_deref().unwrap_or("point") {
+        "point" => false,
+        "ring-walk" => true,
+        o => return Err(format!("--mutation {o}: point or ring-walk")),
+    };
     let checkpoint_every: u32 = num(&args, "--checkpoint-every", 5)?;
     let resume = args.iter().any(|a| a == "--resume");
     // Discovery runs (R, C) answer H1 and H2: they stop at the first program exact on every case, never timing.
@@ -1339,6 +1645,18 @@ fn real_main() -> Result<(), String> {
     let start_tree = if start == "planted" { planted.clone() } else { reference.clone() };
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], program_size).map_err(|e| e.to_string())?;
     let const_len = k.const_len();
+    let (canvas, pool_programs) = if start == "llm-ring" || measure.is_some() {
+        let dir = PathBuf::from(arg(&args, "--pool").ok_or("--start llm-ring and --measure need --pool DIR (bench.tsv and llm.tsv, examples/futhark_pool.rs)")?);
+        let sources = Source::set(arg(&args, "--ring-sources").as_deref().unwrap_or("both"))?;
+        let (r, progs) = ring_canvas(&k, &contract, &layout, &dir, &pname, &sources, &out)?;
+        // A measurement with random padding (no `--start llm-ring`) takes its parents from the pool, not its rings.
+        (if start == "llm-ring" { Some(r) } else { None }, progs)
+    } else {
+        (None, Vec::new())
+    };
+    if ring_walk && canvas.is_none() {
+        return Err("--mutation ring-walk walks the rings: it needs --start llm-ring --pool DIR".into());
+    }
     // Every stored case: the fitness's (training and held-out) and the TEST SET (plan section G), run in the same
     // quality program but never a fitness input, so selection never sees it; an exactness claim is made on it.
     let cases = load_cases(&p)?;
@@ -1415,7 +1733,7 @@ fn real_main() -> Result<(), String> {
     let mut run = Run {
         inst,
         out: out.clone(),
-        gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
+        gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
         judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
@@ -1464,6 +1782,21 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
     std::fs::write(out.join("reference.fut"), &ref_source).map_err(|e| e.to_string())?;
+    if let Some(kind) = &measure {
+        let count: usize = num(&args, "--count", 1400)?;
+        // The parents: the task alternatives with no near copies (the bar of generation 0, by distance alone).
+        let bar: usize = num(&args, "--distinct-edits", 5)?;
+        let mut parents: Vec<Tree> = Vec::new();
+        for t in &pool_programs {
+            if tree_distance(t, &reference) >= bar && parents.iter().all(|o| tree_distance(t, o) >= bar) {
+                parents.push(t.clone());
+            }
+        }
+        println!("# {} measure: {} parents of {} task alternatives (tree edit distance at least {bar} to the reference and to each other)", utc(), parents.len(), pool_programs.len());
+        measure_command(&mut run, &sig, kind, &parents, count, pop, seed)?;
+        run.tel.end("early_stop", 0, None)?;
+        return Ok(());
+    }
     if check {
         slope_check_command(&mut run, &sig, &reference, pop, check_random, seed, check_replay.as_deref(), program_size)?;
         run.tel.end("early_stop", 0, None)?;
@@ -1622,10 +1955,14 @@ fn real_main() -> Result<(), String> {
             }
             // Keep the start and the smallest variants (the e-graph orders them by size).
             cands.truncate(pop);
+        } else if canvas.is_some() {
+            // Generation 0 of `--start llm-ring` (R, C): Sonnet's task alternatives, distinct, on ring canvases.
+            let bar: usize = num(&args, "--distinct-edits", 5)?;
+            cands = alternatives_population(&mut run, &sig, &pool_programs, &reference, pop, bar, &mut rng0)?;
         } else {
             while cands.len() < pop {
                 let g = run.gen.random_gene(&mut rng0)?;
-                let ind = run.fresh(&sig, vec![], "random", g, 0)?;
+                let ind = run.fresh(&sig, vec![], run.gen.fresh_label(), g, 0)?;
                 cands.push(ind);
             }
         }
@@ -1830,7 +2167,7 @@ fn real_main() -> Result<(), String> {
             // The random-search control: a fresh random gene per evaluation, no selection.
             while children.len() < pop {
                 let g = run.gen.random_gene(&mut rng)?;
-                let ind = run.fresh(&sig, vec![], "random", g, generation + 1)?;
+                let ind = run.fresh(&sig, vec![], run.gen.fresh_label(), g, generation + 1)?;
                 children.push(ind);
             }
             cands = children;
@@ -1970,14 +2307,17 @@ fn real_main() -> Result<(), String> {
                             break;
                         }
                         let mut g = g;
-                        let op = if rng.below(2) == 0 {
+                        let (op, walk) = if rng.below(2) == 0 {
                             let m = m_of(&mut rng);
-                            run.gen.mutate(&mut g, m, &mut rng)?;
-                            "crossover+mutation"
+                            let w = run.gen.mutation(&mut g, m, &mut rng)?;
+                            (if ring_walk { "crossover+ring_walk" } else { "crossover+mutation" }, w)
                         } else {
-                            "crossover"
+                            ("crossover", None)
                         };
                         let ind = run.fresh(&sig, vec![population[a].id, population[b].id], op, g, g1)?;
+                        if let Some(w) = walk {
+                            run.tel.mutation(generation, run.gen.walk_event(&w, &ind, population[a].id))?;
+                        }
                         children.push(ind);
                     }
                     continue;
@@ -1985,8 +2325,11 @@ fn real_main() -> Result<(), String> {
             }
             let mut gene = population[a].gene.clone();
             let m = m_of(&mut rng);
-            run.gen.mutate(&mut gene, m, &mut rng)?;
-            let ind = run.fresh(&sig, vec![population[a].id], "mutation", gene, g1)?;
+            let walk = run.gen.mutation(&mut gene, m, &mut rng)?;
+            let ind = run.fresh(&sig, vec![population[a].id], if ring_walk { "ring_walk" } else { "mutation" }, gene, g1)?;
+            if let Some(w) = walk {
+                run.tel.mutation(generation, run.gen.walk_event(&w, &ind, population[a].id))?;
+            }
             children.push(ind);
         }
         children.truncate(pop);

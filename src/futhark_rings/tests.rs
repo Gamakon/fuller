@@ -195,3 +195,22 @@ fn a_growth_mutation_gives_one_head_cell_more_arguments_whatever_the_padding() {
         express(&contract, &layout, &a, &const_len).unwrap();
     }
 }
+
+#[test]
+fn the_committed_pools_fill_every_ring_of_the_default_layout() {
+    for name in ["histogram", "pathfinder"] {
+        let (k, contract, layout, _) = kingdom(name);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark_shapes/sig/{name}/pool"));
+        let excluded = published_source(name).unwrap();
+        let mut rings = Rings::default();
+        for f in ["bench.tsv", "llm.tsv"] {
+            for e in load_pool(&dir.join(f)).unwrap() {
+                if e.origin != excluded {
+                    rings.add(&contract, &build_at(&k, &e.sexp, &e.dual).unwrap());
+                }
+            }
+        }
+        let (_, fills) = rings.complete(&k, &contract, &layout).unwrap_or_else(|e| panic!("{name}: {}", &e[..e.len().min(600)]));
+        eprintln!("{name}: {} programs; {} rings filled from their class, {} from their slot family", rings.programs, fills.iter().filter(|f| f.from == "class").count(), fills.iter().filter(|f| f.from != "class").count());
+    }
+}
