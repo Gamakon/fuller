@@ -59,6 +59,10 @@
 //!   batch, logged in `bugs.log` and scored worst; the rest are scored from their batches. The A/A sets and the
 //!   champion's re-time run in batch processes too. The results are taken when each program is scored, so selection,
 //!   the counts and the bugs are the single path's (checked bit for bit, `docs/PLAN_futhark_wgpu_host.md` §13);
+//! * rust (`fuller::futhark_rust`, `docs/PLAN_futhark_rust_wgpu.md`): the same batch, compiled by our Futhark fork's
+//!   rust-wgpu backend into ONE Rust module (WGSL kernels and a host over wgpu-rs), built by `rustc` into a dylib and
+//!   run IN THIS PROCESS by the runtime `futhark-rust-rt` on one device: no C, no shim, no process. The same commands,
+//!   records and halving as batch; what is scored is the code that ships;
 //! * single: each program its own compile and its own processes, the path before.
 //!
 //! Where the time goes: every ledger line carries its evaluation's path, its batch's size and each stage's
@@ -137,6 +141,24 @@ enum EvalMode {
     Single,
     /// Every new program of a generation in one compiled program and one process (`fuller::futhark_batch`).
     Batch,
+    /// The batch, compiled by the fork's rust-wgpu backend into a Rust module and run IN THIS PROCESS by the runtime
+    /// (`fuller::futhark_rust`): WGSL kernels and a Rust host over wgpu-rs, no C, no shim, no process.
+    Rust,
+}
+
+impl EvalMode {
+    /// A generation's new programs are evaluated together (`batch` or `rust`).
+    fn batched(self) -> bool {
+        matches!(self, EvalMode::Batch | EvalMode::Rust)
+    }
+    /// The path's name, in the ledger.
+    fn label(self) -> &'static str {
+        match self {
+            EvalMode::Single => "single",
+            EvalMode::Batch => "batch",
+            EvalMode::Rust => "rust",
+        }
+    }
 }
 
 /// Where an evaluation's wall time went, in seconds: rendering the program text, the Futhark compiler, the WGSL port,
@@ -440,7 +462,7 @@ impl<'a> Judge<'a> {
     /// kept by text and taken when each program is scored, so selection, the counts and the bugs are the
     /// per-candidate path's. Programs over the work cap are left out: scoring them stops the run, as before.
     fn prefetch(&mut self, items: &[(&Tree, &str)], stage: FitnessStage) -> Result<(), String> {
-        if self.mode != EvalMode::Batch {
+        if !self.mode.batched() {
             return Ok(());
         }
         let t0 = Instant::now();
@@ -642,9 +664,9 @@ impl<'a> Judge<'a> {
                 self.last = ("single", 1, st);
                 r
             }
-            EvalMode::Batch => {
+            EvalMode::Batch | EvalMode::Rust => {
                 let (r, st, n) = self.batched_q.remove(source).ok_or_else(|| format!("our software has a bug: a program scored in batch mode that no batch held\n{source}"))?;
-                self.last = ("batch", n, st);
+                self.last = (self.mode.label(), n, st);
                 r
             }
         };
@@ -710,10 +732,10 @@ impl<'a> Judge<'a> {
                         self.last.2.add(&st);
                         r.map(|(r, _)| r)
                     }
-                    EvalMode::Batch => {
+                    EvalMode::Batch | EvalMode::Rust => {
                         let (r, secs) = self.batched_t.remove(source).ok_or_else(|| format!("our software has a bug: a program timed in batch mode that no batch held\n{source}"))?;
                         if self.last.0 == "hit" {
-                            self.last.0 = "batch";
+                            self.last.0 = self.mode.label();
                         }
                         self.last.2.timing += secs;
                         r
@@ -980,8 +1002,9 @@ fn real_main() -> Result<(), String> {
     // each program its own compile and processes (single).
     let mode = match arg(&args, "--eval").as_deref().unwrap_or("batch") {
         "batch" => EvalMode::Batch,
+        "rust" => EvalMode::Rust,
         "single" => EvalMode::Single,
-        o => return Err(format!("--eval {o}: batch or single")),
+        o => return Err(format!("--eval {o}: batch, rust or single")),
     };
     let minutes: f64 = num(&args, "--minutes", 60.0)?;
     let budget: u64 = num(&args, "--evaluations", 6000)?;
@@ -1075,10 +1098,20 @@ fn real_main() -> Result<(), String> {
             already_spent_seconds: spent,
         },
     )?;
-    // The shim is built once, here (under the cargo lock); no candidate's link runs cargo or takes the lock.
-    let shim = if backend == Backend::Gpu { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
-    let yard_exe = if backend == Backend::Gpu { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
+    if mode == EvalMode::Rust && backend != Backend::Gpu {
+        return Err("--eval rust runs on the GPU: it takes --backend gpu".into());
+    }
+    // The shim is built once, here (under the cargo lock); no candidate's link runs cargo or takes the lock. The rust
+    // path has no shim and no C: its runtime is built once instead, into the run's own directory.
+    let with_shim = backend == Backend::Gpu && mode != EvalMode::Rust;
+    let shim = if with_shim { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
+    let yard_exe = if with_shim { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
     let host = match mode {
+        EvalMode::Rust => {
+            let rt = fuller::futhark_rust::prebuild_rt(&out.join("rust_rt"))?;
+            let b = fuller::futhark_batch::Backend::Rust { rt };
+            Some(Host::new(&k, &sig, cases.len(), b, &out.join("rust_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(p.yardstick) })?)
+        }
         EvalMode::Batch => {
             let b = if backend == Backend::Gpu { fuller::futhark_batch::Backend::Gpu { shim: shim.clone() } } else { fuller::futhark_batch::Backend::C };
             let timing_stdin = if backend == Backend::Gpu { Some(timing.stdin.as_slice()) } else { None };
@@ -1110,13 +1143,13 @@ fn real_main() -> Result<(), String> {
                 run.judge.time_pairs(&y, 1)?;
                 noise = run.judge.time_pairs(&y, 11)?;
             }
-            EvalMode::Batch => {
+            EvalMode::Batch | EvalMode::Rust => {
                 let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
                 noise = a.noise.clone();
                 batch_aa = Some(a);
             }
         }
-        let msg = format!("A/A noise floor{}, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode == EvalMode::Batch { " (in one batch process)" } else { "" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("A/A noise floor{}, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { "" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -1148,7 +1181,7 @@ fn real_main() -> Result<(), String> {
         };
         run.judge.slots.add(p.yardstick, &r)?;
         inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
-        let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode == EvalMode::Batch { " (in the batch process)" } else { "" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in the batch process)" } else { "" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -1411,7 +1444,7 @@ fn real_main() -> Result<(), String> {
         extras.insert("stage_all_s".to_string(), run.judge.gen_stages.total());
         extras.insert("gen_seconds".to_string(), gen_wall);
         extras.insert("evaluations_per_second".to_string(), gen_evals as f64 / gen_wall.max(1e-9));
-        extras.insert("batched".to_string(), f64::from(u8::from(mode == EvalMode::Batch)));
+        extras.insert("batched".to_string(), f64::from(u8::from(mode.batched())));
         extras.insert("batch_halvings".to_string(), run.judge.batch_splits as f64);
         let before = run.tel.individuals();
         run.tel.generation(GenerationStats { generation, fitness: &fits, distinct: Some(distinct as u32), angle_groups: groups, extras, evaluated: run.judge.evaluations.saturating_sub(before) })?;
@@ -1676,7 +1709,7 @@ fn real_main() -> Result<(), String> {
                     let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
                     (ratios, fuller::futhark_sig::read_one(&got)?)
                 }
-                EvalMode::Batch => run.judge.champion_batch(&best.tree, 11)?,
+                EvalMode::Batch | EvalMode::Rust => run.judge.champion_batch(&best.tree, 11)?,
             };
             if let Some(want) = &run.judge.timing.output {
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));

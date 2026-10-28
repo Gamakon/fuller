@@ -49,6 +49,10 @@ pub enum Backend {
     Gpu { shim: PathBuf },
     /// Futhark's sequential C backend (the released compiler), on the host: no timing.
     C,
+    /// The fork's rust-wgpu backend: the batch is a Rust module, built into a dylib against the runtime prebuilt in
+    /// `rt` (`crate::futhark_rust::prebuild_rt`) and run IN THIS PROCESS by the runtime's host, on one device, with
+    /// the driver's commands (entries named, not numbered) and the driver's records.
+    Rust { rt: PathBuf },
 }
 
 /// A member's program.
@@ -170,6 +174,8 @@ pub struct Host<'a> {
     /// The most programs a batch starts with: halved when a batch's bindings pass wgpu's limit, so later batches do
     /// not pay the same failed compile (the cost only: every program is scored the same either way).
     max_batch: std::cell::Cell<usize>,
+    /// The rust-wgpu backend's in-process session, made on first use.
+    session: std::cell::RefCell<Option<crate::futhark_rust::Session>>,
 }
 
 /// The number of a member's entry in a batch.
@@ -540,7 +546,7 @@ impl<'a> Host<'a> {
         if sig.inputs.iter().chain(std::iter::once(&sig.output)).any(|p| p.elem != "i32" || p.dims.len() > 3) {
             return Err("the batch driver reads and writes i32 values of rank at most 3".into());
         }
-        Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0), max_batch: std::cell::Cell::new(usize::MAX) })
+        Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0), max_batch: std::cell::Cell::new(usize::MAX), session: std::cell::RefCell::new(None) })
     }
 
     fn in_ranks(&self) -> Vec<usize> {
@@ -593,7 +599,8 @@ impl<'a> Host<'a> {
     /// The commands of the members `idx`, in order (their indices into the driver's tables, as [`Host::driver`]
     /// numbers them).
     fn commands(&self, members: &[Member], idx: &[usize]) -> Result<Vec<Cmd>, String> {
-        let gpu = matches!(self.backend, Backend::Gpu { .. });
+        let gpu = matches!(self.backend, Backend::Gpu { .. } | Backend::Rust { .. });
+        let named = matches!(self.backend, Backend::Rust { .. });
         let (mut nq, mut nt) = (0usize, 0usize);
         let mut q_of = std::collections::BTreeMap::new();
         let mut t_of = std::collections::BTreeMap::new();
@@ -611,11 +618,15 @@ impl<'a> Host<'a> {
         let mut cmds = Vec::new();
         for &i in idx {
             for (j, s) in members[i].steps.iter().enumerate() {
-                let line = match s {
-                    Step::Quality => format!("q {}", q_of[&i]),
-                    Step::Time { yardstick: false, runs } => format!("t {} {runs}", t_of[&i]),
-                    Step::Time { yardstick: true, runs } => format!("t {nt} {runs}"),
-                    Step::Output => format!("o {}", t_of[&i]),
+                let line = match (s, named) {
+                    (Step::Quality, false) => format!("q {}", q_of[&i]),
+                    (Step::Time { yardstick: false, runs }, false) => format!("t {} {runs}", t_of[&i]),
+                    (Step::Time { yardstick: true, runs }, false) => format!("t {nt} {runs}"),
+                    (Step::Output, false) => format!("o {}", t_of[&i]),
+                    (Step::Quality, true) => format!("q {}", qname(i)),
+                    (Step::Time { yardstick: false, runs }, true) => format!("t {} {runs}", tname(i)),
+                    (Step::Time { yardstick: true, runs }, true) => format!("t {YARD} {runs}"),
+                    (Step::Output, true) => format!("o {}", tname(i)),
                 };
                 if !gpu && matches!(s, Step::Time { .. }) {
                     return Err("our software has a bug: a timed step on the c backend, which has no GPU timing".into());
@@ -753,6 +764,8 @@ impl<'a> Host<'a> {
         let (exe, stages) = match &self.backend {
             Backend::Gpu { shim } => compile_library_prebuilt(&source, &driver, &dir, shim, timeout)?,
             Backend::C => compile_c_library(&source, &driver, &dir, timeout)?,
+            // The crate's name is unique in the process: the host keeps every module it loads.
+            Backend::Rust { rt } => crate::futhark_rust::compile_module(&source, &dir, rt, &format!("p{}_b{n}", std::process::id()), timeout)?,
         };
         Ok((exe, cmds, stages))
     }
@@ -760,6 +773,9 @@ impl<'a> Host<'a> {
     /// One process of `exe` on `cmds` (all of them, from the first): the records it wrote, its stages, and how it
     /// ended (`Ok` when it wrote its `end` record; otherwise its exit and its error output).
     fn process(&self, exe: &Path, cmds: &[Cmd], timestamps: bool) -> Result<Process, String> {
+        if let Backend::Rust { rt } = &self.backend {
+            return self.in_process(rt, exe, cmds);
+        }
         let dir = exe.parent().ok_or("an executable with no directory")?;
         let cmd_path = dir.join("commands.txt");
         let res_path = dir.join("results.bin");
@@ -805,6 +821,38 @@ impl<'a> Host<'a> {
         Ok(Process { records, stages, ended })
     }
 
+    /// THE RUST-WGPU BACKEND'S PROCESS, in this process: the runtime's host runs the commands on the module and writes
+    /// the driver's records. It ends as a process that wrote its `end` record (the host runs every command; one that
+    /// failed has its failure record and the next runs on a new context). The stages: `pipelines` is the shader
+    /// module and pipeline creation the records report, `runs` the rest.
+    fn in_process(&self, rt: &Path, dylib: &Path, cmds: &[Cmd]) -> Result<Process, String> {
+        let mut g = self.session.borrow_mut();
+        if g.is_none() {
+            *g = Some(crate::futhark_rust::Session::new(rt, run_timeout())?);
+        }
+        let session = g.as_ref().ok_or("our software has a bug: no session")?;
+        let on_timing = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("o "));
+        let cases = std::fs::read(&self.cases_path).map_err(|e| format!("{}: {e}", self.cases_path.display()))?;
+        let timing = match (&self.timing_path, on_timing) {
+            (Some(p), true) => Some(std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?),
+            (None, true) => return Err("a timed or output step with no timing input".into()),
+            (_, false) => None,
+        };
+        let commands: String = cmds.iter().map(|c| format!("{}\n", c.line)).collect();
+        let t = std::time::Instant::now();
+        let raw = session.run(dylib, &commands, &cases, self.n_cases, self.sig.inputs.len(), timing.as_deref())?;
+        let total = t.elapsed().as_secs_f64();
+        let records = parse_records(&raw)?;
+        let pipelines: f64 = records.iter().map(|r| r.pipeline_ns as f64 / 1e9).sum();
+        let stages = RunStages { pipelines, runs: (total - pipelines).max(0.0), total, ..RunStages::default() };
+        let ended = if records.last().is_some_and(|r| r.tag == "end") {
+            Ok(())
+        } else {
+            Err(format!("the in-process host stopped: {}", records.iter().rev().find(|r| !r.ok).map(|r| String::from_utf8_lossy(&r.payload).to_string()).unwrap_or_default()))
+        };
+        Ok(Process { records, stages, ended })
+    }
+
     /// Run every step of `members`, each a batch of the members not seen before; see the module's header for the
     /// halving. Every step gets an outcome.
     pub fn run(&self, members: &[Member]) -> Result<BatchResult, String> {
@@ -840,12 +888,16 @@ impl<'a> Host<'a> {
         };
         cost.compile.add(&stages);
         cost.compiles += 1;
-        if matches!(self.backend, Backend::Gpu { .. }) {
+        if matches!(self.backend, Backend::Gpu { .. } | Backend::Rust { .. }) {
             // Futhark's webgpu code numbers the bindings across the whole program, and wgpu refuses a binding index
             // above its limit at the device's set-up (measured 2026-10-28: a batch of 24 histogram programs reached
             // 1011). Halving before the process runs saves the failed set-up.
-            let c = std::fs::read_to_string(exe.parent().ok_or("an executable with no directory")?.join("prog.c")).map_err(|e| format!("the generated C: {e}"))?;
-            let top = max_binding_index(&c);
+            let dir = exe.parent().ok_or("an executable with no directory")?;
+            let top = if matches!(self.backend, Backend::Rust { .. }) {
+                crate::futhark_rust::max_binding_index(&std::fs::read_to_string(dir.join("prog.rs")).map_err(|e| format!("the generated module: {e}"))?)
+            } else {
+                max_binding_index(&std::fs::read_to_string(dir.join("prog.c")).map_err(|e| format!("the generated C: {e}"))?)
+            };
             if top > WGPU_MAX_BINDING_INDEX {
                 self.max_batch.set(self.max_batch.get().min((idx.len() / 2).max(1)));
                 return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost);

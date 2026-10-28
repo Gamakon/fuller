@@ -239,3 +239,87 @@ fn on_the_gpu_a_batch_equals_the_per_candidate_programs_and_times_in_process() {
     eprintln!("GPU batch: 5 members, compile {:.2} s, process {:.2} s (device {:.2}, pipelines {:.2}); A/A {:.4}", got.cost.compile.total(), got.cost.run.total, got.cost.run.device, got.cost.run.pipelines, a / y);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The rust-wgpu backend's build, without the GPU: a batch of programs, timed pairs and the published program as a
+/// member compiles with the fork compiler into one Rust module, and rustc builds it into a dylib against the prebuilt
+/// runtime with no warning (`-D warnings`); the commands name the entries. (The fork compiler and rustc; no device.)
+#[test]
+fn the_rust_backends_batch_compiles() {
+    if !crate::futhark_rust::compiler().is_file() {
+        eprintln!("skipped: the fork compiler is not installed");
+        return;
+    }
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("rust_build");
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&cases[0].stdin), yardstick: Some(p.yardstick) }).unwrap();
+    let ts = trees(&k, 3, 0xBA7C_0004);
+    let mut members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Time { yardstick: false, runs: 2 }, Step::Time { yardstick: true, runs: 2 }] }).collect();
+    members.push(Member { program: Program::Text(p.yardstick), steps: vec![Step::Time { yardstick: false, runs: 2 }, Step::Output] });
+    let idx: Vec<usize> = (0..members.len()).collect();
+    let (dylib, cmds, stages) = host.compile(&members, &idx, &mut Cost::default()).unwrap();
+    assert!(dylib.is_file(), "no dylib");
+    let lines: Vec<&str> = cmds.iter().map(|c| c.line.as_str()).collect();
+    assert_eq!(lines[..3], ["q q0", "t t0 2", "t yard 2"]);
+    assert_eq!(lines[9..], ["t t3 2", "o t3"]);
+    assert!(stages.futhark > 0.0 && stages.cc > 0.0, "{stages:?}");
+    eprintln!("rust-wgpu batch build of 4 members: futhark {:.2} s, rustc {:.2} s", stages.futhark, stages.cc);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// On the GPU: for each of the study's four problems, a batch of random programs and the published program gives,
+/// through the rust-wgpu backend in this process, exactly the outcomes of the batch backend (the branch compiler's C
+/// over the shim, its own process): every quality output, the published program's output, and real GPU times of the
+/// published program against itself. (The fork compiler, rustc, the branch compiler, cc, the GPU; run under the GPU
+/// lock.)
+#[test]
+fn on_the_gpu_the_rust_backend_equals_the_batch_backend() {
+    if !have(crate::futhark_wgpu_host::branch_compiler().to_str().unwrap()) || !have("cc") || !crate::futhark_rust::compiler().is_file() {
+        eprintln!("skipped: the branch compiler, cc or the fork compiler is not installed");
+        return;
+    }
+    let _gpu = crate::gpu_test_lock::acquire();
+    let base = scratch("rust_gpu");
+    let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).unwrap();
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    for (pi, name) in ["reduce", "scan", "histogram", "pathfinder"].into_iter().enumerate() {
+        let p = problem(name).unwrap();
+        let k = load(&p.instance).unwrap();
+        let sig = signature(&p.instance).unwrap();
+        let cases = load_cases(&p).unwrap();
+        let timing = cases.last().unwrap().stdin.clone();
+        let inputs = Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&timing), yardstick: Some(p.yardstick) };
+        let batch = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join(format!("{name}_batch")), inputs).unwrap();
+        let rust = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: rt.clone() }, &base.join(format!("{name}_rust")), inputs).unwrap();
+        let mut ts = trees(&k, 8, 0xBA7C_0010 + pi as u64);
+        ts.push(crate::futhark_sig::build(&k, p.reference).unwrap());
+        let mut members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality] }).collect();
+        members.push(Member { program: Program::Text(p.yardstick), steps: vec![Step::Time { yardstick: false, runs: 3 }, Step::Time { yardstick: true, runs: 3 }, Step::Output] });
+        let want = batch.run(&members).unwrap();
+        let got = rust.run(&members).unwrap();
+        let n = ts.len();
+        for i in 0..n {
+            assert_eq!(got.outcomes[i], want.outcomes[i], "{name} program {i}: the rust backend and the batch backend differ");
+        }
+        assert_eq!(got.outcomes[n][2], want.outcomes[n][2], "{name}: the published program's output differs");
+        let a = got.outcomes[n][0].fastest_ns().unwrap();
+        let y = got.outcomes[n][1].fastest_ns().unwrap();
+        assert!(a.is_finite() && y.is_finite() && a > 0.0 && y > 0.0, "{name}: the published program was not timed: {:?}", got.outcomes[n]);
+        let failed = (0..n).filter(|&i| matches!(got.outcomes[i][0], Outcome::Failed(_))).count();
+        eprintln!(
+            "{name}: {n} programs + the published one, {failed} failed on both paths; batch: compile {:.2} s, run {:.2} s; rust: compile {:.2} s (futhark {:.2}, rustc {:.2}), run {:.2} s (pipelines {:.2}); rust A/A {:.4}",
+            want.cost.compile.total(),
+            want.cost.run.total,
+            got.cost.compile.total(),
+            got.cost.compile.futhark,
+            got.cost.compile.cc,
+            got.cost.run.total,
+            got.cost.run.pipelines,
+            a / y
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}

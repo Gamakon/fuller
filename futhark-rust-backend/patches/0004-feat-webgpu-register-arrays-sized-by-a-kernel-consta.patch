@@ -1,0 +1,103 @@
+From 5f481893f43e63681d252d120dfbf716429a18cf Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Wed, 28 Oct 2026 12:08:36 +0100
+Subject: [PATCH 4/5] feat(webgpu): register arrays sized by a kernel constant,
+ as a specialisation const the host fills in (Futhark's OpenCL/CUDA macro, for
+ WGSL)
+
+---
+ src/Futhark/CodeGen/Backends/RustWGPU.hs |  2 +-
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs     | 43 +++++++++++++++++++++---
+ 2 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index 1ee1bc7..2249f23 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -1087,7 +1087,7 @@ generate version wgsl prelude macros kernels (Definitions params _types consts (
+       line "pub fn state(ctx: &rt::FutharkCtx) -> Result<std::rc::Rc<State>, rt::Error> {"
+       line "    ctx.module_state::<State, _>(|ctx| {"
+       line "        let st = State {"
+-      line "            prog: rt::Program::new(ctx, &PROGRAM),"
++      line "            prog: rt::Program::new(ctx, &PROGRAM)?,"
+       forM_ (constsDecl consts) $ \p -> line $ "            " <> vname (paramName p) <> ": " <> constInit p <> ","
+       line "        };"
+       line "        init_constants(ctx, &st)?;"
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index 00ad26a..a672040 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -78,7 +78,10 @@ data KernelState = KernelState
+     ksBindSlots :: [Int],
+     -- | How many loops and conditionals enclose the statement being
+     -- translated. A 'SetMem' is resolved by renaming only at depth 0.
+-    ksControlDepth :: Int
++    ksControlDepth :: Int,
++    -- | The specialisation constants declared for this kernel's register
++    -- arrays (see 'scalarSpaceSize').
++    ksSpecConsts :: S.Set WGSL.Ident
+   }
+ 
+ type KernelM = RWST KernelR () KernelState WebGPUM
+@@ -196,7 +199,8 @@ genKernel kernel = do
+             ksSharedMem = mempty,
+             ksScalars = mempty,
+             ksBindSlots = mempty,
+-            ksControlDepth = 0
++            ksControlDepth = 0,
++            ksSpecConsts = mempty
+           }
+ 
+   ((), s, ()) <- runRWST gen (KernelR kernel) initial
+@@ -632,6 +636,35 @@ underControl m = do
+ unsupported :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
+ unsupported stmt = pure $ WGSL.Comment $ "Unsupported stmt: " <> prettyText stmt
+ 
++-- | The size of a register array: a WGSL const-expression (function-scope
++-- arrays cannot be sized by an override). A dimension known only at run time
++-- must be one of the kernel's constants (a tuning parameter such as a
++-- register tile size, fixed when the kernel's pipeline is made, as Futhark's
++-- OpenCL and CUDA backends fix it by a macro of the kernel compiler). It is
++-- spelled as a module-scope @const@ whose initialiser is the marker
++-- @/*futhark-specialise:OVERRIDE*/ 0@: a host replaces the 0 with the
++-- override's value before it makes the shader module (the rust-wgpu runtime
++-- does). Unspecialised, the size is 0, which WGSL rejects: a host that does not
++-- specialise fails loudly, never computes with a wrong size.
++scalarSpaceSize :: [SubExp] -> KernelM WGSL.Exp
++scalarSpaceSize [] = pure $ WGSL.IntExp 1
++scalarSpaceSize vs = foldr1 (WGSL.BinOpExp "*") <$> mapM dim vs
++  where
++    dim (Constant (IntValue v)) = pure $ WGSL.IntExp $ valueIntegral v
++    dim (Var v) = do
++      kernel <- asks krKernel
++      unless (v `elem` [n | ImpGPU.ConstUse n _ <- ImpGPU.kernelUses kernel]) $
++        compilerLimitation $
++          "WebGPU backend cannot size a register array by " <> prettyText v <> ", which is not a kernel constant."
++      lo <- mkGlobalIdent (nameToIdent v <> "_lo")
++      c <- mkGlobalIdent (nameToIdent v <> "_spec")
++      done <- gets $ S.member c . ksSpecConsts
++      unless done $ do
++        lift $ addCode $ "const " <> c <> ": i32 = /*futhark-specialise:" <> lo <> "*/ 0;\n"
++        modify $ \s -> s {ksSpecConsts = S.insert c (ksSpecConsts s)}
++      pure $ WGSL.VarExp c
++    dim d = compilerLimitation $ "WebGPU backend cannot size a register array by " <> prettyText d
++
+ wgslProduct :: [SubExp] -> WGSL.Exp
+ wgslProduct [] = WGSL.IntExp 1
+ wgslProduct [Constant (IntValue v)] = WGSL.IntExp $ valueIntegral v
+@@ -687,9 +720,9 @@ genWGSLStm (DeclareMem name (Space "shared")) = do
+       pure $ WGSL.Comment $ "declare_shared: " <> name'
+     Nothing ->
+       pure $ WGSL.Comment $ "discard declare_shared: " <> name'
+-genWGSLStm (DeclareMem name (ScalarSpace vs pt)) =
+-  pure $
+-    WGSL.DeclareVar (nameToIdent name) (WGSL.Array (wgslPrimType pt) (Just $ wgslProduct vs))
++genWGSLStm (DeclareMem name (ScalarSpace vs pt)) = do
++  size <- scalarSpaceSize vs
++  pure $ WGSL.DeclareVar (nameToIdent name) (WGSL.Array (wgslPrimType pt) (Just size))
+ genWGSLStm s@(DeclareMem _ _) = unsupported s
+ genWGSLStm (DeclareScalar name _ typ) =
+   pure $
+-- 
+2.50.1 (Apple Git-155)
+

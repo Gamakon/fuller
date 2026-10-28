@@ -67,6 +67,30 @@ pub struct ProgramDesc {
     pub macro_values: fn(&FutharkCtx, &[i64], &[bool]) -> Vec<f64>,
 }
 
+const MARK: &str = "/*futhark-specialise:";
+
+/// The WGSL with every specialisation constant filled in: `/*futhark-specialise:NAME*/ 0` becomes the value of the
+/// override constant `NAME` (a register array's size, a tuning parameter fixed when the module is made; the fork's
+/// `scalarSpaceSize`). A marker naming no macro of the program is an error.
+pub fn specialise(wgsl: &str, macros: &[(&str, f64)]) -> Result<String, Error> {
+    let mut out = String::with_capacity(wgsl.len());
+    let mut rest = wgsl;
+    while let Some(i) = rest.find(MARK) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + MARK.len()..];
+        let end = after.find("*/ 0").ok_or_else(|| Error::new("a specialisation marker with no `*/ 0`"))?;
+        let name = &after[..end];
+        let v = macros.iter().find(|(n, _)| *n == name).map(|(_, v)| *v).ok_or_else(|| Error::new(format!("a specialisation constant of no macro: {name}")))?;
+        if v.fract() != 0.0 || !(1.0..=f64::from(i32::MAX)).contains(&v) {
+            return Err(Error::new(format!("the specialisation constant {name} = {v} is not a positive i32")));
+        }
+        out.push_str(&format!("{}", v as i32));
+        rest = &after[end + "*/ 0".len()..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// A kernel ready to launch.
 struct KernelRt {
     module: Rc<Module>,
@@ -81,6 +105,8 @@ struct KernelRt {
 /// A program in one context.
 pub struct Program {
     desc: &'static ProgramDesc,
+    /// The program's WGSL, its specialisation constants filled in ([`specialise`]).
+    wgsl: String,
     tuning: Vec<i64>,
     tuning_set: Vec<bool>,
     macros: Vec<(&'static str, f64)>,
@@ -114,7 +140,7 @@ fn class_default(ctx: &FutharkCtx, name: &str, class: &str) -> i64 {
 }
 
 impl Program {
-    pub fn new(ctx: &FutharkCtx, desc: &'static ProgramDesc) -> Program {
+    pub fn new(ctx: &FutharkCtx, desc: &'static ProgramDesc) -> Result<Program, Error> {
         let tuning: Vec<i64> = desc
             .tuning
             .iter()
@@ -122,8 +148,9 @@ impl Program {
             .collect();
         let tuning_set = vec![false; tuning.len()];
         let values = (desc.macro_values)(ctx, &tuning, &tuning_set);
-        let macros = desc.macro_names.iter().copied().zip(values).collect();
-        Program { desc, tuning, tuning_set, macros, kernels: RefCell::new(vec![None; desc.kernels.len()]) }
+        let macros: Vec<(&'static str, f64)> = desc.macro_names.iter().copied().zip(values).collect();
+        let wgsl = specialise(desc.wgsl, &macros)?;
+        Ok(Program { desc, wgsl, tuning, tuning_set, macros, kernels: RefCell::new(vec![None; desc.kernels.len()]) })
     }
 
     pub fn desc(&self) -> &'static ProgramDesc {
@@ -158,7 +185,7 @@ impl Program {
         let info = &self.desc.kernels[idx];
         let module = match &info.builtin {
             Some(b) => ctx.module(&b.wgsl(self.desc.prelude), info.name)?,
-            None => ctx.module(self.desc.wgsl, "Futhark program")?,
+            None => ctx.module(&self.wgsl, "Futhark program")?,
         };
         let layouts = ctx.layouts(info.scalars_binding, info.scalars_size, info.binding_indices);
         let base = self.macros.iter().filter(|(n, _)| info.used_overrides.contains(n)).copied().collect();
@@ -291,4 +318,19 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
         ctx.record_pass(ns);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn specialisation_fills_each_marker_from_its_macro() {
+        let w = "const k_rx_spec: i32 = /*futhark-specialise:k_rx_lo*/ 0;\nvar x: array<f32, (k_rx_spec * k_rx_spec)>;";
+        let got = specialise(w, &[("other", 9.0), ("k_rx_lo", 2.0)]).expect("specialised");
+        assert_eq!(got, "const k_rx_spec: i32 = 2;\nvar x: array<f32, (k_rx_spec * k_rx_spec)>;");
+        assert!(specialise(w, &[("other", 9.0)]).is_err(), "a marker of no macro");
+        assert!(specialise(w, &[("k_rx_lo", 0.0)]).is_err(), "a size of 0");
+        assert_eq!(specialise("no markers", &[]).expect("unchanged"), "no markers");
+    }
 }
