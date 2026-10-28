@@ -112,7 +112,10 @@ pub struct Problem {
     /// THE TIMING INPUT's size (`n`; 0: time on the largest training case). A micro benchmark is timed on its own
     /// large input ([`timing_input`]), used only for timing and never as a quality case: measured 2026-10-27, reduce
     /// timed on its 1,000-element training case gave A/A ratios in three clusters (0.30, 1.00, 3.3), the GPU's clock
-    /// states on a 10-30 us kernel, so selection in stage 2 chose on noise.
+    /// states on a 10-30 us kernel, so selection in stage 2 chose on noise. At most 65,535 x 256: wgpu allows 65,535
+    /// workgroups a dispatch dimension, and an elementwise map over `n` dispatches `n / 256` (measured 2026-10-28: at
+    /// n = 2^24 every champion with a map over `n` failed, "[65536, 1, 1] must be less or equal to 65535"), so the
+    /// micro benchmarks use 15 x 2^20 (61,440 workgroups).
     pub timing_n: usize,
 }
 
@@ -174,7 +177,7 @@ pub const REDUCE_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/reduce/yardstick.fut"),
     planted: REDUCE_PLANTED,
     corpus: "tests/corpus/futhark_problems/reduce",
-    timing_n: 1 << 24,
+    timing_n: 15 << 20,
 };
 
 /// Scan's published program, `scan (+) 0`, as a gene.
@@ -189,7 +192,7 @@ pub const SCAN_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/scan/yardstick.fut"),
     planted: SCAN_PLANTED,
     corpus: "tests/corpus/futhark_problems/scan",
-    timing_n: 1 << 24,
+    timing_n: 15 << 20,
 };
 
 /// The histogram's published program, `hist (+) 0 k (map (% k) is) vs`, as a gene: the bins are the indices modulo
@@ -205,7 +208,7 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/histogram/yardstick.fut"),
     planted: HISTOGRAM_PLANTED,
     corpus: "tests/corpus/futhark_problems/histogram",
-    timing_n: 1 << 24,
+    timing_n: 15 << 20,
 };
 
 /// A problem by name.
