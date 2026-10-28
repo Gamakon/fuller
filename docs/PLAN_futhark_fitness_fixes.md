@@ -66,6 +66,20 @@
 
 **Measured before any run:** the share of random-from-pool programs giving the all-zeros output (now 44–49 %), the number of distinct outputs per 1,400 draws (now 189–208), and the check of section A.
 
+### I. Reading-frame operators, once the open reading frames are real (Andrew, 2026-10-28)
+With random padding, an operator that moves unread cells into the reading frame brings in junk, which is why only point mutation on coding cells is used today (`futhark_evolve.rs:798`). With ring padding, the unread cells are real sequences, so such operators become worth having. Each works inside one type's frame, so every symbol stays a legal row of its own type, and a tail cell keeps a terminal.
+1. **Ring walk:** advance one type's head or tail window by k positions along its ring. The reading frame takes in the next real symbols, and the rest shifts along.
+2. **Transposition** (the classic GEP IS and RIS operators): copy a short run of a type's head, or one starting with a function (RIS), to another place in the same head; the head keeps its length.
+3. **Inversion:** reverse a run inside one type's head.
+4. **Sorting:** reorder the cells within a head; what reordering is to be settled with Andrew before it is built.
+
+Each operator is recorded as its own mutation event and measured on its own:
+- the share of children with an output not seen before;
+- the share of children better than their parent;
+- the share giving the all-zeros output.
+
+They are built after section H, once its rings exist, and measured on the GPU before they enter a run.
+
 ## Order agreed with Andrew (2026-10-28)
 1. Fix all the fitness: A to G. The check of section A passes on histogram and pathfinder.
 2. The canvas: section H.
