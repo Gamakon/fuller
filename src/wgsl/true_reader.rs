@@ -3863,6 +3863,23 @@ mod tests {
         }
     }
 
+    /// The work guard bounds A7's loop over the points by the dispatch's own `params.x` (the interface's uniform is
+    /// `params`, not `cfg`): one workgroup at n = 8,192 is under the per-submit cap, so the timing inputs run.
+    #[test]
+    fn the_work_bound_of_a7_reads_its_uniform_by_the_interfaces_name() {
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update")).expect("the table");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let trees = read_module(&k, &std::fs::read_to_string(root.join("problems/kmeans_update/shipped.wgsl")).expect("A7"), &c).expect("A7 reads");
+        let at = |n: u64| -> u128 {
+            let f: std::collections::BTreeMap<String, u64> = [("x", n), ("y", 1024), ("z", 256), ("w", 0)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+            k.tree_work_bound_workgroup_in(&trees[0], &f, 256).expect("bound")
+        };
+        let (small, big) = (at(8192), at(16384));
+        assert!(small < crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, "one workgroup at n 8192: {small}");
+        assert!(big > small + small / 2, "the bound follows params.x: {small} at 8192, {big} at 16384");
+    }
+
     /// A store into an output at an index the reading does not prove the invocation's own cell is named, never read.
     #[test]
     fn a_store_into_the_output_at_another_cell_is_named() {

@@ -342,8 +342,9 @@ impl TrueKingdom {
         let kid = |i: usize| node.kids.get(i).and_then(|k| self.value_max(k, fields));
         let r = match row.kind {
             RowKind::Constant => self.const_value(node)?,
-            RowKind::Terminal => match sp.strip_prefix("cfg.") {
-                Some(f) => *fields.get(f)?,
+            // a field of the uniform block, by the interface's own name for it (`cfg.n`, `params.x`)
+            RowKind::Terminal => match sp.split_once('.').filter(|(u, f)| !u.is_empty() && u.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') && fields.contains_key(*f)) {
+                Some((_, f)) => *fields.get(f)?,
                 None => sp.trim().trim_start_matches("lit_u32(").trim_end_matches(')').trim_end_matches('u').parse().ok()?,
             },
             RowKind::Function => match sp {

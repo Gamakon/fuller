@@ -85,14 +85,22 @@ through their genes and validate. 600 random modules of the two tables also vali
 (`true_reader::tests::ultradim_kmeans_*`, `random_kmeans_update_modules_validate`). The device check is queued:
 `examples/wgsl_true_read` runs the expressed texts against the kernels' own texts, bit for bit, on every case.
 
-## Tolerance
+## Tolerance (measured 2026-10-28 10:08Z, M3 Max)
 
-Provisional: the largest cell error at most `(n + 2)` f32 epsilons of the expected output's RMS.
+The tolerance is a cell error of at most `(n + 2)` f32 epsilons of the expected output's RMS: Higham's γ_n, the bound
+on any order of summing a cluster's points.
 
-- This is the bound on any order of summing a cluster's points (Higham's γ_n).
-- A kernel that drops one point of a cluster of 100 misses it by about 1e-2 of the RMS.
-- The device measurement of the probes in `variants/` replaces it. That check is queued for the GPU:
-  `/private/tmp/claude-501/kmu/checks.sh`.
+| probe against A7 | cases bit-exact | largest error / RMS |
+|---|---|---|
+| without Kahan (plain sum, same order) | 8 of 8 | 0 |
+| reverse order | 3 of 8 | 1.20e-6 |
+| blocks of 64 | 4 of 8 | 1.37e-6 |
+| the scatter module (counting sort + segmented Kahan) | 8 of 8 | 0 |
+
+**Metal's compiler removes A7's Kahan compensation.** The plain sum gives A7's bits on every case.
+
+Where reordering changes bits, the tolerance on those cases is 6e-6 to 4.8e-4 of the RMS, at least 4.4 times the
+largest measured reordering error. Dropping one point of a cluster of 100 costs about 1e-2 of the RMS.
 
 ## Dropping a champion into `gpu_kmeans.rs`
 

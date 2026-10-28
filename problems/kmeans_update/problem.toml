@@ -137,9 +137,12 @@ name = "constraint"
 role = "constraint"
 cases = "cases/constraint.toml"
 norm = "max_abs_over_rms"
-# THE TOLERANCE (PROVISIONAL until the probes of problems/kmeans_update/variants/ are measured on the device):
-# the largest cell error over the expected output's RMS at most (n + 2) f32 epsilons, the bound on any order of
-# summing a cluster's points (Higham's gamma_n) at the cluster means' scale. A kernel that drops one point of a
+# THE TOLERANCE: the largest cell error over the expected output's RMS at most (n + 2) f32 epsilons, the bound on
+# any order of summing a cluster's points (Higham's gamma_n) at the cluster means' scale. Measured 2026-10-28 10:08Z
+# on the M3 Max (problems/kmeans_update/variants, examples/wgsl_case_check): A7 without its Kahan compensation gives
+# A7's bits on all 8 cases (Metal's compiler removes the compensation); the reverse order and blocks of 64 differ
+# from A7 by at most 1.37e-6 of the RMS, against the tolerance's 6e-6 to 4.8e-4 on the cases where they differ; the
+# scatter module (counting sort + segmented sum) gives A7's bits on all 8. A kernel that drops one point of a
 # cluster of 100 is off by about 1e-2 of the RMS, far outside it.
 pass = "(n + 2) * eps_f32"
 chunk = 1
