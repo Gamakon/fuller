@@ -211,6 +211,15 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], 
                 .write_binary(&mut payload);
             Ok((tag, payload))
         }
+        // `s`: the context's counts so far (a measurement aid: launches, launches skipped as empty, timed passes,
+        // pipelines made and reused, submissions).
+        ["s"] => {
+            let st = ctx.stats();
+            Ok((
+                "s",
+                format!("launches {} skipped {} passes {} pipelines {} cached {} submits {}", st.launches, st.skipped_launches, ctx.timed_passes(), st.pipelines_created, st.pipelines_cached, st.submits).into_bytes(),
+            ))
+        }
         _ => Err(("q", Error::new(format!("an unknown command {line:?}")))),
     }
 }

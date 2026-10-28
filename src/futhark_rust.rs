@@ -305,7 +305,7 @@ mod tests {
         let session = Session::new(&rt, Duration::from_secs(120)).expect("a session");
         let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems");
         let runs = 20;
-        let mut table = String::from("benchmark\tcases\tbit-identical to C\tbit-identical to the shim\trust GPU us/call\tshim GPU us/call\trust wall us/call\n");
+        let mut table = String::from("benchmark\tcases\tbit-identical to C\tbit-identical to the shim\trust GPU us/call\tshim GPU us/call\trust wall us/call\trust launches/call (last case)\tshim dispatches/call (last case)\n");
         for name in ["reduce", "scan", "histogram", "pathfinder", "kmeans"] {
             let dir = corpus.join(name);
             let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
@@ -315,10 +315,11 @@ mod tests {
             inputs.sort();
             let (mut same_c, mut same_shim) = (0, 0);
             let (mut rust_gpu, mut shim_gpu, mut rust_wall) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let (mut rust_launches, mut shim_dispatches) = (0.0, 0.0);
             for input in &inputs {
                 let stdin = std::fs::read(input).expect("a case's input");
                 let want = std::fs::read(input.with_extension("out")).expect("a case's output");
-                let raw = session.run(&dylib, &format!("o main\nt main {runs}\n"), &[], 0, 0, Some(&stdin)).expect("the rust path's run");
+                let raw = session.run(&dylib, &format!("o main\ns\nt main {runs}\ns\n"), &[], 0, 0, Some(&stdin)).expect("the rust path's run");
                 let recs = payloads(&raw);
                 let o = recs.iter().find(|r| r.0 == "o").expect("an output record");
                 assert!(o.1, "{name} {}: the rust path failed: {}", input.display(), String::from_utf8_lossy(&o.3));
@@ -330,6 +331,14 @@ mod tests {
                 rust_wall = rust_wall.min(t.2 as f64 / (runs + 1) as f64 / 1e3);
                 let (shim_out, _) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim path's run");
                 let (_, report) = crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, true, runs).expect("the shim path's timed run");
+                // Launches a call on each path: the rust path's counts across its timed runs, the shim's dispatches
+                // across its process's runs (`-r runs`, and a warm-up).
+                let counts: Vec<String> = recs.iter().filter(|r| r.0 == "s").map(|r| String::from_utf8_lossy(&r.3).to_string()).collect();
+                let launches = |c: &str| c.split(' ').nth(1).and_then(|w| w.parse::<u64>().ok()).unwrap_or(0);
+                if let [a, b] = counts.as_slice() {
+                    rust_launches = (launches(b) - launches(a)) as f64 / (runs + 1) as f64;
+                }
+                shim_dispatches = report.dispatches as f64 / (runs + 1) as f64;
                 // A case with no GPU pass has no GPU time on the shim either (an error there, not a time).
                 if let Ok(ns) = report.fastest_run_ns(runs) {
                     shim_gpu = shim_gpu.min(ns / 1e3);
@@ -343,7 +352,7 @@ mod tests {
                 same_c += usize::from(v(&o.3) == v(&want));
                 same_shim += usize::from(v(&o.3) == v(&shim_out));
             }
-            table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\n", inputs.len()));
+            table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\t{rust_launches:.1}\t{shim_dispatches:.1}\n", inputs.len()));
             assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
             assert_eq!(same_c, inputs.len(), "{name}: the rust path and futhark c differ\n{table}");
         }
@@ -385,6 +394,8 @@ mod tests {
             let failed: Vec<String> = recs.iter().filter(|r| !r.1).map(|r| format!("{}: {}", r.0, String::from_utf8_lossy(&r.3))).collect();
             let o = recs.into_iter().find(|r| r.0 == "o").unwrap_or_else(|| panic!("{name}: no output record; the failures: {failed:?}"));
             assert!(o.1, "{name}: the rust path failed: {}", String::from_utf8_lossy(&o.3));
+            // The C program's standard output ends with a newline, which the binary format allows after a value.
+            let want = want.trim_ascii_end();
             assert_eq!(o.3.len(), want.len(), "{name}: the output's size");
             // Past the 7-byte header and two dimensions: the f32 values.
             let (g, w) = (&o.3[23..], &want[23..]);
@@ -393,6 +404,50 @@ mod tests {
             let same = g.iter().zip(&w).filter(|(a, b)| a == b).count();
             let ulp = g.iter().zip(&w).map(|(a, b)| (i64::from(*a) - i64::from(*b)).abs()).max().unwrap_or(0);
             eprintln!("{name}: {same} of {} values bit-identical to futhark c, the largest gap {ulp} ulp", w.len());
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// THE K-MEANS STEP'S DETERMINISM on the GPU: each path (rust in this process, the shim in its own process) runs the
+    /// published k-means step three times on each stored case, and the test prints whether each path gives the same
+    /// bytes every time, and whether the two paths agree. The cluster sums are a histogram of f32 additions, which
+    /// Futhark's GPU code does with atomics, so their order, and the f32 result, may change from run to run on either
+    /// path: this is what the benchmarks' gate needs to know before it compares the paths. (The fork compiler,
+    /// rustc, the branch compiler, cc, the GPU; run under the GPU lock.)
+    #[test]
+    fn on_the_gpu_the_kmeans_step_s_repeatability_on_each_path() {
+        let branch = crate::futhark_wgpu_host::branch_compiler();
+        if !compiler().is_file() || !branch.is_file() {
+            eprintln!("skipped: the fork compiler or the branch compiler is not installed");
+            return;
+        }
+        let _gpu = crate::gpu_test_lock::acquire();
+        let base = scratch("kmeans_repeat");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).expect("the shim");
+        let session = Session::new(&rt, Duration::from_secs(120)).expect("a session");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans");
+        let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
+        let (dylib, _) = compile_module(&yard, &base.join("rust"), &rt, "kmeans_repeat", Duration::from_secs(600)).expect("the rust-wgpu compile");
+        let exe = crate::futhark_wgpu_host::compile_program_prebuilt(&yard, &base.join("shim_build"), &shim).expect("the shim compile");
+        let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect();
+        inputs.sort();
+        for input in &inputs {
+            let stdin = std::fs::read(input).expect("a case's input");
+            let rust: Vec<Vec<u8>> = (0..3)
+                .map(|_| {
+                    let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&stdin)).expect("the rust path's run");
+                    payloads(&raw).into_iter().find(|r| r.0 == "o" && r.1).expect("an output").3
+                })
+                .collect();
+            let shim_out: Vec<Vec<u8>> = (0..3).map(|_| crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim's run").0.trim_ascii_end().to_vec()).collect();
+            eprintln!(
+                "{}: rust repeats itself {}, the shim repeats itself {}, the paths agree on the first run {}",
+                input.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+                rust.iter().all(|r| *r == rust[0]),
+                shim_out.iter().all(|r| *r == shim_out[0]),
+                rust[0] == shim_out[0]
+            );
         }
         let _ = std::fs::remove_dir_all(&base);
     }
