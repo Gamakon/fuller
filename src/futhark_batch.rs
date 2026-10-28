@@ -167,6 +167,9 @@ pub struct Host<'a> {
     yardstick: Option<String>,
     /// Batches built, for their directories' names.
     built: std::cell::Cell<u64>,
+    /// The most programs a batch starts with: halved when a batch's bindings pass wgpu's limit, so later batches do
+    /// not pay the same failed compile (the cost only: every program is scored the same either way).
+    max_batch: std::cell::Cell<usize>,
 }
 
 /// The number of a member's entry in a batch.
@@ -537,7 +540,7 @@ impl<'a> Host<'a> {
         if sig.inputs.iter().chain(std::iter::once(&sig.output)).any(|p| p.elem != "i32" || p.dims.len() > 3) {
             return Err("the batch driver reads and writes i32 values of rank at most 3".into());
         }
-        Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0) })
+        Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0), max_batch: std::cell::Cell::new(usize::MAX) })
     }
 
     fn in_ranks(&self) -> Vec<usize> {
@@ -809,8 +812,8 @@ impl<'a> Host<'a> {
         let n = members.len();
         let mut cost = Cost { member_quality_seconds: vec![0.0; n], member_timing_seconds: vec![0.0; n], member_quality_pipeline_seconds: vec![0.0; n], member_timing_pipeline_seconds: vec![0.0; n], ..Cost::default() };
         let all: Vec<usize> = (0..members.len()).filter(|i| !members[*i].steps.is_empty()).collect();
-        if !all.is_empty() {
-            self.group(members, &all, &mut outcomes, &mut cost)?;
+        for chunk in all.chunks(self.max_batch.get().max(1)) {
+            self.group(members, chunk, &mut outcomes, &mut cost)?;
         }
         let outcomes = outcomes
             .into_iter()
@@ -837,6 +840,17 @@ impl<'a> Host<'a> {
         };
         cost.compile.add(&stages);
         cost.compiles += 1;
+        if matches!(self.backend, Backend::Gpu { .. }) {
+            // Futhark's webgpu code numbers the bindings across the whole program, and wgpu refuses a binding index
+            // above its limit at the device's set-up (measured 2026-10-28: a batch of 24 histogram programs reached
+            // 1011). Halving before the process runs saves the failed set-up.
+            let c = std::fs::read_to_string(exe.parent().ok_or("an executable with no directory")?.join("prog.c")).map_err(|e| format!("the generated C: {e}"))?;
+            let top = max_binding_index(&c);
+            if top > WGPU_MAX_BINDING_INDEX {
+                self.max_batch.set(self.max_batch.get().min((idx.len() / 2).max(1)));
+                return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost);
+            }
+        }
         let timestamps = cmds.iter().any(|c| c.line.starts_with("t "));
         let mut from = 0;
         let mut first = true;
@@ -926,6 +940,26 @@ impl<'a> Host<'a> {
         self.group(members, a, outcomes, cost)?;
         self.group(members, b, outcomes, cost)
     }
+}
+
+/// wgpu's largest binding index in a bind group layout (`Limits::max_bindings_per_bind_group`, 1000 by default).
+const WGPU_MAX_BINDING_INDEX: u64 = 1000;
+
+/// The largest binding index the generated C's kernels declare (`.scalars_binding =N` and `binding_indices[] = {..}`).
+fn max_binding_index(c: &str) -> u64 {
+    let mut top = 0;
+    let digits = |t: &str| t.split(|ch: char| !ch.is_ascii_digit()).filter(|w| !w.is_empty()).filter_map(|w| w.parse::<u64>().ok()).collect::<Vec<_>>();
+    for (i, _) in c.match_indices(".scalars_binding =") {
+        let rest = &c[i + ".scalars_binding =".len()..];
+        let n: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        top = top.max(n.parse().unwrap_or(0));
+    }
+    for (i, _) in c.match_indices("binding_indices[] = {") {
+        let rest = &c[i + "binding_indices[] = {".len()..];
+        let body = &rest[..rest.find('}').unwrap_or(0)];
+        top = top.max(digits(body).into_iter().max().unwrap_or(0));
+    }
+    top
 }
 
 /// The c backend's library build: `futhark c --library` (the released compiler), then `cc` of its C and the driver.

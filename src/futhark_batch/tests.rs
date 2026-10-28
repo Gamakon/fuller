@@ -141,6 +141,14 @@ fn a_program_that_fails_while_it_runs_fails_only_its_own_step() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The largest binding index of the generated C, which wgpu bounds at 1000 (the halving's trigger before a run).
+#[test]
+fn the_largest_binding_index_is_read_from_the_generated_c() {
+    let c = "static int k_binding_indices[] = {7, 8, 9};\n{.name =\"a\", .scalars_binding =1007, .x =3}\nstatic int j_binding_indices[] = {1011};\n";
+    assert_eq!(max_binding_index(c), 1011);
+    assert_eq!(max_binding_index("no kernels"), 0);
+}
+
 /// The time steps' arithmetic: the fastest run after the warm-up; no timed pass in any run is no GPU work (infinite,
 /// no speed credit); a mix is an error; a failure carries its message.
 #[test]
