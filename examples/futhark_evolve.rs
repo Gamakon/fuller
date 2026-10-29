@@ -538,7 +538,7 @@ impl<'a> Judge<'a> {
             let (mut missing, mut fresh) = (0, false);
             if stage.measures_speed() && self.backend == Backend::Gpu && !self.batched_t.contains_key(*source) {
                 let m = self.slots.missing(source);
-                if m > 0 && self.interp.work(tree, &self.timing.sizes)? <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+                if m > 0 && self.interp.work(tree, &self.timing.sizes)? <= TIMING_WORK_CAP {
                     (missing, fresh) = (m, m == self.slots.slots());
                     steps.extend(pair_steps(missing, fresh, self.runs));
                 }
@@ -761,7 +761,7 @@ impl<'a> Judge<'a> {
             }
             let missing = self.slots.missing(source);
             let timing_work = self.interp.work(tree, &self.timing.sizes)?;
-            if missing > 0 && timing_work > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+            if missing > 0 && timing_work > TIMING_WORK_CAP {
                 // Over the per-submit cap at the timing size: never dispatched (the work guard), no speed credit.
                 self.over_cap_untimed += 1;
                 self.slots.add(source, &vec![f64::INFINITY; missing])?;
@@ -1210,6 +1210,15 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
     run.tel.note(0, msg)?;
     Ok(out)
 }
+
+/// THE WORK BOUND FOR TIMING (2026-10-29). The WGSL cap (`CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`, 1.7e8) is 0.1 s at
+/// the evaluator's 17e9 node evaluations a second with a further safety factor of 10, set for random WGSL kernels with
+/// unbounded loops. Applied to Futhark's timing input it left an exact program untimed ("ratio inf"): Fable's
+/// histogram, 1.57e9 node executions at the timing size, which the rescore path timed at about 71 times the published
+/// program's 3.2 ms, about 0.22 s a run. A Futhark program's work is its interpreter bound with no unbounded loop, so
+/// the timing bound is 0.5 s at the measured 7e9 node executions a second of that run, 3.5e9; the per-command alarm of
+/// the batch driver stays the hard stop.
+const TIMING_WORK_CAP: u128 = 3_500_000_000;
 
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 
