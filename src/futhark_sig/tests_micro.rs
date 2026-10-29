@@ -52,8 +52,10 @@ fn the_published_micro_programs_and_yardsticks_give_the_stored_outputs() {
     }
     for (p, file) in [(REDUCE_PROBLEM, "reduce.fut"), (SCAN_PROBLEM, "scan.fut"), (HISTOGRAM_PROBLEM, "reduce_by_index.fut")] {
         let cases = load_cases(&p).unwrap();
-        assert_eq!(cases.len(), 5, "{}", p.name);
-        assert_eq!(cases.iter().filter(|c| c.split == Split::Held).count(), 2, "{}", p.name);
+        // (training, held-out, test): the histogram has stepping-stone training cases and a test set (plan C, G).
+        let want = if p.name == "histogram" { (11, 4, 4) } else { (3, 2, 0) };
+        let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
+        assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), want, "{}", p.name);
         // The published file, unchanged, its entry sum_i32.
         let b = scratch(&format!("published_{}", p.name));
         std::fs::create_dir_all(&b).unwrap();

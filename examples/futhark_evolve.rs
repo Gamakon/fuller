@@ -1981,6 +1981,8 @@ fn real_main() -> Result<(), String> {
     let mut last_generation = generation;
     // The best the pump last fired on.
     let mut last_pumped: Option<String> = None;
+    let mut per_gen = if resume { std::fs::read_to_string(out.join("per_generation.tsv")).unwrap_or_default() } else { String::new() };
+    let mut prev_so_far: Option<f64> = per_gen.lines().last().and_then(|l| l.split('\t').nth(2)).and_then(|v| v.parse().ok());
     loop {
         if run.tel.stop_requested() {
             stopped_by = "killed";
@@ -2123,6 +2125,16 @@ fn real_main() -> Result<(), String> {
             run.judge.scored,
         ));
         std::fs::write(out.join("series.tsv"), &series).map_err(|e| e.to_string())?;
+        // PER GENERATION (Andrew, 2026-10-29: whether the search learns, generation by generation): the best-so-far
+        // is the stage's champion (the hall of fame's rank 1), the improvement its fall since the last generation.
+        let so_far = run.champion.as_ref().map_or(be.fitness, Individual::fit);
+        let zero_share = population.iter().filter(|i| i.eval.as_ref().is_some_and(|e| e.quality.all_zero())).count() as f64 / population.len() as f64;
+        if per_gen.is_empty() {
+            per_gen = String::from("generation\tevaluations\tbest_so_far_hff\tmedian_hff\tbest_this_generation_hff\tdistinct_outputs\tall_zero_share\timprovement_in_best_so_far\n");
+        }
+        per_gen.push_str(&format!("{generation}\t{}\t{so_far:.6}\t{:.6}\t{:.6}\t{distinct_outputs}\t{zero_share:.4}\t{:.6}\n", run.judge.evaluations, median(&fits), be.fitness, prev_so_far.map_or(0.0, |p| p - so_far)));
+        prev_so_far = Some(so_far);
+        std::fs::write(out.join("per_generation.tsv"), &per_gen).map_err(|e| e.to_string())?;
         if stages_tsv.is_empty() {
             stages_tsv = format!("generation\tutc\teval\tevaluations\tgen_seconds\tevaluations_per_second\t{}\tall\n", Stages::NAMES.join("\t"));
         }

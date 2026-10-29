@@ -10,8 +10,9 @@
 //!
 //! Pathfinder: walls are uniform integers 0 .. 9 (the published benchmark's walls are its Sobol numbers modulo 10).
 //! Training sizes 64x64 (two seeds), 256x256, 16x100, 32x32, 48x80, 100x40, 8x8 and the stepping stones 2x50 and 3x40
-//! (one and two steps of the loop, which a partly right program can solve exactly); held-out sizes 128x512, 512x128,
-//! 5x200, 1x37 and 37x1 (rows x cols), the last two the edges of the signature (one row: the output is row 0; one
+//! (one and two steps of the loop), walls constant along each row (16x40), rising (12x30) and falling (12x30), each
+//! solved exactly by partly right programs; held-out sizes 128x512, 512x128,
+//! 5x200, 40x20 constant along rows, 1x37 and 37x1 (rows x cols), the last two the edges of the signature (one row: the output is row 0; one
 //! column: every neighbour clamps); test sizes 200x200, 64x300, 2x7 and 300x3.
 //!
 //! The micro benchmarks (`--problem reduce|scan|histogram`): values uniform over the whole `i32` range, as
@@ -43,31 +44,56 @@ fn real_main() -> Result<(), String> {
     if p.name != "pathfinder" {
         return micro(&name, &dir, &exe);
     }
-    let cases: [(&str, &str, usize, usize, u64); 19] = [
-        ("train_64x64_s1", "train", 64, 64, 1),
-        ("train_64x64_s2", "train", 64, 64, 2),
-        ("train_256x256_s3", "train", 256, 256, 3),
-        ("train_16x100_s4", "train", 16, 100, 4),
-        ("train_32x32_s9", "train", 32, 32, 9),
-        ("train_48x80_s10", "train", 48, 80, 10),
-        ("train_100x40_s11", "train", 100, 40, 11),
-        ("train_2x50_s12", "train", 2, 50, 12),
-        ("train_3x40_s13", "train", 3, 40, 13),
-        ("train_8x8_s14", "train", 8, 8, 14),
-        ("held_128x512_s5", "held", 128, 512, 5),
-        ("held_512x128_s6", "held", 512, 128, 6),
-        ("held_5x200_s15", "held", 5, 200, 15),
-        ("held_1x37_s7", "held", 1, 37, 7),
-        ("held_37x1_s8", "held", 37, 1, 8),
-        ("test_200x200_s16", "test", 200, 200, 16),
-        ("test_64x300_s17", "test", 64, 300, 17),
-        ("test_2x7_s18", "test", 2, 7, 18),
-        ("test_300x3_s19", "test", 300, 3, 19),
+    // (name, split, rows, cols, seed, walls): walls uniform 0..9 (`Walls::Any`), or a STEPPING STONE (plan section C)
+    // on which a partly right program is exact: constant along each row (`RowConst`: the column sums, the program
+    // without the `min` and every program that drops a neighbour from it are exact), rising left to right (`Rising`:
+    // the least neighbour is always `j - 1`, so the programs that drop `j + 1` are exact) or falling (`Falling`: those
+    // that drop `j - 1`), each row its own random offset 0..9 added.
+    let cases: [(&str, &str, usize, usize, u64, Walls); 23] = [
+        ("train_64x64_s1", "train", 64, 64, 1, Walls::Any),
+        ("train_64x64_s2", "train", 64, 64, 2, Walls::Any),
+        ("train_256x256_s3", "train", 256, 256, 3, Walls::Any),
+        ("train_16x100_s4", "train", 16, 100, 4, Walls::Any),
+        ("train_32x32_s9", "train", 32, 32, 9, Walls::Any),
+        ("train_48x80_s10", "train", 48, 80, 10, Walls::Any),
+        ("train_100x40_s11", "train", 100, 40, 11, Walls::Any),
+        ("train_2x50_s12", "train", 2, 50, 12, Walls::Any),
+        ("train_3x40_s13", "train", 3, 40, 13, Walls::Any),
+        ("train_8x8_s14", "train", 8, 8, 14, Walls::Any),
+        ("train_rowconst_16x40_s20", "train", 16, 40, 20, Walls::RowConst),
+        ("train_rising_12x30_s21", "train", 12, 30, 21, Walls::Rising),
+        ("train_falling_12x30_s22", "train", 12, 30, 22, Walls::Falling),
+        ("held_128x512_s5", "held", 128, 512, 5, Walls::Any),
+        ("held_512x128_s6", "held", 512, 128, 6, Walls::Any),
+        ("held_5x200_s15", "held", 5, 200, 15, Walls::Any),
+        ("held_1x37_s7", "held", 1, 37, 7, Walls::Any),
+        ("held_37x1_s8", "held", 37, 1, 8, Walls::Any),
+        ("held_rowconst_40x20_s23", "held", 40, 20, 23, Walls::RowConst),
+        ("test_200x200_s16", "test", 200, 200, 16, Walls::Any),
+        ("test_64x300_s17", "test", 64, 300, 17, Walls::Any),
+        ("test_2x7_s18", "test", 2, 7, 18, Walls::Any),
+        ("test_300x3_s19", "test", 300, 3, 19, Walls::Any),
     ];
-    let mut index = String::from("# name\tsplit\trows\tcols\tseed (walls uniform 0..9; outputs by yardstick.fut through futhark c)\n");
-    for (case, split, rows, cols, seed) in cases {
+    let mut index = String::from("# name\tsplit\trows\tcols\tseed\twalls (any: uniform 0..9; rowconst, rising, falling: stepping stones; outputs by yardstick.fut through futhark c)\n");
+    for (case, split, rows, cols, seed, kind) in cases {
         let mut rng = GeneRng::new(0x9A7F_1DE5 ^ seed);
-        let walls = Array { dims: vec![rows, cols], data: (0..rows * cols).map(|_| rng.below(10) as i32).collect() };
+        let data: Vec<i32> = match kind {
+            Walls::Any => (0..rows * cols).map(|_| rng.below(10) as i32).collect(),
+            _ => {
+                let offsets: Vec<i32> = (0..rows).map(|_| rng.below(10) as i32).collect();
+                (0..rows * cols)
+                    .map(|i| {
+                        let (r, c) = (i / cols, (i % cols) as i32);
+                        offsets[r] + match kind {
+                            Walls::Rising => c,
+                            Walls::Falling => cols as i32 - 1 - c,
+                            _ => 0,
+                        }
+                    })
+                    .collect()
+            }
+        };
+        let walls = Array { dims: vec![rows, cols], data };
         let stdin = write_binary(&[&walls]);
         let out = run_exe(&exe, &stdin)?;
         if out.dims != vec![cols] {
@@ -75,7 +101,7 @@ fn real_main() -> Result<(), String> {
         }
         std::fs::write(dir.join(format!("{case}.in")), &stdin).map_err(|e| e.to_string())?;
         std::fs::write(dir.join(format!("{case}.out")), write_binary(&[&out])).map_err(|e| e.to_string())?;
-        index.push_str(&format!("{case}\t{split}\t{rows}\t{cols}\t{seed}\n"));
+        index.push_str(&format!("{case}\t{split}\t{rows}\t{cols}\t{seed}\t{}\n", kind.name()));
         println!("{case}: {rows}x{cols}, output min {} max {}", out.data.iter().min().unwrap_or(&0), out.data.iter().max().unwrap_or(&0));
     }
     std::fs::write(dir.join("cases.tsv"), index).map_err(|e| e.to_string())?;
@@ -85,6 +111,26 @@ fn real_main() -> Result<(), String> {
 /// A value uniform over the whole `i32` range.
 fn any_i32(rng: &mut GeneRng) -> i32 {
     rng.next_u64() as u32 as i32
+}
+
+/// How a pathfinder case's walls are drawn (see the case list).
+#[derive(Clone, Copy)]
+enum Walls {
+    Any,
+    RowConst,
+    Rising,
+    Falling,
+}
+
+impl Walls {
+    fn name(self) -> &'static str {
+        match self {
+            Walls::Any => "any",
+            Walls::RowConst => "rowconst",
+            Walls::Rising => "rising",
+            Walls::Falling => "falling",
+        }
+    }
 }
 
 /// How a histogram case's indices are drawn: over the whole `i32` range, or already in `[0, k)`.

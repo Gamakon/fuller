@@ -1126,30 +1126,75 @@ pub fn compare(got: &Array, want: &Array) -> [f64; 3] {
     [differ as f64 / n, squash(sum / n / mean_mag), squash(max / max_mag)]
 }
 
-/// The names of [`quality_inputs`], in order (one set a case).
-pub const QUALITY_INPUTS: [&str; 7] = ["wrong_share", "outside_1pct", "outside_10pct", "outside_50pct", "mean_abs_over_scale", "max_abs_over_scale", "order_wrong"];
-
-/// The names of [`quality_inputs`] against a correct output `want`, in order.
-pub fn quality_input_names(want: &Array) -> Vec<String> {
-    QUALITY_INPUTS.iter().take(if want.dims.len() < 8 { QUALITY_INPUTS.len() } else { 0 }).map(|s| s.to_string()).collect()
+/// One kind of quality input ([`QUALITY_PARTS`] lists the ones the fitness uses, in order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualityPart {
+    /// One input a case: the share of cells not exactly right (the one exactness input).
+    Wrong,
+    /// One input a cell: `ln(1 + |d|) / ln(1 + M)` (at most 1), `d` the cell's error and `M` the largest magnitude of
+    /// the correct output (at least 1). Graded, no threshold, and an error's size counts relative to the answer's
+    /// magnitude, never to its range (fault 3).
+    CellLog,
+    /// One input a cell: `e / (1 + e)` with `e = |d| / m`, `m` the mean magnitude of the correct output (at least 1).
+    CellLevel,
+    /// One input a neighbouring pair of cells: 1 if the step between them has the wrong sign (up, down, flat) against
+    /// the correct output's, else 0. Structure, not level: it credits a program whose output rises and falls where the
+    /// answer does (fault 3). Absent for a one-cell output.
+    Step,
+    /// Two inputs a case whose correct output has at least two distinct values: `(1 - r) / 2` for Spearman's and for
+    /// Pearson's correlation of the output with the correct one (a constant output has no shape: 0.5 each).
+    Shape,
+    /// One input a case: the share of neighbouring pairs of cells whose step has the wrong sign (up, down, flat)
+    /// against the correct output's; 0 for a one-cell output; absent, as the shape inputs are, when the correct output
+    /// is constant over two or more cells (it has no order to agree with, and "is the output flat" would only repeat
+    /// the exactness share).
+    Order,
+    /// One input a case: the share of cells off by over 10 % of the correct value's magnitude (at least 1).
+    Outside10,
+    /// The study's seven inputs a case (2026-10-27): the share of cells not exact; the shares off by over 1 %, 10 %
+    /// and 50 % of the correct value's magnitude; the mean and largest error over the correct output's range, each
+    /// `e / (1 + e)`; the share of neighbouring pairs in the wrong order (0 for one cell).
+    Study,
 }
 
-/// THE QUALITY INPUTS of one case, each its own input on `[0, 1]`, 0 exact, linear (no log scale, which put every
-/// inexact program within 0.03 of 1: the pathfinder pilot of 2026-10-27 ranked its whole population alike for 26
-/// generations). With `d` the absolute error of a cell and `scale` the correct output's own range (its largest value
-/// less its smallest; for a constant output its largest magnitude; at least 1):
-///
-/// * the share of cells not exactly right;
-/// * the shares of cells whose error is over 1 %, 10 % and 50 % of the correct value's magnitude (at least 1);
-/// * the mean and the largest `d / scale`, each mapped `e -> e / (1 + e)`;
-/// * the share of neighbouring pairs of cells in the wrong order (the sign of the step differs from the correct
-///   output's; 0 for an output of fewer than two cells).
-///
-/// An output of the wrong shape is 1 everywhere.
-pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
-    if got.dims != want.dims {
-        return vec![1.0; QUALITY_INPUTS.len()];
+/// THE QUALITY INPUTS' FORMULA: the parts each case contributes, in order (plan section B, chosen 2026-10-29 by the
+/// slope check on the GPU's outputs of histogram's new cases; `docs/PLAN_futhark_fitness_fixes.md` records every
+/// formula tried). The exactness share, the two shape inputs, the order share and the share off by over 10 %: it
+/// passes the check (the median neighbour beats 97.71 % of random genes, Spearman +0.077) and does not reward the
+/// all-zeros output (68.8 % of the non-zero wrong random outputs score better than it; under the study's seven
+/// inputs 28.8 %, so the dead point scored better than most real-looking wrong outputs). The order input is what
+/// makes an output off by one everywhere beat all zeros on a small-valued case. Graded per-cell inputs were measured and lose:
+/// histogram's whole-range cases give hundreds of cells of unrelated large numbers that drown the exactness signal.
+pub const QUALITY_PARTS: &[QualityPart] = &[QualityPart::Wrong, QualityPart::Shape, QualityPart::Order, QualityPart::Outside10];
+
+/// The names of [`quality_inputs`] against a correct output `want`, in order: their number depends on the case
+/// (one input a cell or a step).
+pub fn quality_input_names(want: &Array) -> Vec<String> {
+    let n = want.data.len();
+    let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
+    let mut out = Vec::new();
+    for part in QUALITY_PARTS {
+        match part {
+            QualityPart::Wrong => out.push("wrong_share".to_string()),
+            QualityPart::CellLog => out.extend((0..n).map(|i| format!("cell{i}_log_error"))),
+            QualityPart::CellLevel => out.extend((0..n).map(|i| format!("cell{i}_level_error"))),
+            QualityPart::Step => out.extend((1..n).map(|i| format!("step{i}_sign_wrong"))),
+            QualityPart::Shape if distinct >= 2 => out.extend(["rank_disagreement".to_string(), "linear_disagreement".to_string()]),
+            QualityPart::Shape => {}
+            QualityPart::Order if n >= 2 && distinct < 2 => {}
+            QualityPart::Order => out.push("order_wrong".to_string()),
+            QualityPart::Outside10 => out.push("outside_10pct".to_string()),
+            QualityPart::Study => out.extend(STUDY_INPUTS.iter().map(|s| s.to_string())),
+        }
     }
+    out
+}
+
+/// The names of [`QualityPart::Study`]'s inputs.
+const STUDY_INPUTS: [&str; 7] = ["wrong_share", "outside_1pct", "outside_10pct", "outside_50pct", "mean_abs_over_range", "max_abs_over_range", "order_wrong"];
+
+/// [`QualityPart::Study`]'s inputs, exactly the study's (checked against its ledgers).
+fn study_inputs(got: &Array, want: &Array) -> [f64; 7] {
     let n = want.data.len().max(1) as f64;
     let lo = want.data.iter().copied().min().unwrap_or(0);
     let hi = want.data.iter().copied().max().unwrap_or(0);
@@ -1173,10 +1218,49 @@ pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
         0.0
     } else {
         let sign = |a: i32, b: i32| (i64::from(b) - i64::from(a)).signum();
-        let bad = (0..steps).filter(|&j| sign(got.data[j], got.data[j + 1]) != sign(want.data[j], want.data[j + 1])).count();
-        bad as f64 / steps as f64
+        (0..steps).filter(|&j| sign(got.data[j], got.data[j + 1]) != sign(want.data[j], want.data[j + 1])).count() as f64 / steps as f64
     };
-    vec![wrong / n, o1 / n, o10 / n, o50 / n, squash(sum / n / scale), squash(max / scale), order]
+    [wrong / n, o1 / n, o10 / n, o50 / n, squash(sum / n / scale), squash(max / scale), order]
+}
+
+/// THE QUALITY INPUTS of one case, each its own input on `[0, 1]`, 0 exact, in the order of
+/// [`quality_input_names`]: the parts of [`QUALITY_PARTS`]. Every cell and every step is its own input; nothing is
+/// averaged before HFF but the one exactness share. An output of the wrong shape is 1 everywhere.
+pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
+    let names = quality_input_names(want).len();
+    if got.dims != want.dims {
+        return vec![1.0; names];
+    }
+    let n = want.data.len();
+    let d: Vec<f64> = got.data.iter().zip(&want.data).map(|(g, w)| (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64).collect();
+    let big = want.data.iter().map(|w| f64::from(*w).abs()).fold(1.0, f64::max);
+    let mean = (want.data.iter().map(|w| f64::from(*w).abs()).sum::<f64>() / n.max(1) as f64).max(1.0);
+    let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
+    let mut out = Vec::with_capacity(names);
+    for part in QUALITY_PARTS {
+        match part {
+            QualityPart::Wrong => out.push(d.iter().filter(|x| **x > 0.0).count() as f64 / n.max(1) as f64),
+            QualityPart::CellLog => out.extend(d.iter().map(|x| (x.ln_1p() / big.ln_1p()).min(1.0))),
+            QualityPart::CellLevel => out.extend(d.iter().map(|x| (x / mean) / (1.0 + x / mean))),
+            QualityPart::Step => {
+                let sign = |v: &[i32], j: usize| (i64::from(v[j + 1]) - i64::from(v[j])).signum();
+                out.extend((0..n.saturating_sub(1)).map(|j| f64::from(u8::from(sign(&got.data, j) != sign(&want.data, j)))));
+            }
+            QualityPart::Shape if distinct >= 2 => {
+                let g: Vec<f64> = got.data.iter().map(|x| f64::from(*x)).collect();
+                let w: Vec<f64> = want.data.iter().map(|x| f64::from(*x)).collect();
+                for r in [crate::runner::spearman(&g, &w), crate::runner::pearson(&g, &w)] {
+                    out.push(r.map_or(0.5, |r| (1.0 - r) / 2.0));
+                }
+            }
+            QualityPart::Shape => {}
+            QualityPart::Order if n >= 2 && distinct < 2 => {}
+            QualityPart::Order => out.push(study_inputs(got, want)[6]),
+            QualityPart::Outside10 => out.push(got.data.iter().zip(&want.data).filter(|(g, w)| (i64::from(**g) - i64::from(**w)).unsigned_abs() as f64 / f64::from(**w).abs().max(1.0) > 0.10).count() as f64 / n.max(1) as f64),
+            QualityPart::Study => out.extend(study_inputs(got, want)),
+        }
+    }
+    out
 }
 
 // ---- the slope check's measures (docs/PLAN_futhark_fitness_fixes.md, section A) -----------------------------------

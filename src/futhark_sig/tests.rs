@@ -81,8 +81,8 @@ fn the_reference_gene_is_exact_on_every_case_interpreted_and_compiled() {
     assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), PATHFINDER_REFERENCE.split_whitespace().collect::<String>());
     assert_eq!(functions(&k, &tree), 13);
     let cases = load_cases(&PATHFINDER_PROBLEM).unwrap();
-    assert_eq!(cases.len(), 8);
-    assert_eq!(cases.iter().filter(|c| c.split == Split::Held).count(), 4);
+    let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
+    assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (13, 6, 4), "training, held-out and test cases");
     for c in &cases {
         assert_eq!(interp.eval(&tree, &c.inputs).unwrap(), c.output, "the interpreter on {}", c.name);
         assert_eq!(compare(&c.output, &c.output), [0.0; 3]);
@@ -211,16 +211,18 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
     assert!(small <= wr, "the smallest variant's work {small}, the reference's {wr}");
 }
 
-/// The quality inputs give partial correctness a slope: on every pathfinder case, an output right on half the cells
-/// scores clearly better than one right on none, an output off by one everywhere better still than all zero, and
-/// the answer is 0 on every input.
+/// The quality inputs give partial correctness a slope: on every pathfinder case of the fitness (training and
+/// held-out; a test case is never a fitness input), an output right on half the cells scores clearly better than one
+/// right on none, an output off by one everywhere better still than all zero, and the answer is 0 on every input.
+/// (Measured 2026-10-29 with the formula of `QUALITY_PARTS`: every fitness case clears the 0.2 margin by 0.40 or
+/// more; the 3-cell test case test_300x3 by 0.168.)
 #[test]
 fn the_quality_inputs_give_partial_correctness_a_slope() {
     let angle = |q: &[f64]| crate::runner::staged_hff(crate::runner::FitnessStage::Quality, q, &[]).unwrap().quality;
-    for c in load_cases(&PATHFINDER_PROBLEM).unwrap() {
+    for c in load_cases(&PATHFINDER_PROBLEM).unwrap().into_iter().filter(|c| c.split.in_fitness()) {
         let w = &c.output;
         let with = |f: &dyn Fn(usize, i32) -> i32| Array { dims: w.dims.clone(), data: w.data.iter().enumerate().map(|(i, x)| f(i, *x)).collect() };
-        assert_eq!(quality_inputs(w, w), vec![0.0; QUALITY_INPUTS.len()], "{}: the answer is not 0", c.name);
+        assert_eq!(quality_inputs(w, w), vec![0.0; quality_input_names(w).len()], "{}: the answer is not 0", c.name);
         let zero = angle(&quality_inputs(&with(&|_, _| 0), w));
         if w.data.len() >= 2 {
             let half = angle(&quality_inputs(&with(&|i, x| if i % 2 == 0 { x } else { 0 }), w));
@@ -229,7 +231,7 @@ fn the_quality_inputs_give_partial_correctness_a_slope() {
         let near = angle(&quality_inputs(&with(&|_, x| x + 1), w));
         // A margin of 0.1: on held_1x37 (walls 0..9, the answer is row 0) one off is up to 100 % of a cell.
         assert!(near < zero - 0.1, "{}: off by one {near:.4}, all zero {zero:.4}", c.name);
-        assert_eq!(quality_inputs(&Array { dims: vec![w.data.len() + 1], data: vec![0; w.data.len() + 1] }, w), vec![1.0; QUALITY_INPUTS.len()]);
+        assert_eq!(quality_inputs(&Array { dims: vec![w.data.len() + 1], data: vec![0; w.data.len() + 1] }, w), vec![1.0; quality_input_names(w).len()]);
     }
 }
 

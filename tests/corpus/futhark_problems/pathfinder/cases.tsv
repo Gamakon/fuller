@@ -1,9 +1,24 @@
-# name	split	rows	cols	seed (walls uniform 0..9; outputs by yardstick.fut through futhark c)
-train_64x64_s1	train	64	64	1
-train_64x64_s2	train	64	64	2
-train_256x256_s3	train	256	256	3
-train_16x100_s4	train	16	100	4
-held_128x512_s5	held	128	512	5
-held_512x128_s6	held	512	128	6
-held_1x37_s7	held	1	37	7
-held_37x1_s8	held	37	1	8
+# name	split	rows	cols	seed	walls (any: uniform 0..9; rowconst, rising, falling: stepping stones; outputs by yardstick.fut through futhark c)
+train_64x64_s1	train	64	64	1	any
+train_64x64_s2	train	64	64	2	any
+train_256x256_s3	train	256	256	3	any
+train_16x100_s4	train	16	100	4	any
+train_32x32_s9	train	32	32	9	any
+train_48x80_s10	train	48	80	10	any
+train_100x40_s11	train	100	40	11	any
+train_2x50_s12	train	2	50	12	any
+train_3x40_s13	train	3	40	13	any
+train_8x8_s14	train	8	8	14	any
+train_rowconst_16x40_s20	train	16	40	20	rowconst
+train_rising_12x30_s21	train	12	30	21	rising
+train_falling_12x30_s22	train	12	30	22	falling
+held_128x512_s5	held	128	512	5	any
+held_512x128_s6	held	512	128	6	any
+held_5x200_s15	held	5	200	15	any
+held_1x37_s7	held	1	37	7	any
+held_37x1_s8	held	37	1	8	any
+held_rowconst_40x20_s23	held	40	20	23	rowconst
+test_200x200_s16	test	200	200	16	any
+test_64x300_s17	test	64	300	17	any
+test_2x7_s18	test	2	7	18	any
+test_300x3_s19	test	300	3	19	any

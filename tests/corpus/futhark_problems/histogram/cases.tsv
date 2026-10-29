@@ -1,6 +1,20 @@
-# name	split	k	n	seed (histogram: i32 values uniform over the whole range; outputs by yardstick.fut through futhark c)
-train_k10_n500_s1	train	10	500	1
-train_k10_n500_s2	train	10	500	2
-train_k37_n1000_s3	train	37	1000	3
-held_k100_n777_s4	held	100	777	4
-held_k1_n13_s5	held	1	13	5
+# name	split	k	n	seed	indices	values (histogram: i32 drawn as the last two columns say, `any` over the whole range; outputs by yardstick.fut through futhark c)
+train_k10_n500_s1	train	10	500	1	any	any
+train_k10_n500_s2	train	10	500	2	any	any
+train_k37_n1000_s3	train	37	1000	3	any	any
+train_inrange_k10_n500_s6	train	10	500	6	0..k-1	0..9
+train_inrange_count_k16_n300_s7	train	16	300	7	0..k-1	1
+train_k1_n50_s8	train	1	50	8	any	0..9
+train_k2_n200_s9	train	2	200	9	any	0..9
+train_k3_n300_s10	train	3	300	10	any	0..9
+train_count_k10_n500_s11	train	10	500	11	any	1
+train_small_k10_n500_s12	train	10	500	12	any	0..9
+train_small_k24_n700_s13	train	24	700	13	any	0..99
+held_k100_n777_s4	held	100	777	4	any	any
+held_k1_n13_s5	held	1	13	5	any	any
+held_small_k7_n300_s14	held	7	300	14	any	0..9
+held_inrange_k30_n400_s15	held	30	400	15	0..k-1	any
+test_k50_n1000_s16	test	50	1000	16	any	any
+test_small_k13_n100_s17	test	13	100	17	any	0..9
+test_k3_n31_s18	test	3	31	18	any	any
+test_count_k5_n64_s19	test	5	64	19	any	1
