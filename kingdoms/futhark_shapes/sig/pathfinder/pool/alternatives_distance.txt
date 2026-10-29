@@ -1,0 +1,32 @@
+pathfinder: 153 alternatives read; program size N = 13: 4 too big; bar 5: 43 kept, 36 near the reference, 70 near another kept
+distance to the reference (fitting): 2:21 3:3 4:12 7:2 9:2 10:3 11:5 12:2 13:24 14:7 17:1 18:3 19:4 20:1 22:1 23:2 24:15 25:8 26:12 27:6 28:7 29:2 30:2 34:1 36:1 49:1 56:1
+statement	calls	read	fit	kept
+strategy: deliberately naive but correct programs	1	5	5	0
+strategy: long programs with many small steps	1	5	5	1
+strategy: programs a performance engineer would write	1	5	5	0
+strategy: programs a student would write on a first attempt that are still correct	1	4	4	1
+strategy: programs built from map and map2 over whole arrays	1	5	5	2
+strategy: programs built from tabulate with explicit indexing	2	10	10	3
+strategy: programs that avoid hist and reduce_by_index entirely	2	10	10	1
+strategy: programs that build the result up from replicate and map2	1	5	5	2
+strategy: programs that combine two different approaches in one	1	4	4	1
+strategy: programs that compute each output element independently	1	5	5	2
+strategy: programs that differ from each other in their loop structure	1	5	5	0
+strategy: programs that name every intermediate array with let	1	4	4	0
+strategy: programs that use a sequential loop with a scalar state inside tabulate	1	5	5	1
+strategy: programs that use a sequential loop with an array state	1	5	5	1
+strategy: programs that use conditionals of the form if e < 0 then a else b	1	4	3	3
+strategy: programs that use hist or reduce_by_index where they fit	2	9	9	2
+strategy: programs that use i32.min and i32.max heavily	1	5	5	1
+strategy: programs that use i32.sum, i32.minimum or i32.maximum over a computed array	1	4	3	3
+strategy: programs that use loops from 1 (for i in 1..<n)	1	5	5	1
+strategy: programs that use map with a lambda of several let bindings	1	4	4	0
+strategy: programs that use multiplication to mask values (multiply by 0 or 1)	1	5	3	3
+strategy: programs that use reduce with an operator and its neutral element	1	2	2	2
+strategy: programs that use subtraction and negation in their arithmetic	1	5	5	3
+strategy: programs that use the clamped index forms for neighbours	1	5	5	1
+strategy: programs that use the sizes of the arrays as values	1	4	4	2
+strategy: programs with nested tabulate	1	5	5	0
+strategy: programs written as pipelines with |>	1	5	5	2
+strategy: short programs of one or two lines	1	5	5	1
+strategy: the most direct program you can write	2	9	9	4

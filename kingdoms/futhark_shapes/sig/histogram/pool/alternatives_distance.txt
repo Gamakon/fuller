@@ -1,0 +1,33 @@
+histogram: 577 alternatives read; program size N = 8: 4 too big; bar 5: 84 kept, 133 near the reference, 356 near another kept
+distance to the reference (fitting): 0:106 2:12 3:10 4:5 5:3 6:4 7:17 8:6 9:1 10:10 11:7 12:2 13:6 14:1 15:21 16:2 17:17 18:24 19:45 20:85 21:45 22:82 23:4 24:13 25:6 26:6 27:7 28:3 29:1 31:2 34:2 35:3 36:2 37:4 38:3 39:4 43:1 65:1
+statement	calls	read	fit	kept
+strategy: deliberately naive but correct programs	4	18	18	0
+strategy: long programs with many small steps	4	19	19	1
+strategy: programs a performance engineer would write	4	19	19	2
+strategy: programs a student would write on a first attempt that are still correct	4	19	19	0
+strategy: programs built from map and map2 over whole arrays	4	20	20	2
+strategy: programs built from tabulate with explicit indexing	5	24	24	4
+strategy: programs that avoid hist and reduce_by_index entirely	4	19	19	4
+strategy: programs that build the result up from replicate and map2	4	19	19	4
+strategy: programs that combine two different approaches in one	4	20	20	1
+strategy: programs that compute each output element independently	4	20	20	1
+strategy: programs that differ from each other in their loop structure	4	16	16	0
+strategy: programs that name every intermediate array with let	4	19	19	3
+strategy: programs that use a sequential loop with a scalar state inside tabulate	4	20	20	4
+strategy: programs that use a sequential loop with an array state	4	15	15	8
+strategy: programs that use conditionals of the form if e < 0 then a else b	4	20	19	9
+strategy: programs that use helper functions defined with def	4	19	19	2
+strategy: programs that use hist or reduce_by_index where they fit	5	25	25	5
+strategy: programs that use i32.min and i32.max heavily	4	20	17	1
+strategy: programs that use i32.sum, i32.minimum or i32.maximum over a computed array	4	18	18	3
+strategy: programs that use loops from 1 (for i in 1..<n)	4	19	19	11
+strategy: programs that use map with a lambda of several let bindings	4	16	16	2
+strategy: programs that use multiplication to mask values (multiply by 0 or 1)	4	16	16	2
+strategy: programs that use reduce with an operator and its neutral element	4	19	19	2
+strategy: programs that use subtraction and negation in their arithmetic	4	20	20	4
+strategy: programs that use the clamped index forms for neighbours	4	15	15	0
+strategy: programs that use the sizes of the arrays as values	4	20	20	0
+strategy: programs with nested tabulate	4	19	19	0
+strategy: programs written as pipelines with |>	4	20	20	3
+strategy: short programs of one or two lines	4	20	20	0
+strategy: the most direct program you can write	5	24	24	6

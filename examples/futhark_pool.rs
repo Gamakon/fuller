@@ -541,27 +541,55 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
 /// How many task alternatives (`alternatives.tsv`) pass the population's distance bar, greedily in order: a tree edit
 /// distance of at least `bar` to the reference and to every alternative kept (the output bar is the runner's, on the
 /// GPU). With the distribution of the distances to the reference, to choose the bar from the data.
-fn distinct(c: &Ctx, bar: usize) -> Result<(), String> {
+fn distinct(c: &Ctx, bar: usize, program_size: Option<usize>) -> Result<(), String> {
     let p = problem(&c.pname)?;
     let reference = fuller::futhark_sig::build(&c.k, p.reference)?;
+    let contract = c.k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
+    let n_funcs = reference.level_order().iter().filter(|(t, _)| !c.k.rows[t.symbol as usize].inputs.is_empty()).count();
+    let n = program_size.unwrap_or(n_funcs);
+    let layout = fuller::typed_gep::GeneLayout::from_program_size(&contract, c.k.roots()[0], n).map_err(|e| e.to_string())?;
     let alts = fuller::futhark_rings::load_pool(&c.out.join("alternatives.tsv"))?;
-    let trees: Vec<fuller::typed_gep::Tree> = alts.iter().map(|e| fuller::futhark_rings::build_at(&c.k, &e.sexp, &e.dual)).collect::<Result<_, _>>()?;
+    // The statement of each call: its angle (`--angles`), else its strategy phrase (from its saved prompt).
+    let dir = c.run.join("llm");
+    let statement = |origin: &str| -> String {
+        let call = origin.split('#').next().unwrap_or("");
+        std::fs::read_to_string(dir.join(format!("{call}.statement.txt"))).map(|s| format!("angle: {}", s.trim())).unwrap_or_else(|_| {
+            std::fs::read_to_string(dir.join(format!("{call}.prompt.txt"))).ok().and_then(|t| t.split("Strategy for this batch: ").nth(1).map(|x| format!("strategy: {}", x.split(". (Batch").next().unwrap_or("").trim()))).unwrap_or_else(|| "(no statement saved)".into())
+        })
+    };
     let mut hist: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut kept: Vec<&fuller::typed_gep::Tree> = Vec::new();
-    let (mut near_ref, mut near_other) = (0, 0);
-    for t in &trees {
-        let d = fuller::futhark_sig::tree_distance(t, &reference);
+    let mut kept: Vec<fuller::typed_gep::Tree> = Vec::new();
+    let (mut near_ref, mut near_other, mut unfit) = (0, 0, 0);
+    // statement -> (calls, read, fit, kept)
+    let mut per: BTreeMap<String, (std::collections::BTreeSet<String>, usize, usize, usize)> = BTreeMap::new();
+    for e in &alts {
+        let st = statement(&e.origin);
+        let row = per.entry(st).or_default();
+        row.0.insert(e.origin.split('#').next().unwrap_or("").to_string());
+        row.1 += 1;
+        let t = fuller::futhark_rings::build_at(&c.k, &e.sexp, &e.dual)?;
+        if fuller::typed_gep::fits(&contract, &layout, &t).is_err() {
+            unfit += 1;
+            continue;
+        }
+        row.2 += 1;
+        let d = fuller::futhark_sig::tree_distance(&t, &reference);
         *hist.entry(d).or_default() += 1;
         if d < bar {
             near_ref += 1;
-        } else if kept.iter().any(|o| fuller::futhark_sig::tree_distance(t, o) < bar) {
+        } else if kept.iter().any(|o| fuller::futhark_sig::tree_distance(&t, o) < bar) {
             near_other += 1;
         } else {
             kept.push(t);
+            row.3 += 1;
         }
     }
-    println!("{}: {} alternatives; bar {bar}: {} kept, {near_ref} near the reference, {near_other} near another kept", c.pname, trees.len(), kept.len());
-    println!("distance to the reference: {}", hist.iter().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" "));
+    println!("{}: {} alternatives read; program size N = {n}: {unfit} too big; bar {bar}: {} kept, {near_ref} near the reference, {near_other} near another kept", c.pname, alts.len(), kept.len());
+    println!("distance to the reference (fitting): {}", hist.iter().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" "));
+    println!("statement\tcalls\tread\tfit\tkept");
+    for (st, (calls, read, fit, k)) in &per {
+        println!("{st}\t{}\t{read}\t{fit}\t{k}", calls.len());
+    }
     Ok(())
 }
 
@@ -599,7 +627,8 @@ fn real_main() -> Result<(), String> {
         }
         "distinct" => {
             let bar: usize = arg(&args, "--bar").map_or(Ok(5), |v| v.parse()).map_err(|_| "--bar N")?;
-            distinct(&c, bar)
+            let n = arg(&args, "--program-size").map(|v| v.parse::<usize>()).transpose().map_err(|_| "--program-size N")?;
+            distinct(&c, bar, n)
         }
         o => Err(format!("{o}: bench, llm, topics, reread, distinct or contract")),
     }
