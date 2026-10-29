@@ -45,3 +45,8 @@ The decision on running this set as an improvement (speed) search was not made, 
 ## What went wrong in the night
 - The GPU was idle from 05:01Z to the end of the session: all queues finished, and the lead did not notice or start the next work.
 - The Fable set ran as discovery before the decision on it had been made.
+
+## Improvement run from Fable's histogram program (09:03Z to 09:25Z, stopped)
+Generation 0 was Fable's exact program plus 23 point mutants. Stage 2 began at generation 0, as designed. Then a bug showed: under the two-level HFF, wrong but fast mutants outrank the exact but slow seed. For example, a mutant with quality angle 1.29 (wrong) and speed ratio 0.002 scored 0.848, ahead of the exact seed, which is 71 times slower than the published program. Over 7 generations the best fell 0.848 → 0.802, but no member was exact in any generation (`exact 0+0`), so the search was optimising wrong programs. The run was stopped by its run file.
+
+**Bug:** in stage 2, an inexact program must never rank above an exact one (Andrew's rule: quality first, then performance). The fix is that once a run is in stage 2, selection is lexicographic: exact before inexact, and the two-level HFF only among the exact. It has not been built.
