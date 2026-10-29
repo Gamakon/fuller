@@ -297,8 +297,9 @@ struct AaSets {
 
 /// The ledger's columns after the text: how the program was evaluated, its batch's size, each stage's milliseconds.
 /// Then the fitness inputs, each exactly (Rust's shortest round-trip form, comma-separated): the quality inputs in case
-/// order and the speed inputs (stage 2), so two runs' inputs can be compared bit for bit.
-const LEDGER_STAGE_COLUMNS: [&str; 15] = ["eval", "batch_size", "render_ms", "futhark_ms", "port_ms", "cc_ms", "check_ms", "link_ms", "start_ms", "device_ms", "pipelines_ms", "runs_ms", "timing_ms", "quality_inputs", "speed_inputs"];
+/// order and the speed inputs (stage 2), so two runs' inputs can be compared bit for bit; then the program's
+/// behaviour (the hash of its outputs on every case) and whether every output is all zeros (0 or 1).
+const LEDGER_STAGE_COLUMNS: [&str; 17] = ["eval", "batch_size", "render_ms", "futhark_ms", "port_ms", "cc_ms", "check_ms", "link_ms", "start_ms", "device_ms", "pipelines_ms", "runs_ms", "timing_ms", "quality_inputs", "speed_inputs", "behaviour", "all_zero"];
 
 /// What a program measured on the stored cases (independent of the stage).
 #[derive(Debug, Clone)]
@@ -1511,6 +1512,8 @@ impl Run<'_> {
         let exact = |v: &[f64]| if v.is_empty() { "-".to_string() } else { v.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>().join(",") };
         cols.push(exact(&e.quality.inputs));
         cols.push(exact(&e.speed));
+        cols.push(e.quality.behaviour.clone());
+        cols.push(u8::from(e.quality.all_zero()).to_string());
         self.ledger.record_line(&LedgerLine { generation, id: ind.id, parents: &ind.parents, operator: &ind.operator, fitness: e.fitness, text: &text, extra: &cols })?;
         let mut extras = BTreeMap::new();
         extras.insert("theta_quality".to_string(), e.theta_q);
