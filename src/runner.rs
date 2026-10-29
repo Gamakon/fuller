@@ -91,7 +91,9 @@ impl FitnessStage {
 }
 
 /// The fitness of a stage: stage 1 is TrueNorth over the quality inputs (the speed inputs must be empty, and the
-/// speed angle is 0); stage 2 is [`two_level_hff`].
+/// speed angle is 0); stage 2 is [`two_level_hff`], GATED BY CORRECTNESS (Andrew, 2026-10-29): an exact program
+/// (every quality input 0) scores the two-level angle, in `[0, π/2)`; an inexact one scores `π/2 + θ_quality`, so
+/// no inexact program, however fast, ranks above an exact one, and inexact programs still rank by quality.
 pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
     match stage {
         FitnessStage::Quality => {
@@ -101,7 +103,14 @@ pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result
             let q = if quality.is_empty() { 0.0 } else { crate::score::truenorth_angle(quality) };
             Ok(TwoLevel { fitness: q, quality: q, speed: 0.0 })
         }
-        FitnessStage::QualityAndSpeed => Ok(two_level_hff(quality, speed)),
+        FitnessStage::QualityAndSpeed => {
+            let t = two_level_hff(quality, speed);
+            if quality.iter().all(|x| *x == 0.0) {
+                Ok(t)
+            } else {
+                Ok(TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t })
+            }
+        }
     }
 }
 
@@ -489,14 +498,29 @@ mod tests {
     }
 
     #[test]
+    fn in_stage_two_an_exact_slow_program_ranks_above_every_inexact_fast_one() {
+        let slow_exact = staged_hff(FitnessStage::QualityAndSpeed, &[0.0, 0.0], &[1.0; 11]).unwrap();
+        for wrong in [[1e-9, 0.0], [0.5, 0.5], [1.0, 1.0]] {
+            let fast_wrong = staged_hff(FitnessStage::QualityAndSpeed, &wrong, &[0.0; 11]).unwrap();
+            assert!(slow_exact.fitness < fast_wrong.fitness, "{wrong:?}: {} !< {}", slow_exact.fitness, fast_wrong.fitness);
+        }
+        let near = staged_hff(FitnessStage::QualityAndSpeed, &[0.1, 0.0], &[0.0; 11]).unwrap();
+        let far = staged_hff(FitnessStage::QualityAndSpeed, &[0.9, 0.9], &[0.0; 11]).unwrap();
+        assert!(near.fitness < far.fitness, "inexact programs still rank by quality");
+    }
+
+    #[test]
     fn stage_one_ranks_on_quality_alone_and_the_switch_is_one_way() {
         let q = [0.2, 0.0, 0.4];
         let one = staged_hff(FitnessStage::Quality, &q, &[]).unwrap();
         assert_eq!(one.fitness, crate::score::truenorth_angle(&q));
         assert_eq!((one.quality, one.speed), (one.fitness, 0.0));
         assert!(staged_hff(FitnessStage::Quality, &q, &[0.5]).is_err(), "stage 1 takes no speed inputs");
-        let two = staged_hff(FitnessStage::QualityAndSpeed, &q, &[0.5, 0.5]).unwrap();
-        assert_eq!(two, two_level_hff(&q, &[0.5, 0.5]));
+        let exact = [0.0, 0.0, 0.0];
+        let two = staged_hff(FitnessStage::QualityAndSpeed, &exact, &[0.5, 0.5]).unwrap();
+        assert_eq!(two, two_level_hff(&exact, &[0.5, 0.5]));
+        let inexact = staged_hff(FitnessStage::QualityAndSpeed, &q, &[0.5, 0.5]).unwrap();
+        assert_eq!(inexact.fitness, std::f64::consts::FRAC_PI_2 + crate::score::truenorth_angle(&q));
         assert_eq!(FitnessStage::Quality.next(false), FitnessStage::Quality);
         assert_eq!(FitnessStage::Quality.next(true), FitnessStage::QualityAndSpeed);
         assert_eq!(FitnessStage::QualityAndSpeed.next(false), FitnessStage::QualityAndSpeed);
