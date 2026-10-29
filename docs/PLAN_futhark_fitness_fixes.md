@@ -11,13 +11,14 @@
 
 **Approach.** A check that the fitness has a slope toward the target comes first, before any run. Then the fitness is fixed until it passes, then the budget, diversity and machinery, then the reruns. HFF (the hff library's TrueNorth) stays the only judge, with every measurement its own input and nothing averaged before it. The staged fitness stays: quality only until exact, then the two-level HFF with speed.
 
-**Status (2026-10-28).** Proposed, not built.
+**Status (2026-10-29, 00:45Z).** A to G built (fuller 2ce7079e to 72c37606). The check passes on histogram and pathfinder with the formula of B (b8163635). The reruns run on 72c37606 from 00:37Z (`/private/tmp/claude-501/frerun2/queue.log`).
 
 ## Fixes, by the faults they repair (fault numbers from the review)
 
 ### A. A check before any run (fault 1)
 - For each benchmark, score every one-edit neighbour of the reference gene and a few thousand random genes on the host interpreter (`Interp::eval`, CPU, seconds).
 - A run may start only if the neighbours rank above the random genes and the fitness-distance correlation is positive.
+- (Built on the GPU, not the CPU interpreter: see below.)
 - This is a gate, like the A/A timing gate. A fitness that fails it cannot guide a search.
 
 **Built (2026-10-28).** `futhark_evolve --check --problem P --program-size N --eval rust --out DIR` (the GPU evaluation path; `--eval batch` also works, quality is bit-identical). The verdict is `fuller::runner::slope_check`, tested in `runner::tests::the_slope_check_passes_a_slope_and_fails_a_plateau_or_a_reversed_slope`; the distance is `futhark_sig::tree_distance` (Zhang and Shasha). A discovery run (R, C) now needs `--gate DIR` of a passing check of the same problem, program size, cases and quality-input formula.
@@ -35,29 +36,44 @@
 2. **Drop the duplicate thresholds:** keep one share of wrong cells; drop `outside_1pct` and `outside_10pct`, which copy it.
 3. **Shape credit:** per case, the rank agreement and the correlation of the output with the correct output, so a structurally right program beats a level-matching one (pathfinder's drop-one-neighbour program against "the last row plus a constant").
 
+**Built (2026-10-29), chosen by the check.** `futhark_sig::QUALITY_PARTS` = per fitness case: the share of cells not exact, the two shape inputs (`(1 − r)/2` for Spearman's and Pearson's correlation with the answer; absent for a constant answer), and the shares of cells off by over 50 % and over 1 %. Every combination of 13 measured parts was scored on the GPU's outputs (`docs/measurements/2026-10-29_futhark_slope_check.tsv`); this one passes on both benchmarks, does not reward the all-zeros output, and keeps the partial-correctness test's margins on every pathfinder case. Points 1 and 2 above lost on the measurements:
+- graded per-cell inputs (absolute, relative, log, level-free deviations, log ratio): on histogram the whole-range cases give hundreds of cells of unrelated large numbers that drown the exactness signal (median neighbour beats 48 to 93 %); on pathfinder a level-matching constant such as `(tab rows)` beats the near-neighbours;
+- the 1 % share is kept: with it the check passes on both benchmarks, without it on one.
+- The study's formula rewarded the dead point: on histogram's new cases the all-zeros output (0.789) scored better than the median non-zero wrong output (0.831); 28.8 % of non-zero wrong random outputs beat it, against 68.6 % (histogram) and 84.1 % (pathfinder) now.
+
 ### C. The cases (faults 4, 5)
 - Stepping-stone cases a partly right program can solve exactly. For histogram: indices already in range, k = 1, 2 and 3, values all 1.
 - More normal cases, so the degenerate cases (one row, one bin) carry less weight. Every case stays its own input; nothing is averaged.
+
+**Built.** `examples/futhark_problem_cases.rs` (the study's cases byte-identical). Histogram: 11 training cases (the study's 3; indices in range with values 0..9 and with counts; k = 1, 2, 3; counts; small values 0..9 and 0..99), 4 held-out, 4 test. Pathfinder: 13 training cases (the study's 4; 32x32, 48x80, 100x40, 8x8; 2 and 3 rows; walls constant along each row, rising, falling, on which the drop-a-neighbour programs are exact), 6 held-out, 4 test. Measured: the stepping stones turned histogram's Spearman from −0.080 to +0.370 under the study's formula (A1, A3); on pathfinder they did not lift the study's formula (A2 92.7 %, A5 92.9 %).
 
 ### D. Diversity on behaviour (faults 6, 21)
 - Parents and crossover partners must differ in OUTPUT, not only in text: the parent-pairs rule extended to behaviour.
 - At most one elite per distinct output.
 - Report distinct outputs beside distinct texts in the stream and `series.tsv`.
 
+**Built (2ce7079e).** `Quality::behaviour` (the hash of the outputs on every case). In stage 1 the elites, the marriage pool and the crossover partner differ in behaviour; in stage 2 every program is exact and has one output, so the text is the identity there, as before. `distinct_outputs` in the stream, `series.tsv` and `per_generation.tsv`; `behaviour` and `all_zero` in the ledger.
+
 ### E. A fair budget (faults 7, 8, 10)
 - An evaluation is a program not scored before. Elites and repeats are free. Report both counts.
 - C gets its own seed stream (the seed combined with a regime tag), so R and C do not share generation 0.
+
+**Built (2ce7079e).** `Judge::evaluations` counts programs not scored before (the budget); `scored` counts every individual. C draws from `seed ^ REGIME_C_TAG`.
 
 ### F. The machinery (faults 9, 18, 19, 20)
 - Keep the pump and the fold. The pump fires only when the best has changed; children that repeat a program already scored are not counted.
 - Crossover keeps both children; mutation after crossover is a separate, recorded choice.
 - Marriage draws its swap point uniformly over the whole domain.
 
+**Built (2ce7079e).** The pump fires only when the best's text changed since the last pump, and skips variants already scored. Crossover keeps both children, each mutated or not (operator `crossover` or `crossover+mutation`). Marriage takes the first fitting pair of the whole domain in a random order (uniform over the fitting pairs).
+
 ### G. The claims (faults 11 to 17)
 - Keep the held-out cases in the fitness as the validation column. Add a third test set that selection never sees, and make the exactness claim on it.
 - Every champion field and the re-time come from the hall of fame's rank 1. One hall of fame per stage.
 - All seeds of a comparison run on one binary. One verdict function on both the run and `--rescore` paths.
 - SetMem: the rust-wgpu backend's patches (`futhark-rust-backend/`) and `docs/PROPOSAL_memory_views_setmem.md`. Each internal compiler error is recorded as a kingdom bug.
+
+**Built (2ce7079e, 2028d384).** The test split (`Split::Test`) runs in the same GPU quality program but is never a fitness input; the report gives `best_exact_test` and `first_exact_test`. `Run::champion` (the stage's hall-of-fame rank 1) feeds every report field and the re-time; at the stage change stage 1's hall of fame goes to `hall_of_fame_stage1/`. `speed_verdict` is the one verdict of the report and `--rescore`. The report records the binary's path and hash and counts internal compiler errors. Not built: SetMem (the rust-wgpu path, `--eval rust`, already compiles A7's SetMem).
 
 ### H. Sample where real programs are: a pool of LLM-written Futhark (Andrew, 2026-10-28)
 **The failing.** Random programs are dense at one dead point: in random search, 44 % (histogram) and 49 % (pathfinder) of programs output all zeros. LLM-written seeds would fix generation 0 only. When a gene is written, its unread cells are padded with random symbols. A mutation that grows the tree (a terminal turned function, or a function with more arguments) then exposes those random cells, so random junk returns within a few generations.
@@ -165,7 +181,11 @@ Expectations, stated before each measurement; results after.
 | A1′ | A1's GPU outputs re-scored with graded per-cell inputs (offline, 20 variants of scale, shape and exactness inputs) | old cases | Spearman positive; neighbours still tied with random genes, because whole-range values wrap | Spearman +0.18 to +0.31 in every variant; median neighbour beats 40 to 52 % of random genes: **fail**. The old cases give no partial credit (fault 4); section C is needed |
 | A2 | pathfinder (N = 13), the fitness of the study | 7 inputs a case, the 8 stored cases | fail, as A1 | **fail**: median neighbour beats 92.71 %; Spearman +0.437 (random alone +0.249); 96.6 % of neighbours better than the median random gene, 24.7 % than the best; all-zeros 47.3 %; 195 distinct outputs (907 distinct programs). Offline, ~100 formulas on its outputs top out at 93.4 %; the best quarter of neighbours already beats 99.9 % of random genes |
 | A3 | histogram, the fitness of the study | the new cases (11 training with stepping stones, 4 held-out, 4 test never in the fitness) | the stepping stones let partial programs be exact on some cases: the median neighbour beats more random genes than in A1; Spearman still not clearly positive (the step inputs) | median neighbour beats 98.50 % (A1 98.86 %); **Spearman +0.370** (A1 −0.080); all-zeros 40.8 %; 354 distinct outputs. Passes the 95 % rule; the step-sign input rewards rising junk (`(tab (ival.k j1))` beats the all-zeros output only because it rises) |
-| A4 | pathfinder, the fitness of the study | the new cases (10 training with 2- and 3-row stepping stones, 5 held-out, 4 test) | as A2, slightly better | |
+| A4 | pathfinder, the fitness of the study | the new cases (10 training with 2- and 3-row stepping stones, 5 held-out, 4 test) | as A2, slightly better | **fail**: 93.00 %, Spearman +0.421; all-zeros 47.2 %; 201 distinct outputs. 57 of 178 neighbours give an output some random gene also gives; 35 of them the walls' last row, which 86 random genes give, and the median neighbour falls in that block |
+| A5 | pathfinder, the fitness of the study | A4's cases and four stepping stones (rows constant 16x40 and 40x20 held, rising 12x30, falling 12x30) | (no expectation was written before this run) | **fail**: 92.93 %, Spearman +0.420; all-zeros 47.1 %; 202 distinct outputs |
+| B1 | the chosen formula (wrong share, shape, outside 50 %, outside 1 %), the Rust check replayed from the GPU outputs of A3 and A5 | the new cases | pass on both (from the offline search, before this Rust check) | **pass on both**. Histogram: median neighbour beats 97.36 %, Spearman +0.0785, 68.3 % of neighbours better than the median random gene, AUC 0.707. Pathfinder: 99.00 %, +0.4025, 95.5 %, AUC 0.878 |
+
+Every case set against every formula tried, with every measure: `docs/measurements/2026-10-29_futhark_slope_check.tsv`. The offline scores rank by the mean of squared inputs (TrueNorth's angle is `arccos(1 − mean(x²))`). They match the GPU ledgers exactly on A1 to A4; the Rust check can differ in the last digit where float rounding breaks exact ties (histogram 97.36 % in Rust, 97.71 % offline, for a formula used earlier).
 
 ## Expectations, stated before any run
 | measurement | expected |
