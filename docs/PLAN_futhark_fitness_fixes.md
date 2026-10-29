@@ -23,7 +23,8 @@
 **Built (2026-10-28).** `futhark_evolve --check --problem P --program-size N --eval rust --out DIR` (the GPU evaluation path; `--eval batch` also works, quality is bit-identical). The verdict is `fuller::runner::slope_check`, tested in `runner::tests::the_slope_check_passes_a_slope_and_fails_a_plateau_or_a_reversed_slope`; the distance is `futhark_sig::tree_distance` (Zhang and Shasha). A discovery run (R, C) now needs `--gate DIR` of a passing check of the same problem, program size, cases and quality-input formula.
 - **The programs.** The reference gene (the reference written back into a random gene of the check's own seed stream); every one-edit neighbour of it (each expressed cell set to each other member of its alphabet, each tree once); 1,400 random genes (`--check-random`), every draw, repeats included.
 - **The gate passes only if both:**
-  1. the neighbours rank above the random genes: the median inexact neighbour is better than at least 99 % of the random genes (ties count as not beaten). Random search's best of its draws sets the plateau a population sits on, so a step from the target must look better than nearly all random programs;
+  1. the neighbours rank above the random genes: the median inexact neighbour is better than at least **95 %** of the random genes (ties count as not beaten), a step from the target better than 19 of 20 random programs;
+     - **Changed after A1 to A3 were seen (2026-10-28, approved).** The bar was 99 % before any measurement. It sits at the ceiling: many one-edit neighbours give exactly an output some random gene also gives (on histogram's new cases 70 of 126, on pathfinder's old cases 60 of 178; for example the no-`mod` stepping stone `(hist.add.n is vs)`, which random genes also hit), and a fitness of the outputs must tie them. On histogram about 99.4 % is the most ANY fitness can reach, so 99 % left no margin. The study's fitness still fails under 95 %: A1 Spearman −0.08, A2 92.7 %.
   2. Spearman(fitness, tree distance to the reference) over every program of the check is positive.
 - Neighbours exact on every case (equal programs) score 0 whatever the fitness; they are counted apart and are not in the ranking.
 - Also reported: the share of neighbours better than the median random gene (the expectation below) and than the best one, the probability a neighbour beats a random gene, Spearman over the random genes alone, the all-zeros share, distinct outputs among the random genes.
@@ -105,8 +106,19 @@
 |---|---|---|
 | all-zero share of 1,400 fresh genes (`--check`'s random genes) | 44 % histogram, 49 % pathfinder (study ledgers) | under 20 % |
 | distinct outputs of 1,400 fresh genes | 189–208 | more than 400 |
-| growth mutation of a topic program: all-zero share of children | about the fresh-gene share | under half of random padding's |
+| growth mutation of a task alternative: all-zero share of children | about the fresh-gene share | under half of random padding's |
 | growth mutation: children with an unseen output | | more than random padding's |
+
+**Measured (2026-10-29, GPU, `--eval rust`, binary 66367dbe; the new cases: 19 for histogram, 19 for pathfinder).** Ring canvas: `--check --start llm-ring --pool kingdoms/futhark_shapes/sig/<b>/pool` (the benchmarks' functions and the topic programs, the published file left out). Random padding: the fitness agent's checks A3 and A4, with the same cases, the same seed and the same random-gene path.
+
+| measurement (1,400 fresh genes) | histogram, random padding | histogram, ring canvas | pathfinder, random padding | pathfinder, ring canvas |
+|---|---|---|---|---|
+| all-zero share | 40.8 % | **13.8 %** | 47.2 % | not yet measured |
+| distinct outputs | 354 | **530** | 201 | not yet measured |
+| distinct programs | 1,039 | 876 | 907 | not yet measured |
+| median fitness of the fresh genes (lower is better) | 1.358 | 1.511 | 1.371 | not yet measured |
+
+On histogram, the ring canvas cuts the all-zero share to a third (40.8 % to 13.8 %) and gives 50 % more distinct outputs (354 to 530), from fewer distinct programs. Its median fresh gene scores worse than a random gene's, though (1.511 against 1.358). The remaining jobs wait until the reruns have used the GPU: the pathfinder canvas check, then the growth sets (700 children each, ring canvas against random padding, both benchmarks; `--measure grow`). Their outputs go to `/private/tmp/claude-501/fpool/m_*`.
 
 ### I. Reading-frame operators, once the open reading frames are real (Andrew, 2026-10-28)
 With random padding, an operator that moves unread cells into the reading frame brings in junk, which is why only point mutation on coding cells is used today (`futhark_evolve.rs:798`). With ring padding, the unread cells are real sequences, so such operators become worth having. Each works inside one type's frame, so every symbol stays a legal row of its own type, and a tail cell keeps a terminal.
@@ -151,8 +163,8 @@ Expectations, stated before each measurement; results after.
 |---|---|---|---|---|
 | A1 | histogram (N = 8), the fitness of the study | 7 inputs a case, the 5 stored cases | fail: the median neighbour beats under 99 % of random genes (the review puts neighbours at 1.03 to 1.32, inside random search's band); Spearman positive or near 0 (unlike the ledgers, random genes do not bloat) | **fail**: median neighbour beats 98.86 % of random genes; Spearman −0.080 (random genes alone −0.215); 66.7 % of neighbours better than the median random gene, 15.9 % better than the best; all-zeros share 44.2 %; 209 distinct outputs in 1,400 draws (1,039 distinct programs) |
 | A1′ | A1's GPU outputs re-scored with graded per-cell inputs (offline, 20 variants of scale, shape and exactness inputs) | old cases | Spearman positive; neighbours still tied with random genes, because whole-range values wrap | Spearman +0.18 to +0.31 in every variant; median neighbour beats 40 to 52 % of random genes: **fail**. The old cases give no partial credit (fault 4); section C is needed |
-| A2 | pathfinder (N = 13), the fitness of the study | 7 inputs a case, the 8 stored cases | fail, as A1 | |
-| A3 | histogram, the fitness of the study | the new cases (11 training with stepping stones, 4 held-out, 4 test never in the fitness) | the stepping stones let partial programs be exact on some cases: the median neighbour beats more random genes than in A1; Spearman still not clearly positive (the step inputs) | |
+| A2 | pathfinder (N = 13), the fitness of the study | 7 inputs a case, the 8 stored cases | fail, as A1 | **fail**: median neighbour beats 92.71 %; Spearman +0.437 (random alone +0.249); 96.6 % of neighbours better than the median random gene, 24.7 % than the best; all-zeros 47.3 %; 195 distinct outputs (907 distinct programs). Offline, ~100 formulas on its outputs top out at 93.4 %; the best quarter of neighbours already beats 99.9 % of random genes |
+| A3 | histogram, the fitness of the study | the new cases (11 training with stepping stones, 4 held-out, 4 test never in the fitness) | the stepping stones let partial programs be exact on some cases: the median neighbour beats more random genes than in A1; Spearman still not clearly positive (the step inputs) | median neighbour beats 98.50 % (A1 98.86 %); **Spearman +0.370** (A1 −0.080); all-zeros 40.8 %; 354 distinct outputs. Passes the 95 % rule; the step-sign input rewards rising junk (`(tab (ival.k j1))` beats the all-zeros output only because it rises) |
 | A4 | pathfinder, the fitness of the study | the new cases (10 training with 2- and 3-row stepping stones, 5 held-out, 4 test) | as A2, slightly better | |
 
 ## Expectations, stated before any run
