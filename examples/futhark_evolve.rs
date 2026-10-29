@@ -1164,7 +1164,9 @@ fn alternatives_population(run: &mut Run, sig: &Signature, alternatives: &[Tree]
 /// uniformly, kept only if its text and its tree differ from every member's (`fuller::futhark_rings::mutants`), until
 /// the population is full. Logs the seed program, the mutants tried and kept and each member's tree edit distance
 /// from the seed (`OUT/population.tsv`); every kept mutant is a mutation event.
-fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usize, rng: &mut GeneRng) -> Result<Vec<Individual>, String> {
+/// With `keep_seed` false (`--gen0 fable-mutants-only`, Andrew, 2026-10-29: the winner dominated), the seed is grown
+/// and logged but left out of generation 0, so the population is `pop` mutants and no seed.
+fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usize, keep_seed: bool, rng: &mut GeneRng) -> Result<Vec<Individual>, String> {
     if run.gen.canvas.is_none() {
         return Err("--gen0 fable-mutants writes the seed onto a ring canvas: it needs --start llm-ring".into());
     }
@@ -1172,7 +1174,7 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
     let seed = build_at(run.gen.k, &e.sexp, &e.dual)?;
     fuller::typed_gep::fits(run.gen.contract, run.gen.layout, &seed).map_err(|x| format!("the seed program does not fit the layout: {x}"))?;
     let g0 = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(rng)?, &seed).map_err(|x| format!("the seed's write-back: {x}"))?;
-    let spec = fuller::futhark_rings::MutantSpec { contract: run.gen.contract, layout: run.gen.layout, const_len: run.gen.const_len, pop, max_tries: 200 * pop };
+    let spec = fuller::futhark_rings::MutantSpec { contract: run.gen.contract, layout: run.gen.layout, const_len: run.gen.const_len, pop: pop + usize::from(!keep_seed), max_tries: 200 * pop };
     let m = {
         let gen = &run.gen;
         let mut mutate = |g: &mut Vec<u32>, r: &mut GeneRng| -> Result<(), String> {
@@ -1198,8 +1200,12 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
         run.tel.mutation(0, ev)?;
         out.push(ind);
     }
+    if !keep_seed {
+        out.remove(0);
+        lines.push_str("\nthe seed (member 0) is LEFT OUT of generation 0 (--gen0 fable-mutants-only)\n");
+    }
     std::fs::write(run.out.join("population.tsv"), &lines).map_err(|x| x.to_string())?;
-    let msg = format!("generation 0 from the seed program and its {operator} mutants: {} kept of {} tried (no two members with one text or one tree)", m.genes.len() - 1, m.tried);
+    let msg = format!("generation 0 from the seed program and its {operator} mutants: {} kept of {} tried (no two members with one text or one tree); the seed {}", m.genes.len() - 1, m.tried, if keep_seed { "is in" } else { "is LEFT OUT" });
     println!("# {} {msg}\n# seed: {}", utc(), e.sexp);
     run.tel.note(0, msg)?;
     Ok(out)
@@ -2013,10 +2019,11 @@ fn real_main() -> Result<(), String> {
             }
             // Keep the start and the smallest variants (the e-graph orders them by size).
             cands.truncate(pop);
-        } else if arg(&args, "--gen0").as_deref() == Some("fable-mutants") {
+        } else if matches!(arg(&args, "--gen0").as_deref(), Some("fable-mutants" | "fable-mutants-only")) {
             // Generation 0 from ONE seed program (Fable's, cached in the pool) and its mutants by the run's operator.
             let dir = PathBuf::from(arg(&args, "--pool").ok_or("--gen0 fable-mutants needs --pool DIR (seed.tsv: examples/futhark_pool.rs seed)")?);
-            cands = fable_mutants_population(&mut run, &sig, &dir, pop, &mut rng0)?;
+            let keep_seed = arg(&args, "--gen0").as_deref() == Some("fable-mutants");
+            cands = fable_mutants_population(&mut run, &sig, &dir, pop, keep_seed, &mut rng0)?;
         } else if canvas.is_some() && arg(&args, "--gen0").as_deref() != Some("canvas") {
             // Generation 0 of `--start llm-ring` (R, C): Sonnet's task alternatives, distinct, on ring canvases. With
             // `--gen0 canvas` it is fresh ring-canvas genes instead (the branch below), the alternatives not used.
