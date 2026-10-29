@@ -194,3 +194,10 @@ Every case set against every formula tried, with every measure: `docs/measuremen
 | one-edit neighbours against random genes | every neighbour ranks above the median random gene |
 | R against C, histogram and pathfinder, after all fixes | R's best better than C's best in at least 2 of 3 seeds each |
 | exact programs from random, histogram and pathfinder | possible, not expected |
+
+### J. Stage 2 gated by correctness (Andrew, 2026-10-29)
+The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast programs above an exact but slow one (`docs/reports/2026-10-29_futhark_reruns.md`). Andrew's fix: multiply by correctness, 0 or 1. Lower is better here, so the gate is written as two bands that cannot overlap, the pattern `futhark_shapes_evolve::fitness_of` already uses:
+- **exact** (on every training and held-out case): fitness = the two-level HFF angle (quality and speed), in [0, π/2);
+- **inexact:** fitness = π/2 + the quality angle, so every inexact program ranks below every exact one, and inexact programs still rank among themselves by quality, so they can be repaired.
+
+Test: an exact program 100 times slower ranks above every inexact program, however fast. Then rerun the improvement from Fable's histogram program.
