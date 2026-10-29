@@ -211,15 +211,13 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
     assert!(small <= wr, "the smallest variant's work {small}, the reference's {wr}");
 }
 
-/// The quality inputs give partial correctness a slope: on every pathfinder case of the fitness (training and
-/// held-out; a test case is never a fitness input), an output right on half the cells scores clearly better than one
-/// right on none, an output off by one everywhere better still than all zero, and the answer is 0 on every input.
-/// (Measured 2026-10-29 with the formula of `QUALITY_PARTS`: every fitness case clears the 0.2 margin by 0.40 or
-/// more; the 3-cell test case test_300x3 by 0.168.)
+/// The quality inputs give partial correctness a slope: on every pathfinder case, an output right on half the cells
+/// scores clearly better than one right on none, an output off by one everywhere better still than all zero, and
+/// the answer is 0 on every input.
 #[test]
 fn the_quality_inputs_give_partial_correctness_a_slope() {
     let angle = |q: &[f64]| crate::runner::staged_hff(crate::runner::FitnessStage::Quality, q, &[]).unwrap().quality;
-    for c in load_cases(&PATHFINDER_PROBLEM).unwrap().into_iter().filter(|c| c.split.in_fitness()) {
+    for c in load_cases(&PATHFINDER_PROBLEM).unwrap() {
         let w = &c.output;
         let with = |f: &dyn Fn(usize, i32) -> i32| Array { dims: w.dims.clone(), data: w.data.iter().enumerate().map(|(i, x)| f(i, *x)).collect() };
         assert_eq!(quality_inputs(w, w), vec![0.0; quality_input_names(w).len()], "{}: the answer is not 0", c.name);

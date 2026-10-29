@@ -1149,8 +1149,9 @@ pub enum QualityPart {
     /// is constant over two or more cells (it has no order to agree with, and "is the output flat" would only repeat
     /// the exactness share).
     Order,
-    /// One input a case: the share of cells off by over 10 % of the correct value's magnitude (at least 1).
-    Outside10,
+    /// One input a case: the share of cells off by over this percentage of the correct value's magnitude (at least
+    /// 1).
+    Outside(u8),
     /// The study's seven inputs a case (2026-10-27): the share of cells not exact; the shares off by over 1 %, 10 %
     /// and 50 % of the correct value's magnitude; the mean and largest error over the correct output's range, each
     /// `e / (1 + e)`; the share of neighbouring pairs in the wrong order (0 for one cell).
@@ -1158,14 +1159,17 @@ pub enum QualityPart {
 }
 
 /// THE QUALITY INPUTS' FORMULA: the parts each case contributes, in order (plan section B, chosen 2026-10-29 by the
-/// slope check on the GPU's outputs of histogram's new cases; `docs/PLAN_futhark_fitness_fixes.md` records every
-/// formula tried). The exactness share, the two shape inputs, the order share and the share off by over 10 %: it
-/// passes the check (the median neighbour beats 97.71 % of random genes, Spearman +0.077) and does not reward the
-/// all-zeros output (68.8 % of the non-zero wrong random outputs score better than it; under the study's seven
-/// inputs 28.8 %, so the dead point scored better than most real-looking wrong outputs). The order input is what
-/// makes an output off by one everywhere beat all zeros on a small-valued case. Graded per-cell inputs were measured and lose:
-/// histogram's whole-range cases give hundreds of cells of unrelated large numbers that drown the exactness signal.
-pub const QUALITY_PARTS: &[QualityPart] = &[QualityPart::Wrong, QualityPart::Shape, QualityPart::Order, QualityPart::Outside10];
+/// slope check on the GPU's outputs; `docs/PLAN_futhark_fitness_fixes.md` and
+/// `docs/measurements/2026-10-29_futhark_slope_check.tsv` record every formula tried). The exactness share, the two
+/// shape inputs and the shares off by over 50 % and 1 %. Of every combination of the measured parts it is the one that
+/// passes the check on BOTH benchmarks (histogram: the median neighbour beats 97.4 % of random genes, Spearman
+/// +0.079; pathfinder: 99.0 %, +0.402), does not reward the all-zeros output (68.6 % and 84.1 % of the non-zero
+/// wrong random outputs score better than it; under the study's seven inputs 28.8 % on histogram), and keeps the
+/// partial-correctness test's margins on every pathfinder case (`tests::the_quality_inputs_give_partial_correctness_a_slope`).
+/// Graded per-cell inputs were measured and lose: histogram's whole-range cases give hundreds of cells of unrelated
+/// large numbers that drown the exactness signal, and on pathfinder a level-matching constant beats the
+/// near-neighbours.
+pub const QUALITY_PARTS: &[QualityPart] = &[QualityPart::Wrong, QualityPart::Shape, QualityPart::Outside(50), QualityPart::Outside(1)];
 
 /// The names of [`quality_inputs`] against a correct output `want`, in order: their number depends on the case
 /// (one input a cell or a step).
@@ -1183,7 +1187,7 @@ pub fn quality_input_names(want: &Array) -> Vec<String> {
             QualityPart::Shape => {}
             QualityPart::Order if n >= 2 && distinct < 2 => {}
             QualityPart::Order => out.push("order_wrong".to_string()),
-            QualityPart::Outside10 => out.push("outside_10pct".to_string()),
+            QualityPart::Outside(p) => out.push(format!("outside_{p}pct")),
             QualityPart::Study => out.extend(STUDY_INPUTS.iter().map(|s| s.to_string())),
         }
     }
@@ -1256,7 +1260,7 @@ pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
             QualityPart::Shape => {}
             QualityPart::Order if n >= 2 && distinct < 2 => {}
             QualityPart::Order => out.push(study_inputs(got, want)[6]),
-            QualityPart::Outside10 => out.push(got.data.iter().zip(&want.data).filter(|(g, w)| (i64::from(**g) - i64::from(**w)).unsigned_abs() as f64 / f64::from(**w).abs().max(1.0) > 0.10).count() as f64 / n.max(1) as f64),
+            QualityPart::Outside(p) => out.push(got.data.iter().zip(&want.data).filter(|(g, w)| (i64::from(**g) - i64::from(**w)).unsigned_abs() as f64 / f64::from(**w).abs().max(1.0) > f64::from(*p) / 100.0).count() as f64 / n.max(1) as f64),
             QualityPart::Study => out.extend(study_inputs(got, want)),
         }
     }

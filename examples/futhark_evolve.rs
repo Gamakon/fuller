@@ -1778,6 +1778,13 @@ fn real_main() -> Result<(), String> {
         println!("# {} control: the yardstick on the GPU gives futhark c's output on {} (GPU)", utc(), run.judge.timing.label());
     }
     let ref_source = program(&k, &sig, &reference)?;
+    if check_replay.is_some() && measure.is_none() {
+        // A REPLAYED check runs nothing on the GPU: the stored outputs are the GPU's, the reference's own among them,
+        // and the check stops with our bug if the reference does not score 0 on them.
+        slope_check_command(&mut run, &sig, &reference, pop, check_random, seed, check_replay.as_deref(), program_size)?;
+        run.tel.end("early_stop", 0, None)?;
+        return Ok(());
+    }
     run.judge.prefetch(&[(&reference, ref_source.as_str())], FitnessStage::Quality)?;
     let ref_q = run.judge.quality(&reference, &ref_source)?;
     if !ref_q.perfect() {

@@ -1,0 +1,83 @@
+benchmark	cases	formula	median_neighbour_beats_random	spearman_fitness_distance	neighbours_above_median_random	auc_neighbour_beats_random	best_quarter_neighbour_beats_random	nonzero_wrong_better_than_all_zero	pass_95
+histogram	old: the study 5 cases	CHOSEN 2026-10-29 01Z: wrong + shape + outside 50 % + outside 1 %	0.7921	-0.06	0.661	0.704	0.9907	0.726	fail
+histogram	old: the study 5 cases	used by the running histogram reruns: wrong + shape + order + outside 10 %	0.9886	0.038	0.654	0.772	0.9929	0.549	pass
+histogram	old: the study 5 cases	study (7 inputs a case)	0.9886	-0.08	0.667	0.751	0.9929	0.775	fail
+histogram	old: the study 5 cases	wrong share	0.0	0.265	0.476	0.734	0.9914	0.015	fail
+histogram	old: the study 5 cases	wrong + order	0.9907	0.006	0.651	0.768	0.9907	0.507	pass
+histogram	old: the study 5 cases	wrong + shape	0.8557	0.107	0.559	0.71	0.9929	0.279	fail
+histogram	old: the study 5 cases	wrong + out50	0.895	-0.096	0.651	0.676	0.8971	0.695	fail
+histogram	old: the study 5 cases	wrong + cell log	0.5114	0.275	0.81	0.784	0.9921	0.076	fail
+histogram	old: the study 5 cases	wrong + cell level	0.4279	0.305	0.429	0.721	0.9921	0.233	fail
+histogram	old: the study 5 cases	wrong + cell log + step	0.9843	0.222	0.627	0.857	0.9979	0.155	pass
+histogram	old: the study 5 cases	wrong + cell level + step	0.9786	0.255	0.627	0.828	0.9971	0.307	pass
+histogram	old: the study 5 cases	wrong + cell level + shape + step	0.9736	0.258	0.63	0.828	0.9921	0.303	pass
+histogram	old: the study 5 cases	wrong + cell log ratio	0.5929	-0.152	0.667	0.523	0.6	0.99	fail
+histogram	old: the study 5 cases	wrong + shape + order	0.9907	0.133	0.63	0.787	0.9907	0.287	pass
+histogram	old: the study 5 cases	wrong + shape + outside 10 %	0.8679	0.03	0.622	0.729	0.9929	0.538	fail
+histogram	new: 15 fitness cases with stepping stones	CHOSEN 2026-10-29 01Z: wrong + shape + outside 50 % + outside 1 %	0.9736	0.079	0.685	0.709	0.9886	0.686	pass
+histogram	new: 15 fitness cases with stepping stones	used by the running histogram reruns: wrong + shape + order + outside 10 %	0.9771	0.077	0.748	0.785	0.9857	0.688	pass
+histogram	new: 15 fitness cases with stepping stones	study (7 inputs a case)	0.985	0.37	0.69	0.829	0.9857	0.288	pass
+histogram	new: 15 fitness cases with stepping stones	wrong share	0.9879	0.275	0.571	0.766	0.9879	0.115	pass
+histogram	new: 15 fitness cases with stepping stones	wrong + order	0.9693	0.021	0.77	0.798	0.9807	0.715	pass
+histogram	new: 15 fitness cases with stepping stones	wrong + shape	0.8357	0.146	0.528	0.645	0.9879	0.374	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + out50	0.9857	-0.005	0.73	0.739	0.9857	0.86	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + cell log	0.925	0.333	0.611	0.761	0.9329	0.259	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + cell level	0.4771	0.272	0.357	0.578	0.505	0.147	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + cell log + step	0.8957	0.261	0.762	0.825	0.9757	0.41	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + cell level + step	0.9657	0.319	0.722	0.861	0.9843	0.212	pass
+histogram	new: 15 fitness cases with stepping stones	wrong + cell level + shape + step	0.9657	0.324	0.701	0.85	0.9829	0.204	pass
+histogram	new: 15 fitness cases with stepping stones	wrong + cell log ratio	0.5079	-0.132	0.714	0.537	0.5393	0.973	fail
+histogram	new: 15 fitness cases with stepping stones	wrong + shape + order	0.9679	0.133	0.732	0.775	0.9707	0.489	pass
+histogram	new: 15 fitness cases with stepping stones	wrong + shape + outside 10 %	0.9771	0.109	0.63	0.704	0.9886	0.593	pass
+pathfinder	old: the study 8 cases	CHOSEN 2026-10-29 01Z: wrong + shape + outside 50 % + outside 1 %	0.845	0.406	0.966	0.876	1.0	0.766	fail
+pathfinder	old: the study 8 cases	used by the running histogram reruns: wrong + shape + order + outside 10 %	0.9257	0.439	0.966	0.898	1.0	0.489	fail
+pathfinder	old: the study 8 cases	study (7 inputs a case)	0.9271	0.437	0.966	0.896	0.9993	0.804	fail
+pathfinder	old: the study 8 cases	wrong share	0.8093	0.495	0.949	0.915	0.9993	0.382	fail
+pathfinder	old: the study 8 cases	wrong + order	0.9257	0.441	0.961	0.902	1.0	0.485	fail
+pathfinder	old: the study 8 cases	wrong + shape	0.925	0.454	0.955	0.893	0.9993	0.449	fail
+pathfinder	old: the study 8 cases	wrong + out50	0.8314	0.338	0.966	0.819	0.9979	0.763	fail
+pathfinder	old: the study 8 cases	wrong + cell log	0.8164	0.275	0.86	0.731	0.9193	0.856	fail
+pathfinder	old: the study 8 cases	wrong + cell level	0.8286	0.31	0.792	0.715	0.9193	0.692	fail
+pathfinder	old: the study 8 cases	wrong + cell log + step	0.9336	0.423	0.966	0.881	0.9993	0.892	fail
+pathfinder	old: the study 8 cases	wrong + cell level + step	0.9243	0.413	0.933	0.847	0.9971	0.736	fail
+pathfinder	old: the study 8 cases	wrong + cell level + shape + step	0.9243	0.413	0.933	0.848	0.9993	0.736	fail
+pathfinder	old: the study 8 cases	wrong + cell log ratio	0.785	0.214	0.955	0.777	0.9236	0.985	fail
+pathfinder	old: the study 8 cases	wrong + shape + order	0.9257	0.439	0.955	0.891	0.9257	0.473	fail
+pathfinder	old: the study 8 cases	wrong + shape + outside 10 %	0.925	0.461	0.961	0.905	0.9993	0.462	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	CHOSEN 2026-10-29 01Z: wrong + shape + outside 50 % + outside 1 %	0.8536	0.385	0.966	0.863	0.9993	0.843	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	used by the running histogram reruns: wrong + shape + order + outside 10 %	0.9257	0.439	0.966	0.901	1.0	0.836	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	study (7 inputs a case)	0.93	0.421	0.966	0.879	0.9993	0.871	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong share	0.8993	0.483	0.966	0.913	1.0	0.674	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + order	0.9257	0.443	0.972	0.905	1.0	0.712	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + shape	0.9257	0.468	0.966	0.905	1.0	0.667	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + out50	0.9129	0.328	0.972	0.828	0.9979	0.85	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell log	0.8279	0.327	0.871	0.76	0.9193	0.858	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell level	0.8286	0.31	0.798	0.713	0.9193	0.696	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell log + step	0.935	0.425	0.972	0.881	0.9993	0.892	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell level + step	0.9114	0.413	0.927	0.846	0.9971	0.732	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell level + shape + step	0.9114	0.413	0.927	0.847	0.9993	0.732	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + cell log ratio	0.79	0.229	0.961	0.791	0.9307	0.982	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + shape + order	0.9257	0.445	0.966	0.897	1.0	0.698	fail
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	wrong + shape + outside 10 %	0.925	0.459	0.966	0.909	1.0	0.808	fail
+pathfinder	new + stepping stones: 19 fitness cases	CHOSEN 2026-10-29 01Z: wrong + shape + outside 50 % + outside 1 %	0.99	0.402	0.955	0.878	1.0	0.841	pass
+pathfinder	new + stepping stones: 19 fitness cases	used by the running histogram reruns: wrong + shape + order + outside 10 %	0.9243	0.437	0.966	0.904	0.9993	0.841	fail
+pathfinder	new + stepping stones: 19 fitness cases	study (7 inputs a case)	0.9293	0.421	0.955	0.882	1.0	0.872	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong share	0.8993	0.484	0.966	0.913	0.9993	0.673	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + order	0.925	0.442	0.972	0.905	0.9993	0.712	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + shape	0.9243	0.448	0.939	0.882	0.9993	0.677	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + out50	0.835	0.332	0.978	0.835	1.0	0.85	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell log	0.8157	0.34	0.921	0.791	0.92	0.862	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell level	0.8229	0.316	0.815	0.723	0.9193	0.696	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell log + step	0.935	0.424	0.972	0.885	0.9993	0.893	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell level + step	0.9029	0.413	0.927	0.846	0.9986	0.732	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell level + shape + step	0.9114	0.412	0.927	0.846	0.9964	0.732	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + cell log ratio	0.7914	0.229	0.961	0.794	0.9936	0.985	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + shape + order	0.9257	0.445	0.966	0.896	1.0	0.699	fail
+pathfinder	new + stepping stones: 19 fitness cases	wrong + shape + outside 10 %	0.9243	0.452	0.955	0.901	0.9993	0.816	fail
+
+benchmark	cases	inexact_neighbours	neighbours_sharing_an_output_with_a_random_gene	random_all_zero_share	random_distinct_outputs
+histogram	old: the study 5 cases	126	82	0.4421	209
+histogram	new: 15 fitness cases with stepping stones	126	70	0.4079	354
+pathfinder	old: the study 8 cases	178	60	0.4729	195
+pathfinder	new: 15 fitness cases (2- and 3-row steps)	178	57	0.4721	201
+pathfinder	new + stepping stones: 19 fitness cases	178	57	0.4714	202
