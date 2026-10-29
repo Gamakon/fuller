@@ -1965,8 +1965,9 @@ fn real_main() -> Result<(), String> {
             }
             // Keep the start and the smallest variants (the e-graph orders them by size).
             cands.truncate(pop);
-        } else if canvas.is_some() {
-            // Generation 0 of `--start llm-ring` (R, C): Sonnet's task alternatives, distinct, on ring canvases.
+        } else if canvas.is_some() && arg(&args, "--gen0").as_deref() != Some("canvas") {
+            // Generation 0 of `--start llm-ring` (R, C): Sonnet's task alternatives, distinct, on ring canvases. With
+            // `--gen0 canvas` it is fresh ring-canvas genes instead (the branch below), the alternatives not used.
             let bar: usize = num(&args, "--distinct-edits", 5)?;
             cands = alternatives_population(&mut run, &sig, &pool_programs, &reference, pop, bar, &mut rng0)?;
         } else {
