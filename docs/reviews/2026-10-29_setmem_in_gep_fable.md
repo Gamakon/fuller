@@ -19,9 +19,8 @@ sequentially inside a kernel thread. Futhark emits `SetMem mem_param_ext <- colo
 OUR WGSL generator (patch 0001) resolves a SetMem only at control depth 0. The bug is in the backend; a genotype
 cannot fix a backend.
 
-Memory in the gene would also make two layers decide one thing: the gene says "reuse this block", Futhark's memory
-pass still allocates, double-buffers and merges as it likes, so the gene's memory words are non-coding at best and
-contradicted at worst.
+Memory in the gene would also make two layers decide one thing: Futhark's memory pass would still allocate and
+merge as it likes, so the gene's memory words would be non-coding at best and contradicted at worst.
 
 ## 2. A memory block is not a homeotic gene, on either reading
 
@@ -77,9 +76,8 @@ range by its type. No row's signature asks for a unique array, so no gene spells
 checker has nothing to refuse. `U` nests like `L`: histogram's 607 types and 4,389 rows grow by about a third.
 
 Block, view and lifetime types (the PROPOSAL's batch 10) belong to the WGSL kingdom, which has no compiler to derive
-them. There a lifetime must be a context suffix of the dual, as `L-k-a.n` is now, because a reuse row's legality
-depends on a phase elsewhere in the tree; that multiplies types by the phase count, and it is the only way the rule
-can be local to a slot.
+them. There a lifetime must be a context suffix of the dual, as `L-k-a.n` is now, since a reuse row's legality
+depends on a phase elsewhere in the tree; that multiplies types by the phase count.
 
 ## 4. Expression, variation and fold
 
@@ -96,11 +94,10 @@ hold a genic terminal), and the memo key would need time. Another reason not to.
 **Conclusion: the genotype does not help the failing programs at all; the backend fix does, and it is small.**
 
 Measured in `fcheck/A1_histogram` (program size 8, `--eval rust`, 1,529 programs): 5 at fault for "SetMem inside a
-loop or conditional", 3 other failures; the studies' worst run had 13 of 1,400. I found no run at one in six;
-whatever run gave that figure, every failing program has the one shape above. Random search hits it six times more
-than evolution (29 against 5) because those programs are nonsense (the loop state is never read). The cost is not
-the rate: the shape penalised, an array-carrying loop, is pathfinder's reference shape, so scoring it worst biases
-that search.
+loop or conditional", 3 other failures; the studies' worst run had 13 of 1,400. I found no run at one in six, and
+every failing program has the one shape above. Random search hits it six times more than evolution (29 against 5)
+because those programs are nonsense (the loop state is never read). The cost is not the rate: the shape penalised,
+an array-carrying loop, is pathfinder's reference shape, so scoring it worst biases that search.
 
 The fix is patch 0007 in the fork: in a kernel every block is a module-scope binding, so the blocks a memory variable
 can stand for are a finite set known at code generation. Give the variable a `u32` tag, make `SetMem x y` the
