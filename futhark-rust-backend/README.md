@@ -11,6 +11,9 @@ makes that fork reproducible: the patches and the script that applies them.
 | `patches/0003`, `0005` | names keyed by their full spelling (Futhark's `VName` compares by tag, and a constant and a local can share one); a helper renamed |
 | `patches/0004` | a register array sized by a kernel constant (A7's `[Rx][Rx]f32` tile): a module-scope `const` with the marker `/*futhark-specialise:OVERRIDE*/ 0`, which the runtime fills in from the program's macro values before it makes the shader module (Futhark's OpenCL/CUDA backends pass such constants to the kernel compiler as macros) |
 | `patches/0006` | an upstream defect: a boolean kernel constant was declared an `i64`, so an `if` on it was invalid WGSL (both A7 programs) |
+| `patches/0007` | the rust-wgpu backend passes a unit scalar to a kernel (`rt::KArg::Unit`, the C backend's one-byte zero), and `bare` no longer strips the unit value `()` to an empty argument (192 corpus programs) |
+| `patches/0008` | SetMem of device and shared memory in a kernel, in any loop or conditional: a memory variable that can name one binding is renamed to it; one that can name several holds a selector (the number of the binding it names now), and every access through it dispatches on the selector. Replaces 0001's rename-outside-control-flow (143 corpus programs) |
+| `patches/0009` | an upstream defect, also in Futhark 0.28.1: the flatten pass paired every SegHist operator's destinations with the first operator's result shapes, an ill-typed SegHist ("Type error after pass 'simplify'") when two histograms in one map have different bin counts. Reproducer and bug report: `UPSTREAM_flatten_seghist.txt`; Futhark test `tests/flattening/hist/different-bins.fut` (38 corpus programs) |
 | `build.sh [dir]` | clone the base, apply the series, build with cabal (GHC 9.14.1, cabal 3.18, from Homebrew), install `<dir>/bin/futhark` |
 
 The fork is never pushed anywhere; regenerate the series from it with

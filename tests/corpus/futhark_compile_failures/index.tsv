@@ -1,0 +1,374 @@
+file	kind	first_failing_stage	error	bugs_log_entries
+setmem_loop__04ece0a0e3a2.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13858 <- mem_13854 @@global	histogram_R_s1:1
+setmem_loop__061428005323.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11663 <- color_11629 @@global	histogram_R_s2:1
+setmem_loop__075d3de5063e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12094 <- color_12052 @@global	histogram_R_s2:1
+setmem_loop__0c9cc35d472e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10640 <- color_10628 @@global	histogram_R_s2:1
+setmem_loop__0f3752d57dfc.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11366 <- mem_11362 @@global	histogram_R_s1:1
+setmem_loop__103a96c42fdb.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12821 <- mem_12817 @@global	histogram_R_s1:1
+setmem_loop__103eea4b1622.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10068 <- walls_mem_10041 @@global	pathfinder_R_s2:1
+setmem_loop__1076e0ead5a3.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11683 <- color_11643 @@global	histogram_R_s2:1
+setmem_loop__11d2268db347.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12014 <- color_11998 @@global	histogram_R_s1:1
+setmem_loop__12702ac1b496.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11871 <- color_11831 @@global	histogram_R_s2:1
+setmem_loop__138bd6a2f200.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11381 <- mem_11377 @@global	histogram_R_s1:1
+setmem_loop__157d3108a122.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10692 <- color_10689 @@global	pathfinder_R_s2:1
+setmem_loop__16516de7f5fa.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11582 <- mem_11578 @@global	histogram_R_s1:1
+setmem_loop__19fc9d9d1904.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13656 <- mem_13652 @@global	histogram_R_s1:1
+setmem_loop__1c51dcfcbb94.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11993 <- color_11960 @@global	histogram_R_s2:1
+setmem_loop__1e62c67797a0.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13539 <- mem_13535 @@global	histogram_R_s1:1
+setmem_loop__1fe32a20b313.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11283 <- color_11252 @@global	histogram_R_s2:1
+setmem_loop__2141f8773933.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12390 <- mem_12386 @@global	histogram_R_s1:1
+setmem_loop__225547ef9e36.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9863 <- mem_9859 @@global	histogram_R_s1:1
+setmem_loop__295d3ce1f6c8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10133 <- mem_10118 @@global	histogram_R_s1:1
+setmem_loop__2b721cbf57af.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10700 <- mem_10696 @@global	histogram_R_s1:1
+setmem_loop__2cd9f81047a6.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10356 <- mem_10352 @@global	histogram_R_s1:1
+setmem_loop__2dce6f520bd2.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12508 <- color_12475 @@global	histogram_R_s2:1
+setmem_loop__2f542bc4dec6.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9514 <- mem_9510 @@global	histogram_R_s1:1
+setmem_loop__3040de9b1a8d.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_13833 <- color_13802 @@global	histogram_R_s1:1
+setmem_loop__334059a9b3bc.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13068 <- mem_13064 @@global	histogram_R_s1:1
+setmem_loop__369caa6774e9.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11723 <- color_11683 @@global	histogram_R_s2:1
+setmem_loop__37940fa8f1d8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11828 <- color_11788 @@global	histogram_R_s2:1
+setmem_loop__39b2c96edfb9.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12747 <- color_12714 @@global	histogram_R_s2:1
+setmem_loop__3cb63653c8e8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11315 <- color_11283 @@global	histogram_R_s2:1
+setmem_loop__3dca6282f5aa.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10578 <- mem_10574 @@global	histogram_R_s1:1
+setmem_loop__3e7e97484383.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11790 <- mem_11786 @@global	histogram_R_s1:1
+setmem_loop__3eda3f0ec073.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12527 <- mem_12523 @@global	histogram_R_s2:1
+setmem_loop__3fab7c024947.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12027 <- color_11980 @@global	histogram_R_s2:1
+setmem_loop__3fd81f2189d8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11854 <- color_11816 @@global	histogram_R_s2:1
+setmem_loop__40bf77a45a06.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12830 <- color_12792 @@global	histogram_R_s2:1
+setmem_loop__41bdb1c39143.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11253 <- color_11239 @@global	histogram_R_s2:1
+setmem_loop__4329ca945c61.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12830 <- color_12816 @@global	histogram_R_s2:1
+setmem_loop__45e18ea3f5e5.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10903 <- color_10883 @@global	histogram_R_s2:1
+setmem_loop__482ee5a9bc79.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11701 <- color_11650 @@global	histogram_R_s1:1
+setmem_loop__48e270eb4707.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10306 <- mem_10302 @@global	histogram_R_s1:1
+setmem_loop__4d413e2a3945.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10596 <- color_10584 @@global	histogram_R_s2:1
+setmem_loop__4fbdc16dfe12.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12479 <- mem_12475 @@global	histogram_R_s2:1
+setmem_loop__52d15849062e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_14222 <- mem_14218 @@global	histogram_R_s1:1
+setmem_loop__5597cd10c140.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11905 <- color_11857 @@global	histogram_R_s2:1
+setmem_loop__56ed8bb1fa34.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11478 <- mem_11474 @@global	histogram_R_s1:1
+setmem_loop__56f3c38775a8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11693 <- color_11679 @@global	histogram_R_s2:1
+setmem_loop__5ad22b2d88f1.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11316 <- color_11277 @@global	histogram_R_s2:1
+setmem_loop__5cce1f341e14.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12919 <- mem_12915 @@global	histogram_R_s2:1
+setmem_loop__5f85f4855cb7.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13647 <- mem_13643 @@global	histogram_R_s1:1
+setmem_loop__60977b522720.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9719 <- mem_9715 @@global	histogram_R_s2:1
+setmem_loop__617db3f95470.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11140 <- color_11116 @@global	histogram_R_s2:1
+setmem_loop__61c76e524b99.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13339 <- mem_13335 @@global	histogram_R_s1:1
+setmem_loop__6262280bf294.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9776 <- mem_9772 @@global	histogram_R_s1:1
+setmem_loop__6752ccdc8eac.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10570 <- color_10546 @@global	histogram_R_s1:1
+setmem_loop__68cb4352d293.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13407 <- mem_13403 @@global	histogram_R_s1:1
+setmem_loop__68d2d6fa57ca.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11368 <- color_11344 @@global	histogram_R_s2:1
+setmem_loop__6d343625fd13.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11903 <- color_11865 @@global	histogram_R_s2:1
+setmem_loop__6dbcf232f240.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12921 <- mem_12917 @@global	histogram_R_s1:1
+setmem_loop__6dc513079cd2.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11789 <- mem_11785 @@global	histogram_R_s1:1
+setmem_loop__6e27d983bc78.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12696 <- mem_12692 @@global	histogram_R_s2:1
+setmem_loop__6e8300ecf1fe.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11321 <- mem_11317 @@global	histogram_R_s1:1
+setmem_loop__6f8ac5a118f9.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11798 <- color_11784 @@global	histogram_R_s2:1
+setmem_loop__6fa950a0df13.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11560 <- color_11527 @@global	histogram_R_s2:1
+setmem_loop__6fb00c27bc16.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11437 <- color_11413 @@global	histogram_R_s2:1
+setmem_loop__75a2bcb69a53.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13365 <- mem_13361 @@global	histogram_R_s1:1
+setmem_loop__75d50558fc1a.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11913 <- color_11873 @@global	histogram_R_s2:1
+setmem_loop__76e8390b78cf.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11999 <- vs_mem_11919 @@global	histogram_R_s2:1
+setmem_loop__7a2c61c3367d.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11624 <- color_11586 @@global	histogram_R_s2:1
+setmem_loop__7cc4407b4578.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11804 <- color_11765 @@global	histogram_R_s2:1
+setmem_loop__7da94dacb1ad.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10437 <- mem_10433 @@global	histogram_R_s1:1
+setmem_loop__7e0de121f14f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11740 <- color_11700 @@global	histogram_R_s2:1
+setmem_loop__7e6e3be7ba09.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10016 <- mem_10012 @@global	histogram_R_s1:1
+setmem_loop__7ef39d0c9f87.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11607 <- mem_11603 @@global	histogram_R_s1:1
+setmem_loop__81c1f7184c14.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_9838 <- color_9829 @@global	histogram_R_s2:1
+setmem_loop__83650236481e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11706 <- mem_11702 @@global	histogram_R_s1:1
+setmem_loop__840a1427263f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11592 <- color_11560 @@global	histogram_R_s2:1
+setmem_loop__847db4ecb19e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11868 <- mem_11864 @@global	histogram_R_s1:1
+setmem_loop__848c6e0c2a93.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12178 <- color_12131 @@global	histogram_R_s2:1
+setmem_loop__8b48eafdc77e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11550 <- color_11528 @@global	histogram_R_s2:1
+setmem_loop__8d34cc77f7a5.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11138 <- color_11107 @@global	histogram_R_s2:1
+setmem_loop__8fbc62709796.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10045 <- mem_10041 @@global	histogram_R_s1:1
+setmem_loop__914a463c6dfd.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11873 <- mem_11869 @@global	histogram_R_s1:1
+setmem_loop__9315a77f3568.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11135 <- color_11122 @@global	histogram_R_s2:1
+setmem_loop__9498364df373.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11656 <- color_11616 @@global	histogram_R_s2:1
+setmem_loop__953ce951a7d6.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13169 <- mem_13165 @@global	histogram_R_s1:1
+setmem_loop__9a84336c19ee.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12918 <- mem_12914 @@global	histogram_R_s1:1
+setmem_loop__9b37803b9366.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10657 <- mem_10642 @@global	histogram_R_s1:1
+setmem_loop__9bb9b360eb21.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12615 <- mem_12611 @@global	histogram_R_s1:1
+setmem_loop__9d2afb7bc7c8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11991 <- color_11951 @@global	histogram_R_s2:1
+setmem_loop__9e01fd9246e3.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12101 <- color_12059 @@global	histogram_R_s2:1
+setmem_loop__9e0b6bde6dc4.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11563 <- color_11522 @@global	histogram_R_s2:1
+setmem_loop__9e6ebacf3410.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13484 <- mem_13480 @@global	histogram_R_s1:1
+setmem_loop__a12c31b1150c.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13393 <- mem_13389 @@global	histogram_R_s1:1
+setmem_loop__a395e008e59e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12817 <- mem_12813 @@global	histogram_R_s1:1
+setmem_loop__a6e6620f27bc.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10222 <- is_mem_10215 @@global	histogram_R_s2:1
+setmem_loop__a82faae2d09c.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11607 <- mem_11603 @@global	histogram_R_s1:1
+setmem_loop__a88b7bd544a3.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9874 <- mem_9870 @@global	histogram_R_s2:1
+setmem_loop__abbd5a20cc75.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13097 <- mem_13093 @@global	histogram_R_s1:1
+setmem_loop__ac8bf8ef7fa7.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10306 <- mem_10302 @@global	histogram_R_s1:1
+setmem_loop__ad22864b18a1.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12064 <- color_12024 @@global	histogram_R_s2:1
+setmem_loop__af971d809adb.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10322 <- mem_10318 @@global	histogram_R_s1:1
+setmem_loop__b20966ed8a77.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10147 <- mem_10143 @@global	histogram_R_s1:1
+setmem_loop__b2be5c4c189f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12205 <- color_12163 @@global	histogram_R_s2:1
+setmem_loop__b36d621f0f9f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10286 <- color_10274 @@global	histogram_R_s2:1
+setmem_loop__b4dd74424a8d.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10303 <- mem_10299 @@global	histogram_R_s1:1
+setmem_loop__b8f3783bfc34.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11359 <- color_11345 @@global	histogram_R_s2:1
+setmem_loop__ba1c78cdd513.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11469 <- mem_11465 @@global	histogram_R_s1:1
+setmem_loop__babaf63368cc.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13436 <- mem_13432 @@global	histogram_R_s1:1
+setmem_loop__bc783780ee9f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10202 <- color_10190 @@global	histogram_R_s2:1
+setmem_loop__bd528e57b876.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11638 <- color_11598 @@global	histogram_R_s2:1
+setmem_loop__bd5e8d786cf4.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11969 <- color_11940 @@global	histogram_R_s2:1
+setmem_loop__be9181acb434.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11922 <- color_11898 @@global	histogram_R_s2:1
+setmem_loop__beb0ee3630df.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11772 <- color_11732 @@global	histogram_R_s2:1
+setmem_loop__beb9345ff891.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12577 <- mem_12573 @@global	histogram_R_s1:1
+setmem_loop__bf7bd861e9c0.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9544 <- mem_9540 @@global	histogram_R_s1:1
+setmem_loop__c08f736bd86f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10208 <- walls_mem_10177 @@global	pathfinder_R_s2:1
+setmem_loop__c0d3876111ed.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12897 <- color_12857 @@global	histogram_R_s2:1
+setmem_loop__c419fa5dea11.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_14041 <- mem_14037 @@global	histogram_R_s1:1
+setmem_loop__c5bd7ded112f.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10318 <- mem_10314 @@global	histogram_R_s1:1
+setmem_loop__caf93bb714f4.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12817 <- color_12784 @@global	histogram_R_s2:1
+setmem_loop__cba1e307d823.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13737 <- mem_13733 @@global	histogram_R_s1:1
+setmem_loop__cf4ba0ef2d49.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11258 <- mem_11254 @@global	histogram_R_s1:1
+setmem_loop__cf93f8064747.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11366 <- mem_11362 @@global	histogram_R_s1:1
+setmem_loop__d0684c664f3a.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11344 <- color_11313 @@global	histogram_R_s2:1
+setmem_loop__d1bc9e3621d2.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10332 <- mem_10328 @@global	histogram_R_s2:1
+setmem_loop__d89fe6f8a520.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11473 <- color_11436 @@global	histogram_R_s2:1
+setmem_loop__da2bd4e7282e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13026 <- mem_13022 @@global	histogram_R_s1:1
+setmem_loop__db6965f639e0.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11188 <- mem_11184 @@global	histogram_R_s1:1
+setmem_loop__dba1f7c6731b.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11574 <- color_11562 @@global	histogram_R_s2:1
+setmem_loop__deef8027d5c9.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11544 <- mem_11540 @@global	histogram_R_s1:1
+setmem_loop__e4b31f37c7b8.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11437 <- mem_11433 @@global	histogram_R_s1:1
+setmem_loop__e5a137c9233e.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_11413 <- mem_11409 @@global	histogram_R_s1:1
+setmem_loop__e63d4fc06e3d.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11262 <- color_11238 @@global	histogram_R_s2:1
+setmem_loop__e87d9bd28b15.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_10390 <- color_10378 @@global	histogram_R_s2:1
+setmem_loop__e8d958e84b98.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_12248 <- mem_12244 @@global	histogram_R_s2:1
+setmem_loop__e9a2677c45a9.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13759 <- mem_13755 @@global	histogram_R_s1:1
+setmem_loop__ec35a7a2d447.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_13056 <- mem_13052 @@global	histogram_R_s1:1
+setmem_loop__ed8bfacce24c.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10269 <- mem_10265 @@global	histogram_R_s2:1
+setmem_loop__efe925ff74f7.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_9903 <- mem_9899 @@global	histogram_R_s1:1
+setmem_loop__f190acda50cb.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_12019 <- color_12005 @@global	histogram_R_s2:1
+setmem_loop__f1b78a1d9ae5.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_ext_11991 <- color_11951 @@global	histogram_R_s2:1
+setmem_loop__f336998d6a32.fut	setmem_loop	3 branch webgpu	WebGPU backend cannot resolve a SetMem statement inside a loop or conditional mem_param_10568 <- mem_10564 @@global	histogram_R_s1:1
+simplify_type_error__01f1db060c6d.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq6_6842	histogram_R_s1:1
+simplify_type_error__19748c796a31.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq12_6842	histogram_R_s1:1
+simplify_type_error__1aa8b59c40c1.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq6_6842	histogram_R_s1:1
+simplify_type_error__1f83c0d177bd.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq5_6842	histogram_R_s1:1
+simplify_type_error__21b9af410ad4.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq14_6842	histogram_R_s1:1
+simplify_type_error__2471769b86e8.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq16_6842	histogram_R_s1:1
+simplify_type_error__2567a829fea9.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq6_6842	histogram_R_s1:1
+simplify_type_error__260b0cc440e1.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq12_6842	histogram_R_s1:1
+simplify_type_error__2efc70001703.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq16_6842	histogram_R_s1:1
+simplify_type_error__367a968d3e13.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq19_6842	histogram_R_s1:1
+simplify_type_error__3b51dfad3d1b.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq11_6842	histogram_R_s1:1
+simplify_type_error__405230514d4a.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq9_6842	histogram_R_s1:1
+simplify_type_error__416875d81fd2.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq16_6842	histogram_R_s1:1
+simplify_type_error__4becb09d9931.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq5_6842	histogram_R_s1:1
+simplify_type_error__503e75f5416e.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq11_6842	histogram_R_s1:1
+simplify_type_error__550829f0fcd7.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq18_6842	histogram_R_s1:1
+simplify_type_error__62195b07034a.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq17_6842	histogram_R_s1:1
+simplify_type_error__67bdedbcb05d.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq13_6842	histogram_R_s1:1
+simplify_type_error__6efba6264295.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq15_6842	histogram_R_s1:1
+simplify_type_error__7633f3410d65.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq13_6842	histogram_R_s1:1
+simplify_type_error__7bed292379b1.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq15_6842	histogram_R_s1:1
+simplify_type_error__925f5a04c46e.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq6_6842	histogram_R_s1:1
+simplify_type_error__a492b780c5e2.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq9_6842	histogram_R_s1:1
+simplify_type_error__a4ee0625df5e.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq10_6842	histogram_R_s1:1
+simplify_type_error__a82b34eef001.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq11_6842	histogram_R_s1:1
+simplify_type_error__aa8925b0f3f9.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq16_6842	histogram_R_s1:1
+simplify_type_error__ad07677e0041.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq11_6842	histogram_R_s1:1
+simplify_type_error__b188a3158a5e.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq4_6842	histogram_R_s1:1
+simplify_type_error__b44eb23bf4ee.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq7_6842	histogram_R_s1:1
+simplify_type_error__b7d9041786c5.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq10_6842	histogram_R_s1:1
+simplify_type_error__bb2bf658b268.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq8_6842	histogram_R_s1:1
+simplify_type_error__cb014943e61d.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq8_6842	histogram_R_s1:1
+simplify_type_error__d01f1b73d7be.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq7_6842	histogram_R_s1:1
+simplify_type_error__dba4cf8396a5.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq5_6842	histogram_R_s1:1
+simplify_type_error__e36036a6387c.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq14_6842	histogram_R_s1:1
+simplify_type_error__e70ef687487b.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq13_6842	histogram_R_s1:1
+simplify_type_error__e856d6d060f9.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq14_6842	histogram_R_s1:1
+simplify_type_error__f6283fe220b3.fut	simplify_type_error	2b stock 0.28.1 GPU pipeline (opencl)	Type error after pass 'simplify': In function kq7_6842	histogram_R_s1:1
+unit_kernel_arg__007f3318fdae.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__0087f01f537d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__033f8a0d4744.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s2:1
+unit_kernel_arg__04a0d971b027.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__0a00cf75e176.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__0a68930fe637.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__0a9d325a8cb1.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__0fc4a37e6084.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__147da4832d4a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__1512dd30c2e0.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__1589a309b3ad.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__19e16f9c4d23.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__19e8d54afd7e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__1bd89afb054f.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__1c349e74c678.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__1c75f887112b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s1:1
+unit_kernel_arg__1ef233a45966.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s2:1
+unit_kernel_arg__1ff3b3c436dc.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__226488d02b6b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__2265be2d1137.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__228fe002fc4b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__22a1f8e34afc.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__235a780d8bbb.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__27e9d9363caf.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__28d0658c9168.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__29cef2ece865.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__2c87ea109c6b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__2c9795a5ffe7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__2ce2d6070c21.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__2e90d9b8b5ac.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__2f3df6bbaae3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__3003b0a23796.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__30ad7992fe6d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__3109190e9724.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__37226555cf42.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__3ae250d9c750.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__3c7a2bc06d87.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__3cf0e3b0e6fb.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__3f4ffc15a007.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s1:1
+unit_kernel_arg__414b6fdfcc4e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__41a9fbe6fc18.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__439916fe80a2.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__462ac385f3ba.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__46b604cd501a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__46ed7ac3cc4e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__47e6c9e58b98.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s1:1
+unit_kernel_arg__47f99b05509c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__4989bc60caa1.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__4d57a5d322db.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__580995e59844.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__5847b384ed57.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__587b1b53b9f4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s1:1
+unit_kernel_arg__589cbe43006d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__5a09a95985fc.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__5b1d550dca20.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__5b7f91b40a95.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s1:1
+unit_kernel_arg__5db9361ad2a8.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__5e4a90189d0e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__5e9f4a350e37.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__5ebec79a0af6.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__5ecb335b51e2.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__5f61ec158c6f.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__63b07d2ac4f4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__6430743a8e62.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__6542fda01333.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__66f6d35cb223.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__67b2896cc45d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__68341f901650.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__68b7a5c7ba71.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__69e554c9622e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__6a4cc771a8b3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__6ab04fbb27cf.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__6b5bca45b55b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__6c5c4285c6f9.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__6c6d8af367c5.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s1:1
+unit_kernel_arg__6d4c864ac3f3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__6db81c1b7602.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__6ee83631cfdc.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__707bf4c48ee6.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__71957032499a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__75c49cb578c8.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__76fb86bf4307.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__78ea9d463c97.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__79f4095798c4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s2:1
+unit_kernel_arg__7bb5a5445730.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__7caa244f870c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__7d0468c00e34.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__7e2a9dd0627c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__80a28fc3974e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__80f3a61a6bd1.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__8101b9834ef4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__8214cc51c653.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__879bd51ab6a8.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__897a6d376d5d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__8bb08412d661.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__8c23ddd06ba9.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__8f71e5911d48.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__903fb93026dc.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__910fdafe6161.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__91b8cfacd9f4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__92e7723d5152.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__93a95bdece5b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__93c462d9929a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__9413ee600e86.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__9417d22a688c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__9524b112d848.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__979c6c07dce5.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__9b7c9fb26833.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__9bee0345748f.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__9c31a2d24782.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s2:1
+unit_kernel_arg__9fac60d182c3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__a067582d41e5.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__a413898d29bb.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__a505dc1c29f5.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__a5197219633c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__a62b6fb2a4c7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__a93d0ca7505b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__a9af4b878247.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__aa15024b2aa9.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__aa5b143c9080.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__aa9354559b06.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__ab1531297f3a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__abca9c333943.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__ac003aa2cd52.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__aeeefcbdfb74.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__afa72e740856.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__b0678658c0b8.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b19f258a98b7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__b2835945d74a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__b465be8257f4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b502b40b46af.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b5ae7f0547f0.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b668f86e2848.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b7c8d263a41b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b823ec2f5c0d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__b8bb10812bbb.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__b90ff9cd5f44.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_C_s1:1,pathfinder_C_s2:1
+unit_kernel_arg__bbbe774cd56c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__bf57a4a146c6.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__bffe6bf2d9ba.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__c189b3cde984.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1,histogram_C_s2:1
+unit_kernel_arg__c18f02159acf.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__c30554281859.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__c3790ef4a656.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__c396ad6204d7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__c5e6227dfbd3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__c8c0d2fa8149.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__ce14d0859b5a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__ce33711cc17b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__cea58c734f60.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__cf611341d7de.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__d033bf3d54ba.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d10861cad6b9.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__d3e7d0ec4a79.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d427f1e6ba4a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__d43f4326ad8a.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d477abf0a6e3.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__d4c587f8e53b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d508aa6cb588.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__d756e92cc2f7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d868183cb3ea.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d932fc8e163e.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__d9fcbd710f7c.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__db7dc2257674.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__db87f5be0497.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__dbcf408ae697.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__dbe7a0ff31c1.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__dd43c39288ec.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_R_s1:1
+unit_kernel_arg__de16cff21dd0.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__e31d7a72de17.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__e39fc9f766ef.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__e6ac793efc14.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__e825cd1a8ef8.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__e8f8ad05ba23.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__ed141c579213.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__edab11528735.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1
+unit_kernel_arg__eeec89fcd4bb.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__ef286e1d42fa.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__ef5a0cbdb5f7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__ef7ba9b617f2.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__f0b186b8e809.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__f1800f68a7e2.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__f4abaf67fb98.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__f51c32a23849.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__f6664783c82d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__f67b7121283d.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__f75abf968ac7.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__f89783ce40db.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__f8e1627acc9b.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__f904a705cfc1.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s1:1
+unit_kernel_arg__ffdd7f275a47.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	histogram_C_s2:1
+unit_kernel_arg__fff55f6f6cc4.fut	unit_kernel_arg	5 rust-wgpu generation	The rust-wgpu backend cannot pass a kernel argument of type unit	pathfinder_R_s2:1

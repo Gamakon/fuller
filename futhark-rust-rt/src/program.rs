@@ -215,6 +215,8 @@ pub enum KArg {
     F32(f32),
     F64(f64),
     Bool(bool),
+    /// A unit scalar, stored as the C backend stores it: a one-byte `bool`, zero.
+    Unit(()),
 }
 
 impl KArg {
@@ -227,6 +229,7 @@ impl KArg {
             KArg::F32(x) => x.to_le_bytes().to_vec(),
             KArg::F64(x) => x.to_le_bytes().to_vec(),
             KArg::Bool(x) => vec![x as u8],
+            KArg::Unit(()) => vec![0],
         };
         if out.len() < at + bytes.len() {
             out.resize(at + bytes.len(), 0);

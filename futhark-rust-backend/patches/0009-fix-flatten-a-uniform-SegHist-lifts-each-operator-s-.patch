@@ -1,0 +1,64 @@
+From e41f68cf6808bdcacd08d706104807e10329ad2f Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Thu, 29 Oct 2026 09:11:26 +0100
+Subject: [PATCH 9/9] fix(flatten): a uniform SegHist lifts each operator's
+ destinations to the shapes of its own results (they were paired with the
+ first operator's, an ill-typed SegHist when the bin counts differ)
+
+---
+ src/Futhark/Pass/Flatten/SOAC.hs         | 12 +++++++++---
+ tests/flattening/hist/different-bins.fut | 10 ++++++++++
+ 2 files changed, 19 insertions(+), 3 deletions(-)
+ create mode 100644 tests/flattening/hist/different-bins.fut
+
+diff --git a/src/Futhark/Pass/Flatten/SOAC.hs b/src/Futhark/Pass/Flatten/SOAC.hs
+index 54ca4e3..7c08a3d 100644
+--- a/src/Futhark/Pass/Flatten/SOAC.hs
++++ b/src/Futhark/Pass/Flatten/SOAC.hs
+@@ -29,7 +29,7 @@ import Futhark.Transform.FirstOrderTransform qualified as FOT
+ import Futhark.Transform.Rename
+ import Futhark.Transform.Substitute
+ import Futhark.Transform.ToGPU (soacsLambdaToGPU)
+-import Futhark.Util (mapAccumLM)
++import Futhark.Util (chunks, mapAccumLM)
+ import Futhark.Util.IntegralExp
+ import Prelude hiding (div, quot, rem)
+ 
+@@ -1893,10 +1893,16 @@ flattenHist ops segments env inps res (_pat, aux) (w, hist_inputs, hist_ops0, bu
+         t <- lookupInputType inps hist_inp
+         let expectedShape = segmentsShape segments <> arrayShape t
+         liftSubExpRegular lvl segments inps env expectedShape (Var hist_inp)
+-      hist_ops' <- forM hist_ops $ \(Futhark.IR.SOACS.HistOp num_bins rf dests nes op) -> do
++      -- The results are the operators' destinations in order, so each
++      -- operator's destinations are lifted to the shapes of its own results
++      -- (they used to be paired with the first results, whatever the
++      -- operator, which reshaped the destination of a second operator with a
++      -- different number of bins to the first one's: an ill-typed SegHist).
++      let op_res = chunks (map (length . Futhark.IR.SOACS.histDest) hist_ops) res
++      hist_ops' <- forM (zip hist_ops op_res) $ \(Futhark.IR.SOACS.HistOp num_bins rf dests nes op, res_op) -> do
+         nes' <- mapM (readNeutral segments env inps) nes
+         let rr (DistType _ _ t) = t
+-        let ts = map (rr . distResType) res
++        let ts = map (rr . distResType) res_op
+         let expectedShapes = map (\t -> segmentsShape segments <> arrayShape t) ts
+         dests' <- mapM (\(shape, var) -> liftSubExpRegular lvl segments inps env shape (Var var)) (zip expectedShapes dests)
+         pure $ Futhark.IR.SOACS.HistOp num_bins rf dests' nes' op
+diff --git a/tests/flattening/hist/different-bins.fut b/tests/flattening/hist/different-bins.fut
+new file mode 100644
+index 0000000..1d65092
+--- /dev/null
++++ b/tests/flattening/hist/different-bins.fut
+@@ -0,0 +1,10 @@
++-- Two histograms with different numbers of bins in one map: each
++-- operator's destination must be lifted to its own shape (the flattening
++-- of a SegHist paired every operator's destination with the first one's).
++-- ==
++-- input { 3i64 [0i64,1i64,2i64,0i64] [5,6,7,8] [1,2,3,4] }
++-- output { [[13,6,7],[13,6,7],[13,6,7]] [[5,2,3,0],[5,2,3,0],[5,2,3,0]] }
++-- structure gpu { SegHist 1 }
++
++entry main [n] (k: i64) (is: [n]i64) (vs: [n]i32) (ws: [n]i32) : ([k][k]i32, [k][n]i32) =
++  unzip (tabulate k (\_ -> (hist (+) 0 k is vs, hist (+) 0 n is ws)))
+-- 
+2.50.1 (Apple Git-155)
+

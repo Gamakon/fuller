@@ -1,0 +1,529 @@
+From d7ad6503c9973a2435aff97ccede779bd9d895a5 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Thu, 29 Oct 2026 09:11:26 +0100
+Subject: [PATCH 8/9] feat(webgpu): SetMem of device and shared memory in a
+ kernel, in any loop or conditional: a memory variable naming one binding is
+ renamed, one naming several holds a selector and each access through it
+ dispatches on it
+
+---
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs | 409 +++++++++++++++++++--------
+ 1 file changed, 289 insertions(+), 120 deletions(-)
+
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index 76ecc4e..e9518b7 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -76,9 +76,16 @@ data KernelState = KernelState
+     ksAtomicMem :: [WGSL.Ident],
+     ksScalars :: [WGSL.PrimType],
+     ksBindSlots :: [Int],
+-    -- | How many loops and conditionals enclose the statement being
+-    -- translated. A 'SetMem' is resolved by renaming only at depth 0.
+-    ksControlDepth :: Int,
++    -- | Every memory variable of the kernel (the target of a 'SetMem' of
++    -- non-register memory) and the module-scope bindings it can name, in the
++    -- order of 'ksBindingIds' (see 'analyseMemVars').
++    ksMemCands :: M.Map VName [VName],
++    -- | The memory variables that can name more than one binding: each has a
++    -- selector variable, and each access through it is a dispatch.
++    ksMemSelect :: S.Set VName,
++    -- | The kernel's module-scope memory bindings (its memory uses and its
++    -- shared allocations), numbered: a selector holds one of these numbers.
++    ksBindingIds :: M.Map VName Int,
+     -- | The specialisation constants declared for this kernel's register
+     -- arrays (see 'scalarSpaceSize').
+     ksSpecConsts :: S.Set WGSL.Ident
+@@ -199,7 +206,9 @@ genKernel kernel = do
+             ksSharedMem = mempty,
+             ksScalars = mempty,
+             ksBindSlots = mempty,
+-            ksControlDepth = 0,
++            ksMemCands = mempty,
++            ksMemSelect = mempty,
++            ksBindingIds = mempty,
+             ksSpecConsts = mempty
+           }
+ 
+@@ -247,7 +256,9 @@ genKernel kernel = do
+     gen = do
+       genConstAndBuiltinDecls
+       genScalarDecls
++      analyseMemVars
+       genMemoryDecls
++      genMemVarDecls
+ 
+       genDeviceFuns $ ImpGPU.kernelBody kernel
+ 
+@@ -625,13 +636,139 @@ genCopy pt shape (dst, dst_space) (dst_offset, dst_strides) (src, src_space) (sr
+         (WGSL.Assign i $ wgslBinOp (Add Int64 OverflowWrap) (WGSL.VarExp i) one)
+         (loops ins body)
+ 
+--- | Translate code nested one level deeper in the kernel's control flow.
+-underControl :: KernelM a -> KernelM a
+-underControl m = do
+-  modify $ \s -> s {ksControlDepth = ksControlDepth s + 1}
+-  x <- m
+-  modify $ \s -> s {ksControlDepth = ksControlDepth s - 1}
+-  pure x
++-- | A memory block in a kernel is a module-scope WGSL binding (a storage
++-- buffer, or a workgroup array), never a runtime value: WGSL has no variable
++-- that holds a storage or workgroup pointer. A 'SetMem' @x <- y@ of
++-- non-register memory makes @x@ a memory variable, and the bindings @x@ can
++-- name are the bindings its SetMem sources can name, transitively. This
++-- computes them for every memory variable of the kernel:
++--
++-- * a variable that can name one binding only is that binding everywhere
++--   (renamed), whatever loops and conditionals its SetMems are in;
++--
++-- * a variable that can name several (a loop's memory parameter that starts
++--   at one buffer and is rotated to another, inside a bounds check) gets a
++--   selector, a function-scope @i32@ holding the number of the binding it
++--   names now. Its SetMems assign the selector, and each statement that
++--   accesses memory through it is translated once per candidate binding,
++--   under a test of the selector ('genMemAccess'). That is exactly the
++--   pointer assignment and dereference of Futhark's OpenCL and CUDA kernels,
++--   spelled for WGSL.
++analyseMemVars :: KernelM ()
++analyseMemVars = do
++  kernel <- asks krKernel
++  let body = ImpGPU.kernelBody kernel
++      bindings =
++        nubOrd $
++          [n | ImpGPU.MemoryUse n <- ImpGPU.kernelUses kernel] <> sharedAllocs body
++      ids = M.fromList $ zip bindings [0 ..]
++      edges = setMems body
++      vars = nubOrd $ map fst edges
++      sources x = [y | (x', y) <- edges, x' == x]
++      reach seen [] = seen
++      reach seen (v : vs)
++        | v `S.member` seen = reach seen vs
++        | otherwise = reach (S.insert v seen) (sources v <> vs)
++      cands x =
++        let reached = reach mempty (sources x)
++         in [b | b <- bindings, b `S.member` reached]
++  forM_ vars $ \x ->
++    when (x `M.member` ids) $
++      compilerLimitation $
++        "WebGPU backend cannot assign the memory binding " <> prettyText x <> " in a GPU kernel."
++  forM_ edges $ \(_, y) ->
++    unless (y `M.member` ids || y `elem` vars) $
++      compilerLimitation $
++        "WebGPU backend cannot resolve a SetMem source " <> prettyText y <> " that is neither a binding nor a memory variable of the GPU kernel."
++  let candMap = M.fromList [(x, cands x) | x <- vars]
++  forM_ (M.toList candMap) $ \(x, cs) ->
++    when (null cs) $
++      compilerLimitation $
++        "WebGPU backend found no binding the memory variable " <> prettyText x <> " can name in a GPU kernel."
++  modify $ \s ->
++    s
++      { ksMemCands = candMap,
++        ksMemSelect = S.fromList [x | (x, _ : _ : _) <- M.toList candMap],
++        ksBindingIds = ids
++      }
++  where
++    -- A shared allocation is a workgroup array; a shared memory block that
++    -- is only declared and assigned (a loop's double buffer) is a variable.
++    sharedAllocs (Op (ImpGPU.SharedAlloc n _)) = [n]
++    sharedAllocs (s1 :>>: s2) = sharedAllocs s1 <> sharedAllocs s2
++    sharedAllocs (For _ _ b) = sharedAllocs b
++    sharedAllocs (While _ b) = sharedAllocs b
++    sharedAllocs (If _ s1 s2) = sharedAllocs s1 <> sharedAllocs s2
++    sharedAllocs _ = []
++    setMems (SetMem _ _ (ScalarSpace _ _)) = []
++    setMems (SetMem x y _) = [(x, y)]
++    setMems (s1 :>>: s2) = setMems s1 <> setMems s2
++    setMems (For _ _ b) = setMems b
++    setMems (While _ b) = setMems b
++    setMems (If _ s1 s2) = setMems s1 <> setMems s2
++    setMems _ = []
++
++-- | The memory variables' renames (one candidate) and selectors (several).
++-- Run after 'genMemoryDecls'. A binding's WGSL name is its module-scope name
++-- ('mkGlobalIdent'), for a memory use and a shared allocation alike.
++genMemVarDecls :: KernelM ()
++genMemVarDecls = do
++  cands <- gets ksMemCands
++  forM_ (M.toList cands) $ \case
++    (x, [b]) -> mkGlobalIdent (nameToIdent b) >>= addRename (nameToIdent x)
++    (x, _) -> addInitStmt $ WGSL.DeclareVar (memSelector x) (WGSL.Prim WGSL.Int32)
++
++-- | The selector variable of a memory variable.
++memSelector :: VName -> WGSL.Ident
++memSelector x = nameToIdent x <> "_sel"
++
++-- | The memory a statement accesses (reads, writes, copies, atomics).
++accessedMems :: Code ImpGPU.KernelOp -> [VName]
++accessedMems (Write mem _ _ _ _ _) = [mem]
++accessedMems (Read _ mem _ _ _ _) = [mem]
++accessedMems (Copy _ _ (dst, _) _ (src, _) _) = [dst, src]
++accessedMems (Op (ImpGPU.Atomic _ op)) = [atomicOpArray op]
++accessedMems (Op (ImpGPU.UniformRead _ mem _ _ _)) = [mem]
++accessedMems _ = []
++
++-- | A memory access through memory variables with selectors: the statement
++-- translated once per binding the first such variable can name (that
++-- variable renamed to the binding), under a test of its selector, the last
++-- candidate the final @else@ (the selector always holds one of them).
++genMemAccess :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
++genMemAccess stm = do
++  sel <- gets ksMemSelect
++  case filter (`S.member` sel) (nubOrd (accessedMems stm)) of
++    [] -> genAccessStm stm
++    x : _ -> do
++      case stm of
++        Op ImpGPU.UniformRead {} ->
++          compilerLimitation $
++            "WebGPU backend cannot read uniformly (workgroupUniformLoad) through the memory variable " <> prettyText x <> ", which names one of several bindings at run time."
++        _ -> pure ()
++      cands <- gets $ M.findWithDefault [] x . ksMemCands
++      ids <- gets ksBindingIds
++      let x' = nameToIdent x
++      old <- gets $ M.lookup x' . ksNameReplacements
++      branches <- forM cands $ \b -> do
++        b' <- mkGlobalIdent (nameToIdent b)
++        modify $ \s ->
++          s
++            { ksMemSelect = S.delete x (ksMemSelect s),
++              ksNameReplacements = M.insert x' b' (ksNameReplacements s)
++            }
++        code <- genMemAccess stm
++        modify $ \s ->
++          s
++            { ksMemSelect = S.insert x (ksMemSelect s),
++              ksNameReplacements = M.alter (const old) x' (ksNameReplacements s)
++            }
++        pure (M.findWithDefault 0 b ids, code)
++      let test i = WGSL.BinOpExp "==" (WGSL.VarExp (memSelector x)) (WGSL.IntExp i)
++          chain [] = WGSL.Skip
++          chain [(_, code)] = code
++          chain ((i, code) : rest) = WGSL.If (test i) code (chain rest)
++      pure $ chain branches
+ 
+ unsupported :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
+ unsupported stmt = pure $ WGSL.Comment $ "Unsupported stmt: " <> prettyText stmt
+@@ -666,12 +803,40 @@ scalarSpaceSize vs = foldr1 (WGSL.BinOpExp "*") <$> mapM dim vs
+     dim d = compilerLimitation $ "WebGPU backend cannot size a register array by " <> prettyText d
+ 
+ 
++-- | The declaration of a shared allocation: a workgroup array.
++genSharedDecl :: VName -> KernelM WGSL.Stmt
++genSharedDecl name = do
++  let name' = nameToIdent name
++  moduleName <- mkGlobalIdent name'
++  sizeName <- mkGlobalIdent $ name' <> "_size"
++
++  maybeElemPrimType <- findSingleMemoryType name
++  case maybeElemPrimType of
++    Just elemPrimType@(_, atomic, _) -> do
++      let bufType =
++            wgslSharedBufferType
++              elemPrimType
++              (Just $ WGSL.VarExp sizeName)
++
++      addOverride sizeName (WGSL.Prim WGSL.Int32) (Just $ WGSL.IntExp 0)
++      addDecl $ WGSL.VarDecl [] WGSL.Workgroup moduleName bufType
++      when atomic $ addAtomicMem moduleName
++      addRename name' moduleName
++      pure $ WGSL.Comment $ "declare_shared: " <> name'
++    Nothing ->
++      pure $ WGSL.Comment $ "discard declare_shared: " <> name'
++
+ genWGSLStm :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
++genWGSLStm stm@Copy {} = genMemAccess stm
++genWGSLStm stm@Write {} = genMemAccess stm
++genWGSLStm stm@Read {} = genMemAccess stm
++genWGSLStm stm@(Op ImpGPU.Atomic {}) = genMemAccess stm
++genWGSLStm stm@(Op ImpGPU.UniformRead {}) = genMemAccess stm
+ genWGSLStm Skip = pure WGSL.Skip
+ genWGSLStm (s1 :>>: s2) = liftM2 WGSL.Seq (genWGSLStm s1) (genWGSLStm s2)
+ genWGSLStm (For iName bound body) = do
+   boundExp <- genWGSLExp bound
+-  bodyStm <- underControl $ genWGSLStm body
++  bodyStm <- genWGSLStm body
+   pure $
+     WGSL.For
+       i
+@@ -693,27 +858,12 @@ genWGSLStm (While cond body) =
+   liftM2
+     WGSL.While
+     (genWGSLExp $ untyped cond)
+-    (underControl $ genWGSLStm body)
++    (genWGSLStm body)
+ genWGSLStm (DeclareMem name (Space "shared")) = do
+-  let name' = nameToIdent name
+-  moduleName <- mkGlobalIdent name'
+-  sizeName <- mkGlobalIdent $ name' <> "_size"
+-
+-  maybeElemPrimType <- findSingleMemoryType name
+-  case maybeElemPrimType of
+-    Just elemPrimType@(_, atomic, _) -> do
+-      let bufType =
+-            wgslSharedBufferType
+-              elemPrimType
+-              (Just $ WGSL.VarExp sizeName)
+-
+-      addOverride sizeName (WGSL.Prim WGSL.Int32) (Just $ WGSL.IntExp 0)
+-      addDecl $ WGSL.VarDecl [] WGSL.Workgroup moduleName bufType
+-      when atomic $ addAtomicMem moduleName
+-      addRename name' moduleName
+-      pure $ WGSL.Comment $ "declare_shared: " <> name'
+-    Nothing ->
+-      pure $ WGSL.Comment $ "discard declare_shared: " <> name'
++  isVar <- gets $ M.member name . ksMemCands
++  if isVar
++    then pure $ WGSL.Comment $ "declare_shared of a memory variable: " <> nameToIdent name
++    else genSharedDecl name
+ genWGSLStm (DeclareMem name (ScalarSpace vs pt)) = do
+   size <- scalarSpaceSize vs
+   pure $ WGSL.DeclareVar (nameToIdent name) (WGSL.Array (wgslPrimType pt) (Just size))
+@@ -724,38 +874,14 @@ genWGSLStm (DeclareScalar name _ typ) =
+ genWGSLStm s@(DeclareArray {}) = unsupported s
+ genWGSLStm s@(Allocate {}) = unsupported s
+ genWGSLStm s@(Free _ _) = pure $ WGSL.Comment $ "free: " <> prettyText s
+-genWGSLStm (Copy pt shape dst dst_lmad src src_lmad) = genCopy pt shape dst dst_lmad src src_lmad
+-genWGSLStm (Write mem i Bool s _ v) = genArrayWrite Bool s mem i (genWGSLExp v)
+-genWGSLStm (Write mem i (IntType Int8) s _ v) = genArrayWrite (IntType Int8) s mem i (genWGSLExp v)
+-genWGSLStm (Write mem i (IntType Int16) s _ v) = genArrayWrite (IntType Int16) s mem i (genWGSLExp v)
+-genWGSLStm (Write mem i t s _ v) = do
+-  mem' <- getIdent mem
+-  i' <- indexExp i
+-  v' <- genWGSLExp v
+-  atomic <- isAtomic mem'
+-  if atomic
+-    then genArrayWrite t s mem i (genWGSLExp v)
+-    else pure $ WGSL.AssignIndex mem' i' v'
+ genWGSLStm (SetScalar name e) =
+   liftM2 WGSL.Assign (getIdent name) (genWGSLExp e)
+-genWGSLStm (Read tgt mem i Bool s _) = genArrayRead Bool s tgt mem i
+-genWGSLStm (Read tgt mem i (IntType Int8) s _) = genArrayRead (IntType Int8) s tgt mem i
+-genWGSLStm (Read tgt mem i (IntType Int16) s _) = genArrayRead (IntType Int16) s tgt mem i
+-genWGSLStm (Read tgt mem i t s _) = do
+-  tgt' <- getIdent tgt
+-  mem' <- getIdent mem
+-  i' <- indexExp i
+-  atomic <- isAtomic mem'
+-  if atomic
+-    then genArrayRead t s tgt mem i
+-    else pure $ WGSL.Assign tgt' (WGSL.IndexExp mem' i')
+ -- A memory block in a kernel is a module-scope WGSL binding (or a workgroup
+--- array), never a runtime value, so @SetMem x y@ is resolved at code
+--- generation: every later use of @x@ is spelled with the binding @y@ names
+--- now. That is exact for every statement translated after this one, which is
+--- every statement executed after it, as long as the SetMem is not inside a
+--- loop or a conditional of the kernel (where the binding @x@ stands for could
+--- differ between iterations or branches).
++-- array), never a runtime value, so @SetMem x y@ of non-register memory is
++-- resolved by 'analyseMemVars': a memory variable that can name one binding
++-- is renamed to it (the SetMem is then nothing), and one that can name
++-- several holds the number of the binding it names in its selector (the
++-- SetMem assigns it). Both are exact in any loop or conditional.
+ --
+ -- Register memory ('ScalarSpace') is a function-scope WGSL array, a value,
+ -- so there @SetMem x y@ is the value copy @x = y@ wherever it is (a loop's
+@@ -771,17 +897,25 @@ genWGSLStm stm@(SetMem x y (ScalarSpace _ _)) = do
+       (WGSL.Comment $ "setmem of register memory, a value copy: " <> prettyText stm)
+       (WGSL.Assign x' (WGSL.VarExp y'))
+ genWGSLStm stm@(SetMem x y _) = do
+-  depth <- gets ksControlDepth
+-  if depth == 0
+-    then do
+-      y' <- getIdent y
+-      addRename (nameToIdent x) y'
+-      pure $ WGSL.Comment $ "setmem resolved by renaming: " <> prettyText stm
+-    else
+-      compilerLimitation . docText $
+-        "WebGPU backend cannot resolve a SetMem statement inside a loop or conditional"
+-          </> indent 2 (align (pretty stm))
+-          </> "in GPU kernel."
++  sel <- gets ksMemSelect
++  cands <- gets ksMemCands
++  ids <- gets ksBindingIds
++  if x `S.notMember` sel
++    then pure $ WGSL.Comment $ "setmem resolved by renaming: " <> prettyText stm
++    else do
++      value <- case (M.lookup y ids, M.lookup y cands) of
++        (Just i, _) -> pure $ WGSL.IntExp i
++        (Nothing, Just [b]) | Just i <- M.lookup b ids -> pure $ WGSL.IntExp i
++        (Nothing, Just _) | y `S.member` sel -> pure $ WGSL.VarExp (memSelector y)
++        _ ->
++          compilerLimitation . docText $
++            "WebGPU backend cannot resolve the source of a SetMem statement"
++              </> indent 2 (align (pretty stm))
++              </> "in GPU kernel."
++      pure $
++        WGSL.Seq
++          (WGSL.Comment $ "setmem of a memory variable, its selector: " <> prettyText stm)
++          (WGSL.Assign (memSelector x) value)
+ genWGSLStm (Call [dest] f args) = do
+   fun <- WGSL.CallExp . ("futrts_" <>) <$> getIdent f
+   let getArg (ExpArg e) = genWGSLExp e
+@@ -803,8 +937,8 @@ genWGSLStm (If cond cThen cElse) =
+   liftM3
+     WGSL.If
+     (genWGSLExp $ untyped cond)
+-    (underControl $ genWGSLStm cThen)
+-    (underControl $ genWGSLStm cElse)
++    (genWGSLStm cThen)
++    (genWGSLStm cElse)
+ genWGSLStm s@(Assert {}) = pure $ WGSL.Comment $ "assert: " <> prettyText s
+ genWGSLStm (Meta (MetaComment c)) =
+   pure $ WGSL.Comment c
+@@ -828,34 +962,6 @@ genWGSLStm (Op (ImpGPU.GetLocalSize dest i)) = do
+ genWGSLStm (Op (ImpGPU.GetLockstepWidth dest)) = do
+   destId <- getIdent dest
+   WGSL.Assign destId . WGSL.VarExp <$> builtinLockstepWidth
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicAdd t dest mem i e))) =
+-  genAtomicOp "add" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicSMax t dest mem i e))) =
+-  genAtomicOp "smax" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicSMin t dest mem i e))) =
+-  genAtomicOp "smin" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicUMax t dest mem i e))) =
+-  genAtomicOp "umax" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicUMin t dest mem i e))) =
+-  genAtomicOp "umin" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicAnd t dest mem i e))) =
+-  genAtomicOp "and" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicOr t dest mem i e))) =
+-  genAtomicOp "or" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicXor t dest mem i e))) =
+-  genAtomicOp "xor" (IntType t) dest mem i e
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicCmpXchg _ dest mem i cmp val))) = do
+-  val' <- genWGSLExp val
+-  cmp' <- genWGSLExp cmp
+-  i' <- WGSL.IndexExp <$> getIdent mem <*> indexExp i
+-  liftM2 WGSL.Assign (getIdent dest) (pure $ WGSL.FieldExp (WGSL.CallExp "atomicCompareExchangeWeak" [WGSL.UnOpExp "&" i', cmp', val']) "old_value")
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicXchg _ dest mem i e))) = do
+-  idx <- WGSL.IndexExp <$> getIdent mem <*> indexExp i
+-  val <- genWGSLExp e
+-  let call = WGSL.CallExp "atomicExchange" [WGSL.UnOpExp "&" idx, val]
+-  WGSL.Assign <$> getIdent dest <*> pure call
+-genWGSLStm (Op (ImpGPU.Atomic s (ImpGPU.AtomicWrite t mem i v))) = genArrayWrite t s mem i (genWGSLExp v)
+-genWGSLStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicFAdd t dest mem i e))) = genAtomicOp "fadd" (FloatType t) dest mem i e
+ genWGSLStm (Op (ImpGPU.Barrier ImpGPU.FenceLocal)) =
+   pure $ WGSL.Call "workgroupBarrier" []
+ genWGSLStm (Op (ImpGPU.Barrier ImpGPU.FenceGlobal)) =
+@@ -877,15 +983,72 @@ genWGSLStm (Op (ImpGPU.SharedAlloc name size)) = do
+       pure $ WGSL.Comment $ "shared_alloc: " <> name'
+     Nothing ->
+       pure $ WGSL.Comment $ "discard shared_alloc: " <> name'
+-genWGSLStm (Op (ImpGPU.UniformRead tgt mem i _ _)) = do
++genWGSLStm (Op (ImpGPU.ErrorSync f)) = genWGSLStm $ Op (ImpGPU.Barrier f)
++genWGSLStm GetUserParam {} = error "genWGSLStm: GetUserParam not handled."
++
++-- | The statements that access memory (see 'accessedMems'), once every
++-- memory variable they access is renamed to one binding ('genMemAccess').
++genAccessStm :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
++genAccessStm (Copy pt shape dst dst_lmad src src_lmad) = genCopy pt shape dst dst_lmad src src_lmad
++genAccessStm (Write mem i Bool s _ v) = genArrayWrite Bool s mem i (genWGSLExp v)
++genAccessStm (Write mem i (IntType Int8) s _ v) = genArrayWrite (IntType Int8) s mem i (genWGSLExp v)
++genAccessStm (Write mem i (IntType Int16) s _ v) = genArrayWrite (IntType Int16) s mem i (genWGSLExp v)
++genAccessStm (Write mem i t s _ v) = do
++  mem' <- getIdent mem
++  i' <- indexExp i
++  v' <- genWGSLExp v
++  atomic <- isAtomic mem'
++  if atomic
++    then genArrayWrite t s mem i (genWGSLExp v)
++    else pure $ WGSL.AssignIndex mem' i' v'
++genAccessStm (Read tgt mem i Bool s _) = genArrayRead Bool s tgt mem i
++genAccessStm (Read tgt mem i (IntType Int8) s _) = genArrayRead (IntType Int8) s tgt mem i
++genAccessStm (Read tgt mem i (IntType Int16) s _) = genArrayRead (IntType Int16) s tgt mem i
++genAccessStm (Read tgt mem i t s _) = do
++  tgt' <- getIdent tgt
++  mem' <- getIdent mem
++  i' <- indexExp i
++  atomic <- isAtomic mem'
++  if atomic
++    then genArrayRead t s tgt mem i
++    else pure $ WGSL.Assign tgt' (WGSL.IndexExp mem' i')
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicAdd t dest mem i e))) =
++  genAtomicOp "add" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicSMax t dest mem i e))) =
++  genAtomicOp "smax" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicSMin t dest mem i e))) =
++  genAtomicOp "smin" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicUMax t dest mem i e))) =
++  genAtomicOp "umax" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicUMin t dest mem i e))) =
++  genAtomicOp "umin" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicAnd t dest mem i e))) =
++  genAtomicOp "and" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicOr t dest mem i e))) =
++  genAtomicOp "or" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicXor t dest mem i e))) =
++  genAtomicOp "xor" (IntType t) dest mem i e
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicCmpXchg _ dest mem i cmp val))) = do
++  val' <- genWGSLExp val
++  cmp' <- genWGSLExp cmp
++  i' <- WGSL.IndexExp <$> getIdent mem <*> indexExp i
++  liftM2 WGSL.Assign (getIdent dest) (pure $ WGSL.FieldExp (WGSL.CallExp "atomicCompareExchangeWeak" [WGSL.UnOpExp "&" i', cmp', val']) "old_value")
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicXchg _ dest mem i e))) = do
++  idx <- WGSL.IndexExp <$> getIdent mem <*> indexExp i
++  val <- genWGSLExp e
++  let call = WGSL.CallExp "atomicExchange" [WGSL.UnOpExp "&" idx, val]
++  WGSL.Assign <$> getIdent dest <*> pure call
++genAccessStm (Op (ImpGPU.Atomic s (ImpGPU.AtomicWrite t mem i v))) = genArrayWrite t s mem i (genWGSLExp v)
++genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicFAdd t dest mem i e))) = genAtomicOp "fadd" (FloatType t) dest mem i e
++genAccessStm (Op (ImpGPU.UniformRead tgt mem i _ _)) = do
+   tgt' <- getIdent tgt
+   mem' <- getIdent mem
+   i' <- indexExp i
+   pure $
+     WGSL.Assign tgt' $
+       WGSL.CallExp "workgroupUniformLoad" [WGSL.UnOpExp "&" $ WGSL.IndexExp mem' i']
+-genWGSLStm (Op (ImpGPU.ErrorSync f)) = genWGSLStm $ Op (ImpGPU.Barrier f)
+-genWGSLStm GetUserParam {} = error "genWGSLStm: GetUserParam not handled."
++genAccessStm s = error $ "genAccessStm: not a memory access: " <> T.unpack (prettyText s)
++
+ 
+ call1 :: WGSL.Ident -> WGSL.Exp -> WGSL.Exp
+ call1 f a = WGSL.CallExp f [a]
+@@ -1163,22 +1326,28 @@ atomicOpType (ImpGPU.AtomicWrite t _ _ _) = (t, Signed)
+ -- given buffer and return all types it is accessed at.
+ -- The bool indicates an atomic type. The Signedness is only relevant for atomic
+ -- types as described for `atomicOpType`.
++--
++-- A binding is also accessed through every memory variable that can name it
++-- ('analyseMemVars'), so those accesses count too.
+ findMemoryTypes :: VName -> KernelM [(PrimType, Bool, Signedness)]
+-findMemoryTypes name = S.elems . find <$> asks (ImpGPU.kernelBody . krKernel)
+-  where
+-    find (ImpGPU.Write n _ t _ _ _) | n == name = S.singleton (t, False, Signed)
+-    find (ImpGPU.Read _ n _ t _ _) | n == name = S.singleton (t, False, Signed)
+-    find (ImpGPU.Copy t _ (n, _) _ _ _) | n == name = S.singleton (t, False, Signed)
+-    find (ImpGPU.Copy t _ _ _ (n, _) _) | n == name = S.singleton (t, False, Signed)
+-    find (Op (ImpGPU.Atomic _ op))
+-      | atomicOpArray op == name =
+-          let (t, sgn) = atomicOpType op
+-           in S.singleton (t, True, sgn)
+-    find (s1 :>>: s2) = find s1 <> find s2
+-    find (For _ _ body) = find body
+-    find (While _ body) = find body
+-    find (If _ s1 s2) = find s1 <> find s2
+-    find _ = S.empty
++findMemoryTypes name = do
++  cands <- gets ksMemCands
++  let names = S.insert name $ S.fromList [x | (x, bs) <- M.toList cands, name `elem` bs]
++      this n = n `S.member` names
++      find (ImpGPU.Write n _ t _ _ _) | this n = S.singleton (t, False, Signed)
++      find (ImpGPU.Read _ n _ t _ _) | this n = S.singleton (t, False, Signed)
++      find (ImpGPU.Copy t _ (n, _) _ (m, _) _)
++        | this n || this m = S.singleton (t, False, Signed)
++      find (Op (ImpGPU.Atomic _ op))
++        | this (atomicOpArray op) =
++            let (t, sgn) = atomicOpType op
++             in S.singleton (t, True, sgn)
++      find (s1 :>>: s2) = find s1 <> find s2
++      find (For _ _ body) = find body
++      find (While _ body) = find body
++      find (If _ s1 s2) = find s1 <> find s2
++      find _ = S.empty
++  S.elems . find <$> asks (ImpGPU.kernelBody . krKernel)
+ 
+ findSingleMemoryType :: VName -> KernelM (Maybe (PrimType, Bool, Signedness))
+ findSingleMemoryType name = do
+-- 
+2.50.1 (Apple Git-155)
+

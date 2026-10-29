@@ -103,17 +103,27 @@ this with `as`, which is C's modular conversion between integer types.
 
 The webgpu backend stops on `SetMem` inside a GPU kernel ("Cannot handle SetMem statement ... in GPU kernel").
 
-A kernel's memory blocks are module-scope WGSL bindings (or workgroup arrays), never runtime values. So `SetMem x y`
-is resolved at code generation, as `docs/PROPOSAL_memory_views_setmem.md` proposes: every later use of `x` is spelled
-with the binding `y` names at that point. The WGSL generator's own rename map (`ksNameReplacements`) already exists
-for this.
+A kernel's memory blocks are module-scope WGSL bindings (storage buffers, or workgroup arrays for shared
+allocations), never runtime values: WGSL has no variable that holds a storage or workgroup pointer. So `SetMem x y`
+is resolved at code generation (patch 0008; `docs/PROPOSAL_memory_views_setmem.md` proposed the rename):
+- before a kernel is translated, every SetMem target of non-register memory is a memory variable, and the bindings it
+  can name are the bindings its SetMem sources can name, transitively;
+- a memory variable that can name one binding is renamed to it everywhere (`ksNameReplacements`), in any loop or
+  conditional;
+- one that can name several (a loop's memory parameter that starts at one buffer and is rotated to another, inside a
+  kernel's bounds check, or a shared double buffer) holds a selector, a function-scope `i32` with the number of the
+  binding it names now. Its SetMems assign the selector. Each read, write, copy or atomic through it is translated
+  once per candidate binding, under a test of the selector: the pointer assignment and dereference of Futhark's
+  OpenCL and CUDA kernels, spelled for WGSL;
+- a binding's element type is found from the accesses through every variable that can name it too.
 
-The rename is exact when the SetMem is outside every loop and conditional of the kernel. Then the statements
-translated after it are exactly the statements executed after it. The fork tracks control depth (`ksControlDepth`).
-Inside a loop or conditional the binding could differ between iterations or branches, so that remains a compiler
-limitation, with a message that says so.
+Patch 0001 renamed only outside every loop and conditional of the kernel, and stopped with a compiler limitation
+inside one. The evolution runs of 2026-10-29 met 143 distinct programs with a SetMem inside a loop or conditional
+(`tests/corpus/futhark_compile_failures`); all compile now. A workgroup-uniform read through a variable with a
+selector would not be uniform control flow, so that one case stops with a compiler limitation that names it; no
+corpus program reaches it.
 
-The rename is in the shared WGSL generator (`ImpGen/WebGPU.hs`), so the fork's webgpu backend gets it too. The shim
+The resolution is in the shared WGSL generator (`ImpGen/WebGPU.hs`), so the fork's webgpu backend gets it too. The shim
 path uses the pinned upstream binary, which does not have it.
 
 On the host, `SetMem` is a reference copy (`DevMem::set_from`), as `memblock_set` is.

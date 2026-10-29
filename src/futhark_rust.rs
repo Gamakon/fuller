@@ -485,6 +485,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// THE COMPILE-FAILURE CORPUS (`tests/corpus/futhark_compile_failures`): every distinct program a legal gene
+    /// expressed that the rust-wgpu path once failed to compile (from the evolution runs' `bugs.log`, `index.tsv`
+    /// names each one's error and first failing stage), and the minimal reproducers, compiles through the rust path:
+    /// the fork compiler's `rust-wgpu`, then `rustc -D warnings` against the runtime. CPU only, no device.
+    #[test]
+    fn every_program_of_the_compile_failure_corpus_compiles_through_the_rust_path() {
+        if !compiler().is_file() {
+            eprintln!("skipped: the fork compiler ({}) is not installed", compiler().display());
+            return;
+        }
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_compile_failures");
+        let index = std::fs::read_to_string(corpus.join("index.tsv")).expect("the corpus index");
+        let mut files: Vec<PathBuf> = index.lines().skip(1).map(|l| corpus.join(l.split('\t').next().expect("a file column"))).collect();
+        let mut on_disk: Vec<PathBuf> = std::fs::read_dir(&corpus).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "fut")).collect();
+        files.sort();
+        on_disk.sort();
+        assert_eq!(files, on_disk, "index.tsv must list exactly the corpus's programs");
+        let mut minimal: Vec<PathBuf> = std::fs::read_dir(corpus.join("minimal")).expect("the minimal reproducers").map(|e| e.expect("an entry").path()).collect();
+        minimal.sort();
+        assert_eq!(minimal.len(), 3, "one minimal reproducer a kind");
+        files.extend(minimal);
+        let base = scratch("compile_failures");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let failed = Mutex::new(Vec::new());
+        std::thread::scope(|sc| {
+            for _ in 0..4 {
+                sc.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(f) = files.get(i) else { break };
+                    let source = std::fs::read_to_string(f).expect("a corpus program");
+                    if let Err(e) = compile_module(&source, &base.join(format!("p{i}")), &rt, &format!("cf{i}"), Duration::from_secs(600)) {
+                        let tail: Vec<&str> = e.lines().filter(|l| !l.starts_with("Warning at") && !l.trim_start().starts_with("Unused name") && !l.trim().is_empty()).take(6).collect();
+                        failed.lock().expect("the failure list").push(format!("{}: {}", f.display(), tail.join(" | ")));
+                    }
+                });
+            }
+        });
+        let failed = failed.into_inner().expect("the failure list");
+        eprintln!("{} of {} corpus programs compiled through the rust path", files.len() - failed.len(), files.len());
+        assert!(failed.is_empty(), "{} of {} corpus programs did not compile:\n{}", failed.len(), files.len(), failed.join("\n"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn the_binding_index_is_read_from_the_generated_module() {
         let m = "    rt::KernelInfo {\n        scalars_binding: 12,\n        binding_indices: &[13, 1011, 14],\n    },\n        binding_indices: &[],\n";

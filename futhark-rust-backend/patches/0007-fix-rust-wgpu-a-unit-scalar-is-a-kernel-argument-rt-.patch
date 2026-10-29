@@ -1,0 +1,41 @@
+From 605213a28521046e5e103403add58305ecc93313 Mon Sep 17 00:00:00 2001
+From: andrew-gamakon <andrew@gamakon.ai>
+Date: Thu, 29 Oct 2026 09:11:26 +0100
+Subject: [PATCH 7/9] fix(rust-wgpu): a unit scalar is a kernel argument
+ (rt::KArg::Unit, the C backend's one-byte zero), and the unit value () is
+ never stripped to an empty argument by bare
+
+---
+ src/Futhark/CodeGen/Backends/RustWGPU.hs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index aa91532..e61e781 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -341,8 +341,12 @@ operandAs f t x = convertTo t (primExpType x) <$> compilePE f x
+ -- the parentheses that enclose all of it removed, which Rust's
+ -- @unused_parens@ lint asks for. Inside an operator's operand the
+ -- parenthesised form ('compileExpP') is used.
++--
++-- The unit value @()@ is not a parenthesised expression: stripping it left an
++-- empty argument (a call of @builtin#replicate_unit@ with its value missing).
+ bare :: T.Text -> T.Text
+ bare t
++  | t == "()" = t
+   | T.length t >= 2 && T.head t == '(' && T.last t == ')' && closesAtEnd = bare (T.init (T.tail t))
+   | otherwise = t
+   where
+@@ -729,6 +733,9 @@ compileHostOp (LaunchKernel _safety kname _shared args grid block_dims) = do
+     karg (FloatType Float32) e = "rt::KArg::F32(" <> e <> ")"
+     karg (FloatType Float64) e = "rt::KArg::F64(" <> e <> ")"
+     karg Bool e = "rt::KArg::Bool(" <> e <> ")"
++    -- A unit scalar (Futhark passes one, e.g. for an unused accumulator): its
++    -- storage is the C backend's one-byte bool, always zero.
++    karg Unit e = "rt::KArg::Unit(" <> e <> ")"
+     karg t _ = compilerLimitation $ "The rust-wgpu backend cannot pass a kernel argument of type " <> prettyText t
+ 
+ scalarType :: VName -> GenM PrimType
+-- 
+2.50.1 (Apple Git-155)
+

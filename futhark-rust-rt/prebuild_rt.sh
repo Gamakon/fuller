@@ -22,18 +22,20 @@ if [ $# -ne 1 ]; then
   exit 2
 fi
 dir=$1
+# The cargo target directory: $FUTHARK_RT_TARGET_DIR, or target-dylib beside this script.
+target=${FUTHARK_RT_TARGET_DIR:-$here/target-dylib}
 mkdir -p "$dir/deps"
 lock=/private/tmp/claude-501/locks/cargo
 if [ "${CARGO_LOCK_HELD:-}" != "$lock" ]; then
   until mkdir "$lock" 2>/dev/null; do sleep 2; done
   trap 'rmdir "$lock" 2>/dev/null || true' EXIT
 fi
-(cd "$here" && RUSTFLAGS="-D warnings -C prefer-dynamic" CARGO_TARGET_DIR="$here/target-dylib" nice -n 10 cargo build --release --lib)
+(cd "$here" && RUSTFLAGS="-D warnings -C prefer-dynamic" CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --lib)
 if [ "${CARGO_LOCK_HELD:-}" != "$lock" ]; then
   rmdir "$lock"
   trap - EXIT
 fi
-deps="$here/target-dylib/release/deps"
+deps="$target/release/deps"
 # The toolchain's libstd dylib (prefer-dynamic links it): <sysroot>/lib/rustlib/<host>/lib.
 sys=$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/lib
 [ -n "$(ls "$sys"/libstd-*.dylib 2>/dev/null)" ] || { echo "prebuild_rt.sh: no libstd dylib in $sys" >&2; exit 1; }

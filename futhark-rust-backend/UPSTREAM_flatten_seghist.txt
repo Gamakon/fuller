@@ -1,0 +1,36 @@
+Upstream bug report text (not filed; nothing of the fork is pushed). For diku-dk/futhark issues.
+
+Title: flattening: ill-typed SegHist when a map holds two histograms with different bin counts
+
+Futhark 0.28.1 (and the webgpu branch at 14e9ccb). `futhark c` accepts this program; every GPU backend
+(`futhark opencl`, `futhark dev --gpu`) stops with an internal compiler error:
+
+    entry main [n] (k: i64) (is: [n]i64) (vs: [n]i32) (ws: [n]i32) : ([k][k]i32, [k][n]i32) =
+      unzip (tabulate k (\_ -> (hist (+) 0 k is vs, hist (+) 0 n is ws)))
+
+    Internal compiler error.  Please report this:
+    Type error after pass 'flatten':      (in the full pipeline: after pass 'simplify')
+    In expression of statement
+      {Uniform_segHist_8591 : ({}, [k][n]i32),
+       Uniform_segHist_8592 : ({}, [k][k]i32)}
+    Type of expression
+      reg_lifted_8585
+    must be [k][k]i32, but is [k][n]i32.
+
+Cause: src/Futhark/Pass/Flatten/SOAC.hs, flattenHist, the uniform case. For every HistOp it computes the
+expected shapes of the lifted destinations from ALL the Hist's results (`map (rr . distResType) res`) and zips
+them with that operator's own `dests`, so every operator's destinations are lifted (liftSubExpRegular, which
+reshapes to the expected shape: `reg_lifted`) to the first operator's result shapes. With equal bin counts the
+shapes coincide and nothing shows; with different bin counts the second operator's destination is reshaped to
+the first's shape.
+
+Fix: give each operator the results that are its own destinations, in order:
+
+    let op_res = chunks (map (length . histDest) hist_ops) res
+    hist_ops' <- forM (zip hist_ops op_res) $ \(HistOp num_bins rf dests nes op, res_op) -> do
+      ...
+      let ts = map (rr . distResType) res_op
+
+Test (tests/flattening/hist/different-bins.fut in our patch 0009): the program above with
+input { 3i64 [0i64,1i64,2i64,0i64] [5,6,7,8] [1,2,3,4] }
+output { [[13,6,7],[13,6,7],[13,6,7]] [[5,2,3,0],[5,2,3,0],[5,2,3,0]] }   (futhark c agrees).
