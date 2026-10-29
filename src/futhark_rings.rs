@@ -376,5 +376,62 @@ pub fn coding_cells(contract: &KingdomContract, layout: &GeneLayout, gene: &[u32
     Ok(out)
 }
 
+/// A generation 0 grown by mutation from one seed (`futhark_evolve --gen0 fable-mutants`, Andrew, 2026-10-29).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mutants {
+    /// The members' genes, the seed's first.
+    pub genes: Vec<Vec<u32>>,
+    pub trees: Vec<Tree>,
+    /// Each member's program text (as the caller renders it).
+    pub texts: Vec<String>,
+    /// The member each mutant was made from (`None` for the seed).
+    pub parents: Vec<Option<usize>>,
+    /// Mutants made, kept or not.
+    pub tried: usize,
+}
+
+/// A mutation operator applied once to a gene.
+pub type Mutate<'a> = dyn FnMut(&mut Vec<u32>, &mut GeneRng) -> Result<(), String> + 'a;
+
+/// Where a generation 0 from one seed lives: the kingdom's contract, the layout, the constants, its size and the
+/// most mutants it may try.
+pub struct MutantSpec<'a> {
+    pub contract: &'a KingdomContract,
+    pub layout: &'a GeneLayout,
+    pub const_len: &'a BTreeMap<Ty, u32>,
+    pub pop: usize,
+    pub max_tries: usize,
+}
+
+/// GENERATION 0 FROM ONE SEED: the seed's gene is member 1; each mutant is `mutate` applied once to a copy of a member
+/// drawn uniformly from those already in, and it enters only if its program text AND its tree differ from every
+/// member's (no duplicates), until there are `pop` members. More than `max_tries` mutants tried is an error (an
+/// operator that cannot make `pop` different programs from this seed), never a random fill.
+pub fn mutants(spec: &MutantSpec<'_>, seed_gene: Vec<u32>, mutate: &mut Mutate<'_>, render: &dyn Fn(&Tree) -> Result<String, String>, rng: &mut GeneRng) -> Result<Mutants, String> {
+    let (contract, layout, const_len, pop, max_tries) = (spec.contract, spec.layout, spec.const_len, spec.pop, spec.max_tries);
+    let tree_of = |g: &[u32]| crate::typed_gep::express(contract, layout, g, const_len).map(|e| e.tree()).map_err(|e| format!("a gene does not express: {e}"));
+    let t0 = tree_of(&seed_gene)?;
+    let mut m = Mutants { texts: vec![render(&t0)?], trees: vec![t0], genes: vec![seed_gene], parents: vec![None], tried: 0 };
+    while m.genes.len() < pop {
+        if m.tried >= max_tries {
+            return Err(format!("{} mutants tried, {} members: the operator cannot make {pop} different programs from this seed", m.tried, m.genes.len()));
+        }
+        m.tried += 1;
+        let from = rng.below(m.genes.len());
+        let mut g = m.genes[from].clone();
+        mutate(&mut g, rng)?;
+        let t = tree_of(&g)?;
+        let text = render(&t)?;
+        if m.texts.contains(&text) || m.trees.contains(&t) {
+            continue;
+        }
+        m.genes.push(g);
+        m.trees.push(t);
+        m.texts.push(text);
+        m.parents.push(Some(from));
+    }
+    Ok(m)
+}
+
 #[cfg(test)]
 mod tests;

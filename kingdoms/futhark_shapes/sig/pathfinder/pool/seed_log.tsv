@@ -1,0 +1,6 @@
+attempt	model	statement	verdict	distance_to_published	program
+0	fable	the task as stated	thrown: within 5 edits of the published program	2	(loop1.rows (row.rows.cols walls zero) (tab (add (get.cols (row.rows.cols walls i1) j2) (min (min (get.cols s1 (prev j2)) (get.cols s1 j2)) (get.cols s1 (next j2))))))
+1	fable	compute every output element independently with tabulate, no histogram operation	not read: tabulate at a.cols:c/T-cols/F-rows-a.cols (no row of this type reads it)	-	
+2	fable	a sequential loop over the input carrying the whole output array	thrown: within 5 edits of the published program	2	(loop1.rows (row.rows.cols walls zero) (tab (add (get.cols (row.rows.cols walls i1) j2) (min (min (get.cols s1 (prev j2)) (get.cols s1 j2)) (get.cols s1 (next j2))))))
+3	fable	a loop over the output positions with a reduction over the input inside	not read: no entry point (0 entries, none named main)	-	
+4	fable	an algorithm built from map2 over whole arrays, no explicit indexing	taken	13	(loop1.rows (row.rows.cols walls zero) (map2.add (row.rows.cols walls i1) (map2.min s1 (map2.min (tab (get.cols s1 (prev j2))) (tab (get.cols s1 (next j2)))))))

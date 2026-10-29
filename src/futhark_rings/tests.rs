@@ -214,3 +214,71 @@ fn the_committed_pools_fill_every_ring_of_the_default_layout() {
         eprintln!("{name}: {} programs; {} rings filled from their class, {} from their slot family", rings.programs, fills.iter().filter(|f| f.from == "class").count(), fills.iter().filter(|f| f.from != "class").count());
     }
 }
+
+/// The seed of `--gen0 fable-mutants` from the committed pool, on a canvas of the committed rings.
+fn fable_setup(name: &str) -> (FutharkKingdom, KingdomContract, GeneLayout, Rings, Tree) {
+    let p = problem(name).unwrap();
+    let k = load(&p.instance).unwrap();
+    let contract = k.relations().check().unwrap();
+    let n = if name == "histogram" { 8 } else { 13 };
+    let layout = GeneLayout::from_program_size(&contract, k.roots()[0], n).unwrap();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark_shapes/sig/{name}/pool"));
+    let mut rings = Rings::default();
+    for f in ["bench.tsv", "llm.tsv"] {
+        for e in load_pool(&dir.join(f)).unwrap() {
+            if e.origin != published_source(name).unwrap() {
+                rings.add(&contract, &build_at(&k, &e.sexp, &e.dual).unwrap());
+            }
+        }
+    }
+    let (full, _) = rings.complete(&k, &contract, &layout).unwrap();
+    let seed = load_pool(&dir.join("seed.tsv")).unwrap().remove(0);
+    let t = build_at(&k, &seed.sexp, &seed.dual).unwrap();
+    (k, contract, layout, full, t)
+}
+
+fn grow_population(name: &str, walk: bool, seed: u64) -> Mutants {
+    let (k, contract, layout, rings, t) = fable_setup(name);
+    let const_len = k.const_len();
+    let mut rng = GeneRng::new(seed);
+    let g0 = write_back(&contract, &layout, &rings.canvas(&contract, &layout, &mut rng).unwrap(), &t).unwrap();
+    let spec = MutantSpec { contract: &contract, layout: &layout, const_len: &const_len, pop: 24, max_tries: 24 * 200 };
+    let mut mutate = |g: &mut Vec<u32>, r: &mut GeneRng| -> Result<(), String> {
+        let coding = coding_cells(&contract, &layout, g, &const_len)?;
+        if walk {
+            rings.walk(&layout, g, &coding, 1 + r.below(4), r)?;
+        } else {
+            // One point mutation of a coding cell, as `futhark_evolve`'s `Genetics::mutate`.
+            let pos = coding[r.below(coding.len())];
+            let a = layout.alphabet(&contract, pos, &const_len);
+            g[pos] = a[r.below(a.len())];
+        }
+        Ok(())
+    };
+    let render = |t: &Tree| -> Result<String, String> { Ok(sexp(&k, t)) };
+    let m = mutants(&spec, g0, &mut mutate, &render, &mut rng).unwrap();
+    for g in &m.genes {
+        validate(&contract, &layout, g, &const_len).unwrap();
+    }
+    assert_eq!(m.trees[0], t, "{name}: member 1 is the seed program");
+    m
+}
+
+#[test]
+fn generation_0_from_one_seed_is_24_distinct_legal_members_and_deterministic() {
+    for name in ["histogram", "pathfinder"] {
+        for walk in [true, false] {
+            let m = grow_population(name, walk, 77);
+            assert_eq!(m.genes.len(), 24);
+            for i in 0..24 {
+                for j in 0..i {
+                    assert_ne!(m.texts[i], m.texts[j], "{name}: members {i} and {j} have one text");
+                    assert_ne!(m.trees[i], m.trees[j]);
+                }
+            }
+            assert_eq!(m, grow_population(name, walk, 77), "{name}: the same seed gives the same population");
+            assert_ne!(m.genes, grow_population(name, walk, 78).genes, "{name}: another seed gives another population");
+            eprintln!("{name} ({}): 24 members from {} mutants tried", if walk { "ring walk" } else { "point" }, m.tried);
+        }
+    }
+}

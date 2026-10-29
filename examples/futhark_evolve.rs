@@ -1157,6 +1157,54 @@ fn alternatives_population(run: &mut Run, sig: &Signature, alternatives: &[Tree]
     Ok(out)
 }
 
+/// GENERATION 0 FROM ONE SEED (`--gen0 fable-mutants`, Andrew, 2026-10-29): Fable's program for the task (`DIR/seed.tsv`,
+/// cached so every seed and both regimes start from it; leave one out: `examples/futhark_pool.rs seed` keeps it at
+/// least 5 tree edits from the published program) written onto a ring canvas is individual 1; then each mutant is the
+/// run's mutation operator (`--mutation`, `Genetics::mutation`, m in 1 ..= 4) applied once to a member drawn
+/// uniformly, kept only if its text and its tree differ from every member's (`fuller::futhark_rings::mutants`), until
+/// the population is full. Logs the seed program, the mutants tried and kept and each member's tree edit distance
+/// from the seed (`OUT/population.tsv`); every kept mutant is a mutation event.
+fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usize, rng: &mut GeneRng) -> Result<Vec<Individual>, String> {
+    if run.gen.canvas.is_none() {
+        return Err("--gen0 fable-mutants writes the seed onto a ring canvas: it needs --start llm-ring".into());
+    }
+    let e = load_pool(&dir.join("seed.tsv"))?.into_iter().next().ok_or("seed.tsv holds no program")?;
+    let seed = build_at(run.gen.k, &e.sexp, &e.dual)?;
+    fuller::typed_gep::fits(run.gen.contract, run.gen.layout, &seed).map_err(|x| format!("the seed program does not fit the layout: {x}"))?;
+    let g0 = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(rng)?, &seed).map_err(|x| format!("the seed's write-back: {x}"))?;
+    let spec = fuller::futhark_rings::MutantSpec { contract: run.gen.contract, layout: run.gen.layout, const_len: run.gen.const_len, pop, max_tries: 200 * pop };
+    let m = {
+        let gen = &run.gen;
+        let mut mutate = |g: &mut Vec<u32>, r: &mut GeneRng| -> Result<(), String> {
+            let m = 1 + r.below(4);
+            gen.mutation(g, m, r).map(|_| ())
+        };
+        let render = |t: &Tree| program(gen.k, sig, t);
+        fuller::futhark_rings::mutants(&spec, g0, &mut mutate, &render, rng)?
+    };
+    let operator = if run.gen.ring_walk { "ring_walk" } else { "mutation" };
+    let mut lines = format!("seed_program\t{}\nseed_origin\t{}\noperator\t{operator}\nmutants_tried\t{}\nmutants_kept\t{}\n\nmember\tparent\tdistance_to_seed\tprogram\n", e.sexp, e.origin, m.tried, m.genes.len() - 1);
+    let mut out: Vec<Individual> = Vec::with_capacity(pop);
+    for (i, g) in m.genes.iter().enumerate() {
+        let parents: Vec<u64> = m.parents[i].map(|p| vec![out[p].id]).unwrap_or_default();
+        let ind = run.fresh(sig, parents.clone(), if i == 0 { "fable_seed" } else { "gen0_mutant" }, g.clone(), 0)?;
+        let d = tree_distance(&ind.tree, &seed);
+        lines.push_str(&format!("{i}\t{}\t{d}\t{}\n", m.parents[i].map_or("-".to_string(), |p| p.to_string()), sexp(run.gen.k, &ind.tree)));
+        let mut ev = Mutation::new(if i == 0 { EventKind::ModelRewrite } else if run.gen.ring_walk { EventKind::RingWalk } else { EventKind::Note }, if i == 0 { "fable_seed" } else { "gen0_mutant" }, if i == 0 { format!("generation 0: the seed program ({}) on a ring canvas", e.origin) } else { format!("generation 0: a {operator} mutant of member {}, {d} tree edits from the seed", m.parents[i].unwrap_or(0)) });
+        ev.id = Some(ind.id);
+        ev.parents = parents;
+        ev.text_after = Some(sexp(run.gen.k, &ind.tree));
+        ev.entered = Some(true);
+        run.tel.mutation(0, ev)?;
+        out.push(ind);
+    }
+    std::fs::write(run.out.join("population.tsv"), &lines).map_err(|x| x.to_string())?;
+    let msg = format!("generation 0 from the seed program and its {operator} mutants: {} kept of {} tried (no two members with one text or one tree)", m.genes.len() - 1, m.tried);
+    println!("# {} {msg}\n# seed: {}", utc(), e.sexp);
+    run.tel.note(0, msg)?;
+    Ok(out)
+}
+
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 
 /// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
@@ -1965,6 +2013,10 @@ fn real_main() -> Result<(), String> {
             }
             // Keep the start and the smallest variants (the e-graph orders them by size).
             cands.truncate(pop);
+        } else if arg(&args, "--gen0").as_deref() == Some("fable-mutants") {
+            // Generation 0 from ONE seed program (Fable's, cached in the pool) and its mutants by the run's operator.
+            let dir = PathBuf::from(arg(&args, "--pool").ok_or("--gen0 fable-mutants needs --pool DIR (seed.tsv: examples/futhark_pool.rs seed)")?);
+            cands = fable_mutants_population(&mut run, &sig, &dir, pop, &mut rng0)?;
         } else if canvas.is_some() && arg(&args, "--gen0").as_deref() != Some("canvas") {
             // Generation 0 of `--start llm-ring` (R, C): Sonnet's task alternatives, distinct, on ring canvases. With
             // `--gen0 canvas` it is fresh ring-canvas genes instead (the branch below), the alternatives not used.

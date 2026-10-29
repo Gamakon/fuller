@@ -1,0 +1,2 @@
+seq	source	origin	function	dual	sexp
+1	llm	fable call_001 statement: compute every output element independently with tabulate, no histogram operation	main	a.k:c	(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))

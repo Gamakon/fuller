@@ -1,0 +1,3 @@
+attempt	model	statement	verdict	distance_to_published	program
+0	fable	the task as stated	thrown: within 5 edits of the published program	0	(hist.add.n (tab (mod.k (get.n is j1))) vs)
+1	fable	compute every output element independently with tabulate, no histogram operation	taken	18	(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))

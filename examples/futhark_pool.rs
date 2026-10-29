@@ -359,11 +359,15 @@ fn calls_made(dir: &Path) -> Vec<usize> {
 }
 
 fn one_call(system: &str, prompt: &str, dir: &Path, i: usize) -> Result<(), String> {
+    one_call_with(system, prompt, dir, i, "sonnet")
+}
+
+fn one_call_with(system: &str, prompt: &str, dir: &Path, i: usize, model: &str) -> Result<(), String> {
     write(&dir.join(format!("call_{i:03}.prompt.txt")), prompt)?;
     let out = fuller::futhark_exec::output_with_timeout(
         // No tools, no MCP servers, and the run's own directory as the working directory: the model sees the contract
         // and the prompt only, never this repository (which holds the published program).
-        std::process::Command::new(CLAUDE).current_dir(dir).args(["-p", "--model", "sonnet", "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--system-prompt", system, prompt]),
+        std::process::Command::new(CLAUDE).current_dir(dir).args(["-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--system-prompt", system, prompt]),
         std::time::Duration::from_secs(900),
         None,
     )?;
@@ -593,6 +597,69 @@ fn distinct(c: &Ctx, bar: usize, program_size: Option<usize>) -> Result<(), Stri
     Ok(())
 }
 
+/// THE SEED PROGRAM of `futhark_evolve --gen0 fable-mutants` (Andrew, 2026-10-29): ONE program for the benchmark's task
+/// from Fable, with the task alternatives' contract asking for one program. Leave one out: a program within `bar`
+/// tree edits of the published program (or one the kingdom cannot read, or too big for the layout) is not taken; the
+/// next call changes the problem statement (`ANGLES`), never re-asks the same one. Every prompt, reply and statement
+/// is saved under `RUN/llm/`; the program taken is cached as `OUT/seed.tsv` (one pool line) and every attempt is in
+/// `OUT/seed_log.tsv`, so every seed and both regimes of the runs use the same program.
+fn seed(c: &Ctx, bar: usize, program_size: Option<usize>, tries: usize, model: &str) -> Result<(), String> {
+    let p = problem(&c.pname)?;
+    let reference = fuller::futhark_sig::build(&c.k, p.reference)?;
+    let contract_k = c.k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
+    let n_funcs = reference.level_order().iter().filter(|(t, _)| !c.k.rows[t.symbol as usize].inputs.is_empty()).count();
+    let layout = fuller::typed_gep::GeneLayout::from_program_size(&contract_k, c.k.roots()[0], program_size.unwrap_or(n_funcs)).map_err(|e| e.to_string())?;
+    let many = format!("Answer with {PROGRAMS_PER_CALL} DISTINCT correct programs, each complete, each in its own ```futhark code block, and nothing else.");
+    let base = contract(&c.k, &c.sig, &c.pname, false)?;
+    if !base.contains(&many) {
+        return Err("our software has a bug: the contract's answer sentence moved".into());
+    }
+    let base = base.replace(&many, "Answer with ONE correct program, complete, in one ```futhark code block, and nothing else.");
+    let dir = c.run.join("llm");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let reader = Reader::for_pool(&c.k, &c.sig)?;
+    let mut log = String::from("attempt\tmodel\tstatement\tverdict\tdistance_to_published\tprogram\n");
+    let made = calls_made(&dir).len();
+    for t in 0..tries {
+        let i = made + t;
+        // Attempt 0 is the task as stated; each later attempt a new angle on it.
+        let statement = if t == 0 { "the task as stated".to_string() } else { ANGLES[(t - 1) % ANGLES.len()].to_string() };
+        let system = if t == 0 { base.clone() } else { format!("{base}\n\nTHE ANGLE of this request, which your program must take: {statement}") };
+        write(&dir.join(format!("call_{i:03}.statement.txt")), &statement)?;
+        write(&dir.join(format!("call_{i:03}.system.txt")), &system)?;
+        let prompt = "Write one program.";
+        one_call_with(&system, prompt, &dir, i, model)?;
+        let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("call_{i:03}.reply.json"))).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let reply = result_of(&j).and_then(|r| r["result"].as_str()).unwrap_or("").to_string();
+        let src = code_blocks(&reply).into_iter().next().unwrap_or_default();
+        let (verdict, d, text) = match reader.read_program(&src) {
+            Err(g) => (format!("not read: {g}"), "-".to_string(), String::new()),
+            Ok(tree) => {
+                let d = fuller::futhark_sig::tree_distance(&tree, &reference);
+                let text = sexp(&c.k, &tree);
+                if d < bar {
+                    (format!("thrown: within {bar} edits of the published program"), d.to_string(), text)
+                } else if fuller::typed_gep::fits(&contract_k, &layout, &tree).is_err() {
+                    ("thrown: too big for the layout".to_string(), d.to_string(), text)
+                } else {
+                    let dual = c.k.dual(c.k.roots()[0]).map(|x| x.dual.clone()).unwrap_or_default();
+                    let e = Entry { source: Source::Llm, origin: format!("{model} call_{i:03} statement: {statement}"), function: "main".into(), dual, sexp: text.clone() };
+                    write(&c.out.join("seed.tsv"), &format!("{POOL_HEADER}\n{}\n", e.line(1)))?;
+                    write(&c.out.join("seed.fut"), &src)?;
+                    log.push_str(&format!("{t}\t{model}\t{statement}\ttaken\t{d}\t{text}\n"));
+                    write(&c.out.join("seed_log.tsv"), &log)?;
+                    println!("# {} {}: the seed program, {model} call {i} ({statement}), {d} edits from the published program:\n{text}\n{src}", utc(), c.pname);
+                    return Ok(());
+                }
+            }
+        };
+        log.push_str(&format!("{t}\t{model}\t{statement}\t{verdict}\t{d}\t{text}\n"));
+        write(&c.out.join("seed_log.tsv"), &log)?;
+        println!("# {} {} attempt {t} ({statement}): {verdict}", utc(), c.pname);
+    }
+    Err(format!("no seed program in {tries} attempts (OUT/seed_log.tsv)"))
+}
+
 fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).cloned().ok_or("futhark_pool bench|llm|reread|contract --problem P ...")?;
@@ -630,7 +697,14 @@ fn real_main() -> Result<(), String> {
             let n = arg(&args, "--program-size").map(|v| v.parse::<usize>()).transpose().map_err(|_| "--program-size N")?;
             distinct(&c, bar, n)
         }
-        o => Err(format!("{o}: bench, llm, topics, reread, distinct or contract")),
+        "seed" => {
+            let bar: usize = arg(&args, "--bar").map_or(Ok(5), |v| v.parse()).map_err(|_| "--bar N")?;
+            let n = arg(&args, "--program-size").map(|v| v.parse::<usize>()).transpose().map_err(|_| "--program-size N")?;
+            let tries: usize = arg(&args, "--tries").map_or(Ok(6), |v| v.parse()).map_err(|_| "--tries N")?;
+            let model = arg(&args, "--model").unwrap_or_else(|| "fable".into());
+            seed(&c, bar, n, tries, &model)
+        }
+        o => Err(format!("{o}: bench, llm, topics, reread, distinct, seed or contract")),
     }
 }
 
