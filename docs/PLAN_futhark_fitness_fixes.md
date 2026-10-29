@@ -201,3 +201,10 @@ The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast
 - **inexact:** fitness = π/2 + the quality angle, so every inexact program ranks below every exact one, and inexact programs still rank among themselves by quality, so they can be repaired.
 
 Test: an exact program 100 times slower ranks above every inexact program, however fast. Then rerun the improvement from Fable's histogram program.
+
+### K. Later run: the LLM's mutants without the LLM's answer (Andrew, 2026-10-29)
+Generation 0 is the Fable program's mutants only (`--gen0 fable-mutants` with the seed itself left out), so the population holds real derivatives of a correct program but not the program. Measured, against the same run with the seed in:
+- whether evolution reaches an exact program, and at which evaluation (random search on the same generation 0 as the control);
+- once exact, the speed against the published program;
+- per generation: best and median HFF, distinct outputs, all-zeros share.
+It needs a flag to leave the seed out of generation 0, and the run's correctness gate (section J).
