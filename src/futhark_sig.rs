@@ -222,6 +222,16 @@ pub fn problem(name: &str) -> Result<Problem, String> {
     }
 }
 
+/// THE WORK BOUND FOR TIMING: a program whose [`Interp::work`] at the timing input's sizes is above it is not timed
+/// (no speed credit), on every evaluation path alike (`examples/futhark_evolve.rs`). 0.5 s a run at the rate measured
+/// 2026-10-29 on Fable's exact histogram program `(tab (sum.n (tab (sel ...))))`: its work at histogram's timing input
+/// (k = 100, n = 15 x 2^20) is 16kn + 2k + 1 = 2.517e10 node executions (fifteen nodes in the inner body, the sum's own
+/// pass over n), and it ran 71 times the published program's 3.0 ms, 0.213 s a run: 1.18e11 node executions a second.
+/// The bound of commit 514602a3 (3.5e9) took that program's work as k x n = 1.57e9, the trips without the nodes, and
+/// so still left it untimed ("ratio inf", 66 programs over the bound in that run). The per-command bound of the batch
+/// driver and of the in-process host stays the hard stop.
+pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
+
 /// Load an instance's tables.
 pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {
     FutharkKingdom::from_tables(FutharkFamily::Shape, &format!("Futhark Sig {}", inst.name), inst.types, inst.functions)
@@ -861,7 +871,8 @@ impl<'a> Interp<'a> {
         })
     }
 
-    /// The node executions of a tree on given sizes: every node once, times the trips of the binders it is inside
+    /// The node executions of a tree on given sizes ([`TIMING_WORK_CAP`] bounds them at the timing input's sizes):
+    /// every node once, times the trips of the binders it is inside
     /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;

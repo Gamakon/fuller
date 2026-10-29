@@ -368,3 +368,179 @@ fn every_problems_random_programs_compile_to_rust() {
     }
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The cross-path set: the published histogram program, its planted slowdown (the work twice), Fable's exact program
+/// (`(tab (sum.n (tab (sel ...))))`, about 70 times the published one), a sum of the values in every bin, and a
+/// constant (`tab 10`): five speeds.
+const CROSS_PATH: [&str; 5] = [
+    crate::futhark_sig::HISTOGRAM_REFERENCE,
+    crate::futhark_sig::HISTOGRAM_PLANTED,
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))",
+    "(tab (sum.n (tab (get.n vs j2))))",
+    "(tab 10)",
+];
+
+/// The cross-path set builds in the histogram kingdom, and every program of it is timed (its work at the timing
+/// input within `futhark_sig::TIMING_WORK_CAP`), so the GPU test below times each one on every path. CPU only.
+#[test]
+fn the_cross_path_programs_build_and_are_within_the_timing_work_bound() {
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let interp = crate::futhark_sig::Interp::new(&k, &sig).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().expect("histogram's timing input");
+    let sizes = sig.sizes(&read_binary(&timing).unwrap()).unwrap();
+    for text in CROSS_PATH {
+        let t = crate::futhark_sig::build(&k, text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let w = interp.work(&t, &sizes).unwrap();
+        assert!(w <= crate::futhark_sig::TIMING_WORK_CAP, "{text}: work {w} at the timing input, over the timing bound");
+    }
+}
+
+/// The steps of `pairs` timed pairs after one discarded process-equivalent, the order alternating (the evolution's
+/// `pair_steps` for a fresh program).
+fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
+    let own = Step::Time { yardstick: false, runs };
+    let yard = Step::Time { yardstick: true, runs };
+    let mut v = vec![own];
+    for i in 0..pairs {
+        v.extend(if i % 2 == 0 { [own, yard] } else { [yard, own] });
+    }
+    v
+}
+
+/// The ratios candidate / published of [`fresh_pairs`]' outcomes, and the published program's fastest time.
+fn pair_ratios(o: &[Outcome], pairs: usize) -> (Vec<f64>, f64) {
+    o[0].fastest_ns().unwrap();
+    let mut r = Vec::new();
+    let mut yard = f64::INFINITY;
+    for i in 0..pairs {
+        let (a, b) = (o[1 + 2 * i].fastest_ns().unwrap(), o[2 + 2 * i].fastest_ns().unwrap());
+        let (c, y) = if i % 2 == 0 { (a, b) } else { (b, a) };
+        assert!(c.is_finite() && y.is_finite() && c > 0.0 && y > 0.0, "a timing that is not a finite GPU time: {o:?}");
+        yard = yard.min(y);
+        r.push(c / y);
+    }
+    (r, yard)
+}
+
+fn median(v: &[f64]) -> f64 {
+    let mut s = v.to_vec();
+    s.sort_by(f64::total_cmp);
+    s[s.len() / 2]
+}
+
+/// THE THREE EVALUATION PATHS AGREE, on the GPU (`futhark_evolve --eval single | batch | rust`): on the cross-path set
+/// and histogram's own timing input, (1) every path gives bit-identical quality outputs and so bit-identical quality
+/// inputs; (2) every timing is a finite GPU time; (3) each path's A/A (the published program against itself, 11 pairs,
+/// 20 runs each, as the study times) is within the study's gate of 5 %; (4) every program's median ratio against the
+/// published program agrees between any two paths within the sum of their A/A noise floors (the largest |ratio - 1|
+/// of each). The single path is a process a timing (`futhark_wgpu_host`), the batch path one process for all
+/// (`Backend::Gpu`), the rust path this process (`Backend::Rust`). (The fork compiler, rustc, cc, the GPU; run
+/// under the GPU lock.)
+#[test]
+fn on_the_gpu_the_three_evaluation_paths_agree() {
+    if !crate::futhark_rust::compiler().is_file() || !have("cc") {
+        eprintln!("skipped: the fork compiler or cc is not installed");
+        return;
+    }
+    let _gpu = crate::gpu_test_lock::acquire();
+    let (pairs, runs) = (11, 20);
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().expect("histogram's timing input");
+    let base = scratch("three_paths");
+    let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).unwrap();
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let trees: Vec<Tree> = CROSS_PATH.iter().map(|t| crate::futhark_sig::build(&k, t).unwrap()).collect();
+    let all = stdin_of(&cases);
+    // THE SINGLE PATH: a quality program and a timed program a candidate, a process a timing.
+    let time_once = |exe: &Path| -> f64 {
+        let (_, r) = crate::futhark_wgpu_host::run_program_bytes(exe, &timing, true, runs).unwrap();
+        r.fastest_run_ns(runs).unwrap_or_else(|e| panic!("{}: {e}", exe.display()))
+    };
+    let yard_exe = crate::futhark_wgpu_host::compile_program_prebuilt(p.yardstick, &base.join("single_yard"), &shim).unwrap();
+    let single_pairs = |exe: &Path| -> (Vec<f64>, f64) {
+        time_once(exe);
+        let mut r = Vec::new();
+        let mut yard = f64::INFINITY;
+        for i in 0..pairs {
+            let (c, y) = if i % 2 == 0 {
+                let c = time_once(exe);
+                (c, time_once(&yard_exe))
+            } else {
+                let y = time_once(&yard_exe);
+                (time_once(exe), y)
+            };
+            yard = yard.min(y);
+            r.push(c / y);
+        }
+        (r, yard)
+    };
+    let mut quality: Vec<Vec<Vec<Array>>> = vec![Vec::new(); 3];
+    let mut ratios: Vec<Vec<Vec<f64>>> = vec![Vec::new(); 3];
+    let mut aa: Vec<(Vec<f64>, f64)> = Vec::new();
+    for (i, t) in trees.iter().enumerate() {
+        let q = crate::futhark_wgpu_host::compile_program_prebuilt(&program_cases(&k, &sig, t, cases.len()).unwrap(), &base.join(format!("single_q{i}")), &shim).unwrap();
+        let (out, _) = crate::futhark_wgpu_host::run_program_bytes(&q, &all, false, 1).unwrap();
+        quality[0].push(read_binary(&out).unwrap());
+        let e = crate::futhark_wgpu_host::compile_program_prebuilt(&crate::futhark_sig::program(&k, &sig, t).unwrap(), &base.join(format!("single_t{i}")), &shim).unwrap();
+        ratios[0].push(single_pairs(&e).0);
+    }
+    aa.push(single_pairs(&yard_exe));
+    // THE BATCH AND RUST PATHS: every program in one batch, the published program as a member for the A/A.
+    let inputs = Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) };
+    for (path, backend) in [(1, Backend::Gpu { shim: shim.clone() }), (2, Backend::Rust { rt: rt.clone() })] {
+        let host = Host::new(&k, &sig, cases.len(), backend, &base.join(format!("path{path}")), inputs).unwrap();
+        let mut members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: [vec![Step::Quality], fresh_pairs(pairs, runs)].concat() }).collect();
+        members.push(Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) });
+        let got = host.run(&members).unwrap();
+        for (o, text) in got.outcomes.iter().zip(CROSS_PATH) {
+            match &o[0] {
+                Outcome::Quality(v) => quality[path].push(v.clone()),
+                other => panic!("path {path}, {text}: no quality outputs: {other:?}"),
+            }
+            ratios[path].push(pair_ratios(&o[1..], pairs).0);
+        }
+        aa.push(pair_ratios(&got.outcomes[trees.len()], pairs));
+    }
+    let names = ["single", "batch", "rust"];
+    let floor: Vec<f64> = aa.iter().map(|(r, _)| r.iter().map(|x| (x - 1.0).abs()).fold(0.0, f64::max)).collect();
+    let mut table = String::from("path\tpublished GPU us\tA/A min\tA/A max\tfloor");
+    for c in CROSS_PATH {
+        table.push_str(&format!("\t{c}"));
+    }
+    table.push('\n');
+    for path in 0..3 {
+        let (r, y) = &aa[path];
+        table.push_str(&format!("{}\t{:.1}\t{:.4}\t{:.4}\t{:.4}", names[path], y / 1e3, r.iter().cloned().fold(f64::INFINITY, f64::min), r.iter().cloned().fold(0.0, f64::max), floor[path]));
+        for v in &ratios[path] {
+            table.push_str(&format!("\t{:.4}", median(v)));
+        }
+        table.push('\n');
+    }
+    eprintln!("{table}");
+    for i in 0..trees.len() {
+        for path in 1..3 {
+            assert_eq!(quality[path][i], quality[0][i], "{}: the {} path's quality outputs differ from the single path's", CROSS_PATH[i], names[path]);
+            let fit = cases.iter().zip(&quality[path][i]).filter(|(c, _)| c.split.in_fitness());
+            let qa: Vec<u64> = fit.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, &c.output)).map(f64::to_bits).collect();
+            let fit0 = cases.iter().zip(&quality[0][i]).filter(|(c, _)| c.split.in_fitness());
+            let q0: Vec<u64> = fit0.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, &c.output)).map(f64::to_bits).collect();
+            assert_eq!(qa, q0, "{}: the {} path's quality inputs differ", CROSS_PATH[i], names[path]);
+        }
+    }
+    for path in 0..3 {
+        let within = aa[path].0.iter().filter(|r| (*r - 1.0).abs() <= 0.05).count();
+        assert_eq!(within, pairs, "the {} path's A/A gate: {within} of {pairs} pairs within 5 %\n{table}", names[path]);
+    }
+    for i in 0..trees.len() {
+        for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+            let (ma, mb) = (median(&ratios[a][i]), median(&ratios[b][i]));
+            assert!((ma / mb - 1.0).abs() <= floor[a] + floor[b], "{}: the {} path's median ratio {ma:.4} and the {} path's {mb:.4} differ by more than their A/A floors {:.4} + {:.4}\n{table}", CROSS_PATH[i], names[a], names[b], floor[a], floor[b]);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}

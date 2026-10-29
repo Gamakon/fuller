@@ -1211,14 +1211,8 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
     Ok(out)
 }
 
-/// THE WORK BOUND FOR TIMING (2026-10-29). The WGSL cap (`CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`, 1.7e8) is 0.1 s at
-/// the evaluator's 17e9 node evaluations a second with a further safety factor of 10, set for random WGSL kernels with
-/// unbounded loops. Applied to Futhark's timing input it left an exact program untimed ("ratio inf"): Fable's
-/// histogram, 1.57e9 node executions at the timing size, which the rescore path timed at about 71 times the published
-/// program's 3.2 ms, about 0.22 s a run. A Futhark program's work is its interpreter bound with no unbounded loop, so
-/// the timing bound is 0.5 s at the measured 7e9 node executions a second of that run, 3.5e9; the per-command alarm of
-/// the batch driver stays the hard stop.
-const TIMING_WORK_CAP: u128 = 3_500_000_000;
+// THE WORK BOUND FOR TIMING, one for every evaluation path: `fuller::futhark_sig::TIMING_WORK_CAP` (its basis there).
+use fuller::futhark_sig::TIMING_WORK_CAP;
 
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 

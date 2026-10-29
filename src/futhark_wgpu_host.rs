@@ -54,12 +54,17 @@ pub fn shim_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("futhark-wgpu-shim")
 }
 
-/// The branch compiler: `$FUTHARK_BRANCH`, or the pinned artefact's path
-/// (`futhark-wgpu-shim/fetch_futhark_branch.sh` puts it there).
+/// The compiler of the webgpu path: `$FUTHARK_BRANCH`, or our fork
+/// ([`crate::futhark_rust::compiler`]): the pinned branch commit
+/// (`14e9ccb`, which `futhark-wgpu-shim/fetch_futhark_branch.sh` fetches)
+/// with the series of `futhark-rust-backend/patches`, so the webgpu path and
+/// the rust-wgpu path compile a program with ONE compiler. Measured
+/// 2026-10-29: the unpatched branch stopped on SetMem in a GPU kernel ("Known
+/// compiler limitation") for 4 of the 24 programs of histogram's mutants-only
+/// generation 0, which the fork compiles (patch 0008, the webgpu kernel
+/// code), so `--eval single` scored them worst and `--eval rust` did not.
 pub fn branch_compiler() -> PathBuf {
-    std::env::var_os("FUTHARK_BRANCH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp/branch_artifact/futhark-nightly-macos-arm64/bin/futhark"))
+    std::env::var_os("FUTHARK_BRANCH").map(PathBuf::from).unwrap_or_else(crate::futhark_rust::compiler)
 }
 
 /// What the shim saw while the program ran (its `FUTHARK_WGPU_SHIM_REPORT`).
@@ -286,7 +291,7 @@ pub fn compile_program_prebuilt(source: &str, dir: &Path, shim: &Path) -> Result
 /// [`compile_program_prebuilt`] with each stage's wall time.
 pub fn compile_program_prebuilt_staged(source: &str, dir: &Path, shim: &Path) -> Result<(PathBuf, CompileStages), String> {
     let mut stages = CompileStages::default();
-    let exe = compile_staged(source, dir, Some(shim), &Build { library: None, timeout: COMPILE_TIMEOUT }, &mut stages)?;
+    let exe = compile_staged(source, dir, Some(shim), &Build { library: None, timeout: COMPILE_TIMEOUT, compiler: branch_compiler() }, &mut stages)?;
     Ok((exe, stages))
 }
 
@@ -300,7 +305,7 @@ pub type DriverOf<'a> = &'a dyn Fn(&serde_json::Value) -> Result<String, String>
 /// wall time.
 pub fn compile_library_prebuilt(source: &str, driver_c: DriverOf, dir: &Path, shim: &Path, timeout: Duration) -> Result<(PathBuf, CompileStages), String> {
     let mut stages = CompileStages::default();
-    let exe = compile_staged(source, dir, Some(shim), &Build { library: Some(driver_c), timeout }, &mut stages)?;
+    let exe = compile_staged(source, dir, Some(shim), &Build { library: Some(driver_c), timeout, compiler: branch_compiler() }, &mut stages)?;
     Ok((exe, stages))
 }
 
@@ -314,10 +319,12 @@ struct Build<'a> {
     /// A library build's driver, from the manifest; `None` is the compiler's own executable (Futhark's command line).
     library: Option<DriverOf<'a>>,
     timeout: Duration,
+    /// The compiler ([`branch_compiler`]; a test names the unpatched branch).
+    compiler: PathBuf,
 }
 
 fn compile_with(source: &str, dir: &Path, prebuilt: Option<&Path>) -> Result<PathBuf, String> {
-    compile_staged(source, dir, prebuilt, &Build { library: None, timeout: COMPILE_TIMEOUT }, &mut CompileStages::default())
+    compile_staged(source, dir, prebuilt, &Build { library: None, timeout: COMPILE_TIMEOUT, compiler: branch_compiler() }, &mut CompileStages::default())
 }
 
 fn compile_staged(source: &str, dir: &Path, prebuilt: Option<&Path>, build: &Build, stages: &mut CompileStages) -> Result<PathBuf, String> {
@@ -328,8 +335,8 @@ fn compile_staged(source: &str, dir: &Path, prebuilt: Option<&Path>, build: &Bui
     if c.exists() {
         std::fs::remove_file(&c).map_err(|e| format!("remove the stale {}: {e}", c.display()))?;
     }
-    let compiler = branch_compiler();
-    let mut cmd = Command::new(&compiler);
+    let compiler = &build.compiler;
+    let mut cmd = Command::new(compiler);
     cmd.arg("webgpu");
     if build.library.is_some() {
         cmd.arg("--library");
@@ -516,19 +523,28 @@ mod tests {
         assert!(report_of(&[]).fastest_run_ns(3).is_err());
     }
 
-    /// A program the branch compiler cannot handle ("Known compiler limitation": a SetMem statement in a GPU kernel,
-    /// met by histogram R seed 1 on 2026-10-27) leaves an EMPTY prog.c; that is no C, named with the compiler's own
-    /// message, never a link step that stops with none. (Needs the branch compiler; no GPU, no link.)
+    /// A program the UNPATCHED branch compiler cannot handle ("Known compiler limitation": a SetMem statement in a GPU
+    /// kernel, met by histogram R seed 1 on 2026-10-27) leaves an EMPTY prog.c; that is no C, named with the compiler's
+    /// own message, never a link step that stops with none. The webgpu path's compiler, the fork ([`branch_compiler`]),
+    /// writes C for the same program (its patch 0008). (Needs the pinned branch artefact
+    /// (`futhark-wgpu-shim/fetch_futhark_branch.sh`) and the fork; no GPU, no link.)
     #[test]
     fn an_empty_generated_c_is_no_c_with_the_compilers_message() {
-        if !Command::new(branch_compiler()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
-            eprintln!("skipped: the branch compiler is not installed");
+        let unpatched = PathBuf::from("/tmp/branch_artifact/futhark-nightly-macos-arm64/bin/futhark");
+        let have = |p: &Path| Command::new(p).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !have(&unpatched) || !have(&branch_compiler()) {
+            eprintln!("skipped: the pinned branch artefact or the fork compiler is not installed");
             return;
         }
         let src = "entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [i64.i32 k]i32 =\n  let k = i64.i32 k\n  in tabulate k (\\j1 -> i32.minimum (hist (+) 0i32 k (map i64.i32 vs) (map2 i32.min is vs)))\n";
         let dir = std::env::temp_dir().join(format!("futhark_wgpu_empty_c_{}", std::process::id()));
-        let err = compile_program_prebuilt(src, &dir, &dir.join("no_shim")).unwrap_err();
+        let build = Build { library: None, timeout: COMPILE_TIMEOUT, compiler: unpatched };
+        let err = compile_staged(src, &dir, Some(&dir.join("no_shim")), &build, &mut CompileStages::default()).unwrap_err();
         assert!(err.contains("wrote no C") && err.contains("SetMem"), "{err}");
+        let fork = Build { library: None, timeout: COMPILE_TIMEOUT, compiler: branch_compiler() };
+        let err = compile_staged(src, &dir, Some(&dir.join("no_shim")), &fork, &mut CompileStages::default()).unwrap_err();
+        assert!(!err.contains("wrote no C"), "the fork wrote no C either: {err}");
+        assert!(std::fs::metadata(dir.join("prog.c")).map(|m| m.len() > 0).unwrap_or(false), "the fork wrote no C");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

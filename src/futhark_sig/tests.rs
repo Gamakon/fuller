@@ -256,3 +256,23 @@ fn the_tree_edit_distance_counts_relabels_insertions_and_deletions() {
     assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (get.n is j1)) vs)").unwrap()), 1);
     assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n zeros vs)").unwrap()), 5);
 }
+
+/// THE TIMING WORK BOUND admits the programs it was set for: Fable's exact histogram program, at histogram's timing
+/// input (k = 100, n = 15 x 2^20), is 16kn + 2k + 1 node executions, within the bound, and so is the published program (less work). Commit 514602a3 set the bound
+/// from k x n, and this program stayed untimed on every evaluation path.
+#[test]
+fn the_timing_work_bound_admits_fable_s_exact_histogram_program() {
+    let k = load(&HISTOGRAM).unwrap();
+    let sig = signature(&HISTOGRAM).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let (bins, n) = (100u128, 15u128 << 20);
+    let sizes: BTreeMap<String, usize> = [("k".to_string(), bins as usize), ("n".to_string(), n as usize)].into_iter().collect();
+    let fable = build(&k, "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))").unwrap();
+    let w = interp.work(&fable, &sizes).unwrap();
+    assert_eq!(w, 16 * bins * n + 2 * bins + 1, "Fable's program's work at the timing input");
+    assert!(w <= TIMING_WORK_CAP, "Fable's program's work {w} is over the timing bound {TIMING_WORK_CAP}");
+    let published = build(&k, HISTOGRAM_REFERENCE).unwrap();
+    let wp = interp.work(&published, &sizes).unwrap();
+    assert!(wp < w && wp <= TIMING_WORK_CAP, "the published program's work {wp}");
+    eprintln!("timing work: Fable's histogram {w}, the published program {wp}, the bound {TIMING_WORK_CAP}");
+}

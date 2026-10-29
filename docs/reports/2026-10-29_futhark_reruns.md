@@ -50,3 +50,24 @@ The decision on running this set as an improvement (speed) search was not made, 
 Generation 0 was Fable's exact program plus 23 point mutants. Stage 2 began at generation 0, as designed. Then a bug showed: under the two-level HFF, wrong but fast mutants outrank the exact but slow seed. For example, a mutant with quality angle 1.29 (wrong) and speed ratio 0.002 scored 0.848, ahead of the exact seed, which is 71 times slower than the published program. Over 7 generations the best fell 0.848 → 0.802, but the best was inexact in every generation (`exact 0+0` for the best), so selection was favouring wrong programs over the exact seed. A speed ratio here is the candidate's time over the published program's: 0.002 means a wrong program that does almost no work. The run was stopped by its run file.
 
 **Bug:** in stage 2, an inexact program must never rank above an exact one (Andrew's rule: quality first, then performance). The fix is that once a run is in stage 2, selection is lexicographic: exact before inexact, and the two-level HFF only among the exact. It has not been built.
+
+## Seed-less run: Fable's mutants without Fable's program (09:49Z to 10:27Z, stopped at shutdown)
+Histogram, R, seed 1, `--gen0 fable-mutants-only --mutation point --eval single`, fuller 514602a3 (stage 2 gated by correctness, the Futhark timing work bound). **It learned: the best fell 1.2644 → 1.1024 (−13 %) and the median 1.2926 → 1.1358 over 23 generations (445 programs).** No exact program on this path (the same command on `--eval rust` reached an exact program at evaluation 34; see the open bugs). Full table: `docs/reports/2026-10-29_histogram_noseed_per_generation.tsv`.
+
+| generation | programs | best | median |
+|---|---|---|---|
+| 0 | 24 | 1.2644 | 1.2926 |
+| 4 | 98 | 1.2104 | 1.2594 |
+| 7 | 160 | 1.1789 | 1.2300 |
+| 10 | 213 | 1.1199 | 1.2068 |
+| 16 | 325 | 1.1042 | 1.2367 |
+| 19 | 382 | 1.1024 | 1.1330 |
+| 23 | 445 | 1.1024 | 1.1358 |
+
+## Open bugs at shutdown (2026-10-29 10:30Z)
+1. `--eval rust` records no timed pass for Fable's histogram program, so it is scored as infinitely slow (`src/futhark_batch.rs:109`).
+2. `--eval batch` timing slows the published program 1.3–3.6× and fails every A/A gate.
+3. Generation 0 differs between `--eval rust` and `--eval single` for the same command and seed (rust: best 1.166, exact at evaluation 34; single: best 1.264, not exact).
+4. The fork patches 0007–0009 (7d0b2118) compile all 373 failing programs, but their GPU value check has not been run.
+
+The fix for bugs 1 to 3 was in progress when the session ended. Its edits (`src/futhark_wgpu_host.rs`, `src/futhark_batch/tests.rs` (a cross-path test), `src/futhark_sig.rs`, `examples/futhark_evolve.rs`) are committed as work in progress: clippy is clean with `gpu,wgsl`, and the tests have NOT been run.
