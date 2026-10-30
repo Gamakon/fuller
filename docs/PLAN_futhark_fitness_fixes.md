@@ -157,6 +157,33 @@ They are built after section H, once its rings exist, and measured on the GPU be
 
 Each step reports its per-operator measurements and R against C, as a table in this plan, before the next step is built.
 
+**Results so far (2026-10-29), fixed fitness, histogram and pathfinder, 2 seeds (`scripts/futhark_operator_table.py`):**
+
+| operator | children with an unseen output | better than parent | same output as parent |
+|---|---|---|---|
+| point mutation | 39–60 % | 4.4–7.9 % | 12–29 % |
+| crossover + mutation | 44–59 % | 1.5–3.2 % | 8–24 % |
+| marriage | 29–48 % | 3.1–6.3 % | 34–58 % |
+| crossover alone | 15–22 % | 1.7–5.7 % | 70–79 % |
+| pump (e-graph) | 0 % | 0 % | 100 % |
+| saturated fold | 0 % | 0 % | 99–100 % |
+| ring walk (step 2) | 0.1–1.7 % | 1.5–2.7 % | 53–56 % |
+
+Step 2 failed: ring walk learned nothing on histogram, and less than point mutation on pathfinder. So point mutation stays the baseline mutation, and each operator below is tested ADDED to it, not replacing it.
+
+**The test plan for the remaining operators (Andrew, 2026-10-30).** Each is tested alone, in this order, against the point-mutation baseline:
+1. **Transposition** (IS and RIS, within one type's head).
+2. **Inversion** (a run reversed within one type's head).
+3. **Sorting** (cells reordered within a head; the ordering is settled with Andrew before it is built).
+4. **Model edits** (the `model_rewrite` event kind): an elite program and its scores are given to a model (Sonnet first; Opus, then Fable, when the best stops improving), asked for a variant, read back with the reader (`src/futhark_reader.rs`) and written onto a ring canvas. A reply the reader cannot express is a kingdom gap, recorded. Calls are capped per run, and their cost is reported.
+
+For each operator:
+- **Its own rate,** first as a measurement (`--measure`, 700 children on each benchmark), then in runs: unseen output, better than parent, same output as parent, all zeros.
+- **Runs:** histogram and pathfinder, R, the same seeds, budget and binary as the baseline, with only that operator added at a stated share of the children.
+- **Reported every generation:** best and median HFF (is it falling?), and, once a program is exact, its speed against the published program and against the starting program.
+- **Kept only if** it beats the baseline at equal numbers of programs scored: a lower best HFF in at least 2 of the seeds, or a faster exact program.
+- **First,** the timing bugs (`docs/reports/2026-10-29_futhark_reruns.md`, open bugs) are fixed and tested on all three evaluation paths.
+
 ## Order agreed with Andrew (2026-10-28)
 1. Fix all the fitness: A to G. The check of section A passes on histogram and pathfinder.
 2. The canvas: section H.
