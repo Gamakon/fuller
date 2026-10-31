@@ -4692,26 +4692,37 @@ mod tests {
     }
 
     /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it
-    /// 1.3 %): the scatter form's starts entry reads `scratch[2 nb k + k + c]` and `scratch[2 nb k + c]` as the runs
-    /// `st` and `tot` over its run loop's counter, and its expression spells no clamp; the witness names a run whose
-    /// base is one past its proof and a counter assigned outside a run loop.
+    /// 1.3 %). Since section 10 the starts entry is the scaffold's, so the feature is tested in an entry the gene owns:
+    /// the scatter form's mean, its cluster's length and first slot found by a loop over the clusters, reads
+    /// `scratch[2 nb k + c]` and `scratch[2 nb k + k + c]` as the runs `tot` and `st` over its run loop's counter, and
+    /// its expression spells neither read with a clamp; the witness names a run whose base is one past its proof and a
+    /// counter assigned outside a run loop.
     #[test]
     fn a_run_index_reads_as_its_offset_row_and_spells_no_clamp() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let dir = crate::wgsl::true_kingdom::default_dir();
         let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
         let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
-        let src = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/segmented.wgsl")).expect("kernel");
+        let seg = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/segmented.wgsl")).expect("kernel");
+        let reads = "    let len = scratch[2u * nb * k + c];\n    let first = scratch[2u * nb * k + k + c];\n";
+        assert!(seg.contains(reads), "the scatter form's mean reads its cluster's length and first slot");
+        let src = seg.replace(
+            reads,
+            "    var len: u32 = 0u;\n    var first: u32 = 0u;\n    for (var q: u32 = 0u; q < k; q = q + 1u) {\n        if (q == c) { len = scratch[2u * nb * k + q]; first = scratch[2u * nb * k + k + q]; }\n    }\n",
+        );
         let kids = read_module(&k, &src, &c).expect("reads");
-        let names: Vec<String> = kids[2].level_order().into_iter().map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
+        assert_eq!(kids.len(), 5);
+        let names: Vec<String> = kids[4].level_order().into_iter().map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
         for want in ["inrange.scratch_run_st", "inrange.scratch_run_tot", "run.kr_y1"] {
-            assert!(names.iter().any(|n| n == want), "the starts entry reads through {want}: {names:?}");
+            assert!(names.iter().any(|n| n == want), "the mean entry reads through {want}: {names:?}");
         }
         let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
         let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
-        let starts = &text[text.find("fn starts(").expect("starts")..];
-        let starts = &starts[..starts.find("\n}\n").expect("its end")];
-        assert!(!starts.contains("arrayLength(&scratch) - 1u"), "the starts entry spells a clamp: {starts}");
+        let mean = &text[text.find("fn mean(").expect("mean")..];
+        let mean = &mean[..mean.find("\n}\n").expect("its end")];
+        for run in ["scratch[((2u * ((params.x + 255u) / 256u) * params.y) + kr_y1)]", "scratch[((2u * ((params.x + 255u) / 256u) * params.y + params.y) + kr_y1)]"] {
+            assert!(mean.contains(run), "the mean entry reads the run {run} with no clamp: {mean}");
+        }
         let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("inrange.py")).arg(d).output().expect("python3 runs");
         let src = dir.join("mod").join("kmeans_update_segmented");
         let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
@@ -4736,28 +4747,41 @@ mod tests {
     }
 
     /// THE BREAK GUARD (docs/DESIGN_inrange_index_types.md section 7, 2026-10-31: the clamp on `assignments[base + q]`
-    /// cost reply 2's hist entry 0.8 %, fbench/b4_hist.log): `let idx = base + q; if (idx >= end) { break; }` with
-    /// `end = min(base + 256u, params.x)` reads as the break guard row of `assignments` (`end` through `len.<B>_min`),
-    /// and the entry's expression spells no clamp; the witness names a break guard that assigns its register under
-    /// `gv > L` and a `len.<B>_min` whose bound is an index.
+    /// cost reply 2's hist entry 0.8 %, fbench/b4_hist.log). Since section 10 the hist entry is the scaffold's, so the
+    /// feature is tested in an entry the gene owns: A7's gather mean (the variant `none`) whose loop over the points
+    /// runs by blocks of 256 (reply 2's hist), `let idx = base + q; if (idx >= end) { break; }` with
+    /// `end = min(base + 256u, params.x)`, reads as the break guard (of the inner loop's depth, 2)
+    /// row of `assignments` (`end` through `len.<B>_min`), and the entry's expression spells no clamp; the witness
+    /// names a break guard that assigns its register under `gv > L` and a `len.<B>_min` whose bound is an index.
     #[test]
     fn a_break_guard_reads_as_its_row_and_spells_no_clamp() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let dir = crate::wgsl::true_kingdom::default_dir();
         let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
         let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
-        let src = std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl")).expect("reply 2");
-        let kids = read_module(&k, &src, &c).expect("reply 2 reads");
-        let names: Vec<String> = kids.iter().flat_map(|t| t.level_order()).map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
-        for want in ["block.brk_guard_assignments_B1_f", "len.assignments_min"] {
-            assert!(names.iter().any(|n| n.starts_with(want)), "reply 2 reads through {want}");
+        let gather = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/gather.wgsl")).expect("the gather form");
+        let lp = "    for (var v: u32 = 0u; v < n_vectors; v = v + 1u) {\n        if (assignments[v] == centroid_idx) {\n            let term = vectors[v * dimensions + dim_idx];\n";
+        assert!(gather.contains(lp), "the gather mean loops over the points");
+        let close = "            count = count + 1u;\n        }\n    }\n";
+        assert!(gather.contains(close), "the gather loop's end");
+        let src = gather
+            .replace(
+                lp,
+                "    let nb = (n_vectors + 255u) / 256u;\n    for (var b: u32 = 0u; b < 4096u; b = b + 1u) {\n    if (b >= nb) { break; }\n    let base = b * 256u;\n    let end = min(base + 256u, n_vectors);\n    for (var q: u32 = 0u; q < 256u; q = q + 1u) {\n        let idx = base + q;\n        if (idx >= end) { break; }\n        if (assignments[idx] == centroid_idx) {\n            let term = vectors[idx * dimensions + dim_idx];\n",
+            )
+            .replace(close, "            count = count + 1u;\n        }\n    }\n    }\n");
+        let kids = read_module(&k, &src, &c).expect("the gather mean with a break guard reads");
+        assert_eq!(kids.len(), 5);
+        let names: Vec<String> = kids[4].level_order().into_iter().map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
+        for want in ["block.brk_guard_assignments_B2_f", "len.assignments_min"] {
+            assert!(names.iter().any(|n| n.starts_with(want)), "the mean reads through {want}: {names:?}");
         }
         let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
         let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
-        let hist = &text[text.find("fn hist(").expect("hist")..];
-        let hist = &hist[..hist.find("\n}\n").expect("its end")];
-        assert!(hist.contains("if (gv >= ") && hist.contains("{ break; } gi_assignments1 = gv; }"), "the hist entry breaks through the guard: {hist}");
-        assert!(!hist.contains("arrayLength(&assignments) - 1u"), "the hist entry spells a clamp: {hist}");
+        let mean = &text[text.find("fn mean(").expect("mean")..];
+        let mean = &mean[..mean.find("\n}\n").expect("its end")];
+        assert!(mean.contains("if (gv >= ") && mean.contains("{ break; } gi_assignments2 = gv; }"), "the mean entry breaks through the guard: {mean}");
+        assert!(!mean.contains("arrayLength(&assignments) - 1u"), "the mean entry spells a clamp: {mean}");
         let src = dir.join("mod").join("kmeans_update_segmented");
         let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
         let brk = "\t{0} { let gv = {1}; if (gv >= {2}) { break; } gi_assignments1 = gv; } {3}\t";
@@ -4815,9 +4839,11 @@ mod tests {
     }
 
     /// THE ENTRY-START TYPE (`kingdoms/wgsl_true/start.py`, 2026-10-31: the barrier before reply 2's first scatter phase
-    /// cost the entry 2 %): reply 2's scatter entry, which opens with a phase, reads as that phase's first-phase row, and
-    /// its expressed and shared texts spell no barrier before the phase's first pool write and bind no workgroup read in
-    /// a `let`. The witness proves every module table and names two hand-edited ones.
+    /// cost the entry 2 %). Since section 10 the scatter's head and prologue are the scaffold's, so the feature is tested
+    /// in an entry the gene owns: the scatter form's mean, opening with a phase that stages each invocation's cluster in
+    /// a workgroup array, reads as that phase's first-phase row (the unchanged mean opens with no phase), and its
+    /// expressed and shared texts spell no barrier before the phase's first pool write and bind no workgroup read in a
+    /// `let`. The witness proves every module table and names two hand-edited ones.
     #[test]
     fn an_entry_opening_with_a_phase_spells_no_barrier_before_it() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -4825,19 +4851,25 @@ mod tests {
         let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
         let share = crate::wgsl::true_share::Share::load(&k).expect("the share rows");
         let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
-        let src = std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl")).expect("reply 2");
-        let kids = read_module(&k, &src, &c).expect("reply 2 reads");
+        let seg = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/segmented.wgsl")).expect("kernel");
+        let (sig, cl) = ("fn mean(@builtin(global_invocation_id) global_id: vec3<u32>) {\n", "    let c = t / d;\n");
+        assert!(seg.contains(sig) && seg.contains(cl), "the scatter form's mean");
+        let src = seg
+            .replacen("\n@compute", "\nvar<workgroup> sh_m: array<u32, 256>;\n\n@compute", 1)
+            .replace(sig, "fn mean(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invocation_index) lidx: u32) {\n    sh_m[lidx] = global_id.x / params.z;\n    workgroupBarrier();\n")
+            .replace(cl, "    let c = sh_m[lidx];\n");
+        let kids = read_module(&k, &src, &c).expect("the mean opening with a phase reads");
         let body = |t: &Tree| k.rows[t.kids.last().expect("a body").symbol as usize].name.clone();
-        assert_eq!(body(&kids[3]), "wg.phase_start", "the scatter entry opens with its first phase");
-        assert_eq!(body(&kids[0]), "block.start_body", "the hist entry opens with no phase");
+        assert_eq!(body(&kids[4]), "wg.phase_start", "the mean entry opens with its first phase");
+        assert_eq!(body(&read_module(&k, &seg, &c).expect("reads")[4]), "block.start_body", "the unchanged mean opens with no phase");
         let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
         let tree = Tree { symbol: link, const_index: None, kids };
         for text in [k.render(&tree).expect("render"), share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render")] {
-            let scatter = &text[text.find("fn scatter(").expect("the scatter entry")..];
-            let scatter = &scatter[..scatter.find("\n}\n").expect("its end")];
-            let (write, barrier) = (scatter.find("wg_pool[o] =").expect("the phase's write"), scatter.find("workgroupBarrier").expect("the phase's barrier"));
-            assert!(write < barrier, "a barrier before the first phase's write");
-            assert!(scatter.lines().filter(|l| l.trim_start().starts_with("let st")).all(|l| !l.contains("wg_")), "a let reads workgroup memory");
+            let mean = &text[text.find("fn mean(").expect("the mean entry")..];
+            let mean = &mean[..mean.find("\n}\n").expect("its end")];
+            let (write, barrier) = (mean.find("wg_pool[o] =").expect("the phase's write"), mean.find("workgroupBarrier").expect("the phase's barrier"));
+            assert!(write < barrier, "a barrier before the first phase's write: {mean}");
+            assert!(mean.lines().filter(|l| l.trim_start().starts_with("let st")).all(|l| !l.contains("wg_")), "a let reads workgroup memory: {mean}");
         }
         let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("start.py")).arg(d).output().expect("python3 runs");
         for iface in ["kmeans_update", "kmeans_update_segmented", "v24", "v24_k1"] {
