@@ -4178,11 +4178,30 @@ mod tests {
         if std::env::var("FULLER_PRINT_WIDTHS").is_err() {
             return;
         }
+        // FULLER_WIDTH_DIR: another directory of interface tables (an earlier generation of them) to measure instead
+        let base = std::env::var("FULLER_WIDTH_DIR").map_or_else(|_| crate::wgsl::true_kingdom::default_dir().join("mod"), std::path::PathBuf::from);
         for (iface, n) in [("kmeans_update", 94usize), ("kmeans_update_segmented", 379)] {
-            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            if !base.join(iface).exists() {
+                continue;
+            }
+            let k = TrueKingdom::load(&base.join(iface)).expect("the table");
             let contract = k.relations().check().expect("the kingdom check");
             let l = crate::typed_gep::GeneLayout::from_program_size(&contract, k.root, n).expect("layout");
             eprintln!("{iface}: N = {n}: {} words a gene ({:.1} MB)", l.width, l.width as f64 * 4.0 / 1e6);
+            // the widest families (a type's name up to its first '.', or its rung letter for statement types)
+            let mut fam: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+            for f in &l.frames {
+                let name = k.type_name(f.ty);
+                let key = if name.starts_with("stmt") || name.starts_with("block") { name.chars().take_while(|c| !c.is_ascii_digit()).collect::<String>() } else { name.split('.').next().unwrap_or("").to_string() };
+                let e = fam.entry(key).or_default();
+                e.0 += f.head_len + f.tail_len + f.dc_len;
+                e.1 += 1;
+            }
+            let mut v: Vec<_> = fam.into_iter().collect();
+            v.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            for (f, (w, n)) in v.iter().take(14) {
+                eprintln!("  {f:<24} {w:>10} words over {n} types");
+            }
         }
     }
 
