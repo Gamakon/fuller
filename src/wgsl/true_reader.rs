@@ -4159,6 +4159,27 @@ impl<'a> Reader<'a> {
         Ok(Tree { symbol: row, const_index: None, kids })
     }
 
+    /// The scatter entry of a scaffold variant (section 10): the scaffold's head and prologue, and a body that stores
+    /// the invocation's own point at the slot the scaffold assigned it, `store.cluster_<ids>(cluster.own, cluster.point)`.
+    fn cluster_scatter(&mut self) -> R<Tree> {
+        let k = self.k.fuel_budget;
+        let leaf = |s: &Self, n: &str| -> R<Tree> { Ok(Tree { symbol: s.row(n)?, const_index: None, kids: Vec::new() }) };
+        let store = self.k.rows.iter().find(|r| r.name.starts_with("store.cluster_") && r.name.ends_with(&format!("_L0_f{k}"))).map(|r| r.name.clone()).ok_or_else(|| ReadError::Gap(format!("the cluster store at L0_f{k}")))?;
+        let st = Tree { symbol: self.row(&store)?, const_index: None, kids: vec![leaf(self, "cluster.own")?, leaf(self, "cluster.point")?] };
+        let one = Tree { symbol: self.row(&format!("block.one_L0_f{k}"))?, const_index: None, kids: vec![st] };
+        let body = Tree { symbol: self.row("block.start_body")?, const_index: None, kids: vec![one] };
+        let row = self.row("kernel.entry_scatter")?;
+        let mut kids = Vec::new();
+        for t in &self.k.rows[row as usize].args[..self.k.rows[row as usize].args.len() - 1] {
+            match self.k.type_name(*t).as_str() {
+                "u32.wgext" => kids.push(self.konst_text("u32.wgext", "4")?),
+                o => return gap(format!("our software has a bug: the scatter entry takes {o} before its body")),
+            }
+        }
+        kids.push(body);
+        Ok(Tree { symbol: row, const_index: None, kids })
+    }
+
     /// The constant of `ty_name` whose `C_T` text is `text`.
     fn konst_text(&self, ty_name: &str, text: &str) -> R<Tree> {
         let row = *self.constants.get(ty_name).ok_or_else(|| ReadError::Gap(format!("a constant of {ty_name}")))?;
@@ -4169,15 +4190,123 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The text of entry `name` in `src`: from its `@compute` line through the brace that closes its body
+/// (`kingdoms/wgsl_true/countsort.py` `entry_text` cuts the same way); `None` when the text has no such entry.
+pub fn entry_text<'s>(src: &'s str, name: &str) -> Option<&'s str> {
+    let sig = format!("fn {name}(");
+    let mut from = 0;
+    while let Some(at) = src[from..].find("@compute") {
+        let start = from + at;
+        let line_end = src[start..].find('\n').map_or(src.len(), |e| start + e);
+        let rest = src[line_end..].trim_start();
+        if rest.starts_with(&sig) {
+            let open = src[line_end..].find(&sig).map(|o| line_end + o)?;
+            let close_paren = src[open..].find(')').map(|o| open + o)?;
+            let brace = src[close_paren..].find('{').map(|o| close_paren + o)?;
+            let mut depth = 0i64;
+            for (j, c) in src[brace..].char_indices() {
+                depth += match c {
+                    '{' => 1,
+                    '}' => -1,
+                    _ => 0,
+                };
+                if depth == 0 {
+                    return Some(&src[start..brace + j + 1]);
+                }
+            }
+            return None;
+        }
+        from = line_end;
+    }
+    None
+}
+
+/// Whitespace collapsed: an entry is matched against a scaffold piece in this form (countsort.py `norm`).
+fn norm(t: &str) -> String {
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The module-scope text a source declares between its last binding and its first entry (countsort.py `module_text`).
+fn module_text(src: &str) -> String {
+    let head = &src[..src.find("@compute").unwrap_or(src.len())];
+    let lines: Vec<&str> = head.split('\n').collect();
+    let last = lines.iter().rposition(|l| l.starts_with("@group(")).map_or(0, |i| i + 1);
+    lines[last..].join("\n")
+}
+
+/// The scaffold variant (section 10, countsort.py) whose pieces are the source's hist, offsets and starts entries and
+/// whose recognised scatters hold the source's scatter entry, all with whitespace collapsed; reply 2's variant also
+/// holds its module-scope text. No variant: the source's counting sort is not one the compiler holds, so the kernel
+/// does not read (a reference kernel that matches none points to a variant to add).
+fn scaffold_of<'k>(k: &'k TrueKingdom, src: &str, canonical: &Tree) -> R<&'k str> {
+    let piece = |e: &str| entry_text(src, e).map(norm).ok_or_else(|| ReadError::Out(format!("no entry point {e}")));
+    let (hist, offsets, starts, scatter) = (piece("hist")?, piece("offsets")?, piece("starts")?, piece("scatter")?);
+    let module = norm(&module_text(src));
+    let marks: Vec<(&str, [bool; 5])> = k
+        .scaffold
+        .iter()
+        .map(|(name, v)| {
+            let p = |n: &str| v.get(n).map(|t| norm(t)).unwrap_or_default();
+            // a piece as written in a reference or as the compiler spells it (the kingdom's own expression reads back)
+            let is = |n: &str, x: &str| p(&format!("source_{n}")) == x || p(n) == x;
+            // the kingdom's own scatter: its head and marker line, then declarations only, then its prologue and store (the
+            // share pass declares a module's variables per tree, so the declarations between are not compared)
+            let own_scatter = k.render_entry(canonical, v).is_ok_and(|t| {
+                let (Some(m), Some(p)) = (t.find("// counting sort:"), v.get("scatter_prologue").and_then(|pr| t.find(pr.as_str()))) else { return false };
+                let line = t[m..].find('\n').map_or(t.len(), |e| m + e);
+                let (pre, post) = (norm(&t[t.find("@compute").unwrap_or(0)..line]), norm(&t[p..]));
+                scatter.starts_with(&pre) && scatter.ends_with(&post) && scatter.len() >= pre.len() + post.len() && scatter[pre.len()..scatter.len() - post.len()].split(';').all(|d| d.trim().is_empty() || d.trim().starts_with("var "))
+            });
+            (name.as_str(), [is("hist", &hist), is("offsets", &offsets), is("starts", &starts), !scatter.is_empty() && (p("source_scatter").contains(&scatter) || own_scatter), p("module").is_empty() || p("module") == module])
+        })
+        .collect();
+    let hits: Vec<&str> = marks.iter().filter(|(_, m)| m.iter().all(|b| *b)).map(|(n, _)| *n).collect();
+    match hits.as_slice() {
+        [one] => Ok(one),
+        [] => {
+            // the nearest variant and which of its pieces the module's entries are: the message names what differs
+            let near = marks.iter().max_by_key(|(_, m)| m.iter().filter(|b| **b).count());
+            let what = near.map(|(n, m)| format!("; nearest {n}: hist {} offsets {} starts {} scatter {} module {}", m[0], m[1], m[2], m[3], m[4])).unwrap_or_default();
+            Err(ReadError::Out(format!("the module's counting sort (its hist, offsets, starts and scatter) is none of the scaffold's variants: a scatter's slot is the compiler's, never the gene's (section 10){what}")))
+        }
+        many => gap(format!("our software has a bug: the scaffold variants {many:?} all hold the module's counting sort")),
+    }
+}
+
 /// Read a module's text: one tree per entry point of the kingdom's module interface, in gene order.
 pub fn read_module(k: &TrueKingdom, src: &str, contract: &Contract) -> R<Vec<Tree>> {
     let module = crate::wgsl::naga_shape::parse_unscanned(src).map_err(|e| ReadError::Out(format!("naga does not read the text: {e}")))?;
     let info = crate::wgsl::target::Target::current().validate(&module, src).map_err(|e| ReadError::Out(format!("naga does not validate the text: {e}")))?;
     let passes = crate::wgsl::harness::passes_header(src).map_err(ReadError::Out)?;
+    // section 10: a table with a counting-sort scaffold reads the source's hist, offsets, starts and scatter as one of
+    // its variants (the knob) and the scatter's store as the cluster store of the invocation's own point
+    let variant = if k.scaffold.is_empty() { None } else { Some(scaffold_of(k, src, &Reader::new(k, &module, &info, contract).cluster_scatter()?)?) };
     let mut entries = Vec::new();
     for root in &k.gene_roots {
         let tn = k.type_name(*root);
         let name = tn.strip_prefix("kernel.").ok_or_else(|| ReadError::Gap(format!("our software has a bug: the gene root {tn}")))?;
+        if let Some(v) = variant {
+            // a scaffold entry's gene: the identity over its terminal (a layout holds at least one function)
+            let leaf = |same: &str, row: &str| -> R<Tree> {
+                let rd = Reader::new(k, &module, &info, contract);
+                Ok(Tree { symbol: rd.row(same)?, const_index: None, kids: vec![Tree { symbol: rd.row(row)?, const_index: None, kids: Vec::new() }] })
+            };
+            match name {
+                "hist" => {
+                    entries.push(leaf("kernel.cs_hist_same", &format!("cs.{v}"))?);
+                    continue;
+                }
+                "offsets" | "starts" => {
+                    entries.push(leaf(&format!("kernel.cs_{name}_same"), &format!("cs.{name}"))?);
+                    continue;
+                }
+                "scatter" => {
+                    entries.push(Reader::new(k, &module, &info, contract).cluster_scatter()?);
+                    continue;
+                }
+                _ => {}
+            }
+        }
         let (i, ep) = module.entry_points.iter().enumerate().find(|(_, e)| e.name == name).ok_or_else(|| ReadError::Out(format!("no entry point {name}")))?;
         if ep.stage != naga::ShaderStage::Compute {
             return Err(ReadError::Out(format!("the entry point {name} is not a compute shader")));
@@ -4542,19 +4671,24 @@ mod tests {
         assert_eq!(k.pool_words(), 1024);
         let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
         let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
-        // THE POOL'S EXTENT (pool.py, 2026-10-31: the fixed 1,024-word pool cost its scatter entry 6 %, b4_pool.log):
-        // reply 2's expression declares the 256 words its one array takes (four guard words past them), not the table's
-        // 1,024, and its shared text the same
-        assert!(text.contains("const WG_PW: u32 = 256u;\nvar<workgroup> wg_pool: array<u32, 260>;\n") && !text.contains("6080u") && !text.contains("1024u"), "reply 2's expression declares its own extent");
+        // THE POOL'S EXTENT (pool.py, 2026-10-31: the fixed 1,024-word pool cost its scatter entry 6 %, b4_pool.log), and
+        // since section 10 (countsort.py) reply 2's one array is its counting-sort scaffold's own (`sh_a`, the variant
+        // r2's module text): no entry of its gene names the pool, so the expression declares the least extent, 4 words
+        // (four guard words past them), not the table's 1,024, and its shared text the same
+        assert!(text.contains("const WG_PW: u32 = 4u;\nvar<workgroup> wg_pool: array<u32, 8>;\n") && !text.contains("6080u") && !text.contains("1024u"), "reply 2's expression declares its own extent");
+        assert!(text.contains("var<workgroup> sh_a: array<u32, 256>;") && text.contains("// counting sort: cs_v cs_a cs_ok cs_slot"), "reply 2's scatter is its scaffold's");
         let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).expect("reads") };
-        assert_eq!(k.pool_extent(&tree).expect("extent"), Some(256));
+        assert_eq!(k.pool_extent(&tree).expect("extent"), Some(4));
+        assert_eq!(k.scaffold_variant(&tree).expect("variant").map(|v| v.0), Some("r2"));
         let share = crate::wgsl::true_share::Share::load(&k).expect("share");
         let shared = share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render");
-        assert!(shared.contains("var<workgroup> wg_pool: array<u32, 260>;"), "the shared text declares the extent too");
+        assert!(shared.contains("var<workgroup> wg_pool: array<u32, 8>;"), "the shared text declares the extent too");
         let v24 = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("v24")).expect("v24");
         assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
+        // reply 1 places its points by a workgroup atomicAdd's old value: since section 10 its counting sort is none of the
+        // scaffold's variants, so it does not read (before, it stopped at the old value used as an index)
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
-        assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
+        assert!(e.contains("none of the scaffold's variants"), "reply 1 stops elsewhere: {e}");
     }
 
     /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it

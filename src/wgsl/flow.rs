@@ -209,7 +209,7 @@ mod tests {
     }
 
     /// THE TRUE GATES CATCH A DATA-INDEXED STORE PAST ITS BUFFER (2026-10-31): the segmented kernel passes; the same
-    /// kernel with the scatter's slot shifted by n (past the scratch's n + 2k + 2nbk words) fails the in-range gate.
+    /// kernel with the scatter's slot shifted by n (past the scratch's n + 2k + 2nbk words) does not read (section 10).
     #[test]
     fn the_true_gates_catch_a_scatter_store_past_its_buffer() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/kmeans_update_segmented");
@@ -218,8 +218,10 @@ mod tests {
         let store = "scratch[2u * nb * k + 2u * k + slot] = v;";
         assert_eq!(src.matches(store).count(), 1, "the scatter's store");
         let past = src.replace(store, "scratch[2u * nb * k + 2u * k + slot + n] = v;");
+        // since section 10 (countsort.py) a scatter's slot is the compiler's: a scatter through any other index is none of
+        // the scaffold's variants, so the kingdom does not read it (before, the in-range gate caught this one)
         let e = true_gates_of(&dir, "kmeans_update_segmented", &past).expect_err("a store past the scratch");
-        assert!(e.starts_with("in range: the source"), "{e}");
+        assert!(e.contains("none of the scaffold's variants"), "{e}");
     }
 
     /// The problems whose judged cases take their expected outputs from the

@@ -659,7 +659,7 @@ impl Share {
     /// the declarations and the prologue. A tree with no share row renders to `k.render`'s text exactly.
     pub fn render(&self, k: &TrueKingdom, tree: &Tree) -> Result<String, String> {
         let body = self.spell(k, tree)?;
-        Ok(format!("{}{}", k.prologue_for(tree)?, body.replace("<declarations>", &k.declarations_of(tree)?)))
+        k.resolve_scaffold(tree, format!("{}{}", k.prologue_for(tree)?, body.replace("<declarations>", &k.declarations_of(tree)?)))
     }
 
     fn spell(&self, k: &TrueKingdom, node: &Tree) -> Result<String, String> {

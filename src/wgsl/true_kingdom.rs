@@ -77,6 +77,9 @@ pub struct TrueKingdom {
     /// A module interface's fixed homeotic linker (design section 6): the link function whose signature is the gene
     /// roots in order and whose output is [`TrueKingdom::root`].
     pub linker: Option<String>,
+    /// The counting-sort scaffold's variants (`kingdoms/wgsl_true/countsort.py`, docs/DESIGN_inrange_index_types.md
+    /// section 10): variant name -> piece -> text, from `scaffold.tsv`; empty for a table without a scaffold.
+    pub scaffold: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// How a loop row repeats its arguments, read from its own spelling and types.
@@ -135,6 +138,12 @@ fn solo_body(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<u
 fn loop_row(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<LoopRow>, String> {
     let at = [row.spelling.find("loop {"), row.spelling.find("for (")].into_iter().flatten().min();
     let Some(at) = at else { return Ok(None) };
+    // a counting-sort scaffold's knob (countsort.py, section 10): a reference kernel's own entries, whose loops are its
+    // own bounded loops (256 points of a block, nb blocks, k clusters by the contract), not the gene's; the gene's fuel
+    // does not reach them, and their work is the reference's
+    if row.name.starts_with("cs.") && row.args.is_empty() && type_name(row.out).starts_with("kernel.") {
+        return Ok(None);
+    }
     let inside: Vec<bool> = (0..row.args.len())
         .map(|i| {
             let (plain, field) = (format!("{{{i}}}"), format!("{{{i}:"));
@@ -264,6 +273,7 @@ impl TrueKingdom {
             declarations: read(dir, "declarations.wgsl")?,
             loops,
             solo,
+            scaffold: read_scaffold(dir)?,
         })
     }
 
@@ -504,7 +514,52 @@ impl TrueKingdom {
     /// row's spelling, then put the declarations of the rows the tree holds in the
     /// entry point behind the prologue. Nothing else is done to the text.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
-        Ok(format!("{}{}", self.prologue_for(tree)?, self.spell(tree)?))
+        self.resolve_scaffold(tree, format!("{}{}", self.prologue_for(tree)?, self.spell(tree)?))
+    }
+
+    /// The scaffold variant a module's tree chooses (section 10): the one knob `cs.<variant>` it names, with the
+    /// variant's pieces; `None` for a tree that names none.
+    pub fn scaffold_variant(&self, tree: &Tree) -> Result<Option<(&str, &BTreeMap<String, String>)>, String> {
+        let mut found: Option<(&str, &BTreeMap<String, String>)> = None;
+        let mut stack = vec![tree];
+        while let Some(n) = stack.pop() {
+            stack.extend(n.kids.iter());
+            let Some(row) = self.rows.get(n.symbol as usize) else { continue };
+            let Some((name, v)) = row.name.strip_prefix("cs.").and_then(|v| self.scaffold.get_key_value(v)) else { continue };
+            if found.is_some_and(|(f, _)| f != name.as_str()) {
+                return Err(format!("our software has a bug: a tree names two scaffold variants, {} and {name}", found.map_or("", |f| f.0)));
+            }
+            found = Some((name.as_str(), v));
+        }
+        Ok(found)
+    }
+
+    /// One entry's text (section 10): `node` spelled, its declarations, and its scaffold markers spelled from `variant`'s
+    /// pieces; the reader compares a source's scatter entry with the kingdom's own expression of the cluster store.
+    pub fn render_entry(&self, node: &Tree, variant: &BTreeMap<String, String>) -> Result<String, String> {
+        let mut out = self.spell(node)?;
+        for (piece, t) in variant {
+            out = out.replace(&format!("<cs:{piece}>"), t);
+        }
+        Ok(out)
+    }
+
+    /// The compiler's part of expression (section 10): every `<cs:piece>` marker of `text` spelled as the piece of the
+    /// variant the module's knob chooses, as `<declarations>` is spelled from the tree's rows. A text with markers and a
+    /// tree with no knob is a bug.
+    pub fn resolve_scaffold(&self, tree: &Tree, text: String) -> Result<String, String> {
+        if !text.contains("<cs:") {
+            return Ok(text);
+        }
+        let (name, v) = self.scaffold_variant(tree)?.ok_or_else(|| "our software has a bug: the text spells a scaffold marker and the tree names no scaffold variant".to_string())?;
+        let mut out = text;
+        for (piece, t) in v {
+            out = out.replace(&format!("<cs:{piece}>"), t);
+        }
+        if let Some(at) = out.find("<cs:") {
+            return Err(format!("our software has a bug: variant {name} has no piece for {}", &out[at..out.len().min(at + 30)]));
+        }
+        Ok(out)
     }
 
     /// The words of the plain pool `tree` declares (`kingdoms/wgsl_true/pool.py`, the pool's extent): the largest
@@ -589,6 +644,24 @@ impl TrueKingdom {
         }
         Ok(text)
     }
+}
+
+/// `scaffold.tsv` (countsort.py): one row per (variant, piece), the text escaped as `functions.tsv` escapes it.
+fn read_scaffold(dir: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+    let p = dir.join("scaffold.tsv");
+    let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    if !p.exists() {
+        return Ok(out);
+    }
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    for line in text.lines().skip(1) {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() != 3 {
+            return Err(format!("{}: a row of {} fields: {line:.60}", p.display(), f.len()));
+        }
+        out.entry(f[0].to_string()).or_default().insert(f[1].to_string(), unescape(f[2]));
+    }
+    Ok(out)
 }
 
 /// `{N}`, `{N:F}` and `{v}` of a spelling; every other brace is copied.

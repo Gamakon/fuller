@@ -42,8 +42,19 @@ SOURCES = {
     "seg": "problems/kmeans_update_segmented/segmented.wgsl",
     "r2": "tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl",
     "champ": "docs/kmeans_champion_s1/champion.wgsl",
+    "none": "problems/kmeans_update_segmented/gather.wgsl",
 }
-PIECES = ("module", "hist", "offsets", "starts", "scatter_head", "scatter_prologue", "source_scatter")
+PIECES = ("module", "hist", "offsets", "starts", "scatter_head", "scatter_prologue", "source_hist", "source_offsets", "source_starts", "source_scatter")
+# the identity a gene's layout needs on each scaffold entry type (a head holds at least one function)
+SAME = {"kernel.hist": "kernel.cs_hist_same", "kernel.offsets": "kernel.cs_offsets_same", "kernel.starts": "kernel.cs_starts_same"}
+
+
+def fresh(t):
+    """The champion's own share names (`st7_s0`, the share pass's) spelled as the scaffold's (`cs_st7_s0`): a share
+    name in a row's spelling would not be fresh for the share pass."""
+    return re.sub(r"\bst(\d+)_s(\d+)\b", r"cs_st\1_s\2", t)
+
+
 NAMES = ("cs_v", "cs_a", "cs_ok", "cs_slot")
 MODULE_IDS = ("@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
               "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>")
@@ -134,6 +145,11 @@ R2_PROLOGUE = (
 )
 
 
+# The scatter prologue of the variant with no counting sort (A7's gather in the module form, whose hist, offsets,
+# starts and scatter are empty): no invocation has a slot, so a cluster store stores nothing.
+NONE_PROLOGUE = "{ cs_ok = false; }"
+
+
 def variants():
     """Every scaffold variant: name -> {piece: text}. The segmented layout's hist, offsets and starts come from the
     segmented form or the champion (the champion was evolved from it and writes the same cells), in every combination,
@@ -142,14 +158,19 @@ def variants():
     out = {}
     # the scatter texts the reader recognises for each layout: the sources' own scatter entries
     seg_scatters = "\n\n".join(entry_text(src[s], "scatter") for s in ("seg", "champ"))
+
+    def pieces(h, o, s):
+        e = {"hist": entry_text(src[h], "hist"), "offsets": entry_text(src[o], "offsets"), "starts": entry_text(src[s], "starts")}
+        return {**{p: fresh(t) for p, t in e.items()}, **{f"source_{p}": t for p, t in e.items()}}
+
     for h, o, s in itertools.product(("seg", "champ"), repeat=3):
         for w in (64, 128, 256):
-            out[f"seg_h{h}_o{o}_s{s}_w{w}"] = dict(
-                module="", hist=entry_text(src[h], "hist"), offsets=entry_text(src[o], "offsets"), starts=entry_text(src[s], "starts"),
-                scatter_head=head(w, 1), scatter_prologue=SEG_PROLOGUE, source_scatter=seg_scatters if w == 256 else "")
-    out["r2"] = dict(module=module_text(src["r2"]), hist=entry_text(src["r2"], "hist"), offsets=entry_text(src["r2"], "offsets"),
-                     starts=entry_text(src["r2"], "starts"), scatter_head=head(64, 2), scatter_prologue=R2_PROLOGUE,
+            out[f"seg_h{h}_o{o}_s{s}_w{w}"] = dict(module="", **pieces(h, o, s), scatter_head=head(w, 1), scatter_prologue=SEG_PROLOGUE,
+                                                   source_scatter=seg_scatters if w == 256 else "")
+    out["r2"] = dict(module=module_text(src["r2"]), **pieces("r2", "r2", "r2"), scatter_head=head(64, 2), scatter_prologue=R2_PROLOGUE,
                      source_scatter=entry_text(src["r2"], "scatter"))
+    out["none"] = dict(module="", **pieces("none", "none", "none"), scatter_head=head(256, 1), scatter_prologue=NONE_PROLOGUE,
+                       source_scatter=entry_text(src["none"], "scatter"))
     return dict(sorted(out.items()))
 
 
@@ -177,6 +198,8 @@ def build(iface):
         R(f"cs.{name}", "kernel.hist", [], knob_text(v), f"the counting-sort scaffold {name}: its module text and hist entry (the knob: the module's other scaffold pieces are this variant's)")
     R("cs.offsets", "kernel.offsets", [], "<cs:offsets>\n", "the scaffold's offsets entry, of the module's variant (the knob)")
     R("cs.starts", "kernel.starts", [], "<cs:starts>\n", "the scaffold's starts entry, of the module's variant (the knob)")
+    for t, n in SAME.items():
+        R(n, t, [t], "{0}", "the identity: a gene's layout holds at least one function, and a scaffold entry has none of its own")
     from start import body_type
     args = (["u32.wgext"] if pool else []) + [body_type()]
     text = ("// pool {0} words\n" if pool else "") + "<cs:scatter_head>// counting sort: " + " ".join(NAMES) + "\n<declarations>\n<cs:scatter_prologue>\n{%d}\n}\n" % (len(args) - 1)
@@ -256,16 +279,19 @@ def witness(iface, rows=None):
     produced = {}
     for n, r in rows.items():
         produced.setdefault(r["out"], []).append(n)
-    want = {f"cs.{k}" for k in vs}
+    want = {f"cs.{k}" for k in vs} | {SAME["kernel.hist"]}
     if set(produced.get("kernel.hist", [])) != want:
         problems.append(f"kernel.hist (the knob) has producers {sorted(set(produced.get('kernel.hist', [])) ^ want)} beside or short of the variants")
     for k, v in vs.items():
         r = rows.get(f"cs.{k}")
         if r and (r["spell"] != knob_text(v) or r["args"]):
             problems.append(f"cs.{k} is not the variant's module text and hist entry byte for byte")
-    for t, p in (("kernel.offsets", "cs.offsets"), ("kernel.starts", "cs.starts"), ("u32.cluster", "cluster.own")):
-        if produced.get(t, []) != [p]:
+    for t, p in (("kernel.offsets", ["cs.offsets", SAME["kernel.offsets"]]), ("kernel.starts", ["cs.starts", SAME["kernel.starts"]]), ("u32.cluster", ["cluster.own"])):
+        if produced.get(t, []) != p:
             problems.append(f"{t} has producers {produced.get(t, [])}, not only {p}")
+    for t, n in SAME.items():
+        if n in rows and (rows[n]["spell"] != "{0}" or rows[n]["args"] != [t]):
+            problems.append(f"{n} is not the identity of {t}")
     if sorted(produced.get("kernel.scatter", [])) != ["kernel.entry_scatter", "own.kernel_scatter"]:
         problems.append(f"kernel.scatter has producers {produced.get('kernel.scatter', [])}")
     return problems
