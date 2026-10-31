@@ -546,3 +546,35 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
     }
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// THE RUST PATH TIMES EVERY PROGRAM, on the GPU: each program of the cross-path set, timed on histogram's timing
+/// input in this process (`Backend::Rust`), gives a GPU time on every run, the warm-up included. Fable's exact
+/// program had no timed pass on this path (2026-10-29), so it scored as infinitely slow. (The fork compiler, rustc,
+/// the GPU; run under the GPU lock.)
+#[test]
+fn on_the_gpu_the_rust_path_times_every_cross_path_program() {
+    assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());
+    let _gpu = crate::gpu_test_lock::acquire();
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().expect("histogram's timing input");
+    let base = scratch("rust_times");
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let trees: Vec<Tree> = CROSS_PATH.iter().map(|t| crate::futhark_sig::build(&k, t).unwrap()).collect();
+    let all = stdin_of(&cases);
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt }, &base.join("batch"), Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
+    let members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Time { yardstick: false, runs: 3 }] }).collect();
+    let got = host.run(&members).unwrap();
+    let mut untimed = Vec::new();
+    for (o, text) in got.outcomes.iter().zip(CROSS_PATH) {
+        eprintln!("{text}: {:?}", o[0]);
+        match &o[0] {
+            Outcome::Time(v) if v.len() == 4 && v.iter().all(|x| x.is_some_and(|ns| ns.is_finite() && ns > 0.0)) => {}
+            other => untimed.push(format!("{text}: {other:?}")),
+        }
+    }
+    assert!(untimed.is_empty(), "programs the rust path did not time on every run:\n{}", untimed.join("\n"));
+    let _ = std::fs::remove_dir_all(&base);
+}
