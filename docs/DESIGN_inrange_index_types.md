@@ -211,7 +211,26 @@ harness already owns, sized within UltraDim's binding limits. UltraDim's driver 
 **Built** (fuller `feat/futhark-kingdom`): 8fc4c7a4 (`countsort.py`: the 26 variants in `scaffold.tsv`, the knob
 `kernel.hist`, the cluster store, the witness), db606571 (the reader and the renderer), 757ee175 (the break guard, the
 run index and the phase start tested in the mean, which the gene still owns), d86a401c (section 11), and the tests of
-this section's list (see the commit after d86a401c). The measured table is below.
+this section's list (c38fad8d: no scatter through another slot expresses, 300 random modules per k-means table give
+the same bits with their workgroups reversed on the CPU, the 26 variants restrict no index on the 8 constraint cases).
+
+**Measured** 2026-10-31 23:33Z (`/private/tmp/claude-501/fbench/b7b_pe.log`, runner `tcf_b79f3c38_c6890ba5`, Apple M3
+Max, timing case n8192 d256 k1024, ms, the fastest of 4,302 round-robin runs; the first pass at 23:31Z, `b7_pe.log`,
+gave the same within 0.0002 ms an entry). The A/A floor is the yardstick against the same text as written.
+
+| Text | hist | offsets | starts | scatter | mean | total |
+|---|---:|---:|---:|---:|---:|---:|
+| the yardstick (segmented form) | 0.0555 | 0.0118 | 0.1064 | 0.0290 | 0.0287 | 0.2315 |
+| segmented form, as written | 0.0560 | 0.0118 | 0.1064 | 0.0290 | 0.0287 | 0.2318 |
+| segmented form, as expressed | 0.0560 | 0.0118 | 0.1064 | 0.0291 | 0.0287 | 0.2319 |
+| reply 2, as written | 0.0613 | 0.0117 | 0.1020 | 0.0265 | 0.0285 | 0.2301 |
+| reply 2, as expressed | 0.0614 | 0.0117 | 0.1020 | 0.0268 | 0.0285 | 0.2304 |
+
+Expected parity (the scaffold is the sources' own counting sort). The segmented form as expressed is at parity: 0.0001
+ms over its text in total, against an A/A floor of 0.0003. Reply 2 as expressed is 0.0003 ms over its text in total
+(within the floor), but its scatter entry is 0.0003 ms (1.1 %) slower in both passes, outside the scatter's A/A floor
+of 0.0000: the compiler's r2 prologue computes the slot for every invocation and stores under `cs_ok`, where reply 2
+returns early, and the cluster store clamps its slot. A faster r2 prologue is a variant to add and time.
 
 **The identity rows.** A Karva head holds at least one function, and the scaffold's entries have none of their own:
 `kernel.hist`'s producers are the variants' terminals, `kernel.offsets`' and `kernel.starts`' one terminal each. So
@@ -225,7 +244,7 @@ prologue's rank over 256, the starts' loop over k) sit outside the gene's budget
 kernels' own, a fixed text of known cost (the segmented form, reply 2 and the champion, each timed), never a gene's.
 A new variant must be a timed reference for the same reason.
 
-## 11. Access modes: a region is read-only or write-only in one dispatch (2026-11-01)
+## 11. Access modes: a region is read-only or write-only in one dispatch (built 2026-11-01, d86a401c)
 
 **The hole.** Section 10 left the gene's `load.scratch(u32.in_scratch)` able to read any in-range cell from any
 entry, including the scatter entry, where the cluster store writes the ids region. One invocation's read of a cell
