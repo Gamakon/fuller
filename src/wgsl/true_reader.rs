@@ -1447,7 +1447,15 @@ impl<'a> Reader<'a> {
                         self.store(fr, *pointer, v, out)?;
                     }
                 }
-                Statement::Call { function, arguments, result } => {
+                Statement::Call { function, arguments, result } => 'call: {
+                    // a call to a function that only returns a value of its arguments (`lit_u32(x)`, `col_axis(g)`, the
+                    // kingdom's own value helpers) is that value, wherever it stands (it stores nothing)
+                    if let Some(h) = result {
+                        if let Some(v) = self.pure_call(fr, *function, arguments)? {
+                            fr.values.insert(*h, v);
+                            break 'call;
+                        }
+                    }
                     if depth >= MAX_INLINE_DEPTH {
                         return gap("calls nested deeper than the inliner's limit");
                     }
@@ -2030,6 +2038,34 @@ impl<'a> Reader<'a> {
                     Some(v) => v,
                     None => self.ssa(limit.clone(), out)?,
                 };
+            }
+        }
+        // the kingdom's form: its bound variable `n` and shadow counter `kc` are the loop row's own (its spelling writes
+        // them before the loop), so their last assignments before the loop are the row's, not statements of the body
+        if let Some((_, _, kcv, _)) = kstep {
+            let mut own: Vec<Reg> = Vec::new();
+            if let Some(nv) = load_of(limit_h) {
+                if let Some(Local::Reg(r, _)) = fr.locals.get(&nv) {
+                    own.push(*r);
+                }
+            }
+            if let Some(Local::Reg(r, _)) = fr.locals.get(&kcv) {
+                own.push(*r);
+            }
+            for r in own {
+                if let Some(at) = out.iter().rposition(|st| matches!(st, St::Set(r2, _) if *r2 == r)) {
+                    out.remove(at);
+                }
+            }
+        }
+        // the kingdom's form: the bound row's own cap (`bound.of_*_c` spells `min(e, 2^c)`) is the row's, the bound is e
+        if kstep.is_some() {
+            if let E::Call("min", args, _) = &limit {
+                if let [e, cap] = &args[..] {
+                    if lit_u(cap).is_some_and(|c| [1u32 << 6, 1 << 12, 1 << 18, 1 << 24].contains(&c)) && self.max_of(e).is_some_and(|m| m <= u64::from(lit_u(cap).unwrap_or(0))) {
+                        limit = e.clone();
+                    }
+                }
             }
         }
         if !self.stable(&limit) {
@@ -3087,7 +3123,17 @@ impl<'a> Reader<'a> {
     /// workgroup and every dispatch are one invocation and one workgroup deep in y (the reader's grid has block
     /// factors 1), so `gid.y` is 0. Any other index is a store this reading does not prove the invocation's own.
     fn own_cell(&self, b: &str, i: &E) -> R<(Tree, Tree)> {
-        let gid_x = matches!(i, E::Lane(v, 0, _) if matches!(**v, E::Bi(Bi::Gid)));
+        // `gid.<lane>`, times the block factor 1 the kingdom's store row spells (`KNOB_BCOL`, `KNOB_BROW`, folded to 1)
+        fn lane_of(e: &E, lane: u8) -> bool {
+            match e {
+                E::Lane(v, l, _) => *l == lane && matches!(**v, E::Bi(Bi::Gid)),
+                E::Bin(BinaryOperator::Multiply, x, one, _) => lit_u(one) == Some(1) && lane_of(x, lane),
+                _ => false,
+            }
+        }
+        // the source's `gid.x`, or the kingdom's own spelling of the cell, `r * W + c` with r = gid.y (0 here) and
+        // c = gid.x (the store row `store.<b>_*`, read back)
+        let gid_x = lane_of(i, 0) || matches!(i, E::Bin(BinaryOperator::Add, rw, c, _) if lane_of(c, 0) && matches!(&**rw, E::Bin(BinaryOperator::Multiply, r, _, _) if lane_of(r, 1)));
         let one_row = self.k.rows.iter().any(|r| r.name == format!("store.{b}_L0_f0") && r.spelling.contains("(r < 1u &&"));
         if !(gid_x && one_row && self.wg[1] == 1 && self.contract.workgroups_y <= 1) {
             return gap(format!("a store into the output {b} at {i:?}, which the reading does not prove the invocation's own cell (the own column of a one-row output, gid.y 0)"));
@@ -3996,9 +4042,39 @@ mod tests {
     /// The same bits: A7 and the scatter form, each as its own text, as the kingdom expresses it, and expressed through
     /// the share pass, give the same output words on every constraint case of the problem small enough for the CPU
     /// executor (n k d at most 5e6: 5 of the 8 cases), WGSL's semantics, no device.
+    /// Every text of `texts` gives the first text's output words on every constraint case of the problem at `dir` whose
+    /// n k d is at most `size` (the CPU executor, WGSL's semantics, no device); returns the cases compared.
+    fn cpu_same_bits(dir: &std::path::Path, texts: &[String], size: f64) -> usize {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let p = Problem::load(dir).expect("problem");
+        let exec = CpuExecutor::new(1 << 27);
+        let kernels: Vec<_> = texts.iter().map(|t| exec.compile(&p, t).expect("compiles on the CPU executor")).collect();
+        let mut cases = 0;
+        for su in p.suites.iter().filter(|s| s.spec.role == Role::Constraint) {
+            for case in &su.cases {
+                let env = p.env(case, 1 << 27).expect("env");
+                let nkd = ["n", "k", "d"].iter().map(|v| crate::wgsl::harness::eval(v, &env).expect("size")).product::<f64>();
+                if nkd > size {
+                    continue;
+                }
+                let data = p.case_data(case, 1 << 27).expect("data");
+                let mut outs = Vec::new();
+                for (kern, info) in &kernels {
+                    let plan = p.plan(case, 1 << 27, Some(info)).expect("plan");
+                    let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                    outs.push(exec.run(kern, &plan, &data, &staged, true).expect("runs").outputs);
+                }
+                for (t, o) in outs.iter().enumerate().skip(1) {
+                    assert_eq!(&outs[0], o, "{}: text {t}'s bits differ from text 0's on case {}", dir.display(), case.name);
+                }
+                cases += 1;
+            }
+        }
+        cases
+    }
+
     #[test]
     fn a_kmeans_kernel_expressed_through_the_share_pass_gives_its_sources_bits_on_the_cpu() {
-        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         for (iface, problem, file) in [("kmeans_update", "problems/kmeans_update", "shipped.wgsl"), ("kmeans_update_segmented", "problems/kmeans_update_segmented", "segmented.wgsl")] {
             let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
@@ -4008,29 +4084,7 @@ mod tests {
             let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
             let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &src, &c).expect("reads") };
             let texts = [src.clone(), k.render(&tree).expect("render"), share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render")];
-            let p = Problem::load(&root.join(problem)).expect("problem");
-            let exec = CpuExecutor::new(1 << 27);
-            let kernels: Vec<_> = texts.iter().map(|t| exec.compile(&p, t).expect("compiles on the CPU executor")).collect();
-            let mut cases = 0;
-            for su in p.suites.iter().filter(|s| s.spec.role == Role::Constraint) {
-                for case in &su.cases {
-                    let env = p.env(case, 1 << 27).expect("env");
-                    let size = ["n", "k", "d"].iter().map(|v| crate::wgsl::harness::eval(v, &env).expect("size")).product::<f64>();
-                    if size > 5e6 {
-                        continue;
-                    }
-                    let data = p.case_data(case, 1 << 27).expect("data");
-                    let mut outs = Vec::new();
-                    for (kern, info) in &kernels {
-                        let plan = p.plan(case, 1 << 27, Some(info)).expect("plan");
-                        let (staged, _) = exec.stage(&plan, &data).expect("stage");
-                        outs.push(exec.run(kern, &plan, &data, &staged, true).expect("runs").outputs);
-                    }
-                    assert_eq!(outs[0], outs[1], "{iface} {}: the expressed text's bits differ from the source's", case.name);
-                    assert_eq!(outs[0], outs[2], "{iface} {}: the shared text's bits differ from the source's", case.name);
-                    cases += 1;
-                }
-            }
+            let cases = cpu_same_bits(&root.join(problem), &texts, 5e6);
             assert_eq!(cases, 5, "{iface}: the cases compared");
         }
     }
@@ -4070,6 +4124,28 @@ mod tests {
             }
             eprintln!("{iface}: the least width drawn per entry {least:?}");
         }
+    }
+
+    /// THE KINGDOM'S OWN TEXT READS BACK (2026-10-31: the seed-1 champion's text did not read: its loop bounds are the
+    /// bound rows' `min(e, 2^c)` over `lit_u32(..)`). The champion, spelled through the share pass, reads into the
+    /// segmented kingdom, and the tree it reads spells the champion's text again, byte for byte through the share pass.
+    #[test]
+    fn the_seed1_champions_own_text_reads_back_into_the_kingdom() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let text = std::fs::read_to_string(root.join("docs/kmeans_champion_s1/champion.wgsl")).expect("the champion");
+        let kids = read_module(&k, &text, &c).unwrap_or_else(|e| panic!("the champion does not read: {e}"));
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let tree = Tree { symbol: link, const_index: None, kids };
+        let share = crate::wgsl::true_share::Share::load(&k).expect("share");
+        let again = share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render");
+        let module = crate::wgsl::naga_shape::parse_unscanned(&again).expect("naga parses the read tree's text");
+        crate::wgsl::target::Target::current().validate(&module, &again).expect("naga validates it");
+        assert_eq!(read_module(&k, &again, &c).expect("the text read back reads again").len(), 5);
+        // the same bits as the champion's own text on every case small enough for the CPU executor (5 of 8; the
+        // device checks all 8, `wgsl_true_case_fit --gate`'s cell counts)
+        assert_eq!(cpu_same_bits(&root.join("problems/kmeans_update_segmented"), &[text, again], 5e6), 5);
     }
 
     /// THE MODEL EDIT'S WRITE-BACK (phylu `wgsl_true_case_fit --ops model=P`): a reply read with the true reader is
