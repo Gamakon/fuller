@@ -31,5 +31,10 @@ clean tree (no uncommitted changes, no source newer than the binary) whose 9 com
 0001–0009, checked one by one with `git patch-id --stable`; its build log is `/private/tmp/claude-501/fixc/build_final2.log`.
 The previous default, `/private/tmp/claude-501/futhark-rust/bin/futhark`, had patches 0001–0006 only.
 
+Rebuilt 2026-10-31 13:44Z by `build.sh` (a fresh clone of the pinned base, the 9 patches applied by `git am`, under the
+cargo lock; 2 min): `rust-wgpu @ 0323c7c`, md5 `c0b7e43e19a5f68f835c4d22e1b5b3ac`. On all 376 programs of
+`tests/corpus/futhark_compile_failures` its `webgpu` C and its `rust-wgpu` Rust are byte-identical to fix4's, compiled
+from the same path, but for the `// git:` version line.
+
 The fork is never pushed anywhere; regenerate the series from it with
 `git format-patch 14e9ccb..HEAD -o futhark-rust-backend/patches`.
