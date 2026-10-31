@@ -3844,6 +3844,32 @@ mod tests {
         }
     }
 
+    /// THE WORK BOUNDS AT THE TIMING INPUT (`work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT`, its basis):
+    /// one workgroup (256 invocations) of every entry of the gather (A7 as the `mean` entry) and of the scatter module,
+    /// at n = 8,192, k = 1,024, d = 256 (`problems/kmeans_update_segmented/cases/timing.toml`, case 0; the bound
+    /// depends on n alone for these trees). The scatter's `mean` is over the machine's cap of 1.7e8 (it was left
+    /// untimed, 2026-10-28) and under the measured cap; A7's own bound is the one the measured rate is taken from.
+    #[test]
+    fn kmeans_timing_bounds_fit_the_measured_cap() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let text = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("safety contract");
+        let c = Contract::parse(&text, &["x", "y", "z", "w"]).expect("contract");
+        let fields: BTreeMap<String, u64> = [("x", 8192u64), ("y", 1024), ("z", 256), ("w", 0)].into_iter().map(|(f, v)| (f.to_string(), v)).collect();
+        let bounds = |name: &str| -> Vec<u128> {
+            let src = std::fs::read_to_string(root.join("problems/kmeans_update_segmented").join(name)).expect("kernel");
+            read_module(&k, &src, &c).expect("reads").iter().map(|t| k.tree_work_bound_workgroup_in(t, &fields, 256).expect("bound")).collect()
+        };
+        let (gather, scatter) = (bounds("gather.wgsl"), bounds("segmented.wgsl"));
+        eprintln!("one workgroup at the timing input: gather {gather:?}, scatter {scatter:?}");
+        let cap = crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+        let measured = crate::wgsl::work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT;
+        assert_eq!(gather[4], crate::wgsl::work_guard::A7_TIMING_WORKGROUP_BOUND, "A7's bound, the measured rate's basis");
+        assert!(gather.iter().all(|b| *b <= cap), "the gather fits the machine's cap");
+        assert!(scatter[4] > cap, "the scatter's mean is over the machine's cap (the 2026-10-28 block)");
+        assert!(scatter.iter().all(|b| *b <= measured / 2), "every scatter entry fits the measured cap with room for a larger mutant: {scatter:?}");
+    }
+
     /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and
     /// validates and that names no f16: legality by the types, with A7's bindings.
     #[test]

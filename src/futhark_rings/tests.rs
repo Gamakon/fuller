@@ -282,3 +282,38 @@ fn generation_0_from_one_seed_is_24_distinct_legal_members_and_deterministic() {
         }
     }
 }
+
+/// Generation 0 from several starts: the starts enter first and in order, every mutant descends from the first start
+/// (never from a later one), no two members share a text or a tree, and a start that repeats another is an error.
+/// With one start it is `mutants` draw for draw. The mutation is `point_mutate`, which keeps every gene legal.
+#[test]
+fn generation_0_from_several_starts_grows_from_the_first_only() {
+    let (k, contract, layout, rings, t) = fable_setup("histogram");
+    let const_len = k.const_len();
+    let mut rng = GeneRng::new(5);
+    let first = write_back(&contract, &layout, &rings.canvas(&contract, &layout, &mut rng).unwrap(), &t).unwrap();
+    let mut second = first.clone();
+    point_mutate(&contract, &layout, &const_len, &mut second, 3, &mut rng).unwrap();
+    validate(&contract, &layout, &second, &const_len).unwrap();
+    let spec = MutantSpec { contract: &contract, layout: &layout, const_len: &const_len, pop: 24, max_tries: 24 * 200 };
+    let render = |t: &Tree| -> Result<String, String> { Ok(sexp(&k, t)) };
+    let mut mutate = |g: &mut Vec<u32>, r: &mut GeneRng| -> Result<(), String> { point_mutate(&contract, &layout, &const_len, g, 1, r) };
+    let m = mutants_of_first(&spec, vec![first.clone(), second.clone()], &mut mutate, &render, &mut GeneRng::new(9)).unwrap();
+    assert_eq!(m.genes.len(), 24);
+    assert_eq!((&m.genes[0], &m.genes[1]), (&first, &second), "the starts first, in order");
+    assert_eq!((m.parents[0], m.parents[1]), (None, None));
+    for (i, p) in m.parents.iter().enumerate().skip(2) {
+        let p = p.expect("a mutant has a parent");
+        assert!(p == 0 || p >= 2, "member {i} was made from start {p}, not the first start or a mutant");
+        assert!(p < i);
+        validate(&contract, &layout, &m.genes[i], &const_len).unwrap();
+    }
+    for i in 0..24 {
+        for j in 0..i {
+            assert!(m.texts[i] != m.texts[j] && m.trees[i] != m.trees[j], "members {i} and {j} repeat");
+        }
+    }
+    assert!(mutants_of_first(&spec, vec![first.clone(), first.clone()], &mut mutate, &render, &mut GeneRng::new(9)).is_err(), "a start repeating another is an error");
+    let one = mutants_of_first(&spec, vec![first.clone()], &mut mutate, &render, &mut GeneRng::new(9)).unwrap();
+    assert_eq!(one, mutants(&spec, first, &mut mutate, &render, &mut GeneRng::new(9)).unwrap(), "one start is `mutants`");
+}

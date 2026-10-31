@@ -119,7 +119,7 @@ pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result
 /// and its HFF reads exactly `slots` speed inputs, one a pair: the scorer times [`TimingSlots::missing`] more pairs
 /// before it scores, so no slot is padded and no mean or median is taken before HFF. A full program is never timed
 /// again, so re-scoring it across generations gives the same speed inputs.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct TimingSlots {
     slots: usize,
     by_text: std::collections::HashMap<String, Vec<f64>>,
@@ -154,6 +154,141 @@ impl TimingSlots {
             Some(r) if r.len() == self.slots => Ok(r),
             r => Err(format!("our software has a bug: a program scored with {} of {} timing slots filled", r.map_or(0, Vec::len), self.slots)),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The speed verdict, the operator mix and the operator tally (every runner that times or mixes operators)
+// ---------------------------------------------------------------------------
+
+/// The median of the values of `v` that are not NaN (NaN when there is none); an infinity counts.
+pub fn median(v: &[f64]) -> f64 {
+    let mut s: Vec<f64> = v.iter().copied().filter(|x| !x.is_nan()).collect();
+    s.sort_by(f64::total_cmp);
+    match s.len() {
+        0 => f64::NAN,
+        n if n % 2 == 1 => s[n / 2],
+        n => 0.5 * (s[n / 2 - 1] + s[n / 2]),
+    }
+}
+
+/// THE VERDICT of an exact program's re-time against the published one (`docs/PLAN_futhark_fitness_fixes.md` section
+/// G, fault 12): ratios are the program's time over the published program's, one an interleaved pair; `aa` every
+/// ratio of the A/A sets (the published program against itself).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeedVerdict {
+    /// Faster: the median below the least A/A ratio AND at least 9 of 11 pairs faster (a sign test, one-sided
+    /// p = 0.033; the study plan's rule of 2026-10-28 13:10Z).
+    Beat,
+    /// Within the A/A noise.
+    Matched,
+    /// The median above the greatest A/A ratio.
+    Slower,
+}
+
+impl SpeedVerdict {
+    /// The verdict as the reports write it.
+    pub fn text(self) -> &'static str {
+        match self {
+            SpeedVerdict::Beat => "beat (exact and faster: the median below the least A/A ratio and at least 9 of 11 pairs faster)",
+            SpeedVerdict::Slower => "exact but slower (the median above the greatest A/A ratio)",
+            SpeedVerdict::Matched => "matched (exact, within the A/A noise)",
+        }
+    }
+}
+
+/// [`SpeedVerdict`] of `ratios` against the A/A ratios `aa`. "At least 9 of 11" scales with the count: at least
+/// `9/11` of the pairs below 1.
+pub fn speed_verdict(ratios: &[f64], aa: &[f64]) -> SpeedVerdict {
+    let floor = aa.iter().copied().fold(f64::INFINITY, f64::min);
+    let ceiling = aa.iter().copied().fold(0.0, f64::max);
+    let m = median(ratios);
+    let faster = ratios.iter().filter(|r| **r < 1.0).count();
+    if m < floor && faster * 11 >= 9 * ratios.len() {
+        SpeedVerdict::Beat
+    } else if m > ceiling {
+        SpeedVerdict::Slower
+    } else {
+        SpeedVerdict::Matched
+    }
+}
+
+/// THE OPERATOR MIX (`--ops NAME=P,...`, Andrew, 2026-10-31): every child draws ONE operator by its probability, so
+/// all of them run in the same generation and each child's operator is recorded. `allowed` are the runner's
+/// operators; the probabilities are finite, at least 0, and sum to 1.
+pub fn parse_ops(text: &str, allowed: &[&str]) -> Result<Vec<(String, f64)>, String> {
+    let mut v: Vec<(String, f64)> = Vec::new();
+    for part in text.split(',') {
+        let (name, w) = part.split_once('=').ok_or_else(|| format!("--ops {part}: want NAME=PROBABILITY"))?;
+        if !allowed.contains(&name) {
+            return Err(format!("--ops: {name} is not an operator of this runner ({})", allowed.join(", ")));
+        }
+        if v.iter().any(|x| x.0 == name) {
+            return Err(format!("--ops: {name} is named twice"));
+        }
+        let w: f64 = w.parse().map_err(|_| format!("--ops {part}: {w} is not a number"))?;
+        if !(w >= 0.0 && w.is_finite()) {
+            return Err(format!("--ops {part}: a probability must be finite and at least 0"));
+        }
+        v.push((name.to_string(), w));
+    }
+    let total: f64 = v.iter().map(|x| x.1).sum();
+    if (total - 1.0).abs() > 1e-6 {
+        return Err(format!("--ops: the probabilities sum to {total}, not 1"));
+    }
+    Ok(v)
+}
+
+/// The operator a child draws from the mix with `u` uniform on `[0, 1)`, among the operators other than `exclude`
+/// (marriage, whose share of the children is set apart) with a probability above 0, renormalised; `None` when there
+/// is none. `u` at the top of the range (rounding) takes the last such operator.
+pub fn pick_op<'a>(mix: &'a [(String, f64)], exclude: &str, u: f64) -> Option<&'a str> {
+    let rest: Vec<&(String, f64)> = mix.iter().filter(|x| x.0 != exclude && x.1 > 0.0).collect();
+    let total: f64 = rest.iter().map(|x| x.1).sum();
+    let mut r = u * total;
+    for x in &rest {
+        if r < x.1 {
+            return Some(x.0.as_str());
+        }
+        r -= x.1;
+    }
+    rest.last().map(|x| x.0.as_str())
+}
+
+/// THE OPERATOR TALLY of one generation (decision-critical, logged every generation): each operator's children and
+/// how many of them beat their best parent.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OperatorTally {
+    by: BTreeMap<String, (usize, usize)>,
+}
+
+impl OperatorTally {
+    /// One child of `op`; `beat` when it is strictly better than its best parent.
+    pub fn add(&mut self, op: &str, beat: bool) {
+        let e = self.by.entry(op.to_string()).or_default();
+        e.0 += 1;
+        e.1 += usize::from(beat);
+    }
+
+    /// `(operator, children, children better than their best parent)`, by operator name.
+    pub fn entries(&self) -> Vec<(String, usize, usize)> {
+        self.by.iter().map(|(k, (n, b))| (k.clone(), *n, *b)).collect()
+    }
+
+    /// `point 9 (2 better), crossover 8 (1 better)`: the log's form (`-` when no child was made).
+    pub fn line(&self) -> String {
+        if self.by.is_empty() {
+            return "-".to_string();
+        }
+        self.by.iter().map(|(k, (n, b))| format!("{k} {n} ({b} better)")).collect::<Vec<_>>().join(", ")
+    }
+
+    /// `point=9/2;crossover=8/1`: one TSV cell (`-` when no child was made).
+    pub fn cell(&self) -> String {
+        if self.by.is_empty() {
+            return "-".to_string();
+        }
+        self.by.iter().map(|(k, (n, b))| format!("{k}={n}/{b}")).collect::<Vec<_>>().join(";")
     }
 }
 
@@ -495,6 +630,55 @@ mod tests {
         assert_eq!(s.full("p").unwrap(), &r[..]);
         assert!(s.add("p", &[1.0]).is_err(), "a full program takes no more pairs");
         assert_eq!(s.missing("q"), 11, "slots are kept by text");
+    }
+
+    /// "Beat" needs both the median below the least A/A ratio and 9 of 11 pairs faster; a median below the floor with
+    /// only 8 of 11 faster is "matched"; a median above the greatest A/A ratio is "slower".
+    #[test]
+    fn the_speed_verdict_needs_the_median_below_the_floor_and_nine_of_eleven_faster() {
+        let aa = [0.97, 1.0, 1.02, 0.99];
+        let nine = [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.1];
+        assert_eq!(speed_verdict(&nine, &aa), SpeedVerdict::Beat);
+        let eight = [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.1, 1.1];
+        assert_eq!(speed_verdict(&eight, &aa), SpeedVerdict::Matched, "the median is below the floor but only 8 of 11 are faster");
+        let near = [0.98; 11];
+        assert_eq!(speed_verdict(&near, &aa), SpeedVerdict::Matched, "11 of 11 faster but the median inside the A/A noise");
+        assert_eq!(speed_verdict(&[1.1; 11], &aa), SpeedVerdict::Slower);
+        assert!(SpeedVerdict::Beat.text().starts_with("beat"));
+        assert_eq!(median(&[3.0, f64::NAN, 1.0, 2.0]), 2.0);
+        assert_eq!(median(&[f64::INFINITY, 1.0, 2.0]), 2.0, "an untimed ratio (infinite) counts");
+        assert!(median(&[]).is_nan());
+    }
+
+    #[test]
+    fn the_operator_mix_parses_draws_by_probability_and_the_tally_counts_children_that_beat_their_parent() {
+        let ops = ["point", "invert", "transpose", "crossover", "marriage"];
+        let mix = parse_ops("point=0.5,invert=0.1,transpose=0.1,crossover=0.2,marriage=0.1", &ops).unwrap();
+        assert_eq!(mix.len(), 5);
+        assert!(parse_ops("point=0.5,invert=0.1", &ops).is_err(), "sums to 0.6");
+        assert!(parse_ops("walk=1", &ops).is_err(), "not an operator");
+        assert!(parse_ops("point=0.5,point=0.5", &ops).is_err(), "named twice");
+        assert!(parse_ops("point=-1,invert=2", &ops).is_err(), "negative");
+        // without marriage the rest renormalise to 0.5/0.9, 0.1/0.9, 0.1/0.9, 0.2/0.9
+        assert_eq!(pick_op(&mix, "marriage", 0.0), Some("point"));
+        assert_eq!(pick_op(&mix, "marriage", 0.55), Some("point"));
+        assert_eq!(pick_op(&mix, "marriage", 0.56), Some("invert"));
+        assert_eq!(pick_op(&mix, "marriage", 0.999_999), Some("crossover"));
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for i in 0..9000 {
+            *counts.entry(pick_op(&mix, "marriage", (i as f64 + 0.5) / 9000.0).unwrap()).or_default() += 1;
+        }
+        assert_eq!(counts.get("point"), Some(&5000));
+        assert_eq!(counts.get("crossover"), Some(&2000));
+        assert!(pick_op(&[("marriage".to_string(), 1.0)], "marriage", 0.3).is_none());
+        let mut t = OperatorTally::default();
+        assert_eq!((t.line(), t.cell()), ("-".to_string(), "-".to_string()));
+        t.add("point", true);
+        t.add("point", false);
+        t.add("crossover", false);
+        assert_eq!(t.line(), "crossover 1 (0 better), point 2 (1 better)");
+        assert_eq!(t.cell(), "crossover=1/0;point=2/1");
+        assert_eq!(t.entries()[1], ("point".to_string(), 2, 1));
     }
 
     #[test]

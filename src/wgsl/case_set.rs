@@ -13,6 +13,10 @@ use std::path::Path;
 
 use crate::wgsl::harness::{norm_value, Case, CaseData, DeviceExecutor, Executor, KernelInfo, Norm, OutputSpec, Plan, Problem, Role, RunOut};
 
+/// The bound of ONE WORKGROUP of a dispatch: (entry, the dispatch's uniform words, invocations a workgroup), as the
+/// executor's `harness::DispatchBound` reads it.
+pub type WorkgroupBound<'a> = dyn Fn(usize, &[u8], u64) -> Result<u128, String> + 'a;
+
 /// The two splits of a constraint case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Split {
@@ -137,6 +141,32 @@ impl<'d> CaseSet<'d> {
             v.push(CaseOut { name: s.case.name.clone(), split: s.split, norm, pass: *pass, differ, cells: out.len(), out, gpu_ms: r.gpu_ms });
         }
         Ok(v)
+    }
+
+    /// THE WORK BOUND of one run of a compiled kernel on timing case `i`: `bound` is the per-workgroup bound of a
+    /// dispatch as the executor's dispatch bound reads it (entry, the dispatch's uniform words, its invocations a
+    /// workgroup). Returns the bound of the whole run (every dispatch's workgroups) and the largest bound of ONE
+    /// workgroup of any dispatch (a run whose largest is over the executor's cap cannot be split into submits).
+    pub fn timing_bound(&self, info: &KernelInfo, i: usize, bound: &WorkgroupBound<'_>) -> Result<(u128, u128), String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        let plan = self.problem.plan(&s.case, self.exec.binding_limit(), Some(info))?;
+        let (mut total, mut most) = (0u128, 0u128);
+        for c in &plan.run {
+            let crate::wgsl::harness::Cmd::Dispatch { bind, workgroups, entry, .. } = c else { continue };
+            let words: &[u8] = bind
+                .iter()
+                .find_map(|(_, id)| match &plan.buffers[*id] {
+                    crate::wgsl::harness::BufferDecl { uniform: true, init: crate::wgsl::harness::Init::Words(w), .. } => Some(w.as_slice()),
+                    _ => None,
+                })
+                .unwrap_or(&[]);
+            let inv = info.entry_workgroups.get(*entry).map_or(1, |w| u64::from(w[0]) * u64::from(w[1]) * u64::from(w[2]));
+            let per = bound(*entry, words, inv)?;
+            let groups = workgroups.iter().fold(1u128, |a, w| a.saturating_mul(u128::from(*w)));
+            total = total.saturating_add(per.saturating_mul(groups));
+            most = most.max(per);
+        }
+        Ok((total, most))
     }
 
     /// One timed run of a compiled kernel on timing case `i`: its GPU milliseconds (the sum of its dispatches'

@@ -23,6 +23,32 @@
 /// factor of 10 for a kernel slower than the evaluator: 17e9 * 0.1 / 10 = 1.7e8.
 pub const CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT: u128 = 170_000_000;
 
+/// A7's bound of ONE WORKGROUP at the k-means timing input: UltraDim's `update_centroids` read into the true kingdom
+/// (`problems/kmeans_update_segmented/gather.wgsl`, its `mean` entry), 256 invocations at n = 8,192
+/// (`TrueKingdom::tree_work_bound_workgroup_in`; `true_reader::tests::kmeans_timing_bounds_fit_the_measured_cap`
+/// recomputes it). The basis of [`CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT`].
+pub const A7_TIMING_WORKGROUP_BOUND: u128 = 125_841_920;
+
+/// THE MEASURED CAP, for the kernels of a harness problem whose yardstick was timed on this machine (Apple M3 Max,
+/// Metal). The machine's cap above assumes 17 G node executions a second; A7 itself, timed 2026-10-28 10:18:55Z
+/// (`wgsl_true_case_fit`, timing case n8192_d256_k1024: 1,024 workgroups of [`A7_TIMING_WORKGROUP_BOUND`] each) ran
+/// in 1,054.9 GPU ms, so it was bounded by 1,024 x A7_TIMING_WORKGROUP_BOUND / 1.0549 s = 1.22e11 node executions a
+/// second, 7.2 times the machine cap's assumed 17e9 (each of its 1,024 submits held one workgroup and took about 1 ms
+/// of the 100 ms a submit may take). The cap keeps the machine cap's own rule, a submit bounded by a tenth of a second
+/// at the measured rate over a safety factor of 10: `rate * 0.1 / 10` = 1.22e9. The scatter form's `mean` entry
+/// (171,993,344 a workgroup at the timing input, 1 % over the machine's cap, so it was never timed) fits it 7 times. A runner that uses it checks, before its run, that its own yardstick's
+/// measured rate still gives at least this cap (`measured_cap_holds`). The per-submit GPU wait bound
+/// (`Budget::gpu_wait_ms`) stays the hard stop.
+pub const CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT: u128 = A7_TIMING_WORKGROUP_BOUND * 1024 * 10_000 / 10_549 / 100;
+
+/// Whether a kernel bounded by `bound` node executions in all and timed at `gpu_ms` GPU milliseconds justifies `cap`:
+/// at its measured rate a submit of `cap` takes at most a hundredth of a second (the tenth of a second over the safety
+/// factor of 10). Returns the measured rate (node executions a second) and the verdict.
+pub fn measured_cap_holds(bound: u128, gpu_ms: f64, cap: u128) -> (f64, bool) {
+    let rate = bound as f64 / (gpu_ms / 1e3);
+    (rate, gpu_ms > 0.0 && cap as f64 <= rate * 0.1 / 10.0)
+}
+
 /// `H * 2^(6K) * invocations`, saturating at `u128::MAX`.
 pub fn work_bound(h: u64, k: u32, invocations: u64) -> u128 {
     let shift = 6u32.saturating_mul(k);
@@ -207,5 +233,19 @@ mod tests {
     #[test]
     fn the_cap_is_the_measured_rate_over_a_tenth_of_a_second_over_ten() {
         assert_eq!(CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, 17_000_000_000 / 10 / 10);
+    }
+
+    /// The measured cap is A7's measured rate over a tenth of a second over ten; A7's own timing justifies it, a
+    /// timing ten times slower does not; it is above the machine's cap (the reason it exists) and below the rate
+    /// itself.
+    #[test]
+    fn the_measured_cap_is_a7s_measured_rate_over_a_tenth_of_a_second_over_ten() {
+        let a7 = A7_TIMING_WORKGROUP_BOUND * 1024;
+        let (rate, ok) = measured_cap_holds(a7, 1054.9, CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT);
+        assert!(ok, "A7's own timing justifies the cap (rate {rate:.3e})");
+        assert!(!measured_cap_holds(a7, 10.0 * 1054.9, CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT).1, "a ten times slower yardstick does not");
+        assert!(!measured_cap_holds(a7, 0.0, 1).1, "no time measured, no cap");
+        const { assert!(CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT) };
+        assert!((CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT as f64 - rate / 100.0).abs() <= 1.0 + rate * 1e-9);
     }
 }

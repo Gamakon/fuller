@@ -139,3 +139,10 @@ A P run writes two files:
 UltraDim runs one dispatch. The split changes neither values nor order: each cell's invocation runs alone. It changes
 the timing by the submits' overhead, which the yardstick pays too, and the champion's re-time is against the
 yardstick under the same split.
+
+**The measured cap (2026-10-31).** The machine's cap (1.7e8 node executions a submit) left the scatter form untimed:
+its `mean` entry is bounded by 171,993,344 a workgroup at the timing input. A7's own timing (1,024 workgroups of
+125,841,920 in 1,054.9 GPU ms: 1.22e11 a second) gives, by the cap's own rule (a submit at most 0.1 s over a safety
+factor of 10), `work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT` = 1.22e9. A P run times its yardstick
+under the machine's cap first and raises the executor's cap only when that measured rate justifies it; an exact
+kernel still over the cap is untimed (no speed credit), never an error. The per-submit GPU wait bound stays.

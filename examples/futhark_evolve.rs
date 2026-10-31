@@ -89,7 +89,7 @@ use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebui
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{save_checkpoint, slope_check, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, TimingSlots};
+use fuller::runner::{median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -110,15 +110,6 @@ fn utc() -> String {
     format!("{:02}:{:02}:{:02}Z", s / 3600, (s / 60) % 60, s % 60)
 }
 
-fn median(v: &[f64]) -> f64 {
-    let mut s: Vec<f64> = v.iter().cloned().filter(|x| !x.is_nan()).collect();
-    s.sort_by(|a, b| a.total_cmp(b));
-    match s.len() {
-        0 => f64::NAN,
-        n if n % 2 == 1 => s[n / 2],
-        n => 0.5 * (s[n / 2 - 1] + s[n / 2]),
-    }
-}
 
 /// The hash of a program's text, as its identity in the stream and the hall of fame.
 fn text_hash(s: &str) -> String {
@@ -867,39 +858,12 @@ impl Genetics<'_> {
 
     /// The cells the walk reads: every expressed node's symbol cell and, for an expressed constant, its Dc cell.
     fn coding_cells(&self, gene: &[u32]) -> Result<Vec<usize>, String> {
-        let e = express(self.contract, self.layout, gene, self.const_len).map_err(|e| format!("a gene does not express: {e}"))?;
-        let mut q: BTreeMap<Ty, usize> = BTreeMap::new();
-        let mut out = Vec::with_capacity(e.nodes.len() * 2);
-        for n in &e.nodes {
-            out.push(n.pos);
-            if n.const_index.is_some() {
-                let qq = q.entry(n.ty).or_default();
-                let frame = self.layout.frame(n.ty).ok_or("a node of a type with no frame")?;
-                out.push(frame.dc_off.ok_or("a constant with no Dc")? + *qq);
-                *qq += 1;
-            }
-        }
-        Ok(out)
+        fuller::futhark_rings::coding_cells(self.contract, self.layout, gene, self.const_len)
     }
 
     /// LOW-CHANGE mutation: `m` expressed cells, each set to another member of its own alphabet.
     fn mutate(&self, gene: &mut [u32], m: usize, rng: &mut GeneRng) -> Result<(), String> {
-        for _ in 0..m {
-            let cells = self.coding_cells(gene)?;
-            for _ in 0..16 {
-                let pos = cells[rng.below(cells.len())];
-                let a = self.layout.alphabet(self.contract, pos, self.const_len);
-                if a.len() < 2 {
-                    continue;
-                }
-                let v = a[rng.below(a.len())];
-                if v != gene[pos] {
-                    self.layout.mutate(self.contract, gene, pos, v, self.const_len).map_err(|e| format!("mutation: {e}"))?;
-                    break;
-                }
-            }
-        }
-        Ok(())
+        fuller::futhark_rings::point_mutate(self.contract, self.layout, self.const_len, gene, m, rng)
     }
 
     /// THE ONE-EDIT NEIGHBOURS of a gene: every expressed cell set to every other member of its own alphabet (the
@@ -996,24 +960,6 @@ fn tree_of_json(v: &serde_json::Value) -> Result<Tree, String> {
         const_index: a[1].as_u64().map(|c| c as u32),
         kids: a[2].as_array().ok_or("checkpoint kids")?.iter().map(tree_of_json).collect::<Result<_, _>>()?,
     })
-}
-
-/// THE VERDICT of an exact champion's re-time against the published program (one function for the run's report and
-/// `--rescore`, plan section G, fault 12): "beat" needs the median below the least A/A ratio AND at least 9 of 11
-/// pairs faster (a sign test, one-sided p = 0.033; the study plan's rule of 2026-10-28 13:10Z); "exact but slower"
-/// the median above the greatest A/A ratio; otherwise "matched".
-fn speed_verdict(ratios: &[f64], aa: &[f64]) -> &'static str {
-    let floor = aa.iter().cloned().fold(f64::INFINITY, f64::min);
-    let ceiling = aa.iter().cloned().fold(0.0, f64::max);
-    let m = median(ratios);
-    let faster = ratios.iter().filter(|r| **r < 1.0).count();
-    if m < floor && faster * 11 >= 9 * ratios.len() {
-        "beat (exact and faster: the median below the least A/A ratio and at least 9 of 11 pairs faster)"
-    } else if m > ceiling {
-        "exact but slower (the median above the greatest A/A ratio)"
-    } else {
-        "matched (exact, within the A/A noise)"
-    }
 }
 
 /// The running executable's identity (its path and the hash of its bytes), so every seed of a comparison can be
@@ -1274,26 +1220,6 @@ fn transpose_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u
 /// run in the same generation and each child's operator is recorded. `marriage` is the share of children made by
 /// marriage (as `--marriage`); the others are drawn for each remaining child.
 const OPS: [&str; 6] = ["point", "invert", "transpose", "crossover", "walk", "marriage"];
-
-fn parse_ops(text: &str) -> Result<Vec<(String, f64)>, String> {
-    let mut v = Vec::new();
-    for part in text.split(',') {
-        let (name, w) = part.split_once('=').ok_or_else(|| format!("--ops {part}: want NAME=PROBABILITY"))?;
-        if !OPS.contains(&name) {
-            return Err(format!("--ops: {name} is not an operator of this runner ({})", OPS.join(", ")));
-        }
-        let w: f64 = w.parse().map_err(|_| format!("--ops {part}: {w} is not a number"))?;
-        if !(w >= 0.0 && w.is_finite()) {
-            return Err(format!("--ops {part}: a probability must be finite and at least 0"));
-        }
-        v.push((name.to_string(), w));
-    }
-    let total: f64 = v.iter().map(|x| x.1).sum();
-    if (total - 1.0).abs() > 1e-6 {
-        return Err(format!("--ops: the probabilities sum to {total}, not 1"));
-    }
-    Ok(v)
-}
 
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 
@@ -1778,7 +1704,7 @@ fn real_main() -> Result<(), String> {
     let elites: usize = num(&args, "--elites", 2)?;
     let pump_every: u32 = num(&args, "--pump-every", 5)?;
     let fold_every: u32 = num(&args, "--fold-every", 10)?;
-    let ops: Option<Vec<(String, f64)>> = arg(&args, "--ops").map(|t| parse_ops(&t)).transpose()?;
+    let ops: Option<Vec<(String, f64)>> = arg(&args, "--ops").map(|t| parse_ops(&t, &OPS)).transpose()?;
     let marriage: f64 = match &ops {
         Some(o) => o.iter().find(|x| x.0 == "marriage").map_or(0.0, |x| x.1),
         None => num(&args, "--marriage", 0.3)?,
@@ -2054,7 +1980,7 @@ fn real_main() -> Result<(), String> {
                 let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
             }
-            speed_verdict(&ratios, &all)
+            speed_verdict(&ratios, &all).text()
         } else {
             "not reached (not exact)"
         };
@@ -2240,15 +2166,12 @@ fn real_main() -> Result<(), String> {
         if !population.is_empty() {
             // Every generation, each operator's children and how many beat their best parent (decision-critical).
             let prev: HashMap<u64, f64> = population.iter().map(|i| (i.id, i.fit())).collect();
-            let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            let mut by = OperatorTally::default();
             for c in next.iter().filter(|c| c.operator != "elite") {
                 let pf = c.parents.iter().filter_map(|p| prev.get(p)).cloned().fold(f64::INFINITY, f64::min);
-                let e = by.entry(c.operator.as_str()).or_default();
-                e.0 += 1;
-                e.1 += usize::from(c.fit() < pf);
+                by.add(&c.operator, c.fit() < pf);
             }
-            let line: Vec<String> = by.iter().map(|(k, (n, b))| format!("{k} {n} ({b} better)")).collect();
-            println!("# {} gen {generation} operators: {}", utc(), line.join(", "));
+            println!("# {} gen {generation} operators: {}", utc(), by.line());
         }
         population = next;
         population.sort_by(|a, b| a.fit().total_cmp(&b.fit()));
@@ -2530,17 +2453,7 @@ fn real_main() -> Result<(), String> {
             let m_of = |rng: &mut GeneRng| if regime == "P" { 1 + rng.below(2) } else { 1 + rng.below(4) };
             if let Some(o) = &ops {
                 // One operator drawn by its probability among the non-marriage operators.
-                let rest: Vec<&(String, f64)> = o.iter().filter(|x| x.0 != "marriage" && x.1 > 0.0).collect();
-                let total: f64 = rest.iter().map(|x| x.1).sum();
-                let mut r = rng.below(1_000_000) as f64 / 1e6 * total;
-                let mut pick = rest.last().map(|x| x.0.as_str()).unwrap_or("point");
-                for x in &rest {
-                    if r < x.1 {
-                        pick = x.0.as_str();
-                        break;
-                    }
-                    r -= x.1;
-                }
+                let pick = pick_op(o, "marriage", rng.below(1_000_000) as f64 / 1e6).unwrap_or("point");
                 if pick != "crossover" {
                     let mut gene = population[a].gene.clone();
                     let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &gene, run.gen.const_len)?;
@@ -2692,7 +2605,7 @@ fn real_main() -> Result<(), String> {
             // after a quiet A/A set beside a noisy re-time made the published program itself "faster".
             let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
             let floor = all.iter().cloned().fold(f64::INFINITY, f64::min);
-            let v = speed_verdict(&ratios, &all);
+            let v = speed_verdict(&ratios, &all).text();
             rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\nverdict\t{v}\n", if v.starts_with("beat") { "yes" } else { "no" }));
         }
     }

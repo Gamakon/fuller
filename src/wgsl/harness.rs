@@ -2946,6 +2946,20 @@ mod device {
             self
         }
 
+        /// Raise the per-submit cap of a dispatch bound to the MEASURED cap
+        /// (`work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT`): for a runner that has timed a yardstick of
+        /// the problem on this machine under the machine's cap and checked that the yardstick's measured rate justifies
+        /// it (`work_guard::measured_cap_holds`). It splits dispatches only (a segment bounded by [`Fuel`] keeps the
+        /// machine's cap).
+        pub fn raise_to_measured_cap(&mut self) {
+            self.cap = crate::wgsl::work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT;
+        }
+
+        /// The per-submit cap a dispatch bound is checked against.
+        pub fn cap(&self) -> u128 {
+            self.cap
+        }
+
 
         /// The device executor at the binding limit `problem` plans by
         /// (`ProblemSpec::binding_limit`: the effective limit, or the

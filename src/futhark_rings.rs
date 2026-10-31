@@ -376,6 +376,28 @@ pub fn coding_cells(contract: &KingdomContract, layout: &GeneLayout, gene: &[u32
     Ok(out)
 }
 
+/// LOW-CHANGE MUTATION (any typed kingdom): `m` times, one expressed cell ([`coding_cells`]) set to another member of
+/// its own alphabet (16 draws of a cell at most a change, a cell whose alphabet holds one symbol drawn again). The
+/// child is legal by construction: every cell keeps its own type's alphabet.
+pub fn point_mutate(contract: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMap<Ty, u32>, gene: &mut [u32], m: usize, rng: &mut GeneRng) -> Result<(), String> {
+    for _ in 0..m {
+        let cells = coding_cells(contract, layout, gene, const_len)?;
+        for _ in 0..16 {
+            let pos = cells[rng.below(cells.len())];
+            let a = layout.alphabet(contract, pos, const_len);
+            if a.len() < 2 {
+                continue;
+            }
+            let v = a[rng.below(a.len())];
+            if v != gene[pos] {
+                layout.mutate(contract, gene, pos, v, const_len).map_err(|e| format!("mutation: {e}"))?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A generation 0 grown by mutation from one seed (`futhark_evolve --gen0 fable-mutants`, Andrew, 2026-10-29).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mutants {
@@ -408,16 +430,41 @@ pub struct MutantSpec<'a> {
 /// member's (no duplicates), until there are `pop` members. More than `max_tries` mutants tried is an error (an
 /// operator that cannot make `pop` different programs from this seed), never a random fill.
 pub fn mutants(spec: &MutantSpec<'_>, seed_gene: Vec<u32>, mutate: &mut Mutate<'_>, render: &dyn Fn(&Tree) -> Result<String, String>, rng: &mut GeneRng) -> Result<Mutants, String> {
+    mutants_of_first(spec, vec![seed_gene], mutate, render, rng)
+}
+
+/// GENERATION 0 FROM SEVERAL STARTS, GROWN FROM THE FIRST (`wgsl_true_case_fit`: UltraDim's kernel, the scatter form,
+/// then the kernel's mutants): the members `starts` in order (every one must differ from the others in its program
+/// text AND its tree, or it is an error naming the two), then mutants as [`mutants`], each made from a member drawn
+/// uniformly from the first start and the mutants already in, so every mutant descends from the first start. With
+/// one start it is [`mutants`], draw for draw.
+pub fn mutants_of_first(spec: &MutantSpec<'_>, starts: Vec<Vec<u32>>, mutate: &mut Mutate<'_>, render: &dyn Fn(&Tree) -> Result<String, String>, rng: &mut GeneRng) -> Result<Mutants, String> {
     let (contract, layout, const_len, pop, max_tries) = (spec.contract, spec.layout, spec.const_len, spec.pop, spec.max_tries);
     let tree_of = |g: &[u32]| crate::typed_gep::express(contract, layout, g, const_len).map(|e| e.tree()).map_err(|e| format!("a gene does not express: {e}"));
-    let t0 = tree_of(&seed_gene)?;
-    let mut m = Mutants { texts: vec![render(&t0)?], trees: vec![t0], genes: vec![seed_gene], parents: vec![None], tried: 0 };
+    if starts.is_empty() {
+        return Err("our software has a bug: generation 0 from no start".into());
+    }
+    let n_starts = starts.len();
+    let mut m = Mutants { texts: Vec::new(), trees: Vec::new(), genes: Vec::new(), parents: Vec::new(), tried: 0 };
+    for (i, g) in starts.into_iter().enumerate() {
+        let t = tree_of(&g)?;
+        let text = render(&t)?;
+        if let Some(j) = m.texts.iter().position(|x| *x == text).or_else(|| m.trees.iter().position(|x| *x == t)) {
+            return Err(format!("generation 0: start {i} has the text or the tree of start {j}"));
+        }
+        m.genes.push(g);
+        m.trees.push(t);
+        m.texts.push(text);
+        m.parents.push(None);
+    }
     while m.genes.len() < pop {
         if m.tried >= max_tries {
             return Err(format!("{} mutants tried, {} members: the operator cannot make {pop} different programs from this seed", m.tried, m.genes.len()));
         }
         m.tried += 1;
-        let from = rng.below(m.genes.len());
+        // the first start and the mutants (with one start: every member)
+        let pick = rng.below(1 + m.genes.len() - n_starts);
+        let from = if pick == 0 { 0 } else { n_starts + pick - 1 };
         let mut g = m.genes[from].clone();
         mutate(&mut g, rng)?;
         let t = tree_of(&g)?;
