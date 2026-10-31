@@ -403,7 +403,7 @@ fn the_cross_path_programs_build_and_are_within_the_timing_work_bound() {
 /// that goes first alternating (the evolution's `pair_steps` for a fresh program).
 fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
     let mut v = vec![Step::Time { yardstick: false, runs }];
-    v.extend((0..pairs).map(|i| Step::Pair { runs, yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: false }));
+    v.extend((0..pairs).map(|i| Step::Pair { yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: false }));
     v
 }
 
@@ -413,7 +413,8 @@ fn pair_ratios(o: &[Outcome], pairs: usize) -> (Vec<f64>, f64) {
     let mut r = Vec::new();
     let mut yard = f64::INFINITY;
     for x in &o[1..=pairs] {
-        let Outcome::Pair { yard: y, .. } = x else { panic!("not a pair: {x:?}") };
+        let Outcome::Pair { own, yard: y } = x else { panic!("not a pair: {x:?}") };
+        assert!(own.len() == y.len() && own.len() > PAIR_MIN_RUNS, "a pair's sides ran {} and {} times (a warm-up and at least {PAIR_MIN_RUNS} each)", own.len(), y.len());
         let ratio = x.pair_ratio().unwrap();
         let y = Outcome::Time(y.clone()).fastest_ns().unwrap();
         assert!(ratio.is_finite() && ratio > 0.0 && y.is_finite() && y > 0.0, "a timing that is not a finite GPU time: {x:?}");
@@ -461,6 +462,8 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
     let mut quality: Vec<Vec<Vec<Array>>> = vec![Vec::new(); 3];
     let mut ratios: Vec<Vec<Vec<f64>>> = vec![Vec::new(); 3];
     let mut aa: Vec<(Vec<f64>, f64)> = Vec::new();
+    // Each program's timing seconds a pair on each path (its discarded first timing included).
+    let mut secs: Vec<Vec<f64>> = vec![Vec::new(); 3];
     for (i, t) in trees.iter().enumerate() {
         let q = crate::futhark_wgpu_host::compile_program_prebuilt(&program_cases(&k, &sig, t, cases.len()).unwrap(), &base.join(format!("single_q{i}")), &shim).unwrap();
         let (out, _) = crate::futhark_wgpu_host::run_program_bytes(&q, &all, false, 1).unwrap();
@@ -468,6 +471,7 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         let got = timer.run(&[Member { program: Program::Tree(t), steps: fresh_pairs(pairs, runs) }]).unwrap();
         assert_eq!((got.cost.compiles, got.cost.processes), (1, 1), "the single path's timing is one build and one process a candidate");
         ratios[0].push(pair_ratios(&got.outcomes[0], pairs).0);
+        secs[0].push(got.cost.member_timing_seconds[0] / pairs as f64);
     }
     aa.push(pair_ratios(&timer.run(&[Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) }]).unwrap().outcomes[0], pairs));
     // THE BATCH AND RUST PATHS: every program in one batch, the published program as a member for the A/A.
@@ -483,6 +487,7 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
             }
             ratios[path].push(pair_ratios(&o[1..], pairs).0);
         }
+        secs[path] = got.cost.member_timing_seconds[..trees.len()].iter().map(|s| s / pairs as f64).collect();
         aa.push(pair_ratios(&got.outcomes[trees.len()], pairs));
     }
     let names = ["single", "batch", "rust"];
@@ -501,6 +506,9 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         table.push('\n');
     }
     eprintln!("{table}");
+    for (i, text) in CROSS_PATH.iter().enumerate() {
+        eprintln!("{text}: timing seconds a pair, single {:.3}, batch {:.3}, rust {:.3}", secs[0][i], secs[1][i], secs[2][i]);
+    }
     for (i, text) in CROSS_PATH.iter().enumerate() {
         for path in 0..3 {
             let r = &ratios[path][i];
@@ -624,7 +632,7 @@ fn on_the_gpu_the_published_programs_time_in_each_setting() {
 }
 
 /// THE A/A GATE IN ONE PROCESS (`--eval batch`, `--eval rust`), on the GPU: the published histogram program against
-/// itself (11 interleaved pairs, `Step::Pair`, 20 runs a side) and against its copy as a member (the in-run A/A, 11
+/// itself (11 interleaved pairs, `Step::Pair`, at least 1 s a side) and against its copy as a member (the in-run A/A, 11
 /// more), on each in-process path: all 22 pairs within the study's 5 %. Measured 2026-10-31 before the fix (each side's
 /// runs a command of their own, each run on a fresh upload of the timing input): 7 of 22 on the batch path and 12 of 22
 /// on the rust path, the runs ramping from 4.0 to 8.1 ms and back as the GPU's clock stepped down between uploads.
@@ -646,7 +654,7 @@ fn on_the_gpu_interleaved_pairs_pass_the_a_a_gate_in_one_process() {
     let mut failed = Vec::new();
     for (tag, backend) in [("batch", Backend::Gpu { shim }), ("rust", Backend::Rust { rt })] {
         let host = Host::new(&k, &sig, cases.len(), backend, &base.join(tag), Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
-        let itself: Vec<Step> = (0..=pairs).map(|i| Step::Pair { runs, yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: true }).collect();
+        let itself: Vec<Step> = (0..=pairs).map(|i| Step::Pair { yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: true }).collect();
         let got = host.run(&[Member { program: Program::Text(p.yardstick), steps: itself }, Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) }]).unwrap();
         let noise: Vec<f64> = got.outcomes[0][1..].iter().map(|o| o.pair_ratio().unwrap()).collect();
         let (inrun, yard) = pair_ratios(&got.outcomes[1], pairs);
@@ -733,7 +741,7 @@ fn histogram_s_generation_0_compiles_as_one_batch() {
     let shim = crate::futhark_wgpu_host::process_shim().unwrap();
     let host = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&cases[0].stdin), yardstick: Some(p.yardstick) }).unwrap();
     let trees: Vec<Tree> = HISTOGRAM_GEN0.iter().map(|t| crate::futhark_sig::build(&k, t).unwrap_or_else(|e| panic!("{t}: {e}"))).collect();
-    let members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Pair { runs: 1, yard_first: true, itself: false }] }).collect();
+    let members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Pair { yard_first: true, itself: false }] }).collect();
     let idx: Vec<usize> = (0..members.len()).collect();
     let (exe, cmds, _) = host.compile(&members, &idx, &mut Cost::default()).unwrap_or_else(|e| panic!("generation 0 did not compile as one batch: {e}"));
     assert!(exe.is_file(), "no executable");
@@ -742,4 +750,25 @@ fn histogram_s_generation_0_compiles_as_one_batch() {
     assert!(top <= WGPU_MAX_BINDING_INDEX, "the batch's kernels use binding index {top}, over wgpu's limit {WGPU_MAX_BINDING_INDEX}: it would be halved");
     eprintln!("histogram's generation 0: one batch of 24 programs, binding indices up to {top}");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// THE RUNS A SIDE OF A TIMED PAIR: at least 1 s a side from the slower side's run time, at least 3 runs. A 0.2 s
+/// program takes 5 runs a side (it took 42 at the yardstick's fixed 20 + 1, 2026-10-31), a 3 ms one 334, a run of
+/// exactly 1 s or longer the least 3, and a run of no measurable time the least 3.
+#[test]
+fn a_pair_side_runs_for_at_least_a_second() {
+    assert_eq!(pair_runs(0.2, 1.0, 3), 5);
+    assert_eq!(pair_runs(0.21, 1.0, 3), 5);
+    assert_eq!(pair_runs(0.003, 1.0, 3), 334);
+    assert_eq!(pair_runs(0.25, 1.0, 3), 4);
+    assert_eq!(pair_runs(0.4, 1.0, 3), 3);
+    assert_eq!(pair_runs(1.0, 1.0, 3), 3);
+    assert_eq!(pair_runs(7.5, 1.0, 3), 3);
+    assert_eq!(pair_runs(0.0, 1.0, 3), 3);
+    assert_eq!(pair_runs(f64::NAN, 1.0, 3), 3);
+    assert_eq!(pair_runs(f64::INFINITY, 1.0, 3), 3);
+    for slower in [1e-5, 3e-4, 0.0123, 0.2, 0.33, 0.999] {
+        let n = pair_runs(slower, PAIR_SIDE_SECONDS, PAIR_MIN_RUNS);
+        assert!(n as f64 * slower >= PAIR_SIDE_SECONDS && (n - 1) as f64 * slower < PAIR_SIDE_SECONDS || n == PAIR_MIN_RUNS, "{slower} s a run: {n} runs");
+    }
 }

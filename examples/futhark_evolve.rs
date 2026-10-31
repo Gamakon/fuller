@@ -34,8 +34,9 @@
 //!   generation reads the same pairs and is never timed again; each pair is its own speed input, `r/(1+r)` with `r`
 //!   the candidate's GPU time over the yardstick's, never averaged. (Three pairs a candidate, before 2026-10-27
 //!   21:00Z, ranked one program at 1.287 in the run and 1.000 in an 11-pair re-time.)
-//!   A pair is the candidate and the published program INTERLEAVED run by run on one upload of the timing input,
-//!   `--runs` runs a side after a warm-up each (`fuller::futhark_batch::Step::Pair`, the driver's `p` command), on
+//!   A pair is the candidate and the published program INTERLEAVED run by run on one upload of the timing input, a
+//!   warm-up each and then at least 1 s a side (`fuller::futhark_batch::pair_runs`: the runs from the slower side's
+//!   run time, at least 3; `Step::Pair`, the driver's `p` command), on
 //!   every evaluation path (`--eval single` in a timing process of the candidate's own); each side's time is its
 //!   fastest run's sum of GPU-timed passes. (Until 2026-10-31 each run re-uploaded the input and the GPU's clock
 //!   stepped down in the gaps: the A/A gate failed on every path.) The A/A noise
@@ -224,7 +225,7 @@ fn pair_steps(missing: usize, fresh: bool, runs: usize) -> Vec<Step> {
         v.push(Step::Time { yardstick: false, runs });
     }
     for i in 0..missing {
-        v.push(Step::Pair { runs, yard_first: interleaved_runs(i, 1)[0], itself: false });
+        v.push(Step::Pair { yard_first: interleaved_runs(i, 1)[0], itself: false });
     }
     v
 }
@@ -601,7 +602,7 @@ impl<'a> Judge<'a> {
     fn aa_batch(&self, yardstick: &str, inrun_pairs: usize, rounds: usize) -> Result<AaSets, String> {
         let host = self.timing_host()?;
         // A discarded pair, then 11, each interleaved run by run (`Step::Pair`, the published program against itself).
-        let mut steps: Vec<Step> = (0..12).map(|i| Step::Pair { runs: self.runs, yard_first: interleaved_runs(i, 1)[0], itself: true }).collect();
+        let mut steps: Vec<Step> = (0..12).map(|i| Step::Pair { yard_first: interleaved_runs(i, 1)[0], itself: true }).collect();
         steps.extend(vec![Step::Time { yardstick: true, runs: self.runs }; rounds]);
         let mut members = vec![Member { program: Program::Text(yardstick), steps }];
         if inrun_pairs > 0 {

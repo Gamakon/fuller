@@ -196,18 +196,22 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], 
             drop(args);
             Ok((tag, words.join(" ").into_bytes()))
         }
-        // `p E Y RUNS FIRST`: an INTERLEAVED PAIR (fuller::runner::interleaved_runs). Entries E and Y alternate run by
-        // run on one upload of the timing input, `RUNS + 1` runs each (the first of each a warm-up), Y first when
-        // FIRST is 1: the two sides share the device's state (its clock) run by run. The payload is E's run times,
-        // `|`, Y's run times, each as `t`'s words.
-        ["p", entry, yard, runs, first] => {
+        // `p E Y SIDE_NS MIN FIRST`: an INTERLEAVED PAIR (fuller::runner::interleaved_runs). Entries E and Y alternate
+        // run by run on one upload of the timing input, Y first when FIRST is 1: a warm-up each, then
+        // ceil(SIDE_NS / the slower side's first timed run's wall time) runs each, at least MIN
+        // (fuller::futhark_batch::pair_runs). The payload is E's run times, `|`, Y's run times, each as `t`'s words.
+        ["p", entry, yard, side_ns, min_runs, first] => {
             let tag = "p";
-            let runs: usize = runs.parse().map_err(|_| (tag, Error::new("a pair command with no runs")))?;
+            let side_ns: f64 = side_ns.parse().map_err(|_| (tag, Error::new("a pair command with no side time")))?;
+            let min_runs: usize = min_runs.parse().map_err(|_| (tag, Error::new("a pair command with no least runs")))?;
             let yard_first = match *first {
                 "1" => true,
                 "0" => false,
                 _ => return Err((tag, Error::new("a pair command whose first side is not 0 or 1"))),
             };
+            if side_ns.is_nan() || side_ns <= 0.0 || min_runs < 1 {
+                return Err((tag, Error::new("a pair command with no side time or no runs")));
+            }
             let timing = timing.ok_or((tag, Error::new("a pair command with no timing input")))?;
             if !ctx.timing() {
                 return Err((tag, Error::new("a pair command in a run with no GPU timing")));
@@ -216,16 +220,30 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], 
             let args = upload(ctx, timing).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
             ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
             let mut words: [Vec<String>; 2] = [Vec::new(), Vec::new()];
-            for k in 0..2 * (runs + 1) {
+            let mut first_wall = [0f64; 2];
+            let mut need: Option<usize> = None;
+            let mut k = 0usize;
+            while need.is_none_or(|n| words[0].len() < n + 1 || words[1].len() < n + 1) {
                 // Side 1 (the yardstick) on the even calls when it goes first, else on the odd ones.
-                let side = usize::from((k % 2 == 0) == yard_first);
+                let side = usize::from(k.is_multiple_of(2) == yard_first);
+                k += 1;
+                let w0 = Instant::now();
                 let m0 = ctx.timed_passes();
                 let outs = (sides[side].call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
                 drop(outs);
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after a run: {x}"))))?;
                 let m1 = ctx.timed_passes();
+                let wall = w0.elapsed().as_nanos() as f64;
                 words[side].push(if m1 == m0 { "none".to_string() } else { format!("{:.1}", (m0..m1).map(|p| ctx.pass_ns(p).unwrap_or(0.0)).sum::<f64>()) });
+                if words[side].len() == 2 {
+                    first_wall[side] = wall;
+                }
+                if need.is_none() && words[0].len() >= 2 && words[1].len() >= 2 {
+                    let slower = first_wall[0].max(first_wall[1]);
+                    let n = if slower > 0.0 { (side_ns / slower).ceil() } else { 0.0 };
+                    need = Some(if n > min_runs as f64 { n as usize } else { min_runs });
+                }
             }
             drop(args);
             Ok((tag, format!("{}|{}", words[0].join(" "), words[1].join(" ")).into_bytes()))

@@ -77,12 +77,34 @@ pub enum Step {
     Output,
     /// AN INTERLEAVED TIMED PAIR (`runner::interleaved_runs`): the member's timed entry (or, `itself`, the published
     /// program's, the A/A noise floor) and the published program's, alternating run by run on one upload of the timing
-    /// input, `runs + 1` runs each (the first of each a warm-up), the published program first when `yard_first`.
+    /// input, a warm-up each and then [`pair_runs`] runs a side (at least [`PAIR_SIDE_SECONDS`] a side, judged from the
+    /// slower side's first timed run), the published program first when `yard_first`.
     /// Measured 2026-10-31 on histogram: the published program's runs, each on a fresh upload of the 126 MB timing
     /// input, ramped from 4.0 to 8.1 ms and back as the GPU idled between them (its clock stepping down), so a side's
     /// fastest run depended on where its runs fell; on one upload, back to back, they hold at 2.96 to 3.3 ms, and the
     /// two sides interleaved see the same clock.
-    Pair { runs: usize, yard_first: bool, itself: bool },
+    Pair { yard_first: bool, itself: bool },
+}
+
+/// The least wall time a side of a timed pair runs for (Andrew's rule, 2026-10-31): a fixed run count taken from the
+/// published program cost a 0.2 s program 42 runs a side.
+pub const PAIR_SIDE_SECONDS: f64 = 1.0;
+/// The fewest timed runs a side of a pair has (after its warm-up).
+pub const PAIR_MIN_RUNS: usize = 3;
+
+/// THE RUNS A SIDE of a timed pair: `ceil(side_seconds / slower)`, at least `min_runs`, where `slower` is the wall time
+/// of one run of the slower side (its first timed run). A run of no measurable time takes `min_runs`. The batch
+/// driver (`p`) and the rust-wgpu runtime's host apply the same rule; a GPU test checks their run counts against it.
+pub fn pair_runs(slower_seconds: f64, side_seconds: f64, min_runs: usize) -> usize {
+    if slower_seconds.is_nan() || slower_seconds <= 0.0 || slower_seconds.is_infinite() {
+        return min_runs;
+    }
+    let n = (side_seconds / slower_seconds).ceil();
+    if n.is_finite() && n > min_runs as f64 {
+        n as usize
+    } else {
+        min_runs
+    }
 }
 
 impl Step {
@@ -265,8 +287,9 @@ const DRIVER: &str = r#"/* THE BATCH DRIVER, written by fuller::futhark_batch fo
  * names that command), the per-candidate path's bound of one process.
  *
  * commands, one a line: `q E` (quality entry E on every case), `t E RUNS` (timed entry E, RUNS + 1 runs on one upload
- * of the timing input, the first a warm-up, each run's GPU nanoseconds), `p E Y RUNS FIRST` (timed entries E and Y
- * interleaved run by run on one upload, RUNS + 1 runs each, Y first when FIRST is 1; E's words, `|`, Y's words), `o E`
+ * of the timing input, the first a warm-up, each run's GPU nanoseconds), `p E Y SIDE_NS MIN FIRST` (timed entries E and
+ * Y interleaved run by run on one upload, a warm-up each, then ceil(SIDE_NS / the slower side's first timed run's wall
+ * time) runs each, at least MIN, Y first when FIRST is 1; E's words, `|`, Y's words), `o E`
  * (timed entry E once on the timing input, its output).
  * results: records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then BYTES of payload; TAG is start,
  * ctx, q, t, p, o or end; PIPELINE_NANOSECONDS is the shader and pipeline creation inside the record's span (GPU). */
@@ -275,6 +298,7 @@ const DRIVER: &str = r#"/* THE BATCH DRIVER, written by fuller::futhark_batch fo
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <unistd.h>
 @TIMING_DECLS@
 struct futhark_context_config;
@@ -489,21 +513,26 @@ int main(int argc, char **argv) {
             record("t", index, "ok", mono_ns() - t0, b.p, b.len);
             free(b.p);
         } else if (strcmp(kind, "p") == 0) {
-            /* An interleaved pair: entries E and Y alternate run by run on one upload of the timing input. */
-            int yard, first;
-            if (fscanf(cmds, "%d %d %d", &yard, &runs, &first) != 3 || runs < 0 || (first != 0 && first != 1)) fail("p", index, "a pair command with no yardstick, runs or first side", 2);
+            /* An interleaved pair: entries E and Y alternate run by run on one upload of the timing input, a warm-up
+             * each, then pair_runs() runs a side from the slower side's first timed run (fuller::futhark_batch). */
+            int yard, minr, first;
+            long long side_ns;
+            if (fscanf(cmds, "%d %lld %d %d", &yard, &side_ns, &minr, &first) != 4 || side_ns <= 0 || minr < 1 || (first != 0 && first != 1)) fail("p", index, "a pair command with no yardstick, side time, runs or first side", 2);
             if (!have_timing) fail("p", index, "a pair command with no timing input", 2);
             if (!TIMED_PASSES) fail("p", index, "a pair command in a driver with no GPU timing", 2);
             buf side_b[2] = {{0}, {0}};
             int side_n[2] = {0, 0};
+            uint64_t first_wall[2] = {0, 0};
+            long need = -1;
             dval in[NIN];
             for (int i = 0; i < NIN; i++)
                 if (upload(ctx, &timing[i], &in[i]) != 0) fail_ctx("p", index, ctx, "an input did not upload", 3);
             if (futhark_context_sync(ctx) != 0) fail_ctx("p", index, ctx, "the sync after the inputs", 3);
-            for (int k = 0; k < 2 * (runs + 1); k++) {
+            for (int k = 0; need < 0 || side_n[0] < need + 1 || side_n[1] < need + 1; k++) {
                 /* side 1, the yardstick, on the even calls when it goes first, else on the odd ones */
                 int side = ((k % 2 == 0) == (first == 1)) ? 1 : 0;
                 dval out[1];
+                uint64_t w0 = mono_ns();
                 uint64_t m0 = PASSES();
                 int r = call_t(side ? yard : entry, ctx, out, in);
                 if (r < 0) fail("p", index, "no such timed entry", 2);
@@ -511,6 +540,7 @@ int main(int argc, char **argv) {
                 release(ctx, OUT_RANK, &out[0]);
                 if (futhark_context_sync(ctx) != 0) fail_ctx("p", index, ctx, "the sync after a run", 3);
                 uint64_t m1 = PASSES();
+                uint64_t wall = mono_ns() - w0;
                 char word[64];
                 if (m1 == m0) {
                     snprintf(word, sizeof word, "%snone", side_n[side] ? " " : "");
@@ -525,6 +555,12 @@ int main(int argc, char **argv) {
                 }
                 put(&side_b[side], word, strlen(word));
                 side_n[side]++;
+                if (side_n[side] == 2) first_wall[side] = wall;
+                if (need < 0 && side_n[0] >= 2 && side_n[1] >= 2) {
+                    double slower = (double)(first_wall[0] > first_wall[1] ? first_wall[0] : first_wall[1]);
+                    double n = slower > 0 ? ceil((double)side_ns / slower) : 0;
+                    need = n > minr ? (long)n : minr;
+                }
             }
             for (int i = 0; i < NIN; i++) release(ctx, IN_RANK[i], &in[i]);
             put(&side_b[0], "|", 1);
@@ -709,8 +745,8 @@ impl<'a> Host<'a> {
                     (Step::Time { yardstick: false, runs }, true) => format!("t {} {runs}", tname(i)),
                     (Step::Time { yardstick: true, runs }, true) => format!("t {YARD} {runs}"),
                     (Step::Output, true) => format!("o {}", tname(i)),
-                    (Step::Pair { runs, yard_first, itself }, false) => format!("p {} {nt} {runs} {}", if *itself { nt } else { t_of[&i] }, u8::from(*yard_first)),
-                    (Step::Pair { runs, yard_first, itself }, true) => format!("p {} {YARD} {runs} {}", if *itself { YARD.to_string() } else { tname(i) }, u8::from(*yard_first)),
+                    (Step::Pair { yard_first, itself }, false) => format!("p {} {nt} {} {PAIR_MIN_RUNS} {}", if *itself { nt } else { t_of[&i] }, pair_side_ns(), u8::from(*yard_first)),
+                    (Step::Pair { yard_first, itself }, true) => format!("p {} {YARD} {} {PAIR_MIN_RUNS} {}", if *itself { YARD.to_string() } else { tname(i) }, pair_side_ns(), u8::from(*yard_first)),
                 };
                 if !gpu && matches!(s, Step::Time { .. } | Step::Pair { .. }) {
                     return Err("our software has a bug: a timed step on the c backend, which has no GPU timing".into());
@@ -1076,6 +1112,11 @@ impl<'a> Host<'a> {
         self.group(members, a, outcomes, cost)?;
         self.group(members, b, outcomes, cost)
     }
+}
+
+/// [`PAIR_SIDE_SECONDS`] in whole nanoseconds, as a command carries it.
+fn pair_side_ns() -> u64 {
+    (PAIR_SIDE_SECONDS * 1e9) as u64
 }
 
 /// A timing record's words: each run's GPU nanoseconds, or `none` for a run that timed no pass.
