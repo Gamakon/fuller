@@ -71,3 +71,11 @@ Histogram, R, seed 1, `--gen0 fable-mutants-only --mutation point --eval single`
 4. The fork patches 0007–0009 (7d0b2118) compile all 373 failing programs, but their GPU value check has not been run.
 
 The fix for bugs 1 to 3 was in progress when the session ended. Its edits (`src/futhark_wgpu_host.rs`, `src/futhark_batch/tests.rs` (a cross-path test), `src/futhark_sig.rs`, `examples/futhark_evolve.rs`) are committed as work in progress: clippy is clean with `gpu,wgsl`, and the tests have NOT been run.
+
+## The open bugs, resolved (2026-10-31)
+| bug | cause | fix | test |
+|---|---|---|---|
+| 1. rust path: Fable's program untimed | the runner's timing work bound (3.5e9, k x n trips without the nodes) left it untimed (`over_cap_untimed 66`); the runtime times it (210 ms a run) | d7f8d078 (bound 5.9e10) | `the_timing_work_bound_admits_fable_s_exact_histogram_program`, `on_the_gpu_the_rust_path_times_every_cross_path_program` (8ed854d9) |
+| 2. batch timing fails the A/A gate | every timed run re-uploaded the 126 MB timing input and the GPU's clock stepped down in the gaps (runs 4.0 → 8.1 ms and back); the 1.3–3.6x slowdown did not reproduce | one upload a timed command, pairs interleaved run by run (`p`, `Step::Pair`, b1c55c1d); `--eval single` times the same way (3481e128) | `on_the_gpu_interleaved_pairs_pass_the_a_a_gate_in_one_process`; the runner's gate 22/22 on batch, single and rust |
+| 3. generation 0 differs by path | the same 24 programs on both paths; 4 scored worst on single, whose compiler (the unpatched branch) wrote no C for them (SetMem) | the default compiler is the fork with all 9 patches (8d83ec25) | `the_generation_0_programs_the_single_path_scored_worst_compile_on_the_webgpu_path` (bb32d184); generation 0 byte-identical in the three ledgers, 2026-10-31 |
+| 4. patches 0007–0009 unchecked | — | default compiler (8d83ec25) | 376/376 corpus programs compile on the webgpu and the rust paths; `on_the_gpu_the_three_evaluation_paths_agree` (3481e128) |
