@@ -87,7 +87,7 @@ use std::time::Instant;
 
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
-use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step};
+use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
 use fuller::futhark_sig::{build, cases_fingerprint, compare, quality_fingerprint, compile_c, load, load_cases, problem, program, program_cases, quality_input_names, quality_inputs, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
@@ -1841,7 +1841,7 @@ fn real_main() -> Result<(), String> {
         let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
         noise = a.noise.clone();
         batch_aa = Some(a);
-        let msg = format!("A/A noise floor{}, the published program against itself, 11 interleaved pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { " (in one timing process)" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("A/A noise floor{}, the published program against itself, 11 interleaved pairs of at least {PAIR_SIDE_SECONDS} s a side on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { " (in one timing process)" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
