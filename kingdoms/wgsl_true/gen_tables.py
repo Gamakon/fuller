@@ -32,7 +32,8 @@ from interface import INTERFACES
 def main(argv):
     iface = INTERFACES[argv[1] if len(argv) > 1 else "gram"]
     # K and the strata are read by the submodules when they are imported
-    lib.configure(iface.get("fuel_budget", 1), epilogue=not iface.get("module"), pools=bool(iface.get("wg_pool")))
+    # `phase_depth`: how deep the pool's phase rungs nest (6, every depth, unless the interface says less)
+    lib.configure(iface.get("fuel_budget", 1), epilogue=not iface.get("module"), pools=bool(iface.get("wg_pool")), phase_depth=iface.get("phase_depth", 6))
     skeleton, values, regs, loops, wg, vectors = (importlib.import_module(m) for m in ("skeleton", "values", "regs", "loops", "wg", "vectors"))
     image = importlib.import_module("image") if iface.get("image") else None
     arena = importlib.import_module("arena") if iface.get("arenas") or iface.get("row_outputs") else None

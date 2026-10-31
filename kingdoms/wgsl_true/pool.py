@@ -228,6 +228,9 @@ def build(iface):
     R("wg.zown_x", "u32.zown", ["u32.indexa"], "(lidx + {0} * KNOB_THREADS)", "an own offset: lidx + k * T is injective across invocations")
     R("own.u32_zown", "u32.zown", [], "lidx", "the invocation's own offset in the window's first T")
     for x, d, k in rungs("L"):
+        # a phase opens at an L depth its body's rungs reach (an interface's `phase_depth`)
+        if d not in DEPTH["S"]:
+            continue
         s = S("L", d, k)
         R(f"wg.zsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.xspan", B("Z", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let zw = {1}; {2} } workgroupBarrier(); {3}", "the segment phase: writes into the windows of the prefix table, blocks of zw words below sp; reads at or above sp")
         R(f"wg.gsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")

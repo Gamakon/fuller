@@ -82,7 +82,7 @@ def decl(text):
 K = 1
 
 
-def configure(k, epilogue=True, pools=False):
+def configure(k, epilogue=True, pools=False, phase_depth=6):
     """Set the fuel budget K of the interface about to be generated. The submodules read K and STRATA when they
     are imported (`from lib import *`), so this runs before they are imported. An interface with no primary output
     (a module of several entries, s9 batch 8) has no epilogue: its O rungs do not exist."""
@@ -93,20 +93,20 @@ def configure(k, epilogue=True, pools=False):
         DEPTH["O"] = range(0)
     if pools:
         # s9 batch 9: the pair phase's body (P, W plus the partner load) and the solo phase's body (S, one invocation)
-        DEPTH["P"] = range(0, 6)
-        DEPTH["S"] = range(0, 6)
+        DEPTH["P"] = range(0, phase_depth)
+        DEPTH["S"] = range(0, phase_depth)
         # the split phase's body (X): W, writing below the split and reading above it
-        DEPTH["X"] = range(0, 6)
+        DEPTH["X"] = range(0, phase_depth)
         # the swap-pair phase's body (E, UI1 batch 10): W's families with the pair rows in place of own writes
-        DEPTH["E"] = range(0, 6)
+        DEPTH["E"] = range(0, phase_depth)
         # the block-write phase's body (Y, UI1 batch 10): W's families with the block rows in place of own writes
-        DEPTH["Y"] = range(0, 6)
+        DEPTH["Y"] = range(0, phase_depth)
         # the slot phase's body (A, UI1 batch 10): writes at slots one counter hands out, reads above the split
-        DEPTH["A"] = range(0, 6)
+        DEPTH["A"] = range(0, phase_depth)
         # the group phase's body (G, UI1 batch 10): the group leaders' writes of their own group elements, a values
-        DEPTH["G"] = range(0, 6)
+        DEPTH["G"] = range(0, phase_depth)
         # the segment phase's body (Z, UI1): writes into the windows of the prefix table, a values
-        DEPTH["Z"] = range(0, 6)
+        DEPTH["Z"] = range(0, phase_depth)
 
 
 DEPTH = {"L": range(0, 6), "C": range(0, 6), "O": range(0, 5), "W": range(0, 6), "P": range(0), "S": range(0), "X": range(0), "E": range(0), "Y": range(0), "A": range(0), "G": range(0), "Z": range(0)}
@@ -374,14 +374,21 @@ def drop_f16():
     manager): every type whose slot is or holds f16 goes, with every row that gives or takes one, every declaration
     and helper that names f16. The other families are generated as for every interface, so a table with f16 differs
     from one without it only by the f16 rows. Returns the rows removed."""
-    bad = {t for t in TYPES if F16.search(t.rsplit(".", 1)[0])}
-    gone = [n for n, r in ROWS.items() if r["out"] in bad or any(a in bad for a in r["args"]) or F16.search(r["spell"])]
+    return drop_matching(F16)
+
+
+def drop_matching(pattern):
+    """Every type whose slot matches `pattern` goes, with every row that gives or takes one or spells it, every
+    declaration and helper that names it (`drop_f16`; an interface's `drop_families`: value families its kernels never
+    use, so they neither enter its genes nor widen its layout). Returns the rows removed."""
+    bad = {t for t in TYPES if pattern.search(t.rsplit(".", 1)[0])}
+    gone = [n for n, r in ROWS.items() if r["out"] in bad or any(a in bad for a in r["args"]) or pattern.search(r["spell"])]
     for n in gone:
         del ROWS[n]
     for t in bad:
         del TYPES[t]
-    DECLS[:] = [d for d in DECLS if not F16.search(d)]
-    for n in [n for n, h in HELPERS.items() if F16.search(h)]:
+    DECLS[:] = [d for d in DECLS if not pattern.search(d)]
+    for n in [n for n, h in HELPERS.items() if pattern.search(h)]:
         del HELPERS[n]
     for d in (TWIN, BARE, TWIN_A):
         for k in [k for k, v in d.items() if k in bad or v in bad]:
@@ -393,6 +400,8 @@ def write_all(outdir, root, iface):
     if not iface.get("has_f16", True):
         assert not F16.search(iface["prologue_top"]), "an interface without f16 enables no f16"
         drop_f16()
+    for fam in iface.get("drop_families", []):
+        drop_matching(re.compile(fam))
     BINDINGS.update(re.findall(r"var(?:<[^>]*>)?\s+(\w+)\s*:", iface["prologue_top"]))
     problems, produced, consumed = check()
     names = [re.match(r"var (\w+):", d).group(1) for d in DECLS]

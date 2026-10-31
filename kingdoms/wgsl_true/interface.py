@@ -195,6 +195,12 @@ KMEANS_UPDATE = dict(
     # workgroup memory is the pool (pool.py), as v24's: the reader places every workgroup array in it (a model's or an
     # evolved kernel's shared counters and scans), 2026-10-31
     wg_pool=True,
+    # THE FAMILIES THE KERNELS USE (2026-10-31): no matrix (a k-means update never takes one), the pool's phases nested
+    # at most 2 deep (a phase at the top level, one loop in it); every other family as for every interface. A gene's
+    # width is the design's exact bound over the types that remain (lib.drop_matching): at N 379 the scatter
+    # interface's gene is 14,965,777 words (23,686,615 with every family; 7,691,545 before the pool)
+    drop_families=[r"mat[234]x[234]"],
+    phase_depth=2,
     # the items each entry dispatches over at the problem's largest sizes (problems/kmeans_update*/problem.toml: n up to
     # 2^20, k up to 1,024, k * d up to 2^20), so a workgroup width keeps every dispatch within wgpu's 65,535 workgroups
     # (skeleton.py `min_wg_x`): A7's k * d cells
