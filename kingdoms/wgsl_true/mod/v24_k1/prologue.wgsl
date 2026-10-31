@@ -6,6 +6,7 @@ struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n
 @group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
 @group(0) @binding(4) var<storage, read_write> cands: array<u32>;
 @group(0) @binding(5) var<uniform> cfg: Cfg;
+const WG_PW: u32 = 6080u;
 var<workgroup> wg_pool: array<u32, 6084>;
 var<workgroup> wg_apool: array<atomic<u32>, 2068>;
 var<workgroup> wg_scnt: array<atomic<u32>, 4>;
@@ -102,13 +103,13 @@ fn sorted(a: f32, b: f32) -> vec2<f32> { return vec2<f32>(min(a, b), max(a, b));
 fn sorted_i(a: i32, b: i32) -> vec2<i32> { return vec2<i32>(min(a, b), max(a, b)); }
 fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }
 fn sub_sat(a: i32, b: i32) -> i32 { let s = a - b; let ov = ((a ^ b) & (a ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
-fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) { if (o < 6080u) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls < 6080u) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls < 6080u) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls < 6080u) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
-fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) { if (o >= sl && o < sp && o < 6080u) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls >= sl && o + ls < sp && o + ls < 6080u) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls >= sl && o + 2u * ls < sp && o + 2u * ls < 6080u) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls >= sl && o + 3u * ls < sp && o + 3u * ls < 6080u) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
-fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, 6080u)]), bitcast<f32>(wg_pool[min(b + ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, 6080u)])); }
+fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) { if (o < WG_PW) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls < WG_PW) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls < WG_PW) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls < WG_PW) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
+fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) { if (o >= sl && o < sp && o < WG_PW) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls >= sl && o + ls < sp && o + ls < WG_PW) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls >= sl && o + 2u * ls < sp && o + 2u * ls < WG_PW) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls >= sl && o + 3u * ls < sp && o + 3u * ls < WG_PW) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
+fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, WG_PW)]), bitcast<f32>(wg_pool[min(b + ls + i, WG_PW)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, WG_PW)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, WG_PW)])); }
 fn wg_v4_above(b: u32, ls: u32, i: u32, sl: u32, sp: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[xw(b + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 2u * ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 3u * ls + i, sl, sp)])); }
 fn xidx(p: u32, h: u32, m: u32) -> u32 { if (m == 0u) { return p; } let lo = p & (h - 1u); return ((p & ~(h - 1u)) << 1u) | lo; }
 fn xok(p: u32, h: u32, m: u32) -> bool { if (m == 0u) { return (p & h) == 0u; } return p < 2147483648u; }
-fn xw(a: u32, sl: u32, sp: u32) -> u32 { return select(min(a, 6080u), 6080u, a >= sl && a < sp); }
+fn xw(a: u32, sl: u32, sp: u32) -> u32 { return select(min(a, WG_PW), WG_PW, a >= sl && a < sp); }
 fn zero_mat2x2() -> mat2x2<f32> { return mat2x2<f32>(); }
 fn zero_mat2x3() -> mat2x3<f32> { return mat2x3<f32>(); }
 fn zero_mat2x4() -> mat2x4<f32> { return mat2x4<f32>(); }

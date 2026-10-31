@@ -46,6 +46,10 @@ def declare_types(iface):
                 T(f"grid.grid_{e}", f"the entry {e}'s workgroup shape and block")
         T("u32.passes", "the // passes N count, a literal in the interface's declared range", 1, "1..=16")
         SAFE_ARGS.add("u32.passes")
+        if iface.get("wg_pool"):
+            pw = iface.get("pool_words", 6080)
+            T("u32.wgext", f"the words of the plain pool an entry declares (pool.py WG_PW): a multiple of 4 up to {pw}; the module declares the largest its entries name", 1, f"4..={pw}")
+            SAFE_ARGS.add("u32.wgext")
     else:
         T("kernel.safe", "the entry point; the gene's root")
     T("grid.shape", "one of the target's legal workgroup shapes (x, y, 1): a literal from the target's table")
@@ -193,11 +197,14 @@ def build_module(iface):
              "const KNOB_KTILE: u32 = {0:4}u; const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n")
     entries = []
     for e, passes in iface["module"]:
-        body = "{2}" if passes else "{1}"
-        head = "// passes {1}\n" if passes else ""
+        # the pool's extent (pool.py, 2026-10-31): an entry of a pool interface names the words of the plain pool it
+        # declares, a comment of its text; the renderer declares the largest of the module's entries (WG_PW)
+        pool = bool(iface.get("wg_pool"))
+        args = [entry_grid(iface, e)] + (["u32.passes"] if passes else []) + (["u32.wgext"] if pool else [])
+        head = ("// passes {1}\n" if passes else "") + ("// pool {%d} words\n" % (len(args) - 1) if pool else "")
+        body = "{%d}" % len(args)
         text = head + "@compute @workgroup_size({0:0}, {0:1}, 1)\nfn " + e + "(" + MODULE_IDS + ") {\n" + knobs + "<declarations>\n" + body + "\n}\n"
-        g = entry_grid(iface, e)
-        args = [g, "u32.passes", body_type()] if passes else [g, body_type()]
+        args = args + [body_type()]
         R(f"kernel.entry_{e}", f"kernel.{e}", args, text, f"the entry point {e}: a grid and a body (no epilogue: the module has no primary output)", fields=True)
         empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n"
         R(f"own.kernel_{e}", f"kernel.{e}", [], empty, "the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it")

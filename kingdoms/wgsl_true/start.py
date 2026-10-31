@@ -129,7 +129,7 @@ def witness_rows(rows, prologue, decls):
         if not n.startswith("kernel.entry_") or r["args"].index(START) != i:
             problems.append(f"row {n} takes {START} and is not an entry taking it as its body")
             continue
-        if any(not (a.startswith("grid.") or a == "u32.passes") for a in r["args"][:i]):
+        if any(not (a.startswith("grid.") or a in ("u32.passes", "u32.wgext")) for a in r["args"][:i]):
             problems.append(f"entry {n} takes an argument before its body that is not its grid or passes: {r['args'][:i]}")
         at = r["spell"].find("{" + str(i) + "}")
         if at < 0 or _touches(r["spell"][:at], wg):

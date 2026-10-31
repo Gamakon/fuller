@@ -3,559 +3,560 @@ T0001	kernel.module	kernel	module	1	a module of entry points: the fixed linker's
 T0002	kernel.ingest	kernel	ingest	1	the entry point ingest: the root of its normal gene	-
 T0003	kernel.search	kernel	search	1	the entry point search: the root of its normal gene	-
 T0004	u32.passes	u32	passes	1	the // passes N count, a literal in the interface's declared range	1..=16
-T0005	grid.shape	grid	shape	1	one of the target's legal workgroup shapes (x, y, 1): a literal from the target's table	-
-T0006	u32.blk_row	u32	blk_row	1	a block factor on the row axis: cells per invocation along it	1,2,4,8
-T0007	u32.blk_col	u32	blk_col	1	a block factor on the column axis	1,2,4,8
-T0008	grid.grid	grid	grid	1	the entry's workgroup shape and block	-
-T0009	u32.ktile	u32	ktile	1	the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)	1..=4096
-T0010	stmt.L0_f0	stmt	L0_f0	1	one L-rung statement at depth 0, fuel stratum 0	-
-T0011	block.L0_f0	block	L0_f0	1	a L-rung statement sequence at depth 0, fuel stratum 0	-
-T0012	stmt.L0_f1	stmt	L0_f1	1	one L-rung statement at depth 0, fuel stratum 1	-
-T0013	block.L0_f1	block	L0_f1	1	a L-rung statement sequence at depth 0, fuel stratum 1	-
-T0014	stmt.L1_f0	stmt	L1_f0	1	one L-rung statement at depth 1, fuel stratum 0	-
-T0015	block.L1_f0	block	L1_f0	1	a L-rung statement sequence at depth 1, fuel stratum 0	-
-T0016	stmt.L1_f1	stmt	L1_f1	1	one L-rung statement at depth 1, fuel stratum 1	-
-T0017	block.L1_f1	block	L1_f1	1	a L-rung statement sequence at depth 1, fuel stratum 1	-
-T0018	stmt.L2_f0	stmt	L2_f0	1	one L-rung statement at depth 2, fuel stratum 0	-
-T0019	block.L2_f0	block	L2_f0	1	a L-rung statement sequence at depth 2, fuel stratum 0	-
-T0020	stmt.L2_f1	stmt	L2_f1	1	one L-rung statement at depth 2, fuel stratum 1	-
-T0021	block.L2_f1	block	L2_f1	1	a L-rung statement sequence at depth 2, fuel stratum 1	-
-T0022	stmt.L3_f0	stmt	L3_f0	1	one L-rung statement at depth 3, fuel stratum 0	-
-T0023	block.L3_f0	block	L3_f0	1	a L-rung statement sequence at depth 3, fuel stratum 0	-
-T0024	stmt.L3_f1	stmt	L3_f1	1	one L-rung statement at depth 3, fuel stratum 1	-
-T0025	block.L3_f1	block	L3_f1	1	a L-rung statement sequence at depth 3, fuel stratum 1	-
-T0026	stmt.L4_f0	stmt	L4_f0	1	one L-rung statement at depth 4, fuel stratum 0	-
-T0027	block.L4_f0	block	L4_f0	1	a L-rung statement sequence at depth 4, fuel stratum 0	-
-T0028	stmt.L4_f1	stmt	L4_f1	1	one L-rung statement at depth 4, fuel stratum 1	-
-T0029	block.L4_f1	block	L4_f1	1	a L-rung statement sequence at depth 4, fuel stratum 1	-
-T0030	stmt.L5_f0	stmt	L5_f0	1	one L-rung statement at depth 5, fuel stratum 0	-
-T0031	block.L5_f0	block	L5_f0	1	a L-rung statement sequence at depth 5, fuel stratum 0	-
-T0032	stmt.L5_f1	stmt	L5_f1	1	one L-rung statement at depth 5, fuel stratum 1	-
-T0033	block.L5_f1	block	L5_f1	1	a L-rung statement sequence at depth 5, fuel stratum 1	-
-T0034	stmt.C0_f0	stmt	C0_f0	1	one C-rung statement at depth 0, fuel stratum 0	-
-T0035	block.C0_f0	block	C0_f0	1	a C-rung statement sequence at depth 0, fuel stratum 0	-
-T0036	stmt.C0_f1	stmt	C0_f1	1	one C-rung statement at depth 0, fuel stratum 1	-
-T0037	block.C0_f1	block	C0_f1	1	a C-rung statement sequence at depth 0, fuel stratum 1	-
-T0038	stmt.C1_f0	stmt	C1_f0	1	one C-rung statement at depth 1, fuel stratum 0	-
-T0039	block.C1_f0	block	C1_f0	1	a C-rung statement sequence at depth 1, fuel stratum 0	-
-T0040	stmt.C1_f1	stmt	C1_f1	1	one C-rung statement at depth 1, fuel stratum 1	-
-T0041	block.C1_f1	block	C1_f1	1	a C-rung statement sequence at depth 1, fuel stratum 1	-
-T0042	stmt.C2_f0	stmt	C2_f0	1	one C-rung statement at depth 2, fuel stratum 0	-
-T0043	block.C2_f0	block	C2_f0	1	a C-rung statement sequence at depth 2, fuel stratum 0	-
-T0044	stmt.C2_f1	stmt	C2_f1	1	one C-rung statement at depth 2, fuel stratum 1	-
-T0045	block.C2_f1	block	C2_f1	1	a C-rung statement sequence at depth 2, fuel stratum 1	-
-T0046	stmt.C3_f0	stmt	C3_f0	1	one C-rung statement at depth 3, fuel stratum 0	-
-T0047	block.C3_f0	block	C3_f0	1	a C-rung statement sequence at depth 3, fuel stratum 0	-
-T0048	stmt.C3_f1	stmt	C3_f1	1	one C-rung statement at depth 3, fuel stratum 1	-
-T0049	block.C3_f1	block	C3_f1	1	a C-rung statement sequence at depth 3, fuel stratum 1	-
-T0050	stmt.C4_f0	stmt	C4_f0	1	one C-rung statement at depth 4, fuel stratum 0	-
-T0051	block.C4_f0	block	C4_f0	1	a C-rung statement sequence at depth 4, fuel stratum 0	-
-T0052	stmt.C4_f1	stmt	C4_f1	1	one C-rung statement at depth 4, fuel stratum 1	-
-T0053	block.C4_f1	block	C4_f1	1	a C-rung statement sequence at depth 4, fuel stratum 1	-
-T0054	stmt.C5_f0	stmt	C5_f0	1	one C-rung statement at depth 5, fuel stratum 0	-
-T0055	block.C5_f0	block	C5_f0	1	a C-rung statement sequence at depth 5, fuel stratum 0	-
-T0056	stmt.C5_f1	stmt	C5_f1	1	one C-rung statement at depth 5, fuel stratum 1	-
-T0057	block.C5_f1	block	C5_f1	1	a C-rung statement sequence at depth 5, fuel stratum 1	-
-T0058	stmt.W0_f0	stmt	W0_f0	1	one W-rung statement at depth 0, fuel stratum 0	-
-T0059	block.W0_f0	block	W0_f0	1	a W-rung statement sequence at depth 0, fuel stratum 0	-
-T0060	stmt.W0_f1	stmt	W0_f1	1	one W-rung statement at depth 0, fuel stratum 1	-
-T0061	block.W0_f1	block	W0_f1	1	a W-rung statement sequence at depth 0, fuel stratum 1	-
-T0062	stmt.W1_f0	stmt	W1_f0	1	one W-rung statement at depth 1, fuel stratum 0	-
-T0063	block.W1_f0	block	W1_f0	1	a W-rung statement sequence at depth 1, fuel stratum 0	-
-T0064	stmt.W1_f1	stmt	W1_f1	1	one W-rung statement at depth 1, fuel stratum 1	-
-T0065	block.W1_f1	block	W1_f1	1	a W-rung statement sequence at depth 1, fuel stratum 1	-
-T0066	stmt.W2_f0	stmt	W2_f0	1	one W-rung statement at depth 2, fuel stratum 0	-
-T0067	block.W2_f0	block	W2_f0	1	a W-rung statement sequence at depth 2, fuel stratum 0	-
-T0068	stmt.W2_f1	stmt	W2_f1	1	one W-rung statement at depth 2, fuel stratum 1	-
-T0069	block.W2_f1	block	W2_f1	1	a W-rung statement sequence at depth 2, fuel stratum 1	-
-T0070	stmt.W3_f0	stmt	W3_f0	1	one W-rung statement at depth 3, fuel stratum 0	-
-T0071	block.W3_f0	block	W3_f0	1	a W-rung statement sequence at depth 3, fuel stratum 0	-
-T0072	stmt.W3_f1	stmt	W3_f1	1	one W-rung statement at depth 3, fuel stratum 1	-
-T0073	block.W3_f1	block	W3_f1	1	a W-rung statement sequence at depth 3, fuel stratum 1	-
-T0074	stmt.W4_f0	stmt	W4_f0	1	one W-rung statement at depth 4, fuel stratum 0	-
-T0075	block.W4_f0	block	W4_f0	1	a W-rung statement sequence at depth 4, fuel stratum 0	-
-T0076	stmt.W4_f1	stmt	W4_f1	1	one W-rung statement at depth 4, fuel stratum 1	-
-T0077	block.W4_f1	block	W4_f1	1	a W-rung statement sequence at depth 4, fuel stratum 1	-
-T0078	stmt.W5_f0	stmt	W5_f0	1	one W-rung statement at depth 5, fuel stratum 0	-
-T0079	block.W5_f0	block	W5_f0	1	a W-rung statement sequence at depth 5, fuel stratum 0	-
-T0080	stmt.W5_f1	stmt	W5_f1	1	one W-rung statement at depth 5, fuel stratum 1	-
-T0081	block.W5_f1	block	W5_f1	1	a W-rung statement sequence at depth 5, fuel stratum 1	-
-T0082	stmt.P0_f0	stmt	P0_f0	1	one P-rung statement at depth 0, fuel stratum 0	-
-T0083	block.P0_f0	block	P0_f0	1	a P-rung statement sequence at depth 0, fuel stratum 0	-
-T0084	stmt.P0_f1	stmt	P0_f1	1	one P-rung statement at depth 0, fuel stratum 1	-
-T0085	block.P0_f1	block	P0_f1	1	a P-rung statement sequence at depth 0, fuel stratum 1	-
-T0086	stmt.P1_f0	stmt	P1_f0	1	one P-rung statement at depth 1, fuel stratum 0	-
-T0087	block.P1_f0	block	P1_f0	1	a P-rung statement sequence at depth 1, fuel stratum 0	-
-T0088	stmt.P1_f1	stmt	P1_f1	1	one P-rung statement at depth 1, fuel stratum 1	-
-T0089	block.P1_f1	block	P1_f1	1	a P-rung statement sequence at depth 1, fuel stratum 1	-
-T0090	stmt.P2_f0	stmt	P2_f0	1	one P-rung statement at depth 2, fuel stratum 0	-
-T0091	block.P2_f0	block	P2_f0	1	a P-rung statement sequence at depth 2, fuel stratum 0	-
-T0092	stmt.P2_f1	stmt	P2_f1	1	one P-rung statement at depth 2, fuel stratum 1	-
-T0093	block.P2_f1	block	P2_f1	1	a P-rung statement sequence at depth 2, fuel stratum 1	-
-T0094	stmt.P3_f0	stmt	P3_f0	1	one P-rung statement at depth 3, fuel stratum 0	-
-T0095	block.P3_f0	block	P3_f0	1	a P-rung statement sequence at depth 3, fuel stratum 0	-
-T0096	stmt.P3_f1	stmt	P3_f1	1	one P-rung statement at depth 3, fuel stratum 1	-
-T0097	block.P3_f1	block	P3_f1	1	a P-rung statement sequence at depth 3, fuel stratum 1	-
-T0098	stmt.P4_f0	stmt	P4_f0	1	one P-rung statement at depth 4, fuel stratum 0	-
-T0099	block.P4_f0	block	P4_f0	1	a P-rung statement sequence at depth 4, fuel stratum 0	-
-T0100	stmt.P4_f1	stmt	P4_f1	1	one P-rung statement at depth 4, fuel stratum 1	-
-T0101	block.P4_f1	block	P4_f1	1	a P-rung statement sequence at depth 4, fuel stratum 1	-
-T0102	stmt.P5_f0	stmt	P5_f0	1	one P-rung statement at depth 5, fuel stratum 0	-
-T0103	block.P5_f0	block	P5_f0	1	a P-rung statement sequence at depth 5, fuel stratum 0	-
-T0104	stmt.P5_f1	stmt	P5_f1	1	one P-rung statement at depth 5, fuel stratum 1	-
-T0105	block.P5_f1	block	P5_f1	1	a P-rung statement sequence at depth 5, fuel stratum 1	-
-T0106	stmt.S0_f0	stmt	S0_f0	1	one S-rung statement at depth 0, fuel stratum 0	-
-T0107	block.S0_f0	block	S0_f0	1	a S-rung statement sequence at depth 0, fuel stratum 0	-
-T0108	stmt.S0_f1	stmt	S0_f1	1	one S-rung statement at depth 0, fuel stratum 1	-
-T0109	block.S0_f1	block	S0_f1	1	a S-rung statement sequence at depth 0, fuel stratum 1	-
-T0110	stmt.S1_f0	stmt	S1_f0	1	one S-rung statement at depth 1, fuel stratum 0	-
-T0111	block.S1_f0	block	S1_f0	1	a S-rung statement sequence at depth 1, fuel stratum 0	-
-T0112	stmt.S1_f1	stmt	S1_f1	1	one S-rung statement at depth 1, fuel stratum 1	-
-T0113	block.S1_f1	block	S1_f1	1	a S-rung statement sequence at depth 1, fuel stratum 1	-
-T0114	stmt.S2_f0	stmt	S2_f0	1	one S-rung statement at depth 2, fuel stratum 0	-
-T0115	block.S2_f0	block	S2_f0	1	a S-rung statement sequence at depth 2, fuel stratum 0	-
-T0116	stmt.S2_f1	stmt	S2_f1	1	one S-rung statement at depth 2, fuel stratum 1	-
-T0117	block.S2_f1	block	S2_f1	1	a S-rung statement sequence at depth 2, fuel stratum 1	-
-T0118	stmt.S3_f0	stmt	S3_f0	1	one S-rung statement at depth 3, fuel stratum 0	-
-T0119	block.S3_f0	block	S3_f0	1	a S-rung statement sequence at depth 3, fuel stratum 0	-
-T0120	stmt.S3_f1	stmt	S3_f1	1	one S-rung statement at depth 3, fuel stratum 1	-
-T0121	block.S3_f1	block	S3_f1	1	a S-rung statement sequence at depth 3, fuel stratum 1	-
-T0122	stmt.S4_f0	stmt	S4_f0	1	one S-rung statement at depth 4, fuel stratum 0	-
-T0123	block.S4_f0	block	S4_f0	1	a S-rung statement sequence at depth 4, fuel stratum 0	-
-T0124	stmt.S4_f1	stmt	S4_f1	1	one S-rung statement at depth 4, fuel stratum 1	-
-T0125	block.S4_f1	block	S4_f1	1	a S-rung statement sequence at depth 4, fuel stratum 1	-
-T0126	stmt.S5_f0	stmt	S5_f0	1	one S-rung statement at depth 5, fuel stratum 0	-
-T0127	block.S5_f0	block	S5_f0	1	a S-rung statement sequence at depth 5, fuel stratum 0	-
-T0128	stmt.S5_f1	stmt	S5_f1	1	one S-rung statement at depth 5, fuel stratum 1	-
-T0129	block.S5_f1	block	S5_f1	1	a S-rung statement sequence at depth 5, fuel stratum 1	-
-T0130	stmt.X0_f0	stmt	X0_f0	1	one X-rung statement at depth 0, fuel stratum 0	-
-T0131	block.X0_f0	block	X0_f0	1	a X-rung statement sequence at depth 0, fuel stratum 0	-
-T0132	stmt.X0_f1	stmt	X0_f1	1	one X-rung statement at depth 0, fuel stratum 1	-
-T0133	block.X0_f1	block	X0_f1	1	a X-rung statement sequence at depth 0, fuel stratum 1	-
-T0134	stmt.X1_f0	stmt	X1_f0	1	one X-rung statement at depth 1, fuel stratum 0	-
-T0135	block.X1_f0	block	X1_f0	1	a X-rung statement sequence at depth 1, fuel stratum 0	-
-T0136	stmt.X1_f1	stmt	X1_f1	1	one X-rung statement at depth 1, fuel stratum 1	-
-T0137	block.X1_f1	block	X1_f1	1	a X-rung statement sequence at depth 1, fuel stratum 1	-
-T0138	stmt.X2_f0	stmt	X2_f0	1	one X-rung statement at depth 2, fuel stratum 0	-
-T0139	block.X2_f0	block	X2_f0	1	a X-rung statement sequence at depth 2, fuel stratum 0	-
-T0140	stmt.X2_f1	stmt	X2_f1	1	one X-rung statement at depth 2, fuel stratum 1	-
-T0141	block.X2_f1	block	X2_f1	1	a X-rung statement sequence at depth 2, fuel stratum 1	-
-T0142	stmt.X3_f0	stmt	X3_f0	1	one X-rung statement at depth 3, fuel stratum 0	-
-T0143	block.X3_f0	block	X3_f0	1	a X-rung statement sequence at depth 3, fuel stratum 0	-
-T0144	stmt.X3_f1	stmt	X3_f1	1	one X-rung statement at depth 3, fuel stratum 1	-
-T0145	block.X3_f1	block	X3_f1	1	a X-rung statement sequence at depth 3, fuel stratum 1	-
-T0146	stmt.X4_f0	stmt	X4_f0	1	one X-rung statement at depth 4, fuel stratum 0	-
-T0147	block.X4_f0	block	X4_f0	1	a X-rung statement sequence at depth 4, fuel stratum 0	-
-T0148	stmt.X4_f1	stmt	X4_f1	1	one X-rung statement at depth 4, fuel stratum 1	-
-T0149	block.X4_f1	block	X4_f1	1	a X-rung statement sequence at depth 4, fuel stratum 1	-
-T0150	stmt.X5_f0	stmt	X5_f0	1	one X-rung statement at depth 5, fuel stratum 0	-
-T0151	block.X5_f0	block	X5_f0	1	a X-rung statement sequence at depth 5, fuel stratum 0	-
-T0152	stmt.X5_f1	stmt	X5_f1	1	one X-rung statement at depth 5, fuel stratum 1	-
-T0153	block.X5_f1	block	X5_f1	1	a X-rung statement sequence at depth 5, fuel stratum 1	-
-T0154	stmt.E0_f0	stmt	E0_f0	1	one E-rung statement at depth 0, fuel stratum 0	-
-T0155	block.E0_f0	block	E0_f0	1	a E-rung statement sequence at depth 0, fuel stratum 0	-
-T0156	stmt.E0_f1	stmt	E0_f1	1	one E-rung statement at depth 0, fuel stratum 1	-
-T0157	block.E0_f1	block	E0_f1	1	a E-rung statement sequence at depth 0, fuel stratum 1	-
-T0158	stmt.E1_f0	stmt	E1_f0	1	one E-rung statement at depth 1, fuel stratum 0	-
-T0159	block.E1_f0	block	E1_f0	1	a E-rung statement sequence at depth 1, fuel stratum 0	-
-T0160	stmt.E1_f1	stmt	E1_f1	1	one E-rung statement at depth 1, fuel stratum 1	-
-T0161	block.E1_f1	block	E1_f1	1	a E-rung statement sequence at depth 1, fuel stratum 1	-
-T0162	stmt.E2_f0	stmt	E2_f0	1	one E-rung statement at depth 2, fuel stratum 0	-
-T0163	block.E2_f0	block	E2_f0	1	a E-rung statement sequence at depth 2, fuel stratum 0	-
-T0164	stmt.E2_f1	stmt	E2_f1	1	one E-rung statement at depth 2, fuel stratum 1	-
-T0165	block.E2_f1	block	E2_f1	1	a E-rung statement sequence at depth 2, fuel stratum 1	-
-T0166	stmt.E3_f0	stmt	E3_f0	1	one E-rung statement at depth 3, fuel stratum 0	-
-T0167	block.E3_f0	block	E3_f0	1	a E-rung statement sequence at depth 3, fuel stratum 0	-
-T0168	stmt.E3_f1	stmt	E3_f1	1	one E-rung statement at depth 3, fuel stratum 1	-
-T0169	block.E3_f1	block	E3_f1	1	a E-rung statement sequence at depth 3, fuel stratum 1	-
-T0170	stmt.E4_f0	stmt	E4_f0	1	one E-rung statement at depth 4, fuel stratum 0	-
-T0171	block.E4_f0	block	E4_f0	1	a E-rung statement sequence at depth 4, fuel stratum 0	-
-T0172	stmt.E4_f1	stmt	E4_f1	1	one E-rung statement at depth 4, fuel stratum 1	-
-T0173	block.E4_f1	block	E4_f1	1	a E-rung statement sequence at depth 4, fuel stratum 1	-
-T0174	stmt.E5_f0	stmt	E5_f0	1	one E-rung statement at depth 5, fuel stratum 0	-
-T0175	block.E5_f0	block	E5_f0	1	a E-rung statement sequence at depth 5, fuel stratum 0	-
-T0176	stmt.E5_f1	stmt	E5_f1	1	one E-rung statement at depth 5, fuel stratum 1	-
-T0177	block.E5_f1	block	E5_f1	1	a E-rung statement sequence at depth 5, fuel stratum 1	-
-T0178	stmt.Y0_f0	stmt	Y0_f0	1	one Y-rung statement at depth 0, fuel stratum 0	-
-T0179	block.Y0_f0	block	Y0_f0	1	a Y-rung statement sequence at depth 0, fuel stratum 0	-
-T0180	stmt.Y0_f1	stmt	Y0_f1	1	one Y-rung statement at depth 0, fuel stratum 1	-
-T0181	block.Y0_f1	block	Y0_f1	1	a Y-rung statement sequence at depth 0, fuel stratum 1	-
-T0182	stmt.Y1_f0	stmt	Y1_f0	1	one Y-rung statement at depth 1, fuel stratum 0	-
-T0183	block.Y1_f0	block	Y1_f0	1	a Y-rung statement sequence at depth 1, fuel stratum 0	-
-T0184	stmt.Y1_f1	stmt	Y1_f1	1	one Y-rung statement at depth 1, fuel stratum 1	-
-T0185	block.Y1_f1	block	Y1_f1	1	a Y-rung statement sequence at depth 1, fuel stratum 1	-
-T0186	stmt.Y2_f0	stmt	Y2_f0	1	one Y-rung statement at depth 2, fuel stratum 0	-
-T0187	block.Y2_f0	block	Y2_f0	1	a Y-rung statement sequence at depth 2, fuel stratum 0	-
-T0188	stmt.Y2_f1	stmt	Y2_f1	1	one Y-rung statement at depth 2, fuel stratum 1	-
-T0189	block.Y2_f1	block	Y2_f1	1	a Y-rung statement sequence at depth 2, fuel stratum 1	-
-T0190	stmt.Y3_f0	stmt	Y3_f0	1	one Y-rung statement at depth 3, fuel stratum 0	-
-T0191	block.Y3_f0	block	Y3_f0	1	a Y-rung statement sequence at depth 3, fuel stratum 0	-
-T0192	stmt.Y3_f1	stmt	Y3_f1	1	one Y-rung statement at depth 3, fuel stratum 1	-
-T0193	block.Y3_f1	block	Y3_f1	1	a Y-rung statement sequence at depth 3, fuel stratum 1	-
-T0194	stmt.Y4_f0	stmt	Y4_f0	1	one Y-rung statement at depth 4, fuel stratum 0	-
-T0195	block.Y4_f0	block	Y4_f0	1	a Y-rung statement sequence at depth 4, fuel stratum 0	-
-T0196	stmt.Y4_f1	stmt	Y4_f1	1	one Y-rung statement at depth 4, fuel stratum 1	-
-T0197	block.Y4_f1	block	Y4_f1	1	a Y-rung statement sequence at depth 4, fuel stratum 1	-
-T0198	stmt.Y5_f0	stmt	Y5_f0	1	one Y-rung statement at depth 5, fuel stratum 0	-
-T0199	block.Y5_f0	block	Y5_f0	1	a Y-rung statement sequence at depth 5, fuel stratum 0	-
-T0200	stmt.Y5_f1	stmt	Y5_f1	1	one Y-rung statement at depth 5, fuel stratum 1	-
-T0201	block.Y5_f1	block	Y5_f1	1	a Y-rung statement sequence at depth 5, fuel stratum 1	-
-T0202	stmt.A0_f0	stmt	A0_f0	1	one A-rung statement at depth 0, fuel stratum 0	-
-T0203	block.A0_f0	block	A0_f0	1	a A-rung statement sequence at depth 0, fuel stratum 0	-
-T0204	stmt.A0_f1	stmt	A0_f1	1	one A-rung statement at depth 0, fuel stratum 1	-
-T0205	block.A0_f1	block	A0_f1	1	a A-rung statement sequence at depth 0, fuel stratum 1	-
-T0206	stmt.A1_f0	stmt	A1_f0	1	one A-rung statement at depth 1, fuel stratum 0	-
-T0207	block.A1_f0	block	A1_f0	1	a A-rung statement sequence at depth 1, fuel stratum 0	-
-T0208	stmt.A1_f1	stmt	A1_f1	1	one A-rung statement at depth 1, fuel stratum 1	-
-T0209	block.A1_f1	block	A1_f1	1	a A-rung statement sequence at depth 1, fuel stratum 1	-
-T0210	stmt.A2_f0	stmt	A2_f0	1	one A-rung statement at depth 2, fuel stratum 0	-
-T0211	block.A2_f0	block	A2_f0	1	a A-rung statement sequence at depth 2, fuel stratum 0	-
-T0212	stmt.A2_f1	stmt	A2_f1	1	one A-rung statement at depth 2, fuel stratum 1	-
-T0213	block.A2_f1	block	A2_f1	1	a A-rung statement sequence at depth 2, fuel stratum 1	-
-T0214	stmt.A3_f0	stmt	A3_f0	1	one A-rung statement at depth 3, fuel stratum 0	-
-T0215	block.A3_f0	block	A3_f0	1	a A-rung statement sequence at depth 3, fuel stratum 0	-
-T0216	stmt.A3_f1	stmt	A3_f1	1	one A-rung statement at depth 3, fuel stratum 1	-
-T0217	block.A3_f1	block	A3_f1	1	a A-rung statement sequence at depth 3, fuel stratum 1	-
-T0218	stmt.A4_f0	stmt	A4_f0	1	one A-rung statement at depth 4, fuel stratum 0	-
-T0219	block.A4_f0	block	A4_f0	1	a A-rung statement sequence at depth 4, fuel stratum 0	-
-T0220	stmt.A4_f1	stmt	A4_f1	1	one A-rung statement at depth 4, fuel stratum 1	-
-T0221	block.A4_f1	block	A4_f1	1	a A-rung statement sequence at depth 4, fuel stratum 1	-
-T0222	stmt.A5_f0	stmt	A5_f0	1	one A-rung statement at depth 5, fuel stratum 0	-
-T0223	block.A5_f0	block	A5_f0	1	a A-rung statement sequence at depth 5, fuel stratum 0	-
-T0224	stmt.A5_f1	stmt	A5_f1	1	one A-rung statement at depth 5, fuel stratum 1	-
-T0225	block.A5_f1	block	A5_f1	1	a A-rung statement sequence at depth 5, fuel stratum 1	-
-T0226	stmt.G0_f0	stmt	G0_f0	1	one G-rung statement at depth 0, fuel stratum 0	-
-T0227	block.G0_f0	block	G0_f0	1	a G-rung statement sequence at depth 0, fuel stratum 0	-
-T0228	stmt.G0_f1	stmt	G0_f1	1	one G-rung statement at depth 0, fuel stratum 1	-
-T0229	block.G0_f1	block	G0_f1	1	a G-rung statement sequence at depth 0, fuel stratum 1	-
-T0230	stmt.G1_f0	stmt	G1_f0	1	one G-rung statement at depth 1, fuel stratum 0	-
-T0231	block.G1_f0	block	G1_f0	1	a G-rung statement sequence at depth 1, fuel stratum 0	-
-T0232	stmt.G1_f1	stmt	G1_f1	1	one G-rung statement at depth 1, fuel stratum 1	-
-T0233	block.G1_f1	block	G1_f1	1	a G-rung statement sequence at depth 1, fuel stratum 1	-
-T0234	stmt.G2_f0	stmt	G2_f0	1	one G-rung statement at depth 2, fuel stratum 0	-
-T0235	block.G2_f0	block	G2_f0	1	a G-rung statement sequence at depth 2, fuel stratum 0	-
-T0236	stmt.G2_f1	stmt	G2_f1	1	one G-rung statement at depth 2, fuel stratum 1	-
-T0237	block.G2_f1	block	G2_f1	1	a G-rung statement sequence at depth 2, fuel stratum 1	-
-T0238	stmt.G3_f0	stmt	G3_f0	1	one G-rung statement at depth 3, fuel stratum 0	-
-T0239	block.G3_f0	block	G3_f0	1	a G-rung statement sequence at depth 3, fuel stratum 0	-
-T0240	stmt.G3_f1	stmt	G3_f1	1	one G-rung statement at depth 3, fuel stratum 1	-
-T0241	block.G3_f1	block	G3_f1	1	a G-rung statement sequence at depth 3, fuel stratum 1	-
-T0242	stmt.G4_f0	stmt	G4_f0	1	one G-rung statement at depth 4, fuel stratum 0	-
-T0243	block.G4_f0	block	G4_f0	1	a G-rung statement sequence at depth 4, fuel stratum 0	-
-T0244	stmt.G4_f1	stmt	G4_f1	1	one G-rung statement at depth 4, fuel stratum 1	-
-T0245	block.G4_f1	block	G4_f1	1	a G-rung statement sequence at depth 4, fuel stratum 1	-
-T0246	stmt.G5_f0	stmt	G5_f0	1	one G-rung statement at depth 5, fuel stratum 0	-
-T0247	block.G5_f0	block	G5_f0	1	a G-rung statement sequence at depth 5, fuel stratum 0	-
-T0248	stmt.G5_f1	stmt	G5_f1	1	one G-rung statement at depth 5, fuel stratum 1	-
-T0249	block.G5_f1	block	G5_f1	1	a G-rung statement sequence at depth 5, fuel stratum 1	-
-T0250	stmt.Z0_f0	stmt	Z0_f0	1	one Z-rung statement at depth 0, fuel stratum 0	-
-T0251	block.Z0_f0	block	Z0_f0	1	a Z-rung statement sequence at depth 0, fuel stratum 0	-
-T0252	stmt.Z0_f1	stmt	Z0_f1	1	one Z-rung statement at depth 0, fuel stratum 1	-
-T0253	block.Z0_f1	block	Z0_f1	1	a Z-rung statement sequence at depth 0, fuel stratum 1	-
-T0254	stmt.Z1_f0	stmt	Z1_f0	1	one Z-rung statement at depth 1, fuel stratum 0	-
-T0255	block.Z1_f0	block	Z1_f0	1	a Z-rung statement sequence at depth 1, fuel stratum 0	-
-T0256	stmt.Z1_f1	stmt	Z1_f1	1	one Z-rung statement at depth 1, fuel stratum 1	-
-T0257	block.Z1_f1	block	Z1_f1	1	a Z-rung statement sequence at depth 1, fuel stratum 1	-
-T0258	stmt.Z2_f0	stmt	Z2_f0	1	one Z-rung statement at depth 2, fuel stratum 0	-
-T0259	block.Z2_f0	block	Z2_f0	1	a Z-rung statement sequence at depth 2, fuel stratum 0	-
-T0260	stmt.Z2_f1	stmt	Z2_f1	1	one Z-rung statement at depth 2, fuel stratum 1	-
-T0261	block.Z2_f1	block	Z2_f1	1	a Z-rung statement sequence at depth 2, fuel stratum 1	-
-T0262	stmt.Z3_f0	stmt	Z3_f0	1	one Z-rung statement at depth 3, fuel stratum 0	-
-T0263	block.Z3_f0	block	Z3_f0	1	a Z-rung statement sequence at depth 3, fuel stratum 0	-
-T0264	stmt.Z3_f1	stmt	Z3_f1	1	one Z-rung statement at depth 3, fuel stratum 1	-
-T0265	block.Z3_f1	block	Z3_f1	1	a Z-rung statement sequence at depth 3, fuel stratum 1	-
-T0266	stmt.Z4_f0	stmt	Z4_f0	1	one Z-rung statement at depth 4, fuel stratum 0	-
-T0267	block.Z4_f0	block	Z4_f0	1	a Z-rung statement sequence at depth 4, fuel stratum 0	-
-T0268	stmt.Z4_f1	stmt	Z4_f1	1	one Z-rung statement at depth 4, fuel stratum 1	-
-T0269	block.Z4_f1	block	Z4_f1	1	a Z-rung statement sequence at depth 4, fuel stratum 1	-
-T0270	stmt.Z5_f0	stmt	Z5_f0	1	one Z-rung statement at depth 5, fuel stratum 0	-
-T0271	block.Z5_f0	block	Z5_f0	1	a Z-rung statement sequence at depth 5, fuel stratum 0	-
-T0272	stmt.Z5_f1	stmt	Z5_f1	1	one Z-rung statement at depth 5, fuel stratum 1	-
-T0273	block.Z5_f1	block	Z5_f1	1	a Z-rung statement sequence at depth 5, fuel stratum 1	-
-T0274	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
-T0275	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
-T0276	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
-T0277	block.XB1_f0	block	XB1_f0	1	a split-phase loop body that breaks, depth 1, stratum 0	-
-T0278	block.AB1_f0	block	AB1_f0	1	a slot-phase loop body that breaks, depth 1, stratum 0	-
-T0279	block.UB1_f0	block	UB1_f0	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 0	-
-T0280	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
-T0281	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
-T0282	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
-T0283	block.XB1_f1	block	XB1_f1	1	a split-phase loop body that breaks, depth 1, stratum 1	-
-T0284	block.AB1_f1	block	AB1_f1	1	a slot-phase loop body that breaks, depth 1, stratum 1	-
-T0285	block.UB1_f1	block	UB1_f1	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 1	-
-T0286	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
-T0287	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
-T0288	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
-T0289	block.XB2_f0	block	XB2_f0	1	a split-phase loop body that breaks, depth 2, stratum 0	-
-T0290	block.AB2_f0	block	AB2_f0	1	a slot-phase loop body that breaks, depth 2, stratum 0	-
-T0291	block.UB2_f0	block	UB2_f0	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 0	-
-T0292	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
-T0293	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
-T0294	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
-T0295	block.XB2_f1	block	XB2_f1	1	a split-phase loop body that breaks, depth 2, stratum 1	-
-T0296	block.AB2_f1	block	AB2_f1	1	a slot-phase loop body that breaks, depth 2, stratum 1	-
-T0297	block.UB2_f1	block	UB2_f1	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 1	-
-T0298	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
-T0299	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
-T0300	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
-T0301	block.XB3_f0	block	XB3_f0	1	a split-phase loop body that breaks, depth 3, stratum 0	-
-T0302	block.AB3_f0	block	AB3_f0	1	a slot-phase loop body that breaks, depth 3, stratum 0	-
-T0303	block.UB3_f0	block	UB3_f0	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 0	-
-T0304	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
-T0305	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
-T0306	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
-T0307	block.XB3_f1	block	XB3_f1	1	a split-phase loop body that breaks, depth 3, stratum 1	-
-T0308	block.AB3_f1	block	AB3_f1	1	a slot-phase loop body that breaks, depth 3, stratum 1	-
-T0309	block.UB3_f1	block	UB3_f1	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 1	-
-T0310	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
-T0311	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
-T0312	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
-T0313	block.XB4_f0	block	XB4_f0	1	a split-phase loop body that breaks, depth 4, stratum 0	-
-T0314	block.AB4_f0	block	AB4_f0	1	a slot-phase loop body that breaks, depth 4, stratum 0	-
-T0315	block.UB4_f0	block	UB4_f0	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 0	-
-T0316	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
-T0317	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
-T0318	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
-T0319	block.XB4_f1	block	XB4_f1	1	a split-phase loop body that breaks, depth 4, stratum 1	-
-T0320	block.AB4_f1	block	AB4_f1	1	a slot-phase loop body that breaks, depth 4, stratum 1	-
-T0321	block.UB4_f1	block	UB4_f1	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 1	-
-T0322	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
-T0323	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
-T0324	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
-T0325	block.XB5_f0	block	XB5_f0	1	a split-phase loop body that breaks, depth 5, stratum 0	-
-T0326	block.AB5_f0	block	AB5_f0	1	a slot-phase loop body that breaks, depth 5, stratum 0	-
-T0327	block.UB5_f0	block	UB5_f0	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 0	-
-T0328	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
-T0329	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
-T0330	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
-T0331	block.XB5_f1	block	XB5_f1	1	a split-phase loop body that breaks, depth 5, stratum 1	-
-T0332	block.AB5_f1	block	AB5_f1	1	a slot-phase loop body that breaks, depth 5, stratum 1	-
-T0333	block.UB5_f1	block	UB5_f1	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 1	-
-T0334	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
-T0335	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
-T0336	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
-T0337	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
-T0338	u32.lidx	u32	lidx	1	local_invocation_index	-
-T0339	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
-T0340	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
-T0341	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
-T0342	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
-T0343	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
-T0344	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
-T0345	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
-T0346	block.start	block	start	1	the body of a module entry: it runs first in its dispatch, so a workgroup phase opening it needs no barrier before it	-
-T0347	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
-T0348	f32.reala	f32	reala	1	the slot-phase twin of f32.real: a value no workgroup read reached	-
-T0349	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
-T0350	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
-T0351	vec2<f32>.reala	vec2<f32>	reala	2	the slot-phase twin of vec2<f32>.real: a value no workgroup read reached	-
-T0352	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
-T0353	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
-T0354	vec3<f32>.reala	vec3<f32>	reala	3	the slot-phase twin of vec3<f32>.real: a value no workgroup read reached	-
-T0355	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
-T0356	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
-T0357	vec4<f32>.reala	vec4<f32>	reala	4	the slot-phase twin of vec4<f32>.real: a value no workgroup read reached	-
-T0358	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
-T0359	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
-T0360	f16.reala	f16	reala	1	the slot-phase twin of f16.real: a value no workgroup read reached	-
-T0361	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
-T0362	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
-T0363	vec2<f16>.reala	vec2<f16>	reala	2	the slot-phase twin of vec2<f16>.real: a value no workgroup read reached	-
-T0364	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
-T0365	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
-T0366	vec3<f16>.reala	vec3<f16>	reala	3	the slot-phase twin of vec3<f16>.real: a value no workgroup read reached	-
-T0367	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
-T0368	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
-T0369	vec4<f16>.reala	vec4<f16>	reala	4	the slot-phase twin of vec4<f16>.real: a value no workgroup read reached	-
-T0370	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
-T0371	u32.indexa	u32	indexa	1	the slot-phase twin of u32.index: a value no workgroup read reached	-
-T0372	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
-T0373	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
-T0374	vec2<u32>.indexa	vec2<u32>	indexa	2	the slot-phase twin of vec2<u32>.index: a value no workgroup read reached	-
-T0375	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
-T0376	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
-T0377	vec3<u32>.indexa	vec3<u32>	indexa	3	the slot-phase twin of vec3<u32>.index: a value no workgroup read reached	-
-T0378	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
-T0379	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
-T0380	vec4<u32>.indexa	vec4<u32>	indexa	4	the slot-phase twin of vec4<u32>.index: a value no workgroup read reached	-
-T0381	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
-T0382	u32.counta	u32	counta	1	the slot-phase twin of u32.count: a value no workgroup read reached	-
-T0383	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
-T0384	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
-T0385	vec2<u32>.counta	vec2<u32>	counta	2	the slot-phase twin of vec2<u32>.count: a value no workgroup read reached	-
-T0386	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
-T0387	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
-T0388	vec3<u32>.counta	vec3<u32>	counta	3	the slot-phase twin of vec3<u32>.count: a value no workgroup read reached	-
-T0389	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
-T0390	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
-T0391	vec4<u32>.counta	vec4<u32>	counta	4	the slot-phase twin of vec4<u32>.count: a value no workgroup read reached	-
-T0392	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
-T0393	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
-T0394	i32.inta	i32	inta	1	the slot-phase twin of i32.int: a value no workgroup read reached	-
-T0395	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
-T0396	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
-T0397	vec2<i32>.inta	vec2<i32>	inta	2	the slot-phase twin of vec2<i32>.int: a value no workgroup read reached	-
-T0398	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
-T0399	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
-T0400	vec3<i32>.inta	vec3<i32>	inta	3	the slot-phase twin of vec3<i32>.int: a value no workgroup read reached	-
-T0401	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
-T0402	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
-T0403	vec4<i32>.inta	vec4<i32>	inta	4	the slot-phase twin of vec4<i32>.int: a value no workgroup read reached	-
-T0404	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
-T0405	bool.flaga	bool	flaga	1	the slot-phase twin of bool.flag: a value no workgroup read reached	-
-T0406	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
-T0407	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
-T0408	vec2<bool>.flaga	vec2<bool>	flaga	2	the slot-phase twin of vec2<bool>.flag: a value no workgroup read reached	-
-T0409	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
-T0410	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
-T0411	vec3<bool>.flaga	vec3<bool>	flaga	3	the slot-phase twin of vec3<bool>.flag: a value no workgroup read reached	-
-T0412	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
-T0413	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
-T0414	vec4<bool>.flaga	vec4<bool>	flaga	4	the slot-phase twin of vec4<bool>.flag: a value no workgroup read reached	-
-T0415	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
-T0416	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
-T0417	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T0418	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
-T0419	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
-T0420	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
-T0421	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
-T0422	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
-T0423	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0424	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
-T0425	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
-T0426	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
-T0427	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
-T0428	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
-T0429	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
-T0430	mat2x2<f32>.reala	mat2x2<f32>	reala	4	the slot-phase twin of mat2x2<f32>.real: a value no workgroup read reached	-
-T0431	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
-T0432	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
-T0433	mat2x3<f32>.reala	mat2x3<f32>	reala	6	the slot-phase twin of mat2x3<f32>.real: a value no workgroup read reached	-
-T0434	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
-T0435	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
-T0436	mat2x4<f32>.reala	mat2x4<f32>	reala	8	the slot-phase twin of mat2x4<f32>.real: a value no workgroup read reached	-
-T0437	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
-T0438	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
-T0439	mat3x2<f32>.reala	mat3x2<f32>	reala	6	the slot-phase twin of mat3x2<f32>.real: a value no workgroup read reached	-
-T0440	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
-T0441	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
-T0442	mat3x3<f32>.reala	mat3x3<f32>	reala	9	the slot-phase twin of mat3x3<f32>.real: a value no workgroup read reached	-
-T0443	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
-T0444	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
-T0445	mat3x4<f32>.reala	mat3x4<f32>	reala	12	the slot-phase twin of mat3x4<f32>.real: a value no workgroup read reached	-
-T0446	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
-T0447	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
-T0448	mat4x2<f32>.reala	mat4x2<f32>	reala	8	the slot-phase twin of mat4x2<f32>.real: a value no workgroup read reached	-
-T0449	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
-T0450	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
-T0451	mat4x3<f32>.reala	mat4x3<f32>	reala	12	the slot-phase twin of mat4x3<f32>.real: a value no workgroup read reached	-
-T0452	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
-T0453	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
-T0454	mat4x4<f32>.reala	mat4x4<f32>	reala	16	the slot-phase twin of mat4x4<f32>.real: a value no workgroup read reached	-
-T0455	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
-T0456	u32.bitsw	u32	bitsw	1	the write-phase twin of u32.bits: a value no foreign workgroup read reached	-
-T0457	u32.bitsa	u32	bitsa	1	the slot-phase twin of u32.bits: a value no workgroup read reached	-
-T0458	u32.hash32	u32	hash32	1	a 32-bit hash state	-
-T0459	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
-T0460	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
-T0461	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
-T0462	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
-T0463	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
-T0464	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
-T0465	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
-T0466	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
-T0467	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
-T0468	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
-T0469	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
-T0470	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
-T0471	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
-T0472	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
-T0473	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
-T0474	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
-T0475	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
-T0476	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
-T0477	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
-T0478	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
-T0479	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
-T0480	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
-T0481	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
-T0482	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
-T0483	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
-T0484	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
-T0485	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
-T0486	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
-T0487	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
-T0488	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
-T0489	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
-T0490	u32.pidx_4a	u32	pidx_4a	1	the slot-phase twin of u32.pidx_4: a value no workgroup read reached	-
-T0491	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
-T0492	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
-T0493	u32.pidx_6a	u32	pidx_6a	1	the slot-phase twin of u32.pidx_6: a value no workgroup read reached	-
-T0494	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
-T0495	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
-T0496	u32.pidx_7a	u32	pidx_7a	1	the slot-phase twin of u32.pidx_7: a value no workgroup read reached	-
-T0497	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
-T0498	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
-T0499	u32.pidx_8a	u32	pidx_8a	1	the slot-phase twin of u32.pidx_8: a value no workgroup read reached	-
-T0500	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
-T0501	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
-T0502	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
-T0503	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
-T0504	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
-T0505	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
-T0506	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
-T0507	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
-T0508	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
-T0509	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
-T0510	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
-T0511	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
-T0512	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
-T0513	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
-T0514	u32.boundx6a	u32	boundx6a	1	the slot-phase twin of u32.boundx6: a value no workgroup read reached	-
-T0515	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
-T0516	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
-T0517	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
-T0518	u32.boundx12a	u32	boundx12a	1	the slot-phase twin of u32.boundx12: a value no workgroup read reached	-
-T0519	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
-T0520	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
-T0521	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
-T0522	u32.boundx18a	u32	boundx18a	1	the slot-phase twin of u32.boundx18: a value no workgroup read reached	-
-T0523	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
-T0524	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
-T0525	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
-T0526	u32.boundx24a	u32	boundx24a	1	the slot-phase twin of u32.boundx24: a value no workgroup read reached	-
-T0527	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
-T0528	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
-T0529	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
-T0530	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
-T0531	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
-T0532	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
-T0533	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
-T0534	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
-T0535	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
-T0536	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
-T0537	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T0538	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T0539	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
-T0540	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
-T0541	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
-T0542	u32.plast_8	u32	plast_8	1	the last index of a private array held in a 256-element array: a bare literal	0..=255
-T0543	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
-T0544	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
-T0545	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
-T0546	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
-T0547	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
-T0548	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
-T0549	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
-T0550	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
-T0551	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
-T0552	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
-T0553	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
-T0554	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
-T0555	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
-T0556	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
-T0557	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2067
-T0558	u32.zown	u32	zown	1	the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)	-
-T0559	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
-T0560	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3
+T0005	u32.wgext	u32	wgext	1	the words of the plain pool an entry declares (pool.py WG_PW): a multiple of 4 up to 6080; the module declares the largest its entries name	4..=6080
+T0006	grid.shape	grid	shape	1	one of the target's legal workgroup shapes (x, y, 1): a literal from the target's table	-
+T0007	u32.blk_row	u32	blk_row	1	a block factor on the row axis: cells per invocation along it	1,2,4,8
+T0008	u32.blk_col	u32	blk_col	1	a block factor on the column axis	1,2,4,8
+T0009	grid.grid	grid	grid	1	the entry's workgroup shape and block	-
+T0010	u32.ktile	u32	ktile	1	the tile-depth knob: a bare literal 1..=4096 (a const initialiser, so no knob reference or call may produce it)	1..=4096
+T0011	stmt.L0_f0	stmt	L0_f0	1	one L-rung statement at depth 0, fuel stratum 0	-
+T0012	block.L0_f0	block	L0_f0	1	a L-rung statement sequence at depth 0, fuel stratum 0	-
+T0013	stmt.L0_f1	stmt	L0_f1	1	one L-rung statement at depth 0, fuel stratum 1	-
+T0014	block.L0_f1	block	L0_f1	1	a L-rung statement sequence at depth 0, fuel stratum 1	-
+T0015	stmt.L1_f0	stmt	L1_f0	1	one L-rung statement at depth 1, fuel stratum 0	-
+T0016	block.L1_f0	block	L1_f0	1	a L-rung statement sequence at depth 1, fuel stratum 0	-
+T0017	stmt.L1_f1	stmt	L1_f1	1	one L-rung statement at depth 1, fuel stratum 1	-
+T0018	block.L1_f1	block	L1_f1	1	a L-rung statement sequence at depth 1, fuel stratum 1	-
+T0019	stmt.L2_f0	stmt	L2_f0	1	one L-rung statement at depth 2, fuel stratum 0	-
+T0020	block.L2_f0	block	L2_f0	1	a L-rung statement sequence at depth 2, fuel stratum 0	-
+T0021	stmt.L2_f1	stmt	L2_f1	1	one L-rung statement at depth 2, fuel stratum 1	-
+T0022	block.L2_f1	block	L2_f1	1	a L-rung statement sequence at depth 2, fuel stratum 1	-
+T0023	stmt.L3_f0	stmt	L3_f0	1	one L-rung statement at depth 3, fuel stratum 0	-
+T0024	block.L3_f0	block	L3_f0	1	a L-rung statement sequence at depth 3, fuel stratum 0	-
+T0025	stmt.L3_f1	stmt	L3_f1	1	one L-rung statement at depth 3, fuel stratum 1	-
+T0026	block.L3_f1	block	L3_f1	1	a L-rung statement sequence at depth 3, fuel stratum 1	-
+T0027	stmt.L4_f0	stmt	L4_f0	1	one L-rung statement at depth 4, fuel stratum 0	-
+T0028	block.L4_f0	block	L4_f0	1	a L-rung statement sequence at depth 4, fuel stratum 0	-
+T0029	stmt.L4_f1	stmt	L4_f1	1	one L-rung statement at depth 4, fuel stratum 1	-
+T0030	block.L4_f1	block	L4_f1	1	a L-rung statement sequence at depth 4, fuel stratum 1	-
+T0031	stmt.L5_f0	stmt	L5_f0	1	one L-rung statement at depth 5, fuel stratum 0	-
+T0032	block.L5_f0	block	L5_f0	1	a L-rung statement sequence at depth 5, fuel stratum 0	-
+T0033	stmt.L5_f1	stmt	L5_f1	1	one L-rung statement at depth 5, fuel stratum 1	-
+T0034	block.L5_f1	block	L5_f1	1	a L-rung statement sequence at depth 5, fuel stratum 1	-
+T0035	stmt.C0_f0	stmt	C0_f0	1	one C-rung statement at depth 0, fuel stratum 0	-
+T0036	block.C0_f0	block	C0_f0	1	a C-rung statement sequence at depth 0, fuel stratum 0	-
+T0037	stmt.C0_f1	stmt	C0_f1	1	one C-rung statement at depth 0, fuel stratum 1	-
+T0038	block.C0_f1	block	C0_f1	1	a C-rung statement sequence at depth 0, fuel stratum 1	-
+T0039	stmt.C1_f0	stmt	C1_f0	1	one C-rung statement at depth 1, fuel stratum 0	-
+T0040	block.C1_f0	block	C1_f0	1	a C-rung statement sequence at depth 1, fuel stratum 0	-
+T0041	stmt.C1_f1	stmt	C1_f1	1	one C-rung statement at depth 1, fuel stratum 1	-
+T0042	block.C1_f1	block	C1_f1	1	a C-rung statement sequence at depth 1, fuel stratum 1	-
+T0043	stmt.C2_f0	stmt	C2_f0	1	one C-rung statement at depth 2, fuel stratum 0	-
+T0044	block.C2_f0	block	C2_f0	1	a C-rung statement sequence at depth 2, fuel stratum 0	-
+T0045	stmt.C2_f1	stmt	C2_f1	1	one C-rung statement at depth 2, fuel stratum 1	-
+T0046	block.C2_f1	block	C2_f1	1	a C-rung statement sequence at depth 2, fuel stratum 1	-
+T0047	stmt.C3_f0	stmt	C3_f0	1	one C-rung statement at depth 3, fuel stratum 0	-
+T0048	block.C3_f0	block	C3_f0	1	a C-rung statement sequence at depth 3, fuel stratum 0	-
+T0049	stmt.C3_f1	stmt	C3_f1	1	one C-rung statement at depth 3, fuel stratum 1	-
+T0050	block.C3_f1	block	C3_f1	1	a C-rung statement sequence at depth 3, fuel stratum 1	-
+T0051	stmt.C4_f0	stmt	C4_f0	1	one C-rung statement at depth 4, fuel stratum 0	-
+T0052	block.C4_f0	block	C4_f0	1	a C-rung statement sequence at depth 4, fuel stratum 0	-
+T0053	stmt.C4_f1	stmt	C4_f1	1	one C-rung statement at depth 4, fuel stratum 1	-
+T0054	block.C4_f1	block	C4_f1	1	a C-rung statement sequence at depth 4, fuel stratum 1	-
+T0055	stmt.C5_f0	stmt	C5_f0	1	one C-rung statement at depth 5, fuel stratum 0	-
+T0056	block.C5_f0	block	C5_f0	1	a C-rung statement sequence at depth 5, fuel stratum 0	-
+T0057	stmt.C5_f1	stmt	C5_f1	1	one C-rung statement at depth 5, fuel stratum 1	-
+T0058	block.C5_f1	block	C5_f1	1	a C-rung statement sequence at depth 5, fuel stratum 1	-
+T0059	stmt.W0_f0	stmt	W0_f0	1	one W-rung statement at depth 0, fuel stratum 0	-
+T0060	block.W0_f0	block	W0_f0	1	a W-rung statement sequence at depth 0, fuel stratum 0	-
+T0061	stmt.W0_f1	stmt	W0_f1	1	one W-rung statement at depth 0, fuel stratum 1	-
+T0062	block.W0_f1	block	W0_f1	1	a W-rung statement sequence at depth 0, fuel stratum 1	-
+T0063	stmt.W1_f0	stmt	W1_f0	1	one W-rung statement at depth 1, fuel stratum 0	-
+T0064	block.W1_f0	block	W1_f0	1	a W-rung statement sequence at depth 1, fuel stratum 0	-
+T0065	stmt.W1_f1	stmt	W1_f1	1	one W-rung statement at depth 1, fuel stratum 1	-
+T0066	block.W1_f1	block	W1_f1	1	a W-rung statement sequence at depth 1, fuel stratum 1	-
+T0067	stmt.W2_f0	stmt	W2_f0	1	one W-rung statement at depth 2, fuel stratum 0	-
+T0068	block.W2_f0	block	W2_f0	1	a W-rung statement sequence at depth 2, fuel stratum 0	-
+T0069	stmt.W2_f1	stmt	W2_f1	1	one W-rung statement at depth 2, fuel stratum 1	-
+T0070	block.W2_f1	block	W2_f1	1	a W-rung statement sequence at depth 2, fuel stratum 1	-
+T0071	stmt.W3_f0	stmt	W3_f0	1	one W-rung statement at depth 3, fuel stratum 0	-
+T0072	block.W3_f0	block	W3_f0	1	a W-rung statement sequence at depth 3, fuel stratum 0	-
+T0073	stmt.W3_f1	stmt	W3_f1	1	one W-rung statement at depth 3, fuel stratum 1	-
+T0074	block.W3_f1	block	W3_f1	1	a W-rung statement sequence at depth 3, fuel stratum 1	-
+T0075	stmt.W4_f0	stmt	W4_f0	1	one W-rung statement at depth 4, fuel stratum 0	-
+T0076	block.W4_f0	block	W4_f0	1	a W-rung statement sequence at depth 4, fuel stratum 0	-
+T0077	stmt.W4_f1	stmt	W4_f1	1	one W-rung statement at depth 4, fuel stratum 1	-
+T0078	block.W4_f1	block	W4_f1	1	a W-rung statement sequence at depth 4, fuel stratum 1	-
+T0079	stmt.W5_f0	stmt	W5_f0	1	one W-rung statement at depth 5, fuel stratum 0	-
+T0080	block.W5_f0	block	W5_f0	1	a W-rung statement sequence at depth 5, fuel stratum 0	-
+T0081	stmt.W5_f1	stmt	W5_f1	1	one W-rung statement at depth 5, fuel stratum 1	-
+T0082	block.W5_f1	block	W5_f1	1	a W-rung statement sequence at depth 5, fuel stratum 1	-
+T0083	stmt.P0_f0	stmt	P0_f0	1	one P-rung statement at depth 0, fuel stratum 0	-
+T0084	block.P0_f0	block	P0_f0	1	a P-rung statement sequence at depth 0, fuel stratum 0	-
+T0085	stmt.P0_f1	stmt	P0_f1	1	one P-rung statement at depth 0, fuel stratum 1	-
+T0086	block.P0_f1	block	P0_f1	1	a P-rung statement sequence at depth 0, fuel stratum 1	-
+T0087	stmt.P1_f0	stmt	P1_f0	1	one P-rung statement at depth 1, fuel stratum 0	-
+T0088	block.P1_f0	block	P1_f0	1	a P-rung statement sequence at depth 1, fuel stratum 0	-
+T0089	stmt.P1_f1	stmt	P1_f1	1	one P-rung statement at depth 1, fuel stratum 1	-
+T0090	block.P1_f1	block	P1_f1	1	a P-rung statement sequence at depth 1, fuel stratum 1	-
+T0091	stmt.P2_f0	stmt	P2_f0	1	one P-rung statement at depth 2, fuel stratum 0	-
+T0092	block.P2_f0	block	P2_f0	1	a P-rung statement sequence at depth 2, fuel stratum 0	-
+T0093	stmt.P2_f1	stmt	P2_f1	1	one P-rung statement at depth 2, fuel stratum 1	-
+T0094	block.P2_f1	block	P2_f1	1	a P-rung statement sequence at depth 2, fuel stratum 1	-
+T0095	stmt.P3_f0	stmt	P3_f0	1	one P-rung statement at depth 3, fuel stratum 0	-
+T0096	block.P3_f0	block	P3_f0	1	a P-rung statement sequence at depth 3, fuel stratum 0	-
+T0097	stmt.P3_f1	stmt	P3_f1	1	one P-rung statement at depth 3, fuel stratum 1	-
+T0098	block.P3_f1	block	P3_f1	1	a P-rung statement sequence at depth 3, fuel stratum 1	-
+T0099	stmt.P4_f0	stmt	P4_f0	1	one P-rung statement at depth 4, fuel stratum 0	-
+T0100	block.P4_f0	block	P4_f0	1	a P-rung statement sequence at depth 4, fuel stratum 0	-
+T0101	stmt.P4_f1	stmt	P4_f1	1	one P-rung statement at depth 4, fuel stratum 1	-
+T0102	block.P4_f1	block	P4_f1	1	a P-rung statement sequence at depth 4, fuel stratum 1	-
+T0103	stmt.P5_f0	stmt	P5_f0	1	one P-rung statement at depth 5, fuel stratum 0	-
+T0104	block.P5_f0	block	P5_f0	1	a P-rung statement sequence at depth 5, fuel stratum 0	-
+T0105	stmt.P5_f1	stmt	P5_f1	1	one P-rung statement at depth 5, fuel stratum 1	-
+T0106	block.P5_f1	block	P5_f1	1	a P-rung statement sequence at depth 5, fuel stratum 1	-
+T0107	stmt.S0_f0	stmt	S0_f0	1	one S-rung statement at depth 0, fuel stratum 0	-
+T0108	block.S0_f0	block	S0_f0	1	a S-rung statement sequence at depth 0, fuel stratum 0	-
+T0109	stmt.S0_f1	stmt	S0_f1	1	one S-rung statement at depth 0, fuel stratum 1	-
+T0110	block.S0_f1	block	S0_f1	1	a S-rung statement sequence at depth 0, fuel stratum 1	-
+T0111	stmt.S1_f0	stmt	S1_f0	1	one S-rung statement at depth 1, fuel stratum 0	-
+T0112	block.S1_f0	block	S1_f0	1	a S-rung statement sequence at depth 1, fuel stratum 0	-
+T0113	stmt.S1_f1	stmt	S1_f1	1	one S-rung statement at depth 1, fuel stratum 1	-
+T0114	block.S1_f1	block	S1_f1	1	a S-rung statement sequence at depth 1, fuel stratum 1	-
+T0115	stmt.S2_f0	stmt	S2_f0	1	one S-rung statement at depth 2, fuel stratum 0	-
+T0116	block.S2_f0	block	S2_f0	1	a S-rung statement sequence at depth 2, fuel stratum 0	-
+T0117	stmt.S2_f1	stmt	S2_f1	1	one S-rung statement at depth 2, fuel stratum 1	-
+T0118	block.S2_f1	block	S2_f1	1	a S-rung statement sequence at depth 2, fuel stratum 1	-
+T0119	stmt.S3_f0	stmt	S3_f0	1	one S-rung statement at depth 3, fuel stratum 0	-
+T0120	block.S3_f0	block	S3_f0	1	a S-rung statement sequence at depth 3, fuel stratum 0	-
+T0121	stmt.S3_f1	stmt	S3_f1	1	one S-rung statement at depth 3, fuel stratum 1	-
+T0122	block.S3_f1	block	S3_f1	1	a S-rung statement sequence at depth 3, fuel stratum 1	-
+T0123	stmt.S4_f0	stmt	S4_f0	1	one S-rung statement at depth 4, fuel stratum 0	-
+T0124	block.S4_f0	block	S4_f0	1	a S-rung statement sequence at depth 4, fuel stratum 0	-
+T0125	stmt.S4_f1	stmt	S4_f1	1	one S-rung statement at depth 4, fuel stratum 1	-
+T0126	block.S4_f1	block	S4_f1	1	a S-rung statement sequence at depth 4, fuel stratum 1	-
+T0127	stmt.S5_f0	stmt	S5_f0	1	one S-rung statement at depth 5, fuel stratum 0	-
+T0128	block.S5_f0	block	S5_f0	1	a S-rung statement sequence at depth 5, fuel stratum 0	-
+T0129	stmt.S5_f1	stmt	S5_f1	1	one S-rung statement at depth 5, fuel stratum 1	-
+T0130	block.S5_f1	block	S5_f1	1	a S-rung statement sequence at depth 5, fuel stratum 1	-
+T0131	stmt.X0_f0	stmt	X0_f0	1	one X-rung statement at depth 0, fuel stratum 0	-
+T0132	block.X0_f0	block	X0_f0	1	a X-rung statement sequence at depth 0, fuel stratum 0	-
+T0133	stmt.X0_f1	stmt	X0_f1	1	one X-rung statement at depth 0, fuel stratum 1	-
+T0134	block.X0_f1	block	X0_f1	1	a X-rung statement sequence at depth 0, fuel stratum 1	-
+T0135	stmt.X1_f0	stmt	X1_f0	1	one X-rung statement at depth 1, fuel stratum 0	-
+T0136	block.X1_f0	block	X1_f0	1	a X-rung statement sequence at depth 1, fuel stratum 0	-
+T0137	stmt.X1_f1	stmt	X1_f1	1	one X-rung statement at depth 1, fuel stratum 1	-
+T0138	block.X1_f1	block	X1_f1	1	a X-rung statement sequence at depth 1, fuel stratum 1	-
+T0139	stmt.X2_f0	stmt	X2_f0	1	one X-rung statement at depth 2, fuel stratum 0	-
+T0140	block.X2_f0	block	X2_f0	1	a X-rung statement sequence at depth 2, fuel stratum 0	-
+T0141	stmt.X2_f1	stmt	X2_f1	1	one X-rung statement at depth 2, fuel stratum 1	-
+T0142	block.X2_f1	block	X2_f1	1	a X-rung statement sequence at depth 2, fuel stratum 1	-
+T0143	stmt.X3_f0	stmt	X3_f0	1	one X-rung statement at depth 3, fuel stratum 0	-
+T0144	block.X3_f0	block	X3_f0	1	a X-rung statement sequence at depth 3, fuel stratum 0	-
+T0145	stmt.X3_f1	stmt	X3_f1	1	one X-rung statement at depth 3, fuel stratum 1	-
+T0146	block.X3_f1	block	X3_f1	1	a X-rung statement sequence at depth 3, fuel stratum 1	-
+T0147	stmt.X4_f0	stmt	X4_f0	1	one X-rung statement at depth 4, fuel stratum 0	-
+T0148	block.X4_f0	block	X4_f0	1	a X-rung statement sequence at depth 4, fuel stratum 0	-
+T0149	stmt.X4_f1	stmt	X4_f1	1	one X-rung statement at depth 4, fuel stratum 1	-
+T0150	block.X4_f1	block	X4_f1	1	a X-rung statement sequence at depth 4, fuel stratum 1	-
+T0151	stmt.X5_f0	stmt	X5_f0	1	one X-rung statement at depth 5, fuel stratum 0	-
+T0152	block.X5_f0	block	X5_f0	1	a X-rung statement sequence at depth 5, fuel stratum 0	-
+T0153	stmt.X5_f1	stmt	X5_f1	1	one X-rung statement at depth 5, fuel stratum 1	-
+T0154	block.X5_f1	block	X5_f1	1	a X-rung statement sequence at depth 5, fuel stratum 1	-
+T0155	stmt.E0_f0	stmt	E0_f0	1	one E-rung statement at depth 0, fuel stratum 0	-
+T0156	block.E0_f0	block	E0_f0	1	a E-rung statement sequence at depth 0, fuel stratum 0	-
+T0157	stmt.E0_f1	stmt	E0_f1	1	one E-rung statement at depth 0, fuel stratum 1	-
+T0158	block.E0_f1	block	E0_f1	1	a E-rung statement sequence at depth 0, fuel stratum 1	-
+T0159	stmt.E1_f0	stmt	E1_f0	1	one E-rung statement at depth 1, fuel stratum 0	-
+T0160	block.E1_f0	block	E1_f0	1	a E-rung statement sequence at depth 1, fuel stratum 0	-
+T0161	stmt.E1_f1	stmt	E1_f1	1	one E-rung statement at depth 1, fuel stratum 1	-
+T0162	block.E1_f1	block	E1_f1	1	a E-rung statement sequence at depth 1, fuel stratum 1	-
+T0163	stmt.E2_f0	stmt	E2_f0	1	one E-rung statement at depth 2, fuel stratum 0	-
+T0164	block.E2_f0	block	E2_f0	1	a E-rung statement sequence at depth 2, fuel stratum 0	-
+T0165	stmt.E2_f1	stmt	E2_f1	1	one E-rung statement at depth 2, fuel stratum 1	-
+T0166	block.E2_f1	block	E2_f1	1	a E-rung statement sequence at depth 2, fuel stratum 1	-
+T0167	stmt.E3_f0	stmt	E3_f0	1	one E-rung statement at depth 3, fuel stratum 0	-
+T0168	block.E3_f0	block	E3_f0	1	a E-rung statement sequence at depth 3, fuel stratum 0	-
+T0169	stmt.E3_f1	stmt	E3_f1	1	one E-rung statement at depth 3, fuel stratum 1	-
+T0170	block.E3_f1	block	E3_f1	1	a E-rung statement sequence at depth 3, fuel stratum 1	-
+T0171	stmt.E4_f0	stmt	E4_f0	1	one E-rung statement at depth 4, fuel stratum 0	-
+T0172	block.E4_f0	block	E4_f0	1	a E-rung statement sequence at depth 4, fuel stratum 0	-
+T0173	stmt.E4_f1	stmt	E4_f1	1	one E-rung statement at depth 4, fuel stratum 1	-
+T0174	block.E4_f1	block	E4_f1	1	a E-rung statement sequence at depth 4, fuel stratum 1	-
+T0175	stmt.E5_f0	stmt	E5_f0	1	one E-rung statement at depth 5, fuel stratum 0	-
+T0176	block.E5_f0	block	E5_f0	1	a E-rung statement sequence at depth 5, fuel stratum 0	-
+T0177	stmt.E5_f1	stmt	E5_f1	1	one E-rung statement at depth 5, fuel stratum 1	-
+T0178	block.E5_f1	block	E5_f1	1	a E-rung statement sequence at depth 5, fuel stratum 1	-
+T0179	stmt.Y0_f0	stmt	Y0_f0	1	one Y-rung statement at depth 0, fuel stratum 0	-
+T0180	block.Y0_f0	block	Y0_f0	1	a Y-rung statement sequence at depth 0, fuel stratum 0	-
+T0181	stmt.Y0_f1	stmt	Y0_f1	1	one Y-rung statement at depth 0, fuel stratum 1	-
+T0182	block.Y0_f1	block	Y0_f1	1	a Y-rung statement sequence at depth 0, fuel stratum 1	-
+T0183	stmt.Y1_f0	stmt	Y1_f0	1	one Y-rung statement at depth 1, fuel stratum 0	-
+T0184	block.Y1_f0	block	Y1_f0	1	a Y-rung statement sequence at depth 1, fuel stratum 0	-
+T0185	stmt.Y1_f1	stmt	Y1_f1	1	one Y-rung statement at depth 1, fuel stratum 1	-
+T0186	block.Y1_f1	block	Y1_f1	1	a Y-rung statement sequence at depth 1, fuel stratum 1	-
+T0187	stmt.Y2_f0	stmt	Y2_f0	1	one Y-rung statement at depth 2, fuel stratum 0	-
+T0188	block.Y2_f0	block	Y2_f0	1	a Y-rung statement sequence at depth 2, fuel stratum 0	-
+T0189	stmt.Y2_f1	stmt	Y2_f1	1	one Y-rung statement at depth 2, fuel stratum 1	-
+T0190	block.Y2_f1	block	Y2_f1	1	a Y-rung statement sequence at depth 2, fuel stratum 1	-
+T0191	stmt.Y3_f0	stmt	Y3_f0	1	one Y-rung statement at depth 3, fuel stratum 0	-
+T0192	block.Y3_f0	block	Y3_f0	1	a Y-rung statement sequence at depth 3, fuel stratum 0	-
+T0193	stmt.Y3_f1	stmt	Y3_f1	1	one Y-rung statement at depth 3, fuel stratum 1	-
+T0194	block.Y3_f1	block	Y3_f1	1	a Y-rung statement sequence at depth 3, fuel stratum 1	-
+T0195	stmt.Y4_f0	stmt	Y4_f0	1	one Y-rung statement at depth 4, fuel stratum 0	-
+T0196	block.Y4_f0	block	Y4_f0	1	a Y-rung statement sequence at depth 4, fuel stratum 0	-
+T0197	stmt.Y4_f1	stmt	Y4_f1	1	one Y-rung statement at depth 4, fuel stratum 1	-
+T0198	block.Y4_f1	block	Y4_f1	1	a Y-rung statement sequence at depth 4, fuel stratum 1	-
+T0199	stmt.Y5_f0	stmt	Y5_f0	1	one Y-rung statement at depth 5, fuel stratum 0	-
+T0200	block.Y5_f0	block	Y5_f0	1	a Y-rung statement sequence at depth 5, fuel stratum 0	-
+T0201	stmt.Y5_f1	stmt	Y5_f1	1	one Y-rung statement at depth 5, fuel stratum 1	-
+T0202	block.Y5_f1	block	Y5_f1	1	a Y-rung statement sequence at depth 5, fuel stratum 1	-
+T0203	stmt.A0_f0	stmt	A0_f0	1	one A-rung statement at depth 0, fuel stratum 0	-
+T0204	block.A0_f0	block	A0_f0	1	a A-rung statement sequence at depth 0, fuel stratum 0	-
+T0205	stmt.A0_f1	stmt	A0_f1	1	one A-rung statement at depth 0, fuel stratum 1	-
+T0206	block.A0_f1	block	A0_f1	1	a A-rung statement sequence at depth 0, fuel stratum 1	-
+T0207	stmt.A1_f0	stmt	A1_f0	1	one A-rung statement at depth 1, fuel stratum 0	-
+T0208	block.A1_f0	block	A1_f0	1	a A-rung statement sequence at depth 1, fuel stratum 0	-
+T0209	stmt.A1_f1	stmt	A1_f1	1	one A-rung statement at depth 1, fuel stratum 1	-
+T0210	block.A1_f1	block	A1_f1	1	a A-rung statement sequence at depth 1, fuel stratum 1	-
+T0211	stmt.A2_f0	stmt	A2_f0	1	one A-rung statement at depth 2, fuel stratum 0	-
+T0212	block.A2_f0	block	A2_f0	1	a A-rung statement sequence at depth 2, fuel stratum 0	-
+T0213	stmt.A2_f1	stmt	A2_f1	1	one A-rung statement at depth 2, fuel stratum 1	-
+T0214	block.A2_f1	block	A2_f1	1	a A-rung statement sequence at depth 2, fuel stratum 1	-
+T0215	stmt.A3_f0	stmt	A3_f0	1	one A-rung statement at depth 3, fuel stratum 0	-
+T0216	block.A3_f0	block	A3_f0	1	a A-rung statement sequence at depth 3, fuel stratum 0	-
+T0217	stmt.A3_f1	stmt	A3_f1	1	one A-rung statement at depth 3, fuel stratum 1	-
+T0218	block.A3_f1	block	A3_f1	1	a A-rung statement sequence at depth 3, fuel stratum 1	-
+T0219	stmt.A4_f0	stmt	A4_f0	1	one A-rung statement at depth 4, fuel stratum 0	-
+T0220	block.A4_f0	block	A4_f0	1	a A-rung statement sequence at depth 4, fuel stratum 0	-
+T0221	stmt.A4_f1	stmt	A4_f1	1	one A-rung statement at depth 4, fuel stratum 1	-
+T0222	block.A4_f1	block	A4_f1	1	a A-rung statement sequence at depth 4, fuel stratum 1	-
+T0223	stmt.A5_f0	stmt	A5_f0	1	one A-rung statement at depth 5, fuel stratum 0	-
+T0224	block.A5_f0	block	A5_f0	1	a A-rung statement sequence at depth 5, fuel stratum 0	-
+T0225	stmt.A5_f1	stmt	A5_f1	1	one A-rung statement at depth 5, fuel stratum 1	-
+T0226	block.A5_f1	block	A5_f1	1	a A-rung statement sequence at depth 5, fuel stratum 1	-
+T0227	stmt.G0_f0	stmt	G0_f0	1	one G-rung statement at depth 0, fuel stratum 0	-
+T0228	block.G0_f0	block	G0_f0	1	a G-rung statement sequence at depth 0, fuel stratum 0	-
+T0229	stmt.G0_f1	stmt	G0_f1	1	one G-rung statement at depth 0, fuel stratum 1	-
+T0230	block.G0_f1	block	G0_f1	1	a G-rung statement sequence at depth 0, fuel stratum 1	-
+T0231	stmt.G1_f0	stmt	G1_f0	1	one G-rung statement at depth 1, fuel stratum 0	-
+T0232	block.G1_f0	block	G1_f0	1	a G-rung statement sequence at depth 1, fuel stratum 0	-
+T0233	stmt.G1_f1	stmt	G1_f1	1	one G-rung statement at depth 1, fuel stratum 1	-
+T0234	block.G1_f1	block	G1_f1	1	a G-rung statement sequence at depth 1, fuel stratum 1	-
+T0235	stmt.G2_f0	stmt	G2_f0	1	one G-rung statement at depth 2, fuel stratum 0	-
+T0236	block.G2_f0	block	G2_f0	1	a G-rung statement sequence at depth 2, fuel stratum 0	-
+T0237	stmt.G2_f1	stmt	G2_f1	1	one G-rung statement at depth 2, fuel stratum 1	-
+T0238	block.G2_f1	block	G2_f1	1	a G-rung statement sequence at depth 2, fuel stratum 1	-
+T0239	stmt.G3_f0	stmt	G3_f0	1	one G-rung statement at depth 3, fuel stratum 0	-
+T0240	block.G3_f0	block	G3_f0	1	a G-rung statement sequence at depth 3, fuel stratum 0	-
+T0241	stmt.G3_f1	stmt	G3_f1	1	one G-rung statement at depth 3, fuel stratum 1	-
+T0242	block.G3_f1	block	G3_f1	1	a G-rung statement sequence at depth 3, fuel stratum 1	-
+T0243	stmt.G4_f0	stmt	G4_f0	1	one G-rung statement at depth 4, fuel stratum 0	-
+T0244	block.G4_f0	block	G4_f0	1	a G-rung statement sequence at depth 4, fuel stratum 0	-
+T0245	stmt.G4_f1	stmt	G4_f1	1	one G-rung statement at depth 4, fuel stratum 1	-
+T0246	block.G4_f1	block	G4_f1	1	a G-rung statement sequence at depth 4, fuel stratum 1	-
+T0247	stmt.G5_f0	stmt	G5_f0	1	one G-rung statement at depth 5, fuel stratum 0	-
+T0248	block.G5_f0	block	G5_f0	1	a G-rung statement sequence at depth 5, fuel stratum 0	-
+T0249	stmt.G5_f1	stmt	G5_f1	1	one G-rung statement at depth 5, fuel stratum 1	-
+T0250	block.G5_f1	block	G5_f1	1	a G-rung statement sequence at depth 5, fuel stratum 1	-
+T0251	stmt.Z0_f0	stmt	Z0_f0	1	one Z-rung statement at depth 0, fuel stratum 0	-
+T0252	block.Z0_f0	block	Z0_f0	1	a Z-rung statement sequence at depth 0, fuel stratum 0	-
+T0253	stmt.Z0_f1	stmt	Z0_f1	1	one Z-rung statement at depth 0, fuel stratum 1	-
+T0254	block.Z0_f1	block	Z0_f1	1	a Z-rung statement sequence at depth 0, fuel stratum 1	-
+T0255	stmt.Z1_f0	stmt	Z1_f0	1	one Z-rung statement at depth 1, fuel stratum 0	-
+T0256	block.Z1_f0	block	Z1_f0	1	a Z-rung statement sequence at depth 1, fuel stratum 0	-
+T0257	stmt.Z1_f1	stmt	Z1_f1	1	one Z-rung statement at depth 1, fuel stratum 1	-
+T0258	block.Z1_f1	block	Z1_f1	1	a Z-rung statement sequence at depth 1, fuel stratum 1	-
+T0259	stmt.Z2_f0	stmt	Z2_f0	1	one Z-rung statement at depth 2, fuel stratum 0	-
+T0260	block.Z2_f0	block	Z2_f0	1	a Z-rung statement sequence at depth 2, fuel stratum 0	-
+T0261	stmt.Z2_f1	stmt	Z2_f1	1	one Z-rung statement at depth 2, fuel stratum 1	-
+T0262	block.Z2_f1	block	Z2_f1	1	a Z-rung statement sequence at depth 2, fuel stratum 1	-
+T0263	stmt.Z3_f0	stmt	Z3_f0	1	one Z-rung statement at depth 3, fuel stratum 0	-
+T0264	block.Z3_f0	block	Z3_f0	1	a Z-rung statement sequence at depth 3, fuel stratum 0	-
+T0265	stmt.Z3_f1	stmt	Z3_f1	1	one Z-rung statement at depth 3, fuel stratum 1	-
+T0266	block.Z3_f1	block	Z3_f1	1	a Z-rung statement sequence at depth 3, fuel stratum 1	-
+T0267	stmt.Z4_f0	stmt	Z4_f0	1	one Z-rung statement at depth 4, fuel stratum 0	-
+T0268	block.Z4_f0	block	Z4_f0	1	a Z-rung statement sequence at depth 4, fuel stratum 0	-
+T0269	stmt.Z4_f1	stmt	Z4_f1	1	one Z-rung statement at depth 4, fuel stratum 1	-
+T0270	block.Z4_f1	block	Z4_f1	1	a Z-rung statement sequence at depth 4, fuel stratum 1	-
+T0271	stmt.Z5_f0	stmt	Z5_f0	1	one Z-rung statement at depth 5, fuel stratum 0	-
+T0272	block.Z5_f0	block	Z5_f0	1	a Z-rung statement sequence at depth 5, fuel stratum 0	-
+T0273	stmt.Z5_f1	stmt	Z5_f1	1	one Z-rung statement at depth 5, fuel stratum 1	-
+T0274	block.Z5_f1	block	Z5_f1	1	a Z-rung statement sequence at depth 5, fuel stratum 1	-
+T0275	block.B1_f0	block	B1_f0	1	a loop body that breaks, depth 1, stratum 0	-
+T0276	block.WB1_f0	block	WB1_f0	1	a write-phase loop body that breaks, depth 1, stratum 0	-
+T0277	block.SB1_f0	block	SB1_f0	1	a solo-phase loop body that breaks, depth 1, stratum 0	-
+T0278	block.XB1_f0	block	XB1_f0	1	a split-phase loop body that breaks, depth 1, stratum 0	-
+T0279	block.AB1_f0	block	AB1_f0	1	a slot-phase loop body that breaks, depth 1, stratum 0	-
+T0280	block.UB1_f0	block	UB1_f0	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 0	-
+T0281	block.B1_f1	block	B1_f1	1	a loop body that breaks, depth 1, stratum 1	-
+T0282	block.WB1_f1	block	WB1_f1	1	a write-phase loop body that breaks, depth 1, stratum 1	-
+T0283	block.SB1_f1	block	SB1_f1	1	a solo-phase loop body that breaks, depth 1, stratum 1	-
+T0284	block.XB1_f1	block	XB1_f1	1	a split-phase loop body that breaks, depth 1, stratum 1	-
+T0285	block.AB1_f1	block	AB1_f1	1	a slot-phase loop body that breaks, depth 1, stratum 1	-
+T0286	block.UB1_f1	block	UB1_f1	1	a uniform loop body that breaks on a uniform condition, depth 1, stratum 1	-
+T0287	block.B2_f0	block	B2_f0	1	a loop body that breaks, depth 2, stratum 0	-
+T0288	block.WB2_f0	block	WB2_f0	1	a write-phase loop body that breaks, depth 2, stratum 0	-
+T0289	block.SB2_f0	block	SB2_f0	1	a solo-phase loop body that breaks, depth 2, stratum 0	-
+T0290	block.XB2_f0	block	XB2_f0	1	a split-phase loop body that breaks, depth 2, stratum 0	-
+T0291	block.AB2_f0	block	AB2_f0	1	a slot-phase loop body that breaks, depth 2, stratum 0	-
+T0292	block.UB2_f0	block	UB2_f0	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 0	-
+T0293	block.B2_f1	block	B2_f1	1	a loop body that breaks, depth 2, stratum 1	-
+T0294	block.WB2_f1	block	WB2_f1	1	a write-phase loop body that breaks, depth 2, stratum 1	-
+T0295	block.SB2_f1	block	SB2_f1	1	a solo-phase loop body that breaks, depth 2, stratum 1	-
+T0296	block.XB2_f1	block	XB2_f1	1	a split-phase loop body that breaks, depth 2, stratum 1	-
+T0297	block.AB2_f1	block	AB2_f1	1	a slot-phase loop body that breaks, depth 2, stratum 1	-
+T0298	block.UB2_f1	block	UB2_f1	1	a uniform loop body that breaks on a uniform condition, depth 2, stratum 1	-
+T0299	block.B3_f0	block	B3_f0	1	a loop body that breaks, depth 3, stratum 0	-
+T0300	block.WB3_f0	block	WB3_f0	1	a write-phase loop body that breaks, depth 3, stratum 0	-
+T0301	block.SB3_f0	block	SB3_f0	1	a solo-phase loop body that breaks, depth 3, stratum 0	-
+T0302	block.XB3_f0	block	XB3_f0	1	a split-phase loop body that breaks, depth 3, stratum 0	-
+T0303	block.AB3_f0	block	AB3_f0	1	a slot-phase loop body that breaks, depth 3, stratum 0	-
+T0304	block.UB3_f0	block	UB3_f0	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 0	-
+T0305	block.B3_f1	block	B3_f1	1	a loop body that breaks, depth 3, stratum 1	-
+T0306	block.WB3_f1	block	WB3_f1	1	a write-phase loop body that breaks, depth 3, stratum 1	-
+T0307	block.SB3_f1	block	SB3_f1	1	a solo-phase loop body that breaks, depth 3, stratum 1	-
+T0308	block.XB3_f1	block	XB3_f1	1	a split-phase loop body that breaks, depth 3, stratum 1	-
+T0309	block.AB3_f1	block	AB3_f1	1	a slot-phase loop body that breaks, depth 3, stratum 1	-
+T0310	block.UB3_f1	block	UB3_f1	1	a uniform loop body that breaks on a uniform condition, depth 3, stratum 1	-
+T0311	block.B4_f0	block	B4_f0	1	a loop body that breaks, depth 4, stratum 0	-
+T0312	block.WB4_f0	block	WB4_f0	1	a write-phase loop body that breaks, depth 4, stratum 0	-
+T0313	block.SB4_f0	block	SB4_f0	1	a solo-phase loop body that breaks, depth 4, stratum 0	-
+T0314	block.XB4_f0	block	XB4_f0	1	a split-phase loop body that breaks, depth 4, stratum 0	-
+T0315	block.AB4_f0	block	AB4_f0	1	a slot-phase loop body that breaks, depth 4, stratum 0	-
+T0316	block.UB4_f0	block	UB4_f0	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 0	-
+T0317	block.B4_f1	block	B4_f1	1	a loop body that breaks, depth 4, stratum 1	-
+T0318	block.WB4_f1	block	WB4_f1	1	a write-phase loop body that breaks, depth 4, stratum 1	-
+T0319	block.SB4_f1	block	SB4_f1	1	a solo-phase loop body that breaks, depth 4, stratum 1	-
+T0320	block.XB4_f1	block	XB4_f1	1	a split-phase loop body that breaks, depth 4, stratum 1	-
+T0321	block.AB4_f1	block	AB4_f1	1	a slot-phase loop body that breaks, depth 4, stratum 1	-
+T0322	block.UB4_f1	block	UB4_f1	1	a uniform loop body that breaks on a uniform condition, depth 4, stratum 1	-
+T0323	block.B5_f0	block	B5_f0	1	a loop body that breaks, depth 5, stratum 0	-
+T0324	block.WB5_f0	block	WB5_f0	1	a write-phase loop body that breaks, depth 5, stratum 0	-
+T0325	block.SB5_f0	block	SB5_f0	1	a solo-phase loop body that breaks, depth 5, stratum 0	-
+T0326	block.XB5_f0	block	XB5_f0	1	a split-phase loop body that breaks, depth 5, stratum 0	-
+T0327	block.AB5_f0	block	AB5_f0	1	a slot-phase loop body that breaks, depth 5, stratum 0	-
+T0328	block.UB5_f0	block	UB5_f0	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 0	-
+T0329	block.B5_f1	block	B5_f1	1	a loop body that breaks, depth 5, stratum 1	-
+T0330	block.WB5_f1	block	WB5_f1	1	a write-phase loop body that breaks, depth 5, stratum 1	-
+T0331	block.SB5_f1	block	SB5_f1	1	a solo-phase loop body that breaks, depth 5, stratum 1	-
+T0332	block.XB5_f1	block	XB5_f1	1	a split-phase loop body that breaks, depth 5, stratum 1	-
+T0333	block.AB5_f1	block	AB5_f1	1	a slot-phase loop body that breaks, depth 5, stratum 1	-
+T0334	block.UB5_f1	block	UB5_f1	1	a uniform loop body that breaks on a uniform condition, depth 5, stratum 1	-
+T0335	vec3<u32>.gid	vec3<u32>	gid	3	global_invocation_id	-
+T0336	vec3<u32>.lid	vec3<u32>	lid	3	local_invocation_id	-
+T0337	vec3<u32>.wid	vec3<u32>	wid	3	workgroup_id	-
+T0338	vec3<u32>.nwg	vec3<u32>	nwg	3	num_workgroups	-
+T0339	u32.lidx	u32	lidx	1	local_invocation_index	-
+T0340	u32.rowid	u32	rowid	1	an id's component on the output's row axis (.y)	-
+T0341	u32.colid	u32	colid	1	an id's component on the output's column axis (.x)	-
+T0342	u32.lit64	u32	lit64	1	a literal 1..=64	1..=64
+T0343	u32.index	u32	index	1	any u32 used as a position (no ownership; wraps as WGSL defines)	0..=4294967295
+T0344	u32.count	u32	count	1	any u32 used as a size or a field's value (no ownership)	0..=4294967295
+T0345	f32.real	f32	real	1	a number	-3.4028234663852886e38..=3.4028234663852886e38
+T0346	bool.flag	bool	flag	1	a predicate that may differ between invocations	0,1
+T0347	block.start	block	start	1	the body of a module entry: it runs first in its dispatch, so a workgroup phase opening it needs no barrier before it	-
+T0348	f32.realw	f32	realw	1	the write-phase twin of f32.real: a value no foreign workgroup read reached	-
+T0349	f32.reala	f32	reala	1	the slot-phase twin of f32.real: a value no workgroup read reached	-
+T0350	vec2<f32>.real	vec2<f32>	real	2	a vector of 2 lanes: a number	-
+T0351	vec2<f32>.realw	vec2<f32>	realw	2	the write-phase twin of vec2<f32>.real: a value no foreign workgroup read reached	-
+T0352	vec2<f32>.reala	vec2<f32>	reala	2	the slot-phase twin of vec2<f32>.real: a value no workgroup read reached	-
+T0353	vec3<f32>.real	vec3<f32>	real	3	a vector of 3 lanes: a number	-
+T0354	vec3<f32>.realw	vec3<f32>	realw	3	the write-phase twin of vec3<f32>.real: a value no foreign workgroup read reached	-
+T0355	vec3<f32>.reala	vec3<f32>	reala	3	the slot-phase twin of vec3<f32>.real: a value no workgroup read reached	-
+T0356	vec4<f32>.real	vec4<f32>	real	4	a vector of 4 lanes: a number	-
+T0357	vec4<f32>.realw	vec4<f32>	realw	4	the write-phase twin of vec4<f32>.real: a value no foreign workgroup read reached	-
+T0358	vec4<f32>.reala	vec4<f32>	reala	4	the slot-phase twin of vec4<f32>.real: a value no workgroup read reached	-
+T0359	f16.real	f16	real	1	a half-precision number	-65504.0..=65504.0
+T0360	f16.realw	f16	realw	1	the write-phase twin of f16.real: a value no foreign workgroup read reached	-
+T0361	f16.reala	f16	reala	1	the slot-phase twin of f16.real: a value no workgroup read reached	-
+T0362	vec2<f16>.real	vec2<f16>	real	2	a vector of 2 lanes: a half-precision number	-
+T0363	vec2<f16>.realw	vec2<f16>	realw	2	the write-phase twin of vec2<f16>.real: a value no foreign workgroup read reached	-
+T0364	vec2<f16>.reala	vec2<f16>	reala	2	the slot-phase twin of vec2<f16>.real: a value no workgroup read reached	-
+T0365	vec3<f16>.real	vec3<f16>	real	3	a vector of 3 lanes: a half-precision number	-
+T0366	vec3<f16>.realw	vec3<f16>	realw	3	the write-phase twin of vec3<f16>.real: a value no foreign workgroup read reached	-
+T0367	vec3<f16>.reala	vec3<f16>	reala	3	the slot-phase twin of vec3<f16>.real: a value no workgroup read reached	-
+T0368	vec4<f16>.real	vec4<f16>	real	4	a vector of 4 lanes: a half-precision number	-
+T0369	vec4<f16>.realw	vec4<f16>	realw	4	the write-phase twin of vec4<f16>.real: a value no foreign workgroup read reached	-
+T0370	vec4<f16>.reala	vec4<f16>	reala	4	the slot-phase twin of vec4<f16>.real: a value no workgroup read reached	-
+T0371	u32.indexw	u32	indexw	1	the write-phase twin of u32.index: a value no foreign workgroup read reached	-
+T0372	u32.indexa	u32	indexa	1	the slot-phase twin of u32.index: a value no workgroup read reached	-
+T0373	vec2<u32>.index	vec2<u32>	index	2	a vector of 2 lanes: a u32 used as a position	-
+T0374	vec2<u32>.indexw	vec2<u32>	indexw	2	the write-phase twin of vec2<u32>.index: a value no foreign workgroup read reached	-
+T0375	vec2<u32>.indexa	vec2<u32>	indexa	2	the slot-phase twin of vec2<u32>.index: a value no workgroup read reached	-
+T0376	vec3<u32>.index	vec3<u32>	index	3	a vector of 3 lanes: a u32 used as a position	-
+T0377	vec3<u32>.indexw	vec3<u32>	indexw	3	the write-phase twin of vec3<u32>.index: a value no foreign workgroup read reached	-
+T0378	vec3<u32>.indexa	vec3<u32>	indexa	3	the slot-phase twin of vec3<u32>.index: a value no workgroup read reached	-
+T0379	vec4<u32>.index	vec4<u32>	index	4	a vector of 4 lanes: a u32 used as a position	-
+T0380	vec4<u32>.indexw	vec4<u32>	indexw	4	the write-phase twin of vec4<u32>.index: a value no foreign workgroup read reached	-
+T0381	vec4<u32>.indexa	vec4<u32>	indexa	4	the slot-phase twin of vec4<u32>.index: a value no workgroup read reached	-
+T0382	u32.countw	u32	countw	1	the write-phase twin of u32.count: a value no foreign workgroup read reached	-
+T0383	u32.counta	u32	counta	1	the slot-phase twin of u32.count: a value no workgroup read reached	-
+T0384	vec2<u32>.count	vec2<u32>	count	2	a vector of 2 lanes: a u32 used as a size	-
+T0385	vec2<u32>.countw	vec2<u32>	countw	2	the write-phase twin of vec2<u32>.count: a value no foreign workgroup read reached	-
+T0386	vec2<u32>.counta	vec2<u32>	counta	2	the slot-phase twin of vec2<u32>.count: a value no workgroup read reached	-
+T0387	vec3<u32>.count	vec3<u32>	count	3	a vector of 3 lanes: a u32 used as a size	-
+T0388	vec3<u32>.countw	vec3<u32>	countw	3	the write-phase twin of vec3<u32>.count: a value no foreign workgroup read reached	-
+T0389	vec3<u32>.counta	vec3<u32>	counta	3	the slot-phase twin of vec3<u32>.count: a value no workgroup read reached	-
+T0390	vec4<u32>.count	vec4<u32>	count	4	a vector of 4 lanes: a u32 used as a size	-
+T0391	vec4<u32>.countw	vec4<u32>	countw	4	the write-phase twin of vec4<u32>.count: a value no foreign workgroup read reached	-
+T0392	vec4<u32>.counta	vec4<u32>	counta	4	the slot-phase twin of vec4<u32>.count: a value no workgroup read reached	-
+T0393	i32.int	i32	int	1	a signed integer	-2147483648..=2147483647
+T0394	i32.intw	i32	intw	1	the write-phase twin of i32.int: a value no foreign workgroup read reached	-
+T0395	i32.inta	i32	inta	1	the slot-phase twin of i32.int: a value no workgroup read reached	-
+T0396	vec2<i32>.int	vec2<i32>	int	2	a vector of 2 lanes: a signed integer	-
+T0397	vec2<i32>.intw	vec2<i32>	intw	2	the write-phase twin of vec2<i32>.int: a value no foreign workgroup read reached	-
+T0398	vec2<i32>.inta	vec2<i32>	inta	2	the slot-phase twin of vec2<i32>.int: a value no workgroup read reached	-
+T0399	vec3<i32>.int	vec3<i32>	int	3	a vector of 3 lanes: a signed integer	-
+T0400	vec3<i32>.intw	vec3<i32>	intw	3	the write-phase twin of vec3<i32>.int: a value no foreign workgroup read reached	-
+T0401	vec3<i32>.inta	vec3<i32>	inta	3	the slot-phase twin of vec3<i32>.int: a value no workgroup read reached	-
+T0402	vec4<i32>.int	vec4<i32>	int	4	a vector of 4 lanes: a signed integer	-
+T0403	vec4<i32>.intw	vec4<i32>	intw	4	the write-phase twin of vec4<i32>.int: a value no foreign workgroup read reached	-
+T0404	vec4<i32>.inta	vec4<i32>	inta	4	the slot-phase twin of vec4<i32>.int: a value no workgroup read reached	-
+T0405	bool.flagw	bool	flagw	1	the write-phase twin of bool.flag: a value no foreign workgroup read reached	-
+T0406	bool.flaga	bool	flaga	1	the slot-phase twin of bool.flag: a value no workgroup read reached	-
+T0407	vec2<bool>.flag	vec2<bool>	flag	2	a vector of 2 lanes: a predicate	-
+T0408	vec2<bool>.flagw	vec2<bool>	flagw	2	the write-phase twin of vec2<bool>.flag: a value no foreign workgroup read reached	-
+T0409	vec2<bool>.flaga	vec2<bool>	flaga	2	the slot-phase twin of vec2<bool>.flag: a value no workgroup read reached	-
+T0410	vec3<bool>.flag	vec3<bool>	flag	3	a vector of 3 lanes: a predicate	-
+T0411	vec3<bool>.flagw	vec3<bool>	flagw	3	the write-phase twin of vec3<bool>.flag: a value no foreign workgroup read reached	-
+T0412	vec3<bool>.flaga	vec3<bool>	flaga	3	the slot-phase twin of vec3<bool>.flag: a value no workgroup read reached	-
+T0413	vec4<bool>.flag	vec4<bool>	flag	4	a vector of 4 lanes: a predicate	-
+T0414	vec4<bool>.flagw	vec4<bool>	flagw	4	the write-phase twin of vec4<bool>.flag: a value no foreign workgroup read reached	-
+T0415	vec4<bool>.flaga	vec4<bool>	flaga	4	the slot-phase twin of vec4<bool>.flag: a value no workgroup read reached	-
+T0416	f32.bare	f32	bare	1	a bare literal of f32.real: a const-expression, so it stands only where constant evaluation cannot fail	-3.4028234663852886e38..=3.4028234663852886e38
+T0417	f16.bare	f16	bare	1	a bare literal of f16.real: a const-expression, so it stands only where constant evaluation cannot fail	-65504.0..=65504.0
+T0418	u32.bare_index	u32	bare_index	1	a bare literal of u32.index: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0419	u32.bare_count	u32	bare_count	1	a bare literal of u32.count: a const-expression, so it stands only where constant evaluation cannot fail	0..=4294967295
+T0420	i32.bare	i32	bare	1	a bare literal of i32.int: a const-expression, so it stands only where constant evaluation cannot fail	-2147483648..=2147483647
+T0421	bool.bare	bool	bare	1	a bare literal of bool.flag: a const-expression, so it stands only where constant evaluation cannot fail	0,1
+T0422	f32.nonneg	f32	nonneg	1	a non-negative width	0.0..=3.4028234663852886e+38
+T0423	i32.nonneg	i32	nonneg	1	a non-negative width	0..=2147483647
+T0424	bounds<f32>.ordered	bounds<f32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0425	bounds<i32>.ordered	bounds<i32>	ordered	1	a pair (lo, hi) with lo <= hi by construction	-
+T0426	u32.lit4096	u32	lit4096	1	a literal 1..=4096	1..=4096
+T0427	u32.uniform	u32	uniform	1	a u32 the same in every invocation of the workgroup	-
+T0428	bool.uflag	bool	uflag	1	a predicate the same in every invocation	-
+T0429	mat2x2<f32>.real	mat2x2<f32>	real	4	a matrix of 2 columns and 2 rows	-
+T0430	mat2x2<f32>.realw	mat2x2<f32>	realw	4	the write-phase twin of mat2x2<f32>.real: a value no foreign workgroup read reached	-
+T0431	mat2x2<f32>.reala	mat2x2<f32>	reala	4	the slot-phase twin of mat2x2<f32>.real: a value no workgroup read reached	-
+T0432	mat2x3<f32>.real	mat2x3<f32>	real	6	a matrix of 2 columns and 3 rows	-
+T0433	mat2x3<f32>.realw	mat2x3<f32>	realw	6	the write-phase twin of mat2x3<f32>.real: a value no foreign workgroup read reached	-
+T0434	mat2x3<f32>.reala	mat2x3<f32>	reala	6	the slot-phase twin of mat2x3<f32>.real: a value no workgroup read reached	-
+T0435	mat2x4<f32>.real	mat2x4<f32>	real	8	a matrix of 2 columns and 4 rows	-
+T0436	mat2x4<f32>.realw	mat2x4<f32>	realw	8	the write-phase twin of mat2x4<f32>.real: a value no foreign workgroup read reached	-
+T0437	mat2x4<f32>.reala	mat2x4<f32>	reala	8	the slot-phase twin of mat2x4<f32>.real: a value no workgroup read reached	-
+T0438	mat3x2<f32>.real	mat3x2<f32>	real	6	a matrix of 3 columns and 2 rows	-
+T0439	mat3x2<f32>.realw	mat3x2<f32>	realw	6	the write-phase twin of mat3x2<f32>.real: a value no foreign workgroup read reached	-
+T0440	mat3x2<f32>.reala	mat3x2<f32>	reala	6	the slot-phase twin of mat3x2<f32>.real: a value no workgroup read reached	-
+T0441	mat3x3<f32>.real	mat3x3<f32>	real	9	a matrix of 3 columns and 3 rows	-
+T0442	mat3x3<f32>.realw	mat3x3<f32>	realw	9	the write-phase twin of mat3x3<f32>.real: a value no foreign workgroup read reached	-
+T0443	mat3x3<f32>.reala	mat3x3<f32>	reala	9	the slot-phase twin of mat3x3<f32>.real: a value no workgroup read reached	-
+T0444	mat3x4<f32>.real	mat3x4<f32>	real	12	a matrix of 3 columns and 4 rows	-
+T0445	mat3x4<f32>.realw	mat3x4<f32>	realw	12	the write-phase twin of mat3x4<f32>.real: a value no foreign workgroup read reached	-
+T0446	mat3x4<f32>.reala	mat3x4<f32>	reala	12	the slot-phase twin of mat3x4<f32>.real: a value no workgroup read reached	-
+T0447	mat4x2<f32>.real	mat4x2<f32>	real	8	a matrix of 4 columns and 2 rows	-
+T0448	mat4x2<f32>.realw	mat4x2<f32>	realw	8	the write-phase twin of mat4x2<f32>.real: a value no foreign workgroup read reached	-
+T0449	mat4x2<f32>.reala	mat4x2<f32>	reala	8	the slot-phase twin of mat4x2<f32>.real: a value no workgroup read reached	-
+T0450	mat4x3<f32>.real	mat4x3<f32>	real	12	a matrix of 4 columns and 3 rows	-
+T0451	mat4x3<f32>.realw	mat4x3<f32>	realw	12	the write-phase twin of mat4x3<f32>.real: a value no foreign workgroup read reached	-
+T0452	mat4x3<f32>.reala	mat4x3<f32>	reala	12	the slot-phase twin of mat4x3<f32>.real: a value no workgroup read reached	-
+T0453	mat4x4<f32>.real	mat4x4<f32>	real	16	a matrix of 4 columns and 4 rows	-
+T0454	mat4x4<f32>.realw	mat4x4<f32>	realw	16	the write-phase twin of mat4x4<f32>.real: a value no foreign workgroup read reached	-
+T0455	mat4x4<f32>.reala	mat4x4<f32>	reala	16	the slot-phase twin of mat4x4<f32>.real: a value no workgroup read reached	-
+T0456	u32.bits	u32	bits	1	a bit field: masks, packed lanes; no position, no size	-
+T0457	u32.bitsw	u32	bitsw	1	the write-phase twin of u32.bits: a value no foreign workgroup read reached	-
+T0458	u32.bitsa	u32	bitsa	1	the slot-phase twin of u32.bits: a value no workgroup read reached	-
+T0459	u32.hash32	u32	hash32	1	a 32-bit hash state	-
+T0460	u32.code4	u32	code4	1	a codebook entry below 4	0..=3
+T0461	u32.code8	u32	code8	1	a codebook entry below 8	0..=7
+T0462	u32.code16	u32	code16	1	a codebook entry below 16	0..=15
+T0463	u32.code1024	u32	code1024	1	a codebook entry below 1024	0..=1023
+T0464	i32.q15_16	i32	q15_16	1	fixed point, 16 fractional bits; saturating arithmetic only	-2147483648..=2147483647
+T0465	bool.sign	bool	sign	1	+1/-1 as a bit	0,1
+T0466	reg<f32>.real	reg<f32>	real	1	a named f32 register rf0..rf255, initialised to zero: a name, never a value	-
+T0467	reg<u32>.index	reg<u32>	index	1	a named u32 register ru0..ru255, initialised to zero: a name, never a value	-
+T0468	reg<bool>.flag	reg<bool>	flag	1	a named bool register rb0..rb63, initialised to zero: a name, never a value	-
+T0469	reg<i32>.int	reg<i32>	int	1	a named i32 register rn0..rn63, initialised to zero: a name, never a value	-
+T0470	reg<f16>.real	reg<f16>	real	1	a named f16 register rh0..rh63, initialised to zero: a name, never a value	-
+T0471	reg<vec4<f32>>.real	reg<vec4<f32>>	real	1	a named vec4<f32> register v0..v127, initialised to zero: a name, never a value	-
+T0472	reg<vec2<f32>>.real	reg<vec2<f32>>	real	1	a named vec2<f32> register w0..w63, initialised to zero: a name, never a value	-
+T0473	reg<vec3<f32>>.real	reg<vec3<f32>>	real	1	a named vec3<f32> register C0..C63, initialised to zero: a name, never a value	-
+T0474	reg<vec2<u32>>.index	reg<vec2<u32>>	index	1	a named vec2<u32> register rvu2_0..rvu2_31, initialised to zero: a name, never a value	-
+T0475	reg<vec3<u32>>.index	reg<vec3<u32>>	index	1	a named vec3<u32> register rvu3_0..rvu3_31, initialised to zero: a name, never a value	-
+T0476	reg<vec4<u32>>.index	reg<vec4<u32>>	index	1	a named vec4<u32> register rvu4_0..rvu4_31, initialised to zero: a name, never a value	-
+T0477	reg<vec2<i32>>.int	reg<vec2<i32>>	int	1	a named vec2<i32> register rvi2_0..rvi2_31, initialised to zero: a name, never a value	-
+T0478	reg<vec3<i32>>.int	reg<vec3<i32>>	int	1	a named vec3<i32> register rvi3_0..rvi3_31, initialised to zero: a name, never a value	-
+T0479	reg<vec4<i32>>.int	reg<vec4<i32>>	int	1	a named vec4<i32> register rvi4_0..rvi4_31, initialised to zero: a name, never a value	-
+T0480	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	1	a named vec2<bool> register rvb2_0..rvb2_31, initialised to zero: a name, never a value	-
+T0481	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	1	a named vec3<bool> register rvb3_0..rvb3_31, initialised to zero: a name, never a value	-
+T0482	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	1	a named vec4<bool> register rvb4_0..rvb4_31, initialised to zero: a name, never a value	-
+T0483	reg<vec2<f16>>.real	reg<vec2<f16>>	real	1	a named vec2<f16> register rvh2_0..rvh2_31, initialised to zero: a name, never a value	-
+T0484	reg<vec3<f16>>.real	reg<vec3<f16>>	real	1	a named vec3<f16> register rvh3_0..rvh3_31, initialised to zero: a name, never a value	-
+T0485	reg<vec4<f16>>.real	reg<vec4<f16>>	real	1	a named vec4<f16> register rvh4_0..rvh4_31, initialised to zero: a name, never a value	-
+T0486	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	1	a named mat2x2<f32> register x0..x15, initialised to zero: a name, never a value	-
+T0487	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	1	a named mat3x3<f32> register y0..y15, initialised to zero: a name, never a value	-
+T0488	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	1	a named mat4x4<f32> register z0..z15, initialised to zero: a name, never a value	-
+T0489	u32.pidx_4	u32	pidx_4	1	an index below 16, by the mask its row writes	-
+T0490	u32.pidx_4w	u32	pidx_4w	1	the write-phase twin of u32.pidx_4: a value no foreign workgroup read reached	-
+T0491	u32.pidx_4a	u32	pidx_4a	1	the slot-phase twin of u32.pidx_4: a value no workgroup read reached	-
+T0492	u32.pidx_6	u32	pidx_6	1	an index below 64, by the mask its row writes	-
+T0493	u32.pidx_6w	u32	pidx_6w	1	the write-phase twin of u32.pidx_6: a value no foreign workgroup read reached	-
+T0494	u32.pidx_6a	u32	pidx_6a	1	the slot-phase twin of u32.pidx_6: a value no workgroup read reached	-
+T0495	u32.pidx_7	u32	pidx_7	1	an index below 128, by the mask its row writes	-
+T0496	u32.pidx_7w	u32	pidx_7w	1	the write-phase twin of u32.pidx_7: a value no foreign workgroup read reached	-
+T0497	u32.pidx_7a	u32	pidx_7a	1	the slot-phase twin of u32.pidx_7: a value no workgroup read reached	-
+T0498	u32.pidx_8	u32	pidx_8	1	an index below 256, by the mask its row writes	-
+T0499	u32.pidx_8w	u32	pidx_8w	1	the write-phase twin of u32.pidx_8: a value no foreign workgroup read reached	-
+T0500	u32.pidx_8a	u32	pidx_8a	1	the slot-phase twin of u32.pidx_8: a value no workgroup read reached	-
+T0501	parr<f32,64>.real	parr<f32,64>	real	1	a private array of 64 f32: pf0..pf31	-
+T0502	parr<u32,16>.index	parr<u32,16>	index	1	a private array of 16 u32: pi0..pi19	-
+T0503	parr<u32,64>.index	parr<u32,64>	index	1	a private array of 64 u32: pj0..pj7	-
+T0504	parr<u32,128>.index	parr<u32,128>	index	1	a private array of 128 u32: pk0..pk7	-
+T0505	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..pb11	-
+T0506	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv23	-
+T0507	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq15	-
+T0508	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq15	-
+T0509	parr<f32,128>.real	parr<f32,128>	real	1	a private array of 128 f32: pfk0..pfk7	-
+T0510	parr<f32,256>.real	parr<f32,256>	real	1	a private array of 256 f32: pfh0..pfh7	-
+T0511	parr<u32,256>.index	parr<u32,256>	index	1	a private array of 256 u32: pjh0..pjh7	-
+T0512	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
+T0513	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
+T0514	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
+T0515	u32.boundx6a	u32	boundx6a	1	the slot-phase twin of u32.boundx6: a value no workgroup read reached	-
+T0516	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
+T0517	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
+T0518	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
+T0519	u32.boundx12a	u32	boundx12a	1	the slot-phase twin of u32.boundx12: a value no workgroup read reached	-
+T0520	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
+T0521	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
+T0522	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
+T0523	u32.boundx18a	u32	boundx18a	1	the slot-phase twin of u32.boundx18: a value no workgroup read reached	-
+T0524	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
+T0525	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
+T0526	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
+T0527	u32.boundx24a	u32	boundx24a	1	the slot-phase twin of u32.boundx24: a value no workgroup read reached	-
+T0528	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
+T0529	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
+T0530	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
+T0531	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
+T0532	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
+T0533	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
+T0534	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
+T0535	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
+T0536	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
+T0537	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
+T0538	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
+T0539	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T0540	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
+T0541	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
+T0542	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
+T0543	u32.plast_8	u32	plast_8	1	the last index of a private array held in a 256-element array: a bare literal	0..=255
+T0544	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
+T0545	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
+T0546	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
+T0547	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
+T0548	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
+T0549	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
+T0550	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
+T0551	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
+T0552	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
+T0553	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
+T0554	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
+T0555	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
+T0556	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
+T0557	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
+T0558	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2067
+T0559	u32.zown	u32	zown	1	the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)	-
+T0560	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
+T0561	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3

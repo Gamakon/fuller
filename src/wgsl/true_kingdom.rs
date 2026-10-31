@@ -504,7 +504,44 @@ impl TrueKingdom {
     /// row's spelling, then put the declarations of the rows the tree holds in the
     /// entry point behind the prologue. Nothing else is done to the text.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
-        Ok(format!("{}{}", self.prologue, self.spell(tree)?))
+        Ok(format!("{}{}", self.prologue_for(tree)?, self.spell(tree)?))
+    }
+
+    /// The words of the plain pool `tree` declares (`kingdoms/wgsl_true/pool.py`, the pool's extent): the largest
+    /// `u32.wgext` its entries name; `None` for a tree that names none (a table with no pool, or a tree with no entry).
+    pub fn pool_extent(&self, tree: &Tree) -> Result<Option<u64>, String> {
+        let mut out: Option<u64> = None;
+        let mut stack = vec![tree];
+        while let Some(n) = stack.pop() {
+            stack.extend(n.kids.iter());
+            // a share row (a symbol past the base rows) is a name or a binding, never an extent
+            let Some(row) = self.rows.get(n.symbol as usize) else { continue };
+            if self.type_name(row.out) == "u32.wgext" {
+                let v = match n.const_index {
+                    Some(_) => self.const_value(n),
+                    None => row.spelling.trim().parse::<u64>().ok(),
+                }
+                .ok_or_else(|| format!("our software has a bug: {} gives u32.wgext no number", row.name))?;
+                out = Some(out.map_or(v, |o| o.max(v)));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The prologue of `tree`'s kernel: the table's, with the pool's two lines (`const WG_PW: u32 = Pu;` and
+    /// `var<workgroup> wg_pool: array<u32, P + 4>;`, P the table's largest extent) spelled at the tree's extent E
+    /// ([`TrueKingdom::pool_extent`]). Every row bounds the pool by `WG_PW`, so every subscript stays below E + 4.
+    pub fn prologue_for(&self, tree: &Tree) -> Result<String, String> {
+        let Some(e) = self.pool_extent(tree)? else { return Ok(self.prologue.clone()) };
+        let p = self.pool_words();
+        if e == 0 || e % 4 != 0 || e > p {
+            return Err(format!("our software has a bug: a pool extent of {e} words, outside 4..={p} in steps of 4"));
+        }
+        let (c_old, a_old) = (format!("const WG_PW: u32 = {p}u;\n"), format!("var<workgroup> wg_pool: array<u32, {}>;\n", p + 4));
+        if !self.prologue.contains(&c_old) || !self.prologue.contains(&a_old) {
+            return Err(format!("our software has a bug: the table names u32.wgext but its prologue does not declare WG_PW = {p}u and wg_pool of {} words", p + 4));
+        }
+        Ok(self.prologue.replacen(&c_old, &format!("const WG_PW: u32 = {e}u;\n"), 1).replacen(&a_old, &format!("var<workgroup> wg_pool: array<u32, {}>;\n", e + 4), 1))
     }
 
     /// The declarations a tree's kernel needs: the `declares` fragments of the rows of its nodes, deduplicated, in the

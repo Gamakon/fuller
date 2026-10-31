@@ -31,10 +31,17 @@ Outside a phase every element is an ordinary value (`wg.get_*`, foreign reads). 
 interface's determinism, batch 8): a read-modify-write, load or store at any element is one atomic operation, never a
 race, its old value order-dependent (`u32.atomicold`). `workgroupUniformLoad` of a pool word is a uniform value.
 """
+import os
+import re
+
 from lib import *
 from start import LEAD, START, first_phase
 
 P_WORDS = 6080
+# THE POOL'S EXTENT (2026-10-31): every row, helper and phase spells the pool's length as this module-scope constant,
+# never as a number, so an expressed kernel declares only the words its tree names (`u32.wgext`) and every guard and
+# clamp follows it; the array holds four words past it (the guard word, rounded to 16 bytes)
+PW = "WG_PW"
 # the guard word (UI1, 2026-10-23): the plain pool holds one word past P_WORDS that no row ever writes (every write is
 # guarded `o < P_WORDS`), and every read is clamped onto it rather than onto the pool's last word. Clamping onto word
 # P_WORDS - 1 let a read past the end inside a phase land on an element another invocation may own (its residue
@@ -92,6 +99,9 @@ def declare(iface):
     T("u32.wgabase", "a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)", 1, f"0..={A_WORDS - 1}")
     for t in ("u32.wgblk", "u32.wgbase", "u32.wgown", "u32.wgabase"):
         SAFE_ARGS.add(t)
+    # the pool's extent (2026-10-31): the table's lines are its largest, P_WORDS; an expressed kernel declares the
+    # extent its tree names (`u32.wgext`, TrueKingdom::prologue_for), and every row spells the bound as WG_PW
+    PROLOGUE_TOP.append(f"const {PW}: u32 = {P_WORDS}u;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_pool: array<u32, {P_WORDS + 4}>;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_apool: array<atomic<u32>, {A_WORDS}>;")
     PROLOGUE_TOP.append(f"var<workgroup> wg_scnt: array<atomic<u32>, {S_COUNTERS}>;")
@@ -107,27 +117,29 @@ def declare(iface):
 
 
 def build(iface):
+    C("literal.wgext", "u32.wgext", "{v}", [str(i) for i in range(4, P_WORDS + 1, 4)], "?_wgext: the pool's words, bare (a comment of the entry; the module's WG_PW is the largest)")
+    R("own.u32_wgext", "u32.wgext", [], str(P_WORDS), "the table's whole pool")
     C("literal.wgblk", "u32.wgblk", "{v}u", [str(i) for i in range(0, 512)], "?_wgblk: a block count, bare (its product with KNOB_THREADS is at most 511 * 256)")
     R("own.u32_wgblk", "u32.wgblk", [], "0u")
     R("wg.base", "u32.wgbase", ["u32.wgblk"], "({0} * KNOB_THREADS)", "a region's base: m blocks of the workgroup size")
     R("own.u32_wgbase", "u32.wgbase", [], "0u", "the pool's first region")
     R("wg.own_x", "u32.wgown", ["u32.indexw"], "(lidx + {0} * KNOB_THREADS)", "any per-invocation k: lidx + k * T is injective across invocations")
     R("own.u32_wgown", "u32.wgown", [], "lidx", "each invocation's own element of the region's first T")
-    last = P_WORDS  # the guard word: reads clamp onto it, no write reaches it
+    last = PW  # the guard word: reads clamp onto it, no write reaches it
     for key, vt_, rd, wr in ELEMS:
-        cell = f"wg_pool[min({{0}} + {{1}}, {last}u)]"
+        cell = f"wg_pool[min({{0}} + {{1}}, {last})]"
         R(f"wg.get_{key}", vt_, ["u32.wgbase", "u32.index"], rd.format(cell), "a foreign read of a region's element: an ordinary value outside a phase; no w twin")
         R(f"wg.get_own_{key}", w_of(vt_), ["u32.wgbase", "u32.wgown"], rd.format(cell), "an own read: a w value")
         R(f"wg.get_own_plain_{key}", vt_, ["u32.wgbase", "u32.wgown"], rd.format(cell), "its plain twin")
-    helper("wg_v4", f"fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, {last}u)]), bitcast<f32>(wg_pool[min(b + ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, {last}u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, {last}u)])); }}")
-    helper("wg_set_v4", f"fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) {{ if (o < {P_WORDS}u) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < {P_WORDS}u) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < {P_WORDS}u) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < {P_WORDS}u) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    helper("wg_v4", f"fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, {last})]), bitcast<f32>(wg_pool[min(b + ls + i, {last})]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, {last})]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, {last})])); }}")
+    helper("wg_set_v4", f"fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) {{ if (o < {PW}) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls < {PW}) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls < {PW}) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls < {PW}) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
     # the split phase's window (UI1 batch 10): its writes stand in [sl, sp), its reads outside it (a read in the window
     # reads the guard word instead), so with sl = 0 it is the split of batch 9 and with any sl the written region may
     # stand anywhere in the pool
-    helper("xw", f"fn xw(a: u32, sl: u32, sp: u32) -> u32 {{ return select(min(a, {last}u), {last}u, a >= sl && a < sp); }}")
+    helper("xw", f"fn xw(a: u32, sl: u32, sp: u32) -> u32 {{ return select(min(a, {last}), {last}, a >= sl && a < sp); }}")
     # a lane is written only below the guard word as well as below the split: a split sp past the pool (a wgbase up to
     # 4096 blocks) put lanes at 1,028.. of a 1,028-word pool (true_reader random module 181, 2026-10-31)
-    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) {{ if (o >= sl && o < sp && o < {last}u) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls >= sl && o + ls < sp && o + ls < {last}u) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls >= sl && o + 2u * ls < sp && o + 2u * ls < {last}u) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls >= sl && o + 3u * ls < sp && o + 3u * ls < {last}u) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) {{ if (o >= sl && o < sp && o < {last}) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls >= sl && o + ls < sp && o + ls < {last}) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls >= sl && o + 2u * ls < sp && o + 2u * ls < {last}) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls >= sl && o + 3u * ls < sp && o + 3u * ls < {last}) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
     helper("wg_v4_above", f"fn wg_v4_above(b: u32, ls: u32, i: u32, sl: u32, sp: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[xw(b + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 2u * ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 3u * ls + i, sl, sp)])); }}")
     R("wg.get_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.index"], "wg_v4({0}, {1}, {2})", "element i of a vec4 array kept as four lane regions (lane stride the second base)")
     R("wg.get_own_v4", "vec4<f32>.realw", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "an own read: a w value")
@@ -135,29 +147,29 @@ def build(iface):
     for x, d, k in rungs("WP"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.set_{key}_{x}{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write, guarded by the pool's length (never clamped)")
+            R(f"wg.set_{key}_{x}{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write, guarded by the pool's length (never clamped)")
         R(f"wg.set_v4_{x}{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4({0} + {2}, {1}, {3});", "an own write of a vec4 element: its four lanes, each an own write of its lane region")
     for x, d, k in rungs("X"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.set_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write in the split's window")
-            R(f"wg.qset_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write below the split (qm = T in a split phase)")
+            R(f"wg.set_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.wgown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp && o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "an own write in the split's window")
+            R(f"wg.qset_{key}_X{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o >= sl && o < sp && o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write below the split (qm = T in a split phase)")
             R(f"wg.hload_{key}_X{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format("wg_pool[xw({1} + {2}, sl, sp)]") + ";", "a read at or above the split: no write of the phase reaches it")
         R(f"wg.set_v4_X{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.wgown", "vec4<f32>.realw"], "wg_set_v4_below({0} + {2}, {1}, {3}, sl, sp);")
         R(f"wg.hload_v4_X{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase", "u32.indexw"], "{0} = wg_v4_above({1}, {2}, {3}, sl, sp);")
     for x, d, k in rungs("S"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.put_{key}_S{d}_f{k}", s, ["u32.wgbase", "u32.index", vt_], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[min(o, " + str(P_WORDS) + "u)] = " + wr.format("{2}") + "; } }", "the solo invocation writes any element: no other invocation touches the pool in a solo phase; the index is clamped inside its guard (an identity there) so a constant base and a bare literal never make a constant index past the pool, a shader-creation error")
+            R(f"wg.put_{key}_S{d}_f{k}", s, ["u32.wgbase", "u32.index", vt_], "{ let o = {0} + {1}; if (o < " + PW + ") { wg_pool[min(o, " + PW + ")] = " + wr.format("{2}") + "; } }", "the solo invocation writes any element: no other invocation touches the pool in a solo phase; the index is clamped inside its guard (an identity there) so a constant base and a bare literal never make a constant index past the pool, a shader-creation error")
         R(f"wg.put_v4_S{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", "u32.index", "vec4<f32>.real"], "wg_set_v4({0} + {2}, {1}, {3});")
     for x, d, k in rungs("P"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.pload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase"], "{0} = " + rd.format(f"wg_pool[min({{1}} + lidx + ps, {last}u)]") + ";", "the partner element, lidx + ps: no invocation writes it in a pair phase")
-            R(f"wg.qset_{key}_P{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write lidx + k qm (qm = T in a pair phase)")
-            R(f"wg.qload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.qown"], "{ let o = {1} + {2}; {0} = " + rd.format(f"wg_pool[min(o, {last}u)]") + "; }", "an active lane's own element, lidx + k qm: written only by this lane")
-            R(f"wg.pload_q_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{ let o = {1} + {2} * qm + lidx + ps; {0} = " + rd.format(f"wg_pool[min(o, {last}u)]") + "; }", "the partner of own element lidx + k qm: residue lidx + ps modulo qm, which no writer of the phase has")
-            R(f"wg.pload_x_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{ let o = {1} + {2} * KNOB_THREADS + lidx + ps; {0} = " + rd.format(f"wg_pool[min(o, {last}u)]") + "; }", "the partner of own element lidx + k T: residue lidx + ps modulo T, which no writer of the phase has")
+            R(f"wg.pload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase"], "{0} = " + rd.format(f"wg_pool[min({{1}} + lidx + ps, {last})]") + ";", "the partner element, lidx + ps: no invocation writes it in a pair phase")
+            R(f"wg.qset_{key}_P{d}_f{k}", s, ["u32.wgbase", "u32.qown", w_of(vt_)], "{ let o = {0} + {1}; if (o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "an active lane's own write lidx + k qm (qm = T in a pair phase)")
+            R(f"wg.qload_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.qown"], "{ let o = {1} + {2}; {0} = " + rd.format(f"wg_pool[min(o, {last})]") + "; }", "an active lane's own element, lidx + k qm: written only by this lane")
+            R(f"wg.pload_q_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{ let o = {1} + {2} * qm + lidx + ps; {0} = " + rd.format(f"wg_pool[min(o, {last})]") + "; }", "the partner of own element lidx + k qm: residue lidx + ps modulo qm, which no writer of the phase has")
+            R(f"wg.pload_x_{key}_P{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{ let o = {1} + {2} * KNOB_THREADS + lidx + ps; {0} = " + rd.format(f"wg_pool[min(o, {last})]") + "; }", "the partner of own element lidx + k T: residue lidx + ps modulo T, which no writer of the phase has")
         R(f"wg.pload_v4_P{d}_f{k}", s, [REGS["v4"], "u32.wgbase", "u32.wgbase"], "{0} = wg_v4({1}, {2}, lidx + ps);")
     # ---- the swap-pair phase (UI1 batch 10): sort and butterfly steps. The phase fixes a uniform power of two h (or 0,
     # `xh`), a mode and a span xs (a power of two). Invocation p's pair in block b is (b * xs + i, b * xs + (i | h)),
@@ -173,8 +185,8 @@ def build(iface):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
             for side, at in (("lo", "xidx(p, xh, xm)"), ("hi", "(xidx(p, xh, xm) | xh)")):
-                R(f"wg.xload_{side}_{key}_E{d}_f{k}", s, [REGS[key], "u32.xblk", "u32.wgown"], "{ let p = {2}; let i = " + at + "; {0} = " + rd.format(f"select(0u, wg_pool[min({{1}} * xs + i, {last}u)], xok(p, xh, xm) && i < xs)") + "; }", f"the {side} element of this invocation's pair in block {{1}} (0 when the pair is not taken)")
-                R(f"wg.xset_{side}_{key}_E{d}_f{k}", s, ["u32.xblk", "u32.wgown", w_of(vt_)], "{ let p = {1}; let i = " + at + "; let o = {0} * xs + i; if (xok(p, xh, xm) && i < xs && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", f"a write of the {side} element of this invocation's pair in block {{0}}")
+                R(f"wg.xload_{side}_{key}_E{d}_f{k}", s, [REGS[key], "u32.xblk", "u32.wgown"], "{ let p = {2}; let i = " + at + "; {0} = " + rd.format(f"select(0u, wg_pool[min({{1}} * xs + i, {last})], xok(p, xh, xm) && i < xs)") + "; }", f"the {side} element of this invocation's pair in block {{1}} (0 when the pair is not taken)")
+                R(f"wg.xset_{side}_{key}_E{d}_f{k}", s, ["u32.xblk", "u32.wgown", w_of(vt_)], "{ let p = {1}; let i = " + at + "; let o = {0} * xs + i; if (xok(p, xh, xm) && i < xs && o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", f"a write of the {side} element of this invocation's pair in block {{0}}")
     # ---- the block-write phase (UI1 batch 10): an invocation writes the C consecutive elements of its own block. The
     # phase fixes C (`bc`); invocation t's elements in block group g are g * (T * C) + t * C + j, j below C, g = b + k
     # with b a literal and k any per-invocation value below 4096. Distinct (g, t, j) name distinct words (t * C + j is
@@ -184,9 +196,9 @@ def build(iface):
     for x, d, k in rungs("Y"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.bset_{key}_Y{d}_f{k}", s, ["u32.bblk", "u32.indexw", "u32.indexw", w_of(vt_)], "{ let g = {1}; let o = ({0} + g) * (KNOB_THREADS * bc) + lidx * bc + min({2}, bc - 1u); if (g < 4096u && o < sp && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{3}") + "; } }", "a write of element j of this invocation's own block in group b + k, below the phase's split")
-            R(f"wg.yload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no block write of the phase reaches it")
-            R(f"wg.bload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.bblk", "u32.indexw", "u32.indexw"], "{ let g = {2}; let o = ({1} + g) * (KNOB_THREADS * bc) + lidx * bc + min({3}, bc - 1u); {0} = " + rd.format(f"select(0u, wg_pool[min(o, {last}u)], g < 4096u)") + "; }", "element j of this invocation's own block (0 past the groups)")
+            R(f"wg.bset_{key}_Y{d}_f{k}", s, ["u32.bblk", "u32.indexw", "u32.indexw", w_of(vt_)], "{ let g = {1}; let o = ({0} + g) * (KNOB_THREADS * bc) + lidx * bc + min({2}, bc - 1u); if (g < 4096u && o < sp && o < " + PW + ") { wg_pool[o] = " + wr.format("{3}") + "; } }", "a write of element j of this invocation's own block in group b + k, below the phase's split")
+            R(f"wg.yload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexw"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last})]") + ";", "a read at or above the split: no block write of the phase reaches it")
+            R(f"wg.bload_{key}_Y{d}_f{k}", s, [REGS[key], "u32.bblk", "u32.indexw", "u32.indexw"], "{ let g = {2}; let o = ({1} + g) * (KNOB_THREADS * bc) + lidx * bc + min({3}, bc - 1u); {0} = " + rd.format(f"select(0u, wg_pool[min(o, {last})], g < 4096u)") + "; }", "element j of this invocation's own block (0 past the groups)")
     # ---- the slot phase (UI1 batch 10): slot claiming. The phase fixes a split sp, a counter sc of wg_scnt and a span ss
     # (a power of two). Inside it `slot.take` sets a slot register to atomicAdd(&wg_scnt[sc], 1u): every take in the
     # phase returns a different value (one counter, only incremented by takes in the phase, and a workgroup's takes are
@@ -206,16 +218,16 @@ def build(iface):
         s = S(x, d, k)
         R(f"slot.take_A{d}_f{k}", s, ["reg<u32>.slot"], "{0} = atomicAdd(&wg_scnt[sc], 1u);", "a slot of the phase's counter")
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.sset_{key}_A{d}_f{k}", s, ["u32.xblk", "reg<u32>.slot", a_of(vt_)], "{ let s = {1}; let o = {0} * ss + s; if (s < ss && o < sp && o < " + str(P_WORDS) + "u) { wg_pool[o] = " + wr.format("{2}") + "; } }", "a write at a slot of the phase, below the split")
-            R(f"wg.aload_{key}_A{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split: no write of the phase reaches it")
+            R(f"wg.sset_{key}_A{d}_f{k}", s, ["u32.xblk", "reg<u32>.slot", a_of(vt_)], "{ let s = {1}; let o = {0} * ss + s; if (s < ss && o < sp && o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "a write at a slot of the phase, below the split")
+            R(f"wg.aload_{key}_A{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last})]") + ";", "a read at or above the split: no write of the phase reaches it")
     # ---- the group phase (UI1 batch 10): the leaders lidx % qg == 0 of groups of qg lanes write their own group elements
     # lidx / qg + k (T / qg), below a split, and read only at or above it; the a family has no workgroup read, so no
     # element below sp is read in the phase and no two leaders write one element.
     for x, d, k in rungs("G"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.gset_{key}_G{d}_f{k}", s, ["u32.wgbase", "u32.gown", a_of(vt_)], "{ let o = {0} + {1}; if (o < sp) { wg_pool[o] = " + wr.format("{2}") + "; } }", "a group leader's own write below the split")
-            R(f"wg.gload_{key}_G{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
+            R(f"wg.gset_{key}_G{d}_f{k}", s, ["u32.wgbase", "u32.gown", a_of(vt_)], "{ let o = {0} + {1}; if (o < sp && o < " + PW + ") { wg_pool[o] = " + wr.format("{2}") + "; } }", "a group leader's own write below the split")
+            R(f"wg.gload_{key}_G{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last})]") + ";", "a read at or above the split")
     # ---- the prefix table and the segment phase (UI1): a solo invocation fills the table (`seg.reset`, `seg.push`);
     # a segment phase writes element zb * zw + entry p + m of window p (m below the window's length) at a block zb of
     # zw words below the split, m the invocation's own offset lidx + k T. Two blocks never meet (each write stays below
@@ -231,8 +243,8 @@ def build(iface):
     for x, d, k in rungs("Z"):
         s = S(x, d, k)
         for key, vt_, rd, wr in ELEMS:
-            R(f"wg.zset_{key}_Z{d}_f{k}", s, ["u32.xblk", a_of("u32.index"), "u32.zown", a_of(vt_)], f"{{ let zp = min({{1}}, {n_}u); let zlo = wg_seg[zp]; let zhi = select(zlo, wg_seg[min(zp + 1u, {n_}u)], zp < wg_seg[{cnt}u]); let zm = {{2}}; if (zlo <= zhi && zm < zhi - zlo && zlo + zm < zw) {{ let o = {{0}} * zw + zlo + zm; if (o < sp) {{ wg_pool[o] = " + wr.format("{3}") + "; } } }", "a write at offset m of window p of the prefix table, in block zb of the phase's zw words, below the split")
-            R(f"wg.zload_{key}_Z{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
+            R(f"wg.zset_{key}_Z{d}_f{k}", s, ["u32.xblk", a_of("u32.index"), "u32.zown", a_of(vt_)], f"{{ let zp = min({{1}}, {n_}u); let zlo = wg_seg[zp]; let zhi = select(zlo, wg_seg[min(zp + 1u, {n_}u)], zp < wg_seg[{cnt}u]); let zm = {{2}}; if (zlo <= zhi && zm < zhi - zlo && zlo + zm < zw) {{ let o = {{0}} * zw + zlo + zm; if (o < sp && o < {PW}) {{ wg_pool[o] = " + wr.format("{3}") + "; } } }", "a write at offset m of window p of the prefix table, in block zb of the phase's zw words, below the split")
+            R(f"wg.zload_{key}_Z{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last})]") + ";", "a read at or above the split")
     R("wg.zown_x", "u32.zown", ["u32.indexa"], "(lidx + {0} * KNOB_THREADS)", "an own offset: lidx + k * T is injective across invocations")
     R("own.u32_zown", "u32.zown", [], "lidx", "the invocation's own offset in the window's first T")
     def phase(name, d, k, args, spell, note):
@@ -249,7 +261,7 @@ def build(iface):
         phase(f"wg.zsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.xspan", B("Z", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let zw = {1}; {2} } workgroupBarrier(); {3}", "the segment phase: writes into the windows of the prefix table, blocks of zw words below sp; reads at or above sp")
         phase(f"wg.gsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")
         phase(f"wg.slot_L{d}_f{k}", d, k, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
-        phase(f"wg.bphase_L{d}_f{k}", d, k, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
+        phase(f"wg.bphase_L{d}_f{k}", d, k, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + PW + "; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
         phase(f"wg.bsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let bc = {1}; {2} } workgroupBarrier(); {3}", "the block-write phase with a split: block writes below sp, reads of other arrays at or above it")
         phase(f"wg.xchg_L{d}_f{k}", d, k, ["u32.uniform", "u32.xmode", "u32.xspan", B("E", d, k), B("L", d, k)], "workgroupBarrier(); { let xh0 = {0}; let xh = xh0 & (0u - xh0); let xm = {1}; let xs = {2}; {3} } workgroupBarrier(); {4}", "the swap-pair phase: each invocation writes only the pairs (i, i | h) its own elements name, h a power of two, in blocks of xs words")
         phase(f"wg.phase_L{d}_f{k}", d, k, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
@@ -260,7 +272,7 @@ def build(iface):
         phase(f"wg.qsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
         phase(f"wg.solo_L{d}_f{k}", d, k, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
         phase(f"wg.solo_at_L{d}_f{k}", d, k, ["u32.uniform", B("S", d, k), B("L", d, k)], "workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}", "the phase of the one invocation a uniform value names (lidx == u, the same u in every invocation)")
-        R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + str(last) + "u)]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
+        R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + last + ")]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
     R("own.u32_atomicold", "u32.atomicold", [], "lit_u32(0u)", "a value whose consumer discards it")
     R("own.u32_atomicoldw", "u32.atomicoldw", [], "lit_u32(0u)", "its w twin")
     if DEPTH["A"]:
@@ -293,3 +305,111 @@ def build(iface):
     for x, d, k in rungs("LCSWPXEYAGZ"):
         it, vt_ = (fam(x, "u32.index"), fam(x, "u32.index"))
         R(f"atomic.wg_store_{x}{d}_f{k}", S(x, d, k), ["u32.wgabase", it, vt_], "atomicStore(&wg_apool[min({0} + {1}, " + str(alast) + "u)], {2});", "an atomic store at any element: one atomic operation, never a race")
+
+
+# ---------------------------------------------------------------- the witness (the pool's extent, 2026-10-31)
+
+def _top_split(text, sep):
+    """`text` split at `sep` outside parentheses and brackets."""
+    out, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        c = text[i]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif depth == 0 and text.startswith(sep, i):
+            out.append(text[start:i])
+            start = i + len(sep)
+            i += len(sep)
+            continue
+        i += 1
+    out.append(text[start:])
+    return out
+
+
+def _close(text, j, open_c, close_c):
+    """The index past the bracket that closes the one opened just before `j`."""
+    depth = 1
+    while depth:
+        depth += {open_c: 1, close_c: -1}.get(text[j], 0)
+        j += 1
+    return j
+
+
+XW = f"fn xw(a: u32, sl: u32, sp: u32) -> u32 {{ return select(min(a, {PW}), {PW}, a >= sl && a < sp); }}"
+
+
+def witness_texts(texts, prologue, words):
+    """Every subscript of the plain pool in `texts` ({name: spelling}, rows and helpers) is in range of an array of
+    WG_PW + 4 words, whatever WG_PW is: a read clamped `min(.., WG_PW)` (or through `xw`, which clamps so), a write
+    `if (.. && X < WG_PW && ..) { wg_pool[X] = ..` or clamped. No text spells the table's largest extent `words` as a
+    number: every bound is WG_PW. The prologue declares WG_PW = words and the array words + 4 (the renderer writes the
+    tree's extent in both lines). Returns the problems."""
+    problems = []
+    if f"const {PW}: u32 = {words}u;" not in prologue.splitlines() or f"var<workgroup> wg_pool: array<u32, {words + 4}>;" not in prologue.splitlines():
+        problems.append(f"the prologue does not declare const {PW} = {words}u and wg_pool of {words + 4} words")
+    if "fn xw(" in prologue and XW not in prologue.splitlines():
+        problems.append("the prologue's xw is not the clamp onto WG_PW")
+    number = re.compile(r"\b" + str(words) + r"u\b")
+    for name, sp in texts.items():
+        if "wg_pool[" not in sp:
+            continue
+        if number.search(sp):
+            problems.append(f"{name} spells the pool's length {words}u as a number")
+        for m in re.finditer(r"\bwg_pool\[", sp):
+            end = _close(sp, m.end(), "[", "]")
+            x = sp[m.end():end - 1]
+            if x.startswith("xw(") and _close(x, 3, "(", ")") == len(x):
+                continue
+            if x.startswith("min(") and _close(x, 4, "(", ")") == len(x) and _top_split(x[4:-1], ", ")[-1] == PW:
+                continue
+            # a write under its guard: `if (cond) { wg_pool[X] = `, X < WG_PW a conjunct of cond
+            before = sp[:m.start()]
+            k = before.rfind("if (")
+            ok = sp[end:].startswith(" = ") and k >= 0
+            if ok:
+                c_end = _close(before, k + 4, "(", ")")
+                ok = before[c_end:] == " { " and f"{x} < {PW}" in _top_split(before[k + 4:c_end - 1], " && ")
+            if not ok:
+                problems.append(f"{name} subscripts wg_pool by {x!r}: neither clamped onto {PW} nor a write guarded below it")
+    return problems
+
+
+def witness(iface):
+    if not iface.get("wg_pool"):
+        return []
+    texts = {n: r["spell"] for n, r in ROWS.items()}
+    prologue = "\n".join(PROLOGUE_TOP + list(HELPERS.values()))
+    for line in prologue.splitlines():
+        if line.startswith("fn "):
+            texts[line.split("(")[0]] = line
+    return witness_texts(texts, prologue, P_WORDS)
+
+
+def witness_committed(table_dir):
+    """The witness over a COMMITTED table: `python3 pool.py mod/kmeans_update_segmented`."""
+    unesc = lambda s: s.replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+    texts = {}
+    for line in open(os.path.join(table_dir, "functions.tsv")).read().split("\n")[1:]:
+        if line:
+            p = line.split("\t")
+            texts[p[1]] = unesc(p[5])
+    prologue = open(os.path.join(table_dir, "prologue.wgsl")).read()
+    for line in prologue.splitlines():
+        if line.startswith("fn "):
+            texts[line.split("(")[0]] = line
+    decl = re.search(r"var<workgroup> wg_pool: array<u32, (\d+)>;", prologue)
+    if not decl:
+        return []
+    return witness_texts(texts, prologue, int(decl.group(1)) - 4)
+
+
+if __name__ == "__main__":
+    import sys
+    d = sys.argv[1]
+    probs = witness_committed(d if os.path.isabs(d) else os.path.join(HERE, d))
+    for p in probs[:20]:
+        print(p)
+    print(f"pool witness: {len(probs)} problems")
+    sys.exit(1 if probs else 0)

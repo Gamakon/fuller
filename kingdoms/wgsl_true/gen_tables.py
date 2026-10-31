@@ -82,6 +82,12 @@ def main(argv):
     for p in start.witness(iface):
         print("PROBLEM:", p)
         return 1
+    # the pool's extent (pool.py): every subscript of the plain pool in range of WG_PW + 4 words, whatever WG_PW is
+    pool_problems = pool.witness(iface) if pool else []
+    for p in pool_problems:
+        print("PROBLEM:", p)
+    if pool_problems:
+        return 1
     problems, produced = lib.write_all(outdir, "kernel.module" if iface.get("module") else "kernel.safe", iface)
     print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins, {bare} bare-literal twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:

@@ -102,7 +102,32 @@ may also be `min({0}, {1})` with argument 1 of type `u32.len_<B>`.
 at this depth), the body reads as the break guard row; `f` is not read. Inside the rest, an index of B equal to `e`
 reads as the register.
 
-## 8. Not covered (yet)
+## 8. The pool's extent (built 2026-10-31, `pool.py`)
+
+The interface's fixed 1,024-word workgroup pool cost reply 2's scatter entry 6 % against a 260-word pool (0.0252 ms
+against the source's 0.0266, `fbench/b4_pool.log`): workgroup memory limits occupancy. An expressed kernel now
+declares only the words its tree names.
+
+| Piece | Spelling | Why every subscript stays in range |
+|---|---|---|
+| the extent `u32.wgext` | a constant of `4..=P` in steps of 4 (P the interface's `pool_words`), an argument of every entry, spelled `// pool {i} words` | the module declares the largest its entries name, E |
+| the declaration | `const WG_PW: u32 = Eu;` and `var<workgroup> wg_pool: array<u32, E + 4>;` | written by `TrueKingdom::prologue_for` from the tree; the table's own lines hold P |
+| every pool row and helper | the bound spelled `WG_PW`, never a number | a read is `min(.., WG_PW)` (or `xw`, which clamps so): at most E, below E + 4; a write is `if (.. && X < WG_PW ..) { wg_pool[X] = ..` |
+
+The region rows' in-range proofs are those of the fixed pool with P replaced by `WG_PW`: they hold for every E,
+because no row spells a bound as a number. Region bases (`m * T`) and split points are not capped by E; every access
+through them is.
+
+**Witness** (`pool.py`, gen_tables refuses a table that breaks it; `python3 pool.py DIR` on a committed one): the prologue
+declares `WG_PW = P` and `P + 4` words; no text that subscripts the pool spells `Pu`; every subscript `wg_pool[X]` is
+`min(.., WG_PW)`, `xw(..)` (the prologue's `xw` clamps onto `WG_PW`), or a write directly under `if (cond)` with
+`X < WG_PW` a conjunct of `cond`. It found a hole of the fixed pool: the split phases' writes were guarded by the split
+`sp` only, and `sp` is a region base, up to 511 blocks, past the pool; they are now guarded by `WG_PW` too.
+
+**Reader.** An entry's extent is the words its placed regions take (`place`), rounded up to 4 and at least 4: reply 2's
+one 256-word array gives `WG_PW = 256` and 260 declared words.
+
+## 9. Not covered (yet)
 
 An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
 through the clamp row.

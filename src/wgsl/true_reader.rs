@@ -498,6 +498,8 @@ pub struct Reader<'a> {
     splits: Vec<(Vec<usize>, Vec<usize>, bool)>,
     wg_of: HashMap<Handle<naga::GlobalVariable>, usize>,
     regions: Vec<Region>,
+    /// The words of the plain pool the placed regions take (`place`): the entry's `u32.wgext`, the extent it declares.
+    pool_used: u32,
     next_ureg: usize,
     /// The bound `lidx < c` a condition being read under gives (the write phase's own-element proof).
     lidx_cap: std::cell::Cell<Option<u64>>,
@@ -619,6 +621,7 @@ impl<'a> Reader<'a> {
             splits: Vec::new(),
             wg_of: HashMap::new(),
             regions: Vec::new(),
+            pool_used: 0,
             next_ureg: 0,
             lidx_cap: std::cell::Cell::new(None),
             lidx_zero: std::cell::Cell::new(false),
@@ -4141,7 +4144,18 @@ impl<'a> Reader<'a> {
         let one = |s: &mut Self, t: &str| s.konst_text(t, "1");
         let grid = Tree { symbol: self.row(&format!("grid.of{sfx}"))?, const_index: None, kids: vec![shape, one(self, "u32.blk_col")?, one(self, "u32.blk_row")?, one(self, "u32.ktile")?] };
         self.bare(&mut body);
-        let kids = if self.k.rows[row as usize].args.len() == 3 { vec![grid, self.konst_text("u32.passes", &passes.to_string())?, body] } else { vec![grid, body] };
+        // the entry's arguments by type: its grid, its passes, the pool's extent (the words its regions take, a multiple
+        // of 4 and at least 4: `u32.wgext`), its body
+        let mut kids = vec![grid];
+        let (kd, args) = (self.k, &self.k.rows[row as usize].args);
+        for t in &args[1..args.len() - 1] {
+            match kd.type_name(*t).as_str() {
+                "u32.passes" => kids.push(self.konst_text("u32.passes", &passes.to_string())?),
+                "u32.wgext" => kids.push(self.konst_text("u32.wgext", &self.pool_used.max(4).div_ceil(4).saturating_mul(4).to_string())?),
+                o => return gap(format!("our software has a bug: entry {} takes {o} before its body", ep.name)),
+            }
+        }
+        kids.push(body);
         Ok(Tree { symbol: row, const_index: None, kids })
     }
 
@@ -4528,7 +4542,15 @@ mod tests {
         assert_eq!(k.pool_words(), 1024);
         let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
         let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
-        assert!(text.contains("var<workgroup> wg_pool: array<u32, 1028>;") && !text.contains("6080u"), "reply 2's expression keeps the fixed pool");
+        // THE POOL'S EXTENT (pool.py, 2026-10-31: the fixed 1,024-word pool cost its scatter entry 6 %, b4_pool.log):
+        // reply 2's expression declares the 256 words its one array takes (four guard words past them), not the table's
+        // 1,024, and its shared text the same
+        assert!(text.contains("const WG_PW: u32 = 256u;\nvar<workgroup> wg_pool: array<u32, 260>;\n") && !text.contains("6080u") && !text.contains("1024u"), "reply 2's expression declares its own extent");
+        let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).expect("reads") };
+        assert_eq!(k.pool_extent(&tree).expect("extent"), Some(256));
+        let share = crate::wgsl::true_share::Share::load(&k).expect("share");
+        let shared = share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render");
+        assert!(shared.contains("var<workgroup> wg_pool: array<u32, 260>;"), "the shared text declares the extent too");
         let v24 = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("v24")).expect("v24");
         assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
@@ -4619,6 +4641,40 @@ mod tests {
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
             std::fs::remove_file(bad.join("interface.tsv")).expect("rm");
+            std::fs::remove_dir(&bad).expect("rmdir");
+            assert!(!out.status.success() && text.contains(want), "{want}: {text}");
+        }
+    }
+
+    /// THE POOL'S EXTENT (`kingdoms/wgsl_true/pool.py`, 2026-10-31): every subscript of the plain pool is clamped onto
+    /// `WG_PW` or is a write guarded below it, so it is in range of the `WG_PW + 4` words an expressed kernel declares
+    /// whatever its extent. The witness passes the four pool tables and names a split write without the pool's guard
+    /// (the hole it found: a split `sp` is a region base, up to 511 blocks, past the pool) and a bound spelled as a number.
+    #[test]
+    fn the_pool_witness_proves_every_subscript_below_the_declared_extent() {
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("pool.py")).arg(d).output().expect("python3 runs");
+        for t in ["v24", "v24_k1", "kmeans_update", "kmeans_update_segmented"] {
+            let out = witness(&dir.join("mod").join(t));
+            assert!(out.status.success(), "{t}: {}", String::from_utf8_lossy(&out.stdout));
+        }
+        let src = dir.join("mod").join("kmeans_update_segmented");
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        let split = "if (o >= sl && o < sp && o < WG_PW) { wg_pool[o] = ";
+        let read = "wg_pool[min({0} + {1}, WG_PW)]";
+        assert!(f.contains(split) && f.contains(read));
+        for (edit, want) in [
+            (f.replacen(split, "if (o >= sl && o < sp) { wg_pool[o] = ", 1), "neither clamped onto WG_PW nor a write guarded below it"),
+            (f.replacen(read, "wg_pool[min({0} + {1}, 1024u)]", 1), "spells the pool's length 1024u as a number"),
+        ] {
+            let bad = std::env::temp_dir().join(format!("pool_witness_{}", std::process::id()));
+            std::fs::create_dir_all(&bad).expect("temp dir");
+            std::fs::copy(src.join("prologue.wgsl"), bad.join("prologue.wgsl")).expect("copy");
+            std::fs::write(bad.join("functions.tsv"), edit).expect("write");
+            let out = witness(&bad);
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
+            std::fs::remove_file(bad.join("prologue.wgsl")).expect("rm");
             std::fs::remove_dir(&bad).expect("rmdir");
             assert!(!out.status.success() && text.contains(want), "{want}: {text}");
         }
@@ -6026,6 +6082,7 @@ impl<'a> Reader<'a> {
         if next_blk > pool_blocks {
             return gap(format!("{} blocks of {t} words of workgroup memory, over the pool's {pool_blocks}", next_blk));
         }
+        self.pool_used = next_blk * t;
         if next_word as u64 > crate::wgsl::true_reader::A_WORDS {
             return gap(format!("{next_word} words of workgroup atomics, over the atomic pool's {}", crate::wgsl::true_reader::A_WORDS));
         }
