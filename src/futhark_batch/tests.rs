@@ -688,3 +688,58 @@ fn the_generation_0_programs_the_single_path_scored_worst_compile_on_the_webgpu_
     }
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The 24 programs of histogram's generation 0 (`--gen0 fable-mutants-only`, seed 1, the runs of 2026-10-29), as the
+/// rust run's ledger holds them.
+const HISTOGRAM_GEN0: [&str; 24] = [
+    "(map2.add (replicate 0) (tab (mul (ival.k (prev (next j1))) (ival.k zero))))",
+    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add (ival.k j1) (add s2 s2))) (mod.k (mul s2 (sel 0 1 s2)))) s2 (sel 1 (get.n vs (clamp (sub s2 0))) (sub (get.n vs i2) s2)))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel 0 (get.n vs (clamp (add (sub s2 s2) s2))) (sub (mul s2 (sel s2 1 0)) (get.n vs i2))))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel s2 (get.n is (prev i2)) (sub (mul (add (sel s2 s2 1) (sub 0 s2)) s2) 0)))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel s2 (get.n vs (prev i2)) (sub (mul (add (sel s2 s2 1) (sub 0 s2)) s2) 0)))))) (tab (ival.k (prev zero))))",
+    "(tab (loop.n (ival.k (next j1)) (max s2 (ival.k j1))))",
+    "(tab (loop.n (ival.k (next zero)) (max s2 (ival.k j1))))",
+    "(tab (loop.n (minimum.k (hist.add.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0)) vs)) (max k (ival.k j1))))",
+    "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k j1) (get.n is j2))) (mod.n (mod.k (mod.n 1)))) (get.n vs j2) 0))) (mul s2 (ival.k j1))))",
+    "(tab (loop.n 0 (max (get.n vs (clamp (add s2 (sel (sub (get.n vs i2) (get.n vs i2)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 0 (max s2 (neg (add s2 (sel (sub (get.n vs (clamp (ival.k last))) (get.n vs i2)) 1 0))))))",
+    "(tab (loop.n 1 (get.n vs (clamp s2))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub (add (ival.k j1) (add (mul s2 (ival.k j1)) (get.n vs i2))) (get.n vs i2)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub (get.n vs i2) (get.n vs i2)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub n (get.n vs i2)) 0 -1)))) (ival.k zero))))",
+    "(tab (loop.n 1 (max s2 (ival.k j1))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs (clamp (add (mul s2 (ival.k j1)) (get.n vs i2))))) (sub s2 (ival.k last)))) (neg s2))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs zero)) (sub s2 (ival.k last)))) (neg s2))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 k) (sub s2 (ival.k last)))) (neg s2))))",
+    "(tab (mod.n n))",
+    "(tab (sub 1 (mod.k (mul 10 10))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev j2))) (ival.k j1))) -1) (get.n vs j2) 2))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 10) (get.n vs j2) 0))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs j2)) (ival.k j1))) 0) (get.n vs j2) (get.n is j2)))))",
+];
+
+/// BUG 7: A GENERATION IS ONE BATCH. Histogram's generation 0 (24 programs, each with its quality entry and its timed
+/// entry, and the published program for the pairs) compiles as ONE library with the default compiler and links
+/// against the shim, its kernels' binding indices within wgpu's limit: no halving. With the unpatched branch, 4 of
+/// them stopped the compile (SetMem), and every batch that held one was halved down to it. (The fork compiler, `cc`;
+/// no GPU.)
+#[test]
+fn histogram_s_generation_0_compiles_as_one_batch() {
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("gen0_batch");
+    let shim = crate::futhark_wgpu_host::process_shim().unwrap();
+    let host = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&cases[0].stdin), yardstick: Some(p.yardstick) }).unwrap();
+    let trees: Vec<Tree> = HISTOGRAM_GEN0.iter().map(|t| crate::futhark_sig::build(&k, t).unwrap_or_else(|e| panic!("{t}: {e}"))).collect();
+    let members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Pair { runs: 1, yard_first: true, itself: false }] }).collect();
+    let idx: Vec<usize> = (0..members.len()).collect();
+    let (exe, cmds, _) = host.compile(&members, &idx, &mut Cost::default()).unwrap_or_else(|e| panic!("generation 0 did not compile as one batch: {e}"));
+    assert!(exe.is_file(), "no executable");
+    assert_eq!(cmds.len(), 48);
+    let top = max_binding_index(&std::fs::read_to_string(exe.parent().unwrap().join("prog.c")).unwrap());
+    assert!(top <= WGPU_MAX_BINDING_INDEX, "the batch's kernels use binding index {top}, over wgpu's limit {WGPU_MAX_BINDING_INDEX}: it would be halved");
+    eprintln!("histogram's generation 0: one batch of 24 programs, binding indices up to {top}");
+    let _ = std::fs::remove_dir_all(&base);
+}
