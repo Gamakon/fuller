@@ -8,11 +8,11 @@
 
 **What we measured.** On an Apple M3 Max, under Metal:
 - the candidate's output is bit-identical to A7's on every test case;
-- it runs at **0.0273 of A7's time** (about 37 times faster), at n = 8,192 points, d = 256 dimensions and k = 1,024 clusters.
+- it runs at **0.0274 of A7's time** (about 36 times faster), at n = 8,192 points, d = 256 dimensions and k = 1,024 clusters.
 
 **Where the speed comes from.**
-- **Almost all of it is the algorithm.** A7 gathers: each output cell loops over every point, which costs O(k·d·n). The candidate sorts the points by cluster once, then each cluster sums only its own points, which costs O(n·d). The hand-written form of this algorithm runs at 0.0277 of A7's time.
-- **Evolution added 1.6 %** on top of the hand-written form (0.9840 of its time, 11 of 11 pairs faster). Most of that gain comes from removing the Kahan compensation, which Metal's compiler already removes from A7 (see Caveats).
+- **Almost all of it is the algorithm.** A7 gathers: each output cell loops over every point, which costs O(k·d·n). The candidate sorts the points by cluster once, then each cluster sums only its own points, which costs O(n·d). The hand-written form of this algorithm runs at 0.0278 of A7's time.
+- **Evolution added 1.6 %** on top of the hand-written form (0.9839 of its time, 11 of 11 pairs faster). Most of that gain comes from removing the Kahan compensation, which Metal's compiler already removes from A7 (see Caveats).
 
 **What we ask of the UltraDim team.**
 - Review the kernel.
@@ -21,7 +21,7 @@
 
 We have changed no UltraDim code.
 
-> **Status, 2026-10-31 14:00Z: the ratios below are under re-measurement.** On this Mac, the same WGSL text compiled into separate pipelines runs each entry at one of two speeds. Measured: up to about 1.7× apart per entry; whole-module totals of 0.638 to 0.900 ms for one and the same text. The speed sticks to the pipeline. The A/A gate timed only one pipeline against itself, so it could not see this. Any ratio between two separately compiled kernels is therefore unconfirmed. The candidate's direction, about 0.027 of A7, lies far outside this range. Its exact values, and the 1.6 % over the hand-written form, are being re-measured with a fix: A/A across separate pipelines, and each side's fastest over several pipeline instances.
+> **Status, 2026-10-31 14:45Z: re-measured.** Earlier on 14:00Z we found that one WGSL text, compiled into separate pipelines, ran each entry at one of two speeds, up to about 1.7× apart. The cause was not the pipeline. It was the harness: it allocated fresh buffers for every run, and the speed followed where those buffers landed. The harness now makes each case's buffers once and rewrites them before every run (fuller 40ae60fc). With that fix, the same text compiled five times gives whole-module totals of 0.2322 to 0.2327 ms, a spread of 0.2 %. Every ratio below was measured again with this fix, with A/A pairs across separately compiled pipelines. The memory the process gets still sets the absolute speed: one process measured the scatter form at 0.878 ms rather than 0.234 ms. Both sides of a comparison run on the same buffers, so the ratios hold.
 
 ## 1. The kernel
 
@@ -42,18 +42,22 @@ We have changed no UltraDim code.
 | Item | Method |
 |---|---|
 | Dispatch | One unsplit dispatch per kernel, exactly as UltraDim issues it |
-| Pairs | The candidate and the yardstick interleaved run by run (A, B, A, B, …), each side the fastest of about 118 runs, at least 1 s a side, with one discarded warm-up pair |
-| Noise floor (A/A) | The yardstick against itself, 2 × 11 pairs; every ratio must lie within ±5 %. Measured: 0.9966 to 1.0039 |
+| Pairs | The candidate and the yardstick interleaved run by run (A, B, A, B, …), each side the fastest of its runs, at least 1 s a side, with one discarded warm-up pair; each side's runs rotate over 4 separately compiled pipelines |
+| Noise floor (A/A) | The yardstick's 4 pipelines against 4 more compiled from the same text, 2 × 11 pairs; every ratio must lie within ±5 %. Measured per comparison in the table below |
 | "Faster" | The median ratio below the least A/A ratio, AND at least 9 of 11 pairs faster |
 | Correctness | Bit for bit, cell by cell, on all 8 cases (4 training, 4 held out) and on the timing case's own output |
 
 **Results:**
 
-| Comparison (11 interleaved pairs) | Median ratio | Pairs faster |
-|---|---|---|
-| candidate against A7 | 0.0273 | 11 of 11 |
-| candidate against the hand-written scatter form | 0.9840 | 11 of 11 |
-| hand-written scatter form against A7 | 0.0277 | 11 of 11 |
+| Comparison (11 interleaved pairs, 2026-10-31 14:18-14:42Z) | Median ratio | Pairs faster | A/A range |
+|---|---|---|---|
+| candidate against A7 | 0.0274 | 11 of 11 | 0.9998 to 1.0002 |
+| candidate against the hand-written scatter form | 0.9839 | 11 of 11 | 0.9961 to 1.0055 |
+| hand-written scatter form against A7 | 0.0278 | 11 of 11 | 0.9662 to 1.0086 |
+
+A7 is `problems/kmeans_update_segmented/gather.wgsl`, A7's kernel unchanged in the five-entry interface. Every kernel was bit for bit A7's output on all 8 cases and on the timing case.
+
+**What our kingdom's spelling costs.** Our evolution system rewrites each kernel into its own spelling before it times it. For the hand-written scatter form, that rewritten text runs at **1.0255 and 1.0238 of the original** (two runs, 11 of 11 pairs slower each time). For the candidate it runs at 0.9856 of the scatter form, where the original runs at 0.9839. Per-entry timings found the cause: the index clamps `a[min(i, arrayLength(&a) - 1u)]` that the kingdom puts on every read and write. With the clamps, the loop form, the break flag and the store guard all removed, the rewritten text matches the original to within 0.7 % on four entries. The fifth entry, scatter, stays 1.4 % slower (0.0295 against 0.0291 ms).
 
 ## 3. Faults we found in our own method, all fixed before these numbers
 
@@ -64,6 +68,7 @@ We have changed no UltraDim code.
 | Our reader re-wrote A7 1.72× slower | The kernel's `let`s were inlined into its loop | `let`s are kept and loop-invariant terms hoisted; A7 as expressed now runs at 0.9995 of its own text |
 | A u32 overflow | A guard `gid.x >= (k·d)²` wrapped to 0 at the timing size, so a kernel did no work there and claimed 450×. Two evolved kernels used it. | Every timed kernel's output on the timing case is checked against the yardstick's. Both are withdrawn. |
 | The dispatch limit | A mutated workgroup width needed 262,144 workgroups (the limit is 65,535) | The types bound every workgroup width |
+| Fresh buffers every run | The speed followed where the buffers were allocated. One entry moved by up to 25 %, and one text compiled separately ran at 0.64 to 0.90 ms | Each case's buffers are made once and rewritten before every run (fuller 40ae60fc). The same text compiled five times now agrees within 0.2 % |
 
 ## 4. Caveats
 
@@ -83,6 +88,6 @@ We have changed no UltraDim code.
 
 ## 6. Reproduction
 
-- **Runner:** `phylu/examples/wgsl_true_case_fit.rs`, binary `tcf_724370d3_ac6f4d98` (phylu 724370d3, fuller ac6f4d98).
+- **Runner:** `phylu/examples/wgsl_true_case_fit.rs`, binary `tcf_c705ef22_40ae60fc` (phylu c705ef22, fuller 40ae60fc), each comparison a P run with `--start FILE --gate`. Logs: `/private/tmp/claude-501/fbench/rt_champ_vs_scatter.log`, `rt_champ_vs_a7.log`, `rt2_scatter_vs_a7.log`, `rt2_reply2_vs_scatter.log`, `rt_per_entry.log`, `pe5.log`, `sus2.log`, `sus3.log`.
 - **Problems:** `fuller/problems/kmeans_update_segmented`, `fuller/problems/kmeans_update`.
 - **Evolution run:** `kmeans_P_s1`, 97 generations, 1,415 evaluations. Its per-generation table is in the run directory.
