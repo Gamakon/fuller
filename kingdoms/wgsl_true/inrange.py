@@ -55,6 +55,74 @@ def declare(iface):
             decl(f"var {reg(b, d)}: u32 = 0u;")
 
 
+# ---------------------------------------------------------------- offset types (design section 6)
+# A RUN of binding B is a region [base, base + L) the dispatch contract places inside B (the interface's `runs`: a base
+# polynomial over the uniform's fields, nb = ceil(x / 256), and a length L that is a uniform field). `u32.upto_<L>` is
+# a value at most `<u>.<L>`; `inrange.<B>_run_<r>(u32.upto_<L>)`, spelled `(<base> + {0})`, is in range of B because
+# the witness proves base + L + 1 <= the contract's length of B. A run loop `loop.run_<L><c>_<X><d>_f<k>` counts in its
+# own register kr_<L><d> (with bound register nr_<L><d> = min(<u>.<L>, 2^c)); only run loops assign them, so kr_<L><d>
+# is at most <u>.<L> everywhere: 0 before any run loop, below nr_<L><d> inside one, nr_<L><d> after it.
+
+def run_lengths(iface):
+    return sorted({r["len"] for b in buffers(iface) for r in iface.get("runs", {}).get(b, [])})
+
+
+def upto_t(f):
+    return f"u32.upto_{f}"
+
+
+def runlen_t(f):
+    return f"u32.runlen_{f}"
+
+
+def wgsl_of(poly, u):
+    """The WGSL text of a run's base polynomial (deterministic, so the witness re-derives it)."""
+    def tok(m):
+        t = m.group(0)
+        if t.isdigit():
+            return t + "u"
+        if t == "nb":
+            return f"(({u}.x + 255u) / 256u)"
+        return f"{u}.{t}"
+    return "(" + re.sub(r"\bnb\b|\b[a-z]\b|\b\d+\b", tok, poly) + ")"
+
+
+def run_loop_text(f, d1, cap, u):
+    kr, nr = f"kr_{f}{d1}", f"nr_{f}{d1}"
+    return f"{nr} = min({{0}}, {cap}u); {kr} = 0u; loop {{ if ({kr} >= {nr}) {{ break; }} {{1}} {kr} = {kr} + 1u; }}"
+
+
+def declare_runs(iface):
+    for f in run_lengths(iface):
+        T(upto_t(f), f"a value at most the uniform field {f}: a run loop's counter, 0, or a clamp")
+        T(runlen_t(f), f"the uniform field {f} itself: a run loop's trip count (an argument, so the work bound reads its value)")
+        for d in range(1, 6):
+            decl(f"var kr_{f}{d}: u32 = 0u;")
+            decl(f"var nr_{f}{d}: u32 = 0u;")
+
+
+def build_runs(iface):
+    u = iface.get("uniform", "cfg")
+    for f in run_lengths(iface):
+        R(f"own.u32_upto_{f}", upto_t(f), [], "lit_u32(0u)", "0 is at most any length")
+        R(f"run.len_{f}", runlen_t(f), [], f"{u}.{f}", "the run length's field")
+        R(f"run.upto_{f}_clamp", upto_t(f), ["u32.index"], f"min({{0}}, {u}.{f})", "any value restricted to the length by the row's text")
+        R(f"index.of_upto_{f}", "u32.index", [upto_t(f)], "{0}", "a run offset as a value", twin=True)
+        for d in range(1, 6):
+            R(f"run.kr_{f}{d}", upto_t(f), [], f"kr_{f}{d}", f"the counter of the run loops of depth {d}: at most {u}.{f} in every state")
+        for c in (6, 12, 18, 24):
+            cls = c // 6
+            for x, d, k in rungs("LC"):
+                if d + 1 > 5 or k + cls > K:
+                    continue
+                R(f"loop.run_{f}{c}_{x}{d}_f{k}", S(x, d, k + cls), [runlen_t(f), B("C", d + 1, k)], run_loop_text(f, d + 1, 2 ** c, u),
+                  f"a loop over a run's length: its counter kr_{f}{d + 1} offsets the runs of length {u}.{f}")
+    for b in buffers(iface):
+        for r in iface.get("runs", {}).get(b, []):
+            R(f"inrange.{b}_run_{r['name']}", in_t(b), [upto_t(r["len"])], f"({wgsl_of(r['base'], u)} + {{0}})",
+              f"the run {r['name']} of {b}: base {r['base']} plus at most {r['len']}, below the contract's length (the witness)")
+
+
 def guard_texts(b, d):
     g = reg(b, d)
     lt = "{ let gv = {0}; if (gv < {1}) { " + g + " = gv; {2} } }"
@@ -219,6 +287,17 @@ def witness(iface):
                 ok = (r["args"] == ["u32.index"] or r["args"] == [w_of("u32.index")] or r["args"] == [a_of("u32.index")]) and sp == clamp[b].format("{0}")
                 ok = ok or (not r["args"] and sp == "lit_u32(0u)")
                 ok = ok or (r["out"] == in_t(b) and not r["args"] and re.fullmatch(re.escape(f"gi_{b}") + r"\d", sp) is not None)
+                # section 6: (base + {0}) over u32.upto_L, base a run of B whose base + L + 1 is proved at most B's length
+                runs = {f"({wgsl_of(q['base'], iface.get('uniform', 'cfg'))} + {{0}})": q for q in iface.get("runs", {}).get(b, [])}
+                q = runs.get(sp)
+                if r["out"] == in_t(b) and q is not None and r["args"] == [upto_t(q["len"])]:
+                    bound = f"{q['base']} + {q['len']} + 1"
+                    if not dominated(bound, lengths[b], ranges):
+                        problems.append(f"run {q['name']} of {b}: {bound} is not proved at most its length {lengths[b]}")
+                    elif value_at_hi(bound, ranges) >= 2 ** 32:
+                        problems.append(f"run {q['name']} of {b} wraps at the contract's largest parameters")
+                    else:
+                        ok = True
                 if not ok:
                     problems.append(f"row {name} gives {r['out']} by {sp!r}, which is none of the design's minting forms")
             # rule 2: every assignment of a guard register is a guard row's, under its own guard of a length of B
@@ -235,6 +314,22 @@ def witness(iface):
                 ok = ok or (sp == "{0}" and len(r["args"]) == 1 and r["args"][0] in (in_t(b), w_of(in_t(b)), a_of(in_t(b))))
                 if not ok:
                     problems.append(f"row {name} gives {r['out']} by {sp!r}, which is not proved at most the length of {b}")
+    # section 6: the rows giving u32.upto_L are a run counter, 0 or the clamp; only run loops assign kr_L<d> / nr_L<d>
+    u = iface.get("uniform", "cfg")
+    for f in run_lengths(iface):
+        for name, r in ROWS.items():
+            sp = r["spell"]
+            if r["out"] == runlen_t(f) and (r["args"] or sp != f"{u}.{f}"):
+                problems.append(f"row {name} gives {r['out']} by {sp!r}, not the field {u}.{f}")
+            if r["out"] == upto_t(f):
+                ok = (not r["args"] and (sp == "lit_u32(0u)" or re.fullmatch(f"kr_{f}" + r"[1-5]", sp) is not None))
+                ok = ok or (r["args"] == ["u32.index"] and sp == f"min({{0}}, {u}.{f})")
+                if not ok:
+                    problems.append(f"row {name} gives {r['out']} by {sp!r}, none of the counter, 0 or the clamp")
+            for m in re.finditer(f"\\b([kn]r_{f})([1-5]) = ", sp):
+                d1 = int(m.group(2))
+                if not any(sp == run_loop_text(f, d1, 2 ** c, u) for c in (6, 12, 18, 24)) or len(r["args"]) != 2 or r["args"][0] != runlen_t(f) or not r["args"][1].startswith(f"block.C{d1}_f"):
+                    problems.append(f"row {name} assigns {m.group(1)}{d1} and is not a run loop of depth {d1}")
     return problems
 
 

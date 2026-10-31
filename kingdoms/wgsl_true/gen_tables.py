@@ -49,6 +49,7 @@ def main(argv):
     loops.declare(iface)
     inrange = importlib.import_module("inrange")
     inrange.declare(iface)
+    inrange.declare_runs(iface)
     if not pool:
         # a pool interface (s9 batch 9) keeps all its workgroup memory in the two pools of pool.py, not the stratum map
         wg.declare(iface)
@@ -70,6 +71,7 @@ def main(argv):
         arena.declare(iface)
         arena.build(iface)
     inrange.build(iface)
+    inrange.build_runs(iface)
     twins = lib.finish_twins()
     bare = lib.finish_bare()
     # docs/DESIGN_inrange_index_types.md: every in-range rule proved from the emitted spellings before anything is written

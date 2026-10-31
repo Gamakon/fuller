@@ -536,6 +536,8 @@ pub struct Reader<'a> {
     /// The open guards (docs/DESIGN_inrange_index_types.md): (the guarded index, the binding, the guard's depth), the
     /// innermost last. Inside one, an index of the binding equal to the guarded one reads as the guard's register.
     guards: Vec<(E, String, u8)>,
+    /// The run loops (docs/DESIGN_inrange_index_types.md section 6): loop id -> (its length field, its depth).
+    runs: HashMap<usize, (String, u8)>,
     /// Values made during spelling (a composition regrouped, a scalar splatted): kept alive so their addresses stay
     /// unique keys of the memo.
     temps: Vec<std::rc::Rc<E>>,
@@ -638,6 +640,7 @@ impl<'a> Reader<'a> {
             loop_ctx: HashMap::new(),
             memo: HashMap::new(),
             guards: Vec::new(),
+            runs: HashMap::new(),
             temps: Vec::new(),
             missing: None,
         }
@@ -1895,6 +1898,89 @@ fn indexes_at(sts: &[St], b: &str, i: &E) -> bool {
     })
 }
 
+/// The u32 value of a size expression (literals, uniform fields, + - * / % << >> min max) at field values `f`.
+fn e_value(e: &E, f: &[u64]) -> Option<u64> {
+    let v = match e {
+        E::Field(i) => *f.get(*i)?,
+        E::Bin(op, a, b, _) => {
+            let (a, b) = (e_value(a, f)? as u32, e_value(b, f)? as u32);
+            u64::from(match op {
+                BinaryOperator::Add => a.wrapping_add(b),
+                BinaryOperator::Subtract => a.wrapping_sub(b),
+                BinaryOperator::Multiply => a.wrapping_mul(b),
+                BinaryOperator::Divide => a.checked_div(b)?,
+                BinaryOperator::Modulo => a.checked_rem(b)?,
+                BinaryOperator::ShiftLeft => a.wrapping_shl(b),
+                BinaryOperator::ShiftRight => a.wrapping_shr(b),
+                _ => return None,
+            })
+        }
+        E::Call("min", a, _) if a.len() == 2 => e_value(&a[0], f)?.min(e_value(&a[1], f)?),
+        E::Call("max", a, _) if a.len() == 2 => e_value(&a[0], f)?.max(e_value(&a[1], f)?),
+        _ => u64::from(lit_u(e)?),
+    };
+    Some(v)
+}
+
+/// The u32 value of a WGSL size text over `<uniform>.<field>` (decimal literals with `u`, + - * /, parentheses).
+fn wgsl_value(t: &str, uniform: &str, fields: &[String], f: &[u64]) -> Option<u64> {
+    fn atom(s: &[u8], i: &mut usize, n: &dyn Fn(&str) -> Option<u64>) -> Option<u64> {
+        while s.get(*i) == Some(&b' ') {
+            *i += 1;
+        }
+        if s.get(*i) == Some(&b'(') {
+            *i += 1;
+            let v = sum(s, i, n)?;
+            while s.get(*i) == Some(&b' ') {
+                *i += 1;
+            }
+            (s.get(*i) == Some(&b')')).then(|| *i += 1)?;
+            return Some(v);
+        }
+        let st = *i;
+        while s.get(*i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'.' || *c == b'_') {
+            *i += 1;
+        }
+        n(std::str::from_utf8(&s[st..*i]).ok()?)
+    }
+    fn product(s: &[u8], i: &mut usize, n: &dyn Fn(&str) -> Option<u64>) -> Option<u64> {
+        let mut v = atom(s, i, n)? as u32;
+        loop {
+            while s.get(*i) == Some(&b' ') {
+                *i += 1;
+            }
+            match s.get(*i) {
+                Some(b'*') => { *i += 1; v = v.wrapping_mul(atom(s, i, n)? as u32); }
+                Some(b'/') => { *i += 1; v = v.checked_div(atom(s, i, n)? as u32)?; }
+                _ => return Some(u64::from(v)),
+            }
+        }
+    }
+    fn sum(s: &[u8], i: &mut usize, n: &dyn Fn(&str) -> Option<u64>) -> Option<u64> {
+        let mut v = product(s, i, n)? as u32;
+        loop {
+            while s.get(*i) == Some(&b' ') {
+                *i += 1;
+            }
+            match s.get(*i) {
+                Some(b'+') => { *i += 1; v = v.wrapping_add(product(s, i, n)? as u32); }
+                Some(b'-') => { *i += 1; v = v.wrapping_sub(product(s, i, n)? as u32); }
+                _ => return Some(u64::from(v)),
+            }
+        }
+    }
+    let name = |w: &str| -> Option<u64> {
+        if let Some(fl) = w.strip_prefix(uniform).and_then(|r| r.strip_prefix('.')) {
+            return f.get(fields.iter().position(|x| x == fl)?).copied();
+        }
+        w.strip_suffix('u').unwrap_or(w).parse().ok()
+    };
+    let s = t.as_bytes();
+    let mut i = 0;
+    let v = sum(s, &mut i, &name)?;
+    (i == s.len()).then_some(v)
+}
+
 fn lit_u(e: &E) -> Option<u32> {
     match e {
         E::Lit(Lit::U(v)) => Some(*v),
@@ -2641,7 +2727,7 @@ impl<'a> Reader<'a> {
         self.memo.insert(key, None);
         let tn = self.k.type_name(want);
         let slot = tn.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_default();
-        let r = if slot != e.wt().name() { None } else { self.guard_reg(e, &tn).or_else(|| self.val_direct(e, want, &tn)).or_else(|| self.val_coerce(e, want)) };
+        let r = if slot != e.wt().name() { None } else { self.guard_reg(e, &tn).or_else(|| self.run_index(e, &tn)).or_else(|| self.val_direct(e, want, &tn)).or_else(|| self.val_coerce(e, want)) };
         self.memo.insert(key, r.clone());
         r
     }
@@ -2715,6 +2801,15 @@ impl<'a> Reader<'a> {
                 let names = [format!("reg.get_{key}"), format!("reg.get_{key}_w")];
                 let reg_leaf = self.leaf(&format!("reg.{prefix}{}", r.n)).ok()?;
                 return self.named_rows(&names, want).first().map(|(row, _)| Tree { symbol: *row, const_index: None, kids: vec![reg_leaf] });
+            }
+            E::Counter(id) if self.runs.contains_key(id) => {
+                let (f, d) = self.runs.get(id)?.clone();
+                let leaf = Tree { symbol: *self.rows_by_name.get(&format!("run.kr_{f}{d}"))?, const_index: None, kids: Vec::new() };
+                if self.k.rows[leaf.symbol as usize].out == want {
+                    return Some(leaf);
+                }
+                let names = [format!("index.of_upto_{f}"), format!("index.of_upto_{f}_w")];
+                return self.named_rows(&names, want).first().map(|(row, _)| Tree { symbol: *row, const_index: None, kids: vec![leaf] });
             }
             E::Counter(id) => {
                 let (d, div) = *self.loop_ctx.get(id)?;
@@ -3199,6 +3294,33 @@ impl<'a> Reader<'a> {
     }
 
     /// A statement at exactly stratum `k`: spelled at its own stratum, then lifted.
+    /// `base + c` for a slot asking for `u32.in_<B>` (docs/DESIGN_inrange_index_types.md section 6): `c` the counter of
+    /// a run loop of length field L, `base` the base of a run of B of length L, compared by value at sample sizes (the
+    /// row spells its own base, so the comparison only chooses a reading; the CPU tests compare the bits).
+    fn run_index(&self, e: &E, tn: &str) -> Option<Tree> {
+        let b = tn.strip_prefix("u32.in_")?;
+        let E::Bin(BinaryOperator::Add, l, r, _) = e else { return None };
+        let (base, id) = match (l.as_ref(), r.as_ref()) {
+            (x, E::Counter(id)) | (E::Counter(id), x) if self.runs.contains_key(id) => (x, *id),
+            _ => return None,
+        };
+        let (f, d) = self.runs.get(&id)?.clone();
+        let prefix = format!("inrange.{b}_run_");
+        const SAMPLES: [[u64; 4]; 4] = [[1, 1, 1, 0], [257, 3, 2, 0], [8192, 1024, 256, 0], [1000, 77, 5, 0]];
+        let row = self.k.rows.iter().enumerate().find(|(_, row)| {
+            row.name.starts_with(&prefix)
+                && row.args.len() == 1
+                && self.k.type_name(row.args[0]) == format!("u32.upto_{f}")
+                && SAMPLES.iter().all(|s| {
+                    let fv: Vec<u64> = self.fields.iter().map(|n| ["x", "y", "z", "w"].iter().position(|m| m == n).map_or(u64::MAX, |i| s[i])).collect();
+                    let want = row.spelling.strip_suffix(" + {0})").and_then(|t| t.strip_prefix('(')).and_then(|t| wgsl_value(t, &self.uniform, &self.fields, &fv));
+                    want.is_some() && want == e_value(base, &fv)
+                })
+        })?;
+        let leaf = Tree { symbol: *self.rows_by_name.get(&format!("run.kr_{f}{d}"))?, const_index: None, kids: Vec::new() };
+        Some(Tree { symbol: row.0 as u32, const_index: None, kids: vec![leaf] })
+    }
+
     /// The register of the innermost open guard of binding B whose index is `e`, for a slot asking for `u32.in_<B>`
     /// (docs/DESIGN_inrange_index_types.md). An index that holds no register or counter is left to the clamp row: it
     /// is the same everywhere in the kernel, so the share pass binds it once, ahead of every loop.
@@ -3711,6 +3833,17 @@ impl<'a> Reader<'a> {
         }
         if brk.is_some() && nl {
             return gap("a loop that breaks and holds a barrier under divergent control");
+        }
+        // a loop over a run's length (docs/DESIGN_inrange_index_types.md section 6): its own counter register, so an
+        // index `base + counter` of a run reads as the run's in-range row
+        if let (E::Field(i), None, false, false, 1, 'L' | 'C') = (&lp.bound, lit, brk.is_some(), nl, stride, x) {
+            let name = format!("loop.run_{}{c}_{x}{d}_f{kb}", self.fields[*i]);
+            if let Some(&row) = self.rows_by_name.get(&name) {
+                self.runs.insert(lp.id, (self.fields[*i].clone(), d1));
+                let len = self.leaf(&format!("run.len_{}", self.fields[*i]))?;
+                let body = self.block(&lp.body, 'C', d1, kb)?;
+                return Ok(Tree { symbol: row, const_index: None, kids: vec![len, body] });
+            }
         }
         // the loop's row, its body's rung and whether its counter is divergent
         let ubt = self.bound_ty(&format!("bound.of_uniform_{c}"))?;
@@ -4353,6 +4486,50 @@ mod tests {
         assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
         assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
+    }
+
+    /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it
+    /// 1.3 %): the scatter form's starts entry reads `scratch[2 nb k + k + c]` and `scratch[2 nb k + c]` as the runs
+    /// `st` and `tot` over its run loop's counter, and its expression spells no clamp; the witness names a run whose
+    /// base is one past its proof and a counter assigned outside a run loop.
+    #[test]
+    fn a_run_index_reads_as_its_offset_row_and_spells_no_clamp() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let src = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/segmented.wgsl")).expect("kernel");
+        let kids = read_module(&k, &src, &c).expect("reads");
+        let names: Vec<String> = kids[2].level_order().into_iter().map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
+        for want in ["inrange.scratch_run_st", "inrange.scratch_run_tot", "run.kr_y1"] {
+            assert!(names.iter().any(|n| n == want), "the starts entry reads through {want}: {names:?}");
+        }
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
+        let starts = &text[text.find("fn starts(").expect("starts")..];
+        let starts = &starts[..starts.find("\n}\n").expect("its end")];
+        assert!(!starts.contains("arrayLength(&scratch) - 1u"), "the starts entry spells a clamp: {starts}");
+        let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("inrange.py")).arg(d).output().expect("python3 runs");
+        let src = dir.join("mod").join("kmeans_update_segmented");
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        let st = "\t((2u * ((params.x + 255u) / 256u) * params.y + params.y) + {0})\t";
+        let kr = "\tu32.upto_y\t\tkr_y1\t";
+        assert!(f.contains(st) && f.contains(kr));
+        for (edit, want) in [
+            (f.replace(st, "\t((2u * ((params.x + 255u) / 256u) * params.y + params.y + 1u) + {0})\t"), "none of the design's minting forms"),
+            (f.replacen("\tsize.x\tterminal\tu32.size\t\tparams.x\t", "\tsize.x\tterminal\tu32.size\t\t{ kr_y1 = 9u; params.x }\t", 1), "assigns kr_y1 and is not a run loop"),
+        ] {
+            let bad = std::env::temp_dir().join(format!("run_witness_{}", std::process::id()));
+            std::fs::create_dir_all(&bad).expect("temp dir");
+            std::fs::copy(src.join("interface.tsv"), bad.join("interface.tsv")).expect("copy");
+            std::fs::write(bad.join("functions.tsv"), edit).expect("write");
+            let out = witness(&bad);
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
+            std::fs::remove_file(bad.join("interface.tsv")).expect("rm");
+            std::fs::remove_dir(&bad).expect("rmdir");
+            assert!(!out.status.success() && text.contains(want), "{want}: {text}");
+        }
     }
 
     /// THE ENTRY-START TYPE (`kingdoms/wgsl_true/start.py`, 2026-10-31: the barrier before reply 2's first scatter phase

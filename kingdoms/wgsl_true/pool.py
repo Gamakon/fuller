@@ -125,7 +125,9 @@ def build(iface):
     # reads the guard word instead), so with sl = 0 it is the split of batch 9 and with any sl the written region may
     # stand anywhere in the pool
     helper("xw", f"fn xw(a: u32, sl: u32, sp: u32) -> u32 {{ return select(min(a, {last}u), {last}u, a >= sl && a < sp); }}")
-    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) {{ if (o >= sl && o < sp) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls >= sl && o + ls < sp) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls >= sl && o + 2u * ls < sp) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls >= sl && o + 3u * ls < sp) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
+    # a lane is written only below the guard word as well as below the split: a split sp past the pool (a wgbase up to
+    # 4096 blocks) put lanes at 1,028.. of a 1,028-word pool (true_reader random module 181, 2026-10-31)
+    helper("wg_set_v4_below", f"fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) {{ if (o >= sl && o < sp && o < {last}u) {{ wg_pool[o] = bitcast<u32>(v.x); }} if (o + ls >= sl && o + ls < sp && o + ls < {last}u) {{ wg_pool[o + ls] = bitcast<u32>(v.y); }} if (o + 2u * ls >= sl && o + 2u * ls < sp && o + 2u * ls < {last}u) {{ wg_pool[o + 2u * ls] = bitcast<u32>(v.z); }} if (o + 3u * ls >= sl && o + 3u * ls < sp && o + 3u * ls < {last}u) {{ wg_pool[o + 3u * ls] = bitcast<u32>(v.w); }} }}")
     helper("wg_v4_above", f"fn wg_v4_above(b: u32, ls: u32, i: u32, sl: u32, sp: u32) -> vec4<f32> {{ return vec4<f32>(bitcast<f32>(wg_pool[xw(b + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 2u * ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 3u * ls + i, sl, sp)])); }}")
     R("wg.get_v4", "vec4<f32>.real", ["u32.wgbase", "u32.wgbase", "u32.index"], "wg_v4({0}, {1}, {2})", "element i of a vec4 array kept as four lane regions (lane stride the second base)")
     R("wg.get_own_v4", "vec4<f32>.realw", ["u32.wgbase", "u32.wgbase", "u32.wgown"], "wg_v4({0}, {1}, {2})", "an own read: a w value")
