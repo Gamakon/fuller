@@ -742,3 +742,58 @@ fn main() {
         }
     }
 }
+
+/// THE APPLE METAL HANG'S CONSTRUCT, MEASURED WITHOUT A DISPATCH (docs/reports/2026-10-21_metal_hang_k2): the
+/// reproducer is never run on the device (a hung dispatch starves the display's WindowServer; 2026-10-21 needed a hard
+/// reset). Its loops in each spelling go through the Metal source wgpu 30 hands Apple's compiler
+/// (`target::metal_source`): the hang needs naga's continuing-step form, `loop_init` in the MSL.
+#[cfg(all(test, feature = "gpu", feature = "wgsl"))]
+mod metal_hang_msl_tests {
+    fn reproducer() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/reports/2026-10-21_metal_hang_k2/gene583_reduced.wgsl")).expect("the reproducer")
+    }
+
+    /// `src` with `from` replaced once (exactly one occurrence).
+    fn once(src: &str, from: &str, to: &str) -> String {
+        assert_eq!(src.matches(from).count(), 1, "{from}");
+        src.replacen(from, to, 1)
+    }
+
+    /// The reproducer's two `for` loops spelled `for` (as written), `shadow` (the kingdom's `loops.py` `loop_text`) or
+    /// `tail` (the step at the end of the body).
+    fn spelled(form: &str) -> String {
+        let src = reproducer();
+        let (first, head, end) = ("k1 = 0u; for (; k1 < n1; k1 = k1 + 1u) { {} }", "kx1 = 0u; for (; kx1 < nx1; kx1 = kx1 + 1u) {", "if (lit_bool(true)) { break; } }");
+        match form {
+            "for" => src,
+            "shadow" => {
+                let s = once(&src, "var k1: u32 = 0u;", "var k1: u32 = 0u; var kc1: u32 = 0u; var kxc1: u32 = 0u;");
+                let s = once(&s, first, "kc1 = 0u; loop { k1 = kc1; if (k1 >= n1) { break; } kc1 = k1 + 1u; {} }");
+                once(&s, head, "kxc1 = 0u; loop { kx1 = kxc1; if (kx1 >= nx1) { break; } kxc1 = kx1 + 1u;")
+            }
+            "tail" => {
+                let s = once(&src, first, "k1 = 0u; loop { if (k1 >= n1) { break; } {} k1 = k1 + 1u; }");
+                let s = once(&s, head, "kx1 = 0u; loop { if (kx1 >= nx1) { break; }");
+                once(&s, end, "if (lit_bool(true)) { break; } kx1 = kx1 + 1u; }")
+            }
+            other => panic!("no spelling {other}"),
+        }
+    }
+
+    fn msl(text: &str) -> String {
+        let module = crate::wgsl::naga_shape::parse_unscanned(text).expect("parses");
+        let info = crate::wgsl::target::Target::current().validate(&module, text).expect("validates");
+        crate::wgsl::target::metal_source(&module, &info, "main", &[]).expect("the Metal source")
+    }
+
+    /// The plain `for` gives Apple's compiler naga's `loop_init` form (the hang's construct); the kingdom's shadow
+    /// counter and the step at the end of the body give a plain `while (true)` with no continuing step.
+    #[test]
+    fn the_metal_hangs_loop_init_comes_from_the_for_loop_only() {
+        assert!(msl(&spelled("for")).contains("loop_init"), "the for spelling writes no loop_init");
+        for form in ["shadow", "tail"] {
+            let m = msl(&spelled(form));
+            assert!(!m.contains("loop_init"), "the {form} spelling writes loop_init");
+        }
+    }
+}
