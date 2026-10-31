@@ -624,6 +624,13 @@ impl TrueKingdom {
         if node.kids.len() != row.args.len() {
             return Err(format!("our software has a bug: {} has {} children, its signature {}", row.name, node.kids.len(), row.args.len()));
         }
+        // a node fills an argument only with the type the argument asks (the walk never does otherwise; a tree built by
+        // hand that does is not a tree of the kingdom, and has no text)
+        for (i, (kid, want)) in node.kids.iter().zip(&row.args).enumerate() {
+            if let Some(kr) = self.rows.get(kid.symbol as usize).filter(|kr| kr.out != *want) {
+                return Err(format!("the tree is not one the types allow: argument {i} of {} is {}, and {} gives {}", row.name, self.type_name(*want), kr.name, self.type_name(kr.out)));
+            }
+        }
         let kids: Vec<String> = node.kids.iter().map(|k| self.spell(k)).collect::<Result<_, _>>()?;
         let value = match (row.kind, node.const_index) {
             (RowKind::Constant, Some(i)) => Some(

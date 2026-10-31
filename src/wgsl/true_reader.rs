@@ -4754,6 +4754,162 @@ mod tests {
         assert!(!out.status.success() && text.contains("kernel.entry_scatter: its gene can both read scratch (cluster.point"), "{text}");
     }
 
+    /// The cells `text` writes of binding `b`: each subscript `b[...]` followed by `=` (not `==`).
+    fn written_cells<'t>(text: &'t str, b: &str) -> Vec<&'t str> {
+        let pat = format!("{b}[");
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(at) = text[from..].find(&pat) {
+            let start = from + at;
+            let word = start == 0 || !text[..start].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+            let mut depth = 0i32;
+            let mut end = start + pat.len() - 1;
+            for (j, c) in text[end..].char_indices() {
+                depth += match c {
+                    '[' => 1,
+                    ']' => -1,
+                    _ => 0,
+                };
+                if depth == 0 {
+                    end += j + 1;
+                    break;
+                }
+            }
+            let rest = text[end..].trim_start();
+            if word && rest.starts_with('=') && !rest.starts_with("==") {
+                out.push(&text[start..end]);
+            }
+            from = end.max(start + 1);
+        }
+        out
+    }
+
+    /// NO TREE WRITES TWO VALUES TO ONE SLOT (docs/DESIGN_inrange_index_types.md section 10): the gene's only store into
+    /// the scratch is the cluster store, at the scaffold's slot `cs_slot` (every other write of the scratch in the table
+    /// is a scaffold variant's own text); a scatter built by hand through anything else does not express (its text is
+    /// refused: a mean's body in the scatter's slot, a point that is not the invocation's own); and a scatter written
+    /// with its slot shifted does not read.
+    #[test]
+    fn a_scatter_through_any_index_but_the_slot_does_not_express() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let mut stores = 0;
+        for r in k.rows.iter().filter(|r| !r.name.starts_with("cs.")) {
+            for cell in written_cells(&r.spelling, "scratch") {
+                assert_eq!((r.name.as_str(), cell), ("store.cluster_scratch", "scratch[min(cs_slot, arrayLength(&scratch) - 1u)]"), "a row writes the scratch other than at the slot");
+                stores += 1;
+            }
+        }
+        assert_eq!(stores, 1, "the cluster store is the table's one write of the scratch");
+        let seg = std::fs::read_to_string(root.join("problems/kmeans_update_segmented/segmented.wgsl")).expect("kernel");
+        let kids = read_module(&k, &seg, &c).expect("reads");
+        let row = |n: &str| k.rows.iter().position(|r| r.name == n).unwrap_or_else(|| panic!("no row {n}")) as u32;
+        let leaf = |n: &str| Tree { symbol: row(n), const_index: None, kids: Vec::new() };
+        let module = |scatter: Tree| {
+            let mut kids = kids.clone();
+            kids[3] = scatter;
+            k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids })
+        };
+        assert!(module(kids[3].clone()).is_ok(), "the read scatter expresses");
+        // the mean's body (its loads and its own-cell store) in the scatter's body
+        let mean_body = kids[4].kids.last().expect("the mean's body").clone();
+        let e = module(Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![mean_body] }).expect_err("a general body in the scatter");
+        assert!(e.contains("the tree is not one the types allow: argument 0 of kernel.entry_scatter is block.scatter"), "{e}");
+        // the cluster store of a point that is not the invocation's own (any u32.index: here the zero index)
+        let index = kids[4].level_order().into_iter().map(|(n, _)| n).find(|n| k.type_name(k.rows[n.symbol as usize].out) == "u32.index").expect("an index of the mean").clone();
+        let st = Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), index] };
+        let e = module(Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![st] }).expect_err("a store of another index");
+        assert!(e.contains("argument 1 of store.cluster_scratch is u32.point"), "{e}");
+        // a hand-written scatter through another slot does not read
+        let store = "    scratch[2u * nb * k + 2u * k + slot] = v;\n";
+        assert!(seg.contains(store));
+        let e = read_module(&k, &seg.replace(store, "    scratch[2u * nb * k + 2u * k + slot + 1u] = v;\n"), &c).expect_err("a shifted slot").to_string();
+        assert!(e.contains("none of the scaffold's variants"), "{e}");
+    }
+
+    /// DETERMINISM (docs/DESIGN_inrange_index_types.md sections 10 and 11): 300 random modules of each k-means table,
+    /// each run twice on the CPU executor, once with its workgroups in index order and once reversed (the device promises
+    /// no order), give the same bits. A run may stop at the step budget; only modules whose two runs end are compared.
+    #[test]
+    fn random_kmeans_modules_give_the_same_bits_with_their_workgroups_reversed() {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; k.gene_roots.len()]).expect("module");
+            let p = Problem::load(&root.join("problems").join(iface)).expect("problem");
+            let mut exec = CpuExecutor::new(1 << 27);
+            exec.max_steps = 1 << 24;
+            // a case of several workgroups in every entry (k d 9,600 cells, n 500 points, 2 x 300 blocks x clusters)
+            let case = p.suites.iter().flat_map(|s| s.cases.iter()).find(|c| c.name == "train_n500_d32_k300").expect("the case");
+            let data = p.case_data(case, 1 << 27).expect("data");
+            let mut rng = crate::wgsl::true_kingdom::Rng(0xD7E2);
+            let (mut same, mut stopped) = (0, 0);
+            for i in 0..300 {
+                let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let src = m.render(&ch).expect("render");
+                let (kern, info) = exec.compile(&p, &src).unwrap_or_else(|e| panic!("{iface} gene {i}: {e}"));
+                let plan = p.plan(case, 1 << 27, Some(&info)).expect("plan");
+                let mut outs = Vec::new();
+                for reversed in [false, true] {
+                    let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                    crate::wgsl::cpu::set_reversed_workgroups(reversed);
+                    let r = exec.run(&kern, &plan, &data, &staged, true);
+                    crate::wgsl::cpu::set_reversed_workgroups(false);
+                    match r {
+                        Ok(o) => outs.push(o.outputs),
+                        Err(e) if e.contains("more than 16777216 statements") => {}
+                        Err(e) => panic!("{iface} gene {i}: {e}"),
+                    }
+                }
+                if outs.len() == 2 {
+                    assert_eq!(outs[0], outs[1], "{iface} gene {i}: the bits depend on the order of the workgroups:\n{src}");
+                    same += 1;
+                } else {
+                    stopped += 1;
+                }
+            }
+            eprintln!("{iface}: 300 random modules on case {}: {same} gave the same bits both ways, {stopped} cut at 2^24 statements a dispatch", case.name);
+            assert!(same > 0);
+        }
+    }
+
+    /// THE SCAFFOLD IN RANGE (section 10): every one of the scaffold's 26 variants (its hist, offsets, starts and
+    /// scatter, the mean empty) runs on every one of the problem's 8 constraint cases on the CPU executor with no index
+    /// restricted.
+    #[test]
+    fn every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu() {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let p = Problem::load(&root.join("problems/kmeans_update_segmented")).expect("problem");
+        let exec = CpuExecutor::new(1 << 28);
+        let row = |n: &str| k.rows.iter().position(|r| r.name == n).unwrap_or_else(|| panic!("no row {n}")) as u32;
+        let leaf = |n: &str| Tree { symbol: row(n), const_index: None, kids: Vec::new() };
+        let same = |s: &str, n: &str| Tree { symbol: row(s), const_index: None, kids: vec![leaf(n)] };
+        let cases: Vec<_> = p.suites.iter().filter(|s| s.spec.role == Role::Constraint).flat_map(|s| s.cases.iter()).collect();
+        assert_eq!(cases.len(), 8);
+        assert_eq!(k.scaffold.len(), 26);
+        let mut runs = 0;
+        for v in k.scaffold.keys() {
+            let scatter = Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), leaf("cluster.point")] }] };
+            let kids = vec![same("kernel.cs_hist_same", &format!("cs.{v}")), same("kernel.cs_offsets_same", "cs.offsets"), same("kernel.cs_starts_same", "cs.starts"), scatter, leaf("own.kernel_mean")];
+            let src = k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids }).expect("render");
+            let (kern, info) = exec.compile(&p, &src).unwrap_or_else(|e| panic!("{v}: {e}"));
+            for case in &cases {
+                let data = p.case_data(case, 1 << 28).expect("data");
+                let plan = p.plan(case, 1 << 28, Some(&info)).expect("plan");
+                let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                crate::wgsl::cpu::take_restricted();
+                exec.run(&kern, &plan, &data, &staged, true).unwrap_or_else(|e| panic!("{v} on {}: {e}", case.name));
+                assert_eq!(crate::wgsl::cpu::take_restricted(), 0, "variant {v} indexes past an array on case {}", case.name);
+                runs += 1;
+            }
+        }
+        eprintln!("26 scaffold variants x {} cases: {runs} runs, no index restricted", cases.len());
+    }
+
     /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it
     /// 1.3 %). Since section 10 the starts entry is the scaffold's, so the feature is tested in an entry the gene owns:
     /// the scatter form's mean, its cluster's length and first slot found by a loop over the clusters, reads

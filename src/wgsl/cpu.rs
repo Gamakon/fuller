@@ -264,12 +264,19 @@ fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>,
         }
     }
     let mut m = Machine { module, globals, shared: HashMap::new(), nwg: workgroups, wg: ep.workgroup_size, writes: Vec::new(), next_frame: 0, steps: 0, max_steps, lazy: HashMap::new() };
+    let mut ids = Vec::new();
     for wz in 0..workgroups[2] {
         for wy in 0..workgroups[1] {
             for wx in 0..workgroups[0] {
-                m.workgroup([wx, wy, wz], &ep.function)?;
+                ids.push([wx, wy, wz]);
             }
         }
+    }
+    if REVERSED.with(|c| c.get()) {
+        ids.reverse();
+    }
+    for id in ids {
+        m.workgroup(id, &ep.function)?;
     }
     let mut out = HashMap::new();
     for (h, g) in module.global_variables.iter() {
@@ -858,6 +865,18 @@ thread_local! {
     /// How many indices this thread's dispatches restricted (an index at or past its array, vector or matrix): what a
     /// kernel whose every index is in range by its types never does (docs/DESIGN_inrange_index_types.md).
     static RESTRICTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Whether this thread's dispatches run their workgroups in reverse order ([`set_reversed_workgroups`]).
+    static REVERSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run this thread's dispatches with their workgroups in reverse order (`true`) or in index order (`false`, the
+/// default). The device promises no order between workgroups, so a deterministic kernel gives the same bits both ways;
+/// one whose result depends on the order (a read racing another workgroup's write, two stores to one cell) need not.
+pub fn set_reversed_workgroups(on: bool) {
+    REVERSED.with(|c| c.set(on));
 }
 
 /// The number of indices restricted on this thread since the last call, which resets it.
@@ -1743,5 +1762,30 @@ fn main() {
         let mut w = Vec::new();
         d.buffers["out"].words(&mut w);
         assert_eq!(w, vec![0, 1, 0, 1, 0, 1, 0, 1], "j 0 reads the last element, 3.0");
+    }
+
+    /// The order knob (`set_reversed_workgroups`): four workgroups each store their id in one cell, so the last to
+    /// run wins: 3 in index order, 0 reversed. A kernel whose cells are each its own gives the same bits both ways.
+    #[test]
+    fn reversed_workgroups_expose_a_kernel_whose_result_depends_on_their_order() {
+        let text = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main(@builtin(workgroup_id) wid: vec3<u32>) {
+    out[0] = wid.x;
+    out[1u + wid.x] = wid.x * 7u;
+}
+";
+        let run_once = |reversed: bool| {
+            let mut bufs = HashMap::new();
+            bufs.insert("out".to_string(), Val::V(vec![Val::U(9); 5]));
+            set_reversed_workgroups(reversed);
+            let d = run_text(text, bufs, [4, 1, 1], 1_000_000);
+            set_reversed_workgroups(false);
+            let mut w = Vec::new();
+            d.unwrap().buffers["out"].words(&mut w);
+            w
+        };
+        assert_eq!(run_once(false), vec![3, 0, 7, 14, 21]);
+        assert_eq!(run_once(true), vec![0, 0, 7, 14, 21]);
     }
 }

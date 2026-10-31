@@ -164,7 +164,7 @@ zero region: the result is order-independent, and equals the plain store (plus o
 as they are for a correct sort. It needs the ids region as an `array<atomic<u32>>` binding of its own, an interface
 change to UltraDim's driver, and its cost must be measured against the plain store before it is adopted.
 
-## 10. Compiler-assigned slots for the scatter (approved by Andrew 2026-10-31; to be built)
+## 10. Compiler-assigned slots for the scatter (approved by Andrew 2026-10-31; built 2026-11-01)
 
 This supersedes the atomic proposal at the end of section 9, which would have changed UltraDim's driver interface. An
 interim proposal, an `atomicAdd` counter per cluster, was rejected before it was built: it hands out positions in the
@@ -207,6 +207,23 @@ harness already owns, sized within UltraDim's binding limits. UltraDim's driver 
 - The scatter form, reply 2 and the champion read back bit-exact through the new row (A7 has no scatter). A kernel whose histogram or prefix sums match no variant points to a missing variant, to be added, not a kernel to reject.
 - 300 random modules per table stay legal, in range and deterministic: two runs give the same bits.
 - One per-entry GPU pass, as expressed against as written: the target is parity, since the scaffold does the counting sort's own work.
+
+**Built** (fuller `feat/futhark-kingdom`): 8fc4c7a4 (`countsort.py`: the 26 variants in `scaffold.tsv`, the knob
+`kernel.hist`, the cluster store, the witness), db606571 (the reader and the renderer), 757ee175 (the break guard, the
+run index and the phase start tested in the mean, which the gene still owns), d86a401c (section 11), and the tests of
+this section's list (see the commit after d86a401c). The measured table is below.
+
+**The identity rows.** A Karva head holds at least one function, and the scaffold's entries have none of their own:
+`kernel.hist`'s producers are the variants' terminals, `kernel.offsets`' and `kernel.starts`' one terminal each. So
+each has an identity, `kernel.cs_hist_same`, `kernel.cs_offsets_same`, `kernel.cs_starts_same` (`{0}` over its own
+type); the witness holds them to that text and signature, and the reader reads a scaffold entry as its identity over
+its terminal.
+
+**The work guard.** The tree's work bound (`TrueKingdom::tree_work_bound`, what the work guard splits a dispatch by)
+counts the gene's nodes. A variant is one terminal, so its fixed loops (the hist's 256 points a block, the scatter
+prologue's rank over 256, the starts' loop over k) sit outside the gene's budget: their work is the reference
+kernels' own, a fixed text of known cost (the segmented form, reply 2 and the champion, each timed), never a gene's.
+A new variant must be a timed reference for the same reason.
 
 ## 11. Access modes: a region is read-only or write-only in one dispatch (2026-11-01)
 
