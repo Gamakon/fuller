@@ -68,6 +68,9 @@ pub struct TrueKingdom {
     pub fuel_budget: u32,
     /// For every row, how it repeats the nodes below it ([`LoopRow`]); `None` for a row whose spelling has no loop.
     pub loops: Vec<Option<LoopRow>>,
+    /// For every row, the argument one invocation of the workgroup runs ([`solo_body`]): the body of a solo phase
+    /// (`wg.solo_*`, `wg.solo_at_*`), read from its spelling; `None` for every other row.
+    pub solo: Vec<Option<usize>>,
     /// A module interface (s9 batch 8): the roots of its normal genes, one entry point each, in gene order; empty for
     /// a one-entry interface, whose genes are rooted at [`TrueKingdom::root`].
     pub gene_roots: Vec<Ty>,
@@ -98,6 +101,34 @@ pub struct LoopRow {
 fn stratum(name: &str) -> Option<u32> {
     let at = name.rfind("_f")?;
     name[at + 2..].parse().ok()
+}
+
+/// The argument of a solo phase row (`wg.solo_*`) that one invocation of the workgroup runs, read from its spelling:
+/// the placeholder in `if (lidx == 0u) { {i} }`, or in `let su = {j}; if (lidx == su) { {i} }` with argument `j` of
+/// type `u32.uniform` (the same value in every invocation, so one invocation matches). `None` for any other row; a
+/// solo row spelled in neither form is a bug of the table.
+fn solo_body(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<usize>, String> {
+    if !row.name.starts_with("wg.solo_") {
+        return Ok(None);
+    }
+    let bug = |what: &str| format!("our software has a bug: the solo row {} {what}: {}", row.name, row.spelling);
+    let placeholder = |text: &str| -> Option<usize> { text.strip_prefix('{')?.split_once('}')?.0.parse().ok() };
+    let body = if let Some((_, rest)) = row.spelling.split_once("if (lidx == 0u) { ") {
+        placeholder(rest).ok_or_else(|| bug("has no body placeholder after if (lidx == 0u)"))?
+    } else if let Some((before, rest)) = row.spelling.split_once("if (lidx == su) { ") {
+        let (_, at) = before.rsplit_once("let su = ").ok_or_else(|| bug("compares lidx to su without binding su"))?;
+        let u = placeholder(at).ok_or_else(|| bug("binds su to no argument"))?;
+        if row.args.get(u).map(|t| type_name(*t)).as_deref() != Some("u32.uniform") {
+            return Err(bug("binds su to an argument that is not u32.uniform"));
+        }
+        placeholder(rest).ok_or_else(|| bug("has no body placeholder after if (lidx == su)"))?
+    } else {
+        return Err(bug("spells neither if (lidx == 0u) nor if (lidx == su)"));
+    };
+    if body >= row.args.len() {
+        return Err(bug("names a body past its arguments"));
+    }
+    Ok(Some(body))
 }
 
 /// The [`LoopRow`] of a row, or `None` when its spelling has no loop.
@@ -206,6 +237,7 @@ impl TrueKingdom {
             o => format!("{o:?}"),
         };
         let loops = rows.iter().map(|r| loop_row(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
+        let solo = rows.iter().map(|r| solo_body(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
         let meta = read(dir, "interface.tsv")?;
         let get = |key: &str| meta.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, v)| v.to_string()).ok_or_else(|| format!("interface.tsv has no {key}"));
         let gene_roots = match get("gene_roots") {
@@ -231,6 +263,7 @@ impl TrueKingdom {
             prologue: read(dir, "prologue.wgsl")?,
             declarations: read(dir, "declarations.wgsl")?,
             loops,
+            solo,
         })
     }
 
@@ -288,13 +321,13 @@ impl TrueKingdom {
         let all = u128::from(invocations.max(1));
         let mut stack: Vec<(&Tree, u128)> = vec![(tree, all)];
         while let Some((node, mult)) = stack.pop() {
-            let row = self.rows.get(node.symbol as usize).ok_or_else(|| format!("our software has a bug: symbol {} is not a row", node.symbol))?;
+            self.rows.get(node.symbol as usize).ok_or_else(|| format!("our software has a bug: symbol {} is not a row", node.symbol))?;
             match self.loops.get(node.symbol as usize).and_then(|l| l.as_ref()) {
                 None => {
                     total = total.saturating_add(mult);
-                    // a solo phase's first argument is its body: one invocation of the workgroup runs it
-                    let solo = row.name.starts_with("wg.solo_");
-                    stack.extend(node.kids.iter().enumerate().map(|(i, k)| (k, if solo && i == 0 { (mult / all).max(1) } else { mult })));
+                    // a solo phase's body (read from its spelling): one invocation of the workgroup runs it
+                    let body = self.solo.get(node.symbol as usize).copied().flatten();
+                    stack.extend(node.kids.iter().enumerate().map(|(i, k)| (k, if body == Some(i) { (mult / all).max(1) } else { mult })));
                 }
                 Some(l) => {
                     let mut cap = l.cap;
@@ -814,6 +847,32 @@ mod tests {
     }
 
     /// A tree by row names; a constant placeholder names its `C_T` text.
+    /// A solo phase's body counts once a workgroup, and the body is the argument its spelling puts inside the
+    /// `if (lidx == ..)`: argument 0 of `wg.solo_*`, argument 1 of `wg.solo_at_*`, whose argument 0 is the uniform value
+    /// every invocation evaluates. At 256 invocations, `wg.solo_at_L0_f0(params.x, a body of 4 nodes, {})` is the row,
+    /// the uniform and the rest 256 times each and the body once: 772 (the body counted 256 times and the uniform once,
+    /// as when every `wg.solo_` row's argument 0 was taken for its body, gives 1,537).
+    #[test]
+    fn a_solo_at_rows_body_is_its_second_argument_and_counts_once_a_workgroup() {
+        let k = TrueKingdom::load(&default_dir().join("mod").join("kmeans_update_segmented")).expect("the segmented table");
+        let mut seen = (0, 0);
+        for (r, b) in k.rows.iter().zip(&k.solo) {
+            match (r.name.starts_with("wg.solo_at_"), r.name.starts_with("wg.solo_")) {
+                (true, _) => (assert_eq!(*b, Some(1), "{}", r.name), seen.0 += 1).1,
+                (false, true) => (assert_eq!(*b, Some(0), "{}", r.name), seen.1 += 1).1,
+                _ => assert_eq!(*b, None, "{}", r.name),
+            }
+        }
+        assert!(seen.0 > 0 && seen.1 > 0, "the table has both solo forms: {seen:?}");
+        let body = node(&k, "block.one_S0_f0", None, vec![node(&k, "stmt.block_S0_f0", None, vec![node(&k, "block.one_S0_f0", None, vec![node(&k, "own.stmt_S0_f0", None, vec![])])])]);
+        let at = node(&k, "wg.solo_at_L0_f0", None, vec![node(&k, "uniform.x", None, vec![]), body.clone(), node(&k, "own.block_L0_f0", None, vec![])]);
+        let none = BTreeMap::new();
+        assert_eq!(k.tree_work_bound_workgroup_in(&at, &none, 256).expect("bound"), 256 + 256 + 4 + 256);
+        let solo = node(&k, "wg.solo_L0_f0", None, vec![body, node(&k, "own.block_L0_f0", None, vec![])]);
+        assert_eq!(k.tree_work_bound_workgroup_in(&solo, &none, 256).expect("bound"), 256 + 4 + 256);
+        assert_eq!(k.tree_work_bound_workgroup_in(&at, &none, 1).expect("bound"), k.tree_work_bound_in(&at, &none).expect("bound"));
+    }
+
     fn node(k: &TrueKingdom, name: &str, value: Option<&str>, kids: Vec<Tree>) -> Tree {
         let i = k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}"));
         let const_index = value.map(|v| k.constants[&k.rows[i].out].iter().position(|t| t == v).unwrap_or_else(|| panic!("{name}: no constant {v}")) as u32);
