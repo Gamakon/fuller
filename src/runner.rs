@@ -213,6 +213,15 @@ pub fn speed_verdict(ratios: &[f64], aa: &[f64]) -> SpeedVerdict {
     }
 }
 
+/// THE INTERLEAVED RUNS OF ONE TIMED PAIR (Andrew, 2026-10-31): the yardstick's runs and the candidate's alternate run
+/// by run, `runs` each, so a burst of other GPU work (the display) falls on both sides alike; the side that goes first
+/// alternates from pair to pair (the yardstick first in the even pairs). `true` is a yardstick run. Each side then takes
+/// its fastest run.
+pub fn interleaved_runs(pair: usize, runs: usize) -> Vec<bool> {
+    let yard_first = pair.is_multiple_of(2);
+    (0..2 * runs).map(|i| (i % 2 == 0) == yard_first).collect()
+}
+
 /// THE OPERATOR MIX (`--ops NAME=P,...`, Andrew, 2026-10-31): every child draws ONE operator by its probability, so
 /// all of them run in the same generation and each child's operator is recorded. `allowed` are the runner's
 /// operators; the probabilities are finite, at least 0, and sum to 1.
@@ -648,6 +657,22 @@ mod tests {
         assert_eq!(median(&[3.0, f64::NAN, 1.0, 2.0]), 2.0);
         assert_eq!(median(&[f64::INFINITY, 1.0, 2.0]), 2.0, "an untimed ratio (infinite) counts");
         assert!(median(&[]).is_nan());
+    }
+
+    /// The runs alternate one by one, each side `runs` times; the even pairs start with the yardstick, the odd ones with
+    /// the candidate; no two runs of one side are adjacent.
+    #[test]
+    fn a_timed_pair_interleaves_its_runs_one_by_one_and_alternates_the_first() {
+        assert_eq!(interleaved_runs(0, 3), vec![true, false, true, false, true, false]);
+        assert_eq!(interleaved_runs(1, 3), vec![false, true, false, true, false, true]);
+        for pair in 0..4 {
+            let o = interleaved_runs(pair, 117);
+            assert_eq!(o.len(), 234);
+            assert_eq!(o.iter().filter(|y| **y).count(), 117, "pair {pair}: the yardstick's runs");
+            assert!(o.windows(2).all(|w| w[0] != w[1]), "pair {pair}: two runs of one side in a row");
+            assert_eq!(o[0], pair % 2 == 0, "pair {pair}: who goes first");
+        }
+        assert!(interleaved_runs(5, 0).is_empty());
     }
 
     #[test]
