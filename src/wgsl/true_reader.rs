@@ -2058,8 +2058,9 @@ impl<'a> Reader<'a> {
                 }
             }
         }
-        // the kingdom's form: the bound row's own cap (`bound.of_*_c` spells `min(e, 2^c)`) is the row's, the bound is e
-        if kstep.is_some() {
+        // a cap at a trip class, `min(e, 2^c)` with e at most 2^c (the bound rows' own spelling, or a text that copied it), is
+        // e: the bound row adds the cap again
+        {
             if let E::Call("min", args, _) = &limit {
                 if let [e, cap] = &args[..] {
                     if lit_u(cap).is_some_and(|c| [1u32 << 6, 1 << 12, 1 << 18, 1 << 24].contains(&c)) && self.max_of(e).is_some_and(|m| m <= u64::from(lit_u(cap).unwrap_or(0))) {
@@ -2590,13 +2591,19 @@ impl<'a> Reader<'a> {
     fn val_direct(&mut self, e: &E, want: crate::geneframe::Ty, tn: &str) -> Option<Tree> {
         match e {
             E::Lit(l) => {
-                // a size-bounded trip count's literal is `size.lit` over `u32.lit4096` (loops.py `size_bounds`)
-                if tn == "u32.size" {
-                    let row = *self.rows_by_name.get("size.lit")?;
-                    let lit = self.konst("u32.lit4096", l)?;
-                    return Some(Tree { symbol: row, const_index: None, kids: vec![lit] });
+                if let Some(t) = self.konst(tn, l) {
+                    return Some(t);
                 }
-                return self.konst(tn, l);
+                // a type with no constants of its own spells a literal through a row `lit_u32({0})` over a constant
+                // type (`size.lit`, `uniform.lit` over `u32.lit4096`): a literal is a size and a uniform value
+                let rows: Vec<u32> = self.by_spelling.get("lit_u32({0})").cloned().unwrap_or_default().into_iter().filter(|r| self.k.rows[*r as usize].out == want && self.k.rows[*r as usize].args.len() == 1).collect();
+                for r in rows {
+                    let arg = self.k.type_name(self.k.rows[r as usize].args[0]);
+                    if let Some(lit) = self.konst(&arg, l) {
+                        return Some(Tree { symbol: r, const_index: None, kids: vec![lit] });
+                    }
+                }
+                return None;
             }
             E::Zero(w) => {
                 let sp = format!("zero_vec{}_{}()", w.lanes, sc_name(w.s));
@@ -4148,6 +4155,37 @@ mod tests {
         assert_eq!(cpu_same_bits(&root.join("problems/kmeans_update_segmented"), &[text, again], 5e6), 5);
     }
 
+    /// THE MODEL'S REPLIES READ (2026-10-31, run kmeans_model_smoke2, tests/corpus/kmeans_model_replies): reply 2 (its
+    /// workgroup memory at region base 0, its loops capped with `min(e, 2^24)`) reads into the scatter interface now that
+    /// the interface has the workgroup pool and a cap at a trip class is the bound row's. Reply 1 reads past its
+    /// barrier's uniform condition (`params.y < 8u`: a literal is uniform through `uniform.lit`) and its barrier loop
+    /// bounded by `min(<uniform>, 4096u)` (`size.min_uniform`), and stops only where it uses a workgroup atomicAdd's old
+    /// value as an index: an order-dependent placement the deterministic interface forbids by type.
+    #[test]
+    fn the_models_kmeans_replies_read_into_the_scatter_interface() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let reply = |f: &str| std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies").join(f)).expect("a reply");
+        assert_eq!(read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).unwrap_or_else(|e| panic!("reply 2 does not read: {e}")).len(), 5);
+        let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
+        assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
+    }
+
+    /// The k-means layouts' gene widths at the scatter form's program size (the device holds two populations of them).
+    #[test]
+    fn print_kmeans_gene_widths_when_asked() {
+        if std::env::var("FULLER_PRINT_WIDTHS").is_err() {
+            return;
+        }
+        for (iface, n) in [("kmeans_update", 94usize), ("kmeans_update_segmented", 379)] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let contract = k.relations().check().expect("the kingdom check");
+            let l = crate::typed_gep::GeneLayout::from_program_size(&contract, k.root, n).expect("layout");
+            eprintln!("{iface}: N = {n}: {} words a gene ({:.1} MB)", l.width, l.width as f64 * 4.0 / 1e6);
+        }
+    }
+
     /// THE MODEL EDIT'S WRITE-BACK (phylu `wgsl_true_case_fit --ops model=P`): a reply read with the true reader is
     /// written onto its parent's gene (the parent A7 in the scatter interface, the reply the scatter form), and the child
     /// gene expresses exactly the reply's tree; the parent's gene is unchanged where the reply does not reach.
@@ -4171,10 +4209,16 @@ mod tests {
         assert_ne!(child, parent);
     }
 
+    /// Whether a WGSL text names the f16 type (the word `f16`, as gen_tables.py's own rule; a register `rf16` is an f32).
+    fn names_f16(src: &str) -> bool {
+        src.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| w == "f16")
+    }
+
     /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and
     /// validates and that names no f16: legality by the types, with A7's bindings.
     #[test]
     fn random_kmeans_update_modules_validate() {
+        assert!(names_f16("enable f16;\nvar<private> x: f16 = 0.0h;") && names_f16("vec4<f16>") && !names_f16("var rf16: f32 = 0.0;"), "the f16 word rule");
         for iface in ["kmeans_update", "kmeans_update_segmented"] {
             let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
             let entries = k.gene_roots.len();
@@ -4183,7 +4227,7 @@ mod tests {
             for i in 0..300 {
                 let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
                 let src = m.render(&ch).expect("render");
-                assert!(!src.contains("f16"), "{iface} gene {i}: names f16");
+                assert!(!names_f16(&src), "{iface} gene {i}: names f16");
                 let module = crate::wgsl::naga_shape::parse_unscanned(&src).unwrap_or_else(|e| panic!("{iface} gene {i}: naga parse: {e}\n{src}"));
                 crate::wgsl::target::Target::current().validate(&module, &src).unwrap_or_else(|e| panic!("{iface} gene {i}: naga validate: {e}"));
             }

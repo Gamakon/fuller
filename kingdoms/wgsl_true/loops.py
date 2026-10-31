@@ -9,7 +9,7 @@ UOPS = {"add": "({0} + {1})", "sub": "({0} - {1})", "mul": "({0} * {1})", "div":
 
 # THE SIZE-BOUNDED TRIP COUNT (`size_bounds`, Andrew, 2026-10-31): in an interface that names its size fields, a loop's
 # trip-count slot takes only those fields and expressions bounded by them (a literal 1..=4096, and + * / >> min max of
-# sizes; no subtraction, which wraps), never a free literal or a load, so every gene's work bound follows from the
+# sizes, and min(a uniform value, a size); no subtraction, which wraps), never a free literal or a load, so every gene's work bound follows from the
 # problem's sizes (the work guard's `TrueKingdom::tree_work_bound_in` reads every such bound's value from the fields).
 SIZE_OPS = {"add": "({0} + {1})", "mul": "({0} * {1})", "div": "({0} / {1})", "shr": "({0} >> {1})", "min": "min({0}, {1})", "max": "max({0}, {1})"}
 
@@ -64,6 +64,7 @@ def build(iface):
         R("size.lit", "u32.size", ["u32.lit4096"], "lit_u32({0})", "a literal trip count 1..=4096")
         for op, sp in SIZE_OPS.items():
             R(f"size.{op}", "u32.size", ["u32.size", "u32.size"], sp, "bounded by its arguments' bounds")
+        R("size.min_uniform", "u32.size", ["u32.uniform", "u32.size"], "min({0}, {1})", "a uniform value at most a size: bounded by the size, and uniform (a loop holding a barrier may take it)")
     for c in BOUND_CLASSES:
         cap = 2 ** c
         R(f"bound.of_index_{c}", f"u32.boundx{c}", [bound_arg(iface, "u32.index")], f"min({{0}}, {cap}u)", "the cap is the row's text, so every expression-bounded loop has a known trip bound", twin=True)

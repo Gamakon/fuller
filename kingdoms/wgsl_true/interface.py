@@ -192,6 +192,9 @@ KMEANS_UPDATE = dict(
     fields=["x", "y", "z", "w"],
     # a loop's trip count is bounded by n, k and d only (loops.py `size_bounds`)
     size_bounds=["x", "y", "z"],
+    # workgroup memory is the pool (pool.py), as v24's: the reader places every workgroup array in it (a model's or an
+    # evolved kernel's shared counters and scans), 2026-10-31
+    wg_pool=True,
     # the items each entry dispatches over at the problem's largest sizes (problems/kmeans_update*/problem.toml: n up to
     # 2^20, k up to 1,024, k * d up to 2^20), so a workgroup width keeps every dispatch within wgpu's 65,535 workgroups
     # (skeleton.py `min_wg_x`): A7's k * d cells
@@ -207,7 +210,7 @@ KMEANS_UPDATE = dict(
     has_subgroup_barrier=False,
     has_f16=False,
     workgroup_bytes=32768,
-    extra_constants={"index": ["0", "1"], "count": ["0", "1"], "real": ["0.0"]},
+    extra_constants={"index": ["0", "1"], "count": ["0", "1"], "real": ["0.0"], "lit4096": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "32", "64", "128", "255", "256", "512", "1024", "2048", "4096"]},
     prologue_top="""@group(0) @binding(0) var<storage, read> vectors: array<f32>;
 @group(0) @binding(1) var<storage, read> assignments: array<u32>;
 @group(0) @binding(2) var<storage, read_write> centroids: array<f32>;
@@ -226,7 +229,7 @@ KMEANS_UPDATE_SEGMENTED = dict(
     # hist: ceil(n / 256) * k blocks x clusters; offsets: k; starts: one workgroup (fixed); scatter: n; mean: k * d
     dispatch_items={"hist": (1 << 20) // 256 * 1024, "offsets": 1024, "scatter": 1 << 20, "mean": 1 << 20},
     arenas=[dict(name="scratch", e="u32", ty="u32.index")],
-    extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["255", "256"]},
+    extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "32", "64", "128", "255", "256", "512", "1024", "2048", "4096"]},
     prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",
 )
 

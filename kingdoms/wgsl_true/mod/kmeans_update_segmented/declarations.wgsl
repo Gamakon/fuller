@@ -378,3 +378,7 @@ var U4: u32 = 0u;
 var U5: u32 = 0u;
 var U6: u32 = 0u;
 var U7: u32 = 0u;
+var rs0: u32;
+var rs1: u32;
+var rs2: u32;
+var rs3: u32;

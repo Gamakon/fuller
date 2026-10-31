@@ -3,14 +3,10 @@
 @group(0) @binding(2) var<storage, read_write> centroids: array<f32>;
 @group(0) @binding(3) var<uniform> params: vec4<u32>;
 @group(0) @binding(4) var<storage, read_write> scratch: array<u32>;
-var<workgroup> wg_f_11: array<f32, 2048>;
-var<workgroup> wg_u_10: array<u32, 1024>;
-var<workgroup> wg_v4_9: array<vec4<f32>, 512>;
-var<workgroup> wg_v2_8: array<vec2<f32>, 256>;
-var<workgroup> wg_v3_7: array<vec3<f32>, 128>;
-var<workgroup> wg_i_9: array<i32, 512>;
-var<workgroup> wg_au_8: array<atomic<u32>, 256>;
-var<workgroup> wg_ai_7: array<atomic<i32>, 128>;
+var<workgroup> wg_pool: array<u32, 6084>;
+var<workgroup> wg_apool: array<atomic<u32>, 2068>;
+var<workgroup> wg_scnt: array<atomic<u32>, 4>;
+var<workgroup> wg_seg: array<u32, 36>;
 fn add_sat(a: i32, b: i32) -> i32 { let s = a + b; let ov = ((a ^ s) & (b ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
 fn at2_bool(v: vec2<bool>, i: u32) -> bool { switch i { case 0u: { return v.x; } default: { return v.y; } } }
 fn at2_f32(v: vec2<f32>, i: u32) -> f32 { switch i { case 0u: { return v.x; } default: { return v.y; } } }
@@ -90,19 +86,21 @@ fn outer_3x4(a: vec4<f32>, b: vec3<f32>) -> mat3x4<f32> { return mat3x4<f32>(a *
 fn outer_4x2(a: vec2<f32>, b: vec4<f32>) -> mat4x2<f32> { return mat4x2<f32>(a * b.x, a * b.y, a * b.z, a * b.w); }
 fn outer_4x3(a: vec3<f32>, b: vec4<f32>) -> mat4x3<f32> { return mat4x3<f32>(a * b.x, a * b.y, a * b.z, a * b.w); }
 fn outer_4x4(a: vec4<f32>, b: vec4<f32>) -> mat4x4<f32> { return mat4x4<f32>(a * b.x, a * b.y, a * b.z, a * b.w); }
-fn own_get_wg_f_11(i: u32) -> f32 { return select(0.0, wg_f_11[min(i, 2047u)], i < 2048u); }
-fn own_get_wg_i_9(i: u32) -> i32 { return select(0i, wg_i_9[min(i, 511u)], i < 512u); }
-fn own_get_wg_u_10(i: u32) -> u32 { return select(0u, wg_u_10[min(i, 1023u)], i < 1024u); }
-fn own_get_wg_v2_8(i: u32) -> vec2<f32> { return select(vec2<f32>(), wg_v2_8[min(i, 255u)], i < 256u); }
-fn own_get_wg_v3_7(i: u32) -> vec3<f32> { return select(vec3<f32>(), wg_v3_7[min(i, 127u)], i < 128u); }
-fn own_get_wg_v4_9(i: u32) -> vec4<f32> { return select(vec4<f32>(), wg_v4_9[min(i, 511u)], i < 512u); }
 fn own_load_centroids(r: u32, c: u32) -> f32 { return centroids[min(r * (params.y * params.z) + c, arrayLength(&centroids) - 1u)]; }
 fn row_axis(g: vec3<u32>) -> u32 { return g.y; }
 fn sat_add_u32(x: u32, y: u32) -> u32 { let s = x + y; return select(s, 0xffffffffu, s < x); }
+fn seg_at(i: u32) -> u32 { return wg_seg[min(i, 32u)]; }
 fn sorted(a: f32, b: f32) -> vec2<f32> { return vec2<f32>(min(a, b), max(a, b)); }
 fn sorted_i(a: i32, b: i32) -> vec2<i32> { return vec2<i32>(min(a, b), max(a, b)); }
 fn sub_floor(a: u32, b: u32) -> u32 { return a - min(a, b); }
 fn sub_sat(a: i32, b: i32) -> i32 { let s = a - b; let ov = ((a ^ b) & (a ^ s)) < 0i; return select(s, select(2147483647i, (-2147483647i - 1i), a < 0i), ov); }
+fn wg_set_v4(o: u32, ls: u32, v: vec4<f32>) { if (o < 6080u) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls < 6080u) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls < 6080u) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls < 6080u) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
+fn wg_set_v4_below(o: u32, ls: u32, v: vec4<f32>, sl: u32, sp: u32) { if (o >= sl && o < sp) { wg_pool[o] = bitcast<u32>(v.x); } if (o + ls >= sl && o + ls < sp) { wg_pool[o + ls] = bitcast<u32>(v.y); } if (o + 2u * ls >= sl && o + 2u * ls < sp) { wg_pool[o + 2u * ls] = bitcast<u32>(v.z); } if (o + 3u * ls >= sl && o + 3u * ls < sp) { wg_pool[o + 3u * ls] = bitcast<u32>(v.w); } }
+fn wg_v4(b: u32, ls: u32, i: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[min(b + i, 6080u)]), bitcast<f32>(wg_pool[min(b + ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 2u * ls + i, 6080u)]), bitcast<f32>(wg_pool[min(b + 3u * ls + i, 6080u)])); }
+fn wg_v4_above(b: u32, ls: u32, i: u32, sl: u32, sp: u32) -> vec4<f32> { return vec4<f32>(bitcast<f32>(wg_pool[xw(b + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 2u * ls + i, sl, sp)]), bitcast<f32>(wg_pool[xw(b + 3u * ls + i, sl, sp)])); }
+fn xidx(p: u32, h: u32, m: u32) -> u32 { if (m == 0u) { return p; } let lo = p & (h - 1u); return ((p & ~(h - 1u)) << 1u) | lo; }
+fn xok(p: u32, h: u32, m: u32) -> bool { if (m == 0u) { return (p & h) == 0u; } return p < 2147483648u; }
+fn xw(a: u32, sl: u32, sp: u32) -> u32 { return select(min(a, 6080u), 6080u, a >= sl && a < sp); }
 fn zero_mat2x2() -> mat2x2<f32> { return mat2x2<f32>(); }
 fn zero_mat2x3() -> mat2x3<f32> { return mat2x3<f32>(); }
 fn zero_mat2x4() -> mat2x4<f32> { return mat2x4<f32>(); }
