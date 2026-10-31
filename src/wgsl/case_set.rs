@@ -169,6 +169,12 @@ impl<'d> CaseSet<'d> {
         Ok((total, most))
     }
 
+    /// Each dispatch's GPU milliseconds of one unsplit run on timing case `i` (in dispatch order: which entry costs what).
+    pub fn dispatch_ms_unsplit(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, whole: u128) -> Result<Vec<f64>, String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        Ok(self.exec.unsplit(whole, || self.run_slot(k, info, s, false))?.dispatch_ms)
+    }
+
     /// [`CaseSet::time`] UNSPLIT: every dispatch whole, as UltraDim dispatches it (`DeviceExecutor::unsplit`), the
     /// whole run bounded by `whole`.
     pub fn time_unsplit(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, whole: u128) -> Result<f64, String> {
