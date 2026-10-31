@@ -434,15 +434,13 @@ fn median(v: &[f64]) -> f64 {
 /// inputs; (2) every timing is a finite GPU time; (3) each path's A/A (the published program against itself, 11 pairs,
 /// 20 runs each, as the study times) is within the study's gate of 5 %; (4) every program's median ratio against the
 /// published program agrees between any two paths within the sum of their A/A noise floors (the largest |ratio - 1|
-/// of each). The single path is a process a timing (`futhark_wgpu_host`), the batch path one process for all
-/// (`Backend::Gpu`), the rust path this process (`Backend::Rust`). (The fork compiler, rustc, cc, the GPU; run
-/// under the GPU lock.)
+/// of each), or, for a program noisier than the published one, the sum of its own noise on the two paths. The single path's quality is a process a candidate (`futhark_wgpu_host`) and its timing a build and a
+/// process a candidate, the batch path one process for all (`Backend::Gpu`), the rust path this process
+/// (`Backend::Rust`); every path times with interleaved pairs (`Step::Pair`). (The fork compiler, rustc, cc, the
+/// GPU; run under the GPU lock.)
 #[test]
 fn on_the_gpu_the_three_evaluation_paths_agree() {
-    if !crate::futhark_rust::compiler().is_file() || !have("cc") {
-        eprintln!("skipped: the fork compiler or cc is not installed");
-        return;
-    }
+    assert!(crate::futhark_rust::compiler().is_file() && have("cc"), "the fork compiler {} or cc is not installed", crate::futhark_rust::compiler().display());
     let _gpu = crate::gpu_test_lock::acquire();
     let (pairs, runs) = (11, 20);
     let p = problem("histogram").unwrap();
@@ -455,29 +453,11 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
     let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
     let trees: Vec<Tree> = CROSS_PATH.iter().map(|t| crate::futhark_sig::build(&k, t).unwrap()).collect();
     let all = stdin_of(&cases);
-    // THE SINGLE PATH: a quality program and a timed program a candidate, a process a timing.
-    let time_once = |exe: &Path| -> f64 {
-        let (_, r) = crate::futhark_wgpu_host::run_program_bytes(exe, &timing, true, runs).unwrap();
-        r.fastest_run_ns(runs).unwrap_or_else(|e| panic!("{}: {e}", exe.display()))
-    };
-    let yard_exe = crate::futhark_wgpu_host::compile_program_prebuilt(p.yardstick, &base.join("single_yard"), &shim).unwrap();
-    let single_pairs = |exe: &Path| -> (Vec<f64>, f64) {
-        time_once(exe);
-        let mut r = Vec::new();
-        let mut yard = f64::INFINITY;
-        for i in 0..pairs {
-            let (c, y) = if i % 2 == 0 {
-                let c = time_once(exe);
-                (c, time_once(&yard_exe))
-            } else {
-                let y = time_once(&yard_exe);
-                (time_once(exe), y)
-            };
-            yard = yard.min(y);
-            r.push(c / y);
-        }
-        (r, yard)
-    };
+    let inputs = Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) };
+    // THE SINGLE PATH: the quality outputs from a program of the candidate's own (Futhark's command line, its own
+    // process); the timed pairs from a timing build and process of the candidate's own (`futhark_evolve`'s
+    // `Judge::time_single`: the driver's interleaved pairs, as on the other paths).
+    let timer = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join("single_timer"), inputs).unwrap();
     let mut quality: Vec<Vec<Vec<Array>>> = vec![Vec::new(); 3];
     let mut ratios: Vec<Vec<Vec<f64>>> = vec![Vec::new(); 3];
     let mut aa: Vec<(Vec<f64>, f64)> = Vec::new();
@@ -485,12 +465,12 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         let q = crate::futhark_wgpu_host::compile_program_prebuilt(&program_cases(&k, &sig, t, cases.len()).unwrap(), &base.join(format!("single_q{i}")), &shim).unwrap();
         let (out, _) = crate::futhark_wgpu_host::run_program_bytes(&q, &all, false, 1).unwrap();
         quality[0].push(read_binary(&out).unwrap());
-        let e = crate::futhark_wgpu_host::compile_program_prebuilt(&crate::futhark_sig::program(&k, &sig, t).unwrap(), &base.join(format!("single_t{i}")), &shim).unwrap();
-        ratios[0].push(single_pairs(&e).0);
+        let got = timer.run(&[Member { program: Program::Tree(t), steps: fresh_pairs(pairs, runs) }]).unwrap();
+        assert_eq!((got.cost.compiles, got.cost.processes), (1, 1), "the single path's timing is one build and one process a candidate");
+        ratios[0].push(pair_ratios(&got.outcomes[0], pairs).0);
     }
-    aa.push(single_pairs(&yard_exe));
+    aa.push(pair_ratios(&timer.run(&[Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) }]).unwrap().outcomes[0], pairs));
     // THE BATCH AND RUST PATHS: every program in one batch, the published program as a member for the A/A.
-    let inputs = Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) };
     for (path, backend) in [(1, Backend::Gpu { shim: shim.clone() }), (2, Backend::Rust { rt: rt.clone() })] {
         let host = Host::new(&k, &sig, cases.len(), backend, &base.join(format!("path{path}")), inputs).unwrap();
         let mut members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: [vec![Step::Quality], fresh_pairs(pairs, runs)].concat() }).collect();
@@ -521,6 +501,12 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         table.push('\n');
     }
     eprintln!("{table}");
+    for (i, text) in CROSS_PATH.iter().enumerate() {
+        for path in 0..3 {
+            let r = &ratios[path][i];
+            eprintln!("{text} {}: pairs {:?}", names[path], r.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>());
+        }
+    }
     for i in 0..trees.len() {
         for path in 1..3 {
             assert_eq!(quality[path][i], quality[0][i], "{}: the {} path's quality outputs differ from the single path's", CROSS_PATH[i], names[path]);
@@ -535,10 +521,20 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         let within = aa[path].0.iter().filter(|r| (*r - 1.0).abs() <= 0.05).count();
         assert_eq!(within, pairs, "the {} path's A/A gate: {within} of {pairs} pairs within 5 %\n{table}", names[path]);
     }
+    // A program's own noise on a path: the largest relative distance of one of its pairs from its median. The A/A
+    // floor is the published program's noise only; a program much shorter than it is noisier (measured 2026-10-31:
+    // `(tab 10)`, 3.6 us a run, pairs 0.0012 to 0.0017 on the single path; `(tab (sum.n (tab (get.n vs j2))))`, 1.5 ms,
+    // pairs 0.4851 to 0.5368), so two paths' medians must agree within the larger of the two paths' A/A floors and
+    // the program's own noise on the two paths.
+    let own_noise = |v: &[f64]| {
+        let m = median(v);
+        v.iter().map(|x| (x / m - 1.0).abs()).fold(0.0, f64::max)
+    };
     for i in 0..trees.len() {
         for (a, b) in [(0, 1), (0, 2), (1, 2)] {
             let (ma, mb) = (median(&ratios[a][i]), median(&ratios[b][i]));
-            assert!((ma / mb - 1.0).abs() <= floor[a] + floor[b], "{}: the {} path's median ratio {ma:.4} and the {} path's {mb:.4} differ by more than their A/A floors {:.4} + {:.4}\n{table}", CROSS_PATH[i], names[a], names[b], floor[a], floor[b]);
+            let tol = (floor[a] + floor[b]).max(own_noise(&ratios[a][i]) + own_noise(&ratios[b][i]));
+            assert!((ma / mb - 1.0).abs() <= tol, "{}: the {} path's median ratio {ma:.4} and the {} path's {mb:.4} differ by more than {tol:.4} (A/A floors {:.4} + {:.4}, the program's own noise {:.4} + {:.4})\n{table}", CROSS_PATH[i], names[a], names[b], floor[a], floor[b], own_noise(&ratios[a][i]), own_noise(&ratios[b][i]));
         }
     }
     let _ = std::fs::remove_dir_all(&base);

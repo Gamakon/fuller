@@ -34,8 +34,11 @@
 //!   generation reads the same pairs and is never timed again; each pair is its own speed input, `r/(1+r)` with `r`
 //!   the candidate's GPU time over the yardstick's, never averaged. (Three pairs a candidate, before 2026-10-27
 //!   21:00Z, ranked one program at 1.287 in the run and 1.000 in an 11-pair re-time.)
-//!   Each side of a pair is one process running the program `--runs` times (Futhark's `-r`, after its warm-up run);
-//!   its time is the fastest run's sum of GPU-timed passes (the GPU's clock ramps within a process). The A/A noise
+//!   A pair is the candidate and the published program INTERLEAVED run by run on one upload of the timing input,
+//!   `--runs` runs a side after a warm-up each (`fuller::futhark_batch::Step::Pair`, the driver's `p` command), on
+//!   every evaluation path (`--eval single` in a timing process of the candidate's own); each side's time is its
+//!   fastest run's sum of GPU-timed passes. (Until 2026-10-31 each run re-uploaded the input and the GPU's clock
+//!   stepped down in the gaps: the A/A gate failed on every path.) The A/A noise
 //!   floor (the yardstick against itself, 11 pairs) is measured at the start; in P the published program is also
 //!   timed against itself THROUGH THE SLOT PATH (compiled as a candidate, `--pairs` pairs), the in-run A/A. A speed
 //!   claim counts only when the champion's 11-pair re-time at the end has its median below the least ratio of both
@@ -425,6 +428,12 @@ struct Judge<'a> {
     mode: EvalMode,
     /// The batch host (`--eval batch`).
     host: Option<Host<'a>>,
+    /// `--eval single`'s TIMING HOST: a candidate's timed pairs are its own library build and its own process, the
+    /// batch driver's interleaved pairs on one upload (`Step::Pair`), so the three paths time alike. Measured
+    /// 2026-10-31: Futhark's own command line re-uploads the timing input every run, and the GPU's clock stepped down
+    /// in the gaps (the runner's A/A gate, 9 of 22 pairs within 5 % on histogram). Futhark's command line still gives
+    /// the quality outputs.
+    timer: Option<Host<'a>>,
     /// Batch mode: the quality outputs of the programs batched this generation, by text, with each one's share of its
     /// batch's stages and the batch's size; taken when the program is scored (so the counts, the bugs and the ledger
     /// are the per-candidate path's).
@@ -440,11 +449,8 @@ struct Judge<'a> {
 }
 
 impl<'a> Judge<'a> {
-    fn compile(&self, source: &str, dir: &Path) -> Result<PathBuf, String> {
-        self.compile_staged(source, dir).map(|(e, _)| e)
-    }
-
-    /// [`Judge::compile`] with each stage's wall time (the c backend's compile is all `futhark`).
+    /// A candidate's quality program compiled per candidate (`--eval single`), with each stage's wall time (the c
+    /// backend's compile is all `futhark`).
     fn compile_staged(&self, source: &str, dir: &Path) -> Result<(PathBuf, Stages), String> {
         match self.backend {
             Backend::Gpu => compile_program_prebuilt_staged(source, dir, &self.shim).map(|(e, c)| (e, Stages::compiled(&c))),
@@ -593,7 +599,7 @@ impl<'a> Judge<'a> {
     /// slots' scheme (`inrun_pairs`, the first process-equivalent discarded); with `rounds`, that many single timings
     /// of the published program (the gate's). Returns (noise, in-run A/A, rounds in ns).
     fn aa_batch(&self, yardstick: &str, inrun_pairs: usize, rounds: usize) -> Result<AaSets, String> {
-        let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
+        let host = self.timing_host()?;
         // A discarded pair, then 11, each interleaved run by run (`Step::Pair`, the published program against itself).
         let mut steps: Vec<Step> = (0..12).map(|i| Step::Pair { runs: self.runs, yard_first: interleaved_runs(i, 1)[0], itself: true }).collect();
         steps.extend(vec![Step::Time { yardstick: true, runs: self.runs }; rounds]);
@@ -613,7 +619,7 @@ impl<'a> Judge<'a> {
     /// BATCH MODE: the champion's re-time (`pairs`, the first process-equivalent discarded) and its output on the
     /// timing input, in one process.
     fn champion_batch(&self, tree: &Tree, pairs: usize) -> Result<(Vec<f64>, Array), String> {
-        let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
+        let host = self.timing_host()?;
         let mut steps = pair_steps(pairs, true, self.runs);
         steps.push(Step::Output);
         let r = host.run(&[Member { program: Program::Tree(tree), steps }])?;
@@ -625,40 +631,20 @@ impl<'a> Judge<'a> {
         Ok((pair_ratios(&o[..o.len() - 1], pairs, true)?, out))
     }
 
-    /// One process's time on the timing case: the fastest of `runs` runs' GPU-timed passes, in nanoseconds.
-    fn time_once(&self, exe: &Path) -> Result<f64, String> {
-        let (_, report) = run_program_bytes(exe, &self.timing.stdin, true, self.runs)?;
-        if report.dispatches == 0 && report.passes.is_empty() && report.backend == "Metal" {
-            // No GPU work at all (a constant output: measured 2026-10-27, 18 of reduce's first 48 programs): the GPU
-            // time is not a measure of it, so it earns no speed credit (ratio infinite, speed input 1), never a bug.
-            return Ok(f64::INFINITY);
+    /// The host that times pairs: the batch host (`--eval batch`, `--eval rust`) or the single path's timing host.
+    fn timing_host(&self) -> Result<&Host<'a>, String> {
+        match self.mode {
+            EvalMode::Single => self.timer.as_ref().ok_or_else(|| "our software has a bug: --eval single times on the GPU with no timing host (the c backend has no GPU timing)".to_string()),
+            EvalMode::Batch | EvalMode::Rust => self.host.as_ref().ok_or_else(|| "our software has a bug: batch mode with no batch host".to_string()),
         }
-        report.fastest_run_ns(self.runs)
     }
 
-    /// The pairs of a FRESHLY COMPILED executable: one process of it run first and discarded, then the pairs. Measured
-    /// 2026-10-27 on reduce's timing input: the first process of a new executable took 3.16x the yardstick's time
-    /// (the in-run A/A's first pair), the next 10 pairs 0.994 to 1.010.
-    fn time_fresh(&self, exe: &Path, pairs: usize) -> Result<Vec<f64>, String> {
-        self.time_once(exe)?;
-        self.time_pairs(exe, pairs)
-    }
-
-    /// Interleaved pairs, candidate against the yardstick, the order alternating: the ratios candidate / yardstick.
-    fn time_pairs(&self, exe: &Path, pairs: usize) -> Result<Vec<f64>, String> {
-        let yard = self.yard_exe.as_ref().ok_or("our software has a bug: timing with no yardstick (the c backend has no GPU timing)")?;
-        let mut out = Vec::with_capacity(pairs);
-        for i in 0..pairs {
-            let (c, y) = if i % 2 == 0 {
-                let c = self.time_once(exe)?;
-                (c, self.time_once(yard)?)
-            } else {
-                let y = self.time_once(yard)?;
-                (self.time_once(exe)?, y)
-            };
-            out.push(c / y);
-        }
-        Ok(out)
+    /// `--eval single`: one candidate's `missing` timed pairs (`fresh`: its first process-equivalent discarded) in its
+    /// own build and process, with the build's stages.
+    fn time_single(&self, tree: &Tree, missing: usize, fresh: bool) -> Result<(Vec<f64>, Stages), String> {
+        let r = self.timing_host()?.run(&[Member { program: Program::Tree(tree), steps: pair_steps(missing, fresh, self.runs) }])?;
+        let st = Stages::compiled(&r.cost.compile);
+        Ok((pair_ratios(&r.outcomes[0], missing, fresh)?, st))
     }
 
     fn log_bug(&mut self, msg: &str, source: &str) {
@@ -747,7 +733,7 @@ impl<'a> Judge<'a> {
                 let got = match self.mode {
                     EvalMode::Single => {
                         let t = Instant::now();
-                        let r = self.compile_staged(source, &self.work_dir.join("timed")).and_then(|(e, cs)| if missing == self.slots.slots() { self.time_fresh(&e, missing).map(|r| (r, cs)) } else { self.time_pairs(&e, missing).map(|r| (r, cs)) });
+                        let r = self.time_single(tree, missing, missing == self.slots.slots());
                         let mut st = match &r {
                             Ok((_, cs)) => *cs,
                             Err(_) => Stages::default(),
@@ -1824,11 +1810,16 @@ fn real_main() -> Result<(), String> {
         }
         EvalMode::Single => None,
     };
+    let timer = if mode == EvalMode::Single && backend == Backend::Gpu {
+        Some(Host::new(&k, &sig, cases.len(), fuller::futhark_batch::Backend::Gpu { shim: shim.clone() }, &out.join("timing_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(p.yardstick) })?)
+    } else {
+        None
+    };
     let mut run = Run {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -1844,19 +1835,12 @@ fn real_main() -> Result<(), String> {
     // Batch mode: both A/A sets (and the gate's single timings) in one batch process, as every candidate is timed.
     let mut batch_aa: Option<AaSets> = None;
     if backend == Backend::Gpu && !check {
-        match mode {
-            EvalMode::Single => {
-                let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
-                run.judge.time_pairs(&y, 1)?;
-                noise = run.judge.time_pairs(&y, 11)?;
-            }
-            EvalMode::Batch | EvalMode::Rust => {
-                let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
-                noise = a.noise.clone();
-                batch_aa = Some(a);
-            }
-        }
-        let msg = format!("A/A noise floor{}, the published program against itself, 11 pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { "" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
+        // Every path times its pairs with the driver's interleaved pairs (`Step::Pair`): the batch process, this
+        // process (rust), or the single path's own timing process.
+        let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
+        noise = a.noise.clone();
+        batch_aa = Some(a);
+        let msg = format!("A/A noise floor{}, the published program against itself, 11 interleaved pairs of {runs} runs on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { " (in one timing process)" }, run.judge.timing.label(), median(&noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -1923,16 +1907,10 @@ fn real_main() -> Result<(), String> {
     // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots.
     let mut inrun_aa: Vec<f64> = Vec::new();
     if regime == "P" && backend == Backend::Gpu {
-        let r = match &batch_aa {
-            Some(a) => a.inrun.clone(),
-            None => {
-                let exe = run.judge.compile(p.yardstick, &out.join("candidate_build").join("timed"))?;
-                run.judge.time_fresh(&exe, pairs)?
-            }
-        };
+        let r = batch_aa.as_ref().map(|a| a.inrun.clone()).ok_or("our software has a bug: the in-run A/A with no A/A sets")?;
         run.judge.slots.add(p.yardstick, &r)?;
         inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
-        let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in the batch process)" } else { "" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
+        let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in the batch process)" } else { " (in the timing process)" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
@@ -1958,13 +1936,11 @@ fn real_main() -> Result<(), String> {
         let ceiling = all.iter().cloned().fold(0.0, f64::max);
         rep.push_str(&format!("timing_input\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nnoise_floor_least_ratio\t{floor:.4}\nnoise_floor_greatest_ratio\t{ceiling:.4}\n", run.judge.timing.label(), fmt(&noise), fmt(&inrun_aa)));
         let verdict = if q.perfect() && backend == Backend::Gpu {
-            let exe = compile_program_prebuilt(&source, &out.join("rescore_build"), &shim)?;
-            let ratios = run.judge.time_fresh(&exe, 11)?;
+            let (ratios, got) = run.judge.champion_batch(&tree, 11)?;
             let m = median(&ratios);
             rep.push_str(&format!("champion_vs_published_ratios\t{}\nchampion_vs_published_median\t{m:.4}\npairs_faster\t{} of {}\n", fmt(&ratios), ratios.iter().filter(|r| **r < 1.0).count(), ratios.len()));
             if let Some(want) = &run.judge.timing.output {
-                let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
-                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if read_binary(&got)? == read_binary(want)? { "yes" } else { "NO" }));
+                rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
             speed_verdict(&ratios, &all).text()
         } else {
@@ -1983,13 +1959,7 @@ fn real_main() -> Result<(), String> {
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
         let within = all.iter().filter(|r| (0.95..=1.05).contains(*r)).count();
-        let (one, unit) = match &batch_aa {
-            Some(a) => (a.rounds.clone(), "rounds_in_one_batch_process"),
-            None => {
-                let y = run.judge.yard_exe.clone().ok_or("no yardstick")?;
-                ((0..3).map(|_| run.judge.time_once(&y)).collect::<Result<_, _>>()?, "processes")
-            }
-        };
+        let (one, unit) = (batch_aa.as_ref().ok_or("--aa-only times on the GPU (--backend gpu)")?.rounds.clone(), "rounds_in_one_timing_process");
         let rep = format!("problem\t{pname}\ntiming_input\t{}\npublished_gpu_us_fastest_run_3_{unit}\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n", run.judge.timing.label(), one.iter().map(|ns| format!("{:.1}", ns / 1e3)).collect::<Vec<_>>().join(","), fmt(&noise), fmt(&inrun_aa), all.len(), if within == all.len() && !all.is_empty() { "pass" } else { "fail" });
         std::fs::write(out.join("aa_gate.tsv"), &rep).map_err(|e| e.to_string())?;
         print!("{rep}");
@@ -2573,15 +2543,7 @@ fn real_main() -> Result<(), String> {
         rep.push_str(&format!("timing_input\t{}\nover_cap_untimed\t{}\n", run.judge.timing.label(), run.judge.over_cap_untimed));
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
-            let (ratios, got) = match mode {
-                EvalMode::Single => {
-                    let exe = compile_program_prebuilt(&best.source, &out.join("best_build"), &shim)?;
-                    let ratios = run.judge.time_fresh(&exe, 11)?;
-                    let (got, _) = run_program_bytes(&exe, &run.judge.timing.stdin, false, 1)?;
-                    (ratios, fuller::futhark_sig::read_one(&got)?)
-                }
-                EvalMode::Batch | EvalMode::Rust => run.judge.champion_batch(&best.tree, 11)?,
-            };
+            let (ratios, got) = run.judge.champion_batch(&best.tree, 11)?;
             if let Some(want) = &run.judge.timing.output {
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
