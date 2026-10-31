@@ -4072,6 +4072,29 @@ mod tests {
         }
     }
 
+    /// THE MODEL EDIT'S WRITE-BACK (phylu `wgsl_true_case_fit --ops model=P`): a reply read with the true reader is
+    /// written onto its parent's gene (the parent A7 in the scatter interface, the reply the scatter form), and the child
+    /// gene expresses exactly the reply's tree; the parent's gene is unchanged where the reply does not reach.
+    #[test]
+    fn a_model_reply_read_into_the_kingdom_writes_onto_its_parents_gene() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let contract = k.relations().check().expect("the kingdom check");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let module = |file: &str| Tree { symbol: link, const_index: None, kids: read_module(&k, &std::fs::read_to_string(root.join("problems/kmeans_update_segmented").join(file)).expect("kernel"), &c).expect("reads") };
+        let (parent_tree, reply) = (module("gather.wgsl"), module("segmented.wgsl"));
+        let n = functions(&reply, &k).max(functions(&parent_tree, &k));
+        let layout = crate::typed_gep::GeneLayout::from_program_size(&contract, k.root, n).expect("layout");
+        let cl = k.const_lens();
+        let filler = crate::wgsl::true_kingdom::random_gene(&contract, &layout, &cl, &mut crate::wgsl::true_kingdom::Rng(11), crate::wgsl::true_kingdom::Share::Half, true);
+        let parent = crate::typed_gep::write_back(&contract, &layout, &filler, &parent_tree).expect("the parent's gene");
+        let child = crate::typed_gep::write_back(&contract, &layout, &parent, &reply).expect("the reply onto the parent");
+        assert_eq!(crate::typed_gep::express(&contract, &layout, &child, &cl).expect("express").tree(), reply, "the child expresses the reply");
+        assert_eq!(crate::typed_gep::express(&contract, &layout, &parent, &cl).expect("express").tree(), parent_tree);
+        assert_ne!(child, parent);
+    }
+
     /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and
     /// validates and that names no f16: legality by the types, with A7's bindings.
     #[test]
