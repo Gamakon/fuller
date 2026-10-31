@@ -56,6 +56,8 @@ def fresh(t):
 
 
 NAMES = ("cs_v", "cs_a", "cs_ok", "cs_slot")
+# the scatter entry's gene body (section 11): its own type, the only one the cluster store gives
+SCATTER_BODY = "block.scatter"
 MODULE_IDS = ("@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, "
               "@builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>")
 
@@ -182,6 +184,9 @@ def declare(iface):
     if not enabled(iface):
         return
     T("u32.cluster", "the cluster of the invocation's own point (the scaffold's cs_a): the only cluster a cluster store takes")
+    T("u32.point", "the invocation's own point (the scaffold's cs_v): the value a cluster store stores")
+    T(SCATTER_BODY, "the scatter entry's gene body (section 11): the dispatch in which the cluster store writes the ids region, "
+      "so the region is write-only here and no row of this type reads the scratch")
     for n in NAMES:
         decl(f"var {n}: {'bool' if n == 'cs_ok' else 'u32'} = {'false' if n == 'cs_ok' else '0u'};")
 
@@ -191,24 +196,23 @@ def build(iface):
     the cluster and point of the invocation, and the cluster store at every L and C rung."""
     if not enabled(iface):
         return
-    cs = iface["counting_sort"]
-    ids = cs["ids"]
-    pool = bool(iface.get("wg_pool"))
+    ids = iface["counting_sort"]["ids"]
     for name, v in variants().items():
         R(f"cs.{name}", "kernel.hist", [], knob_text(v), f"the counting-sort scaffold {name}: its module text and hist entry (the knob: the module's other scaffold pieces are this variant's)")
     R("cs.offsets", "kernel.offsets", [], "<cs:offsets>\n", "the scaffold's offsets entry, of the module's variant (the knob)")
     R("cs.starts", "kernel.starts", [], "<cs:starts>\n", "the scaffold's starts entry, of the module's variant (the knob)")
     for t, n in SAME.items():
         R(n, t, [t], "{0}", "the identity: a gene's layout holds at least one function, and a scaffold entry has none of its own")
-    from start import body_type
-    args = (["u32.wgext"] if pool else []) + [body_type()]
-    text = ("// pool {0} words\n" if pool else "") + "<cs:scatter_head>// counting sort: " + " ".join(NAMES) + "\n<declarations>\n<cs:scatter_prologue>\n{%d}\n}\n" % (len(args) - 1)
-    R("kernel.entry_scatter", "kernel.scatter", args, text, "the scatter entry: the scaffold's head and prologue (the slot of the invocation's point), then the gene's body")
+    # section 11 (access modes): the scatter's body is a type of its own, so the general body family (block.start and
+    # all it reaches, the mean's) writes no scratch and every region is read-only there, while here the ids region is
+    # write-only and nothing reads the scratch. The entry names no pool words: its body holds no phase.
+    text = "<cs:scatter_head>// counting sort: " + " ".join(NAMES) + "\n<declarations>\n<cs:scatter_prologue>\n{0}\n}\n"
+    R("kernel.entry_scatter", "kernel.scatter", [SCATTER_BODY], text, "the scatter entry: the scaffold's head and prologue (the slot of the invocation's point), then the gene's body")
     R("cluster.own", "u32.cluster", [], "cs_a", "the cluster of the invocation's own point, as the scaffold read it")
-    R("cluster.point", "u32.index", [], "cs_v", "the invocation's own point, as the scaffold numbered it", twin=True)
-    for x, d, k in rungs("LC"):
-        R(f"store.cluster_{ids}_{x}{d}_f{k}", S(x, d, k), ["u32.cluster", fam(x, "u32.index")], store_text(ids),
-          "the gene's only data-indexed store: the value at the slot the scaffold assigned the invocation's point (no position argument)")
+    R("cluster.point", "u32.point", [], "cs_v", "the invocation's own point, as the scaffold numbered it")
+    R(f"store.cluster_{ids}", SCATTER_BODY, ["u32.cluster", "u32.point"], store_text(ids),
+      "the gene's only data-indexed store: the invocation's own point at the slot the scaffold assigned it (no position argument)")
+    R(f"own.{SCATTER_BODY}", SCATTER_BODY, [], "{}", "the empty scatter body: it stores nothing")
 
 
 def store_text(ids):
@@ -264,7 +268,7 @@ def witness(iface, rows=None):
             # a knob row is a variant's own text (checked byte for byte below): the scaffold's writes are the compiler's
             if not w or (n.startswith("cs.") and n[3:] in vs):
                 continue
-            if b == ids and n.startswith(f"store.cluster_{ids}_") and r["spell"] == store_text(ids) and r["args"][0] == "u32.cluster":
+            if b == ids and n == f"store.cluster_{ids}" and r["spell"] == store_text(ids) and r["args"] == ["u32.cluster", "u32.point"] and r["out"] == SCATTER_BODY:
                 continue
             if r["args"][:2] == [f"u32.threadrow_{b}", f"u32.threadcol_{b}"] and n.startswith(f"store.{b}"):
                 # section 9's own-index store: the cell is the invocation's own by its argument types (the row and
@@ -286,7 +290,8 @@ def witness(iface, rows=None):
         r = rows.get(f"cs.{k}")
         if r and (r["spell"] != knob_text(v) or r["args"]):
             problems.append(f"cs.{k} is not the variant's module text and hist entry byte for byte")
-    for t, p in (("kernel.offsets", ["cs.offsets", SAME["kernel.offsets"]]), ("kernel.starts", ["cs.starts", SAME["kernel.starts"]]), ("u32.cluster", ["cluster.own"])):
+    for t, p in (("kernel.offsets", ["cs.offsets", SAME["kernel.offsets"]]), ("kernel.starts", ["cs.starts", SAME["kernel.starts"]]), ("u32.cluster", ["cluster.own"]),
+                 ("u32.point", ["cluster.point"]), (SCATTER_BODY, [f"store.cluster_{ids}", f"own.{SCATTER_BODY}"])):
         if produced.get(t, []) != p:
             problems.append(f"{t} has producers {produced.get(t, [])}, not only {p}")
     for t, n in SAME.items():
@@ -295,6 +300,74 @@ def witness(iface, rows=None):
     if sorted(produced.get("kernel.scatter", [])) != ["kernel.entry_scatter", "own.kernel_scatter"]:
         problems.append(f"kernel.scatter has producers {produced.get('kernel.scatter', [])}")
     return problems
+
+
+def reads(text, b):
+    """Every read of binding `b` in `text`: a subscript `b[...]` not followed by `=` (a `==` compares a read), or an
+    atomic load on `&b[`. `arrayLength(&b)` reads no cell."""
+    out = []
+    for m in re.finditer(r"\b" + re.escape(b) + r"\[", text):
+        if text[max(0, m.start() - 1)] == "&" and not text[:m.start()].rstrip("&").endswith("atomicLoad("):
+            continue
+        depth, j = 1, m.end()
+        while j < len(text) and depth:
+            depth += {"[": 1, "]": -1}.get(text[j], 0)
+            j += 1
+        rest = text[j:].lstrip()
+        if not (rest.startswith("=") and not rest.startswith("==")):
+            out.append(text[m.start():j])
+    return out
+
+
+def closure(rows, types):
+    """The types a gene can express below `types`: every argument type of every row giving one of them, to a fixpoint."""
+    seen, todo = set(types), list(types)
+    by_out = {}
+    for r in rows.values():
+        by_out.setdefault(r["out"], []).append(r)
+    while todo:
+        for r in by_out.get(todo.pop(), []):
+            for a in r["args"]:
+                if a not in seen:
+                    seen.add(a)
+                    todo.append(a)
+    return seen
+
+
+def modes(iface, rows=None):
+    """Section 11's witness, the access modes: within one entry (one dispatch) every region of a scratch arena is
+    read-only or write-only, so no read races a write. For every entry a gene writes (a `kernel.entry_<e>` row), the rows
+    its gene can express are those giving a type of its arguments' closure; among them, the rows that read the arena and
+    the rows that write it are never both present. A load of the arena takes `u32.in_<arena>`, any cell of any region,
+    so it stands only in an entry where the gene writes no region; the cluster store writes the ids region only, and
+    only in the scatter entry's body, whose closure reads nothing of the arena (the scaffold's own reads in its prologue
+    are of the counts, prefixes and starts, below the ids region, by the variant's text)."""
+    if not enabled(iface):
+        return []
+    rows = ROWS if rows is None else rows
+    problems = []
+    for a in iface.get("arenas", []):
+        b = a["name"]
+        for n, r in sorted(rows.items()):
+            if not n.startswith("kernel.entry_"):
+                continue
+            family = closure(rows, r["args"])
+            rd = sorted(m for m, x in rows.items() if x["out"] in family and reads(x["spell"], b))
+            wr = sorted(m for m, x in rows.items() if x["out"] in family and writes(x["spell"], b))
+            if rd and wr:
+                problems.append(f"{n}: its gene can both read {b} ({rd[0]}, {len(rd)} rows) and write it ({wr[0]}, {len(wr)} rows) in one dispatch: a read races a write")
+    return problems
+
+
+def committed_rows(d):
+    """The rows of a written table (`functions.tsv`), as the generator holds them: name -> out, args, spell."""
+    unesc = lambda t: t.replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+    rows = {}
+    for line in open(os.path.join(d, "functions.tsv")).read().split("\n")[1:]:
+        if line:
+            f = line.split("\t")
+            rows[f[1]] = dict(out=f[3], args=f[4].split(";") if f[4] else [], spell=unesc(f[5]))
+    return rows
 
 
 def check_dir(d, iface):
@@ -307,8 +380,13 @@ def check_dir(d, iface):
 if __name__ == "__main__":
     from interface import INTERFACES
     d = sys.argv[1]
-    iface = INTERFACES[os.path.basename(os.path.normpath(d))]
-    ps = check_dir(d, iface)
+    meta = os.path.join(d, "interface.tsv")
+    name = dict(l.rstrip("\n").split("\t", 1) for l in open(meta) if "\t" in l)["interface"] if os.path.exists(meta) else os.path.basename(os.path.normpath(d))
+    iface = INTERFACES[name]
+    # the written table: its scaffold is the compiler's variants, and its rows keep sections 10 and 11
+    rows = committed_rows(d)
+    ps = check_dir(d, iface) + witness(iface, rows) + modes(iface, rows)
     for p in ps:
         print("PROBLEM:", p)
+    print(f"countsort witness: {len(ps)} problems")
     sys.exit(1 if ps else 0)

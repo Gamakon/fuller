@@ -4160,24 +4160,18 @@ impl<'a> Reader<'a> {
     }
 
     /// The scatter entry of a scaffold variant (section 10): the scaffold's head and prologue, and a body that stores
-    /// the invocation's own point at the slot the scaffold assigned it, `store.cluster_<ids>(cluster.own, cluster.point)`.
+    /// the invocation's own point at the slot the scaffold assigned it, `store.cluster_<ids>(cluster.own, cluster.point)`,
+    /// of the scatter's own body type (section 11: the ids region is write-only in this dispatch, and nothing of this
+    /// type reads the scratch).
     fn cluster_scatter(&mut self) -> R<Tree> {
-        let k = self.k.fuel_budget;
         let leaf = |s: &Self, n: &str| -> R<Tree> { Ok(Tree { symbol: s.row(n)?, const_index: None, kids: Vec::new() }) };
-        let store = self.k.rows.iter().find(|r| r.name.starts_with("store.cluster_") && r.name.ends_with(&format!("_L0_f{k}"))).map(|r| r.name.clone()).ok_or_else(|| ReadError::Gap(format!("the cluster store at L0_f{k}")))?;
-        let st = Tree { symbol: self.row(&store)?, const_index: None, kids: vec![leaf(self, "cluster.own")?, leaf(self, "cluster.point")?] };
-        let one = Tree { symbol: self.row(&format!("block.one_L0_f{k}"))?, const_index: None, kids: vec![st] };
-        let body = Tree { symbol: self.row("block.start_body")?, const_index: None, kids: vec![one] };
+        let store = self.k.rows.iter().find(|r| r.name.starts_with("store.cluster_") && self.k.type_name(r.out) == "block.scatter").map(|r| r.name.clone()).ok_or_else(|| ReadError::Gap("the cluster store".to_string()))?;
+        let body = Tree { symbol: self.row(&store)?, const_index: None, kids: vec![leaf(self, "cluster.own")?, leaf(self, "cluster.point")?] };
         let row = self.row("kernel.entry_scatter")?;
-        let mut kids = Vec::new();
-        for t in &self.k.rows[row as usize].args[..self.k.rows[row as usize].args.len() - 1] {
-            match self.k.type_name(*t).as_str() {
-                "u32.wgext" => kids.push(self.konst_text("u32.wgext", "4")?),
-                o => return gap(format!("our software has a bug: the scatter entry takes {o} before its body")),
-            }
+        if self.k.rows[row as usize].args.len() != 1 {
+            return gap(format!("our software has a bug: the scatter entry takes {} arguments, not its body alone", self.k.rows[row as usize].args.len()));
         }
-        kids.push(body);
-        Ok(Tree { symbol: row, const_index: None, kids })
+        Ok(Tree { symbol: row, const_index: None, kids: vec![body] })
     }
 
     /// The constant of `ty_name` whose `C_T` text is `text`.
@@ -4689,6 +4683,75 @@ mod tests {
         // scaffold's variants, so it does not read (before, it stopped at the old value used as an index)
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
         assert!(e.contains("none of the scaffold's variants"), "reply 1 stops elsewhere: {e}");
+    }
+
+    /// ACCESS MODES (docs/DESIGN_inrange_index_types.md section 11): within one entry every region of the scratch is
+    /// read-only or write-only, so no read races a write. The scatter entry's gene body is its own type: the types it
+    /// reaches hold the cluster store (the ids region, write-only) and no row that reads the scratch, while the mean's
+    /// reach the scratch's loads and no row that writes it. In 300 random modules the scatter entry reads no scratch
+    /// cell past its scaffold's prologue, and the witness names a hand-edited table whose scatter body reads the scratch.
+    #[test]
+    fn a_load_of_a_region_written_in_its_entry_cannot_be_expressed() {
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let src = dir.join("mod").join("kmeans_update_segmented");
+        let k = TrueKingdom::load(&src).expect("the table");
+        let reach = |root: &str| -> Vec<usize> {
+            let mut seen: BTreeSet<crate::geneframe::Ty> = k.rows.iter().filter(|r| r.name == root).flat_map(|r| r.args.iter().copied()).collect();
+            loop {
+                let more: BTreeSet<crate::geneframe::Ty> = k.rows.iter().filter(|r| seen.contains(&r.out)).flat_map(|r| r.args.iter().copied()).filter(|t| !seen.contains(t)).collect();
+                if more.is_empty() {
+                    break;
+                }
+                seen.extend(more);
+            }
+            (0..k.rows.len()).filter(|&i| seen.contains(&k.rows[i].out)).collect()
+        };
+        let writes = |sp: &str| sp.contains("scratch[min(cs_slot, arrayLength(&scratch) - 1u)] = ");
+        let reads = |sp: &str| sp.replace("scratch[min(cs_slot, arrayLength(&scratch) - 1u)] = ", "").contains("scratch[");
+        let scatter = reach("kernel.entry_scatter");
+        assert!(scatter.iter().any(|&i| k.rows[i].name == "store.cluster_scratch"), "the scatter's body holds the cluster store");
+        for &i in &scatter {
+            assert!(!reads(&k.rows[i].spelling), "{} reads the scratch in the dispatch that writes its ids region", k.rows[i].name);
+        }
+        let mean = reach("kernel.entry_mean");
+        assert!(mean.iter().any(|&i| k.rows[i].name == "load.scratch"), "the mean's body loads the scratch");
+        for &i in &mean {
+            assert!(!writes(&k.rows[i].spelling) && !k.rows[i].name.starts_with("store.scratch"), "{} writes the scratch in the dispatch that reads it", k.rows[i].name);
+        }
+        let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; k.gene_roots.len()]).expect("module");
+        let mut rng = crate::wgsl::true_kingdom::Rng(0x5c11);
+        let mut stores = 0;
+        for i in 0..300 {
+            let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+            let tree = m.tree(&ch).expect("tree");
+            let (_, v) = k.scaffold_variant(&tree).expect("variant").expect("a module names its variant");
+            let text = m.render(&ch).expect("render");
+            let e = entry_text(&text, "scatter").expect("the scatter entry");
+            let prologue = v.get("scatter_prologue").expect("the prologue");
+            let body = &e[e.find(prologue.as_str()).expect("the scaffold's prologue") + prologue.len()..];
+            assert!(!reads(body), "module {i}: the scatter's body reads the scratch: {body}");
+            stores += usize::from(writes(body));
+        }
+        assert!(stores > 0, "no random scatter body stores");
+        let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("countsort.py")).arg(d).output().expect("python3 runs");
+        let out = witness(&src);
+        assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("countsort witness: 0 problems"), "{}", String::from_utf8_lossy(&out.stdout));
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        let point = "\tcluster.point\tterminal\tu32.point\t\tcs_v\t";
+        assert!(f.contains(point));
+        let bad = std::env::temp_dir().join(format!("modes_witness_{}", std::process::id()));
+        std::fs::create_dir_all(&bad).expect("temp dir");
+        for g in ["interface.tsv", "scaffold.tsv"] {
+            std::fs::copy(src.join(g), bad.join(g)).expect("copy");
+        }
+        std::fs::write(bad.join("functions.tsv"), f.replace(point, "\tcluster.point\tterminal\tu32.point\t\tscratch[min(cs_v, arrayLength(&scratch) - 1u)]\t")).expect("write");
+        let out = witness(&bad);
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        for g in ["interface.tsv", "scaffold.tsv", "functions.tsv"] {
+            std::fs::remove_file(bad.join(g)).expect("rm");
+        }
+        std::fs::remove_dir(&bad).expect("rmdir");
+        assert!(!out.status.success() && text.contains("kernel.entry_scatter: its gene can both read scratch (cluster.point"), "{text}");
     }
 
     /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it

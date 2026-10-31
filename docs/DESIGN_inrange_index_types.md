@@ -208,7 +208,53 @@ harness already owns, sized within UltraDim's binding limits. UltraDim's driver 
 - 300 random modules per table stay legal, in range and deterministic: two runs give the same bits.
 - One per-entry GPU pass, as expressed against as written: the target is parity, since the scaffold does the counting sort's own work.
 
-## 11. Not covered (yet)
+## 11. Access modes: a region is read-only or write-only in one dispatch (2026-11-01)
+
+**The hole.** Section 10 left the gene's `load.scratch(u32.in_scratch)` able to read any in-range cell from any
+entry, including the scatter entry, where the cluster store writes the ids region. One invocation's read of a cell
+another invocation writes in the same dispatch races the write: the value read depends on the order the device runs
+them, so the kernel is not deterministic. Bounds are not the problem (every index is in range); the access is.
+
+**The rule.** Within one entry (one dispatch), every region of a scratch arena is read-only or write-only. A read-only
+region is read and never written in that dispatch; a write-only region is written (by stores each of which is its own
+cell) and never read. Then no read meets a write, and the dispatch's result does not depend on the order of its
+invocations.
+
+**The type that carries it.** The mode is per entry, so it is carried by the entry's body type. The interface
+(`counting_sort.ids`) names the region the scatter writes; the scaffold variant fixes where the regions lie.
+
+| Entry | Body type | Mode of each scratch region | What the gene can express |
+|---|---|---|---|
+| hist, offsets, starts | (the scaffold's terminals) | the scaffold's own | nothing: the knob picks a variant |
+| scatter | `block.scatter` (its own type) | ids write-only; counts, prefixes, totals, starts read-only (by the scaffold's prologue only) | `store.cluster_scratch(u32.cluster, u32.point)` or the empty body `own.block.scatter`; no row of this type, or of any type it reaches, reads the scratch |
+| mean (every other gene-owned entry) | `block.start` and all it reaches | every region read-only | `load.scratch(u32.in_scratch)`; no row of these types writes the scratch |
+
+A gene's load takes `u32.in_scratch`, a cell of any region, so it stands only in types where no region is written;
+a store takes a write-only region (the cluster store's slot, in the ids region) and stands only in `block.scatter`,
+which reaches no load. `u32.point` (the invocation's own point, `cs_v`) and `u32.cluster` (its cluster, `cs_a`) each
+have one producer, so the scatter body has nothing to compute from the scratch. The scaffold's own reads in the
+scatter prologue (`starts[a]`, `prefix[block][a]`) are of regions below the ids region, by the variant's text, which
+section 10's witness holds byte for byte.
+
+The scatter entry's body no longer names the pool's words (`u32.wgext`): it holds no phase, and an extent named there
+would only enlarge the pool the mean declares.
+
+**Own-index stores into the scratch (section 9).** The rule makes them safe: a store of an own cell into a write-only
+region meets no read. No region needs one today: every scratch region a gene-owned entry could write is the
+scaffold's (the counts, prefixes, totals and starts) or the cluster store's (the ids). An interface that gives a gene
+an entry writing a region of its own gets them in that entry's body type, with the region write-only there.
+
+**The witness** (`countsort.modes`, run by `gen_tables.py` and by `python3 countsort.py DIR` on a written table): for
+every `kernel.entry_<e>` row, the rows giving a type of its arguments' closure never both read and write a scratch
+arena. On the table before this section it names both entries: `kernel.entry_scatter: its gene can both read
+scratch (load.scratch, 3 rows) and write it (store.cluster_scratch_C0_f0, 60 rows) in one dispatch`.
+
+**Tests** (`true_reader.rs` `a_load_of_a_region_written_in_its_entry_cannot_be_expressed`): the types the scatter
+reaches hold the cluster store and no scratch read; the mean's hold the loads and no scratch write; in 300 random
+modules the scatter entry reads no scratch cell past its prologue; the witness passes the committed table and names a
+hand-edited one whose `cluster.point` reads the scratch.
+
+## 12. Not covered (yet)
 
 An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
 through the clamp row.
