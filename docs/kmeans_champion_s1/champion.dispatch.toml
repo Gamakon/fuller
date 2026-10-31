@@ -1,0 +1,57 @@
+# The champion of kmeans_update_segmented as a drop-in for the shipped kernel: the bindings are the shipped kernel's own.
+problem = "kmeans_update_segmented"
+entries = ["hist", "offsets", "starts", "scatter", "mean"]
+
+[workgroup_size.hist]
+x = 128
+y = 1
+z = 1
+
+[workgroup_size.offsets]
+x = 256
+y = 1
+z = 1
+
+[workgroup_size.starts]
+x = 256
+y = 1
+z = 1
+
+[workgroup_size.scatter]
+x = 256
+y = 1
+z = 1
+
+[workgroup_size.mean]
+x = 256
+y = 1
+z = 1
+
+[[binding]]
+binding = 0
+name = "vectors"
+
+[[binding]]
+binding = 1
+name = "assignments"
+
+[[binding]]
+binding = 2
+name = "centroids"
+
+[[binding]]
+binding = 4
+name = "scratch"
+
+[[binding]]
+binding = 3
+name = "params"
+
+# The workgroup counts, the problem's dispatch program (problem.toml [[run]]), with wg_x the entry's workgroup size x:
+# workgroups = ["ceil_div(ceil_div(n, 256) * k, wg_x_hist)", "1", "1"]
+# workgroups = ["ceil_div(k, wg_x_offsets)", "1", "1"]
+# workgroups = ["1", "1", "1"]
+# workgroups = ["ceil_div(n, wg_x_scatter)", "1", "1"]
+# workgroups = ["ceil_div(k * d, wg_x_mean)", "1", "1"]
+
+# kernel text: champion.wgsl (18452 bytes)
