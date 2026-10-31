@@ -1290,15 +1290,50 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     progs.extend(children.iter().map(|c| &c.1));
     let sources: Vec<String> = progs.iter().map(|t| program(run.gen.k, sig, t)).collect::<Result<_, _>>()?;
     let mut scored: Vec<(f64, Quality)> = Vec::with_capacity(progs.len());
-    for (ci, idx) in (0..progs.len()).collect::<Vec<_>>().chunks(chunk.max(1)).enumerate() {
+    // THE INTERIM RESULTS (Rules.md, logging: decision-critical, so a run stopped early still teaches): after every
+    // batch, the running shares over the children scored so far, printed and appended to OUT/measure_progress.tsv.
+    let np0 = parents.len();
+    let mut iseen: HashSet<String> = HashSet::new();
+    let (mut i_done, mut i_zero, mut i_new, mut i_better, mut i_same) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut i_best = f64::INFINITY;
+    let bugs0 = run.judge.bugs;
+    let mut progress = String::from("utc\tseconds\tchildren_scored\tof\tunseen_output\tbetter_than_parent\tsame_output_as_parent\tall_zero\tbest_child_fitness\tbest_parent_fitness\tcompile_failures\n");
+    for idx in (0..progs.len()).collect::<Vec<_>>().chunks(chunk.max(1)) {
         let items: Vec<(&Tree, &str)> = idx.iter().map(|i| (progs[*i], sources[*i].as_str())).collect();
         run.judge.prefetch(&items, FitnessStage::Quality)?;
         for &i in idx {
             let e = run.judge.evaluate(progs[i], &sources[i], FitnessStage::Quality)?;
             scored.push((e.fitness, e.quality));
         }
-        if ci % 10 == 0 {
-            println!("# {} measure: {} of {} programs scored, {:.0} s", utc(), scored.len(), progs.len(), t0.elapsed().as_secs_f64());
+        if scored.len() < np0 {
+            continue;
+        }
+        if iseen.is_empty() {
+            iseen = scored[..np0].iter().map(|s| s.1.behaviour.clone()).collect();
+            let bp = scored[..np0].iter().map(|s| s.0).fold(f64::INFINITY, f64::min);
+            println!("# {} measure: the {np0} parents scored; best parent fitness {bp:.4}, {} distinct parent outputs", utc(), iseen.len());
+        }
+        while np0 + i_done < scored.len() {
+            let (f, q) = &scored[np0 + i_done];
+            let (pf, pq) = &scored[children[i_done].0];
+            i_new += usize::from(iseen.insert(q.behaviour.clone()));
+            i_zero += usize::from(q.all_zero());
+            i_better += usize::from(f < pf);
+            i_same += usize::from(q.behaviour == pq.behaviour);
+            i_best = i_best.min(*f);
+            i_done += 1;
+        }
+        if i_done > 0 {
+            let n = i_done as f64;
+            let bp = scored[..np0].iter().map(|s| s.0).fold(f64::INFINITY, f64::min);
+            let fails = run.judge.bugs - bugs0;
+            let secs = t0.elapsed().as_secs_f64();
+            println!(
+                "# {} measure {kind}: {i_done}/{} children | unseen {:.1} % | better than parent {:.1} % | same as parent {:.1} % | all zeros {:.1} % | best child {i_best:.4} (best parent {bp:.4}) | compile failures {fails} | {secs:.0} s",
+                utc(), children.len(), 100.0 * i_new as f64 / n, 100.0 * i_better as f64 / n, 100.0 * i_same as f64 / n, 100.0 * i_zero as f64 / n
+            );
+            progress.push_str(&format!("{}\t{secs:.0}\t{i_done}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{i_best:.6}\t{bp:.6}\t{fails}\n", utc(), children.len(), i_new as f64 / n, i_better as f64 / n, i_same as f64 / n, i_zero as f64 / n));
+            std::fs::write(run.out.join("measure_progress.tsv"), &progress).map_err(|e| e.to_string())?;
         }
     }
     let np = parents.len();
@@ -1894,7 +1929,9 @@ fn real_main() -> Result<(), String> {
                 parents.push(t.clone());
             }
         }
-        println!("# {} measure: {} parents of {} task alternatives (tree edit distance at least {bar} to the reference and to each other)", utc(), parents.len(), pool_programs.len());
+        if arg(&args, "--parents-from").is_none() {
+            println!("# {} measure: {} parents of {} task alternatives (tree edit distance at least {bar} to the reference and to each other)", utc(), parents.len(), pool_programs.len());
+        }
         measure_command(&mut run, &sig, kind, &parents, count, pop, seed)?;
         run.tel.end("early_stop", 0, None)?;
         return Ok(());
