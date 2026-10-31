@@ -95,19 +95,33 @@ fn true_functions(t: &crate::typed_gep::Tree, k: &crate::wgsl::true_kingdom::Tru
     usize::from(!k.rows[t.symbol as usize].args.is_empty()) + t.kids.iter().map(|c| true_functions(c, k)).sum::<usize>()
 }
 
+/// The largest `n * k * d` of a constraint case [`true_gates`] runs on the CPU.
+pub const TRUE_GATES_CPU_SIZE: f64 = 5e6;
+
 /// The gates for a problem whose shipped kernel the true kingdom holds
 /// (`[kernel] kingdom = "wgsl_true"`): read exactly into the interface table
-/// of the problem's name under the problem's contract, encoded into genes that
-/// express the same trees, the expressed text validated by naga. Returns the
-/// entry points' program sizes.
+/// of the problem's name under the problem's contract (every subscript an
+/// in-range type, `u32.in_<B>`, minted by a guard or the clamp row), encoded
+/// into genes that express the same trees, the expressed text validated by
+/// naga; then the source and the expressed text run on the CPU executor on
+/// every constraint case up to [`TRUE_GATES_CPU_SIZE`]: the same bits, and no
+/// index of EITHER past its array (`cpu::take_restricted`), so a source whose
+/// data-indexed store (the scatter's slot) leaves its buffer fails here.
+/// Returns the entry points' program sizes.
 pub fn true_gates(dir: &Path, name: &str) -> Result<Vec<usize>, String> {
+    true_gates_of(dir, name, &Problem::load(dir)?.reference)
+}
+
+/// [`true_gates`] for a text of the problem's interface.
+pub fn true_gates_of(dir: &Path, name: &str, source: &str) -> Result<Vec<usize>, String> {
+    use crate::wgsl::harness::{CpuExecutor, Executor, Role};
     use crate::wgsl::true_kingdom::{default_dir, Rng, Share, TrueKingdom};
     let problem = Problem::load(dir)?;
     let k = TrueKingdom::load(&default_dir().join("mod").join(name))?;
     let path = dir.join("safety.contract");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let c = crate::wgsl::true_reader::Contract::parse(&text, &["x", "y", "z", "w"])?;
-    let trees = crate::wgsl::true_reader::read_module(&k, &problem.reference, &c).map_err(|e| format!("parse: {e}"))?;
+    let trees = crate::wgsl::true_reader::read_module(&k, source, &c).map_err(|e| format!("parse: {e}"))?;
     let sizes: Vec<usize> = trees.iter().map(|t| true_functions(t, &k)).collect();
     let m = crate::wgsl::true_module::TrueModule::new(&k, &sizes)?;
     let previous = m.random(1, &mut Rng(5), Share::Half, true)?;
@@ -118,6 +132,36 @@ pub fn true_gates(dir: &Path, name: &str) -> Result<Vec<usize>, String> {
     let out = m.render(&ch)?;
     let module = crate::wgsl::naga_shape::parse_unscanned(&out).map_err(|e| format!("validate: {e}"))?;
     crate::wgsl::target::Target::current().validate(&module, &out).map_err(|e| format!("validate: {e}"))?;
+    let exec = CpuExecutor::new(1 << 27);
+    let texts = [("the source", source), ("the expressed text", out.as_str())];
+    let kernels: Vec<_> = texts.iter().map(|(what, t)| exec.compile(&problem, t).map_err(|e| format!("cpu: {what}: {e}"))).collect::<Result<_, _>>()?;
+    let mut cases = 0;
+    for case in problem.suites.iter().filter(|s| s.spec.role == Role::Constraint).flat_map(|s| s.cases.iter()) {
+        let env = problem.env(case, 1 << 27)?;
+        let size = ["n", "k", "d"].iter().map(|v| crate::wgsl::harness::eval(v, &env)).collect::<Result<Vec<f64>, _>>()?.iter().product::<f64>();
+        if size > TRUE_GATES_CPU_SIZE {
+            continue;
+        }
+        let data = problem.case_data(case, 1 << 27)?;
+        let mut outs = Vec::new();
+        for ((what, _), (kern, info)) in texts.iter().zip(&kernels) {
+            let plan = problem.plan(case, 1 << 27, Some(info))?;
+            let (staged, _) = exec.stage(&plan, &data)?;
+            crate::wgsl::cpu::take_restricted();
+            outs.push(exec.run(kern, &plan, &data, &staged, true)?.outputs);
+            let past = crate::wgsl::cpu::take_restricted();
+            if past > 0 {
+                return Err(format!("in range: {what} indexes past an array {past} times on case {}", case.name));
+            }
+        }
+        if outs[0] != outs[1] {
+            return Err(format!("same bits: the expressed text's outputs differ from the source's on case {}", case.name));
+        }
+        cases += 1;
+    }
+    if cases == 0 {
+        return Err(format!("cpu: no constraint case at most {TRUE_GATES_CPU_SIZE} n * k * d"));
+    }
     Ok(sizes)
 }
 
@@ -162,6 +206,20 @@ mod tests {
             }
         }
         assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    /// THE TRUE GATES CATCH A DATA-INDEXED STORE PAST ITS BUFFER (2026-10-31): the segmented kernel passes; the same
+    /// kernel with the scatter's slot shifted by n (past the scratch's n + 2k + 2nbk words) fails the in-range gate.
+    #[test]
+    fn the_true_gates_catch_a_scatter_store_past_its_buffer() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/kmeans_update_segmented");
+        let src = Problem::load(&dir).expect("the problem loads").reference;
+        true_gates_of(&dir, "kmeans_update_segmented", &src).unwrap_or_else(|e| panic!("the shipped kernel: {e}"));
+        let store = "scratch[2u * nb * k + 2u * k + slot] = v;";
+        assert_eq!(src.matches(store).count(), 1, "the scatter's store");
+        let past = src.replace(store, "scratch[2u * nb * k + 2u * k + slot + n] = v;");
+        let e = true_gates_of(&dir, "kmeans_update_segmented", &past).expect_err("a store past the scratch");
+        assert!(e.starts_with("in range: the source"), "{e}");
     }
 
     /// The problems whose judged cases take their expected outputs from the
