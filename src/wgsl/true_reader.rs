@@ -3354,8 +3354,7 @@ impl<'a> Reader<'a> {
         if regs_of(e).iter().any(|rg| w.contains(rg)) {
             return Ok(None);
         }
-        let names: Vec<String> = self.bindings.iter().map(|x| x.name.clone()).chain(self.k.rows.iter().filter_map(|x| x.name.strip_prefix("safe.inrange_").filter(|n| !n.ends_with("_w") && !n.ends_with("_a")).map(str::to_string))).collect::<BTreeSet<_>>().into_iter().collect();
-        for bn in names {
+        for bn in self.guard_buffers() {
             if !self.rows_by_name.contains_key(&format!("inrange.{bn}_g{d}")) || self.guards.iter().any(|(_, gb, gd)| *gb == bn && *gd == d) || !indexes_at(guarded, &bn, e) {
                 continue;
             }
@@ -3376,6 +3375,50 @@ impl<'a> Reader<'a> {
                 (format!("stmt.guard_lt_else_{bn}_{r}"), vec![et, lt, tg, tb])
             };
             return Ok(Some(Tree { symbol: self.row(&name)?, const_index: None, kids }));
+        }
+        Ok(None)
+    }
+
+    /// The bindings a guard may name: the module's, and every one the table clamps (`safe.inrange_<B>`).
+    fn guard_buffers(&self) -> Vec<String> {
+        self.bindings.iter().map(|x| x.name.clone()).chain(self.k.rows.iter().filter_map(|x| x.name.strip_prefix("safe.inrange_").filter(|n| !n.ends_with("_w") && !n.ends_with("_a")).map(str::to_string))).collect::<BTreeSet<_>>().into_iter().collect()
+    }
+
+    /// A loop body `a; if (e >= L) { break; } rest` (the break at `at`) of a C-rung loop at body depth `d` as the break
+    /// guard row of a binding B (docs/DESIGN_inrange_index_types.md section 7): the same conditions as
+    /// [`Self::guard_if`]'s, with `rest` the guarded branch. The row computes the test itself, so the walk's flag
+    /// register of this break (set only here, read only by its empty `if` and the break) is not read. None otherwise:
+    /// the break is read as a plain break.
+    fn break_guard(&mut self, body: &[St], at: usize, d: u8, k: u32) -> R<Option<Tree>> {
+        // the walk spells `if (c) { break; }` as `f = c; if (f) {}; break if f`, `f` a register of its own
+        let Some(j) = at.checked_sub(2) else { return Ok(None) };
+        let (St::Set(f, E::Bin(BinaryOperator::GreaterEqual, e, l, _)), St::If(E::Reg(f1, _), x, y), St::BreakIf(E::Reg(f2, _))) = (&body[j], &body[j + 1], &body[at]) else { return Ok(None) };
+        if f != f1 || f != f2 || !x.is_empty() || !y.is_empty() {
+            return Ok(None);
+        }
+        let (e, l, rest) = (&**e, &**l, &body[at + 1..]);
+        if e.wt() != Wt::scalar(Sc::U32) || fixed(e) || !plain_index(e) || !plain_sts(rest) {
+            return Ok(None);
+        }
+        let mut w = BTreeSet::new();
+        written(rest, &mut w);
+        if regs_of(e).iter().any(|rg| w.contains(rg)) {
+            return Ok(None);
+        }
+        for bn in self.guard_buffers() {
+            let row = format!("block.brk_guard_{bn}_B{d}_f{k}");
+            if !self.rows_by_name.contains_key(&row) || self.guards.iter().any(|(_, gb, gd)| *gb == bn && *gd == d) || !indexes_at(rest, &bn, e) {
+                continue;
+            }
+            let Ok(len_t) = self.ty(&format!("u32.len_{bn}")) else { continue };
+            let Some(lt) = self.val(l, len_t) else { continue };
+            let ta = self.block(&body[..j], 'C', d, k)?;
+            let et = self.must(e, "u32.index")?;
+            self.guards.push((e.clone(), bn.clone(), d));
+            let tr = self.block(rest, 'C', d, k);
+            self.guards.pop();
+            let tr = tr?;
+            return Ok(Some(Tree { symbol: self.row(&row)?, const_index: None, kids: vec![ta, et, lt, tr] }));
         }
         Ok(None)
     }
@@ -3944,17 +3987,21 @@ impl<'a> Reader<'a> {
                     'S' => ('S', "bool.flag"),
                     _ => ('C', "bool.flag"),
                 };
-                let a = self.block(&lp.body[..at], bx, d1, kb)?;
-                let f = self.must(flag, fl)?;
-                let c2 = self.block(&lp.body[at + 1..], bx, d1, kb)?;
-                let name = match x {
-                    'W' => format!("block.brk_WB{d1}_f{kb}"),
-                    'X' => format!("block.brk_XB{d1}_f{kb}"),
-                    'A' => format!("block.brk_AB{d1}_f{kb}"),
-                    'S' => format!("block.brk_SB{d1}_f{kb}"),
-                    _ => format!("block.brk_B{d1}_f{kb}"),
-                };
-                Tree { symbol: self.row(&name)?, const_index: None, kids: vec![a, f, c2] }
+                if let Some(t) = if bx == 'C' { self.break_guard(&lp.body, at, d1, kb)? } else { None } {
+                    t
+                } else {
+                    let a = self.block(&lp.body[..at], bx, d1, kb)?;
+                    let f = self.must(flag, fl)?;
+                    let c2 = self.block(&lp.body[at + 1..], bx, d1, kb)?;
+                    let name = match x {
+                        'W' => format!("block.brk_WB{d1}_f{kb}"),
+                        'X' => format!("block.brk_XB{d1}_f{kb}"),
+                        'A' => format!("block.brk_AB{d1}_f{kb}"),
+                        'S' => format!("block.brk_SB{d1}_f{kb}"),
+                        _ => format!("block.brk_B{d1}_f{kb}"),
+                    };
+                    Tree { symbol: self.row(&name)?, const_index: None, kids: vec![a, f, c2] }
+                }
             }
         };
         let mut kids = bound_kids;
@@ -4524,6 +4571,51 @@ mod tests {
             std::fs::copy(src.join("interface.tsv"), bad.join("interface.tsv")).expect("copy");
             std::fs::write(bad.join("functions.tsv"), edit).expect("write");
             let out = witness(&bad);
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
+            std::fs::remove_file(bad.join("interface.tsv")).expect("rm");
+            std::fs::remove_dir(&bad).expect("rmdir");
+            assert!(!out.status.success() && text.contains(want), "{want}: {text}");
+        }
+    }
+
+    /// THE BREAK GUARD (docs/DESIGN_inrange_index_types.md section 7, 2026-10-31: the clamp on `assignments[base + q]`
+    /// cost reply 2's hist entry 0.8 %, fbench/b4_hist.log): `let idx = base + q; if (idx >= end) { break; }` with
+    /// `end = min(base + 256u, params.x)` reads as the break guard row of `assignments` (`end` through `len.<B>_min`),
+    /// and the entry's expression spells no clamp; the witness names a break guard that assigns its register under
+    /// `gv > L` and a `len.<B>_min` whose bound is an index.
+    #[test]
+    fn a_break_guard_reads_as_its_row_and_spells_no_clamp() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let src = std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl")).expect("reply 2");
+        let kids = read_module(&k, &src, &c).expect("reply 2 reads");
+        let names: Vec<String> = kids.iter().flat_map(|t| t.level_order()).map(|(n, _)| k.rows[n.symbol as usize].name.clone()).collect();
+        for want in ["block.brk_guard_assignments_B1_f", "len.assignments_min"] {
+            assert!(names.iter().any(|n| n.starts_with(want)), "reply 2 reads through {want}");
+        }
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
+        let hist = &text[text.find("fn hist(").expect("hist")..];
+        let hist = &hist[..hist.find("\n}\n").expect("its end")];
+        assert!(hist.contains("if (gv >= ") && hist.contains("{ break; } gi_assignments1 = gv; }"), "the hist entry breaks through the guard: {hist}");
+        assert!(!hist.contains("arrayLength(&assignments) - 1u"), "the hist entry spells a clamp: {hist}");
+        let src = dir.join("mod").join("kmeans_update_segmented");
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        let brk = "\t{0} { let gv = {1}; if (gv >= {2}) { break; } gi_assignments1 = gv; } {3}\t";
+        let min = "\tu32.len_assignments\tu32.index;u32.len_assignments\tmin({0}, {1})\t";
+        assert!(f.contains(brk) && f.contains(min));
+        for (edit, want) in [
+            (f.replacen(brk, "\t{0} { let gv = {1}; if (gv > {2}) { break; } gi_assignments1 = gv; } {3}\t", 1), "assigns gi_assignments1 outside a guard"),
+            (f.replacen(min, "\tu32.len_assignments\tu32.index;u32.index\tmin({0}, {1})\t", 1), "not proved at most the length of assignments"),
+        ] {
+            let bad = std::env::temp_dir().join(format!("brk_witness_{}", std::process::id()));
+            std::fs::create_dir_all(&bad).expect("temp dir");
+            std::fs::copy(src.join("interface.tsv"), bad.join("interface.tsv")).expect("copy");
+            std::fs::write(bad.join("functions.tsv"), edit).expect("write");
+            let out = std::process::Command::new("python3").arg(dir.join("inrange.py")).arg(&bad).output().expect("python3 runs");
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
             std::fs::remove_file(bad.join("interface.tsv")).expect("rm");

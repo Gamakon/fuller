@@ -71,8 +71,38 @@ writes, and no guard of B at the same depth is open. Inside the branch, an index
 register; any other index reads through the clamp row. So a source kernel keeps its own guards and loses only the
 clamps its guards make redundant.
 
-## 6. Not covered (yet)
+## 6. Offset types (built 2026-10-31, `inrange.py` section 6)
 
-An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) or by affine
-reasoning over a loop counter (`scratch[2 nb k + k + c]`, `c < k`) still reads through the clamp row. Offset types
-(`base + c` with `base + C <= len`, `c < C`) are the next step if the measurement shows those clamps cost.
+A run of B is a region `[base, base + L)` the dispatch contract places inside B. `u32.upto_<L>` is a value at most the
+uniform field L; `inrange.<B>_run_<r>(u32.upto_<L>)`, spelled `(<base> + {0})`, is in range because the witness proves
+`base + L + 1` at most the contract's length of B. Its counter is a run loop's own register `kr_<L><d>`, which only run
+loops assign.
+
+## 7. Break guards (built 2026-10-31)
+
+A loop that stops at a length, `let i = ..; if (i >= L) { break; } rest`, proves `i < L` for `rest`, as `if (i < L)
+{ rest }` does. Measured: the clamp on reply 2's `assignments[base + q]` under such a break cost its hist entry 0.8 %
+(0.0609 ms without the clamp against the source's 0.0616, `fbench/b4_hist.log`).
+
+| Row | Spelling | Why the result is in range |
+|---|---|---|
+| `block.brk_guard_<B>_B<d>_f<k>(block.C, u32.index, u32.len_<B>, block.C)` | `{0} { let gv = {1}; if (gv >= {2}) { break; } gi_<B><d> = gv; } {3}` | the register is assigned only after the loop did not break, so `gv < L <= arrayLength(&B)`; `{3}` runs only after the assignment |
+| `len.<B>_min(u32.index, u32.len_<B>)` | `min({0}, {1})` | at most `{1}`, which is at most the length (`end = min(base + 256u, params.x)`) |
+
+The row is a loop body of the C rung (`block.B<d>`, as `block.brk_B<d>`), at depths 1-5, and its register is the one
+of its blocks' depth, so the register stays an invariant of section 2: 0, or the last value a guard proved in range.
+
+**Witness** (rules 2 and 3, extended): an assignment `gi_<B><d> = ` may also be the break guard's exact text, with
+argument 2 of type `u32.len_<B>`, output `block.B<d>_f*` and both blocks `block.C<d>_f*`; a row giving `u32.len_<B>`
+may also be `min({0}, {1})` with argument 1 of type `u32.len_<B>`.
+
+**Reader.** The walk spells `if (c) { break; }` as `f = c; if (f) {}; break if f` with a register `f` of its own. When
+`c` is `e >= L`, `L` reads as `u32.len_<B>`, the rest of the body indexes B at `e`, and the conditions of section 5 hold
+(`e` reads a register or counter that the rest does not write, the rest holds plain statements, no guard of B is open
+at this depth), the body reads as the break guard row; `f` is not read. Inside the rest, an index of B equal to `e`
+reads as the register.
+
+## 8. Not covered (yet)
+
+An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
+through the clamp row.

@@ -131,6 +131,13 @@ def guard_texts(b, d):
     return lt, lt_else, ge
 
 
+def break_guard_text(b, d):
+    """The break guard of a loop body at depth d (design section 7): `{0}`, then the index `{1}` checked against the
+    length `{2}`; the loop breaks unless it is below, so the register is assigned only below `{2}`, and `{3}`, the rest
+    of the body, runs only after that assignment."""
+    return "{0} { let gv = {1}; if (gv >= {2}) { break; } " + reg(b, d) + " = gv; } {3}"
+
+
 def build(iface):
     u = iface.get("uniform", "cfg")
     for b in buffers(iface):
@@ -142,6 +149,11 @@ def build(iface):
         for f in iface.get("len_bounds", {}).get(b, []):
             R(f"len.{b}_{f}", len_t(b), [], f"{u}.{f}", f"the contract: {u}.{f} is at most the length of {b}", twin=True)
         R(f"len.{b}_of_in", len_t(b), [in_t(b)], "{0}", "below the length is at most the length", twin=True)
+        R(f"len.{b}_min", len_t(b), ["u32.index", len_t(b)], "min({0}, {1})", "at most a value at most the length", twin=True)
+        for d in range(1, 6):
+            for k in STRATA:
+                R(f"block.brk_guard_{b}_B{d}_f{k}", f"block.B{d}_f{k}", [B("C", d, k), "u32.index", len_t(b), B("C", d, k)], break_guard_text(b, d),
+                  f"if (e >= L) {{ break; }} with L at most {b}'s length: e is in range of {b} in the rest of the body (the register)")
         for x, d, k in rungs("LC"):
             lt, lt_else, ge = guard_texts(b, d)
             body = B("C", d, k)
@@ -304,7 +316,10 @@ def witness(iface):
             for m in re.finditer(re.escape(f"gi_{b}") + r"(\d) = ", sp):
                 d = m.group(1)
                 lt, lt_else, ge = guard_texts(b, int(d))
-                if sp not in (lt, lt_else, ge) or len(r["args"]) < 2 or r["args"][1] != len_t(b):
+                guard = sp in (lt, lt_else, ge) and len(r["args"]) >= 2 and r["args"][1] == len_t(b)
+                guard = guard or (sp == break_guard_text(b, int(d)) and len(r["args"]) == 4 and r["args"][2] == len_t(b) and r["out"].startswith(f"block.B{d}_f")
+                                  and r["args"][0] == r["args"][3] and r["args"][0].startswith(f"block.C{d}_f"))
+                if not guard:
                     problems.append(f"row {name} assigns gi_{b}{d} outside a guard of a length of {b}: {sp!r}")
             # rule 3 (the len rows): arrayLength, a proved contract bound, or the in_B identity
             if r["out"] in (len_t(b), w_of(len_t(b)), a_of(len_t(b))):
@@ -312,6 +327,7 @@ def witness(iface):
                 ok = (not r["args"] and sp == f"arrayLength(&{b})")
                 ok = ok or (not r["args"] and sp.startswith(u + ".") and sp[len(u) + 1:] in iface.get("len_bounds", {}).get(b, []))
                 ok = ok or (sp == "{0}" and len(r["args"]) == 1 and r["args"][0] in (in_t(b), w_of(in_t(b)), a_of(in_t(b))))
+                ok = ok or (sp == "min({0}, {1})" and len(r["args"]) == 2 and r["args"][1] in (len_t(b), w_of(len_t(b)), a_of(len_t(b))))
                 if not ok:
                     problems.append(f"row {name} gives {r['out']} by {sp!r}, which is not proved at most the length of {b}")
     # section 6: the rows giving u32.upto_L are a run counter, 0 or the clamp; only run loops assign kr_L<d> / nr_L<d>
