@@ -2899,6 +2899,10 @@ mod device {
         /// THE UNSPLIT RUN ([`DeviceExecutor::unsplit`]): while set, every dispatch is encoded whole, as UltraDim
         /// dispatches it, under this bound of the whole run; a dispatch bounded above it is an error, never a split.
         unsplit: std::cell::Cell<Option<u128>>,
+        /// THE RUN BUFFERS KEPT ([`DeviceExecutor::reuse_run_buffers`]): each case's per-run buffers made once and
+        /// written afresh every run, keyed by the case's data, the buffer and its size, so every run of every kernel
+        /// uses the same memory (2026-10-31, measured: a fresh allocation moved an entry's time by up to 25 %).
+        run_cache: std::cell::RefCell<Option<std::collections::HashMap<(usize, usize, u64), wgpu::Buffer>>>,
         /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
         /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
         /// before it is made.
@@ -2928,7 +2932,7 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device, fuel: Fuel) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), run_cache: std::cell::RefCell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
 
         /// The work guard per dispatch ([`DispatchBound`]), for a value check (one submission a segment is not kept).
@@ -2963,6 +2967,13 @@ mod device {
             self.cap
         }
 
+        /// Keep every case's run buffers from now on: made at a case's first run, then written afresh (their initial
+        /// bytes, or zeros) at every later run of any kernel, so all runs use the same memory and a timing compares
+        /// kernels, not allocations.
+        pub fn reuse_run_buffers(&self) {
+            self.run_cache.borrow_mut().get_or_insert_with(std::collections::HashMap::new);
+        }
+
         /// RUN `f` UNSPLIT: every dispatch of the runs `f` makes is one dispatch, exactly the problem's (UltraDim's),
         /// never split into submits of workgroups, as long as the run's whole bound is at most `whole` (the caller's
         /// justification: a timing runner allows at most twice its yardstick's own whole bound, the kernel UltraDim
@@ -2983,7 +2994,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
+            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), run_cache: std::cell::RefCell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
     }
 
@@ -3081,11 +3092,27 @@ mod device {
 
         fn make(&self, plan: &Plan, id: BufId, data: &CaseData) -> Result<wgpu::Buffer, String> {
             let b = &plan.buffers[id];
-            let usage = if b.uniform { wgpu::BufferUsages::UNIFORM } else { wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST };
-            Ok(match &b.init {
+            let usage = if b.uniform { wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST } else { wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST };
+            let key = (data as *const CaseData as usize, id, b.bytes);
+            if let Some(cache) = self.run_cache.borrow().as_ref() {
+                if let Some(buf) = cache.get(&key) {
+                    // the kept buffer, written afresh: its initial bytes, or zeros
+                    let bytes = match &b.init {
+                        super::Init::Zero => vec![0u8; b.bytes as usize],
+                        _ => initial_bytes(b, data)?,
+                    };
+                    self.dev.queue.write_buffer(buf, 0, &bytes);
+                    return Ok(buf.clone());
+                }
+            }
+            let buf = match &b.init {
                 super::Init::Zero => self.dev.device.create_buffer(&wgpu::BufferDescriptor { label: Some(&b.name), size: b.bytes, usage, mapped_at_creation: false }),
                 _ => self.dev.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(&b.name), contents: &initial_bytes(b, data)?, usage }),
-            })
+            };
+            if let Some(cache) = self.run_cache.borrow_mut().as_mut() {
+                cache.insert(key, buf.clone());
+            }
+            Ok(buf)
         }
 
         /// Run the items' commands: segments end at a sync (dropped when
