@@ -175,6 +175,19 @@ impl<'d> CaseSet<'d> {
         Ok(self.exec.unsplit(whole, || self.run_slot(k, info, s, false))?.dispatch_ms)
     }
 
+    /// THE PLACEMENT PROBE: timing case `i` staged again, into a fresh set of resident buffers (its own allocations).
+    pub fn timing_restage(&self, i: usize) -> Result<<DeviceExecutor<'d> as Executor>::Staged, String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        Ok(self.exec.stage(&s.plan, &s.data)?.0)
+    }
+
+    /// [`CaseSet::dispatch_ms_unsplit`] on the resident buffers `staged` (the case's own, or a [`CaseSet::timing_restage`]).
+    pub fn dispatch_ms_unsplit_on(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, staged: &<DeviceExecutor<'d> as Executor>::Staged, whole: u128) -> Result<Vec<f64>, String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        let plan = self.problem.plan(&s.case, self.exec.binding_limit(), Some(info))?;
+        Ok(self.exec.unsplit(whole, || self.exec.run(k, &plan, &s.data, staged, false))?.dispatch_ms)
+    }
+
     /// [`CaseSet::time`] UNSPLIT: every dispatch whole, as UltraDim dispatches it (`DeviceExecutor::unsplit`), the
     /// whole run bounded by `whole`.
     pub fn time_unsplit(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, whole: u128) -> Result<f64, String> {
