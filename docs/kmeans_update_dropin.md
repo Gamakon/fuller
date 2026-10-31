@@ -152,7 +152,10 @@ kernel still over the cap is untimed (no speed credit), never an error. The per-
 - **The yardstick is UltraDim's own A7 text**, timed as written. The kingdom's expression of A7 is timed against it at
   the start of every P run (the cost of reading and rendering; measured 0.579 the other way round, 2026-10-31 03:38Z:
   the expression inlines A7's `let`s, so `idx / d` is computed on every one of the n trips, and it clamps every load
-  with `min(i, arrayLength - 1)`).
+  with `min(i, arrayLength - 1)`). Fixed the same day: every kernel is spelled through the share pass, which binds
+  a loop-invariant, context-free subtree at function scope (`true_share::Share::share`); a trip of A7's loop then
+  spells the source's arithmetic exactly (1 `*`, 4 `+`, 3 `-`, no `/` or `%`; before: one `/` and one `%` more),
+  the two index clamps apart (the source's are wgpu's bounds checks), with the source's bits on the CPU executor.
 - **Speed is timed unsplit**, one dispatch a step exactly as UltraDim dispatches it, for an exact kernel whose run is
   bounded by at most twice A7's; above it a kernel gets no speed credit. Quality cases keep the work guard's splits.
 - **A warm-up pair** is timed and discarded before every timed comparison (each A/A set, each kernel's pairs), as the

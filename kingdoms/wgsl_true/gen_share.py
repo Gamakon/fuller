@@ -24,7 +24,9 @@ round trip is the identity.
 Writes share.tsv (the functions.tsv header) and share_constants.tsv (the
 constants.tsv header; share.name's C_T, append-only).
 
-  python3 kingdoms/wgsl_true/gen_share.py
+  python3 kingdoms/wgsl_true/gen_share.py            # the Gram table beside this file
+  python3 kingdoms/wgsl_true/gen_share.py mod/NAME   # a module interface: the bodies are its entry kernels'
+                                                     # (the gene roots of interface.tsv), each its own function
 """
 
 import os
@@ -46,22 +48,28 @@ def value_slot(slot):
     return re.fullmatch(r"mat[234]x[234]<f(32|16)>", slot) is not None
 
 
+DIR = HERE
+
+
 def read_tsv(name):
-    with open(os.path.join(HERE, name)) as f:
+    with open(os.path.join(DIR, name)) as f:
         lines = f.read().split("\n")
     header = lines[0].split("\t")
     rows = [dict(zip(header, l.split("\t"))) for l in lines[1:] if l]
     return header, rows
 
 
-def body_types(functions, root):
-    """For each row producing the root: the type of its first argument spelled after <declarations>."""
+def body_types(functions, roots, entries=False):
+    """For each row producing a root: the type of its first argument spelled after <declarations>. With `entries` (a
+    module's gene roots) a row with no <declarations> (an empty entry, `own.kernel_<entry>`) has no body: skipped."""
     out = []
     for r in functions:
-        if r["out"] != root:
+        if r["out"] not in roots:
             continue
         spelling = r["spelling"].replace("\\n", "\n")
         at = spelling.find("<declarations>")
+        if at < 0 and entries:
+            continue
         if at < 0:
             sys.exit(f"our software has a bug: root row {r['name']} has no <declarations>, so no function body to put a let in")
         args = r["args"].split(";") if r["args"] else []
@@ -77,19 +85,20 @@ def main():
     fheader, functions = read_tsv("functions.tsv")
     _, meta = read_tsv("interface.tsv")
     root = next(m["value"] for m in meta if m["key"] == "root")
-    bodies = body_types(functions, root)
+    gene_roots = next((m["value"] for m in meta if m["key"] == "gene_roots"), "")
+    bodies = body_types(functions, gene_roots.split(";"), entries=True) if gene_roots else body_types(functions, [root])
     duals = [t for t in types if value_slot(t["slot"])]
     rows = [("share.name", "constant", "share.name", "", "{v}", "the name a let binds: st7_s<k>, never a value")]
     for t in duals:
         for b in bodies:
             rows.append((f"share.let.{t['dual']}.{b}", "function", b, f"share.name;{t['dual']};{b}", f"let {{0}}: {t['slot']} = {{1}};\\n{{2}}", f"binds a {t['dual']} subtree the kernel repeats, at function scope ahead of every in-body use"))
         rows.append((f"share.ref.{t['dual']}", "function", t["dual"], "share.name", "{0}", f"the value of a {t['dual']} let, by its name"))
-    with open(os.path.join(HERE, "share.tsv"), "w") as f:
+    with open(os.path.join(DIR, "share.tsv"), "w") as f:
         # the share rows declare no variable, so share.tsv keeps the seven columns before functions.tsv's `declares`
         f.write("\t".join(fheader[:7]) + "\n")
         for i, r in enumerate(rows):
             f.write("\t".join((f"S{i + 1:05d}",) + r) + "\n")
-    with open(os.path.join(HERE, "share_constants.tsv"), "w") as f:
+    with open(os.path.join(DIR, "share_constants.tsv"), "w") as f:
         f.write("type\tindex\ttext\n")
         for k in range(NAMES):
             f.write(f"share.name\t{k}\t{NAME_PREFIX}{k}\n")
@@ -97,4 +106,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        DIR = os.path.join(HERE, sys.argv[1])
     main()

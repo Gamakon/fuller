@@ -3928,6 +3928,110 @@ mod tests {
         }
     }
 
+    /// The arithmetic a loop executes on every trip in an entry of `text`: the binary operators ` / `, ` % `, ` * `,
+    /// ` + `, ` - ` spelled inside the first loop of entry `entry` (its header too, for a `for`: the source's step is
+    /// there), and the index clamps `min(i, arrayLength(&a) - 1u)` apart (the kingdom's index rule; the source's are
+    /// wgpu's own bounds checks, not in its text).
+    fn loop_ops(text: &str, entry: &str) -> (BTreeMap<&'static str, usize>, usize) {
+        let at = text.find(&format!("fn {entry}(")).unwrap_or_else(|| panic!("no entry {entry}"));
+        let body = &text[at..];
+        let start = [body.find("for ("), body.find("loop {")].into_iter().flatten().min().expect("a loop");
+        let open = start + body[start..].find('{').expect("a brace");
+        let mut depth = 0usize;
+        let mut end = open;
+        for (i, ch) in body[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let lp = &body[start..=end];
+        // a clamp is `min(i, arrayLength(&a) - 1u)`: its ` - ` is the clamp's, counted with it
+        let clamps = lp.matches("arrayLength(").count();
+        let ops = [" / ", " % ", " * ", " + ", " - "].into_iter().map(|o| (o.trim(), lp.matches(o).count() - if o == " - " { clamps } else { 0 })).collect();
+        (ops, clamps)
+    }
+
+    /// EXPRESSING A KERNEL MUST NOT CHANGE ITS COST (2026-10-31: A7 as the kingdom expressed it ran 1.72 times its own
+    /// text). Reading inlines the source's `let`s, so `idx / d` ran on every trip; the share pass now binds a
+    /// loop-invariant, context-free subtree at function scope (`Share::share`). The static count: per trip, the
+    /// expressed loop through the share pass has no more divisions, remainders or other arithmetic than the source's
+    /// loop (the explicit index clamps counted apart); without it, more.
+    #[test]
+    fn a_kmeans_kernel_expressed_through_the_share_pass_costs_no_more_a_trip_than_its_source() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (iface, problem, file, entry) in [("kmeans_update", "problems/kmeans_update", "shipped.wgsl", "update_centroids"), ("kmeans_update_segmented", "problems/kmeans_update_segmented", "segmented.wgsl", "mean")] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let share = crate::wgsl::true_share::Share::load(&k).expect("the share rows");
+            let c = Contract::parse(&std::fs::read_to_string(root.join(problem).join("safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+            let src = std::fs::read_to_string(root.join(problem).join(file)).expect("kernel");
+            let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+            let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &src, &c).expect("reads") };
+            let before = k.render(&tree).expect("render");
+            let shared = share.share(&k, &tree).expect("share");
+            let after = share.render(&k, &shared.tree).expect("render");
+            assert_eq!(share.unshare(&k, &shared.tree).expect("unshare"), tree, "{iface}: unshare is the identity");
+            let (s_ops, s_min) = loop_ops(&src, entry);
+            let (b_ops, b_min) = loop_ops(&before, entry);
+            let (a_ops, a_min) = loop_ops(&after, entry);
+            eprintln!("{iface} {entry}: a trip of the loop: source {s_ops:?} (clamps {s_min}); expressed {b_ops:?} (clamps {b_min}); expressed through the share pass {a_ops:?} (clamps {a_min}); {} lets", shared.stats.lets);
+            let total = |m: &BTreeMap<&str, usize>| m.values().sum::<usize>();
+            let divs = |m: &BTreeMap<&str, usize>| m["/"] + m["%"];
+            assert!(divs(&a_ops) <= divs(&s_ops), "{iface}: the expressed loop divides more often than the source's");
+            assert!(total(&a_ops) <= total(&s_ops), "{iface}: the expressed loop does more arithmetic a trip than the source's");
+            assert!(total(&b_ops) > total(&s_ops), "{iface}: without the share pass the expression already matched the source (the measurement of 2026-10-31 says otherwise)");
+        }
+    }
+
+    /// The same bits: A7 and the scatter form, each as its own text, as the kingdom expresses it, and expressed through
+    /// the share pass, give the same output words on every constraint case of the problem small enough for the CPU
+    /// executor (n k d at most 5e6: 5 of the 8 cases), WGSL's semantics, no device.
+    #[test]
+    fn a_kmeans_kernel_expressed_through_the_share_pass_gives_its_sources_bits_on_the_cpu() {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (iface, problem, file) in [("kmeans_update", "problems/kmeans_update", "shipped.wgsl"), ("kmeans_update_segmented", "problems/kmeans_update_segmented", "segmented.wgsl")] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let share = crate::wgsl::true_share::Share::load(&k).expect("the share rows");
+            let c = Contract::parse(&std::fs::read_to_string(root.join(problem).join("safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+            let src = std::fs::read_to_string(root.join(problem).join(file)).expect("kernel");
+            let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+            let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &src, &c).expect("reads") };
+            let texts = [src.clone(), k.render(&tree).expect("render"), share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render")];
+            let p = Problem::load(&root.join(problem)).expect("problem");
+            let exec = CpuExecutor::new(1 << 27);
+            let kernels: Vec<_> = texts.iter().map(|t| exec.compile(&p, t).expect("compiles on the CPU executor")).collect();
+            let mut cases = 0;
+            for su in p.suites.iter().filter(|s| s.spec.role == Role::Constraint) {
+                for case in &su.cases {
+                    let env = p.env(case, 1 << 27).expect("env");
+                    let size = ["n", "k", "d"].iter().map(|v| crate::wgsl::harness::eval(v, &env).expect("size")).product::<f64>();
+                    if size > 5e6 {
+                        continue;
+                    }
+                    let data = p.case_data(case, 1 << 27).expect("data");
+                    let mut outs = Vec::new();
+                    for (kern, info) in &kernels {
+                        let plan = p.plan(case, 1 << 27, Some(info)).expect("plan");
+                        let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                        outs.push(exec.run(kern, &plan, &data, &staged, true).expect("runs").outputs);
+                    }
+                    assert_eq!(outs[0], outs[1], "{iface} {}: the expressed text's bits differ from the source's", case.name);
+                    assert_eq!(outs[0], outs[2], "{iface} {}: the shared text's bits differ from the source's", case.name);
+                    cases += 1;
+                }
+            }
+            assert_eq!(cases, 5, "{iface}: the cases compared");
+        }
+    }
+
     /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and
     /// validates and that names no f16: legality by the types, with A7's bindings.
     #[test]

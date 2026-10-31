@@ -291,7 +291,8 @@ pub struct KernelShare {
     /// Distinct subtrees of the expressed tree (its hash-consed DAG).
     pub distinct: usize,
     pub lets: usize,
-    /// Function nodes the kernel text spells (each spelled argument counted), without and with the `let`s.
+    /// Function nodes the kernel text spells (each spelled argument counted; one inside a loop's body twice, as it runs on
+    /// every trip), without and with the `let`s.
     pub spelled_ops: u64,
     pub spelled_ops_shared: u64,
 }
@@ -370,10 +371,18 @@ impl Share {
         let spelled: Vec<Placeholders> = k.rows.iter().map(|r| placeholders(&r.spelling, r.args.len())).collect();
         let mut roots = BTreeMap::new();
         for (s, r) in k.rows.iter().enumerate() {
-            if r.out != k.root {
+            // a module interface's kernels are its entries (the gene roots), each its own function; an empty entry
+            // (`own.kernel_<entry>`) has no body and nothing to share
+            let entry = k.linker.is_some() && k.gene_roots.contains(&r.out);
+            if !(entry || (k.linker.is_none() && r.out == k.root)) {
                 continue;
             }
-            let at = r.spelling.find("<declarations>").ok_or_else(|| bug(format!("root row {} has no <declarations>", r.name)))?;
+            let Some(at) = r.spelling.find("<declarations>") else {
+                if entry {
+                    continue;
+                }
+                return Err(bug(format!("root row {} has no <declarations>", r.name)));
+            };
             let mut in_body = vec![false; r.args.len()];
             let mut first: Option<(usize, usize)> = None;
             for (pos, a) in &spelled[s].at {
@@ -417,12 +426,37 @@ impl Share {
         }
     }
 
+    /// A module interface's linker row (its root: each argument an entry kernel).
+    fn is_linker(&self, k: &TrueKingdom, s: SymbolId) -> bool {
+        (s as usize) < self.n_base && k.linker.as_deref().is_some_and(|l| k.rows[s as usize].name == l)
+    }
+
     fn is_share_row(&self, s: SymbolId) -> bool {
         s as usize >= self.n_base
     }
 
     /// The kernel with every subtree its body spells more than once bound by a `let` (module doc).
     pub fn share(&self, k: &TrueKingdom, tree: &Tree) -> Result<Shared, String> {
+        if self.is_linker(k, tree.symbol) {
+            // a module: each entry kernel shared on its own (its lets in its own function)
+            let mut stats = KernelShare::default();
+            let mut kids = Vec::with_capacity(tree.kids.len());
+            for kid in &tree.kids {
+                if self.roots.contains_key(&kid.symbol) {
+                    let sh = self.share(k, kid)?;
+                    stats.nodes += sh.stats.nodes;
+                    stats.distinct += sh.stats.distinct;
+                    stats.lets += sh.stats.lets;
+                    stats.spelled_ops += sh.stats.spelled_ops;
+                    stats.spelled_ops_shared += sh.stats.spelled_ops_shared;
+                    kids.push(sh.tree);
+                } else {
+                    stats.nodes += count_nodes(kid);
+                    kids.push(kid.clone());
+                }
+            }
+            return Ok(Shared { tree: Tree { symbol: tree.symbol, const_index: tree.const_index, kids }, stats });
+        }
         let root_row = self.roots.get(&tree.symbol).ok_or_else(|| bug(format!("the tree's root {} is not a root row", tree.symbol)))?;
         let n_base = self.n_base;
         let functions = |s: SymbolId| (s as usize) < n_base && k.rows[s as usize].kind == RowKind::Function;
@@ -437,9 +471,18 @@ impl Share {
         // DAG edges into each node, counted where the kernel body spells them.
         let mut refs = vec![0u64; cons.info.len()];
         let mut visited = vec![false; cons.info.len()];
-        fn count(o: &Occ, t: &Tree, mult: u64, sh: &Share, cand: &dyn Fn(usize) -> bool, refs: &mut [u64], visited: &mut [bool]) {
-            let p = &sh.spelled[t.symbol as usize];
-            let m = if cand(o.id) {
+        // A use inside a loop's body runs on every trip: it counts as repeated, so a context-free subtree there (one
+        // that reads no counter, register or output: loop-invariant) is bound at function scope, as the source's own
+        // `let` above the loop was (reading A7 inlines `let centroid_idx = idx / d` into its loop; 2026-10-31).
+        let loop_body = |t: &Tree, i: usize| k.loops.get(t.symbol as usize).and_then(|l| l.as_ref()).is_some_and(|l| l.inside.get(i).copied().unwrap_or(false));
+        struct Cx<'c> {
+            sh: &'c Share,
+            cand: &'c dyn Fn(usize) -> bool,
+            inside: &'c dyn Fn(&Tree, usize) -> bool,
+        }
+        fn count(o: &Occ, t: &Tree, mult: u64, cx: &Cx<'_>, refs: &mut [u64], visited: &mut [bool]) {
+            let p = &cx.sh.spelled[t.symbol as usize];
+            let m = if (cx.cand)(o.id) {
                 refs[o.id] += mult;
                 if visited[o.id] {
                     return;
@@ -451,14 +494,16 @@ impl Share {
             };
             for (i, (ko, kt)) in o.kids.iter().zip(&t.kids).enumerate() {
                 if !p.field[i] && p.count[i] > 0 {
-                    count(ko, kt, m * u64::from(p.count[i]), sh, cand, refs, visited);
+                    let trips = if (cx.inside)(t, i) { 2 } else { 1 };
+                    count(ko, kt, m * u64::from(p.count[i]) * trips, cx, refs, visited);
                 }
             }
         }
         let rp = &self.spelled[tree.symbol as usize];
+        let cx = Cx { sh: self, cand: &candidate, inside: &loop_body };
         for (i, (ko, kt)) in occ.kids.iter().zip(&tree.kids).enumerate() {
             if root_row.in_body[i] && !rp.field[i] {
-                count(ko, kt, u64::from(rp.count[i]), self, &candidate, &mut refs, &mut visited);
+                count(ko, kt, u64::from(rp.count[i]), &cx, &mut refs, &mut visited);
             }
         }
         let shared: Vec<bool> = (0..cons.info.len()).map(|id| candidate(id) && refs[id] >= 2).collect();
@@ -529,19 +574,27 @@ impl Share {
         Ok(Shared { tree: shared_tree, stats })
     }
 
-    /// The kingdom functions the text of `tree` spells: each node once per time its parent spells it.
+    /// The kingdom functions the text of `tree` spells: each node once per time its parent spells it, and twice inside a
+    /// loop's body (it runs on every trip: the weight [`Share::share`] binds loop-invariant subtrees by), so a `let` that
+    /// moves a subtree out of a loop lowers it as a `let` of a repeat does.
     pub fn spelled_ops(&self, k: &TrueKingdom, tree: &Tree) -> Result<u64, String> {
         let row = self.row(k, tree.symbol)?;
         let p = if self.is_share_row(tree.symbol) { placeholders(&row.spelling, row.args.len()) } else { self.spelled[tree.symbol as usize].clone() };
         let mut n = u64::from(!self.is_share_row(tree.symbol) && row.kind == RowKind::Function);
+        let lp = if self.is_share_row(tree.symbol) { None } else { k.loops.get(tree.symbol as usize).and_then(|l| l.as_ref()) };
         for (i, kid) in tree.kids.iter().enumerate() {
-            n += u64::from(*p.count.get(i).unwrap_or(&0)) * self.spelled_ops(k, kid)?;
+            let trips = if lp.is_some_and(|l| l.inside.get(i).copied().unwrap_or(false)) { 2 } else { 1 };
+            n += u64::from(*p.count.get(i).unwrap_or(&0)) * trips * self.spelled_ops(k, kid)?;
         }
         Ok(n)
     }
 
     /// The tree with every `let` removed and every reference replaced by its definition.
     pub fn unshare(&self, k: &TrueKingdom, tree: &Tree) -> Result<Tree, String> {
+        if self.is_linker(k, tree.symbol) {
+            let kids = tree.kids.iter().map(|kid| if self.roots.contains_key(&kid.symbol) { self.unshare(k, kid) } else { Ok(kid.clone()) }).collect::<Result<_, _>>()?;
+            return Ok(Tree { symbol: tree.symbol, const_index: tree.const_index, kids });
+        }
         let Some(rp) = self.roots.get(&tree.symbol) else { return Err(bug("the tree's root is not a root row")) };
         let mut defs: BTreeMap<u32, Tree> = BTreeMap::new();
         let mut body = tree.kids.get(rp.first).ok_or_else(|| bug("the root has too few arguments"))?;
@@ -634,8 +687,9 @@ pub fn context_free_rows(k: &TrueKingdom) -> Vec<bool> {
     let module_text: String = std::iter::once(k.prologue.as_str()).chain(k.rows.iter().map(|r| r.spelling.as_str())).collect::<Vec<_>>().join("\n");
     // Names any row binds locally (`let r`, a loop counter): such a name means something else inside that row.
     let mut local: BTreeSet<String> = BTreeSet::new();
+    let is_root = |r: &TrueRow| r.out == k.root || k.gene_roots.contains(&r.out);
     for r in &k.rows {
-        if r.out == k.root {
+        if is_root(r) {
             continue;
         }
         let p = placeholders(&r.spelling, r.args.len());
@@ -664,7 +718,7 @@ pub fn context_free_rows(k: &TrueKingdom) -> Vec<bool> {
                 names.insert(w[1].to_string());
             }
         }
-        if r.out == k.root {
+        if is_root(r) {
             let mut entry = p.wgsl.clone();
             for f in fn_defs(&p.wgsl).iter().filter(|f| f.name != "main") {
                 entry = entry.replace(f.body, " ");
