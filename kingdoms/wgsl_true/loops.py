@@ -7,7 +7,21 @@ UOPS = {"add": "({0} + {1})", "sub": "({0} - {1})", "mul": "({0} * {1})", "div":
         "max": "max({0}, {1})", "shl": "({0} << {1})", "shr": "({0} >> {1})", "and": "({0} & {1})", "or": "({0} | {1})"}
 
 
+# THE SIZE-BOUNDED TRIP COUNT (`size_bounds`, Andrew, 2026-10-31): in an interface that names its size fields, a loop's
+# trip-count slot takes only those fields and expressions bounded by them (a literal 1..=4096, and + * / >> min max of
+# sizes; no subtraction, which wraps), never a free literal or a load, so every gene's work bound follows from the
+# problem's sizes (the work guard's `TrueKingdom::tree_work_bound_in` reads every such bound's value from the fields).
+SIZE_OPS = {"add": "({0} + {1})", "mul": "({0} * {1})", "div": "({0} / {1})", "shr": "({0} >> {1})", "min": "min({0}, {1})", "max": "max({0}, {1})"}
+
+
+def bound_arg(iface, default):
+    return "u32.size" if iface.get("size_bounds") else default
+
+
 def declare(iface):
+    if iface.get("size_bounds"):
+        T("u32.size", "a trip count bounded by the problem's size fields: a size field, a literal 1..=4096, or + * / >> min max of sizes")
+        SAFE_ARGS.add("u32.size")
     for c in BOUND_CLASSES:
         T(f"u32.boundx{c}", f"an expression loop bound capped at 2^{c} (trip class {c // 6}); any invocation's value")
         T(f"u32.boundu{c}", f"a loop bound capped at 2^{c} that is the same in every invocation of the workgroup")
@@ -44,10 +58,16 @@ def loop_text(d1, divergent, bound="{0}", stride=None, body="{1}"):
 
 def build(iface):
     # ---- bounds
+    if iface.get("size_bounds"):
+        for f in iface["size_bounds"]:
+            R(f"size.{f}", "u32.size", [], f"{iface.get('uniform', 'cfg')}.{f}", "a size field of the problem")
+        R("size.lit", "u32.size", ["u32.lit4096"], "lit_u32({0})", "a literal trip count 1..=4096")
+        for op, sp in SIZE_OPS.items():
+            R(f"size.{op}", "u32.size", ["u32.size", "u32.size"], sp, "bounded by its arguments' bounds")
     for c in BOUND_CLASSES:
         cap = 2 ** c
-        R(f"bound.of_index_{c}", f"u32.boundx{c}", ["u32.index"], f"min({{0}}, {cap}u)", "the cap is the row's text, so every expression-bounded loop has a known trip bound", twin=True)
-        R(f"bound.of_uniform_{c}", f"u32.boundu{c}", ["u32.uniform"], f"min({{0}}, {cap}u)", "a uniform bound: the trip count is the same in every invocation")
+        R(f"bound.of_index_{c}", f"u32.boundx{c}", [bound_arg(iface, "u32.index")], f"min({{0}}, {cap}u)", "the cap is the row's text, so every expression-bounded loop has a known trip bound", twin=True)
+        R(f"bound.of_uniform_{c}", f"u32.boundu{c}", [bound_arg(iface, "u32.uniform")], f"min({{0}}, {cap}u)", "a uniform bound: the trip count is the same in every invocation")
         R(f"own.u32_boundx{c}", f"u32.boundx{c}", [], "1u", "a bound of one trip")
         R(f"own.u32_boundx{c}w", f"u32.boundx{c}w", [], "1u")
         if DEPTH["A"]:

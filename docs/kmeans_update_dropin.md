@@ -146,3 +146,21 @@ its `mean` entry is bounded by 171,993,344 a workgroup at the timing input. A7's
 factor of 10), `work_guard::CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT` = 1.22e9. A P run times its yardstick
 under the machine's cap first and raises the executor's cap only when that measured rate justifies it; an exact
 kernel still over the cap is untimed (no speed credit), never an error. The per-submit GPU wait bound stays.
+
+## Timing rules (2026-10-31)
+
+- **The yardstick is UltraDim's own A7 text**, timed as written. The kingdom's expression of A7 is timed against it at
+  the start of every P run (the cost of reading and rendering; measured 0.579 the other way round, 2026-10-31 03:38Z:
+  the expression inlines A7's `let`s, so `idx / d` is computed on every one of the n trips, and it clamps every load
+  with `min(i, arrayLength - 1)`).
+- **Speed is timed unsplit**, one dispatch a step exactly as UltraDim dispatches it, for an exact kernel whose run is
+  bounded by at most twice A7's; above it a kernel gets no speed credit. Quality cases keep the work guard's splits.
+- **A warm-up pair** is timed and discarded before every timed comparison (each A/A set, each kernel's pairs), as the
+  Futhark study discarded its first process.
+- **Runs a side**: a side takes the fastest of enough runs to add up to at least 200 ms of the yardstick's time (A7
+  unsplit is about 15 ms a run), so the GPU's clock states do not split the ratios (set 1 of the 03:38Z gate had pairs
+  at 0.516, 0.582 and 0.596 between pairs at 1.000).
+- **A loop's trip count is bounded by the problem's sizes** (kingdoms/wgsl_true/loops.py `size_bounds`): n, k, d, a
+  literal 1..=4096, and `+ * / >> min max` of them. A free literal or a load can no longer bound a loop, so every gene's
+  work bound follows from the sizes (the 6 smoke-run mutants that the guard could not split had a bound of
+  4,218,022,233 or `assignments[..]`, capped at 2^24 trips).

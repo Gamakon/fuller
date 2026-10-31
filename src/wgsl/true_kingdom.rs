@@ -317,6 +317,28 @@ impl TrueKingdom {
         Ok(total)
     }
 
+    /// The loops of `tree` above the literal class (more than 64 trips by their type) whose trip bound the rows do not
+    /// give a value for in a run whose fields are `fields` (the work guard then counts the type's cap, `2^c`), each as
+    /// `<loop row> bounded by <the bound's rows>`. In an interface whose trip counts are bounded by its size
+    /// fields (kingdoms/wgsl_true/loops.py `size_bounds`) there is none, whatever the gene.
+    pub fn unbounded_loops(&self, tree: &Tree, fields: &BTreeMap<String, u64>) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![tree];
+        while let Some(node) = stack.pop() {
+            if let Some(l) = self.loops.get(node.symbol as usize).and_then(|l| l.as_ref()) {
+                let outside: Vec<usize> = (0..node.kids.len()).filter(|i| !l.inside.get(*i).copied().unwrap_or(false)).collect();
+                let b = outside.first().and_then(|i| node.kids.get(*i));
+                // a literal-bounded loop (`u32.lit64`, at most 64 trips by its type) is bounded whatever its literal
+                if l.cap > 64 && b.is_none_or(|b| self.value_max(b, fields).is_none()) {
+                    let name = |t: &Tree| self.rows.get(t.symbol as usize).map_or("?".to_string(), |r| r.name.clone());
+                    out.push(format!("{} bounded by {}", name(node), b.map_or("nothing".to_string(), |b| b.level_order().iter().map(|(t, _)| name(t)).collect::<Vec<_>>().join(" "))));
+                }
+            }
+            stack.extend(node.kids.iter());
+        }
+        out
+    }
+
     /// A constant node's value, when its `C_T` text is an unsigned integer.
     fn const_value(&self, node: &Tree) -> Option<u64> {
         let row = self.rows.get(node.symbol as usize)?;

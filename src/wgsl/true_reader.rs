@@ -2466,6 +2466,14 @@ impl<'a> Reader<'a> {
         self.rows_by_name.get(name).copied().ok_or_else(|| ReadError::Gap(format!("the row {name}")))
     }
 
+    /// The type a loop's bound row asks of its bound (`u32.index`, `u32.uniform`, their twins, or `u32.size` in an
+    /// interface whose trip counts are bounded by its size fields, kingdoms/wgsl_true/loops.py `size_bounds`).
+    fn bound_ty(&self, bound_row: &str) -> R<String> {
+        let r = &self.k.rows[self.row(bound_row)? as usize];
+        let t = r.args.first().copied().ok_or_else(|| ReadError::Gap(format!("our software has a bug: the bound row {bound_row} takes no argument")))?;
+        Ok(self.k.type_name(t))
+    }
+
     fn leaf(&self, name: &str) -> R<Tree> {
         Ok(Tree { symbol: self.row(name)?, const_index: None, kids: Vec::new() })
     }
@@ -2545,7 +2553,15 @@ impl<'a> Reader<'a> {
 
     fn val_direct(&mut self, e: &E, want: crate::geneframe::Ty, tn: &str) -> Option<Tree> {
         match e {
-            E::Lit(l) => return self.konst(tn, l),
+            E::Lit(l) => {
+                // a size-bounded trip count's literal is `size.lit` over `u32.lit4096` (loops.py `size_bounds`)
+                if tn == "u32.size" {
+                    let row = *self.rows_by_name.get("size.lit")?;
+                    let lit = self.konst("u32.lit4096", l)?;
+                    return Some(Tree { symbol: row, const_index: None, kids: vec![lit] });
+                }
+                return self.konst(tn, l);
+            }
             E::Zero(w) => {
                 let sp = format!("zero_vec{}_{}()", w.lanes, sc_name(w.s));
                 return self.by_spelling.get(&sp).cloned().unwrap_or_default().into_iter().find(|r| self.k.rows[*r as usize].out == want).map(|r| Tree { symbol: r, const_index: None, kids: Vec::new() });
@@ -3445,7 +3461,8 @@ impl<'a> Reader<'a> {
         let (row, mut kids) = match lit {
             Some(n) => (format!("loop.tile_{strided}ubrk_L{d}_f{kb}"), vec![self.konst("u32.lit64", &Lit::U(n)).ok_or_else(|| ReadError::Gap(format!("the constant {n} in C_T of u32.lit64")))?]),
             None => {
-                let b = self.must(&lp.bound, "u32.uniform").map_err(|e| match e {
+                let bt = self.bound_ty(&format!("bound.of_uniform_{c}"))?;
+                let b = self.must(&lp.bound, &bt).map_err(|e| match e {
                     ReadError::Gap(m) => ReadError::Gap(format!("a uniform proof of the bound of a loop holding a barrier: {m}")),
                     o => o,
                 })?;
@@ -3494,29 +3511,35 @@ impl<'a> Reader<'a> {
             return gap("a loop that breaks and holds a barrier under divergent control");
         }
         // the loop's row, its body's rung and whether its counter is divergent
-        let uniform_bound = if lit.is_none() && x == 'L' { let b = self.with_uregs(&lp.bound); self.must(&b, "u32.uniform").ok() } else { None };
+        let ubt = self.bound_ty(&format!("bound.of_uniform_{c}"))?;
+        let uniform_bound = if lit.is_none() && x == 'L' { let b = self.with_uregs(&lp.bound); self.must(&b, &ubt).ok() } else { None };
+        let ibt = self.bound_ty(&format!("bound.of_index_{c}"))?;
+        let wa = |s: &Self, x: char| s.bound_ty(&format!("bound.of_index_{c}_{}", if matches!(x, 'A' | 'G' | 'Z') { "a" } else { "w" }));
         if x == 'L' && nl && lit.is_none() && uniform_bound.is_none() {
             return gap(format!("a uniform proof of the bound of a loop holding a barrier: {:?}", lp.bound));
         }
         let (row, body_x, div, bound_kids): (String, char, bool, Vec<Tree>) = match (x, lit, brk.is_some()) {
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', Some(n), false) if stride == 1 => (format!("loop.tile_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?]),
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', None, false) if stride == 1 => {
-                let b = self.must(&lp.bound, if matches!(x, 'A' | 'G' | 'Z') { "u32.indexa" } else { "u32.indexw" })?;
+                let bt = wa(self, x)?;
+                let b = self.must(&lp.bound, &bt)?;
                 (format!("loop.tilex_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if matches!(x, 'A' | 'G' | 'Z') { "a" } else { "w" }))?, const_index: None, kids: vec![b] }])
             }
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), x, true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', None, true) => {
-                let b = self.must(&lp.bound, if matches!(x, 'A' | 'G' | 'Z') { "u32.indexa" } else { "u32.indexw" })?;
+                let bt = wa(self, x)?;
+                let b = self.must(&lp.bound, &bt)?;
                 (format!("loop.tilex_{sb}_{c}_{x}{d}_f{kb}"), x, true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if matches!(x, 'A' | 'G' | 'Z') { "a" } else { "w" }))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', Some(n), false) => (format!("loop.tile_strided_{x}{d}_f{kb}"), x, true, vec![lit64(self, n)?, lit4096(self, stride)?]),
             ('W' | 'X' | 'E' | 'Y' | 'A' | 'P' | 'G' | 'Z', None, false) => {
-                let b = self.must(&lp.bound, if matches!(x, 'A' | 'G' | 'Z') { "u32.indexa" } else { "u32.indexw" })?;
+                let bt = wa(self, x)?;
+                let b = self.must(&lp.bound, &bt)?;
                 (format!("loop.tilex_strided_{c}_{x}{d}_f{kb}"), x, true, vec![Tree { symbol: self.row(&format!("bound.of_index_{c}_{}", if matches!(x, 'A' | 'G' | 'Z') { "a" } else { "w" }))?, const_index: None, kids: vec![b] }, lit4096(self, stride)?])
             }
             ('S', Some(n), true) => (format!("loop.tile_{sb}_S{d}_f{kb}"), 'S', true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             ('S', None, true) => {
-                let b = self.must(&lp.bound, "u32.index")?;
+                let b = self.must(&lp.bound, &ibt)?;
                 (format!("loop.tilex_{sb}_{c}_S{d}_f{kb}"), 'S', true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('S', Some(n), false) => {
@@ -3527,7 +3550,7 @@ impl<'a> Reader<'a> {
                 }
             }
             ('S', None, false) => {
-                let b = self.must(&lp.bound, "u32.index")?;
+                let b = self.must(&lp.bound, &ibt)?;
                 let b = Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] };
                 if stride == 1 {
                     (format!("loop.tilex_{c}_S{d}_f{kb}"), 'S', true, vec![b])
@@ -3537,7 +3560,7 @@ impl<'a> Reader<'a> {
             }
             (_, Some(n), true) => (format!("loop.tile_{sb}_{x}{d}_f{kb}"), 'C', true, { let v = vec![lit64(self, n)?]; self.with_stride(v, stride)? }),
             (_, None, true) => {
-                let b = self.must(&lp.bound, "u32.index")?;
+                let b = self.must(&lp.bound, &ibt)?;
                 (format!("loop.tilex_{sb}_{c}_{x}{d}_f{kb}"), 'C', true, self.with_stride(vec![Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] }], stride)?)
             }
             ('L', Some(n), false) => {
@@ -3563,7 +3586,7 @@ impl<'a> Reader<'a> {
                 }
             }
             (_, None, false) => {
-                let b = self.must(&lp.bound, "u32.index")?;
+                let b = self.must(&lp.bound, &ibt)?;
                 let b = Tree { symbol: self.row(&format!("bound.of_index_{c}"))?, const_index: None, kids: vec![b] };
                 if stride == 1 {
                     (format!("loop.tilex_{c}_{x}{d}_f{kb}"), 'C', true, vec![b])
@@ -3868,6 +3891,41 @@ mod tests {
         assert!(gather.iter().all(|b| *b <= cap), "the gather fits the machine's cap");
         assert!(scatter[4] > cap, "the scatter's mean is over the machine's cap (the 2026-10-28 block)");
         assert!(scatter.iter().all(|b| *b <= measured / 2), "every scatter entry fits the measured cap with room for a larger mutant: {scatter:?}");
+    }
+
+    /// THE SIZE-BOUNDED TRIP COUNT (kingdoms/wgsl_true/loops.py `size_bounds`, 2026-10-31): in the two k-means tables a
+    /// loop's trip count is a size field (n, k, d) or an expression bounded by them. The two forms the smoke run's
+    /// unrunnable mutants had (a free literal, 4,218,022,233, and a load of `assignments`) do not read; A7 reads; in 300
+    /// random modules of each table every loop's bound has a value from the fields, so the work bound follows from the
+    /// problem's sizes.
+    #[test]
+    fn a_kmeans_trip_count_is_bounded_by_the_problem_sizes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(root.join("problems/kmeans_update/safety.contract")).expect("safety contract");
+        let c = Contract::parse(&text, &["x", "y", "z", "w"]).expect("contract");
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update")).expect("the table");
+        let a7 = std::fs::read_to_string(root.join("problems/kmeans_update/shipped.wgsl")).expect("A7");
+        assert!(a7.contains("v < n_vectors;"));
+        read_module(&k, &a7, &c).expect("A7 reads");
+        for bound in ["4218022233u", "assignments[0]"] {
+            let m = a7.replace("v < n_vectors;", &format!("v < {bound};"));
+            assert!(read_module(&k, &m, &c).is_err(), "a loop bounded by {bound} reads into the table");
+        }
+        let fields: BTreeMap<String, u64> = [("x", 1_048_576u64), ("y", 1024), ("z", 4096), ("w", 0)].into_iter().map(|(f, v)| (f.to_string(), v)).collect();
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; k.gene_roots.len()]).expect("module");
+            let mut rng = crate::wgsl::true_kingdom::Rng(0x5153);
+            let mut loops = 0usize;
+            for i in 0..300 {
+                let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                for t in m.entry_trees(&ch).expect("express") {
+                    assert_eq!(k.unbounded_loops(&t, &fields), Vec::<String>::new(), "{iface} gene {i}: a loop whose trip count is not bounded by the sizes");
+                    loops += t.level_order().iter().filter(|(n, _)| k.loops.get(n.symbol as usize).is_some_and(|l| l.is_some())).count();
+                }
+            }
+            assert!(loops > 0, "{iface}: no random module holds a loop");
+        }
     }
 
     /// Every random module of the two k-means tables (program size 16 a gene, 300 a table) spells a text naga reads and

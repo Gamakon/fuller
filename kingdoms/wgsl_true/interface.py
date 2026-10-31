@@ -190,6 +190,8 @@ KMEANS_UPDATE = dict(
     fuel_budget=4,
     uniform="params",
     fields=["x", "y", "z", "w"],
+    # a loop's trip count is bounded by n, k and d only (loops.py `size_bounds`)
+    size_bounds=["x", "y", "z"],
     inputs=[dict(name="vectors", e="f32", ty="f32.real", vec4_view=True), dict(name="assignments", e="u32", ty="u32.index")],
     outputs=[dict(name="centroids", e="f32", ty="f32.real", rows="1u", cols="(params.y * params.z)")],
     primary=None,
@@ -217,7 +219,7 @@ KMEANS_UPDATE_SEGMENTED = dict(
     name="kmeans_update_segmented",
     module=[("hist", False), ("offsets", False), ("starts", False), ("scatter", False), ("mean", False)],
     arenas=[dict(name="scratch", e="u32", ty="u32.index")],
-    extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"]},
+    extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["255", "256"]},
     prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",
 )
 

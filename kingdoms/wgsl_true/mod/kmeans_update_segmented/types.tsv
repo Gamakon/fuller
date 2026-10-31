@@ -365,57 +365,58 @@ T0363	parr<bool,16>.flag	parr<bool,16>	flag	1	a private array of 16 bool: pb0..p
 T0364	parr<vec4<f32>,16>.real	parr<vec4<f32>,16>	real	1	a private array of 16 vec4<f32>: pv0..pv5	-
 T0365	parr<vec2<f32>,16>.real	parr<vec2<f32>,16>	real	1	a private array of 16 vec2<f32>: pq0..pq3	-
 T0366	parr<vec4<f32>,64>.real	parr<vec4<f32>,64>	real	1	a private array of 64 vec4<f32>: pvq0..pvq3	-
-T0367	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
-T0368	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
-T0369	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
-T0370	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
-T0371	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
-T0372	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
-T0373	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
-T0374	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
-T0375	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
-T0376	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
-T0377	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
-T0378	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
-T0379	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
-T0380	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
-T0381	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
-T0382	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
-T0383	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
-T0384	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
-T0385	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
-T0386	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
-T0387	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
-T0388	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
-T0389	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T0390	wgmem<f32,2048>.real	wgmem<f32,2048>	real	1	the workgroup array wg_f_11: 2048 f32	-
-T0391	wgmem<u32,1024>.index	wgmem<u32,1024>	index	1	the workgroup array wg_u_10: 1024 u32	-
-T0392	wgmem<vec4<f32>,512>.real	wgmem<vec4<f32>,512>	real	1	the workgroup array wg_v4_9: 512 vec4<f32>	-
-T0393	wgmem<vec2<f32>,256>.real	wgmem<vec2<f32>,256>	real	1	the workgroup array wg_v2_8: 256 vec2<f32>	-
-T0394	wgmem<vec3<f32>,128>.real	wgmem<vec3<f32>,128>	real	1	the workgroup array wg_v3_7: 128 vec3<f32>	-
-T0395	wgmem<i32,512>.int	wgmem<i32,512>	int	1	the workgroup array wg_i_9: 512 i32	-
-T0396	wgmem<atomic<u32>,256>.index	wgmem<atomic<u32>,256>	index	1	the workgroup array wg_au_8 of atomics	-
-T0397	u32.atomicold	u32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
-T0398	wgmem<atomic<i32>,128>.int	wgmem<atomic<i32>,128>	int	1	the workgroup array wg_ai_7 of atomics	-
-T0399	i32.atomicold	i32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
-T0400	u32.wgidx_7	u32	wgidx_7	1	an index below 2^7, by the mask its row writes	-
-T0401	u32.wgown_7	u32	wgown_7	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^7 array; the access rows guard it	-
-T0402	u32.wgidx_8	u32	wgidx_8	1	an index below 2^8, by the mask its row writes	-
-T0403	u32.wgown_8	u32	wgown_8	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^8 array; the access rows guard it	-
-T0404	u32.wgidx_9	u32	wgidx_9	1	an index below 2^9, by the mask its row writes	-
-T0405	u32.wgown_9	u32	wgown_9	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^9 array; the access rows guard it	-
-T0406	u32.wgidx_10	u32	wgidx_10	1	an index below 2^10, by the mask its row writes	-
-T0407	u32.wgown_10	u32	wgown_10	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^10 array; the access rows guard it	-
-T0408	u32.wgidx_11	u32	wgidx_11	1	an index below 2^11, by the mask its row writes	-
-T0409	u32.wgown_11	u32	wgown_11	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^11 array; the access rows guard it	-
-T0410	u32.litpow2_7	u32	litpow2_7	1	a literal power of two from 1 to 2^7: a reduction's element count	1..=128
-T0411	u32.litpow2_8	u32	litpow2_8	1	a literal power of two from 1 to 2^8: a reduction's element count	1..=256
-T0412	u32.litpow2_9	u32	litpow2_9	1	a literal power of two from 1 to 2^9: a reduction's element count	1..=512
-T0413	u32.litpow2_11	u32	litpow2_11	1	a literal power of two from 1 to 2^11: a reduction's element count	1..=2048
-T0414	u32.lane	u32	lane	1	a subgroup lane below the subgroup size, by the mask its row writes	-
-T0415	u32.sgoff	u32	sgoff	1	a subgroup-uniform shuffle offset or mask	-
-T0416	u32.lanelit	u32	lanelit	1	a literal lane 0..=min_subgroup_size - 1 of the target	-
-T0417	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T0418	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
-T0419	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
-T0420	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
+T0367	u32.size	u32	size	1	a trip count bounded by the problem's size fields: a size field, a literal 1..=4096, or + * / >> min max of sizes	-
+T0368	u32.boundx6	u32	boundx6	1	an expression loop bound capped at 2^6 (trip class 1); any invocation's value	-
+T0369	u32.boundu6	u32	boundu6	1	a loop bound capped at 2^6 that is the same in every invocation of the workgroup	-
+T0370	u32.boundx6w	u32	boundx6w	1	the write-phase twin of u32.boundx6: a value no foreign workgroup read reached	-
+T0371	u32.boundx12	u32	boundx12	1	an expression loop bound capped at 2^12 (trip class 2); any invocation's value	-
+T0372	u32.boundu12	u32	boundu12	1	a loop bound capped at 2^12 that is the same in every invocation of the workgroup	-
+T0373	u32.boundx12w	u32	boundx12w	1	the write-phase twin of u32.boundx12: a value no foreign workgroup read reached	-
+T0374	u32.boundx18	u32	boundx18	1	an expression loop bound capped at 2^18 (trip class 3); any invocation's value	-
+T0375	u32.boundu18	u32	boundu18	1	a loop bound capped at 2^18 that is the same in every invocation of the workgroup	-
+T0376	u32.boundx18w	u32	boundx18w	1	the write-phase twin of u32.boundx18: a value no foreign workgroup read reached	-
+T0377	u32.boundx24	u32	boundx24	1	an expression loop bound capped at 2^24 (trip class 4); any invocation's value	-
+T0378	u32.boundu24	u32	boundu24	1	a loop bound capped at 2^24 that is the same in every invocation of the workgroup	-
+T0379	u32.boundx24w	u32	boundx24w	1	the write-phase twin of u32.boundx24: a value no foreign workgroup read reached	-
+T0380	u32.tcounter1	u32	tcounter1	1	the counter k1 of a loop whose bound is a literal or uniform: uniform	-
+T0381	u32.xcounter1	u32	xcounter1	1	the counter kx1 of a loop whose bound is any expression, or that breaks: divergent	-
+T0382	u32.tcounter2	u32	tcounter2	1	the counter k2 of a loop whose bound is a literal or uniform: uniform	-
+T0383	u32.xcounter2	u32	xcounter2	1	the counter kx2 of a loop whose bound is any expression, or that breaks: divergent	-
+T0384	u32.tcounter3	u32	tcounter3	1	the counter k3 of a loop whose bound is a literal or uniform: uniform	-
+T0385	u32.xcounter3	u32	xcounter3	1	the counter kx3 of a loop whose bound is any expression, or that breaks: divergent	-
+T0386	u32.tcounter4	u32	tcounter4	1	the counter k4 of a loop whose bound is a literal or uniform: uniform	-
+T0387	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any expression, or that breaks: divergent	-
+T0388	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
+T0389	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
+T0390	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
+T0391	wgmem<f32,2048>.real	wgmem<f32,2048>	real	1	the workgroup array wg_f_11: 2048 f32	-
+T0392	wgmem<u32,1024>.index	wgmem<u32,1024>	index	1	the workgroup array wg_u_10: 1024 u32	-
+T0393	wgmem<vec4<f32>,512>.real	wgmem<vec4<f32>,512>	real	1	the workgroup array wg_v4_9: 512 vec4<f32>	-
+T0394	wgmem<vec2<f32>,256>.real	wgmem<vec2<f32>,256>	real	1	the workgroup array wg_v2_8: 256 vec2<f32>	-
+T0395	wgmem<vec3<f32>,128>.real	wgmem<vec3<f32>,128>	real	1	the workgroup array wg_v3_7: 128 vec3<f32>	-
+T0396	wgmem<i32,512>.int	wgmem<i32,512>	int	1	the workgroup array wg_i_9: 512 i32	-
+T0397	wgmem<atomic<u32>,256>.index	wgmem<atomic<u32>,256>	index	1	the workgroup array wg_au_8 of atomics	-
+T0398	u32.atomicold	u32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
+T0399	wgmem<atomic<i32>,128>.int	wgmem<atomic<i32>,128>	int	1	the workgroup array wg_ai_7 of atomics	-
+T0400	i32.atomicold	i32	atomicold	1	the value an atomic read-modify-write returned: order-dependent across invocations; consumed only by discard	-
+T0401	u32.wgidx_7	u32	wgidx_7	1	an index below 2^7, by the mask its row writes	-
+T0402	u32.wgown_7	u32	wgown_7	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^7 array; the access rows guard it	-
+T0403	u32.wgidx_8	u32	wgidx_8	1	an index below 2^8, by the mask its row writes	-
+T0404	u32.wgown_8	u32	wgown_8	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^8 array; the access rows guard it	-
+T0405	u32.wgidx_9	u32	wgidx_9	1	an index below 2^9, by the mask its row writes	-
+T0406	u32.wgown_9	u32	wgown_9	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^9 array; the access rows guard it	-
+T0407	u32.wgidx_10	u32	wgidx_10	1	an index below 2^10, by the mask its row writes	-
+T0408	u32.wgown_10	u32	wgown_10	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^10 array; the access rows guard it	-
+T0409	u32.wgidx_11	u32	wgidx_11	1	an index below 2^11, by the mask its row writes	-
+T0410	u32.wgown_11	u32	wgown_11	1	the candidate lidx + k * KNOB_THREADS of this invocation's own element of a 2^11 array; the access rows guard it	-
+T0411	u32.litpow2_7	u32	litpow2_7	1	a literal power of two from 1 to 2^7: a reduction's element count	1..=128
+T0412	u32.litpow2_8	u32	litpow2_8	1	a literal power of two from 1 to 2^8: a reduction's element count	1..=256
+T0413	u32.litpow2_9	u32	litpow2_9	1	a literal power of two from 1 to 2^9: a reduction's element count	1..=512
+T0414	u32.litpow2_11	u32	litpow2_11	1	a literal power of two from 1 to 2^11: a reduction's element count	1..=2048
+T0415	u32.lane	u32	lane	1	a subgroup lane below the subgroup size, by the mask its row writes	-
+T0416	u32.sgoff	u32	sgoff	1	a subgroup-uniform shuffle offset or mask	-
+T0417	u32.lanelit	u32	lanelit	1	a literal lane 0..=min_subgroup_size - 1 of the target	-
+T0418	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T0419	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
+T0420	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
+T0421	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
