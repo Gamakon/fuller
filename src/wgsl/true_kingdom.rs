@@ -519,8 +519,8 @@ impl TrueKingdom {
 
     /// The scaffold variant a module's tree chooses (section 10): the one knob `cs.<variant>` it names, with the
     /// variant's pieces; `None` for a tree that names none.
-    pub fn scaffold_variant(&self, tree: &Tree) -> Result<Option<(&str, &BTreeMap<String, String>)>, String> {
-        let mut found: Option<(&str, &BTreeMap<String, String>)> = None;
+    pub fn scaffold_variant(&self, tree: &Tree) -> Result<Option<Variant<'_>>, String> {
+        let mut found: Option<Variant<'_>> = None;
         let mut stack = vec![tree];
         while let Some(n) = stack.pop() {
             stack.extend(n.kids.iter());
@@ -652,6 +652,9 @@ impl TrueKingdom {
         Ok(text)
     }
 }
+
+/// A scaffold variant (section 10): its name and its pieces (piece -> text).
+pub type Variant<'k> = (&'k str, &'k BTreeMap<String, String>);
 
 /// `scaffold.tsv` (countsort.py): one row per (variant, piece), the text escaped as `functions.tsv` escapes it.
 fn read_scaffold(dir: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
