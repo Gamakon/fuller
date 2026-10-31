@@ -67,9 +67,9 @@ fn lo_width(lo: f32, w: f32) -> vec2<f32> { return vec2<f32>(lo, lo + w); }
 fn lo_width_i(lo: i32, w: i32) -> vec2<i32> { return vec2<i32>(lo, max(lo, lo + w)); }
 fn load4_keys(k: u32) -> vec4<f32> { let m = arrayLength(&keys) - 1u; return vec4<f32>(keys[min(k, m)], keys[min(k + 1u, m)], keys[min(k + 2u, m)], keys[min(k + 3u, m)]); }
 fn load4_queries(k: u32) -> vec4<f32> { let m = arrayLength(&queries) - 1u; return vec4<f32>(queries[min(k, m)], queries[min(k + 1u, m)], queries[min(k + 2u, m)], queries[min(k + 3u, m)]); }
-fn load4v_index_f32(j: u32) -> vec4<f32> { let m = min(j, arrayLength(&index_f32) / 4u - 1u) * 4u; return vec4<f32>(index_f32[m], index_f32[m + 1u], index_f32[m + 2u], index_f32[m + 3u]); }
-fn load4v_keys(j: u32) -> vec4<f32> { let m = min(j, arrayLength(&keys) / 4u - 1u) * 4u; return vec4<f32>(keys[m], keys[m + 1u], keys[m + 2u], keys[m + 3u]); }
-fn load4v_queries(j: u32) -> vec4<f32> { let m = min(j, arrayLength(&queries) / 4u - 1u) * 4u; return vec4<f32>(queries[m], queries[m + 1u], queries[m + 2u], queries[m + 3u]); }
+fn load4v_index_f32(j: u32) -> vec4<f32> { let q = arrayLength(&index_f32) / 4u; if (q == 0u) { let x = index_f32[arrayLength(&index_f32) - 1u]; return vec4<f32>(x, x, x, x); } let m = min(j, q - 1u) * 4u; return vec4<f32>(index_f32[m], index_f32[m + 1u], index_f32[m + 2u], index_f32[m + 3u]); }
+fn load4v_keys(j: u32) -> vec4<f32> { let q = arrayLength(&keys) / 4u; if (q == 0u) { let x = keys[arrayLength(&keys) - 1u]; return vec4<f32>(x, x, x, x); } let m = min(j, q - 1u) * 4u; return vec4<f32>(keys[m], keys[m + 1u], keys[m + 2u], keys[m + 3u]); }
+fn load4v_queries(j: u32) -> vec4<f32> { let q = arrayLength(&queries) / 4u; if (q == 0u) { let x = queries[arrayLength(&queries) - 1u]; return vec4<f32>(x, x, x, x); } let m = min(j, q - 1u) * 4u; return vec4<f32>(queries[m], queries[m + 1u], queries[m + 2u], queries[m + 3u]); }
 fn mul_q(a: i32, b: i32) -> i32 {
   let neg = (a < 0i) != (b < 0i);
   let ua = select(u32(a), u32(-a), a < 0i);

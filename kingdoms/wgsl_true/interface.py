@@ -210,6 +210,13 @@ KMEANS_UPDATE = dict(
     dispatch_items={"update_centroids": 1 << 20},
     max_workgroups_x=65535,
     inputs=[dict(name="vectors", e="f32", ty="f32.real", vec4_view=True), dict(name="assignments", e="u32", ty="u32.index")],
+    # IN-RANGE INDICES AS A TYPE (docs/DESIGN_inrange_index_types.md, 2026-10-31): a load or store of a binding takes
+    # `u32.in_<b>` and spells no clamp. `lengths` is the dispatch contract's length of each binding in the uniform's
+    # fields (the problem's buffer sizes: n * d vectors, n assignments; nb = ceil(x / 256)), `len_bounds` the field
+    # texts proved at most that length (inrange.witness)
+    inrange_types=True,
+    lengths={"vectors": "x * z", "assignments": "x"},
+    len_bounds={"vectors": ["x", "z"], "assignments": ["x"]},
     outputs=[dict(name="centroids", e="f32", ty="f32.real", rows="1u", cols="(params.y * params.z)")],
     primary=None,
     default_grid=(256, 1, 1, 1),
@@ -238,6 +245,9 @@ KMEANS_UPDATE_SEGMENTED = dict(
     # hist: ceil(n / 256) * k blocks x clusters; offsets: k; starts: one workgroup (fixed); scatter: n; mean: k * d
     dispatch_items={"hist": (1 << 20) // 256 * 1024, "offsets": 1024, "scatter": 1 << 20, "mean": 1 << 20},
     arenas=[dict(name="scratch", e="u32", ty="u32.index")],
+    # the scratch's length: n + 2 k + 2 nb k (problems/kmeans_update_segmented/problem.toml)
+    lengths={"vectors": "x * z", "assignments": "x", "scratch": "x + 2 * y + 2 * nb * y"},
+    len_bounds={"vectors": ["x", "z"], "assignments": ["x"], "scratch": ["x", "y"]},
     extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "32", "64", "128", "255", "256", "512", "1024", "2048", "4096"]},
     prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",
 )

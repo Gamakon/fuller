@@ -26,9 +26,12 @@ pub const CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT: u128 = 170_000_000;
 /// A7's bound of ONE WORKGROUP at the k-means timing input: UltraDim's `update_centroids` read into the true kingdom
 /// (`problems/kmeans_update_segmented/gather.wgsl`, its `mean` entry), 256 invocations at n = 8,192
 /// (`TrueKingdom::tree_work_bound_workgroup_in`; `true_reader::tests::kmeans_timing_bounds_fit_the_measured_cap`
-/// recomputes it; 125,841,920 before the size-bounded trip counts of 2026-10-31, one node fewer an invocation now). The
-/// basis of [`CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT`].
-pub const A7_TIMING_WORKGROUP_BOUND: u128 = 125_841_664;
+/// recomputes it; 125,841,920 before the size-bounded trip counts of 2026-10-31, one node fewer an invocation then;
+/// 125,841,664 before the in-range index types of 2026-10-31 (docs/DESIGN_inrange_index_types.md), whose clamp of a
+/// load's index is its own row, one node more a load: the same kernel and the same 1,054.9 ms, counted in more nodes,
+/// so the measured rate and the cap below grow by the same 3.3 % as every bound they are compared with). The basis of
+/// [`CAP_M3_MAX_MEASURED_NODE_EXECUTIONS_PER_SUBMIT`].
+pub const A7_TIMING_WORKGROUP_BOUND: u128 = 130_035_968;
 
 /// THE MEASURED CAP, for the kernels of a harness problem whose yardstick was timed on this machine (Apple M3 Max,
 /// Metal). The machine's cap above assumes 17 G node executions a second; A7 itself, timed 2026-10-28 10:18:55Z

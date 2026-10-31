@@ -36,7 +36,10 @@ def declare(iface):
 def build(iface):
     for b in views(iface):
         n = b["name"]
-        helper(f"load4v_{n}", f"fn load4v_{n}(j: u32) -> vec4<f32> {{ let m = min(j, arrayLength(&{n}) / 4u - 1u) * 4u; return vec4<f32>({n}[m], {n}[m + 1u], {n}[m + 2u], {n}[m + 3u]); }}")
+        # A binding shorter than four elements has an EMPTY view: every lane is then its last element, the value the
+        # device's restriction gave the wrapped `m` before (2026-10-31: the CPU executor's restriction count found the
+        # index m + 3 past a one-element binding, case held_n1_d1_k1); otherwise m + 3 <= 4 (len / 4) - 1 < len
+        helper(f"load4v_{n}", f"fn load4v_{n}(j: u32) -> vec4<f32> {{ let q = arrayLength(&{n}) / 4u; if (q == 0u) {{ let x = {n}[arrayLength(&{n}) - 1u]; return vec4<f32>(x, x, x, x); }} let m = min(j, q - 1u) * 4u; return vec4<f32>({n}[m], {n}[m + 1u], {n}[m + 2u], {n}[m + 3u]); }}")
         R(f"load.{n}_v4", "vec4<f32>.real", ["u32.index"], f"load4v_{n}({{0}})", "element j of the binding's vec4 view, restricted to the view's last element as the device restricts it", twin=True)
         R(f"load.{n}_len_v4", "u32.count", [], f"(arrayLength(&{n}) / 4u)", "the vec4 view's length", twin=True)
     for a in iface.get("arenas", []):
@@ -44,13 +47,19 @@ def build(iface):
         at = f"&{n}[min({{0}}, arrayLength(&{n}) - 1u)]"
         if atomic:
             R(f"load.{n}", ty, ["u32.index"], f"atomicLoad({at})", "a read of any cell of the atomic arena (relaxed: another invocation may be writing it)", twin=True)
+        elif iface.get("inrange_types"):
+            R(f"load.{n}", ty, [f"u32.in_{n}"], f"{n}[{{0}}]", "a read of a cell in range by its type (another invocation may be writing it)", twin=True)
         else:
             R(f"load.{n}", ty, ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read of any cell of the arena (another invocation may be writing it)", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
+        typed = iface.get("inrange_types") and not atomic
         for x, d, k in rungs("LCWSPXEYAGZ"):
-            it, vt_ = (fam(x, "u32.index"), fam(x, ty))
+            it, vt_ = (fam(x, f"u32.in_{n}" if typed else "u32.index"), fam(x, ty))
             cell = f"{n}[min(i, arrayLength(&{n}) - 1u)]"
             text = f"{{ let i = {{0}}; atomicStore(&{cell}, {{1}}); }}" if atomic else f"{{ let i = {{0}}; {cell} = {{1}}; }}"
+            if typed:
+                # docs/DESIGN_inrange_index_types.md: the cell is in range by its type
+                text = f"{n}[{{0}}] = {{1}};"
             R(f"store.{n}_{x}{d}_f{k}", S(x, d, k), [it, vt_], text, "a store at any cell of the arena (the arena policy accepts two invocations storing one cell)")
         if atomic:
             for fn, F in ATOMIC_FUNS.items():

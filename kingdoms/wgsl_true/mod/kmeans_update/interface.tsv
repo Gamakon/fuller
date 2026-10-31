@@ -4,3 +4,5 @@ fuel_budget	4
 interface	kmeans_update
 gene_roots	kernel.update_centroids
 linker	kernel.module_kmeans_update
+length_vectors	x * z
+length_assignments	x

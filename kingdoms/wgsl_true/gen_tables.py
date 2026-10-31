@@ -46,6 +46,8 @@ def main(argv):
     vectors.declare(iface)
     regs.declare(iface)
     loops.declare(iface)
+    inrange = importlib.import_module("inrange")
+    inrange.declare(iface)
     if not pool:
         # a pool interface (s9 batch 9) keeps all its workgroup memory in the two pools of pool.py, not the stratum map
         wg.declare(iface)
@@ -65,8 +67,13 @@ def main(argv):
     if arena:
         arena.declare(iface)
         arena.build(iface)
+    inrange.build(iface)
     twins = lib.finish_twins()
     bare = lib.finish_bare()
+    # docs/DESIGN_inrange_index_types.md: every in-range rule proved from the emitted spellings before anything is written
+    for p in inrange.witness(iface):
+        print("PROBLEM:", p)
+        return 1
     problems, produced = lib.write_all(outdir, "kernel.module" if iface.get("module") else "kernel.safe", iface)
     print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins, {bare} bare-literal twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:

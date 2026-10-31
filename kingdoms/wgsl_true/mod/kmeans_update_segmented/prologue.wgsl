@@ -33,7 +33,7 @@ fn lo_width(lo: f32, w: f32) -> vec2<f32> { return vec2<f32>(lo, lo + w); }
 fn lo_width_i(lo: i32, w: i32) -> vec2<i32> { return vec2<i32>(lo, max(lo, lo + w)); }
 fn load4_assignments(k: u32) -> vec4<u32> { let m = arrayLength(&assignments) - 1u; return vec4<u32>(assignments[min(k, m)], assignments[min(k + 1u, m)], assignments[min(k + 2u, m)], assignments[min(k + 3u, m)]); }
 fn load4_vectors(k: u32) -> vec4<f32> { let m = arrayLength(&vectors) - 1u; return vec4<f32>(vectors[min(k, m)], vectors[min(k + 1u, m)], vectors[min(k + 2u, m)], vectors[min(k + 3u, m)]); }
-fn load4v_vectors(j: u32) -> vec4<f32> { let m = min(j, arrayLength(&vectors) / 4u - 1u) * 4u; return vec4<f32>(vectors[m], vectors[m + 1u], vectors[m + 2u], vectors[m + 3u]); }
+fn load4v_vectors(j: u32) -> vec4<f32> { let q = arrayLength(&vectors) / 4u; if (q == 0u) { let x = vectors[arrayLength(&vectors) - 1u]; return vec4<f32>(x, x, x, x); } let m = min(j, q - 1u) * 4u; return vec4<f32>(vectors[m], vectors[m + 1u], vectors[m + 2u], vectors[m + 3u]); }
 fn mul_q(a: i32, b: i32) -> i32 {
   let neg = (a < 0i) != (b < 0i);
   let ua = select(u32(a), u32(-a), a < 0i);

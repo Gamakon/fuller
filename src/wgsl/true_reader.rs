@@ -533,6 +533,9 @@ pub struct Reader<'a> {
     types_by_name: HashMap<String, crate::geneframe::Ty>,
     loop_ctx: HashMap<usize, (u8, bool)>,
     memo: HashMap<(usize, u32), Option<Tree>>,
+    /// The open guards (docs/DESIGN_inrange_index_types.md): (the guarded index, the binding, the guard's depth), the
+    /// innermost last. Inside one, an index of the binding equal to the guarded one reads as the guard's register.
+    guards: Vec<(E, String, u8)>,
     /// Values made during spelling (a composition regrouped, a scalar splatted): kept alive so their addresses stay
     /// unique keys of the memo.
     temps: Vec<std::rc::Rc<E>>,
@@ -574,7 +577,7 @@ impl<'a> Reader<'a> {
                     let value_arg = r.args.len() == 1 && { let a = k.type_name(r.args[0]); !a.starts_with("reg<") && !a.starts_with("parr<") && !a.starts_with("wgmem<") && !a.starts_with("ureg<") };
                     if r.spelling == "{0}" && value_arg {
                         coercions.entry(r.out.code()).or_default().push((i as u32, r.args[0]));
-                    } else if (r.name.starts_with("safe.pidx_") || r.name.starts_with("safe.wg_of_")) && value_arg {
+                    } else if (r.name.starts_with("safe.pidx_") || r.name.starts_with("safe.wg_of_") || r.name.starts_with("safe.inrange_")) && value_arg {
                         wrappers.entry(r.out.code()).or_default().push((i as u32, r.args[0]));
                     } else {
                         by_spelling.entry(r.spelling.clone()).or_default().push(i as u32);
@@ -634,6 +637,7 @@ impl<'a> Reader<'a> {
             types_by_name,
             loop_ctx: HashMap::new(),
             memo: HashMap::new(),
+            guards: Vec::new(),
             temps: Vec::new(),
             missing: None,
         }
@@ -1829,6 +1833,68 @@ fn written(sts: &[St], out: &mut BTreeSet<(usize, usize)>) {
     }
 }
 
+/// The direct subexpressions of a value.
+fn e_kids(e: &E) -> Vec<&E> {
+    match e {
+        E::Lit(_) | E::Zero(_) | E::Bi(_) | E::Field(_) | E::Reg(..) | E::Counter(_) | E::Len(..) | E::UReg(_) | E::Slot(_) => Vec::new(),
+        E::Parr(_, i, _) | E::Load(_, i, _) | E::LoadV4(_, i) | E::Un(_, i, _) | E::Cast(_, i) | E::Bitcast(_, i) | E::Splat(_, i) | E::Lane(i, _, _) | E::Swz(i, _, _) | E::Wg(_, i, _) | E::WgOwn(_, i, _) | E::WgA(_, i) => vec![&**i],
+        E::Bin(_, x, y, _) | E::DynLane(x, y, _) | E::Rmw(_, _, x, y) | E::WgRmw(_, _, x, y) => vec![&**x, &**y],
+        E::Sel(x, y, z, _) => vec![&**x, &**y, &**z],
+        E::Call(_, v, _) | E::Compose(_, v) => v.iter().collect(),
+    }
+}
+
+/// A value that is the same at every point of the kernel: no register, counter, binding read or workgroup read in it.
+fn fixed(e: &E) -> bool {
+    !matches!(e, E::Reg(..) | E::Counter(_) | E::Parr(..) | E::Load(..) | E::LoadV4(..) | E::Rmw(..) | E::Wg(..) | E::WgOwn(..) | E::WgA(..) | E::WgRmw(..) | E::UReg(_) | E::Slot(_)) && e_kids(e).into_iter().all(fixed)
+}
+
+/// An index a guard may bind: arithmetic over literals, builtins, fields, registers and counters (no read of memory,
+/// which a guarded branch could change).
+fn plain_index(e: &E) -> bool {
+    matches!(e, E::Lit(_) | E::Bi(_) | E::Field(_) | E::Reg(..) | E::Counter(_) | E::Bin(..) | E::Un(..) | E::Lane(..) | E::Cast(..)) && e_kids(e).into_iter().all(plain_index)
+}
+
+/// The registers a value reads.
+fn regs_of(e: &E) -> BTreeSet<(usize, usize)> {
+    let mut out = BTreeSet::new();
+    if let E::Reg(r, _) = e {
+        out.insert((r.kind, r.n));
+    }
+    for k in e_kids(e) {
+        out.extend(regs_of(k));
+    }
+    out
+}
+
+/// A statement list of plain statements only (register sets, stores into bindings, conditionals, counted loops, a
+/// loop's break point): the ones whose register writes [`written`] sees.
+fn plain_sts(sts: &[St]) -> bool {
+    sts.iter().all(|s| match s {
+        St::Set(..) | St::SetLane(..) | St::Store(..) | St::Discard(_) | St::BreakIf(_) => true,
+        St::If(_, a, b) => plain_sts(a) && plain_sts(b),
+        St::Loop(l) => plain_sts(&l.body),
+        _ => false,
+    })
+}
+
+/// Whether a value reads binding `b` at index `i`.
+fn e_indexes(x: &E, b: &str, i: &E) -> bool {
+    matches!(x, E::Load(n, j, _) if n == b && **j == *i) || e_kids(x).into_iter().any(|k| e_indexes(k, b, i))
+}
+
+/// Whether plain statements read or store binding `b` at index `i`.
+fn indexes_at(sts: &[St], b: &str, i: &E) -> bool {
+    sts.iter().any(|s| match s {
+        St::Set(_, x) | St::Discard(x) | St::BreakIf(x) => e_indexes(x, b, i),
+        St::SetLane(_, j, x) => e_indexes(j, b, i) || e_indexes(x, b, i),
+        St::Store(n, j, x) => (n == b && j == i) || e_indexes(j, b, i) || e_indexes(x, b, i),
+        St::If(c, p, q) => e_indexes(c, b, i) || indexes_at(p, b, i) || indexes_at(q, b, i),
+        St::Loop(l) => e_indexes(&l.bound, b, i) || indexes_at(&l.body, b, i),
+        _ => false,
+    })
+}
+
 fn lit_u(e: &E) -> Option<u32> {
     match e {
         E::Lit(Lit::U(v)) => Some(*v),
@@ -2554,7 +2620,7 @@ impl<'a> Reader<'a> {
         self.memo.insert(key, None);
         let tn = self.k.type_name(want);
         let slot = tn.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_default();
-        let r = if slot != e.wt().name() { None } else { self.val_direct(e, want, &tn).or_else(|| self.val_coerce(e, want)) };
+        let r = if slot != e.wt().name() { None } else { self.guard_reg(e, &tn).or_else(|| self.val_direct(e, want, &tn)).or_else(|| self.val_coerce(e, want)) };
         self.memo.insert(key, r.clone());
         r
     }
@@ -2666,7 +2732,7 @@ impl<'a> Reader<'a> {
             }
             E::Len(n, v4) => {
                 let base = if *v4 { format!("load.{n}_len_v4") } else { format!("load.{n}_len") };
-                let names = [base.clone(), format!("{base}_w")];
+                let names = [base.clone(), format!("{base}_w"), format!("len.{n}_len"), format!("len.{n}_len_w")];
                 return self.named_rows(&names, want).first().map(|(row, _)| Tree { symbol: *row, const_index: None, kids: Vec::new() });
             }
             E::Wg(v, i, w) => {
@@ -3112,6 +3178,65 @@ impl<'a> Reader<'a> {
     }
 
     /// A statement at exactly stratum `k`: spelled at its own stratum, then lifted.
+    /// The register of the innermost open guard of binding B whose index is `e`, for a slot asking for `u32.in_<B>`
+    /// (docs/DESIGN_inrange_index_types.md). An index that holds no register or counter is left to the clamp row: it
+    /// is the same everywhere in the kernel, so the share pass binds it once, ahead of every loop.
+    fn guard_reg(&self, e: &E, tn: &str) -> Option<Tree> {
+        let b = tn.strip_prefix("u32.in_")?;
+        if fixed(e) {
+            return None;
+        }
+        let (_, _, d) = self.guards.iter().rev().find(|(ge, gb, _)| gb == b && ge == e)?;
+        let row = *self.rows_by_name.get(&format!("inrange.{b}_g{d}"))?;
+        Some(Tree { symbol: row, const_index: None, kids: Vec::new() })
+    }
+
+    /// `if (e < L) {a} [else {b}]` or `if (e >= L) {a} else {b}` as a guard row of a binding B
+    /// (docs/DESIGN_inrange_index_types.md): when `L` reads as `u32.len_<B>`, the guarded branch indexes B at `e`, `e`
+    /// holds a register or counter (an index fixed for the whole kernel is the clamp row's, shared once) that the
+    /// branch never writes, the branch holds only plain statements, and no guard of B is open at this depth. None
+    /// otherwise: the condition is read as a plain `if`.
+    fn guard_if(&mut self, c: &E, a: &[St], b: &[St], r: &str, d: u8, k: u32) -> R<Option<Tree>> {
+        let (e, l, ge) = match c {
+            E::Bin(BinaryOperator::Less, e, l, _) => (&**e, &**l, false),
+            E::Bin(BinaryOperator::GreaterEqual, e, l, _) if !b.is_empty() => (&**e, &**l, true),
+            _ => return Ok(None),
+        };
+        let guarded = if ge { b } else { a };
+        if e.wt() != Wt::scalar(Sc::U32) || fixed(e) || !plain_index(e) || !plain_sts(guarded) {
+            return Ok(None);
+        }
+        let mut w = BTreeSet::new();
+        written(guarded, &mut w);
+        if regs_of(e).iter().any(|rg| w.contains(rg)) {
+            return Ok(None);
+        }
+        let names: Vec<String> = self.bindings.iter().map(|x| x.name.clone()).chain(self.k.rows.iter().filter_map(|x| x.name.strip_prefix("safe.inrange_").filter(|n| !n.ends_with("_w") && !n.ends_with("_a")).map(str::to_string))).collect::<BTreeSet<_>>().into_iter().collect();
+        for bn in names {
+            if !self.rows_by_name.contains_key(&format!("inrange.{bn}_g{d}")) || self.guards.iter().any(|(_, gb, gd)| *gb == bn && *gd == d) || !indexes_at(guarded, &bn, e) {
+                continue;
+            }
+            let Ok(len_t) = self.ty(&format!("u32.len_{bn}")) else { continue };
+            let Some(lt) = self.val(l, len_t) else { continue };
+            let et = self.must(e, "u32.index")?;
+            self.guards.push((e.clone(), bn.clone(), d));
+            let tg = self.block(guarded, 'C', d, k);
+            self.guards.pop();
+            let tg = tg?;
+            let (name, kids) = if ge {
+                let ta = self.block(a, 'C', d, k)?;
+                (format!("stmt.guard_ge_{bn}_{r}"), vec![et, lt, ta, tg])
+            } else if b.is_empty() {
+                (format!("stmt.guard_lt_{bn}_{r}"), vec![et, lt, tg])
+            } else {
+                let tb = self.block(b, 'C', d, k)?;
+                (format!("stmt.guard_lt_else_{bn}_{r}"), vec![et, lt, tg, tb])
+            };
+            return Ok(Some(Tree { symbol: self.row(&name)?, const_index: None, kids }));
+        }
+        Ok(None)
+    }
+
     fn stmt(&mut self, st: &St, x: char, d: u8, k: u32) -> R<Tree> {
         let n = self.need(st)?;
         if n > k {
@@ -3443,6 +3568,9 @@ impl<'a> Reader<'a> {
                     'L' | 'C' => {
                         if nl {
                             return gap("a uniform proof of the control around a barrier (naga validated it; the reader's uniformity is weaker)");
+                        }
+                        if let Some(t) = self.guard_if(c, a, b, &r, d, k)? {
+                            return Ok(t);
                         }
                         let cond = self.must(c, "bool.flag")?;
                         let ta = self.block(a, 'C', d, k)?;
@@ -4052,7 +4180,13 @@ mod tests {
     /// Every text of `texts` gives the first text's output words on every constraint case of the problem at `dir` whose
     /// n k d is at most `size` (the CPU executor, WGSL's semantics, no device); returns the cases compared.
     fn cpu_same_bits(dir: &std::path::Path, texts: &[String], size: f64) -> usize {
+        cpu_same_bits_restricted(dir, texts, size).0
+    }
+
+    /// [`cpu_same_bits`], with how many indices each text's runs restricted (`cpu::take_restricted`).
+    fn cpu_same_bits_restricted(dir: &std::path::Path, texts: &[String], size: f64) -> (usize, Vec<u64>) {
         use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let mut restricted = vec![0u64; texts.len()];
         let p = Problem::load(dir).expect("problem");
         let exec = CpuExecutor::new(1 << 27);
         let kernels: Vec<_> = texts.iter().map(|t| exec.compile(&p, t).expect("compiles on the CPU executor")).collect();
@@ -4066,10 +4200,12 @@ mod tests {
                 }
                 let data = p.case_data(case, 1 << 27).expect("data");
                 let mut outs = Vec::new();
-                for (kern, info) in &kernels {
+                for (t, (kern, info)) in kernels.iter().enumerate() {
                     let plan = p.plan(case, 1 << 27, Some(info)).expect("plan");
                     let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                    crate::wgsl::cpu::take_restricted();
                     outs.push(exec.run(kern, &plan, &data, &staged, true).expect("runs").outputs);
+                    restricted[t] += crate::wgsl::cpu::take_restricted();
                 }
                 for (t, o) in outs.iter().enumerate().skip(1) {
                     assert_eq!(&outs[0], o, "{}: text {t}'s bits differ from text 0's on case {}", dir.display(), case.name);
@@ -4077,7 +4213,7 @@ mod tests {
                 cases += 1;
             }
         }
-        cases
+        (cases, restricted)
     }
 
     #[test]
@@ -4179,6 +4315,129 @@ mod tests {
         assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
         assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
+    }
+
+    /// IN-RANGE INDICES AS A TYPE (docs/DESIGN_inrange_index_types.md): the generator's witness proves every rule from
+    /// the committed tables' own spellings, and names a hand-edited table whose load indexes past its type.
+    #[test]
+    fn the_inrange_witness_proves_the_kmeans_tables_and_names_a_hand_edited_one() {
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("inrange.py")).arg(d).output().expect("python3 runs");
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let out = witness(&dir.join("mod").join(iface));
+            assert!(out.status.success(), "{iface}: {}", String::from_utf8_lossy(&out.stdout));
+            assert!(String::from_utf8_lossy(&out.stdout).contains("inrange witness: 0 problems"));
+        }
+        let bad = std::env::temp_dir().join(format!("inrange_witness_{}", std::process::id()));
+        std::fs::create_dir_all(&bad).expect("temp dir");
+        let src = dir.join("mod").join("kmeans_update");
+        std::fs::copy(src.join("interface.tsv"), bad.join("interface.tsv")).expect("copy");
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        assert!(f.contains("\tassignments[{0}]\t"));
+        std::fs::write(bad.join("functions.tsv"), f.replace("\tassignments[{0}]\t", "\tassignments[({0} + 1u)]\t")).expect("write");
+        let out = witness(&bad);
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        std::fs::remove_file(bad.join("functions.tsv")).expect("rm");
+        std::fs::remove_file(bad.join("interface.tsv")).expect("rm");
+        std::fs::remove_dir(&bad).expect("rmdir");
+        assert!(!out.status.success() && text.contains("neither an in_assignments argument nor the clamp"), "{text}");
+    }
+
+    /// The host side of the dispatch contract: every buffer every case of the two k-means problems binds is at least
+    /// the length the table's `u32.len_<b>` rows rest on (`interface.tsv` `length_<b>`, in the uniform's fields, here
+    /// x = n, y = k, z = d as the problems' `params` words say, nb = ceil(n / 256)).
+    #[test]
+    fn every_kmeans_case_binds_buffers_at_least_the_contract_length() {
+        use crate::wgsl::harness::{eval, Problem};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let meta = std::fs::read_to_string(crate::wgsl::true_kingdom::default_dir().join("mod").join(iface).join("interface.tsv")).expect("interface.tsv");
+            let lengths: Vec<(String, String)> = meta.lines().filter_map(|l| l.strip_prefix("length_")).filter_map(|l| l.split_once('\t')).map(|(b, t)| (b.to_string(), t.to_string())).collect();
+            assert!(!lengths.is_empty(), "{iface} declares its lengths");
+            let p = Problem::load(&root.join("problems").join(iface)).expect("problem");
+            let steps: Vec<_> = p.spec.setup.iter().chain(p.spec.run.iter()).collect();
+            let words = steps.iter().find_map(|s| (s.of.as_deref() == Some("params")).then(|| s.words.clone()).flatten()).expect("the params words");
+            let elements: BTreeMap<String, String> = steps.iter().filter_map(|s| Some((s.buffer.clone()?, s.elements.clone()?))).collect();
+            let bound: BTreeMap<String, String> = steps.iter().filter_map(|s| s.dispatch.clone()).flat_map(|d| d.into_iter()).collect();
+            let (mut checked, mut cases) = (0, 0);
+            for su in &p.suites {
+                cases += su.cases.len();
+                for case in &su.cases {
+                    let env = p.env(case, 1 << 27).expect("env");
+                    for (b, text) in &lengths {
+                        let sub = text.replace("nb", &format!("ceil_div({}, 256)", words[0])).replace('x', &format!("({})", words[0])).replace('y', &format!("({})", words[1])).replace('z', &format!("({})", words[2]));
+                        let need = eval(&sub, &env).expect("the contract length");
+                        let buf = bound.get(b).unwrap_or_else(|| panic!("{iface}: no dispatch binds {b}"));
+                        let have = eval(&elements[buf], &env).expect("the buffer's elements");
+                        assert!(have >= need, "{iface} case {}: {b} has {have} elements, the contract says at least {need}", case.name);
+                        checked += 1;
+                    }
+                }
+            }
+            assert!(cases >= 8 && checked == cases * lengths.len(), "{iface}: {checked} checks over {cases} cases");
+        }
+    }
+
+    /// Every index of a k-means kernel the kingdom expresses is in range on the CPU executor (no index is restricted,
+    /// `cpu::take_restricted`): A7, the scatter form, the seed-1 champion and the model's reply 2, read and expressed
+    /// through the share pass, give their own texts' bits, and 300 random modules of each table run with no index past
+    /// its array (a run may stop at the step budget; the count is taken over every step it ran).
+    #[test]
+    fn kmeans_kernels_and_random_modules_index_in_range_on_the_cpu() {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let reads = [
+            ("kmeans_update", "problems/kmeans_update", root.join("problems/kmeans_update/shipped.wgsl")),
+            ("kmeans_update_segmented", "problems/kmeans_update_segmented", root.join("problems/kmeans_update_segmented/segmented.wgsl")),
+            ("kmeans_update_segmented", "problems/kmeans_update_segmented", root.join("problems/kmeans_update_segmented/gather.wgsl")),
+            ("kmeans_update_segmented", "problems/kmeans_update_segmented", root.join("docs/kmeans_champion_s1/champion.wgsl")),
+            ("kmeans_update_segmented", "problems/kmeans_update_segmented", root.join("tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl")),
+        ];
+        for (iface, problem, file) in reads {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let share = crate::wgsl::true_share::Share::load(&k).expect("the share rows");
+            let c = Contract::parse(&std::fs::read_to_string(root.join(problem).join("safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+            let src = std::fs::read_to_string(&file).expect("kernel");
+            let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+            let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &src, &c).unwrap_or_else(|e| panic!("{}: {e}", file.display())) };
+            let expressed = share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render");
+            let (cases, restricted) = cpu_same_bits_restricted(&root.join(problem), &[src, expressed], 5e6);
+            assert!(cases >= 3, "{}: {cases} cases", file.display());
+            assert_eq!(restricted[1], 0, "{} as expressed indexes past an array", file.display());
+            eprintln!("{}: the expressed text gives its source's bits on {cases} cases; indices restricted: source {}, expressed 0", file.display(), restricted[0]);
+        }
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; k.gene_roots.len()]).expect("module");
+            let p = Problem::load(&root.join("problems").join(iface)).expect("problem");
+            // a random gene's loops may run long: each dispatch is cut at 2^24 statements (a cut run is counted, and its
+            // indices up to the cut are checked as every other's)
+            let mut exec = CpuExecutor::new(1 << 27);
+            exec.max_steps = 1 << 24;
+            let case = p.suites.iter().filter(|s| s.spec.role == Role::Constraint).flat_map(|s| s.cases.iter()).min_by_key(|c| {
+                let env = p.env(c, 1 << 27).expect("env");
+                ["n", "k", "d"].iter().map(|v| crate::wgsl::harness::eval(v, &env).expect("size") as u64).product::<u64>()
+            }).expect("a case");
+            let data = p.case_data(case, 1 << 27).expect("data");
+            let mut rng = crate::wgsl::true_kingdom::Rng(0x1A12);
+            let (mut ran, mut stopped) = (0, 0);
+            crate::wgsl::cpu::take_restricted();
+            for i in 0..300 {
+                let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let src = m.render(&ch).expect("render");
+                let (kern, info) = exec.compile(&p, &src).unwrap_or_else(|e| panic!("{iface} gene {i}: {e}"));
+                let plan = p.plan(case, 1 << 27, Some(&info)).expect("plan");
+                let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                match exec.run(&kern, &plan, &data, &staged, true) {
+                    Ok(_) => ran += 1,
+                    Err(e) if e.contains("more than 16777216 statements") => stopped += 1,
+                    Err(e) => panic!("{iface} gene {i}: {e}"),
+                }
+                assert_eq!(crate::wgsl::cpu::take_restricted(), 0, "{iface} gene {i} indexes past an array on the CPU executor:\n{src}");
+            }
+            eprintln!("{iface}: 300 random modules on case {}: {ran} ran to the end, {stopped} cut at 2^24 statements a dispatch, no index restricted", case.name);
+            assert!(ran > 0);
+        }
     }
 
     /// The k-means layouts' gene widths at the scatter form's program size (the device holds two populations of them).

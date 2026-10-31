@@ -442,4 +442,8 @@ def write_all(outdir, root, iface):
             # the normal genes' roots, in gene order: the fixed homeotic linker (design section 6) takes them
             f.write("gene_roots\t" + ";".join(f"kernel.{e}" for e, _ in iface["module"]) + "\n")
             f.write(f"linker\tkernel.module_{iface['name']}\n")
+        # the dispatch contract's length of each binding whose index is a type (inrange.py), in the uniform's fields:
+        # the host's buffers must be at least this long (a Rust test checks every case of the problem)
+        for b, text in iface.get("lengths", {}).items():
+            f.write(f"length_{b}\t{text}\n")
     return problems, produced

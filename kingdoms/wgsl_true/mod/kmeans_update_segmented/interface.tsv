@@ -4,3 +4,6 @@ fuel_budget	4
 interface	kmeans_update_segmented
 gene_roots	kernel.hist;kernel.offsets;kernel.starts;kernel.scatter;kernel.mean
 linker	kernel.module_kmeans_update_segmented
+length_vectors	x * z
+length_assignments	x
+length_scratch	x + 2 * y + 2 * nb * y

@@ -594,25 +594,37 @@ T0592	u32.xcounter4	u32	xcounter4	1	the counter kx4 of a loop whose bound is any
 T0593	u32.tcounter5	u32	tcounter5	1	the counter k5 of a loop whose bound is a literal or uniform: uniform	-
 T0594	u32.xcounter5	u32	xcounter5	1	the counter kx5 of a loop whose bound is any expression, or that breaks: divergent	-
 T0595	ureg<u32>.uniform	ureg<u32>	uniform	1	a named u32 register U0..U7 that holds the same value in every invocation	-
-T0596	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
-T0597	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
-T0598	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
-T0599	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
-T0600	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
-T0601	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
-T0602	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
-T0603	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
-T0604	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
-T0605	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
-T0606	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
-T0607	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
-T0608	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
-T0609	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
-T0610	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
-T0611	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
-T0612	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
-T0613	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
-T0614	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2067
-T0615	u32.zown	u32	zown	1	the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)	-
-T0616	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
-T0617	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3
+T0596	u32.in_vectors	u32	in_vectors	1	a position below arrayLength(&vectors): a load or store of vectors spells no clamp	-
+T0597	u32.in_vectorsw	u32	in_vectorsw	1	the write-phase twin of u32.in_vectors: a value no foreign workgroup read reached	-
+T0598	u32.in_vectorsa	u32	in_vectorsa	1	the slot-phase twin of u32.in_vectors: a value no workgroup read reached	-
+T0599	u32.len_vectors	u32	len_vectors	1	a value at most arrayLength(&vectors) (the dispatch contract's length of vectors)	-
+T0600	u32.len_vectorsw	u32	len_vectorsw	1	the write-phase twin of u32.len_vectors: a value no foreign workgroup read reached	-
+T0601	u32.len_vectorsa	u32	len_vectorsa	1	the slot-phase twin of u32.len_vectors: a value no workgroup read reached	-
+T0602	u32.in_assignments	u32	in_assignments	1	a position below arrayLength(&assignments): a load or store of assignments spells no clamp	-
+T0603	u32.in_assignmentsw	u32	in_assignmentsw	1	the write-phase twin of u32.in_assignments: a value no foreign workgroup read reached	-
+T0604	u32.in_assignmentsa	u32	in_assignmentsa	1	the slot-phase twin of u32.in_assignments: a value no workgroup read reached	-
+T0605	u32.len_assignments	u32	len_assignments	1	a value at most arrayLength(&assignments) (the dispatch contract's length of assignments)	-
+T0606	u32.len_assignmentsw	u32	len_assignmentsw	1	the write-phase twin of u32.len_assignments: a value no foreign workgroup read reached	-
+T0607	u32.len_assignmentsa	u32	len_assignmentsa	1	the slot-phase twin of u32.len_assignments: a value no workgroup read reached	-
+T0608	u32.payload	u32	payload	1	a knob reference's multiplier, a literal 1..=2^20 in units of 1/256	1..=1048576
+T0609	u32.plast_4	u32	plast_4	1	the last index of a private array held in a 16-element array: a bare literal	0..=15
+T0610	u32.plast_6	u32	plast_6	1	the last index of a private array held in a 64-element array: a bare literal	0..=63
+T0611	u32.plast_7	u32	plast_7	1	the last index of a private array held in a 128-element array: a bare literal	0..=127
+T0612	u32.atomicold	u32	atomicold	1	the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position	-
+T0613	u32.atomicoldw	u32	atomicoldw	1	the write-phase twin of u32.atomicold: a value no foreign workgroup read reached	-
+T0614	u32.atomicolda	u32	atomicolda	1	the slot-phase twin of u32.atomicold: a value no workgroup read reached	-
+T0615	u32.wgblk	u32	wgblk	1	a region's base in blocks of the workgroup size: a bare literal	0..=511
+T0616	u32.wgbase	u32	wgbase	1	a region's base: a multiple of the workgroup size T, so own writes of two regions never meet	-
+T0617	u32.wgown	u32	wgown	1	the candidate lidx + k * T of this invocation's own element of a region; the write rows guard it	-
+T0618	u32.xblk	u32	xblk	1	a swap-pair phase's block of xs words: a bare literal	0..=1023
+T0619	u32.xspan	u32	xspan	1	a swap-pair phase's block length xs: a bare power of two	2..=4096
+T0620	u32.qown	u32	qown	1	the candidate lidx + k * qm of an active lane's own element in a split phase (qm = T, or the lanes of a lane-split phase)	-
+T0621	u32.lanes	u32	lanes	1	a lane-split phase's active lanes: a bare power of two	1..=1024
+T0622	u32.gown	u32	gown	1	a group leader's own element lidx / qg + k * (T / qg) in a group phase	-
+T0623	u32.bblk	u32	bblk	1	a block-write phase's first group of T * bc words: a bare literal	0..=1023
+T0624	u32.bcount	u32	bcount	1	a block-write phase's block length bc: a bare literal	1..=256
+T0625	u32.xmode	u32	xmode	1	the swap-pair phase's map from an own element to its pair: 0 the element itself, 1 a zero bit inserted at h	0..=1
+T0626	u32.wgabase	u32	wgabase	1	a region's first word in the atomic pool: a bare literal (an atomic never races, so no alignment)	0..=2067
+T0627	u32.zown	u32	zown	1	the candidate lidx + k * T of an invocation's own offset in a window of the prefix table (segment phase)	-
+T0628	reg<u32>.slot	reg<u32>	slot	1	a slot register rs0..rs3: written only by a slot phase's take, reset when a slot phase begins	-
+T0629	u32.slotc	u32	slotc	1	a slot counter of wg_scnt: a bare literal	0..=3

@@ -155,7 +155,11 @@ def build(iface):
             R(f"load.{n}", "u32.count", ["u32.index"], f"atomicLoad(&{n}[min({{0}}, arrayLength(&{n}) - 1u)])", "an atomic read of any position, clamped to the last element by the row's own text", twin=True)
             R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
             continue
-        R(f"load.{n}", i["ty"], ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read at any position, clamped to the last element by the row's own text", twin=True)
+        if iface.get("inrange_types"):
+            # docs/DESIGN_inrange_index_types.md: the index is a position below the length by its type (inrange.py)
+            R(f"load.{n}", i["ty"], [f"u32.in_{n}"], f"{n}[{{0}}]", "a read at a position in range by its type", twin=True)
+        else:
+            R(f"load.{n}", i["ty"], ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read at any position, clamped to the last element by the row's own text", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
     for o in iface["outputs"]:
         n = o["name"]

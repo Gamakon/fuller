@@ -854,9 +854,23 @@ fn convert(v: &Val, kind: ScalarKind, bitcast: bool) -> Result<Val, String> {
     })
 }
 
+thread_local! {
+    /// How many indices this thread's dispatches restricted (an index at or past its array, vector or matrix): what a
+    /// kernel whose every index is in range by its types never does (docs/DESIGN_inrange_index_types.md).
+    static RESTRICTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The number of indices restricted on this thread since the last call, which resets it.
+pub fn take_restricted() -> u64 {
+    RESTRICTED.with(|c| c.replace(0))
+}
+
 /// The index naga's `Restrict` policy uses: `min(unsigned(index), len - 1)`. An
-/// empty array has no element to restrict to (None).
+/// empty array has no element to restrict to (None). A restriction is counted ([`take_restricted`]).
 fn restrict(i: u32, len: usize) -> Option<usize> {
+    if (i as usize) >= len {
+        RESTRICTED.with(|c| c.set(c.get() + 1));
+    }
     len.checked_sub(1).map(|last| (i as usize).min(last))
 }
 
