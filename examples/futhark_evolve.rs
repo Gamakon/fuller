@@ -1233,6 +1233,68 @@ fn invert_once(layout: &GeneLayout, gene: &mut [u32], coding: &[usize], rng: &mu
     Ok(Some(format!("{} cells [{lo}, {hi}) of a {} span reversed", hi - lo, span.domain.name())))
 }
 
+/// TRANSPOSITION (GEP's IS and RIS, plan section I, step 2): inside the head of one type holding a coding cell drawn
+/// uniformly, a run of 1 to 3 cells is copied to another place in the same head; the cells after the insertion point
+/// shift right and the last ones fall off the head's end. IS inserts anywhere; RIS takes a run that starts at a
+/// function and inserts it at the head's start. Every symbol stays in its own type's head, so the child is legal by
+/// construction. `None` when the drawn copy changes nothing.
+fn transpose_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u32], coding: &[usize], rng: &mut GeneRng) -> Result<Option<String>, String> {
+    let heads: Vec<usize> = coding.iter().copied().filter(|p| layout.key(*p).domain == Domain::Head).collect();
+    if heads.is_empty() {
+        return Ok(None);
+    }
+    let pos = heads[rng.below(heads.len())];
+    let span = layout.spans().into_iter().find(|s| s.domain == Domain::Head && s.off <= pos && pos < s.off + s.len).ok_or("a coding head cell in no head span")?;
+    if span.len < 2 {
+        return Ok(None);
+    }
+    let ris = rng.below(2) == 1;
+    let src = if ris {
+        match (pos..span.off + span.len).find(|q| !contract.signature(gene[*q]).is_empty()) {
+            Some(q) => q,
+            None => return Ok(None),
+        }
+    } else {
+        pos
+    };
+    let len = (1 + rng.below(3)).min(span.off + span.len - src);
+    let dst = if ris { span.off } else { span.off + rng.below(span.len) };
+    let before = gene[span.off..span.off + span.len].to_vec();
+    let mut head = before.clone();
+    head.splice(dst - span.off..dst - span.off, gene[src..src + len].iter().copied());
+    head.truncate(span.len);
+    if head == before {
+        return Ok(None);
+    }
+    gene[span.off..span.off + span.len].copy_from_slice(&head);
+    Ok(Some(format!("{} of {len} cells from {src} to {dst}, in a head of {} cells", if ris { "RIS" } else { "IS" }, span.len)))
+}
+
+/// THE OPERATOR MIX (`--ops`, Andrew, 2026-10-31): every child draws ONE operator by its probability, so all of them
+/// run in the same generation and each child's operator is recorded. `marriage` is the share of children made by
+/// marriage (as `--marriage`); the others are drawn for each remaining child.
+const OPS: [&str; 6] = ["point", "invert", "transpose", "crossover", "walk", "marriage"];
+
+fn parse_ops(text: &str) -> Result<Vec<(String, f64)>, String> {
+    let mut v = Vec::new();
+    for part in text.split(',') {
+        let (name, w) = part.split_once('=').ok_or_else(|| format!("--ops {part}: want NAME=PROBABILITY"))?;
+        if !OPS.contains(&name) {
+            return Err(format!("--ops: {name} is not an operator of this runner ({})", OPS.join(", ")));
+        }
+        let w: f64 = w.parse().map_err(|_| format!("--ops {part}: {w} is not a number"))?;
+        if !(w >= 0.0 && w.is_finite()) {
+            return Err(format!("--ops {part}: a probability must be finite and at least 0"));
+        }
+        v.push((name.to_string(), w));
+    }
+    let total: f64 = v.iter().map(|x| x.1).sum();
+    if (total - 1.0).abs() > 1e-6 {
+        return Err(format!("--ops: the probabilities sum to {total}, not 1"));
+    }
+    Ok(v)
+}
+
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 
 /// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
@@ -1248,8 +1310,8 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     if parents.is_empty() {
         return Err("--measure: the pool has no model-written program that fits the layout".into());
     }
-    if !["grow", "point", "walk", "invert"].contains(&kind) {
-        return Err(format!("--measure {kind}: grow, point, walk or invert"));
+    if !["grow", "point", "walk", "invert", "transpose"].contains(&kind) {
+        return Err(format!("--measure {kind}: grow, point, walk, invert or transpose"));
     }
     if kind == "walk" && run.gen.canvas.is_none() {
         return Err("--measure walk needs the rings: --start llm-ring".into());
@@ -1271,6 +1333,7 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
                 Some("one coding cell".to_string())
             }
             "invert" => invert_once(run.gen.layout, &mut g, &coding, &mut op)?,
+            "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut g, &coding, &mut op)?,
             _ => run.gen.canvas.ok_or("no rings")?.walk(run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
         };
         match what {
@@ -1715,7 +1778,11 @@ fn real_main() -> Result<(), String> {
     let elites: usize = num(&args, "--elites", 2)?;
     let pump_every: u32 = num(&args, "--pump-every", 5)?;
     let fold_every: u32 = num(&args, "--fold-every", 10)?;
-    let marriage: f64 = num(&args, "--marriage", 0.3)?;
+    let ops: Option<Vec<(String, f64)>> = arg(&args, "--ops").map(|t| parse_ops(&t)).transpose()?;
+    let marriage: f64 = match &ops {
+        Some(o) => o.iter().find(|x| x.0 == "marriage").map_or(0.0, |x| x.1),
+        None => num(&args, "--marriage", 0.3)?,
+    };
     // THE MUTATION (plan section I, one operator at a time): `point` (the baseline) or `ring-walk` (needs the rings).
     let ring_walk = match arg(&args, "--mutation").as_deref().unwrap_or("point") {
         "point" => false,
@@ -2170,6 +2237,19 @@ fn real_main() -> Result<(), String> {
         if next.is_empty() {
             break;
         }
+        if !population.is_empty() {
+            // Every generation, each operator's children and how many beat their best parent (decision-critical).
+            let prev: HashMap<u64, f64> = population.iter().map(|i| (i.id, i.fit())).collect();
+            let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            for c in next.iter().filter(|c| c.operator != "elite") {
+                let pf = c.parents.iter().filter_map(|p| prev.get(p)).cloned().fold(f64::INFINITY, f64::min);
+                let e = by.entry(c.operator.as_str()).or_default();
+                e.0 += 1;
+                e.1 += usize::from(c.fit() < pf);
+            }
+            let line: Vec<String> = by.iter().map(|(k, (n, b))| format!("{k} {n} ({b} better)")).collect();
+            println!("# {} gen {generation} operators: {}", utc(), line.join(", "));
+        }
         population = next;
         population.sort_by(|a, b| a.fit().total_cmp(&b.fit()));
         // ---- the stage: quality only until the best is exact on every case, then quality and speed ----
@@ -2448,7 +2528,56 @@ fn real_main() -> Result<(), String> {
         while children.len() < pop {
             let a = tournament(&mut rng);
             let m_of = |rng: &mut GeneRng| if regime == "P" { 1 + rng.below(2) } else { 1 + rng.below(4) };
-            if rng.below(2) == 0 {
+            if let Some(o) = &ops {
+                // One operator drawn by its probability among the non-marriage operators.
+                let rest: Vec<&(String, f64)> = o.iter().filter(|x| x.0 != "marriage" && x.1 > 0.0).collect();
+                let total: f64 = rest.iter().map(|x| x.1).sum();
+                let mut r = rng.below(1_000_000) as f64 / 1e6 * total;
+                let mut pick = rest.last().map(|x| x.0.as_str()).unwrap_or("point");
+                for x in &rest {
+                    if r < x.1 {
+                        pick = x.0.as_str();
+                        break;
+                    }
+                    r -= x.1;
+                }
+                if pick != "crossover" {
+                    let mut gene = population[a].gene.clone();
+                    let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &gene, run.gen.const_len)?;
+                    let done = match pick {
+                        "point" => {
+                            let m = m_of(&mut rng);
+                            run.gen.mutate(&mut gene, m, &mut rng)?;
+                            true
+                        }
+                        "invert" => invert_once(run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
+                        "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
+                        _ => {
+                            let rings = run.gen.canvas.ok_or("--ops walk needs the rings: --start llm-ring")?;
+                            match rings.walk(run.gen.layout, &mut gene, &coding, 4, &mut rng)? {
+                                Some(w) => {
+                                    let ind = run.fresh(&sig, vec![population[a].id], "ring_walk", gene, g1)?;
+                                    run.tel.mutation(generation, run.gen.walk_event(&w, &ind, population[a].id))?;
+                                    children.push(ind);
+                                    continue;
+                                }
+                                None => false,
+                            }
+                        }
+                    };
+                    if done {
+                        let name = match pick {
+                            "point" => "mutation",
+                            "invert" => "inversion",
+                            _ => "transposition",
+                        };
+                        let ind = run.fresh(&sig, vec![population[a].id], name, gene, g1)?;
+                        children.push(ind);
+                    }
+                    continue;
+                }
+            }
+            if ops.is_some() || rng.below(2) == 0 {
                 let mut b = tournament(&mut rng);
                 for _ in 0..8 {
                     if population[b].identity(stage) != population[a].identity(stage) {
