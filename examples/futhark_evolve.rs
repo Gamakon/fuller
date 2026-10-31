@@ -1214,6 +1214,25 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
 // THE WORK BOUND FOR TIMING, one for every evaluation path: `fuller::futhark_sig::TIMING_WORK_CAP` (its basis there).
 use fuller::futhark_sig::TIMING_WORK_CAP;
 
+/// INVERSION (plan section I, step 3): a run of at least two cells, inside the one domain of one type that holds a
+/// coding cell drawn uniformly, reversed (`GeneLayout::invert`). Every symbol stays in a cell of its own type and
+/// domain, so the child is legal by construction. `None` when the drawn cell's span is a single cell.
+fn invert_once(layout: &GeneLayout, gene: &mut [u32], coding: &[usize], rng: &mut GeneRng) -> Result<Option<String>, String> {
+    let pos = coding[rng.below(coding.len())];
+    let span = layout.spans().into_iter().find(|s| s.off <= pos && pos < s.off + s.len).ok_or("a coding cell in no span")?;
+    if span.len < 2 {
+        return Ok(None);
+    }
+    let lo = span.off + rng.below(pos - span.off + 1);
+    let hi = (pos + 1 + rng.below(span.off + span.len - pos)).min(span.off + span.len);
+    let (lo, hi) = if hi - lo < 2 { if hi < span.off + span.len { (lo, hi + 1) } else { (lo - 1, hi) } } else { (lo, hi) };
+    if gene[lo..hi].iter().zip(gene[lo..hi].iter().rev()).all(|(a, b)| a == b) {
+        return Ok(None);
+    }
+    layout.invert(gene, lo, hi).map_err(|e| format!("inversion: {e}"))?;
+    Ok(Some(format!("{} cells [{lo}, {hi}) of a {} span reversed", hi - lo, span.domain.name())))
+}
+
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 
 /// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
@@ -1229,8 +1248,8 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     if parents.is_empty() {
         return Err("--measure: the pool has no model-written program that fits the layout".into());
     }
-    if !["grow", "point", "walk"].contains(&kind) {
-        return Err(format!("--measure {kind}: grow, point or walk"));
+    if !["grow", "point", "walk", "invert"].contains(&kind) {
+        return Err(format!("--measure {kind}: grow, point, walk or invert"));
     }
     if kind == "walk" && run.gen.canvas.is_none() {
         return Err("--measure walk needs the rings: --start llm-ring".into());
@@ -1251,6 +1270,7 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
                 run.gen.mutate(&mut g, 1, &mut op)?;
                 Some("one coding cell".to_string())
             }
+            "invert" => invert_once(run.gen.layout, &mut g, &coding, &mut op)?,
             _ => run.gen.canvas.ok_or("no rings")?.walk(run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
         };
         match what {
@@ -1854,7 +1874,22 @@ fn real_main() -> Result<(), String> {
         // The parents: the task alternatives with no near copies (the bar of generation 0, by distance alone).
         let bar: usize = num(&args, "--distinct-edits", 5)?;
         let mut parents: Vec<Tree> = Vec::new();
-        for t in &pool_programs {
+        if let Some(dir) = arg(&args, "--parents-from") {
+            // The parents: the distinct programs of the LAST generation of an earlier run (its ledger), so the
+            // operator is measured on real, partly correct elites.
+            let ledger = std::fs::read_to_string(PathBuf::from(&dir).join("ledger.tsv")).map_err(|e| format!("--parents-from {dir}: {e}"))?;
+            let rows: Vec<Vec<&str>> = ledger.lines().skip(1).map(|l| l.split('\t').collect()).filter(|f: &Vec<&str>| f.len() > 5).collect();
+            let last = rows.iter().filter_map(|f| f[0].parse::<u64>().ok()).max().ok_or("--parents-from: an empty ledger")?;
+            let dual = k.dual(layout.root).map(|d| d.dual.clone()).ok_or("the root has no dual")?;
+            let mut texts: Vec<&str> = rows.iter().filter(|f| f[0].parse::<u64>().ok() == Some(last)).map(|f| f[5]).collect();
+            texts.sort_unstable();
+            texts.dedup();
+            for t in texts {
+                parents.push(build_at(&k, t, &dual).map_err(|e| format!("--parents-from: {t}: {e}"))?);
+            }
+            println!("# {} measure: {} parents, the distinct programs of generation {last} of {dir}", utc(), parents.len());
+        }
+        for t in pool_programs.iter().filter(|_| arg(&args, "--parents-from").is_none()) {
             if tree_distance(t, &reference) >= bar && parents.iter().all(|o| tree_distance(t, o) >= bar) {
                 parents.push(t.clone());
             }
