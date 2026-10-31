@@ -2900,9 +2900,9 @@ mod device {
         /// dispatches it, under this bound of the whole run; a dispatch bounded above it is an error, never a split.
         unsplit: std::cell::Cell<Option<u128>>,
         /// THE RUN BUFFERS KEPT ([`DeviceExecutor::reuse_run_buffers`]): each case's per-run buffers made once and
-        /// written afresh every run, keyed by the case's data, the buffer and its size, so every run of every kernel
+        /// written afresh every run, keyed by [`KeptKey`], so every run of every kernel
         /// uses the same memory (2026-10-31, measured: a fresh allocation moved an entry's time by up to 25 %).
-        run_cache: std::cell::RefCell<Option<std::collections::HashMap<(usize, usize, u64), wgpu::Buffer>>>,
+        run_cache: std::cell::RefCell<Option<std::collections::HashMap<KeptKey, wgpu::Buffer>>>,
         /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
         /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
         /// before it is made.
@@ -3068,14 +3068,24 @@ mod device {
 
     /// A run's buffer, or a resident one borrowed from its stage.
     enum Slot<'p> {
+        /// Made for this run, destroyed at its end.
         Own(wgpu::Buffer),
+        /// A run buffer kept by the executor ([`DeviceExecutor::reuse_run_buffers`]): a handle to the kept buffer,
+        /// which the run never destroys (the executor's cache owns it, and every later run of the case reuses it).
+        Kept(wgpu::Buffer),
         Resident(&'p wgpu::Buffer),
     }
+
+    /// The key of a kept run buffer: the case's data, the buffer, its size, its usage, and its occurrence within one
+    /// run (the n-th time the same case's same buffer is made in one run), so two items of one run on the same case
+    /// never share memory.
+    type KeptKey = (usize, BufId, u64, u32, u32);
 
     impl Live<'_> {
         fn buf(&self, id: BufId, what: &str) -> Result<&wgpu::Buffer, String> {
             match self.bufs[id].as_ref() {
                 Some(Slot::Own(b)) => Ok(b),
+                Some(Slot::Kept(b)) => Ok(b),
                 Some(Slot::Resident(b)) => Ok(b),
                 None => Err(format!("{what} of a buffer never made")),
             }
@@ -3090,29 +3100,54 @@ mod device {
             Ok(ep.workgroup_size.iter().map(|x| u64::from(*x)).product())
         }
 
+        fn usage(plan: &Plan, id: BufId) -> wgpu::BufferUsages {
+            if plan.buffers[id].uniform {
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+            } else {
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST
+            }
+        }
+
+        /// A fresh buffer, owned by the caller (who destroys it).
         fn make(&self, plan: &Plan, id: BufId, data: &CaseData) -> Result<wgpu::Buffer, String> {
             let b = &plan.buffers[id];
-            let usage = if b.uniform { wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST } else { wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST };
-            let key = (data as *const CaseData as usize, id, b.bytes);
-            if let Some(cache) = self.run_cache.borrow().as_ref() {
-                if let Some(buf) = cache.get(&key) {
-                    // the kept buffer, written afresh: its initial bytes, or zeros
-                    let bytes = match &b.init {
-                        super::Init::Zero => vec![0u8; b.bytes as usize],
-                        _ => initial_bytes(b, data)?,
-                    };
-                    self.dev.queue.write_buffer(buf, 0, &bytes);
-                    return Ok(buf.clone());
-                }
-            }
-            let buf = match &b.init {
+            let usage = Self::usage(plan, id);
+            Ok(match &b.init {
                 super::Init::Zero => self.dev.device.create_buffer(&wgpu::BufferDescriptor { label: Some(&b.name), size: b.bytes, usage, mapped_at_creation: false }),
                 _ => self.dev.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(&b.name), contents: &initial_bytes(b, data)?, usage }),
+            })
+        }
+
+        /// A run's buffer: a fresh one ([`Slot::Own`], destroyed at the run's end), or, while the run buffers are kept,
+        /// the kept one written afresh with its initial bytes or zeros ([`Slot::Kept`], never destroyed by the run).
+        /// `seen` counts, within one run, how often each buffer of each case has been made, so two items of one run
+        /// on the same case get two kept buffers.
+        fn run_buffer<'p>(&self, plan: &Plan, id: BufId, data: &CaseData, seen: &mut std::collections::HashMap<KeptKey, u32>) -> Result<Slot<'p>, String> {
+            let mut cache = self.run_cache.borrow_mut();
+            let Some(cache) = cache.as_mut() else {
+                return Ok(Slot::Own(self.make(plan, id, data)?));
             };
-            if let Some(cache) = self.run_cache.borrow_mut().as_mut() {
-                cache.insert(key, buf.clone());
+            let b = &plan.buffers[id];
+            let base: KeptKey = (data as *const CaseData as usize, id, b.bytes, Self::usage(plan, id).bits(), 0);
+            let n = seen.entry(base).or_insert(0);
+            let key = (base.0, base.1, base.2, base.3, *n);
+            *n += 1;
+            if let Some(buf) = cache.get(&key) {
+                let bytes = match &b.init {
+                    super::Init::Zero => vec![0u8; b.bytes as usize],
+                    _ => initial_bytes(b, data)?,
+                };
+                self.dev.queue.write_buffer(buf, 0, &bytes);
+                return Ok(Slot::Kept(buf.clone()));
             }
-            Ok(buf)
+            let buf = self.make(plan, id, data)?;
+            cache.insert(key, buf.clone());
+            Ok(Slot::Kept(buf))
+        }
+
+        /// How many run buffers the executor keeps (0 when it keeps none).
+        pub fn kept_run_buffers(&self) -> usize {
+            self.run_cache.borrow().as_ref().map_or(0, |c| c.len())
         }
 
         /// Run the items' commands: segments end at a sync (dropped when
@@ -3248,6 +3283,7 @@ mod device {
             };
             let started = Instant::now();
             let mut over_budget = false;
+            let mut seen = std::collections::HashMap::new();
             for i in 0..live.len() {
                 let run = live[i].plan.run.clone();
                 for c in &run {
@@ -3256,8 +3292,7 @@ mod device {
                     }
                     match c {
                         Cmd::Create(id) => {
-                            let b = self.make(live[i].plan, *id, live[i].data)?;
-                            live[i].bufs[*id] = Some(Slot::Own(b));
+                            live[i].bufs[*id] = Some(self.run_buffer(live[i].plan, *id, live[i].data, &mut seen)?);
                         }
                         Cmd::Clear(id) => {
                             seg.enc.clear_buffer(live[i].buf(*id, "a clear")?, 0, None);
@@ -3373,7 +3408,7 @@ mod device {
                 }
             }
             flush(seg, live, &mut compute_ms)?;
-            // Run buffers go now; the residents stay with their stage.
+            // Run buffers go now; the kept ones stay with the executor, the residents with their stage.
             for l in live.iter_mut() {
                 for b in l.bufs.iter_mut() {
                     if let Some(Slot::Own(b)) = b.take() {

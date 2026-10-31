@@ -221,3 +221,57 @@ impl<'d> CaseSet<'d> {
         Ok(self.run_slot(k, info, s, false)?.gpu_ms)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wgsl::oracle::device::{Device, Fuel};
+
+    /// THE KEPT RUN BUFFERS OVER MANY RUNS AND SEVERAL KERNELS (GPU): problems/kmeans_update_segmented, three kernels
+    /// of its interface (the scatter form, the gather, the evolved champion), each judged on every constraint case and
+    /// run on the timing case, five rounds, interleaved, with a re-staged timing case made and dropped between rounds.
+    /// Every round's outputs are bit for bit those of an executor that keeps no buffer, and the kept set stops
+    /// growing after the first round. (2026-10-31: a kept buffer was destroyed at the end of its first run, and the
+    /// second run's write to it was a validation error, "Buffer with 'cen' label has been destroyed".)
+    #[test]
+    fn kept_run_buffers_survive_many_runs_of_several_kernels_on_the_gpu() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("problems/kmeans_update_segmented");
+        let texts = [
+            std::fs::read_to_string(dir.join("segmented.wgsl")).unwrap(),
+            std::fs::read_to_string(dir.join("gather.wgsl")).unwrap(),
+            std::fs::read_to_string(root.join("docs/kmeans_champion_s1/champion.wgsl")).unwrap(),
+        ];
+        let dev = Device::new().expect("device");
+        let fresh = CaseSet::new(&dir, DeviceExecutor::new(&dev, Fuel::Proven("the problem's and the champion's kernels"))).unwrap();
+        let want: Vec<Vec<Vec<u32>>> = texts
+            .iter()
+            .map(|t| {
+                let (k, info) = fresh.compile(t).unwrap();
+                fresh.judge(&k, &info).unwrap().iter().map(|c| c.out.iter().map(|x| x.to_bits()).collect()).collect()
+            })
+            .collect();
+        assert_eq!(fresh.exec.kept_run_buffers(), 0, "an executor that keeps no buffer kept one");
+        drop(fresh);
+        let set = CaseSet::new(&dir, DeviceExecutor::new(&dev, Fuel::Proven("the problem's and the champion's kernels"))).unwrap();
+        set.exec.reuse_run_buffers();
+        let kernels: Vec<_> = texts.iter().map(|t| set.compile(t).unwrap()).collect();
+        let mut kept_after_first = 0;
+        for round in 0..5 {
+            for (j, (k, info)) in kernels.iter().enumerate() {
+                let got: Vec<Vec<u32>> = set.judge(k, info).unwrap().iter().map(|c| c.out.iter().map(|x| x.to_bits()).collect()).collect();
+                assert_eq!(got, want[j], "round {round}, kernel {j}: the outputs on kept buffers are not those on fresh ones");
+                let ms = set.time(k, info, 0).unwrap();
+                assert!(ms > 0.0, "round {round}, kernel {j}: the timing run took {ms} ms");
+            }
+            let restaged = set.timing_restage(0).unwrap();
+            drop(restaged);
+            if round == 0 {
+                kept_after_first = set.exec.kept_run_buffers();
+                assert!(kept_after_first > 0, "the executor kept no run buffer");
+            } else {
+                assert_eq!(set.exec.kept_run_buffers(), kept_after_first, "round {round}: the kept set grew");
+            }
+        }
+    }
+}
