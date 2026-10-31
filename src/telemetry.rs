@@ -892,8 +892,27 @@ impl Writer {
         self.seq
     }
 
-    /// A MUTATION EVENT (`docs/STANDARD_runners.md`). The text is written as given: [`RunTelemetry::mutation`]
-    /// cuts it to [`EVENT_TEXT_LIMIT`] and keeps the full text in a side file.
+    /// A MUTATION EVENT whose texts are never lost: each cut to [`EVENT_TEXT_LIMIT`] in the event, and when either was
+    /// cut both in full in `dir/event_text/<seq>.txt`, named by the event's `text_file` (`dir` the run's output
+    /// directory, beside `stream.jsonl`).
+    pub fn mutation_kept(&mut self, dir: &std::path::Path, generation: u32, mut m: Mutation) -> Result<(), String> {
+        let before = m.text_before.as_deref().map(cut_text);
+        let after = m.text_after.as_deref().map(cut_text);
+        if before.as_ref().is_some_and(|b| b.1) || after.as_ref().is_some_and(|a| a.1) {
+            let side = dir.join("event_text");
+            std::fs::create_dir_all(&side).map_err(|e| format!("event text {}: {e}", side.display()))?;
+            let file = side.join(format!("{}.txt", self.next_seq()));
+            let full = format!("before:\n{}\n\nafter:\n{}\n", m.text_before.as_deref().unwrap_or(""), m.text_after.as_deref().unwrap_or(""));
+            std::fs::write(&file, full).map_err(|e| format!("event text {}: {e}", file.display()))?;
+            m.text_file = Some(format!("event_text/{}.txt", self.next_seq()));
+        }
+        m.text_before = before.map(|b| b.0);
+        m.text_after = after.map(|a| a.0);
+        self.mutation(generation, m)
+    }
+
+    /// A MUTATION EVENT (`docs/STANDARD_runners.md`). The text is written as given: [`Writer::mutation_kept`] cuts it
+    /// to [`EVENT_TEXT_LIMIT`] and keeps the full text in a side file.
     pub fn mutation(&mut self, generation: u32, m: Mutation) -> Result<(), String> {
         let header = self.header(generation);
         self.write(&Record::Event(Event {
@@ -1405,20 +1424,8 @@ impl RunTelemetry {
 
     /// A MUTATION EVENT: the before/after text cut to [`EVENT_TEXT_LIMIT`], the full text in
     /// `OUT/event_text/<seq>.txt` when either was cut.
-    pub fn mutation(&mut self, generation: u32, mut m: Mutation) -> Result<(), String> {
-        let before = m.text_before.as_deref().map(cut_text);
-        let after = m.text_after.as_deref().map(cut_text);
-        if before.as_ref().is_some_and(|b| b.1) || after.as_ref().is_some_and(|a| a.1) {
-            let dir = self.dir.join("event_text");
-            std::fs::create_dir_all(&dir).map_err(|e| format!("event text {}: {e}", dir.display()))?;
-            let file = dir.join(format!("{}.txt", self.writer.next_seq()));
-            let full = format!("before:\n{}\n\nafter:\n{}\n", m.text_before.as_deref().unwrap_or(""), m.text_after.as_deref().unwrap_or(""));
-            std::fs::write(&file, full).map_err(|e| format!("event text {}: {e}", file.display()))?;
-            m.text_file = Some(format!("event_text/{}.txt", self.writer.next_seq()));
-        }
-        m.text_before = before.map(|b| b.0);
-        m.text_after = after.map(|a| a.0);
-        self.writer.mutation(generation, m)
+    pub fn mutation(&mut self, generation: u32, m: Mutation) -> Result<(), String> {
+        self.writer.mutation_kept(&self.dir, generation, m)
     }
 
     /// A note for the operator (an event of kind `note`).
