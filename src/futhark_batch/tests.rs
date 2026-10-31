@@ -198,7 +198,9 @@ fn the_branch_compilers_batch_compiles_and_links() {
     assert_eq!(cmds.len(), 11);
     assert!(stages.futhark > 0.0 && stages.cc > 0.0 && stages.link > 0.0, "{stages:?}");
     let driver = std::fs::read_to_string(exe.parent().unwrap().join("driver.c")).unwrap();
-    assert!(driver.contains("futhark_wgpu_shim_timed_passes") && driver.contains("futhark_project_opaque_tup5"), "the GPU driver reads the shim's passes and projects the cases' tuple");
+    let tuple = format!("futhark_project_opaque_tup{}_", cases.len());
+    assert!(driver.contains("futhark_wgpu_shim_timed_passes"), "the GPU driver does not read the shim's passes");
+    assert!(driver.contains(&tuple), "the GPU driver does not project the cases' tuple of {} ({tuple})", cases.len());
     eprintln!("GPU batch build of 4 members: {stages:?}");
     let _ = std::fs::remove_dir_all(&base);
 }

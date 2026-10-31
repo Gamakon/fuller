@@ -35,7 +35,10 @@ const PREBUILD_TIMEOUT: Duration = Duration::from_secs(1800);
 
 /// Build the runtime once into `dir` (the run's own copy). Returns `dir`.
 pub fn prebuild_rt(dir: &Path) -> Result<PathBuf, String> {
-    let out = output_with_timeout(Command::new(rt_crate_dir().join("prebuild_rt.sh")).arg(dir).env_remove("CARGO_TARGET_DIR"), PREBUILD_TIMEOUT, None)?;
+    // The lock is waited for outside the build's bound: a wait is another holder's build, not a hang of ours.
+    let lock = crate::futhark_wgpu_host::CargoLock::take()?;
+    let out = output_with_timeout(lock.mark(Command::new(rt_crate_dir().join("prebuild_rt.sh")).arg(dir).env_remove("CARGO_TARGET_DIR")), PREBUILD_TIMEOUT, None)?;
+    drop(lock);
     if !out.status.success() {
         return Err(format!("prebuilding the runtime failed:\n{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
     }

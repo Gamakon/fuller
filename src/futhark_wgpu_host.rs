@@ -268,17 +268,78 @@ pub struct GpuRun {
 /// `dir` (`futhark-wgpu-shim/prebuild_shim.sh`, under the cargo lock), for
 /// [`compile_program_prebuilt`]. Returns `dir`.
 pub fn prebuild_shim(dir: &Path) -> Result<PathBuf, String> {
-    let out = output_with_timeout(Command::new(shim_dir().join("prebuild_shim.sh")).arg(dir).env_remove("CARGO_TARGET_DIR"), LINK_TIMEOUT, None)?;
+    let lock = CargoLock::take()?;
+    let out = output_with_timeout(lock.mark(Command::new(shim_dir().join("prebuild_shim.sh")).arg(dir).env_remove("CARGO_TARGET_DIR")), LINK_TIMEOUT, None)?;
+    drop(lock);
     if !out.status.success() {
         return Err(format!("prebuilding the shim failed:\n{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
     }
     Ok(dir.to_path_buf())
 }
 
+/// THE SHARED CARGO LOCK (`/private/tmp/claude-501/locks/cargo`, a directory made to take it): every cargo build on
+/// this machine runs under it. Taking it waits for as long as another holder builds, with no bound: the wait is a
+/// queue, not a hang, so it is never counted against a build's timeout. The holder marks its commands with
+/// `CARGO_LOCK_HELD`, so the build scripts do not take it again. A process that already runs under the lock (its
+/// own `CARGO_LOCK_HELD` names it) takes nothing and releases nothing.
+pub struct CargoLock {
+    ours: bool,
+}
+
+/// The shared cargo lock's path.
+pub const CARGO_LOCK: &str = "/private/tmp/claude-501/locks/cargo";
+
+impl CargoLock {
+    /// Wait for the lock and take it (or find this process already under it).
+    pub fn take() -> Result<CargoLock, String> {
+        if std::env::var_os("CARGO_LOCK_HELD").is_some_and(|v| v == CARGO_LOCK) {
+            return Ok(CargoLock { ours: false });
+        }
+        let lock = Path::new(CARGO_LOCK);
+        let parent = lock.parent().ok_or("the cargo lock has no parent directory")?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        loop {
+            match std::fs::create_dir(lock) {
+                Ok(()) => return Ok(CargoLock { ours: true }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::thread::sleep(Duration::from_secs(2)),
+                Err(e) => return Err(format!("take the cargo lock {CARGO_LOCK}: {e}")),
+            }
+        }
+    }
+
+    /// `cmd` runs under this lock: its scripts must not take it again.
+    pub fn mark<'c>(&self, cmd: &'c mut Command) -> &'c mut Command {
+        cmd.env("CARGO_LOCK_HELD", CARGO_LOCK)
+    }
+}
+
+impl Drop for CargoLock {
+    fn drop(&mut self) {
+        if self.ours {
+            // Ours, made by take(): removing it is the release. A failure here leaves the lock taken for every other
+            // builder, so it is reported loudly rather than passed over.
+            if let Err(e) = std::fs::remove_dir(CARGO_LOCK) {
+                eprintln!("RELEASING THE CARGO LOCK {CARGO_LOCK} FAILED: {e}");
+            }
+        }
+    }
+}
+
+/// The shim this process links its candidates against: prebuilt once (under the cargo lock, [`prebuild_shim`]) into
+/// the process's own directory, so a candidate's link is plain `cc` and never runs cargo or waits on the lock. Measured
+/// 2026-10-31: [`compile_program`] ran the shim's cargo build for every candidate, so each waited on whatever held the
+/// cargo lock (19 s and 41 s for two of 20 candidates while another agent built), against the link's 900 s bound: a
+/// longer build elsewhere failed the candidate (`half_draw_candidates_compile_for_the_gpu_on_the_host`, 2026-10-31
+/// 03:08Z, in a full test run).
+pub fn process_shim() -> Result<PathBuf, String> {
+    static SHIM: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    SHIM.get_or_init(|| prebuild_shim(&std::env::temp_dir().join(format!("futhark_wgpu_shim_process_{}", std::process::id())))).clone()
+}
+
 /// Compile a Futhark program for the GPU: the branch compiler's C, then the
-/// link step. Returns the executable.
+/// link step against this process's prebuilt shim ([`process_shim`]). Returns the executable.
 pub fn compile_program(source: &str, dir: &Path) -> Result<PathBuf, String> {
-    compile_with(source, dir, None)
+    compile_with(source, dir, Some(&process_shim()?))
 }
 
 /// [`compile_program`] linking against a shim [`prebuild_shim`] wrote: the link
@@ -559,6 +620,8 @@ mod tests {
         }
         let base = std::env::temp_dir().join(format!("futhark_wgpu_prebuilt_{}", std::process::id()));
         let shim = prebuild_shim(&base.join("shim")).unwrap();
+        // compile_program's own shim, prebuilt once for the process before the lock is held.
+        process_shim().unwrap();
         // Hold the lock (or find it held by someone else already: then it is theirs, and left alone).
         let lock = Path::new("/private/tmp/claude-501/locks/cargo");
         std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
@@ -567,12 +630,19 @@ mod tests {
         let t = std::time::Instant::now();
         let got = compile_program_prebuilt("entry main (xs: []f32) : []f32 = map (+1f32) xs\n", &base.join("prog"), &shim);
         let secs = t.elapsed().as_secs_f64();
+        // compile_program (the pixel runner's and its tests' path) links the same way: it ran the shim's cargo build
+        // for every candidate, under this lock, until 2026-10-31.
+        let t = std::time::Instant::now();
+        let plain = compile_program("entry main (xs: []f32) : []f32 = map (+2f32) xs\n", &base.join("plain"));
+        let plain_secs = t.elapsed().as_secs_f64();
         if ours {
             std::fs::remove_dir(lock).unwrap();
         }
         let exe = got.unwrap();
         assert!(exe.is_file(), "no executable");
         assert!(secs < 60.0, "the link took {secs:.1} s with the lock held: it waited on the lock");
+        assert!(plain.unwrap().is_file(), "compile_program wrote no executable");
+        assert!(plain_secs < 60.0, "compile_program took {plain_secs:.1} s with the lock held: it waited on the lock");
         let _ = std::fs::remove_dir_all(&base);
     }
 
