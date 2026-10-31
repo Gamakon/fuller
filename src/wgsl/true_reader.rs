@@ -1004,7 +1004,7 @@ impl<'a> Reader<'a> {
         }
         // the kingdom's own plain pool (a module this table rendered): its guard words past P_WORDS are never written and
         // every read clamps onto them, so the array is the pool's P_WORDS words
-        let len = if name == "wg_pool" { len.min(P_WORDS as u32) } else { len };
+        let len = if name == "wg_pool" { len.min(self.k.pool_words() as u32) } else { len };
         let v = self.wgvars.len();
         self.wgvars.push(WgVar { name, elem, len, atomic });
         self.wg_of.insert(g, v);
@@ -3002,7 +3002,7 @@ impl<'a> Reader<'a> {
                             let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
                                 Some(Region::Plain { base, .. }) => Some(*base),
                                 _ => None,
-                            }).min().unwrap_or((P_WORDS / u64::from(self.threads())) as u32);
+                            }).min().unwrap_or((self.k.pool_words() / u64::from(self.threads())) as u32);
                             let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
                             let wt = self.konst("u32.xspan", &Lit::U(*zw)).ok_or_else(|| ReadError::Gap(format!("the constant {zw} of u32.xspan")))?;
                             let zb = self.block(b, 'Z', d, k)?;
@@ -3013,7 +3013,7 @@ impl<'a> Reader<'a> {
                             let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
                                 Some(Region::Plain { base, .. }) => Some(*base),
                                 _ => None,
-                            }).min().unwrap_or((P_WORDS / u64::from(self.threads())) as u32);
+                            }).min().unwrap_or((self.k.pool_words() / u64::from(self.threads())) as u32);
                             let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
                             let gt = self.konst("u32.lanes", &Lit::U(*g)).ok_or_else(|| ReadError::Gap(format!("the constant {g} of u32.lanes")))?;
                             let gb = self.block(b, 'G', d, k)?;
@@ -3045,7 +3045,7 @@ impl<'a> Reader<'a> {
                             let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
                                 Some(Region::Plain { base, .. }) => Some(*base),
                                 _ => None,
-                            }).min().unwrap_or((P_WORDS / u64::from(self.threads())) as u32);
+                            }).min().unwrap_or((self.k.pool_words() / u64::from(self.threads())) as u32);
                             let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
                             let mt = self.konst("u32.lanes", &Lit::U(*m)).ok_or_else(|| ReadError::Gap(format!("the constant {m} of u32.lanes")))?;
                             let (saved_cap, saved_qm) = (self.lidx_cap.get(), self.qm);
@@ -3062,7 +3062,7 @@ impl<'a> Reader<'a> {
                             let sp = rd.iter().filter_map(|v| match self.regions.get(*v) {
                                 Some(Region::Plain { base, .. }) => Some(*base),
                                 _ => None,
-                            }).min().unwrap_or((P_WORDS / u64::from(self.threads())) as u32);
+                            }).min().unwrap_or((self.k.pool_words() / u64::from(self.threads())) as u32);
                             let spt = self.wg_base(sp).ok_or_else(|| ReadError::Gap(format!("the split base {sp}")))?;
                             let kt = self.konst("u32.slotc", &Lit::U(*kc)).ok_or_else(|| ReadError::Gap("the constant of u32.slotc".into()))?;
                             let st = self.konst("u32.xspan", &Lit::U(*span)).ok_or_else(|| ReadError::Gap(format!("the constant {span} of u32.xspan")))?;
@@ -4167,7 +4167,16 @@ mod tests {
         let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
         let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
         let reply = |f: &str| std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies").join(f)).expect("a reply");
-        assert_eq!(read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).unwrap_or_else(|e| panic!("reply 2 does not read: {e}")).len(), 5);
+        let kids = read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).unwrap_or_else(|e| panic!("reply 2 does not read: {e}"));
+        assert_eq!(kids.len(), 5);
+        // its workgroup array lives in the interface's own pool: 1,024 words (`pool_words`), not the fixed 6,080 that
+        // cost its scatter entry 40 times its own text's time
+        assert_eq!(k.pool_words(), 1024);
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let text = k.render(&Tree { symbol: link, const_index: None, kids }).expect("render");
+        assert!(text.contains("var<workgroup> wg_pool: array<u32, 1028>;") && !text.contains("6080u"), "reply 2's expression keeps the fixed pool");
+        let v24 = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("v24")).expect("v24");
+        assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
         assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
     }
@@ -5358,7 +5367,7 @@ impl<'a> Reader<'a> {
             let pick = free.iter().copied().max_by_key(|i| (align(self, left[*i]), std::cmp::Reverse(*i))).ok_or_else(|| ReadError::Gap("split phases whose written and read arrays cannot be ordered in the pool".into()))?;
             order.push(left.remove(pick));
         }
-        let pool_blocks = (crate::wgsl::true_reader::P_WORDS / t as u64) as u32;
+        let pool_blocks = (self.k.pool_words() / t as u64) as u32;
         self.regions = vec![Region::Atomic { word: 0 }; self.wgvars.len()];
         let (mut next_blk, mut next_word) = (0u32, 0u32);
         for v in order {

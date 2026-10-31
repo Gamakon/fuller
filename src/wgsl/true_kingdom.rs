@@ -339,6 +339,13 @@ impl TrueKingdom {
         out
     }
 
+    /// The plain workgroup pool's words (`pool.py` P_WORDS, an interface's `pool_words`): its prologue declares
+    /// `wg_pool: array<u32, P + 4>` (four guard words); [`crate::wgsl::true_reader::P_WORDS`] for a table with no pool.
+    pub fn pool_words(&self) -> u64 {
+        let decl = self.prologue.lines().find_map(|l| l.trim().strip_prefix("var<workgroup> wg_pool: array<u32, ").and_then(|r| r.strip_suffix(">;")).and_then(|n| n.trim().parse::<u64>().ok()));
+        decl.map_or(crate::wgsl::true_reader::P_WORDS, |n| n.saturating_sub(4))
+    }
+
     /// A constant node's value, when its `C_T` text is an unsigned integer.
     fn const_value(&self, node: &Tree) -> Option<u64> {
         let row = self.rows.get(node.symbol as usize)?;

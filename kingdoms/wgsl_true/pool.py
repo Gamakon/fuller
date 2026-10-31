@@ -61,6 +61,11 @@ REGS = {"u": "reg<u32>.index", "f": "reg<f32>.real", "n": "reg<i32>.int", "v4": 
 
 
 def declare(iface):
+    # THE POOL'S WORDS (2026-10-31): an interface's `pool_words` (6080 unless it says less), so a kernel's workgroup
+    # memory is what its interface's kernels need: a fixed 24 KiB pool cut an evolved scatter entry's occupancy (40x
+    # slower than the same kernel with its own 1 KiB array, measured). Every row and helper reads P_WORDS when built.
+    global P_WORDS
+    P_WORDS = iface.get("pool_words", 6080)
     T("u32.atomicold", "the value an atomic returned: order-dependent across invocations; consumed by discard, or (relaxed) as a position")
     # an atomic never races, and the atomic pool is not the plain pool a phase writes: its values stand in a phase too
     register_twin("u32.atomicold")

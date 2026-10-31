@@ -201,6 +201,9 @@ KMEANS_UPDATE = dict(
     # interface's gene is 14,965,777 words (23,686,615 with every family; 7,691,545 before the pool)
     drop_families=[r"mat[234]x[234]"],
     phase_depth=2,
+    # the plain pool's words: 1,024 (4 KiB), a kernel's workgroup arrays placed in them (reply 2's 256-word array; the
+    # fixed 6,080 cost an evolved scatter entry 40x its own text's time, 2026-10-31)
+    pool_words=1024,
     # the items each entry dispatches over at the problem's largest sizes (problems/kmeans_update*/problem.toml: n up to
     # 2^20, k up to 1,024, k * d up to 2^20), so a workgroup width keeps every dispatch within wgpu's 65,535 workgroups
     # (skeleton.py `min_wg_x`): A7's k * d cells
