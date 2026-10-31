@@ -169,6 +169,12 @@ impl<'d> CaseSet<'d> {
         Ok((total, most))
     }
 
+    /// [`CaseSet::time`] UNSPLIT: every dispatch whole, as UltraDim dispatches it (`DeviceExecutor::unsplit`), the
+    /// whole run bounded by `whole`.
+    pub fn time_unsplit(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, whole: u128) -> Result<f64, String> {
+        self.exec.unsplit(whole, || self.time(k, info, i))
+    }
+
     /// One timed run of a compiled kernel on timing case `i`: its GPU milliseconds (the sum of its dispatches'
     /// timestamps), nothing read back.
     pub fn time(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize) -> Result<f64, String> {

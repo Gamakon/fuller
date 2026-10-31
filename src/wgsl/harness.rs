@@ -2896,6 +2896,9 @@ mod device {
         dispatch_bound: Option<DispatchBound>,
         /// The per-submit cap of a dispatch bound (the machine's; a test lowers it to force a split).
         cap: u128,
+        /// THE UNSPLIT RUN ([`DeviceExecutor::unsplit`]): while set, every dispatch is encoded whole, as UltraDim
+        /// dispatches it, under this bound of the whole run; a dispatch bounded above it is an error, never a split.
+        unsplit: std::cell::Cell<Option<u128>>,
         /// The work guard (`work_guard`): `Fuel::Proven` for the shipped and hand kernels; a candidate of a kingdom
         /// with a fuel budget gets [`DeviceExecutor::with_fuel`], and every submit is checked against the cap
         /// before it is made.
@@ -2925,7 +2928,7 @@ mod device {
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device, fuel: Fuel) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
 
         /// The work guard per dispatch ([`DispatchBound`]), for a value check (one submission a segment is not kept).
@@ -2960,6 +2963,17 @@ mod device {
             self.cap
         }
 
+        /// RUN `f` UNSPLIT: every dispatch of the runs `f` makes is one dispatch, exactly the problem's (UltraDim's),
+        /// never split into submits of workgroups, as long as the run's whole bound is at most `whole` (the caller's
+        /// justification: a timing runner allows at most twice its yardstick's own whole bound, the kernel UltraDim
+        /// already runs unsplit). A dispatch bounded above `whole` is an error and nothing of it is submitted.
+        pub fn unsplit<R>(&self, whole: u128, f: impl FnOnce() -> R) -> R {
+            self.unsplit.set(Some(whole));
+            let r = f();
+            self.unsplit.set(None);
+            r
+        }
+
 
         /// The device executor at the binding limit `problem` plans by
         /// (`ProblemSpec::binding_limit`: the effective limit, or the
@@ -2969,7 +2983,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
+            DeviceExecutor { dev, limit, dispatch_bound: None, cap: crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, unsplit: std::cell::Cell::new(None), fuel, judge: std::cell::RefCell::new(None), wall_budget_ms: None }
         }
     }
 
@@ -3243,7 +3257,10 @@ mod device {
                                     let per_wg = bound(*entry, words, wg_inv)?;
                                     let groups = workgroups.iter().fold(1u64, |a, w| a.saturating_mul(u64::from(*w)));
                                     let this = per_wg.saturating_mul(u128::from(groups));
-                                    let cap = self.cap;
+                                    let cap = self.unsplit.get().unwrap_or(self.cap);
+                                    if this > cap && self.unsplit.get().is_some() {
+                                        return Err(format!("the work guard: an unsplit dispatch of entry {} is bounded by {this} node executions, over the run's bound {cap}; nothing of it was submitted", *entry));
+                                    }
                                     if this > cap {
                                         // THE SPLIT DISPATCH: submits of whole workgroups, as many a submit as the
                                         // dispatch's own bound of one workgroup lets under the cap (`image::tiles`), each
