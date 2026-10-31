@@ -664,3 +664,31 @@ fn on_the_gpu_interleaved_pairs_pass_the_a_a_gate_in_one_process() {
     assert!(failed.is_empty(), "the A/A gate failed: {}", failed.join("; "));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// BUG 5 (2026-10-29): the same command and seed gave a different generation 0 on `--eval rust` and `--eval single`
+/// (histogram, `--gen0 fable-mutants-only`, seed 1). Both runs drew the same 24 programs (the random stream does not
+/// depend on the path); these 4 scored worst on the single path only, because its compiler then was the unpatched
+/// branch, which writes no C for them ("Cannot handle SetMem statement"), while the rust path used the fork. Each now
+/// compiles and links on the webgpu path with the default compiler, its quality program and its timed program. (The
+/// fork compiler, `cc`; no GPU.)
+#[test]
+fn the_generation_0_programs_the_single_path_scored_worst_compile_on_the_webgpu_path() {
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let shim = crate::futhark_wgpu_host::process_shim().unwrap();
+    let base = scratch("bug5");
+    let texts = [
+        "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k j1) (get.n is j2))) (mod.n (mod.k (mod.n 1)))) (get.n vs j2) 0))) (mul s2 (ival.k j1))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev j2))) (ival.k j1))) -1) (get.n vs j2) 2))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 10) (get.n vs j2) 0))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs j2)) (ival.k j1))) 0) (get.n vs j2) (get.n is j2)))))",
+    ];
+    for (i, text) in texts.iter().enumerate() {
+        let t = crate::futhark_sig::build(&k, text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        crate::futhark_wgpu_host::compile_program_prebuilt(&program_cases(&k, &sig, &t, cases.len()).unwrap(), &base.join(format!("q{i}")), &shim).unwrap_or_else(|e| panic!("{text}: the quality program did not compile: {e}"));
+        crate::futhark_wgpu_host::compile_program_prebuilt(&crate::futhark_sig::program(&k, &sig, &t).unwrap(), &base.join(format!("t{i}")), &shim).unwrap_or_else(|e| panic!("{text}: the timed program did not compile: {e}"));
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
