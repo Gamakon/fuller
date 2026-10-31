@@ -164,7 +164,51 @@ zero region: the result is order-independent, and equals the plain store (plus o
 as they are for a correct sort. It needs the ids region as an `array<atomic<u32>>` binding of its own, an interface
 change to UltraDim's driver, and its cost must be measured against the plain store before it is adopted.
 
-## 10. Not covered (yet)
+## 10. Compiler-assigned slots for the scatter (approved by Andrew 2026-10-31; to be built)
+
+This supersedes the atomic proposal at the end of section 9, which would have changed UltraDim's driver interface. An
+interim proposal, an `atomicAdd` counter per cluster, was rejected before it was built: it hands out positions in the
+order threads arrive, so a cluster's points land in different slots on each run. The mean then sums them in a
+different order, and f32 addition gives different last bits. That kernel would not be deterministic and not
+bit-identical to A7, the same reason Sonnet's reply 1 is refused by type (an `atomicAdd` old value used as an index).
+
+**The principle.** A gene names the cluster a value belongs to; it never names a slot. The compiler assigns the slot
+when the gene is expressed into WGSL.
+
+**What the gene sees.** One row for the data-indexed store: `store.cluster_<R>(u32.cluster, value)`. It takes a
+cluster id (an in-range index of the cluster count `k`) and a value. There is no position argument, so no gene can
+express a slot.
+
+**What the compiler emits.** A deterministic counting-sort scaffold, owned by the compiler:
+1. `hist`: the number of points per cluster per block;
+2. `offsets` and `starts`: the prefix sums, so `start[cluster]` is the first slot of each cluster, and `prefix[block][cluster]` the first slot of a block's points within it;
+3. the store, at `slot = start[cluster] + prefix[block][cluster] + rank`, where `rank` is the point's rank among the earlier points of its block with the same cluster, in invocation-index order.
+
+The position is the number of earlier points, in index order, with the same cluster: a stable rank. It is
+deterministic (the same slot on every run), keeps each cluster's points in index order (so the mean's summing order,
+and so its bits, equal A7's), and uses no atomics.
+
+**What evolution may still choose.** The scaffold's entries are about 75 % of the module's time (hist 0.056, offsets
+0.012 and starts 0.106 of 0.23 ms), so they must stay open to the search. The compiler offers a fixed set of correct
+scaffold variants: the workgroup width, the block size, the per-block rank method. The gene chooses among them through
+a typed knob. The gene picks a variant known to be correct; it never computes a slot.
+
+**The other durable stores.** Each invocation's own outputs (the histogram's per-block counts, the mean's output cell)
+keep the injective own-index types of section 9: `inj.<B>_<R>_own`, `_strided`, `_run` and `_solo`.
+
+**The witness.** Every durable write goes through either an own-index store (section 9) or a cluster store (this
+section), and through no other row. Every cluster store's scaffold is one of the compiler's variants, byte for byte.
+
+**What stays the same.** The kernel's buffer interface: the scaffold's counts and starts live in the scratch the
+harness already owns, sized within UltraDim's binding limits. UltraDim's driver changes nothing.
+
+**Tests.**
+- No tree can express two writes to one slot: a hand-built scatter through any index other than the scaffold's slot fails to read and to express.
+- The scatter form, reply 2 and the champion read back bit-exact through the new row (A7 has no scatter). A kernel whose histogram or prefix sums match no variant points to a missing variant, to be added, not a kernel to reject.
+- 300 random modules per table stay legal, in range and deterministic: two runs give the same bits.
+- One per-entry GPU pass, as expressed against as written: the target is parity, since the scaffold does the counting sort's own work.
+
+## 11. Not covered (yet)
 
 An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
 through the clamp row.
