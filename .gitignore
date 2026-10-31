@@ -109,3 +109,6 @@ logs/
 target-check/
 /[0-9]*.log
 cabal.tar.xz
+
+# Experiment results kept on this machine, not pushed (copied from the scratch space).
+/results/
