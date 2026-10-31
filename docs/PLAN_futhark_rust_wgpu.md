@@ -8,7 +8,7 @@ THE SAME PATH: each generation's programs are compiled to Rust+WGSL and run in t
 what evolution scores is exactly what ships. There is no C, no shim, and no process per candidate.
 
 **Approach.**
-- A backend in a local fork of Futhark's webgpu branch (`/private/tmp/claude-501/futhark-rust`, never pushed). It
+- A backend in a local fork of Futhark's webgpu branch (`$HOME/.local/share/fuller/futhark-rust`, built by `futhark-rust-backend/build.sh`, never pushed). It
   reads the same ImpCode the webgpu backend reads and writes one Rust module.
 - A runtime crate in fuller, `futhark-rust-rt/`, that does what Futhark's C runtime does for webgpu: memory and the
   free list, the pipeline cache, launches, sizes and tuning, copies.

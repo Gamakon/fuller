@@ -14,7 +14,22 @@ makes that fork reproducible: the patches and the script that applies them.
 | `patches/0007` | the rust-wgpu backend passes a unit scalar to a kernel (`rt::KArg::Unit`, the C backend's one-byte zero), and `bare` no longer strips the unit value `()` to an empty argument (192 corpus programs) |
 | `patches/0008` | SetMem of device and shared memory in a kernel, in any loop or conditional: a memory variable that can name one binding is renamed to it; one that can name several holds a selector (the number of the binding it names now), and every access through it dispatches on the selector. Replaces 0001's rename-outside-control-flow (143 corpus programs) |
 | `patches/0009` | an upstream defect, also in Futhark 0.28.1: the flatten pass paired every SegHist operator's destinations with the first operator's result shapes, an ill-typed SegHist ("Type error after pass 'simplify'") when two histograms in one map have different bin counts. Reproducer and bug report: `UPSTREAM_flatten_seghist.txt`; Futhark test `tests/flattening/hist/different-bins.fut` (38 corpus programs) |
-| `build.sh [dir]` | clone the base, apply the series, build with cabal (GHC 9.14.1, cabal 3.18, from Homebrew), install `<dir>/bin/futhark` |
+| `build.sh [dir]` | clone the base (or bring an existing clone up to the series: its commits must be the series' first patches by `git patch-id`, the rest are applied), build with cabal (GHC 9.14.1, cabal 3.18, from Homebrew), install `<dir>/bin/futhark` and copy the series to `<dir>/bin/patches/`. Default `<dir>`: `$HOME/.local/share/fuller/futhark-rust` |
+
+## The default compiler
+
+fuller's default compiler, for the rust-wgpu path and the webgpu path alike (`fuller::futhark_rust::default_compiler`,
+used when `FUTHARK_RUST_WGPU` / `FUTHARK_BRANCH` are unset), is `$HOME/.local/share/fuller/futhark-rust/bin/futhark`.
+The test `futhark_rust::tests::the_default_compiler_is_built_from_the_committed_patch_series` fails unless
+`bin/patches/` beside it is this series, name for name and byte for byte.
+
+Installed 2026-10-31 as a COPY of the proven build `/private/tmp/claude-501/fixc/bins/fix4` (md5
+`b9fee28e3cf4f960e55d0ce69d9a33f7`, `--version`: `rust-wgpu @ e41f68c`), not a fresh `build.sh` run (one build at a
+time on this machine; the rebuild is to be run under the cargo lock when no other build runs, and must compile the
+corpus identically). fix4 was built 2026-10-29 08:12Z in `/private/tmp/claude-501/futhark-rust-fix` at `e41f68c`, a
+clean tree (no uncommitted changes, no source newer than the binary) whose 9 commits on `14e9ccb` are patches
+0001–0009, checked one by one with `git patch-id --stable`; its build log is `/private/tmp/claude-501/fixc/build_final2.log`.
+The previous default, `/private/tmp/claude-501/futhark-rust/bin/futhark`, had patches 0001–0006 only.
 
 The fork is never pushed anywhere; regenerate the series from it with
 `git format-patch 14e9ccb..HEAD -o futhark-rust-backend/patches`.

@@ -21,9 +21,62 @@ use std::time::{Duration, Instant};
 use crate::futhark_exec::output_with_timeout;
 use crate::futhark_wgpu_host::CompileStages;
 
-/// The fork's compiler: `$FUTHARK_RUST_WGPU`, or where the fork's `build_rust_wgpu.sh` installs it.
+/// The fork's compiler: `$FUTHARK_RUST_WGPU`, or [`default_compiler`].
 pub fn compiler() -> PathBuf {
-    std::env::var_os("FUTHARK_RUST_WGPU").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/private/tmp/claude-501/futhark-rust/bin/futhark"))
+    std::env::var_os("FUTHARK_RUST_WGPU").map(PathBuf::from).unwrap_or_else(default_compiler)
+}
+
+/// Where `futhark-rust-backend/build.sh` installs the fork, built from the committed patch series
+/// (`futhark-rust-backend/patches`): `$HOME/.local/share/fuller/futhark-rust/bin/futhark`, a path that survives a
+/// reboot. Until 2026-10-31 the default was a build under `/private/tmp` with the first 6 of the 9 patches, so a run
+/// without `FUTHARK_RUST_WGPU`/`FUTHARK_BRANCH` compiled with a compiler that fails 373 corpus programs.
+/// [`installed_series`] names the series the build holds.
+pub fn default_compiler() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share/fuller/futhark-rust/bin/futhark")
+}
+
+/// The patch series a compiler was built from: `build.sh` copies it to `bin/patches/` beside the compiler. Each
+/// patch's file name and bytes, sorted by name.
+pub fn installed_series(compiler: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let dir = compiler.parent().ok_or_else(|| format!("{} has no directory", compiler.display()))?.join("patches");
+    series_in(&dir)
+}
+
+/// The committed patch series (`futhark-rust-backend/patches`), as [`installed_series`] reads one.
+pub fn committed_series() -> Result<Vec<(String, Vec<u8>)>, String> {
+    series_in(&Path::new(env!("CARGO_MANIFEST_DIR")).join("futhark-rust-backend/patches"))
+}
+
+fn series_in(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))? {
+        let p = e.map_err(|e| format!("read {}: {e}", dir.display()))?.path();
+        if p.extension().is_some_and(|x| x == "patch") {
+            let name = p.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{} is not a UTF-8 name", p.display()))?.to_string();
+            out.push((name, std::fs::read(&p).map_err(|e| format!("read {}: {e}", p.display()))?));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// The compile-failure corpus (`tests/corpus/futhark_compile_failures`): every program `index.tsv` lists (checked to
+/// be exactly the corpus's `.fut` files), then the minimal reproducers (one a kind).
+#[cfg(test)]
+pub(crate) fn compile_failure_corpus() -> Vec<PathBuf> {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_compile_failures");
+    let index = std::fs::read_to_string(corpus.join("index.tsv")).expect("the corpus index");
+    let mut files: Vec<PathBuf> = index.lines().skip(1).map(|l| corpus.join(l.split('\t').next().expect("a file column"))).collect();
+    let mut on_disk: Vec<PathBuf> = std::fs::read_dir(&corpus).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "fut")).collect();
+    files.sort();
+    on_disk.sort();
+    assert_eq!(files, on_disk, "index.tsv must list exactly the corpus's programs");
+    assert_eq!(files.len(), 373, "the corpus holds 373 programs");
+    let mut minimal: Vec<PathBuf> = std::fs::read_dir(corpus.join("minimal")).expect("the minimal reproducers").map(|e| e.expect("an entry").path()).collect();
+    minimal.sort();
+    assert_eq!(minimal.len(), 3, "one minimal reproducer a kind");
+    files.extend(minimal);
+    files
 }
 
 /// The runtime crate.
@@ -494,21 +547,9 @@ mod tests {
     /// the fork compiler's `rust-wgpu`, then `rustc -D warnings` against the runtime. CPU only, no device.
     #[test]
     fn every_program_of_the_compile_failure_corpus_compiles_through_the_rust_path() {
-        if !compiler().is_file() {
-            eprintln!("skipped: the fork compiler ({}) is not installed", compiler().display());
-            return;
-        }
-        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_compile_failures");
-        let index = std::fs::read_to_string(corpus.join("index.tsv")).expect("the corpus index");
-        let mut files: Vec<PathBuf> = index.lines().skip(1).map(|l| corpus.join(l.split('\t').next().expect("a file column"))).collect();
-        let mut on_disk: Vec<PathBuf> = std::fs::read_dir(&corpus).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "fut")).collect();
-        files.sort();
-        on_disk.sort();
-        assert_eq!(files, on_disk, "index.tsv must list exactly the corpus's programs");
-        let mut minimal: Vec<PathBuf> = std::fs::read_dir(corpus.join("minimal")).expect("the minimal reproducers").map(|e| e.expect("an entry").path()).collect();
-        minimal.sort();
-        assert_eq!(minimal.len(), 3, "one minimal reproducer a kind");
-        files.extend(minimal);
+        assert_eq!(compiler(), default_compiler(), "FUTHARK_RUST_WGPU overrides the default compiler, which this test checks");
+        assert!(compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
+        let files = compile_failure_corpus();
         let base = scratch("compile_failures");
         let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -530,6 +571,23 @@ mod tests {
         eprintln!("{} of {} corpus programs compiled through the rust path", files.len() - failed.len(), files.len());
         assert!(failed.is_empty(), "{} of {} corpus programs did not compile:\n{}", failed.len(), files.len(), failed.join("\n"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// THE DEFAULT COMPILER IS THE COMMITTED SERIES: the compiler a run uses with no `FUTHARK_RUST_WGPU` or
+    /// `FUTHARK_BRANCH` exists, and `build.sh` built it from exactly `futhark-rust-backend/patches` (the copy beside
+    /// it, name for name and byte for byte). A patch added to the series without a rebuild fails here.
+    #[test]
+    fn the_default_compiler_is_built_from_the_committed_patch_series() {
+        let c = default_compiler();
+        assert!(c.is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", c.display());
+        let installed = installed_series(&c).unwrap_or_else(|e| panic!("{e}: rebuild with futhark-rust-backend/build.sh"));
+        let committed = committed_series().unwrap();
+        let names = |s: &[(String, Vec<u8>)]| s.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&installed), names(&committed), "the default compiler's series is not the committed one: rebuild with futhark-rust-backend/build.sh");
+        for ((n, a), (_, b)) in installed.iter().zip(&committed) {
+            assert!(a == b, "patch {n} of the default compiler differs from the committed one: rebuild with futhark-rust-backend/build.sh");
+        }
+        assert_eq!(crate::futhark_wgpu_host::branch_compiler(), compiler(), "the webgpu path and the rust path use one compiler");
     }
 
     #[test]
