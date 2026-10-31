@@ -2076,6 +2076,21 @@ impl<'a> Reader<'a> {
         if w.s == Sc::I32 {
             return gap("an i32 loop counter");
         }
+        // the kingdom's tail form (loops.py `loop_text`, 2026-10-31): `n = bound; k = 0u; loop { if (k >= n) { break; }
+        // body k = k + step; }`, the counter `k<d>` (`kx<d>`) and its bound `n<d>` (`nx<d>`) the loop row's own
+        let lname = |v: Handle<naga::LocalVariable>| fr.f.local_variables[v].name.clone().unwrap_or_default();
+        let tform = kform.is_none()
+            && cont_real.is_empty()
+            && load_of(limit_h).is_some_and(|nv| {
+                let (kn, nn) = (lname(var), lname(nv));
+                kn.strip_prefix('k').is_some_and(|d| !d.is_empty() && nn.strip_prefix('n') == Some(d))
+            });
+        // where the body starts after the loop's head (the kingdom's forms)
+        let body_from = match (kstep, tform) {
+            (Some((_, _, _, js)), _) => Some(js + 1),
+            (None, true) => Some(j + 1),
+            _ => None,
+        };
         // the kingdom's form starts at its shadow counter's value
         let start_reg = match kstep {
             Some((_, _, kcv, _)) => match fr.locals.get(&kcv).cloned() {
@@ -2087,7 +2102,7 @@ impl<'a> Reader<'a> {
         let start = self.last_set.get(&start_reg).cloned().unwrap_or(E::Reg(start_reg, w));
         let mut limit = self.ex(fr, limit_h)?;
         // the kingdom's form: its bound n is a variable set before the loop that no statement of the body writes
-        if let (Some((_, _, _, js)), E::Reg(r, _)) = (kstep, &limit) {
+        if let (Some(from), E::Reg(r, _)) = (body_from, &limit) {
             let nv = load_of(limit_h);
             fn stores(b: &[&Statement], v: Handle<naga::LocalVariable>, f: &naga::Function) -> bool {
                 b.iter().any(|s| match s {
@@ -2098,7 +2113,7 @@ impl<'a> Reader<'a> {
                     _ => false,
                 })
             }
-            if nv.is_some_and(|nv| !stores(&stmts[js + 1..], nv, fr.f)) {
+            if nv.is_some_and(|nv| !stores(&stmts[from..], nv, fr.f)) {
                 // its value at the loop: what the statement before it stored, or that value kept in a fresh register
                 limit = match self.last_set.get(r).cloned() {
                     Some(v) => v,
@@ -2108,7 +2123,13 @@ impl<'a> Reader<'a> {
         }
         // the kingdom's form: its bound variable `n` and shadow counter `kc` are the loop row's own (its spelling writes
         // them before the loop), so their last assignments before the loop are the row's, not statements of the body
-        if let Some((_, _, kcv, _)) = kstep {
+        // (the tail form's: `n` and the counter's start `k = 0u`)
+        let own_start = match kstep {
+            Some((_, _, kcv, _)) => Some(kcv),
+            None if tform => Some(var),
+            None => None,
+        };
+        if let Some(kcv) = own_start {
             let mut own: Vec<Reg> = Vec::new();
             if let Some(nv) = load_of(limit_h) {
                 if let Some(Local::Reg(r, _)) = fr.locals.get(&nv) {

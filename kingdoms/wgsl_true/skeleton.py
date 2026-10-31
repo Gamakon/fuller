@@ -273,9 +273,9 @@ def build_rest(iface):
             R(f"own.block_B{d}_f{k}", BB(d, k), [], "{}", "an empty loop body")
             R(f"own.block_WB{d}_f{k}", WBB(d, k), [], "{}", "an empty write-phase loop body")
             R(f"block.brk_B{d}_f{k}", BB(d, k), [B("C", d, k), "bool.flag", B("C", d, k)], "{0} if ({1}) { break; } {2}", "both parts are C blocks: no barrier before or after the break")
-            R(f"block.cont_B{d}_f{k}", BB(d, k), ["bool.flag", B("C", d, k)], "if ({0}) { continue; } {1}", "continue lives only in the divergent barrier-free loop bodies")
+            R(f"block.cont_B{d}_f{k}", BB(d, k), ["bool.flag", B("C", d, k)], "if (!({0})) { {1} }", "a continue: the rest of the body under the negated test (the loop's step is the body's last statement, loops.loop_text); it lives only in the divergent barrier-free loop bodies")
             R(f"block.brk_WB{d}_f{k}", WBB(d, k), [B("W", d, k), "bool.flagw", B("W", d, k)], "{0} if ({1}) { break; } {2}")
-            R(f"block.cont_WB{d}_f{k}", WBB(d, k), ["bool.flagw", B("W", d, k)], "if ({0}) { continue; } {1}")
+            R(f"block.cont_WB{d}_f{k}", WBB(d, k), ["bool.flagw", B("W", d, k)], "if (!({0})) { {1} }")
             if d in DEPTH["S"]:
                 R(f"own.block_SB{d}_f{k}", SBB(d, k), [], "{}", "an empty solo-phase loop body")
                 R(f"block.brk_SB{d}_f{k}", SBB(d, k), [B("S", d, k), "bool.flag", B("S", d, k)], "{0} if ({1}) { break; } {2}")

@@ -32,7 +32,7 @@ def declare(iface):
         T(f"u32.xcounter{d}", f"the counter kx{d} of a loop whose bound is any expression, or that breaks: divergent")
         SAFE_ARGS.add(f"u32.tcounter{d}")
         SAFE_ARGS.add(f"u32.xcounter{d}")
-        for p in ("n", "k", "nx", "kx", "kc", "kxc"):
+        for p in ("n", "k", "nx", "kx"):
             decl(f"var {p}{d}: u32 = 0u;")
     T("ureg<u32>.uniform", "a named u32 register U0..U7 that holds the same value in every invocation")
     SAFE_ARGS.add("ureg<u32>.uniform")
@@ -41,19 +41,19 @@ def declare(iface):
 
 
 def loop_text(d1, divergent, bound="{0}", stride=None, body="{1}"):
-    """A counted loop. naga writes a `for` with a continuing step as `while(true) { if (!loop_init) { k = k + 1 } ... }`, and
-    Apple's compiler hangs the dispatch on that form (docs/reports/2026-10-21_metal_hang_k2), so the loop is a plain `loop`
-    with no continuing block. The step is taken on a shadow counter `kc` before the body: `k = kc` at the top, the test
-    `k >= n` before the body, `kc = k + step` next, so `k` is the trip inside the body, the final value after the loop (n
-    after the last trip, the trip of a `break`), and a `continue` still takes the step. Measured 2026-10-22 against the
-    earlier spelling, where the counter started at -1 and the step came before the test (`k = k + 1u; if (k >= n)`):
-    volumepassage at 64 x 64 one submit 0.957x of its time (the test of a counter from 0 before the step lets Apple's
-    compiler see the trip count); it terminates on the hang reproducer."""
-    n, k, kc = (f"nx{d1}", f"kx{d1}", f"kxc{d1}") if divergent else (f"n{d1}", f"k{d1}", f"kc{d1}")
-    head = f"{kc} = 0u; loop {{ {k} = {kc}; if ({k} >= {n}) {{ break; }} "
+    """A counted loop: `k = 0u; loop { if (k >= n) { break; } body k = k + step; }`. naga writes a `for` with a continuing
+    step as `while(true) { if (!loop_init) { k = k + 1 } ... }`, and Apple's compiler hangs one dispatch on that form
+    (docs/reports/2026-10-21_metal_hang_k2), so the loop is a plain `loop` with no continuing block (no `loop_init` in the
+    MSL: `oracle::metal_hang_msl_tests`). The step is the body's last statement: no row spells `continue` (a loop body's
+    `continue` row is spelled `if (!c) { rest }`, the rest of the body), so every trip that does not break takes it; `k`
+    is the trip inside the body, n after the last trip, the trip of a `break`. Measured 2026-10-31 (fbench/loop1.log,
+    the scatter form's scatter entry): this spelling 0.0284 ms against the source's 0.0290 and the earlier shadow-counter
+    spelling (`k = kc; ... kc = k + step;` before the body) 0.0300."""
+    n, k = (f"nx{d1}", f"kx{d1}") if divergent else (f"n{d1}", f"k{d1}")
+    head = f"{k} = 0u; loop {{ if ({k} >= {n}) {{ break; }} "
     if stride is None:
-        return f"{n} = {bound}; {head}{kc} = {k} + 1u; {body} }}"
-    return f"{{ let st = {stride}; {n} = {bound}; {head}{kc} = {k} + st; {body} }} }}"
+        return f"{n} = {bound}; {head}{body} {k} = {k} + 1u; }}"
+    return f"{{ let st = {stride}; {n} = {bound}; {head}{body} {k} = {k} + st; }} }}"
 
 
 def build(iface):
