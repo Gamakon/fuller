@@ -399,15 +399,11 @@ fn the_cross_path_programs_build_and_are_within_the_timing_work_bound() {
     }
 }
 
-/// The steps of `pairs` timed pairs after one discarded process-equivalent, the order alternating (the evolution's
-/// `pair_steps` for a fresh program).
+/// The steps of `pairs` timed pairs after one discarded process-equivalent, each interleaved run by run, the side
+/// that goes first alternating (the evolution's `pair_steps` for a fresh program).
 fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
-    let own = Step::Time { yardstick: false, runs };
-    let yard = Step::Time { yardstick: true, runs };
-    let mut v = vec![own];
-    for i in 0..pairs {
-        v.extend(if i % 2 == 0 { [own, yard] } else { [yard, own] });
-    }
+    let mut v = vec![Step::Time { yardstick: false, runs }];
+    v.extend((0..pairs).map(|i| Step::Pair { runs, yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: false }));
     v
 }
 
@@ -416,12 +412,13 @@ fn pair_ratios(o: &[Outcome], pairs: usize) -> (Vec<f64>, f64) {
     o[0].fastest_ns().unwrap();
     let mut r = Vec::new();
     let mut yard = f64::INFINITY;
-    for i in 0..pairs {
-        let (a, b) = (o[1 + 2 * i].fastest_ns().unwrap(), o[2 + 2 * i].fastest_ns().unwrap());
-        let (c, y) = if i % 2 == 0 { (a, b) } else { (b, a) };
-        assert!(c.is_finite() && y.is_finite() && c > 0.0 && y > 0.0, "a timing that is not a finite GPU time: {o:?}");
+    for x in &o[1..=pairs] {
+        let Outcome::Pair { yard: y, .. } = x else { panic!("not a pair: {x:?}") };
+        let ratio = x.pair_ratio().unwrap();
+        let y = Outcome::Time(y.clone()).fastest_ns().unwrap();
+        assert!(ratio.is_finite() && ratio > 0.0 && y.is_finite() && y > 0.0, "a timing that is not a finite GPU time: {x:?}");
         yard = yard.min(y);
-        r.push(c / y);
+        r.push(ratio);
     }
     (r, yard)
 }
@@ -576,5 +573,94 @@ fn on_the_gpu_the_rust_path_times_every_cross_path_program() {
         }
     }
     assert!(untimed.is_empty(), "programs the rust path did not time on every run:\n{}", untimed.join("\n"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// THE PUBLISHED PROGRAM'S GPU TIME IN EACH SETTING, on the GPU: for reduce, scan and histogram, the published
+/// program's fastest-of-20 GPU time a process-equivalent (5 of each), (S) a process of its own (`--eval single`),
+/// (B1) a batch process of the published program alone, (B2) a batch process after 8 random programs' quality and
+/// timing (`--eval batch`), and (R1, R2) the same two in this process (`--eval rust`). Printed as a table of medians
+/// and ranges in microseconds. (The fork compiler, rustc, cc, the GPU; run under the GPU lock.)
+#[test]
+fn on_the_gpu_the_published_programs_time_in_each_setting() {
+    assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());
+    let _gpu = crate::gpu_test_lock::acquire();
+    let (reps, runs) = (5, 20);
+    let base = scratch("settings");
+    let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).unwrap();
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let us = |v: &[f64]| -> String {
+        let mut s = v.to_vec();
+        s.sort_by(f64::total_cmp);
+        format!("{:.1} [{:.1}, {:.1}]", s[s.len() / 2] / 1e3, s[0] / 1e3, s[s.len() - 1] / 1e3)
+    };
+    let mut table = String::from("problem\tS single process\tB1 batch alone\tB2 batch after 8\tR1 rust alone\tR2 rust after 8\n");
+    for name in ["reduce", "scan", "histogram"] {
+        let p = problem(name).unwrap();
+        let k = load(&p.instance).unwrap();
+        let sig = signature(&p.instance).unwrap();
+        let cases = load_cases(&p).unwrap();
+        let timing = crate::futhark_sig::timing_input(&p).unwrap().expect("a timing input");
+        let all = stdin_of(&cases);
+        let exe = crate::futhark_wgpu_host::compile_program_prebuilt(p.yardstick, &base.join(format!("{name}_single")), &shim).unwrap();
+        crate::futhark_wgpu_host::run_program_bytes(&exe, &timing, true, runs).unwrap();
+        let single: Vec<f64> = (0..reps).map(|_| crate::futhark_wgpu_host::run_program_bytes(&exe, &timing, true, runs).unwrap().1.fastest_run_ns(runs).unwrap()).collect();
+        let ts = trees(&k, 8, 0xBA7C_0005);
+        let mut cols = vec![single];
+        for (tag, backend) in [("gpu", Backend::Gpu { shim: shim.clone() }), ("rust", Backend::Rust { rt: rt.clone() })] {
+            for after in [false, true] {
+                let host = Host::new(&k, &sig, cases.len(), backend.clone(), &base.join(format!("{name}_{tag}_{after}")), Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
+                let mut members: Vec<Member> = if after { ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Time { yardstick: false, runs }] }).collect() } else { Vec::new() };
+                members.push(Member { program: Program::Text(p.yardstick), steps: vec![Step::Time { yardstick: false, runs }; reps + 1] });
+                let got = host.run(&members).unwrap();
+                let o = got.outcomes.last().unwrap();
+                cols.push(o[1..].iter().map(|x| x.fastest_ns().unwrap()).collect());
+            }
+        }
+        table.push_str(name);
+        for c in &cols {
+            table.push_str(&format!("\t{}", us(c)));
+        }
+        table.push('\n');
+    }
+    eprintln!("{table}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// THE A/A GATE IN ONE PROCESS (`--eval batch`, `--eval rust`), on the GPU: the published histogram program against
+/// itself (11 interleaved pairs, `Step::Pair`, 20 runs a side) and against its copy as a member (the in-run A/A, 11
+/// more), on each in-process path: all 22 pairs within the study's 5 %. Measured 2026-10-31 before the fix (each side's
+/// runs a command of their own, each run on a fresh upload of the timing input): 7 of 22 on the batch path and 12 of 22
+/// on the rust path, the runs ramping from 4.0 to 8.1 ms and back as the GPU's clock stepped down between uploads.
+/// (The fork compiler, rustc, cc, the GPU; run under the GPU lock.)
+#[test]
+fn on_the_gpu_interleaved_pairs_pass_the_a_a_gate_in_one_process() {
+    assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());
+    let _gpu = crate::gpu_test_lock::acquire();
+    let (pairs, runs) = (11usize, 20usize);
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().expect("a timing input");
+    let all = stdin_of(&cases);
+    let base = scratch("aa_gate");
+    let shim = crate::futhark_wgpu_host::prebuild_shim(&base.join("shim")).unwrap();
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let mut failed = Vec::new();
+    for (tag, backend) in [("batch", Backend::Gpu { shim }), ("rust", Backend::Rust { rt })] {
+        let host = Host::new(&k, &sig, cases.len(), backend, &base.join(tag), Inputs { cases_stdin: &all, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
+        let itself: Vec<Step> = (0..=pairs).map(|i| Step::Pair { runs, yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: true }).collect();
+        let got = host.run(&[Member { program: Program::Text(p.yardstick), steps: itself }, Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) }]).unwrap();
+        let noise: Vec<f64> = got.outcomes[0][1..].iter().map(|o| o.pair_ratio().unwrap()).collect();
+        let (inrun, yard) = pair_ratios(&got.outcomes[1], pairs);
+        let all: Vec<f64> = noise.iter().chain(&inrun).cloned().collect();
+        let within = all.iter().filter(|r| (**r - 1.0).abs() <= 0.05).count();
+        eprintln!("{tag}: {within} of {} pairs within 5 %, min {:.4}, max {:.4}, the published program {:.1} us; noise {:?}; in-run {:?}", all.len(), all.iter().cloned().fold(f64::INFINITY, f64::min), all.iter().cloned().fold(0.0, f64::max), yard / 1e3, noise.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>(), inrun.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>());
+        if within != all.len() {
+            failed.push(format!("{tag}: {within} of {} pairs within 5 %", all.len()));
+        }
+    }
+    assert!(failed.is_empty(), "the A/A gate failed: {}", failed.join("; "));
     let _ = std::fs::remove_dir_all(&base);
 }

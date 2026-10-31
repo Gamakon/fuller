@@ -75,6 +75,25 @@ pub enum Step {
     Time { yardstick: bool, runs: usize },
     /// The member's timed entry once on the timing input, its output read back.
     Output,
+    /// AN INTERLEAVED TIMED PAIR (`runner::interleaved_runs`): the member's timed entry (or, `itself`, the published
+    /// program's, the A/A noise floor) and the published program's, alternating run by run on one upload of the timing
+    /// input, `runs + 1` runs each (the first of each a warm-up), the published program first when `yard_first`.
+    /// Measured 2026-10-31 on histogram: the published program's runs, each on a fresh upload of the 126 MB timing
+    /// input, ramped from 4.0 to 8.1 ms and back as the GPU idled between them (its clock stepping down), so a side's
+    /// fastest run depended on where its runs fell; on one upload, back to back, they hold at 2.96 to 3.3 ms, and the
+    /// two sides interleaved see the same clock.
+    Pair { runs: usize, yard_first: bool, itself: bool },
+}
+
+impl Step {
+    /// The member's own timed entry is used by this step.
+    fn times_own(&self) -> bool {
+        matches!(self, Step::Time { yardstick: false, .. } | Step::Output | Step::Pair { itself: false, .. })
+    }
+    /// The published program's entry is used by this step.
+    fn times_yard(&self) -> bool {
+        matches!(self, Step::Time { yardstick: true, .. } | Step::Pair { .. })
+    }
 }
 
 /// A member of a batch: a program and what to do with it.
@@ -93,11 +112,27 @@ pub enum Outcome {
     Time(Vec<Option<f64>>),
     /// The output on the timing input.
     Output(Array),
+    /// An interleaved pair's run times: the member's side and the published program's, each the warm-up first.
+    Pair { own: Vec<Option<f64>>, yard: Vec<Option<f64>> },
     /// The step failed: the compiler's, the driver's or the process's own message.
     Failed(String),
 }
 
+/// A side's time from its runs (the warm-up first), as [`Outcome::fastest_ns`] takes a timing's.
+fn fastest_of(v: &[Option<f64>]) -> Result<f64, String> {
+    Outcome::Time(v.to_vec()).fastest_ns()
+}
+
 impl Outcome {
+    /// An interleaved pair's ratio: the member's fastest run over the published program's (each after its warm-up).
+    pub fn pair_ratio(&self) -> Result<f64, String> {
+        match self {
+            Outcome::Pair { own, yard } => Ok(fastest_of(own)? / fastest_of(yard)?),
+            Outcome::Failed(e) => Err(e.clone()),
+            other => Err(format!("our software has a bug: a pair's ratio read from {other:?}")),
+        }
+    }
+
     /// One process-equivalent's time, as `futhark_wgpu_host::ShimReport::fastest_run_ns` takes it from a process run
     /// `runs` times: the fastest of the runs after the warm-up. Infinite when no run timed any pass (no GPU work: no
     /// speed credit, as the per-candidate path gives it); a mix of timed and untimed runs is an error.
@@ -229,10 +264,12 @@ const DRIVER: &str = r#"/* THE BATCH DRIVER, written by fuller::futhark_batch fo
  * <seconds> bounds the device set-up and each command (alarm: a command past it ends the process, and the host
  * names that command), the per-candidate path's bound of one process.
  *
- * commands, one a line: `q E` (quality entry E on every case), `t E RUNS` (timed entry E, RUNS + 1 runs on the timing
- * input, the first a warm-up, each run's GPU nanoseconds), `o E` (timed entry E once on the timing input, its output).
+ * commands, one a line: `q E` (quality entry E on every case), `t E RUNS` (timed entry E, RUNS + 1 runs on one upload
+ * of the timing input, the first a warm-up, each run's GPU nanoseconds), `p E Y RUNS FIRST` (timed entries E and Y
+ * interleaved run by run on one upload, RUNS + 1 runs each, Y first when FIRST is 1; E's words, `|`, Y's words), `o E`
+ * (timed entry E once on the timing input, its output).
  * results: records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then BYTES of payload; TAG is start,
- * ctx, q, t, o or end; PIPELINE_NANOSECONDS is the shader and pipeline creation inside the record's span (GPU). */
+ * ctx, q, t, p, o or end; PIPELINE_NANOSECONDS is the shader and pipeline creation inside the record's span (GPU). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -421,16 +458,16 @@ int main(int argc, char **argv) {
             if (!have_timing) fail("t", index, "a time command with no timing input", 2);
             if (!TIMED_PASSES) fail("t", index, "a time command in a driver with no GPU timing", 2);
             buf b = {0};
+            dval in[NIN];
+            for (int i = 0; i < NIN; i++)
+                if (upload(ctx, &timing[i], &in[i]) != 0) fail_ctx("t", index, ctx, "an input did not upload", 3);
+            if (futhark_context_sync(ctx) != 0) fail_ctx("t", index, ctx, "the sync after the inputs", 3);
             for (int run = 0; run <= runs; run++) {
-                dval in[NIN], out[1];
+                dval out[1];
                 uint64_t m0 = PASSES();
-                for (int i = 0; i < NIN; i++)
-                    if (upload(ctx, &timing[i], &in[i]) != 0) fail_ctx("t", index, ctx, "an input did not upload", 3);
-                if (futhark_context_sync(ctx) != 0) fail_ctx("t", index, ctx, "the sync after the inputs", 3);
                 int r = call_t(entry, ctx, out, in);
                 if (r < 0) fail("t", index, "no such timed entry", 2);
                 if (r != 0 || futhark_context_sync(ctx) != 0) fail_ctx("t", index, ctx, "the timed entry failed", 3);
-                for (int i = 0; i < NIN; i++) release(ctx, IN_RANK[i], &in[i]);
                 release(ctx, OUT_RANK, &out[0]);
                 if (futhark_context_sync(ctx) != 0) fail_ctx("t", index, ctx, "the sync after a run", 3);
                 uint64_t m1 = PASSES();
@@ -448,8 +485,53 @@ int main(int argc, char **argv) {
                 }
                 put(&b, word, strlen(word));
             }
+            for (int i = 0; i < NIN; i++) release(ctx, IN_RANK[i], &in[i]);
             record("t", index, "ok", mono_ns() - t0, b.p, b.len);
             free(b.p);
+        } else if (strcmp(kind, "p") == 0) {
+            /* An interleaved pair: entries E and Y alternate run by run on one upload of the timing input. */
+            int yard, first;
+            if (fscanf(cmds, "%d %d %d", &yard, &runs, &first) != 3 || runs < 0 || (first != 0 && first != 1)) fail("p", index, "a pair command with no yardstick, runs or first side", 2);
+            if (!have_timing) fail("p", index, "a pair command with no timing input", 2);
+            if (!TIMED_PASSES) fail("p", index, "a pair command in a driver with no GPU timing", 2);
+            buf side_b[2] = {{0}, {0}};
+            int side_n[2] = {0, 0};
+            dval in[NIN];
+            for (int i = 0; i < NIN; i++)
+                if (upload(ctx, &timing[i], &in[i]) != 0) fail_ctx("p", index, ctx, "an input did not upload", 3);
+            if (futhark_context_sync(ctx) != 0) fail_ctx("p", index, ctx, "the sync after the inputs", 3);
+            for (int k = 0; k < 2 * (runs + 1); k++) {
+                /* side 1, the yardstick, on the even calls when it goes first, else on the odd ones */
+                int side = ((k % 2 == 0) == (first == 1)) ? 1 : 0;
+                dval out[1];
+                uint64_t m0 = PASSES();
+                int r = call_t(side ? yard : entry, ctx, out, in);
+                if (r < 0) fail("p", index, "no such timed entry", 2);
+                if (r != 0 || futhark_context_sync(ctx) != 0) fail_ctx("p", index, ctx, "the timed entry failed", 3);
+                release(ctx, OUT_RANK, &out[0]);
+                if (futhark_context_sync(ctx) != 0) fail_ctx("p", index, ctx, "the sync after a run", 3);
+                uint64_t m1 = PASSES();
+                char word[64];
+                if (m1 == m0) {
+                    snprintf(word, sizeof word, "%snone", side_n[side] ? " " : "");
+                } else {
+                    double ns = 0;
+                    for (uint64_t p = m0; p < m1; p++) {
+                        double x = PASS_NS(p);
+                        if (x < 0) fail("p", index, "a pass the GPU did not time", 3);
+                        ns += x;
+                    }
+                    snprintf(word, sizeof word, "%s%.1f", side_n[side] ? " " : "", ns);
+                }
+                put(&side_b[side], word, strlen(word));
+                side_n[side]++;
+            }
+            for (int i = 0; i < NIN; i++) release(ctx, IN_RANK[i], &in[i]);
+            put(&side_b[0], "|", 1);
+            put(&side_b[0], side_b[1].p, side_b[1].len);
+            record("p", index, "ok", mono_ns() - t0, side_b[0].p, side_b[0].len);
+            free(side_b[0].p);
+            free(side_b[1].p);
         } else if (strcmp(kind, "o") == 0) {
             if (!have_timing) fail("o", index, "an output command with no timing input", 2);
             dval in[NIN], out[1];
@@ -561,8 +643,8 @@ impl<'a> Host<'a> {
         for &i in idx {
             let m = &members[i];
             let quality = m.steps.contains(&Step::Quality);
-            let timed = m.steps.iter().any(|s| matches!(s, Step::Time { yardstick: false, .. } | Step::Output));
-            yard |= m.steps.iter().any(|s| matches!(s, Step::Time { yardstick: true, .. }));
+            let timed = m.steps.iter().any(Step::times_own);
+            yard |= m.steps.iter().any(Step::times_yard);
             match m.program {
                 Program::Tree(t) => {
                     if quality {
@@ -610,7 +692,7 @@ impl<'a> Host<'a> {
                 q_of.insert(i, nq);
                 nq += 1;
             }
-            if m.steps.iter().any(|s| matches!(s, Step::Time { yardstick: false, .. } | Step::Output)) {
+            if m.steps.iter().any(Step::times_own) {
                 t_of.insert(i, nt);
                 nt += 1;
             }
@@ -627,8 +709,10 @@ impl<'a> Host<'a> {
                     (Step::Time { yardstick: false, runs }, true) => format!("t {} {runs}", tname(i)),
                     (Step::Time { yardstick: true, runs }, true) => format!("t {YARD} {runs}"),
                     (Step::Output, true) => format!("o {}", tname(i)),
+                    (Step::Pair { runs, yard_first, itself }, false) => format!("p {} {nt} {runs} {}", if *itself { nt } else { t_of[&i] }, u8::from(*yard_first)),
+                    (Step::Pair { runs, yard_first, itself }, true) => format!("p {} {YARD} {runs} {}", if *itself { YARD.to_string() } else { tname(i) }, u8::from(*yard_first)),
                 };
-                if !gpu && matches!(s, Step::Time { .. }) {
+                if !gpu && matches!(s, Step::Time { .. } | Step::Pair { .. }) {
                     return Err("our software has a bug: a timed step on the c backend, which has no GPU timing".into());
                 }
                 cmds.push(Cmd { line, member: i, step: j });
@@ -701,12 +785,12 @@ impl<'a> Host<'a> {
                 }
                 nq += 1;
             }
-            if m.steps.iter().any(|s| matches!(s, Step::Time { yardstick: false, .. } | Step::Output)) {
+            if m.steps.iter().any(Step::times_own) {
                 decls.push_str(&format!("int futhark_entry_{}{t_proto};\n", tname(i)));
                 call_t.push_str(&format!("    case {nt}: return futhark_entry_{}({t_args});\n", tname(i)));
                 nt += 1;
             }
-            yard |= m.steps.iter().any(|s| matches!(s, Step::Time { yardstick: true, .. }));
+            yard |= m.steps.iter().any(Step::times_yard);
         }
         if let Some((ctype, free, fields)) = &tuple {
             let field_out = c_out(out_rank);
@@ -787,7 +871,7 @@ impl<'a> Host<'a> {
         }
         std::fs::write(&cmd_path, cmds.iter().map(|c| format!("{}\n", c.line)).collect::<String>()).map_err(|e| format!("write {}: {e}", cmd_path.display()))?;
         // The timing input is read only by a process that runs on it (the histogram's is 128 MB).
-        let on_timing = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("o "));
+        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o "].iter().any(|k| c.line.starts_with(k)));
         let timing = if on_timing { self.timing_path.as_deref().ok_or("a timed or output step with no timing input")? } else { Path::new("-") };
         // The driver bounds its device set-up and each command by the per-candidate path's bound of one process; this
         // bound on the whole process is a backstop.
@@ -831,7 +915,7 @@ impl<'a> Host<'a> {
             *g = Some(crate::futhark_rust::Session::new(rt, run_timeout())?);
         }
         let session = g.as_ref().ok_or("our software has a bug: no session")?;
-        let on_timing = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("o "));
+        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o "].iter().any(|k| c.line.starts_with(k)));
         let cases = std::fs::read(&self.cases_path).map_err(|e| format!("{}: {e}", self.cases_path.display()))?;
         let timing = match (&self.timing_path, on_timing) {
             (Some(p), true) => Some(std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?),
@@ -903,7 +987,7 @@ impl<'a> Host<'a> {
                 return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost);
             }
         }
-        let timestamps = cmds.iter().any(|c| c.line.starts_with("t "));
+        let timestamps = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("p "));
         let mut from = 0;
         let mut first = true;
         while from < cmds.len() {
@@ -923,7 +1007,7 @@ impl<'a> Host<'a> {
             first = false;
             let mut done = 0;
             let mut recorded_failure = false;
-            for r in records.iter().filter(|r| ["q", "t", "o"].contains(&r.tag.as_str())) {
+            for r in records.iter().filter(|r| ["q", "t", "p", "o"].contains(&r.tag.as_str())) {
                 let c = cmds.get(from + r.index as usize).ok_or("a results record of no command")?;
                 if r.tag == "q" {
                     cost.member_quality_seconds[c.member] += r.ns as f64 / 1e9;
@@ -943,12 +1027,12 @@ impl<'a> Host<'a> {
                             }
                             Outcome::Quality(v)
                         }
-                        "t" => Outcome::Time(
-                            String::from_utf8_lossy(&r.payload)
-                                .split(' ')
-                                .map(|w| if w == "none" { Ok(None) } else { w.parse::<f64>().map(Some).map_err(|_| format!("a timing word {w:?}")) })
-                                .collect::<Result<_, _>>()?,
-                        ),
+                        "t" => Outcome::Time(time_words(&String::from_utf8_lossy(&r.payload))?),
+                        "p" => {
+                            let text = String::from_utf8_lossy(&r.payload);
+                            let (own, yard) = text.split_once('|').ok_or_else(|| format!("a pair record with no `|`: {text:?}"))?;
+                            Outcome::Pair { own: time_words(own)?, yard: time_words(yard)? }
+                        }
                         _ => Outcome::Output(read_binary(&r.payload)?.into_iter().next().ok_or("an output record with no value")?),
                     }
                 };
@@ -992,6 +1076,11 @@ impl<'a> Host<'a> {
         self.group(members, a, outcomes, cost)?;
         self.group(members, b, outcomes, cost)
     }
+}
+
+/// A timing record's words: each run's GPU nanoseconds, or `none` for a run that timed no pass.
+fn time_words(text: &str) -> Result<Vec<Option<f64>>, String> {
+    text.split(' ').map(|w| if w == "none" { Ok(None) } else { w.parse::<f64>().map(Some).map_err(|_| format!("a timing word {w:?}")) }).collect()
 }
 
 /// wgpu's largest binding index in a bind group layout (`Limits::max_bindings_per_bind_group`, 1000 by default).

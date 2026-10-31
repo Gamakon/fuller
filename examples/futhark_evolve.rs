@@ -89,7 +89,7 @@ use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebui
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
+use fuller::runner::{interleaved_runs, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -213,20 +213,15 @@ impl Stages {
 }
 
 /// The steps of a program's timed pairs (`missing` of them) in a batch: the process-equivalent the per-candidate path
-/// discards for a freshly compiled executable (`fresh`), then each pair, its order alternating, as `Judge::time_pairs`.
+/// discards for a freshly compiled executable (`fresh`), then each pair INTERLEAVED run by run on one upload of the
+/// timing input (`Step::Pair`, `runner::interleaved_runs`), the side that goes first alternating from pair to pair.
 fn pair_steps(missing: usize, fresh: bool, runs: usize) -> Vec<Step> {
-    let own = Step::Time { yardstick: false, runs };
-    let yard = Step::Time { yardstick: true, runs };
-    let mut v = Vec::with_capacity(2 * missing + 1);
+    let mut v = Vec::with_capacity(missing + 1);
     if fresh {
-        v.push(own);
+        v.push(Step::Time { yardstick: false, runs });
     }
     for i in 0..missing {
-        if i % 2 == 0 {
-            v.extend([own, yard]);
-        } else {
-            v.extend([yard, own]);
-        }
+        v.push(Step::Pair { runs, yard_first: interleaved_runs(i, 1)[0], itself: false });
     }
     v
 }
@@ -238,14 +233,7 @@ fn pair_ratios(outs: &[Outcome], missing: usize, fresh: bool) -> Result<Vec<f64>
     if fresh {
         o.next().ok_or("our software has a bug: no discarded timing")?.fastest_ns()?;
     }
-    let mut r = Vec::with_capacity(missing);
-    for i in 0..missing {
-        let a = o.next().ok_or("our software has a bug: a pair cut short")?.fastest_ns()?;
-        let b = o.next().ok_or("our software has a bug: a pair cut short")?.fastest_ns()?;
-        let (c, y) = if i % 2 == 0 { (a, b) } else { (b, a) };
-        r.push(c / y);
-    }
-    Ok(r)
+    (0..missing).map(|_| o.next().ok_or("our software has a bug: a pair cut short")?.pair_ratio()).collect()
 }
 
 /// The input the speed is timed on.
@@ -606,20 +594,18 @@ impl<'a> Judge<'a> {
     /// of the published program (the gate's). Returns (noise, in-run A/A, rounds in ns).
     fn aa_batch(&self, yardstick: &str, inrun_pairs: usize, rounds: usize) -> Result<AaSets, String> {
         let host = self.host.as_ref().ok_or("our software has a bug: batch mode with no batch host")?;
-        let y = Step::Time { yardstick: true, runs: self.runs };
-        let mut steps = vec![y; 2 + 2 * 11];
-        steps.extend(vec![y; rounds]);
+        // A discarded pair, then 11, each interleaved run by run (`Step::Pair`, the published program against itself).
+        let mut steps: Vec<Step> = (0..12).map(|i| Step::Pair { runs: self.runs, yard_first: interleaved_runs(i, 1)[0], itself: true }).collect();
+        steps.extend(vec![Step::Time { yardstick: true, runs: self.runs }; rounds]);
         let mut members = vec![Member { program: Program::Text(yardstick), steps }];
         if inrun_pairs > 0 {
             members.push(Member { program: Program::Text(yardstick), steps: pair_steps(inrun_pairs, true, self.runs) });
         }
         let r = host.run(&members)?;
         let o = &r.outcomes[0];
-        let mut noise = Vec::with_capacity(11);
-        for i in 0..11 {
-            noise.push(o[2 + 2 * i].fastest_ns()? / o[3 + 2 * i].fastest_ns()?);
-        }
-        let rounds = o[24..].iter().map(Outcome::fastest_ns).collect::<Result<Vec<_>, _>>()?;
+        o[0].pair_ratio()?;
+        let noise = o[1..12].iter().map(Outcome::pair_ratio).collect::<Result<Vec<_>, _>>()?;
+        let rounds = o[12..].iter().map(Outcome::fastest_ns).collect::<Result<Vec<_>, _>>()?;
         let inrun = if inrun_pairs > 0 { pair_ratios(&r.outcomes[1], inrun_pairs, true)? } else { Vec::new() };
         Ok(AaSets { noise, inrun, rounds })
     }

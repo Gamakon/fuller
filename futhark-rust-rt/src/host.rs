@@ -177,13 +177,12 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], 
             }
             let e = find(m, entry).map_err(|x| (tag, x))?;
             let mut words = Vec::new();
+            let args = upload(ctx, timing).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
+            ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
             for _ in 0..=runs {
                 let m0 = ctx.timed_passes();
-                let args = upload(ctx, timing).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
-                ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
                 let outs = (e.call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
-                drop(args);
                 drop(outs);
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after a run: {x}"))))?;
                 let m1 = ctx.timed_passes();
@@ -194,7 +193,42 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], 
                     words.push(format!("{ns:.1}"));
                 }
             }
+            drop(args);
             Ok((tag, words.join(" ").into_bytes()))
+        }
+        // `p E Y RUNS FIRST`: an INTERLEAVED PAIR (fuller::runner::interleaved_runs). Entries E and Y alternate run by
+        // run on one upload of the timing input, `RUNS + 1` runs each (the first of each a warm-up), Y first when
+        // FIRST is 1: the two sides share the device's state (its clock) run by run. The payload is E's run times,
+        // `|`, Y's run times, each as `t`'s words.
+        ["p", entry, yard, runs, first] => {
+            let tag = "p";
+            let runs: usize = runs.parse().map_err(|_| (tag, Error::new("a pair command with no runs")))?;
+            let yard_first = match *first {
+                "1" => true,
+                "0" => false,
+                _ => return Err((tag, Error::new("a pair command whose first side is not 0 or 1"))),
+            };
+            let timing = timing.ok_or((tag, Error::new("a pair command with no timing input")))?;
+            if !ctx.timing() {
+                return Err((tag, Error::new("a pair command in a run with no GPU timing")));
+            }
+            let sides = [find(m, entry).map_err(|x| (tag, x))?, find(m, yard).map_err(|x| (tag, x))?];
+            let args = upload(ctx, timing).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
+            ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
+            let mut words: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+            for k in 0..2 * (runs + 1) {
+                // Side 1 (the yardstick) on the even calls when it goes first, else on the odd ones.
+                let side = usize::from((k % 2 == 0) == yard_first);
+                let m0 = ctx.timed_passes();
+                let outs = (sides[side].call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
+                ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
+                drop(outs);
+                ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after a run: {x}"))))?;
+                let m1 = ctx.timed_passes();
+                words[side].push(if m1 == m0 { "none".to_string() } else { format!("{:.1}", (m0..m1).map(|p| ctx.pass_ns(p).unwrap_or(0.0)).sum::<f64>()) });
+            }
+            drop(args);
+            Ok((tag, format!("{}|{}", words[0].join(" "), words[1].join(" ")).into_bytes()))
         }
         ["o", entry] => {
             let tag = "o";
@@ -251,7 +285,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         }
         None => None,
     };
-    let timed = commands.lines().any(|l| l.starts_with("t "));
+    let timed = commands.lines().any(|l| l.starts_with("t ") || l.starts_with("p "));
     if !s.modules.contains_key(path) {
         match load(path) {
             Ok(m) => {
@@ -324,6 +358,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
             Err(p) => {
                 let tag = match line.split_whitespace().next() {
                     Some("t") => "t",
+                    Some("p") => "p",
                     Some("o") => "o",
                     _ => "q",
                 };
