@@ -21,6 +21,8 @@
 
 We have changed no UltraDim code.
 
+> **Status, 2026-10-31 14:00Z: the ratios below are under re-measurement.** On this Mac, the same WGSL text compiled into separate pipelines runs each entry at one of two speeds. Measured: up to about 1.7× apart per entry; whole-module totals of 0.638 to 0.900 ms for one and the same text. The speed sticks to the pipeline. The A/A gate timed only one pipeline against itself, so it could not see this. Any ratio between two separately compiled kernels is therefore unconfirmed. The candidate's direction, about 0.027 of A7, lies far outside this range. Its exact values, and the 1.6 % over the hand-written form, are being re-measured with a fix: A/A across separate pipelines, and each side's fastest over several pipeline instances.
+
 ## 1. The kernel
 
 - Five entry points share UltraDim's buffers, with one scratch binding added:
