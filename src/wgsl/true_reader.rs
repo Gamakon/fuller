@@ -3733,12 +3733,15 @@ impl<'a> Reader<'a> {
         if z != 1 {
             return gap(format!("a workgroup of depth {z}"));
         }
-        let shape = self.konst_text("grid.shape", &format!("{x} {y}"))?;
-        let one = |s: &mut Self, t: &str| s.konst_text(t, "1");
-        let grid = Tree { symbol: self.row("grid.of")?, const_index: None, kids: vec![shape, one(self, "u32.blk_col")?, one(self, "u32.blk_row")?, one(self, "u32.ktile")?] };
-        self.bare(&mut body);
         let name = format!("kernel.entry_{}", ep.name);
         let row = self.row(&name)?;
+        // the entry's own grid type when the dispatch limit binds it (`grid.grid_<entry>`, skeleton.py `min_wg_x`)
+        let gt = self.k.rows[row as usize].args.first().map(|t| self.k.type_name(*t)).unwrap_or_default();
+        let sfx = gt.strip_prefix("grid.grid").ok_or_else(|| ReadError::Gap(format!("our software has a bug: entry {} takes {gt} first, not a grid", ep.name)))?.to_string();
+        let shape = self.konst_text(&format!("grid.shape{sfx}"), &format!("{x} {y}"))?;
+        let one = |s: &mut Self, t: &str| s.konst_text(t, "1");
+        let grid = Tree { symbol: self.row(&format!("grid.of{sfx}"))?, const_index: None, kids: vec![shape, one(self, "u32.blk_col")?, one(self, "u32.blk_row")?, one(self, "u32.ktile")?] };
+        self.bare(&mut body);
         let kids = if self.k.rows[row as usize].args.len() == 3 { vec![grid, self.konst_text("u32.passes", &passes.to_string())?, body] } else { vec![grid, body] };
         Ok(Tree { symbol: row, const_index: None, kids })
     }
@@ -4029,6 +4032,43 @@ mod tests {
                 }
             }
             assert_eq!(cases, 5, "{iface}: the cases compared");
+        }
+    }
+
+    /// THE DISPATCH LIMIT IN THE TYPES (skeleton.py `min_wg_x`, 2026-10-31: seed 1 of the k-means queue stopped at
+    /// generation 69 on `ceil(k * d / wg_x_mean)` = 262,144 workgroups, over wgpu's 65,535): in 300 random modules of each
+    /// k-means table, every entry's workgroup count at the problem's largest sizes (n 2^20, k 1,024, k * d 2^20, the
+    /// interface's `dispatch_items`) fits 65,535; an entry whose limit binds offers no narrower shape.
+    #[test]
+    fn a_random_kmeans_module_never_dispatches_over_the_workgroup_limit() {
+        let largest = |e: &str| -> Option<u64> {
+            match e {
+                "update_centroids" | "mean" | "scatter" => Some(1 << 20),
+                "hist" => Some((1 << 20) / 256 * 1024),
+                "offsets" => Some(1024),
+                _ => None,
+            }
+        };
+        for iface in ["kmeans_update", "kmeans_update_segmented"] {
+            let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join(iface)).expect("the table");
+            let m = crate::wgsl::true_module::TrueModule::new(&k, &vec![16; k.gene_roots.len()]).expect("module");
+            let mut rng = crate::wgsl::true_kingdom::Rng(0x6c69);
+            let mut least: BTreeMap<String, u64> = BTreeMap::new();
+            for i in 0..300 {
+                let ch = m.random(i, &mut rng, crate::wgsl::true_kingdom::Share::Half, true).expect("random");
+                let src = m.render(&ch).expect("render");
+                for part in src.split("@compute @workgroup_size(").skip(1) {
+                    let (dims, rest) = part.split_once(')').expect("a workgroup size");
+                    let x: u64 = dims.split(',').next().expect("x").trim().parse().expect("a literal width");
+                    let e = rest.trim_start().strip_prefix("\nfn ").or_else(|| rest.trim_start().strip_prefix("fn ")).and_then(|r| r.split('(').next()).expect("the entry's name").trim().to_string();
+                    if let Some(items) = largest(&e) {
+                        assert!(items.div_ceil(x) <= 65_535, "{iface} gene {i}: entry {e} at width {x} dispatches {} workgroups", items.div_ceil(x));
+                        let l = least.entry(e).or_insert(u64::MAX);
+                        *l = (*l).min(x);
+                    }
+                }
+            }
+            eprintln!("{iface}: the least width drawn per entry {least:?}");
         }
     }
 

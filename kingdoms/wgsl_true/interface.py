@@ -192,6 +192,11 @@ KMEANS_UPDATE = dict(
     fields=["x", "y", "z", "w"],
     # a loop's trip count is bounded by n, k and d only (loops.py `size_bounds`)
     size_bounds=["x", "y", "z"],
+    # the items each entry dispatches over at the problem's largest sizes (problems/kmeans_update*/problem.toml: n up to
+    # 2^20, k up to 1,024, k * d up to 2^20), so a workgroup width keeps every dispatch within wgpu's 65,535 workgroups
+    # (skeleton.py `min_wg_x`): A7's k * d cells
+    dispatch_items={"update_centroids": 1 << 20},
+    max_workgroups_x=65535,
     inputs=[dict(name="vectors", e="f32", ty="f32.real", vec4_view=True), dict(name="assignments", e="u32", ty="u32.index")],
     outputs=[dict(name="centroids", e="f32", ty="f32.real", rows="1u", cols="(params.y * params.z)")],
     primary=None,
@@ -218,6 +223,8 @@ KMEANS_UPDATE_SEGMENTED = dict(
     KMEANS_UPDATE,
     name="kmeans_update_segmented",
     module=[("hist", False), ("offsets", False), ("starts", False), ("scatter", False), ("mean", False)],
+    # hist: ceil(n / 256) * k blocks x clusters; offsets: k; starts: one workgroup (fixed); scatter: n; mean: k * d
+    dispatch_items={"hist": (1 << 20) // 256 * 1024, "offsets": 1024, "scatter": 1 << 20, "mean": 1 << 20},
     arenas=[dict(name="scratch", e="u32", ty="u32.index")],
     extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["255", "256"]},
     prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",

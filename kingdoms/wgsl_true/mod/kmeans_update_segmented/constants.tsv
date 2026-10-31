@@ -52,6 +52,29 @@ u32.blk_col	0	1
 u32.blk_col	1	2
 u32.blk_col	2	4
 u32.blk_col	3	8
+grid.shape_hist	0	128 1
+grid.shape_hist	1	128 2
+grid.shape_hist	2	256 1
+grid.shape_scatter	0	32 1
+grid.shape_scatter	1	32 2
+grid.shape_scatter	2	32 4
+grid.shape_scatter	3	32 8
+grid.shape_scatter	4	64 1
+grid.shape_scatter	5	64 2
+grid.shape_scatter	6	64 4
+grid.shape_scatter	7	128 1
+grid.shape_scatter	8	128 2
+grid.shape_scatter	9	256 1
+grid.shape_mean	0	32 1
+grid.shape_mean	1	32 2
+grid.shape_mean	2	32 4
+grid.shape_mean	3	32 8
+grid.shape_mean	4	64 1
+grid.shape_mean	5	64 2
+grid.shape_mean	6	64 4
+grid.shape_mean	7	128 1
+grid.shape_mean	8	128 2
+grid.shape_mean	9	256 1
 u32.passes	0	1
 u32.passes	1	2
 u32.passes	2	3

@@ -52,6 +52,16 @@ u32.blk_col	0	1
 u32.blk_col	1	2
 u32.blk_col	2	4
 u32.blk_col	3	8
+grid.shape_update_centroids	0	32 1
+grid.shape_update_centroids	1	32 2
+grid.shape_update_centroids	2	32 4
+grid.shape_update_centroids	3	32 8
+grid.shape_update_centroids	4	64 1
+grid.shape_update_centroids	5	64 2
+grid.shape_update_centroids	6	64 4
+grid.shape_update_centroids	7	128 1
+grid.shape_update_centroids	8	128 2
+grid.shape_update_centroids	9	256 1
 u32.passes	0	1
 u32.passes	1	2
 u32.passes	2	3

@@ -1,3 +1,4 @@
+import sys
 """Batch 1: the kernel skeleton, the statement and block rungs, the epilogue's
 store, the ownership rows (design section 9). Every statement and block type
 carries a depth `d` (the loop ladder) and a fuel stratum `k` (batch 3)."""
@@ -19,6 +20,19 @@ def shape_table(iface):
     return out
 
 
+def min_wg_x(iface, e):
+    """THE DISPATCH LIMIT IN THE TYPES (2026-10-31): the least workgroup width x of entry `e` for which its workgroup
+    count, ceil(items / x), fits the device's limit at the problem's largest sizes (`dispatch_items`: the items entry `e`
+    dispatches over at those sizes; `max_workgroups_x`, wgpu's 65,535). 1 for an entry the interface does not list."""
+    items = iface.get("dispatch_items", {}).get(e)
+    return 1 if items is None else -(-items // iface["max_workgroups_x"])
+
+
+def entry_grid(iface, e):
+    """The grid type of entry `e`: its own (`grid.grid_<e>`, shapes x >= min_wg_x) when the limit binds, else the shared one."""
+    return f"grid.grid_{e}" if min_wg_x(iface, e) > 1 else "grid.grid"
+
+
 def declare_types(iface):
     if iface.get("module"):
         # s9 batch 8: a module of several entry points, each a normal gene rooted at its own entry type, joined by the
@@ -26,6 +40,9 @@ def declare_types(iface):
         T("kernel.module", "a module of entry points: the fixed linker's root")
         for e, _ in iface["module"]:
             T(f"kernel.{e}", f"the entry point {e}: the root of its normal gene")
+            if min_wg_x(iface, e) > 1:
+                T(f"grid.shape_{e}", f"a workgroup shape of entry {e} whose width is at least {min_wg_x(iface, e)}: its workgroup count fits {iface['max_workgroups_x']} at the problem's largest sizes")
+                T(f"grid.grid_{e}", f"the entry {e}'s workgroup shape and block")
         T("u32.passes", "the // passes N count, a literal in the interface's declared range", 1, "1..=16")
         SAFE_ARGS.add("u32.passes")
     else:
@@ -178,7 +195,8 @@ def build_module(iface):
         body = "{2}" if passes else "{1}"
         head = "// passes {1}\n" if passes else ""
         text = head + "@compute @workgroup_size({0:0}, {0:1}, 1)\nfn " + e + "(" + MODULE_IDS + ") {\n" + knobs + "<declarations>\n" + body + "\n}\n"
-        args = ["grid.grid", "u32.passes", B("L", 0, K)] if passes else ["grid.grid", B("L", 0, K)]
+        g = entry_grid(iface, e)
+        args = [g, "u32.passes", B("L", 0, K)] if passes else [g, B("L", 0, K)]
         R(f"kernel.entry_{e}", f"kernel.{e}", args, text, f"the entry point {e}: a grid and a body (no epilogue: the module has no primary output)", fields=True)
         empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n"
         R(f"own.kernel_{e}", f"kernel.{e}", [], empty, "the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it")
@@ -192,6 +210,16 @@ def build_module(iface):
     C("literal.blk_col", "u32.blk_col", "{v}", ["1", "2", "4", "8"], "?_blk_col")
     gx, gy, bx, by = iface["default_grid"]
     R("own.grid_grid", "grid.grid", [], f"{gx} {gy} {bx} {by} 1", "the interface's default grid")
+    for e, _ in iface["module"]:
+        m = min_wg_x(iface, e)
+        if m <= 1:
+            continue
+        if gx < m:
+            sys.exit(f"our software has a bug: the default grid's width {gx} is under entry {e}'s least {m}")
+        R(f"grid.of_{e}", f"grid.grid_{e}", [f"grid.shape_{e}", "u32.blk_col", "u32.blk_row", "u32.ktile"], "{0:0} {0:1} {1} {2} {3}",
+          f"entry {e}'s workgroup shape, blocks and tile depth as fields the entry spells", fields=True)
+        C(f"literal.shape_{e}", f"grid.shape_{e}", "{v}", [t for t in shape_table(iface) if int(t.split()[0]) >= m], f"?_shape_{e}: the shapes of width at least {m}")
+        R(f"own.grid_grid_{e}", f"grid.grid_{e}", [], f"{gx} {gy} {bx} {by} 1", "the interface's default grid")
     lo, hi = iface.get("passes", (1, 16))
     C("literal.passes", "u32.passes", "{v}", [str(n) for n in range(lo, hi + 1)], "?_passes: the harness reads the count from the header")
     R("own.u32_passes", "u32.passes", [], str(lo), "the domain's smallest value")
