@@ -90,6 +90,37 @@ pub fn source_gates(source: &str, entry: &str, contract: Contract, kingdom: &Wgs
     Ok(Gates { role: r.role.name.clone(), entry: r.role.entry.clone(), nodes: tree.size(), genes: c.genes.len(), rendered, round_trip })
 }
 
+/// The functions of a true-kingdom tree (its program size).
+fn true_functions(t: &crate::typed_gep::Tree, k: &crate::wgsl::true_kingdom::TrueKingdom) -> usize {
+    usize::from(!k.rows[t.symbol as usize].args.is_empty()) + t.kids.iter().map(|c| true_functions(c, k)).sum::<usize>()
+}
+
+/// The gates for a problem whose shipped kernel the true kingdom holds
+/// (`[kernel] kingdom = "wgsl_true"`): read exactly into the interface table
+/// of the problem's name under the problem's contract, encoded into genes that
+/// express the same trees, the expressed text validated by naga. Returns the
+/// entry points' program sizes.
+pub fn true_gates(dir: &Path, name: &str) -> Result<Vec<usize>, String> {
+    use crate::wgsl::true_kingdom::{default_dir, Rng, Share, TrueKingdom};
+    let problem = Problem::load(dir)?;
+    let k = TrueKingdom::load(&default_dir().join("mod").join(name))?;
+    let path = dir.join("safety.contract");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let c = crate::wgsl::true_reader::Contract::parse(&text, &["x", "y", "z", "w"])?;
+    let trees = crate::wgsl::true_reader::read_module(&k, &problem.reference, &c).map_err(|e| format!("parse: {e}"))?;
+    let sizes: Vec<usize> = trees.iter().map(|t| true_functions(t, &k)).collect();
+    let m = crate::wgsl::true_module::TrueModule::new(&k, &sizes)?;
+    let previous = m.random(1, &mut Rng(5), Share::Half, true)?;
+    let ch = m.encode(&trees, &previous).map_err(|e| format!("karva: does not encode: {e}"))?;
+    if m.entry_trees(&ch)? != trees {
+        return Err("karva: the genes express another tree".into());
+    }
+    let out = m.render(&ch)?;
+    let module = crate::wgsl::naga_shape::parse_unscanned(&out).map_err(|e| format!("validate: {e}"))?;
+    crate::wgsl::target::Target::current().validate(&module, &out).map_err(|e| format!("validate: {e}"))?;
+    Ok(sizes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +140,15 @@ mod tests {
             // The Gram's reference is the grid-headed Gram kernel of its own
             // interface; the flow's inferred interface is for a captured kernel.
             if p.spec.kernel.grid_header {
+                continue;
+            }
+            // A kernel the true kingdom holds goes through the true kingdom's gates.
+            if let Some(kingdom) = &p.spec.kernel.kingdom {
+                assert_eq!(kingdom, "wgsl_true", "{}: an unknown kingdom", d.display());
+                match true_gates(d, &p.spec.name) {
+                    Ok(sizes) => println!("{}: the true kingdom, entry program sizes {sizes:?}, read, expressed, validated", d.display()),
+                    Err(e) => failed.push(format!("{}: the true kingdom: {e}", d.display())),
+                }
                 continue;
             }
             match shipped_gates(d, &k, &Trial::default()) {

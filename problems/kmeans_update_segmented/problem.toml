@@ -27,6 +27,9 @@ on = "executor"
 entry = "hist"
 entries = ["offsets", "starts", "scatter", "mean"]
 reference = "segmented.wgsl"
+# The true kingdom holds this kernel (kingdoms/wgsl_true/mod/kmeans_update_segmented): the scatter stores at a slot
+# read from data, disjoint by the counting sort, which the safe kingdom's layer 7 cannot prove (flow::true_gates).
+kingdom = "wgsl_true"
 
 [[binding]]
 binding = 0

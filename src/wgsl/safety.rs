@@ -4577,4 +4577,32 @@ mod tests {
         assert_eq!(rule(&k("t + h * 128u", "i + jj"), &c), "workgroup_memory_race");
         assert_eq!(rule(&k("t + h * 256u", "i + 2u * jj"), &c), "workgroup_memory_race");
     }
+
+    /// A SEGMENTED SCRATCH (2026-10-31, the k-means `offsets` entry, `problems/kmeans_update_segmented`): each
+    /// invocation `c < k` reads `scratch[b * k + c]` (`b < nb`) and writes `scratch[nb * k + b * k + c]`. The
+    /// reads lie below `nb * k` and the writes at or above it, split at the symbolic stride `k`.
+    #[test]
+    fn a_segmented_scratch_reads_below_the_segment_it_writes() {
+        let c = Contract::parse(&std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/problems/kmeans_update_segmented/safety.contract")).expect("the contract")).expect("parses");
+        let src = |line: &str| format!("@group(0) @binding(3) var<uniform> params: vec4<u32>;
+@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
+    let n = params.x;
+    let k = params.y;
+    let nb = (n + 255u) / 256u;
+    let c = global_id.x;
+    if (c >= k) {{ return; }}
+    var run: u32 = 0u;
+    for (var b: u32 = 0u; b < nb; b = b + 1u) {{
+        {line}
+        run = run + scratch[b * k + c];
+    }}
+    scratch[2u * nb * k + c] = run;
+}}
+");
+        proved(&src("scratch[nb * k + b * k + c] = run;"), &c);
+        // Reading one cell over in the written segment: invocation c reads the cell invocation c + 1 writes.
+        assert_eq!(rule(&src("scratch[nb * k + b * k + c] = scratch[nb * k + b * k + c + 1u];"), &c), "output_read_of_another_invocations_cell");
+    }
 }

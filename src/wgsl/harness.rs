@@ -653,6 +653,14 @@ pub struct KernelSpec {
     /// program reads `mode_<name>` (1 when declared, else 0).
     #[serde(default)]
     pub modes: Vec<String>,
+    /// The kingdom that holds the shipped kernel: absent, the safe kingdom
+    /// (the flow's, `flow::shipped_gates`); `wgsl_true`, the true kingdom's
+    /// interface table of the problem's name (`flow::true_gates`), for a
+    /// kernel whose legality the safe kingdom cannot prove (the k-means
+    /// scatter's store at a slot read from data: its writes are disjoint by
+    /// the counting sort, not by any affine form).
+    #[serde(default)]
+    pub kingdom: Option<String>,
 }
 
 impl KernelSpec {

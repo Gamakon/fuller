@@ -1169,6 +1169,19 @@ impl<'a> Checker<'a> {
         Some(r)
     }
 
+    /// A uniform field's range under the dispatch contract (`param params.y 1 1024`
+    /// for the rows `load.params_y` and `uniform.params_y`): the contract the checker
+    /// proves layer 7 under also bounds the field's value in layers 3 and 6. A field
+    /// the contract does not name is not known here.
+    fn contract_param(&self, base: &str) -> Option<Iv> {
+        let rest = base.strip_prefix("load.").or_else(|| base.strip_prefix("uniform."))?;
+        let vars = std::iter::once(&self.role.uniform_var).chain(self.role.more_uniforms.iter().map(|u| &u.var));
+        vars.filter_map(|var| rest.strip_prefix(var.as_str())?.strip_prefix('_').map(|f| format!("{var}.{f}"))).find_map(|key| {
+            let (lo, hi) = *self.contract.params.get(&key)?;
+            (0..=hi).contains(&lo).then(|| Iv { lo: lo as u128, hi: hi.min(U32_MAX as i128) as u128 })
+        })
+    }
+
     /// The value of a u32 expression at the worst shape, when known; every
     /// child is evaluated (and every array access in it checked) either way.
     fn iv(&self, v: &Tree, cx: &mut Cx) -> Option<Iv> {
@@ -1245,6 +1258,7 @@ impl<'a> Checker<'a> {
             "load.cfg_m" | "bound.m" => Some(pt(WORST_M as u128)),
             "load.cfg_r_rows" | "bound.rows" => Some(pt(WORST_ROWS as u128)),
             "load.cfg_r_off" => Some(pt(0)),
+            b if v.kids.is_empty() && self.contract_param(b).is_some() => self.contract_param(b),
             "safe.counter" | "builtin.item" => if cx.in_items { cx.t.iv } else { Some(pt(0)) },
             b if tile_counter_depth(b).is_some() => match tile_counter_depth(b).and_then(|n| cx.tiles.get(n - 1)) {
                 Some(c) => c.iv,
@@ -1684,6 +1698,30 @@ mod tests {
         let counter = Tree::new("safe.counter_index", ty(&k, "u32.index"), vec![Tree::new("safe.counter", ty(&k, "u32.counter"), vec![])]);
         let early = with_body(&k, one_l0(Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i0", ty(&k, "reg<u32>.index"), vec![]), counter])));
         checker.check(&early).unwrap_or_else(|e| panic!("a counter outside its loop: {e}"));
+    }
+
+    /// THE CONTRACT BOUNDS A UNIFORM FIELD IN THE RANGE LAYER (2026-10-31): past the guard `gid.x >= k`, the
+    /// branch fact alone gives `k = params.y` the range [gid.x + 1, u32::MAX], so `gid.x * k` wraps at layer 3
+    /// (the k-means `offsets` entry's `b * k`, problems/kmeans_update_segmented). The dispatch contract's
+    /// `param params.y 1 1024` bounds it, and the store's cell is in range.
+    #[test]
+    fn the_contract_bounds_a_uniform_field_in_the_range_layer() {
+        let k = WgslKingdom::load_safe();
+        let src = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@group(0) @binding(1) var<uniform> params: vec4<u32>;
+@compute @workgroup_size(64, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k = params.y;
+    if (gid.x >= k) { return; }
+    out[gid.x * k] = 1u;
+}
+";
+        let r = crate::wgsl::safe_reader::read_safe(src, &k).unwrap_or_else(|e| panic!("does not read: {e}"));
+        let plain = crate::wgsl::params::to_literals(&r.tree, &k).expect("literals");
+        let range = |c: &str| Checker::with_contract(&k, &r.role, &Target::recorded(), Contract::parse(c).expect("contract")).range(&plain);
+        let e = range("workgroups x 1 1024\n").expect_err("params.y unbounded: the product wraps");
+        assert_eq!((e.layer, e.reason), (Layer::Range, "store_cell_wraps"), "{e}");
+        range("workgroups x 1 1024\nparam params.y 1 1024\n").unwrap_or_else(|e| panic!("params.y at most 1024: {e}"));
     }
 
     /// THE FINDING: 1,000 random genes from the kingdom's sampler (the safe
