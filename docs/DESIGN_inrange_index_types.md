@@ -127,7 +127,44 @@ declares `WG_PW = P` and `P + 4` words; no text that subscripts the pool spells 
 **Reader.** An entry's extent is the words its placed regions take (`place`), rounded up to 4 and at least 4: reply 2's
 one 256-word array gives `WG_PW = 256` and 260 declared words.
 
-## 9. Not covered (yet)
+## 9. Injective store indices (design 2026-10-31, bug D; not built)
+
+**The hole.** `store.scratch_*(u32.in_scratch, value)` stores any in-range cell from any invocation, so a gene can
+express two invocations storing one cell: a nondeterministic kernel, caught today only by the bit checks on 8 cases.
+The output's store is already its own cell (`u32.threadrow_*`/`u32.threadcol_*`); the scratch arena's is not.
+
+**The type.** `u32.inj_<B>_<R>`: a cell of region R of B that no other invocation of the dispatch stores. A store to B
+takes it. R is a region of the interface's layout, `[base_R, base_R + ext_R)`, with base and extent texts over the
+uniform's fields, as the runs of section 6 are; the witness proves the regions of one layout pairwise disjoint and
+inside the contract's length of B. One region per type is needed because two stores, each injective, are not injective
+together: invocation `i` storing `scratch[gid.x]` and invocation `j` storing `scratch[nb * k + gid.x]` collide when
+`j = i + nb * k`. Within one region, every store of an entry must use the same own map, so the minting rows below are
+the region's only producers, and one entry's stores to one region compose only through one map.
+
+| Row | Spelling | Why no two invocations store one cell |
+|---|---|---|
+| `inj.<B>_<R>_own(u32.own_<R>)` | `(base_R + {0})` | the own index is `gid.x`, below `ext_R` by its guard (`if (t >= ext) { return; }`, a guard row of section 2 over the region's extent): `gid.x` differs between invocations |
+| `inj.<B>_<R>_strided(u32.index, u32.own_k)` | `(base_R + {0} * k + {1})` | `{1}` is an own index below `k` (the stride, a uniform field): two invocations have different `{1}`, so different residues mod `k`; `{0}` is a loop counter below `ext_R / k` |
+| `inj.<B>_<R>_run(u32.own_<R>)` | `(<run base> + {0})` | a run of section 6 plus an own index below the run's length |
+| `inj.<B>_solo(u32.index)` | `{0}` inside `wg.solo*` of an entry the dispatch contract runs as ONE workgroup | one invocation stores at all (reply 2's `starts`: `lidx != 0u`, one workgroup) |
+
+`u32.own_<R>` and `u32.own_k` are minted only by `gid.x` (or `wid.x * WG + lidx`, reply 2's scatter) under a guard
+row whose length is `ext_R` (or `k`). Point mutation, transposition and crossover draw from the type's column, so an
+`u32.index` never fills an injective slot, and a guard register read outside its guard holds 0 or a value a guard of
+the same region proved: still the invocation's own value, since only own maps assign it.
+
+**The data-indexed store has no such proof.** The scatter's `scratch[ids + starts[a] + prefix[b][a] + rank]` (segmented
+line 84, reply 2 line 90, the champion's line 224) is injective only if the scratch holds the counting sort's true
+counts and scans, which other entries' genes wrote. A gene whose `hist` body is `{}` (legal: the scratch is zero,
+problem.toml `fill = "zero"`) leaves `starts = prefix = 0`, so the slot is the rank, and the first point of every
+block stores cell `ids + 0`. No type of the scatter's own gene can see that, so "offsets[bin] + rank" cannot be a
+minting row. The true-GEP plan says the same (`PLAN_true_gep_wgsl.md`, the rule ledger's layer 7: "scatter writes go
+through atomics"). The construction that is deterministic for ANY slot value is `atomicMax(&ids[slot], v + 1u)` into a
+zero region: the result is order-independent, and equals the plain store (plus one) whenever the slots are distinct,
+as they are for a correct sort. It needs the ids region as an `array<atomic<u32>>` binding of its own, an interface
+change to UltraDim's driver, and its cost must be measured against the plain store before it is adopted.
+
+## 10. Not covered (yet)
 
 An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
 through the clamp row.
