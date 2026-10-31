@@ -857,6 +857,43 @@ mod tests {
         assert!(free > 100);
     }
 
+    /// THE ENTRY-START TYPE rests on this (`kingdoms/wgsl_true/start.py`): a first phase spells no barrier before it, so
+    /// nothing the share pass places ahead of an entry's body may read workgroup memory. In every pool table, a row that
+    /// names a workgroup variable, a barrier, or a prologue function whose body reaches one (transitively) is never
+    /// context-free, so the share pass never binds it into a `let`.
+    #[test]
+    fn the_share_pass_never_binds_a_workgroup_read_ahead_of_a_first_phase() {
+        let dir = default_dir().join("mod");
+        for iface in ["kmeans_update_segmented", "kmeans_update", "v24_k1"] {
+            let k = TrueKingdom::load(&dir.join(iface)).unwrap_or_else(|e| panic!("{e}"));
+            let free = context_free_rows(&k);
+            let declared = |kw: &str| k.prologue.split(kw).skip(1).filter_map(|r| r.split(':').next()).map(|n| n.trim().to_string()).collect::<BTreeSet<String>>();
+            let mut wg = declared("var<workgroup>");
+            assert!(wg.contains("wg_pool"), "{iface} declares the pool");
+            wg.extend(["workgroupBarrier".to_string(), "workgroupUniformLoad".to_string()]);
+            let defs = fn_defs(&k.prologue);
+            loop {
+                let reach: Vec<String> = defs.iter().filter(|f| !wg.contains(f.name) && identifiers(f.body).iter().any(|i| wg.contains(*i))).map(|f| f.name.to_string()).collect();
+                if reach.is_empty() {
+                    break;
+                }
+                wg.extend(reach);
+            }
+            let (mut touching, mut free_touching) = (0, Vec::new());
+            for (i, r) in k.rows.iter().enumerate() {
+                let p = placeholders(&r.spelling, r.args.len());
+                if identifiers(&p.wgsl).iter().any(|n| wg.contains(*n)) {
+                    touching += 1;
+                    if free[i] {
+                        free_touching.push(r.name.clone());
+                    }
+                }
+            }
+            assert!(touching > 100, "{iface}: {touching} rows touch workgroup memory");
+            assert!(free_touching.is_empty(), "{iface}: context-free rows that touch workgroup memory: {free_touching:?}");
+        }
+    }
+
     /// On random genes: the shared tree is well typed, unshares to the expressed tree, renders without lets to the
     /// kingdom's text, and naga accepts the shared text exactly when it accepts the unshared one.
     #[test]

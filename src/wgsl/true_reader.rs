@@ -3887,6 +3887,22 @@ fn needs_l(sts: &[St]) -> bool {
 }
 
 impl<'a> Reader<'a> {
+    /// The entry's body as the entry-start type when the table has it (`kingdoms/wgsl_true/start.py`): a body that opens
+    /// with a workgroup phase reads as that phase's first-phase row, spelled with no barrier before it (nothing of the
+    /// dispatch runs before it); any other body through `block.start_body`. A table without the type keeps the body.
+    fn start_body(&self, body: Tree, k: u32) -> Tree {
+        let Some(&wrap) = self.rows_by_name.get("block.start_body") else { return body };
+        if body.kids.len() == 1 && self.k.rows[body.symbol as usize].name.starts_with("block.one_L0_") {
+            let first = &self.k.rows[body.kids[0].symbol as usize].name;
+            let twin = first.strip_suffix(&format!("_L0_f{k}")).filter(|b| b.starts_with("wg.")).and_then(|b| self.rows_by_name.get(&format!("{b}_start")));
+            if let Some(&row) = twin {
+                let phase = body.kids.into_iter().next().map(|p| p.kids).unwrap_or_default();
+                return Tree { symbol: row, const_index: None, kids: phase };
+            }
+        }
+        Tree { symbol: wrap, const_index: None, kids: vec![body] }
+    }
+
     /// One entry point read into the tree of its gene: `kernel.entry_<e>(grid, [passes,] body)`.
     fn entry(&mut self, ep: &'a naga::EntryPoint, info: &'a naga::valid::FunctionInfo, passes: u32) -> R<Tree> {
         let mut args = Vec::new();
@@ -3930,7 +3946,8 @@ impl<'a> Reader<'a> {
         if need > k {
             return gap(format!("fuel: the entry {} needs stratum {need}, the table's budget is K = {k}", ep.name));
         }
-        let mut body = self.block(&out, 'L', 0, k)?;
+        let body = self.block(&out, 'L', 0, k)?;
+        let mut body = self.start_body(body, k);
         let [x, y, z] = ep.workgroup_size;
         if z != 1 {
             return gap(format!("a workgroup of depth {z}"));
@@ -4336,6 +4353,61 @@ mod tests {
         assert_eq!(v24.pool_words(), P_WORDS, "an interface that names no pool_words keeps 6,080");
         let e = read_module(&k, &reply("reply1_g0_r3.wgsl"), &c).expect_err("reply 1 places points by atomic order").to_string();
         assert!(e.contains("WgRmw") && e.contains("as u32.index"), "reply 1 stops elsewhere: {e}");
+    }
+
+    /// THE ENTRY-START TYPE (`kingdoms/wgsl_true/start.py`, 2026-10-31: the barrier before reply 2's first scatter phase
+    /// cost the entry 2 %): reply 2's scatter entry, which opens with a phase, reads as that phase's first-phase row, and
+    /// its expressed and shared texts spell no barrier before the phase's first pool write and bind no workgroup read in
+    /// a `let`. The witness proves every module table and names two hand-edited ones.
+    #[test]
+    fn an_entry_opening_with_a_phase_spells_no_barrier_before_it() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = crate::wgsl::true_kingdom::default_dir();
+        let k = TrueKingdom::load(&dir.join("mod").join("kmeans_update_segmented")).expect("the table");
+        let share = crate::wgsl::true_share::Share::load(&k).expect("the share rows");
+        let c = Contract::parse(&std::fs::read_to_string(root.join("problems/kmeans_update_segmented/safety.contract")).expect("contract"), &["x", "y", "z", "w"]).expect("contract");
+        let src = std::fs::read_to_string(root.join("tests/corpus/kmeans_model_replies/reply2_g0_r4.wgsl")).expect("reply 2");
+        let kids = read_module(&k, &src, &c).expect("reply 2 reads");
+        let body = |t: &Tree| k.rows[t.kids.last().expect("a body").symbol as usize].name.clone();
+        assert_eq!(body(&kids[3]), "wg.phase_start", "the scatter entry opens with its first phase");
+        assert_eq!(body(&kids[0]), "block.start_body", "the hist entry opens with no phase");
+        let link = k.rows.iter().position(|r| Some(&r.name) == k.linker.as_ref()).expect("linker") as u32;
+        let tree = Tree { symbol: link, const_index: None, kids };
+        for text in [k.render(&tree).expect("render"), share.render(&k, &share.share(&k, &tree).expect("share").tree).expect("render")] {
+            let scatter = &text[text.find("fn scatter(").expect("the scatter entry")..];
+            let scatter = &scatter[..scatter.find("\n}\n").expect("its end")];
+            let (write, barrier) = (scatter.find("wg_pool[o] =").expect("the phase's write"), scatter.find("workgroupBarrier").expect("the phase's barrier"));
+            assert!(write < barrier, "a barrier before the first phase's write");
+            assert!(scatter.lines().filter(|l| l.trim_start().starts_with("let st")).all(|l| !l.contains("wg_")), "a let reads workgroup memory");
+        }
+        let witness = |d: &std::path::Path| std::process::Command::new("python3").arg(dir.join("start.py")).arg(d).output().expect("python3 runs");
+        for iface in ["kmeans_update", "kmeans_update_segmented", "v24", "v24_k1"] {
+            let out = witness(&dir.join("mod").join(iface));
+            assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("start witness: 0 problems"), "{iface}: {}", String::from_utf8_lossy(&out.stdout));
+        }
+        let src = dir.join("mod").join("kmeans_update_segmented");
+        let f = std::fs::read_to_string(src.join("functions.tsv")).expect("functions");
+        let phase = "\twg.phase_start\tfunction\tblock.start\t";
+        let body_row = "\tblock.start_body\tfunction\tblock.start\tblock.L0_f4\t";
+        assert!(f.contains(phase) && f.contains(body_row));
+        for (edit, want) in [
+            (f.replace(phase, "\twg.phase_start\tfunction\tstmt.L1_f4\t"), "spells a phase with no barrier before it outside block.start"),
+            (f.replace(body_row, "\tblock.start_body\tfunction\tblock.L1_f4\tblock.start\t"), "takes block.start and is not an entry"),
+        ] {
+            let bad = std::env::temp_dir().join(format!("start_witness_{}", std::process::id()));
+            std::fs::create_dir_all(&bad).expect("temp dir");
+            for g in ["interface.tsv", "prologue.wgsl", "declarations.wgsl"] {
+                std::fs::copy(src.join(g), bad.join(g)).expect("copy");
+            }
+            std::fs::write(bad.join("functions.tsv"), edit).expect("write");
+            let out = witness(&bad);
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            for g in ["interface.tsv", "prologue.wgsl", "declarations.wgsl", "functions.tsv"] {
+                std::fs::remove_file(bad.join(g)).expect("rm");
+            }
+            std::fs::remove_dir(&bad).expect("rmdir");
+            assert!(!out.status.success() && text.contains(want), "{want}: {text}");
+        }
     }
 
     /// IN-RANGE INDICES AS A TYPE (docs/DESIGN_inrange_index_types.md): the generator's witness proves every rule from

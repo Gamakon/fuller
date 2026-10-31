@@ -34,7 +34,7 @@ def main(argv):
     # K and the strata are read by the submodules when they are imported
     # `phase_depth`: how deep the pool's phase rungs nest (6, every depth, unless the interface says less)
     lib.configure(iface.get("fuel_budget", 1), epilogue=not iface.get("module"), pools=bool(iface.get("wg_pool")), phase_depth=iface.get("phase_depth", 6))
-    skeleton, values, regs, loops, wg, vectors = (importlib.import_module(m) for m in ("skeleton", "values", "regs", "loops", "wg", "vectors"))
+    skeleton, values, regs, loops, wg, vectors, start = (importlib.import_module(m) for m in ("skeleton", "values", "regs", "loops", "wg", "vectors", "start"))
     image = importlib.import_module("image") if iface.get("image") else None
     arena = importlib.import_module("arena") if iface.get("arenas") or iface.get("row_outputs") else None
     pool = importlib.import_module("pool") if iface.get("wg_pool") else None
@@ -42,6 +42,7 @@ def main(argv):
     os.makedirs(outdir, exist_ok=True)
     # types first (every row names declared types), in dependency order
     skeleton.declare_types(iface)
+    start.declare(iface)
     values.declare(iface)
     vectors.declare(iface)
     regs.declare(iface)
@@ -52,6 +53,7 @@ def main(argv):
         # a pool interface (s9 batch 9) keeps all its workgroup memory in the two pools of pool.py, not the stratum map
         wg.declare(iface)
     skeleton.build(iface)
+    start.build(iface)
     values.build(iface)
     vectors.build(iface)
     regs.build(iface)
@@ -72,6 +74,10 @@ def main(argv):
     bare = lib.finish_bare()
     # docs/DESIGN_inrange_index_types.md: every in-range rule proved from the emitted spellings before anything is written
     for p in inrange.witness(iface):
+        print("PROBLEM:", p)
+        return 1
+    # the entry-start type (start.py): a first-phase row stands only where nothing of the dispatch ran before it
+    for p in start.witness(iface):
         print("PROBLEM:", p)
         return 1
     problems, produced = lib.write_all(outdir, "kernel.module" if iface.get("module") else "kernel.safe", iface)

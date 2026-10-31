@@ -3,6 +3,7 @@ import sys
 store, the ownership rows (design section 9). Every statement and block type
 carries a depth `d` (the loop ladder) and a fuel stratum `k` (batch 3)."""
 from lib import *
+from start import body_type
 
 AXES_COLS_X = "fn row_axis(g: vec3<u32>) -> u32 { return g.y; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.x; }\n"
 AXES_ROWS_X = "fn row_axis(g: vec3<u32>) -> u32 { return g.x; }\nfn col_axis(g: vec3<u32>) -> u32 { return g.y; }\n"
@@ -196,7 +197,7 @@ def build_module(iface):
         head = "// passes {1}\n" if passes else ""
         text = head + "@compute @workgroup_size({0:0}, {0:1}, 1)\nfn " + e + "(" + MODULE_IDS + ") {\n" + knobs + "<declarations>\n" + body + "\n}\n"
         g = entry_grid(iface, e)
-        args = [g, "u32.passes", B("L", 0, K)] if passes else [g, B("L", 0, K)]
+        args = [g, "u32.passes", body_type()] if passes else [g, body_type()]
         R(f"kernel.entry_{e}", f"kernel.{e}", args, text, f"the entry point {e}: a grid and a body (no epilogue: the module has no primary output)", fields=True)
         empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n"
         R(f"own.kernel_{e}", f"kernel.{e}", [], empty, "the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it")

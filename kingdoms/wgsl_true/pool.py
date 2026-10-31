@@ -32,6 +32,7 @@ interface's determinism, batch 8): a read-modify-write, load or store at any ele
 race, its old value order-dependent (`u32.atomicold`). `workgroupUniformLoad` of a pool word is a uniform value.
 """
 from lib import *
+from start import LEAD, START, first_phase
 
 P_WORDS = 6080
 # the guard word (UI1, 2026-10-23): the plain pool holds one word past P_WORDS that no row ever writes (every write is
@@ -232,25 +233,31 @@ def build(iface):
             R(f"wg.zload_{key}_Z{d}_f{k}", s, [REGS[key], "u32.wgbase", "u32.indexa"], "{0} = " + rd.format(f"wg_pool[min(max({{1}} + {{2}}, sp), {last}u)]") + ";", "a read at or above the split")
     R("wg.zown_x", "u32.zown", ["u32.indexa"], "(lidx + {0} * KNOB_THREADS)", "an own offset: lidx + k * T is injective across invocations")
     R("own.u32_zown", "u32.zown", [], "lidx", "the invocation's own offset in the window's first T")
+    def phase(name, d, k, args, spell, note):
+        """A phase row at rung L<d>_f<k>; at the entry body's rung, also its first-phase twin of the entry-start type,
+        spelled without the leading barrier (nothing of the dispatch runs before it: start.py proves it)."""
+        R(name, S("L", d, k), args, spell, note)
+        if d == 0 and k == K and START in TYPES:
+            R(first_phase(name), START, args, spell.removeprefix(LEAD), note + "; the first phase of an entry: no barrier before it")
     for x, d, k in rungs("L"):
         # a phase opens at an L depth its body's rungs reach (an interface's `phase_depth`)
         if d not in DEPTH["S"]:
             continue
         s = S("L", d, k)
-        R(f"wg.zsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.xspan", B("Z", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let zw = {1}; {2} } workgroupBarrier(); {3}", "the segment phase: writes into the windows of the prefix table, blocks of zw words below sp; reads at or above sp")
-        R(f"wg.gsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")
-        R(f"wg.slot_L{d}_f{k}", s, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
-        R(f"wg.bphase_L{d}_f{k}", s, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
-        R(f"wg.bsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let bc = {1}; {2} } workgroupBarrier(); {3}", "the block-write phase with a split: block writes below sp, reads of other arrays at or above it")
-        R(f"wg.xchg_L{d}_f{k}", s, ["u32.uniform", "u32.xmode", "u32.xspan", B("E", d, k), B("L", d, k)], "workgroupBarrier(); { let xh0 = {0}; let xh = xh0 & (0u - xh0); let xm = {1}; let xs = {2}; {3} } workgroupBarrier(); {4}", "the swap-pair phase: each invocation writes only the pairs (i, i | h) its own elements name, h a power of two, in blocks of xs words")
-        R(f"wg.phase_L{d}_f{k}", s, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
-        R(f"wg.pair_L{d}_f{k}", s, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = KNOB_THREADS; let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")
-        R(f"wg.qpair_L{d}_f{k}", s, ["u32.uniform", "u32.lanes", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = min({1}, KNOB_THREADS); let ps = min({0}, qm / 2u); if (lidx < ps) { {2} } } workgroupBarrier(); {3}", "the tree step at a granularity of qm lanes (a power of two dividing T): writers below ps <= qm / 2 write lidx + k qm, partners at residue lidx + ps modulo qm")
-        R(f"wg.split_L{d}_f{k}", s, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = KNOB_THREADS; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
-        R(f"wg.split2_L{d}_f{k}", s, ["u32.wgbase", "u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = {0}; let sp = {1}; let qm = KNOB_THREADS; {2} } workgroupBarrier(); {3}", "the split phase over a window: writes in [sl, sp), reads outside it, the written region anywhere in the pool")
-        R(f"wg.qsplit_L{d}_f{k}", s, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
-        R(f"wg.solo_L{d}_f{k}", s, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
-        R(f"wg.solo_at_L{d}_f{k}", s, ["u32.uniform", B("S", d, k), B("L", d, k)], "workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}", "the phase of the one invocation a uniform value names (lidx == u, the same u in every invocation)")
+        phase(f"wg.zsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.xspan", B("Z", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let zw = {1}; {2} } workgroupBarrier(); {3}", "the segment phase: writes into the windows of the prefix table, blocks of zw words below sp; reads at or above sp")
+        phase(f"wg.gsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.lanes", B("G", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let qg = min({1}, KNOB_THREADS); if (lidx % qg == 0u) { {2} } } workgroupBarrier(); {3}", "the group phase: the leader of each group of qg lanes writes its own group elements below sp")
+        phase(f"wg.slot_L{d}_f{k}", d, k, ["u32.wgbase", "u32.slotc", "u32.xspan", B("A", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let sc = {1}; let ss = {2}; rs0 = 4294967295u; rs1 = 4294967295u; rs2 = 4294967295u; rs3 = 4294967295u; {3} } workgroupBarrier(); {4}", "the slot phase: writes at the slots one counter hands out, below the split; reads above it")
+        phase(f"wg.bphase_L{d}_f{k}", d, k, ["u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let bc = {0}; let sp = " + str(P_WORDS) + "u; {1} } workgroupBarrier(); {2}", "the block-write phase: each invocation writes only its own blocks of bc elements")
+        phase(f"wg.bsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.bcount", B("Y", d, k), B("L", d, k)], "workgroupBarrier(); { let sp = {0}; let bc = {1}; {2} } workgroupBarrier(); {3}", "the block-write phase with a split: block writes below sp, reads of other arrays at or above it")
+        phase(f"wg.xchg_L{d}_f{k}", d, k, ["u32.uniform", "u32.xmode", "u32.xspan", B("E", d, k), B("L", d, k)], "workgroupBarrier(); { let xh0 = {0}; let xh = xh0 & (0u - xh0); let xm = {1}; let xs = {2}; {3} } workgroupBarrier(); {4}", "the swap-pair phase: each invocation writes only the pairs (i, i | h) its own elements name, h a power of two, in blocks of xs words")
+        phase(f"wg.phase_L{d}_f{k}", d, k, [B("W", d, k), B("L", d, k)], "workgroupBarrier(); {0} workgroupBarrier(); {1}", "the write phase: own writes and own reads only")
+        phase(f"wg.pair_L{d}_f{k}", d, k, ["u32.uniform", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = KNOB_THREADS; let ps = min({0}, KNOB_THREADS / 2u); if (lidx < ps) { {1} } } workgroupBarrier(); {2}", "the tree step: invocations below ps write own elements and read their partners")
+        phase(f"wg.qpair_L{d}_f{k}", d, k, ["u32.uniform", "u32.lanes", B("P", d, k), B("L", d, k)], "workgroupBarrier(); { let qm = min({1}, KNOB_THREADS); let ps = min({0}, qm / 2u); if (lidx < ps) { {2} } } workgroupBarrier(); {3}", "the tree step at a granularity of qm lanes (a power of two dividing T): writers below ps <= qm / 2 write lidx + k qm, partners at residue lidx + ps modulo qm")
+        phase(f"wg.split_L{d}_f{k}", d, k, ["u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = KNOB_THREADS; {1} } workgroupBarrier(); {2}", "the split phase: writes below sp, foreign reads at or above it, so no element is both read and written")
+        phase(f"wg.split2_L{d}_f{k}", d, k, ["u32.wgbase", "u32.wgbase", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = {0}; let sp = {1}; let qm = KNOB_THREADS; {2} } workgroupBarrier(); {3}", "the split phase over a window: writes in [sl, sp), reads outside it, the written region anywhere in the pool")
+        phase(f"wg.qsplit_L{d}_f{k}", d, k, ["u32.wgbase", "u32.lanes", B("X", d, k), B("L", d, k)], "workgroupBarrier(); { let sl = 0u; let sp = {0}; let qm = min({1}, KNOB_THREADS); if (lidx < qm) { {2} } } workgroupBarrier(); {3}", "the lane-split phase: the lanes below qm (a power of two dividing T) run a split phase whose own elements are lidx + k qm; a T-own element lidx + k T is one of them")
+        phase(f"wg.solo_L{d}_f{k}", d, k, [B("S", d, k), B("L", d, k)], "workgroupBarrier(); if (lidx == 0u) { {0} } workgroupBarrier(); {1}", "one invocation's phase")
+        phase(f"wg.solo_at_L{d}_f{k}", d, k, ["u32.uniform", B("S", d, k), B("L", d, k)], "workgroupBarrier(); { let su = {0}; if (lidx == su) { {1} } } workgroupBarrier(); {2}", "the phase of the one invocation a uniform value names (lidx == u, the same u in every invocation)")
         R(f"wg.uload_L{d}_f{k}", s, ["ureg<u32>.uniform", "u32.wgbase", "u32.uniform"], "{0} = workgroupUniformLoad(&wg_pool[min({1} + {2}, " + str(last) + "u)]);", "the pointer is uniform and the call is a control barrier: L rungs only; the value is uniform")
     R("own.u32_atomicold", "u32.atomicold", [], "lit_u32(0u)", "a value whose consumer discards it")
     R("own.u32_atomicoldw", "u32.atomicoldw", [], "lit_u32(0u)", "its w twin")
