@@ -175,6 +175,26 @@ impl<'d> CaseSet<'d> {
         self.exec.unsplit(whole, || self.time(k, info, i))
     }
 
+    /// One run of a compiled kernel on timing case `i` UNSPLIT with its output read back (the timing case's output is
+    /// checked against the yardstick's: a kernel exact on the quality cases need not be on the timing case's sizes).
+    pub fn timing_output_unsplit(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize, whole: u128) -> Result<Vec<f32>, String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        let r = self.exec.unsplit(whole, || self.run_slot(k, info, s, true))?;
+        let bytes = r.outputs.get(self.out_index).ok_or_else(|| format!("timing case {}: the run read no {}", s.case.name, self.out.name))?;
+        Ok(crate::wgsl::harness::bytemuck_f32(bytes))
+    }
+
+    /// The constraint suite's pass value (its tolerance) at timing case `i`'s sizes.
+    pub fn timing_pass(&self, i: usize) -> Result<f64, String> {
+        let s = self.timing.get(i).ok_or_else(|| format!("no timing case {i}"))?;
+        let su = self.problem.suites.iter().find(|x| x.spec.role == crate::wgsl::harness::Role::Constraint).ok_or("the problem has no constraint suite")?;
+        let env = self.problem.env(&s.case, self.exec.binding_limit())?;
+        match &su.spec.pass {
+            Some(p) => crate::wgsl::harness::eval(p, &env),
+            None => Ok(0.0),
+        }
+    }
+
     /// One timed run of a compiled kernel on timing case `i`: its GPU milliseconds (the sum of its dispatches'
     /// timestamps), nothing read back.
     pub fn time(&self, k: &<DeviceExecutor<'d> as Executor>::Kernel, info: &KernelInfo, i: usize) -> Result<f64, String> {
