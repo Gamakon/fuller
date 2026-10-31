@@ -34,6 +34,11 @@ def entry_grid(iface, e):
     return f"grid.grid_{e}" if min_wg_x(iface, e) > 1 else "grid.grid"
 
 
+def scaffold_entries(iface):
+    """The entries the counting-sort scaffold builds (countsort.py, docs/DESIGN_inrange_index_types.md section 10)."""
+    return tuple(iface.get("counting_sort", {}).get("entries", ()))
+
+
 def declare_types(iface):
     if iface.get("module"):
         # s9 batch 8: a module of several entry points, each a normal gene rooted at its own entry type, joined by the
@@ -41,7 +46,7 @@ def declare_types(iface):
         T("kernel.module", "a module of entry points: the fixed linker's root")
         for e, _ in iface["module"]:
             T(f"kernel.{e}", f"the entry point {e}: the root of its normal gene")
-            if min_wg_x(iface, e) > 1:
+            if min_wg_x(iface, e) > 1 and e not in scaffold_entries(iface):
                 T(f"grid.shape_{e}", f"a workgroup shape of entry {e} whose width is at least {min_wg_x(iface, e)}: its workgroup count fits {iface['max_workgroups_x']} at the problem's largest sizes")
                 T(f"grid.grid_{e}", f"the entry {e}'s workgroup shape and block")
         T("u32.passes", "the // passes N count, a literal in the interface's declared range", 1, "1..=16")
@@ -197,6 +202,13 @@ def build_module(iface):
              "const KNOB_KTILE: u32 = {0:4}u; const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n")
     entries = []
     for e, passes in iface["module"]:
+        if e in scaffold_entries(iface):
+            # countsort.py: the counting-sort scaffold's entries (section 10): hist, offsets and starts are the
+            # scaffold's own terminals, the scatter's head and prologue the scaffold's; the scatter keeps its empty entry
+            if e == "scatter":
+                R(f"own.kernel_{e}", f"kernel.{e}", [], f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n", "the empty entry: it stores nothing")
+            entries.append(f"kernel.{e}")
+            continue
         # the pool's extent (pool.py, 2026-10-31): an entry of a pool interface names the words of the plain pool it
         # declares, a comment of its text; the renderer declares the largest of the module's entries (WG_PW)
         pool = bool(iface.get("wg_pool"))
@@ -220,7 +232,7 @@ def build_module(iface):
     R("own.grid_grid", "grid.grid", [], f"{gx} {gy} {bx} {by} 1", "the interface's default grid")
     for e, _ in iface["module"]:
         m = min_wg_x(iface, e)
-        if m <= 1:
+        if m <= 1 or e in scaffold_entries(iface):
             continue
         if gx < m:
             sys.exit(f"our software has a bug: the default grid's width {gx} is under entry {e}'s least {m}")

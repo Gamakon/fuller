@@ -250,6 +250,9 @@ KMEANS_UPDATE_SEGMENTED = dict(
     len_bounds={"vectors": ["x", "z"], "assignments": ["x"], "scratch": ["x", "y"]},
     # the offset types' runs (docs/DESIGN_inrange_index_types.md section 6): the counting sort's totals and starts
     runs={"scratch": [dict(name="tot", base="2 * nb * y", len="y"), dict(name="st", base="2 * nb * y + y", len="y")]},
+    # compiler-assigned slots for the scatter (countsort.py, docs/DESIGN_inrange_index_types.md section 10): hist,
+    # offsets and starts are the scaffold's, the scatter's slot is the scaffold's, the grouped ids live in scratch
+    counting_sort=dict(entries=("hist", "offsets", "starts", "scatter"), ids="scratch"),
     extra_constants={"index": ["0", "1", "2", "255", "256"], "count": ["0", "1", "2", "255", "256"], "real": ["0.0"], "lit4096": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "32", "64", "128", "255", "256", "512", "1024", "2048", "4096"]},
     prologue_top=KMEANS_UPDATE["prologue_top"] + "@group(0) @binding(4) var<storage, read_write> scratch: array<u32>;\n",
 )

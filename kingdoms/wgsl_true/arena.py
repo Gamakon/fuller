@@ -53,7 +53,9 @@ def build(iface):
             R(f"load.{n}", ty, ["u32.index"], f"{n}[min({{0}}, arrayLength(&{n}) - 1u)]", "a read of any cell of the arena (another invocation may be writing it)", twin=True)
         R(f"load.{n}_len", "u32.count", [], f"arrayLength(&{n})", twin=True)
         typed = iface.get("inrange_types") and not atomic
-        for x, d, k in rungs("LCWSPXEYAGZ"):
+        # section 10 (countsort.py): an arena that holds a counting sort is written only by its scaffold and the
+        # cluster store; a store at any cell would let two invocations store one cell
+        for x, d, k in ([] if iface.get("counting_sort") else rungs("LCWSPXEYAGZ")):
             it, vt_ = (fam(x, f"u32.in_{n}" if typed else "u32.index"), fam(x, ty))
             cell = f"{n}[min(i, arrayLength(&{n}) - 1u)]"
             text = f"{{ let i = {{0}}; atomicStore(&{cell}, {{1}}); }}" if atomic else f"{{ let i = {{0}}; {cell} = {{1}}; }}"

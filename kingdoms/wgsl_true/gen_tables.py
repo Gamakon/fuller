@@ -50,6 +50,8 @@ def main(argv):
     inrange = importlib.import_module("inrange")
     inrange.declare(iface)
     inrange.declare_runs(iface)
+    countsort = importlib.import_module("countsort")
+    countsort.declare(iface)
     if not pool:
         # a pool interface (s9 batch 9) keeps all its workgroup memory in the two pools of pool.py, not the stratum map
         wg.declare(iface)
@@ -72,6 +74,7 @@ def main(argv):
         arena.build(iface)
     inrange.build(iface)
     inrange.build_runs(iface)
+    countsort.build(iface)
     twins = lib.finish_twins()
     bare = lib.finish_bare()
     # docs/DESIGN_inrange_index_types.md: every in-range rule proved from the emitted spellings before anything is written
@@ -83,12 +86,19 @@ def main(argv):
         print("PROBLEM:", p)
         return 1
     # the pool's extent (pool.py): every subscript of the plain pool in range of WG_PW + 4 words, whatever WG_PW is
+    # compiler-assigned slots (countsort.py, section 10): every durable write is an own-index store or the cluster store,
+    # every scaffold a compiler variant byte for byte
+    for p in countsort.witness(iface):
+        print("PROBLEM:", p)
+        return 1
     pool_problems = pool.witness(iface) if pool else []
     for p in pool_problems:
         print("PROBLEM:", p)
     if pool_problems:
         return 1
     problems, produced = lib.write_all(outdir, "kernel.module" if iface.get("module") else "kernel.safe", iface)
+    countsort.write(outdir, iface)
+    problems += countsort.check_dir(outdir, iface) if countsort.enabled(iface) else []
     print(f"{len(lib.TYPES)} types, {len(lib.ROWS)} rows ({twins} w twins, {bare} bare-literal twins), {sum(1 for r in lib.ROWS.values() if r['values'] is not None)} constant placeholders")
     for p in problems:
         print("PROBLEM:", p)

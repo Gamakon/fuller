@@ -279,6 +279,11 @@ def witness(iface):
     clamp = {b: f"min({{}}, arrayLength(&{b}) - 1u)" for b in bs}
     for name, r in ROWS.items():
         sp = r["spell"]
+        if name.startswith("cs."):
+            # a counting-sort scaffold (countsort.py): a reference kernel's own entry text, in range by the contract's
+            # lengths as the kernel is (its subscripts are checked by the CPU executor on every case, a Rust test), not
+            # by these rules; countsort's witness proves it is a compiler variant byte for byte
+            continue
         for b in bs:
             # rule 1: every subscript of B is {i} of type in_B, or a clamp text
             for m in subscript[b].finditer(sp):
