@@ -326,3 +326,54 @@ mod tests {
         assert!(!srbench_equivalent(model, truth, &vars(2)).unwrap(), "x0/x1 != x1/x0");
     }
 }
+
+#[cfg(test)]
+mod sympy_agreement {
+    use super::*;
+
+    /// THE SYMPY AGREEMENT, MEASURED. The claim "fuller = SymPy on 11 of 12" (2026-09-28) came from a table
+    /// phylu/logs/score_all*.py printed and never saved. `parity/gen_srbench_equiv_fixture.py` re-measures SymPy's
+    /// side OFFLINE (SRBench's own `srbench_solution`, 120 s a law) on the same twelve tidied models
+    /// (phylu/logs/SIX_SOLVED and SIX_SOLVED_B) and saves it in `tests/fixtures/srbench_equiv_sympy.tsv`; this test
+    /// runs fuller on the same pairs, with no SymPy.
+    ///
+    /// Measured 2026-11-01: SymPy decides 10 of the 12 (9 the law, I_12_4 not) and times out on test_9 and
+    /// I_30_3; fuller agrees with SymPy on all 10 it decides; on the two SymPy cannot decide, fuller says neither is
+    /// the law (in ~4 s for the whole table). So the saved statement is "10 of 10 that SymPy decides, 2 that SymPy
+    /// cannot decide"; "11 of 12" counted one undecided law as agreement.
+    #[test]
+    fn agreement_with_sympy_on_the_twelve_laws() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/srbench_equiv_sympy.tsv");
+        let text = std::fs::read_to_string(&path).expect("the SymPy fixture (parity/gen_srbench_equiv_fixture.py)");
+        let mut rows = 0usize;
+        let (mut decided, mut agree) = (0usize, 0usize);
+        let mut undecided: Vec<(String, bool)> = Vec::new();
+        for line in text.lines().skip(1) {
+            let f: Vec<&str> = line.split('\t').collect();
+            assert_eq!(f.len(), 7, "a fixture row has seven fields: {line}");
+            let (law, vars, sympy, truth, model) = (f[0], f[1], f[2], f[5], f[6]);
+            let vars: Vec<String> = vars.split(',').map(str::to_string).collect();
+            let ours = srbench_equivalent(model, truth, &vars).unwrap_or_else(|e| panic!("{law}: {e}"));
+            rows += 1;
+            match sympy {
+                "pass" | "fail" => {
+                    decided += 1;
+                    if ours == (sympy == "pass") {
+                        agree += 1;
+                    } else {
+                        eprintln!("DISAGREE {law}: sympy {sympy}, fuller {ours}");
+                    }
+                }
+                "undecided" => undecided.push((law.to_string(), ours)),
+                other => panic!("{law}: a SymPy verdict of {other}"),
+            }
+        }
+        assert_eq!(rows, 12, "the twelve laws");
+        assert_eq!((decided, agree), (10, 10), "fuller agrees with every verdict SymPy reaches");
+        assert_eq!(
+            undecided,
+            vec![("feynman_test_9".to_string(), false), ("feynman_I_30_3".to_string(), false)],
+            "SymPy times out on two; fuller says neither is the law"
+        );
+    }
+}
