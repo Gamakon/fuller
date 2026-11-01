@@ -112,3 +112,7 @@ cabal.tar.xz
 
 # Experiment results kept on this machine, not pushed (copied from the scratch space).
 /results/
+
+# Scratch scripts and logs of agents (Rules.md: temporary scripts go in tmp/), and LaTeX auxiliary files.
+/tmp/
+papers/*.toc
