@@ -4975,6 +4975,41 @@ mod tests {
         assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Constraint, None), 26 * 8);
     }
 
+    /// THE CHECK OF THE UNCLAMPED SLOT FAILS LOUDLY (2026-11-01): the cluster store spells no clamp, so the in-range
+    /// tests above are the check of its proof (countsort.py `store_text`). A scaffold whose slot could pass the ids
+    /// region (each variant's slot shifted by n, by hand, after rendering) is caught on the first constraint case: the
+    /// CPU executor restricts the store.
+    #[test]
+    fn a_scaffold_slot_past_the_ids_region_is_caught_by_the_in_range_check() {
+        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let p = Problem::load(&root.join("problems/kmeans_update_segmented")).expect("problem");
+        let exec = CpuExecutor::new(1 << 28);
+        let row = |n: &str| k.rows.iter().position(|r| r.name == n).unwrap_or_else(|| panic!("no row {n}")) as u32;
+        let leaf = |n: &str| Tree { symbol: row(n), const_index: None, kids: Vec::new() };
+        let same = |s: &str, n: &str| Tree { symbol: row(s), const_index: None, kids: vec![leaf(n)] };
+        let case = p.suites.iter().filter(|s| s.spec.role == Role::Constraint).flat_map(|s| s.cases.iter()).next().expect("a case");
+        for v in ["r2", "seg_hseg_oseg_sseg_w256"] {
+            let store = Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), leaf("cluster.point")] }] };
+            let kids = vec![same("kernel.cs_hist_same", &format!("cs.{v}")), same("kernel.cs_offsets_same", "cs.offsets"), same("kernel.cs_starts_same", "cs.starts"), store, leaf("own.kernel_mean")];
+            let src = k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids }).expect("render");
+            assert_eq!(src.matches("+ cs_rank;\n").count(), 1, "{v}: one slot assignment");
+            let shifted = src.replace("+ cs_rank;\n", "+ cs_rank + cs_n;\n");
+            let restricted = |text: &str| {
+                let (kern, info) = exec.compile(&p, text).unwrap_or_else(|e| panic!("{v}: {e}"));
+                let data = p.case_data(case, 1 << 28).expect("data");
+                let plan = p.plan(case, 1 << 28, Some(&info)).expect("plan");
+                let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                crate::wgsl::cpu::take_restricted();
+                exec.run(&kern, &plan, &data, &staged, true).unwrap_or_else(|e| panic!("{v}: {e}"));
+                crate::wgsl::cpu::take_restricted()
+            };
+            assert_eq!(restricted(&src), 0, "{v}: the scaffold's own slot is in range");
+            assert!(restricted(&shifted) > 0, "{v}: a slot shifted past the ids region is not caught");
+        }
+    }
+
     /// The scaffold in range and within the dispatch limit on timing case 0 (n 8,192, d 256, k 1,024).
     #[test]
     fn every_scaffold_variant_indexes_in_range_on_timing_case_0_on_the_cpu() {
