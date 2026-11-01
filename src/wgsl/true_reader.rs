@@ -4975,6 +4975,105 @@ mod tests {
         assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Constraint, None), 26 * 8);
     }
 
+    /// THE COUNTING SORT ON EVERY INPUT (2026-11-01, the property behind the unclamped cluster store, countsort.py
+    /// `store_text`): for each of the 26 variants, 200 shapes and label vectors drawn from a fixed seed, with the edges
+    /// (k = 1; every point in one cluster; empty clusters; n a multiple of the block of 256, one either side of it, and
+    /// under it; n 16,000 to 16,999 with k 1,024, the contract's largest k, its n scaled down for the CPU), run on the
+    /// CPU executor with a mean that copies the ids region into the centroids: no index is restricted, and the ids
+    /// region is the stable counting sort of the points by label (every slot written once, by the point the sort puts
+    /// there; the variant without a counting sort leaves it zero).
+    #[test]
+    fn every_scaffold_variant_sorts_200_random_shapes_into_their_slots_on_the_cpu() {
+        use crate::wgsl::harness::{Case, CpuExecutor, Executor, Problem};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
+        let p = Problem::load(&root.join("problems/kmeans_update_segmented")).expect("problem");
+        let row = |n: &str| k.rows.iter().position(|r| r.name == n).unwrap_or_else(|| panic!("no row {n}")) as u32;
+        let leaf = |n: &str| Tree { symbol: row(n), const_index: None, kids: Vec::new() };
+        let same = |s: &str, n: &str| Tree { symbol: row(s), const_index: None, kids: vec![leaf(n)] };
+        // the shapes: (n, k, labels)
+        let mut rng = crate::wgsl::true_kingdom::Rng(0x5107);
+        let mut shapes: Vec<(usize, usize, Vec<u32>)> = Vec::new();
+        for j in 0..200usize {
+            let (n, kk) = match j % 10 {
+                _ if j == 0 => (16_000 + rng.below(1000), 1024),
+                0 => (1 + rng.below(600), 1),
+                1 | 2 => (1 + rng.below(3000), 2 + rng.below(299)),
+                3 => (256 * (1 + rng.below(8)), 1 + rng.below(64)),
+                4 => (1 + rng.below(255), 1 + rng.below(300)),
+                5 => (256 * (1 + rng.below(8)) + if rng.below(2) == 0 { 1 } else { 255 }, 1 + rng.below(64)),
+                _ => (1 + rng.below(3000), 1 + rng.below(300)),
+            };
+            let n = n.min(256 * kk.max(2));
+            let labels: Vec<u32> = match j % 10 {
+                1 => {
+                    let c = rng.below(kk) as u32;
+                    vec![c; n]
+                }
+                2 => {
+                    // empty clusters: the labels drawn from a third of the clusters
+                    let used: Vec<u32> = (0..kk.div_ceil(3)).map(|_| rng.below(kk) as u32).collect();
+                    (0..n).map(|_| used[rng.below(used.len())]).collect()
+                }
+                _ => (0..n).map(|_| rng.below(kk) as u32).collect(),
+            };
+            shapes.push((n, kk, labels));
+        }
+        assert!(shapes.iter().any(|s| s.1 == 1) && shapes.iter().any(|s| s.0 < 256) && shapes.iter().any(|s| s.0 % 256 == 0) && shapes.iter().any(|s| s.0 % 256 != 0 && s.0 > 256) && shapes.iter().any(|s| s.1 == 1024));
+        let variants: Vec<String> = k.scaffold.keys().cloned().collect();
+        assert_eq!(variants.len(), 26);
+        let checked = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|sc| {
+            for chunk in variants.chunks(2) {
+                let (k, p, shapes, checked) = (&k, &p, &shapes, &checked);
+                sc.spawn(move || {
+                    let exec = CpuExecutor::new(1 << 28);
+                    for v in chunk {
+                        let store = Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), leaf("cluster.point")] }] };
+                        let kids = vec![same("kernel.cs_hist_same", &format!("cs.{v}")), same("kernel.cs_offsets_same", "cs.offsets"), same("kernel.cs_starts_same", "cs.starts"), store, leaf("own.kernel_mean")];
+                        let src = k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids }).expect("render");
+                        // the ids region's base in the variant's layout
+                        let base = if v.starts_with("seg_") { Some("2u * nb * k + 2u * k") } else if v == "r2" { Some("nb * k + 2u * k") } else { None };
+                        let empty = "@compute @workgroup_size(256, 1, 1)\nfn mean() {\n}\n";
+                        assert_eq!(src.matches(empty).count(), 1, "{v}: the empty mean");
+                        let copy = format!(
+                            "@compute @workgroup_size(256, 1, 1)\nfn mean(@builtin(global_invocation_id) gid: vec3<u32>) {{\n  let n = params.x; let k = params.y; let nb = (n + 255u) / 256u; let i = gid.x;\n  if (i >= k * params.z) {{ return; }}\n  var w: u32 = 0u;\n  if (i < n) {{ w = scratch[{} + i]; }}\n  centroids[i] = bitcast<f32>(w);\n}}\n",
+                            base.unwrap_or("0u")
+                        );
+                        let text = src.replace(empty, &copy);
+                        let (kern, info) = exec.compile(p, &text).unwrap_or_else(|e| panic!("{v}: {e}"));
+                        for (j, (n, kk, labels)) in shapes.iter().enumerate() {
+                            let d = n.div_ceil(*kk);
+                            let case = Case {
+                                name: format!("prop_{j}_n{n}_k{kk}_d{d}"),
+                                label: String::new(),
+                                params: [("n", *n as f64), ("d", d as f64), ("k", *kk as f64)].into_iter().map(|(a, b)| (a.to_string(), b)).collect(),
+                                inputs: BTreeMap::new(),
+                                expected: BTreeMap::new(),
+                            };
+                            let mut data = p.case_data(&case, 1 << 28).expect("data");
+                            data.inputs.insert("assignments".into(), labels.iter().flat_map(|l| l.to_le_bytes()).collect());
+                            let plan = p.plan(&case, 1 << 28, Some(&info)).unwrap_or_else(|e| panic!("{v} on {}: {e}", case.name));
+                            let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                            crate::wgsl::cpu::take_restricted();
+                            let out = exec.run(&kern, &plan, &data, &staged, true).unwrap_or_else(|e| panic!("{v} on {}: {e}", case.name));
+                            assert_eq!(crate::wgsl::cpu::take_restricted(), 0, "variant {v} indexes past an array on {}", case.name);
+                            let cells: Vec<u32> = out.outputs[0].chunks(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+                            let mut want: Vec<u32> = (0..*n as u32).collect();
+                            want.sort_by_key(|&i| labels[i as usize]);
+                            if base.is_none() {
+                                want = vec![0; *n];
+                            }
+                            assert_eq!(&cells[..*n], &want[..], "variant {v} on {}: the ids region is not the stable counting sort", case.name);
+                            checked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(checked.into_inner(), 26 * 200);
+    }
+
     /// THE CHECK OF THE UNCLAMPED SLOT FAILS LOUDLY (2026-11-01): the cluster store spells no clamp, so the in-range
     /// tests above are the check of its proof (countsort.py `store_text`). A scaffold whose slot could pass the ids
     /// region (each variant's slot shifted by n, by hand, after rendering) is caught on the first constraint case: the
