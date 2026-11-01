@@ -1,0 +1,7 @@
+# source: phylu/logs/RUNPOD_AB1/check_tally.py output (seed 7013, 133 laws, 90 s, RTX 4090)
+# outcome laws
+outcome n
+both 68
+tsr_only 4
+untyped_only 8
+neither 53

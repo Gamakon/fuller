@@ -1,0 +1,10 @@
+# source: phylu/docs/reports/2026-10-20_tsr_speed.md (TSR arm C, order_depth, feynman_I_6_2a, seed 7101, 1000+1000, Apple M3 Max)
+# step ms_per_generation label ; conditions differ between rows (timed or untimed, machine load) as the report states
+step ms label
+1 2743 start
+2 633 lengthclass
+3 411 resident
+4 317.5 percell
+5 197.2 dedup
+6 156 sparse
+7 127.5 scorer

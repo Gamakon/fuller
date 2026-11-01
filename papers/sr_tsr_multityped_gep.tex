@@ -1,0 +1,863 @@
+%%
+%% Symbolic Regression and Typed Symbolic Regression (TSR) on multi-typed
+%% Gene Expression Programming: the kingdom paper.
+%%
+%% One of the four domain papers of the set; the shared material (the schema,
+%% the master symbol table, the geneframe, GPU execution, fitness and evolution)
+%% is in the core report, cited as morgan_core, and is not repeated here.
+%%
+%% Every number below has a source file, named where it is used. Data for the
+%% figures are in sr_tsr_data/, written from the run logs by
+%% sr_tsr_data/extract.py (CASCADE2, TF_DEV1) or copied from the named report.
+%%
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning}
+
+\newcommand{\ty}[1]{\textsf{#1}}
+\newcommand{\src}[1]{{\small\ttfamily #1}}
+\emergencystretch=2em
+
+\begin{document}
+
+\title{Typed Symbolic Regression on Multi-typed Gene Expression Programming}
+\subtitle{Transcendental depth as a type, rewriting inside the search, and
+SRBench results under their stated protocols}
+
+\author{Andrew James Morgan}
+\email{andrew@gamakon.ai}
+\affiliation{%
+  \institution{Gamakon Ltd.}
+  \city{London}
+  \country{United Kingdom}
+}
+\renewcommand{\shortauthors}{Morgan}
+
+\begin{abstract}
+Symbolic regression (SR) searches for a closed-form expression that fits data.
+In classical Gene Expression Programming (GEP) every SR operator consumes and
+produces one real type, so nothing in the representation separates a physical
+law from a tower of nested transcendentals that fits the training rows. This
+paper describes the SR kingdom of a multi-typed GEP engine and Andrew Morgan's
+Typed Symbolic Regression (TSR), in which the type of a subexpression records
+how many transcendental functions lie on its deepest path. Three depth-typed
+layers, \ty{F}, \ty{T1} and \ty{T2}, are enough for every one of the 128
+parseable SRBench ground-truth laws, and a transcendental applied to a \ty{T2}
+value has no row in the symbol table, so it cannot be expressed. We describe the
+real-domain operator set, its protected variants, the rewriting system (fuller)
+that edits individuals during the search through equality saturation, the
+fitness (linear scaling, six error objectives and the hyperspherical TrueNorth
+angle, HFF), and where each stage runs. We then report the measured results,
+each with its protocol. On one development seed with 90~s a problem and
+SRBench's symbolic check as the stop condition, TSR recovered 74 of 133 laws,
+and 79 after fuller's post-search candidate generation. In the only
+same-engine comparison of typed and untyped search (one development seed,
+90~s, an RTX 4090), TSR certified 72 laws against the untyped engine's 76. A
+truth-free pipeline on ten development seeds solved 85.61\% of trials, but only
+over the first 82 scored problems in our own likelihood order. No run on
+SRBench's official seeds has been completed. Against SymPy, fuller's rule
+families prove 33.6\% of 972 SymPy simplifications equal. We report the faults
+found on the way and the open work.
+\end{abstract}
+
+\maketitle
+
+%% ===================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Symbolic regression (SR) asks for an expression, built from variables,
+constants and a set of operators, that predicts a target from data. Genetic
+programming~\cite{koza1992gp} and its fixed-length variant, Gene Expression
+Programming (GEP)~\cite{ferreira2001gep}, search that space by evolving
+expression trees, and physics data sets are a natural test because the
+generating law is known~\cite{schmidt2009distilling,udrescu2020aifeynman}.
+SRBench~\cite{lacava2021srbench} made that test standard: 133 ground-truth
+problems, 119 from the Feynman lectures and 14 Strogatz dynamical systems, with
+a symbolic-equivalence check against the true law.
+
+In classical GEP every SR operator takes and returns a real number. The
+representation therefore treats $\tanh(\exp(\cos(\log x)))$ as no different in
+kind from $m v^2/2$; only the fitness can tell them apart, after the individual
+has been built and evaluated. The search is free to grow towers of
+transcendentals that fit the training rows to many digits and are not the law.
+In our own engine's labelled fits, three quarters of the accurate-but-wrong
+models nest three or more transcendentals (the measurement is cited in
+\src{phylu src/\allowbreak{}evolve/\allowbreak{}engine.\allowbreak{}rs}, doc comment of \texttt{t\_depth}).
+
+Typed Symbolic Regression (TSR) is Andrew Morgan's answer: make the
+transcendental distance between functions part of the type. A subexpression's
+type is the largest number of transcendental functions on any path from it to a
+leaf. Arithmetic absorbs that depth, a transcendental raises it, and no row
+accepts a value that is already two deep. An illegal shape is not penalised;
+it has no signature in the symbol table. The core report~\cite{morgan_core}
+describes the multi-typed schema, the master symbol table, the geneframe and
+the GPU-resident engine; this paper describes the SR and TSR kingdoms that run
+on it.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+\item The \textbf{SR kingdom} as built: a real-domain operator set of 26
+operators with protected variants that are distinct symbols from the raw
+operators, a real-domain evaluator, and a Karva-to-expression converter keyed
+on what each operator computes (Section~\ref{sec:kingdom}).
+\item The \textbf{TSR kingdom}: transcendental depth carried in three
+depth-typed layers, with the measurement over the SRBench laws that fixed the
+ceiling at two, and its generated tables for the typed GEP core, including the
+joint table with Horton--Strahler stream order
+(Section~\ref{sec:tsr}).
+\item \textbf{Rewriting inside the search}: fuller's bounded equality-saturation
+editors, the constant snap, the physics-prior generator and the canonicaliser
+that turns a fitted model into one submitted form
+(Section~\ref{sec:editors}).
+\item A \textbf{device and host map} of every stage with its source location
+(Section~\ref{sec:gpu}).
+\item \textbf{Measured results under stated protocols}: three SRBench runs, two
+controls, a SymPy-parity measurement, and the faults found and fixed
+(Sections~\ref{sec:experiments}--\ref{sec:faults}).
+\end{enumerate}
+
+%% ===================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{GEP and typed GP.} Ferreira's GEP~\cite{ferreira2001gep} encodes a
+tree as a head and a tail read breadth-first, so every string decodes to a
+valid tree under one type. Montana's strongly typed GP~\cite{montana1995stgp}
+types every argument slot and makes the operators type-aware. The engine here
+keeps raw operators and lets the table and the decoder carry the types; the
+mechanism is the core report's~\cite{morgan_core}. What is particular to TSR is
+the choice of type: not a data type, but an upper bound on transcendental
+nesting.
+
+\paragraph{Symbolic regression benchmarks.} SRBench~\cite{lacava2021srbench}
+measures the fraction of ten runs per problem that are symbolically exact, at
+up to eight hours or $10^6$ evaluations a run. AI Feynman~\cite{udrescu2020aifeynman}
+is the strongest published method on the ground-truth track at zero noise:
+about 53\% overall~\cite{lacava2021srbench}, which Kartelj and
+Djukanovi\'c~\cite{kartelj2023rilsrols} break down as 55.78\% on the Feynman
+problems and 27.14\% on the Strogatz systems. Linear scaling of an evolved
+expression by a least-squares slope and intercept is due to
+Keijzer~\cite{keijzer2003scaling}; the engine applies it to every candidate.
+
+\paragraph{Rewriting.} Equality saturation~\cite{tate2009equality} keeps every
+form reachable by a rule set in one e-graph and extracts the best;
+egg~\cite{willsey2021egg} made it fast and egglog~\cite{egglog} joined it with
+Datalog. fuller uses egglog as a replacement for SymPy~\cite{meurer2017sympy}
+in the engine: deterministic, real-domain and bounded.
+
+\paragraph{Selection.} Selection is by hyperspherical fitness
+(HFF)~\cite{morgan2026hff}, whose TrueNorth angle and beta-distribution
+correction~\cite{cai2013angles} we use as published. Cohort tournaments
+reformulate the age-layered population structure~\cite{hornby2006alps}; they
+are described in the core report~\cite{morgan_core}. Stream order is the
+Horton--Strahler number of a tree~\cite{horton1945streams,strahler1957watershed}.
+
+%% ===================================================================
+\section{The SR Kingdom}
+\label{sec:kingdom}
+
+\subsection{The operator set and its semantics}
+
+Expressions live in one egglog datatype, \texttt{Math}
+(\src{fuller src/\allowbreak{}expr.\allowbreak{}rs}): numeric literals, named variables, and the
+operators of Table~\ref{tab:ops}. The engine's alphabet is the
+\emph{master semantic set} (\src{src/\allowbreak{}karva.\allowbreak{}rs:59}, \texttt{master\_pset}), 26
+operators keyed on what each computes; a test keeps it in lockstep with the
+converter. \texttt{diff\_sq}$(a,b)=(a-b)^2$ is a rule over \texttt{Pow2} and
+\texttt{Sub}, not a symbol.
+
+\begin{table}[t]
+\caption{The 26 operators of the SR kingdom (\src{src/\allowbreak{}karva.\allowbreak{}rs:59}). The
+protected operators are distinct symbols; their semantics are those of the
+engine (\src{src/\allowbreak{}expr.\allowbreak{}rs}).}
+\label{tab:ops}
+\small
+\begin{tabular}{@{}lp{0.68\columnwidth}@{}}
+\toprule
+Arity 2 & \texttt{add sub mul div pow protected\_div} \\
+Arity 1 & \texttt{neg sin cos tan log exp sqrt abs tanh pow2 pow3 inv asin acos} \\
+Protected & \texttt{protected\_sqrt} $=\sqrt{|x|}$; \texttt{protected\_log} $=\log|x|$;
+\texttt{protected\_exp} $=e^x$, $+\infty$ on overflow; \texttt{protected\_inv}
+$=1/x$, or 1 at 0; \texttt{protected\_div} $=a/b$, or 0 when $b=0$;
+\texttt{protected\_asin}, \texttt{protected\_acos} clamp to $[-1,1]$, 0 where
+not finite \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The evaluator (\src{src/\allowbreak{}eval.\allowbreak{}rs}) is real-domain only: the square root of a
+negative, the logarithm of a non-positive number and division by zero return
+NaN, and the caller decides. There is no complex domain, which is why fuller
+replaces SymPy in the engine rather than wrapping it. The protected operators
+are never mapped to raw ones: they disagree on negatives and zero, and a rewrite
+that treated them as equal would be unsound. They are inert under rewriting
+except where a rule is sound for the protected form, and domain facts
+(\texttt{is-positive}, \texttt{is-nonzero}, \texttt{is-nonneg}) are carried as
+relations that guarded rules require (\src{src/\allowbreak{}expr.\allowbreak{}rs},
+\texttt{GUARD\_RELATIONS}).
+
+\subsection{Genotype and phenotype}
+
+A chromosome has three genes, each a Karva expression with a head of 34
+positions (the run cards of Section~\ref{sec:experiments}), and ten random
+numerical constants. \texttt{karva\_to\_terms} (\src{src/\allowbreak{}karva.\allowbreak{}rs:171}) decodes
+a gene by the GEP level-order rule into a \texttt{Math} term, ignoring the
+non-coding region; \texttt{terms\_to\_karva} re-encodes an edited term into a
+gene. Both sides use the semantic id, so the rewriting system never sees an
+engine-specific symbol name. In the single-type kingdom every symbol has the one
+type \ty{F}; the typed layout reduces to the classical Karva layout, a
+property the core report states and the engine's golden test pins~\cite{morgan_core}.
+
+\paragraph{Phenotype.} Each chromosome is scored as up to 15 gene--linker
+combinations (subsets of its genes under a linker; \src{phylu
+src/\allowbreak{}evolve/\allowbreak{}score.\allowbreak{}wgsl}, header), each under up to three output wrappers, and each
+candidate is linearly scaled, $\hat y = a\,f(x)+b$, by least squares on the
+training rows~\cite{keijzer2003scaling}. The best candidate by HFF is the
+individual's phenotype.
+
+%% ===================================================================
+\section{The TSR Kingdom}
+\label{sec:tsr}
+
+\subsection{Three depth-typed layers}
+
+TSR gives the same operators types that record transcendental depth:
+
+\begin{itemize}
+\item \ty{F}: a plain value --- a variable, a constant, or arithmetic over
+plain values;
+\item \ty{T1}: the output of one transcendental over \ty{F};
+\item \ty{T2}: a transcendental over something already \ty{T1}.
+\end{itemize}
+
+\emph{Raising} operators add one layer: \texttt{sin cos tan log exp sqrt abs
+tanh asin acos} and the five protected transcendentals, fifteen in all
+(\src{fuller src/\allowbreak{}geneframe.\allowbreak{}rs:448}, \texttt{DEPTH\_RAISING}; the engine's list
+\src{phylu src/\allowbreak{}evolve/\allowbreak{}engine.\allowbreak{}rs:2271} names the same fifteen, and a
+\texttt{pow} counts only when its exponent is not a whole number).
+\emph{Level-keeping} unaries (\texttt{neg pow2 pow3 inv}) keep the layer.
+Arithmetic is \emph{absorbing}: $+$, $-$, $\times$, $\div$ accept any mix of
+layers and yield the highest. A raiser has rows from \ty{F} and from \ty{T1}
+only:
+\[
+\texttt{exp}: \ty{F}\to\ty{T1},\qquad \texttt{exp}: \ty{T1}\to\ty{T2},
+\]
+and there is no row from \ty{T2} and no \ty{T3}. That missing row is the whole
+rule. In the geneframe table (\src{src/\allowbreak{}geneframe.\allowbreak{}rs:471},
+\texttt{typed\_depth\_table}) the argument types are many-hot and unordered, so
+a binary operator has six rows; in the generated tables for the typed GEP core
+(\src{kingdoms/\allowbreak{}tsr/\allowbreak{}depth/\allowbreak{}functions.\allowbreak{}tsv}) argument types are ordered and a
+binary operator has nine.
+
+\subsection{Why the ceiling is two}
+
+The ceiling was set from the laws, before any engine work
+(\src{kingdoms/\allowbreak{}tsr/\allowbreak{}README.\allowbreak{}md}). Of the 133 SRBench ground-truth models, 128
+parse; 78 are at depth 0, 47 at depth 1, 3 at depth 2 and none deeper, and no law
+nests two transcendentals directly. The three depth-two laws, such as
+$\exp(-(\theta/\sqrt2)^2)$ in which the square root of a constant and the
+exponential lie on one path, reach that depth through arithmetic, which is why
+arithmetic must absorb rather than reset. All 128 parsed laws type cleanly. Of
+eight models the untyped engine had earlier reported, seven did not type (213
+to 412 characters); the one that did was 60 characters long and at depth one.
+
+\subsection{Worked examples}
+
+\begin{itemize}
+\item $m v^2/2$: every node is \ty{F}.
+\item $\tanh(x+e^{y})$: $e^{y}$ is \ty{T1}, the sum absorbs to \ty{T1}, and
+$\tanh$ raises to \ty{T2}: legal.
+\item $m_0 v/\sqrt{1-v^2/c^2}$ (Feynman I.15.10): the square root raises the
+\ty{F} argument to \ty{T1}; the quotient absorbs: legal.
+\item $\tan(\tan(\log(1/\cos(x_1/x_2))))$: $\cos$ gives \ty{T1}, $\log$ gives
+\ty{T2}, and the inner $\tan$ has no row for \ty{T2}: not expressible. This is
+the model the untyped engine reported for Feynman I.15.10 at seed 7014 and 180~s,
+where TSR recovered the law; it is one seed and is not a kept result
+(\src{kingdoms/\allowbreak{}tsr/\allowbreak{}README.\allowbreak{}md}).
+\end{itemize}
+
+\subsection{Legality: two decoders}
+\label{sec:legal}
+
+Two versions of TSR exist in the code, and the results of
+Section~\ref{sec:experiments} come from the first.
+
+\paragraph{Depth derived at decode.} In the engine that produced the SRBench
+results, the layout is the single-type Karva layout and the device decoder
+derives a layer for every node bottom-up (\src{phylu
+src/\allowbreak{}evolve/\allowbreak{}typed\_\allowbreak{}decode.\allowbreak{}wgsl:229-235}: a raiser over \ty{T2} returns no type).
+A gene with no derivation does not express: its program has length zero, and it
+is counted. In the CASCADE2 study (Section~\ref{sec:experiments}) 31.0 million
+genes were not expressed over the 133 fits (sum of the \texttt{TYPED refused}
+counts in \src{phylu logs/\allowbreak{}CASCADE2/\allowbreak{}p1/\allowbreak{}*/\allowbreak{}run.\allowbreak{}log}); on Strogatz shear flow~2,
+476{,}641 of about 6.65 million decoded genes (1{,}108 generations of 2{,}000
+three-gene individuals), about 7\%. A gene that does not express does not kill
+its chromosome: a three-gene chromosome scores on its other genes and the gene
+rides along unscored, so the final population still holds genes past the
+ceiling (\src{kingdoms/\allowbreak{}tsr/\allowbreak{}README.\allowbreak{}md}).
+
+\paragraph{Depth in the layout.} For the typed GEP core, a generator
+(\src{fuller kingdoms/\allowbreak{}tsr/\allowbreak{}gen\_\allowbreak{}tables.\allowbreak{}py}) writes the depth limit, and
+optionally the Horton--Strahler stream-order limit, as types: each node's type
+is an upper bound on the subtree under its slot, every operator has one row per
+legal combination of argument types, and a separate \ty{ROOT} type has a twin of
+every row (\src{kingdoms/\allowbreak{}tsr/\allowbreak{}depth/\allowbreak{}TYPES.\allowbreak{}md}). A gene in these layouts is legal
+by construction: variation draws each cell from the domain of its type, so no
+individual is built and then discarded. A checker
+(\src{kingdoms/\allowbreak{}tsr/\allowbreak{}check\_\allowbreak{}types.\allowbreak{}py}) compared the order and depth tables with
+the engine's own order and depth code on 4{,}335{,}881 exhaustively enumerated
+trees of up to nine nodes and 300{,}000 random trees, with no disagreement
+(\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}tsr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md}, findings). Table~\ref{tab:variants}
+gives the sizes. Edited trees are re-typed by keeping each node's row while it
+still fits the heads, because typing a rewritten tree exactly from scratch
+failed 72\% of identity rewrites for want of head capacity (same file, finding
+(b)).
+
+\begin{table}[t]
+\caption{TSR tables for the typed GEP core
+(\src{fuller kingdoms/\allowbreak{}tsr/\allowbreak{}README.\allowbreak{}md}). Width is words per gene at program
+size $N=17$, the size the head of 34 guarantees in the single-type layout.}
+\label{tab:variants}
+\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+Variant & Arm & Types & Function rows & Width ($N{=}17$) \\
+\midrule
+single & A & 1 & 18 & 101 \\
+depth & E & 4 & 68 & 558 \\
+order & B & 12 & 574 & 3{,}656 \\
+order\_depth & C & 34 & 4{,}132 & 20{,}980 \\
+order\_depth\_windows & F & 34 & 4{,}047 & 20{,}980 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What a type cannot carry.} Every type here is an upper bound. A
+lower bound --- the laws never apply $\exp$ to a bare variable (10 of 10 uses
+take an argument of order two, \src{phylu src/\allowbreak{}evolve/\allowbreak{}order.\allowbreak{}rs:20-27}) --- cannot
+be a type, because a bare variable fits every upper bound.
+
+%% ===================================================================
+\section{Fitness Evaluation}
+\label{sec:fitness}
+
+\paragraph{Objectives.} For each candidate the device reduces mean squared
+error (capped at the target's variance), $1-R^2$ (capped at 1) and mean
+absolute deviation (capped at the target's MAD), each on the training and on
+the validation rows: six objectives
+(\src{phylu src/\allowbreak{}evolve/\allowbreak{}engine.\allowbreak{}rs:2349}, \texttt{hff\_columns};
+\texttt{Caps::objectives}, \src{:2631}). Validation is an objective, not a
+filter, and there is no parsimony objective; the fixed head bounds size.
+
+\paragraph{HFF and TrueNorth.} The objective vector $\mathbf{x}\in[0,1]^m$ is
+projected by the hff library's TrueNorth construction
+(\src{hff src/\allowbreak{}core\_\allowbreak{}functions.\allowbreak{}rs:104}): with energy $E=\sum x_i^2$ and energy
+score $e=1-\min(E/m,1)$, the vector is lifted into $\mathbb{R}^{m+1}$ and its
+angle from the pole $(0,\dots,0,1)$ is $\theta=\arccos e$. The engine calls the
+library with normalisation off (\src{phylu src/\allowbreak{}evolve/\allowbreak{}engine.\allowbreak{}rs:2585}).
+Tournaments select on $\theta$, lower preferred, within the cohort rule of the
+core report~\cite{morgan_core}.
+
+\paragraph{The law bar.} The early stop uses $\log_{10} p$, where
+$p=I_{\sin^2\theta}\big(\tfrac{m-1}{2},\tfrac12\big)$ is the probability that a
+uniformly random direction lies within $\theta$ of the pole
+(\src{hff src/\allowbreak{}higd.\allowbreak{}rs:126}; \src{engine.\allowbreak{}rs:2259}). A fit stops when
+$\log_{10}p\le-19$ and $1-R^2\le10^{-10}$ on both the training and the
+validation rows (\src{engine.\allowbreak{}rs:8852-8864}). The training side was added after
+Strogatz bacres2 stopped with validation $1-R^2=9.46\times10^{-11}$ and
+training $1.03\times10^{-9}$, on a function that was not the law; over 117
+earlier early stops, all 113 real wins had training $1-R^2\le10^{-10}$ (code
+comment at the same lines). Some runs below used $10^{-6}$; each says so.
+
+\paragraph{Cases.} The fitness cases are the rows of an SRBench data set: up to
+5{,}000 rows in the engine's stratified order, split 80/20 into training and
+validation (4{,}000 and 1{,}000 for the Feynman sets), at noise level zero.
+
+%% ===================================================================
+\section{Rewriting Inside the Search}
+\label{sec:editors}
+
+fuller proposes; the tournament disposes. Each editor takes individuals from the
+population, edits them as \texttt{Math} terms, re-encodes them into genes and
+returns them for selection, with the original kept.
+
+\paragraph{Rule families.} fuller's rules are grouped in named egglog rulesets
+(\src{fuller src/\allowbreak{}ruleset/\allowbreak{}}): algebraic identities, powers, sign,
+distribution, rational forms, trigonometry, cofunctions, collection, a wide
+family of commutativity and associativity for the equality check, rules mined
+from SymPy's own power and trigonometric code, and a sharing family. The
+families are not mutually confluent: distribution saturated with trigonometry or
+with rational forms grows the e-graph without bound, so every saturation is
+bounded and families are kept apart.
+
+\paragraph{Denoise.} \texttt{denoise} (\src{fuller src/\allowbreak{}extract.\allowbreak{}rs:408})
+saturates a term under algebra, powers and sign for at most 40 iterations,
+extracts the $k$ cheapest equivalent forms, evaluates each on the training rows
+and returns the smallest whose $R^2$ loss against the input is within a
+tolerance; otherwise the input, unchanged. It never raises.
+
+\paragraph{Snap.} A fitted constant within a relative tolerance of a known value
+($\pi$, $e$, $\sqrt2$, $\tau$, $\tfrac12$, $\tfrac13$, $\tfrac14$, $G$, $c$,
+$k_e$; \src{fuller src/\allowbreak{}snap.\allowbreak{}rs:26}) is replaced by that value, and the symbol is
+recorded for rendering; the expression stays numeric. Problem-specific
+combinations are deliberately not in the library. In the engine the snap
+candidates are grafted and checked on the device (\src{fuller
+src/\allowbreak{}lint/\allowbreak{}snap\_\allowbreak{}graft.\allowbreak{}wgsl:88}, \src{snap\_\allowbreak{}guard.\allowbreak{}wgsl:136}).
+
+\paragraph{Typed snap and fold.} Typed snap matches subtrees of promising genes
+to a library of typed shapes; fold replaces a subtree that is near constant on
+the data by its mean, with the statistics computed in one device pass
+(\src{phylu src/\allowbreak{}evolve/\allowbreak{}gpu\_\allowbreak{}fold.\allowbreak{}rs:49}); the ratio fold replaces a subtree that
+is a constant multiple of its own descendant on the data.
+
+\paragraph{Physics prior.} \texttt{physics::generate} (\src{fuller
+src/\allowbreak{}physics.\allowbreak{}rs}) is a one-to-many generator of physics-shaped edits (squared
+differences, axis-aligned coordinate pairs, inverse powers), with no evaluation
+inside it; edits that build new structure are tagged speculative so the caller
+can check them on held-back rows.
+
+\paragraph{The canonicaliser.} After a fit, the reported model goes through the
+kitchen sink (\src{phylu examples/\allowbreak{}kitchen\_\allowbreak{}sink.\allowbreak{}rs}), which runs every editor
+above on it in three rounds, ranks the pool by HFF on the device
+(\src{src/\allowbreak{}evolve/\allowbreak{}hff\_\allowbreak{}gpu.\allowbreak{}rs:257}), re-scores the finalists in \texttt{f64},
+spells each one plainly, rationalised and in SRBench's algebra, and keeps only
+spellings whose predictions survive SRBench's rounding of floats on the
+training rows. One form is emitted. In the truth-free protocol it reads only the
+training partition.
+
+%% ===================================================================
+\section{GPU Implementation}
+\label{sec:gpu}
+
+Table~\ref{tab:where} states where each stage runs. The population is resident
+on the device; the host reads the best row each generation and only the rows an
+editor acts on at its beat (\src{phylu docs/\allowbreak{}reports/\allowbreak{}2026-10-20\_\allowbreak{}tsr\_\allowbreak{}speed.\allowbreak{}md}).
+Every device kernel has a host twin it is tested against. All source paths are
+in phylu unless marked fuller or hff.
+
+\begin{table*}[t]
+\caption{Where each stage runs. ``Device'' means a WGSL compute kernel on the
+GPU through wgpu; ``host'' means Rust or Python on the CPU.}
+\label{tab:where}
+\small
+\begin{tabular}{@{}llp{0.42\textwidth}@{}}
+\toprule
+Stage & Where & Source \\
+\midrule
+Initialisation, typed, one thread per cell & device & \src{src/\allowbreak{}evolve/\allowbreak{}typed\_\allowbreak{}init.\allowbreak{}wgsl:100} \\
+Selection (cohort tournament), elites & device & \src{typed\_\allowbreak{}select.\allowbreak{}wgsl:294}, \src{:231} \\
+Mutation (point, Dc point, constants), transposition & device & \src{typed\_\allowbreak{}vary.\allowbreak{}wgsl:419}, \src{:664}, \src{:748}, \src{:635} \\
+Recombination (plan and swap passes) & device & \src{typed\_\allowbreak{}vary.\allowbreak{}wgsl:1049}, \src{:1095} \\
+Decode and depth derivation (Section~\ref{sec:legal}) & device & \src{typed\_\allowbreak{}decode.\allowbreak{}wgsl:310}; rule \src{:229-235} \\
+Merge of identical node arrays & device & \src{dedup.\allowbreak{}wgsl:77} \\
+Expression evaluation over all rows & device & fuller \src{src/\allowbreak{}gpu\_\allowbreak{}eval.\allowbreak{}rs:494} \\
+Linear scaling and objective sums & device & \src{score.\allowbreak{}wgsl:276} \\
+HFF TrueNorth angle & device & \src{hff.\allowbreak{}wgsl:128}; host reference \src{engine.\allowbreak{}rs:2585} \\
+Stop check ($\log_{10}p$, $1-R^2$, \texttt{f64} re-score) & host & \src{engine.\allowbreak{}rs:8852-8864} \\
+The pump: intake to champion, refill & host plans, device draws & \src{engine.\allowbreak{}rs:5238}; draws by \src{typed\_\allowbreak{}init.\allowbreak{}wgsl} \\
+Constant snap & host picks, device grafts and checks & \src{engine.\allowbreak{}rs:5671}; fuller \src{src/\allowbreak{}lint/\allowbreak{}snap\_\allowbreak{}graft.\allowbreak{}wgsl:88} \\
+Typed snap (subtree mode) & host enumerates, device scores & \src{engine.\allowbreak{}rs:6313} \\
+Fold (statistics) & host edits, device statistics & \src{engine.\allowbreak{}rs:6632}; \src{gpu\_\allowbreak{}fold.\allowbreak{}rs:49} \\
+Beam of mutants & host plans, device scores & \src{engine.\allowbreak{}rs:7173} \\
+Canonicaliser (kitchen sink) & host rewriting, device ranking & \src{examples/\allowbreak{}kitchen\_\allowbreak{}sink.\allowbreak{}rs}; \src{hff\_\allowbreak{}gpu.\allowbreak{}rs:257} \\
+SRBench symbolic verdict & host, offline, Python (SymPy) & \src{scripts/\allowbreak{}srbench\_\allowbreak{}tf\_\allowbreak{}score.\allowbreak{}py:67} \\
+SymPy-parity scorer & host (egglog) & fuller \src{src/\allowbreak{}parity.\allowbreak{}rs:138} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\paragraph{Throughput.} On Strogatz shear flow~2 in the CASCADE2 study, the
+engine ran 1{,}108 generations of 2{,}000 individuals in 17.1~s, 15.5~ms a
+generation, 129{,}501 individuals a second, on an Apple Silicon laptop
+(\src{logs/\allowbreak{}CASCADE2/\allowbreak{}p1/\allowbreak{}strogatz\_\allowbreak{}shearflow2/\allowbreak{}run.\allowbreak{}log}). The typed-core arm C
+(order and depth in the layout, genes of 20{,}980 words) began at 2{,}743~ms a
+generation on Feynman I.6.2a; Figure~\ref{fig:speed} shows the fixes that
+brought it to 127.5~ms, against 45.7~ms for the single type on the same law and
+machine. Every fix kept the best-angle trajectory identical except where the
+report says the random draws changed.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.0cm,
+  ybar, bar width=9pt, ymode=log, log origin=infty,
+  ymin=80, ymax=4000,
+  ylabel={ms per generation},
+  xtick={1,...,7},
+  xticklabels={start,{length\\classes},{genes\\resident},{per-cell\\kernels},dedup,{sparse\\draws},scorer},
+  xticklabel style={font=\scriptsize, align=center},
+  yticklabel style={font=\scriptsize},
+  nodes near coords, nodes near coords style={font=\scriptsize},
+  point meta=explicit symbolic,
+]
+\addplot table[x=step, y=ms, meta=ms] {sr_tsr_data/tsr_speed.dat};
+\end{axis}
+\end{tikzpicture}
+\caption{TSR arm C, Feynman I.6.2a, seed 7101, 1{,}000+1{,}000, Apple M3 Max:
+milliseconds a generation after each fix (\src{phylu
+docs/\allowbreak{}reports/\allowbreak{}2026-10-20\_\allowbreak{}tsr\_\allowbreak{}speed.\allowbreak{}md}). Conditions differ between bars (stage
+timing on or off, machine load), as the report states; the bars are a sequence,
+not a controlled comparison.}
+\Description{Bar chart, log scale, falling from 2743 ms to 127.5 ms over seven steps.}
+\label{fig:speed}
+\end{figure}
+
+%% ===================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Protocols}
+
+SRBench's metric is, per problem, the fraction of ten independent runs whose
+model is symbolically exact, averaged over problems. None of our runs meets
+that protocol in full, and Table~\ref{tab:protocols} states how each departs
+from it. We never convert a rate to a count over 133 or the reverse.
+
+\begin{table*}[t]
+\caption{The runs, their protocols and their sources. ``Truth in the loop''
+means SRBench's symbolic check was used inside the run, to stop a fit or to
+choose which spelling to submit; that is choosing the answer with the key, and
+such counts are development results only. All seeds here are development seeds
+except PROD1.}
+\label{tab:protocols}
+\small
+\begin{tabular}{@{}lllllp{0.30\textwidth}@{}}
+\toprule
+Run & Laws & Seeds & Budget & Kingdom & Protocol and source \\
+\midrule
+CASCADE2 & 133 & 7014 & 90~s, 1{,}000+1{,}000 & TSR & SRBench check is the stop condition; the kitchen sink tries up to 30 spellings against the check; whole data files. \src{phylu logs/\allowbreak{}CASCADE2/\allowbreak{}sweep.\allowbreak{}log}, \src{ks.\allowbreak{}log} \\
+AB1 & 133 & 7013 & 90~s, RTX 4090 & TSR and untyped & stop at $\log_{10}p\le-19$, $1-R^2\le10^{-6}$; check offline, the kitchen sink tries up to 30 spellings against it; whole data files. \src{logs/\allowbreak{}RUNPOD\_\allowbreak{}AB1/\allowbreak{}check\_\allowbreak{}tally.\allowbreak{}py} \\
+TF\_DEV1 & first 84 of our order & 7101--7110 & 90~s, 1{,}000+1{,}000 & TSR & truth-free: SRBench's 75/25 split, fit and canonicaliser on the 75\%, one form, SRBench's assessment offline. \src{logs/\allowbreak{}TF\_\allowbreak{}DEV1/\allowbreak{}summary.\allowbreak{}txt} \\
+SR\_OLD\_NEW & first 40 of our order & 7001--7010 & $10^6$ evaluations & single type & old engine against the rebuild on the typed core; engine's law bar, no SRBench check. \src{phylu docs/\allowbreak{}reports/\allowbreak{}2026-10-20\_\allowbreak{}sr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md} \\
+PROD1 & 38 of 133 & official & 90~s & TSR & stopped by Andrew at law 38; truth in the loop; not reported. \src{logs/\allowbreak{}PROD1/\allowbreak{}sweep.\allowbreak{}log} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\paragraph{Settings shared by the SRBench runs.} Three genes, head 34, ten
+random constants in $[-100,100]$, two islands of 1{,}000 (an intake island and
+a champion island), the pump every 50 generations (the intake's best two
+replace the champion island's worst, the intake keeps its best fifth and is
+refilled at random, \src{engine.\allowbreak{}rs:5235-5238}), cohort merge age 10{,}000,
+gene subsets on, snap, fold and beam every 20 generations, typed snap every 10,
+TSR ceiling 2 (\src{logs/\allowbreak{}TF\_\allowbreak{}DEV1/\allowbreak{}card.\allowbreak{}json}). Our law order
+(\src{phylu experiments/\allowbreak{}order\_\allowbreak{}prioritized.\allowbreak{}txt}) sorts laws by how quickly an
+earlier development run stopped on them, so the first laws are the easiest.
+
+\paragraph{Expectations stated before the runs.} For CASCADE2 the reference
+points were the untyped engine's previous certified best on the same problems,
+62, and the union of every law any earlier configuration had solved, 69
+(\src{experiments/\allowbreak{}known69.\allowbreak{}txt}). For SR\_OLD\_NEW the stated expectation was no
+fewer passes than the old arm. For the typed-core arms, the expectations of
+\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}tsr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md} \S7.3 (for example, arms B, C and E
+within six passes of arm A out of 400) were written before any arm ran; those
+arms have not run (Section~\ref{sec:limits}).
+
+\subsection{Results}
+
+\paragraph{CASCADE2 (development, truth in the loop).} TSR recovered 74 of 133
+laws in 117~minutes of fit time: 66 of the 119 Feynman problems and 8 of the 14
+Strogatz systems (\src{logs/\allowbreak{}CASCADE2/\allowbreak{}sweep.\allowbreak{}log}, last line). The kitchen sink
+then recovered five more from the misses' halls of fame --- Feynman I.6.2a,
+I.8.14, I.30.5, II.11.27 and Strogatz shear flow~1 --- for 79
+(\src{logs/\allowbreak{}CASCADE2/\allowbreak{}ks.\allowbreak{}log}, last line). Of the 79, 16 lie outside the
+earlier union of 69 and 6 laws of that union were missed; the engine alone had
+15 outside it and missed 10 (\src{experiments/\allowbreak{}known69.\allowbreak{}txt}). Builds, budgets and seeds differ from the
+earlier runs, so this is history, not a typing effect.
+Figure~\ref{fig:cascade} shows the running count in our law order.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.8cm,
+  xlabel={law, in our order}, ylabel={laws recovered},
+  xmin=0, xmax=133, ymin=0, ymax=80,
+  xtick={0,20,40,60,80,100,133},
+  ticklabel style={font=\scriptsize}, label style={font=\small},
+  grid=major, grid style={gray!25},
+]
+\addplot[thick, mark=none] table[x=i, y=found] {sr_tsr_data/cascade2_cumulative.dat};
+\addplot[dashed, gray, domain=0:133] {x};
+\end{axis}
+\end{tikzpicture}
+\caption{CASCADE2: laws recovered against laws attempted, in our likelihood
+order (\src{phylu logs/\allowbreak{}CASCADE2/\allowbreak{}sweep.\allowbreak{}log}, via
+\src{sr\_\allowbreak{}tsr\_\allowbreak{}data/\allowbreak{}extract.\allowbreak{}py}). The dashed line is every law recovered. The
+flat tail is the Feynman bonus set and the hard Strogatz systems.}
+\Description{A rising step curve that follows the diagonal for about forty laws and then flattens near 74.}
+\label{fig:cascade}
+\end{figure}
+
+\paragraph{AB1: TSR against untyped, the only same-engine control.} Same
+driver, same seed (7013), same card, the TSR ceiling the only difference, 90~s a
+fit on one rented RTX 4090. The engine's law bar fired on 79 laws for TSR and 81
+for untyped; SRBench's check certified 72 and 76
+(\src{logs/\allowbreak{}RUNPOD\_\allowbreak{}AB1/\allowbreak{}check\_\allowbreak{}tally.\allowbreak{}py}, checked 133 of 133 in each arm).
+Table~\ref{tab:ab1} gives the paired outcomes. On this one seed the untyped
+engine certified four more laws; with 12 discordant laws (4 against 8) an exact
+two-sided sign test gives $p\approx0.39$, so the difference is not
+distinguishable from chance on this evidence. Both arms certified 10 of the 14
+Strogatz systems.
+
+\begin{table}[t]
+\caption{AB1, paired by law: SRBench-certified outcomes, TSR against untyped
+(seed 7013, 90~s, 133 laws).}
+\label{tab:ab1}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+ & untyped certified & untyped not \\
+\midrule
+TSR certified & 68 & 4 \\
+TSR not & 8 & 53 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{TF\_DEV1: the truth-free pipeline.} No answer key and no test row
+reach the fit or the canonicaliser; SRBench's unmodified assessment scores one
+form per trial offline. Over 834 trials on 84 laws (the first 84 of our order)
+and ten development seeds, 82 problems are scored (SRBench excludes two of the
+84), and the mean over problems of solved trials out of ten is \textbf{85.61\%}
+(\src{logs/\allowbreak{}TF\_\allowbreak{}DEV1/\allowbreak{}summary.\allowbreak{}txt}): 86.39\% over 72 Feynman problems and 80.0\%
+over 10 Strogatz systems. Counting only rows the canonicaliser emitted, without
+the 52 fallback rows, it is 83.66\%. 78 of the 82 problems were solved in at
+least one trial. Figure~\ref{fig:tfdev1} shows the distribution. The run was
+stopped by Andrew to move to a larger budget, so the other 49 laws, which are
+the harder ones by construction of the order, were not run at this budget; this
+85.61\% is therefore not an estimate of the rate over the 130 problems SRBench
+scores. TF\_DEV2 (the remaining laws at 180~s and 5{,}000+5{,}000) was paused
+after 173 trials and is not reported.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.6cm,
+  ybar, bar width=10pt,
+  xlabel={trials solved, of 10}, ylabel={problems},
+  xtick={0,0.1,...,1.0},
+  xticklabels={0,1,2,3,4,5,6,7,8,9,10},
+  xmin=-0.07, xmax=1.07, ymin=0, ymax=58,
+  ticklabel style={font=\scriptsize}, label style={font=\small},
+  nodes near coords, nodes near coords style={font=\scriptsize},
+]
+\addplot table[x=frac, y=n] {sr_tsr_data/tf_dev1_hist.dat};
+\end{axis}
+\end{tikzpicture}
+\caption{TF\_DEV1: problems by number of the ten development-seed trials solved
+(82 scored problems, the first 84 laws of our order;
+\src{phylu logs/\allowbreak{}TF\_\allowbreak{}DEV1/\allowbreak{}summary.\allowbreak{}txt}).}
+\Description{Bar chart: 51 problems solved in all ten trials, 13 in nine, and a few in each lower bin, four in none.}
+\label{fig:tfdev1}
+\end{figure}
+
+\paragraph{Control: the stream-order rule as a hard constraint.} A rule bolted
+on after decoding --- root stream order at most three, argument windows, and a
+table of permitted unary stacks --- was run on 83 laws at 90~s under the TF\_DEV1
+protocol. It solved 84.69\% (81 scored problems) against TF\_DEV1's 85.61\% (82);
+on the 81 common laws, 686 against 700 solved trials of 810, 16 laws better and
+13 worse; its largest losses were Lorentz and Gaussian laws, for example Feynman
+II.13.23, 1 of 10 against 8 (\src{logs/\allowbreak{}AB\_\allowbreak{}ORDER\_\allowbreak{}EASY/\allowbreak{}summary.\allowbreak{}txt};
+\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}tsr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md} \S1.2). It is off in every other run.
+
+\paragraph{Control: the rebuild onto the typed core.} On the first 40 laws, ten
+development seeds and $10^6$ evaluations, the single-type kingdom rebuilt on the
+typed GEP core passed the engine's law bar in 380 of 400 seed-runs against the
+old engine's 382; 33 laws gave the same count, four went up (+5) and three down
+($-7$) (\src{phylu docs/\allowbreak{}reports/\allowbreak{}2026-10-20\_\allowbreak{}sr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md}). The two arms do
+not draw the same random numbers.
+
+\paragraph{Against AI Feynman.} AI Feynman finds an exact solution in about
+53\% of runs at zero noise~\cite{lacava2021srbench}, 55.78\% on the Feynman
+problems and 27.14\% on the Strogatz systems~\cite{kartelj2023rilsrols}, with up
+to eight hours a run and no access to the answer. Our CASCADE2 and AB1 counts
+are of the same order but come from one seed, a 90~s budget, and the answer key
+inside the loop; our truth-free rate covers the easiest 82 problems. None of
+these is comparable with the published figure. The comparison that would count
+--- the pre-registered official seeds under the truth-free protocol, over all
+130 scored problems --- has not been run.
+
+\subsection{Parity with SymPy}
+
+fuller's claim to replace SymPy in the engine is measured against SymPy itself.
+A corpus of 972 (input, target) pairs was generated offline by SymPy
+(\src{fuller parity/\allowbreak{}gen\_\allowbreak{}corpus.\allowbreak{}py}): random expressions of depth at most four,
+each mapped through one SymPy simplifier. The scorer
+(\src{src/\allowbreak{}parity.\allowbreak{}rs}) loads both sides into one e-graph, runs a bounded schedule
+of the family chosen for the corpus (algebra, rational or trigonometric,
+\src{src/\allowbreak{}bin/\allowbreak{}parity.\allowbreak{}rs:68}), and counts a pair when input and target end in the
+same e-class. SymPy never runs in the scorer. Table~\ref{tab:parity} gives the
+last full measurement.
+
+\begin{table}[t]
+\caption{SymPy parity, fuller commit \texttt{477bd28a} (2026-05-26). Counts are
+the corpus sizes times the reported percentages; powsimp's 146 is confirmed by
+the re-run in \src{fuller logs/\allowbreak{}parity\_\allowbreak{}after\_\allowbreak{}rules.\allowbreak{}log}.}
+\label{tab:parity}
+\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+SymPy module & Family & Proved & Pairs & \% \\
+\midrule
+powsimp & algebra & 146 & 172 & 84.9 \\
+trigsimp & trig & 94 & 200 & 47.0 \\
+radsimp & rational & 33 & 200 & 16.5 \\
+ratsimp & rational & 28 & 200 & 14.0 \\
+simplify & algebra & 26 & 200 & 13.0 \\
+\midrule
+all & & 327 & 972 & 33.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A re-run on 2026-09-19 with the later rule families reached powsimp 84.9\%,
+radsimp 17.5\% and ratsimp 14.0\%; the simplify corpus did not complete and
+trigsimp was not reached (\src{fuller logs/\allowbreak{}parity\_\allowbreak{}after\_\allowbreak{}rules.\allowbreak{}log},
+\src{parity\_\allowbreak{}simplify\_\allowbreak{}full.\allowbreak{}log}). The low rational figures are partly a
+measurement effect: SymPy's rationalised targets are often larger than their
+inputs, which is not the simplification SR wants. The equality the search
+needs is narrower --- is this model the law? --- and the canonicaliser's
+spelling is what SRBench's own check scores.
+
+%% ===================================================================
+\section{Faults Found and Fixed}
+\label{sec:faults}
+
+These are part of the method: each was found by a measurement that disagreed
+with an expectation, and each is fixed in the commit named.
+
+\begin{itemize}
+\item \textbf{The answer key was inside the loop.} Every SRBench count before
+2026-09-30 stopped on SRBench's verdict and chose the submitted spelling by
+it; an external review also found test rows reaching the finisher, an
+inheritable environment variable that carried the truth data set, and a
+pool-relative HFF normalisation (\src{phylu
+docs/\allowbreak{}PLAN\_\allowbreak{}srbench\_\allowbreak{}competition.\allowbreak{}md} v2, findings C1--C3). The truth-free
+pipeline answers each; CASCADE2 and AB1 remain development results, and PROD1,
+begun on the official seeds with the key in the loop, was stopped and is not
+reported.
+\item \textbf{The HFF kernel had four defects its parity tests could not see.}
+The tests re-implemented the kernel's arithmetic in Rust. A test that dispatches
+the kernel and compares it with the host's own candidate walk found that NaN
+candidates won the argmin (Metal folds \texttt{a != a} to false), that a tower
+term divided by 6 where the host divided by 4, and two more (fuller
+\texttt{bbd4d77a}).
+\item \textbf{The scorer's compensated sums were optimised away on the
+device.} On $y=2x$ over 40{,}000 rows the device gave $a=1.9999967$ and
+$1-R^2=10^{-9}$; every intermediate is now kept and division and square root are
+corrected by an exact residual, bit-identical with a CPU twin (fuller
+\texttt{e2fc1738}).
+\item \textbf{TSR genes were 2{,}743~ms a generation} because the evaluator
+gave every thread scratch for the layout's worst case, zero-filled; length
+classes cut it to 633~ms (fuller \texttt{35b88fb8}), and the later fixes of
+Figure~\ref{fig:speed} to 127.5~ms.
+\item \textbf{Fold read the wrong statistics.} From phylu \texttt{5ba2ff53}
+(2026-10-20) to \texttt{f706393d} the fold read subtree statistics with a
+stride of 128 from an array whose stride was the evaluator's bound, so most
+statistics belonged to another expression: on Feynman I.6.2a, TSR arm C folded
+22 rows instead of 293. Every SR and TSR run in that window ran with a nearly
+inactive fold (\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}outstanding\_\allowbreak{}2026-10-21.\allowbreak{}md}, T57); none
+of the SRBench results above is in that window except the rebuild control and
+the TSR speed measurements.
+\item \textbf{The beam put the live population back only when it kept a
+survivor}, after scoring its mutants in a scratch population over the device's
+(\src{tsr\_\allowbreak{}speed.\allowbreak{}md}, ``Found on the way'').
+\end{itemize}
+
+%% ===================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+The measurement that set the TSR ceiling is clean: the laws never exceed two
+transcendentals on a path, and most reported towers do. What the measurements do
+not yet show is that removing those shapes helps the search find laws. The one
+same-engine comparison, AB1, is one seed; there the untyped engine certified
+four more laws and the difference is within chance. A ceiling on stream order,
+bolted on after decoding, lost 14 solved trials of 810, mostly on laws whose
+true form the rule's table had been built from tidied spellings that the raw
+genes did not use. The lesson we draw is about where a constraint sits rather
+than whether it is right: a rule applied after decoding throws away individuals
+the variation operators have already spent effort on, and a rule built from
+tidied spellings rejects raw spellings of the same law. The typed-core TSR
+tables address both --- the rule is the table, and the table is checked against
+the engine's own order and depth code --- at the price of genes up to 208 times
+wider. The speed work of Figure~\ref{fig:speed} brought arm C within a factor
+of 2.8 of the single type per generation; whether it pays in laws found is what
+the arms of the plan will measure.
+
+The clearest evidence that the two systems do more together than apart is the
+step from 74 to 79 in CASCADE2: rewriting a near miss into the law was cheaper
+than evolving it, for five laws. That step used the answer key to choose among
+spellings; in TF\_DEV1, where the canonicaliser chooses alone, the rate counting
+only its own emitted forms is 83.66\%, and the engine's plain form, used when
+the canonicaliser found no spelling that survives SRBench's rounding, accounts
+for the rest of the 85.61\%.
+
+%% ===================================================================
+\section{Limitations and Open Work}
+\label{sec:limits}
+
+\begin{itemize}
+\item \textbf{No reported run on SRBench's official seeds.} The
+pre-registered run (the first ten official seeds, the truth-free protocol, all
+130 scored problems, TSR and untyped paired, \src{fuller
+docs/\allowbreak{}DESIGN\_\allowbreak{}tsr\_\allowbreak{}vs\_\allowbreak{}sr\_\allowbreak{}srbench\_\allowbreak{}runpod.\allowbreak{}md}) has not been run. Two official
+seeds were watched during judge-side fixes, which a report must state.
+\item \textbf{The truth-free rate is on the easiest problems.} TF\_DEV1 covers
+the first 82 scored problems of an order built to put easy laws first.
+\item \textbf{One seed for the typing comparison}, and in AB1 the kitchen sink
+chose among up to 30 spellings with the answer key.
+\item \textbf{The typed-core TSR arms have not run.} The tables, the checker,
+the re-typing and the speed fixes exist; the experiment of
+\src{PLAN\_\allowbreak{}tsr\_\allowbreak{}typed\_\allowbreak{}gep.\allowbreak{}md} \S7 (arms A--F, paired by law and seed, McNemar
+counts and a law bootstrap) has not been run, and nothing here says whether
+depth or order in the layout changes recovery. A three-seed learning check on
+Feynman I.6.2a (arm C found the law on 3 of 3 seeds with the mutation rate
+applied per type, 2 of 3 without) ran in the fold-fault window and is not a
+result.
+\item \textbf{A gene that does not express still occupies a chromosome} in the
+decode-time version, so typing there adds unscored genes rather than removing
+shapes.
+\item \textbf{Parity is stale.} The full measurement is from May 2026; rule
+families have been added since and the simplify corpus did not complete in the
+September re-run.
+\item \textbf{Lower bounds are not types.} ``$\exp$ never takes a bare
+variable'' holds for every law and cannot be written as an upper-bound type.
+\end{itemize}
+
+%% ===================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+TSR makes transcendental depth a type: three depth-typed layers, absorbing
+arithmetic, raising transcendentals, and no row past two. The ceiling is the
+one the 133 SRBench laws support, and in the typed GEP core it is part of the
+layout, so every individual is legal by construction. On the engine as run, TSR
+with fuller's editors recovered 74 laws, and 79 with post-search rewriting, on
+one development seed at 90~s with the answer key as the stop; it solved
+85.61\% of truth-free trials on the 82 easiest scored problems; and in the one
+same-engine control it certified 72 laws against the untyped engine's 76, a
+difference within chance. fuller proves 33.6\% of SymPy's simplifications on
+its own rules. The official-seed run under the truth-free protocol, and the
+typed-core arms, are the open work.
+
+\begin{acks}
+The author thanks the maintainers of egglog, wgpu and SRBench. Claude Code was
+used in writing the code and this text; every number was checked against the
+named source file.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{sr_tsr_multityped_gep}
+
+\end{document}

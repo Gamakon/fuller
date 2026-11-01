@@ -1,0 +1,7 @@
+# source: fuller commit 477bd28a (2026-05-26), the parity binary over parity/corpus/*.jsonl
+module matched total pct
+powsimp 146 172 84.9
+trigsimp 94 200 47.0
+radsimp 33 200 16.5
+ratsimp 28 200 14.0
+simplify 26 200 13.0
