@@ -82,6 +82,12 @@ This is a departure from Andrew's geneframe design, in which a kingdom is a QUER
 - A query over the master: filter the rows the specification admits, bind the size variables, then compute the reachable types for the layout.
 - It is optionally written out as the exact table, for the user, a cache or the witness tests.
 - **Regression:** the four benchmarks (reduce, scan, histogram, pathfinder) become four view specifications. Each view's table must equal today's table, and the same genes must express the same programs.
+- **Done (2026-11-01)**, commits e181563b, a2be66bf, dbbf58a6, following the design below:
+  - `kingdoms/futhark/master/` (55 row templates, the three frames, the rules with their element domain, the pools, the matrix family's types; version 1), with master witnesses M1-M9 in `gen_tables.py` (6 of 6 planted faults caught);
+  - `kingdoms/futhark/sniff.py`, which writes `sig/<problem>/view.tsv` from each benchmark's `yardstick.fut`; `interface.tsv` is gone, and `gen_tables.py --check` re-sniffs every benchmark;
+  - `kingdoms/futhark/view.py` (the generator's view) and `src/futhark_view.rs` (the engine's, at runtime, cached once a process); A7's specification is `kingdoms/futhark/view.tsv`;
+  - the regression: the four views and A7's equal the tables of d26a018a byte for byte from both implementations, and `futhark_sig::tests_view` shows the same genes express the same programs.
+  - Not built here, for step 4: elements other than i32 in the master's rows (the format admits them; the value model does not), and the matrix family's cost table and e-graph stay generator-written from A7's view.
 
 ## Step 3 design (3b, 3c, 3d), 2026-11-01
 
