@@ -161,6 +161,37 @@ impl TimingSlots {
 // The speed verdict, the operator mix and the operator tally (every runner that times or mixes operators)
 // ---------------------------------------------------------------------------
 
+/// THE A/A GATE's evidence, `OUT/aa_gate.tsv`: the published program timed against itself (`noise`, the noise
+/// floor) and, in regime P, as a candidate through the timing slots (`inrun`). The gate passes when every ratio is
+/// within 5 % of 1. `rounds_us` is the published program's fastest run of each timing round, in microseconds, when
+/// the run measured them (`--aa-only`); empty otherwise, and the line is then left out. The file is written on
+/// every run that times, so the gate's numbers are on disk and not only in a commit message.
+pub fn aa_gate_report(problem: &str, timing_input: &str, rounds_us: &[f64], noise: &[f64], inrun: &[f64]) -> String {
+    let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
+    let all: Vec<f64> = noise.iter().chain(inrun.iter()).cloned().collect();
+    let within = all.iter().filter(|r| (0.95..=1.05).contains(*r)).count();
+    let mut rep = format!("problem\t{problem}\ntiming_input\t{timing_input}\n");
+    if !rounds_us.is_empty() {
+        let us = rounds_us.iter().map(|u| format!("{u:.1}")).collect::<Vec<_>>().join(",");
+        rep.push_str(&format!("published_gpu_us_fastest_run_{}_rounds_in_one_timing_process\t{us}\n", rounds_us.len()));
+    }
+    rep.push_str(&format!(
+        "noise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n",
+        fmt(noise),
+        fmt(inrun),
+        all.len(),
+        if within == all.len() && !all.is_empty() { "pass" } else { "fail" }
+    ));
+    rep
+}
+
+/// Write [`aa_gate_report`] to `out/aa_gate.tsv`, and return it.
+pub fn write_aa_gate(out: &Path, problem: &str, timing_input: &str, rounds_us: &[f64], noise: &[f64], inrun: &[f64]) -> Result<String, String> {
+    let rep = aa_gate_report(problem, timing_input, rounds_us, noise, inrun);
+    std::fs::write(out.join("aa_gate.tsv"), &rep).map_err(|e| format!("aa_gate.tsv: {e}"))?;
+    Ok(rep)
+}
+
 /// The median of the values of `v` that are not NaN (NaN when there is none); an infinity counts.
 pub fn median(v: &[f64]) -> f64 {
     let mut s: Vec<f64> = v.iter().copied().filter(|x| !x.is_nan()).collect();
@@ -620,6 +651,33 @@ impl HallOfFame {
 
 #[cfg(test)]
 mod tests {
+
+    /// The A/A gate's file holds every ratio, and the gate is pass only when all of them are within 5 %: the numbers
+    /// of 3481e128 (batch path, histogram) read back as 22 of 22, and one ratio outside makes it fail.
+    #[test]
+    fn the_aa_gate_file_holds_every_ratio_and_the_verdict() {
+        let dir = std::env::temp_dir().join(format!("aa_gate_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let noise = [0.9989, 1.0001, 1.0004, 1.0002, 1.0015, 0.9996, 0.9996, 1.0009, 0.9992, 0.9999, 1.0002];
+        let inrun = [1.0009, 0.9997, 1.0009, 1.0011, 1.0016, 1.0010, 0.9999, 1.0014, 1.0012, 0.9998, 1.0029];
+        let rep = super::write_aa_gate(&dir, "histogram", "t", &[2951.2, 2955.0, 2948.0], &noise, &inrun).unwrap();
+        let file = std::fs::read_to_string(dir.join("aa_gate.tsv")).unwrap();
+        assert_eq!(rep, file, "the file is the report");
+        assert!(file.contains("published_gpu_us_fastest_run_3_rounds_in_one_timing_process\t2951.2,2955.0,2948.0\n"));
+        assert!(file.contains("noise_floor_ratios_published_vs_itself\t0.9989,1.0001,"));
+        assert!(file.contains("inrun_aa_ratios\t1.0009,0.9997,"));
+        assert!(file.ends_with("within_5_percent\t22 of 22\ngate\tpass\n"));
+        // No rounds measured: the line is left out, the ratios are still there.
+        let plain = super::aa_gate_report("histogram", "t", &[], &noise, &[]);
+        assert!(!plain.contains("rounds_in_one_timing_process"));
+        assert!(plain.ends_with("within_5_percent\t11 of 11\ngate\tpass\n"));
+        let mut bad = noise;
+        bad[4] = 1.051;
+        assert!(super::aa_gate_report("histogram", "t", &[], &bad, &inrun).ends_with("within_5_percent\t21 of 22\ngate\tfail\n"));
+        assert!(super::aa_gate_report("histogram", "t", &[], &[], &[]).ends_with("gate\tfail\n"), "no ratio is no evidence");
+        std::fs::remove_file(dir.join("aa_gate.tsv")).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     /// The slots fill, accumulate and stop: a new program misses every slot, pairs added in two batches are kept in
     /// order, a full program reads the same ratios again and takes no more.

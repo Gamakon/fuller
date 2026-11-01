@@ -95,7 +95,7 @@ use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebui
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{interleaved_runs, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
+use fuller::runner::{interleaved_runs, write_aa_gate, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -1917,6 +1917,11 @@ fn real_main() -> Result<(), String> {
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
+    // The A/A gate's evidence, on every run that timed its A/A sets (every evaluation path: batch, single, rust).
+    if let Some(a) = &batch_aa {
+        let rounds_us: Vec<f64> = a.rounds.iter().map(|ns| ns / 1e3).collect();
+        write_aa_gate(&out, &pname, &run.judge.timing.label(), &rounds_us, &noise, &inrun_aa)?;
+    }
     if let Some(text) = &rescore {
         let tree = build(&k, text)?;
         let source = program(&k, &sig, &tree)?;
@@ -1959,12 +1964,11 @@ fn real_main() -> Result<(), String> {
         if regime != "P" {
             return Err("--aa-only measures the two A/A sets of regime P".into());
         }
-        let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
-        let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
-        let within = all.iter().filter(|r| (0.95..=1.05).contains(*r)).count();
-        let (one, unit) = (batch_aa.as_ref().ok_or("--aa-only times on the GPU (--backend gpu)")?.rounds.clone(), "rounds_in_one_timing_process");
-        let rep = format!("problem\t{pname}\ntiming_input\t{}\npublished_gpu_us_fastest_run_3_{unit}\t{}\nnoise_floor_ratios_published_vs_itself\t{}\ninrun_aa_ratios\t{}\nwithin_5_percent\t{within} of {}\ngate\t{}\n", run.judge.timing.label(), one.iter().map(|ns| format!("{:.1}", ns / 1e3)).collect::<Vec<_>>().join(","), fmt(&noise), fmt(&inrun_aa), all.len(), if within == all.len() && !all.is_empty() { "pass" } else { "fail" });
-        std::fs::write(out.join("aa_gate.tsv"), &rep).map_err(|e| e.to_string())?;
+        if batch_aa.is_none() {
+            return Err("--aa-only times on the GPU (--backend gpu)".into());
+        }
+        // Written above, with the timing rounds: the gate's file is the report.
+        let rep = std::fs::read_to_string(out.join("aa_gate.tsv")).map_err(|e| format!("aa_gate.tsv: {e}"))?;
         print!("{rep}");
         run.tel.end("early_stop", 0, None)?;
         return Ok(());
