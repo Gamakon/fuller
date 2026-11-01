@@ -31,6 +31,9 @@ map2.add@a.n:c	Xmap2_add__a_n_c	Sa_n_c
 map2.sub@a.n:c	Xmap2_sub__a_n_c	Sa_n_c
 map2.min@a.n:c	Xmap2_min__a_n_c	Sa_n_c
 map2.max@a.n:c	Xmap2_max__a_n_c	Sa_n_c
+scan.add@a.n:c	Xscan_add__a_n_c	Sa_n_c
+scan.min@a.n:c	Xscan_min__a_n_c	Sa_n_c
+scan.max@a.n:c	Xscan_max__a_n_c	Sa_n_c
 hist.add.n@a.n:c	Xhist_add_n__a_n_c	Sa_n_c
 hist.min.n@a.n:c	Xhist_min_n__a_n_c	Sa_n_c
 hist.max.n@a.n:c	Xhist_max_n__a_n_c	Sa_n_c
@@ -43,6 +46,9 @@ map2.add@a.k:c	Xmap2_add__a_k_c	Sa_k_c
 map2.sub@a.k:c	Xmap2_sub__a_k_c	Sa_k_c
 map2.min@a.k:c	Xmap2_min__a_k_c	Sa_k_c
 map2.max@a.k:c	Xmap2_max__a_k_c	Sa_k_c
+scan.add@a.k:c	Xscan_add__a_k_c	Sa_k_c
+scan.min@a.k:c	Xscan_min__a_k_c	Sa_k_c
+scan.max@a.k:c	Xscan_max__a_k_c	Sa_k_c
 hist.add.n@a.k:c	Xhist_add_n__a_k_c	Sa_k_c
 hist.min.n@a.k:c	Xhist_min_n__a_k_c	Sa_k_c
 hist.max.n@a.k:c	Xhist_max_n__a_k_c	Sa_k_c
@@ -93,6 +99,9 @@ map2.add@a.n:c/T-k	Xmap2_add__a_n_c_T_k	Sa_n_c_T_k
 map2.sub@a.n:c/T-k	Xmap2_sub__a_n_c_T_k	Sa_n_c_T_k
 map2.min@a.n:c/T-k	Xmap2_min__a_n_c_T_k	Sa_n_c_T_k
 map2.max@a.n:c/T-k	Xmap2_max__a_n_c_T_k	Sa_n_c_T_k
+scan.add@a.n:c/T-k	Xscan_add__a_n_c_T_k	Sa_n_c_T_k
+scan.min@a.n:c/T-k	Xscan_min__a_n_c_T_k	Sa_n_c_T_k
+scan.max@a.n:c/T-k	Xscan_max__a_n_c_T_k	Sa_n_c_T_k
 hist.add.n@a.n:c/T-k	Xhist_add_n__a_n_c_T_k	Sa_n_c_T_k
 hist.min.n@a.n:c/T-k	Xhist_min_n__a_n_c_T_k	Sa_n_c_T_k
 hist.max.n@a.n:c/T-k	Xhist_max_n__a_n_c_T_k	Sa_n_c_T_k
@@ -105,6 +114,9 @@ map2.add@a.k:c/T-k	Xmap2_add__a_k_c_T_k	Sa_k_c_T_k
 map2.sub@a.k:c/T-k	Xmap2_sub__a_k_c_T_k	Sa_k_c_T_k
 map2.min@a.k:c/T-k	Xmap2_min__a_k_c_T_k	Sa_k_c_T_k
 map2.max@a.k:c/T-k	Xmap2_max__a_k_c_T_k	Sa_k_c_T_k
+scan.add@a.k:c/T-k	Xscan_add__a_k_c_T_k	Sa_k_c_T_k
+scan.min@a.k:c/T-k	Xscan_min__a_k_c_T_k	Sa_k_c_T_k
+scan.max@a.k:c/T-k	Xscan_max__a_k_c_T_k	Sa_k_c_T_k
 hist.add.n@a.k:c/T-k	Xhist_add_n__a_k_c_T_k	Sa_k_c_T_k
 hist.min.n@a.k:c/T-k	Xhist_min_n__a_k_c_T_k	Sa_k_c_T_k
 hist.max.n@a.k:c/T-k	Xhist_max_n__a_k_c_T_k	Sa_k_c_T_k
@@ -155,6 +167,9 @@ map2.add@a.n:c/T-n	Xmap2_add__a_n_c_T_n	Sa_n_c_T_n
 map2.sub@a.n:c/T-n	Xmap2_sub__a_n_c_T_n	Sa_n_c_T_n
 map2.min@a.n:c/T-n	Xmap2_min__a_n_c_T_n	Sa_n_c_T_n
 map2.max@a.n:c/T-n	Xmap2_max__a_n_c_T_n	Sa_n_c_T_n
+scan.add@a.n:c/T-n	Xscan_add__a_n_c_T_n	Sa_n_c_T_n
+scan.min@a.n:c/T-n	Xscan_min__a_n_c_T_n	Sa_n_c_T_n
+scan.max@a.n:c/T-n	Xscan_max__a_n_c_T_n	Sa_n_c_T_n
 hist.add.n@a.n:c/T-n	Xhist_add_n__a_n_c_T_n	Sa_n_c_T_n
 hist.min.n@a.n:c/T-n	Xhist_min_n__a_n_c_T_n	Sa_n_c_T_n
 hist.max.n@a.n:c/T-n	Xhist_max_n__a_n_c_T_n	Sa_n_c_T_n
@@ -167,6 +182,9 @@ map2.add@a.k:c/T-n	Xmap2_add__a_k_c_T_n	Sa_k_c_T_n
 map2.sub@a.k:c/T-n	Xmap2_sub__a_k_c_T_n	Sa_k_c_T_n
 map2.min@a.k:c/T-n	Xmap2_min__a_k_c_T_n	Sa_k_c_T_n
 map2.max@a.k:c/T-n	Xmap2_max__a_k_c_T_n	Sa_k_c_T_n
+scan.add@a.k:c/T-n	Xscan_add__a_k_c_T_n	Sa_k_c_T_n
+scan.min@a.k:c/T-n	Xscan_min__a_k_c_T_n	Sa_k_c_T_n
+scan.max@a.k:c/T-n	Xscan_max__a_k_c_T_n	Sa_k_c_T_n
 hist.add.n@a.k:c/T-n	Xhist_add_n__a_k_c_T_n	Sa_k_c_T_n
 hist.min.n@a.k:c/T-n	Xhist_min_n__a_k_c_T_n	Sa_k_c_T_n
 hist.max.n@a.k:c/T-n	Xhist_max_n__a_k_c_T_n	Sa_k_c_T_n
@@ -217,6 +235,9 @@ map2.add@a.n:c/L-k-i32	Xmap2_add__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 map2.sub@a.n:c/L-k-i32	Xmap2_sub__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 map2.min@a.n:c/L-k-i32	Xmap2_min__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 map2.max@a.n:c/L-k-i32	Xmap2_max__a_n_c_L_k_i32	Sa_n_c_L_k_i32
+scan.add@a.n:c/L-k-i32	Xscan_add__a_n_c_L_k_i32	Sa_n_c_L_k_i32
+scan.min@a.n:c/L-k-i32	Xscan_min__a_n_c_L_k_i32	Sa_n_c_L_k_i32
+scan.max@a.n:c/L-k-i32	Xscan_max__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 hist.add.n@a.n:c/L-k-i32	Xhist_add_n__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 hist.min.n@a.n:c/L-k-i32	Xhist_min_n__a_n_c_L_k_i32	Sa_n_c_L_k_i32
 hist.max.n@a.n:c/L-k-i32	Xhist_max_n__a_n_c_L_k_i32	Sa_n_c_L_k_i32
@@ -229,6 +250,9 @@ map2.add@a.k:c/L-k-i32	Xmap2_add__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 map2.sub@a.k:c/L-k-i32	Xmap2_sub__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 map2.min@a.k:c/L-k-i32	Xmap2_min__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 map2.max@a.k:c/L-k-i32	Xmap2_max__a_k_c_L_k_i32	Sa_k_c_L_k_i32
+scan.add@a.k:c/L-k-i32	Xscan_add__a_k_c_L_k_i32	Sa_k_c_L_k_i32
+scan.min@a.k:c/L-k-i32	Xscan_min__a_k_c_L_k_i32	Sa_k_c_L_k_i32
+scan.max@a.k:c/L-k-i32	Xscan_max__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 hist.add.n@a.k:c/L-k-i32	Xhist_add_n__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 hist.min.n@a.k:c/L-k-i32	Xhist_min_n__a_k_c_L_k_i32	Sa_k_c_L_k_i32
 hist.max.n@a.k:c/L-k-i32	Xhist_max_n__a_k_c_L_k_i32	Sa_k_c_L_k_i32
@@ -279,6 +303,9 @@ map2.add@a.n:c/L-k-a.n	Xmap2_add__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 map2.sub@a.n:c/L-k-a.n	Xmap2_sub__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 map2.min@a.n:c/L-k-a.n	Xmap2_min__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 map2.max@a.n:c/L-k-a.n	Xmap2_max__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
+scan.add@a.n:c/L-k-a.n	Xscan_add__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
+scan.min@a.n:c/L-k-a.n	Xscan_min__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
+scan.max@a.n:c/L-k-a.n	Xscan_max__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 hist.add.n@a.n:c/L-k-a.n	Xhist_add_n__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 hist.min.n@a.n:c/L-k-a.n	Xhist_min_n__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
 hist.max.n@a.n:c/L-k-a.n	Xhist_max_n__a_n_c_L_k_a_n	Sa_n_c_L_k_a_n
@@ -291,6 +318,9 @@ map2.add@a.k:c/L-k-a.n	Xmap2_add__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 map2.sub@a.k:c/L-k-a.n	Xmap2_sub__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 map2.min@a.k:c/L-k-a.n	Xmap2_min__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 map2.max@a.k:c/L-k-a.n	Xmap2_max__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
+scan.add@a.k:c/L-k-a.n	Xscan_add__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
+scan.min@a.k:c/L-k-a.n	Xscan_min__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
+scan.max@a.k:c/L-k-a.n	Xscan_max__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 hist.add.n@a.k:c/L-k-a.n	Xhist_add_n__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 hist.min.n@a.k:c/L-k-a.n	Xhist_min_n__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
 hist.max.n@a.k:c/L-k-a.n	Xhist_max_n__a_k_c_L_k_a_n	Sa_k_c_L_k_a_n
@@ -341,6 +371,9 @@ map2.add@a.n:c/L-k-a.k	Xmap2_add__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 map2.sub@a.n:c/L-k-a.k	Xmap2_sub__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 map2.min@a.n:c/L-k-a.k	Xmap2_min__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 map2.max@a.n:c/L-k-a.k	Xmap2_max__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
+scan.add@a.n:c/L-k-a.k	Xscan_add__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
+scan.min@a.n:c/L-k-a.k	Xscan_min__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
+scan.max@a.n:c/L-k-a.k	Xscan_max__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 hist.add.n@a.n:c/L-k-a.k	Xhist_add_n__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 hist.min.n@a.n:c/L-k-a.k	Xhist_min_n__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
 hist.max.n@a.n:c/L-k-a.k	Xhist_max_n__a_n_c_L_k_a_k	Sa_n_c_L_k_a_k
@@ -353,6 +386,9 @@ map2.add@a.k:c/L-k-a.k	Xmap2_add__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 map2.sub@a.k:c/L-k-a.k	Xmap2_sub__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 map2.min@a.k:c/L-k-a.k	Xmap2_min__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 map2.max@a.k:c/L-k-a.k	Xmap2_max__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
+scan.add@a.k:c/L-k-a.k	Xscan_add__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
+scan.min@a.k:c/L-k-a.k	Xscan_min__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
+scan.max@a.k:c/L-k-a.k	Xscan_max__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 hist.add.n@a.k:c/L-k-a.k	Xhist_add_n__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 hist.min.n@a.k:c/L-k-a.k	Xhist_min_n__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
 hist.max.n@a.k:c/L-k-a.k	Xhist_max_n__a_k_c_L_k_a_k	Sa_k_c_L_k_a_k
@@ -403,6 +439,9 @@ map2.add@a.n:c/L-n-i32	Xmap2_add__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 map2.sub@a.n:c/L-n-i32	Xmap2_sub__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 map2.min@a.n:c/L-n-i32	Xmap2_min__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 map2.max@a.n:c/L-n-i32	Xmap2_max__a_n_c_L_n_i32	Sa_n_c_L_n_i32
+scan.add@a.n:c/L-n-i32	Xscan_add__a_n_c_L_n_i32	Sa_n_c_L_n_i32
+scan.min@a.n:c/L-n-i32	Xscan_min__a_n_c_L_n_i32	Sa_n_c_L_n_i32
+scan.max@a.n:c/L-n-i32	Xscan_max__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 hist.add.n@a.n:c/L-n-i32	Xhist_add_n__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 hist.min.n@a.n:c/L-n-i32	Xhist_min_n__a_n_c_L_n_i32	Sa_n_c_L_n_i32
 hist.max.n@a.n:c/L-n-i32	Xhist_max_n__a_n_c_L_n_i32	Sa_n_c_L_n_i32
@@ -415,6 +454,9 @@ map2.add@a.k:c/L-n-i32	Xmap2_add__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 map2.sub@a.k:c/L-n-i32	Xmap2_sub__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 map2.min@a.k:c/L-n-i32	Xmap2_min__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 map2.max@a.k:c/L-n-i32	Xmap2_max__a_k_c_L_n_i32	Sa_k_c_L_n_i32
+scan.add@a.k:c/L-n-i32	Xscan_add__a_k_c_L_n_i32	Sa_k_c_L_n_i32
+scan.min@a.k:c/L-n-i32	Xscan_min__a_k_c_L_n_i32	Sa_k_c_L_n_i32
+scan.max@a.k:c/L-n-i32	Xscan_max__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 hist.add.n@a.k:c/L-n-i32	Xhist_add_n__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 hist.min.n@a.k:c/L-n-i32	Xhist_min_n__a_k_c_L_n_i32	Sa_k_c_L_n_i32
 hist.max.n@a.k:c/L-n-i32	Xhist_max_n__a_k_c_L_n_i32	Sa_k_c_L_n_i32
@@ -465,6 +507,9 @@ map2.add@a.n:c/L-n-a.n	Xmap2_add__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 map2.sub@a.n:c/L-n-a.n	Xmap2_sub__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 map2.min@a.n:c/L-n-a.n	Xmap2_min__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 map2.max@a.n:c/L-n-a.n	Xmap2_max__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
+scan.add@a.n:c/L-n-a.n	Xscan_add__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
+scan.min@a.n:c/L-n-a.n	Xscan_min__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
+scan.max@a.n:c/L-n-a.n	Xscan_max__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 hist.add.n@a.n:c/L-n-a.n	Xhist_add_n__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 hist.min.n@a.n:c/L-n-a.n	Xhist_min_n__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
 hist.max.n@a.n:c/L-n-a.n	Xhist_max_n__a_n_c_L_n_a_n	Sa_n_c_L_n_a_n
@@ -477,6 +522,9 @@ map2.add@a.k:c/L-n-a.n	Xmap2_add__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 map2.sub@a.k:c/L-n-a.n	Xmap2_sub__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 map2.min@a.k:c/L-n-a.n	Xmap2_min__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 map2.max@a.k:c/L-n-a.n	Xmap2_max__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
+scan.add@a.k:c/L-n-a.n	Xscan_add__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
+scan.min@a.k:c/L-n-a.n	Xscan_min__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
+scan.max@a.k:c/L-n-a.n	Xscan_max__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 hist.add.n@a.k:c/L-n-a.n	Xhist_add_n__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 hist.min.n@a.k:c/L-n-a.n	Xhist_min_n__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
 hist.max.n@a.k:c/L-n-a.n	Xhist_max_n__a_k_c_L_n_a_n	Sa_k_c_L_n_a_n
@@ -527,6 +575,9 @@ map2.add@a.n:c/L-n-a.k	Xmap2_add__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 map2.sub@a.n:c/L-n-a.k	Xmap2_sub__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 map2.min@a.n:c/L-n-a.k	Xmap2_min__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 map2.max@a.n:c/L-n-a.k	Xmap2_max__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
+scan.add@a.n:c/L-n-a.k	Xscan_add__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
+scan.min@a.n:c/L-n-a.k	Xscan_min__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
+scan.max@a.n:c/L-n-a.k	Xscan_max__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 hist.add.n@a.n:c/L-n-a.k	Xhist_add_n__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 hist.min.n@a.n:c/L-n-a.k	Xhist_min_n__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
 hist.max.n@a.n:c/L-n-a.k	Xhist_max_n__a_n_c_L_n_a_k	Sa_n_c_L_n_a_k
@@ -539,6 +590,9 @@ map2.add@a.k:c/L-n-a.k	Xmap2_add__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 map2.sub@a.k:c/L-n-a.k	Xmap2_sub__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 map2.min@a.k:c/L-n-a.k	Xmap2_min__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 map2.max@a.k:c/L-n-a.k	Xmap2_max__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
+scan.add@a.k:c/L-n-a.k	Xscan_add__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
+scan.min@a.k:c/L-n-a.k	Xscan_min__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
+scan.max@a.k:c/L-n-a.k	Xscan_max__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 hist.add.n@a.k:c/L-n-a.k	Xhist_add_n__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 hist.min.n@a.k:c/L-n-a.k	Xhist_min_n__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
 hist.max.n@a.k:c/L-n-a.k	Xhist_max_n__a_k_c_L_n_a_k	Sa_k_c_L_n_a_k
@@ -589,6 +643,9 @@ map2.add@a.n:c/F-k-i32	Xmap2_add__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 map2.sub@a.n:c/F-k-i32	Xmap2_sub__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 map2.min@a.n:c/F-k-i32	Xmap2_min__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 map2.max@a.n:c/F-k-i32	Xmap2_max__a_n_c_F_k_i32	Sa_n_c_F_k_i32
+scan.add@a.n:c/F-k-i32	Xscan_add__a_n_c_F_k_i32	Sa_n_c_F_k_i32
+scan.min@a.n:c/F-k-i32	Xscan_min__a_n_c_F_k_i32	Sa_n_c_F_k_i32
+scan.max@a.n:c/F-k-i32	Xscan_max__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 hist.add.n@a.n:c/F-k-i32	Xhist_add_n__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 hist.min.n@a.n:c/F-k-i32	Xhist_min_n__a_n_c_F_k_i32	Sa_n_c_F_k_i32
 hist.max.n@a.n:c/F-k-i32	Xhist_max_n__a_n_c_F_k_i32	Sa_n_c_F_k_i32
@@ -601,6 +658,9 @@ map2.add@a.k:c/F-k-i32	Xmap2_add__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 map2.sub@a.k:c/F-k-i32	Xmap2_sub__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 map2.min@a.k:c/F-k-i32	Xmap2_min__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 map2.max@a.k:c/F-k-i32	Xmap2_max__a_k_c_F_k_i32	Sa_k_c_F_k_i32
+scan.add@a.k:c/F-k-i32	Xscan_add__a_k_c_F_k_i32	Sa_k_c_F_k_i32
+scan.min@a.k:c/F-k-i32	Xscan_min__a_k_c_F_k_i32	Sa_k_c_F_k_i32
+scan.max@a.k:c/F-k-i32	Xscan_max__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 hist.add.n@a.k:c/F-k-i32	Xhist_add_n__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 hist.min.n@a.k:c/F-k-i32	Xhist_min_n__a_k_c_F_k_i32	Sa_k_c_F_k_i32
 hist.max.n@a.k:c/F-k-i32	Xhist_max_n__a_k_c_F_k_i32	Sa_k_c_F_k_i32
@@ -651,6 +711,9 @@ map2.add@a.n:c/F-k-a.n	Xmap2_add__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 map2.sub@a.n:c/F-k-a.n	Xmap2_sub__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 map2.min@a.n:c/F-k-a.n	Xmap2_min__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 map2.max@a.n:c/F-k-a.n	Xmap2_max__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
+scan.add@a.n:c/F-k-a.n	Xscan_add__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
+scan.min@a.n:c/F-k-a.n	Xscan_min__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
+scan.max@a.n:c/F-k-a.n	Xscan_max__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 hist.add.n@a.n:c/F-k-a.n	Xhist_add_n__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 hist.min.n@a.n:c/F-k-a.n	Xhist_min_n__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
 hist.max.n@a.n:c/F-k-a.n	Xhist_max_n__a_n_c_F_k_a_n	Sa_n_c_F_k_a_n
@@ -663,6 +726,9 @@ map2.add@a.k:c/F-k-a.n	Xmap2_add__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 map2.sub@a.k:c/F-k-a.n	Xmap2_sub__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 map2.min@a.k:c/F-k-a.n	Xmap2_min__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 map2.max@a.k:c/F-k-a.n	Xmap2_max__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
+scan.add@a.k:c/F-k-a.n	Xscan_add__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
+scan.min@a.k:c/F-k-a.n	Xscan_min__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
+scan.max@a.k:c/F-k-a.n	Xscan_max__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 hist.add.n@a.k:c/F-k-a.n	Xhist_add_n__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 hist.min.n@a.k:c/F-k-a.n	Xhist_min_n__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
 hist.max.n@a.k:c/F-k-a.n	Xhist_max_n__a_k_c_F_k_a_n	Sa_k_c_F_k_a_n
@@ -713,6 +779,9 @@ map2.add@a.n:c/F-k-a.k	Xmap2_add__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 map2.sub@a.n:c/F-k-a.k	Xmap2_sub__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 map2.min@a.n:c/F-k-a.k	Xmap2_min__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 map2.max@a.n:c/F-k-a.k	Xmap2_max__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
+scan.add@a.n:c/F-k-a.k	Xscan_add__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
+scan.min@a.n:c/F-k-a.k	Xscan_min__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
+scan.max@a.n:c/F-k-a.k	Xscan_max__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 hist.add.n@a.n:c/F-k-a.k	Xhist_add_n__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 hist.min.n@a.n:c/F-k-a.k	Xhist_min_n__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
 hist.max.n@a.n:c/F-k-a.k	Xhist_max_n__a_n_c_F_k_a_k	Sa_n_c_F_k_a_k
@@ -725,6 +794,9 @@ map2.add@a.k:c/F-k-a.k	Xmap2_add__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 map2.sub@a.k:c/F-k-a.k	Xmap2_sub__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 map2.min@a.k:c/F-k-a.k	Xmap2_min__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 map2.max@a.k:c/F-k-a.k	Xmap2_max__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
+scan.add@a.k:c/F-k-a.k	Xscan_add__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
+scan.min@a.k:c/F-k-a.k	Xscan_min__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
+scan.max@a.k:c/F-k-a.k	Xscan_max__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 hist.add.n@a.k:c/F-k-a.k	Xhist_add_n__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 hist.min.n@a.k:c/F-k-a.k	Xhist_min_n__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
 hist.max.n@a.k:c/F-k-a.k	Xhist_max_n__a_k_c_F_k_a_k	Sa_k_c_F_k_a_k
@@ -775,6 +847,9 @@ map2.add@a.n:c/F-n-i32	Xmap2_add__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 map2.sub@a.n:c/F-n-i32	Xmap2_sub__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 map2.min@a.n:c/F-n-i32	Xmap2_min__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 map2.max@a.n:c/F-n-i32	Xmap2_max__a_n_c_F_n_i32	Sa_n_c_F_n_i32
+scan.add@a.n:c/F-n-i32	Xscan_add__a_n_c_F_n_i32	Sa_n_c_F_n_i32
+scan.min@a.n:c/F-n-i32	Xscan_min__a_n_c_F_n_i32	Sa_n_c_F_n_i32
+scan.max@a.n:c/F-n-i32	Xscan_max__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 hist.add.n@a.n:c/F-n-i32	Xhist_add_n__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 hist.min.n@a.n:c/F-n-i32	Xhist_min_n__a_n_c_F_n_i32	Sa_n_c_F_n_i32
 hist.max.n@a.n:c/F-n-i32	Xhist_max_n__a_n_c_F_n_i32	Sa_n_c_F_n_i32
@@ -787,6 +862,9 @@ map2.add@a.k:c/F-n-i32	Xmap2_add__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 map2.sub@a.k:c/F-n-i32	Xmap2_sub__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 map2.min@a.k:c/F-n-i32	Xmap2_min__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 map2.max@a.k:c/F-n-i32	Xmap2_max__a_k_c_F_n_i32	Sa_k_c_F_n_i32
+scan.add@a.k:c/F-n-i32	Xscan_add__a_k_c_F_n_i32	Sa_k_c_F_n_i32
+scan.min@a.k:c/F-n-i32	Xscan_min__a_k_c_F_n_i32	Sa_k_c_F_n_i32
+scan.max@a.k:c/F-n-i32	Xscan_max__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 hist.add.n@a.k:c/F-n-i32	Xhist_add_n__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 hist.min.n@a.k:c/F-n-i32	Xhist_min_n__a_k_c_F_n_i32	Sa_k_c_F_n_i32
 hist.max.n@a.k:c/F-n-i32	Xhist_max_n__a_k_c_F_n_i32	Sa_k_c_F_n_i32
@@ -837,6 +915,9 @@ map2.add@a.n:c/F-n-a.n	Xmap2_add__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 map2.sub@a.n:c/F-n-a.n	Xmap2_sub__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 map2.min@a.n:c/F-n-a.n	Xmap2_min__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 map2.max@a.n:c/F-n-a.n	Xmap2_max__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
+scan.add@a.n:c/F-n-a.n	Xscan_add__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
+scan.min@a.n:c/F-n-a.n	Xscan_min__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
+scan.max@a.n:c/F-n-a.n	Xscan_max__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 hist.add.n@a.n:c/F-n-a.n	Xhist_add_n__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 hist.min.n@a.n:c/F-n-a.n	Xhist_min_n__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
 hist.max.n@a.n:c/F-n-a.n	Xhist_max_n__a_n_c_F_n_a_n	Sa_n_c_F_n_a_n
@@ -849,6 +930,9 @@ map2.add@a.k:c/F-n-a.n	Xmap2_add__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 map2.sub@a.k:c/F-n-a.n	Xmap2_sub__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 map2.min@a.k:c/F-n-a.n	Xmap2_min__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 map2.max@a.k:c/F-n-a.n	Xmap2_max__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
+scan.add@a.k:c/F-n-a.n	Xscan_add__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
+scan.min@a.k:c/F-n-a.n	Xscan_min__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
+scan.max@a.k:c/F-n-a.n	Xscan_max__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 hist.add.n@a.k:c/F-n-a.n	Xhist_add_n__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 hist.min.n@a.k:c/F-n-a.n	Xhist_min_n__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
 hist.max.n@a.k:c/F-n-a.n	Xhist_max_n__a_k_c_F_n_a_n	Sa_k_c_F_n_a_n
@@ -899,6 +983,9 @@ map2.add@a.n:c/F-n-a.k	Xmap2_add__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 map2.sub@a.n:c/F-n-a.k	Xmap2_sub__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 map2.min@a.n:c/F-n-a.k	Xmap2_min__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 map2.max@a.n:c/F-n-a.k	Xmap2_max__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
+scan.add@a.n:c/F-n-a.k	Xscan_add__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
+scan.min@a.n:c/F-n-a.k	Xscan_min__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
+scan.max@a.n:c/F-n-a.k	Xscan_max__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 hist.add.n@a.n:c/F-n-a.k	Xhist_add_n__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 hist.min.n@a.n:c/F-n-a.k	Xhist_min_n__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
 hist.max.n@a.n:c/F-n-a.k	Xhist_max_n__a_n_c_F_n_a_k	Sa_n_c_F_n_a_k
@@ -911,6 +998,9 @@ map2.add@a.k:c/F-n-a.k	Xmap2_add__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 map2.sub@a.k:c/F-n-a.k	Xmap2_sub__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 map2.min@a.k:c/F-n-a.k	Xmap2_min__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 map2.max@a.k:c/F-n-a.k	Xmap2_max__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
+scan.add@a.k:c/F-n-a.k	Xscan_add__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
+scan.min@a.k:c/F-n-a.k	Xscan_min__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
+scan.max@a.k:c/F-n-a.k	Xscan_max__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 hist.add.n@a.k:c/F-n-a.k	Xhist_add_n__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 hist.min.n@a.k:c/F-n-a.k	Xhist_min_n__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k
 hist.max.n@a.k:c/F-n-a.k	Xhist_max_n__a_k_c_F_n_a_k	Sa_k_c_F_n_a_k

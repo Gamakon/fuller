@@ -1593,8 +1593,8 @@ def pixel_dir(instance):
 # The root is the output class in the empty context `c`.
 
 # THE PROBLEMS: each is a view over the master, its specification `sig/<problem>/view.tsv` written by the sniffer
-# (`sniff.py`) from the problem's Futhark source. The rows are the master's signature families (`master/rows.tsv`,
-# family `core` and the optional `scan`, `hist`, `mod`); the view (`view.py`) filters, binds and closes them.
+# (`sniff.py`) from the problem's Futhark source. The rows are every family of the master (`master/rows.tsv`); the
+# view (`view.py`) filters, binds and keeps the types reachable both ways (docs/PLAN_futhark_kingdom.md, 3e).
 import sniff  # noqa: E402
 
 SIG_PROBLEMS = {
@@ -1622,7 +1622,6 @@ SIG_HISTS = {"i32": [("add", "hist (+) 0i32 {D} (map i64.i32 {0}) {1}"),
                      ("min", "hist i32.min i32.highest {D} (map i64.i32 {0}) {1}"),
                      ("max", "hist i32.max i32.lowest {D} (map i64.i32 {0}) {1}")]}
 SIG_MOD = "{0} % i32.i64 {D}"
-SIG_FAMILIES = ("scan", "hist", "mod")
 
 # The element operators, by element type: (name, arity, spelling), restated for the witnesses. Every one is total
 # on its type (i32 arithmetic wraps; no division, which traps on 0).
@@ -1735,7 +1734,6 @@ def witness_sig(dir_path, name):
         bad.append(f"S1 the roots are {roots}, the declared output is {want_root}")
     inputs = {n: f"a.{'.'.join(ds)}" for n, e, ds in inst["inputs"] if e != "size"}
     dims = [n for n, e, _ in inst["inputs"] if e == "size"] + [d for _, _, ds in inst["inputs"] for d in ds]
-    fams = inst["families"]
     parsed = {}
     for t in types:
         try:
@@ -1817,10 +1815,9 @@ def witness_sig(dir_path, name):
         # S6: the work bound -- binders, reductions and replicates only above the depth.
         heavy = (binder or op == "replicate" or op.startswith("map2.") or op.startswith("scan.") or op.startswith("hist.")
                  or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS[elem]})
-        # S10: an optional family's row only in an instance that carries the family, and of its template.
+        # S10: an optional family's row is of its template. (Every view carries every family since 3e; which of
+        # its rows a view keeps is the reachability's, not the specification's.)
         fam = op.split(".")[0]
-        if fam in SIG_FAMILIES and fam not in fams:
-            bad.append(f"S10 the row {rname} is of the family {fam}, which {name} does not carry")
         if fam == "scan" and (args != [out] or (op[5:], spelling) not in set(SIG_SCANS[elem])):
             bad.append(f"S10 the scan row {rname} does not take one array of its own class: {args} {spelling!r}")
         if fam == "hist":

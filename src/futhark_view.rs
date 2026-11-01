@@ -3,14 +3,18 @@
 //! `kingdoms/futhark/master/` holds every row of every Futhark kingdom as a TEMPLATE over size variables (`{D}`), the
 //! element (`{E}`) and contexts (`C`), each row versioned (`since`). A problem's view specification (`view.tsv`,
 //! written by `kingdoms/futhark/sniff.py` from the problem's Futhark source) is the WHERE clause: the element, the
-//! inputs and output over named dimensions, the families, the depth, the master version. The view
+//! inputs and output over named dimensions, the depth, the master version. The view
 //!
-//! 1. **filters** the master rows the specification admits (family, version, element);
+//! 1. **filters** the master rows the specification admits (version and element; a signature view admits EVERY
+//!    family, the matrix view its `families`);
 //! 2. **binds** them: a row's scope is a list of quantifiers, outermost first; consecutive rows that share their first
 //!    quantifier are one block, the block iterates it, and its rows recurse on their remaining quantifiers, so the
 //!    master's row order is the expansion order;
-//! 3. keeps the types **reachable** from the root (the closure over the rows' arguments): the gene layout then has
-//!    per-type heads only for types an expressed tree can reach;
+//! 3. keeps the types **reachable both ways** (`docs/PLAN_futhark_kingdom.md`, 3e): forward, F is the least fixpoint
+//!    of what can be built (every leaf's output, then the output of every function whose arguments are all in F), and
+//!    a row is usable when all its arguments are in F; backward, B is the closure from the root over the usable rows;
+//!    the kept rows are the usable rows whose output is in B. Which families a view has is decided by the types, never
+//!    by what the problem's source happens to use;
 //! 4. **writes** the exact table: `types.tsv`, `functions.tsv` and, for a signature view, the e-graph artefacts.
 //!
 //! This is the implementation the engine runs; `kingdoms/futhark/view.py` is the generator's, and the tests require
@@ -28,9 +32,6 @@ const MASTER_FRAMES: &str = include_str!("../kingdoms/futhark/master/frames.tsv"
 const MASTER_RULES: &str = include_str!("../kingdoms/futhark/master/rules.tsv");
 const MASTER_POOLS: &str = include_str!("../kingdoms/futhark/master/pools.tsv");
 const MASTER_TYPES: &str = include_str!("../kingdoms/futhark/master/types.tsv");
-
-/// The optional families of a signature view (the `core` family is always admitted).
-pub const SIGNATURE_FAMILIES: [&str; 3] = ["scan", "hist", "mod"];
 
 // ---- the master -------------------------------------------------------------------------------------------------
 
@@ -187,7 +188,8 @@ pub struct SpecInput {
     pub dims: Vec<String>,
 }
 
-/// A view specification (`view.tsv`): four-column lines `kind name element dims`; `#` lines are comments.
+/// A view specification (`view.tsv`): four-column lines `kind name element dims`; `#` lines are comments. A
+/// `families` line belongs to the matrix view only: a signature view admits every family of the master.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewSpec {
     pub shape: Shape,
@@ -199,6 +201,7 @@ pub struct ViewSpec {
     /// The output's name, element and dimensions.
     pub output: Option<SpecInput>,
     pub depth: u32,
+    /// The matrix view's families (a signature view has none: it admits every family).
     pub families: Vec<String>,
     pub literals: Vec<String>,
     pub dims: Vec<String>,
@@ -223,6 +226,7 @@ impl ViewSpec {
             root: Vec::new(),
         };
         let list = |x: &str| x.split(',').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>();
+        let mut families_line = false;
         for line in text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
             let f: Vec<&str> = line.split('\t').collect();
             let [kind, name, elem, dims] = f.as_slice() else {
@@ -249,7 +253,10 @@ impl ViewSpec {
                         other => return Err(format!("the view shape {other}")),
                     }
                 }
-                "families" => s.families = list(name),
+                "families" => {
+                    families_line = true;
+                    s.families = list(name);
+                }
                 "literals" => s.literals = list(name),
                 "dims" => s.dims = list(name),
                 "roles" => s.roles = list(name),
@@ -259,6 +266,9 @@ impl ViewSpec {
         }
         if s.element.is_empty() {
             return Err("the specification names no element".into());
+        }
+        if s.shape == Shape::Signature && families_line {
+            return Err("a signature specification has a families line: a signature view admits every family".into());
         }
         if s.shape == Shape::Signature && s.output.is_none() {
             return Err("the signature specification has no output".into());
@@ -572,9 +582,11 @@ pub struct ViewRow {
     pub note: String,
 }
 
+/// Whether the specification admits a master row: its version and its element, and for the matrix view its family. A
+/// signature view admits every family; a row whose quantifiers range over sets the view does not have (`P:pairs` in a
+/// signature view) expands to no rows, and [`reachable`] drops what nothing can use.
 fn admitted(row: &MasterRow, spec: &ViewSpec, master: &Master) -> bool {
-    let core = spec.shape == Shape::Signature && row.family == "core";
-    (core || spec.families.contains(&row.family))
+    (spec.shape == Shape::Signature || spec.families.contains(&row.family))
         && row.since <= spec.master.unwrap_or(master.version)
         && (row.elems == "*" || row.elems.split(',').any(|e| e == spec.element))
 }
@@ -613,43 +625,75 @@ fn instantiate(row: &MasterRow, binder: &Binder, env: &Env) -> Result<ViewRow, S
     Ok(ViewRow { reference: row.reference.clone(), name: subst(&row.name, &e)?, kind: row.kind.clone(), out, args, spelling: subst(&row.spelling, &e)?, note: subst(&row.note, &e)? })
 }
 
-/// Steps 1 to 3: the view's rows, filtered, bound, and closed under reachability from the root; and the root.
-fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, Binder), String> {
-    let mut binder = Binder::new(spec, master)?;
-    let picked: Vec<(&MasterRow, &[String])> = master.rows.iter().filter(|r| admitted(r, spec, master)).map(|r| (r, r.scope.as_slice())).collect();
-    let base = Env::default().with(&[("E".into(), spec.element.clone())]);
-    if spec.shape == Shape::Signature {
-        // A class that no function row of the view produces is CONTEXT-FREE (the interface's value, one type in every
-        // context). The expansion runs twice: once to see what the function rows produce, then for real.
-        let mut first = Vec::new();
-        expand(&picked, &binder, &base, &mut first)?;
-        let produced: BTreeSet<&str> = first.iter().filter(|r| r.kind == "function").map(|r| r.out.split(':').next().unwrap_or("")).collect();
-        binder.sets.free = binder.sets.classes.iter().filter(|c| !produced.contains(c.as_str())).cloned().collect();
-    }
-    let mut rows = Vec::new();
-    expand(&picked, &binder, &base, &mut rows)?;
-    let root = match spec.shape {
-        Shape::Signature => {
-            let o = spec.output.as_ref().ok_or("the signature specification has no output")?;
-            let cls = if o.dims.is_empty() { spec.element.clone() } else { array_class(&o.dims.iter().map(String::as_str).collect::<Vec<_>>()) };
-            binder.dual(&cls, &Env { ctx: Some(vec![]), ..Env::default() })?
+/// The rows reachable both ways. Forward: F, the least fixpoint of the types that can be built (the output of every
+/// terminal and constant, then of every function whose arguments are all in F); a row is usable when all its arguments
+/// are in F. Backward: B, the closure from the root over the usable rows. Kept: the usable rows whose output is in B,
+/// in expansion order. The root must be in F.
+fn reachable(rows: Vec<ViewRow>, root: &str) -> Result<Vec<ViewRow>, String> {
+    let mut built: BTreeSet<&str> = rows.iter().filter(|r| r.kind != "function").map(|r| r.out.as_str()).collect();
+    loop {
+        let before = built.len();
+        for r in &rows {
+            if !built.contains(r.out.as_str()) && r.args.iter().all(|a| built.contains(a.as_str())) {
+                built.insert(&r.out);
+            }
         }
-        Shape::Matrix => format!("mat.{}", spec.root.join(".")),
-    };
-    let mut keep: BTreeSet<String> = BTreeSet::from([root.clone()]);
+        if built.len() == before {
+            break;
+        }
+    }
+    if !built.contains(root) {
+        return Err(format!("the root {root} cannot be built from the view's leaves by any chain of its functions"));
+    }
+    let usable: Vec<bool> = rows.iter().map(|r| r.args.iter().all(|a| built.contains(a.as_str()))).collect();
+    let mut keep: BTreeSet<&str> = BTreeSet::from([root]);
     loop {
         let before = keep.len();
-        for r in &rows {
-            if keep.contains(&r.out) {
-                keep.extend(r.args.iter().cloned());
+        for (r, _) in rows.iter().zip(&usable).filter(|(_, u)| **u) {
+            if keep.contains(r.out.as_str()) {
+                keep.extend(r.args.iter().map(String::as_str));
             }
         }
         if keep.len() == before {
             break;
         }
     }
-    rows.retain(|r| keep.contains(&r.out));
-    Ok((rows, root, binder))
+    let kept: Vec<bool> = rows.iter().zip(&usable).map(|(r, u)| *u && keep.contains(r.out.as_str())).collect();
+    Ok(rows.into_iter().zip(kept).filter(|(_, k)| *k).map(|(r, _)| r).collect())
+}
+
+/// Steps 1 to 3: the view's rows, filtered, bound, and kept when reachable both ways; the root; the binder.
+fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, Binder), String> {
+    let mut binder = Binder::new(spec, master)?;
+    let picked: Vec<(&MasterRow, &[String])> = master.rows.iter().filter(|r| admitted(r, spec, master)).map(|r| (r, r.scope.as_slice())).collect();
+    let base = Env::default().with(&[("E".into(), spec.element.clone())]);
+    let o = match spec.shape {
+        Shape::Matrix => {
+            let root = format!("mat.{}", spec.root.join("."));
+            let mut rows = Vec::new();
+            expand(&picked, &binder, &base, &mut rows)?;
+            return Ok((reachable(rows, &root)?, root, binder));
+        }
+        Shape::Signature => spec.output.as_ref().ok_or("the signature specification has no output")?,
+    };
+    let cls = if o.dims.is_empty() { spec.element.clone() } else { array_class(&o.dims.iter().map(String::as_str).collect::<Vec<_>>()) };
+    // A class that no KEPT function row of the view produces is CONTEXT-FREE (the interface's value, one type in every
+    // context). Which rows are kept depends on which classes are free, so the view iterates expand -> keep ->
+    // recompute until the free classes settle (from none free; bounded by the class count: a run that does not settle
+    // is a bug in the master or here, never a guess).
+    for _ in 0..binder.sets.classes.len() + 2 {
+        let mut rows = Vec::new();
+        expand(&picked, &binder, &base, &mut rows)?;
+        let root = binder.dual(&cls, &Env { ctx: Some(vec![]), ..Env::default() })?;
+        let rows = reachable(rows, &root)?;
+        let produced: BTreeSet<&str> = rows.iter().filter(|r| r.kind == "function").map(|r| r.out.split(':').next().unwrap_or("")).collect();
+        let free: Vec<String> = binder.sets.classes.iter().filter(|c| !produced.contains(c.as_str())).cloned().collect();
+        if free == binder.sets.free {
+            return Ok((rows, root, binder));
+        }
+        binder.sets.free = free;
+    }
+    Err(format!("the context-free classes of the view do not settle (last {:?})", binder.sets.free))
 }
 
 // ---- the written tables -----------------------------------------------------------------------------------------

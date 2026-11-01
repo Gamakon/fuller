@@ -75,3 +75,63 @@ fn the_cache_gives_one_view_a_specification() {
     let b = cached(SIG[1].1).unwrap();
     assert!(std::ptr::eq(a, b));
 }
+
+#[test]
+fn a_signature_view_carries_every_family_its_types_reach() {
+    // Reduce's source has no `scan`, `hist` or `%`; before 3e its view had none of those rows. Every family is now
+    // admitted and the reachability keeps each row whose types it reaches both ways.
+    let v = View::load(&Master::committed().unwrap(), SIG[2].1).unwrap();
+    let ops: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).map(|n| n.split('.').next().unwrap_or("")).collect();
+    for op in ["scan", "hist", "mod"] {
+        assert!(ops.contains(op), "reduce's view has no {op} row: {ops:?}");
+    }
+}
+
+#[test]
+fn a_signature_specification_with_a_families_line_is_an_error() {
+    let spec = SIG[3].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
+    assert_ne!(spec, SIG[3].1);
+    let e = ViewSpec::parse(&spec).unwrap_err();
+    assert!(e.contains("families"), "{e}");
+}
+
+#[test]
+fn the_kept_rows_are_reachable_both_ways() {
+    let row = |name: &str, kind: &str, out: &str, args: &[&str]| ViewRow {
+        reference: "M".into(),
+        name: name.into(),
+        kind: kind.into(),
+        out: out.into(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+        spelling: String::new(),
+        note: String::new(),
+    };
+    // A leaf of `a`; `f: a -> b` and `g: b -> r` chain to the root, `b` has no leaf of its own and is kept; `h: z -> r`
+    // is unusable (nothing builds `z`); `u: a -> q` is usable but the root never uses `q`.
+    let rows = vec![
+        row("x", "terminal", "a", &[]),
+        row("f", "function", "b", &["a"]),
+        row("g", "function", "r", &["b"]),
+        row("h", "function", "r", &["z"]),
+        row("u", "function", "q", &["a"]),
+    ];
+    let kept: Vec<String> = reachable(rows.clone(), "r").unwrap().into_iter().map(|r| r.name).collect();
+    assert_eq!(kept, ["x", "f", "g"]);
+    let e = reachable(rows, "z").unwrap_err();
+    assert!(e.contains("cannot be built"), "{e}");
+}
+
+/// The measurement of `docs/PLAN_futhark_kingdom.md` 3e: per view, its types, function rows and leaf rows after the
+/// bidirectional reachability (the types and leaf rows are unchanged; the function rows grew: before 3e pathfinder
+/// 3395, reduce 351, scan 369, histogram 2610).
+#[test]
+fn the_view_sizes_are_the_measured_ones() {
+    let master = Master::committed().unwrap();
+    for ((name, spec), want) in SIG.iter().zip([(607, 2700, 1779), (832, 3975, 2062), (73, 408, 221), (73, 408, 221)]) {
+        let v = View::load(&master, spec).unwrap();
+        let types = v.types_tsv.lines().count() - 1;
+        let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();
+        let leaves = v.functions_tsv.lines().count() - 1 - funcs;
+        assert_eq!((types, funcs, leaves), want, "{name}");
+    }
+}

@@ -3,17 +3,22 @@
 `master/rows.tsv` holds every row of every Futhark kingdom as a TEMPLATE over
 size variables (`{D}`), the element (`{E}`) and the context (`C`). A problem's
 view specification (`view.tsv`, written by `sniff.py`) is the WHERE clause:
-the element, the inputs and output over named dimensions, the families, the
-depth, the master version. The view
+the element, the inputs and output over named dimensions, the depth, the
+master version. The view
 
-  1. FILTERS the master rows the specification admits (family, version,
-     element);
+  1. FILTERS the master rows the specification admits (version and element;
+     a signature view admits EVERY family, the matrix view its `families`);
   2. BINDS them: each row's scope is a list of quantifiers, outermost first;
      consecutive rows sharing their first quantifier are one block, the block
      iterates it and its rows recurse on their remaining quantifiers -- the
      master's row order IS the expansion order;
-  3. keeps the types REACHABLE from the root (the closure over the rows'
-     arguments), which is what makes the gene layout's per-type heads;
+  3. keeps the types REACHABLE BOTH WAYS (docs/PLAN_futhark_kingdom.md, 3e):
+     forward, F is the least fixpoint of what can be built (every leaf's
+     output, then the output of every function whose arguments are all in F),
+     and a row is USABLE when all its arguments are in F; backward, B is the
+     closure from the root over the usable rows. The kept rows are the usable
+     rows whose output is in B. Which families a view has is decided here, by
+     the types, never by what the problem's source happens to use;
   4. ORDERS and writes the exact table: types.tsv, functions.tsv and the
      e-graph artefacts.
 
@@ -32,7 +37,6 @@ VAR_RE = re.compile(r"\{([A-Z][A-Z0-9]*(?:\.[a-z0-9]+)?)\}")
 QUANT_RE = re.compile(r"^([A-Z][A-Z0-9]*):([a-z0-9]+)(?:\((.*)\))?$")
 ROW_COLUMNS = ["ref", "since", "family", "kind", "elems", "scope", "when", "name", "out", "args", "spelling", "note"]
 FRAME_COLUMNS = ["family", "kind", "code", "scope", "binds"]
-SIGNATURE_FAMILIES = ("scan", "hist", "mod")
 
 
 def read_tsv(path, columns):
@@ -71,7 +75,8 @@ def master(path=MASTER):
 # ---- the specification --------------------------------------------------------------------------------------------
 
 def read_spec(text):
-    """A view specification: four-column lines `kind name element dims`; `#` lines are comments."""
+    """A view specification: four-column lines `kind name element dims`; `#` lines are comments. A `families` line
+    belongs to the matrix view only: a signature view admits every family of the master."""
     spec = {"inputs": [], "sizes": [], "families": [], "shape": "signature"}
     for line in text.splitlines():
         if not line.strip() or line.startswith("#"):
@@ -96,6 +101,8 @@ def read_spec(text):
             spec[kind] = [x for x in name.split(",") if x]
         else:
             raise ValueError(f"a specification line of kind {kind}")
+    if spec["shape"] == "signature" and any(l.split("\t")[0] == "families" for l in text.splitlines()):
+        raise ValueError("a signature specification has a families line: a signature view admits every family")
     return spec
 
 
@@ -277,10 +284,12 @@ class Binder:
 
 
 def admitted(row, spec, mst):
-    """Whether the specification admits a master row: its family, its version, its element."""
-    fams = set(spec["families"]) | ({"core"} if spec["shape"] == "signature" else set())
+    """Whether the specification admits a master row: its version and its element, and for the matrix view its
+    family. A signature view admits every family; a row whose quantifiers range over sets the view does not have
+    (`P:pairs` in a signature view) expands to no rows, and the reachability below drops what nothing can use."""
     elems = row["elems"].split(",")
-    return (row["family"] in fams and int(row["since"]) <= spec.get("master", mst["version"])
+    return ((spec["shape"] == "signature" or row["family"] in spec["families"])
+            and int(row["since"]) <= spec.get("master", mst["version"])
             and (row["elems"] == "*" or spec["element"] in elems))
 
 
@@ -317,33 +326,55 @@ def instantiate(row, binder, env):
             "spelling": subst(row["spelling"], e), "note": subst(row["note"], e)}
 
 
-def view_rows(spec, mst):
-    """Steps 1 to 3: the view's rows, filtered, bound, and closed under reachability from the root."""
-    binder = Binder(spec, mst)
-    picked = [(r, [q for q in r["scope"].split(";") if q]) for r in mst["rows"] if admitted(r, spec, mst)]
-    if spec["shape"] == "signature":
-        # A class that no function row of the view produces is CONTEXT-FREE: its value is the interface's, the same
-        # in every context, so it is one type (`walls: a.rows.cols`). The expansion runs twice: once to see what the
-        # function rows produce, then with those classes context-free.
-        produced = {r["out"].partition(":")[0] for r in expand(picked, binder, {"E": spec["element"]})
-                    if r["kind"] == "function"}
-        binder.sets["free"] = [c for c in binder.sets["classes"] if c not in produced]
-    rows = expand(picked, binder, {"E": spec["element"]})
-    if spec["shape"] == "signature":
-        elem, dims = spec["output"]
-        root = binder.dual(array_class(dims) if dims else elem, {"C": ()})
-    else:
-        root = "mat." + ".".join(spec["root"])
-    keep, changed = {root}, True
+def reachable(rows, root):
+    """The rows reachable both ways. Forward: F, the least fixpoint of the types that can be built (the output of
+    every terminal and constant, then of every function whose arguments are all in F); a row is usable when all its
+    arguments are in F. Backward: B, the closure from the root over the usable rows. Kept: the usable rows whose
+    output is in B, in expansion order. The root must be in F."""
+    built, changed = {r["out"] for r in rows if r["kind"] != "function"}, True
     while changed:
         changed = False
         for r in rows:
+            if r["out"] not in built and all(a in built for a in r["args"]):
+                built.add(r["out"])
+                changed = True
+    if root not in built:
+        raise ValueError(f"the root {root} cannot be built from the view's leaves by any chain of its functions")
+    usable = [r for r in rows if all(a in built for a in r["args"])]
+    keep, changed = {root}, True
+    while changed:
+        changed = False
+        for r in usable:
             if r["out"] in keep:
                 for a in r["args"]:
                     if a not in keep:
                         keep.add(a)
                         changed = True
-    return [r for r in rows if r["out"] in keep], root, binder
+    return [r for r in usable if r["out"] in keep]
+
+
+def view_rows(spec, mst):
+    """Steps 1 to 3: the view's rows, filtered, bound, and kept when reachable both ways; the root; the binder."""
+    binder = Binder(spec, mst)
+    picked = [(r, [q for q in r["scope"].split(";") if q]) for r in mst["rows"] if admitted(r, spec, mst)]
+    if spec["shape"] != "signature":
+        return reachable(expand(picked, binder, {"E": spec["element"]}), "mat." + ".".join(spec["root"])), \
+            "mat." + ".".join(spec["root"]), binder
+    # A class that no KEPT function row of the view produces is CONTEXT-FREE: its value is the interface's, the same
+    # in every context, so it is one type (`walls: a.rows.cols`). Which rows are kept depends on which classes are
+    # free, so the view iterates expand -> keep -> recompute until the free classes settle (from none free; bounded by
+    # the class count, since a run that does not settle is a bug in the master or here, never a guess).
+    elem, dims = spec["output"]
+    for _ in range(len(binder.sets["classes"]) + 2):
+        rows = expand(picked, binder, {"E": spec["element"]})
+        root = binder.dual(array_class(dims) if dims else elem, {"C": ()})
+        rows = reachable(rows, root)
+        produced = {r["out"].partition(":")[0] for r in rows if r["kind"] == "function"}
+        free = [c for c in binder.sets["classes"] if c not in produced]
+        if free == binder.sets["free"]:
+            return rows, root, binder
+        binder.sets["free"] = free
+    raise ValueError(f"the context-free classes of the view do not settle (last {binder.sets['free']})")
 
 
 # ---- the written tables ---------------------------------------------------------------------------------------------

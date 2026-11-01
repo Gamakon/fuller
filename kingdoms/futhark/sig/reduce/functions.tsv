@@ -12,562 +12,619 @@ F00010	sum.n@i32:c	function	i32:c	a.n:c	i32.sum {0}	the sum of a [n] array
 F00011	minimum.n@i32:c	function	i32:c	a.n:c	i32.minimum {0}	the minimum of a [n] array
 F00012	maximum.n@i32:c	function	i32:c	a.n:c	i32.maximum {0}	the maximum of a [n] array
 F00013	ival.n@i32:c	function	i32:c	ix.n:c	i32.i64 {0}	an index into [n] as a value
-F00014	prev@ix.n:c	function	ix.n:c	ix.n:c	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00015	next@ix.n:c	function	ix.n:c	ix.n:c	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00016	clamp@ix.n:c	function	ix.n:c	i32:c	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00017	tab@a.n:c	function	a.n:c	i32:c/T-n	tabulate n (\j1 -> {0})	a [n] array, element j1 by its body
-F00018	replicate@a.n:c	function	a.n:c	i32:c	replicate n {0}	a [n] array of one value
-F00019	map2.add@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00020	map2.sub@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00021	map2.min@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00022	map2.max@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00023	loop.n@i32:c	function	i32:c	i32:c;i32:c/L-n-i32	loop (s1: i32) = {0} for i1 < n do {1}	a loop over [n] carrying s1, its counter i1
-F00024	loop1.n@i32:c	function	i32:c	i32:c;i32:c/F-n-i32	loop (s1: i32) = {0} for t1 < n - 1 do let i1 = t1 + 1 in {1}	a loop over 1 .. n - 1 carrying s1, its counter i1
-F00025	loop.n@a.n:c	function	a.n:c	a.n:c;a.n:c/L-n-a.n	loop (s1: [n]i32) = {0} for i1 < n do {1}	a loop over [n] carrying s1, its counter i1
-F00026	loop1.n@a.n:c	function	a.n:c	a.n:c;a.n:c/F-n-a.n	loop (s1: [n]i32) = {0} for t1 < n - 1 do let i1 = t1 + 1 in {1}	a loop over 1 .. n - 1 carrying s1, its counter i1
-F00027	add@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} + {1}	add on i32
-F00028	sub@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} - {1}	sub on i32
-F00029	mul@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} * {1}	mul on i32
-F00030	min@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	i32.min {0} {1}	min on i32
-F00031	max@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	i32.max {0} {1}	max on i32
-F00032	neg@i32:c/T-n	function	i32:c/T-n	i32:c/T-n	-{0}	neg on i32
-F00033	abs@i32:c/T-n	function	i32:c/T-n	i32:c/T-n	i32.abs {0}	abs on i32
-F00034	sel@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n;i32:c/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00035	get.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n;ix.n:c/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00036	sum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.sum {0}	the sum of a [n] array
-F00037	minimum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.minimum {0}	the minimum of a [n] array
-F00038	maximum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.maximum {0}	the maximum of a [n] array
-F00039	ival.n@i32:c/T-n	function	i32:c/T-n	ix.n:c/T-n	i32.i64 {0}	an index into [n] as a value
-F00040	prev@ix.n:c/T-n	function	ix.n:c/T-n	ix.n:c/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00041	next@ix.n:c/T-n	function	ix.n:c/T-n	ix.n:c/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00042	clamp@ix.n:c/T-n	function	ix.n:c/T-n	i32:c/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00043	tab@a.n:c/T-n	function	a.n:c/T-n	i32:c/T-n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
-F00044	replicate@a.n:c/T-n	function	a.n:c/T-n	i32:c/T-n	replicate n {0}	a [n] array of one value
-F00045	map2.add@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00046	map2.sub@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00047	map2.min@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00048	map2.max@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00049	loop.n@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00050	loop1.n@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00051	loop.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00052	loop1.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00053	add@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} + {1}	add on i32
-F00054	sub@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} - {1}	sub on i32
-F00055	mul@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} * {1}	mul on i32
-F00056	min@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	i32.min {0} {1}	min on i32
-F00057	max@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	i32.max {0} {1}	max on i32
-F00058	neg@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32	-{0}	neg on i32
-F00059	abs@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32	i32.abs {0}	abs on i32
-F00060	sel@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32;i32:c/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00061	get.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32;ix.n:c/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00062	sum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.sum {0}	the sum of a [n] array
-F00063	minimum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.minimum {0}	the minimum of a [n] array
-F00064	maximum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.maximum {0}	the maximum of a [n] array
-F00065	ival.n@i32:c/L-n-i32	function	i32:c/L-n-i32	ix.n:c/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00066	prev@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	ix.n:c/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00067	next@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	ix.n:c/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00068	clamp@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	i32:c/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00069	tab@a.n:c/L-n-i32	function	a.n:c/L-n-i32	i32:c/L-n-i32/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
-F00070	replicate@a.n:c/L-n-i32	function	a.n:c/L-n-i32	i32:c/L-n-i32	replicate n {0}	a [n] array of one value
-F00071	map2.add@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00072	map2.sub@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00073	map2.min@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00074	map2.max@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00075	loop.n@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00076	loop1.n@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00077	loop.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00078	loop1.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00079	add@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} + {1}	add on i32
-F00080	sub@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} - {1}	sub on i32
-F00081	mul@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} * {1}	mul on i32
-F00082	min@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	i32.min {0} {1}	min on i32
-F00083	max@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	i32.max {0} {1}	max on i32
-F00084	neg@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n	-{0}	neg on i32
-F00085	abs@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n	i32.abs {0}	abs on i32
-F00086	sel@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n;i32:c/L-n-a.n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00087	get.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n;ix.n:c/L-n-a.n	{0}[{1}]	an element of a [n] array, at an index in range
-F00088	sum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.sum {0}	the sum of a [n] array
-F00089	minimum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.minimum {0}	the minimum of a [n] array
-F00090	maximum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.maximum {0}	the maximum of a [n] array
-F00091	ival.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	ix.n:c/L-n-a.n	i32.i64 {0}	an index into [n] as a value
-F00092	prev@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	ix.n:c/L-n-a.n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00093	next@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	ix.n:c/L-n-a.n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00094	clamp@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	i32:c/L-n-a.n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00095	tab@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	i32:c/L-n-a.n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
-F00096	replicate@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	i32:c/L-n-a.n	replicate n {0}	a [n] array of one value
-F00097	map2.add@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00098	map2.sub@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00099	map2.min@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00100	map2.max@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00101	loop.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00102	loop1.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00103	loop.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00104	loop1.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00105	add@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} + {1}	add on i32
-F00106	sub@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} - {1}	sub on i32
-F00107	mul@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} * {1}	mul on i32
-F00108	min@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	i32.min {0} {1}	min on i32
-F00109	max@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	i32.max {0} {1}	max on i32
-F00110	neg@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32	-{0}	neg on i32
-F00111	abs@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32	i32.abs {0}	abs on i32
-F00112	sel@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32;i32:c/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00113	get.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32;ix.n:c/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00114	sum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.sum {0}	the sum of a [n] array
-F00115	minimum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.minimum {0}	the minimum of a [n] array
-F00116	maximum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.maximum {0}	the maximum of a [n] array
-F00117	ival.n@i32:c/F-n-i32	function	i32:c/F-n-i32	ix.n:c/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00118	prev@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	ix.n:c/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00119	next@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	ix.n:c/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00120	clamp@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	i32:c/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00121	tab@a.n:c/F-n-i32	function	a.n:c/F-n-i32	i32:c/F-n-i32/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
-F00122	replicate@a.n:c/F-n-i32	function	a.n:c/F-n-i32	i32:c/F-n-i32	replicate n {0}	a [n] array of one value
-F00123	map2.add@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00124	map2.sub@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00125	map2.min@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00126	map2.max@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00127	loop.n@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00128	loop1.n@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00129	loop.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00130	loop1.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00131	add@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} + {1}	add on i32
-F00132	sub@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} - {1}	sub on i32
-F00133	mul@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} * {1}	mul on i32
-F00134	min@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	i32.min {0} {1}	min on i32
-F00135	max@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	i32.max {0} {1}	max on i32
-F00136	neg@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n	-{0}	neg on i32
-F00137	abs@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n	i32.abs {0}	abs on i32
-F00138	sel@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n;i32:c/F-n-a.n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00139	get.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n;ix.n:c/F-n-a.n	{0}[{1}]	an element of a [n] array, at an index in range
-F00140	sum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.sum {0}	the sum of a [n] array
-F00141	minimum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.minimum {0}	the minimum of a [n] array
-F00142	maximum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.maximum {0}	the maximum of a [n] array
-F00143	ival.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	ix.n:c/F-n-a.n	i32.i64 {0}	an index into [n] as a value
-F00144	prev@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	ix.n:c/F-n-a.n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00145	next@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	ix.n:c/F-n-a.n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00146	clamp@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	i32:c/F-n-a.n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00147	tab@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	i32:c/F-n-a.n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
-F00148	replicate@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	i32:c/F-n-a.n	replicate n {0}	a [n] array of one value
-F00149	map2.add@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 (+) {0} {1}	elementwise add of two [n] arrays
-F00150	map2.sub@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
-F00151	map2.min@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
-F00152	map2.max@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
-F00153	loop.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00154	loop1.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00155	loop.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
-F00156	loop1.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
-F00157	add@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} + {1}	add on i32
-F00158	sub@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} - {1}	sub on i32
-F00159	mul@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} * {1}	mul on i32
-F00160	min@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	i32.min {0} {1}	min on i32
-F00161	max@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	i32.max {0} {1}	max on i32
-F00162	neg@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n	-{0}	neg on i32
-F00163	abs@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n	i32.abs {0}	abs on i32
-F00164	sel@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n;i32:c/T-n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00165	get.n@i32:c/T-n/T-n	function	i32:c/T-n/T-n	a.n:c/T-n/T-n;ix.n:c/T-n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00166	ival.n@i32:c/T-n/T-n	function	i32:c/T-n/T-n	ix.n:c/T-n/T-n	i32.i64 {0}	an index into [n] as a value
-F00167	prev@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	ix.n:c/T-n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00168	next@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	ix.n:c/T-n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00169	clamp@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	i32:c/T-n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00170	add@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} + {1}	add on i32
-F00171	sub@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} - {1}	sub on i32
-F00172	mul@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} * {1}	mul on i32
-F00173	min@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	i32.min {0} {1}	min on i32
-F00174	max@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	i32.max {0} {1}	max on i32
-F00175	neg@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	-{0}	neg on i32
-F00176	abs@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	i32.abs {0}	abs on i32
-F00177	sel@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00178	get.n@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	a.n:c/T-n/L-n-i32;ix.n:c/T-n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00179	ival.n@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00180	prev@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00181	next@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00182	clamp@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00183	add@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} + {1}	add on i32
-F00184	sub@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} - {1}	sub on i32
-F00185	mul@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} * {1}	mul on i32
-F00186	min@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	i32.min {0} {1}	min on i32
-F00187	max@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	i32.max {0} {1}	max on i32
-F00188	neg@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	-{0}	neg on i32
-F00189	abs@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	i32.abs {0}	abs on i32
-F00190	sel@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00191	get.n@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	a.n:c/T-n/F-n-i32;ix.n:c/T-n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00192	ival.n@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00193	prev@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00194	next@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00195	clamp@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00196	add@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} + {1}	add on i32
-F00197	sub@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} - {1}	sub on i32
-F00198	mul@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} * {1}	mul on i32
-F00199	min@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	i32.min {0} {1}	min on i32
-F00200	max@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	i32.max {0} {1}	max on i32
-F00201	neg@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	-{0}	neg on i32
-F00202	abs@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	i32.abs {0}	abs on i32
-F00203	sel@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00204	get.n@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	a.n:c/L-n-i32/T-n;ix.n:c/L-n-i32/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00205	ival.n@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i32.i64 {0}	an index into [n] as a value
-F00206	prev@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00207	next@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00208	clamp@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00209	add@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} + {1}	add on i32
-F00210	sub@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} - {1}	sub on i32
-F00211	mul@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} * {1}	mul on i32
-F00212	min@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	i32.min {0} {1}	min on i32
-F00213	max@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	i32.max {0} {1}	max on i32
-F00214	neg@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	-{0}	neg on i32
-F00215	abs@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	i32.abs {0}	abs on i32
-F00216	sel@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00217	get.n@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	a.n:c/L-n-i32/L-n-i32;ix.n:c/L-n-i32/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00218	ival.n@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00219	prev@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00220	next@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00221	clamp@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00222	add@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} + {1}	add on i32
-F00223	sub@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} - {1}	sub on i32
-F00224	mul@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} * {1}	mul on i32
-F00225	min@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	i32.min {0} {1}	min on i32
-F00226	max@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	i32.max {0} {1}	max on i32
-F00227	neg@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	-{0}	neg on i32
-F00228	abs@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	i32.abs {0}	abs on i32
-F00229	sel@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00230	get.n@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	a.n:c/L-n-i32/F-n-i32;ix.n:c/L-n-i32/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00231	ival.n@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00232	prev@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00233	next@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00234	clamp@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00235	add@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} + {1}	add on i32
-F00236	sub@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} - {1}	sub on i32
-F00237	mul@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} * {1}	mul on i32
-F00238	min@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	i32.min {0} {1}	min on i32
-F00239	max@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	i32.max {0} {1}	max on i32
-F00240	neg@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	-{0}	neg on i32
-F00241	abs@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	i32.abs {0}	abs on i32
-F00242	sel@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00243	get.n@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	a.n:c/L-n-a.n/T-n;ix.n:c/L-n-a.n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00244	ival.n@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i32.i64 {0}	an index into [n] as a value
-F00245	prev@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00246	next@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00247	clamp@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00248	add@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} + {1}	add on i32
-F00249	sub@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} - {1}	sub on i32
-F00250	mul@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} * {1}	mul on i32
-F00251	min@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	i32.min {0} {1}	min on i32
-F00252	max@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	i32.max {0} {1}	max on i32
-F00253	neg@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	-{0}	neg on i32
-F00254	abs@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	i32.abs {0}	abs on i32
-F00255	sel@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00256	get.n@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	a.n:c/L-n-a.n/L-n-i32;ix.n:c/L-n-a.n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00257	ival.n@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00258	prev@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00259	next@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00260	clamp@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00261	add@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} + {1}	add on i32
-F00262	sub@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} - {1}	sub on i32
-F00263	mul@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} * {1}	mul on i32
-F00264	min@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	i32.min {0} {1}	min on i32
-F00265	max@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	i32.max {0} {1}	max on i32
-F00266	neg@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	-{0}	neg on i32
-F00267	abs@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	i32.abs {0}	abs on i32
-F00268	sel@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00269	get.n@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	a.n:c/L-n-a.n/F-n-i32;ix.n:c/L-n-a.n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00270	ival.n@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00271	prev@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00272	next@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00273	clamp@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00274	add@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} + {1}	add on i32
-F00275	sub@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} - {1}	sub on i32
-F00276	mul@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} * {1}	mul on i32
-F00277	min@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	i32.min {0} {1}	min on i32
-F00278	max@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	i32.max {0} {1}	max on i32
-F00279	neg@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	-{0}	neg on i32
-F00280	abs@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	i32.abs {0}	abs on i32
-F00281	sel@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00282	get.n@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	a.n:c/F-n-i32/T-n;ix.n:c/F-n-i32/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00283	ival.n@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i32.i64 {0}	an index into [n] as a value
-F00284	prev@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00285	next@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00286	clamp@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00287	add@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} + {1}	add on i32
-F00288	sub@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} - {1}	sub on i32
-F00289	mul@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} * {1}	mul on i32
-F00290	min@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	i32.min {0} {1}	min on i32
-F00291	max@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	i32.max {0} {1}	max on i32
-F00292	neg@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	-{0}	neg on i32
-F00293	abs@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	i32.abs {0}	abs on i32
-F00294	sel@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00295	get.n@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	a.n:c/F-n-i32/L-n-i32;ix.n:c/F-n-i32/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00296	ival.n@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00297	prev@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00298	next@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00299	clamp@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00300	add@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} + {1}	add on i32
-F00301	sub@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} - {1}	sub on i32
-F00302	mul@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} * {1}	mul on i32
-F00303	min@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	i32.min {0} {1}	min on i32
-F00304	max@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	i32.max {0} {1}	max on i32
-F00305	neg@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	-{0}	neg on i32
-F00306	abs@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	i32.abs {0}	abs on i32
-F00307	sel@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00308	get.n@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	a.n:c/F-n-i32/F-n-i32;ix.n:c/F-n-i32/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00309	ival.n@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00310	prev@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00311	next@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00312	clamp@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00313	add@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} + {1}	add on i32
-F00314	sub@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} - {1}	sub on i32
-F00315	mul@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} * {1}	mul on i32
-F00316	min@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	i32.min {0} {1}	min on i32
-F00317	max@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	i32.max {0} {1}	max on i32
-F00318	neg@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	-{0}	neg on i32
-F00319	abs@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	i32.abs {0}	abs on i32
-F00320	sel@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
-F00321	get.n@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	a.n:c/F-n-a.n/T-n;ix.n:c/F-n-a.n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
-F00322	ival.n@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i32.i64 {0}	an index into [n] as a value
-F00323	prev@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00324	next@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00325	clamp@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00326	add@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} + {1}	add on i32
-F00327	sub@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} - {1}	sub on i32
-F00328	mul@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} * {1}	mul on i32
-F00329	min@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	i32.min {0} {1}	min on i32
-F00330	max@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	i32.max {0} {1}	max on i32
-F00331	neg@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	-{0}	neg on i32
-F00332	abs@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	i32.abs {0}	abs on i32
-F00333	sel@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00334	get.n@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	a.n:c/F-n-a.n/L-n-i32;ix.n:c/F-n-a.n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00335	ival.n@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i32.i64 {0}	an index into [n] as a value
-F00336	prev@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00337	next@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00338	clamp@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00339	add@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} + {1}	add on i32
-F00340	sub@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} - {1}	sub on i32
-F00341	mul@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} * {1}	mul on i32
-F00342	min@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	i32.min {0} {1}	min on i32
-F00343	max@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	i32.max {0} {1}	max on i32
-F00344	neg@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	-{0}	neg on i32
-F00345	abs@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	i32.abs {0}	abs on i32
-F00346	sel@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
-F00347	get.n@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	a.n:c/F-n-a.n/F-n-i32;ix.n:c/F-n-a.n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
-F00348	ival.n@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i32.i64 {0}	an index into [n] as a value
-F00349	prev@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
-F00350	next@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
-F00351	clamp@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
-F00352	n@i32:c	terminal	i32:c		i32.i64 n	the size n as a value
-F00353	?_i32:c	const	i32:c			a literal of the constant pool
-F00354	zero@ix.n:c	terminal	ix.n:c		0i64	the first index into [n]
-F00355	last@ix.n:c	terminal	ix.n:c		n - 1	the last index into [n] (every dim is at least 1)
-F00356	xs@a.n:c	terminal	a.n:c		xs	an input of the interface
-F00357	zeros@a.n:c	terminal	a.n:c		zeros_n	the zero [n] array (bound once by the entry point)
-F00358	n@i32:c/T-n	terminal	i32:c/T-n		i32.i64 n	the size n as a value
-F00359	?_i32:c/T-n	const	i32:c/T-n			a literal of the constant pool
-F00360	zero@ix.n:c/T-n	terminal	ix.n:c/T-n		0i64	the first index into [n]
-F00361	last@ix.n:c/T-n	terminal	ix.n:c/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00362	j1@ix.n:c/T-n	terminal	ix.n:c/T-n		j1	the bound index j1
-F00363	xs@a.n:c/T-n	terminal	a.n:c/T-n		xs	an input of the interface
-F00364	zeros@a.n:c/T-n	terminal	a.n:c/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00365	n@i32:c/L-n-i32	terminal	i32:c/L-n-i32		i32.i64 n	the size n as a value
-F00366	?_i32:c/L-n-i32	const	i32:c/L-n-i32			a literal of the constant pool
-F00367	s1@i32:c/L-n-i32	terminal	i32:c/L-n-i32		s1	the loop state s1
-F00368	zero@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		0i64	the first index into [n]
-F00369	last@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00370	i1@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		i1	the bound index i1
-F00371	xs@a.n:c/L-n-i32	terminal	a.n:c/L-n-i32		xs	an input of the interface
-F00372	zeros@a.n:c/L-n-i32	terminal	a.n:c/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00373	n@i32:c/L-n-a.n	terminal	i32:c/L-n-a.n		i32.i64 n	the size n as a value
-F00374	?_i32:c/L-n-a.n	const	i32:c/L-n-a.n			a literal of the constant pool
-F00375	zero@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		0i64	the first index into [n]
-F00376	last@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		n - 1	the last index into [n] (every dim is at least 1)
-F00377	i1@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		i1	the bound index i1
-F00378	s1@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		s1	the loop state s1
-F00379	xs@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		xs	an input of the interface
-F00380	zeros@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00381	n@i32:c/F-n-i32	terminal	i32:c/F-n-i32		i32.i64 n	the size n as a value
-F00382	?_i32:c/F-n-i32	const	i32:c/F-n-i32			a literal of the constant pool
-F00383	s1@i32:c/F-n-i32	terminal	i32:c/F-n-i32		s1	the loop state s1
-F00384	zero@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		0i64	the first index into [n]
-F00385	last@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00386	i1@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		i1	the bound index i1
-F00387	xs@a.n:c/F-n-i32	terminal	a.n:c/F-n-i32		xs	an input of the interface
-F00388	zeros@a.n:c/F-n-i32	terminal	a.n:c/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00389	n@i32:c/F-n-a.n	terminal	i32:c/F-n-a.n		i32.i64 n	the size n as a value
-F00390	?_i32:c/F-n-a.n	const	i32:c/F-n-a.n			a literal of the constant pool
-F00391	zero@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		0i64	the first index into [n]
-F00392	last@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		n - 1	the last index into [n] (every dim is at least 1)
-F00393	i1@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		i1	the bound index i1
-F00394	s1@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		s1	the loop state s1
-F00395	xs@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		xs	an input of the interface
-F00396	zeros@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00397	n@i32:c/T-n/T-n	terminal	i32:c/T-n/T-n		i32.i64 n	the size n as a value
-F00398	?_i32:c/T-n/T-n	const	i32:c/T-n/T-n			a literal of the constant pool
-F00399	zero@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		0i64	the first index into [n]
-F00400	last@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00401	j1@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		j1	the bound index j1
-F00402	j2@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		j2	the bound index j2
-F00403	xs@a.n:c/T-n/T-n	terminal	a.n:c/T-n/T-n		xs	an input of the interface
-F00404	zeros@a.n:c/T-n/T-n	terminal	a.n:c/T-n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00405	n@i32:c/T-n/L-n-i32	terminal	i32:c/T-n/L-n-i32		i32.i64 n	the size n as a value
-F00406	?_i32:c/T-n/L-n-i32	const	i32:c/T-n/L-n-i32			a literal of the constant pool
-F00407	s2@i32:c/T-n/L-n-i32	terminal	i32:c/T-n/L-n-i32		s2	the loop state s2
-F00408	zero@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		0i64	the first index into [n]
-F00409	last@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00410	j1@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		j1	the bound index j1
-F00411	i2@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		i2	the bound index i2
-F00412	xs@a.n:c/T-n/L-n-i32	terminal	a.n:c/T-n/L-n-i32		xs	an input of the interface
-F00413	zeros@a.n:c/T-n/L-n-i32	terminal	a.n:c/T-n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00414	s2@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		s2	the loop state s2
-F00415	xs@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		xs	an input of the interface
-F00416	zeros@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00417	n@i32:c/T-n/F-n-i32	terminal	i32:c/T-n/F-n-i32		i32.i64 n	the size n as a value
-F00418	?_i32:c/T-n/F-n-i32	const	i32:c/T-n/F-n-i32			a literal of the constant pool
-F00419	s2@i32:c/T-n/F-n-i32	terminal	i32:c/T-n/F-n-i32		s2	the loop state s2
-F00420	zero@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		0i64	the first index into [n]
-F00421	last@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00422	j1@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		j1	the bound index j1
-F00423	i2@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		i2	the bound index i2
-F00424	xs@a.n:c/T-n/F-n-i32	terminal	a.n:c/T-n/F-n-i32		xs	an input of the interface
-F00425	zeros@a.n:c/T-n/F-n-i32	terminal	a.n:c/T-n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00426	s2@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		s2	the loop state s2
-F00427	xs@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		xs	an input of the interface
-F00428	zeros@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00429	n@i32:c/L-n-i32/T-n	terminal	i32:c/L-n-i32/T-n		i32.i64 n	the size n as a value
-F00430	?_i32:c/L-n-i32/T-n	const	i32:c/L-n-i32/T-n			a literal of the constant pool
-F00431	s1@i32:c/L-n-i32/T-n	terminal	i32:c/L-n-i32/T-n		s1	the loop state s1
-F00432	zero@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		0i64	the first index into [n]
-F00433	last@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00434	i1@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		i1	the bound index i1
-F00435	j2@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		j2	the bound index j2
-F00436	xs@a.n:c/L-n-i32/T-n	terminal	a.n:c/L-n-i32/T-n		xs	an input of the interface
-F00437	zeros@a.n:c/L-n-i32/T-n	terminal	a.n:c/L-n-i32/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00438	n@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		i32.i64 n	the size n as a value
-F00439	?_i32:c/L-n-i32/L-n-i32	const	i32:c/L-n-i32/L-n-i32			a literal of the constant pool
-F00440	s1@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		s1	the loop state s1
-F00441	s2@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		s2	the loop state s2
-F00442	zero@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		0i64	the first index into [n]
-F00443	last@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00444	i1@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		i1	the bound index i1
-F00445	i2@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		i2	the bound index i2
-F00446	xs@a.n:c/L-n-i32/L-n-i32	terminal	a.n:c/L-n-i32/L-n-i32		xs	an input of the interface
-F00447	zeros@a.n:c/L-n-i32/L-n-i32	terminal	a.n:c/L-n-i32/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00448	s2@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		s2	the loop state s2
-F00449	xs@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		xs	an input of the interface
-F00450	zeros@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00451	n@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		i32.i64 n	the size n as a value
-F00452	?_i32:c/L-n-i32/F-n-i32	const	i32:c/L-n-i32/F-n-i32			a literal of the constant pool
-F00453	s1@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		s1	the loop state s1
-F00454	s2@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		s2	the loop state s2
-F00455	zero@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		0i64	the first index into [n]
-F00456	last@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00457	i1@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		i1	the bound index i1
-F00458	i2@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		i2	the bound index i2
-F00459	xs@a.n:c/L-n-i32/F-n-i32	terminal	a.n:c/L-n-i32/F-n-i32		xs	an input of the interface
-F00460	zeros@a.n:c/L-n-i32/F-n-i32	terminal	a.n:c/L-n-i32/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00461	s2@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		s2	the loop state s2
-F00462	xs@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		xs	an input of the interface
-F00463	zeros@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00464	n@i32:c/L-n-a.n/T-n	terminal	i32:c/L-n-a.n/T-n		i32.i64 n	the size n as a value
-F00465	?_i32:c/L-n-a.n/T-n	const	i32:c/L-n-a.n/T-n			a literal of the constant pool
-F00466	zero@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		0i64	the first index into [n]
-F00467	last@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00468	i1@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		i1	the bound index i1
-F00469	j2@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		j2	the bound index j2
-F00470	s1@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		s1	the loop state s1
-F00471	xs@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		xs	an input of the interface
-F00472	zeros@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00473	n@i32:c/L-n-a.n/L-n-i32	terminal	i32:c/L-n-a.n/L-n-i32		i32.i64 n	the size n as a value
-F00474	?_i32:c/L-n-a.n/L-n-i32	const	i32:c/L-n-a.n/L-n-i32			a literal of the constant pool
-F00475	s2@i32:c/L-n-a.n/L-n-i32	terminal	i32:c/L-n-a.n/L-n-i32		s2	the loop state s2
-F00476	zero@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		0i64	the first index into [n]
-F00477	last@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00478	i1@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		i1	the bound index i1
-F00479	i2@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		i2	the bound index i2
-F00480	s1@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		s1	the loop state s1
-F00481	xs@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		xs	an input of the interface
-F00482	zeros@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00483	s1@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		s1	the loop state s1
-F00484	s2@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		s2	the loop state s2
-F00485	xs@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		xs	an input of the interface
-F00486	zeros@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00487	n@i32:c/L-n-a.n/F-n-i32	terminal	i32:c/L-n-a.n/F-n-i32		i32.i64 n	the size n as a value
-F00488	?_i32:c/L-n-a.n/F-n-i32	const	i32:c/L-n-a.n/F-n-i32			a literal of the constant pool
-F00489	s2@i32:c/L-n-a.n/F-n-i32	terminal	i32:c/L-n-a.n/F-n-i32		s2	the loop state s2
-F00490	zero@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		0i64	the first index into [n]
-F00491	last@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00492	i1@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		i1	the bound index i1
-F00493	i2@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		i2	the bound index i2
-F00494	s1@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		s1	the loop state s1
-F00495	xs@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		xs	an input of the interface
-F00496	zeros@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00497	s1@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		s1	the loop state s1
-F00498	s2@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		s2	the loop state s2
-F00499	xs@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		xs	an input of the interface
-F00500	zeros@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00501	n@i32:c/F-n-i32/T-n	terminal	i32:c/F-n-i32/T-n		i32.i64 n	the size n as a value
-F00502	?_i32:c/F-n-i32/T-n	const	i32:c/F-n-i32/T-n			a literal of the constant pool
-F00503	s1@i32:c/F-n-i32/T-n	terminal	i32:c/F-n-i32/T-n		s1	the loop state s1
-F00504	zero@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		0i64	the first index into [n]
-F00505	last@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00506	i1@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		i1	the bound index i1
-F00507	j2@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		j2	the bound index j2
-F00508	xs@a.n:c/F-n-i32/T-n	terminal	a.n:c/F-n-i32/T-n		xs	an input of the interface
-F00509	zeros@a.n:c/F-n-i32/T-n	terminal	a.n:c/F-n-i32/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00510	n@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		i32.i64 n	the size n as a value
-F00511	?_i32:c/F-n-i32/L-n-i32	const	i32:c/F-n-i32/L-n-i32			a literal of the constant pool
-F00512	s1@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		s1	the loop state s1
-F00513	s2@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		s2	the loop state s2
-F00514	zero@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		0i64	the first index into [n]
-F00515	last@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00516	i1@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		i1	the bound index i1
-F00517	i2@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		i2	the bound index i2
-F00518	xs@a.n:c/F-n-i32/L-n-i32	terminal	a.n:c/F-n-i32/L-n-i32		xs	an input of the interface
-F00519	zeros@a.n:c/F-n-i32/L-n-i32	terminal	a.n:c/F-n-i32/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00520	s2@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		s2	the loop state s2
-F00521	xs@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		xs	an input of the interface
-F00522	zeros@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00523	n@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		i32.i64 n	the size n as a value
-F00524	?_i32:c/F-n-i32/F-n-i32	const	i32:c/F-n-i32/F-n-i32			a literal of the constant pool
-F00525	s1@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		s1	the loop state s1
-F00526	s2@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		s2	the loop state s2
-F00527	zero@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		0i64	the first index into [n]
-F00528	last@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00529	i1@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		i1	the bound index i1
-F00530	i2@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		i2	the bound index i2
-F00531	xs@a.n:c/F-n-i32/F-n-i32	terminal	a.n:c/F-n-i32/F-n-i32		xs	an input of the interface
-F00532	zeros@a.n:c/F-n-i32/F-n-i32	terminal	a.n:c/F-n-i32/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00533	s2@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		s2	the loop state s2
-F00534	xs@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		xs	an input of the interface
-F00535	zeros@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00536	n@i32:c/F-n-a.n/T-n	terminal	i32:c/F-n-a.n/T-n		i32.i64 n	the size n as a value
-F00537	?_i32:c/F-n-a.n/T-n	const	i32:c/F-n-a.n/T-n			a literal of the constant pool
-F00538	zero@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		0i64	the first index into [n]
-F00539	last@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		n - 1	the last index into [n] (every dim is at least 1)
-F00540	i1@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		i1	the bound index i1
-F00541	j2@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		j2	the bound index j2
-F00542	s1@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		s1	the loop state s1
-F00543	xs@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		xs	an input of the interface
-F00544	zeros@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
-F00545	n@i32:c/F-n-a.n/L-n-i32	terminal	i32:c/F-n-a.n/L-n-i32		i32.i64 n	the size n as a value
-F00546	?_i32:c/F-n-a.n/L-n-i32	const	i32:c/F-n-a.n/L-n-i32			a literal of the constant pool
-F00547	s2@i32:c/F-n-a.n/L-n-i32	terminal	i32:c/F-n-a.n/L-n-i32		s2	the loop state s2
-F00548	zero@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		0i64	the first index into [n]
-F00549	last@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00550	i1@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		i1	the bound index i1
-F00551	i2@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		i2	the bound index i2
-F00552	s1@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		s1	the loop state s1
-F00553	xs@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		xs	an input of the interface
-F00554	zeros@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00555	s1@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		s1	the loop state s1
-F00556	s2@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		s2	the loop state s2
-F00557	xs@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		xs	an input of the interface
-F00558	zeros@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
-F00559	n@i32:c/F-n-a.n/F-n-i32	terminal	i32:c/F-n-a.n/F-n-i32		i32.i64 n	the size n as a value
-F00560	?_i32:c/F-n-a.n/F-n-i32	const	i32:c/F-n-a.n/F-n-i32			a literal of the constant pool
-F00561	s2@i32:c/F-n-a.n/F-n-i32	terminal	i32:c/F-n-a.n/F-n-i32		s2	the loop state s2
-F00562	zero@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		0i64	the first index into [n]
-F00563	last@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
-F00564	i1@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		i1	the bound index i1
-F00565	i2@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		i2	the bound index i2
-F00566	s1@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		s1	the loop state s1
-F00567	xs@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		xs	an input of the interface
-F00568	zeros@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
-F00569	s1@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		s1	the loop state s1
-F00570	s2@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		s2	the loop state s2
-F00571	xs@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		xs	an input of the interface
-F00572	zeros@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00014	mod.n@i32:c	function	i32:c	i32:c	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00015	prev@ix.n:c	function	ix.n:c	ix.n:c	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00016	next@ix.n:c	function	ix.n:c	ix.n:c	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00017	clamp@ix.n:c	function	ix.n:c	i32:c	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00018	tab@a.n:c	function	a.n:c	i32:c/T-n	tabulate n (\j1 -> {0})	a [n] array, element j1 by its body
+F00019	replicate@a.n:c	function	a.n:c	i32:c	replicate n {0}	a [n] array of one value
+F00020	map2.add@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00021	map2.sub@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00022	map2.min@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00023	map2.max@a.n:c	function	a.n:c	a.n:c;a.n:c	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00024	scan.add@a.n:c	function	a.n:c	a.n:c	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00025	scan.min@a.n:c	function	a.n:c	a.n:c	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00026	scan.max@a.n:c	function	a.n:c	a.n:c	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00027	hist.add.n@a.n:c	function	a.n:c	a.n:c;a.n:c	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00028	hist.min.n@a.n:c	function	a.n:c	a.n:c;a.n:c	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00029	hist.max.n@a.n:c	function	a.n:c	a.n:c;a.n:c	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00030	loop.n@i32:c	function	i32:c	i32:c;i32:c/L-n-i32	loop (s1: i32) = {0} for i1 < n do {1}	a loop over [n] carrying s1, its counter i1
+F00031	loop1.n@i32:c	function	i32:c	i32:c;i32:c/F-n-i32	loop (s1: i32) = {0} for t1 < n - 1 do let i1 = t1 + 1 in {1}	a loop over 1 .. n - 1 carrying s1, its counter i1
+F00032	loop.n@a.n:c	function	a.n:c	a.n:c;a.n:c/L-n-a.n	loop (s1: [n]i32) = {0} for i1 < n do {1}	a loop over [n] carrying s1, its counter i1
+F00033	loop1.n@a.n:c	function	a.n:c	a.n:c;a.n:c/F-n-a.n	loop (s1: [n]i32) = {0} for t1 < n - 1 do let i1 = t1 + 1 in {1}	a loop over 1 .. n - 1 carrying s1, its counter i1
+F00034	add@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} + {1}	add on i32
+F00035	sub@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} - {1}	sub on i32
+F00036	mul@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	{0} * {1}	mul on i32
+F00037	min@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	i32.min {0} {1}	min on i32
+F00038	max@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n	i32.max {0} {1}	max on i32
+F00039	neg@i32:c/T-n	function	i32:c/T-n	i32:c/T-n	-{0}	neg on i32
+F00040	abs@i32:c/T-n	function	i32:c/T-n	i32:c/T-n	i32.abs {0}	abs on i32
+F00041	sel@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n;i32:c/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00042	get.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n;ix.n:c/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00043	sum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.sum {0}	the sum of a [n] array
+F00044	minimum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.minimum {0}	the minimum of a [n] array
+F00045	maximum.n@i32:c/T-n	function	i32:c/T-n	a.n:c/T-n	i32.maximum {0}	the maximum of a [n] array
+F00046	ival.n@i32:c/T-n	function	i32:c/T-n	ix.n:c/T-n	i32.i64 {0}	an index into [n] as a value
+F00047	mod.n@i32:c/T-n	function	i32:c/T-n	i32:c/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00048	prev@ix.n:c/T-n	function	ix.n:c/T-n	ix.n:c/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00049	next@ix.n:c/T-n	function	ix.n:c/T-n	ix.n:c/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00050	clamp@ix.n:c/T-n	function	ix.n:c/T-n	i32:c/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00051	tab@a.n:c/T-n	function	a.n:c/T-n	i32:c/T-n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
+F00052	replicate@a.n:c/T-n	function	a.n:c/T-n	i32:c/T-n	replicate n {0}	a [n] array of one value
+F00053	map2.add@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00054	map2.sub@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00055	map2.min@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00056	map2.max@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00057	scan.add@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00058	scan.min@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00059	scan.max@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00060	hist.add.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00061	hist.min.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00062	hist.max.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00063	loop.n@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00064	loop1.n@i32:c/T-n	function	i32:c/T-n	i32:c/T-n;i32:c/T-n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00065	loop.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00066	loop1.n@a.n:c/T-n	function	a.n:c/T-n	a.n:c/T-n;a.n:c/T-n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00067	add@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} + {1}	add on i32
+F00068	sub@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} - {1}	sub on i32
+F00069	mul@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	{0} * {1}	mul on i32
+F00070	min@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	i32.min {0} {1}	min on i32
+F00071	max@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32	i32.max {0} {1}	max on i32
+F00072	neg@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32	-{0}	neg on i32
+F00073	abs@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32	i32.abs {0}	abs on i32
+F00074	sel@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32;i32:c/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00075	get.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32;ix.n:c/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00076	sum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.sum {0}	the sum of a [n] array
+F00077	minimum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.minimum {0}	the minimum of a [n] array
+F00078	maximum.n@i32:c/L-n-i32	function	i32:c/L-n-i32	a.n:c/L-n-i32	i32.maximum {0}	the maximum of a [n] array
+F00079	ival.n@i32:c/L-n-i32	function	i32:c/L-n-i32	ix.n:c/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00080	mod.n@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00081	prev@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	ix.n:c/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00082	next@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	ix.n:c/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00083	clamp@ix.n:c/L-n-i32	function	ix.n:c/L-n-i32	i32:c/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00084	tab@a.n:c/L-n-i32	function	a.n:c/L-n-i32	i32:c/L-n-i32/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
+F00085	replicate@a.n:c/L-n-i32	function	a.n:c/L-n-i32	i32:c/L-n-i32	replicate n {0}	a [n] array of one value
+F00086	map2.add@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00087	map2.sub@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00088	map2.min@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00089	map2.max@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00090	scan.add@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00091	scan.min@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00092	scan.max@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00093	hist.add.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00094	hist.min.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00095	hist.max.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00096	loop.n@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00097	loop1.n@i32:c/L-n-i32	function	i32:c/L-n-i32	i32:c/L-n-i32;i32:c/L-n-i32/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00098	loop.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00099	loop1.n@a.n:c/L-n-i32	function	a.n:c/L-n-i32	a.n:c/L-n-i32;a.n:c/L-n-i32/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00100	add@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} + {1}	add on i32
+F00101	sub@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} - {1}	sub on i32
+F00102	mul@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	{0} * {1}	mul on i32
+F00103	min@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	i32.min {0} {1}	min on i32
+F00104	max@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n	i32.max {0} {1}	max on i32
+F00105	neg@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n	-{0}	neg on i32
+F00106	abs@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n	i32.abs {0}	abs on i32
+F00107	sel@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n;i32:c/L-n-a.n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00108	get.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n;ix.n:c/L-n-a.n	{0}[{1}]	an element of a [n] array, at an index in range
+F00109	sum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.sum {0}	the sum of a [n] array
+F00110	minimum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.minimum {0}	the minimum of a [n] array
+F00111	maximum.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	a.n:c/L-n-a.n	i32.maximum {0}	the maximum of a [n] array
+F00112	ival.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	ix.n:c/L-n-a.n	i32.i64 {0}	an index into [n] as a value
+F00113	mod.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00114	prev@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	ix.n:c/L-n-a.n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00115	next@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	ix.n:c/L-n-a.n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00116	clamp@ix.n:c/L-n-a.n	function	ix.n:c/L-n-a.n	i32:c/L-n-a.n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00117	tab@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	i32:c/L-n-a.n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
+F00118	replicate@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	i32:c/L-n-a.n	replicate n {0}	a [n] array of one value
+F00119	map2.add@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00120	map2.sub@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00121	map2.min@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00122	map2.max@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00123	scan.add@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00124	scan.min@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00125	scan.max@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00126	hist.add.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00127	hist.min.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00128	hist.max.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00129	loop.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00130	loop1.n@i32:c/L-n-a.n	function	i32:c/L-n-a.n	i32:c/L-n-a.n;i32:c/L-n-a.n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00131	loop.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00132	loop1.n@a.n:c/L-n-a.n	function	a.n:c/L-n-a.n	a.n:c/L-n-a.n;a.n:c/L-n-a.n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00133	add@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} + {1}	add on i32
+F00134	sub@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} - {1}	sub on i32
+F00135	mul@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	{0} * {1}	mul on i32
+F00136	min@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	i32.min {0} {1}	min on i32
+F00137	max@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32	i32.max {0} {1}	max on i32
+F00138	neg@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32	-{0}	neg on i32
+F00139	abs@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32	i32.abs {0}	abs on i32
+F00140	sel@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32;i32:c/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00141	get.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32;ix.n:c/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00142	sum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.sum {0}	the sum of a [n] array
+F00143	minimum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.minimum {0}	the minimum of a [n] array
+F00144	maximum.n@i32:c/F-n-i32	function	i32:c/F-n-i32	a.n:c/F-n-i32	i32.maximum {0}	the maximum of a [n] array
+F00145	ival.n@i32:c/F-n-i32	function	i32:c/F-n-i32	ix.n:c/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00146	mod.n@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00147	prev@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	ix.n:c/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00148	next@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	ix.n:c/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00149	clamp@ix.n:c/F-n-i32	function	ix.n:c/F-n-i32	i32:c/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00150	tab@a.n:c/F-n-i32	function	a.n:c/F-n-i32	i32:c/F-n-i32/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
+F00151	replicate@a.n:c/F-n-i32	function	a.n:c/F-n-i32	i32:c/F-n-i32	replicate n {0}	a [n] array of one value
+F00152	map2.add@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00153	map2.sub@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00154	map2.min@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00155	map2.max@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00156	scan.add@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00157	scan.min@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00158	scan.max@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00159	hist.add.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00160	hist.min.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00161	hist.max.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00162	loop.n@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00163	loop1.n@i32:c/F-n-i32	function	i32:c/F-n-i32	i32:c/F-n-i32;i32:c/F-n-i32/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00164	loop.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00165	loop1.n@a.n:c/F-n-i32	function	a.n:c/F-n-i32	a.n:c/F-n-i32;a.n:c/F-n-i32/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00166	add@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} + {1}	add on i32
+F00167	sub@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} - {1}	sub on i32
+F00168	mul@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	{0} * {1}	mul on i32
+F00169	min@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	i32.min {0} {1}	min on i32
+F00170	max@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n	i32.max {0} {1}	max on i32
+F00171	neg@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n	-{0}	neg on i32
+F00172	abs@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n	i32.abs {0}	abs on i32
+F00173	sel@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n;i32:c/F-n-a.n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00174	get.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n;ix.n:c/F-n-a.n	{0}[{1}]	an element of a [n] array, at an index in range
+F00175	sum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.sum {0}	the sum of a [n] array
+F00176	minimum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.minimum {0}	the minimum of a [n] array
+F00177	maximum.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	a.n:c/F-n-a.n	i32.maximum {0}	the maximum of a [n] array
+F00178	ival.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	ix.n:c/F-n-a.n	i32.i64 {0}	an index into [n] as a value
+F00179	mod.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00180	prev@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	ix.n:c/F-n-a.n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00181	next@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	ix.n:c/F-n-a.n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00182	clamp@ix.n:c/F-n-a.n	function	ix.n:c/F-n-a.n	i32:c/F-n-a.n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00183	tab@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	i32:c/F-n-a.n/T-n	tabulate n (\j2 -> {0})	a [n] array, element j2 by its body
+F00184	replicate@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	i32:c/F-n-a.n	replicate n {0}	a [n] array of one value
+F00185	map2.add@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 (+) {0} {1}	elementwise add of two [n] arrays
+F00186	map2.sub@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 (-) {0} {1}	elementwise sub of two [n] arrays
+F00187	map2.min@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 i32.min {0} {1}	elementwise min of two [n] arrays
+F00188	map2.max@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	map2 i32.max {0} {1}	elementwise max of two [n] arrays
+F00189	scan.add@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n	scan (+) 0i32 (opaque {0})	the inclusive add scan of a [n] array
+F00190	scan.min@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n	scan i32.min i32.highest (opaque {0})	the inclusive min scan of a [n] array
+F00191	scan.max@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n	scan i32.max i32.lowest (opaque {0})	the inclusive max scan of a [n] array
+F00192	hist.add.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	hist (+) 0i32 n (map i64.i32 {0}) {1}	the add histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00193	hist.min.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	hist i32.min i32.highest n (map i64.i32 {0}) {1}	the min histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00194	hist.max.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n	hist i32.max i32.lowest n (map i64.i32 {0}) {1}	the max histogram into [n] of [n] values at [n] indices (outside [0, n) ignored)
+F00195	loop.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n/L-n-i32	loop (s2: i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00196	loop1.n@i32:c/F-n-a.n	function	i32:c/F-n-a.n	i32:c/F-n-a.n;i32:c/F-n-a.n/F-n-i32	loop (s2: i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00197	loop.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n/L-n-a.n	loop (s2: [n]i32) = {0} for i2 < n do {1}	a loop over [n] carrying s2, its counter i2
+F00198	loop1.n@a.n:c/F-n-a.n	function	a.n:c/F-n-a.n	a.n:c/F-n-a.n;a.n:c/F-n-a.n/F-n-a.n	loop (s2: [n]i32) = {0} for t2 < n - 1 do let i2 = t2 + 1 in {1}	a loop over 1 .. n - 1 carrying s2, its counter i2
+F00199	add@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} + {1}	add on i32
+F00200	sub@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} - {1}	sub on i32
+F00201	mul@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	{0} * {1}	mul on i32
+F00202	min@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	i32.min {0} {1}	min on i32
+F00203	max@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n	i32.max {0} {1}	max on i32
+F00204	neg@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n	-{0}	neg on i32
+F00205	abs@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n	i32.abs {0}	abs on i32
+F00206	sel@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n;i32:c/T-n/T-n;i32:c/T-n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00207	get.n@i32:c/T-n/T-n	function	i32:c/T-n/T-n	a.n:c/T-n/T-n;ix.n:c/T-n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00208	ival.n@i32:c/T-n/T-n	function	i32:c/T-n/T-n	ix.n:c/T-n/T-n	i32.i64 {0}	an index into [n] as a value
+F00209	mod.n@i32:c/T-n/T-n	function	i32:c/T-n/T-n	i32:c/T-n/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00210	prev@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	ix.n:c/T-n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00211	next@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	ix.n:c/T-n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00212	clamp@ix.n:c/T-n/T-n	function	ix.n:c/T-n/T-n	i32:c/T-n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00213	add@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} + {1}	add on i32
+F00214	sub@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} - {1}	sub on i32
+F00215	mul@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	{0} * {1}	mul on i32
+F00216	min@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	i32.min {0} {1}	min on i32
+F00217	max@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	i32.max {0} {1}	max on i32
+F00218	neg@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	-{0}	neg on i32
+F00219	abs@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	i32.abs {0}	abs on i32
+F00220	sel@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32;i32:c/T-n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00221	get.n@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	a.n:c/T-n/L-n-i32;ix.n:c/T-n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00222	ival.n@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00223	mod.n@i32:c/T-n/L-n-i32	function	i32:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00224	prev@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00225	next@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	ix.n:c/T-n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00226	clamp@ix.n:c/T-n/L-n-i32	function	ix.n:c/T-n/L-n-i32	i32:c/T-n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00227	add@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} + {1}	add on i32
+F00228	sub@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} - {1}	sub on i32
+F00229	mul@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	{0} * {1}	mul on i32
+F00230	min@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	i32.min {0} {1}	min on i32
+F00231	max@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	i32.max {0} {1}	max on i32
+F00232	neg@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	-{0}	neg on i32
+F00233	abs@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	i32.abs {0}	abs on i32
+F00234	sel@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32;i32:c/T-n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00235	get.n@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	a.n:c/T-n/F-n-i32;ix.n:c/T-n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00236	ival.n@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00237	mod.n@i32:c/T-n/F-n-i32	function	i32:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00238	prev@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00239	next@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	ix.n:c/T-n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00240	clamp@ix.n:c/T-n/F-n-i32	function	ix.n:c/T-n/F-n-i32	i32:c/T-n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00241	add@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} + {1}	add on i32
+F00242	sub@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} - {1}	sub on i32
+F00243	mul@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	{0} * {1}	mul on i32
+F00244	min@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	i32.min {0} {1}	min on i32
+F00245	max@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	i32.max {0} {1}	max on i32
+F00246	neg@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	-{0}	neg on i32
+F00247	abs@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	i32.abs {0}	abs on i32
+F00248	sel@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n;i32:c/L-n-i32/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00249	get.n@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	a.n:c/L-n-i32/T-n;ix.n:c/L-n-i32/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00250	ival.n@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i32.i64 {0}	an index into [n] as a value
+F00251	mod.n@i32:c/L-n-i32/T-n	function	i32:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00252	prev@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00253	next@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	ix.n:c/L-n-i32/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00254	clamp@ix.n:c/L-n-i32/T-n	function	ix.n:c/L-n-i32/T-n	i32:c/L-n-i32/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00255	add@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} + {1}	add on i32
+F00256	sub@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} - {1}	sub on i32
+F00257	mul@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	{0} * {1}	mul on i32
+F00258	min@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	i32.min {0} {1}	min on i32
+F00259	max@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	i32.max {0} {1}	max on i32
+F00260	neg@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	-{0}	neg on i32
+F00261	abs@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	i32.abs {0}	abs on i32
+F00262	sel@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32;i32:c/L-n-i32/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00263	get.n@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	a.n:c/L-n-i32/L-n-i32;ix.n:c/L-n-i32/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00264	ival.n@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00265	mod.n@i32:c/L-n-i32/L-n-i32	function	i32:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00266	prev@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00267	next@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	ix.n:c/L-n-i32/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00268	clamp@ix.n:c/L-n-i32/L-n-i32	function	ix.n:c/L-n-i32/L-n-i32	i32:c/L-n-i32/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00269	add@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} + {1}	add on i32
+F00270	sub@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} - {1}	sub on i32
+F00271	mul@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	{0} * {1}	mul on i32
+F00272	min@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	i32.min {0} {1}	min on i32
+F00273	max@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	i32.max {0} {1}	max on i32
+F00274	neg@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	-{0}	neg on i32
+F00275	abs@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	i32.abs {0}	abs on i32
+F00276	sel@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32;i32:c/L-n-i32/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00277	get.n@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	a.n:c/L-n-i32/F-n-i32;ix.n:c/L-n-i32/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00278	ival.n@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00279	mod.n@i32:c/L-n-i32/F-n-i32	function	i32:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00280	prev@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00281	next@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	ix.n:c/L-n-i32/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00282	clamp@ix.n:c/L-n-i32/F-n-i32	function	ix.n:c/L-n-i32/F-n-i32	i32:c/L-n-i32/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00283	add@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} + {1}	add on i32
+F00284	sub@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} - {1}	sub on i32
+F00285	mul@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	{0} * {1}	mul on i32
+F00286	min@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	i32.min {0} {1}	min on i32
+F00287	max@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	i32.max {0} {1}	max on i32
+F00288	neg@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	-{0}	neg on i32
+F00289	abs@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	i32.abs {0}	abs on i32
+F00290	sel@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n;i32:c/L-n-a.n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00291	get.n@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	a.n:c/L-n-a.n/T-n;ix.n:c/L-n-a.n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00292	ival.n@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i32.i64 {0}	an index into [n] as a value
+F00293	mod.n@i32:c/L-n-a.n/T-n	function	i32:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00294	prev@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00295	next@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	ix.n:c/L-n-a.n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00296	clamp@ix.n:c/L-n-a.n/T-n	function	ix.n:c/L-n-a.n/T-n	i32:c/L-n-a.n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00297	add@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} + {1}	add on i32
+F00298	sub@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} - {1}	sub on i32
+F00299	mul@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	{0} * {1}	mul on i32
+F00300	min@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	i32.min {0} {1}	min on i32
+F00301	max@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	i32.max {0} {1}	max on i32
+F00302	neg@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	-{0}	neg on i32
+F00303	abs@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	i32.abs {0}	abs on i32
+F00304	sel@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32;i32:c/L-n-a.n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00305	get.n@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	a.n:c/L-n-a.n/L-n-i32;ix.n:c/L-n-a.n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00306	ival.n@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00307	mod.n@i32:c/L-n-a.n/L-n-i32	function	i32:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00308	prev@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00309	next@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	ix.n:c/L-n-a.n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00310	clamp@ix.n:c/L-n-a.n/L-n-i32	function	ix.n:c/L-n-a.n/L-n-i32	i32:c/L-n-a.n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00311	add@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} + {1}	add on i32
+F00312	sub@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} - {1}	sub on i32
+F00313	mul@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	{0} * {1}	mul on i32
+F00314	min@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	i32.min {0} {1}	min on i32
+F00315	max@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	i32.max {0} {1}	max on i32
+F00316	neg@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	-{0}	neg on i32
+F00317	abs@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	i32.abs {0}	abs on i32
+F00318	sel@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32;i32:c/L-n-a.n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00319	get.n@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	a.n:c/L-n-a.n/F-n-i32;ix.n:c/L-n-a.n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00320	ival.n@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00321	mod.n@i32:c/L-n-a.n/F-n-i32	function	i32:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00322	prev@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00323	next@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	ix.n:c/L-n-a.n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00324	clamp@ix.n:c/L-n-a.n/F-n-i32	function	ix.n:c/L-n-a.n/F-n-i32	i32:c/L-n-a.n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00325	add@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} + {1}	add on i32
+F00326	sub@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} - {1}	sub on i32
+F00327	mul@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	{0} * {1}	mul on i32
+F00328	min@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	i32.min {0} {1}	min on i32
+F00329	max@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	i32.max {0} {1}	max on i32
+F00330	neg@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	-{0}	neg on i32
+F00331	abs@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	i32.abs {0}	abs on i32
+F00332	sel@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n;i32:c/F-n-i32/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00333	get.n@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	a.n:c/F-n-i32/T-n;ix.n:c/F-n-i32/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00334	ival.n@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i32.i64 {0}	an index into [n] as a value
+F00335	mod.n@i32:c/F-n-i32/T-n	function	i32:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00336	prev@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00337	next@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	ix.n:c/F-n-i32/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00338	clamp@ix.n:c/F-n-i32/T-n	function	ix.n:c/F-n-i32/T-n	i32:c/F-n-i32/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00339	add@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} + {1}	add on i32
+F00340	sub@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} - {1}	sub on i32
+F00341	mul@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	{0} * {1}	mul on i32
+F00342	min@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	i32.min {0} {1}	min on i32
+F00343	max@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	i32.max {0} {1}	max on i32
+F00344	neg@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	-{0}	neg on i32
+F00345	abs@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	i32.abs {0}	abs on i32
+F00346	sel@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32;i32:c/F-n-i32/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00347	get.n@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	a.n:c/F-n-i32/L-n-i32;ix.n:c/F-n-i32/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00348	ival.n@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00349	mod.n@i32:c/F-n-i32/L-n-i32	function	i32:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00350	prev@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00351	next@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	ix.n:c/F-n-i32/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00352	clamp@ix.n:c/F-n-i32/L-n-i32	function	ix.n:c/F-n-i32/L-n-i32	i32:c/F-n-i32/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00353	add@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} + {1}	add on i32
+F00354	sub@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} - {1}	sub on i32
+F00355	mul@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	{0} * {1}	mul on i32
+F00356	min@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	i32.min {0} {1}	min on i32
+F00357	max@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	i32.max {0} {1}	max on i32
+F00358	neg@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	-{0}	neg on i32
+F00359	abs@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	i32.abs {0}	abs on i32
+F00360	sel@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32;i32:c/F-n-i32/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00361	get.n@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	a.n:c/F-n-i32/F-n-i32;ix.n:c/F-n-i32/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00362	ival.n@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00363	mod.n@i32:c/F-n-i32/F-n-i32	function	i32:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00364	prev@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00365	next@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	ix.n:c/F-n-i32/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00366	clamp@ix.n:c/F-n-i32/F-n-i32	function	ix.n:c/F-n-i32/F-n-i32	i32:c/F-n-i32/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00367	add@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} + {1}	add on i32
+F00368	sub@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} - {1}	sub on i32
+F00369	mul@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	{0} * {1}	mul on i32
+F00370	min@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	i32.min {0} {1}	min on i32
+F00371	max@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	i32.max {0} {1}	max on i32
+F00372	neg@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	-{0}	neg on i32
+F00373	abs@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	i32.abs {0}	abs on i32
+F00374	sel@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n;i32:c/F-n-a.n/T-n	if {0} < 0i32 then {1} else {2}	sel on i32
+F00375	get.n@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	a.n:c/F-n-a.n/T-n;ix.n:c/F-n-a.n/T-n	{0}[{1}]	an element of a [n] array, at an index in range
+F00376	ival.n@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i32.i64 {0}	an index into [n] as a value
+F00377	mod.n@i32:c/F-n-a.n/T-n	function	i32:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00378	prev@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00379	next@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	ix.n:c/F-n-a.n/T-n	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00380	clamp@ix.n:c/F-n-a.n/T-n	function	ix.n:c/F-n-a.n/T-n	i32:c/F-n-a.n/T-n	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00381	add@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} + {1}	add on i32
+F00382	sub@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} - {1}	sub on i32
+F00383	mul@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	{0} * {1}	mul on i32
+F00384	min@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	i32.min {0} {1}	min on i32
+F00385	max@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	i32.max {0} {1}	max on i32
+F00386	neg@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	-{0}	neg on i32
+F00387	abs@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	i32.abs {0}	abs on i32
+F00388	sel@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32;i32:c/F-n-a.n/L-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00389	get.n@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	a.n:c/F-n-a.n/L-n-i32;ix.n:c/F-n-a.n/L-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00390	ival.n@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i32.i64 {0}	an index into [n] as a value
+F00391	mod.n@i32:c/F-n-a.n/L-n-i32	function	i32:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00392	prev@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00393	next@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	ix.n:c/F-n-a.n/L-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00394	clamp@ix.n:c/F-n-a.n/L-n-i32	function	ix.n:c/F-n-a.n/L-n-i32	i32:c/F-n-a.n/L-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00395	add@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} + {1}	add on i32
+F00396	sub@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} - {1}	sub on i32
+F00397	mul@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	{0} * {1}	mul on i32
+F00398	min@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	i32.min {0} {1}	min on i32
+F00399	max@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	i32.max {0} {1}	max on i32
+F00400	neg@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	-{0}	neg on i32
+F00401	abs@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	i32.abs {0}	abs on i32
+F00402	sel@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32;i32:c/F-n-a.n/F-n-i32	if {0} < 0i32 then {1} else {2}	sel on i32
+F00403	get.n@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	a.n:c/F-n-a.n/F-n-i32;ix.n:c/F-n-a.n/F-n-i32	{0}[{1}]	an element of a [n] array, at an index in range
+F00404	ival.n@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i32.i64 {0}	an index into [n] as a value
+F00405	mod.n@i32:c/F-n-a.n/F-n-i32	function	i32:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	{0} % i32.i64 n	a value modulo the size n, in [0, n)
+F00406	prev@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i64.max 0 ({0} - 1)	the previous index into [n], clamped at 0
+F00407	next@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	ix.n:c/F-n-a.n/F-n-i32	i64.min (n - 1) ({0} + 1)	the next index into [n], clamped at n - 1
+F00408	clamp@ix.n:c/F-n-a.n/F-n-i32	function	ix.n:c/F-n-a.n/F-n-i32	i32:c/F-n-a.n/F-n-i32	i64.max 0 (i64.min (n - 1) (i64.i32 {0}))	a value clamped into an index of [n]
+F00409	n@i32:c	terminal	i32:c		i32.i64 n	the size n as a value
+F00410	?_i32:c	const	i32:c			a literal of the constant pool
+F00411	zero@ix.n:c	terminal	ix.n:c		0i64	the first index into [n]
+F00412	last@ix.n:c	terminal	ix.n:c		n - 1	the last index into [n] (every dim is at least 1)
+F00413	xs@a.n:c	terminal	a.n:c		xs	an input of the interface
+F00414	zeros@a.n:c	terminal	a.n:c		zeros_n	the zero [n] array (bound once by the entry point)
+F00415	n@i32:c/T-n	terminal	i32:c/T-n		i32.i64 n	the size n as a value
+F00416	?_i32:c/T-n	const	i32:c/T-n			a literal of the constant pool
+F00417	zero@ix.n:c/T-n	terminal	ix.n:c/T-n		0i64	the first index into [n]
+F00418	last@ix.n:c/T-n	terminal	ix.n:c/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00419	j1@ix.n:c/T-n	terminal	ix.n:c/T-n		j1	the bound index j1
+F00420	xs@a.n:c/T-n	terminal	a.n:c/T-n		xs	an input of the interface
+F00421	zeros@a.n:c/T-n	terminal	a.n:c/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00422	n@i32:c/L-n-i32	terminal	i32:c/L-n-i32		i32.i64 n	the size n as a value
+F00423	?_i32:c/L-n-i32	const	i32:c/L-n-i32			a literal of the constant pool
+F00424	s1@i32:c/L-n-i32	terminal	i32:c/L-n-i32		s1	the loop state s1
+F00425	zero@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		0i64	the first index into [n]
+F00426	last@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00427	i1@ix.n:c/L-n-i32	terminal	ix.n:c/L-n-i32		i1	the bound index i1
+F00428	xs@a.n:c/L-n-i32	terminal	a.n:c/L-n-i32		xs	an input of the interface
+F00429	zeros@a.n:c/L-n-i32	terminal	a.n:c/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00430	n@i32:c/L-n-a.n	terminal	i32:c/L-n-a.n		i32.i64 n	the size n as a value
+F00431	?_i32:c/L-n-a.n	const	i32:c/L-n-a.n			a literal of the constant pool
+F00432	zero@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		0i64	the first index into [n]
+F00433	last@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		n - 1	the last index into [n] (every dim is at least 1)
+F00434	i1@ix.n:c/L-n-a.n	terminal	ix.n:c/L-n-a.n		i1	the bound index i1
+F00435	s1@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		s1	the loop state s1
+F00436	xs@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		xs	an input of the interface
+F00437	zeros@a.n:c/L-n-a.n	terminal	a.n:c/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00438	n@i32:c/F-n-i32	terminal	i32:c/F-n-i32		i32.i64 n	the size n as a value
+F00439	?_i32:c/F-n-i32	const	i32:c/F-n-i32			a literal of the constant pool
+F00440	s1@i32:c/F-n-i32	terminal	i32:c/F-n-i32		s1	the loop state s1
+F00441	zero@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		0i64	the first index into [n]
+F00442	last@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00443	i1@ix.n:c/F-n-i32	terminal	ix.n:c/F-n-i32		i1	the bound index i1
+F00444	xs@a.n:c/F-n-i32	terminal	a.n:c/F-n-i32		xs	an input of the interface
+F00445	zeros@a.n:c/F-n-i32	terminal	a.n:c/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00446	n@i32:c/F-n-a.n	terminal	i32:c/F-n-a.n		i32.i64 n	the size n as a value
+F00447	?_i32:c/F-n-a.n	const	i32:c/F-n-a.n			a literal of the constant pool
+F00448	zero@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		0i64	the first index into [n]
+F00449	last@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		n - 1	the last index into [n] (every dim is at least 1)
+F00450	i1@ix.n:c/F-n-a.n	terminal	ix.n:c/F-n-a.n		i1	the bound index i1
+F00451	s1@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		s1	the loop state s1
+F00452	xs@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		xs	an input of the interface
+F00453	zeros@a.n:c/F-n-a.n	terminal	a.n:c/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00454	n@i32:c/T-n/T-n	terminal	i32:c/T-n/T-n		i32.i64 n	the size n as a value
+F00455	?_i32:c/T-n/T-n	const	i32:c/T-n/T-n			a literal of the constant pool
+F00456	zero@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		0i64	the first index into [n]
+F00457	last@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00458	j1@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		j1	the bound index j1
+F00459	j2@ix.n:c/T-n/T-n	terminal	ix.n:c/T-n/T-n		j2	the bound index j2
+F00460	xs@a.n:c/T-n/T-n	terminal	a.n:c/T-n/T-n		xs	an input of the interface
+F00461	zeros@a.n:c/T-n/T-n	terminal	a.n:c/T-n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00462	n@i32:c/T-n/L-n-i32	terminal	i32:c/T-n/L-n-i32		i32.i64 n	the size n as a value
+F00463	?_i32:c/T-n/L-n-i32	const	i32:c/T-n/L-n-i32			a literal of the constant pool
+F00464	s2@i32:c/T-n/L-n-i32	terminal	i32:c/T-n/L-n-i32		s2	the loop state s2
+F00465	zero@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		0i64	the first index into [n]
+F00466	last@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00467	j1@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		j1	the bound index j1
+F00468	i2@ix.n:c/T-n/L-n-i32	terminal	ix.n:c/T-n/L-n-i32		i2	the bound index i2
+F00469	xs@a.n:c/T-n/L-n-i32	terminal	a.n:c/T-n/L-n-i32		xs	an input of the interface
+F00470	zeros@a.n:c/T-n/L-n-i32	terminal	a.n:c/T-n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00471	s2@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		s2	the loop state s2
+F00472	xs@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		xs	an input of the interface
+F00473	zeros@a.n:c/T-n/L-n-a.n	terminal	a.n:c/T-n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00474	n@i32:c/T-n/F-n-i32	terminal	i32:c/T-n/F-n-i32		i32.i64 n	the size n as a value
+F00475	?_i32:c/T-n/F-n-i32	const	i32:c/T-n/F-n-i32			a literal of the constant pool
+F00476	s2@i32:c/T-n/F-n-i32	terminal	i32:c/T-n/F-n-i32		s2	the loop state s2
+F00477	zero@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		0i64	the first index into [n]
+F00478	last@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00479	j1@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		j1	the bound index j1
+F00480	i2@ix.n:c/T-n/F-n-i32	terminal	ix.n:c/T-n/F-n-i32		i2	the bound index i2
+F00481	xs@a.n:c/T-n/F-n-i32	terminal	a.n:c/T-n/F-n-i32		xs	an input of the interface
+F00482	zeros@a.n:c/T-n/F-n-i32	terminal	a.n:c/T-n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00483	s2@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		s2	the loop state s2
+F00484	xs@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		xs	an input of the interface
+F00485	zeros@a.n:c/T-n/F-n-a.n	terminal	a.n:c/T-n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00486	n@i32:c/L-n-i32/T-n	terminal	i32:c/L-n-i32/T-n		i32.i64 n	the size n as a value
+F00487	?_i32:c/L-n-i32/T-n	const	i32:c/L-n-i32/T-n			a literal of the constant pool
+F00488	s1@i32:c/L-n-i32/T-n	terminal	i32:c/L-n-i32/T-n		s1	the loop state s1
+F00489	zero@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		0i64	the first index into [n]
+F00490	last@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00491	i1@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		i1	the bound index i1
+F00492	j2@ix.n:c/L-n-i32/T-n	terminal	ix.n:c/L-n-i32/T-n		j2	the bound index j2
+F00493	xs@a.n:c/L-n-i32/T-n	terminal	a.n:c/L-n-i32/T-n		xs	an input of the interface
+F00494	zeros@a.n:c/L-n-i32/T-n	terminal	a.n:c/L-n-i32/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00495	n@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		i32.i64 n	the size n as a value
+F00496	?_i32:c/L-n-i32/L-n-i32	const	i32:c/L-n-i32/L-n-i32			a literal of the constant pool
+F00497	s1@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		s1	the loop state s1
+F00498	s2@i32:c/L-n-i32/L-n-i32	terminal	i32:c/L-n-i32/L-n-i32		s2	the loop state s2
+F00499	zero@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		0i64	the first index into [n]
+F00500	last@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00501	i1@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		i1	the bound index i1
+F00502	i2@ix.n:c/L-n-i32/L-n-i32	terminal	ix.n:c/L-n-i32/L-n-i32		i2	the bound index i2
+F00503	xs@a.n:c/L-n-i32/L-n-i32	terminal	a.n:c/L-n-i32/L-n-i32		xs	an input of the interface
+F00504	zeros@a.n:c/L-n-i32/L-n-i32	terminal	a.n:c/L-n-i32/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00505	s2@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		s2	the loop state s2
+F00506	xs@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		xs	an input of the interface
+F00507	zeros@a.n:c/L-n-i32/L-n-a.n	terminal	a.n:c/L-n-i32/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00508	n@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		i32.i64 n	the size n as a value
+F00509	?_i32:c/L-n-i32/F-n-i32	const	i32:c/L-n-i32/F-n-i32			a literal of the constant pool
+F00510	s1@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		s1	the loop state s1
+F00511	s2@i32:c/L-n-i32/F-n-i32	terminal	i32:c/L-n-i32/F-n-i32		s2	the loop state s2
+F00512	zero@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		0i64	the first index into [n]
+F00513	last@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00514	i1@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		i1	the bound index i1
+F00515	i2@ix.n:c/L-n-i32/F-n-i32	terminal	ix.n:c/L-n-i32/F-n-i32		i2	the bound index i2
+F00516	xs@a.n:c/L-n-i32/F-n-i32	terminal	a.n:c/L-n-i32/F-n-i32		xs	an input of the interface
+F00517	zeros@a.n:c/L-n-i32/F-n-i32	terminal	a.n:c/L-n-i32/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00518	s2@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		s2	the loop state s2
+F00519	xs@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		xs	an input of the interface
+F00520	zeros@a.n:c/L-n-i32/F-n-a.n	terminal	a.n:c/L-n-i32/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00521	n@i32:c/L-n-a.n/T-n	terminal	i32:c/L-n-a.n/T-n		i32.i64 n	the size n as a value
+F00522	?_i32:c/L-n-a.n/T-n	const	i32:c/L-n-a.n/T-n			a literal of the constant pool
+F00523	zero@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		0i64	the first index into [n]
+F00524	last@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00525	i1@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		i1	the bound index i1
+F00526	j2@ix.n:c/L-n-a.n/T-n	terminal	ix.n:c/L-n-a.n/T-n		j2	the bound index j2
+F00527	s1@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		s1	the loop state s1
+F00528	xs@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		xs	an input of the interface
+F00529	zeros@a.n:c/L-n-a.n/T-n	terminal	a.n:c/L-n-a.n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00530	n@i32:c/L-n-a.n/L-n-i32	terminal	i32:c/L-n-a.n/L-n-i32		i32.i64 n	the size n as a value
+F00531	?_i32:c/L-n-a.n/L-n-i32	const	i32:c/L-n-a.n/L-n-i32			a literal of the constant pool
+F00532	s2@i32:c/L-n-a.n/L-n-i32	terminal	i32:c/L-n-a.n/L-n-i32		s2	the loop state s2
+F00533	zero@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		0i64	the first index into [n]
+F00534	last@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00535	i1@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		i1	the bound index i1
+F00536	i2@ix.n:c/L-n-a.n/L-n-i32	terminal	ix.n:c/L-n-a.n/L-n-i32		i2	the bound index i2
+F00537	s1@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		s1	the loop state s1
+F00538	xs@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		xs	an input of the interface
+F00539	zeros@a.n:c/L-n-a.n/L-n-i32	terminal	a.n:c/L-n-a.n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00540	s1@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		s1	the loop state s1
+F00541	s2@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		s2	the loop state s2
+F00542	xs@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		xs	an input of the interface
+F00543	zeros@a.n:c/L-n-a.n/L-n-a.n	terminal	a.n:c/L-n-a.n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00544	n@i32:c/L-n-a.n/F-n-i32	terminal	i32:c/L-n-a.n/F-n-i32		i32.i64 n	the size n as a value
+F00545	?_i32:c/L-n-a.n/F-n-i32	const	i32:c/L-n-a.n/F-n-i32			a literal of the constant pool
+F00546	s2@i32:c/L-n-a.n/F-n-i32	terminal	i32:c/L-n-a.n/F-n-i32		s2	the loop state s2
+F00547	zero@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		0i64	the first index into [n]
+F00548	last@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00549	i1@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		i1	the bound index i1
+F00550	i2@ix.n:c/L-n-a.n/F-n-i32	terminal	ix.n:c/L-n-a.n/F-n-i32		i2	the bound index i2
+F00551	s1@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		s1	the loop state s1
+F00552	xs@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		xs	an input of the interface
+F00553	zeros@a.n:c/L-n-a.n/F-n-i32	terminal	a.n:c/L-n-a.n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00554	s1@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		s1	the loop state s1
+F00555	s2@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		s2	the loop state s2
+F00556	xs@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		xs	an input of the interface
+F00557	zeros@a.n:c/L-n-a.n/F-n-a.n	terminal	a.n:c/L-n-a.n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00558	n@i32:c/F-n-i32/T-n	terminal	i32:c/F-n-i32/T-n		i32.i64 n	the size n as a value
+F00559	?_i32:c/F-n-i32/T-n	const	i32:c/F-n-i32/T-n			a literal of the constant pool
+F00560	s1@i32:c/F-n-i32/T-n	terminal	i32:c/F-n-i32/T-n		s1	the loop state s1
+F00561	zero@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		0i64	the first index into [n]
+F00562	last@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00563	i1@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		i1	the bound index i1
+F00564	j2@ix.n:c/F-n-i32/T-n	terminal	ix.n:c/F-n-i32/T-n		j2	the bound index j2
+F00565	xs@a.n:c/F-n-i32/T-n	terminal	a.n:c/F-n-i32/T-n		xs	an input of the interface
+F00566	zeros@a.n:c/F-n-i32/T-n	terminal	a.n:c/F-n-i32/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00567	n@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		i32.i64 n	the size n as a value
+F00568	?_i32:c/F-n-i32/L-n-i32	const	i32:c/F-n-i32/L-n-i32			a literal of the constant pool
+F00569	s1@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		s1	the loop state s1
+F00570	s2@i32:c/F-n-i32/L-n-i32	terminal	i32:c/F-n-i32/L-n-i32		s2	the loop state s2
+F00571	zero@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		0i64	the first index into [n]
+F00572	last@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00573	i1@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		i1	the bound index i1
+F00574	i2@ix.n:c/F-n-i32/L-n-i32	terminal	ix.n:c/F-n-i32/L-n-i32		i2	the bound index i2
+F00575	xs@a.n:c/F-n-i32/L-n-i32	terminal	a.n:c/F-n-i32/L-n-i32		xs	an input of the interface
+F00576	zeros@a.n:c/F-n-i32/L-n-i32	terminal	a.n:c/F-n-i32/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00577	s2@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		s2	the loop state s2
+F00578	xs@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		xs	an input of the interface
+F00579	zeros@a.n:c/F-n-i32/L-n-a.n	terminal	a.n:c/F-n-i32/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00580	n@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		i32.i64 n	the size n as a value
+F00581	?_i32:c/F-n-i32/F-n-i32	const	i32:c/F-n-i32/F-n-i32			a literal of the constant pool
+F00582	s1@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		s1	the loop state s1
+F00583	s2@i32:c/F-n-i32/F-n-i32	terminal	i32:c/F-n-i32/F-n-i32		s2	the loop state s2
+F00584	zero@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		0i64	the first index into [n]
+F00585	last@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00586	i1@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		i1	the bound index i1
+F00587	i2@ix.n:c/F-n-i32/F-n-i32	terminal	ix.n:c/F-n-i32/F-n-i32		i2	the bound index i2
+F00588	xs@a.n:c/F-n-i32/F-n-i32	terminal	a.n:c/F-n-i32/F-n-i32		xs	an input of the interface
+F00589	zeros@a.n:c/F-n-i32/F-n-i32	terminal	a.n:c/F-n-i32/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00590	s2@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		s2	the loop state s2
+F00591	xs@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		xs	an input of the interface
+F00592	zeros@a.n:c/F-n-i32/F-n-a.n	terminal	a.n:c/F-n-i32/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00593	n@i32:c/F-n-a.n/T-n	terminal	i32:c/F-n-a.n/T-n		i32.i64 n	the size n as a value
+F00594	?_i32:c/F-n-a.n/T-n	const	i32:c/F-n-a.n/T-n			a literal of the constant pool
+F00595	zero@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		0i64	the first index into [n]
+F00596	last@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		n - 1	the last index into [n] (every dim is at least 1)
+F00597	i1@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		i1	the bound index i1
+F00598	j2@ix.n:c/F-n-a.n/T-n	terminal	ix.n:c/F-n-a.n/T-n		j2	the bound index j2
+F00599	s1@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		s1	the loop state s1
+F00600	xs@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		xs	an input of the interface
+F00601	zeros@a.n:c/F-n-a.n/T-n	terminal	a.n:c/F-n-a.n/T-n		zeros_n	the zero [n] array (bound once by the entry point)
+F00602	n@i32:c/F-n-a.n/L-n-i32	terminal	i32:c/F-n-a.n/L-n-i32		i32.i64 n	the size n as a value
+F00603	?_i32:c/F-n-a.n/L-n-i32	const	i32:c/F-n-a.n/L-n-i32			a literal of the constant pool
+F00604	s2@i32:c/F-n-a.n/L-n-i32	terminal	i32:c/F-n-a.n/L-n-i32		s2	the loop state s2
+F00605	zero@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		0i64	the first index into [n]
+F00606	last@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00607	i1@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		i1	the bound index i1
+F00608	i2@ix.n:c/F-n-a.n/L-n-i32	terminal	ix.n:c/F-n-a.n/L-n-i32		i2	the bound index i2
+F00609	s1@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		s1	the loop state s1
+F00610	xs@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		xs	an input of the interface
+F00611	zeros@a.n:c/F-n-a.n/L-n-i32	terminal	a.n:c/F-n-a.n/L-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00612	s1@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		s1	the loop state s1
+F00613	s2@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		s2	the loop state s2
+F00614	xs@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		xs	an input of the interface
+F00615	zeros@a.n:c/F-n-a.n/L-n-a.n	terminal	a.n:c/F-n-a.n/L-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)
+F00616	n@i32:c/F-n-a.n/F-n-i32	terminal	i32:c/F-n-a.n/F-n-i32		i32.i64 n	the size n as a value
+F00617	?_i32:c/F-n-a.n/F-n-i32	const	i32:c/F-n-a.n/F-n-i32			a literal of the constant pool
+F00618	s2@i32:c/F-n-a.n/F-n-i32	terminal	i32:c/F-n-a.n/F-n-i32		s2	the loop state s2
+F00619	zero@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		0i64	the first index into [n]
+F00620	last@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		n - 1	the last index into [n] (every dim is at least 1)
+F00621	i1@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		i1	the bound index i1
+F00622	i2@ix.n:c/F-n-a.n/F-n-i32	terminal	ix.n:c/F-n-a.n/F-n-i32		i2	the bound index i2
+F00623	s1@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		s1	the loop state s1
+F00624	xs@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		xs	an input of the interface
+F00625	zeros@a.n:c/F-n-a.n/F-n-i32	terminal	a.n:c/F-n-a.n/F-n-i32		zeros_n	the zero [n] array (bound once by the entry point)
+F00626	s1@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		s1	the loop state s1
+F00627	s2@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		s2	the loop state s2
+F00628	xs@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		xs	an input of the interface
+F00629	zeros@a.n:c/F-n-a.n/F-n-a.n	terminal	a.n:c/F-n-a.n/F-n-a.n		zeros_n	the zero [n] array (bound once by the entry point)

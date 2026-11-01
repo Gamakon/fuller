@@ -5,6 +5,5 @@ element	i32
 input	walls	i32	rows,cols
 output	main	i32	cols
 depth	2		
-families			
 literals	0,1,2,-1,10		
 dims	rows,cols		

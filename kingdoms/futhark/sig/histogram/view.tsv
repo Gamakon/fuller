@@ -7,6 +7,5 @@ input	is	i32	n
 input	vs	i32	n
 output	main	i32	k
 depth	2		
-families	hist,mod		
 literals	0,1,2,-1,10		
 dims	k,n		

@@ -252,6 +252,22 @@ The tables are committed, like the 1-D Futhark kingdom's, so the loader's
 committed table is the trust boundary; `--write` regenerates and then runs the
 same checks.
 
+## The problems are views over the master (`master/`, `sig/<problem>/`)
+
+Every row lives once, as a template, in `master/rows.tsv`. A problem's
+specification `sig/<problem>/view.tsv` is written by `sniff.py` from the
+problem's Futhark source (inputs, output, dimensions, element, depth), and
+`view.py` (and `src/futhark_view.rs`, byte for byte the same) computes the
+table from the master. A signature view admits **every family** of the master;
+which rows it keeps is decided by **reachability both ways**: forward, the
+types that can be built from the leaves by any chain of functions (a row is
+usable when all its arguments can be built); backward, the types the root can
+use through usable rows. The kept rows are the usable rows whose output the
+root can use. What the problem's source happens to use limits nothing
+(`docs/PLAN_futhark_kingdom.md`, 3e). The `sig/<problem>/*.tsv` and `egraph.*`
+beside a specification are the written-out view, checked by
+`gen_tables.py`; nothing loads them at runtime.
+
 ## The pixel family (`pixel/<shader>/`)
 
 A second family from the same generator: a picture as a map over the pixels of

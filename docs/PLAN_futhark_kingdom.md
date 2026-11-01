@@ -75,7 +75,7 @@ This is a departure from Andrew's geneframe design, in which a kingdom is a QUER
   - the size variables bound to the problem's sizes;
   - the element types;
   - the context depth;
-  - the function families.
+  - (until 3e, the function families; a signature view now admits every family, see 3e).
 - It replaces the hand-written `interface.tsv`.
 
 ### 3d. The view
@@ -88,6 +88,29 @@ This is a departure from Andrew's geneframe design, in which a kingdom is a QUER
   - `kingdoms/futhark/view.py` (the generator's view) and `src/futhark_view.rs` (the engine's, at runtime, cached once a process); A7's specification is `kingdoms/futhark/view.tsv`;
   - the regression: the four views and A7's equal the tables of d26a018a byte for byte from both implementations, and `futhark_sig::tests_view` shows the same genes express the same programs.
   - Not built here, for step 4: elements other than i32 in the master's rows (the format admits them; the value model does not), and the matrix family's cost table and e-graph stay generator-written from A7's view.
+
+### 3e. Bidirectional reachability replaces the family filter
+
+**The rule (Andrew, 2026-11-01): do not limit families by what the source happens to use.** Build the graph of types and functions from the rows of ALL families the view's element and shape can bind; compute reachability FORWARD from the inputs (which types can be built) and BACKWARD from the output toward the inputs (which types the root can use); where the two meet, include every type and function reachable both ways.
+
+**As built** (`view.py::reachable`, `src/futhark_view.rs::reachable`, byte-identical):
+- admission: version and element only for a signature view (the matrix view keeps its `families matrix`); a quantifier whose set the view does not have (`P:pairs` in a signature view) binds nothing, so foreign-shape rows expand to no rows;
+- F: the least fixpoint, from the output of every terminal and constant, then the output of every function whose arguments are all in F. A function is USABLE when all its arguments are in F; there is no further cut. A type with no leaf of its own, which only a chain of functions builds, is kept: the GEP tail cannot hold one, so that is the gene layout's to design, not the view's to filter (Andrew's correction). Witness S8 ("every dual has a terminal") stays and will fail loudly when a master row first brings in such a class. Measured under this rule: **0** kept types without a leaf in all four views (every class in a context has `zeros`, `zero`/`last`, or the size terminals and the pool);
+- B: the closure from the root over the usable rows; kept: the usable rows whose output is in B. The root must be in F, else an error naming it;
+- the context-free classes (classes no kept function row produces) are recomputed expand → keep → recompute until they settle, bounded by the class count, an error if they do not. Measured: histogram, reduce and scan settle at once with none free; pathfinder in two rounds with `a.rows.cols` free, the same result as the old double expansion. It changed nothing in these four views;
+- the sniffer no longer writes a `families` line (`FAMILY_CONSTRUCTS` and the source walk are gone); both readers reject one in a signature specification; S10 keeps its template checks and drops the family-membership half.
+
+**Measured** (types; function rows; leaf rows = terminals and constants; head length and gene width at the runner's default program size N = the reference's function count; A7 at N = 3, unchanged):
+
+| view | N | types | function rows | leaf rows | head length | gene width |
+|---|---:|---|---|---|---|---|
+| pathfinder | 13 | 832 → 832 | 3395 → 3975 | 2062 → 2062 | 14065 → 14065 | 82573 → 84015 |
+| reduce | 1 | 73 → 73 | 351 → 408 | 221 → 221 | 1 → 1 | 13 → 13 |
+| scan | 1 | 73 → 73 | 369 → 408 | 221 → 221 | 1 → 1 | 9 → 9 |
+| histogram | 4 | 607 → 607 | 2610 → 2700 | 1779 → 1779 | 2506 → 2506 | 13945 → 13945 |
+| A7 | 3 | 11 → 11 | 54 → 54 | 17 → 17 | 41 → 41 | 322 → 322 |
+
+The types did not change: every type the new families' rows name was already in each view. At N = 1 a layout is the root's frame alone, so reduce's and scan's widths do not show their new rows. The regression: each problem's reference and planted slowdown, and A7's reference, write the programs recorded at 97dbbb80 (`tests/fixtures/futhark_view_programs/`, `futhark_sig::tests_view`); the 200 random genes and the stored cases as in 3d; the sizes above are pinned in `futhark_view::tests` and `futhark_sig::tests_view`.
 
 ## Step 3 design (3b, 3c, 3d), 2026-11-01
 
@@ -131,18 +154,17 @@ input	is	i32	n
 input	vs	i32	n
 output	main	i32	k
 depth	2
-families	hist,mod
 literals	0,1,2,-1,10
 dims	k,n		            (derived: order of first appearance, size inputs included)
 ```
 
-A7's spec (`kingdoms/futhark/view.tsv`) is `shape matrix`, `roles n,m,p`, `root n,p`, `families matrix`: hand-written, since A7 has no entry source until step 4 makes it a view problem of `futhark_evolve`.
+Since 3e a signature specification has no `families` line (the readers reject one): the view admits every family. A7's spec (`kingdoms/futhark/view.tsv`) is `shape matrix`, `roles n,m,p`, `root n,p`, `families matrix`: hand-written, since A7 has no entry source until step 4 makes it a view problem of `futhark_evolve`.
 
 ### D3. The view algorithm (one in Python, one in Rust; a test requires them equal)
 
-1. **Filter**: the rows whose family the spec admits (`core` always for a signature view), `since <= master`, and the spec's element in `elems`.
+1. **Filter**: `since <= master` and the spec's element in `elems`; a signature view admits every family (3e), the matrix view the families its spec names.
 2. **Bind**: derive the sets from the spec, exactly as `sig_signature` does today: `dims` (first appearance), `classes` (each input's class and its row classes, the output's, each dim's rank-1 class), `rank1`, `states` = the element then `rank1`, `free`, the inputs; the contexts from `frames.tsv` (`[()]`, then each context of depth `d` extended by every frame, `d < depth`). Expand the rows' blocks, substitute the variables, and form each type's dual (`class:context`, or the bare class when it is context-free). Name a row `name` as templated (`add@{OUT}` gives today's `add@i32:c`).
-3. **Reachability**: the closure from the root (`output` in context `c`): a type is kept when a kept row's output is kept and it is that row's argument; rows whose output is not kept go. This is today's `sig_rows` closure, and it is what makes the gene layout per-type heads only for reachable types.
+3. **Reachability**, both ways since 3e: forward from the leaves (what can be built), backward from the root (`output` in context `c`) over the rows forward reachability makes usable. It is what makes the gene layout per-type heads only for reachable types.
 4. **Order and write**: functions, then terminals and constants, numbered `F00001...`; types ordered as today (the root, then depth, then name; the matrix family in template order), numbered `T0001...`; the e-graph datatype, rules, rows and sorts from the rows and `rules.tsv`, with today's sort and constructor naming.
 
 The **Rust** side (`src/futhark_view.rs`): `View::load(master, spec) -> View { types_tsv, functions_tsv, datatype, rules, rows, sorts }`, the same text the generator writes; `futhark_sig::Instance` stays a `Copy` static handle `{ name, spec: include_str!(view.tsv) }`, and its view is computed at runtime from `include_str!(master/*)` + the spec once a process, in one cache entry a view name holding the view text and its parsed `ViewSpec`, from which the kingdom, the signature and the bridge are all read, so they cannot disagree (finding 9), and `View::write(dir)` writes the exact table (the option). The committed written-out tables (`sig/<p>/types.tsv`, ...) stay as the regression record and for the witnesses; nothing loads them at runtime. For A7 the Rust view computes `types.tsv`/`functions.tsv`; its `costs.tsv` and e-graph files stay generator-written from the same view (A7's runner is deprecated by step 4, so its family-specific cost and rule code is not ported).
@@ -156,7 +178,7 @@ The **Rust** side (`src/futhark_view.rs`): `View::load(master, spec) -> View { t
 
 - **Input**: the problem's Futhark source and its entry (`tests/corpus/futhark_problems/<p>/yardstick.fut`, `main`). The compiler is pinned: the sniffer requires `futhark --version` 0.28.1, the version whose print it parses (finding 6).
 - **The CLI types it**: `futhark dev -t` prints the type-checked program with every size inferred (measured: histogram's `: []i32` prints as `: [i64.i32 k]i32`). The sniffer parses that entry line: size parameters, `((name: T): T)` parameters, the result type. A scalar `i32` parameter that appears as `i64.i32 p` in a dimension is a **size input**; another scalar is an input value.
-- **Writes** `view.tsv`: the element (the one element type of the parameters and result; two or more is an error until step 4), the inputs, the output, `dims` in first-appearance order, the master's default depth (2) and pool, `master` = the current version, and the **families**: an optional family is admitted when its construct appears in the source of the entry or of a definition the entry reaches (by name, transitively; comments stripped; the prelude is not the problem's text): `scan`; `hist` or `reduce_by_index`; `%` (finding 5). The accepted signature subset is explicit: size parameters, parameters of an element type over size parameters, a scalar `i32` parameter that appears exactly as `i64.i32 p` in a dimension (a size input, still usable as a value), a result over those; anything else stops the sniffer with a diagnostic naming it (finding 7). That rule reproduces today's declarations; whether every view should carry every family is a step 4 experiment, not decided here.
+- **Writes** `view.tsv`: the element (the one element type of the parameters and result; two or more is an error until step 4), the inputs, the output, `dims` in first-appearance order, the master's default depth (2) and pool, `master` = the current version. (Until 3e it also wrote the **families**, admitting an optional family when its construct appeared in the problem's source (finding 5); 3e removed that: every view admits every family.) The accepted signature subset is explicit: size parameters, parameters of an element type over size parameters, a scalar `i32` parameter that appears exactly as `i64.i32 p` in a dimension (a size input, still usable as a value), a result over those; anything else stops the sniffer with a diagnostic naming it (finding 7). Whether every view should carry every family was decided by Andrew in 3e: it should.
 - `gen_tables.py --check` re-runs the sniffer on every benchmark and requires its `view.tsv` byte for byte (a hand-edited spec fails `cargo test`, as a hand-edited table does).
 
 ### D6. The regression plan

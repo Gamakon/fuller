@@ -14,9 +14,10 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
   input (a size the inputs do not fix would be unknown);
 * the element type is the one element of the parameters and the result (one
   element a view until step 4 of docs/PLAN_futhark_kingdom.md);
-* an optional FAMILY of the master is admitted when its construct appears in
-  the type-checked program's own text: `scan`; `hist` or `reduce_by_index`;
-  the modulus `%`;
+* no FAMILY is chosen here: a view admits every family of the master and
+  keeps the types reachable both ways, forward from the leaves and backward
+  from the root (`view.py`; docs/PLAN_futhark_kingdom.md, 3e), so what the
+  problem's source happens to use limits nothing;
 * the depth, the literal pool and the master version are the master's
   defaults.
 
@@ -38,7 +39,6 @@ import view  # noqa: E402
 
 DEFAULT_DEPTH = 2
 ELEMENTS = ("i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "bool")
-FAMILY_CONSTRUCTS = {"scan": [r"\bscan\b"], "hist": [r"\bhist\b", r"\breduce_by_index\b"], "mod": [r"%"]}
 TYPE_RE = re.compile(r"^((?:\[[^\]]*\])*)([a-z][a-z0-9]*)$")
 
 
@@ -57,31 +57,6 @@ def parse_type(text):
         raise ValueError(f"the type {text!r} is not an array of an element (a tuple or a record is step 4)")
     dims = re.findall(r"\[([^\]]*)\]", m.group(1))
     return dims, m.group(2)
-
-
-def reachable_source(path, entry):
-    """The problem's own text the entry reaches: the entry's definition and every top-level definition it names,
-    transitively, comments stripped. The prelude is not the problem's text, so it is never read."""
-    with open(path) as f:
-        src = "\n".join(re.sub(r"--.*", "", l) for l in f.read().splitlines())
-    defs, cur = {}, None
-    for line in src.splitlines():
-        m = re.match(r"^(?:entry|def|let)\s+([A-Za-z_][A-Za-z0-9_']*)", line)
-        if m:
-            cur = m.group(1)
-            defs[cur] = ""
-        if cur is not None:
-            defs[cur] += line + "\n"
-    if entry not in defs:
-        raise ValueError(f"{path} has no definition {entry}")
-    seen, todo = set(), [entry]
-    while todo:
-        d = todo.pop()
-        if d in seen:
-            continue
-        seen.add(d)
-        todo += [n for n in re.findall(r"[A-Za-z_][A-Za-z0-9_']*", defs[d]) if n in defs and n not in seen]
-    return "".join(defs[d] for d in defs if d in seen)
 
 
 def check_compiler():
@@ -177,9 +152,6 @@ def sniff(path, entry="main"):
         dims_seen += [d for d in names if d not in dims_seen]
     lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
     lines.append(f"depth\t{DEFAULT_DEPTH}\t\t")
-    user = reachable_source(path, entry)
-    fams = [f for f in view.SIGNATURE_FAMILIES if any(re.search(p, user) for p in FAMILY_CONSTRUCTS[f])]
-    lines.append(f"families\t{','.join(fams)}\t\t")
     lines.append(f"literals\t{','.join(view.master()['pools'][elem])}\t\t")
     lines.append(f"dims\t{','.join(dims_seen)}\t\t")
     return "\n".join(lines) + "\n"

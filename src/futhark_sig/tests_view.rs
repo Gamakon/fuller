@@ -115,3 +115,24 @@ fn the_reference_programs_are_the_ones_recorded_before_bidirectional_reachabilit
     let got = crate::futhark::program(&k, k.roots()[0], &crate::futhark_search::product_twice(&k), &sizes).unwrap();
     assert_eq!(got, include_str!("../../tests/fixtures/futhark_view_programs/a7.reference.fut"), "A7: the reference's program changed");
 }
+
+/// The gene layouts of `docs/PLAN_futhark_kingdom.md` 3e, at the runner's default program size (the reference's
+/// function count): the head length (the sum of the per-type heads) and the gene width in words. Before 3e (commit
+/// 97dbbb80): pathfinder 14065 and 82573, reduce 1 and 13, scan 1 and 9, histogram 2506 and 13945. Only pathfinder's
+/// width changed (the head length did not, so the tails or constant domains grew); at N = 1 a layout
+/// is the root's frame alone, so reduce's and scan's do not show their new rows.
+#[test]
+fn the_gene_layouts_are_the_measured_ones() {
+    let got: Vec<(&str, usize, usize, usize)> = ["pathfinder", "reduce", "scan", "histogram"]
+        .into_iter()
+        .map(|name| {
+            let prob = problem(name).unwrap();
+            let k = load(&prob.instance).unwrap();
+            let reference = build(&k, prob.reference).unwrap();
+            let n = reference.level_order().iter().filter(|(t, _)| !k.rows[t.symbol as usize].inputs.is_empty()).count();
+            let layout = GeneLayout::from_program_size(&k.relations().check().unwrap(), k.roots()[0], n).unwrap();
+            (name, n, layout.head_lens().values().sum::<usize>(), layout.width)
+        })
+        .collect();
+    assert_eq!(got, [("pathfinder", 13, 14065, 84015), ("reduce", 1, 1, 13), ("scan", 1, 1, 9), ("histogram", 4, 2506, 13945)]);
+}
