@@ -22,11 +22,13 @@
 //!   starts in stage 2 (the reference is exact).
 //!
 //! FITNESS, staged (`fuller::runner::FitnessStage`, `staged_hff`):
-//! * stage 1, quality only, no timing: for every stored case, training and held-out alike, the seven inputs of
-//!   `futhark_sig::quality_inputs`, each its own, linear: the share of cells not exact; the shares off by over 1 %,
-//!   10 % and 50 %; the mean and largest error over the correct output's range (`e/(1+e)`); the share of neighbouring
-//!   pairs in the wrong order. (The pilot of 2026-10-27 used three inputs on HFF's log scale, which put every inexact
-//!   program within 0.03 of 1, and ranked its whole population alike for 26 generations.)
+//! * stage 1, quality only, no timing: for every stored case, training and held-out alike, the inputs of
+//!   `futhark_sig::quality_inputs` in the order of `futhark_sig::QUALITY_PARTS` (plan section B, 2026-10-29), each its
+//!   own, linear: the share of cells not exact; the two shape inputs, `(1 - r)/2` for Spearman's and for Pearson's
+//!   correlation with the correct output (absent when the correct output is constant); the shares of cells off by
+//!   over 50 % and over 1 % of the correct value's magnitude. (The study of 2026-10-27 used seven inputs, now
+//!   `QualityPart::Study`; its pilot used three on HFF's log scale, which put every inexact program within 0.03 of 1
+//!   and ranked its whole population alike for 26 generations.)
 //! * stage 2, once the best is exact on every case (a `stage_change` event, never back): the two-level HFF of that
 //!   quality group and the speed group: the program's TIMING SLOTS (`fuller::runner::TimingSlots`, `--pairs` of
 //!   them, 11 by default), interleaved timed pairs against the published program (the yardstick) on the largest
@@ -289,7 +291,7 @@ const LEDGER_STAGE_COLUMNS: [&str; 17] = ["eval", "batch_size", "render_ms", "fu
 struct Quality {
     /// Three raw measurements a fitness case (differing share, mean, max), in case order: exactness.
     raw: Vec<[f64; 3]>,
-    /// The quality inputs (`futhark_sig::quality_inputs`, seven a case), in case order.
+    /// The quality inputs (`futhark_sig::quality_inputs`, the parts of `futhark_sig::QUALITY_PARTS` a case), in case order.
     inputs: Vec<f64>,
     exact_train: usize,
     exact_held: usize,
