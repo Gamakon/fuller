@@ -405,8 +405,14 @@ fn the_cross_path_programs_build_and_are_within_the_timing_work_bound() {
 /// The steps of `pairs` timed pairs after one discarded process-equivalent, each interleaved run by run, the side
 /// that goes first alternating (the evolution's `pair_steps` for a fresh program).
 fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
+    fresh_pairs_at(0, pairs, runs)
+}
+
+#[cfg(feature = "gpu")]
+/// [`fresh_pairs`] numbered from pair `first`: the side that goes first alternates across rounds as within one.
+fn fresh_pairs_at(first: usize, pairs: usize, runs: usize) -> Vec<Step> {
     let mut v = vec![Step::Time { yardstick: false, runs }];
-    v.extend((0..pairs).map(|i| Step::Pair { yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: false }));
+    v.extend((first..first + pairs).map(|i| Step::Pair { yard_first: crate::runner::interleaved_runs(i, 1)[0], itself: false }));
     v
 }
 
@@ -442,8 +448,12 @@ fn median(v: &[f64]) -> f64 {
 /// published program agrees between any two paths within the sum of their A/A noise floors (the largest |ratio - 1|
 /// of each), or, for a program noisier than the published one, the sum of its own noise on the two paths. The single path's quality is a process a candidate (`futhark_wgpu_host`) and its timing a build and a
 /// process a candidate, the batch path one process for all (`Backend::Gpu`), the rust path this process
-/// (`Backend::Rust`); every path times with interleaved pairs (`Step::Pair`). (The fork compiler, rustc, cc, the
-/// GPU; run under the GPU lock.)
+/// (`Backend::Rust`); every path times with interleaved pairs (`Step::Pair`). The PATHS ARE INTERLEAVED too: the 11
+/// pairs are timed in rounds of 4, 4 and 3, each round on all three paths, the paths' order rotated a round, so each
+/// path's pairs sample the device's state over the same span. Timed one path after another (2026-11-01, the merge
+/// run, after ~1 h of GPU tests), `(tab (sum.n (tab (get.n vs j2))))`'s ratio was 0.5038 on the batch path and 0.5077
+/// on the rust path, timed last (its pairs falling from 0.5081 to 0.5054); alone the same build gave 0.5035 and
+/// 0.5037. (The fork compiler, rustc, cc, the GPU; run under the GPU lock.)
 #[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_the_three_evaluation_paths_agree() {
@@ -465,36 +475,65 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
     // process); the timed pairs from a timing build and process of the candidate's own (`futhark_evolve`'s
     // `Judge::time_single`: the driver's interleaved pairs, as on the other paths).
     let timer = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join("single_timer"), inputs).unwrap();
+    // THE BATCH AND RUST PATHS: every program in one batch, the published program as a member for the A/A.
+    let hosts = [
+        Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join("path1"), inputs).unwrap(),
+        Host::new(&k, &sig, cases.len(), Backend::Rust { rt: rt.clone() }, &base.join("path2"), inputs).unwrap(),
+    ];
     let mut quality: Vec<Vec<Vec<Array>>> = vec![Vec::new(); 3];
-    let mut ratios: Vec<Vec<Vec<f64>>> = vec![Vec::new(); 3];
-    let mut aa: Vec<(Vec<f64>, f64)> = Vec::new();
-    // Each program's timing seconds a pair on each path (its discarded first timing included).
-    let mut secs: Vec<Vec<f64>> = vec![Vec::new(); 3];
+    let mut ratios: Vec<Vec<Vec<f64>>> = vec![vec![Vec::new(); trees.len()]; 3];
+    let mut aa: Vec<(Vec<f64>, f64)> = vec![(Vec::new(), f64::INFINITY); 3];
+    // Each program's timing seconds a pair on each path (its discarded first timings included).
+    let mut secs: Vec<Vec<f64>> = vec![vec![0.0; trees.len()]; 3];
     for (i, t) in trees.iter().enumerate() {
         let q = crate::futhark_wgpu_host::compile_program_prebuilt(&program_cases(&k, &sig, t, cases.len()).unwrap(), &base.join(format!("single_q{i}")), &shim).unwrap();
         let (out, _) = crate::futhark_wgpu_host::run_program_bytes(&q, &all, false, 1).unwrap();
         quality[0].push(read_binary(&out).unwrap());
-        let got = timer.run(&[Member { program: Program::Tree(t), steps: fresh_pairs(pairs, runs) }]).unwrap();
-        assert_eq!((got.cost.compiles, got.cost.processes), (1, 1), "the single path's timing is one build and one process a candidate");
-        ratios[0].push(pair_ratios(&got.outcomes[0], pairs).0);
-        secs[0].push(got.cost.member_timing_seconds[0] / pairs as f64);
     }
-    aa.push(pair_ratios(&timer.run(&[Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) }]).unwrap().outcomes[0], pairs));
-    // THE BATCH AND RUST PATHS: every program in one batch, the published program as a member for the A/A.
-    for (path, backend) in [(1, Backend::Gpu { shim: shim.clone() }), (2, Backend::Rust { rt: rt.clone() })] {
-        let host = Host::new(&k, &sig, cases.len(), backend, &base.join(format!("path{path}")), inputs).unwrap();
-        let mut members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: [vec![Step::Quality], fresh_pairs(pairs, runs)].concat() }).collect();
-        members.push(Member { program: Program::Text(p.yardstick), steps: fresh_pairs(pairs, runs) });
-        let got = host.run(&members).unwrap();
-        for (o, text) in got.outcomes.iter().zip(CROSS_PATH) {
-            match &o[0] {
-                Outcome::Quality(v) => quality[path].push(v.clone()),
-                other => panic!("path {path}, {text}: no quality outputs: {other:?}"),
+    let rounds = [4usize, 4, 3];
+    assert_eq!(rounds.iter().sum::<usize>(), pairs);
+    let mut first = 0;
+    for (r, &n) in rounds.iter().enumerate() {
+        for j in 0..3 {
+            let path = (r + j) % 3;
+            if path == 0 {
+                for (i, t) in trees.iter().enumerate() {
+                    let got = timer.run(&[Member { program: Program::Tree(t), steps: fresh_pairs_at(first, n, runs) }]).unwrap();
+                    assert_eq!((got.cost.compiles, got.cost.processes), (1, 1), "the single path's timing is one build and one process a candidate");
+                    ratios[0][i].extend(pair_ratios(&got.outcomes[0], n).0);
+                    secs[0][i] += got.cost.member_timing_seconds[0];
+                }
+                let (v, y) = pair_ratios(&timer.run(&[Member { program: Program::Text(p.yardstick), steps: fresh_pairs_at(first, n, runs) }]).unwrap().outcomes[0], n);
+                aa[0].0.extend(v);
+                aa[0].1 = aa[0].1.min(y);
+            } else {
+                // The quality outputs in the first round only.
+                let quality_step = if r == 0 { vec![Step::Quality] } else { Vec::new() };
+                let mut members: Vec<Member> = trees.iter().map(|t| Member { program: Program::Tree(t), steps: [quality_step.clone(), fresh_pairs_at(first, n, runs)].concat() }).collect();
+                members.push(Member { program: Program::Text(p.yardstick), steps: fresh_pairs_at(first, n, runs) });
+                let got = hosts[path - 1].run(&members).unwrap();
+                for (i, (o, text)) in got.outcomes.iter().zip(CROSS_PATH).enumerate() {
+                    let timed = if r == 0 {
+                        match &o[0] {
+                            Outcome::Quality(v) => quality[path].push(v.clone()),
+                            other => panic!("path {path}, {text}: no quality outputs: {other:?}"),
+                        }
+                        &o[1..]
+                    } else {
+                        &o[..]
+                    };
+                    ratios[path][i].extend(pair_ratios(timed, n).0);
+                    secs[path][i] += got.cost.member_timing_seconds[i];
+                }
+                let (v, y) = pair_ratios(&got.outcomes[trees.len()], n);
+                aa[path].0.extend(v);
+                aa[path].1 = aa[path].1.min(y);
             }
-            ratios[path].push(pair_ratios(&o[1..], pairs).0);
         }
-        secs[path] = got.cost.member_timing_seconds[..trees.len()].iter().map(|s| s / pairs as f64).collect();
-        aa.push(pair_ratios(&got.outcomes[trees.len()], pairs));
+        first += n;
+    }
+    for s in secs.iter_mut().flatten() {
+        *s /= pairs as f64;
     }
     let names = ["single", "batch", "rust"];
     let floor: Vec<f64> = aa.iter().map(|(r, _)| r.iter().map(|x| (x - 1.0).abs()).fold(0.0, f64::max)).collect();
