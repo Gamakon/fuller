@@ -34,6 +34,7 @@ pub mod eval;
 pub mod expr;
 pub mod extract;
 pub mod extract_dag;
+pub mod fitness;
 pub mod homeotic;
 pub mod infix;
 pub mod population_dag;

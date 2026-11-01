@@ -1197,10 +1197,15 @@ pub const QUALITY_PARTS: &[QualityPart] = &[QualityPart::Wrong, QualityPart::Sha
 /// The names of [`quality_inputs`] against a correct output `want`, in order: their number depends on the case
 /// (one input a cell or a step).
 pub fn quality_input_names(want: &Array) -> Vec<String> {
+    quality_input_names_of(QUALITY_PARTS, want)
+}
+
+/// [`quality_input_names`] for the parts `parts` (a fitness scheme's, `crate::fitness::Scheme::quality_parts`).
+pub fn quality_input_names_of(parts: &[QualityPart], want: &Array) -> Vec<String> {
     let n = want.data.len();
     let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
     let mut out = Vec::new();
-    for part in QUALITY_PARTS {
+    for part in parts {
         match part {
             QualityPart::Wrong => out.push("wrong_share".to_string()),
             QualityPart::CellLog => out.extend((0..n).map(|i| format!("cell{i}_log_error"))),
@@ -1254,7 +1259,12 @@ fn study_inputs(got: &Array, want: &Array) -> [f64; 7] {
 /// [`quality_input_names`]: the parts of [`QUALITY_PARTS`]. Every cell and every step is its own input; nothing is
 /// averaged before HFF but the one exactness share. An output of the wrong shape is 1 everywhere.
 pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
-    let names = quality_input_names(want).len();
+    quality_inputs_of(QUALITY_PARTS, got, want)
+}
+
+/// [`quality_inputs`] for the parts `parts` (a fitness scheme's, `crate::fitness::Scheme::quality_parts`).
+pub fn quality_inputs_of(parts: &[QualityPart], got: &Array, want: &Array) -> Vec<f64> {
+    let names = quality_input_names_of(parts, want).len();
     if got.dims != want.dims {
         return vec![1.0; names];
     }
@@ -1264,7 +1274,7 @@ pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
     let mean = (want.data.iter().map(|w| f64::from(*w).abs()).sum::<f64>() / n.max(1) as f64).max(1.0);
     let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
     let mut out = Vec::with_capacity(names);
-    for part in QUALITY_PARTS {
+    for part in parts {
         match part {
             QualityPart::Wrong => out.push(d.iter().filter(|x| **x > 0.0).count() as f64 / n.max(1) as f64),
             QualityPart::CellLog => out.extend(d.iter().map(|x| (x.ln_1p() / big.ln_1p()).min(1.0))),
@@ -1379,6 +1389,11 @@ pub fn cases_fingerprint(cases: &[Case]) -> String {
 /// The identity of the quality inputs' formula: their values, exactly, on fixed outputs against fixed answers (a
 /// level shift, a reversal, a constant, a shape mismatch, a near miss), so any change to the formula changes it.
 pub fn quality_fingerprint() -> String {
+    quality_fingerprint_of(QUALITY_PARTS)
+}
+
+/// [`quality_fingerprint`] of the parts `parts` (a fitness scheme's).
+pub fn quality_fingerprint_of(parts: &[QualityPart]) -> String {
     let want = Array { dims: vec![7], data: vec![3, -40, 900, 7, 7, 0, 123_456] };
     let probes = [
         Array { dims: vec![7], data: want.data.iter().map(|x| x + 5).collect() },
@@ -1387,7 +1402,7 @@ pub fn quality_fingerprint() -> String {
         Array { dims: vec![6], data: vec![1; 6] },
         Array { dims: vec![7], data: vec![3, -40, 901, 7, 7, 0, 123_456] },
     ];
-    let text: String = probes.iter().flat_map(|g| quality_inputs(g, &want)).map(|x| format!("{x:?},")).collect();
+    let text: String = probes.iter().flat_map(|g| quality_inputs_of(parts, g, &want)).map(|x| format!("{x:?},")).collect();
     fnv(&[text.as_bytes()])
 }
 

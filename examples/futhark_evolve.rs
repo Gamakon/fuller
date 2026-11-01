@@ -21,7 +21,12 @@
 //!   (`--start planted`, the control), its e-graph variants and the saturated fold's forms make the population; it
 //!   starts in stage 2 (the reference is exact).
 //!
-//! FITNESS, staged (`fuller::runner::FitnessStage`, `staged_hff`):
+//! FITNESS, a NAMED SCHEME (`--fitness NAME`, `fuller::fitness`, family `futhark_sig`; `docs/FITNESS_SCHEMES.md`),
+//! stated in the header, the stream's `run_start` and `report.tsv`. The default, `futhark-slope4-gated`, is described
+//! below. The old schemes, `futhark-slope4` (stage 2 ungated, the 2026-10-29 reruns) and `futhark-study7` (the
+//! study's seven inputs, stage 2 ungated, the 2026-10-27/28 study), are NOT TO BE RUN AS IS: each has a known fault,
+//! named in its header line; redefine the fitness function before using one. Staged
+//! (`fuller::runner::FitnessStage`, `fuller::fitness::Scheme::staged`):
 //! * stage 1, quality only, no timing: for every stored case, training and held-out alike, the inputs of
 //!   `futhark_sig::quality_inputs` in the order of `futhark_sig::QUALITY_PARTS` (plan section B, 2026-10-29), each its
 //!   own, linear: the share of cells not exact; the two shape inputs, `(1 - r)/2` for Spearman's and for Pearson's
@@ -92,12 +97,13 @@ use std::time::Instant;
 use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
 use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
-use fuller::futhark_sig::{build, cases_fingerprint, compare, quality_fingerprint, compile_c, load, load_cases, problem, program, program_cases, quality_input_names, quality_inputs, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, Signature, Split};
+use fuller::fitness::{Family, Scheme};
+use fuller::futhark_sig::{build, cases_fingerprint, compare, quality_fingerprint_of, compile_c, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{interleaved_runs, write_aa_gate, AA_RETIMES, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
+use fuller::runner::{interleaved_runs, write_aa_gate, AA_RETIMES, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -320,19 +326,19 @@ impl Quality {
         !self.outputs.is_empty() && self.outputs.iter().all(|a| a.data.iter().all(|x| *x == 0))
     }
     /// A legal gene's program that did not compile or run (our software has a bug, logged): wrong everywhere.
-    fn worst(cases: &[Case]) -> Quality {
+    fn worst(cases: &[Case], parts: &[QualityPart]) -> Quality {
         let fit: Vec<&Case> = cases.iter().filter(|c| c.split.in_fitness()).collect();
-        let inputs = fit.iter().flat_map(|c| vec![1.0; quality_input_names(&c.output).len()]).collect();
+        let inputs = fit.iter().flat_map(|c| vec![1.0; quality_input_names_of(parts, &c.output).len()]).collect();
         Quality { raw: vec![[1.0; 3]; fit.len()], inputs, exact_train: 0, exact_held: 0, exact_test: 0, work: 0, outputs: Vec::new(), behaviour: "failed".into() }
     }
     /// The quality of a program's outputs on the cases: the fitness's inputs and exactness from the training and
     /// held-out cases alone; the test cases only counted (`exact_test`).
-    fn of(outs: Vec<Array>, cases: &[Case], work: u128) -> Quality {
+    fn of(outs: Vec<Array>, cases: &[Case], work: u128, parts: &[QualityPart]) -> Quality {
         let mut q = Quality { raw: Vec::with_capacity(cases.len()), inputs: Vec::new(), exact_train: 0, exact_held: 0, exact_test: 0, work, outputs: Vec::new(), behaviour: String::new() };
         for (got, c) in outs.iter().zip(cases) {
             let r = compare(got, &c.output);
             if c.split.in_fitness() {
-                q.inputs.extend(quality_inputs(got, &c.output));
+                q.inputs.extend(quality_inputs_of(parts, got, &c.output));
                 q.raw.push(r);
             }
             if r == [0.0; 3] {
@@ -400,6 +406,11 @@ struct Judge<'a> {
     all_stdin: Vec<u8>,
     interp: Interp<'a>,
     cases: Vec<Case>,
+    /// THE FITNESS SCHEME (`--fitness`, `fuller::fitness`, family `futhark_sig`): the quality parts and the stage-2
+    /// rule.
+    scheme: &'static Scheme,
+    /// The scheme's quality parts (`Scheme::quality_parts`).
+    parts: &'static [QualityPart],
     sizes: Vec<BTreeMap<String, usize>>,
     /// The input the speed is timed on: the problem's own large timing input (never a quality case) or, without one,
     /// the largest training case.
@@ -454,6 +465,11 @@ struct Judge<'a> {
 }
 
 impl<'a> Judge<'a> {
+    /// The fitness scheme's quality parts.
+    fn parts(&self) -> &'static [QualityPart] {
+        self.parts
+    }
+
     /// A candidate's quality program compiled per candidate (`--eval single`), with each stage's wall time (the c
     /// backend's compile is all `futhark`).
     fn compile_staged(&self, source: &str, dir: &Path) -> Result<(PathBuf, Stages), String> {
@@ -711,10 +727,10 @@ impl<'a> Judge<'a> {
             }
         };
         match got {
-            Ok(o) => Ok(Quality::of(o, &self.cases, work)),
+            Ok(o) => Ok(Quality::of(o, &self.cases, work, self.parts())),
             Err(e) => {
                 self.log_bug(&e, &batch);
-                Ok(Quality::worst(&self.cases))
+                Ok(Quality::worst(&self.cases, self.parts()))
             }
         }
     }
@@ -782,7 +798,7 @@ impl<'a> Judge<'a> {
             speed = ratios.iter().map(|r| if r.is_finite() { r / (1.0 + r) } else { 1.0 }).collect();
             ratio = median(&ratios);
         }
-        let t = staged_hff(stage, &q.inputs(), &speed)?;
+        let t = self.scheme.staged(stage, &q.inputs(), &speed)?;
         Ok(Eval { fitness: t.fitness, theta_q: t.quality, theta_s: t.speed, quality: q, speed, ratio })
     }
 }
@@ -1417,8 +1433,8 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
                 Some(m) => {
                     let text = sexp(run.gen.k, tree);
                     let outs = m.get(&text).ok_or_else(|| format!("the stored outputs have no program {text}"))?;
-                    let q = if outs.is_empty() { Quality::worst(&run.judge.cases) } else { Quality::of(outs.clone(), &run.judge.cases, run.judge.work_of(tree)?) };
-                    (staged_hff(FitnessStage::Quality, &q.inputs, &[])?.fitness, q)
+                    let q = if outs.is_empty() { Quality::worst(&run.judge.cases, run.judge.parts()) } else { Quality::of(outs.clone(), &run.judge.cases, run.judge.work_of(tree)?, run.judge.parts()) };
+                    (run.judge.scheme.staged(FitnessStage::Quality, &q.inputs, &[])?.fitness, q)
                 }
                 None => {
                     let e = run.judge.evaluate(tree, source, FitnessStage::Quality)?;
@@ -1472,8 +1488,8 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
         run.judge.mode.label(),
         if replay.is_some() { "yes" } else { "no" },
         run.judge.cases.len(),
-        quality_fingerprint(),
-        run.judge.cases.iter().map(|k| quality_input_names(&k.output).len()).sum::<usize>(),
+        quality_fingerprint_of(run.judge.parts()),
+        run.judge.cases.iter().map(|k| quality_input_names_of(run.judge.parts(), &k.output).len()).sum::<usize>(),
         c.neighbours,
         c.exact_neighbours,
         c.random,
@@ -1521,11 +1537,11 @@ fn read_check_outputs(path: &Path, fp_cases: &str) -> Result<HashMap<String, Vec
 
 /// THE GATE (`--gate DIR`): a discovery run (R, C) starts only after the slope check of the same problem, program
 /// size, cases and quality inputs passed (`DIR/check_summary.tsv`).
-fn gate_passed(dir: &Path, problem: &str, program_size: usize, fp_cases: &str) -> Result<(), String> {
+fn gate_passed(dir: &Path, problem: &str, program_size: usize, fp_cases: &str, parts: &[QualityPart]) -> Result<(), String> {
     let path = dir.join("check_summary.tsv");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("the gate {}: {e}", path.display()))?;
     let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(&format!("{k}\t"))).unwrap_or("").to_string();
-    let want = [("problem", problem.to_string()), ("program_size", program_size.to_string()), ("cases_fingerprint", fp_cases.to_string()), ("quality_fingerprint", quality_fingerprint()), ("verdict", "pass".to_string())];
+    let want = [("problem", problem.to_string()), ("program_size", program_size.to_string()), ("cases_fingerprint", fp_cases.to_string()), ("quality_fingerprint", quality_fingerprint_of(parts)), ("verdict", "pass".to_string())];
     for (k, v) in want {
         if get(k) != v {
             return Err(format!("the gate {}: {k} is {:?}, this run needs {v:?}; a discovery run starts only after the slope check passes for its problem, program size, cases and quality inputs (--check)", path.display(), get(k)));
@@ -1646,6 +1662,10 @@ fn real_main() -> Result<(), String> {
     // THE OPERATOR MEASUREMENT (`--measure grow|point|walk`, plan sections H and I): a measurement, not a run, like
     // the slope check (regime "A", no timing).
     let measure = arg(&args, "--measure");
+    // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`; default the family's newest, futhark-slope4-gated).
+    let scheme = fuller::fitness::scheme_for(Family::FutharkSig, arg(&args, "--fitness").as_deref())?;
+    let parts = scheme.quality_parts()?;
+    println!("# {}", scheme.card_line());
     let check = args.iter().any(|a| a == "--check") || measure.is_some();
     let regime = match arg(&args, "--regime") {
         Some(_) if check => return Err("--check is not a run: it takes no --regime".into()),
@@ -1767,7 +1787,7 @@ fn real_main() -> Result<(), String> {
     let sizes: Vec<BTreeMap<String, usize>> = cases.iter().map(|c| sig.sizes(&c.inputs)).collect::<Result<_, _>>()?;
     if regime == "R" || regime == "C" {
         let g = arg(&args, "--gate").ok_or("--gate DIR: a discovery run (R, C) starts only after the slope check passes (--check --out DIR)")?;
-        gate_passed(Path::new(&g), &pname, program_size, &cases_fingerprint(&cases))?;
+        gate_passed(Path::new(&g), &pname, program_size, &cases_fingerprint(&cases), scheme.quality_parts()?)?;
         println!("# {} the gate: the slope check in {g} passed for these cases and quality inputs", utc());
     }
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
@@ -1791,12 +1811,12 @@ fn real_main() -> Result<(), String> {
     }
     println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
 
-    let mut objectives: Vec<String> = cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| quality_input_names(&c.output).into_iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect();
+    let mut objectives: Vec<String> = cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| quality_input_names_of(parts, &c.output).into_iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect();
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
-    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": "staged: TrueNorth(quality) until exact on every case, then TrueNorth(theta_q/(pi/2), theta_s/(pi/2))"});
-    let tel = RunTelemetry::start(
+    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
+    let tel = RunTelemetry::start_with_fitness(
         &out,
         format!("futhark-{pname}-{regime}-seed{seed}"),
         RunInfo {
@@ -1811,6 +1831,7 @@ fn real_main() -> Result<(), String> {
             resume,
             already_spent_seconds: spent,
         },
+        scheme,
     )?;
     if mode == EvalMode::Rust && backend != Backend::Gpu {
         return Err("--eval rust runs on the GPU: it takes --backend gpu".into());
@@ -1842,7 +1863,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -1949,10 +1970,11 @@ fn real_main() -> Result<(), String> {
         let q = run.judge.quality(&tree, &source)?;
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         let mut rep = format!("problem\t{pname}\nprogram\t{}\nexact_on_every_case\t{}\nexact_train\t{}\nexact_held\t{}\n", sexp(&k, &tree), if q.perfect() { "yes" } else { "no" }, q.exact_train, q.exact_held);
+        rep.push_str(&format!("{}\n", run.judge.scheme.card_line()));
         // Each case's inputs by name (a report: the fitness takes every input on its own).
         let mut at = 0;
         for c in run.judge.cases.iter().filter(|c| c.split.in_fitness()) {
-            let names = quality_input_names(&c.output);
+            let names = quality_input_names_of(run.judge.parts(), &c.output);
             let vals = &q.inputs[at..at + names.len()];
             at += names.len();
             let cells: Vec<String> = names.iter().zip(vals).map(|(n, v)| format!("{n}={v:.6}")).collect();
@@ -2593,6 +2615,7 @@ fn real_main() -> Result<(), String> {
     if let Some(h) = run.hof.entries().first() {
         rep.push_str(&format!("best_ever_hff\t{:.6}\nbest_ever_born\t{}\nbest_ever_program\t{}\n", h.fitness, h.born, h.text.lines().next().unwrap_or("")));
     }
+    rep.push_str(&format!("{}\n", run.judge.scheme.card_line()));
     std::fs::write(out.join("report.tsv"), &rep).map_err(|e| e.to_string())?;
     print!("{rep}");
     let chart = std::process::Command::new("python3")

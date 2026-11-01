@@ -90,28 +90,13 @@ impl FitnessStage {
     }
 }
 
-/// The fitness of a stage: stage 1 is TrueNorth over the quality inputs (the speed inputs must be empty, and the
+/// The fitness of a stage under the fitness scheme `staged-gated` (`crate::fitness`; a runner configured by scheme
+/// calls [`crate::fitness::Scheme::staged`]): stage 1 is TrueNorth over the quality inputs (the speed inputs must be empty, and the
 /// speed angle is 0); stage 2 is [`two_level_hff`], GATED BY CORRECTNESS (Andrew, 2026-10-29): an exact program
 /// (every quality input 0) scores the two-level angle, in `[0, π/2)`; an inexact one scores `π/2 + θ_quality`, so
 /// no inexact program, however fast, ranks above an exact one, and inexact programs still rank by quality.
 pub fn staged_hff(stage: FitnessStage, quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
-    match stage {
-        FitnessStage::Quality => {
-            if !speed.is_empty() {
-                return Err("our software has a bug: speed inputs in stage 1 (quality only)".into());
-            }
-            let q = if quality.is_empty() { 0.0 } else { crate::score::truenorth_angle(quality) };
-            Ok(TwoLevel { fitness: q, quality: q, speed: 0.0 })
-        }
-        FitnessStage::QualityAndSpeed => {
-            let t = two_level_hff(quality, speed);
-            if quality.iter().all(|x| *x == 0.0) {
-                Ok(t)
-            } else {
-                Ok(TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t })
-            }
-        }
-    }
+    crate::fitness::staged(crate::fitness::StageTwo::Gated, stage, quality, speed)
 }
 
 /// THE TIMING SLOTS (the scheme of phylu `evolve::image_fitness::TimingStore`): every timed pair a program has had,

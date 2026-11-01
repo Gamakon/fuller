@@ -100,6 +100,8 @@ pub struct Config {
     pub seconds: f64,
     /// How many distinct individuals the hall of fame keeps.
     pub hall_of_fame: usize,
+    /// THE FITNESS SCHEME (`crate::fitness`, family `shapes`): what a program selects on. Default `shapes-hff-gated`.
+    pub fitness: &'static crate::fitness::Scheme,
 }
 
 impl Default for Config {
@@ -122,6 +124,7 @@ impl Default for Config {
             resume: false,
             seconds: 3600.0,
             hall_of_fame: 8,
+            fitness: crate::fitness::default_for(crate::fitness::Family::Shapes),
         }
     }
 }
@@ -349,7 +352,10 @@ pub fn evolve(
     let bridge = Bridge::load();
 
     let resumed: Option<Checkpoint> = if cfg.resume { Some(load_checkpoint(out)?) } else { None };
-    let mut run = RunTelemetry::start(
+    if cfg.fitness.family != crate::fitness::Family::Shapes {
+        return Err(format!("the fitness scheme {} is not a shapes scheme; the shapes schemes are {}", cfg.fitness.name, crate::fitness::names_for(crate::fitness::Family::Shapes).join(", ")));
+    }
+    let mut run = RunTelemetry::start_with_fitness(
         out,
         format!("{KINGDOM}-seed{:x}", cfg.seed),
         RunInfo {
@@ -367,6 +373,7 @@ pub fn evolve(
             resume: cfg.resume,
             already_spent_seconds: resumed.as_ref().map_or(0.0, |c| c.seconds),
         },
+        cfg.fitness,
     )?;
     let mut ledger = Ledger::open(out, cfg.resume)?;
 
@@ -461,7 +468,7 @@ pub fn evolve(
                 .map_err(|e| format!("a gene does not express: {e}"))?
                 .tree();
             let individual = evaluate(&tree, &member.gene, &context)?;
-            let hff = two_level(&individual, &reference_score);
+            let hff = two_level_under(cfg.fitness, &individual, &reference_score);
             ledger.record(g, member.id, &member.parents, &member.operator, hff.fitness, &source_of(&individual.tree)?)?;
             scored.push(Ranked { individual, hff, member: member.clone() });
         }
@@ -511,7 +518,7 @@ pub fn evolve(
                     continue;
                 }
                 seen.push(gene.clone());
-                let hff = two_level(&child, &reference_score);
+                let hff = two_level_under(cfg.fitness, &child, &reference_score);
                 // The polish only counts when it is actually better.
                 let better = hff.fitness < elite.hff.fitness;
                 if better {
@@ -606,7 +613,7 @@ pub fn evolve(
                     (Some(a), Some(b)) => a.cost < b.cost,
                     (Some(_), None) => true,
                     (None, Some(_)) => false,
-                    (None, None) => two_level(best, &reference_score).fitness < two_level(previous, &reference_score).fitness,
+                    (None, None) => two_level_under(cfg.fitness, best, &reference_score).fitness < two_level_under(cfg.fitness, previous, &reference_score).fitness,
                 },
             };
             if better {
@@ -718,7 +725,7 @@ pub fn evolve(
     }
 
     let done = report.generations.len() as u32;
-    let best = report.best.as_ref().map(|b| two_level(b, &reference_score).fitness);
+    let best = report.best.as_ref().map(|b| two_level_under(cfg.fitness, b, &reference_score).fitness);
     run.end(stopped_by, done, best)?;
     Ok(report)
 }
@@ -1036,6 +1043,11 @@ impl Scorer {
         individuals.iter().map(|i| fitness_of(i, &self.reference_score)).collect()
     }
 
+    /// [`Scorer::fitness`] under the fitness scheme `scheme` ([`fitness_under`]).
+    pub fn fitness_under(&self, scheme: &crate::fitness::Scheme, individuals: &[Individual]) -> Result<Vec<f32>, String> {
+        individuals.iter().map(|i| fitness_under(scheme, i, &self.reference_score)).collect()
+    }
+
     /// The reference's own gene: the reference written onto a LEGAL gene.
     ///
     /// A blank gene is not a legal one — its zero is only the right symbol for
@@ -1094,6 +1106,18 @@ impl Scorer {
 /// Until 2026-11-01 this kingdom's fitness was the ungated two-level HFF, under which a wrong but cheap program could
 /// rank above an exact but dear one.
 pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
+    two_level_under(crate::fitness::default_for(crate::fitness::Family::Shapes), individual, reference)
+}
+
+/// A program's fitness under the shapes scheme `scheme` (`crate::fitness`), with the two group angles of
+/// [`two_level`] beside it (reported under every scheme):
+/// * `shapes-hff-gated` (the default, fuller f572a7cc): [`two_level`];
+/// * `shapes-hff` (fuller b1bccf66): the two-level HFF, ungated;
+/// * `shapes-two-band` (fuller f3972766): a correct program `0.49 · t/(t + t_ref)`, an incorrect one
+///   `0.5 + 0.5 (1 − agreement)`, computed in `f32` exactly as that commit did.
+///
+/// A scheme of another family gives π, the worst; [`fitness_under`] and the run loop refuse such a scheme.
+pub fn two_level_under(scheme: &crate::fitness::Scheme, individual: &Individual, reference: &Score) -> TwoLevel {
     let quality: Vec<f64> = individual.disagreement.iter().map(|d| log_scaled(*d)).collect();
     let ratio = |x: u64, r: u64| {
         let (x, r) = (x as f64, r.max(1) as f64);
@@ -1101,11 +1125,38 @@ pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
     };
     let s = &individual.score;
     let speed = [ratio(s.traffic, reference.traffic), ratio(s.alloc, reference.alloc), ratio(s.depth, reference.depth)];
-    let t = two_level_hff(&quality, &speed);
-    if quality.iter().all(|q| *q == 0.0) {
-        t
+    match scheme.definition {
+        crate::fitness::Definition::ShapesHff { stage_two, .. } => crate::fitness::stage_two(stage_two, &quality, &speed),
+        crate::fitness::Definition::ShapesTwoBand { .. } => TwoLevel { fitness: f64::from(two_band(individual, reference.traffic)), ..two_level_hff(&quality, &speed) },
+        _ => TwoLevel { fitness: std::f64::consts::PI, ..two_level_hff(&quality, &speed) },
+    }
+}
+
+/// THE TWO BANDS (fuller f3972766, 2026-10-27, scheme `shapes-two-band`), exactly as that commit computed them.
+fn two_band(individual: &Individual, reference_traffic: u64) -> f32 {
+    const CORRECT_BAND: f32 = 0.49;
+    if individual.correct {
+        let traffic = individual.score.traffic as f64;
+        let reference = reference_traffic.max(1) as f64;
+        CORRECT_BAND * (traffic / (traffic + reference)) as f32
     } else {
-        TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t }
+        0.5 + 0.5 * (1.0 - individual.agreement.clamp(0.0, 1.0)) as f32
+    }
+}
+
+/// The `f32` a GPU-resident population selects on under the shapes scheme `scheme`; a scheme of another family is
+/// an error.
+pub fn fitness_under(scheme: &crate::fitness::Scheme, individual: &Individual, reference: &Score) -> Result<f32, String> {
+    not_expressed_under(scheme)?;
+    Ok(two_level_under(scheme, individual, reference).fitness as f32)
+}
+
+/// The fitness of a gene the layout cannot express under the shapes scheme `scheme`: 1.5 before the gate
+/// (`shapes-two-band`, `shapes-hff`), [`NOT_EXPRESSED_FITNESS`] under `shapes-hff-gated`.
+pub fn not_expressed_under(scheme: &crate::fitness::Scheme) -> Result<f32, String> {
+    match scheme.definition {
+        crate::fitness::Definition::ShapesHff { not_expressed, .. } | crate::fitness::Definition::ShapesTwoBand { not_expressed } => Ok(not_expressed),
+        _ => Err(format!("our software has a bug: the fitness scheme {} is not a shapes scheme", scheme.name)),
     }
 }
 

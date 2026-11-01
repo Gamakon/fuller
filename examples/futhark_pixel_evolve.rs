@@ -15,7 +15,10 @@
 //!   forms make the population, and the search looks for an equivalent that is faster; every `--pump-every`
 //!   generations the e-graph variants of the best replace the worst.
 //!
-//! Fitness, in two stages (`fuller::runner::FitnessStage`; Andrew, 2026-10-27: quality only until the picture is
+//! Fitness, a NAMED SCHEME (`--fitness NAME`, `fuller::fitness`, family `staged`; `docs/FITNESS_SCHEMES.md`):
+//! `staged-gated` (the default) or `staged` (stage 2 ungated, the runs of 2026-10-27/28). (The runner's first
+//! version, 8834c828, ranked on TrueNorth(theta_q, theta_s) with no stages; it is not yet a scheme, listed as open in
+//! `docs/FITNESS_SCHEMES.md`.) In two stages (`fuller::runner::FitnessStage`; Andrew, 2026-10-27: quality only until the picture is
 //! perfect, then performance), the hff library's TrueNorth, every measurement its own input, 0 best, pi/2 worst:
 //! * quality group, for each quality case (a shader: t = 5 and 8 at `--train`; an image target: the training and the
 //!   held-out picture), the six display-space inputs of `image::quality_inputs`;
@@ -55,7 +58,8 @@ use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, HofRow, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
 use fuller::wgsl::cuneus_originals::case_bindings;
-use fuller::runner::{staged_hff, FitnessStage};
+use fuller::fitness::{Family, Scheme};
+use fuller::runner::FitnessStage;
 use fuller::wgsl::image::{compare, largest_colour_share, ocr_word, quality_inputs, read_ppm, side_by_side, write_png, BindingData, Difference, ImageKernel, Ocr, Picture};
 use fuller::wgsl::oracle::device::{Device, Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
 
@@ -158,6 +162,8 @@ struct Judge<'a> {
     runs: usize,
     /// The fitness stage (`runner::FitnessStage`): stage 1 measures quality only, with no timing runs.
     stage: FitnessStage,
+    /// THE FITNESS SCHEME (`--fitness`, `fuller::fitness`, family `staged`): the stage-2 rule.
+    scheme: &'static Scheme,
     ref_exe: PathBuf,
     ref_plan: Vec<Tile>,
     work_dir: PathBuf,
@@ -239,7 +245,7 @@ impl Judge<'_> {
         // Stage 1 runs no timing at all; stage 2 times interleaved pairs against the reference.
         let ratios = if self.stage.measures_speed() { self.time_pairs(&exe, &plan, self.pairs)? } else { Vec::new() };
         let speed: Vec<f64> = ratios.iter().map(|r| r / (1.0 + r)).collect();
-        let f = staged_hff(self.stage, &quality, &speed)?;
+        let f = self.scheme.staged(self.stage, &quality, &speed)?;
         Ok(Eval { theta: f.fitness, theta_q: f.quality, theta_s: f.speed, quality, speed, ratio: median(&ratios), diff, work, tiles: plan.len(), perfect: all_perfect })
     }
 }
@@ -496,6 +502,9 @@ impl Run<'_> {
 
 fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
+    // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`; default the family's newest, staged-gated).
+    let scheme = fuller::fitness::scheme_for(Family::Staged, arg(&args, "--fitness").as_deref())?;
+    println!("# {}", scheme.card_line());
     let shader = arg(&args, "--shader").unwrap_or_else(|| "volumepassage".into());
     let regime = arg(&args, "--regime").ok_or("--regime petri|champion")?;
     if regime != "petri" && regime != "champion" {
@@ -567,8 +576,8 @@ fn real_main() -> Result<(), String> {
     for p in 0..pairs {
         objectives.push(format!("speed pair {p} r/(1+r)"));
     }
-    let card = serde_json::json!({"shader": shader, "regime": regime, "minutes": minutes, "pop": pop, "seed": seed, "train": train, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "checkpoint_every": checkpoint_every, "program_size": program_size, "gene_words": layout.width, "fitness": "TrueNorth(theta_quality/(pi/2), theta_speed/(pi/2))"});
-    let tel = RunTelemetry::start(
+    let card = serde_json::json!({"shader": shader, "regime": regime, "minutes": minutes, "pop": pop, "seed": seed, "train": train, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "checkpoint_every": checkpoint_every, "program_size": program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
+    let tel = RunTelemetry::start_with_fitness(
         &out,
         format!("futhark-pixel-{shader}-{regime}-seed{seed}"),
         RunInfo {
@@ -583,6 +592,7 @@ fn real_main() -> Result<(), String> {
             resume,
             already_spent_seconds: spent,
         },
+        scheme,
     )?;
     let ledger = std::fs::OpenOptions::new().create(true).append(true).open(out.join("ledger.tsv")).map_err(|e| format!("the ledger: {e}"))?;
     let mut run = Run {
@@ -591,7 +601,7 @@ fn real_main() -> Result<(), String> {
         regime: regime.clone(),
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len },
-        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, stage: checkpoint.as_ref().and_then(|c| serde_json::from_value::<FitnessStage>(c["stage"].clone()).ok()).unwrap_or(FitnessStage::Quality), ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
+        judge: Judge { k: &k, iface: &iface, cases: train_cases, pairs, runs, scheme, stage: checkpoint.as_ref().and_then(|c| serde_json::from_value::<FitnessStage>(c["stage"].clone()).ok()).unwrap_or(FitnessStage::Quality), ref_exe, ref_plan, work_dir: out.join("candidate_build"), cache: HashMap::new(), evaluated: 0, hits: 0, bugs: 0, bug_log: out.join("bugs.log") },
         tel,
         ledger,
         next_id: 0,

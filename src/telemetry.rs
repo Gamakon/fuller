@@ -197,6 +197,10 @@ pub struct RunStart {
     /// every other kingdom's stream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wgsl: Option<WgslStart>,
+    /// THE FITNESS SCHEME the run selects on (`crate::fitness`): its name, family, the commit it reproduces and what
+    /// it computes. `None` on a stream written before schemes existed, or by a runner not configured by one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fitness: Option<crate::fitness::FitnessStart>,
 }
 
 /// What a WGSL evolution run declares once, at its start.
@@ -882,6 +886,7 @@ impl Writer {
             kingdom: start.kingdom,
             hff_objectives: start.hff_objectives,
             wgsl: start.wgsl,
+            fitness: start.fitness,
         });
         w.write(&record)?;
         Ok(w)
@@ -1161,6 +1166,8 @@ pub struct RunStartFields {
     pub hff_objectives: Vec<String>,
     /// A WGSL run's fixed facts. See [`RunStart::wgsl`].
     pub wgsl: Option<WgslStart>,
+    /// The fitness scheme. See [`RunStart::fitness`].
+    pub fitness: Option<crate::fitness::FitnessStart>,
 }
 
 /// A snapshot without its header — what the engine builds.
@@ -1305,6 +1312,24 @@ impl RunTelemetry {
             config_json: info.config_json,
             kingdom: Some(info.kingdom),
             hff_objectives: info.hff_objectives,
+            ..RunStartFields::default()
+        };
+        RunTelemetry::start_with(out, run_id, fields, info.resume)
+    }
+
+    /// [`RunTelemetry::start`] for a runner configured by a fitness scheme: the `run_start` records `scheme`.
+    pub fn start_with_fitness(out: &std::path::Path, run_id: String, info: RunInfo, scheme: &crate::fitness::Scheme) -> Result<RunTelemetry, String> {
+        let fields = RunStartFields {
+            dataset: info.dataset,
+            seed: info.seed,
+            population: info.population,
+            budget_ms: info.budget_ms,
+            max_generations: info.max_generations,
+            already_spent_seconds: info.already_spent_seconds,
+            config_json: info.config_json,
+            kingdom: Some(info.kingdom),
+            hff_objectives: info.hff_objectives,
+            fitness: Some(scheme.start()),
             ..RunStartFields::default()
         };
         RunTelemetry::start_with(out, run_id, fields, info.resume)

@@ -17,7 +17,7 @@
 //!
 //! ```text
 //! cargo run --release --features wgsl --example futhark_shapes_evolve -- \
-//!     [--out DIR] [--generations 8] [--population 32] [--seed N] [--seconds 3600] [--resume] [--no-gpu]
+//!     [--out DIR] [--generations 8] [--population 32] [--seed N] [--seconds 3600] [--resume] [--no-gpu] [--fitness shapes-hff-gated]
 //! ```
 //!
 //! The run writes the runner standard's outputs into `--out` (default `logs/futhark_shapes_evolve`,
@@ -164,6 +164,7 @@ fn main() {
     let mut out = std::path::PathBuf::from("logs/futhark_shapes_evolve");
     let mut resume = false;
     let mut seconds = 3600.0f64;
+    let mut fitness: Option<String> = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
@@ -196,6 +197,10 @@ fn main() {
                 resume = true;
                 i += 1;
             }
+            "--fitness" => {
+                fitness = Some(args[i + 1].clone());
+                i += 2;
+            }
             other => {
                 eprintln!("unknown flag {other}");
                 std::process::exit(2);
@@ -208,7 +213,16 @@ fn main() {
     let table = CostTable::load(&k).expect("the cost table loads");
     let reference_tree = reference(&k);
     let (layout, size) = layout_for(&k, &reference_tree).expect("a layout holds the reference");
-    let mut cfg = Config { generations, population, seed, measure_gpu, resume, seconds, ..Config::default() };
+    // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`, family `shapes`; default shapes-hff-gated).
+    let scheme = match fuller::fitness::scheme_for(fuller::fitness::Family::Shapes, fitness.as_deref()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    println!("# {}", scheme.card_line());
+    let mut cfg = Config { generations, population, seed, measure_gpu, resume, seconds, fitness: scheme, ..Config::default() };
     cfg.program_size = size;
     // A REALISTIC size: at 2x3x4 the fixed overhead of a GPU program (the
     // counters, the tiling parameters) swamps the traffic, and the win the
