@@ -87,7 +87,8 @@
 //! The standard (`docs/STANDARD_runners.md`): the stream (`OUT/stream.jsonl`), the staged two-level HFF,
 //! checkpoints (`OUT/checkpoint.json`, `--resume`), the kill trigger (`OUT/killme.trigger`), the guards, the hall of
 //! fame (`OUT/hall_of_fame/`), the ledger with lineage (`OUT/ledger.tsv`), mutation events (`egraph_exact`, `pump`,
-//! `saturated_fold`, `marriage`, `stage_change`).
+//! `saturated_fold`, `marriage`, `stage_change`, and a `note` for each child of a row operator, its operator
+//! `invert_rows`, `transpose_rows` or `cross_rows`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
@@ -1210,30 +1211,118 @@ fn transpose_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u
     };
     let len = (1 + rng.below(3)).min(span.off + span.len - src);
     let dst = if ris { span.off } else { span.off + rng.below(span.len) };
-    let before = gene[span.off..span.off + span.len].to_vec();
-    let mut head = before.clone();
-    head.splice(dst - span.off..dst - span.off, gene[src..src + len].iter().copied());
-    head.truncate(span.len);
-    if head == before {
+    if !layout.transpose(gene, src, len, dst).map_err(|e| format!("transposition: {e}"))? {
         return Ok(None);
     }
-    gene[span.off..span.off + span.len].copy_from_slice(&head);
     Ok(Some(format!("{} of {len} cells from {src} to {dst}, in a head of {} cells", if ris { "RIS" } else { "IS" }, span.len)))
+}
+
+// THE ROW OPERATORS (Andrew, 2026-11-01; `GeneLayout::invert_rows`, `transpose_rows`, `crossover_rows`): a domain of
+// the gene is a table, row = position, column = type; the operator acts on rows across EVERY column, so one
+// application touches every type's frame, not one of hundreds. Rows are drawn uniformly over the table's rows (its
+// longest column); a column takes part only where it has the row. Every symbol stays in its own column: legal by
+// construction.
+
+/// ROW INVERSION: a domain drawn uniformly among those of at least two rows, rows `[lo, hi)` (at least two) drawn
+/// uniformly, reversed in every column. `None` when no column changed.
+fn invert_rows_once(layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
+    let domains: Vec<Domain> = [Domain::Head, Domain::Tail, Domain::Dc].into_iter().filter(|d| layout.domain_rows(*d) >= 2).collect();
+    if domains.is_empty() {
+        return Ok(None);
+    }
+    let d = domains[rng.below(domains.len())];
+    let rows = layout.domain_rows(d);
+    let lo = rng.below(rows - 1);
+    let hi = lo + 2 + rng.below(rows - lo - 1);
+    let changed = layout.invert_rows(gene, d, lo, hi).map_err(|e| format!("row inversion: {e}"))?;
+    if changed == 0 {
+        return Ok(None);
+    }
+    Ok(Some(format!("rows [{lo}, {hi}) of the {} table ({rows} rows) reversed in {changed} of {} columns", d.name(), layout.columns(d).len())))
+}
+
+/// ROW TRANSPOSITION (GEP's IS and RIS on the head table, one or the other with probability one half): a run of 1
+/// to 3 rows copied to another row in every column, the rows after it shifting down and the overflow falling off
+/// each column. IS: the run's first row and the destination uniform over the rows. RIS: from a row drawn uniformly,
+/// the first row where the root's column holds a function, inserted at row 0. `None` when no column changed.
+fn transpose_rows_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
+    let rows = layout.domain_rows(Domain::Head);
+    if rows < 2 {
+        return Ok(None);
+    }
+    let ris = rng.below(2) == 1;
+    let src = if ris {
+        match layout.ris_row(contract, gene, rng.below(rows)) {
+            Some(r) => r,
+            None => return Ok(None),
+        }
+    } else {
+        rng.below(rows)
+    };
+    let len = 1 + rng.below(3);
+    let dst = if ris { 0 } else { rng.below(rows) };
+    let changed = layout.transpose_rows(gene, Domain::Head, src, len, dst).map_err(|e| format!("row transposition: {e}"))?;
+    if changed == 0 {
+        return Ok(None);
+    }
+    Ok(Some(format!("{} of rows [{src}, {}) to row {dst} of the head table ({rows} rows), {changed} of {} columns changed", if ris { "RIS" } else { "IS" }, src + len, layout.columns(Domain::Head).len())))
+}
+
+/// ROW CROSSOVER: GEP's one-point or two-point recombination (one or the other with probability one half) at rows of
+/// the whole gene's table, a column being `head_T`, `tail_T`, `Dc_T` (`GeneLayout::crossover_rows`): one-point
+/// exchanges rows `c..` for `c` uniform in `1 .. rows`, two-point rows `[c1, c2)` for `c1 < c2` uniform. Both
+/// children kept. `None` when the table has one row.
+fn cross_rows_once(layout: &GeneLayout, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
+    let rows = layout.gene_rows();
+    if rows < 2 {
+        return Ok(None);
+    }
+    let (c1, c2) = if rng.below(2) == 0 {
+        (1 + rng.below(rows - 1), None)
+    } else {
+        let c1 = rng.below(rows - 1);
+        (c1, Some(c1 + 1 + rng.below(rows - c1 - 1)))
+    };
+    let cells = layout.crossover_rows(layout, a, b, c1, c2).map_err(|e| format!("row crossover: {e}"))?;
+    Ok(Some(match c2 {
+        None => format!("one-point at row {c1} of {rows}: {cells} cells exchanged"),
+        Some(c2) => format!("two-point, rows [{c1}, {c2}) of {rows}: {cells} cells exchanged"),
+    }))
 }
 
 /// THE OPERATOR MIX (`--ops`, Andrew, 2026-10-31): every child draws ONE operator by its probability, so all of them
 /// run in the same generation and each child's operator is recorded. `marriage` is the share of children made by
-/// marriage (as `--marriage`); the others are drawn for each remaining child.
-const OPS: [&str; 6] = ["point", "invert", "transpose", "crossover", "walk", "marriage"];
+/// marriage (as `--marriage`); the others are drawn for each remaining child. The ROW operators (`invert-rows`,
+/// `transpose-rows`, `cross-rows`: Andrew, 2026-11-01) act on rows across every type's column; the old ones, inside
+/// one type's span, are unchanged beside them.
+const OPS: [&str; 9] = ["point", "invert", "transpose", "crossover", "walk", "marriage", "invert-rows", "transpose-rows", "cross-rows"];
+
+/// The mutation event of a row operator's child (`docs/STANDARD_runners.md`): the operator, what it did, the child,
+/// its parents and the texts before and after.
+fn row_event(k: &FutharkKingdom, operator: &str, what: &str, child: &Individual, before: &Tree) -> Mutation {
+    let mut m = Mutation::new(EventKind::Note, operator, what.to_string());
+    m.id = Some(child.id);
+    m.parents = child.parents.clone();
+    m.text_before = Some(sexp(k, before));
+    m.text_after = Some(sexp(k, &child.tree));
+    m
+}
 
 const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
+
+/// The operators `--measure` measures: the old ones inside one type's span (`invert`, `transpose`, `crossover`) and
+/// the row operators across every column (`invert-rows`, `transpose-rows`, `cross-rows`), on the same parents and
+/// seeds, so old and new compare.
+const MEASURE_KINDS: [&str; 9] = ["grow", "point", "walk", "invert", "transpose", "crossover", "invert-rows", "transpose-rows", "cross-rows"];
 
 /// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
 /// children, each ONE application of the operator to a parent, the parents Sonnet's task alternatives in order
 /// (`ring_canvas`), none within `--distinct-edits` of the reference or of another parent, each written onto a fresh gene (a ring canvas with `--start llm-ring`, else random padding).
 /// KIND: `grow` (`fuller::futhark_rings::grow`: a coding head cell given more arguments, so cells the padding holds
 /// are read), `point` (today's point mutation, `Genetics::mutate`, one cell), `walk` (`Rings::walk`, ring walk, k at
-/// most 4; it needs the rings). Measured, the children's: the share whose output is all zeros; the share with an
+/// most 4; it needs the rings), `invert`, `transpose`, `crossover` (inside one type's span) and `invert-rows`,
+/// `transpose-rows`, `cross-rows` (the row operators); a crossover's partner is the next parent, its child the
+/// parent's side. Measured, the children's: the share whose output is all zeros; the share with an
 /// output not seen before in the measurement (parents' included); the share better than their parent (stage-1
 /// fitness); the share equal to their parent's output; distinct outputs. Writes `OUT/measure.tsv` (one line a child)
 /// and `OUT/measure_summary.tsv`; every child is a mutation event (`ring_walk` for the walk).
@@ -1241,8 +1330,8 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     if parents.is_empty() {
         return Err("--measure: the pool has no model-written program that fits the layout".into());
     }
-    if !["grow", "point", "walk", "invert", "transpose"].contains(&kind) {
-        return Err(format!("--measure {kind}: grow, point, walk, invert or transpose"));
+    if !MEASURE_KINDS.contains(&kind) {
+        return Err(format!("--measure {kind}: one of {}", MEASURE_KINDS.join(", ")));
     }
     if kind == "walk" && run.gen.canvas.is_none() {
         return Err("--measure walk needs the rings: --start llm-ring".into());
@@ -1265,6 +1354,18 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
             }
             "invert" => invert_once(run.gen.layout, &mut g, &coding, &mut op)?,
             "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut g, &coding, &mut op)?,
+            "invert-rows" => invert_rows_once(run.gen.layout, &mut g, &mut op)?,
+            "transpose-rows" => transpose_rows_once(run.gen.contract, run.gen.layout, &mut g, &mut op)?,
+            "crossover" | "cross-rows" => {
+                // The partner: the next parent, on its own fresh padding; the child is this parent's side.
+                let mut h = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[(pi + 1) % parents.len()]).map_err(|e| format!("a partner's write-back: {e}"))?;
+                if kind == "cross-rows" {
+                    cross_rows_once(run.gen.layout, &mut g, &mut h, &mut op)?
+                } else {
+                    run.gen.crossover(&mut g, &mut h, &mut op)?;
+                    Some(format!("a range of one span exchanged with parent {}", (pi + 1) % parents.len()))
+                }
+            }
             _ => run.gen.canvas.ok_or("no rings")?.walk(run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
         };
         match what {
@@ -2461,6 +2562,44 @@ fn real_main() -> Result<(), String> {
             if let Some(o) = &ops {
                 // One operator drawn by its probability among the non-marriage operators.
                 let pick = pick_op(o, "marriage", rng.below(1_000_000) as f64 / 1e6).unwrap_or("point");
+                if pick == "cross-rows" {
+                    // ROW CROSSOVER: a partner of another identity (as crossover's), both children kept, each its
+                    // own mutation event.
+                    let mut b = tournament(&mut rng);
+                    for _ in 0..8 {
+                        if population[b].identity(stage) != population[a].identity(stage) {
+                            break;
+                        }
+                        b = tournament(&mut rng);
+                    }
+                    let (mut ga, mut gb) = (population[a].gene.clone(), population[b].gene.clone());
+                    let what = if population[b].identity(stage) != population[a].identity(stage) { cross_rows_once(run.gen.layout, &mut ga, &mut gb, &mut rng)? } else { None };
+                    match what {
+                        Some(what) => {
+                            for (g, before) in [(ga, a), (gb, b)] {
+                                if children.len() >= pop {
+                                    break;
+                                }
+                                let ind = run.fresh(&sig, vec![population[a].id, population[b].id], "cross_rows", g, g1)?;
+                                run.tel.mutation(generation, row_event(run.gen.k, "cross_rows", &what, &ind, &population[before].tree))?;
+                                children.push(ind);
+                            }
+                        }
+                        None => {
+                            // No partner of another identity (or a one-row table): the child is mutation alone, as
+                            // crossover's is.
+                            let mut gene = population[a].gene.clone();
+                            let m = m_of(&mut rng);
+                            let walk = run.gen.mutation(&mut gene, m, &mut rng)?;
+                            let ind = run.fresh(&sig, vec![population[a].id], if ring_walk { "ring_walk" } else { "mutation" }, gene, g1)?;
+                            if let Some(w) = walk {
+                                run.tel.mutation(generation, run.gen.walk_event(&w, &ind, population[a].id))?;
+                            }
+                            children.push(ind);
+                        }
+                    }
+                    continue;
+                }
                 if pick != "crossover" {
                     let mut gene = population[a].gene.clone();
                     let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &gene, run.gen.const_len)?;
@@ -2472,6 +2611,19 @@ fn real_main() -> Result<(), String> {
                         }
                         "invert" => invert_once(run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
                         "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
+                        "invert-rows" | "transpose-rows" => {
+                            let (what, name) = if pick == "invert-rows" {
+                                (invert_rows_once(run.gen.layout, &mut gene, &mut rng)?, "invert_rows")
+                            } else {
+                                (transpose_rows_once(run.gen.contract, run.gen.layout, &mut gene, &mut rng)?, "transpose_rows")
+                            };
+                            if let Some(what) = what {
+                                let ind = run.fresh(&sig, vec![population[a].id], name, gene, g1)?;
+                                run.tel.mutation(generation, row_event(run.gen.k, name, &what, &ind, &population[a].tree))?;
+                                children.push(ind);
+                            }
+                            continue;
+                        }
                         _ => {
                             let rings = run.gen.canvas.ok_or("--ops walk needs the rings: --start llm-ring")?;
                             match rings.walk(run.gen.layout, &mut gene, &coding, 4, &mut rng)? {
