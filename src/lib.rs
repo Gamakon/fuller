@@ -46,6 +46,7 @@ pub mod runner;
 pub mod geneframe;
 pub mod tsr_kingdom;
 pub mod futhark_table;
+pub mod futhark_view;
 pub mod futhark_1d_kingdom;
 pub mod futhark;
 pub mod futhark_cost;

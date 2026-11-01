@@ -141,9 +141,8 @@ def signature_sets(spec):
     for d in dims:
         add(array_class((d,)))
     rank1 = [c for c in classes if len(class_dims(c)) == 1]
-    # A class no row can produce is context-free: no row template's output is an array of rank 2 or more.
-    free = [c for c in classes if len(class_dims(c)) >= 2]
-    return {"elem": elem, "dims": dims, "classes": classes, "rank1": rank1, "states": [elem] + rank1, "free": free,
+    # `free` (the context-free classes) is derived by `view_rows` from what the view's function rows produce.
+    return {"elem": elem, "dims": dims, "classes": classes, "rank1": rank1, "states": [elem] + rank1, "free": [],
             "inputs": [(n, array_class(ds) if ds else elem) for n, e, ds in spec["inputs"] if e != "size"]}
 
 
@@ -322,6 +321,13 @@ def view_rows(spec, mst):
     """Steps 1 to 3: the view's rows, filtered, bound, and closed under reachability from the root."""
     binder = Binder(spec, mst)
     picked = [(r, [q for q in r["scope"].split(";") if q]) for r in mst["rows"] if admitted(r, spec, mst)]
+    if spec["shape"] == "signature":
+        # A class that no function row of the view produces is CONTEXT-FREE: its value is the interface's, the same
+        # in every context, so it is one type (`walls: a.rows.cols`). The expansion runs twice: once to see what the
+        # function rows produce, then with those classes context-free.
+        produced = {r["out"].partition(":")[0] for r in expand(picked, binder, {"E": spec["element"]})
+                    if r["kind"] == "function"}
+        binder.sets["free"] = [c for c in binder.sets["classes"] if c not in produced]
     rows = expand(picked, binder, {"E": spec["element"]})
     if spec["shape"] == "signature":
         elem, dims = spec["output"]
