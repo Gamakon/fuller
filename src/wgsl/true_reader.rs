@@ -4671,6 +4671,13 @@ mod tests {
         // (four guard words past them), not the table's 1,024, and its shared text the same
         assert!(text.contains("const WG_PW: u32 = 4u;\nvar<workgroup> wg_pool: array<u32, 8>;\n") && !text.contains("6080u") && !text.contains("1024u"), "reply 2's expression declares its own extent");
         assert!(text.contains("var<workgroup> sh_a: array<u32, 256>;") && text.contains("// counting sort: cs_v cs_a cs_ok cs_slot"), "reply 2's scatter is its scaffold's");
+        // THE FASTER R2 PROLOGUE (2026-11-01: reply 2's scatter entry as expressed was 1.1 % slower than as written,
+        // fbench/b7b_pe.log): an invocation with no point, or whose point has no cluster, returns after the barrier as
+        // reply 2 does, and the cluster store spells no clamp (its slot is in range by the variant's counting sort,
+        // countsort.py `store_text`); the expression gives reply 2's own bits on every case the CPU executor holds
+        assert!(text.contains("workgroupBarrier();\ncs_v = cs_w * 128u + lidx;\nif (cs_v >= cs_n || !scratch_ok()) { return; }\n") && text.contains("if (cs_a >= cs_k) { return; }\n"), "the r2 prologue returns early as reply 2 does");
+        assert!(text.contains("if (cs_ok) { scratch[cs_slot] = cs_v; }") && !text.contains("min(cs_slot"), "the cluster store spells no clamp");
+        assert_eq!(cpu_same_bits(&root.join("problems/kmeans_update_segmented"), &[reply("reply2_g0_r4.wgsl"), text.clone()], 5e6), 5, "reply 2 as expressed gives its own bits");
         let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).expect("reads") };
         assert_eq!(k.pool_extent(&tree).expect("extent"), Some(4));
         assert_eq!(k.scaffold_variant(&tree).expect("variant").map(|v| v.0), Some("r2"));
@@ -4706,8 +4713,8 @@ mod tests {
             }
             (0..k.rows.len()).filter(|&i| seen.contains(&k.rows[i].out)).collect()
         };
-        let writes = |sp: &str| sp.contains("scratch[min(cs_slot, arrayLength(&scratch) - 1u)] = ");
-        let reads = |sp: &str| sp.replace("scratch[min(cs_slot, arrayLength(&scratch) - 1u)] = ", "").contains("scratch[");
+        let writes = |sp: &str| sp.contains("scratch[cs_slot] = ");
+        let reads = |sp: &str| sp.replace("scratch[cs_slot] = ", "").contains("scratch[");
         let scatter = reach("kernel.entry_scatter");
         assert!(scatter.iter().any(|&i| k.rows[i].name == "store.cluster_scratch"), "the scatter's body holds the cluster store");
         for &i in &scatter {
@@ -4797,7 +4804,7 @@ mod tests {
         let mut stores = 0;
         for r in k.rows.iter().filter(|r| !r.name.starts_with("cs.")) {
             for cell in written_cells(&r.spelling, "scratch") {
-                assert_eq!((r.name.as_str(), cell), ("store.cluster_scratch", "scratch[min(cs_slot, arrayLength(&scratch) - 1u)]"), "a row writes the scratch other than at the slot");
+                assert_eq!((r.name.as_str(), cell), ("store.cluster_scratch", "scratch[cs_slot]"), "a row writes the scratch other than at the slot");
                 stores += 1;
             }
         }
@@ -4881,7 +4888,8 @@ mod tests {
     /// entry, plans within 65,535 workgroups an entry on every case of every suite (8 constraint, 3 timing) and at the
     /// problem's largest sizes (n 2^20, k 1,024, k * d 2^20, the interface's `dispatch_items`); with the cluster store,
     /// it runs on the cases of `role` (one timing case a test, `timing`, so the slow CPU runs proceed in parallel) on the
-    /// CPU executor with no index restricted. The empty scatter runs nothing the store's module does not, so it is
+    /// CPU executor with no index restricted (the store spells no clamp: its slot is in range by the variant's counting
+    /// sort, countsort.py `store_text`, and this is that proof's check on every case). The empty scatter runs nothing the store's module does not, so it is
     /// planned, not run. Returns the runs.
     fn scaffold_variants_in_range(role: crate::wgsl::harness::Role, timing: Option<usize>) -> usize {
         use crate::wgsl::harness::{Case, CpuExecutor, Executor, Problem, Role};

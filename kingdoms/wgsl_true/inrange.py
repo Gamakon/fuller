@@ -258,6 +258,13 @@ def value_at_hi(text, ranges):
     return total
 
 
+def cluster_store(iface, name, r, b):
+    """Row `name` is section 10's cluster store into `b`, the interface's ids binding, byte for byte (countsort.py)."""
+    import countsort
+    cs = iface.get("counting_sort")
+    return bool(cs) and cs["ids"] == b and name == f"store.cluster_{b}" and r["spell"] == countsort.store_text(b) and r["args"] == ["u32.cluster", "u32.point"] and r["out"] == countsort.SCATTER_BODY
+
+
 def witness(iface):
     """Every rule of the design proved from the emitted spellings. Returns the problems (empty when every rule holds)."""
     bs = buffers(iface)
@@ -297,6 +304,10 @@ def witness(iface):
                     a = r["args"][int(hole.group(1))]
                     if a not in (in_t(b), w_of(in_t(b)), a_of(in_t(b))):
                         problems.append(f"row {name} indexes {b} with argument type {a}, not {in_t(b)}")
+                elif inner == "cs_slot" and cluster_store(iface, name, r, b):
+                    # section 10: the cluster store's slot, in range of the ids region by the scaffold's own counting
+                    # sort (countsort.py store_text gives the proof); only that row, byte for byte, spells it
+                    pass
                 elif not (inner.startswith("min(") and inner.endswith(f", arrayLength(&{b}) - 1u)")):
                     problems.append(f"row {name} indexes {b} by {inner!r}: neither an in_{b} argument nor the clamp")
             # rule 2: the rows that give in_B are the design's four forms

@@ -127,7 +127,10 @@ SEG_PROLOGUE = (
 # The scatter prologue of reply 2's layout ([counts, then prefixes in place, nb k][lens k][starts k][ids n]): a
 # workgroup of 64 x 2 = 128 invocations, two per block of 256 points, the block's labels staged in its workgroup array
 # `sh_a` (reply 2's module text declares it), the rank counted there (reply 2's method). `scratch_ok()` and
-# `nblocks()` are reply 2's helpers.
+# `nblocks()` are reply 2's helpers. An invocation with no point, or whose point has no cluster, returns after the
+# barrier, as reply 2 does (2026-11-01: computing the rank and slot under `cs_ok` instead cost the scatter entry
+# 0.0003 ms, 1.1 %, fbench/b7b_pe.log): the scatter's body is one cluster store or empty (section 11), so nothing the
+# gene spells after the prologue acts for an invocation that does not store.
 R2_PROLOGUE = (
     "{ let cs_n = params.x; let cs_k = params.y; let cs_w = wid.x; let cs_b = cs_w / 2u;\n"
     "let cs_a0 = cs_b * 256u + lidx; let cs_a1 = cs_a0 + 128u;\n"
@@ -135,15 +138,16 @@ R2_PROLOGUE = (
     "sh_a[lidx + 128u] = select(0xffffffffu, assignments[min(cs_a1, arrayLength(&assignments) - 1u)], cs_a1 < cs_n);\n"
     "workgroupBarrier();\n"
     "cs_v = cs_w * 128u + lidx;\n"
+    "if (cs_v >= cs_n || !scratch_ok()) { return; }\n"
     "let cs_p = (cs_w & 1u) * 128u + lidx;\n"
     "cs_a = sh_a[cs_p];\n"
-    "cs_ok = cs_v < cs_n && scratch_ok() && cs_a < cs_k;\n"
-    "if (cs_ok) {\n"
+    "if (cs_a >= cs_k) { return; }\n"
+    "cs_ok = true;\n"
     "var cs_rank: u32 = 0u;\n"
     "for (var cs_q: u32 = 0u; cs_q < 256u; cs_q = cs_q + 1u) { if (cs_q >= cs_p) { break; } if (sh_a[cs_q] == cs_a) { cs_rank = cs_rank + 1u; } }\n"
     "let cs_cb = nblocks() * cs_k;\n"
     "cs_slot = cs_cb + 2u * cs_k + scratch[cs_cb + cs_k + cs_a] + scratch[cs_b * cs_k + cs_a] + cs_rank;\n"
-    "} }"
+    "}"
 )
 
 
@@ -216,7 +220,16 @@ def build(iface):
 
 
 def store_text(ids):
-    return f"{{ _ = {{0}}; if (cs_ok) {{ {ids}[min(cs_slot, arrayLength(&{ids}) - 1u)] = {{1}}; }} }}"
+    """The cluster store at the scaffold's slot, spelled with no clamp: `cs_slot` is in range of the ids region by the
+    variant's own counting sort, whatever the data (2026-11-01). For a point v of cluster a < k in block b, the
+    scaffold's counts are the true counts of the same read-only labels under the same filter (hist counts c < k only,
+    the prologue stores only a < k), and the gene writes none of them (section 10: hist, offsets and starts are the
+    scaffold's; section 11: no gene-owned entry writes the scratch). So starts[a] = sum_{c<a} total[c],
+    prefix[b][a] = sum_{b'<b} count[b'][a] and rank < count[b][a], and the slot's offset into the ids region is at most
+    sum_{c<=a} total[c] - 1 <= n - 1: below the region's n words, inside the contract's length of the scratch. Checked on
+    every variant on every case of the problem with no index restricted (true_reader.rs
+    `every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu`)."""
+    return f"{{ _ = {{0}}; if (cs_ok) {{ {ids}[cs_slot] = {{1}}; }} }}"
 
 
 def write(outdir, iface):
