@@ -1,0 +1,4 @@
+{"id": "t_poly", "rank": 1, "wgsl": "fn evolved_icdf(u: f32, span: f32) -> f32 {\n  let t = u - 0.5;\n  return t * (2.5 + 4.0 * t * t) * (1.0 + 0.02 * span);\n}"}
+{"id": "t_const", "rank": 2, "wgsl": "fn evolved_icdf(u: f32, span: f32) -> f32 { return 0.3; }"}
+{"id": "t_loop", "rank": 3, "wgsl": "fn evolved_icdf(u: f32, span: f32) -> f32 { var x = 0.0; loop { break; } return x; }"}
+{"id": "t_tabs", "rank": 4, "wgsl": "fn evolved_icdf(u: f32, span: f32) -> f32 { return tabs[0]; }"}
