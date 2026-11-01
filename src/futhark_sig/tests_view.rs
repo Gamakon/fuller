@@ -88,3 +88,30 @@ fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_program
         }
     }
 }
+
+/// THE PROGRAMS BEFORE BIDIRECTIONAL REACHABILITY (`docs/PLAN_futhark_kingdom.md`, 3e): each problem's reference and
+/// planted slowdown, and A7's reference (the product twice, at n = 2, m = 3, p = 4), written as Futhark programs by
+/// the views of commit 97dbbb80, when a signature view still admitted only the families its source used. The views
+/// now admit every family and keep the types reachable both ways, so the tables are wider; these programs must not
+/// change.
+const RECORDED: [(&str, &str, &str); 4] = [
+    ("pathfinder", include_str!("../../tests/fixtures/futhark_view_programs/pathfinder.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/pathfinder.planted.fut")),
+    ("reduce", include_str!("../../tests/fixtures/futhark_view_programs/reduce.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/reduce.planted.fut")),
+    ("scan", include_str!("../../tests/fixtures/futhark_view_programs/scan.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/scan.planted.fut")),
+    ("histogram", include_str!("../../tests/fixtures/futhark_view_programs/histogram.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/histogram.planted.fut")),
+];
+
+#[test]
+fn the_reference_programs_are_the_ones_recorded_before_bidirectional_reachability() {
+    for (name, reference, planted) in RECORDED {
+        let prob = problem(name).unwrap();
+        let k = load(&prob.instance).unwrap();
+        let sig = signature(&prob.instance).unwrap();
+        assert_eq!(program(&k, &sig, &build(&k, prob.reference).unwrap()).unwrap(), reference, "{name}: the reference's program changed");
+        assert_eq!(program(&k, &sig, &build(&k, prob.planted).unwrap()).unwrap(), planted, "{name}: the planted slowdown's program changed");
+    }
+    let k = FutharkKingdom::load().unwrap();
+    let sizes: BTreeMap<String, usize> = [("n", 2), ("m", 3), ("p", 4)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    let got = crate::futhark::program(&k, k.roots()[0], &crate::futhark_search::product_twice(&k), &sizes).unwrap();
+    assert_eq!(got, include_str!("../../tests/fixtures/futhark_view_programs/a7.reference.fut"), "A7: the reference's program changed");
+}
