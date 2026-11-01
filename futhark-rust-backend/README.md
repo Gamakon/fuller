@@ -23,7 +23,7 @@ used when `FUTHARK_RUST_WGPU` / `FUTHARK_BRANCH` are unset), is `$HOME/.local/sh
 The test `futhark_rust::tests::the_default_compiler_is_built_from_the_committed_patch_series` fails unless
 `bin/patches/` beside it is this series, name for name and byte for byte.
 
-Installed 2026-10-31 as a COPY of the proven build `/private/tmp/claude-501/fixc/bins/fix4` (md5
+Installed 2026-10-31 as a COPY of the proven build `/private/tmp/claude-501/fixc/bins/fix4` (since 2026-11-01 kept at `/private/tmp/claude-501/keep/fix4`; md5
 `b9fee28e3cf4f960e55d0ce69d9a33f7`, `--version`: `rust-wgpu @ e41f68c`), not a fresh `build.sh` run (one build at a
 time on this machine; the rebuild is to be run under the cargo lock when no other build runs, and must compile the
 corpus identically). fix4 was built 2026-10-29 08:12Z in `/private/tmp/claude-501/futhark-rust-fix` at `e41f68c`, a
