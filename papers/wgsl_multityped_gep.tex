@@ -1,0 +1,833 @@
+%%
+%% A true multi-typed WGSL kingdom: every gene a legal GPU program by its types,
+%% applied to UltraDim's k-means centroid update.
+%%
+%% Domain paper (4) of the set; the shared material (the schema, the master symbol
+%% table, the geneframe, GPU-resident evolution, HFF) is in the core paper
+%% \cite{morgan_core}. Every number here has a source file named beside it.
+%% Figures are drawn by pgfplots from wgsl_multityped_gep_data/*.tsv.
+%%
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+
+\usepackage{xurl}
+\urlstyle{tt}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\src}[1]{{\footnotesize\nolinkurl{#1}}}
+
+\begin{document}
+
+\title{A True Multi-typed WGSL Kingdom}
+\subtitle{Every gene a legal GPU program by its types, applied to UltraDim's
+k-means centroid update}
+
+\author{Andrew James Morgan}
+\email{andrew@gamakon.ai}
+\affiliation{%
+  \institution{Gamakon Ltd.}
+  \city{London}
+  \country{United Kingdom}
+}
+\renewcommand{\shortauthors}{Morgan}
+
+\begin{abstract}
+We describe a kingdom of multi-typed Gene Expression Programming (GEP) whose
+phenotypes are WGSL compute kernels, and in which every gene, at every position
+and after every operator, expresses a legal kernel. Legality is not checked,
+filtered or repaired: each rule of a legal GPU program is carried by a type of
+the master symbol table, and a symbol exists only in the types where its use is
+legal. The rules carried include an index in range of the buffer it indexes, a
+thread that stores only to a cell it owns, a barrier only in uniform control, a
+loop whose trip count is bounded by the problem's sizes, a workgroup pool no
+larger than the tree names, a data-indexed store whose slot is assigned by the
+compiler and never by the gene, and a scratch region that is read-only or
+write-only within one dispatch. Python generators emit the tables and refuse to
+write one unless witnesses, run over the emitted text, prove these properties.
+We apply the kingdom to UltraDim's k-means centroid update, with UltraDim's own
+bindings, so every individual is a drop-in. On an Apple M3 Max under Metal, the
+best individual of one evolution run gives A7's output bit for bit on all 8
+correctness cases and runs at 0.0274 of A7's time (11 of 11 interleaved pairs
+faster). Almost all of that is the hand-written counting-sort form that the
+population started from (0.0278 of A7). Evolution added 1.6\,\% over that form
+(0.9839, 11 of 11 pairs). Most of that gain comes from removing a Kahan
+compensation that, on Metal, changes no bit. We report the measurement faults
+we found and fixed, the controls, and the open work.
+\end{abstract}
+
+\keywords{gene expression programming, strongly typed genetic programming, GPU,
+WGSL, program legality by construction, genetic improvement, k-means}
+
+\maketitle
+
+%% ---------------------------------------------------------------------------
+\section{Introduction}
+
+A genetic programming system that evolves GPU programs has to deal with
+illegality. A random GPU kernel can read past an array, let two threads write
+one element, place a barrier under divergent control, or loop for ever. Each of
+these either fails to compile, gives a nondeterministic answer, or hangs the
+device. In our earlier WGSL work (Section~\ref{sec:earlier}) these failures
+were handled downstream: by renderer substitutions, legality refusals and
+filters. An audit of one such run counted 558 of 2,668 scorings (20.9\,\%)
+refused at legality, plus ten silent substitutions in the renderer
+(\src{docs/reports/2026-10-21_A1_post_expression_inventory.md}:5,13,183).
+
+Andrew Morgan set the goal on 2026-10-21 (\src{docs/GOAL.md}): \emph{a true
+multi-typed GEP kingdom for WGSL, in which every gene expresses a legal GPU
+program because the symbol table's types describe exactly the legal programs.}
+The chromosome, the master symbol table, the geneframe and the shared typed
+GPU core are those of the core paper \cite{morgan_core}. This paper describes
+what is particular to WGSL: the types that carry the rules, the generators
+and witnesses that emit and prove the tables, the reader that brings existing
+kernels into the kingdom, and the fitness evaluation. It then reports the first
+application to a production kernel: UltraDim's k-means centroid update.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+\item A type discipline for WGSL in which an index in range of buffer $B$, a
+  cell a thread owns, a uniform context for barriers, a bounded loop, the extent
+  of a workgroup pool, a compiler-assigned scatter slot and a per-dispatch
+  access mode are each a type of the master symbol table
+  (Section~\ref{sec:kingdom}).
+\item Generators that refuse to write a table unless witnesses over the
+  emitted text prove each property, including a polynomial proof that every
+  length bound is at most the interface's buffer length for every parameter of
+  the dispatch contract (Section~\ref{sec:witness}).
+\item A reader that brings source kernels into the kingdom exactly, so that a
+  population can start from hand-written code, and a measured account of what
+  the kingdom's own spelling costs in speed (Section~\ref{sec:spelling}).
+\item An application to UltraDim's k-means centroid update, with the protocol,
+  the controls, the results and the measurement faults found and fixed
+  (Sections~\ref{sec:eval}--\ref{sec:faults}).
+\end{enumerate}
+
+%% ---------------------------------------------------------------------------
+\section{Related work}
+
+\paragraph{Typed and grammar-guided genetic programming.} Strongly typed GP
+\cite{montana1995stgp} restricts each argument of a function to a type, so
+that only well-typed trees are built. Grammar-guided GP \cite{whigham1995grammar}
+and grammatical evolution \cite{oneill2001ge} restrict the search to the
+sentences of a grammar. GEP \cite{ferreira2001gep} keeps a fixed-length linear
+genotype whose head-and-tail layout guarantees that every gene expresses a
+valid tree. Multi-typed GEP combines the last two: one reading frame per type
+\cite{morgan_core}. What this paper adds is the use of the types for semantic
+legality of GPU programs (bounds, ownership, uniformity, termination and
+determinism), rather than only syntactic or type-correctness.
+
+\paragraph{Superoptimisation and genetic improvement.} Massalin's
+superoptimiser \cite{massalin1987superopt} enumerated short programs; STOKE
+\cite{schkufza2013stoke} searched x86 code stochastically, with a cost of
+correctness plus performance. Genetic improvement \cite{petke2018gi} evolves
+existing software, and has been applied to CUDA kernels
+\cite{langdon2014cuda,langdon2017gpu}. These works check candidate correctness
+by testing and, for STOKE, by a verifier. In our kingdom, legality (in-range
+access, race freedom, termination) holds by construction. Functional
+correctness is still judged by fitness on cases.
+
+\paragraph{Equality saturation.} E-graphs \cite{tate2009equality,willsey2021egg}
+find equivalent programs by rewriting. The runner uses the kingdom's e-graph
+to make equivalent variants of the start for the pump
+(Section~\ref{sec:setup}). We do not evaluate it separately here.
+
+\paragraph{Measurement.} Mytkowicz et al.\ \cite{mytkowicz2009wrong} showed that
+innocuous changes of the experimental set-up, such as memory layout, bias
+performance comparisons. We met the GPU form of that fault
+(Section~\ref{sec:faults}).
+
+%% ---------------------------------------------------------------------------
+\section{The kingdom}
+\label{sec:kingdom}
+
+\subsection{Genotype and expression}
+A chromosome is a fixed number of Karva genes joined by a linker; each gene has
+a head of length $h$ and a tail of length $t=h(n-1)+1$, with $n$ the largest
+arity \cite{ferreira2001gep}. The types are columns of the gene: every
+position holds one symbol per type, so a gene carries one open reading frame
+per type. Expression walks from the root. Each argument slot asks for a type,
+and the next symbol of that type's frame fills it (\src{docs/GOAL.md}, items
+1--3; the general schema is in \cite{morgan_core}). The WGSL module root is
+\code{kernel.module}. Each entry point of a module interface is a type
+\code{kernel.<e>}, and its argument closure is that entry's body.
+
+A row of the table is a symbol with an output type, ordered argument types and
+a WGSL spelling with holes \texttt{\{0\}}, \texttt{\{1\}}, \ldots. The renderer only
+substitutes argument texts into spellings (\src{kingdoms/wgsl_true/README.md}:5).
+Table~\ref{tab:rules} lists the rules and the types that carry them.
+
+\begin{table}[t]
+\caption{Each legality rule of a WGSL kernel and the types that carry it. Sources:
+\src{kingdoms/wgsl_true/README.md}:15--22, \src{docs/DESIGN_inrange_index_types.md}
+sections 1--11, \src{kingdoms/wgsl_true/loops.py}.}
+\label{tab:rules}
+\small
+\begin{tabularx}{\columnwidth}{@{}p{2.5cm}X@{}}
+\toprule
+Rule & Carried by\\
+\midrule
+index in range of $B$ & \code{u32.in_<B>}: a value $<$ \code{arrayLength(&B)}; minted only by the clamp row, the literal 0, a guard register, a guard or break-guard row, or an offset into a proved run\\
+length bound & \code{u32.len_<B>}: a value $\le$ the length of $B$ (\code{arrayLength}, a uniform-field bound proved by the witness, or \code{min} with one)\\
+one writer per element & ownership types (\code{u32.threadrow_<b>}, \code{u32.wgown_<j>}, block and slot phases)\\
+barrier in uniform control & statement classes: L (uniform), C (conditional, no barrier), W (a write phase between barriers), O (the epilogue)\\
+every loop ends & trip counts of type \code{u32.size}: a size field, a literal 1..4096, and \code{+ * / >> min max} of them, never a subtraction, a free literal or a load; fuel strata \code{_f<k>}, $k<K$\\
+pool no larger than named & \code{u32.wgext}: an extent of 4..$P$ words in steps of 4; every pool bound spelled \code{WG_PW}\\
+no slot chosen by a gene & \code{store.cluster_<R>(u32.cluster, u32.point)}: no position argument; the slot is the compiler's\\
+no read meets a write & per-entry body types: \code{block.scatter} reaches the cluster store and no load; \code{block.start} reaches loads and no store into the scratch\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{In-range indices as a type}
+\label{sec:inrange}
+The first version of the kingdom made every load and store legal by spelling a
+clamp in the row's text, \code{B[min(i, arrayLength(&B) - 1u)]}. It was legal
+by construction, but it was not free. The scatter form of the k-means update
+as expressed ran 2.4--2.6\,\% slower than its source, and the clamps were the
+first cause (\src{docs/DESIGN_inrange_index_types.md}, Objective; logs
+\src{fbench/sus2.log}, \src{sus3.log}). Being in range of $B$ is now a type,
+\code{u32.in_<B>}. A load or store of $B$ takes it and spells no clamp. The
+clamp is kept as one of the rows that produce the type, so every index stays
+legal whatever the gene. Its table name is \code{safe.inrange_<B>}; the design
+document calls it \code{inrange.<B>_clamp}. Example rows, verbatim from
+\src{kingdoms/wgsl_true/mod/kmeans_update_segmented/functions.tsv}
+(output type, then argument types, then spelling):
+
+\begin{small}
+\begin{verbatim}
+load.scratch          u32.index  <- u32.in_scratch
+   scratch[{0}]
+safe.inrange_scratch  u32.in_scratch <- u32.index
+   min({0}, arrayLength(&scratch) - 1u)
+stmt.guard_lt_scratch_C2_f1  stmt.C2_f1
+   <- u32.index; u32.len_scratch; block.C2_f1
+   { let gv = {0}; if (gv < {1}) { gi_scratch2 = gv; {2} } }
+block.brk_guard_scratch_B1_f0  block.B1_f0
+   <- block.C1_f0; u32.index; u32.len_scratch; block.C1_f0
+   {0} { let gv = {1}; if (gv >= {2}) { break; }
+         gi_scratch1 = gv; } {3}
+\end{verbatim}
+\end{small}
+
+The guard register \code{gi_scratch2} is declared \code{0u}. The only text
+that assigns it is the guard row's, inside \code{if (gv < L)} with $L$ of type
+\code{u32.len_scratch}. A read of the register anywhere therefore holds 0 or a
+value some guard proved in range: possibly stale, never out of range. Fitness
+judges the value (\src{docs/DESIGN_inrange_index_types.md} sections 2 and 4).
+The break-guard row carries the same proof for the common loop shape
+\texttt{if (i >= L) \{ break; \}}; on reply 2's histogram entry the clamp it
+removes had cost 0.8\,\% (0.0609\,ms against 0.0616\,ms; section 7,
+\src{fbench/b4_hist.log}). Offset types \code{u32.upto_<L>} give an index
+\code{base + c} into a run that the dispatch contract places inside $B$
+(section 6).
+
+\subsection{The workgroup pool's extent}
+The interface's fixed 1,024-word workgroup pool limited occupancy. On reply 2's
+scatter entry, a 260-word pool ran at 0.0252\,ms against 0.0268\,ms as written
+(\src{fbench/b4_pool.log}), about 6\,\%. Each entry now takes an extent of type
+\code{u32.wgext}. Every pool row spells its bound as \code{WG_PW}, never a
+number, and the module declares \code{WG_PW} as the largest extent its entries
+name, plus 4 words (\src{src/wgsl/true_kingdom.rs}:567, \code{prologue_for}
+:589). The pool witness found a hole in the fixed pool: the split phases'
+writes were guarded only by the split point, which can lie past the pool
+(design section 8).
+
+\subsection{Compiler-assigned slots for the scatter}
+\label{sec:scatter}
+The counting-sort form of the k-means update stores each point's id at a slot
+read from data: \code{scratch[ids + starts[a] + prefix[b][a] + rank]}. That
+store is injective only if other entries computed the counts and scans
+correctly. A gene whose histogram body is empty is legal, and then every block
+stores its first point to one cell. No type of the scatter's own gene can see
+this (design section 9). Two alternatives were rejected. An \code{atomicMax}
+form would have changed UltraDim's driver interface. An \code{atomicAdd}
+counter per cluster hands out slots in the order threads arrive, so the
+cluster's points, and hence the mean's summing order and its last bits, would
+change from run to run (section 10).
+
+The adopted design, approved by Andrew Morgan on 2026-10-31: \emph{a gene names
+the cluster a value belongs to; it never names a slot.} The gene sees one row,
+\code{store.cluster_scratch(u32.cluster, u32.point)}, of type
+\code{block.scatter}. The compiler emits a deterministic counting-sort scaffold
+around it: a per-block histogram, the prefix sums, and a stable rank in
+invocation-index order. Each cluster's points therefore land in index order and
+the mean sums them in A7's order. The scaffold entries take about 75\,\% of the
+module's time, so evolution can still choose among 26 correct variants through
+a knob of type \code{kernel.hist}
+(\src{kingdoms/wgsl_true/countsort.py}:159--180):
+\begin{itemize}
+\item 24 variants combine the histogram, offsets and starts entries of either
+  the hand-written segmented form or the seed-1 champion with a scatter
+  workgroup width of 64, 128 or 256;
+\item one, \code{r2}, is the layout of the model-written kernel ``reply 2''
+  (Section~\ref{sec:setup});
+\item one, \code{none}, is the gather form.
+\end{itemize}
+A variant is one terminal, spelled with its pieces byte for byte. The renderer
+fills every \code{<cs:piece>} marker of a module from that module's single
+knob (\src{src/wgsl/true_kingdom.rs}:550).
+
+\subsection{Access modes}
+With the slot fixed, one hole remained. A gene's \code{load.scratch} could read,
+inside the scatter entry, the region the cluster store writes in the same
+dispatch, which is a race. The rule is now that every scratch region is
+read-only or write-only within one entry, and the entry's body type carries
+it. \code{block.scatter} reaches the cluster store and no load. The mean's
+\code{block.start} reaches loads and no scratch write. \code{u32.point} and
+\code{u32.cluster} each have one producer, so the scatter body has nothing to
+compute from the scratch (design section 11; commit d86a401c).
+
+\subsection{The tables}
+Table~\ref{tab:tables} gives the sizes of the two k-means interfaces. The fuel
+budget is $K=4$, because A7's loop over $n$ needs stratum 4 for $n$ up to
+$2^{20}$. f16 is dropped (\code{has_f16=False}), because UltraDim requests no
+device feature (\src{docs/kmeans_update_dropin.md}, gaps 1--2;
+\src{kingdoms/wgsl_true/interface.py}:190,227).
+
+\begin{table}[t]
+\caption{The k-means interfaces' tables, counted on 2026-11-01 at about 01:20Z
+(\code{wc -l} less one header line; the working tree held uncommitted edits to 2 and
+4 lines of these files).}
+\label{tab:tables}
+\small
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+Interface & types & rows & variants & bindings\\
+\midrule
+\code{kmeans_update} & 631 & 24,384 & -- & 0--3\\
+\code{kmeans_update_segmented} & 646 & 25,030 & 26 & 0--4\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The witnesses}
+\label{sec:witness}
+The generator \src{kingdoms/wgsl_true/gen_tables.py} runs every witness before
+it writes a table (lines 81--102). It checks the scaffold byte for byte after
+writing (line 105). Each witness reads the emitted text, not the generator's
+intent:
+\begin{itemize}
+\item \textbf{in range} (\src{inrange.py}:268--365): every subscript of a
+  storage binding is \texttt{B[\{i\}]} with argument $i$ of type \code{u32.in_<B>},
+  or the clamp text. Only the four allowed forms mint \code{u32.in_<B>}. A guard
+  register is assigned only inside its guard. Every length bound over the
+  uniform's fields is at most the interface's length of $B$ for every parameter
+  of the problem's \code{safety.contract}: each variable is written as its lower
+  bound plus a non-negative part, and every coefficient of
+  $\mathit{length}-\mathit{bound}$ must be non-negative. No bound may wrap at
+  the contract's largest parameters (lines 234--247, 280--284).
+\item \textbf{pool} (\src{pool.py}:343--387): every \code{wg_pool[X]} is
+  \code{min(.., WG_PW)}, the clamping helper \code{xw}, or a write under a
+  condition with \code{X < WG_PW} as a conjunct, and no pool text spells its
+  extent as a number.
+\item \textbf{counting sort} (\src{countsort.py}:268--315): every durable
+  write is an own-index store or the exact cluster store, the scaffold names
+  are assigned by no row, and the \code{kernel.hist} producers are exactly the
+  variants plus an identity.
+\item \textbf{access modes} (\src{countsort.py}:350--372): for every
+  \code{kernel.entry_*}, the closure of its argument types does not hold both a
+  reader and a writer of a scratch arena.
+\end{itemize}
+On the table as it stood before section 11, the access-mode witness named
+the scatter entry: its gene could read the scratch through 3 rows and write
+it through 60 (design section 11).
+
+\subsection{The reader and the share pass}
+\label{sec:spelling}
+\code{read_module} (\src{src/wgsl/true_reader.rs}) reads a WGSL module into
+a tree of the kingdom. The tree is then written back into a gene. A source
+kernel keeps its own guards, as guard rows, and loses only the clamps its
+guards make redundant (design section 5). A7, the planted control, the
+scatter module, the gather module and both model replies read exactly. These
+are tests \code{ultradim_kmeans_update_kernels_read_exactly_into_their_interfaces}
+and \code{the_models_kmeans_replies_read_into_the_scatter_interface}.
+The share pass (\src{src/wgsl/true_share.rs}:439) binds loop-invariant,
+context-free subtrees at function scope. Before it, the kingdom's expression of
+A7 ran at 0.579 of A7's speed, because A7's \code{let}s were inlined into its
+loop over $n$. With it, A7 as expressed runs at 0.9995 of its own text
+(\src{fbench/rt_champ_vs_a7.log}:14).
+
+%% ---------------------------------------------------------------------------
+\section{Fitness evaluation}
+\label{sec:eval}
+
+\subsection{The problem}
+UltraDim's A7 \code{update_centroids} (qdrant
+\src{lib/projection-voting-kmeans/src/gpu_kmeans.rs}:654--715) runs one
+invocation per (centroid, dimension) cell. Each invocation scans all $n$
+assignments in index order and keeps a Kahan-compensated \cite{kahan1965} sum
+of the matching points. It writes the mean when the count is positive and
+leaves an empty cluster's centroid unchanged. Its cost is $O(kdn)$. The scatter
+form (\src{problems/kmeans_update_segmented/segmented.wgsl}) is UltraDim's A6
+stable counting sort, rewritten with A7's semantics, as five entries
+\code{hist}, \code{offsets}, \code{starts}, \code{scatter} and \code{mean}. A
+fifth binding holds a scratch arena of $n+2k+2\lceil n/256\rceil k$ words.
+Its cost is $O(nd)$ (\src{docs/kmeans_update_dropin.md}).
+
+\subsection{Cases and tolerance}
+There are 8 correctness cases, 4 training and 4 held out
+(\src{problems/kmeans_update_segmented/cases/constraint.toml}). They cover
+$n$ from 1 to 4,000, $d$ up to 2,048, $k$ up to 300, empty clusters at the end
+and at random, and a partial workgroup. The expected output is A7's own output
+on the same device. The tolerance on a cell is $(n+2)\,\epsilon_{f32}$ of the
+expected output's RMS, Higham's $\gamma_n$ bound for any summing order
+\cite{higham2002}. Timing uses its own inputs and never a correctness case. The
+timing case is $n=8{,}192$, $d=256$, $k=1{,}024$. The quality group has six
+inputs per case, each its own input to HFF: the share of cells outside
+tolerance; the shares off by over 1, 10 and 50\,\%; and the mean and largest
+error over the RMS (\src{phylu/examples/wgsl_true_case_fit.rs}:22--27, 194).
+
+\subsection{Staged HFF}
+Fitness is Andrew Morgan's Hyperspherical Fitness Function (HFF)
+\cite{morgan2026hff} with the TrueNorth angle, staged
+(\src{src/runner.rs}:97). Stage 1 is TrueNorth over the quality inputs. In
+stage 2, an exact individual scores the two-level angle of the quality and
+speed groups, in $[0,\pi/2)$. An inexact one scores $\pi/2+\theta_q$, so no
+inexact kernel, however fast, ranks above an exact one. The speed group holds
+11 timing slots. Each slot is one interleaved pair against the yardstick,
+entered as $r/(1+r)$ with $r$ the candidate's GPU time over the yardstick's.
+Pairs are never averaged before HFF (\src{src/runner.rs}:123).
+
+\subsection{The timing protocol}
+Each rule below answers a fault of Section~\ref{sec:faults}:
+\begin{itemize}
+\item every timed run is one unsplit dispatch per entry, as UltraDim issues it,
+  for a kernel whose bound is at most twice the yardstick's; above that, an
+  exact kernel is untimed and gets no speed credit;
+\item a pair interleaves the two sides run by run, alternating which goes
+  first (\src{src/runner.rs}:220). Each side takes its fastest run, over at
+  least 1\,s of runs, and one warm-up pair is discarded;
+\item the case buffers are made once and rewritten before every run (fuller
+  40ae60fc);
+\item every timed kernel's output on the timing case is compared with the
+  yardstick's, within a cell tolerance of $3.71\times10^{-4}$; a kernel
+  outside it gets no speed credit;
+\item before any run, two A/A sets of 11 pairs each must lie within
+  $\pm5\,\%$;
+\item a speed claim counts only when the median of 11 fresh pairs is below the
+  least A/A ratio \emph{and} at least 9 of the 11 pairs are faster, a sign
+  test with one-sided $p=0.033$ (\src{src/runner.rs}:204).
+\end{itemize}
+
+%% ---------------------------------------------------------------------------
+\section{GPU implementation}
+
+Table~\ref{tab:where} states where each stage runs. The population is drawn,
+selected and varied on the device by the shared typed core \cite{morgan_core}.
+Expression, rendering and HFF run on the host. The kernels themselves run and
+are timed on the device. In this runner, unlike symbolic regression, HFF runs
+on the host, because the scores are a few dozen inputs per individual and
+compiling each new pipeline dominates the cost: 500--730\,ms per new kernel,
+measured in the earlier ST3/ST5 runs (\src{docs/PLAN_true_gep_wgsl.md}:35).
+
+\begin{table*}[t]
+\caption{Where each stage runs. fuller paths are under \src{src/} or
+\src{kingdoms/}, phylu paths under \src{phylu/}; line numbers are those of the
+commits read (fuller d450a10f, phylu b79f3c38).}
+\label{tab:where}
+\small
+\begin{tabularx}{\textwidth}{@{}lp{2.2cm}X@{}}
+\toprule
+Stage & Runs on & Function (file:line)\\
+\midrule
+Table generation and witnesses & host, offline (Python) & \src{kingdoms/wgsl_true/gen_tables.py}:81--105\\
+Table load & host & \code{TrueKingdom::load}, \src{src/wgsl/true_kingdom.rs}:202\\
+Initial population & device & \code{TypedDevice::init}, \src{phylu/src/evolve/typed_device.rs}:507 (called \src{true_wgsl_fit.rs}:771)\\
+Selection, mutation, inversion, transposition, crossover & device & \code{profile_vary} \src{typed_device.rs}:665; \code{vary_parents} :747 (called \src{true_wgsl_fit.rs}:1445, 2106)\\
+Behaviour-diverse parents (\code{--diverse}) & host & \code{diverse_parents}, \src{phylu/src/evolve/true_wgsl_fit.rs}:1965\\
+Model edit (Sonnet, \code{--ops model=P}) & host, external process & \code{call_model}, \src{phylu/examples/wgsl_true_case_fit.rs}:1208\\
+Karva expression of a gene & host & \code{TrueModule::tree}, \src{src/wgsl/true_module.rs}:92; \src{phylu/src/evolve/true_wgsl_fit.rs}:1741\\
+Share pass and rendering to WGSL & host & \code{Share::share} \src{src/wgsl/true_share.rs}:439; \code{TrueKingdom::render} \src{true_kingdom.rs}:516, \code{prologue_for} :589\\
+Reading a source kernel & host & \code{read_module}, \src{src/wgsl/true_reader.rs}\\
+E-graph variants of the start (for the pump) & host & \src{phylu/examples/wgsl_true_case_fit.rs}:964\\
+naga parse and validation & host & \src{src/wgsl/naga_shape.rs}:37; \src{src/wgsl/target.rs}:93\\
+Pipeline compile & host driver, for the device & \code{DeviceExecutor::compile}, \src{src/wgsl/harness.rs}:3517\\
+Work bound and dispatch split & host decides; device runs & \code{tree_work_bound_workgroup_in} \src{true_kingdom.rs}:329; \src{work_guard.rs}:130; \src{harness.rs}:3313--3350\\
+Correctness cases & device & \code{CaseSet::judge} \src{src/wgsl/case_set.rs}:130; \code{DeviceExecutor::run} \src{harness.rs}:3605\\
+Output comparison, quality inputs & host & \src{case_set.rs}:139--140; \src{phylu/examples/wgsl_true_case_fit.rs}:194\\
+Timing & device timestamps; host schedules & \src{harness.rs}:3361, 3386; \code{time_unsplit} \src{case_set.rs}:193; \src{src/runner.rs}:220; \src{wgsl_true_case_fit.rs}:582--594\\
+Timing-case output check & host & \src{phylu/examples/wgsl_true_case_fit.rs}:617\\
+Staged HFF, verdict & host & \code{staged_hff} \src{src/runner.rs}:97; \code{speed_verdict} :204\\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\paragraph{The work guard.} After a run of random genes at $K=2$ starved
+the macOS window server and forced a hard reset on 2026-10-21 (fuller
+9f770a28), every dispatch runs under a work guard. The guard bounds each
+submit's node executions from the tree's own work bound, and splits a dispatch
+into submits of whole workgroups (\src{src/wgsl/work_guard.rs}:24, 130). A7's
+own timing gives a measured rate of $1.22\times10^{11}$ node executions a
+second. From it the measured cap is $1.22\times10^{9}$ per submit, a tenth of a
+second over a safety factor of 10 (:49--54). The splits serve the correctness
+cases only. Speed is timed unsplit.
+
+\paragraph{Determinism.} A CPU executor that can run workgroups in reverse
+order (\src{src/wgsl/cpu.rs}:878) tests the kingdom's determinism claim.
+300 random modules per k-means table give the same bits with their workgroups
+reversed (test
+\code{random_kmeans_modules_give_the_same_bits_with_their_workgroups_reversed}).
+The CPU executor is a test reference only.
+
+%% ---------------------------------------------------------------------------
+\section{Experiments}
+\label{sec:exp}
+
+\subsection{Setup}
+\label{sec:setup}
+All runs used an Apple M3 Max under Metal through wgpu 30.0.1, the runner
+\src{phylu/examples/wgsl_true_case_fit.rs}, regime P (from given kernels toward
+faster), a population of 24 and a budget of 1,400 fitness evaluations. The
+start was A7 in the five-entry interface (\src{gather.wgsl}). The hand-written
+scatter form was added to generation 0 with \code{--also}. The rest of
+generation 0 was 22 point mutants of the start, each with a text and a tree
+different from every member's. The start's e-graph variants were fed to the
+pump. Operators were point mutation, inversion, transposition, crossover and
+marriage (\src{fbench/kmeans_P_s1/population.tsv},
+\src{per_generation.tsv}). ``Reply 2'' is a kernel that the model-edit operator
+(Sonnet) wrote in a smoke run. On that day it did not read into the kingdom
+(\src{fbench/kmeans_model_smoke2/model_calls.tsv}). Its text is now a reader
+test and the source of the \code{r2} variant
+(\src{tests/corpus/kmeans_model_replies/}).
+
+\paragraph{Expectations, stated before the runs.} The scatter form's
+$O(nd)$ cost against A7's $O(kdn)$ should give most of any gain. Evolution was
+expected to find small gains in the scaffold's widths and the mean's loop. The
+kingdom's expression of a kernel was expected to run at parity with the kernel
+as written once the in-range types were built (design section 10, target
+parity).
+
+\subsection{Results}
+Table~\ref{tab:retime} gives the re-time of the champion of run
+\code{kmeans_P_s1} after the buffer fix (2026-10-31, 14:18--14:42Z). Every
+kernel in the table gave A7's output bit for bit on all 8 cases (0 cells
+differing), and on the timing case 0.00\,\% of cells lay outside the
+yardstick's tolerance. All six A/A sets passed.
+
+\begin{table}[t]
+\caption{Interleaved re-times, 11 pairs each, timing case $n$ 8,192, $d$ 256,
+$k$ 1,024. Ratio is candidate over yardstick (lower is faster). Logs:
+\src{fbench/rt_champ_vs_a7.log}, \src{rt_champ_vs_scatter.log},
+\src{rt2_scatter_vs_a7.log}, \src{rt2_reply2_vs_scatter.log}.}
+\label{tab:retime}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Candidate / yardstick & median & faster & A/A range\\
+\midrule
+champion / A7 & 0.0274 & 11/11 & 0.9998--1.0002\\
+champion / scatter form & 0.9839 & 11/11 & 0.9961--1.0055\\
+scatter form / A7 & 0.0278 & 11/11 & 0.9662--1.0086\\
+reply 2 / scatter form & 0.9925 & 11/11 & 0.9970--1.0020\\
+\midrule
+\multicolumn{4}{@{}l}{\emph{the kingdom's expression, against the same text as written}}\\
+A7 & 0.9995 & -- & \\
+scatter form & 1.0255 & 0/11 & \\
+scatter form (second run) & 1.0238 & 0/11 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The absolute times on the timing case were 8.452\,ms for A7 and about
+0.234\,ms for the scatter form, a whole module of five dispatches
+(\src{rt_champ_vs_a7.log}:14, \src{rt_champ_vs_scatter.log}:15). Per entry,
+the champion's own text took 0.0509, 0.0119, 0.1095, 0.0278 and 0.0290\,ms for
+\code{hist}, \code{offsets}, \code{starts}, \code{scatter} and \code{mean}
+(\src{rt_champ_vs_a7.log}:17--18).
+
+\paragraph{What evolution changed}
+(\src{docs/kmeans_champion_s1/README.md}):
+\begin{enumerate}
+\item In \code{mean}, the Kahan subtraction now reads a register that is never
+  written. The sum is therefore a plain sum. The compensation is still
+  computed, but nothing reads it.
+\item \code{hist} runs at workgroup width 128 instead of 256.
+\item Three rewrites have no effect: a loop's final counter in place of the
+  literal 256, knob constants that no line reads, and a dead store.
+\end{enumerate}
+
+\paragraph{The Kahan point.} On Metal, A7 with its Kahan lines replaced by a
+plain sum in the same order gives A7's bits on 8 of 8 cases, with 0 cells
+differing. Reversing the order or summing in blocks of 64 changes 27,832 and
+23,026 cells, so the cases are large enough to show a working compensation
+(\src{docs/reports/2026-10-28_metal_removes_a7_kahan.md}). The likely cause is
+the Metal compiler folding $(t-s)-y$ under reassociation. We did not inspect
+the compiled shader, so this is an inference. The champion's main change is
+therefore exact on Metal. It need not be exact on Vulkan, which has not been
+measured.
+
+\paragraph{Learning curve.} Figure~\ref{fig:curve} shows the best exact
+kernel's speed ratio by generation, as measured inside the run (one slot,
+before the buffer fix). Generation 0's best was the scatter form at 0.0285 of
+A7. The run reached 0.0276 at generation 9 and 0.0273 at generation 13, and
+did not improve in the remaining 84 generations. It stopped at 1,415
+evaluations after 36.4 minutes, with 5 work-guard failures: mutants with a
+single workgroup over the per-submit cap (\src{fbench/kmeans_P_s1/report.tsv},
+\src{bugs.log}).
+
+\begin{figure}[t]
+\centering
+\Description{Two step plots against generation: the best exact kernel's speed ratio against A7 falls from 0.0285 to 0.0276 at generation 9 and 0.0273 at generation 13, then stays flat; the best HFF falls in the same steps.}
+\pgfplotstableread[col sep=tab]{wgsl_multityped_gep_data/kmeans_P_s1_per_generation.tsv}\curve
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth, height=4.4cm, xlabel={generation},
+  ylabel={best exact / A7}, ymin=0.0270, ymax=0.0288,
+  yticklabel style={/pgf/number format/fixed, /pgf/number format/precision=4},
+  scaled y ticks=false, xmin=0, xmax=96, tick label style={font=\footnotesize},
+  label style={font=\footnotesize}]
+\addplot[const plot, thick, blue!70!black] table[x=generation, y=best_exact_speed_ratio]{\curve};
+\end{axis}
+\end{tikzpicture}
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth, height=4.0cm, xlabel={generation},
+  ylabel={best HFF}, xmin=0, xmax=96,
+  yticklabel style={/pgf/number format/fixed, /pgf/number format/precision=4},
+  scaled y ticks=false, tick label style={font=\footnotesize},
+  label style={font=\footnotesize}]
+\addplot[const plot, thick, red!70!black] table[x=generation, y=best_hff]{\curve};
+\end{axis}
+\end{tikzpicture}
+\caption{Run \code{kmeans_P_s1}: the best exact kernel's speed ratio against A7
+(in-run, one slot) and the best HFF (0 is best), by generation. Data:
+\src{wgsl_multityped_gep_data/kmeans_P_s1_per_generation.tsv}, from the run's
+\src{per_generation.tsv}.}
+\label{fig:curve}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\Description{Scatter of 11 pair ratios: both A/A sets lie between 0.996 and 1.006, the champion's pairs between 0.981 and 0.987, and the scatter form as then expressed between 1.022 and 1.028.}
+\pgfplotstableread[col sep=tab]{wgsl_multityped_gep_data/champion_vs_scatter_pairs.tsv}\pairs
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth, height=4.6cm, xlabel={pair},
+  ylabel={ratio to scatter form}, xmin=0.5, xmax=11.5, ymin=0.975, ymax=1.032,
+  xtick={1,...,11}, legend columns=2, legend style={font=\scriptsize, at={(0.5,-0.32)}, anchor=north},
+  yticklabel style={/pgf/number format/fixed, /pgf/number format/precision=3},
+  tick label style={font=\footnotesize}, label style={font=\footnotesize}]
+\addplot[only marks, mark=o, gray] table[x=pair, y=aa1]{\pairs};
+\addplot[only marks, mark=x, gray] table[x=pair, y=aa2]{\pairs};
+\addplot[only marks, mark=*, blue!70!black] table[x=pair, y=champion_text]{\pairs};
+\addplot[only marks, mark=square*, red!70!black] table[x=pair, y=scatter_expressed]{\pairs};
+\legend{A/A set 1, A/A set 2, champion, scatter form as expressed}
+\end{axis}
+\end{tikzpicture}
+\caption{The 11 pairs against the hand-written scatter form, with both A/A sets
+and the scatter form as the kingdom then expressed it. Data:
+\src{wgsl_multityped_gep_data/champion_vs_scatter_pairs.tsv}, from
+\src{fbench/rt_champ_vs_scatter.log}.}
+\label{fig:pairs}
+\end{figure}
+
+\paragraph{The cost of the kingdom's spelling, after sections 1--11.}
+Table~\ref{tab:perentry} is the per-entry pass that tested the target of
+parity, made after the in-range types, the pool extent, the compiler-assigned
+slots and the access modes were built. The segmented form as expressed is at
+parity: 0.0001\,ms over its text in total, against an A/A floor of 0.0003\,ms.
+Reply 2 as expressed is 0.0003\,ms over its text in total, within the floor.
+Its scatter entry, however, is 0.0003\,ms (1.1\,\%) slower in both passes,
+where that entry's A/A floor is 0.0000. The cause is the scaffold's \code{r2}
+prologue. It computes the slot for every invocation and stores under a flag,
+where reply 2 returns early, and the cluster store clamps its slot (design
+section 10).
+
+\begin{table}[t]
+\caption{Per entry, ms, the fastest of 4,302 round-robin runs over 4 pipelines
+a text, 2026-10-31 23:33Z (\src{fbench/b7b_pe.log}). ``Yardstick'' is the A/A
+reference, the segmented form's text.}
+\label{tab:perentry}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Text & hist & offs. & starts & scat. & mean & total\\
+\midrule
+yardstick & 0.0555 & 0.0118 & 0.1064 & 0.0290 & 0.0287 & 0.2315\\
+segmented, written & 0.0560 & 0.0118 & 0.1064 & 0.0290 & 0.0287 & 0.2318\\
+segmented, expressed & 0.0560 & 0.0118 & 0.1064 & 0.0291 & 0.0287 & 0.2319\\
+reply 2, written & 0.0613 & 0.0117 & 0.1020 & 0.0265 & 0.0285 & 0.2301\\
+reply 2, expressed & 0.0614 & 0.0117 & 0.1020 & 0.0268 & 0.0285 & 0.2304\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The other runs.} Table~\ref{tab:runs} lists every k-means P run of
+2026-10-31. Two champions were withdrawn because they did no work on the timing
+case. The timing-case output check was added because of them.
+
+\begin{table}[t]
+\caption{The k-means P runs of 2026-10-31 (\src{fbench/kmeans_P_progress.tsv};
+checks \src{fbench/check_kmeans_*.log}, 11:06--11:14Z, before the buffer fix).
+Ratios are against A7.}
+\label{tab:runs}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}lrrX@{}}
+\toprule
+Run (\code{kmeans_P_}\ldots) & evals & in run & status\\
+\midrule
+\code{s1} & 1,415 & 0.0273 & valid; re-time 0.0274\\
+\code{s2} & 348 & 0.0252 & stopped; never checked on the timing case\\
+\code{diverse_s2} & 1,400 & 0.0284 & check 0.0284, 0\,\% outside\\
+\code{model_s3} & 1,129 & 0.0285 & check 0.0282, 0\,\% outside\\
+\code{long_s2} & 4,013 & 0.0260 & withdrawn: 99.88\,\% of timing-case cells wrong\\
+\code{planted_diverse_s1}$^\dagger$ & 1,402 & 0.0022 & withdrawn: no work on the timing case\\
+\bottomrule
+\multicolumn{4}{@{}l}{\footnotesize $^\dagger$ on the one-entry interface \code{kmeans_update}, from the planted kernel.}
+\end{tabularx}
+\end{table}
+
+%% ---------------------------------------------------------------------------
+\section{Faults found and fixed}
+\label{sec:faults}
+
+Each fault in Table~\ref{tab:faults} produced a result that looked better
+than it was, or hid a cost. Each was found before the numbers of
+Table~\ref{tab:retime}, and each fix is now part of the protocol.
+
+\begin{table*}[t]
+\caption{Faults in our own method, found and fixed. Sources:
+\src{docs/papers/2026-10-31_kmeans_centroid_update.md} section 3,
+\src{docs/kmeans_update_dropin.md} (timing rules), and the logs named.}
+\label{tab:faults}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.2cm}XX@{}}
+\toprule
+Fault & What it did & Fix\\
+\midrule
+Split timing & Timing a dispatch split into many submits favoured kernels with small work bounds, and was not UltraDim's dispatch & every timed run is one unsplit dispatch per entry\\
+Display noise & The display shares the GPU; self-timing ranged 0.92--1.10 when each side was timed in its own block & run-by-run interleaving, fastest of at least 1\,s a side, one warm-up pair discarded\\
+Buffer placement & Fresh buffers every run: speed followed where they landed; one entry moved by up to 25\,\%, one text compiled separately ran at 0.64--0.90\,ms & case buffers made once, rewritten before every run (fuller 40ae60fc); five compilations of one text then agree within 0.2\,\%\\
+The u32-overflow cheat & A guard \code{gid.x >= (k*d)^2} wrapped to 0 at the timing size, so the kernel did no work there and claimed up to 450$\times$ & every timed kernel's timing-case output is checked against the yardstick's; two champions withdrawn (Table~\ref{tab:runs})\\
+The expression cost & The kingdom's spelling cost speed: A7 as expressed ran at 0.579 of its text (inlined \code{let}s in the loop); the scatter form at 1.024--1.026 (clamps, the pool, the scatter's slot) & the share pass; in-range, offset and break-guard types; the pool extent; compiler-assigned slots. A7 now 0.9995, the segmented form at parity (Table~\ref{tab:perentry})\\
+The dispatch limit & A mutated workgroup width needed 262,144 workgroups (the limit is 65,535) & the types bound every workgroup width; the empty entry is still open (Section~\ref{sec:limits})\\
+Unbounded loops & 6 smoke-run mutants had a work bound of 4,218,022,233 or a bound read from \code{assignments}, which the guard could not split & a trip count is of type \code{u32.size}: sizes, literals, and \code{+ * / >> min max} of them\\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+%% ---------------------------------------------------------------------------
+\section{Earlier WGSL work}
+\label{sec:earlier}
+
+The kingdom grew out of four earlier lines of work. Each one taught the
+method something.
+\begin{itemize}
+\item \textbf{Weighted Gram superoptimisation (2026-10-10 to 14).} A rule
+  beam over 24 correct, model-written kernels gave 1.25$\times$ over generation
+  0's best (6 of 6 paired rounds; 247 of 247 rule children correct). Random
+  starts never produced a correct kernel. Single-round timing had spread
+  champions from 6.0$\times$ to 8.7$\times$ when re-timing put them all at about
+  6.1$\times$. 37 of 40 random kernels raced, and naga's raw \texttt{\%} hung the GPU
+  on modulo by zero (\src{docs/reports/2026-10-13_SUMMARY.md};
+  \src{docs/PLAN_hgp_gram.md}:193--217).
+\item \textbf{V24 streaming index (2026-10-17 to 19).} The best individual was
+  a quantised exhaustive scan at recall@10 of 1.0 up to 15,000 records. At that
+  size the fitness could not tell a scan from an index
+  (\src{docs/reports/2026-10-17_v24_overnight.md}:3--5).
+\item \textbf{cuneus image shaders (ST9--ST13).} volumepassage and nebula were
+  read exactly (0 of 1,048,576 channels differ), and the expressed volumepassage
+  reached 0.983 of the shipped shader's time. A planted slowdown was recovered
+  (1.742$\times$ to 0.962$\times$), but no faster shader was found. An apparent
+  2.2\,\% gain existed only under tiled submits, and the fitness allowed a literal
+  to be replaced by a uniform that never varied across cases
+  (\src{docs/reports/2026-10-22_ST9_volumepassage_champion/README.md};
+  \src{docs/reports/2026-10-23_summary_instance_and_class.md}:125--129).
+\item \textbf{UltraDim ingest (UI1--UI4).} 50 of 67 ingest kernels read
+  exactly. The best evolved kernel was 59--107$\times$ faster at ingest but had
+  lower recall (0.62 to 0.38, against 0.98 to 0.97), and one champion
+  hard-coded the fitness case's query count
+  (\src{docs/reports/2026-10-23_UI_ingest_overnight.md}:53--71).
+\end{itemize}
+What this taught: legality belongs in the types (A1--A3), timing needs a noise
+floor and a sign test, and a fitness must check what the timed kernel actually
+computed. The k-means protocol is built on these lessons.
+
+%% ---------------------------------------------------------------------------
+\section{Discussion}
+
+Legality by construction worked as designed on this problem. Every gene
+expresses a kernel that compiles and runs. 300 random modules per table
+validate under naga, index in range on the CPU, never exceed the dispatch
+limit, and give the same bits with their workgroups reversed (tests in
+\src{src/wgsl/true_reader.rs}). The failures that remained in the run were
+the work guard's: 5 of 1,415 evaluations.
+
+The speed result needs to be read in three parts. First, the factor of about 36
+over A7 is the algorithm. The hand-written counting sort is at 0.0278, and
+evolution did not invent it: the scatter form was given to generation 0.
+Second, evolution's own gain is 1.6\,\% over that form, and it held under the
+strict protocol (11 of 11 pairs, outside both A/A ranges). Third, most of that
+gain is the removal of a compensation that the Metal compiler appears to remove
+already. The change is free on Metal for that reason, and it may not be free
+elsewhere.
+
+The kingdom's spelling had been costing as much as evolution gained: 2.4--2.6\,\%
+on the scatter form. That cost is now removed on the segmented form, by types
+rather than by special cases in the renderer. This matters for regime P,
+because otherwise evolution must first win back the kingdom's own overhead
+before it can improve on the source.
+
+%% ---------------------------------------------------------------------------
+\section{Limitations and open work}
+\label{sec:limits}
+
+\begin{itemize}
+\item \textbf{The empty mean exceeds the dispatch limit.} The empty entry
+  (\code{own.kernel_<e>}) was spelled at workgroup width 1. For the mean this
+  gives $\lceil kd/1\rceil=262{,}144$ workgroups on the timing case, over
+  65,535. At the time of writing, a fix is in fuller's working tree,
+  uncommitted: an \code{empty_width} rule and a \code{dispatch_witness} in
+  \src{kingdoms/wgsl_true/skeleton.py}.
+\item \textbf{Reply 2's scaffold is 1.1\,\% slow in its scatter entry}
+  (Table~\ref{tab:perentry}). An uncommitted change of the \code{r2} prologue
+  returns early as reply 2 does and drops the slot clamp. It has not been
+  timed. While that edit was in progress, the committed segmented table
+  failed the counting-sort witness against the edited generator. It must be
+  regenerated.
+\item \textbf{Data-dependent indices} (a slot read from the scratch, a label
+  read from \code{assignments}) still read through the clamp row (design
+  section 12).
+\item \textbf{One shape, one machine, one backend}: $n$ 8,192, $d$ 256, $k$
+  1,024, on an M3 Max under Metal through wgpu 30. Larger $n$, rolling
+  k-means' small batches, and Vulkan are not measured. The Kahan point is
+  Metal-only.
+\item \textbf{One valid seed.} Only \code{kmeans_P_s1} was re-timed after the
+  buffer fix. Two other runs passed the timing-case check before it, and one
+  stopped run was never checked (Table~\ref{tab:runs}).
+\item \textbf{The timing-case check is a tolerance}, not a bit count: 0.00\,\%
+  of cells outside $3.71\times10^{-4}$ of the yardstick's. Bit-exactness is
+  measured on the 8 correctness cases.
+\item \textbf{Not yet in UltraDim.} The change request
+  (\src{docs/papers/2026-10-31_kmeans_centroid_update.md}) asks the UltraDim
+  team to validate the kernel in UltraDim, end to end, on Metal and Vulkan.
+  We changed no UltraDim code.
+\end{itemize}
+
+%% ---------------------------------------------------------------------------
+\section{Conclusion}
+
+A WGSL kingdom in which every gene expresses a legal kernel can be built by
+putting each legality rule into a type of the master symbol table, and having
+generators prove the emitted tables. Applied to UltraDim's k-means centroid
+update with UltraDim's own bindings, the kingdom read the production and
+hand-written kernels exactly, expressed them at parity with their text, and
+evolved a kernel at 0.0274 of A7's time, bit for bit on every correctness case.
+Evolution's own gain over the hand-written form is 1.6\,\%, and its main source
+is specific to Metal. The open work is the two bugs above, measurement on
+Vulkan and other shapes, and validation inside UltraDim.
+
+\begin{acks}
+The design of the multi-typed GEP schema, the geneframe, HFF and TrueNorth, the
+pump, and the rules of the kingdom and of the timing protocol are Andrew
+Morgan's.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{wgsl_multityped_gep}
+
+\end{document}
