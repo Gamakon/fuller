@@ -4676,7 +4676,7 @@ mod tests {
         // reply 2 does, and the cluster store spells no clamp (its slot is in range by the variant's counting sort,
         // countsort.py `store_text`); the expression gives reply 2's own bits on every case the CPU executor holds
         assert!(text.contains("workgroupBarrier();\ncs_v = cs_w * 128u + lidx;\nif (cs_v >= cs_n || !scratch_ok()) { return; }\n") && text.contains("if (cs_a >= cs_k) { return; }\n"), "the r2 prologue returns early as reply 2 does");
-        assert!(text.contains("{ _ = cs_a; scratch[cs_slot] = cs_v; }") && !text.contains("min(cs_slot") && !text.contains("if (cs_ok)"), "the cluster store spells no clamp and no guard");
+        assert!(text.contains("{ _ = cs_a; if (cs_ok) { scratch[cs_slot] = cs_v; } }") && !text.contains("min(cs_slot"), "the cluster store spells no clamp");
         assert_eq!(cpu_same_bits(&root.join("problems/kmeans_update_segmented"), &[reply("reply2_g0_r4.wgsl"), text.clone()], 5e6), 5, "reply 2 as expressed gives its own bits");
         let tree = Tree { symbol: link, const_index: None, kids: read_module(&k, &reply("reply2_g0_r4.wgsl"), &c).expect("reads") };
         assert_eq!(k.pool_extent(&tree).expect("extent"), Some(4));
@@ -4761,24 +4761,27 @@ mod tests {
         assert!(!out.status.success() && text.contains("kernel.entry_scatter: its gene can both read scratch (cluster.point"), "{text}");
     }
 
-    /// THE UNGUARDED CLUSTER STORE (2026-11-01, countsort.py `store_text`): the store spells neither a clamp nor a
-    /// `cs_ok` guard, so it rests on every variant's prologue returning for an invocation that stores nothing and
-    /// assigning `cs_v`, `cs_a` and `cs_slot` at its top level (`prologue_returns`). The witness passes the 26 variants
-    /// and names a prologue whose slot is assigned under a condition, and one whose cluster is reassigned in a branch.
+    /// THE CLUSTER STORE'S PROLOGUE CONTRACT (2026-11-01, countsort.py `store_text`): the store spells no clamp and
+    /// stores under `cs_ok`, so it rests on every variant's prologue setting `cs_ok` only where the point, its cluster
+    /// and its slot are assigned (`prologue_contract`). The witness passes the 26 variants and names a prologue whose
+    /// slot is assigned under a further condition, one whose cluster is reassigned in a branch, and one that sets
+    /// `cs_ok` before the cluster.
     #[test]
-    fn the_unguarded_cluster_store_follows_a_prologue_that_returns() {
+    fn the_cluster_stores_prologue_sets_its_guard_only_with_its_slot() {
         let dir = crate::wgsl::true_kingdom::default_dir();
         let probe = "import countsort as c\n\
-            bad = [k for k, v in c.variants().items() if c.prologue_returns(v['scatter_prologue'])]\n\
+            bad = [k for k, v in c.variants().items() if c.prologue_contract(v['scatter_prologue'])]\n\
             print('variants', len(c.variants()), 'bad', bad)\n\
-            print('nested', c.prologue_returns(c.SEG_PROLOGUE.replace('cs_slot = 2u', 'if (cs_ok) { cs_slot = 2u').replace('cs_rank;\\n}', 'cs_rank; }\\n}')))\n\
-            print('branch', c.prologue_returns(c.R2_PROLOGUE.replace('if (cs_a >= cs_k) { return; }', 'if (cs_a >= cs_k) { cs_a = 0u; }')))\n";
+            print('nested', c.prologue_contract(c.SEG_PROLOGUE.replace('if (cs_ok) {\\n', 'if (cs_ok) {\\nif (cs_v > 3u) {\\n').replace('cs_rank;\\n} }', 'cs_rank; }\\n} }')))\n\
+            print('branch', c.prologue_contract(c.R2_PROLOGUE.replace('if (cs_a >= cs_k) { return; }', 'if (cs_a >= cs_k) { cs_a = 0u; }')))\n\
+            print('early', c.prologue_contract(c.R2_PROLOGUE.replace('cs_ok = true;\\n', '').replace('cs_v = cs_w * 128u + lidx;\\n', 'cs_v = cs_w * 128u + lidx;\\ncs_ok = true;\\n')))\n";
         let out = std::process::Command::new("python3").arg("-c").arg(probe).current_dir(&dir).output().expect("python3 runs");
         let text = String::from_utf8_lossy(&out.stdout).to_string();
         assert!(out.status.success(), "{text}{}", String::from_utf8_lossy(&out.stderr));
         assert!(text.contains("variants 26 bad []"), "{text}");
-        assert!(text.contains("nested [") && text.contains("its last top-level statement does not assign cs_slot"), "{text}");
-        assert!(text.contains("branch [") && text.contains("cs_a is assigned below the top level"), "{text}");
+        assert!(text.contains("nested ['cs_slot is not assigned once"), "{text}");
+        assert!(text.contains("branch [\"cs_a is assigned below the top level"), "{text}");
+        assert!(text.contains("early ['cs_a is not assigned at the top level before cs_ok']"), "{text}");
     }
 
     /// The cells `text` writes of binding `b`: each subscript `b[...]` followed by `=` (not `==`).

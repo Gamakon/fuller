@@ -20,8 +20,9 @@ other pieces of the same variant are spelled by the markers `<cs:offsets>`, `<cs
 `<cs:scatter_prologue>`, which the renderer (TrueKingdom::render) resolves from the module's one knob, as it resolves
 `<declarations>` from the tree. One knob per module, so every piece of one module is one variant's.
 
-The cluster store is unguarded (2026-11-01): it stands only in the scatter entry's body (section 11), after a prologue
-that returns for every invocation that stores nothing (`prologue_returns`, the witness).
+Outside the scatter entry the cluster store's names are declared and never set (`cs_ok` stays false), so a cluster
+store a gene places in another entry stores nothing. In the scatter entry, `cs_ok` is true only where the prologue has
+assigned the point, its cluster and its slot (`prologue_contract`, the witness).
 
 The variants' texts are the reference kernels' own (the segmented form, Sonnet's reply 2 and the seed-1 champion,
 read from their committed files) and the compiler's scatter prologues below; `scaffold.tsv` holds them, one row per
@@ -110,21 +111,22 @@ def head(wx, wy):
 # The scatter prologue of the segmented layout ([counts nb k][prefixes nb k][lens k][starts k][ids n], nb = ceil(n /
 # 256)): one invocation per point, any workgroup width, the rank counted over the block's earlier points in the
 # assignments buffer (the segmented form's method). Every subscript is in range of its binding by the contract's
-# lengths (cs_v < n, cs_u < cs_v, cs_a < k). EVERY PROLOGUE RETURNS for an invocation that stores nothing (2026-11-01,
-# as the sources do: `if (v >= n) { return; }`), so the cluster store after it is unguarded: whoever reaches it has its
-# point, its cluster and its slot (`cs_ok` is true there, kept for the names' contract).
+# lengths (cs_v < n, cs_u < cs_v, cs_a < k). An invocation with no point returns, as the source does (`if (v >= n) {
+# return; }`); one whose point has no cluster (a label >= k) skips its rank and slot under `cs_ok`. MEASURED 2026-11-01
+# (fbench/b10_pe.log, the scatter entry, ms): a second return there costs 0.0294 against the source's 0.0290; this
+# guard gives 0.0290, the same as the source.
 SEG_PROLOGUE = (
     "{ let cs_n = params.x; let cs_k = params.y; let cs_nb = (cs_n + 255u) / 256u;\n"
     "cs_v = gid.x;\n"
     "if (cs_v >= cs_n) { return; }\n"
     "cs_a = assignments[cs_v];\n"
-    "if (cs_a >= cs_k) { return; }\n"
-    "cs_ok = true;\n"
+    "cs_ok = cs_a < cs_k;\n"
+    "if (cs_ok) {\n"
     "let cs_b = cs_v / 256u;\n"
     "var cs_rank: u32 = 0u;\n"
     "for (var cs_i: u32 = 0u; cs_i < 256u; cs_i = cs_i + 1u) { let cs_u = cs_b * 256u + cs_i; if (cs_u < cs_v) { if (assignments[cs_u] == cs_a) { cs_rank = cs_rank + 1u; } } }\n"
     "cs_slot = 2u * cs_nb * cs_k + 2u * cs_k + scratch[2u * cs_nb * cs_k + cs_k + cs_a] + scratch[cs_nb * cs_k + cs_b * cs_k + cs_a] + cs_rank;\n"
-    "}"
+    "} }"
 )
 
 # The scatter prologue of reply 2's layout ([counts, then prefixes in place, nb k][lens k][starts k][ids n]): a
@@ -155,8 +157,8 @@ R2_PROLOGUE = (
 
 
 # The scatter prologue of the variant with no counting sort (A7's gather in the module form, whose hist, offsets,
-# starts and scatter are empty): no invocation has a slot, so every invocation returns and a cluster store stores nothing.
-NONE_PROLOGUE = "{ return; }"
+# starts and scatter are empty): no invocation has a slot, so a cluster store stores nothing.
+NONE_PROLOGUE = "{ cs_ok = false; }"
 
 
 def variants():
@@ -231,10 +233,9 @@ def store_text(ids):
     prefix[b][a] = sum_{b'<b} count[b'][a] and rank < count[b][a], and the slot's offset into the ids region is at most
     sum_{c<=a} total[c] - 1 <= n - 1: below the region's n words, inside the contract's length of the scratch. Checked on
     every variant on every case of the problem with no index restricted (true_reader.rs
-    `every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu`). The store is unguarded: every variant's
-    prologue returns for an invocation that stores nothing (`prologue_returns`), and the store stands only in the
-    scatter entry's body, after the prologue (section 11)."""
-    return f"{{ _ = {{0}}; {ids}[cs_slot] = {{1}}; }}"
+    `every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu`). The store is guarded by `cs_ok`, and every
+    variant's prologue sets `cs_ok` only once it has the point, its cluster and its slot (`prologue_contract`)."""
+    return f"{{ _ = {{0}}; if (cs_ok) {{ {ids}[cs_slot] = {{1}}; }} }}"
 
 
 def write(outdir, iface):
@@ -317,24 +318,16 @@ def witness(iface, rows=None):
             problems.append(f"{n} is not the identity of {t}")
     if sorted(produced.get("kernel.scatter", [])) != ["kernel.entry_scatter", "own.kernel_scatter"]:
         problems.append(f"kernel.scatter has producers {produced.get('kernel.scatter', [])}")
-    # the unguarded cluster store (store_text): it stands only after a scaffold prologue, in the scatter entry's body
-    takers = sorted(n for n, r in rows.items() if SCATTER_BODY in r["args"])
-    if takers != ["kernel.entry_scatter"]:
-        problems.append(f"{SCATTER_BODY} is taken by {takers}, not only by the scatter entry (the cluster store would stand after no prologue)")
+    # the cluster store (store_text) stores under cs_ok: every prologue sets it only where the slot is assigned
     for k, v in vs.items():
-        problems += [f"variant {k}: {p}" for p in prologue_returns(v["scatter_prologue"])]
+        problems += [f"variant {k}: {p}" for p in prologue_contract(v["scatter_prologue"])]
     return problems
 
 
-def prologue_returns(text):
-    """The prologue's contract with the unguarded cluster store: it is `{ return; }` (no invocation stores), or a block
-    whose LAST top-level statement assigns `cs_slot` and whose top level also assigns `cs_v` and `cs_a`. A top-level
-    statement runs on every path that has not returned (the prologue's top level holds no loop it could break out of),
-    so whoever reaches the store has its point, its cluster and its slot. No statement below the top level assigns them."""
-    if text == "{ return; }":
-        return []
+def top_level(text):
+    """The top-level statements of the block `text` ("{ ... }"), or None when it is not one block."""
     if not (text.startswith("{") and text.endswith("}")):
-        return ["the prologue is not one block"]
+        return None
     body, depth, top, cur = text[1:-1], 0, [], ""
     for ch in body:
         cur += ch
@@ -342,19 +335,42 @@ def prologue_returns(text):
         if depth == 0 and ch in ";}":
             top.append(cur.strip())
             cur = ""
-    if cur.strip():
-        return [f"text after the last statement: {cur.strip()[:40]!r}"]
+    return None if cur.strip() else top
+
+
+def prologue_contract(text):
+    """The prologue's contract with the cluster store, which stores `cs_v` at `cs_slot` under `cs_ok` with no clamp:
+    `cs_ok` is true only where the point, its cluster and its slot are assigned. Every assignment of `cs_v`, `cs_a` and
+    `cs_ok` is a top-level statement (a top-level statement runs on every path that has not returned; the top level
+    holds no break or continue); `cs_v` and `cs_a` are assigned before any `cs_ok`; and `cs_slot` is assigned once,
+    either as the last top-level statement after `cs_ok = true;`, or as the last statement of the last top-level
+    statement `if (cs_ok) { ... }`. A prologue that never sets `cs_ok` (`cs_ok = false;` only) stores nothing."""
+    top = top_level(text)
+    if top is None:
+        return ["the prologue is not one block of statements"]
+    assigns = lambda n, t: re.search(r"(?<![\w.])" + n + r"\s*=[^=]", t) is not None
     problems = []
-    if not (top and re.match(r"cs_slot = [^;]*;$", top[-1])):
-        problems.append("its last top-level statement does not assign cs_slot")
-    for n in ("cs_v", "cs_a", "cs_slot"):
-        nested = [t for t in top if re.search(r"\b" + n + r"\s*=[^=]", t) and not re.match(n + r" = ", t)]
+    for n in ("cs_v", "cs_a", "cs_ok"):
+        nested = [t for t in top if assigns(n, t) and not re.match(n + r" = ", t)]
         if nested:
             problems.append(f"{n} is assigned below the top level ({nested[0][:40]!r})")
-        if not any(re.match(n + r" = ", t) for t in top):
-            problems.append(f"no top-level statement assigns {n}")
     if re.search(r"\b(break|continue)\b", " ".join(t for t in top if not t.startswith("for ") and not t.startswith("loop"))):
         problems.append("a top-level break or continue")
+    oks = [i for i, t in enumerate(top) if re.match(r"cs_ok = ", t)]
+    if all(top[i] == "cs_ok = false;" for i in oks):
+        if any(assigns("cs_slot", t) for t in top):
+            problems.append("cs_slot is assigned in a prologue that never sets cs_ok")
+        return problems
+    first = oks[0]
+    for n in ("cs_v", "cs_a"):
+        if not any(re.match(n + r" = ", t) for t in top[:first]):
+            problems.append(f"{n} is not assigned at the top level before cs_ok")
+    slots = [i for i, t in enumerate(top) if assigns("cs_slot", t)]
+    last = top[-1]
+    guarded = last.startswith("if (cs_ok) {") and last.endswith("}") and (top_level(last[len("if (cs_ok) "):]) or [""])[-1].startswith("cs_slot = ")
+    plain = re.match(r"cs_slot = [^;]*;$", last) is not None and top[first] == "cs_ok = true;" and oks == [first]
+    if slots != [len(top) - 1] or len(re.findall(r"(?<![\w.])cs_slot\s*=[^=]", last)) != 1 or not (guarded or plain):
+        problems.append("cs_slot is not assigned once, as the last top-level statement after cs_ok = true; or last under the last top-level if (cs_ok)")
     return problems
 
 
