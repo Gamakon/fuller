@@ -160,9 +160,10 @@ On the host, `SetMem` is a reference copy (`DevMem::set_from`), as `memblock_set
 
 How the build works:
 - `futhark-rust-rt/prebuild_rt.sh <dir>` builds the runtime once per run and copies it, with the dependency rlibs
-  and proc-macro dylibs `rustc` needs, into the run's own directory. It sets an `@rpath` install name and an rpath to
-  the toolchain's libstd, and re-signs the dylib. A later rebuild never changes a running fit's runtime.
-- Each batch gets a crate name unique in the process (`futhark_gen_p<pid>_b<n>`).
+  and proc-macro dylibs `rustc` needs, into the run's own directory. It sets the runtime's own absolute path as its install name
+  (an `@rpath` name bound every later run directory's modules to the first runtime loaded in the process) and an
+  rpath to the toolchain's libstd, and re-signs the dylib. A later rebuild never changes a running fit's runtime.
+- Each batch gets a crate name unique in the process (`futhark_gen_p<pid>_m<n>`, a process-wide count).
 - A loaded module is never unloaded: its module state's code lives in it.
 
 **Failures in-process** are handled as the driver's failures:

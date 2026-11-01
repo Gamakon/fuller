@@ -547,6 +547,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// TWO RUNTIMES IN ONE PROCESS (2026-11-01): a module binds to the runtime it was compiled against. The runtime's
+    /// install name was `@rpath/libfuthark_rust_rt.dylib` in every run directory, and dyld binds a module's dependency
+    /// of that name to the first runtime of that name loaded in the process: a second test's module ran the first
+    /// test's runtime (and its wgpu) on the second session's device, and every pipeline it made failed
+    /// (`NegativeWorkgroupSize`, 7 GPU tests run in one process). Each runtime's install name is now its own path, and
+    /// a module compiled against runtime B names B's path, not A's. CPU only (`otool`), no device.
+    #[test]
+    fn a_module_names_the_runtime_it_was_compiled_against() {
+        let base = scratch("two_runtimes");
+        let a = prebuild_rt(&base.join("rt_a")).expect("runtime A");
+        let b = prebuild_rt(&base.join("rt_b")).expect("runtime B");
+        let otool = |args: &[&str], p: &Path| -> Vec<String> {
+            let out = Command::new("otool").args(args).arg(p).output().expect("otool");
+            assert!(out.status.success(), "otool {args:?} {}: {}", p.display(), String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).lines().skip(1).map(|l| l.trim().split(" (compatibility").next().unwrap_or("").to_string()).collect()
+        };
+        let lib = |d: &Path| std::fs::canonicalize(d.join("libfuthark_rust_rt.dylib")).expect("the runtime dylib").display().to_string();
+        let (la, lb) = (lib(&a), lib(&b));
+        assert_eq!(otool(&["-D"], Path::new(&la)), vec![la.clone()], "runtime A's install name must be its own path");
+        assert_eq!(otool(&["-D"], Path::new(&lb)), vec![lb.clone()], "runtime B's install name must be its own path");
+        if !compiler().is_file() {
+            panic!("the fork compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
+        }
+        let (dylib, _) = compile_module("entry main (n: i64) : []i32 = replicate n 7\n", &base.join("m"), &b, "two_runtimes_m", Duration::from_secs(600)).expect("the module");
+        let deps: Vec<String> = otool(&["-L"], &dylib).into_iter().filter(|d| d.ends_with("libfuthark_rust_rt.dylib")).collect();
+        assert_eq!(deps, vec![lb], "the module must name runtime B by its path (runtime A is {la})");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// THE COMPILE-FAILURE CORPUS (`tests/corpus/futhark_compile_failures`): every distinct program a legal gene
     /// expressed that the rust-wgpu path once failed to compile (from the evolution runs' `bugs.log`, `index.tsv`
     /// names each one's error and first failing stage), and the minimal reproducers, compiles through the rust path:

@@ -5,7 +5,7 @@
 #
 #   prebuild_rt.sh <dir>
 #
-# <dir>/libfuthark_rust_rt.dylib   the runtime, its install name @rpath/libfuthark_rust_rt.dylib, an rpath to the
+# <dir>/libfuthark_rust_rt.dylib   the runtime, its install name its own absolute path (unique to <dir>), an rpath to the
 #                                  toolchain's libstd (built with -C prefer-dynamic: the runtime and every generation
 #                                  share the toolchain's libstd dylib, so std, wgpu and the runtime are one copy each)
 # <dir>/deps/                      the dependencies' rlibs and proc-macro dylibs (rustc's -L dependency=)
@@ -25,12 +25,17 @@ dir=$1
 # The cargo target directory: $FUTHARK_RT_TARGET_DIR, or target-dylib beside this script.
 target=${FUTHARK_RT_TARGET_DIR:-$here/target-dylib}
 mkdir -p "$dir/deps"
+# Absolute: the runtime's install name is its path. An @rpath install name is not unique: dyld binds a module's
+# @rpath/libfuthark_rust_rt.dylib to the FIRST runtime of that name loaded in the process, so a second run directory's
+# module called the first runtime's code (and its wgpu) with the second session's device, and its pipelines failed
+# (NegativeWorkgroupSize, 2026-11-01). The link leaves room in the header for the longer name (headerpad).
+dir=$(cd "$dir" && pwd -P)
 lock=/private/tmp/claude-501/locks/cargo
 if [ "${CARGO_LOCK_HELD:-}" != "$lock" ]; then
   until mkdir "$lock" 2>/dev/null; do sleep 2; done
   trap 'rmdir "$lock" 2>/dev/null || true' EXIT
 fi
-(cd "$here" && RUSTFLAGS="-D warnings -C prefer-dynamic" CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --lib)
+(cd "$here" && RUSTFLAGS="-D warnings -C prefer-dynamic -C link-args=-Wl,-headerpad_max_install_names" CARGO_TARGET_DIR="$target" nice -n 10 cargo build --release --lib)
 if [ "${CARGO_LOCK_HELD:-}" != "$lock" ]; then
   rmdir "$lock"
   trap - EXIT
@@ -44,7 +49,7 @@ for f in "$deps"/*.dylib; do
   [ "$(basename "$f")" = libfuthark_rust_rt.dylib ] || cp "$f" "$dir/deps/"
 done
 cp "$deps/libfuthark_rust_rt.dylib" "$dir/libfuthark_rust_rt.dylib"
-install_name_tool -id @rpath/libfuthark_rust_rt.dylib -add_rpath "$sys" "$dir/libfuthark_rust_rt.dylib"
+install_name_tool -id "$dir/libfuthark_rust_rt.dylib" -add_rpath "$sys" "$dir/libfuthark_rust_rt.dylib"
 codesign -f -s - "$dir/libfuthark_rust_rt.dylib" 2>/dev/null
-printf '%s\n' "-C prefer-dynamic" "-L dependency=$dir/deps" "--extern futhark_rust_rt=$dir/libfuthark_rust_rt.dylib" "-C link-args=-Wl,-rpath,$dir" "-C link-args=-Wl,-rpath,$sys" > "$dir/rustc_flags"
+printf '%s\n' "-C prefer-dynamic" "-L dependency=$dir/deps" "--extern futhark_rust_rt=$dir/libfuthark_rust_rt.dylib" "-C link-args=-Wl,-rpath,$sys" > "$dir/rustc_flags"
 echo "prebuilt the runtime into $dir"

@@ -42,6 +42,9 @@ use crate::futhark_sig::{entry_calling, program_cases_named, program_named, read
 use crate::futhark_wgpu_host::{compile_library_prebuilt, compile_timeout, run_timeout, unix_ns, CompileStages, DriverOf, RunStages, ShimReport};
 use crate::typed_gep::Tree;
 
+/// The rust-wgpu modules built in this process, for their crate names (unique in the process).
+static RUST_MODULES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Where a batch runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Backend {
@@ -884,8 +887,9 @@ impl<'a> Host<'a> {
         let (exe, stages) = match &self.backend {
             Backend::Gpu { shim } => compile_library_prebuilt(&source, &driver, &dir, shim, timeout)?,
             Backend::C => compile_c_library(&source, &driver, &dir, timeout)?,
-            // The crate's name is unique in the process: the host keeps every module it loads.
-            Backend::Rust { rt } => crate::futhark_rust::compile_module(&source, &dir, rt, &format!("p{}_b{n}", std::process::id()), timeout)?,
+            // The crate's name is unique in the process (a process-wide count, not this host's `n`: two hosts of one
+            // process both build a b0): the host keeps every module it loads.
+            Backend::Rust { rt } => crate::futhark_rust::compile_module(&source, &dir, rt, &format!("p{}_m{}", std::process::id(), RUST_MODULES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)), timeout)?,
         };
         Ok((exe, cmds, stages))
     }
