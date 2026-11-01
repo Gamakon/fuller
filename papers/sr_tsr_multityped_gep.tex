@@ -729,6 +729,14 @@ inputs, which is not the simplification SR wants. The equality the search
 needs is narrower --- is this model the law? --- and the canonicaliser's
 spelling is what SRBench's own check scores.
 
+On that narrower question fuller's law check (\texttt{srbench\_equiv}) was
+compared with SymPy, run offline through SRBench's \texttt{srbench\_solution}
+with 120~s a law, on 12 tidied models (fuller \texttt{9f89f9cf},
+\src{fuller tests/\allowbreak{}fixtures/\allowbreak{}srbench\_\allowbreak{}equiv\_\allowbreak{}sympy.\allowbreak{}tsv}): 10 of 10
+decided, 2 undecided by SymPy. SymPy decides 10 of the 12 laws and fuller agrees
+on all 10; SymPy times out on Feynman test~9 and I.30.3, which fuller says are
+not the law.
+
 %% ===================================================================
 \section{Faults Found and Fixed}
 \label{sec:faults}
@@ -766,9 +774,11 @@ Figure~\ref{fig:speed} to 127.5~ms.
 stride of 128 from an array whose stride was the evaluator's bound, so most
 statistics belonged to another expression: on Feynman I.6.2a, TSR arm C folded
 22 rows instead of 293. Every SR and TSR run in that window ran with a nearly
-inactive fold (\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}outstanding\_\allowbreak{}2026-10-21.\allowbreak{}md}, T57); none
-of the SRBench results above is in that window except the rebuild control and
-the TSR speed measurements.
+inactive fold (\src{fuller docs/\allowbreak{}PLAN\_\allowbreak{}outstanding\_\allowbreak{}2026-10-21.\allowbreak{}md}, T57). A test
+(phylu \texttt{459d2214}) plants a blob in 40 rows of one beat: with the old
+stride the fold finds 4 of 40 and 276 of 292 subtrees are non-finite; today it
+finds 59, with 1 of 318 non-finite. Before \texttt{5ba2ff53} the evaluator's
+bound was the fold's stride of 128, so runs before it were not affected.
 \item \textbf{The beam put the live population back only when it kept a
 survivor}, after scoring its mutants in a scratch population over the device's
 (\src{tsr\_\allowbreak{}speed.\allowbreak{}md}, ``Found on the way'').
@@ -813,6 +823,13 @@ pre-registered run (the first ten official seeds, the truth-free protocol, all
 130 scored problems, TSR and untyped paired, \src{fuller
 docs/\allowbreak{}DESIGN\_\allowbreak{}tsr\_\allowbreak{}vs\_\allowbreak{}sr\_\allowbreak{}srbench\_\allowbreak{}runpod.\allowbreak{}md}) has not been run. Two official
 seeds were watched during judge-side fixes, which a report must state.
+\item \textbf{Runs with a nearly inactive fold.} SR\_OLD\_NEW (report of
+2026-10-20), the TSR speed measurements (2026-10-20) and the Feynman I.6.2a
+learning check ran between phylu \texttt{5ba2ff53} (2026-10-20) and the fold's
+fix \texttt{f706393d} (2026-10-21), so their fold read another expression's
+statistics. CASCADE2 (2026-09-30), TF\_DEV1 (2026-10-02), AB1 (2026-10-08) and
+PROD1 (2026-09-30) predate \texttt{f706393d} but also \texttt{5ba2ff53}, when
+the stride and the evaluator's bound were both 128.
 \item \textbf{The truth-free rate is on the easiest problems.} TF\_DEV1 covers
 the first 82 scored problems of an order built to put easy laws first.
 \item \textbf{One seed for the typing comparison}, and in AB1 the kitchen sink

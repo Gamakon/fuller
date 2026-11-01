@@ -242,8 +242,8 @@ node's class. It has 54 rewrites, all bit-identical. For each class there are
 27 identities: \texttt{map} with the identity row function is the matrix;
 \texttt{map2} with the binary identity is its first operand; and
 \texttt{transpose} is an involution. There are also 27 transposed-product rules,
-$(Y^\top X^\top)^\top = XY$ (\src{kingdoms/futhark_shapes/egraph.rules}). (The
-kingdom's README still says 27 rules; the committed table has 54.)
+$(Y^\top X^\top)^\top = XY$ (\src{kingdoms/futhark_shapes/egraph.rules}). The
+kingdom's README now also states 54 rules (da2eb221).
 
 Two costs rank the programs. The \emph{static cost} is a polynomial in the
 roles (traffic, allocations and serial depth), generated into
@@ -422,10 +422,22 @@ two programs alternate run by run on one upload of the timing input, at least
 1\,s a side, and each side takes its fastest run
 (\src{src/runner.rs:220}; \src{src/futhark_batch.rs:98}). Before any timed run
 an A/A gate times the published program against itself, and every A/A ratio
-must lie within $\pm5\,\%$. A champion counts as \emph{faster} only if the median
-of its 11-pair re-time is below the least A/A ratio \emph{and} at least 9 of its
-11 pairs are below 1. That is a sign test with one-sided $p=0.033$
-(\src{src/runner.rs:202}). Before scoring, the host computes each program's
+must lie within $\pm5\,\%$; every timed run writes the gate to
+\path{OUT/aa_gate.tsv} on all three paths (commit 20dd37ab). A champion counts as
+\emph{faster} only if the median of its 11-pair re-time is below a floor
+\emph{and} at least 9 of its 11 pairs are below 1. That is a sign test with
+one-sided $p=0.033$. The floor is the least median of $N$ re-times of the
+published program by the champion's own path (default $N=19$,
+\texttt{--aa-retimes}), so a false beat has probability $1/20$ (commit 0cce420b,
+\src{src/runner.rs}). The floor was first the least A/A ratio of the
+yardstick, timed by another process. Measured on histogram, the published
+program as its own champion then gave a false beat: median 0.9987, 11 of 11
+pairs faster, against a floor of 0.9994. Each timing process carries its own
+offset of about 0.1\,\%, so medians from a different process are not a fair
+floor. Against 5 re-times by its own path the same program is matched (0.9986
+against a floor of 0.9968). Pathfinder is timed on the published benchmark's
+shape, $100\times100000$: 2.45\,ms a run, A/A gate 22 of 22 within 5\,\%
+(ratios 0.979--1.027). Before scoring, the host computes each program's
 exact node executions on the case sizes (\src{src/futhark_sig.rs:877}). A
 program above the device's per-submit cap stops the run as misconfigured. A
 program above the timing cap is not timed.
@@ -618,9 +630,11 @@ program, so they explore correctness. With the population on the device
 ($n=m=p=8$), the correct count moved between 5 and 12 of 32 and never settled,
 although the best individual was correct. The fitness recorded in that run is the
 earlier two-band form: its logged best, 0.15313, equals
-$0.49\cdot320/(320+704)$. The code now computes the two-level HFF instead
-(\src{src/futhark_shapes_evolve.rs:1104}), so that run predates the current
-fitness.
+$0.49\cdot320/(320+704)$. The code now gates the fitness by correctness (commit f572a7cc): an exact
+program scores below $\pi/2$, an inexact one scores $\pi/2$ plus its quality
+angle, and an unexpressed gene scores 4.0, so every exact program ranks above
+every inexact one. All earlier shape-kingdom runs, this one included, used the
+ungated two-band fitness.
 
 \subsection{The benchmark study}
 \label{sec:study}
@@ -733,7 +747,7 @@ distorts measurement, m = minor. Three were suspected rather than confirmed (17,
 10 & M & R and C share generation 0 & C has its own seed stream (E)\\
 11 & M & held-out cases are in the fitness & a test split that selection never sees (G)\\
 12 & M & \texttt{--rescore} uses the old verdict rule & one verdict function (G)\\
-13 & M & batched timing fails the A/A gate; selection on in-run slots chose noise; the floor is an extreme value; pathfinder timed on a quality case & interleaved pairs (Section~\ref{sec:fixes}); the floor and pathfinder's timing input are \emph{not} changed\\
+13 & M & batched timing fails the A/A gate; selection on in-run slots chose noise; the floor is an extreme value; pathfinder timed on a quality case & interleaved pairs (Section~\ref{sec:fixes}); the floor is the least median of 19 own-path re-times; pathfinder timed on $100\times100000$ (0cce420b)\\
 14 & M & legal programs the compiler cannot build are scored worst & patches 0007--0009 (Section~\ref{sec:fixes})\\
 15 & M & champion fields from the last batch & from the hall of fame's rank 1 (G)\\
 16 & M & hall of fame mixes stage-1 and stage-2 fitness & one hall of fame per stage (G)\\
@@ -951,11 +965,31 @@ SetMem of device or shared memory in a kernel loop or conditional (143 corpus pr
 a unit scalar as a kernel argument (192 programs) & patch 0007\\
 flatten pairs every SegHist operator with the first one's shapes (38 programs; also in Futhark 0.28.1) & patch 0009; reported upstream with a test case\\
 all compile failures & 376 of 376 corpus programs compile on the webgpu and rust paths; the default compiler is the fork with all 9 patches\\
-timed runs re-uploaded the 126\,MB input; the GPU clock stepped down in the gaps & one upload per timed command, runs interleaved one by one. A/A gate: 7/22 batch, 12/22 rust, 9/22 single before; 22/22 on all three after\\
+timed runs re-uploaded the 126\,MB input; the GPU clock stepped down in the gaps & one upload per timed command, runs interleaved one by one. A/A gate: 7/22 batch, 12/22 rust, 9/22 single before; 22/22 on all three after (\path{aa_gate.tsv}, Table~\ref{tab:aagate})\\
 timing work bound counted loop trips, not nodes; Fable's exact program left untimed & bound $5.9\times10^{10}$ node executions\\
 generation 0 differed by path & the single path's unpatched compiler wrote no C for 4 programs (SetMem); same compiler on every path\\
 \bottomrule
 \end{tabularx}
+\end{table}
+
+\begin{table}[t]
+\centering\small
+\caption{A/A gates after the fixes, read from each run's \texttt{aa\_gate.tsv}: 22
+ratios of the published program timed against itself (11 noise-floor, 11 in-run).
+Histogram at $k=100$, $n=15{,}728{,}640$; pathfinder at $100\times100000$.}
+\label{tab:aagate}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+run & problem & least & greatest & within 5\,\%\\
+\midrule
+aa3, batch  & histogram  & 0.9989 & 1.0029 & 22/22\\
+aa3, rust   & histogram  & 0.9988 & 1.0020 & 22/22\\
+aa3, single & histogram  & 0.9989 & 1.0021 & 22/22\\
+aa4, batch  & histogram  & 0.9990 & 1.0021 & 22/22\\
+aa4, rust (full run) & histogram & 0.9989 & 1.0016 & 22/22\\
+fault 13 check & pathfinder & 0.9794 & 1.0266 & 22/22\\
+\bottomrule
+\end{tabular}
 \end{table}
 
 %======================================================================
@@ -999,9 +1033,9 @@ rust path the reference also runs, so that win depends on the backend.
 \item \textbf{The slope check's bar was changed after measurements were seen}
   (99\,\% to 95\,\%), with the reason recorded. The chosen formula's histogram
   Spearman is small ($+0.079$).
-\item \textbf{Timing fault 13 is only partly fixed.} The verdict still compares a
-  median with the least of 22 A/A ratios, and pathfinder is still timed on a
-  quality case (\texttt{timing\_n = 0}, \src{src/futhark_sig.rs:163}).
+\item \textbf{Timing fault 13 was fixed after the reported runs} (0cce420b).
+  Every run reported here used the old floor (the least A/A ratio) and timed
+  pathfinder on a quality case.
 \item \textbf{Operators.} Inversion and transposition have rates but no runs.
   Elite edits by a language model are planned, not built.
 \item \textbf{One machine and one GPU family}: an Apple M3 Max under Metal.
@@ -1015,8 +1049,7 @@ rust path the reference also runs, so that win depends on the backend.
 \item \textbf{The pixel family produced no picture from random}, and is parked.
 \item \textbf{Documentation lag.} Some documents disagree with the code. The
   runner's header still lists the study's seven quality inputs, the matrix
-  README says 27 e-graph rules where the table has 54, and the phylu short paper
-  describes the two-band fitness. This paper follows the code.
+  the phylu short paper describes the two-band fitness. This paper follows the code.
 \end{itemize}
 
 %======================================================================
