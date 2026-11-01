@@ -1,0 +1,10 @@
+# kind	name	element	dims
+# written by kingdoms/futhark/sniff.py from tests/corpus/futhark_problems/reduce/yardstick.fut, entry main
+master	1		
+element	i32		
+input	xs	i32	n
+output	main	i32	
+depth	2		
+families			
+literals	0,1,2,-1,10		
+dims	n		

@@ -5,11 +5,13 @@
 -- its input. The helper `min` and the kernel (the copy of row 0 and the loop)
 -- are the published text unchanged; `sobol_walls.fut` and the test
 -- `the_yardstick_is_the_published_kernel` check it gives medium.out on the
--- published walls.
+-- published walls. The entry's parameter is `walls`, the kingdom's input
+-- name, bound to the kernel's `wall` (the sniffer reads the name from here).
 
 def min (a: i32, b: i32) : i32 = if (a <= b) then a else b
 
-entry main [rows][cols] (wall: [rows][cols]i32) : [cols]i32 =
+entry main [rows][cols] (walls: [rows][cols]i32) : [cols]i32 =
+  let wall = walls
   let result = copy (wall[0])
   ---------------
   -- 1. Kernel --

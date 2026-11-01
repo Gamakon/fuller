@@ -55,9 +55,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # THE INTERFACE. What the program's signature declares.
 # --------------------------------------------------------------------------
 
+# The A7 view's specification: the dimension roles and the root. The rows are
+# the master's matrix family (`master/rows.tsv`), expanded by the view
+# (`view.py`); this generator derives the cost table and the e-graph from them
+# and witnesses all of it.
+import view as master_view  # noqa: E402
+
+A7_SPEC_PATH = os.path.join(HERE, "view.tsv")
+with open(A7_SPEC_PATH) as _f:
+    A7_SPEC_TEXT = _f.read()
+A7_SPEC = master_view.read_spec(A7_SPEC_TEXT)
+
 # The dimension roles. Each is a dimension variable in the generated Futhark
 # source, so `mat.n.m` and `mat.m.p` share the `m`.
-ROLES = ["n", "m", "p"]
+ROLES = A7_SPEC["roles"]
 
 # The shape classes: every ordered pair of roles. The set is the CLOSURE of
 # the declared inputs under the operators' effects -- `transpose` swaps a pair
@@ -75,13 +86,7 @@ FN = "fn.arr_f32_arr_f32"
 FN2 = "fn.arr2_f32_arr_f32_arr_f32"
 
 # The roots: the classes a gene may be rooted at.
-ROOTS = [("n", "p")]
-
-# The concrete sizes the harness uses, so the generated Futhark source can be
-# checked against a real compiler. The ROLES are what the source is
-# polymorphic in; these are only the sizes one harness run picks.
-SIZES = {"n": 2, "m": 3, "p": 4}
-
+ROOTS = [tuple(A7_SPEC["root"])]
 
 # --------------------------------------------------------------------------
 # The class names. The dual name is what the tables carry; the tuple is what
@@ -140,173 +145,44 @@ OPERATORS = [
 ]
 
 
-def operator_rows():
-    """Every row of the kingdom: the operator templates, instantiated over the
-    class set.
+def _matrix_view():
+    """The A7 view's tables and rows, from the master (computed once)."""
+    if not hasattr(_matrix_view, "cache"):
+        _matrix_view.cache = master_view.matrix_view(A7_SPEC_TEXT)
+    return _matrix_view.cache
 
-    A template's type is PARAMETRIC; a row's type is a concrete class. The
-    instantiation is the unification, and it happens here.
-    """
-    rows = []
-    for d1, d2 in MATRIX_CLASSES:
-        c = (d1, d2)
-        # `map` over the rows: shape-preserving.
-        rows.append({
-            "name": f"map_rows@{mat_class(d1, d2)}",
-            "out": c,
-            "args": [FN, c],
-            "spelling": "map {0} {1}",
-            "note": "map a row function over the rows",
-        })
-        # `map2` over the rows: shape-preserving, and the two matrices must
-        # have the SAME class -- the relation the class set makes explicit.
-        # The function is a TWO-argument row function, because Futhark's
-        # `map2` is curried.
-        rows.append({
-            "name": f"map2_rows@{mat_class(d1, d2)}",
-            "out": c,
-            "args": [FN2, c, c],
-            "spelling": "map2 {0} {1} {2}",
-            "note": "map a binary row function over two matrices of the same class",
-        })
-        # `transpose`: swaps the roles. The row exists only if the swapped
-        # class is in the set.
-        if swap(c) in MATRIX_CLASSES:
-            rows.append({
-                "name": f"transpose@{mat_class(d1, d2)}",
-                "out": swap(c),
-                "args": [c],
-                "spelling": "transpose {0}",
-                "note": "transpose a matrix",
-            })
-    # `matmul`: the shape-sensitive one. Its two arguments must agree on the
-    # inner role, and the result is the outer roles. Enumerating the triples
-    # over the class set IS the unification.
-    for d1, d2, d3 in itertools.product(ROLES, ROLES, ROLES):
-        a, b, out = (d1, d2), (d2, d3), (d1, d3)
-        if a in MATRIX_CLASSES and b in MATRIX_CLASSES and out in MATRIX_CLASSES:
-            rows.append({
-                "name": f"matmul@{mat_class(*a)}x{mat_class(*b)}",
-                "out": out,
-                "args": [a, b],
-                "spelling": "matmul {0} {1}",
-                "note": "matrix multiplication; the inner roles must agree",
-            })
-    return rows
+
+def _mrow(r):
+    """A view row as the matrix generator reasons about it: a matrix class as its pair of roles."""
+    cls = lambda c: parse_class(c) or c  # noqa: E731
+    return {"name": r["name"], "out": cls(r["out"]), "args": [cls(a) for a in r["args"]],
+            "spelling": r["spelling"], "note": r["note"]}
+
+
+def operator_rows():
+    """The operator rows of the A7 view (the master's matrix-family templates instantiated over the class set:
+    the instantiation is the unification)."""
+    return [_mrow(r) for r in _matrix_view()[1] if r["kind"] == "function" and "@" in r["name"]]
 
 
 def function_rows():
     """The elementary row functions: the rows of the function classes."""
-    return [
-        {
-            "name": f"{FN}.id",
-            "out": FN,
-            "args": [],
-            "spelling": "\\xs -> xs",
-            "note": "the identity row function",
-        },
-        {
-            "name": f"{FN}.add1",
-            "out": FN,
-            "args": [],
-            "spelling": "\\xs -> map (+1.0) xs",
-            "note": "add one to every element",
-        },
-        {
-            "name": f"{FN}.scale2",
-            "out": FN,
-            "args": [],
-            "spelling": "\\xs -> map (*2.0) xs",
-            "note": "double every element",
-        },
-        {
-            "name": f"{FN2}.id",
-            "out": FN2,
-            "args": [],
-            "spelling": "\\xs _ys -> xs",
-            "note": "the identity binary row function",
-        },
-        {
-            "name": f"{FN2}.add1",
-            "out": FN2,
-            "args": [],
-            "spelling": "\\xs _ys -> map (+1.0) xs",
-            "note": "add one to every element, ignoring the second row",
-        },
-        {
-            "name": f"{FN2}.add",
-            "out": FN2,
-            "args": [],
-            "spelling": "\\xs ys -> map2 (+) xs ys",
-            "note": "add the two rows elementwise -- a genuinely binary row function",
-        },
-    ]
+    return [_mrow(r) for r in _matrix_view()[1] if r["kind"] == "function" and "@" not in r["name"]]
 
 
 def terminal_rows():
-    """One input terminal per class.
-
-    The kingdom contract requires a terminal for every demanded class, and a
-    class is demanded by any row that mentions it. A terminal need not be an
-    external input -- a derived terminal (like the 1-D Futhark kingdom's
-    `scn.f32.identity`) is legal -- but for the PoC every class gets its own
-    input, which is the simplest interface that satisfies the contract.
-    """
-    rows = []
-    for c in MATRIX_CLASSES:
-        rows.append({
-            "name": f"{mat_class(*c)}.input",
-            "out": c,
-            "args": [],
-            "spelling": input_name(c),
-            "note": f"the interface's {c[0]}x{c[1]} matrix",
-        })
-    rows.append({
-        "name": f"{FN}.const",
-        "out": FN,
-        "args": [],
-        "spelling": "\\xs -> map (\\_ -> 0.0) xs",
-        "note": "the constant zero row function",
-    })
-    rows.append({
-        "name": f"{FN2}.const",
-        "out": FN2,
-        "args": [],
-        "spelling": "\\xs _ys -> map (\\_ -> 0.0) xs",
-        "note": "the constant zero binary row function",
-    })
-    return rows
+    """The terminals: one input a class, and the two constant row functions."""
+    return [_mrow(r) for r in _matrix_view()[1] if r["kind"] == "terminal"]
 
 
 def type_rows():
-    """One dual per class, plus the function class."""
-    rows = []
-    for d1, d2 in MATRIX_CLASSES:
-        rows.append({
-            "dual": mat_class(d1, d2),
-            "slot": "mat",
-            "form": f"{d1}.{d2}",
-            "literals": [],
-            "root": (d1, d2) in ROOTS,
-            "meaning": f"a 2-D array whose dims are the interface's {d1} and {d2}",
-        })
-    rows.append({
-        "dual": FN,
-        "slot": "fn",
-        "form": "arr_f32_arr_f32",
-        "literals": [],
-        "root": False,
-        "meaning": "a row function, []f32 -> []f32",
-    })
-    rows.append({
-        "dual": FN2,
-        "slot": "fn",
-        "form": "arr2_f32_arr_f32_arr_f32",
-        "literals": [],
-        "root": False,
-        "meaning": "a binary row function, []f32 -> []f32 -> []f32",
-    })
-    return rows
+    """One dual a class, plus the function classes, from the A7 view's types."""
+    out = []
+    for line in _matrix_view()[0]["types.tsv"].splitlines()[1:]:
+        f = line.split("\t")
+        out.append({"dual": f[1], "slot": f[2], "form": f[3], "literals": [x for x in f[4].split(",") if x],
+                    "root": f[5] == "yes", "meaning": f[6]})
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1709,70 +1585,37 @@ def pixel_dir(instance):
 #   variables of its context and the interface's inputs. An input array whose
 #   class no function produces is one context-free type.
 # * **The work is bounded by the types.** A binder, a reduction, a `map2` and a
-#   `replicate` exist only in a context shallower than `SIG_DEPTH`, so a node
-#   runs at most `max(D) ** SIG_DEPTH` times. Every rank-1 class has the
+#   `replicate` exist only in a context shallower than the view's depth, so a
+#   node runs at most `max(D) ** depth` times. Every rank-1 class has the
 #   zero array as a terminal, bound once by the entry point (`zeros_D`), so
 #   it costs nothing where it is read.
 #
 # The root is the output class in the empty context `c`.
 
-SIG_DEPTH = 2
+# THE PROBLEMS: each is a view over the master, its specification `sig/<problem>/view.tsv` written by the sniffer
+# (`sniff.py`) from the problem's Futhark source. The rows are the master's signature families (`master/rows.tsv`,
+# family `core` and the optional `scan`, `hist`, `mod`); the view (`view.py`) filters, binds and closes them.
+import sniff  # noqa: E402
 
-# The instances: the declared signature, the constant pool, and where it is
-# from. An input is (name, element, dims); the output is (element, dims).
-SIG_INSTANCES = {
-    "pathfinder": {
-        "source": "Rodinia pathfinder, diku-dk/futhark-benchmarks rodinia/pathfinder/pathfinder.fut",
-        "inputs": [("walls", "i32", ("rows", "cols"))],
-        "output": ("i32", ("cols",)),
-        "literals": ("0", "1", "2", "-1", "10"),
-    },
-    # The study's micro benchmarks (docs/STUDY_evolving_benchmarks.md). Each published program is an entry of
-    # diku-dk/futhark-benchmarks, copied under tests/corpus/futhark_problems/<problem>/published/.
-    "reduce": {
-        "source": "futhark-benchmarks micro/reduce.fut, entry sum_i32 (i32.sum: reduce (+) 0)",
-        "inputs": [("xs", "i32", ("n",))],
-        "output": ("i32", ()),
-        "literals": ("0", "1", "2", "-1", "10"),
-    },
-    "scan": {
-        "source": "futhark-benchmarks micro/scan.fut, entry sum_i32 (scan (+) 0, inclusive)",
-        "inputs": [("xs", "i32", ("n",))],
-        "output": ("i32", ("n",)),
-        "literals": ("0", "1", "2", "-1", "10"),
-        "families": ("scan",),
-    },
-    "histogram": {
-        "source": "futhark-benchmarks micro/reduce_by_index.fut, entry sum_i32 (hist (+) 0 k (is % k) vs)",
-        "inputs": [("k", "size", ()), ("is", "i32", ("n",)), ("vs", "i32", ("n",))],
-        "output": ("i32", ("k",)),
-        "literals": ("0", "1", "2", "-1", "10"),
-        "families": ("hist", "mod"),
-    },
+SIG_PROBLEMS = {
+    "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main"),
+    "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main"),
+    "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main"),
+    "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main"),
 }
 
-# THE OPTIONAL FAMILIES, carried by an instance that names them in "families" (an instance that names none, such
-# as pathfinder, is unchanged by their existence). Each is general: its rows are made for every class and context
-# the instance has, and its legality is carried by the types as the core rows' is.
+# THE WITNESS MODELS of the optional families and of the element rows: the templates restated by hand, apart from the
+# master, so the per-view checks compare the master's expansion with an independent statement of what each row is.
 #
-# * `scan`: the inclusive prefix scans of a rank-1 array, `scan op ne xs` with its neutral element. A heavy row
-#   (it costs its array's length), so only a context shallower than the depth holds one.
+# * `scan`: the inclusive prefix scans of a rank-1 array, `scan op ne xs` with its neutral element. A heavy row.
 # * `hist`: the histogram of a rank-1 array of values `vs: [m]` at a rank-1 array of indices `is: [m]` of the
-#   same class (so of the same length, by its type) into a `[d]` array, every pair of rank-1 classes:
-#   `hist op ne d (map i64.i32 is) vs`. An index outside `[0, d)` is ignored (Futhark's `hist` is total), so every
-#   index array is legal. Heavy.
-# * `mod`: a value modulo a dimension's size, `x % i32.i64 D` (Futhark's `%` rounds toward negative infinity, so
-#   the value is in `[0, D)`; total, since every dimension is at least 1): how a value becomes a bin.
-#
-# A SIZE INPUT (element "size", no dims) is a dimension given as an `i32` value parameter of the entry point,
-# rather than by an array's shape, as the published histogram's `k`: the entry point binds `let k = i64.i32 k`, so
-# in the body it is a size like any other.
+#   same class into a `[d]` array: `hist op ne d (map i64.i32 is) vs`. An index outside `[0, d)` is ignored
+#   (Futhark's `hist` is total). Heavy.
+# * `mod`: a value modulo a dimension's size, `x % i32.i64 D` (in `[0, D)`; every dimension is at least 1).
 #
 # A scan's array is spelled `opaque`: Futhark 0.28.1's "Fuse SOACs" pass breaks on a scan whose input is a scan (or
 # a map of one): `scan (+) 0 (scan (+) 0 xs)` is an internal compiler error ("Name ... bound twice", measured
-# 2026-10-27 on every pair of the three operators), and `opaque` (the prelude's identity that the optimiser does not
-# see through) stops that fusion. A legal gene must compile, so every scan carries it; the cost is the fusion of a
-# scan with its producer, which a timed candidate pays and the e-graph cannot remove.
+# 2026-10-27), and `opaque` stops that fusion. A legal gene must compile, so every scan carries it.
 SIG_SCANS = {"i32": [("add", "scan (+) 0i32 (opaque {0})"), ("min", "scan i32.min i32.highest (opaque {0})"),
                      ("max", "scan i32.max i32.lowest (opaque {0})")]}
 SIG_HISTS = {"i32": [("add", "hist (+) 0i32 {D} (map i64.i32 {0}) {1}"),
@@ -1781,8 +1624,8 @@ SIG_HISTS = {"i32": [("add", "hist (+) 0i32 {D} (map i64.i32 {0}) {1}"),
 SIG_MOD = "{0} % i32.i64 {D}"
 SIG_FAMILIES = ("scan", "hist", "mod")
 
-# The element operators, by element type: (name, arity, spelling). Every one
-# is total on its type (i32 arithmetic wraps; no division, which traps on 0).
+# The element operators, by element type: (name, arity, spelling), restated for the witnesses. Every one is total
+# on its type (i32 arithmetic wraps; no division, which traps on 0).
 SIG_ELEMENT_OPS = {
     "i32": [
         ("add", 2, "{0} + {1}"),
@@ -1819,314 +1662,30 @@ def sig_class_dims(cls):
     return tuple(cls.split(".")[1:]) if cls.startswith("a.") else ()
 
 
-def sig_signature(inst):
-    """The instance's element, dims (in order of first appearance), classes and
-    rank-1 classes. One element type an instance (the family holds one); a size input (element "size") is a
-    dimension, not a value of the element type."""
-    elems = {e for _, e, _ in inst["inputs"] if e != "size"} | {inst["output"][0]}
-    if len(elems) != 1 or next(iter(elems)) not in SIG_ELEMENT_OPS:
-        raise ValueError(f"the signature family holds one element type of {sorted(SIG_ELEMENT_OPS)}: {sorted(elems)}")
-    elem = next(iter(elems))
-    unknown = [f for f in inst.get("families", ()) if f not in SIG_FAMILIES]
-    if unknown:
-        raise ValueError(f"the families {unknown} are not of {SIG_FAMILIES}")
-    dims = []
-    for name, e, ds in inst["inputs"]:
-        if e == "size":
-            if ds or name in dims:
-                raise ValueError(f"the size input {name} has dims {ds} or repeats a dimension")
-            dims.append(name)
-        for d in ds:
-            if d not in dims:
-                dims.append(d)
-    out_dims = inst["output"][1]
-    if any(d not in dims for d in out_dims):
-        raise ValueError(f"the output's dims {out_dims} are not all dims of an input {dims}: its size would be unknown")
-    if len(out_dims) > 1:
-        raise ValueError("the family produces scalar and rank-1 outputs (a rank-2 output is not yet a family row)")
-    for d in dims:
-        if not re.fullmatch(r"[a-z][a-z0-9]*", d) or d in ("c",):
-            raise ValueError(f"the dim {d} is not a plain lower-case name")
-    classes = []
-
-    def add(c):
-        if c not in classes:
-            classes.append(c)
-            ds = sig_class_dims(c)
-            if len(ds) >= 2:
-                add(sig_class(elem, ds[1:]))
-
-    for _, e, ds in inst["inputs"]:
-        if e != "size":
-            add(sig_class(elem, ds))
-    add(sig_class(elem, out_dims))
-    for d in dims:
-        add(sig_class(elem, (d,)))
-    rank1 = [c for c in classes if len(sig_class_dims(c)) == 1]
-    return elem, dims, classes, rank1
 
 
-def sig_futhark_type(cls, elem):
-    """A class as a Futhark type: `a.rows.cols` -> `[rows][cols]i32`. A loop's state is declared with it, because
-    Futhark gives an array state whose size is not declared a fresh unknown size (the state could change size)."""
-    return "".join(f"[{d}]" for d in sig_class_dims(cls)) + elem
+def sig_class(elem, dims):
+    return f"a.{'.'.join(dims)}" if dims else elem
 
 
-def sig_frame_code(f):
-    return f"T-{f[1]}" if f[0] == "T" else f"{f[0]}-{f[1]}-{f[2]}"
+def sig_class_dims(cls):
+    """`a.rows.cols` -> ("rows", "cols"); a scalar -> ()."""
+    return tuple(cls.split(".")[1:]) if cls.startswith("a.") else ()
 
 
-def sig_ctx_name(ctx):
-    return "/".join(["c"] + [sig_frame_code(f) for f in ctx])
+def sig_spec_path(name):
+    return os.path.join(sig_dir(name), "view.tsv")
 
 
-def sig_vars(elem, ctx):
-    """The variables a context binds: (name, class), outermost first."""
-    out = []
-    for k, f in enumerate(ctx, start=1):
-        if f[0] == "T":
-            out.append((f"j{k}", f"ix.{f[1]}"))
-        else:
-            out.append((f"s{k}", f[2]))
-            out.append((f"i{k}", f"ix.{f[1]}"))
-    return out
-
-
-def sig_rows(name):
-    """Every row of an instance, before the closure from the root."""
-    inst = SIG_INSTANCES[name]
-    elem, dims, classes, rank1 = sig_signature(inst)
-    fams = inst.get("families", ())
-    states = [elem] + rank1
-    produced = set(rank1) | {elem}
-    free = [c for c in classes if c not in produced]  # rank >= 2 with no producer: context-free
-    binders = [("T", d) for d in dims] + [(kind, d, s) for kind in ("L", "F") for d in dims for s in states]
-    ctxs = [()]
-    frontier = [()]
-    for _ in range(SIG_DEPTH):
-        nxt = []
-        for c in frontier:
-            for b in binders:
-                nxt.append(c + (b,))
-        ctxs += nxt
-        frontier = nxt
-
-    def dual(cls, ctx):
-        if cls in free:
-            return cls
-        return f"{cls}:{sig_ctx_name(ctx)}"
-
-    rows = []
-
-    def fn(nm, out, args, spelling, note):
-        rows.append({"name": f"{nm}@{out}", "kind": "function", "out": out, "args": args, "spelling": spelling, "note": note})
-
-    def term(nm, out, spelling, note, kind="terminal"):
-        rows.append({"name": f"{nm}@{out}" if kind == "terminal" else nm, "kind": kind, "out": out, "args": [], "spelling": spelling, "note": note})
-
-    for ctx in ctxs:
-        k = len(ctx) + 1
-        shallow = len(ctx) < SIG_DEPTH
-        e = dual(elem, ctx)
-        vs = sig_vars(elem, ctx)
-        for op, arity, spelling in SIG_ELEMENT_OPS[elem]:
-            fn(op, e, [e] * arity, spelling, f"{op} on {elem}")
-        for c in rank1:
-            (d,) = sig_class_dims(c)
-            fn(f"get.{d}", e, [dual(c, ctx), dual(f"ix.{d}", ctx)], "{0}[{1}]", f"an element of a [{d}] array, at an index in range")
-            if shallow:
-                for r, spelling in SIG_REDUCTIONS[elem]:
-                    fn(f"{r}.{d}", e, [dual(c, ctx)], spelling, f"the {r} of a [{d}] array")
-        for d in dims:
-            fn(f"ival.{d}", e, [dual(f"ix.{d}", ctx)], f"{elem}.i64 {{0}}", f"an index into [{d}] as a value")
-            term(d, e, f"{elem}.i64 {d}", f"the size {d} as a value")
-            if "mod" in fams:
-                fn(f"mod.{d}", e, [e], SIG_MOD.replace("{D}", d), f"a value modulo the size {d}, in [0, {d})")
-        term(f"?_{e}", e, "", "a literal of the constant pool", kind="const")
-        for v, c in vs:
-            if c == elem:
-                term(v, e, v, f"the loop state {v}")
-        for d in dims:
-            ix = dual(f"ix.{d}", ctx)
-            fn("prev", ix, [ix], SIG_IX_PREV, f"the previous index into [{d}], clamped at 0")
-            fn("next", ix, [ix], SIG_IX_NEXT.replace("{D}", d), f"the next index into [{d}], clamped at {d} - 1")
-            fn("clamp", ix, [e], SIG_IX_CLAMP.replace("{D}", d), f"a value clamped into an index of [{d}]")
-            term("zero", ix, "0i64", f"the first index into [{d}]")
-            term("last", ix, f"{d} - 1", f"the last index into [{d}] (every dim is at least 1)")
-            for v, c in vs:
-                if c == f"ix.{d}":
-                    term(v, ix, v, f"the bound index {v}")
-        for c in rank1:
-            (d,) = sig_class_dims(c)
-            a = dual(c, ctx)
-            if shallow:
-                fn("tab", a, [dual(elem, ctx + (("T", d),))], f"tabulate {d} (\\j{k} -> {{0}})", f"a [{d}] array, element j{k} by its body")
-                fn("replicate", a, [e], f"replicate {d} {{0}}", f"a [{d}] array of one value")
-                for m, spelling in SIG_MAP2[elem]:
-                    fn(f"map2.{m}", a, [a, a], spelling, f"elementwise {m} of two [{d}] arrays")
-                if "scan" in fams:
-                    for m, spelling in SIG_SCANS[elem]:
-                        fn(f"scan.{m}", a, [a], spelling, f"the inclusive {m} scan of a [{d}] array")
-                if "hist" in fams:
-                    for c2 in rank1:
-                        (m2,) = sig_class_dims(c2)
-                        for m, spelling in SIG_HISTS[elem]:
-                            fn(f"hist.{m}.{m2}", a, [dual(c2, ctx), dual(c2, ctx)], spelling.replace("{D}", d),
-                               f"the {m} histogram into [{d}] of [{m2}] values at [{m2}] indices (outside [0, {d}) ignored)")
-            for y in classes:
-                ys = sig_class_dims(y)
-                if len(ys) >= 2 and sig_class(elem, ys[1:]) == c:
-                    fn(f"row.{'.'.join(ys)}", a, [dual(y, ctx), dual(f"ix.{ys[0]}", ctx)], "{0}[{1}]", f"a row of a [{']['.join(ys)}] array")
-            for v, vc in vs:
-                if vc == c:
-                    term(v, a, v, f"the loop state {v}")
-            for iname, ielem, ids in inst["inputs"]:
-                if sig_class(ielem, ids) == c:
-                    term(iname, a, iname, "an input of the interface")
-            term("zeros", a, f"zeros_{d}", f"the zero [{d}] array (bound once by the entry point)")
-        if shallow:
-            for s in states:
-                out = dual(s, ctx)
-                st = sig_futhark_type(s, elem)
-                for d in dims:
-                    fn(f"loop.{d}", out, [out, dual(s, ctx + (("L", d, s),))],
-                       f"loop (s{k}: {st}) = {{0}} for i{k} < {d} do {{1}}", f"a loop over [{d}] carrying s{k}, its counter i{k}")
-                    fn(f"loop1.{d}", out, [out, dual(s, ctx + (("F", d, s),))],
-                       f"loop (s{k}: {st}) = {{0}} for t{k} < {d} - 1 do let i{k} = t{k} + 1 in {{1}}",
-                       f"a loop over 1 .. {d} - 1 carrying s{k}, its counter i{k}")
-    for c in free:
-        for iname, ielem, ids in inst["inputs"]:
-            if sig_class(ielem, ids) == c:
-                term(iname, c, iname, "an input of the interface")
-    root = dual(sig_class(*inst["output"]), ())
-    # The closure from the root: a type is kept when a kept row demands it.
-    keep = {root}
-    changed = True
-    while changed:
-        changed = False
-        for r in rows:
-            if r["out"] in keep:
-                for a in r["args"]:
-                    if a not in keep:
-                        keep.add(a)
-                        changed = True
-    rows = [r for r in rows if r["out"] in keep]
-    return rows, root
-
-
-def sig_types(name, rows, root):
-    inst = SIG_INSTANCES[name]
-    elem = inst["output"][0]
-    literals = [f"{l}{elem}" for l in inst["literals"]]
-    named = []
-    for r in rows:
-        for d in [r["out"]] + r["args"]:
-            if d not in named:
-                named.append(d)
-    named.sort(key=lambda d: (d != root, d.count("/"), d))
-    out = []
-    for d in named:
-        cls, _, ctx = d.partition(":")
-        slot = "ix" if cls.startswith("ix.") else ("arr" if cls.startswith("a.") else elem)
-        meaning = {"ix": f"an index in range for [{cls[3:]}]", "arr": f"a [{']['.join(sig_class_dims(cls))}]{elem}",
-                   elem: f"an {elem}"}[slot] + (f", in the context {ctx}" if ctx else ", the interface's input class")
-        out.append({"dual": d, "slot": slot, "form": cls, "literals": literals if slot == elem else [],
-                    "root": d == root, "meaning": meaning})
-    return out
-
-
-def sig_sort(dual):
-    return "S" + re.sub(r"[^A-Za-z0-9]", "_", dual)
-
-
-def sig_ctor(row):
-    if row["kind"] == "const":
-        return "C" + sig_sort(row["out"])[1:]
-    op = row["name"].split("@", 1)[0]
-    return "X" + re.sub(r"[^A-Za-z0-9]", "_", op) + "__" + sig_sort(row["out"])[1:]
-
-
-def sig_egraph_texts(types, rows, root, elem, literals):
-    data = ["; The signature family's e-graph datatype, generated by gen_tables.py.",
-            "; One sort per dual: the sort IS the type (class and context).", ""]
-    for t in types:
-        data.append(f"(sort {sig_sort(t['dual'])})")
-    data.append("")
-    for r in rows:
-        if r["kind"] == "const":
-            data.append(f"(constructor {sig_ctor(r)} (i64) {sig_sort(r['out'])})")
-        else:
-            data.append(f"(constructor {sig_ctor(r)} ({' '.join(sig_sort(a) for a in r['args'])}) {sig_sort(r['out'])})")
-    # The rules: identities of wrapping i32 arithmetic and of min/max, exact on
-    # every input (no rule that changes a value): commutativity of + * min max,
-    # associativity of + min max (one direction), a - b = a + (-b), -(-a) = a.
-    rules = ["; The signature family's e-graph ruleset, generated by gen_tables.py.", "(ruleset futhark_sig)", ""]
-    for t in types:
-        if t["slot"] != elem:
-            continue
-        e = t["dual"]
-        c = {op: sig_ctor({"name": f"{op}@{e}", "out": e, "kind": "function"}) for op, _, _ in SIG_ELEMENT_OPS[elem]}
-        rules.append(f"; {e}")
-        for op in ("add", "mul", "min", "max"):
-            rules.append(f"(rewrite ({c[op]} a b) ({c[op]} b a) :ruleset futhark_sig)")
-        for op in ("add", "min", "max"):
-            rules.append(f"(rewrite ({c[op]} a ({c[op]} b d)) ({c[op]} ({c[op]} a b) d) :ruleset futhark_sig)")
-        rules.append(f"(rewrite ({c['sub']} a b) ({c['add']} a ({c['neg']} b)) :ruleset futhark_sig)")
-        rules.append(f"(rewrite ({c['neg']} ({c['neg']} a)) a :ruleset futhark_sig)")
-        rules.append("")
-    # Elementwise: commutativity of map2 + min max, and the idempotence of map2 min and max (exact: min a a = a).
-    for t in types:
-        if t["slot"] != "arr" or t["form"].count(".") != 1 or ":" not in t["dual"]:
-            continue
-        a = t["dual"]
-        c = {m: sig_ctor({"name": f"map2.{m}@{a}", "out": a, "kind": "function"}) for m, _ in SIG_MAP2[elem]}
-        if not any(r["name"] == f"map2.min@{a}" for r in rows):
-            continue
-        rules.append(f"; {a}")
-        for m in ("add", "min", "max"):
-            rules.append(f"(rewrite ({c[m]} a b) ({c[m]} b a) :ruleset futhark_sig)")
-        for m in ("min", "max"):
-            rules.append(f"(rewrite ({c[m]} a a) a :ruleset futhark_sig)")
-        rules.append("")
-    rtext = ["# row name\tconstructor\tsort"] + [f"{r['name']}\t{sig_ctor(r)}\t{sig_sort(r['out'])}" for r in rows]
-    stext = ["# dual\tsort"] + [f"{t['dual']}\t{sig_sort(t['dual'])}" for t in types]
-    return {
-        "egraph.datatype": "\n".join(data) + "\n",
-        "egraph.rules": "\n".join(rules) + "\n",
-        "egraph.rows": "\n".join(rtext) + "\n",
-        "egraph.sorts": "\n".join(stext) + "\n",
-    }
+def sig_spec(name):
+    with open(sig_spec_path(name)) as f:
+        return master_view.read_spec(f.read())
 
 
 def sig_tables(name):
-    inst = SIG_INSTANCES[name]
-    elem, dims, _, _ = sig_signature(inst)
-    rows, root = sig_rows(name)
-    types = sig_types(name, rows, root)
-    ttext = ["ref\tdual\tslot\tform\tliterals\troot\tmeaning"]
-    for i, t in enumerate(types, start=1):
-        ttext.append(f"T{i:04d}\t{t['dual']}\t{t['slot']}\t{t['form']}\t{','.join(t['literals'])}\t"
-                     f"{'yes' if t['root'] else 'no'}\t{t['meaning']}")
-    ordered = [r for r in rows if r["kind"] == "function"] + [r for r in rows if r["kind"] != "function"]
-    ftext = ["ref\tname\tkind\tout\targs\tspelling\tnote"]
-    for i, r in enumerate(ordered, start=1):
-        ftext.append(f"F{i:05d}\t{r['name']}\t{r['kind']}\t{r['out']}\t{';'.join(r['args'])}\t{r['spelling']}\t{r['note']}")
-    itext = ["# kind\tname\telement\tdims", f"# {inst['source']}"]
-    for iname, ielem, ids in inst["inputs"]:
-        if ielem == "size":
-            itext.append(f"size\t{iname}\ti32\t")
-        else:
-            itext.append(f"input\t{iname}\t{ielem}\t{','.join(ids)}")
-    itext.append(f"output\tmain\t{inst['output'][0]}\t{','.join(inst['output'][1])}")
-    itext.append(f"depth\t{SIG_DEPTH}\t\t")
-    itext.append(f"dims\t{','.join(dims)}\t\t")
-    out = {
-        "types.tsv": "\n".join(ttext) + "\n",
-        "functions.tsv": "\n".join(ftext) + "\n",
-        "interface.tsv": "\n".join(itext) + "\n",
-    }
-    out.update(sig_egraph_texts(types, ordered, root, elem, [f"{l}{elem}" for l in inst["literals"]]))
-    return out
+    """The written-out exact table of a problem's view: the tables and the e-graph."""
+    with open(sig_spec_path(name)) as f:
+        return master_view.signature_view(f.read())
 
 
 # ---- the signature family's witness tests -----------------------------------
@@ -2165,8 +1724,9 @@ def sig_parse_dual(dual):
 
 def witness_sig(dir_path, name):
     bad = []
-    inst = SIG_INSTANCES[name]
-    elem = inst["output"][0]
+    inst = sig_spec(name)
+    elem = inst["element"]
+    depth_bound = inst["depth"]
     types, funcs = read_tables(os.path.join(dir_path, "types.tsv"), os.path.join(dir_path, "functions.tsv"))
     declared = {t[1] for t in types}
     roots = [t[1] for t in types if t[5] == "yes"]
@@ -2175,7 +1735,7 @@ def witness_sig(dir_path, name):
         bad.append(f"S1 the roots are {roots}, the declared output is {want_root}")
     inputs = {n: f"a.{'.'.join(ds)}" for n, e, ds in inst["inputs"] if e != "size"}
     dims = [n for n, e, _ in inst["inputs"] if e == "size"] + [d for _, _, ds in inst["inputs"] for d in ds]
-    fams = inst.get("families", ())
+    fams = inst["families"]
     parsed = {}
     for t in types:
         try:
@@ -2275,8 +1835,8 @@ def witness_sig(dir_path, name):
             bad.append(f"S10 the modulo row {rname} is not a value modulo a dimension: {args} {spelling!r}")
         if op.startswith("map2.") and (args != [out, out] or (op[5:], spelling) not in set(SIG_MAP2[elem])):
             bad.append(f"S7 the elementwise row {rname} does not take two arrays of its own class: {args} {spelling!r}")
-        if heavy and depth >= SIG_DEPTH:
-            bad.append(f"S6 the row {rname} multiplies the work at depth {depth} (the bound is {SIG_DEPTH})")
+        if heavy and depth >= depth_bound:
+            bad.append(f"S6 the row {rname} multiplies the work at depth {depth} (the bound is {depth_bound})")
         # S7: an index row is one of the clamped templates of its own dim.
         if cls.startswith("ix.") and kind == "function":
             d = cls[3:]
@@ -2335,8 +1895,25 @@ def sig_dir(name):
 def sig_main(mode):
     """The signature family's instances: checked (the default) or written,
     staged and witnessed as the pixel family's are."""
-    for name in sorted(SIG_INSTANCES):
+    for name in sorted(SIG_PROBLEMS):
         out_dir = sig_dir(name)
+        # The specification first: the sniffer's reading of the problem's source, byte for byte.
+        src, entry = SIG_PROBLEMS[name]
+        spec_text = sniff.sniff(os.path.join(REPO, src), entry)
+        if mode == "--write":
+            with open(sig_spec_path(name), "w") as f:
+                f.write(spec_text)
+        else:
+            try:
+                with open(sig_spec_path(name), "rb") as f:
+                    got = f.read()
+            except OSError as e:
+                print(f"THE SIGNATURE INSTANCE {name} FAILED: its specification cannot be read: {e}")
+                return 1
+            if got != spec_text.encode("utf-8"):
+                print(f"THE SIGNATURE INSTANCE {name} FAILED: sig/{name}/view.tsv is not what the sniffer writes from "
+                      f"{src} ({first_difference(got, spec_text.encode('utf-8'))}); run with --write to regenerate")
+                return 1
         wanted = sig_tables(name)
         if mode == "--write":
             staged = os.path.join(out_dir, ".staged")
@@ -2384,6 +1961,180 @@ def sig_main(mode):
               f"({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}); "
               f"{'committed artefacts MATCH the generator, ' if mode == '--check' else 'written, '}witness tests PASS")
     return 0
+
+
+# --------------------------------------------------------------------------
+# THE MASTER WITNESSES. They read `master/` itself, apart from the expansion
+# code in `view.py`, and check what every view inherits: the row templates'
+# references and versions, their variables, their placeholders, the binders and
+# their frames, the work bound, the index templates, the elements' totality,
+# and the e-graph rules' soundness.
+# --------------------------------------------------------------------------
+
+MASTER_GLOBALS = {"E", "K", "OUT", "CTX"}
+QUANT_VARS = {"dims": [""], "rank1": [""], "states": ["", ".type", ".dims", ".br", ".d0"],
+              "free": ["", ".type", ".dims", ".br", ".d0"], "rows": ["", ".type", ".dims", ".br", ".d0"],
+              "vars": [""], "inputs": [""], "pairs": ["", ".a", ".b"], "swap": [""],
+              "triples": ["", ".ab", ".bc", ".ac"]}
+HEAVY_OPS = {"tab", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "loop", "loop1"}
+BINDER_SPELLINGS = {
+    "tab": ("{E}+T-{D}", "tabulate {D} (\\j{K} -> {0})"),
+    "loop": ("{S}+L-{D}-{S}", "loop (s{K}: {S.type}) = {0} for i{K} < {D} do {1}"),
+    "loop1": ("{S}+F-{D}-{S}", "loop (s{K}: {S.type}) = {0} for t{K} < {D} - 1 do let i{K} = t{K} + 1 in {1}"),
+}
+FRAME_BINDS = {"T": "j{K}:ix.{D}", "L": "s{K}:{S},i{K}:ix.{D}", "F": "s{K}:{S},i{K}:ix.{D}"}
+INTEGER_ELEMS = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+
+
+def witness_master(path=None):
+    """Check the master table itself. Returns the failures (empty = pass)."""
+    bad = []
+    mst = master_view.master(path or master_view.MASTER)
+    seen = set()
+    for r in mst["rows"]:
+        ref = r["ref"]
+        # M1: a reference is unique and well formed, and its version is the master's or older.
+        if not re.fullmatch(r"M\d{4}", ref) or ref in seen:
+            bad.append(f"M1 the reference {ref} is malformed or repeated")
+        seen.add(ref)
+        if not r["since"].isdigit() or not 1 <= int(r["since"]) <= mst["version"]:
+            bad.append(f"M1 the row {ref} has the version {r['since']}, the master is at {mst['version']}")
+        if r["kind"] not in ("function", "terminal", "const"):
+            bad.append(f"M1 the row {ref} has the kind {r['kind']}")
+        # M2: every variable is bound by the row's scope or is a global.
+        bound = set(MASTER_GLOBALS)
+        for q in [q for q in r["scope"].split(";") if q]:
+            if q == "C":
+                bound.add("C")
+                continue
+            m = master_view.QUANT_RE.match(q)
+            if not m or m.group(2) not in QUANT_VARS:
+                bad.append(f"M2 the row {ref} has the quantifier {q!r}, which the master does not define")
+                continue
+            for v in master_view.VAR_RE.findall(m.group(3) or ""):
+                if v not in bound:
+                    bad.append(f"M2 the quantifier {q} of {ref} reads {{{v}}} before it is bound")
+            bound |= {m.group(1) + sfx for sfx in QUANT_VARS[m.group(2)]}
+        for col in ("name", "out", "args", "spelling", "note"):
+            for v in master_view.VAR_RE.findall(r[col]):
+                if v not in bound:
+                    bad.append(f"M2 the {col} of {ref} reads {{{v}}}, which its scope does not bind")
+        if "+" in r["out"] or ("+" in r["args"] and "C" not in r["scope"].split(";")):
+            bad.append(f"M2 the row {ref} pushes a frame outside a context")
+        # M3: a function's spelling holds {0}..{n-1} once each, in order (Futhark's application is positional);
+        # a leaf holds none.
+        args = [a for a in r["args"].split(";") if a]
+        held = [int(x) for x in PLACEHOLDER_RE.findall(r["spelling"])]
+        if r["kind"] == "function" and held != list(range(len(args))):
+            bad.append(f"M3 the row {ref}'s spelling holds {held}, it has {len(args)} arguments")
+        if r["kind"] != "function" and (held or args):
+            bad.append(f"M3 the leaf {ref} has arguments or placeholders")
+        # M4: a binder's body is its own frame and its spelling binds that frame's variables; no other row pushes.
+        op = r["name"].split("@", 1)[0].split(".")[0]
+        pushes = [a for a in args if "+" in a]
+        if op in BINDER_SPELLINGS and r["family"] != "matrix":
+            body, spelling = BINDER_SPELLINGS[op]
+            if args[-1:] != [body] or len(pushes) != 1 or r["spelling"] != spelling:
+                bad.append(f"M4 the binder {ref} is not its own frame's binder: {args} {r['spelling']!r}")
+        elif pushes:
+            bad.append(f"M4 the row {ref} pushes a frame but is not a binder")
+        # M5: the work bound -- every heavy row of a context family holds only above the depth.
+        if r["family"] != "matrix" and op in HEAVY_OPS and r["when"] != "shallow":
+            bad.append(f"M5 the heavy row {ref} ({r['name']}) is not limited to a shallow context")
+        if r["when"] not in ("", "shallow"):
+            bad.append(f"M5 the row {ref} has the condition {r['when']!r}")
+        # M6: an index row is one of the clamped templates (restated by hand).
+        if r["out"].startswith("ix.") and r["kind"] == "function":
+            if (op, r["spelling"]) not in {("prev", SIG_IX_PREV), ("next", SIG_IX_NEXT),
+                                           ("clamp", SIG_IX_CLAMP.replace("i64.i32", "i64.{E}"))}:
+                bad.append(f"M6 the index row {ref} is not a clamped template: {r['spelling']!r}")
+        # M7: no integer element admits a division or a modulus by a value (each traps on 0); `mod` divides by a
+        # dimension, which is at least 1.
+        elems = INTEGER_ELEMS if r["elems"] == "*" else set(r["elems"].split(","))
+        if elems & INTEGER_ELEMS and (re.search(r"\{\d\} / ", r["spelling"])
+                                      or (re.search(r"% ", r["spelling"]) and "% {E}.i64 {D}" not in r["spelling"])):
+            bad.append(f"M7 the row {ref} divides an integer by a value: {r['spelling']!r}")
+    # M8: the frames are the three binders' frames, with their variables.
+    for f in mst["frames"]:
+        if FRAME_BINDS.get(f["kind"]) != f["binds"]:
+            bad.append(f"M8 the frame {f['kind']} binds {f['binds']!r}")
+    # M9: every rule's constructors name element or array rows of the master, and every rule is an identity.
+    bad += witness_rules(mst)
+    return bad
+
+
+# The element operators' meanings, for the rule witness: wrapping i32 arithmetic, restated.
+def _wrap(x):
+    return (x + 2**31) % 2**32 - 2**31
+
+
+RULE_SEMANTICS = {
+    "add": lambda a, b: _wrap(a + b), "sub": lambda a, b: _wrap(a - b), "mul": lambda a, b: _wrap(a * b),
+    "min": min, "max": max, "neg": lambda a: _wrap(-a),
+    "map2.add": lambda a, b: [_wrap(x + y) for x, y in zip(a, b)], "map2.min": lambda a, b: [min(x, y) for x, y in zip(a, b)],
+    "map2.max": lambda a, b: [max(x, y) for x, y in zip(a, b)], "map2.sub": lambda a, b: [_wrap(x - y) for x, y in zip(a, b)],
+}
+
+
+def _rule_eval(text, env):
+    """Evaluate one side of a rule template: `({op} x y)` with `{op}` an operator of RULE_SEMANTICS."""
+    toks = text.replace("(", " ( ").replace(")", " ) ").split()
+
+    def at(i):
+        if toks[i] != "(":
+            return env[toks[i]], i + 1
+        op = toks[i + 1]
+        m = re.fullmatch(r"\{(.+)\}", op)
+        if not m or m.group(1) not in RULE_SEMANTICS:
+            raise ValueError(f"the operator {op}")
+        args, j = [], i + 2
+        while toks[j] != ")":
+            v, j = at(j)
+            args.append(v)
+        return RULE_SEMANTICS[m.group(1)](*args), j + 1
+
+    v, end = at(0)
+    if end != len(toks):
+        raise ValueError(f"text after the term: {toks[end:]}")
+    return v
+
+
+def witness_rules(mst):
+    """Both sides of every rule agree on random values of the element (i32 today), with the operators' own
+    meaning: a rule that changed a value would let the e-graph justify a candidate that computes something else."""
+    import random
+    bad = []
+    rnd = random.Random(20261101)
+    edges = [0, 1, -1, 2**31 - 1, -2**31, 7, -40]
+    for r in mst["rules"]:
+        if r["elems"] != "i32":
+            bad.append(f"M9 the rule {r['rule']!r} is admitted for {r['elems']}: the witness checks wrapping i32 only")
+            continue
+        m = re.fullmatch(r"\(rewrite (.+) :ruleset futhark_sig\)", r["rule"])
+        if not m or r["on"] not in ("elem", "arr"):
+            bad.append(f"M9 the rule {r['rule']!r} is not a rewrite of the futhark_sig ruleset on elem or arr")
+            continue
+        body = m.group(1)
+        depth, cut = 0, None
+        for i, c in enumerate(body):
+            depth += {"(": 1, ")": -1}.get(c, 0)
+            if depth == 0 and c == ")":
+                cut = i + 1
+                break
+        lhs, rhs = body[:cut], body[cut:].strip()
+        for trial in range(200):
+            if r["on"] == "elem":
+                env = {v: (edges[trial % len(edges)] if trial < 50 else rnd.randint(-2**31, 2**31 - 1)) for v in "abd"}
+            else:
+                env = {v: [rnd.choice(edges + [rnd.randint(-2**31, 2**31 - 1)]) for _ in range(5)] for v in "abd"}
+            try:
+                if _rule_eval(lhs, env) != _rule_eval(rhs, env):
+                    bad.append(f"M9 the rule {r['rule']!r} changes a value at {env}")
+                    break
+            except (ValueError, KeyError, IndexError) as e:
+                bad.append(f"M9 the rule {r['rule']!r} does not evaluate: {e}")
+                break
+    return bad
 
 
 def artefacts():
@@ -2511,6 +2262,13 @@ def main(argv):
     if mode == "--check":
         print(f"committed artefacts: MATCH the generator ({len(wanted)} files)")
     print("witness tests: PASS")
+    mbad = witness_master()
+    if mbad:
+        print("THE MASTER WITNESS TESTS FAILED:")
+        for b in mbad:
+            print("  " + b)
+        return 1
+    print(f"master: {len(master_view.master()['rows'])} row templates, version {master_view.master()['version']}; master witness tests PASS")
     rc = pixel_main(mode)
     return rc if rc else sig_main(mode)
 
