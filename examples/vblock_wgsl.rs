@@ -36,7 +36,7 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|e| format!("no GPU adapter: {e}"))?;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor { label: Some("vblock"), required_limits: adapter.limits(), ..Default::default() })
+            .request_device(&wgpu::DeviceDescriptor { label: Some("vblock"), required_features: adapter.features() & wgpu::Features::SUBGROUP, required_limits: adapter.limits(), ..Default::default() })
             .await
             .map_err(|e| format!("request_device: {e}"))?;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("vblock"), source: wgpu::ShaderSource::Wgsl(Cow::Owned(src)) });

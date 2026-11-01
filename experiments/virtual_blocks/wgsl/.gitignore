@@ -2,3 +2,4 @@
 *.u32
 !tables.f32
 __pycache__/
+*.npy
