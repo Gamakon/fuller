@@ -1985,23 +1985,51 @@ mod tests {
         assert_eq!(new[0], 1.0 / 10.7);
     }
 
-    /// GPU (run when the device is free): with the shipped times taken once,
-    /// the shipped kernel scored as a candidate has speed-ups of 1 within
-    /// one-round noise (15 %, 2026-10-11), and a second timing of the
-    /// shipped kernel moves its times by less than that.
+    /// GPU (run when the device is free): the shipped kernel scored as a
+    /// candidate times as the shipped kernel does, within one-round noise
+    /// (15 %, 2026-10-11), and two timings of the shipped kernel agree
+    /// within that.
+    ///
+    /// Each comparison is PAIRED, so a slow change of the device's speed
+    /// cancels: the candidate's time at each shape against the mean of the
+    /// shipped times measured just before and just after its fitness, and
+    /// the shipped kernel's stability as the median ratio of 5 pairs of
+    /// back-to-back builds a shape. The old form compared a timing with one
+    /// taken ~30 s earlier, and failed in the merge run of 2026-11-01 after
+    /// ~1 h of GPU tests ([993.7, 984.1, 989.2] then [1137.2, 1135.4,
+    /// 1138.6] ms, the candidate in between); alone, the same build gave
+    /// 994.3 then 995.7 ms.
     #[cfg(feature = "gpu")]
     #[test]
     fn the_generations_shipped_times_score_shipped_at_one_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, &crate::wgsl::pairs::cache_dir()).expect("context");
-        let first = ctx.shipped_gpu_ms.get();
+        let before = ctx.time_shipped(&dev).expect("time shipped before");
         let f = ctx.fitness_with_fuel(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel"));
         assert!(f.feasible, "{f:?}");
-        let again = ctx.time_shipped(&dev).expect("time shipped");
-        println!("shipped {first:?} then {again:?} ms; shipped as a candidate: speed-ups {:?}", f.speedups);
+        // The reference the candidate was scored against, read before the next timing can lower it.
+        let reference = ctx.shipped_reference();
+        let after = ctx.time_shipped(&dev).expect("time shipped after");
+        // The candidate's own GPU time at each shape, from its speed-up over the reference it was scored against.
+        let candidate: Vec<f64> = (0..3).map(|k| reference[k] / f.speedups[k]).collect();
+        let paired: Vec<f64> = (0..3).map(|k| candidate[k] / (0.5 * (before[k] + after[k]))).collect();
+        let shipped = Gram::compile(&dev, SHIPPED, Fuel::Proven("the shipped Gram kernel")).expect("the shipped kernel");
+        let mut stability = [0.0f64; 3];
+        for (k, res) in ctx.resident_timing.iter().enumerate() {
+            shipped.run(res, false).expect("a warm-up build");
+            let mut ratios: Vec<f64> = (0..5)
+                .map(|_| {
+                    let a = shipped.run(res, false).expect("a timing build").gpu_ms;
+                    let b = shipped.run(res, false).expect("a timing build").gpu_ms;
+                    b / a
+                })
+                .collect();
+            stability[k] = median(&mut ratios);
+        }
+        println!("shipped {before:?} before and {after:?} after the candidate ms; the candidate {candidate:?} ms (over the bracket {paired:?}); back-to-back shipped ratios (median of 5) {stability:?}; speed-ups {:?}", f.speedups);
         for k in 0..3 {
-            assert!((0.85..=1.15).contains(&f.speedups[k]), "{:?}", f.speedups);
-            assert!((again[k] / first[k] - 1.0).abs() < 0.15, "{first:?} {again:?}");
+            assert!((0.85..=1.15).contains(&paired[k]), "shape {k}: the candidate over the shipped bracket {paired:?}");
+            assert!((stability[k] - 1.0).abs() < 0.15, "shape {k}: back-to-back shipped ratios {stability:?}");
         }
     }
 
