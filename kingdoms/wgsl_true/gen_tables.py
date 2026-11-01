@@ -88,6 +88,10 @@ def main(argv):
     # the pool's extent (pool.py): every subscript of the plain pool in range of WG_PW + 4 words, whatever WG_PW is
     # compiler-assigned slots (countsort.py, section 10): every durable write is an own-index store or the cluster store,
     # every scaffold a compiler variant byte for byte
+    # the dispatch limit (skeleton.py): every width an entry of dispatch_items can spell fits max_workgroups_x
+    for p in skeleton.dispatch_witness(iface):
+        print("PROBLEM:", p)
+        return 1
     for p in countsort.witness(iface) + countsort.modes(iface):
         print("PROBLEM:", p)
         return 1

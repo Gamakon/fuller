@@ -4875,12 +4875,16 @@ mod tests {
         }
     }
 
-    /// THE SCAFFOLD IN RANGE (section 10): every one of the scaffold's 26 variants (its hist, offsets, starts and
-    /// scatter, the mean empty) runs on every one of the problem's 8 constraint cases on the CPU executor with no index
-    /// restricted.
-    #[test]
-    fn every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu() {
-        use crate::wgsl::harness::{CpuExecutor, Executor, Problem, Role};
+    /// THE SCAFFOLD IN RANGE (section 10) AND WITHIN THE DISPATCH LIMIT (2026-11-01: with the mean left empty, the
+    /// empty entry's width 1 dispatched `ceil(k * d / 1)` = 262,144 workgroups on the timing cases, over wgpu's 65,535):
+    /// every one of the scaffold's 26 variants, its scatter the cluster store or the empty entry and its mean the empty
+    /// entry, plans within 65,535 workgroups an entry on every case of every suite (8 constraint, 3 timing) and at the
+    /// problem's largest sizes (n 2^20, k 1,024, k * d 2^20, the interface's `dispatch_items`); with the cluster store,
+    /// it runs on the cases of `role` (one timing case a test, `timing`, so the slow CPU runs proceed in parallel) on the
+    /// CPU executor with no index restricted. The empty scatter runs nothing the store's module does not, so it is
+    /// planned, not run. Returns the runs.
+    fn scaffold_variants_in_range(role: crate::wgsl::harness::Role, timing: Option<usize>) -> usize {
+        use crate::wgsl::harness::{Case, CpuExecutor, Executor, Problem, Role};
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let k = TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir().join("mod").join("kmeans_update_segmented")).expect("the table");
         let p = Problem::load(&root.join("problems/kmeans_update_segmented")).expect("problem");
@@ -4888,26 +4892,74 @@ mod tests {
         let row = |n: &str| k.rows.iter().position(|r| r.name == n).unwrap_or_else(|| panic!("no row {n}")) as u32;
         let leaf = |n: &str| Tree { symbol: row(n), const_index: None, kids: Vec::new() };
         let same = |s: &str, n: &str| Tree { symbol: row(s), const_index: None, kids: vec![leaf(n)] };
-        let cases: Vec<_> = p.suites.iter().filter(|s| s.spec.role == Role::Constraint).flat_map(|s| s.cases.iter()).collect();
-        assert_eq!(cases.len(), 8);
+        let of = |r: Role| -> Vec<&Case> { p.suites.iter().filter(|s| s.spec.role == r).flat_map(|s| s.cases.iter()).collect() };
+        let cases: Vec<&Case> = p.suites.iter().flat_map(|s| s.cases.iter()).collect();
+        assert_eq!(of(Role::Constraint).len(), 8);
+        assert_eq!(of(Role::Timing).len(), 3);
+        assert_eq!(cases.len(), 11);
+        let mut ran: Vec<&Case> = of(role);
+        if let Some(i) = timing {
+            ran = vec![ran[i]];
+        }
+        let largest = Case {
+            name: "largest_n1048576_d1024_k1024".into(),
+            label: "the interface's dispatch_items".into(),
+            params: [("n", 1048576.0), ("d", 1024.0), ("k", 1024.0)].into_iter().map(|(a, b)| (a.to_string(), b)).collect(),
+            inputs: BTreeMap::new(),
+            expected: BTreeMap::new(),
+        };
         assert_eq!(k.scaffold.len(), 26);
         let mut runs = 0;
         for v in k.scaffold.keys() {
-            let scatter = Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), leaf("cluster.point")] }] };
-            let kids = vec![same("kernel.cs_hist_same", &format!("cs.{v}")), same("kernel.cs_offsets_same", "cs.offsets"), same("kernel.cs_starts_same", "cs.starts"), scatter, leaf("own.kernel_mean")];
-            let src = k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids }).expect("render");
-            let (kern, info) = exec.compile(&p, &src).unwrap_or_else(|e| panic!("{v}: {e}"));
-            for case in &cases {
-                let data = p.case_data(case, 1 << 28).expect("data");
-                let plan = p.plan(case, 1 << 28, Some(&info)).expect("plan");
-                let (staged, _) = exec.stage(&plan, &data).expect("stage");
-                crate::wgsl::cpu::take_restricted();
-                exec.run(&kern, &plan, &data, &staged, true).unwrap_or_else(|e| panic!("{v} on {}: {e}", case.name));
-                assert_eq!(crate::wgsl::cpu::take_restricted(), 0, "variant {v} indexes past an array on case {}", case.name);
-                runs += 1;
+            let store = Tree { symbol: row("kernel.entry_scatter"), const_index: None, kids: vec![Tree { symbol: row("store.cluster_scratch"), const_index: None, kids: vec![leaf("cluster.own"), leaf("cluster.point")] }] };
+            for (scatter, run) in [(store, true), (leaf("own.kernel_scatter"), false)] {
+                let kids = vec![same("kernel.cs_hist_same", &format!("cs.{v}")), same("kernel.cs_offsets_same", "cs.offsets"), same("kernel.cs_starts_same", "cs.starts"), scatter, leaf("own.kernel_mean")];
+                let src = k.render(&Tree { symbol: row(k.linker.as_deref().expect("linker")), const_index: None, kids }).expect("render");
+                let (kern, info) = exec.compile(&p, &src).unwrap_or_else(|e| panic!("{v}: {e}"));
+                p.plan(&largest, u64::MAX, Some(&info)).unwrap_or_else(|e| panic!("variant {v} at the largest sizes: {e}"));
+                for case in &cases {
+                    p.plan(case, 1 << 28, Some(&info)).unwrap_or_else(|e| panic!("variant {v} on {}: {e}", case.name));
+                }
+                if !run {
+                    continue;
+                }
+                for case in &ran {
+                    let data = p.case_data(case, 1 << 28).expect("data");
+                    let plan = p.plan(case, 1 << 28, Some(&info)).expect("plan");
+                    let (staged, _) = exec.stage(&plan, &data).expect("stage");
+                    crate::wgsl::cpu::take_restricted();
+                    exec.run(&kern, &plan, &data, &staged, true).unwrap_or_else(|e| panic!("{v} on {}: {e}", case.name));
+                    assert_eq!(crate::wgsl::cpu::take_restricted(), 0, "variant {v} indexes past an array on case {}", case.name);
+                    runs += 1;
+                }
             }
         }
-        eprintln!("26 scaffold variants x {} cases: {runs} runs, no index restricted", cases.len());
+        eprintln!("26 scaffold variants x {} cases ({role:?}): {runs} runs, no index restricted; both scatters of every variant within 65,535 workgroups on all 11 cases and at the largest sizes", ran.len());
+        runs
+    }
+
+    /// The scaffold in range and within the dispatch limit (`scaffold_variants_in_range`) on the 8 constraint cases.
+    #[test]
+    fn every_scaffold_variant_indexes_in_range_on_every_case_on_the_cpu() {
+        assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Constraint, None), 26 * 8);
+    }
+
+    /// The scaffold in range and within the dispatch limit on timing case 0 (n 8,192, d 256, k 1,024).
+    #[test]
+    fn every_scaffold_variant_indexes_in_range_on_timing_case_0_on_the_cpu() {
+        assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Timing, Some(0)), 26);
+    }
+
+    /// The scaffold in range and within the dispatch limit on timing case 1 (n 8,192, d 4,096, k 64).
+    #[test]
+    fn every_scaffold_variant_indexes_in_range_on_timing_case_1_on_the_cpu() {
+        assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Timing, Some(1)), 26);
+    }
+
+    /// The scaffold in range and within the dispatch limit on timing case 2 (n 8,192, d 1,024, k 256).
+    #[test]
+    fn every_scaffold_variant_indexes_in_range_on_timing_case_2_on_the_cpu() {
+        assert_eq!(scaffold_variants_in_range(crate::wgsl::harness::Role::Timing, Some(2)), 26);
     }
 
     /// OFFSET TYPES (docs/DESIGN_inrange_index_types.md section 6, 2026-10-31: the starts entry's two clamps cost it

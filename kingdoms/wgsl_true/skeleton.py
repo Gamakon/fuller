@@ -1,3 +1,4 @@
+import re
 import sys
 """Batch 1: the kernel skeleton, the statement and block rungs, the epilogue's
 store, the ownership rows (design section 9). Every statement and block type
@@ -27,6 +28,86 @@ def min_wg_x(iface, e):
     dispatches over at those sizes; `max_workgroups_x`, wgpu's 65,535). 1 for an entry the interface does not list."""
     items = iface.get("dispatch_items", {}).get(e)
     return 1 if items is None else -(-items // iface["max_workgroups_x"])
+
+
+def empty_width(iface, e):
+    """The workgroup width of entry `e`'s empty entry (`own.kernel_<e>`, a legal terminal of `kernel.<e>`): 1 when the
+    dispatch limit does not bind on the entry, else the interface's default grid width, at least `min_wg_x` (2026-11-01:
+    the empty mean at width 1 dispatched `ceil(k * d / 1)` = 262,144 workgroups on the timing cases, over 65,535)."""
+    m = min_wg_x(iface, e)
+    if m <= 1:
+        return 1
+    gx = iface["default_grid"][0]
+    if gx < m:
+        sys.exit(f"our software has a bug: the default grid's width {gx} is under entry {e}'s least {m}")
+    return gx
+
+
+def dispatch_witness(iface, rows=None, variants=None):
+    """THE DISPATCH LIMIT, PROVED FROM THE EMITTED TEXT (2026-11-01): for every entry the interface lists in
+    `dispatch_items`, every width a producer of `kernel.<e>` can spell (a literal `@workgroup_size(X, ..)`, a grid field
+    `{0:0}` resolved through the grid type's producers and literals, or a scaffold marker resolved through every
+    variant's piece) keeps `ceil(items / X)` within `max_workgroups_x`. A width the witness cannot see is a problem."""
+    rows = ROWS if rows is None else rows
+    items = iface.get("dispatch_items", {})
+    if not items:
+        return []
+    if variants is None:
+        import countsort
+        variants = countsort.variants() if countsort.enabled(iface) else {}
+    produced = {}
+    for n, r in rows.items():
+        produced.setdefault(r["out"], []).append(n)
+    lit = re.compile(r"@workgroup_size\((\d+)\s*,")
+
+    def grid_widths(t, seen):
+        out = set()
+        for n in produced.get(t, []):
+            r = rows[n]
+            if r["values"] is not None:
+                out |= {int(v.split()[0]) for v in r["values"]}
+            elif re.fullmatch(r"\d+( \d+)*", r["spell"]):
+                out.add(int(r["spell"].split()[0]))
+            elif r["spell"].startswith("{0:0}") and r["args"] and r["args"][0] not in seen:
+                out |= grid_widths(r["args"][0], seen | {r["args"][0]})
+            else:
+                raise ValueError(f"{n}: a grid spelling {r['spell'][:40]!r} whose width the witness cannot see")
+        return out
+
+    def texts(n, r):
+        """Every text row `n` can spell, its scaffold markers resolved through every variant."""
+        t = r["spell"]
+        ms = re.findall(r"<cs:(\w+)>", t)
+        return [t] if not ms else [re.sub(r"<cs:(\w+)>", lambda m: v[m.group(1)], t) for v in variants.values()]
+
+    problems = []
+    for e, n_items in items.items():
+        t = f"kernel.{e}"
+        names = list(produced.get(t, []))
+        # the knob: the hist's producers are the identity over kernel.hist and the variants' terminals
+        for n in names:
+            r = rows[n]
+            if r["args"] == [t] and r["spell"] == "{0}":
+                continue
+            try:
+                ws = set()
+                for x in texts(n, r):
+                    if "@workgroup_size({0:0}" in x:
+                        ws |= grid_widths(r["args"][0], {r["args"][0]})
+                    else:
+                        found = [int(w) for w in lit.findall(x)]
+                        if not found:
+                            raise ValueError(f"{n}: no workgroup width the witness can see")
+                        ws |= set(found)
+            except ValueError as err:
+                problems.append(f"the dispatch limit: {err}")
+                continue
+            for w in sorted(ws):
+                if -(-n_items // w) > iface["max_workgroups_x"]:
+                    problems.append(f"the dispatch limit: {n} spells entry {e} at width {w}: ceil({n_items} / {w}) = {-(-n_items // w)} workgroups, over {iface['max_workgroups_x']}")
+        if not names:
+            problems.append(f"the dispatch limit: entry {e} of dispatch_items has no producer")
+    return problems
 
 
 def entry_grid(iface, e):
@@ -206,7 +287,7 @@ def build_module(iface):
             # countsort.py: the counting-sort scaffold's entries (section 10): hist, offsets and starts are the
             # scaffold's own terminals, the scatter's head and prologue the scaffold's; the scatter keeps its empty entry
             if e == "scatter":
-                R(f"own.kernel_{e}", f"kernel.{e}", [], f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n", "the empty entry: it stores nothing")
+                R(f"own.kernel_{e}", f"kernel.{e}", [], f"@compute @workgroup_size({empty_width(iface, e)}, 1, 1)\nfn {e}() {{\n}}\n", "the empty entry: it stores nothing")
             entries.append(f"kernel.{e}")
             continue
         # the pool's extent (pool.py, 2026-10-31): an entry of a pool interface names the words of the plain pool it
@@ -218,7 +299,7 @@ def build_module(iface):
         text = head + "@compute @workgroup_size({0:0}, {0:1}, 1)\nfn " + e + "(" + MODULE_IDS + ") {\n" + knobs + "<declarations>\n" + body + "\n}\n"
         args = args + [body_type()]
         R(f"kernel.entry_{e}", f"kernel.{e}", args, text, f"the entry point {e}: a grid and a body (no epilogue: the module has no primary output)", fields=True)
-        empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size(1, 1, 1)\nfn {e}() {{\n}}\n"
+        empty = ("// passes 1\n" if passes else "") + f"@compute @workgroup_size({empty_width(iface, e)}, 1, 1)\nfn {e}() {{\n}}\n"
         R(f"own.kernel_{e}", f"kernel.{e}", [], empty, "the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it")
         entries.append(f"kernel.{e}")
     R(f"kernel.module_{iface['name']}", "kernel.module", entries, "\n".join("{%d}" % i for i in range(len(entries))) + "\n",

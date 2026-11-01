@@ -1,7 +1,7 @@
 ref	name	kind	out	args	spelling	note	declares
-F00001	own.kernel_scatter	terminal	kernel.scatter		@compute @workgroup_size(1, 1, 1)\nfn scatter() {\n}\n	the empty entry: it stores nothing	
+F00001	own.kernel_scatter	terminal	kernel.scatter		@compute @workgroup_size(256, 1, 1)\nfn scatter() {\n}\n	the empty entry: it stores nothing	
 F00002	kernel.entry_mean	function	kernel.mean	grid.grid_mean;u32.wgext;block.start	// pool {1} words\n@compute @workgroup_size({0:0}, {0:1}, 1)\nfn mean(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {\nconst KNOB_WCOL: u32 = {0:0}u; const KNOB_WROW: u32 = {0:1}u; const KNOB_BCOL: u32 = {0:2}u; const KNOB_BROW: u32 = {0:3}u; const KNOB_KTILE: u32 = {0:4}u; const KNOB_THREADS: u32 = {0:0}u * {0:1}u;\n<declarations>\n{2}\n}\n	the entry point mean: a grid and a body (no epilogue: the module has no primary output)	
-F00003	own.kernel_mean	terminal	kernel.mean		@compute @workgroup_size(1, 1, 1)\nfn mean() {\n}\n	the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it	
+F00003	own.kernel_mean	terminal	kernel.mean		@compute @workgroup_size(256, 1, 1)\nfn mean() {\n}\n	the empty entry: the terminal the linker's argument type needs (the kingdom check); a fixed linker never expresses it	
 F00004	kernel.module_kmeans_update_segmented	function	kernel.module	kernel.hist;kernel.offsets;kernel.starts;kernel.scatter;kernel.mean	{0}\n{1}\n{2}\n{3}\n{4}\n	the fixed homeotic linker's link function: the module is its entries in gene order	
 F00005	grid.of	function	grid.grid	grid.shape;u32.blk_col;u32.blk_row;u32.ktile	{0:0} {0:1} {1} {2} {3}	the entry's workgroup shape, blocks and tile depth as fields the entry spells	
 F00006	literal.shape	constant	grid.shape		{v}	?_shape; its Dc domain is the table	
