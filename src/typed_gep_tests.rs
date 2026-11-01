@@ -1073,7 +1073,18 @@ mod tsr {
 /// the row; the same seed gives the same children.
 mod rows {
     use super::*;
-    use crate::typed_gep::validate;
+    use crate::typed_gep::{frac_of_row, frac_row, validate, FRAC_ONE};
+
+    /// A fraction uniform in `[0, 1)`.
+    fn frac(rng: &mut Rng) -> u64 {
+        rng.next() >> 32
+    }
+
+    /// Two fractions `lo < hi <= 1`, `lo` uniform in `[0, 1)`.
+    fn frac_pair(rng: &mut Rng) -> (u64, u64) {
+        let lo = frac(rng);
+        (lo, lo + 1 + rng.next() % (FRAC_ONE - lo))
+    }
 
     /// How many random (layout, gene) pairs a kingdom's property test draws.
     const ROW_GENES: usize = 20_000;
@@ -1226,7 +1237,61 @@ mod rows {
             eat(&cb);
             crossed += 1;
         }
-        println!("{label}: {inverted} row inversions, {transposed} row IS, {ris} row RIS, {crossed} row crossovers, every child legal");
+        // THE RELATIVE ROWS: each column at its own row floor(f * len), so every column takes part.
+        let mut relative = 0usize;
+        for g in 0..genes {
+            let n = SIZES[g % SIZES.len()];
+            let root = k.roots()[rng.below(k.roots().len())];
+            let layout = GeneLayout::from_program_size(k, root, n).expect("layout");
+            let (a, b) = (random_gene(k, &layout, &mut rng), random_gene(k, &layout, &mut rng));
+            let what = |op: &str| format!("{label} gene {g} N = {n} {op}");
+            let domain = [Domain::Head, Domain::Tail, Domain::Dc][rng.below(3)];
+            let cols = layout.columns(domain);
+
+            let (lo, hi) = frac_pair(&mut rng);
+            let mut c = a.clone();
+            layout.invert_rel(&mut c, domain, lo, hi).expect("fractions in order");
+            for s in &cols {
+                let (l, h) = (frac_row(lo, s.len), frac_row(hi, s.len));
+                let mut want = a[s.off..s.off + s.len].to_vec();
+                want[l..h].reverse();
+                assert_eq!(&c[s.off..s.off + s.len], &want[..], "{}: column {:?}", what("invert_rel"), s.ty);
+            }
+            legal(k, &layout, &c, &consts, &what("invert_rel"));
+            eat(&c);
+
+            let (src, dst) = (frac(&mut rng), frac(&mut rng));
+            let end = src + rng.next() % (FRAC_ONE - src + 1);
+            let mut c = a.clone();
+            layout.transpose_rel(&mut c, domain, src, end, dst).expect("fractions in order");
+            for s in &cols {
+                let (r, d) = (frac_row(src, s.len), frac_row(dst, s.len));
+                let e = frac_row(end, s.len).clamp(r + 1, s.len);
+                let want = classic_is(&a[s.off..s.off + s.len], r, e - r, d);
+                assert_eq!(&c[s.off..s.off + s.len], &want[..], "{}: column {:?}", what("transpose_rel"), s.ty);
+            }
+            legal(k, &layout, &c, &consts, &what("transpose_rel"));
+            eat(&c);
+
+            let (cut1, cut2) = if rng.below(2) == 0 { (frac(&mut rng), None) } else { let (x, y) = frac_pair(&mut rng); (x, Some(y)) };
+            let (mut ca, mut cb) = (a.clone(), b.clone());
+            layout.crossover_rel(&layout, &mut ca, &mut cb, cut1, cut2).expect("homologous, fractions in order");
+            for f in &layout.frames {
+                let len = f.head_len + f.tail_len + f.dc_len;
+                let (l, h) = (frac_row(cut1, len), frac_row(cut2.unwrap_or(FRAC_ONE), len));
+                for r in 0..len {
+                    let p = GeneLayout::column_pos(f, r).expect("row");
+                    let inside = r >= l && r < h;
+                    assert_eq!((ca[p], cb[p]), if inside { (b[p], a[p]) } else { (a[p], b[p]) }, "{}: cell {p}", what("crossover_rel"));
+                }
+            }
+            legal(k, &layout, &ca, &consts, &what("crossover_rel first child"));
+            legal(k, &layout, &cb, &consts, &what("crossover_rel second child"));
+            eat(&ca);
+            eat(&cb);
+            relative += 1;
+        }
+        println!("{label}: {inverted} row inversions, {transposed} row IS, {ris} row RIS, {crossed} row crossovers, {relative} genes through the three relative operators, every child legal");
         assert!(inverted > 0 && transposed > 0 && ris > 0 && crossed > 0, "{label}: every operator was applied");
         fp
     }
@@ -1273,6 +1338,19 @@ mod rows {
                 layout.crossover_rows(&layout, &mut ca, &mut cb, c1, cut2).expect("rows");
                 legal(&k, &layout, &ca, &consts, &what("crossover_rows"));
                 legal(&k, &layout, &cb, &consts, &what("crossover_rows"));
+                let f = |rng: &mut GeneRng| rng.next_u64() >> 32;
+                let mut c = a.clone();
+                let lo = f(&mut rng);
+                layout.invert_rel(&mut c, Domain::Head, lo, lo + 1 + rng.next_u64() % (FRAC_ONE - lo)).expect("fractions");
+                legal(&k, &layout, &c, &consts, &what("invert_rel"));
+                let mut c = a.clone();
+                let src = f(&mut rng);
+                layout.transpose_rel(&mut c, Domain::Head, src, (src + rng.next_u64() % (FRAC_ONE / 8)).min(FRAC_ONE), f(&mut rng)).expect("fractions");
+                legal(&k, &layout, &c, &consts, &what("transpose_rel"));
+                let (mut ca, mut cb) = (a.clone(), b.clone());
+                layout.crossover_rel(&layout, &mut ca, &mut cb, f(&mut rng), None).expect("fractions");
+                legal(&k, &layout, &ca, &consts, &what("crossover_rel"));
+                legal(&k, &layout, &cb, &consts, &what("crossover_rel"));
             }
             let types = layout.frames.len() as f64;
             let mean_head = layout.frames.iter().map(|f| f.head_len).sum::<usize>() as f64 / types;
@@ -1341,6 +1419,33 @@ mod rows {
             layout.crossover_rows(&layout, &mut xa, &mut xb, c1, Some(c2)).expect("rows");
             ya[c1..c2].swap_with_slice(&mut yb[c1..c2]);
             assert_eq!((xa, xb), (ya, yb), "SR gene {g}: two-point [{c1}, {c2}) is the classic two-point");
+            // THE RELATIVE ROWS with one type: the fraction of any row gives that row, so each relative operator is the
+            // absolute one, and so the classic one.
+            let w = layout.width;
+            let (mut xa, mut xb, mut ya, mut yb) = (a.clone(), b.clone(), a.clone(), b.clone());
+            layout.crossover_rel(&layout, &mut xa, &mut xb, frac_of_row(c, w), None).expect("fractions");
+            ya[c..].swap_with_slice(&mut yb[c..]);
+            assert_eq!((xa, xb), (ya, yb), "SR gene {g}: relative one-point at {c} is the classic one-point");
+            let (mut xa, mut xb, mut ya, mut yb) = (a.clone(), b.clone(), a.clone(), b.clone());
+            layout.crossover_rel(&layout, &mut xa, &mut xb, frac_of_row(c1, w), Some(frac_of_row(c2, w))).expect("fractions");
+            ya[c1..c2].swap_with_slice(&mut yb[c1..c2]);
+            assert_eq!((xa, xb), (ya, yb), "SR gene {g}: relative two-point [{c1}, {c2}) is the classic two-point");
+            for s in layout.spans() {
+                if s.len >= 2 {
+                    let lo = rng.below(s.len - 1);
+                    let hi = lo + 2 + rng.below(s.len - lo - 1);
+                    let (mut x, mut y) = (a.clone(), a.clone());
+                    layout.invert_rel(&mut x, s.domain, frac_of_row(lo, s.len), frac_of_row(hi, s.len)).expect("fractions");
+                    layout.invert(&mut y, s.off + lo, s.off + hi).expect("span");
+                    assert_eq!(x, y, "SR gene {g}: invert_rel is invert in the {}", s.domain.name());
+                }
+                let (src, len, dst) = (rng.below(s.len), 1 + rng.below(3), rng.below(s.len));
+                let run = len.min(s.len - src);
+                let (mut x, mut y) = (a.clone(), a.clone());
+                layout.transpose_rel(&mut x, s.domain, frac_of_row(src, s.len), frac_of_row(src + run, s.len), frac_of_row(dst, s.len)).expect("fractions");
+                layout.transpose(&mut y, s.off + src, run, s.off + dst).expect("span");
+                assert_eq!(x, y, "SR gene {g}: transpose_rel is transpose in the {}", s.domain.name());
+            }
             checked += 1;
         }
         println!("SR: {checked} genes, every row operator equal to its one-type operator");
@@ -1394,6 +1499,30 @@ mod rows {
             let swapped = want.contains(&p);
             assert_eq!(a[p], if swapped { id[p] + 1000 } else { id[p] }, "cell {p}");
         }
+
+        // RELATIVE rows: every column at its own row. Inversion of [1/4, 1): S (4 rows) rows [1, 4), I (2 rows)
+        // rows [0, 2) -- I takes part, where by absolute rows it had one row and did not change.
+        let mut g = id.clone();
+        assert_eq!(layout.invert_rel(&mut g, Domain::Head, FRAC_ONE / 4, FRAC_ONE), Ok(2));
+        assert_eq!(head(&g), (vec![0, 3, 2, 1], vec![5, 4]));
+        // IS from 1/2 (S row 2, I row 1), a run to 1 (S rows [2, 4), I row 1), to row 0 of each.
+        let mut g = id.clone();
+        assert_eq!(layout.transpose_rel(&mut g, Domain::Head, FRAC_ONE / 2, FRAC_ONE, 0), Ok(2));
+        assert_eq!(head(&g), (vec![2, 3, 0, 1], vec![5, 4]));
+        // One-point at 1/2 of every whole column: S from row (4 + t_S) / 2, I from row (2 + t_I) / 2.
+        let (mut a2, mut b2) = (id.clone(), id.iter().map(|w| w + 1000).collect::<Vec<u32>>());
+        layout.crossover_rel(&layout, &mut a2, &mut b2, FRAC_ONE / 2, None).expect("fractions");
+        for f in [&s, &i] {
+            let len = f.head_len + f.tail_len;
+            for r in 0..len {
+                let p = GeneLayout::column_pos(f, r).expect("row");
+                assert_eq!(a2[p], if r >= len / 2 { id[p] + 1000 } else { id[p] }, "{:?} row {r}", f.ty);
+            }
+        }
+        let mut g = id.clone();
+        assert!(matches!(layout.invert_rel(&mut g, Domain::Head, FRAC_ONE / 2, FRAC_ONE / 2), Err(LayoutDefect::FractionOutsideUnit { .. })));
+        assert!(matches!(layout.transpose_rel(&mut g, Domain::Head, FRAC_ONE, FRAC_ONE, 0), Err(LayoutDefect::FractionOutsideUnit { .. })));
+        assert_eq!(g, id, "a defect changes nothing");
 
         // Rows outside the table are our bug, named.
         let mut g = id.clone();

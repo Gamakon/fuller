@@ -387,6 +387,88 @@ impl GeneLayout {
         }
         Ok(cells)
     }
+
+    // ---- THE RELATIVE ROWS (2026-11-01): every column takes part in every application ----
+    //
+    // A fraction `f` of a column is a fixed-point number of `FRAC_ONE` parts; column `T` applies it at its own row
+    // `floor(f * len_T)` ([`frac_row`]). With one type, [`frac_of_row`] gives the fraction of any row exactly, so each
+    // relative operator is the absolute one, and so the one-type operator.
+
+    /// RELATIVE INVERSION: in every column of `domain`, its rows `[frac_row(lo, len), frac_row(hi, len))` reversed.
+    /// `lo < hi <= FRAC_ONE`. Returns the columns that changed.
+    pub fn invert_rel(&self, gene: &mut [u32], domain: Domain, lo: u64, hi: u64) -> Result<usize, LayoutDefect> {
+        if lo >= hi || hi > FRAC_ONE {
+            return Err(LayoutDefect::FractionOutsideUnit { lo, hi });
+        }
+        let mut changed = 0;
+        for c in self.columns(domain) {
+            let (l, h) = (frac_row(lo, c.len), frac_row(hi, c.len));
+            if h <= l + 1 {
+                continue;
+            }
+            let cells = &gene[c.off + l..c.off + h];
+            if cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b) {
+                self.invert(gene, c.off + l, c.off + h)?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
+    /// RELATIVE TRANSPOSITION (IS; RIS with `dst = 0` and `src` the fraction of [`GeneLayout::ris_row`]'s row in the
+    /// root's head column, [`frac_of_row`]): in every column of `domain`, the run of rows from `frac_row(src, len)` to
+    /// `frac_row(end, len)` (at least one row, at most to the column's end) copied to row `frac_row(dst, len)`, the
+    /// rest shifted down and the overflow off the column's end. `src, dst < FRAC_ONE`, `src <= end <= FRAC_ONE`.
+    /// Returns the columns that changed.
+    pub fn transpose_rel(&self, gene: &mut [u32], domain: Domain, src: u64, end: u64, dst: u64) -> Result<usize, LayoutDefect> {
+        if src >= FRAC_ONE || dst >= FRAC_ONE || end < src || end > FRAC_ONE {
+            return Err(LayoutDefect::FractionOutsideUnit { lo: src.min(dst), hi: end.max(dst) });
+        }
+        let mut changed = 0;
+        for c in self.columns(domain) {
+            let (s, d) = (frac_row(src, c.len), frac_row(dst, c.len));
+            let e = frac_row(end, c.len).clamp(s + 1, c.len);
+            changed += usize::from(self.transpose(gene, c.off + s, e - s, c.off + d)?);
+        }
+        Ok(changed)
+    }
+
+    /// RELATIVE CROSSOVER: one-point (`cut2 = None`) or two-point, each column of the whole gene (`head_T`, `tail_T`,
+    /// `Dc_T`, as [`GeneLayout::crossover_rows`]) exchanging its rows `[frac_row(cut1, len), frac_row(cut2, len))`
+    /// (to its end for one-point). `cut1 < cut2 <= FRAC_ONE`. Returns the cells exchanged.
+    pub fn crossover_rel(&self, other: &GeneLayout, a: &mut [u32], b: &mut [u32], cut1: u64, cut2: Option<u64>) -> Result<usize, LayoutDefect> {
+        if !self.homologous(other) {
+            return Err(LayoutDefect::NotHomologous);
+        }
+        let hi = cut2.unwrap_or(FRAC_ONE);
+        if cut1 >= hi || hi > FRAC_ONE {
+            return Err(LayoutDefect::FractionOutsideUnit { lo: cut1, hi });
+        }
+        let mut cells = 0;
+        for f in &self.frames {
+            let len = f.head_len + f.tail_len + f.dc_len;
+            for r in frac_row(cut1, len)..frac_row(hi, len) {
+                let p = Self::column_pos(f, r).expect("a row below the column's length");
+                std::mem::swap(&mut a[p], &mut b[p]);
+                cells += 1;
+            }
+        }
+        Ok(cells)
+    }
+}
+
+/// The fixed-point one of a relative row: a fraction is `f / FRAC_ONE`.
+pub const FRAC_ONE: u64 = 1 << 32;
+
+/// The row of a column of `len` rows at fraction `f`: `floor(f * len / FRAC_ONE)`, exact in integers.
+pub fn frac_row(f: u64, len: usize) -> usize {
+    ((u128::from(f) * len as u128) >> 32) as usize
+}
+
+/// The smallest fraction whose row in a column of `len` rows is `r` (`r <= len`): `ceil(r * FRAC_ONE / len)`, so
+/// `frac_row(frac_of_row(r, len), len) == r`.
+pub fn frac_of_row(r: usize, len: usize) -> u64 {
+    ((r as u128 * u128::from(FRAC_ONE)).div_ceil(len as u128)) as u64
 }
 
 /// The genes of one layout id: the root and domain lengths of every gene id
@@ -496,6 +578,8 @@ pub enum LayoutDefect {
     /// A row operator's rows `[lo, hi)` outside a table of `rows` rows (`domain`'s, or the whole gene's, `None`, for
     /// a crossover), or empty.
     RowsOutsideTable { domain: Option<Domain>, lo: usize, hi: usize, rows: usize },
+    /// A relative row operator's fractions (parts of `FRAC_ONE`) out of order or past one.
+    FractionOutsideUnit { lo: u64, hi: u64 },
     /// A tree to encode whose node `step` fills a slot of another type.
     TreeNotTyped { step: usize, want: Ty, got: Ty },
     /// A tree to encode whose node `step` has the wrong number of children.
@@ -531,6 +615,7 @@ impl fmt::Display for LayoutDefect {
             LayoutDefect::NotHomologous => write!(f, "an exchange between genes the layout does not call homologous"),
             LayoutDefect::RangeAcrossDomains { lo, hi } => write!(f, "range [{lo}, {hi}) is not inside one domain of one type"),
             LayoutDefect::RowsOutsideTable { domain, lo, hi, rows } => write!(f, "rows [{lo}, {hi}) are empty or outside the {} table of {rows} rows", domain.map_or("gene", Domain::name)),
+            LayoutDefect::FractionOutsideUnit { lo, hi } => write!(f, "fractions {lo} and {hi} (of {FRAC_ONE}) are out of order or past one"),
             LayoutDefect::TreeNotTyped { step, want, got } => write!(f, "tree node {step} fills a slot of type {want:?} and outputs {got:?}"),
             LayoutDefect::TreeArity { step, want, got } => write!(f, "tree node {step} has {got} children, its symbol takes {want}"),
             LayoutDefect::HeadTooShort { ty, need, h } => write!(f, "the tree needs {need} head rows of type {ty:?}, h_T is {h}"),
