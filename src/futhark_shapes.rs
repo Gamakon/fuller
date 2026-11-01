@@ -937,6 +937,38 @@ mod tests {
         );
     }
 
+    /// The kingdom's README states the size of the table, and a README that
+    /// disagrees with the table is a fault (it said 27 e-graph rules after
+    /// the transposed-product rules took the ruleset to 54). So its counts
+    /// are measured from the committed artefacts, every run of the suite.
+    #[test]
+    fn the_readme_counts_are_the_tables_counts() {
+        use crate::futhark_shapes_egraph::SHAPE_RULESET;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let readme = std::fs::read_to_string(root.join("kingdoms/futhark_shapes/README.md"))
+            .expect("the kingdom's README reads");
+        let k = kingdom();
+        let rules = rules_of(SHAPE_RULESET).len();
+        let row = |label: &str| -> String {
+            readme
+                .lines()
+                .find(|l| l.starts_with(&format!("| {label} |")))
+                .unwrap_or_else(|| panic!("the README has a `{label}` row"))
+                .rsplit('|')
+                .nth(1)
+                .expect("the row has a shape-kingdom column")
+                .trim()
+                .trim_matches('*')
+                .to_string()
+        };
+        assert_eq!(row("e-graph rules"), rules.to_string(), "the README's rule count");
+        assert_eq!(row("symbol rows"), k.rows.len().to_string(), "the README's row count");
+        assert!(
+            readme.contains(&format!("the ruleset, {rules} rules:")),
+            "the README's artefact table names the ruleset's {rules} rules"
+        );
+    }
+
     /// The strong check: the compiled program and the interpreter agree, element
     /// by element, on a random gene — up to the numeric policy above, which
     /// is numeric rather than bitwise.

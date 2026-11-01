@@ -49,7 +49,7 @@ ordinary flat typed kingdom, and **legality by construction is unchanged**.
 | types | 4 | **11** |
 | symbol rows | 38 | **71** |
 | e-graph constructors | 40 | **71** |
-| e-graph rules | 9 | **27** |
+| e-graph rules | 9 | **54** |
 | dimensions | none (1-D) | 3 roles, 9 matrix classes |
 | gene width (N = 3) | 40–42 words | **322 words** |
 
@@ -63,7 +63,7 @@ kingdom whose rows are *generated*. So the generator emits the e-graph too:
 | artefact | what it holds |
 |---|---|
 | `egraph.datatype` | one sort per class (11), one constructor per row (71) |
-| `egraph.rules` | the ruleset: three identities per class, 27 rules |
+| `egraph.rules` | the ruleset, 54 rules: three identities per class (27) and the transposed product for each of the 27 products |
 | `egraph.rows` | the bridge: row name → constructor → sort |
 | `egraph.sorts` | the class → sort mapping |
 

@@ -422,7 +422,7 @@ The checks, all passing:
 | **a candidate writes back to a gene and comes back** | ✓ the proposal's round-trip invariant, for every candidate |
 | **an e-graph candidate compiles, runs, and agrees** | ✓ the whole loop, closed |
 | **every row's spelling means what the interpreter says** | ✓ one program per row, every row of the table |
-| **every e-graph rule is an equivalence** | ✓ all 27 rules, both sides rendered and compiled |
+| **every e-graph rule is an equivalence** | ✓ all 54 rules, both sides rendered and compiled |
 | **the degenerate shapes agree with Futhark** | ✓ a `[0][m]` matrix and an empty inner dimension, against the compiler |
 | **the committed artefacts are what the generator produces** | ✓ the suite runs the generator's own check |
 
@@ -473,7 +473,7 @@ So the generator emits the e-graph too:
 | artefact | what it holds |
 |---|---|
 | `egraph.datatype` | one sort per class (11), one constructor per row (71) |
-| `egraph.rules` | the ruleset: three identities per class, 27 rules |
+| `egraph.rules` | the ruleset, 54 rules: three identities per class (27) and the transposed product for each of the 27 products |
 | `egraph.rows` | the bridge: row name → constructor → sort |
 | `egraph.sorts` | the class → sort mapping |
 
