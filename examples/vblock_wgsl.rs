@@ -6,7 +6,8 @@
 //! `params.f32` holds four f32 a block (m_mean, m_std, scale, bias); block i gets the offset i. The
 //! output is 64 f32 a block. With `reps`, the dispatch is repeated and the median GPU wall time printed. With
 //! `bpw` (blocks per workgroup, default 1), each workgroup loops over that many consecutive blocks; the kernel reads
-//! it as the fifth u32 of its uniform.
+//! it as the fifth u32 of its uniform. A seventh argument fixes the number of workgroups instead (a kernel that
+//! maps workgroups to matrix rows).
 
 use std::borrow::Cow;
 use std::time::Instant;
@@ -30,7 +31,10 @@ fn main() -> Result<(), String> {
     let reps: usize = a.get(5).map(|r| r.parse().map_err(|e| format!("reps: {e}"))).transpose()?.unwrap_or(0);
     let bpw: u32 = a.get(6).map(|r| r.parse().map_err(|e| format!("bpw: {e}"))).transpose()?.unwrap_or(1).max(1);
     let n = (params.len() / 4) as u32;
-    let groups = n.div_ceil(bpw);
+    let groups: u32 = match a.get(7) {
+        Some(g) => g.parse().map_err(|e| format!("groups: {e}"))?,
+        None => n.div_ceil(bpw),
+    };
     let groups_x = groups.min(65_535);
     let groups_y = groups.div_ceil(groups_x);
     pollster::block_on(async {
