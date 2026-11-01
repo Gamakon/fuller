@@ -261,6 +261,132 @@ impl GeneLayout {
         gene[lo..hi].reverse();
         Ok(())
     }
+
+    /// GEP's insertion-sequence transposition inside one domain of one type: the run `[src, src + len)` is copied
+    /// to `dst`, the cells from `dst` on shift towards the span's end and the overflow falls off it. The run and
+    /// `dst` must lie in one span. Returns whether a cell changed.
+    pub fn transpose(&self, gene: &mut [u32], src: usize, len: usize, dst: usize) -> Result<bool, LayoutDefect> {
+        let s = self.span_of(src, src + len)?;
+        if dst < s.off || dst >= s.off + s.len {
+            return Err(LayoutDefect::RangeAcrossDomains { lo: dst, hi: dst + 1 });
+        }
+        let before = gene[s.off..s.off + s.len].to_vec();
+        let mut span = before.clone();
+        span.splice(dst - s.off..dst - s.off, gene[src..src + len].iter().copied());
+        span.truncate(s.len);
+        gene[s.off..s.off + s.len].copy_from_slice(&span);
+        Ok(span != before)
+    }
+
+    // ---- THE ROW TABLE (Andrew, 2026-11-01): a domain of the gene is a table, row = position, column = type ----
+    //
+    // Column `T` of domain `D` is `D_T`; its row `r` is the cell `off_T + r` while `r < len_T`. The columns are
+    // ragged: a column takes part in a row only where it has that row. Every row operator below moves a symbol only
+    // within its own column, so a child is legal by construction, and with one type it is the one-type operator.
+
+    /// The columns of `domain`'s table, in physical order: one non-empty span a type.
+    pub fn columns(&self, domain: Domain) -> Vec<Span> {
+        self.spans().into_iter().filter(|s| s.domain == domain).collect()
+    }
+
+    /// The rows of `domain`'s table: its longest column.
+    pub fn domain_rows(&self, domain: Domain) -> usize {
+        self.columns(domain).iter().map(|s| s.len).max().unwrap_or(0)
+    }
+
+    /// INVERSION, row-wise: rows `[lo, hi)` reversed in every column of `domain`, each column over the part of
+    /// `[lo, hi)` it has. Returns the columns that changed.
+    pub fn invert_rows(&self, gene: &mut [u32], domain: Domain, lo: usize, hi: usize) -> Result<usize, LayoutDefect> {
+        let rows = self.domain_rows(domain);
+        if lo >= hi || hi > rows {
+            return Err(LayoutDefect::RowsOutsideTable { domain: Some(domain), lo, hi, rows });
+        }
+        let mut changed = 0;
+        for c in self.columns(domain) {
+            let h = hi.min(c.len);
+            if h <= lo + 1 {
+                continue;
+            }
+            let cells = &gene[c.off + lo..c.off + h];
+            if cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b) {
+                self.invert(gene, c.off + lo, c.off + h)?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
+    /// TRANSPOSITION, row-wise (GEP's IS; RIS with `dst = 0` and `src` from [`GeneLayout::ris_row`]): in every
+    /// column of `domain`, the run of rows `[src, src + len)` (the part the column has) is copied to row `dst`, the
+    /// rows from `dst` on shift down and the overflow falls off the column's end ([`GeneLayout::transpose`]). A
+    /// column without row `src` or row `dst` is unchanged. Returns the columns that changed.
+    pub fn transpose_rows(&self, gene: &mut [u32], domain: Domain, src: usize, len: usize, dst: usize) -> Result<usize, LayoutDefect> {
+        let rows = self.domain_rows(domain);
+        if len == 0 || src >= rows || dst >= rows {
+            return Err(LayoutDefect::RowsOutsideTable { domain: Some(domain), lo: src.min(dst), hi: src.max(dst) + len.max(1), rows });
+        }
+        let mut changed = 0;
+        for c in self.columns(domain) {
+            if src >= c.len || dst >= c.len {
+                continue;
+            }
+            let run = len.min(c.len - src);
+            changed += usize::from(self.transpose(gene, c.off + src, run, c.off + dst)?);
+        }
+        Ok(changed)
+    }
+
+    /// RIS's start: the first row at or after `from` where the ROOT's head column holds a function, if one does.
+    pub fn ris_row(&self, k: &KingdomContract, gene: &[u32], from: usize) -> Option<usize> {
+        let f = self.frame(self.root)?;
+        (from..f.head_len).find(|r| !k.signature(gene[f.head_off + r]).is_empty())
+    }
+
+    /// The rows of the WHOLE gene's table: the longest column, a column of type `T` being `head_T`, then `tail_T`,
+    /// then `Dc_T` ([`GeneLayout::column_pos`]).
+    pub fn gene_rows(&self) -> usize {
+        self.frames.iter().map(|f| f.head_len + f.tail_len + f.dc_len).max().unwrap_or(0)
+    }
+
+    /// The gene position of row `r` of `f`'s whole column (`head_T`, `tail_T`, `Dc_T`), or `None` past its end.
+    pub fn column_pos(f: &Frame, r: usize) -> Option<usize> {
+        match f.row_pos(r) {
+            Some(p) => Some(p),
+            None => {
+                let d = r - f.head_len - f.tail_len;
+                f.dc_off.filter(|_| d < f.dc_len).map(|o| o + d)
+            }
+        }
+    }
+
+    /// CROSSOVER, row-wise: GEP's one-point (`cut2 = None`: rows `cut1..`) or two-point (rows `[cut1, cut2)`)
+    /// recombination at row indices of the whole gene's table, the rows exchanged between `a` and `b` in every
+    /// column. A column is `head_T`, `tail_T`, `Dc_T` in that order, so a cut spans head and tail (and Dc) together,
+    /// as the classic recombination does over the linear gene; with one type the column IS the linear gene and this
+    /// is the classic operator. Both layouts must be homologous. Returns the cells exchanged.
+    pub fn crossover_rows(&self, other: &GeneLayout, a: &mut [u32], b: &mut [u32], cut1: usize, cut2: Option<usize>) -> Result<usize, LayoutDefect> {
+        if !self.homologous(other) {
+            return Err(LayoutDefect::NotHomologous);
+        }
+        let rows = self.gene_rows();
+        let hi = cut2.unwrap_or(rows);
+        if cut1 >= hi || hi > rows {
+            return Err(LayoutDefect::RowsOutsideTable { domain: None, lo: cut1, hi, rows });
+        }
+        let mut cells = 0;
+        for f in &self.frames {
+            for r in cut1..hi {
+                match Self::column_pos(f, r) {
+                    Some(p) => {
+                        std::mem::swap(&mut a[p], &mut b[p]);
+                        cells += 1;
+                    }
+                    None => break,
+                }
+            }
+        }
+        Ok(cells)
+    }
 }
 
 /// The genes of one layout id: the root and domain lengths of every gene id
@@ -367,6 +493,9 @@ pub enum LayoutDefect {
     NotHomologous,
     /// An operator range that is not inside one domain of one type.
     RangeAcrossDomains { lo: usize, hi: usize },
+    /// A row operator's rows `[lo, hi)` outside a table of `rows` rows (`domain`'s, or the whole gene's, `None`, for
+    /// a crossover), or empty.
+    RowsOutsideTable { domain: Option<Domain>, lo: usize, hi: usize, rows: usize },
     /// A tree to encode whose node `step` fills a slot of another type.
     TreeNotTyped { step: usize, want: Ty, got: Ty },
     /// A tree to encode whose node `step` has the wrong number of children.
@@ -401,6 +530,7 @@ impl fmt::Display for LayoutDefect {
             LayoutDefect::NotInAlphabet { pos, value } => write!(f, "value {value} is not in the alphabet of cell {pos}"),
             LayoutDefect::NotHomologous => write!(f, "an exchange between genes the layout does not call homologous"),
             LayoutDefect::RangeAcrossDomains { lo, hi } => write!(f, "range [{lo}, {hi}) is not inside one domain of one type"),
+            LayoutDefect::RowsOutsideTable { domain, lo, hi, rows } => write!(f, "rows [{lo}, {hi}) are empty or outside the {} table of {rows} rows", domain.map_or("gene", Domain::name)),
             LayoutDefect::TreeNotTyped { step, want, got } => write!(f, "tree node {step} fills a slot of type {want:?} and outputs {got:?}"),
             LayoutDefect::TreeArity { step, want, got } => write!(f, "tree node {step} has {got} children, its symbol takes {want}"),
             LayoutDefect::HeadTooShort { ty, need, h } => write!(f, "the tree needs {need} head rows of type {ty:?}, h_T is {h}"),

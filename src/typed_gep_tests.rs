@@ -1066,3 +1066,349 @@ mod tsr {
         assert_eq!(single.attained, single.frames, "TSR single: t_F is attained by an all-binary head");
     }
 }
+
+/// THE ROW TABLE (Andrew, 2026-11-01): a domain of the gene is a table, row = position, column = type, and the
+/// inversion, transposition and crossover act on rows across every column. Every symbol stays in its own column, so
+/// every child is legal; with one type each is the one-type operator; ragged columns take part only where they have
+/// the row; the same seed gives the same children.
+mod rows {
+    use super::*;
+    use crate::typed_gep::validate;
+
+    /// How many random (layout, gene) pairs a kingdom's property test draws.
+    const ROW_GENES: usize = 20_000;
+
+    /// Every kingdom of the property tests: the one-type SR, the four-type regex, the design's two-type fixture.
+    fn kingdoms() -> Vec<(KingdomContract, &'static str)> {
+        vec![(sr_relations().check().expect("SR"), "SR"), (regex_relations().check().expect("regex"), "regex"), (two_type(), "two-type")]
+    }
+
+    fn legal(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], consts: &BTreeMap<Ty, u32>, what: &str) {
+        validate(k, layout, gene, consts).unwrap_or_else(|d| panic!("{what}: {d}"));
+        let e = express(k, layout, gene, consts).unwrap_or_else(|d| panic!("{what}: {d}"));
+        assert_well_typed(k, layout.root, &e, what);
+    }
+
+    /// The (column, row) of every position of `domain`'s table, `None` for a cell of another domain.
+    fn cells_of(layout: &GeneLayout, domain: Domain) -> Vec<Option<(usize, usize)>> {
+        let mut v = vec![None; layout.width];
+        for (c, s) in layout.columns(domain).iter().enumerate() {
+            for r in 0..s.len {
+                v[s.off + r] = Some((c, r));
+            }
+        }
+        v
+    }
+
+    /// The row in its whole column (`head_T`, `tail_T`, `Dc_T`) of every position.
+    fn gene_rows_of(layout: &GeneLayout) -> Vec<usize> {
+        let mut v = vec![usize::MAX; layout.width];
+        for f in &layout.frames {
+            let mut r = 0;
+            while let Some(p) = GeneLayout::column_pos(f, r) {
+                v[p] = r;
+                r += 1;
+            }
+        }
+        assert!(v.iter().all(|r| *r != usize::MAX), "every cell is in one column");
+        v
+    }
+
+    /// The classic IS on one column, written independently: the run copied in, the column cut back to its length.
+    fn classic_is(col: &[u32], src: usize, len: usize, dst: usize) -> Vec<u32> {
+        let run: Vec<u32> = col[src..(src + len).min(col.len())].to_vec();
+        let mut out: Vec<u32> = col[..dst].to_vec();
+        out.extend(run);
+        out.extend_from_slice(&col[dst..]);
+        out.truncate(col.len());
+        out
+    }
+
+    /// One random application of each row operator to random genes of random layouts; returns a fingerprint of
+    /// every child, for the determinism test.
+    fn row_operators(k: &KingdomContract, label: &str, seed: u64, genes: usize) -> u64 {
+        let consts = const_lens(k);
+        let mut rng = Rng(seed);
+        let mut fp = 0xcbf2_9ce4_8422_2325u64;
+        let mut eat = |g: &[u32]| {
+            for w in g {
+                fp = (fp ^ u64::from(*w)).wrapping_mul(0x100_0000_01b3);
+            }
+        };
+        let (mut inverted, mut transposed, mut ris, mut crossed) = (0usize, 0usize, 0usize, 0usize);
+        for g in 0..genes {
+            let n = SIZES[g % SIZES.len()];
+            let root = k.roots()[rng.below(k.roots().len())];
+            let layout = GeneLayout::from_program_size(k, root, n).expect("layout");
+            let (a, b) = (random_gene(k, &layout, &mut rng), random_gene(k, &layout, &mut rng));
+            let what = |op: &str| format!("{label} gene {g} N = {n} {op}");
+
+            // Inversion, in a domain drawn uniformly.
+            let domain = [Domain::Head, Domain::Tail, Domain::Dc][rng.below(3)];
+            let rows = layout.domain_rows(domain);
+            if rows >= 2 {
+                let lo = rng.below(rows - 1);
+                let hi = lo + 2 + rng.below(rows - lo - 1);
+                let mut c = a.clone();
+                let changed = layout.invert_rows(&mut c, domain, lo, hi).expect("rows inside the table");
+                let at = cells_of(&layout, domain);
+                let cols = layout.columns(domain);
+                for p in 0..layout.width {
+                    let want = match at[p] {
+                        Some((ci, r)) if r >= lo && r < hi.min(cols[ci].len) => a[cols[ci].off + lo + hi.min(cols[ci].len) - 1 - r],
+                        _ => a[p],
+                    };
+                    assert_eq!(c[p], want, "{}: cell {p}", what("invert_rows"));
+                }
+                let differ = cols.iter().filter(|s| a[s.off..s.off + s.len] != c[s.off..s.off + s.len]).count();
+                assert_eq!(changed, differ, "{}: the changed columns", what("invert_rows"));
+                legal(k, &layout, &c, &consts, &what("invert_rows"));
+                eat(&c);
+                inverted += 1;
+            }
+
+            // IS, in a domain drawn uniformly (the runner's is the head; every domain keeps the child legal).
+            let domain = [Domain::Head, Domain::Tail, Domain::Dc][rng.below(3)];
+            let rows = layout.domain_rows(domain);
+            if rows >= 1 {
+                let (src, len, dst) = (rng.below(rows), 1 + rng.below(3), rng.below(rows));
+                let mut c = a.clone();
+                layout.transpose_rows(&mut c, domain, src, len, dst).expect("rows inside the table");
+                for s in layout.columns(domain) {
+                    let col = &a[s.off..s.off + s.len];
+                    let want = if src < s.len && dst < s.len { classic_is(col, src, len, dst) } else { col.to_vec() };
+                    assert_eq!(&c[s.off..s.off + s.len], &want[..], "{}: column {:?}", what("transpose_rows"), s.ty);
+                }
+                let at = cells_of(&layout, domain);
+                assert!((0..layout.width).filter(|p| at[*p].is_none()).all(|p| a[p] == c[p]), "{}: a cell of another domain changed", what("transpose_rows"));
+                legal(k, &layout, &c, &consts, &what("transpose_rows"));
+                eat(&c);
+                transposed += 1;
+            }
+
+            // RIS: the run starts where the root's head column holds a function, inserted at row 0.
+            let rows = layout.domain_rows(Domain::Head);
+            if rows >= 1 {
+                if let Some(src) = layout.ris_row(k, &a, rng.below(rows)) {
+                    let f = layout.frame(root).expect("root frame");
+                    assert!(!k.signature(a[f.head_off + src]).is_empty(), "{}: RIS starts at a function", what("RIS"));
+                    let mut c = a.clone();
+                    layout.transpose_rows(&mut c, Domain::Head, src, 1 + rng.below(3), 0).expect("rows inside the table");
+                    assert_eq!(c[f.head_off], a[f.head_off + src], "{}: the root's row 0 is the function", what("RIS"));
+                    legal(k, &layout, &c, &consts, &what("RIS"));
+                    eat(&c);
+                    ris += 1;
+                }
+            }
+
+            // One- and two-point crossover over the whole gene's rows.
+            let rows = layout.gene_rows();
+            let (cut1, cut2) = if rng.below(2) == 0 {
+                (rng.below(rows), None)
+            } else {
+                let c1 = rng.below(rows);
+                (c1, Some(c1 + 1 + rng.below(rows - c1)))
+            };
+            let (mut ca, mut cb) = (a.clone(), b.clone());
+            let cells = layout.crossover_rows(&layout, &mut ca, &mut cb, cut1, cut2).expect("homologous, rows inside the table");
+            let row = gene_rows_of(&layout);
+            let hi = cut2.unwrap_or(rows);
+            let mut swapped = 0;
+            for p in 0..layout.width {
+                let inside = row[p] >= cut1 && row[p] < hi;
+                swapped += usize::from(inside);
+                assert_eq!((ca[p], cb[p]), if inside { (b[p], a[p]) } else { (a[p], b[p]) }, "{}: cell {p}", what("crossover_rows"));
+            }
+            assert_eq!(cells, swapped, "{}: the cells exchanged", what("crossover_rows"));
+            legal(k, &layout, &ca, &consts, &what("crossover_rows first child"));
+            legal(k, &layout, &cb, &consts, &what("crossover_rows second child"));
+            eat(&ca);
+            eat(&cb);
+            crossed += 1;
+        }
+        println!("{label}: {inverted} row inversions, {transposed} row IS, {ris} row RIS, {crossed} row crossovers, every child legal");
+        assert!(inverted > 0 && transposed > 0 && ris > 0 && crossed > 0, "{label}: every operator was applied");
+        fp
+    }
+
+    #[test]
+    fn row_operators_keep_every_symbol_in_its_column_and_every_child_legal() {
+        for (k, label) in kingdoms() {
+            row_operators(&k, label, 0x7ab1e ^ label.len() as u64, ROW_GENES);
+        }
+    }
+
+    /// Several thousand genes of the pathfinder view (832 types at N = 13) and histogram: the kingdoms the row
+    /// operators were made for, with hundreds of ragged columns.
+    #[test]
+    fn row_operators_keep_futhark_genes_legal() {
+        use crate::futhark_table::GeneRng;
+        for (name, n, genes) in [("pathfinder", 13, 60), ("histogram", 4, 300)] {
+            let prob = crate::futhark_sig::problem(name).expect("problem");
+            let fk = crate::futhark_sig::load(&prob.instance).expect("kingdom");
+            let k = fk.relations().check().expect("contract");
+            let consts = fk.const_len();
+            let layout = GeneLayout::from_program_size(&k, fk.roots()[0], n).expect("layout");
+            let mut rng = GeneRng::new(0x5eed);
+            for g in 0..genes {
+                let a = crate::futhark_sig::random_gene(&k, &layout, &consts, &mut rng).expect("gene");
+                let b = crate::futhark_sig::random_gene(&k, &layout, &consts, &mut rng).expect("gene");
+                let what = |op: &str| format!("{name} gene {g} {op}");
+                let rows = layout.domain_rows(Domain::Head);
+                let mut c = a.clone();
+                let lo = rng.below(rows - 1);
+                layout.invert_rows(&mut c, Domain::Head, lo, lo + 2 + rng.below(rows - lo - 1)).expect("rows");
+                legal(&k, &layout, &c, &consts, &what("invert_rows"));
+                let mut c = a.clone();
+                layout.transpose_rows(&mut c, Domain::Head, rng.below(rows), 1 + rng.below(3), rng.below(rows)).expect("rows");
+                legal(&k, &layout, &c, &consts, &what("IS"));
+                if let Some(src) = layout.ris_row(&k, &a, 0) {
+                    let mut c = a.clone();
+                    layout.transpose_rows(&mut c, Domain::Head, src, 1 + rng.below(3), 0).expect("rows");
+                    legal(&k, &layout, &c, &consts, &what("RIS"));
+                }
+                let (mut ca, mut cb) = (a.clone(), b.clone());
+                let c1 = rng.below(layout.gene_rows());
+                let cut2 = if rng.below(2) == 0 { None } else { Some(c1 + 1 + rng.below(layout.gene_rows() - c1)) };
+                layout.crossover_rows(&layout, &mut ca, &mut cb, c1, cut2).expect("rows");
+                legal(&k, &layout, &ca, &consts, &what("crossover_rows"));
+                legal(&k, &layout, &cb, &consts, &what("crossover_rows"));
+            }
+            let types = layout.frames.len() as f64;
+            let mean_head = layout.frames.iter().map(|f| f.head_len).sum::<usize>() as f64 / types;
+            let mean_frame = layout.frames.iter().map(|f| f.head_len + f.tail_len).sum::<usize>() as f64 / types;
+            let mean_column = layout.frames.iter().map(|f| f.head_len + f.tail_len + f.dc_len).sum::<usize>() as f64 / types;
+            let max_frame = layout.frames.iter().map(|f| f.head_len + f.tail_len).max().unwrap_or(0);
+            println!(
+                "{name}: {} types, head table {} rows (mean column {mean_head:.1}), head+tail {max_frame} rows (mean {mean_frame:.1}), gene table {} rows (mean column {mean_column:.1}), {genes} genes, every child legal",
+                layout.frames.len(),
+                layout.domain_rows(Domain::Head),
+                layout.gene_rows()
+            );
+        }
+    }
+
+    /// With ONE type the table has one column and each row operator IS the one-type operator: the inversion is
+    /// `GeneLayout::invert`, the transposition `GeneLayout::transpose` (and the classic IS), the crossover the classic
+    /// one- and two-point recombination over the linear gene (head, tail, Dc), which inside one domain is
+    /// `GeneLayout::swap_range`.
+    #[test]
+    fn with_one_type_each_row_operator_is_the_one_type_operator() {
+        let k = sr_relations().check().expect("SR");
+        assert_eq!(k.types().len(), 1, "SR is single-typed");
+        let mut rng = Rng(0x0e_7e);
+        let mut checked = 0usize;
+        for g in 0..ROW_GENES {
+            let n = SIZES[g % SIZES.len()];
+            let layout = GeneLayout::from_program_size(&k, k.roots()[0], n).expect("layout");
+            assert_eq!(layout.frames.len(), 1);
+            let f = layout.frames[0].clone();
+            assert_eq!(layout.gene_rows(), layout.width, "one column is the linear gene");
+            let (a, b) = (random_gene(&k, &layout, &mut rng), random_gene(&k, &layout, &mut rng));
+            for s in layout.spans() {
+                if s.len >= 2 {
+                    let lo = rng.below(s.len - 1);
+                    let hi = lo + 2 + rng.below(s.len - lo - 1);
+                    let (mut x, mut y) = (a.clone(), a.clone());
+                    layout.invert_rows(&mut x, s.domain, lo, hi).expect("rows");
+                    layout.invert(&mut y, s.off + lo, s.off + hi).expect("span");
+                    assert_eq!(x, y, "SR gene {g}: invert_rows is invert in the {}", s.domain.name());
+                }
+                let (src, len, dst) = (rng.below(s.len), 1 + rng.below(3), rng.below(s.len));
+                let (mut x, mut y) = (a.clone(), a.clone());
+                layout.transpose_rows(&mut x, s.domain, src, len, dst).expect("rows");
+                layout.transpose(&mut y, s.off + src, len.min(s.len - src), s.off + dst).expect("span");
+                assert_eq!(x, y, "SR gene {g}: transpose_rows is transpose in the {}", s.domain.name());
+                assert_eq!(&x[s.off..s.off + s.len], &classic_is(&a[s.off..s.off + s.len], src, len, dst)[..], "SR gene {g}: the classic IS");
+                // Two-point inside one domain is the homologous swap of that range.
+                let lo = rng.below(s.len);
+                let hi = lo + 1 + rng.below(s.len - lo);
+                let (mut xa, mut xb, mut ya, mut yb) = (a.clone(), b.clone(), a.clone(), b.clone());
+                layout.crossover_rows(&layout, &mut xa, &mut xb, s.off + lo, Some(s.off + hi)).expect("rows");
+                layout.swap_range(&layout, &mut ya, &mut yb, s.off + lo, s.off + hi).expect("span");
+                assert_eq!((xa, xb), (ya, yb), "SR gene {g}: two-point inside the {} is swap_range", s.domain.name());
+            }
+            // One-point at c: the classic recombination, everything from position c on exchanged.
+            let c = rng.below(layout.width);
+            let (mut xa, mut xb, mut ya, mut yb) = (a.clone(), b.clone(), a.clone(), b.clone());
+            layout.crossover_rows(&layout, &mut xa, &mut xb, c, None).expect("rows");
+            ya[c..].swap_with_slice(&mut yb[c..]);
+            assert_eq!((xa, xb), (ya, yb), "SR gene {g}: one-point at {c} is the classic one-point (head {}, tail {}, Dc {})", f.head_len, f.tail_len, f.dc_len);
+            // Two-point across domains: the classic two-point.
+            let c1 = rng.below(layout.width);
+            let c2 = c1 + 1 + rng.below(layout.width - c1);
+            let (mut xa, mut xb, mut ya, mut yb) = (a.clone(), b.clone(), a.clone(), b.clone());
+            layout.crossover_rows(&layout, &mut xa, &mut xb, c1, Some(c2)).expect("rows");
+            ya[c1..c2].swap_with_slice(&mut yb[c1..c2]);
+            assert_eq!((xa, xb), (ya, yb), "SR gene {g}: two-point [{c1}, {c2}) is the classic two-point");
+            checked += 1;
+        }
+        println!("SR: {checked} genes, every row operator equal to its one-type operator");
+    }
+
+    /// Ragged columns by hand: the two-type fixture with `h_S = 4`, `h_I = 2`. The gene holds its own positions, so
+    /// each result names where every cell came from.
+    #[test]
+    fn ragged_columns_take_part_only_where_they_have_the_row() {
+        let k = two_type();
+        let heads: BTreeMap<Ty, usize> = [(Ty::S, 4), (Ty::I, 2)].into_iter().collect();
+        let layout = GeneLayout::from_heads(&k, Ty::S, &heads).expect("layout");
+        let (s, i) = (layout.frame(Ty::S).expect("S").clone(), layout.frame(Ty::I).expect("I").clone());
+        assert_eq!((s.head_off, s.head_len, i.head_off, i.head_len), (0, 4, 4, 2));
+        assert_eq!(layout.domain_rows(Domain::Head), 4);
+        let id: Vec<u32> = (0..layout.width as u32).collect();
+        let head = |g: &[u32]| (g[0..4].to_vec(), g[4..6].to_vec());
+
+        // Rows [1, 4): S reverses rows 1..4; I has only row 1 of them, one cell, unchanged.
+        let mut g = id.clone();
+        assert_eq!(layout.invert_rows(&mut g, Domain::Head, 1, 4), Ok(1));
+        assert_eq!(head(&g), (vec![0, 3, 2, 1], vec![4, 5]));
+        assert_eq!(g[6..], id[6..], "the tails are another table");
+        // Rows [0, 3): S reverses rows 0..3, I its rows 0..2.
+        let mut g = id.clone();
+        assert_eq!(layout.invert_rows(&mut g, Domain::Head, 0, 3), Ok(2));
+        assert_eq!(head(&g), (vec![2, 1, 0, 3], vec![5, 4]));
+
+        // IS of rows [2, 4) to row 0: S takes it; I has no row 2, unchanged.
+        let mut g = id.clone();
+        assert_eq!(layout.transpose_rows(&mut g, Domain::Head, 2, 2, 0), Ok(1));
+        assert_eq!(head(&g), (vec![2, 3, 0, 1], vec![4, 5]));
+        // IS of rows [1, 4) to row 0: S's run is three rows, I's the one row 1 it has.
+        let mut g = id.clone();
+        assert_eq!(layout.transpose_rows(&mut g, Domain::Head, 1, 3, 0), Ok(2));
+        assert_eq!(head(&g), (vec![1, 2, 3, 0], vec![5, 4]));
+        // IS to row 3: I has no row 3, unchanged.
+        let mut g = id.clone();
+        assert_eq!(layout.transpose_rows(&mut g, Domain::Head, 0, 1, 3), Ok(1));
+        assert_eq!(head(&g), (vec![0, 1, 2, 0], vec![4, 5]));
+
+        // One-point crossover at row 3 of the whole gene's table: S's head row 3 and its whole tail; I's column is
+        // head (2 rows) then tail, so its tail from tail row 1 on.
+        let (mut a, mut b) = (id.clone(), id.iter().map(|w| w + 1000).collect::<Vec<u32>>());
+        let cells = layout.crossover_rows(&layout, &mut a, &mut b, 3, None).expect("rows");
+        let mut want: Vec<usize> = vec![s.head_off + 3];
+        want.extend(s.tail_off..s.tail_off + s.tail_len);
+        want.extend(i.tail_off + 1..i.tail_off + i.tail_len);
+        assert_eq!(cells, want.len());
+        for p in 0..layout.width {
+            let swapped = want.contains(&p);
+            assert_eq!(a[p], if swapped { id[p] + 1000 } else { id[p] }, "cell {p}");
+        }
+
+        // Rows outside the table are our bug, named.
+        let mut g = id.clone();
+        assert!(matches!(layout.invert_rows(&mut g, Domain::Head, 2, 5), Err(LayoutDefect::RowsOutsideTable { .. })));
+        assert!(matches!(layout.transpose_rows(&mut g, Domain::Head, 4, 1, 0), Err(LayoutDefect::RowsOutsideTable { .. })));
+        assert!(matches!(layout.crossover_rows(&layout, &mut a, &mut b, 2, Some(2)), Err(LayoutDefect::RowsOutsideTable { .. })));
+        assert_eq!(g, id, "a defect changes nothing");
+    }
+
+    /// The same seed gives the same children; another seed others.
+    #[test]
+    fn the_same_seed_gives_the_same_children() {
+        let k = regex_relations().check().expect("regex");
+        let (x, y, z) = (row_operators(&k, "regex", 42, 2000), row_operators(&k, "regex", 42, 2000), row_operators(&k, "regex", 43, 2000));
+        assert_eq!(x, y, "one seed, one result");
+        assert_ne!(x, z, "another seed, other children");
+    }
+}
