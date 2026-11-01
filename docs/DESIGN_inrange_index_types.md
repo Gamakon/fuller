@@ -27,7 +27,7 @@ every index type has.
 
 | Row | Spelling | Why the result is in range |
 |---|---|---|
-| `inrange.<B>_clamp(u32.index)` | `min({0}, arrayLength(&B) - 1u)` | the row's own text (the old clamp, now a row of its own: the fallback that keeps every index legal) |
+| `safe.inrange_<B>(u32.index)` | `min({0}, arrayLength(&B) - 1u)` | the row's own text (the old clamp, now a row of its own: the fallback that keeps every index legal) |
 | `own.u32_in_<B>` | `lit_u32(0u)` | `arrayLength(&B) >= 1` |
 | `inrange.<B>_g<d>` (terminal) | `gi_<B><d>` | an invariant of the register: declared `var gi_<B><d>: u32 = 0u;`, and the ONLY text that assigns it is the guard row's, inside `if (gv < L)` with `L: u32.len_<B>` |
 | `stmt.guard_lt_<B>_<rung>(u32.index, u32.len_<B>, block)` | `{ let gv = {0}; if (gv < {1}) { gi_<B><d> = gv; {2} } }` | mints the register's value: `gv < L <= arrayLength(&B)` |
@@ -232,6 +232,50 @@ ms over its text in total, against an A/A floor of 0.0003. Reply 2 as expressed 
 of 0.0000: the compiler's r2 prologue computes the slot for every invocation and stores under `cs_ok`, where reply 2
 returns early, and the cluster store clamps its slot. A faster r2 prologue is a variant to add and time.
 
+**The faster prologues and the unclamped store** (built 2026-11-01, 7ca67905, ceee6340, 4963f7ee, e5cdf428, ea7b0b04).
+The r2 prologue returns after the barrier for an invocation with no point or no cluster, as reply 2 does. The
+segmented prologue returns for no point and skips a label >= k under `cs_ok`. A second return there cost its scatter
+0.0294 ms against the source's 0.0290 (`fbench/b10_pe.log`). The cluster store spells `scratch[cs_slot]`, with no
+clamp, under `cs_ok`. No type of the gene proves the slot in range, because the gene cannot name the slot: the store
+takes no position, `u32.cluster` and `u32.point` have one producer each, the counts are the scaffold's (this section),
+and no gene-owned entry writes the scratch (section 11). The proof is the variant's counting sort: for a point of
+cluster a < k in block b, the offset into the ids region is at most `sum_{c<=a} total[c] - 1 <= n - 1`
+(`countsort.store_text`). Checks of the emitted text: `countsort.witness` (every variant and the store row byte for
+byte); `countsort.prologue_contract` (`cs_ok` is set only where `cs_v`, `cs_a` and `cs_slot` are assigned);
+`inrange.witness` (admits `scratch[cs_slot]` in that one row only). Checks of the arithmetic, on the CPU:
+`every_scaffold_variant_indexes_in_range_on_*` (26 variants on 11 cases, nothing restricted);
+`every_scaffold_variant_sorts_200_random_shapes_into_their_slots_on_the_cpu` (26 x 200 shapes with the edges, the ids
+region exactly the stable counting sort); `a_scaffold_slot_past_the_ids_region_is_caught_by_the_in_range_check`.
+
+**Measured** 2026-11-01 04:37-04:39Z (`fbench/b14_pe.log`, `b14b_pe.log`, `b15_pe.log`, `b15b_pe.log`; runner
+`tcf_ec98a415_59ed99a0`; load 2.5-4.7; ms, the fastest of about 4,300 round-robin runs; the timing case checked bit
+for bit, 0 of 262,144 cells differing for every text). Expected: parity.
+
+| Text | pass | hist | offsets | starts | scatter | mean | total |
+|---|---|---:|---:|---:|---:|---:|---:|
+| the yardstick (segmented form) | b14 / b14b | 0.0555 / 0.0559 | 0.0119 / 0.0118 | 0.1062 / 0.1064 | 0.0291 / 0.0292 | 0.0287 / 0.0288 | 0.2314 / 0.2320 |
+| segmented form, as written | b14 / b14b | 0.0563 / 0.0562 | 0.0118 / 0.0118 | 0.1065 / 0.1062 | 0.0290 / 0.0290 | 0.0287 / 0.0286 | 0.2322 / 0.2318 |
+| segmented form, as expressed | b14 / b14b | 0.0560 / 0.0560 | 0.0119 / 0.0118 | 0.1064 / 0.1063 | 0.0291 / 0.0291 | 0.0290 / 0.0289 | 0.2323 / 0.2320 |
+| reply 2, as written | b14 / b14b / b15 / b15b | 0.0615 / 0.0613 / 0.0618 / 0.0613 | 0.0117 | 0.1019 / 0.1017 / 0.1019 / 0.1020 | 0.0265 / 0.0266 / 0.0267 / 0.0269 | 0.0286 / 0.0285 / 0.0286 / 0.0293 | 0.2303 / 0.2299 / 0.2307 / 0.2313 |
+| reply 2, as expressed | b14 / b14b / b15 / b15b | 0.0614 / 0.0614 / 0.0615 / 0.0618 | 0.0118 | 0.1018 / 0.1018 / 0.1017 / 0.1019 | 0.0270 / 0.0268 / 0.0269 / 0.0267 | 0.0288 / 0.0288 / 0.0285 / 0.0286 | 0.2309 / 0.2306 / 0.2304 / 0.2308 |
+| reply 2 expressed, the store clamped (hand) | b14 / b14b | 0.0617 / 0.0617 | 0.0117 | 0.1018 / 0.1019 | 0.0268 / 0.0267 | 0.0285 / 0.0284 | 0.2304 / 0.2304 |
+
+The segmented form as expressed is at parity: its scatter is 0.0001 ms over its text, and the yardstick against the
+same text differs by up to 0.0002 ms. Reply 2's scatter as expressed is 0.0270, 0.0268, 0.0269 and 0.0267 ms against
+0.0265, 0.0266, 0.0267 and 0.0269 as written: 0.00017 ms (0.6 %) over on the mean of four passes, inside the 0.0002
+floor, and faster than written in b15b. Reply 2's scatter entry, set as written inside the expressed module, gives
+0.0267 and 0.0265 ms. The expressed entry set inside the written module gives 0.0265 and 0.0268. Neither changes
+the scatter's time. The clamp costs nothing measurable here (0.0268 / 0.0267 ms). Before this change the gap was
+0.0003 ms in both passes (`b7b_pe.log`).
+
+**The dispatch limit of the empty entries** (2026-11-01, cab1a98e). `own.kernel_<e>`, the empty entry, spelled
+`@workgroup_size(1, 1, 1)`. An empty mean therefore dispatched `ceil(k * d / 1)` = 262,144 workgroups on the timing
+cases and 1,048,576 at the largest sizes, over wgpu's 65,535. An entry the dispatch limit binds now spells the default
+grid's width, 256, in its empty entry. `skeleton.dispatch_witness` proves that every width an entry of
+`dispatch_items` can spell fits: a literal, a grid field resolved through its type's producers, or a scaffold marker
+resolved through every variant. With an empty mean, and with the cluster store or an empty scatter, all 26 variants
+plan within the limit on all 11 cases and at n 2^20, k 1,024, d 1,024.
+
 **The identity rows.** A Karva head holds at least one function, and the scaffold's entries have none of their own:
 `kernel.hist`'s producers are the variants' terminals, `kernel.offsets`' and `kernel.starts`' one terminal each. So
 each has an identity, `kernel.cs_hist_same`, `kernel.cs_offsets_same`, `kernel.cs_starts_same` (`{0}` over its own
@@ -293,4 +337,5 @@ hand-edited one whose `cluster.point` reads the scratch.
 ## 12. Not covered (yet)
 
 An index that is in range only by the data (a slot read from scratch, a label read from `assignments`) still reads
-through the clamp row.
+through the clamp row. The one exception is the cluster store's `cs_slot`. It is in range by the scaffold's own
+counting sort, which the gene cannot write (section 10, "The faster prologues and the unclamped store").
