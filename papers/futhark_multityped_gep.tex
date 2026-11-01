@@ -1,0 +1,1045 @@
+% The Futhark domain paper of the multi-typed GEP set.
+% Build: cd papers && latexmk -pdf futhark_multityped_gep.tex
+% Every number in this paper has a source file named beside it; the figure data are in
+% futhark_multityped_gep_data/ (each file names the ledger it was taken from).
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\settopmatter{printacmref=false,printfolios=true}
+\setlength{\emergencystretch}{1.5em}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\DeclareRobustCommand{\src}[1]{{\footnotesize\path{#1}}}
+\newcommand{\ty}[1]{\texttt{#1}}
+\newcommand{\D}{\textsf{D}}
+\newcommand{\Hh}{\textsf{H}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\dat}[1]{futhark_multityped_gep_data/#1}
+
+\lstset{basicstyle=\ttfamily\scriptsize,columns=fullflexible,breaklines=true,frame=none,
+  xleftmargin=0pt,aboveskip=3pt,belowskip=3pt}
+
+\definecolor{evo}{HTML}{1f5fa8}
+\definecolor{rnd}{HTML}{c0392b}
+
+\begin{document}
+
+\title{The Futhark Kingdom: Multi-typed Gene Expression Programming for GPU Array Programs}
+\subtitle{A benchmark study, the fitness faults it found, and what the corrected fitness does}
+
+\author{Andrew James Morgan}
+\affiliation{\institution{Gamakon Ltd.}\country{United Kingdom}}
+\email{andrew@gamakon.ai}
+
+\begin{abstract}
+The Futhark kingdom applies Andrew Morgan's multi-typed gene expression
+programming (GEP) to Futhark, a purely functional array language that compiles
+to GPU code. Its rules of legality are types: a matrix's shape class, an index
+that is in range, a variable that is bound, and a bounded amount of work. Every
+gene therefore expresses a program the Futhark compiler accepts. The kingdom has
+three families, all generated offline from declared interfaces: a matrix
+family (11 types, 71 rows), a signature family that builds one kingdom from a
+benchmark's typed signature (73 to 832 types), and a pixel family for image
+shaders (435 types). Candidates are compiled by a fork of Futhark's WebGPU
+compiler that we extended with a Rust and wgpu backend. They run and are timed
+on the GPU, and the host scores them with Morgan's hyperspherical fitness
+function (HFF).
+
+We report four measured results. (1) On a matrix kernel that computes a product
+twice, the search found a form with 9 device allocations instead of 15. The
+reference's OpenCL kernel was too large for the device to build, and the found
+form ran. (2) In a study on four published benchmarks, evolution was no better
+than random search. Both found the two-node reduce and scan exactly; neither
+found histogram or pathfinder in 1,400 evaluations. (3) A review of that study
+found 22 faults, six of which break evolution: fitness got \emph{worse} as
+programs got closer to the published one (Spearman $-0.68$ and $-0.52$). We added
+a slope check that every run must pass first, rebuilt the quality inputs and
+the fitness cases, and reran. Evolution then reached a lower best HFF than
+random search in 4 of 4 pairs, and its median HFF fell in every run. No run
+found an exact program. (4) No program found by evolution is faster than the
+program it started from. One pathfinder program ran 5\,\% faster than the
+published port, but that speed comes from the way the kingdom writes the
+algorithm, not from the search. We also fixed the compiler and timing faults
+that the study exposed: SetMem in GPU kernels, timing that drifted with the
+GPU's clock, and three evaluation paths that disagreed.
+\end{abstract}
+
+\keywords{gene expression programming, strongly typed genetic programming, Futhark,
+GPU, superoptimisation, fitness landscape, equality saturation}
+
+\maketitle
+
+%======================================================================
+\section{Introduction}
+
+Genetic programming over a real programming language has two problems before
+it has a search problem. Most random programs are illegal, and the legal ones
+must be compiled and run before they can be scored. Andrew Morgan's
+multi-typed GEP removes the first problem by construction. A Karva gene has a
+head and a tail for each output type, and a slot that needs type $T$ reads the
+next row of $T$'s own reading frame. Every expressed node therefore has the type
+its parent asks for, so every gene expresses a legal program. The schema,
+the master symbol table, the geneframe and the GPU engine are described in
+the core paper~\cite{morgan_core}. This paper covers one domain:
+Futhark~\cite{henriksen2017futhark}.
+
+Futhark is a good target for three reasons. Its programs are pure functions of
+typed arrays, so a candidate's behaviour is fully described by its outputs on a
+set of inputs. Its type system already knows about array sizes, so the rules
+that make a program legal can be written as types. And its optimising compiler
+does fusion, flattening and tiling~\cite{henriksen2019flattening}, so the search
+can concentrate on what the compiler cannot see.
+
+The paper follows the work in the order it happened, failures included,
+because the failures were the main finding:
+\begin{enumerate}
+\item a matrix kernel on which the e-graph and the compiler's common
+  subexpression elimination together turn a kernel the device cannot build into
+  one it can (Section~\ref{sec:a7});
+\item a study on four published benchmarks, in which evolution was no better
+  than random search (Section~\ref{sec:study});
+\item the 22 faults a review then found, chiefly a fitness that rewarded moving
+  \emph{away} from the target, and a slope check that now has to pass before any
+  run (Section~\ref{sec:faults});
+\item reruns on the corrected fitness, in which evolution beat random search in
+  4 of 4 pairs but found no exact program (Section~\ref{sec:reruns});
+\item the compiler and timing faults the study exposed, and their fixes
+  (Section~\ref{sec:fixes}).
+\end{enumerate}
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item \textbf{A Futhark kingdom in which legality is a type.} Shape classes,
+  in-range indices, bound variables and a work bound are all types. They are
+  generated offline from a declared interface, and witness tests re-check every
+  relation from the emitted tables (Section~\ref{sec:kingdom}).
+\item \textbf{An evaluation path that scores the code that ships.} Our fork's
+  \texttt{rust-wgpu} backend compiles each generation into one Rust module that
+  runs inside the evolution process on our own wgpu device. Its outputs are
+  bit-identical to \texttt{futhark c} on the integer benchmarks
+  (Section~\ref{sec:gpu}).
+\item \textbf{A measured account of a fitness that could not guide a search}, and
+  a slope check that refuses to start a run on such a fitness
+  (Sections~\ref{sec:faults} and~\ref{sec:slope}).
+\item \textbf{Controlled comparisons against random search}, run with equal
+  numbers of new programs and timed with interleaved pairs and an A/A noise floor
+  (Sections~\ref{sec:study} and~\ref{sec:reruns}).
+\end{itemize}
+
+%======================================================================
+\section{Related work}
+
+\paragraph{Typed genetic programming and GEP.}
+Genetic programming evolves program trees~\cite{koza1992gp}. Strongly typed
+GP~\cite{montana1995stgp} keeps trees well typed by constraining generation and
+variation. GEP~\cite{ferreira2001gep} separates a fixed-length linear genotype
+from the tree it expresses. Morgan's multi-typed GEP~\cite{morgan_core} has a
+head and tail for every type, so type safety is a property of the layout rather
+than of the operators.
+
+\paragraph{GP on GPUs.}
+Early GPU GP evaluated a population of programs in parallel on graphics
+hardware~\cite{harding2007gpu,chitty2007gpu}. In the Futhark kingdom the GPU
+runs the \emph{evolved programs themselves}, compiled by a production compiler.
+In one of the two runners it also holds the population (Section~\ref{sec:gpu}).
+
+\paragraph{Superoptimisation.}
+STOKE~\cite{schkufza2013stoke} searches for x86 code by stochastic search, and
+Souper~\cite{sasnauskas2017souper} synthesises LLVM IR with a solver. We know of
+no superoptimiser for Futhark. Our matrix result
+(Section~\ref{sec:a7}, and the short paper~\cite{morgan2026a7}) is of this kind,
+but on a single kernel.
+
+\paragraph{Equality saturation.}
+E-graphs hold many equal forms of a program at once~\cite{tate2009equality,willsey2021egg}.
+We use egglog~\cite{zhang2023egglog}, with one sort for each kingdom type and
+rules that are identities.
+
+\paragraph{Benchmarks and landscape measures.}
+The benchmarks are Futhark ports~\cite{futharkbenchmarks} of
+Rodinia~\cite{che2009rodinia} programs and of micro benchmarks in the style of
+Parboil~\cite{stratton2012parboil}. Our slope check is a form of fitness-distance
+correlation~\cite{jones1995fdc}, with the tree edit distance of Zhang and
+Shasha~\cite{zhang1989ted}. Futhark's size
+types~\cite{henriksen2021sizedependent} are related to the matrix family's
+classes; the classes are generated by our own table generator,
+not by Futhark's type system.
+
+%======================================================================
+\section{The Futhark kingdom}
+\label{sec:kingdom}
+
+\subsection{What is shared, and what is not}
+The genotype, the head and tail lengths for a declared program size $N$
+($h_T=[T{=}R]+(N-1)\,a_T$), expression, and the contract that every gene
+expresses a legal program all come from the core paper~\cite{morgan_core}.
+What belongs to this kingdom is its \emph{tables}. They are written once,
+offline, by \src{kingdoms/futhark_shapes/gen_tables.py}, from an interface
+that is declared in the generator. The engine reads them as an ordinary flat
+typed kingdom and never learns that shapes exist. The tables are therefore the
+trust boundary, and two checks guard them. The generator's default mode,
+\texttt{--check}, compares every committed table byte for byte with what it
+would write now, and a Rust test runs that check, so a hand edit fails
+\texttt{cargo test}. Then witness tests re-read the committed text and re-check
+every shape relation against a separately written model.
+
+The kingdom has three families, all from the same generator
+(Table~\ref{tab:families}).
+
+\begin{table}[t]
+\caption{The Futhark kingdom's instances, counted from the committed tables
+(\src{kingdoms/futhark_shapes/}: \texttt{types.tsv}, \texttt{functions.tsv}, \texttt{egraph.rules}).}
+\label{tab:families}
+\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+family & instance & types & rows & e-graph rules\\
+\midrule
+matrix    & A7 interface ($n,m,p$)        & 11  & 71    & 54\\
+signature & reduce \texttt{[n]i32 -> i32}   & 73  & 572   & 219\\
+signature & scan \texttt{[n]i32 -> [n]i32}  & 73  & 590   & 219\\
+signature & histogram                     & 607 & 4,389 & 1,041\\
+signature & pathfinder                    & 832 & 5,457 & 1,545\\
+pixel     & image target                  & 435 & 4,957 & 410\\
+pixel     & cuneus                        & 435 & 5,531 & 451\\
+pixel     & volumepassage                 & 435 & 5,490 & 451\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The matrix family: a shape class is a type}
+The interface declares three dimension roles, $n$, $m$ and $p$. A class
+\ty{mat.n.m} is the interface's \texttt{[n][m]f32}. There are nine matrix
+classes and two function classes: a row function \texttt{[]f32 -> []f32}, used
+by \texttt{map} over rows, and a binary row function, needed because Futhark's
+\texttt{map2} is curried. The rows are \texttt{map\_rows}, \texttt{map2\_rows}
+and \texttt{transpose} for every class (27 rows); \texttt{matmul} for every
+legal triple of classes (27); one input terminal for each class, plus two
+\texttt{const} rows (11); and six row functions. The output class is
+\ty{mat.n.p}. The program renders as a shape-polymorphic Futhark function over
+the roles, and an entry point binds the actual sizes. One gene is therefore a
+program for any sizes. At $N=3$ the gene is 322 words long.
+
+Futhark 0.28.1 has no \texttt{matmul}, so the kingdom brings a
+shape-polymorphic helper:
+\begin{lstlisting}
+def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
+  map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
+\end{lstlisting}
+Futhark's own type checker then enforces the inner-dimension relation that the
+class table states. The table and the compiler check each other: the
+compiler caught the table giving \texttt{map2} the wrong arity
+(\src{kingdoms/futhark_shapes/README.md}).
+
+The e-graph has one egglog sort for each class, so a rewrite cannot change a
+node's class. It has 54 rewrites, all bit-identical. For each class there are
+27 identities: \texttt{map} with the identity row function is the matrix;
+\texttt{map2} with the binary identity is its first operand; and
+\texttt{transpose} is an involution. There are also 27 transposed-product rules,
+$(Y^\top X^\top)^\top = XY$ (\src{kingdoms/futhark_shapes/egraph.rules}). (The
+kingdom's README still says 27 rules; the committed table has 54.)
+
+Two costs rank the programs. The \emph{static cost} is a polynomial in the
+roles (traffic, allocations and serial depth), generated into
+\texttt{costs.tsv} with a witness test of its own
+(\src{src/futhark_shapes_cost.rs:263}). The \emph{measured GPU cost} comes from
+the compiled GPU program (\texttt{futhark dev --gpu-mem --compile-imp-gpu}). It
+records device allocation sites, literal bytes, shared memory, kernels, and
+whether the block and register tiler fired
+(\src{src/futhark_shapes_gpu.rs:110}).
+
+\subsection{The signature family: a kingdom from a benchmark's signature}
+\label{sec:sig}
+A signature instance declares a program's typed inputs and output over named
+dimensions, for example Rodinia pathfinder's
+\texttt{walls: [rows][cols]i32 -> [cols]i32}. The generator derives the rest,
+and makes every rule of a legal program a type
+(\src{kingdoms/futhark_shapes/gen_tables.py:1684-1811}):
+\begin{itemize}
+\item \textbf{A class is a type.} \ty{a.rows.cols}, \ty{a.cols}, \ty{ix.cols}
+  and \ty{i32} are classes; a row of an \ty{a.rows.cols} is an \ty{a.cols}.
+\item \textbf{An index is in range by its type.} \ty{ix.D} has the terminals
+  \texttt{0}, $D{-}1$ and the counters of the binders over $D$. Its functions are
+  \texttt{prev} ($\max(0,i{-}1)$), \texttt{next} ($\min(D{-}1,i{+}1)$) and
+  \texttt{clamp}. Every dimension is at least 1, so every index is legal, and
+  neighbour accesses at the edges are clamped by the types.
+\item \textbf{A variable is bound before it is read.} A type is a class in a
+  context, the stack of binders around the node: \texttt{T-D} (a
+  \texttt{tabulate D}), \texttt{L-D-S} (a loop over $D$ carrying state $S$) and
+  \texttt{F-D-S} (the same loop from 1). For example,
+  \ty{i32:c/\allowbreak F-rows-a.cols/\allowbreak T-cols} is an \texttt{i32} inside a \texttt{tabulate}
+  over \texttt{cols}, inside a row loop. Its terminals are the variables of its
+  context and the interface's inputs.
+\item \textbf{The work is bounded by the types.} Binders, reductions,
+  \texttt{map2} and \texttt{replicate} exist only in contexts shallower than
+  \texttt{SIG\_DEPTH} $=2$. So a node runs at most $\max(D)^2$ times, and no gene
+  can express a runaway kernel.
+\item \textbf{Optional families.} An instance can name \texttt{scan},
+  \texttt{hist} or \texttt{mod}. A scan's input is wrapped in \texttt{opaque},
+  because Futhark 0.28.1's SOAC fusion fails on a scan of a scan with an
+  internal compiler error (measured on every pair of the three operators).
+\end{itemize}
+All element operators are total. \texttt{i32} arithmetic wraps, and there is
+no division, which traps on zero.
+
+The e-graph's rules are exact identities of wrapping \texttt{i32} arithmetic.
+They are commutativity of \texttt{+}, \texttt{*}, \texttt{min} and
+\texttt{max}; associativity of \texttt{+}, \texttt{min} and \texttt{max};
+$a-b=a+(-b)$; and $-(-a)=a$. For arrays they are commutativity of
+\texttt{map2}, and \texttt{map2 min a a = a} (and the same for \texttt{max}).
+Each is generated in every context.
+
+\paragraph{Worked example: histogram.} The published program is
+\texttt{hist (+) 0 k (map (\%k) is) vs}. As a gene of the kingdom
+(\src{src/futhark_sig.rs:200}) it is
+\begin{lstlisting}
+(hist.add.n (tab (mod.k (get.n is j1))) vs)
+\end{lstlisting}
+which renders, by the rows' spellings, as
+\texttt{hist (+) 0i32 k (map i64.i32 (tabulate n (\textbackslash j1 -> is[j1] \% i32.i64 k))) vs}.
+Here \texttt{j1} is a terminal only because the \texttt{tabulate} binds it, and
+\texttt{get.n} takes an \ty{ix.n}, so the read is in range.
+
+\paragraph{Worked example: pathfinder.} The published kernel uses \texttt{map5},
+\texttt{rotate} and edge branches. The kingdom writes the same algorithm with
+clamped neighbours (\src{src/futhark_sig.rs:145}):
+\begin{lstlisting}
+(loop1.rows (row.rows.cols walls zero)
+  (tab (add (get.cols (row.rows.cols walls i1) j2)
+            (min (min (get.cols s1 j2) (get.cols s1 (prev j2)))
+                 (get.cols s1 (next j2))))))
+\end{lstlisting}
+At an edge, the clamped neighbour is the cell itself, which the minimum already
+contains, so the values are the same. This form turns out to be faster than the
+published port (Section~\ref{sec:study}).
+
+\subsection{The pixel family}
+A picture is a \texttt{map} over pixels of a scalar program. The program is a
+chain of \texttt{let}s and bounded \texttt{loop}s over \texttt{f32}, ending in
+\texttt{[r, g, b]}. Scope is a type (\ty{f32.s}$k$ has $v_0\ldots v_{k-1}$ in
+scope). A binding moves the scope. Trip counts are literals of at most 64, and
+loops nest at most two deep (\src{kingdoms/futhark_shapes/gen_tables.py:1130-1222}).
+An instance is declared by its WGSL source: the uniform blocks become inputs,
+and the source's float literals join the constant pool. The hand-written
+references draw the WGSL originals' pictures up to fast-math differences
+(volumepassage: 13 of 16,384 pixels differ by more than 1/255). Evolution from
+random did not draw any target picture, and the study is parked
+(\src{docs/reports/2026-10-27_image_study_parked.md}). We report nothing more
+from this family.
+
+\subsection{The deprecated 1-D kingdom}
+The first Futhark kingdom (\src{kingdoms/futhark_true/}, 4 types and 38 rows,
+\src{src/futhark_kingdom.rs}) made \emph{shape a value, not a type}: \ty{arr.f32}
+was one type whatever its length. That kept the kingdom small, but it could not
+say that two arrays' shapes are related, so a \texttt{matmul} was not
+expressible. Two findings from it remain useful. Its e-graph diverged when
+\texttt{map id} was combined with a fusion rule (5, 7, 13, 55 and then 1,357
+e-nodes) until the unit laws of composition were added. And one legal program
+made Futhark 0.28.1's SOAC fusion loop forever; capping that loop
+(\texttt{--fuse=10}) compiles it in 0.12\,s. The kingdom is superseded and is not
+used in any experiment here.
+
+\subsection{Reading real programs: the reader and the ring canvas}
+\label{sec:reader}
+\src{src/futhark_reader.rs} reads Futhark source back into a tree of a
+signature kingdom. It parses a subset of the language, inlines \texttt{let}s and
+helpers, and matches each expression against the rows' own spellings. A
+construct it cannot express is recorded as a \emph{gap}, never skipped. As a
+round trip, 1,600 rendered random genes (400 per instance) read back to the
+same program text.
+
+When a gene is written, its unread cells are filled with random symbols. A
+mutation that grows the tree then exposes those cells, so random symbols come
+back within a few generations. Andrew's \emph{ring canvas} fills the unread cells
+with real code instead (\src{src/futhark_rings.rs:183}). Read programs are
+converted to Karva and their coding symbols are appended, by type, to rings of
+head symbols, terminals and constants. A new gene is a window onto each type's
+rings. The pool holds the benchmarks' own functions and programs that Sonnet
+wrote on 60 unrelated topics (it was never told the task). For histogram 48 of 60
+of those programs could be read, and for pathfinder 45. The published program's
+own file is left out. Measured on 1,400 fresh histogram genes, the canvas cut
+the share of programs whose output is all zeros from 40.8\,\% to 13.8\,\%, and
+raised the number of distinct outputs from 354 to 530
+(\src{docs/PLAN_futhark_fitness_fixes.md}, section H).
+
+%======================================================================
+\section{Fitness evaluation}
+\label{sec:fitness}
+
+\subsection{Cases}
+Each benchmark's cases are random inputs paired with the published program's
+exact outputs. They are split into training, held-out and test cases. Training
+and held-out cases are fitness inputs (the held-out cases form the quality
+group's validation column). Test cases are run but are never fitness inputs.
+After the fixes (Section~\ref{sec:faults}), histogram has 11 training, 4
+held-out and 4 test cases. Pathfinder has 13, 6 and 4. The training sets include
+\emph{stepping stones}: cases that a partly correct program can solve exactly,
+such as histogram indices that are already in range, or $k=1,2,3$
+(\src{examples/futhark_problem_cases.rs}).
+
+\subsection{Quality inputs and the staged HFF}
+Each case contributes its own inputs on $[0,1]$, where 0 is exact
+(\src{src/futhark_sig.rs:1183}, \texttt{QUALITY\_PARTS};
+\src{:1244}, \texttt{quality\_inputs}):
+\begin{itemize}
+\item the share of cells that are not exact;
+\item $(1-r)/2$ for Spearman's and for Pearson's correlation with the correct
+  output (left out when the correct output is constant);
+\item the share of cells that are off by more than 50\,\% of the correct value's
+  magnitude, and the share off by more than 1\,\%.
+\end{itemize}
+This formula was chosen by the slope check (Section~\ref{sec:slope}), from every
+combination of 13 measured parts. Nothing is averaged before HFF: each input
+keeps its own place in TrueNorth's angle,
+$\theta=\arccos\!\bigl(1-\tfrac1m\sum x_i^2\bigr)$, which is computed by the hff
+library~\cite{morgan2026hff}.
+
+The fitness is staged, by Andrew's rule: quality first, then performance
+(\src{src/runner.rs:97}, \texttt{staged\_hff}). In stage 1 the fitness is
+TrueNorth over the quality inputs, and no program is timed. When the best
+individual is exact on every training and held-out case, the whole population
+moves to stage 2, and it never moves back. Stage 2 is the two-level HFF:
+TrueNorth over $(\theta_q/\tfrac\pi2,\ \theta_s/\tfrac\pi2)$, where $\theta_s$ is
+the angle of the speed inputs. Stage 2 is \emph{gated by correctness}. An exact
+program scores the two-level angle, in $[0,\pi/2)$. An inexact one scores
+$\pi/2+\theta_q$. So no inexact program, however fast, ranks above an exact one.
+We added this gate after a run in which wrong but fast programs outranked an
+exact seed (Section~\ref{sec:reruns}).
+
+\subsection{Speed inputs and the verdict}
+A program's speed inputs are its \emph{timing slots}
+(\src{src/runner.rs:123}). There are 11 timed pairs against the published
+program, kept by the program's text, so a program scored again in a later
+generation reads the same pairs. Each pair is its own input, $r/(1+r)$, where
+$r$ is the candidate's GPU time over the published program's. In a pair, the
+two programs alternate run by run on one upload of the timing input, at least
+1\,s a side, and each side takes its fastest run
+(\src{src/runner.rs:220}; \src{src/futhark_batch.rs:98}). Before any timed run
+an A/A gate times the published program against itself, and every A/A ratio
+must lie within $\pm5\,\%$. A champion counts as \emph{faster} only if the median
+of its 11-pair re-time is below the least A/A ratio \emph{and} at least 9 of its
+11 pairs are below 1. That is a sign test with one-sided $p=0.033$
+(\src{src/runner.rs:202}). Before scoring, the host computes each program's
+exact node executions on the case sizes (\src{src/futhark_sig.rs:877}). A
+program above the device's per-submit cap stops the run as misconfigured. A
+program above the timing cap is not timed.
+
+\subsection{The slope check}
+\label{sec:slope}
+A run may start only after a slope check of the same problem, program size,
+cases and quality formula has passed (\src{src/runner.rs:388};
+\src{examples/futhark_evolve.rs:1372}). The check scores the reference gene,
+every one-edit neighbour of it, and 1,400 random genes on the GPU. It passes
+only if (i) the median inexact neighbour is better than at least 95\,\% of the
+random genes, and (ii) Spearman's correlation between fitness and tree edit
+distance to the reference~\cite{zhang1989ted} is positive. Lower fitness is
+better, so a positive correlation means that programs nearer the reference
+score better. The 95\,\% bar was 99\,\% when the check was designed. It was
+lowered after the first three measurements, with Andrew's approval, because
+ties at outputs that random genes also produce cap the reachable figure at about
+99.4\,\% on histogram (\src{docs/PLAN_futhark_fitness_fixes.md}, section A).
+
+\subsection{The matrix family's fitness}
+Correctness is judged against the \emph{reference kernel's} value on a suite of
+independent input sets. The comparison is bit for bit (signed zeros told
+apart) on element-wise paths, and exact (no tolerance) where there is a
+reduction (\src{src/futhark_shapes_interp.rs:281-297}). The fitness that the code
+computes today is the two-level HFF. Its quality inputs are the disagreement on
+each input set, on HFF's log scale. Its speed inputs are traffic, allocations
+and depth, each as $x/(x+x_{\mathrm{ref}})$
+(\src{src/futhark_shapes_evolve.rs:1091-1106}).
+
+%======================================================================
+\section{GPU implementation}
+\label{sec:gpu}
+
+\subsection{Three evaluation paths}
+The signature runner (\src{examples/futhark_evolve.rs}) can evaluate a
+generation in three ways. \emph{Single} compiles each candidate with the
+WebGPU compiler, links it against our wgpu shim and runs it in its own process.
+\emph{Batch} makes each new program of a generation one entry point of a single
+Futhark library, run by one driver process. If a program fails to compile, the
+batch is split in halves until that program stands alone; it is logged and
+scored worst (\src{src/futhark_batch.rs:1-33}). \emph{Rust} compiles the same
+batch with our fork's \texttt{rust-wgpu} backend into one Rust module. That
+module holds the WGSL kernels and a host over wgpu-rs. \texttt{rustc} builds it
+into a dylib, which the runtime \texttt{futhark-rust-rt} loads and runs inside
+this process on one device: no C, no shim and no process per candidate
+(\src{src/futhark_rust.rs:1-12}, \src{:128}, \src{:257}). The kernels are
+launched on the device (\src{futhark-rust-rt/src/program.rs:252}), and each pass
+is timed with GPU timestamps (\src{futhark-rust-rt/src/ctx.rs:114-119}).
+
+\subsection{The compiler fork}
+The fork is a series of nine patches on Futhark's \texttt{webgpu} branch at
+\texttt{14e9ccb} (\src{futhark-rust-backend/README.md}). Six are needed for the
+backend and for the matrix kernel (the backend itself; SetMem of register memory;
+names; register arrays sized by a kernel constant; a boolean kernel constant
+that was declared \texttt{i64}, an upstream defect). Three came from the
+study's compile failures (Table~\ref{tab:fixes}). The runtime reimplements the
+C runtime's memory and free list, pipeline cache, launches, tuning and copies.
+It differs from the C runtime in no way that changes a value
+(\src{docs/PLAN_futhark_rust_wgpu.md}, section 3).
+
+\begin{table}[t]
+\caption{The rust path against \texttt{futhark c} and the shim, Apple M3 Max,
+wgpu 30.0.1 on Metal (\src{docs/PLAN_futhark_rust_wgpu.md}, section 7). GPU
+$\mu$s is the fastest of 20 runs; k-means sums f32 with atomics and does not
+repeat from run to run on either GPU path.}
+\label{tab:rust}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+benchmark & cases & $=$\,C (bits) & rust $\mu$s & shim $\mu$s\\
+\midrule
+reduce     & 5 & 5 & 8.5  & 27.6\\
+scan       & 5 & 5 & 16.8 & 17.4\\
+histogram  & 5 & 5 & 23.3 & 11.0\\
+pathfinder & 8 & 8 & 56.2 & 57.8\\
+k-means    & 5 & 1 & 43.5 & 43.7\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the four integer benchmarks the rust path is bit-identical to
+\texttt{futhark c} on every case (Table~\ref{tab:rust}). Over three generations
+of evolution its ledger (every fitness, every text, every quality input)
+matched the batch path's with 0 mismatches on all four problems, and it scored
+0--5\,\% more evaluations per second.
+
+\subsection{Where each stage runs}
+Table~\ref{tab:where} gives, with file and line, where each stage runs in the
+two runners. fuller must not depend on phylu, so the signature runner has its
+own host genetic algorithm. In phylu's \texttt{shape\_typed} runner, the
+population lives in the typed core on the device, and the host scores it.
+
+\begin{table*}[t]
+\caption{Where each stage runs. \D{} device, \Hh{} host. ``Signature'' is fuller's
+\texttt{examples/futhark\_evolve.rs} (the benchmark study); ``Matrix (GPU population)''
+is phylu's \texttt{src/evolve/shape\_typed.rs} with fuller's scorer. Paths are
+relative to each repository.}
+\label{tab:where}
+\small
+\begin{tabularx}{\textwidth}{@{}lcYcY@{}}
+\toprule
+stage & \multicolumn{2}{c}{Signature (fuller)} & \multicolumn{2}{c}{Matrix, GPU population (phylu + fuller)}\\
+\midrule
+random genes & \Hh & \src{futhark_evolve.rs:790} $\to$ \src{src/futhark_sig.rs:1007} & \D & typed core init (\src{phylu src/evolve/shape_typed.rs:10-17})\\
+expression & \Hh & \src{futhark_evolve.rs:828} & \Hh{}\,(+\D{} walk check) & \texttt{score\_lenient} \src{futhark_shapes_evolve.rs:1012}; walk check \src{shape_typed.rs:566}\\
+mutation, crossover, marriage & \Hh & \src{futhark_evolve.rs:838}, \src{:867}, \src{:882} & \D & \texttt{dev.vary} \src{shape_typed.rs:746}\\
+e-graph variants & \Hh & egglog, \src{src/futhark_sig.rs:1444} & \Hh & \texttt{saturate\_tree} \src{shape_typed.rs:630}\\
+program building & \Hh & render \src{futhark_sig.rs:423}; fork + \texttt{rustc} \src{futhark_rust.rs:128} & \Hh & interpreter; compile only for measured elites \src{futhark_shapes_gpu.rs:110}\\
+program execution & \D & \src{futhark-rust-rt/src/program.rs:252} & \Hh & interpreter \src{futhark_shapes_interp.rs:331}\\
+timing & \D & GPU timestamps \src{futhark-rust-rt/src/ctx.rs:114}; pairs \src{src/runner.rs:220} & -- & static cost \src{futhark_shapes_cost.rs:263} (no timing)\\
+fitness evaluation & \Hh & \src{futhark_sig.rs:1244}, \src{src/runner.rs:97} & \Hh & \src{futhark_shapes_evolve.rs:1104}; written to \D{} \src{shape_typed.rs:488}\\
+selection & \Hh & tournament of 3, \src{futhark_evolve.rs:2362} & \D & device selection kernel on the host's fitness\\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+The matrix family's evaluation stays on the host because its contract is
+bit-exactness. The GPU's backend contracts multiply-add into an FMA and the
+interpreter does not: on the A7 product, 758 of 4,096 elements agreed bit for
+bit, and the rest differed by up to $3.7\times10^{-4}$
+(\src{docs/measurements/2026-10-27_futhark_shapes_A7.md}).
+
+%======================================================================
+\section{Experiments}
+All runs were on one machine, an Apple M3 Max, under Metal. The A7 run used
+Futhark 0.28.1's OpenCL backend. The benchmark runs used our wgpu path (wgpu
+30.0.1). Expectations were written before the runs; where a rule was changed
+after a result was seen, we say so.
+
+\subsection{The matrix kernel A7}
+\label{sec:a7}
+\paragraph{Setup.} A7 computes the product of two matrices twice, once directly
+and once the transposed way, and adds them:
+\texttt{map2 (add) (A.B) ((B'.A')')}. The sizes were $n=m=p=64$; the population
+was 32, run for 20 generations, starting from random genes plus the reference
+(\src{docs/measurements/2026-10-27_futhark_shapes_A7_learning.md}).
+
+\paragraph{Result.} The best program is \texttt{map2 (add) (A.B) (A.B)}. The
+e-graph's transposed-product rule rewrote the second operand into the first, and
+Futhark's common subexpression elimination removed the duplicate
+(Table~\ref{tab:a7}). On Apple's OpenCL backend, the reference does not run: its
+kernel is too large to build (\texttt{newCompute\-Pipeline\-State failed}, error
+$-48$). The winner runs. Through our rust path both programs compile and run,
+and both agree with \texttt{futhark c} on 1,157 of 4,096 values, within 6 ulp
+(\src{docs/PLAN_futhark_rust_wgpu.md}, section 7). So ``the reference cannot
+run'' describes one backend, not the program.
+
+\begin{table}[t]
+\caption{A7 at $n=m=p=64$, Apple OpenCL over Metal
+(\src{docs/measurements/2026-10-27_futhark_shapes_A7.md}).}
+\label{tab:a7}
+\small
+\begin{tabular}{@{}lrrrrrl@{}}
+\toprule
+program & traffic & dev.\ allocs & bytes & kernels & tiled & runs\\
+\midrule
+reference & 45,056 & 15 & 188,416 & 10 & yes & no\\
+winner    & 20,480 & 9  & 106,496 & 5  & no  & yes\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=4.2cm,xlabel={generation},ylabel={correct of 32},
+  ymin=0,ymax=34,xmin=0,xmax=20,legend style={font=\scriptsize,at={(0.98,0.5)},anchor=east},
+  tick label style={font=\scriptsize},label style={font=\scriptsize}]
+\addplot[evo,thick,mark=*,mark size=1.2pt] table[x=generation,y=correct]{\dat{a7_host.dat}};
+\addlegendentry{host population, $64^3$}
+\addplot[rnd,thick,mark=square*,mark size=1.2pt] table[x=generation,y=correct]{\dat{a7_gpu.dat}};
+\addlegendentry{device population, $8^3$}
+\end{axis}
+\end{tikzpicture}
+\caption{A7: individuals bit-identical to the reference over the input suite.
+Host run: \src{docs/measurements/2026-10-27_futhark_shapes_A7_learning.md}. Device
+run (phylu \texttt{shape\_fit}):
+\src{docs/measurements/2026-10-27_futhark_shapes_A7_gpu_population.md}.}
+\label{fig:a7}
+\end{figure}
+
+\paragraph{Learning.} In the host run, the share of correct individuals rose
+from 1 of 32 at generation 0 to 32 of 32 at generation 4. After that it moved
+between 28 and 32 (Figure~\ref{fig:a7}). The population converged on the
+untiled, runnable form: from generation 2 on, the device refused no measured
+candidate and the compiler tiled none. The cost moved only once. The e-graph improved one elite
+at generation 0, and no generation after it improved any. The e-graph's rules
+are identities, so they can move only the cost axis. GEP's operators change the
+program, so they explore correctness. With the population on the device
+($n=m=p=8$), the correct count moved between 5 and 12 of 32 and never settled,
+although the best individual was correct. The fitness recorded in that run is the
+earlier two-band form: its logged best, 0.15313, equals
+$0.49\cdot320/(320+704)$. The code now computes the two-level HFF instead
+(\src{src/futhark_shapes_evolve.rs:1104}), so that run predates the current
+fitness.
+
+\subsection{The benchmark study}
+\label{sec:study}
+\paragraph{Question and hypotheses.} Given only examples of a published
+benchmark's inputs and outputs, does evolution produce the program exactly
+(H1)? Does it do so sooner than random search at the same budget (H2)? Starting
+from the published program, does it find a faster equivalent (H3)? The
+hypotheses and expectations are written in \src{docs/STUDY_evolving_benchmarks.md}.
+We expected H1 to hold on reduce and scan and to be likely on histogram, and H3 to
+be unlikely on reduce and scan and possible on histogram and pathfinder.
+
+\paragraph{Setup.} Four benchmarks: reduce, scan, histogram (Futhark's
+\path{micro/reduce_by_index}) and Rodinia pathfinder. Three regimes: R,
+evolution from random, 3 seeds; C, random search (a new random gene for each
+evaluation), 3 seeds; and P, starting from the published program and searching
+for a faster one, 1 seed for 60 minutes. The budget was 1,400 evaluations, with
+population 24, 2 elites and tournaments of 3. The operators were point mutation,
+homologous crossover, marriage (typed subtree crossover between parents whose
+trees differ), the e-graph pump, and the saturated fold. Each P run was preceded
+by an A/A gate and a control in which a slowdown was planted on purpose.
+
+\begin{table}[t]
+\caption{The benchmark study, before the fixes
+(\src{docs/reports/2026-10-27_STUDY_evolving_benchmarks_summary.md}). ``First exact'' gives
+the evaluation at which a seed was first exact; ``best'' is the best-ever quality
+angle (0 exact) of the three seeds.}
+\label{tab:study}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+benchmark & R (evolution) & C (random search)\\
+\midrule
+reduce (2 nodes)     & exact 3/3: 19, 118, 119  & exact 3/3: 19, 127, 60\\
+scan (2 nodes)       & exact 3/3: 57, 108, 41   & exact 3/3: 42, 46, 28\\
+histogram (7 nodes)  & 0/3; best 1.124--1.147    & 0/3; best 1.120--1.137\\
+pathfinder (24 nodes)& 0/3; best 1.015--1.207    & 0/3; best 1.076--1.105\\
+\midrule
+\multicolumn{3}{@{}l}{H3 (P): reduce undecided (A/A gate 21/22); scan matched 1.0000;}\\
+\multicolumn{3}{@{}l}{histogram matched 1.0046; pathfinder 0.9705, 11 of 11 pairs faster.}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Results.} Evolution was no better than random search
+(Table~\ref{tab:study}). H1 held only for the two-node programs, and random
+search found those as fast or faster: a random gene of program size 8 expresses
+\texttt{(sum.n xs)} about once in 20 to 130 draws. Evolution's own exact reduce
+programs were bloated equivalents (14 and 10 nodes) that ran 4.6 and 2.4 times
+slower. On histogram, random search got as close as evolution or closer. On
+pathfinder, two evolution seeds got closer than any random search seed, and the
+third did not move from 1.207.
+
+\paragraph{The pathfinder ``beat''.} P's champion was 0.9705 of the published
+program's time, with 11 of 11 pairs faster. But its starting point, the reference
+gene (the published algorithm as the kingdom writes it, never evolved), re-timed
+at 0.9473 and 0.9434, also 11 of 11. Evolution returned an e-graph variant that
+was about 2.5\,\% \emph{slower} than where it started. Selection had preferred it
+because of noise in the 11 in-run slots (0.940 against 0.955, where the re-times
+give 0.970 against 0.945). The 5\,\% gain is real and was repeated in 22 of 22
+pairs. It comes from the kingdom's spelling, which clamps indices instead of
+branching and uses \texttt{tabulate} with direct indexing instead of
+\texttt{map5} over two \texttt{rotate}s. It does not come from search.
+
+\subsection{The faults}
+\label{sec:faults}
+During the study we found ten faults in our own method, fixed each one, and
+reran or voided every result it affected (the summary's ``methods findings''
+table). Among them: timing a 10--30\,$\mu$s kernel measured the GPU's clock state
+(A/A ratios in three clusters, 0.30, 1.00 and 3.3), so micro benchmarks now have
+their own timing input; the first rule for ``faster'' gave a false win to the
+published program itself (median 0.985, but only 8 of 11 pairs faster), so the
+sign test was added; random search's champion had been reported from its last
+batch rather than from the hall of fame; and an input of $n=2^{24}$ exceeded
+wgpu's dispatch limit of 65,535 workgroups.
+
+Andrew's premise was that random search beats evolution only when the fitness is
+broken. An independent review then read the runner, the scorer and TrueNorth, and
+re-implemented the quality inputs. The re-implementation reproduced the
+ledgers' fitness exactly (\src{docs/reviews/2026-10-28_futhark_evolve_faults.md}).
+It found 22 faults: 6 break evolution, 11 distort measurement, and 5 are minor
+(Table~\ref{tab:faults}). The central one is fault 1. Over all the distinct
+programs the study evaluated, fitness got \emph{better} as tree distance from
+the reference grew: Spearman $-0.68$ on histogram (6,588 programs) and $-0.52$
+on pathfinder (6,027). The target's one-edit neighbours scored in the same band
+as unrelated programs. On pathfinder, dropping one neighbour from the
+\texttt{min} gives a program right in structure and close in value, which
+scored 1.045. That is worse than a 46-node program wrong in 87\,\% of cells
+(1.015). Selection therefore moved the population away from the target.
+
+\begin{table*}[t]
+\caption{The 22 faults of the review
+(\src{docs/reviews/2026-10-28_futhark_evolve_faults.md}) and the fix built for each
+(\src{docs/PLAN_futhark_fitness_fixes.md}, sections A--G). B = breaks evolution, M =
+distorts measurement, m = minor. Three were suspected rather than confirmed (17, 19, 22).}
+\label{tab:faults}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}rlYY@{}}
+\toprule
+\# & & fault & fix (built unless stated)\\
+\midrule
+1 & B & fitness does not reward closeness: Spearman(fitness, distance) $-0.68$, $-0.52$ & the slope check, required before any run (A)\\
+2 & B & four of seven inputs are step functions, three near-copies & new quality formula chosen by the check (B)\\
+3 & B & error scaled by the output's range rewards matching the level & shape inputs (Spearman, Pearson); magnitude, not range (B)\\
+4 & B & histogram's whole-range values wrap; no case gives partial credit & stepping-stone cases (C)\\
+5 & B & degenerate cases (one row, one bin) reward trivial programs & more normal cases (C)\\
+6 & B & behaviour diversity collapses (23 texts, about 5 outputs) while text diversity is reported & elites, partners and pool differ in output; distinct outputs reported (D)\\
+7 & M & elites re-scored and counted (8.3\,\% of R's budget) & an evaluation is a program not scored before (E)\\
+8 & M & repeats count as evaluations & as 7 (E)\\
+9 & M & pump and fold cannot change stage-1 fitness, and repeat themselves & pump only when the best changed; repeats not counted (F)\\
+10 & M & R and C share generation 0 & C has its own seed stream (E)\\
+11 & M & held-out cases are in the fitness & a test split that selection never sees (G)\\
+12 & M & \texttt{--rescore} uses the old verdict rule & one verdict function (G)\\
+13 & M & batched timing fails the A/A gate; selection on in-run slots chose noise; the floor is an extreme value; pathfinder timed on a quality case & interleaved pairs (Section~\ref{sec:fixes}); the floor and pathfinder's timing input are \emph{not} changed\\
+14 & M & legal programs the compiler cannot build are scored worst & patches 0007--0009 (Section~\ref{sec:fixes})\\
+15 & M & champion fields from the last batch & from the hall of fame's rank 1 (G)\\
+16 & M & hall of fame mixes stage-1 and stage-2 fitness & one hall of fame per stage (G)\\
+17 & M & seed 1 on a different binary and path & one binary per comparison (G)\\
+18 & m & bloat under neutral drift (8--17 to 35--124 nodes) & symptom of 1, 2, 6; no length penalty\\
+19 & m & marriage favours swaps near the root & uniform over fitting pairs (F)\\
+20 & m & crossover drops its second child; always followed by mutation & both kept; mutation a recorded choice (F)\\
+21 & m & partners need only a different text & differ in output (D)\\
+22 & m & 24 individuals, 58 generations: a small search & not changed\\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\paragraph{The slope check, measured.} Table~\ref{tab:slope} shows the check on
+the study's fitness and on the chosen one. Under the study's formula, histogram
+failed on the old cases (A1) and passed only once the stepping stones were added
+(A3). Pathfinder failed with every set of cases (A2, A4, A5). The chosen formula
+passes both benchmarks (B1). It also no longer rewards the all-zeros output:
+68.6\,\% (histogram) and 84.1\,\% (pathfinder) of non-zero wrong random outputs
+now score better than it, against 28.8\,\% on histogram under the study's
+formula. Graded per-cell inputs were measured and rejected: on histogram, cells
+holding unrelated large numbers drowned the exactness signal, and on pathfinder
+a constant at the right level beat the near-neighbours
+(\src{docs/measurements/2026-10-29_futhark_slope_check.tsv}, 82 formula and case
+combinations).
+
+\begin{table}[t]
+\caption{The slope check on the GPU, 1,400 random genes
+(\src{docs/PLAN_futhark_fitness_fixes.md}, ``Measurements of the check'';
+\src{results/2026-10-27_31/fcheck/}). ``Beats'' = share of random genes the median
+neighbour beats; pass needs $\ge95\,\%$ and $\rho>0$.}
+\label{tab:slope}
+\small
+\begin{tabular}{@{}lllrrl@{}}
+\toprule
+ & benchmark & formula, cases & beats & $\rho$ & verdict\\
+\midrule
+A1 & histogram  & study, old  & 98.86\,\% & $-0.080$ & fail\\
+A2 & pathfinder & study, old  & 92.71\,\% & $+0.437$ & fail\\
+A3 & histogram  & study, new  & 98.50\,\% & $+0.370$ & pass\\
+A4 & pathfinder & study, new  & 93.00\,\% & $+0.421$ & fail\\
+A5 & pathfinder & study, new+4 & 92.93\,\% & $+0.420$ & fail\\
+B1 & histogram  & chosen, new & 97.36\,\% & $+0.079$ & pass\\
+B1 & pathfinder & chosen, new & 99.00\,\% & $+0.403$ & pass\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reruns on the corrected fitness}
+\label{sec:reruns}
+\paragraph{Setup.} Fuller \texttt{72c37606}, fitness of section B, both slope
+checks passed. Generation 0 was ring-canvas genes. Population 24, budget 1,400
+new programs, a 30-minute bound per run, \texttt{--eval rust}, point mutation, and
+seeds 1 and 2. C drew from its own seed stream. We expected R's best to be
+better than C's in at least 2 of 3 seeds per benchmark, and we did not expect an
+exact program (\src{docs/PLAN_futhark_fitness_fixes.md}, ``Expectations'').
+Two seeds were run, not three.
+
+\begin{table}[t]
+\caption{Best HFF (0 exact, lower better) at the same number of programs, the
+shorter run's (\src{docs/reports/2026-10-29_futhark_reruns.md};
+\src{results/2026-10-27_31/frerun2/point/}). The histogram R runs reached the
+30-minute bound before 1,400 programs.}
+\label{tab:reruns}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+benchmark, seed & programs & R best & C best & R median & C median\\
+\midrule
+histogram, 1  & 689   & \textbf{1.0584} & 1.1346 & 1.107 & 1.293\\
+histogram, 2  & 1,218 & \textbf{0.9513} & 1.0608 & 0.953 & 1.286\\
+pathfinder, 1 & 1,400 & \textbf{0.9834} & 1.0000 & 0.984 & 1.243\\
+pathfinder, 2 & 1,400 & \textbf{0.9536} & 1.0000 & 0.964 & 1.261\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[t]
+\centering
+\pgfplotsset{every axis/.style={width=0.27\textwidth,height=4.0cm,
+  tick label style={font=\scriptsize},label style={font=\scriptsize},
+  title style={font=\scriptsize},ymin=0.9,ymax=1.32,xmin=0,xmax=1420}}
+\begin{tikzpicture}
+\begin{axis}[title={histogram, seed 1},xlabel={programs scored},ylabel={HFF}]
+\addplot[evo,thick] table[x=evaluations,y=best]{\dat{rerun_histogram_R_s1.dat}};
+\addplot[evo,dashed] table[x=evaluations,y=median]{\dat{rerun_histogram_R_s1.dat}};
+\addplot[rnd,thick] table[x=evaluations,y=best]{\dat{rerun_histogram_C_s1.dat}};
+\addplot[rnd,dashed] table[x=evaluations,y=median]{\dat{rerun_histogram_C_s1.dat}};
+\end{axis}
+\end{tikzpicture}%
+\begin{tikzpicture}
+\begin{axis}[title={histogram, seed 2},xlabel={programs scored},yticklabels={}]
+\addplot[evo,thick] table[x=evaluations,y=best]{\dat{rerun_histogram_R_s2.dat}};
+\addplot[evo,dashed] table[x=evaluations,y=median]{\dat{rerun_histogram_R_s2.dat}};
+\addplot[rnd,thick] table[x=evaluations,y=best]{\dat{rerun_histogram_C_s2.dat}};
+\addplot[rnd,dashed] table[x=evaluations,y=median]{\dat{rerun_histogram_C_s2.dat}};
+\end{axis}
+\end{tikzpicture}%
+\begin{tikzpicture}
+\begin{axis}[title={pathfinder, seed 1},xlabel={programs scored},yticklabels={}]
+\addplot[evo,thick] table[x=evaluations,y=best]{\dat{rerun_pathfinder_R_s1.dat}};
+\addplot[evo,dashed] table[x=evaluations,y=median]{\dat{rerun_pathfinder_R_s1.dat}};
+\addplot[rnd,thick] table[x=evaluations,y=best]{\dat{rerun_pathfinder_C_s1.dat}};
+\addplot[rnd,dashed] table[x=evaluations,y=median]{\dat{rerun_pathfinder_C_s1.dat}};
+\end{axis}
+\end{tikzpicture}%
+\begin{tikzpicture}
+\begin{axis}[title={pathfinder, seed 2},xlabel={programs scored},yticklabels={}]
+\addplot[evo,thick] table[x=evaluations,y=best]{\dat{rerun_pathfinder_R_s2.dat}};
+\addplot[evo,dashed] table[x=evaluations,y=median]{\dat{rerun_pathfinder_R_s2.dat}};
+\addplot[rnd,thick] table[x=evaluations,y=best]{\dat{rerun_pathfinder_C_s2.dat}};
+\addplot[rnd,dashed] table[x=evaluations,y=median]{\dat{rerun_pathfinder_C_s2.dat}};
+\end{axis}
+\end{tikzpicture}
+\caption{HFF against programs scored on the corrected fitness: best so far (solid)
+and the generation's median (dashed), evolution (blue) against random search (red).
+Data: \src{papers/futhark_multityped_gep_data/rerun_*.dat}, taken from each run's
+\texttt{per\_generation.tsv}.}
+\label{fig:reruns}
+\end{figure*}
+
+\paragraph{Results.} Evolution reached a lower best HFF than random search in all
+4 pairs, at equal numbers of programs scored (Table~\ref{tab:reruns},
+Figure~\ref{fig:reruns}). Evolution's median fell during every run. Random
+search's median stayed between about 1.24 and 1.29. On histogram, evolution's best
+after a run cut short (1.058 at 689 programs; 0.951 at 1,218) was better than
+random search's best after all 1,400 (1.093 and 1.061). Random search's best on
+pathfinder stopped at 1.0000 in both seeds. No run found an exact program, and
+none reached stage 2. The histogram R runs reached the 30-minute bound because
+of compile failures (74 to 133 a run), which made batches split in halves. The
+compiler patches that remove those failures were not yet in these runs.
+
+\paragraph{Ring walk.} Ring walk replaces point mutation by moving a type's
+reading frame along its ring. It did worse. On histogram, seed 1 ran 16,149
+generations and produced only 858 new programs among 386,742 repeats, and its
+best never left the generation-0 value (1.1346). On pathfinder it learned
+(1.140 to 1.027), but less than point mutation (0.983). Point mutation stays.
+
+\begin{table}[t]
+\caption{Operator rates. Top: children in the reruns, 2 seeds
+(\src{docs/PLAN_futhark_fitness_fixes.md}, section I). Bottom: 700 children per
+operator, one application each, ring canvas
+(\src{results/2026-10-27_31/fmeasure/fix/*/measure_summary.tsv}).}
+\label{tab:ops}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+operator & new output & better than parent & same output\\
+\midrule
+point mutation       & 39--60\,\% & 4.4--7.9\,\% & 12--29\,\%\\
+crossover+mutation   & 44--59\,\% & 1.5--3.2\,\% & 8--24\,\%\\
+marriage             & 29--48\,\% & 3.1--6.3\,\% & 34--58\,\%\\
+crossover alone      & 15--22\,\% & 1.7--5.7\,\% & 70--79\,\%\\
+pump (e-graph)       & 0\,\%      & 0\,\%        & 100\,\%\\
+saturated fold       & 0\,\%      & 0\,\%        & 99--100\,\%\\
+ring walk            & 0.1--1.7\,\% & 1.5--2.7\,\% & 53--56\,\%\\
+\midrule
+point, hist / path   & 45.9 / 44.9\,\% & 4.0 / 15.3\,\% & 42.6 / 43.0\,\%\\
+inversion            & 45.9 / 56.1\,\% & 3.7 / 18.1\,\% & 32.3 / 24.7\,\%\\
+transposition        & 46.1 / 55.1\,\% & 3.7 / 14.4\,\% & 34.6 / 28.1\,\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Operators.} Table~\ref{tab:ops} gives the measured rates. The pump and
+the fold never change stage-1 fitness. That is by design: their rules are
+identities, so they matter only once programs are timed. Inversion and
+transposition (IS and RIS within one type's head) were measured alone, 700
+children each, but have not yet been tested inside runs. On pathfinder they
+give more new outputs than point mutation, and inversion more improvements;
+on histogram all three are similar.
+
+\paragraph{Programs from a language model.} In one generation-0 set, a program
+written by Fable (a language model) was one of the individuals. All 8 such runs
+stopped at evaluation 1, because Fable's program was already exact. On
+histogram it was 70 to 72 times slower than the published program: it
+tabulates over the whole input once for each bin. On pathfinder it was 0.94 to
+0.96 of the published time, the same algorithm written with \texttt{map2} over
+whole rows. These are a model's programs, not evolution's.
+
+\paragraph{Improvement run, and the correctness gate.} An improvement run from
+Fable's exact histogram program showed a fault: under the two-level HFF, wrong
+but fast mutants outranked the exact, slow seed. One mutant had quality angle
+1.29 and speed ratio 0.002 and scored 0.848. Over 7 generations the best was
+inexact in every generation. The run was stopped and the stage-2 gate
+described in Section~\ref{sec:fitness} was built. With the gate in place, the
+best stayed at the exact seed for 18 generations and no faster exact program
+appeared (\src{results/2026-10-27_31/frerun2/improve/histogram_R_s1_gate/}). A
+further run started from Fable's mutants with Fable's program itself left
+out. Its best HFF fell from 1.2644 to 1.1024 ($-13\,\%$) over 23 generations
+(445 programs), and its median from 1.2926 to 1.1358. It found no exact
+program.
+
+\subsection{Compiler and timing fixes}
+\label{sec:fixes}
+At the end of the reruns four bugs were open
+(\src{docs/reports/2026-10-29_futhark_reruns.md}). All four are fixed and tested
+(Table~\ref{tab:fixes}). The three paths now agree. On five programs (the
+published histogram, its planted slowdown, Fable's program, a per-bin sum and a
+constant) the quality outputs and inputs are bit-identical on all three paths,
+and the median speed ratios agree; Fable's program, for example, is 70.75, 70.64
+and 70.47. Generation 0 is byte-identical in the three ledgers.
+
+\begin{table}[t]
+\caption{Compiler and timing faults and their fixes
+(\src{futhark-rust-backend/README.md}; \src{docs/reports/2026-10-29_futhark_reruns.md};
+\src{docs/PLAN_futhark_rust_wgpu.md}, section 4; fuller commit \texttt{3481e128}).}
+\label{tab:fixes}
+\small
+\begin{tabularx}{\columnwidth}{@{}YY@{}}
+\toprule
+fault & fix and measurement\\
+\midrule
+SetMem of device or shared memory in a kernel loop or conditional (143 corpus programs) & patch 0008: a memory variable that can name one binding is renamed to it; otherwise a selector picks among bindings. 10 of 10 SetMem test programs identical to \texttt{futhark c}\\
+a unit scalar as a kernel argument (192 programs) & patch 0007\\
+flatten pairs every SegHist operator with the first one's shapes (38 programs; also in Futhark 0.28.1) & patch 0009; reported upstream with a test case\\
+all compile failures & 376 of 376 corpus programs compile on the webgpu and rust paths; the default compiler is the fork with all 9 patches\\
+timed runs re-uploaded the 126\,MB input; the GPU clock stepped down in the gaps & one upload per timed command, runs interleaved one by one. A/A gate: 7/22 batch, 12/22 rust, 9/22 single before; 22/22 on all three after\\
+timing work bound counted loop trips, not nodes; Fable's exact program left untimed & bound $5.9\times10^{10}$ node executions\\
+generation 0 differed by path & the single path's unpatched compiler wrote no C for 4 programs (SetMem); same compiler on every path\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%======================================================================
+\section{Discussion}
+\paragraph{The fitness was the problem.} The first study's result, evolution
+no better than random search, was not a property of the kingdom or of GEP.
+The fitness had no slope towards the target, and on both hard benchmarks it
+sloped the wrong way. The study's controls (A/A gates, planted slowdowns, the
+sign test) protected the speed claims, but nothing tested the quality landscape
+until the review. The slope check is now the first gate, before any run. Once
+the fitness passed it, evolution's best and median fell in every run, and
+random search's median did not.
+
+\paragraph{Small targets do not test search.} On two-node targets random search
+wins, because a random gene expresses the target often. A fair test of H2 needs
+targets that random search cannot hit by chance. Histogram and pathfinder are
+such targets, and neither regime has yet found them exactly.
+
+\paragraph{The e-graph is a cost operator.} Every rule in every family is an
+identity. In stage 1 its children always have their parent's fitness. On A7 it
+produced the only cost improvement, in generation 0. On reduce, scan and
+histogram it found no variants of the published programs, and on pathfinder
+it found 23.
+
+\paragraph{Where the speed came from.} Two programs faster than a published
+one have been measured: the kingdom's own pathfinder (5\,\%) and Fable's
+pathfinder (4--6\,\%). Neither came from evolution. The matrix family's win is
+a kernel the OpenCL backend could build, found with the e-graph's help; on our
+rust path the reference also runs, so that win depends on the backend.
+
+%======================================================================
+\section{Limitations and open work}
+\begin{itemize}
+\item \textbf{No evolved Futhark program is faster than its starting point or
+  than the published program.} No rerun found an exact program, so no rerun
+  reached stage 2.
+\item \textbf{Few seeds.} The reruns used 2 seeds per benchmark, and two
+  histogram R runs stopped at the time bound before 1,400 programs; they are
+  compared at the shorter run's count. The study used 3 seeds where H1 asked
+  for 5.
+\item \textbf{The slope check's bar was changed after measurements were seen}
+  (99\,\% to 95\,\%), with the reason recorded. The chosen formula's histogram
+  Spearman is small ($+0.079$).
+\item \textbf{Timing fault 13 is only partly fixed.} The verdict still compares a
+  median with the least of 22 A/A ratios, and pathfinder is still timed on a
+  quality case (\texttt{timing\_n = 0}, \src{src/futhark_sig.rs:163}).
+\item \textbf{Operators.} Inversion and transposition have rates but no runs.
+  Elite edits by a language model are planned, not built.
+\item \textbf{One machine and one GPU family}: an Apple M3 Max under Metal.
+  Vulkan was not measured.
+\item \textbf{The matrix family is one kernel} (A7). The extension to vector
+  classes (softmax, layer normalisation) waits for a second win, and an
+  \texttt{exp} row would break the bit-exact contract.
+\item \textbf{The signature family is integer-only.} Of 1,575 functions in the
+  221 benchmark files, 10 read into the kingdom; floats, tuples and records are
+  outside it.
+\item \textbf{The pixel family produced no picture from random}, and is parked.
+\item \textbf{Documentation lag.} Some documents disagree with the code. The
+  runner's header still lists the study's seven quality inputs, the matrix
+  README says 27 e-graph rules where the table has 54, and the phylu short paper
+  describes the two-band fitness. This paper follows the code.
+\end{itemize}
+
+%======================================================================
+\section{Conclusion}
+The Futhark kingdom shows that a production array language can be made a
+multi-typed GEP kingdom in which every gene compiles. Shapes, index ranges,
+scopes and work bounds can all be types, generated offline and checked. The
+evaluation path now scores the code that would ship, on the device, and the three
+paths agree bit for bit. The search itself has not yet produced a better
+Futhark program. Our first comparison found evolution no better than random
+search, and the cause was a fitness with no slope towards the target. With that
+fitness corrected and checked before each run, evolution beat random search in
+4 of 4 pairs. The next tests are exact discovery on histogram and pathfinder,
+and an improvement run that is gated by correctness and timed on the corrected
+paths.
+
+\begin{acks}
+The design of multi-typed GEP, the geneframe, HFF and TrueNorth, the staged
+fitness, the ring canvas and the correctness gate are Andrew Morgan's. The review
+of the 22 faults was an independent reading of the code and ledgers.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{futhark_multityped_gep}
+
+\end{document}
