@@ -1,10 +1,11 @@
-//! The SIGNATURE FAMILY of the Futhark kingdom's generator: a Futhark kingdom whose interface is generated from a
-//! program's declared signature (`kingdoms/futhark/gen_tables.py`, section "THE SIGNATURE FAMILY"; one instance
-//! a problem, under `kingdoms/futhark/sig/<problem>/`), in the direction of "any Futhark program: inputs and
-//! outputs are any typed values".
+//! The SIGNATURE FAMILY of the Futhark kingdom: a Futhark kingdom whose interface is a program's signature, in the
+//! direction of "any Futhark program: inputs and outputs are any typed values". A problem's kingdom is a VIEW over
+//! the master Futhark table (`kingdoms/futhark/master/`, [`crate::futhark_view`]): its specification
+//! (`kingdoms/futhark/sig/<problem>/view.tsv`) is written by `kingdoms/futhark/sniff.py` from the problem's Futhark
+//! source, and the view filters, binds and closes the master's rows (`docs/PLAN_futhark_kingdom.md`, step 3).
 //!
-//! An instance declares its inputs and output as typed arrays over named dimensions — Rodinia's pathfinder is
-//! `walls: [rows][cols]i32 -> [cols]i32` — and the generator derives the rest, every rule of a legal program a type:
+//! A specification gives its inputs and output as typed arrays over named dimensions — Rodinia's pathfinder is
+//! `walls: [rows][cols]i32 -> [cols]i32` — and the view derives the rest, every rule of a legal program a type:
 //! a class (`a.rows.cols`, `a.cols`, `ix.cols`, `i32`) in a context (the binders around the node: `tabulate`, a
 //! `loop` over a dimension carrying a state, the same loop from 1). An index is in range by its type (its terminals
 //! are `0`, `D - 1` and the counters of binders over `D`; its functions clamp), a variable is read only in a context
@@ -27,68 +28,43 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{EGraph, Term, TermDag, TermId};
 
-use crate::futhark_table::{FutharkFamily, FutharkKind, FutharkKingdom, GeneRng};
+use crate::futhark_table::{FutharkKind, FutharkKingdom, GeneRng};
+use crate::futhark_view::{Shape, View as TableView, ViewSpec};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::saturated_fold::EgraphKingdom;
 use crate::typed_gep::{Domain, GeneLayout, Tree};
 
-/// One instance of the family: the generated artefacts of one declared signature.
+/// One instance of the family: a problem's VIEW over the master Futhark table (`kingdoms/futhark/master/`), given by
+/// its specification (`kingdoms/futhark/sig/<problem>/view.tsv`, written by `kingdoms/futhark/sniff.py` from the
+/// problem's Futhark source). Its tables, signature and e-graph are computed at runtime from the master and the
+/// specification ([`crate::futhark_view`]), once a process; the written-out tables beside the specification are the
+/// generator's record and are never loaded.
 #[derive(Debug, Clone, Copy)]
 pub struct Instance {
     pub name: &'static str,
-    types: &'static str,
-    functions: &'static str,
-    interface: &'static str,
-    pub datatype: &'static str,
-    pub rules: &'static str,
-    egraph_rows: &'static str,
+    pub spec: &'static str,
+}
+
+impl Instance {
+    /// The instance's view (computed once a process, shared by every caller).
+    pub fn view(&self) -> Result<&'static TableView, String> {
+        crate::futhark_view::cached(self.spec).map_err(|e| format!("{}: the view does not load: {e}", self.name))
+    }
 }
 
 /// Rodinia pathfinder: `walls: [rows][cols]i32 -> [cols]i32`.
-pub const PATHFINDER: Instance = Instance {
-    name: "pathfinder",
-    types: include_str!("../kingdoms/futhark/sig/pathfinder/types.tsv"),
-    functions: include_str!("../kingdoms/futhark/sig/pathfinder/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark/sig/pathfinder/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.rows"),
-};
+pub const PATHFINDER: Instance = Instance { name: "pathfinder", spec: include_str!("../kingdoms/futhark/sig/pathfinder/view.tsv") };
 
 /// The study's micro benchmark reduce (`micro/reduce.fut`, `sum_i32`): `xs: [n]i32 -> i32`.
-pub const REDUCE: Instance = Instance {
-    name: "reduce",
-    types: include_str!("../kingdoms/futhark/sig/reduce/types.tsv"),
-    functions: include_str!("../kingdoms/futhark/sig/reduce/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark/sig/reduce/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark/sig/reduce/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark/sig/reduce/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark/sig/reduce/egraph.rows"),
-};
+pub const REDUCE: Instance = Instance { name: "reduce", spec: include_str!("../kingdoms/futhark/sig/reduce/view.tsv") };
 
 /// The study's micro benchmark scan (`micro/scan.fut`, `sum_i32`): `xs: [n]i32 -> [n]i32`, inclusive prefix sums.
-pub const SCAN: Instance = Instance {
-    name: "scan",
-    types: include_str!("../kingdoms/futhark/sig/scan/types.tsv"),
-    functions: include_str!("../kingdoms/futhark/sig/scan/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark/sig/scan/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark/sig/scan/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark/sig/scan/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark/sig/scan/egraph.rows"),
-};
+pub const SCAN: Instance = Instance { name: "scan", spec: include_str!("../kingdoms/futhark/sig/scan/view.tsv") };
 
 /// The study's histogram (`micro/reduce_by_index.fut`, `sum_i32`): `(k: i32) (is: [n]i32) (vs: [n]i32) -> [k]i32`,
 /// the sum of the values in each bin `is % k`.
-pub const HISTOGRAM: Instance = Instance {
-    name: "histogram",
-    types: include_str!("../kingdoms/futhark/sig/histogram/types.tsv"),
-    functions: include_str!("../kingdoms/futhark/sig/histogram/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark/sig/histogram/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark/sig/histogram/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark/sig/histogram/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark/sig/histogram/egraph.rows"),
-};
+pub const HISTOGRAM: Instance = Instance { name: "histogram", spec: include_str!("../kingdoms/futhark/sig/histogram/view.tsv") };
 
 /// The ruleset name the generated rules are in.
 pub const RULESET: &str = "futhark_sig";
@@ -244,9 +220,9 @@ pub fn problem(name: &str) -> Result<Problem, String> {
 /// driver and of the in-process host stays the hard stop.
 pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
 
-/// Load an instance's tables.
+/// Load an instance's kingdom: its view's table.
 pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {
-    FutharkKingdom::from_tables(FutharkFamily::Shape, &format!("Futhark Sig {}", inst.name), inst.types, inst.functions)
+    inst.view()?.kingdom(&format!("Futhark Sig {}", inst.name))
 }
 
 // ---- the declared signature -------------------------------------------------------------------------------------
@@ -259,7 +235,7 @@ pub struct Param {
     pub dims: Vec<String>,
 }
 
-/// The declared signature, read from `interface.tsv`.
+/// The declared signature, read from the view's specification (`view.tsv`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
     pub inputs: Vec<Param>,
@@ -269,41 +245,31 @@ pub struct Signature {
     /// Every dimension role, in order of first appearance.
     pub dims: Vec<String>,
     /// The SIZE INPUTS: dimensions given as an `i32` value parameter of the entry point (a `size` line of the
-    /// interface; the parameter is in `inputs`, a scalar), rather than by an array's shape.
+    /// specification; the parameter is in `inputs`, a scalar), rather than by an array's shape.
     pub size_inputs: Vec<String>,
 }
 
+/// The signature of an instance, from its view's specification.
 pub fn signature(inst: &Instance) -> Result<Signature, String> {
-    let mut inputs = Vec::new();
-    let mut size_inputs = Vec::new();
-    let (mut output, mut depth, mut dims) = (None, None, None);
-    for line in inst.interface.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
-        let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 4 {
-            return Err(format!("{}: the interface line {line:?} has {} fields, wants 4", inst.name, f.len()));
-        }
-        let list = |s: &str| s.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
-        match f[0] {
-            "input" => inputs.push(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
-            "size" => {
-                if f[2] != "i32" || !f[3].is_empty() {
-                    return Err(format!("{}: the size input {} is not an i32 scalar", inst.name, f[1]));
-                }
-                inputs.push(Param { name: f[1].into(), elem: "i32".into(), dims: vec![] });
-                size_inputs.push(f[1].to_string());
-            }
-            "output" => output = Some(Param { name: f[1].into(), elem: f[2].into(), dims: list(f[3]) }),
-            "depth" => depth = Some(f[1].parse::<u32>().map_err(|e| format!("{}: depth: {e}", inst.name))?),
-            "dims" => dims = Some(list(f[1])),
-            other => return Err(format!("{}: an interface line of kind {other}", inst.name)),
-        }
+    signature_of(&inst.view()?.spec).map_err(|e| format!("{}: {e}", inst.name))
+}
+
+/// The signature a view specification declares: its inputs (a size input as an `i32` scalar), its output, its depth
+/// and its dimensions.
+pub fn signature_of(spec: &ViewSpec) -> Result<Signature, String> {
+    if spec.shape != Shape::Signature {
+        return Err("the specification is not a signature view".into());
+    }
+    let param = |p: &crate::futhark_view::SpecInput| Param { name: p.name.clone(), elem: if p.elem == "size" { "i32".into() } else { p.elem.clone() }, dims: p.dims.clone() };
+    if spec.dims.is_empty() {
+        return Err("the specification has no dims".into());
     }
     Ok(Signature {
-        inputs,
-        output: output.ok_or_else(|| format!("{}: the interface has no output", inst.name))?,
-        depth: depth.ok_or_else(|| format!("{}: the interface has no depth", inst.name))?,
-        dims: dims.ok_or_else(|| format!("{}: the interface has no dims", inst.name))?,
-        size_inputs,
+        inputs: spec.inputs.iter().map(param).collect(),
+        output: spec.output.as_ref().map(param).ok_or("the specification has no output")?,
+        depth: spec.depth,
+        dims: spec.dims.clone(),
+        size_inputs: spec.sizes.clone(),
     })
 }
 
@@ -1413,14 +1379,18 @@ pub fn quality_fingerprint_of(parts: &[QualityPart]) -> String {
 pub struct Bridge {
     ctor_of_row: BTreeMap<String, String>,
     row_of_ctor: BTreeMap<String, String>,
+    /// The view's e-graph datatype and ruleset, the programs the mapping is of.
+    pub datatype: &'static str,
+    pub rules: &'static str,
 }
 
 impl Bridge {
     /// Read an instance's mapping; a repeated row or constructor is an error (the generator's witness refuses one).
     pub fn load(inst: &Instance) -> Result<Bridge, String> {
+        let view = inst.view()?;
         let mut ctor_of_row = BTreeMap::new();
         let mut row_of_ctor = BTreeMap::new();
-        for line in inst.egraph_rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        for line in view.egraph_rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
             let f: Vec<&str> = line.split('\t').collect();
             if f.len() != 3 {
                 return Err(format!("the mapping line {line:?} is malformed"));
@@ -1429,7 +1399,7 @@ impl Bridge {
                 return Err(format!("the mapping line {line:?} repeats a row or a constructor"));
             }
         }
-        Ok(Bridge { ctor_of_row, row_of_ctor })
+        Ok(Bridge { ctor_of_row, row_of_ctor, datatype: &view.datatype, rules: &view.rules })
     }
 }
 
@@ -1470,9 +1440,10 @@ fn term_cost(termdag: &TermDag, id: TermId) -> u64 {
 /// arithmetic and of `min`/`max`, so every variant computes the same values.
 pub fn variants(inst: &Instance, k: &FutharkKingdom, bridge: &Bridge, tree: &Tree, iters: u32, members: usize, n: usize) -> Result<Vec<Tree>, String> {
     let term = import(tree, k, bridge)?;
+    let view = inst.view()?;
     let mut egraph = EGraph::default();
-    egraph.parse_and_run_program(None, inst.datatype).map_err(|e| format!("the datatype does not load: {e}"))?;
-    egraph.parse_and_run_program(None, inst.rules).map_err(|e| format!("the ruleset does not load: {e}"))?;
+    egraph.parse_and_run_program(None, &view.datatype).map_err(|e| format!("the datatype does not load: {e}"))?;
+    egraph.parse_and_run_program(None, &view.rules).map_err(|e| format!("the ruleset does not load: {e}"))?;
     egraph.parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule (repeat {iters} (run {RULESET})))")).map_err(|e| format!("the term does not load: {e}"))?;
     let (sort, value) = egraph.eval_expr(&exprs::var("__root")).map_err(|e| format!("the root does not evaluate: {e}"))?;
     let mut termdag = TermDag::default();
@@ -1505,7 +1476,7 @@ pub struct FoldEgraph<'a> {
 
 impl EgraphKingdom for FoldEgraph<'_> {
     fn programs(&self) -> Vec<&str> {
-        vec![self.inst.datatype, self.inst.rules]
+        vec![self.bridge.datatype, self.bridge.rules]
     }
     fn rulesets(&self) -> Vec<&str> {
         vec![RULESET]
@@ -1528,3 +1499,5 @@ impl EgraphKingdom for FoldEgraph<'_> {
 mod tests;
 #[cfg(test)]
 mod tests_micro;
+#[cfg(test)]
+mod tests_view;
