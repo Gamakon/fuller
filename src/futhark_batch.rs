@@ -976,6 +976,8 @@ impl<'a> Host<'a> {
     /// Run every step of `members`, each a batch of the members not seen before; see the module's header for the
     /// halving. Every step gets an outcome.
     pub fn run(&self, members: &[Member]) -> Result<BatchResult, String> {
+        #[cfg(test)]
+        let _turn = (!matches!(self.backend, Backend::C)).then(|| crate::gpu_test_lock::futhark_gpu_turn("futhark_batch::Host::run"));
         let mut outcomes: Vec<Vec<Option<Outcome>>> = members.iter().map(|m| vec![None; m.steps.len()]).collect();
         let n = members.len();
         let mut cost = Cost { member_quality_seconds: vec![0.0; n], member_timing_seconds: vec![0.0; n], member_quality_pipeline_seconds: vec![0.0; n], member_timing_pipeline_seconds: vec![0.0; n], ..Cost::default() };

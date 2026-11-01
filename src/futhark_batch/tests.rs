@@ -5,7 +5,9 @@
 
 use super::*;
 use crate::futhark_kingdom::GeneRng;
-use crate::futhark_sig::{compile_c, load, load_cases, problem, program_cases, random_gene, signature, Case};
+#[cfg(feature = "gpu")]
+use crate::futhark_sig::compile_c;
+use crate::futhark_sig::{load, load_cases, problem, program_cases, random_gene, signature, Case};
 use crate::typed_gep::{express, GeneLayout};
 
 fn have(p: &str) -> bool {
@@ -37,6 +39,7 @@ fn trees(k: &FutharkKingdom, n: usize, seed: u64) -> Vec<Tree> {
     out
 }
 
+#[cfg(feature = "gpu")]
 /// The per-candidate path's quality outputs of a tree on the c backend: its own quality program, its own process.
 fn per_candidate(k: &FutharkKingdom, sig: &Signature, t: &Tree, cases: &[Case], dir: &Path) -> Vec<Array> {
     let exe = compile_c(&program_cases(k, sig, t, cases.len()).unwrap(), dir).unwrap();
@@ -48,8 +51,9 @@ fn per_candidate(k: &FutharkKingdom, sig: &Signature, t: &Tree, cases: &[Case], 
 /// A batch of 6 random programs of each micro problem (a size input and two inputs in the histogram) gives every
 /// program's outputs on every case exactly as its own quality program in its own process does, and its timed entry's
 /// output on the timing input exactly as the plain program's. One compile, one process.
+#[cfg(feature = "gpu")]
 #[test]
-fn a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
+fn on_the_gpu_a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     for name in ["reduce", "histogram", "pathfinder"] {
         let p = problem(name).unwrap();
@@ -80,8 +84,9 @@ fn a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
 /// A program the compiler refuses (here a text naming no definition: legal genes cannot be made to fail on the c
 /// backend) is found by halving the batch: its steps are failures carrying the compiler's own message, and every
 /// other program is scored from its half, exactly.
+#[cfg(feature = "gpu")]
 #[test]
-fn one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_are_scored() {
+fn on_the_gpu_one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_are_scored() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     let p = problem("reduce").unwrap();
     let k = load(&p.instance).unwrap();
@@ -112,8 +117,9 @@ fn one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_are_scored(
 /// A program that fails while it runs (an index out of bounds, Futhark's own check) fails only its own step: the
 /// driver records the entry's error and stops, and a new process runs the commands after it, so the programs before
 /// and after it are scored exactly.
+#[cfg(feature = "gpu")]
 #[test]
-fn a_program_that_fails_while_it_runs_fails_only_its_own_step() {
+fn on_the_gpu_a_program_that_fails_while_it_runs_fails_only_its_own_step() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     let p = problem("reduce").unwrap();
     let k = load(&p.instance).unwrap();
@@ -208,6 +214,7 @@ fn the_branch_compilers_batch_compiles_and_links() {
 /// On the GPU: a batch of random programs gives each program's quality outputs exactly as its own per-candidate GPU
 /// program does, and timed pairs inside the one process give real GPU times of the published program against itself.
 /// (The branch compiler, `cc`, the GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_a_batch_equals_the_per_candidate_programs_and_times_in_process() {
     if !have(crate::futhark_wgpu_host::branch_compiler().to_str().unwrap()) || !have("cc") {
@@ -277,6 +284,7 @@ fn the_rust_backends_batch_compiles() {
 /// over the shim, its own process): every quality output, the published program's output, and real GPU times of the
 /// published program against itself. (The fork compiler, rustc, the branch compiler, cc, the GPU; run under the GPU
 /// lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_the_rust_backend_equals_the_batch_backend() {
     if !have(crate::futhark_wgpu_host::branch_compiler().to_str().unwrap()) || !have("cc") || !crate::futhark_rust::compiler().is_file() {
@@ -399,6 +407,7 @@ fn the_cross_path_programs_build_and_are_within_the_timing_work_bound() {
     }
 }
 
+#[cfg(feature = "gpu")]
 /// The steps of `pairs` timed pairs after one discarded process-equivalent, each interleaved run by run, the side
 /// that goes first alternating (the evolution's `pair_steps` for a fresh program).
 fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
@@ -407,6 +416,7 @@ fn fresh_pairs(pairs: usize, runs: usize) -> Vec<Step> {
     v
 }
 
+#[cfg(feature = "gpu")]
 /// The ratios candidate / published of [`fresh_pairs`]' outcomes, and the published program's fastest time.
 fn pair_ratios(o: &[Outcome], pairs: usize) -> (Vec<f64>, f64) {
     o[0].fastest_ns().unwrap();
@@ -424,6 +434,7 @@ fn pair_ratios(o: &[Outcome], pairs: usize) -> (Vec<f64>, f64) {
     (r, yard)
 }
 
+#[cfg(feature = "gpu")]
 fn median(v: &[f64]) -> f64 {
     let mut s = v.to_vec();
     s.sort_by(f64::total_cmp);
@@ -439,6 +450,7 @@ fn median(v: &[f64]) -> f64 {
 /// process a candidate, the batch path one process for all (`Backend::Gpu`), the rust path this process
 /// (`Backend::Rust`); every path times with interleaved pairs (`Step::Pair`). (The fork compiler, rustc, cc, the
 /// GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_the_three_evaluation_paths_agree() {
     assert!(crate::futhark_rust::compiler().is_file() && have("cc"), "the fork compiler {} or cc is not installed", crate::futhark_rust::compiler().display());
@@ -552,6 +564,7 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
 /// input in this process (`Backend::Rust`), gives a GPU time on every run, the warm-up included. Fable's exact
 /// program had no timed pass on this path (2026-10-29), so it scored as infinitely slow. (The fork compiler, rustc,
 /// the GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_the_rust_path_times_every_cross_path_program() {
     assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());
@@ -585,6 +598,7 @@ fn on_the_gpu_the_rust_path_times_every_cross_path_program() {
 /// (B1) a batch process of the published program alone, (B2) a batch process after 8 random programs' quality and
 /// timing (`--eval batch`), and (R1, R2) the same two in this process (`--eval rust`). Printed as a table of medians
 /// and ranges in microseconds. (The fork compiler, rustc, cc, the GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_the_published_programs_time_in_each_setting() {
     assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());
@@ -637,6 +651,7 @@ fn on_the_gpu_the_published_programs_time_in_each_setting() {
 /// runs a command of their own, each run on a fresh upload of the timing input): 7 of 22 on the batch path and 12 of 22
 /// on the rust path, the runs ramping from 4.0 to 8.1 ms and back as the GPU's clock stepped down between uploads.
 /// (The fork compiler, rustc, cc, the GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_interleaved_pairs_pass_the_a_a_gate_in_one_process() {
     assert!(crate::futhark_rust::compiler().is_file(), "the fork compiler {} is not built", crate::futhark_rust::compiler().display());

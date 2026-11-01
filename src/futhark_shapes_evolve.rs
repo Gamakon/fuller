@@ -1430,7 +1430,7 @@ mod tests {
     /// in opposite directions, and the hard gate is that the program runs
     /// at all.
     #[test]
-    fn the_two_forms_are_measured_on_the_gpu() {
+    fn the_two_forms_are_measured_from_their_compiled_gpu_programs() {
         let k = FutharkKingdom::load_shapes().expect("the shape tables load");
         if !std::process::Command::new("futhark")
             .arg("--version")

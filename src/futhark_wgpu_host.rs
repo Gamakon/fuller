@@ -514,6 +514,8 @@ pub fn run_program_bytes(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize
 
 /// [`run_program_bytes`] with the process's stages ([`RunStages`]).
 pub fn run_program_bytes_staged(exe: &Path, stdin: &[u8], timestamps: bool, runs: usize) -> Result<(Vec<u8>, ShimReport, RunStages), String> {
+    #[cfg(test)]
+    let _turn = crate::gpu_test_lock::futhark_gpu_turn("futhark_wgpu_host::run_program_bytes_staged");
     if runs == 0 {
         return Err("a program run zero times has no result".into());
     }
@@ -557,8 +559,11 @@ pub fn compile_and_run(source: &str, input: &[f32], dir: &Path, timestamps: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "gpu")]
     use crate::futhark_interp::Value;
+    #[cfg(feature = "gpu")]
     use crate::futhark_kingdom::FutharkKingdom;
+    #[cfg(feature = "gpu")]
     use crate::typed_gep::{express, GeneLayout, Tree};
 
     fn report_of(ns: &[f64]) -> ShimReport {
@@ -717,6 +722,7 @@ mod tests {
         assert!(read_binary_f32(b"b\x02\x01 i32").is_err());
     }
 
+    #[cfg(feature = "gpu")]
     /// The rows whose arithmetic is exact on any IEEE device: data movement,
     /// one addition or subtraction per element, exact operations. No
     /// multiplication (a multiply then an add is fused into one `fma` by
@@ -739,10 +745,12 @@ mod tests {
         "arr.f32.input",
     ];
 
+    #[cfg(feature = "gpu")]
     fn uses_only(k: &FutharkKingdom, t: &Tree, allowed: &[&str]) -> bool {
         allowed.contains(&k.rows[t.symbol as usize].name.as_str()) && t.kids.iter().all(|c| uses_only(k, c, allowed))
     }
 
+    #[cfg(feature = "gpu")]
     fn uses(k: &FutharkKingdom, t: &Tree, name: &str) -> bool {
         k.rows[t.symbol as usize].name == name || t.kids.iter().any(|c| uses(k, c, name))
     }
@@ -759,6 +767,7 @@ mod tests {
     ///
     /// Needs the branch compiler (`futhark-wgpu-shim/fetch_futhark_branch.sh`),
     /// `futhark` 0.28.1 for the C path, `cc`, and the GPU.
+    #[cfg(feature = "gpu")]
     #[test]
     fn a_gene_runs_on_the_gpu_and_equals_the_interpreter() {
         let have = |p: &Path| Command::new(p).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);

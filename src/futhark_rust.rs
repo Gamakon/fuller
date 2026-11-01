@@ -272,6 +272,8 @@ impl Session {
 
     /// Run the batch driver's `commands` on the module `dylib`: the records (`crate::futhark_batch`'s format).
     pub fn run(&self, dylib: &Path, commands: &str, cases: &[u8], n_cases: usize, n_in: usize, timing: Option<&[u8]>) -> Result<Vec<u8>, String> {
+        #[cfg(test)]
+        let _turn = crate::gpu_test_lock::futhark_gpu_turn("futhark_rust::Session::run");
         let path = CString::new(dylib.as_os_str().as_encoded_bytes()).map_err(|_| "a module path with a NUL byte")?;
         let cmds = CString::new(commands).map_err(|_| "commands with a NUL byte")?;
         let args = RunArgs {
@@ -325,6 +327,7 @@ mod tests {
         d
     }
 
+    #[cfg(feature = "gpu")]
     /// One `o` record's payload (the entry's output in Futhark's binary format), and the `t` record's per-run
     /// nanoseconds, from a run's records.
     fn payloads(raw: &[u8]) -> Vec<(String, bool, u64, Vec<u8>)> {
@@ -349,6 +352,7 @@ mod tests {
     /// the shim's output; the counts are printed. It prints each benchmark's GPU time
     /// a call on both paths (the fastest of 20 runs after a warm-up, GPU timestamps) and the rust path's wall time a
     /// call. (The fork compiler, rustc, the branch compiler, cc, the GPU; run under the GPU lock.)
+    #[cfg(feature = "gpu")]
     #[test]
     fn on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim() {
         let branch = crate::futhark_wgpu_host::branch_compiler();
@@ -443,6 +447,7 @@ mod tests {
     /// the count of bit-identical values and the largest gap in units in the last place, printed. Not asserted equal:
     /// f32 multiply-adds on Metal are contracted (fast math; the shim's S5 measured it), which is to be measured.
     /// (The fork compiler, rustc, the released futhark, the GPU; run under the GPU lock.)
+    #[cfg(feature = "gpu")]
     #[test]
     fn on_the_gpu_the_a7_programs_run_through_the_rust_path() {
         if !compiler().is_file() {
@@ -491,6 +496,7 @@ mod tests {
     /// Futhark's GPU code does with atomics, so their order, and the f32 result, may change from run to run on either
     /// path: this is what the benchmarks' gate needs to know before it compares the paths. (The fork compiler,
     /// rustc, the branch compiler, cc, the GPU; run under the GPU lock.)
+    #[cfg(feature = "gpu")]
     #[test]
     fn on_the_gpu_the_kmeans_step_s_repeatability_on_each_path() {
         let branch = crate::futhark_wgpu_host::branch_compiler();
