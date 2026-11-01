@@ -13,9 +13,9 @@
 //!
 //! ```text
 //! cargo run --release --example futhark_pool -- bench --problem histogram --benchmarks /private/tmp/claude-501/futhark-benchmarks \
-//!     --out kingdoms/futhark_shapes/sig/histogram/pool --run /private/tmp/claude-501/fpool/histogram_bench
+//!     --out kingdoms/futhark/sig/histogram/pool --run /private/tmp/claude-501/fpool/histogram_bench
 //! cargo run --release --example futhark_pool -- llm --problem histogram --calls 150 --parallel 6 \
-//!     --out kingdoms/futhark_shapes/sig/histogram/pool --run /private/tmp/claude-501/fpool/histogram_llm
+//!     --out kingdoms/futhark/sig/histogram/pool --run /private/tmp/claude-501/fpool/histogram_llm
 //! cargo run --release --example futhark_pool -- reread --problem histogram --out ... --run ...   (no new calls)
 //! cargo run --release --example futhark_pool -- contract --problem histogram
 //! ```
@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use fuller::futhark_kingdom::FutharkKingdom;
+use fuller::futhark_table::FutharkKingdom;
 use fuller::futhark_reader::{Gap, Reader};
 use fuller::futhark_rings::{published_source, Entry, Source, POOL_HEADER};
 use fuller::futhark_sig::{load, problem, sexp, signature, Signature};
@@ -156,7 +156,7 @@ fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str, topics: bool) -> R
         entry.push_str(&format!(" ({}: {}{})", p.name, dims(&p.dims), p.elem));
     }
     entry.push_str(&format!(" : {}{} =", dims(&sig.output.dims), sig.output.elem));
-    let notes = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark_shapes/sig/{pname}/functions.tsv"))).map_err(|e| e.to_string())?;
+    let notes = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark/sig/{pname}/functions.tsv"))).map_err(|e| e.to_string())?;
     let note_of: BTreeMap<&str, &str> = notes.lines().skip(1).filter_map(|l| {
         let f: Vec<&str> = l.split('\t').collect();
         (f.len() >= 7).then(|| (f[1], f[6]))
@@ -166,7 +166,7 @@ fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str, topics: bool) -> R
     for r in &k.rows {
         let Some(d) = k.dual(r.output) else { continue };
         let top = !d.dual.contains(':') || d.dual.ends_with(":c");
-        if !top || r.kind == fuller::futhark_kingdom::FutharkKind::Const {
+        if !top || r.kind == fuller::futhark_table::FutharkKind::Const {
             continue;
         }
         // `zeros_D` is bound by the kingdom's own entry point: to a program it is `replicate D 0`.

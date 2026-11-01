@@ -37,7 +37,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::futhark_exec::output_with_timeout_bytes;
-use crate::futhark_kingdom::FutharkKingdom;
+use crate::futhark_table::FutharkKingdom;
 use crate::futhark_sig::{entry_calling, program_cases_named, program_named, read_binary, Array, Signature};
 use crate::futhark_wgpu_host::{compile_library_prebuilt, compile_timeout, run_timeout, unix_ns, CompileStages, DriverOf, RunStages, ShimReport};
 use crate::typed_gep::Tree;

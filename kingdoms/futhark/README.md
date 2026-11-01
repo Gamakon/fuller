@@ -1,14 +1,14 @@
-# `futhark_shapes` — the shape-classed Futhark kingdom
+# `futhark` — the Futhark kingdom
 
-**What it evolves:** the same kind of typed parallel program as `futhark_true`,
+**What it evolves:** the same kind of typed parallel program as `futhark_1d`,
 but over **multi-dimensional** arrays whose dimensions are *related* by the
 program's own type.
 
-**Why it exists.** `futhark_true` decides that **shape is a value, not a
+**Why it exists.** `futhark_1d` decides that **shape is a value, not a
 type**: `arr.f32` is one type however long the array is. That keeps the type
 count flat, and it also means the kingdom cannot say that two arrays' shapes
 relate — `matmul`'s inner dimensions must match, and nothing in the type
-system says so. So a `matmul` in the 1-D kingdom is spelled by the *caller's*
+system says so. So a `matmul` in the 1-D Futhark kingdom is spelled by the *caller's*
 luck, and Futhark is left to reject the program if it is wrong.
 
 This kingdom takes the other road, and the only road the multi-typed GEP
@@ -44,7 +44,7 @@ the declared interface, works out which class each operator instantiates to,
 and writes the two tables the kingdom loader reads. The engine then sees an
 ordinary flat typed kingdom, and **legality by construction is unchanged**.
 
-| | `futhark_true` | `futhark_shapes` |
+| | `futhark_1d` | `futhark` |
 |---|---:|---:|
 | types | 4 | **11** |
 | symbol rows | 38 | **71** |
@@ -55,7 +55,7 @@ ordinary flat typed kingdom, and **legality by construction is unchanged**.
 
 ## The e-graph, generated
 
-The 1-D kingdom's e-graph has its datatype and its ruleset as hand-written
+The 1-D Futhark kingdom's e-graph has its datatype and its ruleset as hand-written
 constants, and its bridge as a hand-written `match` over the constructor
 names. That was affordable for 38 rows and 4 sorts; it is not affordable for a
 kingdom whose rows are *generated*. So the generator emits the e-graph too:
@@ -105,7 +105,7 @@ Twelve, and the last three are the ones that matter:
 | **every e-graph rule is an equivalence** | no rule can justify a candidate that computes something else |
 | the committed artefacts match the generator | the table has not been hand-edited behind the engine's back |
 
-The interpreter (`src/futhark_shapes_interp.rs`) is the shape kingdom's own:
+The interpreter (`src/futhark_interpreter.rs`) is the Futhark kingdom's own:
 `map` over the rows, `map2` over the pairs of rows, `transpose`, and the
 `matmul` helper's own formula — a left fold over the products of one row of
 `A` and one column of `B`. A program that compiles but computes the wrong
@@ -181,7 +181,7 @@ the witnesses are the inner one.
 They fail loudly:
 
 ```
-$ python3 kingdoms/futhark_shapes/gen_tables.py --check
+$ python3 kingdoms/futhark/gen_tables.py --check
 types.tsv: 11 types (9 matrix classes + 2 function classes)
 functions.tsv: 71 rows
 …
@@ -230,11 +230,11 @@ def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
 ## The two Futhark kingdoms
 
 They coexist, and they are separate kingdoms in separate `Ty` families
-(`Ty::Futhark` and `Ty::FutharkShape`), so their duals can never be confused.
-`futhark_true` keeps the programs whose shapes are only equal **at run time**
+(`Ty::Futhark1d` and `Ty::Futhark`), so their duals can never be confused.
+`futhark_1d` keeps the programs whose shapes are only equal **at run time**
 (`map2` over two arrays of equal length), which static classes cannot express.
 
-| | `futhark_true` | `futhark_shapes` |
+| | `futhark_1d` | `futhark` |
 |---|---|---|
 | shapes | 1-D, equal at run time | multi-dimensional, related by the type |
 | equal-length inputs | runtime check | **static** (same class) |
@@ -243,11 +243,11 @@ They coexist, and they are separate kingdoms in separate `Ty` families
 ## Regenerating
 
 ```
-python3 kingdoms/futhark_shapes/gen_tables.py            # check the committed artefacts
-python3 kingdoms/futhark_shapes/gen_tables.py --write    # regenerate them, then check
+python3 kingdoms/futhark/gen_tables.py            # check the committed artefacts
+python3 kingdoms/futhark/gen_tables.py --write    # regenerate them, then check
 ```
 
-The tables are committed, like the 1-D kingdom's, so the loader's
+The tables are committed, like the 1-D Futhark kingdom's, so the loader's
 `include_str!` sees them. The default is to **check** them, because the
 committed table is the trust boundary; `--write` regenerates and then runs the
 same checks.

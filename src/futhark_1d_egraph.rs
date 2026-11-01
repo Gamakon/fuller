@@ -1,7 +1,9 @@
-//! The Futhark kingdom inside Fuller's e-graph.
+//! DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).
+//!
+//! The 1-D Futhark kingdom inside Fuller's e-graph.
 //!
 //! Fuller's equality saturation runs on egglog over the `Math` datatype — a
-//! language of *scalar reals*. The Futhark kingdom is a language of *typed
+//! language of *scalar reals*. The 1-D Futhark kingdom is a language of *typed
 //! array programs*, so it needs its own datatypes. The design here is the one
 //! that makes the typing fall out for free:
 //!
@@ -76,7 +78,7 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{ArcSort, EGraph, Term, TermDag, TermId, Value};
 
-use crate::futhark_kingdom::{FutharkKingdom, FutharkKind};
+use crate::futhark_table::{FutharkKingdom, FutharkKind};
 use crate::kingdom_contract::SymbolId;
 use crate::saturated_fold::EgraphKingdom;
 use crate::typed_chromosome::{AdfSet, Epoch};
@@ -306,13 +308,13 @@ pub fn import(tree: &Tree, kingdom: &FutharkKingdom) -> Result<String, String> {
     let row = kingdom
         .rows
         .get(tree.symbol as usize)
-        .ok_or_else(|| format!("futhark_egraph: symbol {} is not a row", tree.symbol))?;
+        .ok_or_else(|| format!("futhark_1d_egraph: symbol {} is not a row", tree.symbol))?;
     if row.kind == FutharkKind::Const {
         let v = kingdom.literal(tree)?;
         return Ok(format!("(RNum {})", fmt_f64(v as f64)));
     }
     let ctor = constructor_of(&row.name)
-        .ok_or_else(|| format!("futhark_egraph: the row {} has no e-graph constructor", row.name))?;
+        .ok_or_else(|| format!("futhark_1d_egraph: the row {} has no e-graph constructor", row.name))?;
     let kids: Vec<String> = tree
         .kids
         .iter()
@@ -336,8 +338,8 @@ pub fn render(termdag: &TermDag, id: TermId, kingdom: &FutharkKingdom) -> Result
     let term = termdag.get(id);
     let Term::App(op, kids) = term else {
         return Err(match term {
-            Term::Lit(_) => "futhark_egraph: a literal is not a program".to_string(),
-            Term::Var(v) => format!("futhark_egraph: {v} is not a program"),
+            Term::Lit(_) => "futhark_1d_egraph: a literal is not a program".to_string(),
+            Term::Var(v) => format!("futhark_1d_egraph: {v} is not a program"),
             _ => unreachable!(),
         });
     };
@@ -425,7 +427,7 @@ pub fn render(termdag: &TermDag, id: TermId, kingdom: &FutharkKingdom) -> Result
         // --- the reals ------------------------------------------------------
         "RNum" => {
             let Term::Lit(egglog::ast::Literal::Float(v)) = termdag.get(kids[0]) else {
-                return Err("futhark_egraph: RNum needs a float".to_string());
+                return Err("futhark_1d_egraph: RNum needs a float".to_string());
             };
             literal_text(kingdom, v.into_inner())?
         }
@@ -433,7 +435,7 @@ pub fn render(termdag: &TermDag, id: TermId, kingdom: &FutharkKingdom) -> Result
         "RReduceMul" => format!("reduce (*) 1.0 ({})", child(0)?),
         "RReduceAddS" => format!("reduce (+) 0.0 ({})", child(0)?),
         "RReduceMulS" => format!("reduce (*) 1.0 ({})", child(0)?),
-        other => return Err(format!("futhark_egraph: unknown constructor {other}")),
+        other => return Err(format!("futhark_1d_egraph: unknown constructor {other}")),
     })
 }
 
@@ -523,10 +525,10 @@ pub fn saturate_with(
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(None, FUTHARK_DATATYPE)
-        .map_err(|e| format!("futhark_egraph: the datatype does not load: {e}"))?;
+        .map_err(|e| format!("futhark_1d_egraph: the datatype does not load: {e}"))?;
     egraph
         .parse_and_run_program(None, rules)
-        .map_err(|e| format!("futhark_egraph: the ruleset does not load: {e}"))?;
+        .map_err(|e| format!("futhark_1d_egraph: the ruleset does not load: {e}"))?;
     let schedule = rulesets
         .iter()
         .map(|r| format!("(repeat {iters} (run {r}))"))
@@ -537,10 +539,10 @@ pub fn saturate_with(
             None,
             &format!("(let __root {term})\n(run-schedule {schedule})"),
         )
-        .map_err(|e| format!("futhark_egraph: {term} does not load: {e}"))?;
+        .map_err(|e| format!("futhark_1d_egraph: {term} does not load: {e}"))?;
     let (sort, value) = egraph
         .eval_expr(&exprs::var("__root"))
-        .map_err(|e| format!("futhark_egraph: the root does not evaluate: {e}"))?;
+        .map_err(|e| format!("futhark_1d_egraph: the root does not evaluate: {e}"))?;
     Ok((egraph, sort, value))
 }
 
@@ -713,7 +715,7 @@ pub fn saturate_folded(epoch: &Epoch, adfs: &AdfSet, tree: &Tree, kingdom: &Futh
     saturate_tree(&adfs.unfold(epoch, tree), kingdom, k, iters)
 }
 
-/// The 1-D kingdom's e-graph as the population fold needs it
+/// The 1-D Futhark kingdom's e-graph as the population fold needs it
 /// ([`crate::saturated_fold`]): the datatype, [`FUTHARK_RULESET`], and the
 /// constructor-to-row bridge. `FId` and `FCompose` have no row, so the fold's
 /// extractor never chooses them; an `RNum` whose value is not in `C_T` is not
@@ -764,18 +766,18 @@ pub fn egraph_size(egraph: &EGraph) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::futhark_kingdom::FutharkKingdom;
+    use crate::futhark_table::FutharkKingdom;
     use crate::typed_gep::Tree;
 
     fn kingdom() -> FutharkKingdom {
-        FutharkKingdom::load().expect("the kingdom loads")
+        FutharkKingdom::load_1d().expect("the kingdom loads")
     }
 
     /// A tree for one kingdom row: each argument slot gets the kingdom's own
     /// terminal for that type.
     fn tree_for(kingdom: &FutharkKingdom, name: &str) -> Option<Tree> {
         let row = kingdom.rows.iter().find(|r| r.name == name)?;
-        if row.kind == crate::futhark_kingdom::FutharkKind::Const {
+        if row.kind == crate::futhark_table::FutharkKind::Const {
             return Some(Tree {
                 symbol: kingdom.rows.iter().position(|r| r.name == name).unwrap() as u32,
                 const_index: Some(0),
@@ -800,12 +802,12 @@ mod tests {
     fn leaf_for(kingdom: &FutharkKingdom, ty: crate::geneframe::Ty) -> Option<Tree> {
         let is_const = ty == kingdom.ty("f32.real").expect("the real type is in the kingdom");
         let name = if is_const {
-            kingdom.rows.iter().find(|r| r.kind == crate::futhark_kingdom::FutharkKind::Const)?.name.clone()
+            kingdom.rows.iter().find(|r| r.kind == crate::futhark_table::FutharkKind::Const)?.name.clone()
         } else {
             kingdom
                 .rows
                 .iter()
-                .find(|r| r.kind == crate::futhark_kingdom::FutharkKind::Terminal && r.output == ty)?
+                .find(|r| r.kind == crate::futhark_table::FutharkKind::Terminal && r.output == ty)?
                 .name
                 .clone()
         };
@@ -1110,7 +1112,7 @@ mod tests {
             vec![0.0],
             vec![1.0, 1.0, 1.0, 1.0],
         ];
-        let mut rng = crate::futhark_kingdom::GeneRng::new(0x000A_11CE_5EED_0001);
+        let mut rng = crate::futhark_table::GeneRng::new(0x000A_11CE_5EED_0001);
         let mut checked = 0usize;
         for root_name in ["arr.f32", "scn.f32", "f32.real"] {
             let root = k.ty(root_name).expect("the root is in the kingdom");

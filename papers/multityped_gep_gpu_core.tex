@@ -495,7 +495,7 @@ The type set is declared once (\texttt{Ty}, \src{fuller/src/geneframe.rs:46-127}
 base types (\ty{S}, \ty{I}, \ty{F}, \ty{B}, \ty{A}, \ty{L}); the transcendental
 depth types \ty{T1} and \ty{T2}; NLP and regex types; and four table-defined
 families --- \ty{Wgsl(u16)}, \ty{Tsr(u16)}, \ty{Futhark(u16)} and
-\ty{FutharkShape(u16)} --- whose members are rows of a generated
+\ty{Futhark(u16)} --- whose members are rows of a generated
 \texttt{types.tsv}, so that a new type in those kingdoms is a table row, not a
 code change. A type has a device code (\texttt{Ty::code}, \src{:168}).
 
@@ -845,18 +845,18 @@ paper:~\cite{tr_wgsl}.
 
 \section{Futhark array programs}
 \label{sec:futhark}
-In the shape kingdom (\texttt{kingdoms/futhark\_shapes/}) a shape class is a type:
+In the shape kingdom (\texttt{kingdoms/futhark/}) a shape class is a type:
 \ty{mat.n.m} is the interface's $[n][m]$ over three dimension roles, with nine
 matrix classes and two function classes (a row function $[]f32\to[]f32$, and a
 binary one, because Futhark's \texttt{map2} is curried): 11 types and 71 rows
-(\src{fuller/kingdoms/futhark_shapes/types.tsv}, \texttt{functions.tsv}). The
+(\src{fuller/kingdoms/futhark/types.tsv}, \texttt{functions.tsv}). The
 unification of shapes is done once, offline, by the table generator, whose
 witness tests re-check every shape relation, and a Rust test compares the
 committed tables with what the generator would write; the engine sees an
 ordinary typed kingdom. The \texttt{sig/} family holds one kingdom per published
 benchmark (histogram, pathfinder, reduce, scan); the \texttt{pixel/} family holds
 per-pixel programs in which scope, \texttt{let} and bounded loops are types. The
-earlier 1-D kingdom (\texttt{kingdoms/futhark\_true/}, 4 types, 38 rows) is
+earlier 1-D kingdom (\texttt{kingdoms/futhark\_1d/}, 4 types, 38 rows) is
 superseded. Two runners exist: phylu's \texttt{shape\_typed}, with the population
 on the device and the evaluation in a host interpreter, and fuller's
 \texttt{futhark\_evolve}, which compiles each program with the project's Futhark
@@ -905,7 +905,7 @@ WGSL express, render \Hh & \src{phylu/src/evolve/true_wgsl_fit.rs:1736-1750} (\t
 WGSL naga, pipeline \Hh; execute \D & \src{phylu/examples/wgsl_true_fit.rs:178-202}; \src{fuller/src/wgsl/harness.rs:3366}, \src{:3524}\\
 WGSL fitness \Hh, written to \D & \src{phylu/examples/wgsl_true_fit.rs:210-219}; \src{phylu/src/evolve/true_wgsl_fit.rs:1308}\\
 Shape: split as stated & \src{phylu/src/evolve/shape_typed.rs:10-27}; read genes \src{:425}; fitness written \src{:488}; walk check \src{:566}\\
-Shape fitness & \src{fuller/src/futhark_shapes_evolve.rs:1091-1106} (\texttt{two\_level}, \texttt{fitness\_of})\\
+Shape fitness & \src{fuller/src/futhark_search.rs:1091-1106} (\texttt{two\_level}, \texttt{fitness\_of})\\
 Futhark sig: host GA & \src{fuller/examples/futhark_evolve.rs:790} (random gene), \src{:838} (mutation), \src{:867} (crossover); fuller cannot depend on phylu\\
 Futhark sig: execute \D & \src{fuller/src/futhark_rust.rs:1-12}, \src{:274}\\
 \bottomrule
@@ -965,7 +965,7 @@ computes the static cost. The fitness is the two-level HFF: TrueNorth over the
 quality group (disagreement with the reference on each input set, on HFF's log
 scale), then over the speed group (traffic, allocations and serial depth, each
 as $x/(x+x_{\mathrm{ref}})$), then over the two angles
-(\src{fuller/src/futhark_shapes_evolve.rs:1084-1106}). It is written to the
+(\src{fuller/src/futhark_search.rs:1084-1106}). It is written to the
 device at \src{phylu/src/evolve/shape_typed.rs:488}. A gene that the layout cannot
 express would score 1.5 (\src{:455}).
 

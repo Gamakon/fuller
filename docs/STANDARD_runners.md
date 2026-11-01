@@ -24,7 +24,7 @@ keeps no second copy.
 | piece | home | status (2026-10-27, evening) |
 |---|---|---|
 | telemetry stream | `fuller::telemetry` | moved; phylu re-exports it |
-| two-level HFF | hff library's TrueNorth; the grouping is phylu `evolve::image_fitness::HffGroups` (WGSL), `futhark_shapes_evolve` and `shape_typed::two_level` (shapes), `futhark_pixel` (pixels) | every runner with speed inputs is two-level; the grouping code is not yet one piece |
+| two-level HFF | hff library's TrueNorth; the grouping is phylu `evolve::image_fitness::HffGroups` (WGSL), `futhark_search` and `shape_typed::two_level` (shapes), `futhark_pixel` (pixels) | every runner with speed inputs is two-level; the grouping code is not yet one piece |
 | checkpoints | phylu `evolve::checkpoint` (engine), `true_wgsl_fit`, the shape loops, `futhark_pixel_evolve` each their own | every runnable runner writes them by default and resumes only on `--resume` |
 | kill trigger | `fuller::run_file`; phylu re-exports it | moved |
 | guards, hall of fame, ledger | each runner its own | every runnable runner has them |
@@ -44,7 +44,7 @@ Y = meets it; opt-in = only when an environment variable or flag names a path; N
 | `examples/wgsl_true_image_fit` (volumepassage) | phylu | `evolve::true_wgsl_fit` | Y | Y | Y | N | Y | text + pictures | opt-in |
 | `examples/wgsl_true_ingest_fit` | phylu | `evolve::true_wgsl_fit` | Y | Y | Y | Y (own check) | Y | text | opt-in |
 | `examples/shape_fit` | phylu | `evolve::shape_typed` | N | N | N | N | Y (seconds) | N (best only) | N |
-| `examples/futhark_shapes_evolve` | fuller | `futhark_shapes_evolve::evolve` | N | N | N | N | N (generations only) | N (best only) | N |
+| `examples/futhark_a7_evolve` | fuller | `futhark_search::evolve` | N | N | N | N | N (generations only) | N (best only) | N |
 | `examples/wgsl_gram_evolve` | fuller | its own | N | N | N | N | Y (build watchdog) | N | Y (`ledger.tsv`) |
 | `examples/futhark_pixel_evolve` | fuller | `futhark_pixel` (another agent) | N | Y | N | N | N | text + pictures | N (series only) |
 
@@ -54,10 +54,10 @@ Every runner meets every item, or the cell gives the written reason it does not.
 
 | runner | stream | two-level HFF | checkpoint + resume | kill trigger | guards | hall of fame | ledger / lineage | mutation events |
 |---|---|---|---|---|---|---|---|---|
-| fuller `futhark_shapes_evolve` | Y | Y (quality: disagreement per input set; speed: traffic, allocations, depth) | Y (`--resume`) | Y | Y (`--seconds`, generations) | text | Y (`ledger.tsv`, parents) | `egraph_exact`, `write_back_defect` |
+| fuller `futhark_a7_evolve` | Y | Y (quality: disagreement per input set; speed: traffic, allocations, depth) | Y (`--resume`) | Y | Y (`--seconds`, generations) | text | Y (`ledger.tsv`, parents) | `egraph_exact`, `write_back_defect` |
 | fuller `futhark_pixel_evolve` | Y | Y (θ_quality: the picture; θ_speed: the timed pairs) | Y (`OUT/checkpoint.json`, `--resume`) | Y | Y (`--minutes`, the work bound) | text + pictures + OCR | Y (`ledger.tsv`, parents) | `egraph_exact`, `saturated_fold`, `pump` |
 | fuller `futhark_evolve` (the study runner, `docs/STUDY_evolving_benchmarks.md`) | Y | Y, staged: θ_quality alone (seven linear inputs a case) until the best is exact on every case, then θ_quality and θ_speed, the speed over the program text's 11 timing slots (`runner::TimingSlots`, each pair its own input); `--stop-at-exact` (R, C) ends before stage 2 | Y (`OUT/checkpoint.json`, `--resume`) | Y | Y (`--minutes`, `--evaluations`, each candidate's node executions against the per-submit cap before it runs) | text (`OUT/hall_of_fame/`, top 5) + the HFF chart | Y (`ledger.tsv`, parents; since 2026-10-28 also each evaluation's path, batch size, stage milliseconds and exact quality and speed inputs; `--eval batch`, the default, evaluates a generation's new programs in one compiled program and one process, `src/futhark_batch.rs`; `--eval rust` evaluates the same batch in this process through the rust-wgpu backend, `src/futhark_rust.rs`, `docs/PLAN_futhark_rust_wgpu.md`: the same loop, so every item of the standard holds unchanged, and the ledger's `eval` column reads `rust`, its `futhark_ms` the fork compiler and its `cc_ms` rustc) | `egraph_exact`, `pump`, `saturated_fold`, `marriage`, `stage_change` |
-| phylu `shape_fit` (`shape_typed`) | Y | Y (as `futhark_shapes_evolve`) | Y (`--resume`) | Y | Y | text | Y (the device's parent buffer) | `egraph_exact`, `write_back_defect` |
+| phylu `shape_fit` (`shape_typed`) | Y | Y (as `futhark_search`) | Y (`--resume`) | Y | Y | text | Y (the device's parent buffer) | `egraph_exact`, `write_back_defect` |
 | phylu `wgsl_true_fit` (the Gram problem) | Y | Y (`--hff-groups quality,speed`, the default since 2026-10-27: θ_quality over the three tolerance ratios, θ_speed over `r/(1+r)` of the device time against the shipped kernel; `flat` is the old one TrueNorth) | Y (`--resume`) | Y | Y | text | Y (`lineage.tsv`) | every optimiser, `adf_fold`, `marriage`, `pump`, `write_back_defect` |
 | phylu `wgsl_true_image_fit`, `wgsl_true_ingest_fit` | Y | Y | Y (`--resume`) | Y | Y | text (+ pictures, image) | Y (`lineage.tsv`) | as `wgsl_true_fit` |
 | phylu `evolve_fit` (SR), `regex_fit` (engine) | Y (`EVOLVE_OUT`) | NOT APPLICABLE: one quality group. Andrew's rule, "Quality first; HFF selects on quality only": the engine has no speed input, and speed is a second phase on settled models, never an HFF column | Y: `OUT/checkpoint/` by default (every 60 s, `EVOLVE_CHECKPOINT_EVERY`); resumed ONLY with `--resume` (an error when there is nothing to resume); a fresh run moves an earlier run's slots to `checkpoint/superseded/<UTC>/` | Y | Y (seconds, 1M evaluations) | text | Y: the genealogy by default (`OUT/genealogy.tsv`; `EVOLVE_GENEALOGY=0` turns it off), measured below | the engine's `snap`, `fold`, `typed_snap`, `regex_simplify`, `pump` |

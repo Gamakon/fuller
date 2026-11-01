@@ -14,7 +14,7 @@ not a "rescue". The e-graph's contribution to that outcome is **zero**.
 The record is reproduced by
 
 ```bash
-cargo run --release --features wgsl --example futhark_rescue -- --limit 120 --candidates 40
+cargo run --release --features wgsl --example futhark_1d_rescue -- --limit 120 --candidates 40
 ```
 
 which regenerates the gene from its seed — no stored fixture — and prints

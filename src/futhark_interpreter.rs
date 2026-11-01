@@ -1,9 +1,9 @@
-//! The shape kingdom's interpreter: the same expressed tree, evaluated
+//! The Futhark kingdom's interpreter: the same expressed tree, evaluated
 //! without a compiler.
 //!
-//! The 1-D kingdom's interpreter is what makes its strongest claim possible —
+//! The 1-D Futhark kingdom's interpreter is what makes its strongest claim possible —
 //! the rendered program and the interpreter agree element for element, so the
-//! kingdom means what it says. The shape kingdom needs the same check, and it
+//! kingdom means what it says. The Futhark kingdom needs the same check, and it
 //! needs it in two dimensions: its operators are `map` over the ROWS of a
 //! matrix, `transpose`, and `matmul`.
 //!
@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::futhark_kingdom::{FutharkKingdom, FutharkKind, FutharkRow};
+use crate::futhark_table::{FutharkKingdom, FutharkKind, FutharkRow};
 use crate::geneframe::Ty;
 use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
@@ -174,7 +174,7 @@ impl Row2Fn {
     }
 }
 
-/// A value of the shape kingdom.
+/// A value of the Futhark kingdom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MValue {
     Mat(Mat),
@@ -323,7 +323,7 @@ fn as_fun2(v: &MValue) -> Result<Row2Fn, String> {
 }
 
 impl FutharkKingdom {
-    /// Evaluate an expressed tree of the shape kingdom.
+    /// Evaluate an expressed tree of the Futhark kingdom.
     ///
     /// `inputs` holds one matrix per class, keyed by the class's type. A
     /// terminal of a matrix class is that class's input; a terminal of a
@@ -344,7 +344,7 @@ impl FutharkKingdom {
             .get(tree.symbol as usize)
             .ok_or_else(|| format!("{}: symbol {} is not a row of this kingdom", self.kingdom, tree.symbol))?;
         match row.kind {
-            FutharkKind::Const => Err(format!("{}: the shape kingdom has no constant placeholder", self.kingdom)),
+            FutharkKind::Const => Err(format!("{}: the Futhark kingdom has no constant placeholder", self.kingdom)),
             FutharkKind::Terminal => {
                 if let Some(m) = inputs.get(&row.output) {
                     return Ok(MValue::Mat(m.clone()));
@@ -410,7 +410,7 @@ impl FutharkKingdom {
             let b = as_mat(&kids[1])?;
             return Ok(MValue::Mat(matmul(a, b)?));
         }
-        Err(format!("{}: the shape kingdom cannot evaluate {}", self.kingdom, row.name))
+        Err(format!("{}: the Futhark kingdom cannot evaluate {}", self.kingdom, row.name))
     }
 }
 

@@ -304,7 +304,7 @@ versus `wgsl_true`'s 8,841, with vastly more semantic density per row. This is t
 quantitative case for the hypothesis, and it is the thing the kingdom build will
 actually demonstrate.
 
-**Built and measured (`kingdoms/futhark_true`).** The v0 that followed this
+**Built and measured (`kingdoms/futhark_1d`).** The v0 that followed this
 estimate came out at **4 types and 38 rows** — and it is *smaller* than the
 estimate, because two of the proposed types turned out to be unnecessary and one
 turned out to be necessary:
@@ -443,12 +443,12 @@ post-processing, and the result is not heritable.
 
 | # | Component | Size | Where |
 |---|---|---|---|
-| 1 | The kingdom: compact type set, symbol table, `gen_tables.py`, `interface.py` | ~12 types, ~60 rows | `kingdoms/futhark_true/` |
-| 2 | The AST + gene -> AST -> Futhark source renderer (Rust) | ~500-800 lines | `src/futhark_true/` |
+| 1 | The kingdom: compact type set, symbol table, `gen_tables.py`, `interface.py` | ~12 types, ~60 rows | `kingdoms/futhark_1d/` |
+| 2 | The AST + gene -> AST -> Futhark source renderer (Rust) | ~500-800 lines | `src/futhark_1d/` |
 | 3 | A Futhark toolchain, including the PR branch | hours of build time | Docker + GHC/cabal |
 | 4 | A JSON manifest emitter patched into `CWebGPU.hs` (per-kernel metadata + WGSL files) | ~150 lines Haskell | PR branch |
 | 5 | The launch plan (kernel order, grid expressions, buffer allocation) | ~300-500 lines Haskell | PR branch, `Backends/GPU.hs` |
-| 6 | The Rust/wgpu host (H2: C-ABI shim, 35 functions, or H1: launch-plan interpreter) | ~700-1,200 lines | `src/futhark_true/` |
+| 6 | The Rust/wgpu host (H2: C-ABI shim, 35 functions, or H1: launch-plan interpreter) | ~700-1,200 lines | `src/futhark_1d/` |
 | 7 | Fuller integration: AST-level share-equivalence feeding the compile cache | ~300 lines | `src/` |
 
 **The most significant technical risk: per-genome compilation throughput (question D).**
@@ -619,17 +619,17 @@ needs those helpers rewritten, not deleted.
 
 Built in this session, and it works:
 
-* `kingdoms/futhark_true/` — `gen_tables.py` (the design as code), the
+* `kingdoms/futhark_1d/` — `gen_tables.py` (the design as code), the
   generated `types.tsv` and `functions.tsv`, `README.md` (the typing rules).
-* `src/futhark_kingdom.rs` — the loader, the kingdom's relations, and the
+* `src/futhark_table.rs` — the loader, the kingdom's relations, and the
   renderer from an expressed tree to Futhark source.
-* `src/futhark_interp.rs` — the kingdom's **own interpreter**: what a gene
+* `src/futhark_1d_interp.rs` — the kingdom's **own interpreter**: what a gene
   *means*, independent of Futhark.
 * `src/futhark_exec.rs` — compile the rendered source with the real Futhark
   compiler, link it with `cc`, run it, and read the values back.
-* `Ty::Futhark(u16)` — one new variant in `src/geneframe.rs`, the same
+* `Ty::Futhark1d(u16)` — one new variant in `src/geneframe.rs`, the same
   table-defined-family pattern as `Ty::Wgsl` and `Ty::Tsr`.
-* `examples/futhark_true_emit.rs` — random genes in, Futhark source out, the
+* `examples/futhark_1d_emit.rs` — random genes in, Futhark source out, the
   real Futhark compiler's verdict, and the interpreter's value against the
   compiled program's, element for element.
 
@@ -790,7 +790,7 @@ Two consequences.
   such program — that is a property of Futhark, not of the typing. So the
   fitness harness needs a **wall-clock bound on compilation**, and a program
   that exceeds it is a *failed compile*, not a failed gene. `src/futhark_exec.rs`
-  now enforces one (120 s), and `examples/futhark_true_emit.rs` reports a
+  now enforces one (120 s), and `examples/futhark_1d_emit.rs` reports a
   non-converging program as its own outcome rather than as an error.
 * **This sharpens the compile-throughput risk.** §6 said a Futhark compile
   costs seconds against a naga validation's milliseconds, and estimated hours
@@ -954,7 +954,7 @@ table is the point.
   and the compact kingdom makes them more effective: the number of *distinct*
   programs is far smaller, so the AST-keyed cache hits far more often. But
   they have moved from "optimisation" to "requirement".
-* *A `Ty::Futhark(u16)` variant is all a new kingdom needs in the type
+* *A `Ty::Futhark1d(u16)` variant is all a new kingdom needs in the type
   system* — the same table-defined-family pattern `Ty::Wgsl` and `Ty::Tsr`
   already use. The expensive part is not the type system; it is the fitness
   harness and the GPU execution path.

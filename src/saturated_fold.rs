@@ -18,7 +18,7 @@
 //!    over every root with [`crate::extract_dag::extract_shared_dag_with_budget`]
 //!    (the marginal-cost fixpoint), so a form wins when other genes already pay
 //!    for its parts. A node the kingdom cannot spell as a row (an e-graph-only
-//!    constructor such as the 1-D kingdom's `FId`/`FCompose`, or a literal not
+//!    constructor such as the 1-D Futhark kingdom's `FId`/`FCompose`, or a literal not
 //!    in the dual's `C_T`) is given an infinite cost, so the extractor never
 //!    chooses it: every chosen form is a tree of kingdom rows.
 //! 3. **The ADFs.** In the extracted DAG (one node per e-class), an e-class that

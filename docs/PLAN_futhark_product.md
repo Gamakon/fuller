@@ -1,12 +1,12 @@
-# Plan: the shape kingdom as a Futhark superoptimiser
+# Plan: the Futhark kingdom as a Futhark superoptimiser
 
 **Status:** 2026-10-27, revised after a review of the first draft and after
 the first run. The machinery this document builds on is written:
-`src/futhark_shapes.rs` (the interface and the renderer),
-`src/futhark_shapes_interp.rs` (the oracle), `src/futhark_shapes_egraph.rs`
-(the generated e-graph), `src/futhark_shapes_cost.rs` (the static cost),
-`src/futhark_shapes_gpu.rs` (the measured GPU cost), and
-`src/futhark_shapes_evolve.rs` (the loop).
+`src/futhark.rs` (the interface and the renderer),
+`src/futhark_interpreter.rs` (the oracle), `src/futhark_saturation.rs`
+(the generated e-graph), `src/futhark_cost.rs` (the static cost),
+`src/futhark_gpu.rs` (the measured GPU cost), and
+`src/futhark_search.rs` (the loop).
 
 ## 1. The product
 
@@ -147,9 +147,9 @@ the wrong machine is worse than no search.
 
 Two costs, for two jobs:
 
-1. **The static cost** (`src/futhark_shapes_cost.rs`), a polynomial in the
+1. **The static cost** (`src/futhark_cost.rs`), a polynomial in the
    dimension roles, generated into the kingdom's own table
-   (`kingdoms/futhark_shapes/costs.tsv`, with the generator's own witness
+   (`kingdoms/futhark/costs.tsv`, with the generator's own witness
    test re-deriving it). It is a *pre-optimisation* model — traffic,
    allocations, serial depth — and it is **cheap**, so it filters the
    population. It is a model and not a measurement, and it has to be read as
@@ -159,7 +159,7 @@ Two costs, for two jobs:
    n·p) and the GPU agrees (4648 device bytes against the scaled *result*'s
    4656). The real disagreement is the one §6 measures: the model cannot
    see that the reference's kernel does not run at all.
-2. **The measured GPU cost** (`src/futhark_shapes_gpu.rs`), from the
+2. **The measured GPU cost** (`src/futhark_gpu.rs`), from the
    **compiled GPU program**: `futhark dev --gpu-mem --compile-imp-gpu` runs
    the whole GPU pipeline and prints the ImpGPU, and the cost is what that
    program allocates — the number of device allocation sites, the total of
@@ -254,7 +254,7 @@ So the loop is:
 4. a child is kept when it is correct and cheaper.
 
 The transposed-product rule is the one that pays, and the plan has to say
-why it does not diverge the way the 1-D kingdom's fusion rule did. In 1-D, a
+why it does not diverge the way the 1-D Futhark kingdom's fusion rule did. In 1-D, a
 fusion rule together with `map id` grew the e-graph 5 → 7 → 13 → 55 → 1357
 e-nodes and never converged; the fix was the unit laws of composition
 (`f . id = f`, `id . g = g`) and merging the fusion rules into the core
@@ -319,11 +319,11 @@ the machine, the Futhark version and the command.
 
 ## 7. Cut and deferred
 
-* **No 2-D pathological program.** Cut. The 1-D kingdom's hang is a compiler
+* **No 2-D pathological program.** Cut. The 1-D Futhark kingdom's hang is a compiler
   bug (upstream's unbounded `fuseSOACs`), not a property of two-dimensional
   shapes, and there is no 2-D instance to find. If one turns up, the fitness
   is **floored** and the search moves on.
-* **The e-graph rescue stays negative.** The shape kingdom's rules cannot
+* **The e-graph rescue stays negative.** The Futhark kingdom's rules cannot
   restructure the SOAC nest, and equality-preserving source rewrites were
   measured not to rescue the 1-D pathological program either. The bounded
   fusion workaround is a *compiler* workaround, and the 2-D path inherits it
@@ -338,7 +338,7 @@ the machine, the Futhark version and the command.
   written before the phylu half existed; it is now BUILT, and it is worth
   recording how, because the answer was not the one this section predicted.*
 
-  The prediction was that the shape kingdom needed a new operator family in
+  The prediction was that the Futhark kingdom needed a new operator family in
   phylu's symbol table (`SymbolTable::tsr` is the pattern), a decode stage
   built from it, and a fit driver. **All three predictions were wrong, for
   one reason: phylu's typed core is driven by the KINGDOM CONTRACT, not by
@@ -347,11 +347,11 @@ the machine, the Futhark version and the command.
   eleven places and constructed in *zero*. The WGSL kingdom bypasses
   `SymbolTable` entirely.
 
-  What the shape kingdom actually needed was much smaller:
+  What the Futhark kingdom actually needed was much smaller:
 
-  1. **A contract, not a symbol table.** `futhark_kingdom::relations()` already
-     yields a `KingdomRelations` that checks, and the shape kingdom's one
-     root class (`mat.n.p`) is a `Ty::FutharkShape(u16)` dual that the layout
+  1. **A contract, not a symbol table.** `futhark_table::relations()` already
+     yields a `KingdomRelations` that checks, and the Futhark kingdom's one
+     root class (`mat.n.p`) is a `Ty::Futhark(u16)` dual that the layout
      machinery is generic over. Nothing in `typed_layout.rs` names a `Ty`
      family.
   2. **The walk-only decode stage**, which already existed — it is the stage
@@ -361,12 +361,12 @@ the machine, the Futhark version and the command.
      `walk_stage`, gated behind `gpu` only.
   3. **A fit driver** — `phylu::evolve::shape_typed` — that fills the device's
      fitness buffer from the host's scores, and one new host-side service
-     (`futhark_shapes_evolve::Scorer`) that scores a population of genes
+     (`futhark_search::Scorer`) that scores a population of genes
      against the reference.
 
   So the answer to "an evaluator, or rather the absence of one" is what the
   plan said — with one correction that the reviews forced, and it is worth
-  being exact about. The shape kingdom's device is a **population whose
+  being exact about. The Futhark kingdom's device is a **population whose
   evaluation comes back from the host**, and that is *not* the same as "a
   population without an evaluator":
 
@@ -390,7 +390,7 @@ the machine, the Futhark version and the command.
   cost, and that is why the measured tier exists at all.
 
   The fitness is one `f32`, because that is what the device's selection
-  kernel reads. `futhark_shapes_evolve::fitness_of` packs the three signals
+  kernel reads. `futhark_search::fitness_of` packs the three signals
   into two bands that cannot overlap: a **correct** program in `[0, 0.49)`,
   ranked by `traffic / (traffic + reference_traffic)` — strictly increasing,
   so no two correct programs tie, and bounded, so the band never crosses into

@@ -1,6 +1,6 @@
 -- input: -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32 -g [64][64]f32
 -- The A7 reference of docs/measurements/2026-10-27_futhark_shapes_A7.md, in the
--- form src/futhark_shapes.rs::program renders it, at n = m = p = 64.
+-- form src/futhark.rs::program renders it, at n = m = p = 64.
 def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
   map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
 

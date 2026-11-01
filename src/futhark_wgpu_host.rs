@@ -560,9 +560,9 @@ pub fn compile_and_run(source: &str, input: &[f32], dir: &Path, timestamps: bool
 mod tests {
     use super::*;
     #[cfg(feature = "gpu")]
-    use crate::futhark_interp::Value;
+    use crate::futhark_1d_interp::Value;
     #[cfg(feature = "gpu")]
-    use crate::futhark_kingdom::FutharkKingdom;
+    use crate::futhark_table::FutharkKingdom;
     #[cfg(feature = "gpu")]
     use crate::typed_gep::{express, GeneLayout, Tree};
 
@@ -759,7 +759,7 @@ mod tests {
     /// run on the GPU → read back, and its values equal the interpreter's —
     /// bit for bit — and Futhark's C backend's.
     ///
-    /// The genes are drawn at random from the 1-D kingdom with a fixed seed
+    /// The genes are drawn at random from the 1-D Futhark kingdom with a fixed seed
     /// and kept when they use only [`EXACT_ROWS`] and at least one map (so a
     /// kernel must run): on those rows every IEEE device computes the same
     /// bits, so "equal" means equal, with no tolerance. The GPU's own
@@ -776,7 +776,7 @@ mod tests {
             return;
         }
         let _gpu = crate::gpu_test_lock::acquire();
-        let k = FutharkKingdom::load().unwrap();
+        let k = FutharkKingdom::load_1d().unwrap();
         let contract = k.relations().check().unwrap();
         let const_len = k.const_len();
         let root = k.ty("arr.f32").unwrap();

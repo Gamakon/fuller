@@ -4,7 +4,7 @@
 //! (the branch compiler, the GPU lock): the same equality through the shim, and timed pairs inside one process.
 
 use super::*;
-use crate::futhark_kingdom::GeneRng;
+use crate::futhark_table::GeneRng;
 use crate::futhark_sig::{compile_c, load, load_cases, problem, program_cases, random_gene, signature, Case};
 use crate::typed_gep::{express, GeneLayout};
 

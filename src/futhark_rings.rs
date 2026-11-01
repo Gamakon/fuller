@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::futhark_kingdom::{FutharkKind, FutharkKingdom, GeneRng};
+use crate::futhark_table::{FutharkKind, FutharkKingdom, GeneRng};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;
 use crate::typed_gep::{GeneLayout, Tree};

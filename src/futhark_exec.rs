@@ -2,7 +2,7 @@
 //! the real C compiler, and the real program.
 //!
 //! This is the check that the kingdom means what it says. The renderer turns
-//! an expressed tree into Futhark source; [`crate::futhark_interp`] turns the
+//! an expressed tree into Futhark source; [`crate::futhark_1d_interp`] turns the
 //! same tree into a value; this module compiles the source and runs it, so
 //! the two can be compared element for element.
 
@@ -302,7 +302,7 @@ pub fn compile_program(source: &str, dir: &Path, limit: Duration) -> (Verdict, D
 /// A 2-D array is `[[1.0,2.0],[3.0,4.0]]` in that format, so a program over
 /// matrices needs no C driver at all: the inputs go in on stdin and the
 /// result comes out on stdout. The trade is that the format is Futhark's, not
-/// ours — the 1-D kingdom's driver stays the faster path for flat arrays.
+/// ours — the 1-D Futhark kingdom's driver stays the faster path for flat arrays.
 pub fn compile_text_program(source: &str, dir: &Path, limit: Duration) -> (Verdict, Duration) {
     compile_with(source, dir, limit, false, Backend::C)
 }
@@ -580,7 +580,7 @@ mod tests {
             eprintln!("skipped: futhark or cc is not installed");
             return;
         }
-        let dir = std::env::temp_dir().join("futhark_rescue_test").join(format!("t{}", std::process::id()));
+        let dir = std::env::temp_dir().join("futhark_1d_rescue_test").join(format!("t{}", std::process::id()));
 
         // The normal path does not finish.
         let verdict =

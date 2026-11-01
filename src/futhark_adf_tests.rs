@@ -10,13 +10,13 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::futhark_egraph::FoldEgraph as PlainFold;
-use crate::futhark_interp::Value;
-use crate::futhark_kingdom::{FutharkKingdom, GeneRng};
-use crate::futhark_shapes::program_folded;
-use crate::futhark_shapes_egraph::{Bridge, FoldEgraph as ShapeFold};
-use crate::futhark_shapes_evolve::suite;
-use crate::futhark_shapes_interp::{format_matrix, identical, parse_matrix, MValue, Mat};
+use crate::futhark_1d_egraph::FoldEgraph as PlainFold;
+use crate::futhark_1d_interp::Value;
+use crate::futhark_table::{FutharkKingdom, GeneRng};
+use crate::futhark::program_folded;
+use crate::futhark_saturation::{Bridge, FoldEgraph as ShapeFold};
+use crate::futhark_search::suite;
+use crate::futhark_interpreter::{format_matrix, identical, parse_matrix, MValue, Mat};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;
 use crate::population_fold::AdfTable;
@@ -77,12 +77,12 @@ fn same_matrix(a: &Mat, b: &Mat) -> bool {
     a.rows == b.rows && a.cols == b.cols && a.data.iter().zip(&b.data).all(|(x, y)| identical(*x, *y))
 }
 
-/// The 1-D kingdom's three roots, each with its layout at program size 3.
-/// The 1-D kingdom, its contract, its `C_T` lengths, and a layout per root.
+/// The 1-D Futhark kingdom's three roots, each with its layout at program size 3.
+/// The 1-D Futhark kingdom, its contract, its `C_T` lengths, and a layout per root.
 type Plain = (FutharkKingdom, KingdomContract, BTreeMap<Ty, u32>, Vec<(Ty, GeneLayout)>);
 
 fn plain() -> Plain {
-    let k = FutharkKingdom::load().expect("the 1-D tables load");
+    let k = FutharkKingdom::load_1d().expect("the 1-D tables load");
     let c = k.relations().check().expect("the contract");
     let cl = k.const_len();
     let layouts = ["arr.f32", "scn.f32", "f32.real"].iter().map(|r| {
@@ -94,7 +94,7 @@ fn plain() -> Plain {
 }
 
 fn shapes() -> (FutharkKingdom, Bridge, KingdomContract, BTreeMap<Ty, u32>, Ty, GeneLayout) {
-    let k = FutharkKingdom::load_shapes().expect("the shape tables load");
+    let k = FutharkKingdom::load().expect("the Futhark tables load");
     let c = k.relations().check().expect("the contract");
     let cl = k.const_len();
     let root = k.ty("mat.n.p").expect("root");
@@ -119,7 +119,7 @@ fn fold_population(table: &mut AdfTable, eg: &dyn EgraphKingdom, c: &KingdomCont
 const GENES: usize = 100_000;
 const POPULATION: usize = 1_000;
 
-/// Fold, write-back, unfold on 100,000 random genes of the 1-D kingdom (100 populations of 1,000, a third per
+/// Fold, write-back, unfold on 100,000 random genes of the 1-D Futhark kingdom (100 populations of 1,000, a third per
 /// root): every value of the folded population, unfolded and interpreted, is bit for bit the submitted gene's.
 #[test]
 fn plain_fold_write_back_unfold_keeps_every_value_on_100000_genes() {
@@ -150,7 +150,7 @@ fn plain_fold_write_back_unfold_keeps_every_value_on_100000_genes() {
     assert!(adfs > 0 && refs > 0, "the fold made no ADF: the test exercised nothing");
 }
 
-/// The same on 100,000 random genes of the shape kingdom.
+/// The same on 100,000 random genes of the Futhark kingdom.
 #[test]
 fn shape_fold_write_back_unfold_keeps_every_value_on_100000_genes() {
     let started = Instant::now();
@@ -285,7 +285,7 @@ fn count_refs(epoch: &Epoch, t: &Tree) -> usize {
     usize::from(matches!(epoch.reference(t.symbol), Some(RefKind::Adf { .. }))) + t.kids.iter().map(|k| count_refs(epoch, k)).sum::<usize>()
 }
 
-/// The same for the shape kingdom, through Futhark's textual format.
+/// The same for the Futhark kingdom, through Futhark's textual format.
 #[test]
 fn shape_programs_with_adfs_compile_and_agree_bit_for_bit() {
     assert!(have("futhark") && have("cc"), "this test needs futhark 0.28.1 and a C compiler");

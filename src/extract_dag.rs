@@ -288,7 +288,7 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &BTreeMap<Clas
     }
 
     // Only the roots must have a candidate. A class reachable only through members no candidate uses (the 1-D
-    // Futhark kingdom's `FId` class, reached through `map id x`, a member of `x`'s class, when the caller excludes
+    // 1-D Futhark kingdom's `FId` class, reached through `map id x`, a member of `x`'s class, when the caller excludes
     // its e-graph-only nodes) needs none: every candidate's children have one by `try_candidate`.
     for cid in roots {
         if !best.contains_key(cid) {

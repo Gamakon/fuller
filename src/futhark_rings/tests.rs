@@ -91,7 +91,7 @@ fn empty_rings_are_filled_from_their_class_and_a_missing_class_is_named() {
         let mut rings = random_rings(&k, &contract, &layout, 300, 5);
         // Half the scopes of every class emptied: those are filled from the class.
         // (A type outside every scope, pathfinder's `a.rows.cols` input, has no other scope and is kept.)
-        rings.rings.retain(|(ty, _), _| class_of(ty) == gap_class || !k.dual(*ty).unwrap().dual.contains(':') || matches!(ty, Ty::FutharkShape(i) if i % 2 == 0));
+        rings.rings.retain(|(ty, _), _| class_of(ty) == gap_class || !k.dual(*ty).unwrap().dual.contains(':') || matches!(ty, Ty::Futhark(i) if i % 2 == 0));
         // The whole of one class emptied: filled from its slot family, and named a class gap.
         rings.rings.retain(|(ty, _), _| class_of(ty) != gap_class);
         let (full, fills) = rings.complete(&k, &contract, &layout).unwrap();
@@ -200,7 +200,7 @@ fn a_growth_mutation_gives_one_head_cell_more_arguments_whatever_the_padding() {
 fn the_committed_pools_fill_every_ring_of_the_default_layout() {
     for name in ["histogram", "pathfinder"] {
         let (k, contract, layout, _) = kingdom(name);
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark_shapes/sig/{name}/pool"));
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark/sig/{name}/pool"));
         let excluded = published_source(name).unwrap();
         let mut rings = Rings::default();
         for f in ["bench.tsv", "llm.tsv"] {
@@ -222,7 +222,7 @@ fn fable_setup(name: &str) -> (FutharkKingdom, KingdomContract, GeneLayout, Ring
     let contract = k.relations().check().unwrap();
     let n = if name == "histogram" { 8 } else { 13 };
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], n).unwrap();
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark_shapes/sig/{name}/pool"));
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark/sig/{name}/pool"));
     let mut rings = Rings::default();
     for f in ["bench.tsv", "llm.tsv"] {
         for e in load_pool(&dir.join(f)).unwrap() {

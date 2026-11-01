@@ -1,7 +1,9 @@
+//! DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).
+//!
 //! The compiler rescue: Fuller's e-graph finds an equivalent program that the
 //! Futhark compiler CAN compile, for a program it cannot.
 //!
-//!   cargo run --release --features wgsl --example futhark_rescue -- [options]
+//!   cargo run --release --features wgsl --example futhark_1d_rescue -- [options]
 //!
 //!   --root NAME     the program's root type (default f32.real)
 //!   --size N        the program size (default 4)
@@ -32,10 +34,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use fuller::futhark_egraph;
+use fuller::futhark_1d_egraph;
 use fuller::futhark_exec::{compile_program, run_compiled, Verdict};
-use fuller::futhark_interp::Value;
-use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
+use fuller::futhark_1d_interp::Value;
+use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{self, GeneLayout, Tree};
@@ -90,7 +92,7 @@ fn main() -> Result<(), String> {
         }
     }
 
-    let k = FutharkKingdom::load()?;
+    let k = FutharkKingdom::load_1d()?;
     let contract: KingdomContract = k.relations().check().map_err(|d| d.join("; "))?;
     let root: Ty = k.ty(&root_name).ok_or_else(|| format!("no root {root_name}"))?;
     let layout = GeneLayout::from_program_size(&contract, root, size).map_err(|e| format!("{e:?}"))?;
@@ -126,7 +128,7 @@ fn main() -> Result<(), String> {
     println!("expression    {expr}");
     println!("hash          {}", hash(&expr));
 
-    let dir = std::env::temp_dir().join("futhark_rescue").join(format!("p{}", std::process::id()));
+    let dir = std::env::temp_dir().join("futhark_1d_rescue").join(format!("p{}", std::process::id()));
 
     // --- 1. reproduce the timeout -------------------------------------------
     println!("\n== 1. the original, compiled ==");
@@ -140,7 +142,7 @@ fn main() -> Result<(), String> {
 
     // --- 2-3. the e-graph and its candidates --------------------------------
     println!("\n== 2. the e-graph ==");
-    let sat = futhark_egraph::saturate_tree(&tree, &k, want, iters)?;
+    let sat = futhark_1d_egraph::saturate_tree(&tree, &k, want, iters)?;
     println!("term          {}", sat.term);
     println!("sort          {}", sat.sort);
     println!(

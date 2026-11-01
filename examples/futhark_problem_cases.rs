@@ -24,7 +24,7 @@
 //! something). Every size is at most 1024, so a gene's work (`max(D) ** 2` a node at the family's depth) stays under
 //! the work guard. The study's cases are drawn first and in the same order, so they are byte-identical to before.
 
-use fuller::futhark_kingdom::GeneRng;
+use fuller::futhark_table::GeneRng;
 use fuller::futhark_sig::{compile_c, corpus_dir, problem, run_exe, write_binary, Array};
 
 fn main() {

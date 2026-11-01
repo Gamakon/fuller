@@ -1,7 +1,7 @@
 //! Saturated share-equivalence against structural hashing, on a population
 //! where the same part is written in different ways.
 //!
-//! The population: random genes of the shape kingdom, each with a variant
+//! The population: random genes of the Futhark kingdom, each with a variant
 //! that spells part of it differently by one of the e-graph's own rules
 //! (`X . Y` as `(Y' . X')'`, `X` as `(X')'`, `X` as `map id X`), and the A7
 //! kernel (the product computed directly and the transposed way) beside the
@@ -17,11 +17,11 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use fuller::futhark_exec::run_text_program;
-use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
-use fuller::futhark_shapes::program_folded;
-use fuller::futhark_shapes_egraph::{Bridge, FoldEgraph};
-use fuller::futhark_shapes_evolve::{product_twice, suite};
-use fuller::futhark_shapes_interp::{format_matrix, identical, parse_matrix, MValue};
+use fuller::futhark_table::{FutharkKingdom, GeneRng};
+use fuller::futhark::program_folded;
+use fuller::futhark_saturation::{Bridge, FoldEgraph};
+use fuller::futhark_search::{product_twice, suite};
+use fuller::futhark_interpreter::{format_matrix, identical, parse_matrix, MValue};
 use fuller::population_fold::AdfTable;
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::typed_chromosome::RefKind;
@@ -83,7 +83,7 @@ fn refs(t: &Tree, sym: u32) -> bool {
 }
 
 fn main() {
-    let k = FutharkKingdom::load_shapes().expect("the shape tables load");
+    let k = FutharkKingdom::load().expect("the Futhark tables load");
     let c = k.relations().check().expect("the contract");
     let cl = k.const_len();
     let root = k.ty("mat.n.p").expect("root");

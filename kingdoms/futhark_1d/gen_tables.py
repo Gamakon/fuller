@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""The Futhark-style parallel kingdom: the design written as code.
+"""DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).
+
+The Futhark-style parallel kingdom: the design written as code.
 
 The kingdom evolves a *typed, high-level parallel program*: a tree of
 combinators over arrays. It is the answer to the search-space problem of
@@ -41,10 +43,10 @@ The rules that keep this kingdom small:
     drops it. Two array types and a factor of two on the rows is the whole
     price of a kingdom in which every gene is legal.
 
-Output: `types.tsv` and `functions.tsv`, the format `src/futhark_kingdom.rs`
+Output: `types.tsv` and `functions.tsv`, the format `src/futhark_table.rs`
 loads.
 
-    python3 kingdoms/futhark_true/gen_tables.py
+    python3 kingdoms/futhark_1d/gen_tables.py
 """
 
 import os

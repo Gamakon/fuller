@@ -6,7 +6,7 @@
 //!
 //!   cargo run --release --example futhark_sig_quality_study -- --problem pathfinder --n 1000
 
-use fuller::futhark_kingdom::GeneRng;
+use fuller::futhark_table::GeneRng;
 use fuller::futhark_sig::{build, compare, load, load_cases, problem, quality_inputs, random_gene, signature, Array, Interp};
 use fuller::runner::{log_scaled, staged_hff, FitnessStage};
 use fuller::typed_gep::{express, GeneLayout};

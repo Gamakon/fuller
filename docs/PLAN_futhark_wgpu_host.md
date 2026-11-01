@@ -206,7 +206,7 @@ The Rust side of the repo gets one small module, `src/futhark_wgpu_host.rs`, tha
 | **S2** | the header + a **stub** shim whose every function returns `WGPUStatus_Error` | Futhark's generated C **compiles and links** against our header with `cc`. *Gate: `cc` succeeds and the executable runs and reports "no device".* |
 | **S3** | the 28 mechanical functions | the program creates a device, allocates a buffer, builds the compute pipeline, dispatches, and reads the buffer back. *Gate: a Metal capture shows the dispatch; the output matches the C backend bit-for-bit.* |
 | **S4** | the future/callback subset and `wgpuInstanceWaitAny` | the RTS's own wait paths work without the `emscripten_sleep(0)` spin being load-bearing. *Gate: the full program runs to completion.* |
-| **S5** | the **decisive** test | the same program compiled by (a) Futhark's C backend and (b) the branch's webgpu backend + our shim produce **bit-identical** output arrays on the same inputs, and both match `src/futhark_interp.rs`. *Gate: bit-identical, zero differing bits.* |
+| **S5** | the **decisive** test | the same program compiled by (a) Futhark's C backend and (b) the branch's webgpu backend + our shim produce **bit-identical** output arrays on the same inputs, and both match `src/futhark_1d_interp.rs`. *Gate: bit-identical, zero differing bits.* |
 | **S6** | wire it into Fuller | `src/futhark_wgpu_host.rs` runs a **gene**: express → render → branch compiler → link → run → read back, so a gene's fitness can come from the GPU. *Gate: a gene's values equal the interpreter's.* |
 
 **S1–S3 are the cheap part and they de-risk the whole route.** S4 is the design. S5 is the proof. S6 is the product.
@@ -215,7 +215,7 @@ The Rust side of the repo gets one small module, `src/futhark_wgpu_host.rs`, tha
 
 ## 7. Acceptance criteria
 
-1. **The decisive one:** a Futhark program compiled through the branch's webgpu backend and hosted by our shim produces **bit-identical** output arrays to the same program compiled by Futhark's C backend, on the same inputs — and both match `src/futhark_interp.rs`.
+1. **The decisive one:** a Futhark program compiled through the branch's webgpu backend and hosted by our shim produces **bit-identical** output arrays to the same program compiled by Futhark's C backend, on the same inputs — and both match `src/futhark_1d_interp.rs`.
 2. A Metal capture (or `MTLCommandBuffer` counters) shows the kernel **actually dispatched**, not merely a pipeline built.
 3. The shim's exported symbol set is **exactly** the enumerated list — a test asserts the generated C's undefined `wgpu*` symbols are a subset of the shim's exports, so the surface cannot quietly grow.
 4. The header is **generated**, never hand-edited, and a build from a clean checkout reproduces it.
@@ -334,7 +334,7 @@ committed header is byte-identical to the one the build generated. 5: plain
 
 **S6** — `src/futhark_wgpu_host.rs`: a gene goes express → render → the branch
 compiler → `build_futhark.sh` → run on Metal → read back. Its test draws genes
-from the 1-D kingdom with a fixed seed, keeps those built only from exactly
+from the 1-D Futhark kingdom with a fixed seed, keeps those built only from exactly
 computed rows (no multiply, no scan or reduction of reals, no
 transcendental), and checks all **4** of 4 genes, 1 000 values each,
 **bit-identical to the interpreter and to Futhark's C backend**, each with its

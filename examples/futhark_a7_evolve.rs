@@ -1,4 +1,4 @@
-//! The shape kingdom's evolution loop, and what it wins.
+//! The Futhark kingdom's evolution loop, and what it wins.
 //!
 //! The kernel is the one the kingdom's vocabulary can make *expensive*:
 //! the product of two matrices, computed **twice** — once directly and once
@@ -16,11 +16,11 @@
 //! asks for, and the number of kernels.
 //!
 //! ```text
-//! cargo run --release --features wgsl --example futhark_shapes_evolve -- \
+//! cargo run --release --features wgsl --example futhark_a7_evolve -- \
 //!     [--out DIR] [--generations 8] [--population 32] [--seed N] [--seconds 3600] [--resume] [--no-gpu] [--fitness shapes-hff-gated]
 //! ```
 //!
-//! The run writes the runner standard's outputs into `--out` (default `logs/futhark_shapes_evolve`,
+//! The run writes the runner standard's outputs into `--out` (default `logs/futhark_a7_evolve`,
 //! `docs/STANDARD_runners.md`): `stream.jsonl` (watch it with `evowatch DIR`), `killme.trigger`
 //! (delete it to stop after the current generation), `checkpoint.json` (`--resume` continues from it),
 //! `ledger.tsv` and `hall_of_fame/`.
@@ -29,16 +29,16 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use fuller::futhark_exec::{run_text_program, run_text_program_on, Backend};
-use fuller::futhark_shapes::program_folded;
-use fuller::futhark_shapes_egraph::{Bridge, FoldEgraph};
+use fuller::futhark::program_folded;
+use fuller::futhark_saturation::{Bridge, FoldEgraph};
 use fuller::population_fold::AdfTable;
 use fuller::saturated_fold::{fold_saturated, Budget};
-use fuller::futhark_kingdom::FutharkKingdom;
-use fuller::futhark_shapes::program;
-use fuller::futhark_shapes_cost::{program_cost, score_at, CostTable};
-use fuller::futhark_shapes_evolve::{evolve, Config};
-use fuller::futhark_shapes_gpu::measure;
-use fuller::futhark_shapes_interp::{format_matrix, identical, parse_matrix, Mat, MValue};
+use fuller::futhark_table::FutharkKingdom;
+use fuller::futhark::program;
+use fuller::futhark_cost::{program_cost, score_at, CostTable};
+use fuller::futhark_search::{evolve, Config};
+use fuller::futhark_gpu::measure;
+use fuller::futhark_interpreter::{format_matrix, identical, parse_matrix, Mat, MValue};
 use fuller::geneframe::Ty;
 use fuller::typed_gep::{express, fits, GeneLayout, Tree};
 
@@ -140,7 +140,7 @@ fn inputs_from(
 /// The smallest program size whose layout holds the reference.
 fn layout_for(k: &FutharkKingdom, reference: &Tree) -> Result<(GeneLayout, usize), String> {
     let contract = k.relations().check().map_err(|bad| bad.join("; "))?;
-    let root = k.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
+    let root = k.ty("mat.n.p").ok_or("the Futhark kingdom has no mat.n.p class")?;
     for size in 3..=12 {
         let layout = GeneLayout::from_program_size(&contract, root, size)
             .map_err(|e| format!("the layout at size {size}: {e}"))?;
@@ -161,7 +161,7 @@ fn main() {
     let mut population = 32usize;
     let mut seed = 0x5EED_1234_ABCD_0010u64;
     let mut measure_gpu = true;
-    let mut out = std::path::PathBuf::from("logs/futhark_shapes_evolve");
+    let mut out = std::path::PathBuf::from("logs/futhark_a7_evolve");
     let mut resume = false;
     let mut seconds = 3600.0f64;
     let mut fitness: Option<String> = None;
@@ -208,7 +208,7 @@ fn main() {
         }
     }
 
-    let k = FutharkKingdom::load_shapes().expect("the shape tables load");
+    let k = FutharkKingdom::load().expect("the Futhark tables load");
     let root = k.ty("mat.n.p").expect("the root class");
     let table = CostTable::load(&k).expect("the cost table loads");
     let reference_tree = reference(&k);
@@ -255,7 +255,7 @@ fn main() {
     println!("\n== the reference ==");
     println!("cheap cost    traffic {}   alloc {}   depth {}", reference_score.traffic, reference_score.alloc, reference_score.depth);
 
-    let dir = std::env::temp_dir().join("futhark_shapes_evolve_example");
+    let dir = std::env::temp_dir().join("futhark_a7_evolve_example");
     if measure_gpu {
         let measured = measure(&reference_source, &dir).expect("the GPU cost is measured");
         println!(

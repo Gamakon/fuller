@@ -1,7 +1,9 @@
+//! DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).
+//!
 //! The Futhark-style kingdom's interpreter: what a gene MEANS, independent of
 //! Futhark.
 //!
-//! The renderer ([`crate::futhark_kingdom::FutharkKingdom::render`]) turns an
+//! The renderer ([`crate::futhark_table::FutharkKingdom::render`]) turns an
 //! expressed tree into Futhark source; Futhark compiles and runs that. This
 //! module turns the same tree into a value. Putting the two side by side is
 //! the check that the kingdom means what it says: the Futhark program and the
@@ -34,7 +36,7 @@
 //! nearest EVEN, like `rintf` and like WGSL's `round`, while Rust's
 //! `f32::round` rounds a half away from zero. See [`Unary::Round`].
 
-use crate::futhark_kingdom::FutharkKingdom;
+use crate::futhark_table::FutharkKingdom;
 use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
@@ -126,14 +128,14 @@ impl FutharkKingdom {
         let row = self
             .rows
             .get(tree.symbol as usize)
-            .ok_or_else(|| format!("futhark_true: symbol {} is not a row of this kingdom", tree.symbol))?;
+            .ok_or_else(|| format!("futhark_1d: symbol {} is not a row of this kingdom", tree.symbol))?;
         let kids: Vec<Value> =
             tree.kids.iter().map(|k| self.eval_at(k, input)).collect::<Result<Vec<_>, _>>()?;
         let name = row.name.as_str();
 
         // The constant placeholder: its value is the literal its
         // constant-array index names.
-        if row.kind == crate::futhark_kingdom::FutharkKind::Const {
+        if row.kind == crate::futhark_table::FutharkKind::Const {
             return Ok(Value::Real(self.literal(tree)?));
         }
 
@@ -197,7 +199,7 @@ impl FutharkKingdom {
                 let xs = as_arr(&kids[0])?;
                 Ok(Value::Real(xs.iter().fold(1.0f32, |a, x| a * x)))
             }
-            other => Err(format!("futhark_true: the interpreter has no rule for {other}")),
+            other => Err(format!("futhark_1d: the interpreter has no rule for {other}")),
         }
     }
 
@@ -227,9 +229,9 @@ impl FutharkKingdom {
                 let c = match tree.kids.first() {
                     Some(k) => match self.eval_at(k, input)? {
                         Value::Real(v) => v,
-                        other => return Err(format!("futhark_true: {name} captured a {other:?}, not a real")),
+                        other => return Err(format!("futhark_1d: {name} captured a {other:?}, not a real")),
                     },
-                    None => return Err(format!("futhark_true: {name} has no captured literal")),
+                    None => return Err(format!("futhark_1d: {name} has no captured literal")),
                 };
                 match name {
                     "fn.f32_f32.add_c" => Unary::AddC(c),
@@ -251,33 +253,33 @@ impl FutharkKingdom {
         let row = self
             .rows
             .get(tree.symbol as usize)
-            .ok_or_else(|| format!("futhark_true: symbol {} is not a row of this kingdom", tree.symbol))?;
+            .ok_or_else(|| format!("futhark_1d: symbol {} is not a row of this kingdom", tree.symbol))?;
         let dual = self
             .dual(row.output)
-            .ok_or_else(|| "futhark_true: a constant placeholder with no dual".to_string())?;
+            .ok_or_else(|| "futhark_1d: a constant placeholder with no dual".to_string())?;
         let idx = tree
             .const_index
-            .ok_or_else(|| format!("futhark_true: {} has no constant index", row.name))? as usize;
+            .ok_or_else(|| format!("futhark_1d: {} has no constant index", row.name))? as usize;
         let text = dual
             .literals
             .get(idx)
-            .ok_or_else(|| format!("futhark_true: {} literal {idx} is past the list", row.name))?;
+            .ok_or_else(|| format!("futhark_1d: {} literal {idx} is past the list", row.name))?;
         text.parse::<f32>()
-            .map_err(|e| format!("futhark_true: literal {text:?} is not a real: {e}"))
+            .map_err(|e| format!("futhark_1d: literal {text:?} is not a real: {e}"))
     }
 }
 
 fn as_fun(v: &Value) -> Result<Unary, String> {
     match v {
         Value::Fun(f) => Ok(*f),
-        other => Err(format!("futhark_true: expected a function, got {other:?}")),
+        other => Err(format!("futhark_1d: expected a function, got {other:?}")),
     }
 }
 
 fn as_arr(v: &Value) -> Result<Vec<f32>, String> {
     match v {
         Value::Arr(a) => Ok(a.clone()),
-        other => Err(format!("futhark_true: expected an array, got {other:?}")),
+        other => Err(format!("futhark_1d: expected an array, got {other:?}")),
     }
 }
 

@@ -1,9 +1,9 @@
-//! What a shape-kingdom program costs **on the GPU**, measured from the
+//! What a Futhark-kingdom program costs **on the GPU**, measured from the
 //! compiled GPU program rather than modelled from the source.
 //!
 //! # Why this exists
 //!
-//! The static cost in [`crate::futhark_shapes_cost`] is a *pre-optimisation*
+//! The static cost in [`crate::futhark_cost`] is a *pre-optimisation*
 //! model: it prices the program as the search writes it, before Futhark's
 //! own passes. That is the right thing for a cheap filter, but it is not
 //! what the machine sees, and the two can disagree — measured: scaling an

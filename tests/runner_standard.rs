@@ -5,15 +5,15 @@
 //!    loop is in [`RUNNERS`] or, excluded by name with its reason and its guard, in [`LEGACY`]; every registered
 //!    runner reaches the standard through `RunTelemetry` (directly, or through a library loop that creates one) and
 //!    carries the two-level HFF.
-//! 2. `the_shape_loop_meets_the_standard`: `futhark_shapes_evolve::evolve` runs 2 generations and its directory
+//! 2. `the_shape_loop_meets_the_standard`: `futhark_search::evolve` runs 2 generations and its directory
 //!    holds the stream (run_start, a snapshot a generation with the generic view's numbers, a hall of fame, mutation
 //!    events, run_end), the ledger with lineage and the checkpoint; a resume continues it to generation 3 on the
 //!    same stream; deleting `killme.trigger` stops a long run with `stopped_by: killed`.
 
 use std::path::{Path, PathBuf};
 
-use fuller::futhark_kingdom::FutharkKingdom;
-use fuller::futhark_shapes_evolve::{evolve, product_twice, suite, Config};
+use fuller::futhark_table::FutharkKingdom;
+use fuller::futhark_search::{evolve, product_twice, suite, Config};
 use fuller::telemetry::{parse_stream, EventKind, Record, STREAM_FILE};
 
 /// Every runner in fuller's examples, how it reaches the standard (`RunTelemetry::start` in its own source, or a
@@ -21,7 +21,7 @@ use fuller::telemetry::{parse_stream, EventKind, Record, STREAM_FILE};
 /// has speed inputs).
 const RUNNERS: &[(&str, &str, &str)] = &[
     // the loop's two-level HFF is checked on its stream by `the_shape_loop_meets_the_standard`
-    ("futhark_shapes_evolve", "use fuller::futhark_shapes_evolve::{evolve", "use fuller::futhark_shapes_evolve::{evolve"),
+    ("futhark_a7_evolve", "use fuller::futhark_search::{evolve", "use fuller::futhark_search::{evolve"),
     ("futhark_pixel_evolve", "RunTelemetry::start", "groups.insert(\"speed\""),
     ("futhark_evolve", "RunTelemetry::start", "groups.insert(\"speed\""),
 ];
@@ -91,7 +91,7 @@ fn records(dir: &Path) -> Vec<Record> {
 
 #[test]
 fn the_shape_loop_meets_the_standard() {
-    let k = FutharkKingdom::load_shapes().expect("the shape tables");
+    let k = FutharkKingdom::load().expect("the Futhark tables");
     let reference = product_twice(&k);
     let cfg = small(2);
     let input = suite(&k, &cfg.sizes, cfg.samples);
@@ -100,7 +100,7 @@ fn the_shape_loop_meets_the_standard() {
 
     let rs = records(&dir);
     let Record::RunStart(start) = &rs[0] else { panic!("the stream opens with run_start") };
-    assert_eq!(start.kingdom.as_deref(), Some("futhark_shapes"));
+    assert_eq!(start.kingdom.as_deref(), Some("futhark"));
     assert_eq!(start.max_generations, 2);
     assert!(!start.hff_objectives.is_empty(), "the HFF inputs are named");
     let snaps: Vec<_> = rs.iter().filter_map(|r| if let Record::Snapshot(s) = r { Some(s) } else { None }).collect();

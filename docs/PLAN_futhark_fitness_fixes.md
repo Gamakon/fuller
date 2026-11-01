@@ -94,7 +94,7 @@
 
 **Built (2026-10-28, commit 50e91778 and after).**
 - The reader, `src/futhark_reader.rs`: Futhark text to a tree of the kingdom, typed, each row's spelling used as a pattern. Round trip: 1,600 rendered random genes (400 in each of the four kingdoms) read back to the same program text. 5 of them read to a different tree with the same text, because the kingdom spells `zero` and `prev` the same in every index class. Pathfinder's published kernel does not read: it uses a tuple, `map5` and `rotate`.
-- The pool, `examples/futhark_pool.rs`, committed under `kingdoms/futhark_shapes/sig/<benchmark>/pool/`. `manifest.tsv` holds the counts and the gaps by construct; `bench_functions.tsv` and `llm_programs.tsv` hold every function and program, read or gap.
+- The pool, `examples/futhark_pool.rs`, committed under `kingdoms/futhark/sig/<benchmark>/pool/`. `manifest.tsv` holds the counts and the gaps by construct; `bench_functions.tsv` and `llm_programs.tsv` hold every function and program, read or gap.
   - **Benchmarks:** only 10 of the 1,575 functions in the 221 files read, mostly `i32` constants. The kingdom has only `i32` arrays and no tuples, so f32 code (158 float literals), tuples (324), type parameters (76) and records are outside it. These are gaps in the kingdom. Fixing the reader would not close them. The leave-one-out rule takes the benchmark's own file out of the discovery rings: `micro/reduce_by_index.fut`, `rodinia/pathfinder/pathfinder.fut`.
   - **Topic programs (Andrew's correction, 2026-10-28):** Sonnet was given one topic per call from 60 unrelated topics (blur, hash, Kadane, Horner, game of life, ...), the kingdom's operations, and the entry signature, with no description of the benchmark's task. Histogram: 48 of 60 read. Pathfinder: 45 of 60 read. 120 calls, $1.74. Many histogram topic programs work on `hist.add.n is vs` (no `% k`), because the contract lists `hist`.
   - An earlier set of programs written for the benchmark's task (histogram 124 calls, pathfinder 34, $4.77) was stopped and is not used: the rings must not look like the task.
@@ -125,7 +125,7 @@
 | growth mutation of a task alternative: all-zero share of children | about the fresh-gene share | under half of random padding's |
 | growth mutation: children with an unseen output | | more than random padding's |
 
-**Measured (2026-10-29, GPU, `--eval rust`, binary 66367dbe; the new cases: 19 for histogram, 19 for pathfinder).** Ring canvas: `--check --start llm-ring --pool kingdoms/futhark_shapes/sig/<b>/pool` (the benchmarks' functions and the topic programs, the published file left out). Random padding: the fitness agent's checks A3 and A4, with the same cases, the same seed and the same random-gene path.
+**Measured (2026-10-29, GPU, `--eval rust`, binary 66367dbe; the new cases: 19 for histogram, 19 for pathfinder).** Ring canvas: `--check --start llm-ring --pool kingdoms/futhark/sig/<b>/pool` (the benchmarks' functions and the topic programs, the published file left out). Random padding: the fitness agent's checks A3 and A4, with the same cases, the same seed and the same random-gene path.
 
 | measurement (1,400 fresh genes) | histogram, random padding | histogram, ring canvas | pathfinder, random padding | pathfinder, ring canvas |
 |---|---|---|---|---|
@@ -223,7 +223,7 @@ Every case set against every formula tried, with every measure: `docs/measuremen
 | exact programs from random, histogram and pathfinder | possible, not expected |
 
 ### J. Stage 2 gated by correctness (Andrew, 2026-10-29)
-The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast programs above an exact but slow one (`docs/reports/2026-10-29_futhark_reruns.md`). Andrew's fix: multiply by correctness, 0 or 1. Lower is better here, so the gate is written as two bands that cannot overlap (the pattern `futhark_shapes_evolve::fitness_of` used until fuller `b1bccf66`; it was then the ungated two-level HFF, and since 2026-11-01 is gated by this rule):
+The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast programs above an exact but slow one (`docs/reports/2026-10-29_futhark_reruns.md`). Andrew's fix: multiply by correctness, 0 or 1. Lower is better here, so the gate is written as two bands that cannot overlap (the pattern `futhark_search::fitness_of` used until fuller `b1bccf66`; it was then the ungated two-level HFF, and since 2026-11-01 is gated by this rule):
 - **exact** (on every training and held-out case): fitness = the two-level HFF angle (quality and speed), in [0, π/2);
 - **inexact:** fitness = π/2 + the quality angle, so every inexact program ranks below every exact one, and inexact programs still rank among themselves by quality, so they can be repaired.
 

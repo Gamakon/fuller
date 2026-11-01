@@ -8,7 +8,7 @@ the index links to the `.md` files themselves, not to copies of them.
 The page is GENERATED, and the generator's default is `--check`: the committed
 page is compared byte for byte with what this would write, and a test runs
 that check, so a hand-edited index fails `cargo test` and a stale one fails
-too. The same discipline as `kingdoms/futhark_shapes/gen_tables.py`, and for
+too. The same discipline as `kingdoms/futhark/gen_tables.py`, and for
 the same reason: the index is a lie the moment it stops matching the tree.
 
     python3 docs/build_index.py           # write docs/index.html
@@ -51,13 +51,13 @@ FAMILIES = [
 # The hand-picked shortlist: where a reader starts. The order is the reading
 # order, and each line says why it is there.
 START_HERE = [
-    ("REPORT_2026-10-27_shape_kingdom.md", "the shape kingdom end to end: what was built, measured, and what is next"),
+    ("REPORT_2026-10-27_shape_kingdom.md", "the Futhark kingdom end to end: what was built, measured, and what is next"),
     ("GOAL.md", "what this repository is for"),
     ("USAGE.md", "how to drive it"),
-    ("PLAN_futhark_shapes_product.md", "the shape kingdom's product decision, and what the phylu half turned out to be"),
+    ("PLAN_futhark_product.md", "the Futhark kingdom's product decision, and what the phylu half turned out to be"),
     ("FirstClassShapes.md", "the design that made a matrix shape a TYPE"),
     ("ASSESSMENT_first_class_shapes.md", "that design, measured, with the build's corrections"),
-    ("EGRAPH_futhark.md", "the Futhark kingdom inside the e-graph, and the rules that are bit-identical"),
+    ("EGRAPH_futhark.md", "the 1-D Futhark kingdom inside the e-graph, and the rules that are bit-identical"),
     ("RESCUE_futhark.md", "the compiler hang: what was measured, and why the e-graph rescue is negative"),
     ("SPLIT_fuller_phylu.md", "the boundary between this repository and phylu — read every line before changing it"),
     ("PLAN_population_dag.md", "the population DAG: the next structural step"),

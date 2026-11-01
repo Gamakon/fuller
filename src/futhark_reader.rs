@@ -1,5 +1,5 @@
 //! THE READER of the signature kingdom (`crate::futhark_sig`): Futhark source text to an expressed tree of a
-//! benchmark's kingdom, the inverse of how the kingdom renders a tree ([`crate::futhark_kingdom::FutharkKingdom::render`]
+//! benchmark's kingdom, the inverse of how the kingdom renders a tree ([`crate::futhark_table::FutharkKingdom::render`]
 //! inside [`crate::futhark_sig::program`]). Plan: `docs/PLAN_futhark_fitness_fixes.md` section H.
 //!
 //! Three steps.
@@ -26,7 +26,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::futhark_kingdom::{FutharkKind, FutharkKingdom};
+use crate::futhark_table::{FutharkKind, FutharkKingdom};
 use crate::futhark_sig::Signature;
 use crate::geneframe::Ty;
 use crate::typed_gep::Tree;
@@ -1366,7 +1366,7 @@ impl<'a> Reader<'a> {
     }
 
     /// The exact rewrites tried when no row reads an expression.
-    fn rewrites(&self, e: &E, dual: &crate::futhark_kingdom::FutharkDual, norm: &mut Norm<'_>) -> Vec<E> {
+    fn rewrites(&self, e: &E, dual: &crate::futhark_table::FutharkDual, norm: &mut Norm<'_>) -> Vec<E> {
         let mut out = Vec::new();
         let class = dual.dual.split(':').next().unwrap_or("");
         let arr_dim = class.strip_prefix("a.").filter(|d| !d.contains('.')).map(str::to_string);

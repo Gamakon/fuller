@@ -1,9 +1,9 @@
-# Fuller's e-graph for the Futhark kingdom
+# Fuller's e-graph for the 1-D Futhark kingdom
 
 Date: 2026-10-26. Status: Phase 1–3 of the e-graph specification, built and
 measured. Phases 4–6 are deliberately not started; §6 says why.
 
-Scope: `kingdoms/futhark_true`, `src/futhark_egraph.rs`, and the existing
+Scope: `kingdoms/futhark_1d`, `src/futhark_1d_egraph.rs`, and the existing
 Futhark execution harness. The Karva gene stays the canonical representation:
 the e-graph is a *tool that finds equivalent programs*, not a new genome.
 
@@ -11,7 +11,7 @@ the e-graph is a *tool that finds equivalent programs*, not a new genome.
 
 ## 1. What was built
 
-`src/futhark_egraph.rs` puts the Futhark kingdom inside Fuller's equality
+`src/futhark_1d_egraph.rs` puts the 1-D Futhark kingdom inside Fuller's equality
 saturation. The design decision that makes it work is that **one egglog sort
 is one kingdom type**:
 
@@ -283,10 +283,10 @@ saturation cannot help.
 
 ```bash
 # the e-graph's own tests
-cargo test --features wgsl --lib futhark_egraph
+cargo test --features wgsl --lib futhark_1d_egraph
 
 # the rescue experiment, with the full record
-cargo run --release --features wgsl --example futhark_rescue -- --limit 120 --candidates 40
+cargo run --release --features wgsl --example futhark_1d_rescue -- --limit 120 --candidates 40
 ```
 
 The rescue example regenerates the pathological gene from its seed, so it

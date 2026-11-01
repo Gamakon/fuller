@@ -180,7 +180,7 @@ The genotype, the head and tail lengths for a declared program size $N$
 ($h_T=[T{=}R]+(N-1)\,a_T$), expression, and the contract that every gene
 expresses a legal program all come from the core paper~\cite{morgan_core}.
 What belongs to this kingdom is its \emph{tables}. They are written once,
-offline, by \src{kingdoms/futhark_shapes/gen_tables.py}, from an interface
+offline, by \src{kingdoms/futhark/gen_tables.py}, from an interface
 that is declared in the generator. The engine reads them as an ordinary flat
 typed kingdom and never learns that shapes exist. The tables are therefore the
 trust boundary, and two checks guard them. The generator's default mode,
@@ -194,7 +194,7 @@ The kingdom has three families, all from the same generator
 
 \begin{table}[t]
 \caption{The Futhark kingdom's instances, counted from the committed tables
-(\src{kingdoms/futhark_shapes/}: \texttt{types.tsv}, \texttt{functions.tsv}, \texttt{egraph.rules}).}
+(\src{kingdoms/futhark/}: \texttt{types.tsv}, \texttt{functions.tsv}, \texttt{egraph.rules}).}
 \label{tab:families}
 \small
 \begin{tabular}{@{}llrrr@{}}
@@ -235,24 +235,24 @@ def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
 Futhark's own type checker then enforces the inner-dimension relation that the
 class table states. The table and the compiler check each other: the
 compiler caught the table giving \texttt{map2} the wrong arity
-(\src{kingdoms/futhark_shapes/README.md}).
+(\src{kingdoms/futhark/README.md}).
 
 The e-graph has one egglog sort for each class, so a rewrite cannot change a
 node's class. It has 54 rewrites, all bit-identical. For each class there are
 27 identities: \texttt{map} with the identity row function is the matrix;
 \texttt{map2} with the binary identity is its first operand; and
 \texttt{transpose} is an involution. There are also 27 transposed-product rules,
-$(Y^\top X^\top)^\top = XY$ (\src{kingdoms/futhark_shapes/egraph.rules}). The
+$(Y^\top X^\top)^\top = XY$ (\src{kingdoms/futhark/egraph.rules}). The
 kingdom's README now also states 54 rules (da2eb221).
 
 Two costs rank the programs. The \emph{static cost} is a polynomial in the
 roles (traffic, allocations and serial depth), generated into
 \texttt{costs.tsv} with a witness test of its own
-(\src{src/futhark_shapes_cost.rs:263}). The \emph{measured GPU cost} comes from
+(\src{src/futhark_cost.rs:263}). The \emph{measured GPU cost} comes from
 the compiled GPU program (\texttt{futhark dev --gpu-mem --compile-imp-gpu}). It
 records device allocation sites, literal bytes, shared memory, kernels, and
 whether the block and register tiler fired
-(\src{src/futhark_shapes_gpu.rs:110}).
+(\src{src/futhark_gpu.rs:110}).
 
 \subsection{The signature family: a kingdom from a benchmark's signature}
 \label{sec:sig}
@@ -260,7 +260,7 @@ A signature instance declares a program's typed inputs and output over named
 dimensions, for example Rodinia pathfinder's
 \texttt{walls: [rows][cols]i32 -> [cols]i32}. The generator derives the rest,
 and makes every rule of a legal program a type
-(\src{kingdoms/futhark_shapes/gen_tables.py:1684-1811}):
+(\src{kingdoms/futhark/gen_tables.py:1684-1811}):
 \begin{itemize}
 \item \textbf{A class is a type.} \ty{a.rows.cols}, \ty{a.cols}, \ty{ix.cols}
   and \ty{i32} are classes; a row of an \ty{a.rows.cols} is an \ty{a.cols}.
@@ -324,7 +324,7 @@ A picture is a \texttt{map} over pixels of a scalar program. The program is a
 chain of \texttt{let}s and bounded \texttt{loop}s over \texttt{f32}, ending in
 \texttt{[r, g, b]}. Scope is a type (\ty{f32.s}$k$ has $v_0\ldots v_{k-1}$ in
 scope). A binding moves the scope. Trip counts are literals of at most 64, and
-loops nest at most two deep (\src{kingdoms/futhark_shapes/gen_tables.py:1130-1222}).
+loops nest at most two deep (\src{kingdoms/futhark/gen_tables.py:1130-1222}).
 An instance is declared by its WGSL source: the uniform blocks become inputs,
 and the source's float literals join the constant pool. The hand-written
 references draw the WGSL originals' pictures up to fast-math differences
@@ -334,8 +334,8 @@ random did not draw any target picture, and the study is parked
 from this family.
 
 \subsection{The deprecated 1-D kingdom}
-The first Futhark kingdom (\src{kingdoms/futhark_true/}, 4 types and 38 rows,
-\src{src/futhark_kingdom.rs}) made \emph{shape a value, not a type}: \ty{arr.f32}
+The first Futhark kingdom (\src{kingdoms/futhark_1d/}, 4 types and 38 rows,
+\src{src/futhark_table.rs}) made \emph{shape a value, not a type}: \ty{arr.f32}
 was one type whatever its length. That kept the kingdom small, but it could not
 say that two arrays' shapes are related, so a \texttt{matmul} was not
 expressible. Two findings from it remain useful. Its e-graph diverged when
@@ -461,11 +461,11 @@ ties at outputs that random genes also produce cap the reachable figure at about
 Correctness is judged against the \emph{reference kernel's} value on a suite of
 independent input sets. The comparison is bit for bit (signed zeros told
 apart) on element-wise paths, and exact (no tolerance) where there is a
-reduction (\src{src/futhark_shapes_interp.rs:281-297}). The fitness that the code
+reduction (\src{src/futhark_interpreter.rs:281-297}). The fitness that the code
 computes today is the two-level HFF. Its quality inputs are the disagreement on
 each input set, on HFF's log scale. Its speed inputs are traffic, allocations
 and depth, each as $x/(x+x_{\mathrm{ref}})$
-(\src{src/futhark_shapes_evolve.rs:1091-1106}).
+(\src{src/futhark_search.rs:1091-1106}).
 
 %======================================================================
 \section{GPU implementation}
@@ -542,13 +542,13 @@ relative to each repository.}
 stage & \multicolumn{2}{c}{Signature (fuller)} & \multicolumn{2}{c}{Matrix, GPU population (phylu + fuller)}\\
 \midrule
 random genes & \Hh & \src{futhark_evolve.rs:790} $\to$ \src{src/futhark_sig.rs:1007} & \D & typed core init (\src{phylu src/evolve/shape_typed.rs:10-17})\\
-expression & \Hh & \src{futhark_evolve.rs:828} & \Hh{}\,(+\D{} walk check) & \texttt{score\_lenient} \src{futhark_shapes_evolve.rs:1012}; walk check \src{shape_typed.rs:566}\\
+expression & \Hh & \src{futhark_evolve.rs:828} & \Hh{}\,(+\D{} walk check) & \texttt{score\_lenient} \src{futhark_search.rs:1012}; walk check \src{shape_typed.rs:566}\\
 mutation, crossover, marriage & \Hh & \src{futhark_evolve.rs:838}, \src{:867}, \src{:882} & \D & \texttt{dev.vary} \src{shape_typed.rs:746}\\
 e-graph variants & \Hh & egglog, \src{src/futhark_sig.rs:1444} & \Hh & \texttt{saturate\_tree} \src{shape_typed.rs:630}\\
-program building & \Hh & render \src{futhark_sig.rs:423}; fork + \texttt{rustc} \src{futhark_rust.rs:128} & \Hh & interpreter; compile only for measured elites \src{futhark_shapes_gpu.rs:110}\\
-program execution & \D & \src{futhark-rust-rt/src/program.rs:252} & \Hh & interpreter \src{futhark_shapes_interp.rs:331}\\
-timing & \D & GPU timestamps \src{futhark-rust-rt/src/ctx.rs:114}; pairs \src{src/runner.rs:220} & -- & static cost \src{futhark_shapes_cost.rs:263} (no timing)\\
-fitness evaluation & \Hh & \src{futhark_sig.rs:1244}, \src{src/runner.rs:97} & \Hh & \src{futhark_shapes_evolve.rs:1104}; written to \D{} \src{shape_typed.rs:488}\\
+program building & \Hh & render \src{futhark_sig.rs:423}; fork + \texttt{rustc} \src{futhark_rust.rs:128} & \Hh & interpreter; compile only for measured elites \src{futhark_gpu.rs:110}\\
+program execution & \D & \src{futhark-rust-rt/src/program.rs:252} & \Hh & interpreter \src{futhark_interpreter.rs:331}\\
+timing & \D & GPU timestamps \src{futhark-rust-rt/src/ctx.rs:114}; pairs \src{src/runner.rs:220} & -- & static cost \src{futhark_cost.rs:263} (no timing)\\
+fitness evaluation & \Hh & \src{futhark_sig.rs:1244}, \src{src/runner.rs:97} & \Hh & \src{futhark_search.rs:1104}; written to \D{} \src{shape_typed.rs:488}\\
 selection & \Hh & tournament of 3, \src{futhark_evolve.rs:2362} & \D & device selection kernel on the host's fitness\\
 \bottomrule
 \end{tabularx}

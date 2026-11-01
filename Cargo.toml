@@ -108,7 +108,7 @@ name = "st4_seeds"
 required-features = ["wgsl"]
 
 [[example]]
-name = "futhark_true_emit"
+name = "futhark_1d_emit"
 required-features = ["wgsl"]
 
 [[example]]

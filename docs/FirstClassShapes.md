@@ -1,6 +1,6 @@
 # Design Question: First-Class Shape Types in Multi-Typed GEP
 
-**Project:** nucleotable / Fuller / `futhark_true`  
+**Project:** nucleotable / Fuller / `futhark_1d`  
 **Status:** Architectural proposal for technical review  
 **Objective:** Determine whether symbolic array shapes can become first-class elements of the Karva type system while preserving true multi-typed GEP's legality-by-construction guarantee.
 
@@ -19,7 +19,7 @@ The current kingdom is deliberately compact:
 
 The major achievement of our architecture is that **every gene expresses a legal AST by construction**. We do not repair, filter, reject or substitute malformed genetic expressions.
 
-However, the current Futhark kingdom makes a questionable design assumption:
+However, the 1-D Futhark kingdom makes a questionable design assumption:
 
 > Shape is a value, not a type.
 
@@ -59,7 +59,7 @@ But this creates a combinatorial explosion in the number of types, reading frame
 
 We have already encountered the consequences of a very large genetic search space in `wgsl_true`, which has thousands of symbols and hundreds of types.
 
-Our new Futhark kingdom was created specifically to avoid that complexity.
+Our 1-D Futhark kingdom was created specifically to avoid that complexity.
 
 We therefore want:
 
@@ -261,7 +261,7 @@ Specifically:
 
 ## 9. Requested response
 
-Please inspect the actual implementations of `geneframe`, `typed_gep`, `KingdomRelations`, the Futhark kingdom generator, `write_back`, and `futhark_egraph`.
+Please inspect the actual implementations of `geneframe`, `typed_gep`, `KingdomRelations`, the Futhark kingdom generator, `write_back`, and `futhark_1d_egraph`.
 
 **Do not implement anything yet.**
 

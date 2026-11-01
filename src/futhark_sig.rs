@@ -1,6 +1,6 @@
-//! The SIGNATURE FAMILY of the shape kingdom's generator: a Futhark kingdom whose interface is generated from a
-//! program's declared signature (`kingdoms/futhark_shapes/gen_tables.py`, section "THE SIGNATURE FAMILY"; one instance
-//! a problem, under `kingdoms/futhark_shapes/sig/<problem>/`), in the direction of "any Futhark program: inputs and
+//! The SIGNATURE FAMILY of the Futhark kingdom's generator: a Futhark kingdom whose interface is generated from a
+//! program's declared signature (`kingdoms/futhark/gen_tables.py`, section "THE SIGNATURE FAMILY"; one instance
+//! a problem, under `kingdoms/futhark/sig/<problem>/`), in the direction of "any Futhark program: inputs and
 //! outputs are any typed values".
 //!
 //! An instance declares its inputs and output as typed arrays over named dimensions — Rodinia's pathfinder is
@@ -27,7 +27,7 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{EGraph, Term, TermDag, TermId};
 
-use crate::futhark_kingdom::{FutharkFamily, FutharkKind, FutharkKingdom, GeneRng};
+use crate::futhark_table::{FutharkFamily, FutharkKind, FutharkKingdom, GeneRng};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::saturated_fold::EgraphKingdom;
@@ -48,46 +48,46 @@ pub struct Instance {
 /// Rodinia pathfinder: `walls: [rows][cols]i32 -> [cols]i32`.
 pub const PATHFINDER: Instance = Instance {
     name: "pathfinder",
-    types: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/types.tsv"),
-    functions: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/pathfinder/egraph.rows"),
+    types: include_str!("../kingdoms/futhark/sig/pathfinder/types.tsv"),
+    functions: include_str!("../kingdoms/futhark/sig/pathfinder/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark/sig/pathfinder/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark/sig/pathfinder/egraph.rows"),
 };
 
 /// The study's micro benchmark reduce (`micro/reduce.fut`, `sum_i32`): `xs: [n]i32 -> i32`.
 pub const REDUCE: Instance = Instance {
     name: "reduce",
-    types: include_str!("../kingdoms/futhark_shapes/sig/reduce/types.tsv"),
-    functions: include_str!("../kingdoms/futhark_shapes/sig/reduce/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark_shapes/sig/reduce/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/reduce/egraph.rows"),
+    types: include_str!("../kingdoms/futhark/sig/reduce/types.tsv"),
+    functions: include_str!("../kingdoms/futhark/sig/reduce/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark/sig/reduce/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark/sig/reduce/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark/sig/reduce/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark/sig/reduce/egraph.rows"),
 };
 
 /// The study's micro benchmark scan (`micro/scan.fut`, `sum_i32`): `xs: [n]i32 -> [n]i32`, inclusive prefix sums.
 pub const SCAN: Instance = Instance {
     name: "scan",
-    types: include_str!("../kingdoms/futhark_shapes/sig/scan/types.tsv"),
-    functions: include_str!("../kingdoms/futhark_shapes/sig/scan/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark_shapes/sig/scan/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/scan/egraph.rows"),
+    types: include_str!("../kingdoms/futhark/sig/scan/types.tsv"),
+    functions: include_str!("../kingdoms/futhark/sig/scan/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark/sig/scan/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark/sig/scan/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark/sig/scan/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark/sig/scan/egraph.rows"),
 };
 
 /// The study's histogram (`micro/reduce_by_index.fut`, `sum_i32`): `(k: i32) (is: [n]i32) (vs: [n]i32) -> [k]i32`,
 /// the sum of the values in each bin `is % k`.
 pub const HISTOGRAM: Instance = Instance {
     name: "histogram",
-    types: include_str!("../kingdoms/futhark_shapes/sig/histogram/types.tsv"),
-    functions: include_str!("../kingdoms/futhark_shapes/sig/histogram/functions.tsv"),
-    interface: include_str!("../kingdoms/futhark_shapes/sig/histogram/interface.tsv"),
-    datatype: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.datatype"),
-    rules: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.rules"),
-    egraph_rows: include_str!("../kingdoms/futhark_shapes/sig/histogram/egraph.rows"),
+    types: include_str!("../kingdoms/futhark/sig/histogram/types.tsv"),
+    functions: include_str!("../kingdoms/futhark/sig/histogram/functions.tsv"),
+    interface: include_str!("../kingdoms/futhark/sig/histogram/interface.tsv"),
+    datatype: include_str!("../kingdoms/futhark/sig/histogram/egraph.datatype"),
+    rules: include_str!("../kingdoms/futhark/sig/histogram/egraph.rules"),
+    egraph_rows: include_str!("../kingdoms/futhark/sig/histogram/egraph.rows"),
 };
 
 /// The ruleset name the generated rules are in.
@@ -789,7 +789,7 @@ impl<'a> Interp<'a> {
             Op::Const => {
                 let row = &self.k.rows[t.symbol as usize];
                 let ty = match row.output {
-                    Ty::FutharkShape(i) => i as usize,
+                    Ty::Futhark(i) => i as usize,
                     _ => return Err("a constant outside the family".into()),
                 };
                 let pool = self.literals[ty].as_ref().ok_or("a constant of a type with no pool")?;

@@ -1,4 +1,4 @@
-//! The shape kingdom's evolution loop.
+//! The Futhark kingdom's evolution loop.
 //!
 //! # The two operators, and the two jobs
 //!
@@ -26,9 +26,9 @@
 //!    elementwise paths, and exact values (`equal`, no tolerance) where the
 //!    program contains a reduction, because the compiled program may
 //!    legitimately differ from the source semantics there.
-//! 2. **The cost.** The cheap polynomial ([`crate::futhark_shapes_cost`])
+//! 2. **The cost.** The cheap polynomial ([`crate::futhark_cost`])
 //!    ranks the population; the *measured* GPU cost
-//!    ([`crate::futhark_shapes_gpu`]) decides the elites, because the
+//!    ([`crate::futhark_gpu`]) decides the elites, because the
 //!    polynomial is a pre-optimisation model and the machine sees something
 //!    else.
 //!
@@ -43,12 +43,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::futhark_kingdom::{FutharkKingdom, GeneRng};
-use crate::futhark_shapes::program;
-use crate::futhark_shapes_cost::{program_cost, score_at, CostTable, Score};
-use crate::futhark_shapes_egraph::{saturate_tree, Bridge};
-use crate::futhark_shapes_gpu::{measure, GpuMeasurement};
-use crate::futhark_shapes_interp::{identical, Mat, MValue};
+use crate::futhark_table::{FutharkKingdom, GeneRng};
+use crate::futhark::program;
+use crate::futhark_cost::{program_cost, score_at, CostTable, Score};
+use crate::futhark_saturation::{saturate_tree, Bridge};
+use crate::futhark_gpu::{measure, GpuMeasurement};
+use crate::futhark_interpreter::{identical, Mat, MValue};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;
 use crate::runner::{load_checkpoint, log_scaled, save_checkpoint, two_level_hff, FameEntry, HallOfFame, Ledger, TwoLevel};
@@ -208,7 +208,7 @@ fn input_text(kingdom: &FutharkKingdom, sample: &BTreeMap<Ty, Mat>) -> Result<St
         let mat = sample
             .get(&ty)
             .ok_or_else(|| format!("the sample has no matrix for {}", dual.dual))?;
-        text.push_str(&crate::futhark_shapes_interp::format_matrix(mat));
+        text.push_str(&crate::futhark_interpreter::format_matrix(mat));
     }
     Ok(text)
 }
@@ -324,7 +324,7 @@ fn gene_key(gene: &[u32]) -> String {
 }
 
 /// The loop's own name for the kingdom on the stream.
-pub const KINGDOM: &str = "futhark_shapes";
+pub const KINGDOM: &str = "futhark";
 
 /// Run the loop against a reference kernel, writing the run's standard outputs into `out`
 /// (`docs/STANDARD_runners.md`): `stream.jsonl`, `killme.trigger` (delete it to stop after the current generation),
@@ -339,12 +339,12 @@ pub fn evolve(
     cfg: &Config,
     out: &Path,
 ) -> Result<Report, String> {
-    let kingdom = FutharkKingdom::load_shapes()?;
+    let kingdom = FutharkKingdom::load()?;
     let contract = kingdom
         .relations()
         .check()
         .map_err(|bad| bad.join("; "))?;
-    let root = kingdom.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
+    let root = kingdom.ty("mat.n.p").ok_or("the Futhark kingdom has no mat.n.p class")?;
     let layout = GeneLayout::from_program_size(&contract, root, cfg.program_size)
         .map_err(|e| format!("the layout: {e}"))?;
     let const_len = kingdom.const_len();
@@ -746,7 +746,7 @@ fn order(a: &Ranked, b: &Ranked) -> std::cmp::Ordering {
 /// the same source file over each other — and the measurement is cached by
 /// the source, so a stale file would be measured under the wrong program.
 fn run_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join("futhark_shapes_evolve").join(format!("run{}", std::process::id()))
+    std::env::temp_dir().join("futhark_search").join(format!("run{}", std::process::id()))
 }
 
 /// Evaluate one program: is it right, and what does it cost?
@@ -884,7 +884,7 @@ fn tournament<'a>(pool: &'a [Ranked], rng: &mut GeneRng) -> &'a Ranked {
 /// The measured GPU cost of a program.
 ///
 /// This is the *decision* cost — the one the compiled GPU program carries —
-/// as against the cheap polynomial in [`crate::futhark_shapes_cost`], which
+/// as against the cheap polynomial in [`crate::futhark_cost`], which
 /// is the filter.
 pub fn measure_program(
     tree: &Tree,
@@ -892,12 +892,12 @@ pub fn measure_program(
     cfg: &Config,
     dir: &Path,
 ) -> Result<GpuMeasurement, String> {
-    let root = kingdom.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
+    let root = kingdom.ty("mat.n.p").ok_or("the Futhark kingdom has no mat.n.p class")?;
     let source = program(kingdom, root, tree, &cfg.sizes)?;
     measure(&source, dir)
 }
 
-/// The shape kingdom's **evaluation service**: score a population of genes
+/// The Futhark kingdom's **evaluation service**: score a population of genes
 /// against a reference kernel.
 ///
 /// This is the seam a GPU-resident population uses. The population lives on
@@ -917,7 +917,7 @@ pub fn score_population(
     Scorer::new(reference.clone(), inputs.to_vec(), cfg.sizes.clone(), cfg.program_size)?.score(genes)
 }
 
-/// The shape kingdom's evaluation service, PREPARED ONCE.
+/// The Futhark kingdom's evaluation service, PREPARED ONCE.
 ///
 /// [`score_population`] builds the kingdom, the contract, the layout, the cost
 /// table and the reference's own value on every call. That is right for a
@@ -961,12 +961,12 @@ impl Scorer {
         if inputs.is_empty() {
             return Err("the evaluation service needs at least one input set: an empty suite decides nothing".into());
         }
-        let kingdom = FutharkKingdom::load_shapes()?;
+        let kingdom = FutharkKingdom::load()?;
         let contract = kingdom
             .relations()
             .check()
             .map_err(|bad| bad.join("; "))?;
-        let root = kingdom.ty("mat.n.p").ok_or("the shape kingdom has no mat.n.p class")?;
+        let root = kingdom.ty("mat.n.p").ok_or("the Futhark kingdom has no mat.n.p class")?;
         let layout = GeneLayout::from_program_size(&contract, root, program_size)
             .map_err(|e| format!("the layout: {e}"))?;
         let const_len = kingdom.const_len();
@@ -1222,11 +1222,11 @@ pub fn suite(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::futhark_shapes_gpu::measure;
-    use crate::futhark_shapes_interp::{matmul, transpose, Mat};
+    use crate::futhark_gpu::measure;
+    use crate::futhark_interpreter::{matmul, transpose, Mat};
 
     fn kingdom() -> FutharkKingdom {
-        FutharkKingdom::load_shapes().expect("the shape tables load")
+        FutharkKingdom::load().expect("the Futhark tables load")
     }
 
     /// A run's own output directory.
@@ -1482,7 +1482,7 @@ mod tests {
     /// at all.
     #[test]
     fn the_two_forms_are_measured_from_their_compiled_gpu_programs() {
-        let k = FutharkKingdom::load_shapes().expect("the shape tables load");
+        let k = FutharkKingdom::load().expect("the Futhark tables load");
         if !std::process::Command::new("futhark")
             .arg("--version")
             .output()
@@ -1505,7 +1505,7 @@ mod tests {
             ],
         );
         let cfg = Config::default();
-        let dir = std::env::temp_dir().join("futhark_shapes_probe");
+        let dir = std::env::temp_dir().join("futhark_probe");
         let root = k.ty("mat.n.p").expect("the root class");
         let mut costs = Vec::new();
         for tree in [&reference, &winner] {

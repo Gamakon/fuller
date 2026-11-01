@@ -1,4 +1,6 @@
-# `futhark_true` — a Futhark-style parallel kingdom
+# `futhark_1d` — the 1-D Futhark kingdom
+
+**DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).**
 
 **What it evolves:** a typed, high-level *parallel program* over arrays — a
 tree of combinators (`map`, `map2`, `scan`, `rev`, `reduce`), each applied to
@@ -16,7 +18,7 @@ This kingdom is the same idea in the opposite shape: a tiny type system, a
 tiny symbol table, and a compiler that does the optimisation evolution cannot
 discover (fusion, vectorisation, tiling, size polymorphism).
 
-| | `wgsl_true` | `futhark_true` |
+| | `wgsl_true` | `futhark_1d` |
 |---|---:|---:|
 | types | 305 | **4** |
 | symbol rows | 8,841 | **38** |
@@ -129,18 +131,18 @@ functions.tsv    the symbol table: output type, ordered argument types, spelling
 
 The table is the design; the Rust is its loader:
 
-* `src/futhark_kingdom.rs` — the loader, the kingdom's relations, and the
+* `src/futhark_table.rs` — the loader, the kingdom's relations, and the
   renderer that turns an expressed tree into Futhark source.
-* `src/futhark_interp.rs` — the kingdom's own interpreter: what a gene *means*,
+* `src/futhark_1d_interp.rs` — the kingdom's own interpreter: what a gene *means*,
   independent of Futhark.
 * `src/futhark_exec.rs` — compile the rendered source with the real Futhark
   compiler and run it.
-* `examples/futhark_true_emit.rs` — the end-to-end check: random genes in,
+* `examples/futhark_1d_emit.rs` — the end-to-end check: random genes in,
   Futhark source out, the real Futhark compiler's verdict, and the
   interpreter's value compared with the compiled program's.
 
 ```
-cargo run --release --features wgsl --example futhark_true_emit -- \
+cargo run --release --features wgsl --example futhark_1d_emit -- \
     --root arr.f32 --size 4 --count 100 --check
 ```
 

@@ -1244,7 +1244,7 @@ pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// What a runner says about itself once, at its start, for [`RunTelemetry::start`].
 #[derive(Clone, Debug, Default)]
 pub struct RunInfo {
-    /// The kingdom's name, as the watchers show it (`futhark_shapes`, `wgsl`, `Regex`, …). A kingdom the watcher
+    /// The kingdom's name, as the watchers show it (`futhark`, `wgsl`, `Regex`, …). A kingdom the watcher
     /// has no view of its own for gets the generic view, so a new name needs no watcher change.
     pub kingdom: String,
     /// The problem or dataset the run measures against.

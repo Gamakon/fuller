@@ -142,12 +142,12 @@ The design above keeps everything:
 | the alphabet is enumerable before the draw | the class set is finite, as it is now; the dim sort's operators are finite |
 | legality by construction | the class set and the dim classes are resolved offline, in the generator |
 | no repair, no rejection | a tree that expresses is a legal program |
-| the GEP core is untouched | a new type in the type space, like `Ty::FutharkShape` itself |
+| the GEP core is untouched | a new type in the type space, like `Ty::Futhark` itself |
 | the unification happens once, offline | the generator enumerates the extended class set |
 
 ### 2.4 The sharing question, answered
 
-**Designed.** A computed dimension used twice — "compute `n = length xs`, then build an `n×m` matrix and an `n×k` matrix" — needs the value in two places. The tree is a tree, so the expression is *duplicated*: `length xs` twice. That is correct, because the expression is pure and Futhark computes it twice, and it is what the 1-D kingdom already does with `length`. The population DAG's homeotic rows would make it a *shared definition* — an optimisation, and a change to the gene's encoding, not a requirement of the semantics. **So the third piece does not need the DAG.** That is worth stating, because it is the point at which a design like this usually starts pulling in the rest of the system.
+**Designed.** A computed dimension used twice — "compute `n = length xs`, then build an `n×m` matrix and an `n×k` matrix" — needs the value in two places. The tree is a tree, so the expression is *duplicated*: `length xs` twice. That is correct, because the expression is pure and Futhark computes it twice, and it is what the 1-D Futhark kingdom already does with `length`. The population DAG's homeotic rows would make it a *shared definition* — an optimisation, and a change to the gene's encoding, not a requirement of the semantics. **So the third piece does not need the DAG.** That is worth stating, because it is the point at which a design like this usually starts pulling in the rest of the system.
 
 ---
 
@@ -178,7 +178,7 @@ and the growth in the number of roles:
 | 4 | 25 | 38 | 299 | 38 | 1737 | 213 |
 | 5 | 36 | 51 | 459 | 51 | 2779 | 303 |
 
-**The width is the real cost**, and it grows faster than the class count: the width is quadratic in the number of types, and the types are quadratic in the number of roles, so the width is quartic in the roles. The class kingdom's 322 words is already 7.7× the shipped 1-D kingdom's; the dynamic version is 24× it.
+**The width is the real cost**, and it grows faster than the class count: the width is quadratic in the number of types, and the types are quadratic in the number of roles, so the width is quartic in the roles. The class kingdom's 322 words is already 7.7× the shipped 1-D Futhark kingdom's; the dynamic version is 24× it.
 
 That is the number that decides whether the third piece is affordable, and it is the number a reader should weigh before anything else in this document.
 
@@ -192,7 +192,7 @@ Nothing, by itself: a wider gene is a more expressive search space, not a better
 
 ### 4.1 The static relations are lost exactly where the dimension is dynamic
 
-**Designed.** A class with a dynamic axis has no static relation on that axis. `mat.dyn.m × mat.dyn.p` is illegal statically, even though the two matrices might have equal inner dimensions at run time — that is the 1-D kingdom's `map2 (+)` case, and it is *not* expressible here. The dynamic class set buys expressiveness of *shapes*, at the cost of expressiveness of *relations between dynamic shapes*. The 1-D kingdom keeps the latter; the class kingdom keeps the former. **Neither replaces the other**, which is why both stay.
+**Designed.** A class with a dynamic axis has no static relation on that axis. `mat.dyn.m × mat.dyn.p` is illegal statically, even though the two matrices might have equal inner dimensions at run time — that is the 1-D Futhark kingdom's `map2 (+)` case, and it is *not* expressible here. The dynamic class set buys expressiveness of *shapes*, at the cost of expressiveness of *relations between dynamic shapes*. The 1-D Futhark kingdom keeps the latter; the class kingdom keeps the former. **Neither replaces the other**, which is why both stay.
 
 ### 4.2 The class set is coarser than Futhark's types
 
@@ -207,7 +207,7 @@ The harness must therefore distinguish three outcomes that all look like "the pr
 | outcome | what it is | what the engine should do |
 |---|---|---|
 | the program failed its size obligation | the candidate is wrong | **reject the candidate**, count it as a failure |
-| the compiler did not converge | a known Futhark defect (§15.3a) | reject the candidate, as the 1-D kingdom's rescue already does |
+| the compiler did not converge | a known Futhark defect (§15.3a) | reject the candidate, as the 1-D Futhark kingdom's rescue already does |
 | the program timed out | the candidate is slow | reject the candidate |
 
 All three reject the candidate, so the *engine* is safe either way. What must not happen is the ICE being reported as a crash of the engine, or the candidate being counted as a *success* with an empty result.
@@ -224,7 +224,7 @@ This is the place where the design is least settled. The options are (a) keep on
 
 * **It is not a repair step.** No candidate is ever fixed up; the classes are legal by construction.
 * **It is not a rejection step.** A tree that expresses is a legal program, exactly as now.
-* **It is not the shape-aware IR of §13's first wording.** §13 said "a separate shape-aware IR/evaluator for dynamic-shape tasks"; the measurements have shown that the *evaluator* already exists (Futhark's own type checker, and the shape kingdom's interpreter for the oracle), and that the IR need not be separate — it is the class machinery with dynamic axes.
+* **It is not the shape-aware IR of §13's first wording.** §13 said "a separate shape-aware IR/evaluator for dynamic-shape tasks"; the measurements have shown that the *evaluator* already exists (Futhark's own type checker, and the Futhark kingdom's interpreter for the oracle), and that the IR need not be separate — it is the class machinery with dynamic axes.
 * **It is not the population DAG.** §2.4: sharing is an optimisation, not a requirement.
 
 ---
@@ -243,7 +243,7 @@ The same discipline as §10.2 of the design assessment: three of these decide th
 | 6 | the width | the measured width at N = 3, against the model's 991 |
 | 7 | the violated obligation | the harness rejects the candidate and the engine survives the ICE |
 
-Experiments 1–3 are the ones that decide. Experiment 5 is the one that keeps the design honest: the dynamic class set does **not** subsume the 1-D kingdom, and a design that hid that would be hiding its own limit.
+Experiments 1–3 are the ones that decide. Experiment 5 is the one that keeps the design honest: the dynamic class set does **not** subsume the 1-D Futhark kingdom, and a design that hid that would be hiding its own limit.
 
 ---
 

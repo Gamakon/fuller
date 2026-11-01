@@ -6,7 +6,7 @@
 //! is a new scheme beside the others; it never changes what an existing name computes.
 //!
 //! The OLD fitness functions of earlier experiments are schemes too (an ungated stage 2, the study's seven quality
-//! inputs, the shape kingdom's two bands, the regex generation-0 scaling), each marked NOT TO BE RUN AS IS with the
+//! inputs, the Futhark kingdom's two bands, the regex generation-0 scaling), each marked NOT TO BE RUN AS IS with the
 //! fault that retired it: redefine the fitness function before using one. Each runner's default is its newest scheme.
 //! `docs/FITNESS_SCHEMES.md` lists every scheme and the commit of each past experiment.
 //!
@@ -26,7 +26,7 @@ pub enum Family {
     /// A staged runner with quality inputs of its own (phylu `examples/wgsl_true_case_fit.rs`, fuller
     /// `examples/futhark_pixel_evolve.rs`).
     Staged,
-    /// The shape kingdom (fuller `futhark_shapes_evolve::run`, phylu `evolve::shape_typed`).
+    /// The Futhark kingdom (fuller `futhark_search::run`, phylu `evolve::shape_typed`).
     Shapes,
     /// phylu's regex kingdom (`examples/regex_fit.rs`, the engine's regex HFF).
     Regex,
@@ -54,7 +54,7 @@ pub enum StageTwo {
     Gated,
 }
 
-/// THE SHAPE KINGDOM'S UNEXPRESSED FITNESS before the gate (fuller f572a7cc): 1.5.
+/// THE FUTHARK KINGDOM'S UNEXPRESSED FITNESS before the gate (fuller f572a7cc): 1.5.
 pub const SHAPES_NOT_EXPRESSED_BEFORE_GATE: f32 = 1.5;
 
 /// The unexpressed fitness of the gated shape fitness: above every gated value (at most π).
@@ -72,7 +72,7 @@ pub enum Definition {
     /// traffic), an incorrect one `0.5 + 0.5 (1 − agreement)`, both in `f32`.
     ShapesTwoBand { not_expressed: f32 },
     /// [`Family::Shapes`]: the two-level HFF of the log-scaled disagreements and the three cost ratios under
-    /// `stage_two` (`futhark_shapes_evolve::two_level_under`).
+    /// `stage_two` (`futhark_search::two_level_under`).
     ShapesHff { stage_two: StageTwo, not_expressed: f32 },
     /// [`Family::Regex`]: `column_max_generation0` divides each objective by its maximum over the generation-0
     /// population (the device freezes it at the first evaluation); otherwise HFF reads the objectives as they are (on

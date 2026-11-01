@@ -1,5 +1,5 @@
 //! The Futhark route to a cuneus shader, step 4: evolve a Futhark program that draws the shader's picture, in the
-//! pixel family of the shape kingdom (`fuller::futhark_pixel`). Every gene expresses a legal Futhark program; each
+//! pixel family of the Futhark kingdom (`fuller::futhark_pixel`). Every gene expresses a legal Futhark program; each
 //! candidate is compiled by the branch compiler's webgpu backend, linked against the shim, and run on our wgpu/Metal
 //! path. The runner meets `docs/STANDARD_runners.md`: the stream (`OUT/stream.jsonl`, `fuller::telemetry`), the
 //! two-level HFF, checkpoints and resume, the kill trigger (`OUT/killme.trigger`), guards, the hall of fame with
@@ -48,7 +48,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
+use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::futhark_pixel::{build, draw, inputs, instance, interface, load, program, random_gene, tiles, variants, work_per_pixel, Bridge, FoldEgraph, HeadDraw, Input, Instance, Tile};
 use fuller::futhark_wgpu_host::compile_program;
 use fuller::geneframe::Ty;

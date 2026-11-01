@@ -3,7 +3,7 @@
 //! yardsticks read to the reference gene, or are a gap that names the construct the kingdom lacks.
 
 use super::*;
-use crate::futhark_kingdom::GeneRng;
+use crate::futhark_table::GeneRng;
 use crate::futhark_sig::{build, load, problem, program, random_gene, sexp, signature, Problem};
 use crate::typed_gep::{express, GeneLayout};
 

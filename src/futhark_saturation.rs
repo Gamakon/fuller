@@ -1,12 +1,12 @@
-//! The shape kingdom inside Fuller's e-graph: **one sort per shape class**,
+//! The Futhark kingdom inside Fuller's e-graph: **one sort per shape class**,
 //! so the sort IS the class.
 //!
-//! This is the 1-D kingdom's e-graph (`futhark_egraph.rs`) with the parts
-//! that were hand-written there *generated* here, because the shape kingdom's
+//! This is the 1-D Futhark kingdom's e-graph (`futhark_1d_egraph.rs`) with the parts
+//! that were hand-written there *generated* here, because the Futhark kingdom's
 //! rows are generated and a hand-written bridge would drift from them:
 //!
 //! * the **datatype** and the **ruleset** come from
-//!   `kingdoms/futhark_shapes/egraph.{datatype,rules}`, written by
+//!   `kingdoms/futhark/egraph.{datatype,rules}`, written by
 //!   `gen_tables.py`;
 //! * the **bridge** — the row ↔ constructor mapping and the class ↔ sort
 //!   mapping — comes from `egraph.rows` and `egraph.sorts`, also generated.
@@ -29,7 +29,7 @@
 //! arithmetic, so no floating-point question arises. Nothing here assumes
 //! that mathematical equivalence implies floating-point equivalence.
 //!
-//! The class kingdom has no fusion rule, so the divergence the 1-D kingdom
+//! The class kingdom has no fusion rule, so the divergence the 1-D Futhark kingdom
 //! measured (`map id` and fusion cannot share a saturation) cannot arise here
 //! — but the saturation is still bounded, because a bounded search is a
 //! property of the *harness*, not of the rules.
@@ -40,23 +40,23 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{ArcSort, EGraph, Term, TermDag, TermId, Value};
 
-use crate::futhark_kingdom::FutharkKingdom;
+use crate::futhark_table::FutharkKingdom;
 use crate::kingdom_contract::SymbolId;
 use crate::saturated_fold::EgraphKingdom;
 use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
 /// The generated datatype: one sort per class, one constructor per row.
-pub const SHAPE_DATATYPE: &str = include_str!("../kingdoms/futhark_shapes/egraph.datatype");
+pub const SHAPE_DATATYPE: &str = include_str!("../kingdoms/futhark/egraph.datatype");
 
 /// The generated ruleset.
-pub const SHAPE_RULESET: &str = include_str!("../kingdoms/futhark_shapes/egraph.rules");
+pub const SHAPE_RULESET: &str = include_str!("../kingdoms/futhark/egraph.rules");
 
 /// The generated bridge: the row name, its constructor, and its sort.
-const SHAPE_ROWS: &str = include_str!("../kingdoms/futhark_shapes/egraph.rows");
+const SHAPE_ROWS: &str = include_str!("../kingdoms/futhark/egraph.rows");
 
 /// The generated bridge: the class and its sort.
-const SHAPE_SORTS: &str = include_str!("../kingdoms/futhark_shapes/egraph.sorts");
+const SHAPE_SORTS: &str = include_str!("../kingdoms/futhark/egraph.sorts");
 
 /// The bridge between the kingdom's rows and the e-graph's constructors.
 #[derive(Debug, Clone)]
@@ -84,13 +84,13 @@ impl Bridge {
             let row = f.next().unwrap_or_default().to_string();
             let ctor = f.next().unwrap_or_default().to_string();
             if row.is_empty() || ctor.is_empty() {
-                panic!("futhark_shapes_egraph: the mapping line {line:?} is malformed");
+                panic!("futhark_saturation: the mapping line {line:?} is malformed");
             }
             if ctor_of_row.insert(row.clone(), ctor.clone()).is_some() {
-                panic!("futhark_shapes_egraph: the row {row} is mapped twice");
+                panic!("futhark_saturation: the row {row} is mapped twice");
             }
             if row_of_ctor.insert(ctor.clone(), row.clone()).is_some() {
-                panic!("futhark_shapes_egraph: the constructor {ctor} is mapped to two rows");
+                panic!("futhark_saturation: the constructor {ctor} is mapped to two rows");
             }
         }
         let mut sort_of_class = BTreeMap::new();
@@ -99,10 +99,10 @@ impl Bridge {
             let class = f.next().unwrap_or_default().to_string();
             let sort = f.next().unwrap_or_default().to_string();
             if class.is_empty() || sort.is_empty() {
-                panic!("futhark_shapes_egraph: the sort line {line:?} is malformed");
+                panic!("futhark_saturation: the sort line {line:?} is malformed");
             }
             if sort_of_class.insert(class.clone(), sort.clone()).is_some() {
-                panic!("futhark_shapes_egraph: the class {class} is mapped twice");
+                panic!("futhark_saturation: the class {class} is mapped twice");
             }
         }
         Bridge { ctor_of_row, row_of_ctor, sort_of_class }
@@ -137,10 +137,10 @@ pub fn import(tree: &Tree, kingdom: &FutharkKingdom, bridge: &Bridge) -> Result<
     let row = kingdom
         .rows
         .get(tree.symbol as usize)
-        .ok_or_else(|| format!("futhark_shapes_egraph: symbol {} is not a row", tree.symbol))?;
+        .ok_or_else(|| format!("futhark_saturation: symbol {} is not a row", tree.symbol))?;
     let ctor = bridge
         .constructor_of(&row.name)
-        .ok_or_else(|| format!("futhark_shapes_egraph: the row {} has no e-graph constructor", row.name))?;
+        .ok_or_else(|| format!("futhark_saturation: the row {} has no e-graph constructor", row.name))?;
     let kids: Vec<String> = tree
         .kids
         .iter()
@@ -164,25 +164,25 @@ pub fn render(termdag: &TermDag, id: TermId, kingdom: &FutharkKingdom, bridge: &
     let term = termdag.get(id);
     let Term::App(op, kids) = term else {
         return Err(match term {
-            Term::Lit(_) => "futhark_shapes_egraph: a literal is not a program".to_string(),
-            Term::Var(v) => format!("futhark_shapes_egraph: {v} is not a program"),
+            Term::Lit(_) => "futhark_saturation: a literal is not a program".to_string(),
+            Term::Var(v) => format!("futhark_saturation: {v} is not a program"),
             _ => unreachable!(),
         });
     };
     let row_name = bridge
         .row_of(op.as_str())
-        .ok_or_else(|| format!("futhark_shapes_egraph: the constructor {} has no kingdom row", op))?;
+        .ok_or_else(|| format!("futhark_saturation: the constructor {} has no kingdom row", op))?;
     let row = kingdom
         .rows
         .iter()
         .find(|r| r.name == row_name)
-        .ok_or_else(|| format!("futhark_shapes_egraph: the kingdom has no row {row_name}"))?;
+        .ok_or_else(|| format!("futhark_saturation: the kingdom has no row {row_name}"))?;
     let mut out = row.spelling.clone();
     for (i, kid) in kids.iter().enumerate() {
         let placeholder = format!("{{{i}}}");
         if !out.contains(&placeholder) {
             return Err(format!(
-                "futhark_shapes_egraph: {}'s spelling has no {placeholder}, so its {i}th argument is dropped",
+                "futhark_saturation: {}'s spelling has no {placeholder}, so its {i}th argument is dropped",
                 row.name
             ));
         }
@@ -230,10 +230,10 @@ pub fn saturate_with(
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(None, SHAPE_DATATYPE)
-        .map_err(|e| format!("futhark_shapes_egraph: the datatype does not load: {e}"))?;
+        .map_err(|e| format!("futhark_saturation: the datatype does not load: {e}"))?;
     egraph
         .parse_and_run_program(None, rules)
-        .map_err(|e| format!("futhark_shapes_egraph: the ruleset does not load: {e}"))?;
+        .map_err(|e| format!("futhark_saturation: the ruleset does not load: {e}"))?;
     let schedule = rulesets
         .iter()
         .map(|r| format!("(repeat {iters} (run {r}))"))
@@ -241,10 +241,10 @@ pub fn saturate_with(
         .join(" ");
     egraph
         .parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule {schedule})"))
-        .map_err(|e| format!("futhark_shapes_egraph: {term} does not load: {e}"))?;
+        .map_err(|e| format!("futhark_saturation: {term} does not load: {e}"))?;
     let (sort, value) = egraph
         .eval_expr(&exprs::var("__root"))
-        .map_err(|e| format!("futhark_shapes_egraph: the root does not evaluate: {e}"))?;
+        .map_err(|e| format!("futhark_saturation: the root does not evaluate: {e}"))?;
     Ok((egraph, sort, value))
 }
 
@@ -376,7 +376,7 @@ pub fn saturate_folded(epoch: &Epoch, adfs: &AdfSet, tree: &Tree, kingdom: &Futh
     saturate_tree(&adfs.unfold(epoch, tree), kingdom, bridge, k, iters)
 }
 
-/// The shape kingdom's e-graph as the population fold needs it
+/// The Futhark kingdom's e-graph as the population fold needs it
 /// ([`crate::saturated_fold`]): the generated datatype, the generated ruleset
 /// and the generated bridge.
 pub struct FoldEgraph<'a> {
@@ -408,7 +408,7 @@ impl EgraphKingdom for FoldEgraph<'_> {
 /// saturation explored.
 ///
 /// The count is over the *constructors* the kingdom's rows map to, so it
-/// measures the e-nodes of the shape kingdom's own programs.
+/// measures the e-nodes of the Futhark kingdom's own programs.
 pub fn egraph_size(egraph: &EGraph, bridge: &Bridge) -> usize {
     bridge
         .constructors()
@@ -419,14 +419,14 @@ pub fn egraph_size(egraph: &EGraph, bridge: &Bridge) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::futhark_kingdom::FutharkKingdom;
+    use crate::futhark_table::FutharkKingdom;
     use crate::typed_gep::{express, GeneLayout};
 
     fn kingdom() -> FutharkKingdom {
-        FutharkKingdom::load_shapes().expect("the shape tables load")
+        FutharkKingdom::load().expect("the Futhark tables load")
     }
 
-    /// A random gene of the shape kingdom.
+    /// A random gene of the Futhark kingdom.
     fn random_tree(k: &FutharkKingdom, seed: u64) -> Tree {
         let contract = k.relations().check().expect("the kingdom's own check");
         let root = k.ty("mat.n.p").expect("the root class");
@@ -546,7 +546,7 @@ mod tests {
 
     /// The ruleset **settles**.
     ///
-    /// The 1-D kingdom's fusion rule, together with `map id`, grew its
+    /// The 1-D Futhark kingdom's fusion rule, together with `map id`, grew its
     /// e-graph 5 -> 7 -> 13 -> 55 -> 1357 e-nodes and never converged, so a
     /// ruleset that adds rules has to be measured, not assumed. The
     /// transposed-product rule is shrinking — its right side has no

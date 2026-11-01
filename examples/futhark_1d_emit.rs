@@ -1,7 +1,9 @@
+//! DEPRECATED: the 1-D Futhark kingdom. New work uses the Futhark kingdom (docs/PLAN_futhark_kingdom.md).
+//!
 //! The Futhark-style kingdom, end to end: random genes in, Futhark source
 //! out, and (with `--compile`) the real Futhark compiler's verdict.
 //!
-//!   cargo run --release --features wgsl --example futhark_true_emit -- [options]
+//!   cargo run --release --features wgsl --example futhark_1d_emit -- [options]
 //!
 //!   --root arr|f32   the program's root type (default arr)
 //!   --size N         the program size, the number of function nodes (default 4)
@@ -26,7 +28,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 
 use fuller::futhark_exec::compile_and_run;
-use fuller::futhark_kingdom::{FutharkKingdom, GeneRng};
+use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::typed_gep::{self, GeneLayout};
@@ -66,7 +68,7 @@ fn main() -> Result<(), String> {
         }
     }
 
-    let k = FutharkKingdom::load()?;
+    let k = FutharkKingdom::load_1d()?;
     let contract: KingdomContract = k.relations().check().map_err(|d| d.join("; "))?;
     let root = root_ty(&k, &root_name);
     let layout = GeneLayout::from_program_size(&contract, root, size).map_err(|e| format!("{e:?}"))?;
@@ -127,7 +129,7 @@ fn main() -> Result<(), String> {
             // driver and the executable are all named after the program, so
             // two runs sharing a directory race on the same files.
             let dir = std::env::temp_dir()
-                .join("futhark_true_emit")
+                .join("futhark_1d_emit")
                 .join(format!("check{}", std::process::id()));
             let got = match compile_and_run(&source, scalar, &input, &dir) {
                 Ok(got) => got,
@@ -144,9 +146,9 @@ fn main() -> Result<(), String> {
                 }
             };
             let (want, label): (Vec<f32>, &str) = match &expected {
-                fuller::futhark_interp::Value::Arr(a) => (a.clone(), "array"),
-                fuller::futhark_interp::Value::Real(r) => (vec![*r], "real"),
-                fuller::futhark_interp::Value::Fun(_) => {
+                fuller::futhark_1d_interp::Value::Arr(a) => (a.clone(), "array"),
+                fuller::futhark_1d_interp::Value::Real(r) => (vec![*r], "real"),
+                fuller::futhark_1d_interp::Value::Fun(_) => {
                     return Err("the root of a program is not a function".to_string())
                 }
             };
@@ -175,12 +177,12 @@ fn main() -> Result<(), String> {
         }
 
         if compile {
-            let dir = std::env::temp_dir().join("futhark_true_emit");
+            let dir = std::env::temp_dir().join("futhark_1d_emit");
             std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
             let path = dir.join(format!("p{shown}_{}.fut", rng.next_u64()));
             std::fs::write(&path, &source).map_err(|e| format!("write: {e}"))?;
             let out = Command::new("futhark")
-                .args(["c", "--library", path.to_str().unwrap(), "-o", "/tmp/futhark_true_emit.out"])
+                .args(["c", "--library", path.to_str().unwrap(), "-o", "/tmp/futhark_1d_emit.out"])
                 .output();
             match out {
                 Ok(o) if o.status.success() => compiled += 1,

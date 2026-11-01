@@ -8,7 +8,7 @@
 //! write, and THIS test runs that check. So a hand-edited index fails the
 //! suite, and an index that has fallen behind the tree fails it too.
 //!
-//! The same discipline as `kingdoms/futhark_shapes/gen_tables.py`, and for
+//! The same discipline as `kingdoms/futhark/gen_tables.py`, and for
 //! the same reason: a page that claims to be a map of the tree and is not is
 //! worse than no page.
 
