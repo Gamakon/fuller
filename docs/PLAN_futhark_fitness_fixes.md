@@ -223,7 +223,7 @@ Every case set against every formula tried, with every measure: `docs/measuremen
 | exact programs from random, histogram and pathfinder | possible, not expected |
 
 ### J. Stage 2 gated by correctness (Andrew, 2026-10-29)
-The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast programs above an exact but slow one (`docs/reports/2026-10-29_futhark_reruns.md`). Andrew's fix: multiply by correctness, 0 or 1. Lower is better here, so the gate is written as two bands that cannot overlap (the pattern `futhark_shapes_evolve::fitness_of` used until fuller `b1bccf66`; it is now the ungated two-level HFF):
+The improvement run of 09:03Z showed that the two-level HFF ranks wrong but fast programs above an exact but slow one (`docs/reports/2026-10-29_futhark_reruns.md`). Andrew's fix: multiply by correctness, 0 or 1. Lower is better here, so the gate is written as two bands that cannot overlap (the pattern `futhark_shapes_evolve::fitness_of` used until fuller `b1bccf66`; it was then the ungated two-level HFF, and since 2026-11-01 is gated by this rule):
 - **exact** (on every training and held-out case): fitness = the two-level HFF angle (quality and speed), in [0, π/2);
 - **inexact:** fitness = π/2 + the quality angle, so every inexact program ranks below every exact one, and inexact programs still rank among themselves by quality, so they can be repaired.
 

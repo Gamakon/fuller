@@ -1087,7 +1087,12 @@ impl Scorer {
 /// * **Speed:** one input per cost term, the program's over the program's plus the reference's (`x / (x + ref)`):
 ///   traffic, allocations, serial depth. The reference itself is 0.5 in each; strictly increasing and bounded by 1.
 ///
-/// The fitness is the hff library's TrueNorth over the two group angles, each divided by π/2.
+/// The fitness is the hff library's TrueNorth over the two group angles, each divided by π/2, GATED BY CORRECTNESS
+/// ([`crate::runner::staged_hff`], stage 2; Andrew, 2026-10-29): a correct program (every quality input 0) scores the
+/// two-level angle, in `[0, π/2)`; an incorrect one scores `π/2 + θ_quality`, in `[π/2, π]`, so no incorrect program,
+/// however cheap, ranks above a correct one, and incorrect programs still rank by how much of their value disagrees.
+/// Until 2026-11-01 this kingdom's fitness was the ungated two-level HFF, under which a wrong but cheap program could
+/// rank above an exact but dear one.
 pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
     let quality: Vec<f64> = individual.disagreement.iter().map(|d| log_scaled(*d)).collect();
     let ratio = |x: u64, r: u64| {
@@ -1096,11 +1101,20 @@ pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
     };
     let s = &individual.score;
     let speed = [ratio(s.traffic, reference.traffic), ratio(s.alloc, reference.alloc), ratio(s.depth, reference.depth)];
-    two_level_hff(&quality, &speed)
+    let t = two_level_hff(&quality, &speed);
+    if quality.iter().all(|q| *q == 0.0) {
+        t
+    } else {
+        TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t }
+    }
 }
 
-/// The fitness a GPU-resident population selects on: the [`two_level`] HFF, as phylu's device reads a fitness (an
-/// angle, 0 perfect, lower fitter).
+/// The fitness of a gene the layout cannot express: above every [`two_level`] fitness (at most π), so it is worse
+/// than any incorrect program; it cannot be shipped, so it cannot be a parent either.
+pub const NOT_EXPRESSED_FITNESS: f32 = 4.0;
+
+/// The fitness a GPU-resident population selects on: the gated [`two_level`] HFF, as phylu's device reads a fitness
+/// (lower fitter, 0 perfect; a correct program below π/2, an incorrect one in `[π/2, π]`).
 pub fn fitness_of(individual: &Individual, reference: &Score) -> f32 {
     two_level(individual, reference).fitness as f32
 }
@@ -1343,7 +1357,13 @@ mod tests {
         let fitness = scorer.fitness(&scored);
         let r = *scorer.reference_score();
         for (individual, f) in scored.iter().zip(&fitness) {
-            assert!((0.0..=std::f32::consts::FRAC_PI_2).contains(f), "the fitness is an angle: {f}");
+            // Gated by correctness: a correct program below π/2, an incorrect one in [π/2, π].
+            if individual.correct {
+                assert!((0.0..std::f32::consts::FRAC_PI_2).contains(f), "a correct program's fitness is below pi/2: {f}");
+            } else {
+                assert!((std::f32::consts::FRAC_PI_2..=std::f32::consts::PI).contains(f), "an incorrect program's fitness is in [pi/2, pi]: {f}");
+            }
+            assert!(*f < NOT_EXPRESSED_FITNESS);
             assert_eq!(individual.disagreement.len(), cfg.samples, "one quality input per input set");
             assert_eq!(two_level(individual, &r).quality == 0.0, individual.correct, "a quality angle of 0 is correctness");
         }
@@ -1366,6 +1386,17 @@ mod tests {
         let one_element = 1.0 / (8.0 * 8.0);
         assert!(fitness_of(&wrong(one_element), &r) < fitness_of(&wrong(0.9), &r));
         assert!(fitness_of(&dear, &r) < fitness_of(&wrong(one_element), &r));
+
+        // THE CORRECTNESS GATE (runner::staged_hff's rule): a correct program a hundred times dearer than the
+        // reference on every cost ranks above every incorrect program, however cheap, even one wrong in a single
+        // element; and incorrect programs still rank among themselves by their disagreement.
+        let slow = Individual { score: Score { traffic: 100 * r.traffic, alloc: 100 * r.alloc.max(1), depth: 100 * r.depth.max(1) }, ..reference_individual.clone() };
+        let cheap_wrong = |d: f64| Individual { score: Score { traffic: 1, alloc: 0, depth: 1 }, ..wrong(d) };
+        for d in [one_element, 0.01, 0.5, 1.0] {
+            assert!(fitness_of(&slow, &r) < fitness_of(&cheap_wrong(d), &r), "an exact program 100 times dearer ranks above a cheap one wrong by {d}");
+        }
+        assert!(fitness_of(&cheap_wrong(one_element), &r) < fitness_of(&cheap_wrong(0.5), &r));
+        assert!(fitness_of(&cheap_wrong(1.0), &r) < NOT_EXPRESSED_FITNESS);
     }
 
     /// The premise of the transposed-product rule: the product computed the
