@@ -348,8 +348,9 @@ mod tests {
     /// pathfinder), through the rust-wgpu path (the published program compiled to Rust, run in this process), gives
     /// output bytes identical to Futhark's C backend (the corpus's `.out`, written by `futhark c`) and to the shim path
     /// (the branch compiler's webgpu C over the shim, its own process). The k-means step is not repeatable on the GPU
-    /// on either path (f32 atomics): on each of its cases that the shim repeats, the rust path must repeat exactly
-    /// the shim's output; the counts are printed. It prints each benchmark's GPU time
+    /// on either path (f32 atomics), so its corpus cases are counted, not compared; its gate is exact on three inputs
+    /// of multiples of 1/256, whose output is one in any order of the additions: the rust path gives the shim's bytes
+    /// and each repeats itself, three runs each. It prints each benchmark's GPU time
     /// a call on both paths (the fastest of 20 runs after a warm-up, GPU timestamps) and the rust path's wall time a
     /// call. (The fork compiler, rustc, the branch compiler, cc, the GPU; run under the GPU lock.)
     #[cfg(feature = "gpu")]
@@ -368,6 +369,9 @@ mod tests {
         let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems");
         let runs = 20;
         let mut table = String::from("benchmark\tcases\tbit-identical to C\tbit-identical to the shim\trust GPU us/call\tshim GPU us/call\trust wall us/call\trust launches/call (last case)\tshim dispatches/call (last case)\n");
+        // Futhark's binary format allows whitespace after a value, and an executable's standard output ends with a
+        // newline: the values are compared, the trailing whitespace is not.
+        let v = |b: &[u8]| b.trim_ascii_end().to_vec();
         for name in ["reduce", "scan", "histogram", "pathfinder", "kmeans"] {
             let dir = corpus.join(name);
             let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
@@ -406,9 +410,6 @@ mod tests {
                 if let Ok(ns) = report.fastest_run_ns(runs) {
                     shim_gpu = shim_gpu.min(ns / 1e3);
                 }
-                // Futhark's binary format allows whitespace after a value, and an executable's standard output ends
-                // with a newline: the values are compared, the trailing whitespace is not.
-                let v = |b: &[u8]| b.trim_ascii_end().to_vec();
                 if v(&shim_out) != v(&o.3) {
                     eprintln!("{name} {}: the shim's {} bytes against the rust path's {}: first difference at {:?}", input.display(), shim_out.len(), o.3.len(), shim_out.iter().zip(&o.3).position(|(a, b)| a != b));
                 }
@@ -416,22 +417,39 @@ mod tests {
                 same_shim += usize::from(v(&o.3) == v(&shim_out));
                 if name == "kmeans" {
                     // The k-means step's cluster sums are f32 additions done with atomics: not repeatable on either
-                    // path (on_the_gpu_the_kmeans_step_s_repeatability_on_each_path). Where the shim repeats one output
-                    // over three runs, the rust path must give exactly it, three times.
+                    // path (on_the_gpu_the_kmeans_step_s_repeatability_on_each_path), so a corpus case has no one
+                    // output to compare. Three equal runs do not make a case repeatable (measured 2026-11-01:
+                    // train_n200_d4_k5_s2 repeated three times on the rust path and not on the shim, and in the merge
+                    // run the shim repeated train_n200_d4_k5_s1 three times while the rust path gave another value 1
+                    // ulp away). Counted and printed here; the exact gate is on inputs whose answer is one in any
+                    // order of the additions (kmeans_exact_input, below).
                     let shim3: Vec<Vec<u8>> = (0..3).map(|_| v(&crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim's run").0)).collect();
                     if shim3.iter().all(|x| *x == shim3[0]) {
-                        for _ in 0..3 {
-                            let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&stdin)).expect("the rust path's run");
-                            let r = payloads(&raw).into_iter().find(|r| r.0 == "o" && r.1).expect("an output").3;
-                            assert_eq!(v(&r), shim3[0], "kmeans {}: the shim repeats one output, the rust path gives another", input.display());
-                        }
                         kmeans_repeatable += 1;
+                    }
+                }
+            }
+            if name == "kmeans" {
+                // THE K-MEANS GATE, exact: points and centres multiples of 1/256 in [0, 1), so every distance, every
+                // cluster sum and every count is exact in f32 in any order of the additions, and the step's output is
+                // one set of bits on the device: the rust path and the shim must each give it, three runs each. Not
+                // futhark c's bits: the device's f32 division (a centre is a sum over a count) is not correctly
+                // rounded (WGSL allows 2.5 ulp), measured 2026-11-01: 1 ulp from C on several centres.
+                for (n, d, k, seed) in [(200usize, 4usize, 5usize, 1u64), (500, 8, 10, 3), (777, 6, 7, 4)] {
+                    let stdin = kmeans_exact_input(n, d, k, seed);
+                    let want = v(&crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim's run").0);
+                    for run in 0..3 {
+                        let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&stdin)).expect("the rust path's run");
+                        let r = payloads(&raw).into_iter().find(|r| r.0 == "o" && r.1).expect("an output").3;
+                        assert_eq!(v(&r), want, "kmeans exact n {n} d {d} k {k}, run {run}: the rust path differs from the shim's first run");
+                        let shim = v(&crate::futhark_wgpu_host::run_program_bytes(&exe, &stdin, false, 1).expect("the shim's run").0);
+                        assert_eq!(shim, want, "kmeans exact n {n} d {d} k {k}, run {run}: the shim does not repeat itself");
                     }
                 }
             }
             table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\t{rust_launches:.1}\t{shim_dispatches:.1}\n", inputs.len()));
             if name == "kmeans" {
-                table.push_str(&format!("kmeans: {kmeans_repeatable} of {} cases repeatable on the shim, and on each the rust path gave its output three times\n", inputs.len()));
+                table.push_str(&format!("kmeans: {kmeans_repeatable} of {} cases gave one output over three shim runs; 3 exact-input cases one output on both paths, three runs each\n", inputs.len()));
             } else {
                 assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
                 assert_eq!(same_c, inputs.len(), "{name}: the rust path and futhark c differ\n{table}");
@@ -439,6 +457,34 @@ mod tests {
         }
         eprintln!("{table}devices made: {}", session.devices_made());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A k-means step's input (Futhark's binary format: `[n][d]f32` points, then `[k][d]f32` centres, the first k
+    /// points as the published program starts) whose every value is a multiple of 1/256 in [0, 1), from a fixed
+    /// seed. A squared distance is a sum of d <= 8 products of 8-bit fractions and a cluster sum at most n < 2^10 of
+    /// them: each fits f32's 24 bits, so the step's output does not depend on the order of its additions (only the
+    /// final division rounds).
+    #[cfg(feature = "gpu")]
+    fn kmeans_exact_input(n: usize, d: usize, k: usize, seed: u64) -> Vec<u8> {
+        assert!(n < 1024 && d <= 8 && k <= n);
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let pts: Vec<f32> = (0..n * d)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 56) as f32 / 256.0
+            })
+            .collect();
+        let array = |rows: usize, vals: &[f32]| -> Vec<u8> {
+            let mut b = vec![b'b', 2, 2];
+            b.extend_from_slice(b" f32");
+            b.extend_from_slice(&(rows as i64).to_le_bytes());
+            b.extend_from_slice(&(d as i64).to_le_bytes());
+            vals.iter().for_each(|f| b.extend_from_slice(&f.to_le_bytes()));
+            b
+        };
+        [array(n, &pts), array(k, &pts[..k * d])].concat()
     }
 
     /// THE A7 PROGRAMS on the GPU (`futhark-wgpu-shim/tests/s5/a7_*.fut`, which Futhark's webgpu backend does not
