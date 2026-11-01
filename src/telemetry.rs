@@ -1561,10 +1561,15 @@ impl Tailer {
         // after the last newline is next poll's problem — including a
         // multi-byte character the read cut in half, which is why the decode
         // happens HERE, per whole line, and not on the chunk above.
-        while let Some(at) = self.partial.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.partial.drain(..=at).collect();
-            let text = String::from_utf8_lossy(&line);
-            let line = text.trim_end_matches(['\n', '\r']);
+        //
+        // The complete region is walked IN PLACE and drained ONCE. Draining
+        // line by line moved the whole remaining buffer for every line: quadratic,
+        // so a 350 MB stream (a few fits at one snapshot a generation) kept the
+        // viewer on "connecting" for hours (phylu ticket 0003).
+        let Some(last) = self.partial.iter().rposition(|&b| b == b'\n') else { return out };
+        for raw in self.partial[..last].split(|&b| b == b'\n') {
+            let text = String::from_utf8_lossy(raw);
+            let line = text.trim_end_matches('\r');
             if line.trim().is_empty() {
                 continue;
             }
@@ -1576,6 +1581,7 @@ impl Tailer {
                 }
             }
         }
+        self.partial.drain(..=last);
         out
     }
 }
@@ -1849,5 +1855,36 @@ mod tests {
     fn the_generic_fields_are_additive() {
         let text = serde_json::to_string(&Global::default()).expect("serialises");
         assert!(!text.contains("median_hff") && !text.contains("angle_groups") && !text.contains("extras"), "{text}");
+    }
+
+    /// A big backlog is read in one poll in time linear in its size (phylu ticket 0003: draining the partial
+    /// buffer line by line was quadratic, so a 350 MB stream never finished loading). 100,000 lines of 100 bytes
+    /// would take minutes under the old loop; each is a line the parser does not understand, counted as bad, and
+    /// the unterminated tail stays buffered for the next poll.
+    #[test]
+    fn a_large_backlog_is_read_in_linear_time() {
+        use std::io::Write;
+        let dir = scratch("tailer_backlog");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stream.jsonl");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            let line = format!("{}\n", "x".repeat(99));
+            for _ in 0..100_000 {
+                f.write_all(line.as_bytes()).unwrap();
+            }
+            f.write_all(b"unterminated tail").unwrap();
+        }
+        let mut t = Tailer::new(&path);
+        let started = std::time::Instant::now();
+        let first = t.poll();
+        let took = started.elapsed();
+        assert_eq!(first.len(), 100_000);
+        assert_eq!(t.bad_lines, 100_000);
+        assert!(took < std::time::Duration::from_secs(20), "100,000 lines took {took:?}");
+        // The tail was held, and finishes when its newline arrives.
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"\n").unwrap();
+        assert_eq!(t.poll().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
