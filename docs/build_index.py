@@ -109,13 +109,15 @@ def description_of(text: str) -> str:
             continue
         if stripped.startswith(("#", "|", ">", "---", "===", "<!--")):
             continue
-        if stripped.startswith(("-", "*", "+")) or re.match(r"^\d+\.\s", stripped):
+        # A bullet is a marker and a space: a paragraph that opens in bold
+        # (`**...`) is prose, and was skipped as a bullet until 2026-11-01.
+        if re.match(r"^[-*+]\s", stripped) or re.match(r"^\d+\.\s", stripped):
             continue
         para.append(stripped)
     if not para:
         return ""
     text = " ".join(para)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text.replace("**", "")).strip()
     if len(text) > 220:
         text = text[:217].rsplit(" ", 1)[0] + "…"
     return text

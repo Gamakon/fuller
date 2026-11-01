@@ -1,5 +1,7 @@
 # THE GOAL
 
+**SUPERSEDED (2026-11-01) by `papers/wgsl_multityped_gep.tex`; history only.**
+
 **A true multi-typed Gene Expression Programming kingdom for WGSL: every gene expresses a legal GPU program, because the symbol table's types describe exactly the legal programs.**
 
 ## The design

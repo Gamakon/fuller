@@ -56,3 +56,23 @@ fn the_index_is_a_well_formed_page() {
     }
     assert!(checked > 50, "the index offers {checked} documents — it should offer the whole tree");
 }
+
+/// A document's description is its first prose paragraph, and a paragraph
+/// that opens in bold is prose. The generator used to skip it as a list
+/// bullet (it tested for a leading `*`, not for a marker and a space), so
+/// a superseded document's pointer, written in bold at the top, never
+/// reached the index. `docs/GOAL.md` opens with that pointer.
+#[test]
+fn a_bold_first_paragraph_is_the_description() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page = std::fs::read_to_string(root.join("docs/index.html")).expect("the index page");
+    let entry = page
+        .split("GOAL.md\">THE GOAL</a><div class=\"d\">")
+        .nth(1)
+        .expect("the index has docs/GOAL.md's entry with a description");
+    assert!(
+        entry.starts_with("SUPERSEDED (2026-11-01) by `papers/wgsl_multityped_gep.tex`"),
+        "docs/GOAL.md's description is its bold first paragraph, without the bold markers: {}",
+        entry.split('<').next().unwrap_or_default()
+    );
+}
