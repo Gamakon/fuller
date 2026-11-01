@@ -1,0 +1,4 @@
+*.f32
+*.u32
+!tables.f32
+__pycache__/
