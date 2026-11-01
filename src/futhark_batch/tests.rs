@@ -5,9 +5,7 @@
 
 use super::*;
 use crate::futhark_kingdom::GeneRng;
-#[cfg(feature = "gpu")]
-use crate::futhark_sig::compile_c;
-use crate::futhark_sig::{load, load_cases, problem, program_cases, random_gene, signature, Case};
+use crate::futhark_sig::{compile_c, load, load_cases, problem, program_cases, random_gene, signature, Case};
 use crate::typed_gep::{express, GeneLayout};
 
 fn have(p: &str) -> bool {
@@ -39,7 +37,6 @@ fn trees(k: &FutharkKingdom, n: usize, seed: u64) -> Vec<Tree> {
     out
 }
 
-#[cfg(feature = "gpu")]
 /// The per-candidate path's quality outputs of a tree on the c backend: its own quality program, its own process.
 fn per_candidate(k: &FutharkKingdom, sig: &Signature, t: &Tree, cases: &[Case], dir: &Path) -> Vec<Array> {
     let exe = compile_c(&program_cases(k, sig, t, cases.len()).unwrap(), dir).unwrap();
@@ -51,9 +48,8 @@ fn per_candidate(k: &FutharkKingdom, sig: &Signature, t: &Tree, cases: &[Case], 
 /// A batch of 6 random programs of each micro problem (a size input and two inputs in the histogram) gives every
 /// program's outputs on every case exactly as its own quality program in its own process does, and its timed entry's
 /// output on the timing input exactly as the plain program's. One compile, one process.
-#[cfg(feature = "gpu")]
 #[test]
-fn on_the_gpu_a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
+fn a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     for name in ["reduce", "histogram", "pathfinder"] {
         let p = problem(name).unwrap();
@@ -84,9 +80,8 @@ fn on_the_gpu_a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
 /// A program the compiler refuses (here a text naming no definition: legal genes cannot be made to fail on the c
 /// backend) is found by halving the batch: its steps are failures carrying the compiler's own message, and every
 /// other program is scored from its half, exactly.
-#[cfg(feature = "gpu")]
 #[test]
-fn on_the_gpu_one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_are_scored() {
+fn one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_are_scored() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     let p = problem("reduce").unwrap();
     let k = load(&p.instance).unwrap();
@@ -117,9 +112,8 @@ fn on_the_gpu_one_program_the_compiler_refuses_is_found_by_halving_and_the_rest_
 /// A program that fails while it runs (an index out of bounds, Futhark's own check) fails only its own step: the
 /// driver records the entry's error and stops, and a new process runs the commands after it, so the programs before
 /// and after it are scored exactly.
-#[cfg(feature = "gpu")]
 #[test]
-fn on_the_gpu_a_program_that_fails_while_it_runs_fails_only_its_own_step() {
+fn a_program_that_fails_while_it_runs_fails_only_its_own_step() {
     assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
     let p = problem("reduce").unwrap();
     let k = load(&p.instance).unwrap();
