@@ -674,9 +674,16 @@ Figure~\ref{fig:curves} shows the best HFF angle per generation of the two runs.
 Stage S first reached the value it ended with at generation 125 (3~s), and
 stage P at generation 5{,}915 (60~s). The angle values are compared within
 a curve only: stage S's final rule has larger errors on all three objectives
-than stage P's yet a smaller angle (0.176 against 0.284), so the two builds did
-not compute the same angle from the same objectives. We have not traced which
-change between the two builds caused this.
+than stage P's yet a smaller angle (0.176 against 0.284). The cause is a scaling
+bug, found after these runs: every HFF objective was divided by its maximum over
+the generation-0 population (\texttt{colmax\_main}, frozen at the first
+evaluation), so the weight of each objective depended on the layout's first
+population. The angles decompose exactly: stage S's champion entered HFF with a
+length of $12/64$ (its column maximum was 1), stage P's with
+$(4/64)/(12/64)=1/3$, because the longest generation-0 rule of the four-type
+layout was 12 instructions; stage P's length was weighted about five times more
+heavily. The regex objectives are on $[0,1]$ by construction, and HFF now reads
+them unnormalised (phylu \texttt{759f0936}, with a device check and a test).
 
 \begin{figure}[t]
 \centering
@@ -966,6 +973,12 @@ et~al.~\cite{bartoli2016regex}, on a common benchmark, and no statistical test.
 \item \textbf{Confounded comparisons.} As stated in
 Section~\ref{sec:experiments}: alphabet and types together (S to P); objectives,
 data split and representation together (P to T).
+\item \textbf{Every reported run used the generation-0 column-maximum
+scaling.} Selection divided each objective by its maximum in the first
+population, so the relative weights of false negatives, false positives and
+length differed between layouts, and between seeds. The 92.4\,\% to 97.5\,\%
+held-out comparison of stages S and P, and every stage-T result, were made
+under it; they have not been re-run since the fix (phylu \texttt{759f0936}).
 \item \textbf{Instruction counts not reported for stage T} (Section~\ref{sec:faults}).
 \item \textbf{Throughput.} Stage T at $N=28$ ran at 28 to 30\% of stage P's
 generation rate in the measured binaries; the frame read-back of 6.8~MB a
