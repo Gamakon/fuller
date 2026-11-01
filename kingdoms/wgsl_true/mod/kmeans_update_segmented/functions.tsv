@@ -13912,7 +13912,7 @@ F13910	kernel.cs_starts_same	function	kernel.starts	kernel.starts	{0}	the identi
 F13911	kernel.entry_scatter	function	kernel.scatter	block.scatter	<cs:scatter_head>// counting sort: cs_v cs_a cs_ok cs_slot\n<declarations>\n<cs:scatter_prologue>\n{0}\n}\n	the scatter entry: the scaffold's head and prologue (the slot of the invocation's point), then the gene's body	var cs_v: u32 = 0u;\nvar cs_a: u32 = 0u;\nvar cs_ok: bool = false;\nvar cs_slot: u32 = 0u;
 F13912	cluster.own	terminal	u32.cluster		cs_a	the cluster of the invocation's own point, as the scaffold read it	var cs_a: u32 = 0u;
 F13913	cluster.point	terminal	u32.point		cs_v	the invocation's own point, as the scaffold numbered it	var cs_v: u32 = 0u;
-F13914	store.cluster_scratch	function	block.scatter	u32.cluster;u32.point	{ _ = {0}; if (cs_ok) { scratch[cs_slot] = {1}; } }	the gene's only data-indexed store: the invocation's own point at the slot the scaffold assigned it (no position argument)	var cs_ok: bool = false;\nvar cs_slot: u32 = 0u;
+F13914	store.cluster_scratch	function	block.scatter	u32.cluster;u32.point	{ _ = {0}; scratch[cs_slot] = {1}; }	the gene's only data-indexed store: the invocation's own point at the slot the scaffold assigned it (no position argument)	var cs_slot: u32 = 0u;
 F13915	own.block.scatter	terminal	block.scatter		{}	the empty scatter body: it stores nothing	
 F13916	safe.row_as_index_centroids_w	function	u32.indexw	u32.threadrow_centroids	{0}	the w twin of safe.row_as_index_centroids	
 F13917	safe.col_as_index_centroids_w	function	u32.indexw	u32.threadcol_centroids	{0}	the w twin of safe.col_as_index_centroids	
