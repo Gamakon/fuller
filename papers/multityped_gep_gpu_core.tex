@@ -495,7 +495,7 @@ The type set is declared once (\texttt{Ty}, \src{fuller/src/geneframe.rs:46-127}
 base types (\ty{S}, \ty{I}, \ty{F}, \ty{B}, \ty{A}, \ty{L}); the transcendental
 depth types \ty{T1} and \ty{T2}; NLP and regex types; and four table-defined
 families --- \ty{Wgsl(u16)}, \ty{Tsr(u16)}, \ty{Futhark(u16)} and
-\ty{Futhark(u16)} --- whose members are rows of a generated
+\ty{Futhark1d(u16)} --- whose members are rows of a generated
 \texttt{types.tsv}, so that a new type in those kingdoms is a table row, not a
 code change. A type has a device code (\texttt{Ty::code}, \src{:168}).
 
@@ -736,7 +736,7 @@ Figure~\ref{fig:dataflow} draws the two shapes the generation takes.
 \node[h,below=7mm of a6] (r1) {host: frame (kB), f64 re-score of winners};
 \draw[->,dashed] (a6.south) -- (r1.north);
 % Bottom: WGSL and Futhark
-\node[font=\scriptsize\bfseries,anchor=west] at (-0.2,-2.15) {(b) WGSL and Futhark shape kingdoms: device population, host fitness};
+\node[font=\scriptsize\bfseries,anchor=west] at (-0.2,-2.15) {(b) WGSL and Futhark kingdoms: device population, host fitness};
 \node[k] (b1) at (0,-3.7) {init / vary};
 \node[k,right=of b1] (b2) {select};
 \node[h,right=8mm of b2] (b3) {read genes};
@@ -757,7 +757,7 @@ Figure~\ref{fig:dataflow} draws the two shapes the generation takes.
 \caption{The two shapes of a generation. In (a) the host receives a frame of a
 few kilobytes and acts on chosen rows. In (b) the genes cross to the host every
 generation, the program is built there, and the fitness crosses back. In the
-WGSL kingdom the kernel executes on the device; in the Futhark shape kingdom's
+WGSL kingdom the kernel executes on the device; in the Futhark kingdom's
 GPU-population runner it is interpreted on the host.}
 \label{fig:dataflow}
 \end{figure}
@@ -845,7 +845,8 @@ paper:~\cite{tr_wgsl}.
 
 \section{Futhark array programs}
 \label{sec:futhark}
-In the shape kingdom (\texttt{kingdoms/futhark/}) a shape class is a type:
+In the Futhark kingdom (\texttt{kingdoms/futhark/}, earlier called the shape
+kingdom) a shape class is a type:
 \ty{mat.n.m} is the interface's $[n][m]$ over three dimension roles, with nine
 matrix classes and two function classes (a row function $[]f32\to[]f32$, and a
 binary one, because Futhark's \texttt{map2} is curried): 11 types and 71 rows
@@ -856,8 +857,8 @@ committed tables with what the generator would write; the engine sees an
 ordinary typed kingdom. The \texttt{sig/} family holds one kingdom per published
 benchmark (histogram, pathfinder, reduce, scan); the \texttt{pixel/} family holds
 per-pixel programs in which scope, \texttt{let} and bounded loops are types. The
-earlier 1-D kingdom (\texttt{kingdoms/futhark\_1d/}, 4 types, 38 rows) is
-superseded. Two runners exist: phylu's \texttt{shape\_typed}, with the population
+earlier 1-D Futhark kingdom (\texttt{kingdoms/futhark\_1d/}, 4 types, 38 rows) is
+superseded and deprecated. Two runners exist: phylu's \texttt{shape\_typed}, with the population
 on the device and the evaluation in a host interpreter, and fuller's
 \texttt{futhark\_evolve}, which compiles each program with the project's Futhark
 fork (\texttt{rust-wgpu} backend, then \texttt{rustc}) and runs it on the device,
@@ -950,17 +951,18 @@ programs are built on the host, and the fitness is computed on the host and
 returned to the device. Building on the host is not incidental: the shader
 compiler (naga, then the platform's compiler) is host software. Two parts could
 move: expression, since the walk kernel exists and is already used for checking
-in the shape kingdom; and the comparison of outputs, for which the harness has a
+in the Futhark kingdom; and the comparison of outputs, for which the harness has a
 device judge (\texttt{pooled\_judge.wgsl}, \src{fuller/src/wgsl/harness.rs:3442}).
 Neither is wired into the true-kingdom runner today.
 
 \section{Futhark programs}
-\paragraph{The shape kingdom with a GPU population.} The runner's header states
+\paragraph{The Futhark kingdom with a GPU population.} The runner's header states
 the split, and the code follows it (\src{phylu/src/evolve/shape_typed.rs:10-27}).
 The device draws, varies and selects the population and walks each gene; the
 walk's node count is compared with the host's expression
 (\texttt{walk\_check}, \src{:566}). The host reads the generation (\src{:425}),
-expresses each gene, interprets it with the shape kingdom's interpreter, and
+expresses each gene, interprets it with the Futhark kingdom's interpreter
+(\src{fuller/src/futhark_interpreter.rs}), and
 computes the static cost. The fitness is the two-level HFF: TrueNorth over the
 quality group (disagreement with the reference on each input set, on HFF's log
 scale), then over the speed group (traffic, allocations and serial depth, each
@@ -986,7 +988,7 @@ Candidates are compiled to WGSL through the fork's \texttt{rust-wgpu} backend an
 \texttt{rustc}, and executed and timed on the device. The fitness is a staged HFF
 computed on the host.
 
-\paragraph{What would complete it.} For the shape kingdom, the evaluation moves
+\paragraph{What would complete it.} For the Futhark kingdom, the evaluation moves
 to the device only with a device evaluator that reproduces the interpreter's
 arithmetic bit for bit (no FMA contraction, the same reduction order), or with a
 change of the correctness contract; the compile, as in WGSL, is host software. For
@@ -1029,7 +1031,7 @@ own right.
 device, and the population, variation and selection are on the device. The
 programs are built on the host (expression, rendering, naga, the driver's
 compiler) and the fitness is computed on the host and uploaded.
-\item \textbf{Futhark shape kingdom (GPU population): partly.} Population,
+\item \textbf{Futhark kingdom (GPU population): partly.} Population,
 variation and selection are on the device; execution in the fitness evaluation
 is the host interpreter, and compiled GPU programs are analysed only for elites.
 \item \textbf{Futhark benchmark runner: execution only.} The programs run on the
@@ -1127,7 +1129,7 @@ kernel (\src{fuller/docs/reports/2026-10-15_nluca_per_width.md}). Section crosso
 is not part of the typed core.
 
 \section{The Futhark kingdoms}
-\paragraph{A7 matrix kernel.} On the shape kingdom's A7 kernel (two matrix
+\paragraph{A7 matrix kernel.} On the Futhark kingdom's A7 kernel (two matrix
 products added) at $n=m=p=64$, the reference's OpenCL kernel is too large for the
 device to compile (error $-48$); the search found a form that runs, with 9 device
 allocations against 15 ($-40\,\%$), 106,496 bytes against 188,416, and 5 kernels

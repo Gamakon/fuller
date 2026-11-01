@@ -333,9 +333,9 @@ random did not draw any target picture, and the study is parked
 (\src{docs/reports/2026-10-27_image_study_parked.md}). We report nothing more
 from this family.
 
-\subsection{The deprecated 1-D kingdom}
+\subsection{The deprecated 1-D Futhark kingdom}
 The first Futhark kingdom (\src{kingdoms/futhark_1d/}, 4 types and 38 rows,
-\src{src/futhark_table.rs}) made \emph{shape a value, not a type}: \ty{arr.f32}
+\src{src/futhark_1d_kingdom.rs}) made \emph{shape a value, not a type}: \ty{arr.f32}
 was one type whatever its length. That kept the kingdom small, but it could not
 say that two arrays' shapes are related, so a \texttt{matmul} was not
 expressible. Two findings from it remain useful. Its e-graph diverged when
@@ -633,7 +633,7 @@ earlier two-band form: its logged best, 0.15313, equals
 $0.49\cdot320/(320+704)$. The code now gates the fitness by correctness (commit f572a7cc): an exact
 program scores below $\pi/2$, an inexact one scores $\pi/2$ plus its quality
 angle, and an unexpressed gene scores 4.0, so every exact program ranks above
-every inexact one. All earlier shape-kingdom runs, this one included, used the
+every inexact one. All earlier matrix-family runs (the family was then called the shape kingdom), this one included, used the
 ungated two-band fitness.
 
 \subsection{The benchmark study}
