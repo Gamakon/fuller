@@ -348,7 +348,8 @@ mod tests {
     /// pathfinder), through the rust-wgpu path (the published program compiled to Rust, run in this process), gives
     /// output bytes identical to Futhark's C backend (the corpus's `.out`, written by `futhark c`) and to the shim path
     /// (the branch compiler's webgpu C over the shim, its own process). The k-means step is not repeatable on the GPU
-    /// on either path (f32 atomics), so its corpus cases are counted, not compared; its gate is exact on three inputs
+    /// on either path (f32 atomics), so on its corpus cases each path's every run is held to a derived bound from the
+    /// exact step on the CPU ([`kmeans_bound`]); its bit gate is on three inputs
     /// of multiples of 1/256, whose output is one in any order of the additions: the rust path gives the shim's bytes
     /// and each repeats itself, three runs each. It prints each benchmark's GPU time
     /// a call on both paths (the fastest of 20 runs after a warm-up, GPU timestamps) and the rust path's wall time a
@@ -383,6 +384,7 @@ mod tests {
             let (mut rust_gpu, mut shim_gpu, mut rust_wall) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
             let (mut rust_launches, mut shim_dispatches) = (0.0, 0.0);
             let mut kmeans_repeatable = 0;
+            let mut kmeans_worst_seen = 0f64;
             for input in &inputs {
                 let stdin = std::fs::read(input).expect("a case's input");
                 let want = std::fs::read(input.with_extension("out")).expect("a case's output");
@@ -427,6 +429,20 @@ mod tests {
                     if shim3.iter().all(|x| *x == shim3[0]) {
                         kmeans_repeatable += 1;
                     }
+                    // Where rounding happens: each path's every run within kmeans_bound of the exact step (f64, CPU).
+                    let (exact, bound) = kmeans_bound(&stdin);
+                    let mut runs3 = vec![v(&o.3)];
+                    for _ in 0..2 {
+                        let raw = session.run(&dylib, "o main\n", &[], 0, 0, Some(&stdin)).expect("the rust path's run");
+                        runs3.push(v(&payloads(&raw).into_iter().find(|r| r.0 == "o" && r.1).expect("an output").3));
+                    }
+                    for (path, outs) in [("rust", &runs3), ("shim", &shim3)] {
+                        for (run, out) in outs.iter().enumerate() {
+                            let worst = kmeans_worst(out, &exact, &bound);
+                            kmeans_worst_seen = kmeans_worst_seen.max(worst);
+                            assert!(worst <= 1.0, "kmeans {}: the {path} path's run {run} is {worst} times the bound from the exact step", input.display());
+                        }
+                    }
                 }
             }
             if name == "kmeans" {
@@ -449,7 +465,7 @@ mod tests {
             }
             table.push_str(&format!("{name}\t{}\t{same_c}\t{same_shim}\t{rust_gpu:.1}\t{shim_gpu:.1}\t{rust_wall:.1}\t{rust_launches:.1}\t{shim_dispatches:.1}\n", inputs.len()));
             if name == "kmeans" {
-                table.push_str(&format!("kmeans: {kmeans_repeatable} of {} cases gave one output over three shim runs; 3 exact-input cases one output on both paths, three runs each\n", inputs.len()));
+                table.push_str(&format!("kmeans: {kmeans_repeatable} of {} cases gave one output over three shim runs; every run of both paths within the bound of the exact step (worst {kmeans_worst_seen:.3} of it); 3 exact-input cases one output on both paths, three runs each\n", inputs.len()));
             } else {
                 assert_eq!(same_shim, inputs.len(), "{name}: the rust path and the shim path differ\n{table}");
                 assert_eq!(same_c, inputs.len(), "{name}: the rust path and futhark c differ\n{table}");
@@ -457,6 +473,120 @@ mod tests {
         }
         eprintln!("{table}devices made: {}", session.devices_made());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The 2-D f32 arrays of a Futhark binary value stream (`b`, version 2, rank 2, ` f32`, two i64 dimensions, the
+    /// data), in order: (rows, columns, values). Trailing whitespace is allowed.
+    fn f32_matrices(mut b: &[u8]) -> Vec<(usize, usize, Vec<f32>)> {
+        let mut out = Vec::new();
+        loop {
+            b = b.trim_ascii_start();
+            if b.is_empty() {
+                return out;
+            }
+            assert!(b.len() >= 23 && b[0] == b'b' && b[1] == 2 && b[2] == 2 && &b[3..7] == b" f32", "not a [][]f32 value: {:?}", &b[..b.len().min(8)]);
+            let dim = |i: usize| i64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes")) as usize;
+            let (r, c) = (dim(7), dim(15));
+            let vals: Vec<f32> = b[23..23 + 4 * r * c].chunks_exact(4).map(|w| f32::from_le_bytes(w.try_into().expect("4 bytes"))).collect();
+            out.push((r, c, vals));
+            b = &b[23 + 4 * r * c..];
+        }
+    }
+
+    /// gamma_k = k u / (1 - k u), the bound on the relative error of k floating-point operations of unit roundoff u
+    /// (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., Lemma 3.1).
+    fn gamma(k: usize, u: f64) -> f64 {
+        let ku = k as f64 * u;
+        assert!(ku < 1.0);
+        ku / (1.0 - ku)
+    }
+
+    /// THE K-MEANS STEP'S BOUND: the exact step on the CPU (f64) and, centre by centre and coordinate by coordinate, how
+    /// far a device's f32 result may lie from it. `input` is the step's input (points, centres); returns the exact
+    /// centres and the bound, each `k * d` values.
+    ///
+    /// Derivation (u = 2^-24, f32's unit roundoff):
+    /// * MEMBERSHIP must be the exact one. A squared distance in f32 is d differences, d squares and a sum of d terms in
+    ///   some order (a fused multiply-add only removes roundings): relative error at most gamma_{d+2}(u). So the
+    ///   nearest centre is unambiguous when the exact nearest D1 and second nearest D2 satisfy
+    ///   D2 - D1 > (gamma_{d+2}(u) + gamma_{d+2}(2^-53)) (D1 + D2) (the second term the f64 reference's own error).
+    ///   An input that fails this for any point panics: it cannot be judged by a bound.
+    /// * A CLUSTER SUM of m points, in ANY order (atomics, a tree, a fold): |S^ - S| <= gamma_{m-1}(u) sum |x_i|
+    ///   (Higham §4.2). The count m is exact in f32 (m < 2^24).
+    /// * THE DIVISION c^ = S^ (/) m on the device: WGSL allows 2.5 ulp for f32 `/`, and ulp(y) <= 2^-23 |y| for a
+    ///   normal y, so |c^ - S^/m| <= 2.5 * 2^-23 |S^/m|.
+    /// * Together, with e1 = gamma_{m-1}(u) sum |x_i| / m: |c^ - S/m| <= e1 + 2.5 * 2^-23 (|S/m| + e1), plus the f64
+    ///   reference's own error gamma_{m+1}(2^-53) (sum |x_i| / m + |S/m|). An empty cluster's centre is exactly 0.
+    fn kmeans_bound(input: &[u8]) -> (Vec<f64>, Vec<f64>) {
+        let m = f32_matrices(input);
+        assert_eq!(m.len(), 2, "a k-means input is points then centres");
+        let ((n, d, pts), (k, d2, cen)) = (&m[0], &m[1]);
+        assert_eq!(d, d2);
+        let (n, d, k) = (*n, *d, *k);
+        let (u32_, u64_) = (2f64.powi(-24), 2f64.powi(-53));
+        let margin = gamma(d + 2, u32_) + gamma(d + 2, u64_);
+        let mut sum = vec![0f64; k * d];
+        let mut abs = vec![0f64; k * d];
+        let mut count = vec![0usize; k];
+        for i in 0..n {
+            let p = &pts[i * d..(i + 1) * d];
+            let dist: Vec<f64> = (0..k).map(|j| (0..d).map(|t| (f64::from(p[t]) - f64::from(cen[j * d + t])).powi(2)).sum()).collect();
+            let mut order: Vec<usize> = (0..k).collect();
+            order.sort_by(|a, b| dist[*a].total_cmp(&dist[*b]).then(a.cmp(b)));
+            if k > 1 {
+                let (d1, d2) = (dist[order[0]], dist[order[1]]);
+                assert!(d2 - d1 > margin * (d1 + d2), "point {i}: its nearest centres are {d1} and {d2} apart by less than the f32 distance bound; the input cannot be judged by a bound");
+            }
+            let j = order[0];
+            count[j] += 1;
+            for t in 0..d {
+                sum[j * d + t] += f64::from(p[t]);
+                abs[j * d + t] += f64::from(p[t]).abs();
+            }
+        }
+        let mut exact = vec![0f64; k * d];
+        let mut bound = vec![0f64; k * d];
+        for (j, &mc) in count.iter().enumerate() {
+            if mc == 0 {
+                continue;
+            }
+            for t in 0..d {
+                let x = j * d + t;
+                exact[x] = sum[x] / mc as f64;
+                let e1 = gamma(mc.saturating_sub(1), u32_) * abs[x] / mc as f64;
+                bound[x] = e1 + 2.5 * 2f64.powi(-23) * (exact[x].abs() + e1) + gamma(mc + 1, u64_) * (abs[x] / mc as f64 + exact[x].abs());
+            }
+        }
+        (exact, bound)
+    }
+
+    /// The largest |c^ - c| / bound of a k-means output against [`kmeans_bound`]: at most 1 within the bound.
+    fn kmeans_worst(output: &[u8], exact: &[f64], bound: &[f64]) -> f64 {
+        let m = f32_matrices(output);
+        assert_eq!(m.len(), 1, "a k-means output is one [k][d]f32");
+        assert_eq!(m[0].2.len(), exact.len(), "the output's size");
+        m[0].2.iter().zip(exact.iter().zip(bound)).map(|(g, (e, b))| {
+            let gap = (f64::from(*g) - e).abs();
+            if *b == 0.0 { if gap == 0.0 { 0.0 } else { f64::INFINITY } } else { gap / b }
+        }).fold(0.0, f64::max)
+    }
+
+    /// THE K-MEANS BOUND HOLDS FOR FUTHARK C (CPU, no device): every k-means corpus case's membership is unambiguous
+    /// under the f32 distance bound, and futhark c's output (`.out`, IEEE division, 0.5 ulp) lies within
+    /// [`kmeans_bound`] of the exact step. The GPU check (`on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`)
+    /// holds each device path to the same bound.
+    #[test]
+    fn futhark_c_s_kmeans_steps_lie_within_the_bound_of_the_exact_step() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans");
+        let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect();
+        inputs.sort();
+        assert_eq!(inputs.len(), 5);
+        for input in &inputs {
+            let (exact, bound) = kmeans_bound(&std::fs::read(input).expect("an input"));
+            let worst = kmeans_worst(&std::fs::read(input.with_extension("out")).expect("an output"), &exact, &bound);
+            eprintln!("{}: futhark c at {worst:.3} of the bound", input.display());
+            assert!(worst <= 1.0, "{}: futhark c's output is {worst} times the bound from the exact step", input.display());
+        }
     }
 
     /// A k-means step's input (Futhark's binary format: `[n][d]f32` points, then `[k][d]f32` centres, the first k
