@@ -7,7 +7,8 @@
 //! output is 64 f32 a block. With `reps`, the dispatch is repeated and the median GPU wall time printed. With
 //! `bpw` (blocks per workgroup, default 1), each workgroup loops over that many consecutive blocks; the kernel reads
 //! it as the fifth u32 of its uniform. A seventh argument fixes the number of workgroups instead (a kernel that
-//! maps workgroups to matrix rows).
+//! maps workgroups to matrix rows). `VBLOCK_INNER=k` records k dispatches in one submission for the timed runs and
+//! reports the time per dispatch, so the fixed cost of a submission and its wait is shared out.
 
 use std::borrow::Cow;
 use std::time::Instant;
@@ -76,13 +77,17 @@ fn main() -> Result<(), String> {
                 wgpu::BindGroupEntry { binding: 3, resource: c_buf.as_entire_binding() },
             ],
         });
+        let inner: u32 = std::env::var("VBLOCK_INNER").ok().map(|v| v.parse().map_err(|e| format!("VBLOCK_INNER: {e}"))).transpose()?.unwrap_or(1).max(1);
         let run = |copy: bool| -> Result<f64, String> {
+            let k = if copy { 1 } else { inner };
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             {
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups_x, groups_y, 1);
+                for _ in 0..k {
+                    pass.dispatch_workgroups(groups_x, groups_y, 1);
+                }
             }
             if copy {
                 enc.copy_buffer_to_buffer(&o_buf, 0, &r_buf, 0, size);
@@ -90,7 +95,7 @@ fn main() -> Result<(), String> {
             let t0 = Instant::now();
             queue.submit(Some(enc.finish()));
             fuller::gpu_io::wait(&device)?;
-            Ok(t0.elapsed().as_secs_f64() * 1e3)
+            Ok(t0.elapsed().as_secs_f64() * 1e3 / f64::from(k))
         };
         run(true)?;
         let slice = r_buf.slice(..);
@@ -107,7 +112,7 @@ fn main() -> Result<(), String> {
         if reps > 0 {
             let mut ms: Vec<f64> = (0..reps).map(|_| run(false)).collect::<Result<_, _>>()?;
             ms.sort_by(f64::total_cmp);
-            println!("vblock: {n} blocks, median {:.3} ms over {reps} dispatches (min {:.3}, max {:.3})", ms[reps / 2], ms[0], ms[reps - 1]);
+            println!("vblock: {n} blocks, median {:.3} ms a dispatch over {reps} submissions of {inner} (min {:.3}, max {:.3})", ms[reps / 2], ms[0], ms[reps - 1]);
         }
         Ok(())
     })
