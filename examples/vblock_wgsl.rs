@@ -4,7 +4,9 @@
 //!       <kernel.wgsl> <tables.f32> <params.f32> <seed> <out.f32> [reps]
 //!
 //! `params.f32` holds four f32 a block (m_mean, m_std, scale, bias); block i gets the offset i. The
-//! output is 64 f32 a block. With `reps`, the dispatch is repeated and the median GPU wall time printed.
+//! output is 64 f32 a block. With `reps`, the dispatch is repeated and the median GPU wall time printed. With
+//! `bpw` (blocks per workgroup, default 1), each workgroup loops over that many consecutive blocks; the kernel reads
+//! it as the fifth u32 of its uniform.
 
 use std::borrow::Cow;
 use std::time::Instant;
@@ -26,9 +28,11 @@ fn main() -> Result<(), String> {
     let params = read_f32(&a[2])?;
     let seed: u32 = a[3].parse().map_err(|e| format!("seed: {e}"))?;
     let reps: usize = a.get(5).map(|r| r.parse().map_err(|e| format!("reps: {e}"))).transpose()?.unwrap_or(0);
+    let bpw: u32 = a.get(6).map(|r| r.parse().map_err(|e| format!("bpw: {e}"))).transpose()?.unwrap_or(1).max(1);
     let n = (params.len() / 4) as u32;
-    let groups_x = n.min(65_535);
-    let groups_y = n.div_ceil(groups_x);
+    let groups = n.div_ceil(bpw);
+    let groups_x = groups.min(65_535);
+    let groups_y = groups.div_ceil(groups_x);
     pollster::block_on(async {
         let instance = wgpu::Instance::default();
         let adapter = instance
@@ -56,7 +60,7 @@ fn main() -> Result<(), String> {
         let size = u64::from(n) * 64 * 4;
         let o_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("out"), size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
         let r_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("read"), size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        let cfg = [n, seed, groups_x, 0u32];
+        let cfg = [n, seed, groups_x, 0u32, bpw, 0, 0, 0];
         let c_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("cfg"), contents: bytemuck::cast_slice(&cfg), usage: wgpu::BufferUsages::UNIFORM });
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
