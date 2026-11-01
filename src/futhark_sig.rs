@@ -134,6 +134,15 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
             let (is, vs) = (any(n), any(n));
             Ok(Some(write_binary(&[&Array { dims: vec![], data: vec![100] }, &is, &vs])))
         }
+        // The published benchmark's own shape (`published/pathfinder.fut`, data/medium.in: cols = 100000, rows =
+        // 100) and its wall heights, 0 to 9 (the published walls are Sobol numbers modulo 10). Before 2026-11-01
+        // pathfinder was timed on its largest quality case (256 x 256, about 1 ms a run; fault 13 of
+        // docs/reviews/2026-10-28_futhark_evolve_faults.md).
+        "pathfinder" => {
+            let (rows, cols) = (PATHFINDER_TIMING_ROWS, n / PATHFINDER_TIMING_ROWS);
+            let walls = Array { dims: vec![rows, cols], data: (0..rows * cols).map(|_| (rng.next_u64() % 10) as i32).collect() };
+            Ok(Some(write_binary(&[&walls])))
+        }
         other => Err(format!("no timing input recipe for {other}")),
     }
 }
@@ -161,8 +170,11 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/pathfinder/yardstick.fut"),
     planted: PATHFINDER_PLANTED,
     corpus: "tests/corpus/futhark_problems/pathfinder",
-    timing_n: 0,
+    timing_n: PATHFINDER_TIMING_ROWS * 100_000,
 };
+
+/// The rows of pathfinder's timing input (the published medium data set's); its columns are `timing_n / rows`.
+pub const PATHFINDER_TIMING_ROWS: usize = 100;
 
 /// Reduce's published program, `i32.sum` (`reduce (+) 0`), as a gene.
 pub const REDUCE_REFERENCE: &str = "(sum.n xs)";

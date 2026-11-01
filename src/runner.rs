@@ -204,16 +204,19 @@ pub fn median(v: &[f64]) -> f64 {
 }
 
 /// THE VERDICT of an exact program's re-time against the published one (`docs/PLAN_futhark_fitness_fixes.md` section
-/// G, fault 12): ratios are the program's time over the published program's, one an interleaved pair; `aa` every
-/// ratio of the A/A sets (the published program against itself).
+/// G, fault 12): ratios are the program's time over the published program's, one an interleaved pair, and they are
+/// compared with the MEDIANS of the A/A sets (the published program against itself), each set as many pairs as the
+/// re-time, timed apart (fault 13 of `docs/reviews/2026-10-28_futhark_evolve_faults.md`: the verdict compared the
+/// median of 11 with the least of 22 A/A ratios, two different statistics, and that extreme value moved from 0.9525
+/// to 0.9888 between re-times of the same two programs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpeedVerdict {
-    /// Faster: the median below the least A/A ratio AND at least 9 of 11 pairs faster (a sign test, one-sided
+    /// Faster: the median below the least A/A median AND at least 9 of 11 pairs faster (a sign test, one-sided
     /// p = 0.033; the study plan's rule of 2026-10-28 13:10Z).
     Beat,
     /// Within the A/A noise.
     Matched,
-    /// The median above the greatest A/A ratio.
+    /// The median above the greatest A/A median.
     Slower,
 }
 
@@ -221,18 +224,22 @@ impl SpeedVerdict {
     /// The verdict as the reports write it.
     pub fn text(self) -> &'static str {
         match self {
-            SpeedVerdict::Beat => "beat (exact and faster: the median below the least A/A ratio and at least 9 of 11 pairs faster)",
-            SpeedVerdict::Slower => "exact but slower (the median above the greatest A/A ratio)",
+            SpeedVerdict::Beat => "beat (exact and faster: the median below the least A/A set median and at least 9 of 11 pairs faster)",
+            SpeedVerdict::Slower => "exact but slower (the median above the greatest A/A set median)",
             SpeedVerdict::Matched => "matched (exact, within the A/A noise)",
         }
     }
 }
 
-/// [`SpeedVerdict`] of `ratios` against the A/A ratios `aa`. "At least 9 of 11" scales with the count: at least
-/// `9/11` of the pairs below 1.
-pub fn speed_verdict(ratios: &[f64], aa: &[f64]) -> SpeedVerdict {
-    let floor = aa.iter().copied().fold(f64::INFINITY, f64::min);
-    let ceiling = aa.iter().copied().fold(0.0, f64::max);
+/// How many times a run re-times the published program by the champion's own path for the verdict: under "no
+/// faster" the champion's median falls below all of them with probability `1 / (AA_RETIMES + 1)` = 5 %.
+pub const AA_RETIMES: usize = 19;
+
+/// [`SpeedVerdict`] of `ratios` against `aa_medians`, the median of each A/A set (the published program re-timed
+/// [`AA_RETIMES`] times by the same path and pair count as the champion). "At least 9 of 11" scales with the count: at least `9/11` of the pairs below 1.
+pub fn speed_verdict(ratios: &[f64], aa_medians: &[f64]) -> SpeedVerdict {
+    let floor = aa_medians.iter().copied().fold(f64::INFINITY, f64::min);
+    let ceiling = aa_medians.iter().copied().fold(0.0, f64::max);
     let m = median(ratios);
     let faster = ratios.iter().filter(|r| **r < 1.0).count();
     if m < floor && faster * 11 >= 9 * ratios.len() {
@@ -699,8 +706,8 @@ mod tests {
         assert_eq!(s.missing("q"), 11, "slots are kept by text");
     }
 
-    /// "Beat" needs both the median below the least A/A ratio and 9 of 11 pairs faster; a median below the floor with
-    /// only 8 of 11 faster is "matched"; a median above the greatest A/A ratio is "slower".
+    /// "Beat" needs both the median below the least A/A median and 9 of 11 pairs faster; a median below the floor with
+    /// only 8 of 11 faster is "matched"; a median above the greatest A/A median is "slower".
     #[test]
     fn the_speed_verdict_needs_the_median_below_the_floor_and_nine_of_eleven_faster() {
         let aa = [0.97, 1.0, 1.02, 0.99];
@@ -715,6 +722,23 @@ mod tests {
         assert_eq!(median(&[3.0, f64::NAN, 1.0, 2.0]), 2.0);
         assert_eq!(median(&[f64::INFINITY, 1.0, 2.0]), 2.0, "an untimed ratio (infinite) counts");
         assert!(median(&[]).is_nan());
+    }
+
+    /// FAULT 13: the floor is the least A/A MEDIAN, not the least A/A ratio. The A/A sets of the pathfinder re-times
+    /// held single ratios as low as 0.9525 while their medians stayed near 1; a champion whose 11 pairs are all
+    /// faster with median 0.975 was "matched" against the least ratio, and is "beat" against the medians. And one
+    /// A/A set whose median is itself low (a slow clock state over a whole set) still raises the bar.
+    #[test]
+    fn the_speed_verdict_compares_a_median_with_the_a_a_medians() {
+        let set_a = [0.9525, 0.998, 0.999, 1.0, 1.0, 1.001, 1.002, 0.997, 1.003, 1.0, 0.999];
+        let set_b = [1.0, 0.9845, 1.001, 0.999, 1.002, 1.0, 0.998, 1.001, 1.0, 0.999, 1.003];
+        let medians = [median(&set_a), median(&set_b)];
+        assert_eq!(medians, [1.0, 1.0]);
+        let champion = [0.975, 0.97, 0.98, 0.975, 0.972, 0.978, 0.975, 0.97, 0.98, 0.976, 0.974];
+        assert_eq!(speed_verdict(&champion, &medians), SpeedVerdict::Beat);
+        let all: Vec<f64> = set_a.iter().chain(set_b.iter()).copied().collect();
+        assert_eq!(speed_verdict(&champion, &all), SpeedVerdict::Matched, "against every ratio, the extreme 0.9525 decided");
+        assert_eq!(speed_verdict(&champion, &[1.0, 0.973, 1.0]), SpeedVerdict::Matched, "a low A/A median raises the bar");
     }
 
     /// The runs alternate one by one, each side `runs` times; the even pairs start with the yardstick, the odd ones with

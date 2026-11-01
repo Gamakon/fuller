@@ -63,7 +63,7 @@
     - The first process of a freshly compiled executable is discarded.
     - Micro P runs use `--runs 60`.
     - Every P run is gated first: both A/A sets (22 pairs) must be within ±5 %.
-    - A speed claim counts only when the champion's 11-pair re-time median is below the least A/A ratio.
+    - A speed claim counts only when the champion's 11-pair re-time median is below the least A/A ratio (since 2026-11-01 the least MEDIAN of 19 re-times of the published program by the champion's own path: fault 13 of `docs/reviews/2026-10-28_futhark_evolve_faults.md`).
   - **Budget.**
     - R and C get a guard large enough for 1,400 evaluations (180 min), so H2 compares equal budgets.
     - Histogram R seed 1 was rerun at the full budget. Histogram R seed 2 (1,176 evaluations, stopped) is a short run and is replaced.
@@ -74,7 +74,7 @@
     - The shim now caches Metal pipelines. Before that, histogram candidates spent most of their time creating a pipeline at every kernel launch (6,210 creations, 14.5 s, in one process).
 - **Change to the verdict rule, 2026-10-28 13:10Z, made AFTER a result was seen.** It applies to every verdict, the earlier ones included.
   - **The rule.** A champion counts as "faster" only if BOTH:
-    1. its 11-pair re-time median is below the least ratio of both A/A sets;
+    1. its 11-pair re-time median is below the least ratio of both A/A sets (since 2026-11-01: below the least median of 19 re-times of the published program by the champion's own path, a 5 % false beat; fault 13);
     2. at least 9 of its 11 pairs are below 1 (a sign test, one-sided p = 0.033).
     Otherwise an exact champion is "matched", or "exact but slower" when its median is above the greatest A/A ratio.
   - **The reason.** The old rule had condition 1 alone, and it gave a false "beat" on reduce R seed 1. That champion, (sum.n xs), is the published program itself. Its re-time pairs were 0.97, 0.70, 0.71, 0.99, 1.19, 0.98, 1.00, 1.02, 1.00, 0.97, 1.38, with median 0.985; the least A/A ratio, from a quiet A/A set, was 0.9936. Only 6 of the 11 pairs were below 1.

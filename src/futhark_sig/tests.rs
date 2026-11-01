@@ -276,3 +276,39 @@ fn the_timing_work_bound_admits_fable_s_exact_histogram_program() {
     assert!(wp < w && wp <= TIMING_WORK_CAP, "the published program's work {wp}");
     eprintln!("timing work: Fable's histogram {w}, the published program {wp}, the bound {TIMING_WORK_CAP}");
 }
+
+/// FAULT 13 (docs/reviews/2026-10-28_futhark_evolve_faults.md): pathfinder was timed on a quality case (256 x 256,
+/// about 1 ms a run). Its timing input is now the published benchmark's own shape (data/medium.in: rows = 100, cols
+/// = 100000) with walls 0 to 9, and the published program (the yardstick, through `futhark c`) gives on it what the
+/// recurrence gives, computed here directly.
+#[test]
+fn pathfinder_is_timed_on_the_published_benchmarks_shape() {
+    let p = problem("pathfinder").unwrap();
+    let stdin = timing_input(&p).unwrap().expect("pathfinder has its own timing input");
+    let inputs = read_binary(&stdin).unwrap();
+    assert_eq!(inputs.len(), 1, "one input, the walls");
+    let walls = &inputs[0];
+    assert_eq!(walls.dims, vec![PATHFINDER_TIMING_ROWS, 100_000]);
+    assert!(walls.data.iter().all(|w| (0..10).contains(w)), "walls 0 to 9, as the published Sobol walls");
+    let sizes = signature(&PATHFINDER).unwrap().sizes(&inputs).unwrap();
+    assert_eq!((sizes["rows"], sizes["cols"]), (100, 100_000));
+    assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed: the same bytes every time");
+    // The recurrence: row 0, then each later row's wall plus the least of the neighbours (clamped at the edges).
+    let (rows, cols) = (walls.dims[0], walls.dims[1]);
+    let mut state: Vec<i32> = walls.data[..cols].to_vec();
+    for r in 1..rows {
+        let prev = state.clone();
+        for j in 0..cols {
+            let left = prev[j.saturating_sub(1)];
+            let right = prev[(j + 1).min(cols - 1)];
+            state[j] = walls.data[r * cols + j] + prev[j].min(left).min(right);
+        }
+    }
+    if !have_futhark() {
+        panic!("futhark is not installed: the published program cannot be checked on the timing input");
+    }
+    let exe = compile_c(p.yardstick, &scratch("pathfinder_timing")).unwrap();
+    let got = run_exe(&exe, &stdin).unwrap();
+    assert_eq!(got.dims, vec![cols]);
+    assert_eq!(got.data, state, "the published program on the timing input is the recurrence");
+}

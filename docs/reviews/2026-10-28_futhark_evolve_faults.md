@@ -229,6 +229,8 @@ Evolution scored 15–37 % MORE distinct programs than random search did, and st
 - Compare the champion's median with a spread of A/A medians, for example by re-timing the A/A set several times.
 - Give pathfinder its own large timing input.
 
+**Status 2026-11-01: fixed, all three parts.** The batched path passes (3481e128: 22/22 on batch, single and rust). The verdict compares the champion's median with the medians of `runner::AA_RETIMES` = 19 re-times of the published program by the champion's own path (`champion_batch`, 11 pairs, a process each), so a false "beat" has probability 1/20 (`runner::tests::the_speed_verdict_compares_a_median_with_the_a_a_medians`). Measured on the GPU: against yardstick-against-itself medians the published program as champion was a false "beat" (median 0.9987, 11 of 11 faster, floor 0.9994: each timing process carries its own offset of about 0.1 %); against 5 re-times by its own path it is "matched" (0.9986 against floor 0.9968). Pathfinder is timed on the published benchmark's shape, 100 x 100000, walls 0-9 (`futhark_sig::tests::pathfinder_is_timed_on_the_published_benchmarks_shape`): 2.45 ms a run, A/A 22 of 22 within 5 % (ratios 0.979-1.027).
+
 ### 14. Legal programs the compiler cannot build are scored worst (CONFIRMED)
 
 **What.** A program the branch compiler fails on gets every quality input set to 1 (`Quality::worst`, `futhark_evolve.rs:318`). Under `docs/Rules.md` that is a kingdom bug: a legal gene must run.

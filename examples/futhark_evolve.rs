@@ -44,8 +44,10 @@
 //!   stepped down in the gaps: the A/A gate failed on every path.) The A/A noise
 //!   floor (the yardstick against itself, 11 pairs) is measured at the start; in P the published program is also
 //!   timed against itself THROUGH THE SLOT PATH (compiled as a candidate, `--pairs` pairs), the in-run A/A. A speed
-//!   claim counts only when the champion's 11-pair re-time at the end has its median below the least ratio of both
-//!   A/A sets (`speed_claim_beats_noise_floor` in the report).
+//!   claim counts only when the champion's 11-pair re-time at the end has its median below the least MEDIAN of the
+//!   published program re-timed `--aa-retimes` times by the champion's own path (default `runner::AA_RETIMES`, a
+//!   5 % false "beat"; fault 13: until 2026-11-01 it was the least single ratio of the two A/A sets) and at least 9
+//!   of 11 pairs faster (`speed_claim_beats_noise_floor` in the report).
 //!
 //! The BUDGET is `--evaluations` fitness evaluations (an individual scored, a cache hit included, so R and C are
 //! counted alike); the wall clock (`--minutes`) is a guard. The work guard: every candidate's exact node executions
@@ -95,7 +97,7 @@ use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebui
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
 use fuller::population_fold::AdfTable;
-use fuller::runner::{interleaved_runs, write_aa_gate, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
+use fuller::runner::{interleaved_runs, write_aa_gate, AA_RETIMES, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, staged_hff, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
 use fuller::typed_gep::{express, write_back, Domain, GeneLayout, Tree};
@@ -617,6 +619,18 @@ impl<'a> Judge<'a> {
         let rounds = o[12..].iter().map(Outcome::fastest_ns).collect::<Result<Vec<_>, _>>()?;
         let inrun = if inrun_pairs > 0 { pair_ratios(&r.outcomes[1], inrun_pairs, true)? } else { Vec::new() };
         Ok(AaSets { noise, inrun, rounds })
+    }
+
+    /// THE A/A MEDIANS the speed verdict reads (`runner::speed_verdict`, fault 13): the PUBLISHED program re-timed
+    /// exactly as the champion is (`champion_batch`, 11 pairs, a process each), `retimes` times. Like for like: the
+    /// same statistic (a median of 11) by the same path, so under "no faster" the champion's median is one more
+    /// draw of the same distribution and falls below all `retimes` of them with probability `1/(retimes + 1)`.
+    /// Measured 2026-11-01, histogram: the published program as the champion gave median 0.9987 with 11 of 11
+    /// pairs faster against yardstick-against-itself medians 0.9994-1.0012 (a false "beat"), because each timing
+    /// process carries its own offset of about 0.1 %: so the A/A sets the run timed at its start (another path)
+    /// are not used here.
+    fn aa_medians(&self, reference: &Tree, retimes: usize) -> Result<Vec<f64>, String> {
+        (0..retimes).map(|_| self.champion_batch(reference, 11).map(|(r, _)| median(&r))).collect()
     }
 
     /// BATCH MODE: the champion's re-time (`pairs`, the first process-equivalent discarded) and its output on the
@@ -1696,6 +1710,12 @@ fn real_main() -> Result<(), String> {
     let stop_at_exact = args.iter().any(|a| a == "--stop-at-exact");
     // The timing gate (P): measure the two A/A sets and stop, before any search.
     let aa_only = args.iter().any(|a| a == "--aa-only");
+    // The A/A re-times of the speed verdict (fault 13): a false "beat" of the published program has probability
+    // 1/(n + 1), so the default (runner::AA_RETIMES) is 5 %.
+    let aa_retimes: usize = arg(&args, "--aa-retimes").map(|v| v.parse().map_err(|_| format!("--aa-retimes {v}"))).transpose()?.unwrap_or(AA_RETIMES);
+    if aa_retimes == 0 {
+        return Err("--aa-retimes must be at least 1".into());
+    }
     // THE RELATIVE SCORE of one program (`--rescore SEXP`, regime P): its quality inputs on every stored case beside
     // the published program's (all 0), and, when exact, its 11-pair re-time against the published program next to
     // both A/A sets, with the verdict (beat / matched / exact but slower / not reached). Writes OUT/rescore.tsv.
@@ -1950,7 +1970,9 @@ fn real_main() -> Result<(), String> {
             if let Some(want) = &run.judge.timing.output {
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
-            speed_verdict(&ratios, &all).text()
+            let medians = run.judge.aa_medians(&reference, aa_retimes)?;
+            rep.push_str(&format!("aa_set_medians\t{}\n", fmt(&medians)));
+            speed_verdict(&ratios, &medians).text()
         } else {
             "not reached (not exact)"
         };
@@ -2555,13 +2577,14 @@ fn real_main() -> Result<(), String> {
                 rep.push_str(&format!("champion_exact_on_timing_input\t{}\n", if got == fuller::futhark_sig::read_one(want)? { "yes" } else { "NO" }));
             }
             rep.push_str(&format!("best_vs_published_pairs\t11\nbest_vs_published_ratios\t{}\nbest_vs_published_median\t{:.4}\nfaster_rounds\t{}\n", fmt(&ratios), median(&ratios), ratios.iter().filter(|r| **r < 1.0).count()));
-            // A speed claim counts only below the noise floor (the least ratio of both A/A sets) AND with at least 9
-            // of 11 pairs faster (a sign test, one-sided p = 0.033): the rule of the study plan, 2026-10-28 13:10Z,
-            // after a quiet A/A set beside a noisy re-time made the published program itself "faster".
-            let all: Vec<f64> = noise.iter().chain(inrun_aa.iter()).cloned().collect();
-            let floor = all.iter().cloned().fold(f64::INFINITY, f64::min);
-            let v = speed_verdict(&ratios, &all).text();
-            rep.push_str(&format!("noise_floor_least_ratio\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\nverdict\t{v}\n", if v.starts_with("beat") { "yes" } else { "no" }));
+            // A speed claim counts only below the noise floor (the least MEDIAN of `--aa-retimes` re-times of the
+            // published program by the champion's own path, fault 13) AND with at least 9 of 11 pairs faster (a sign
+            // test, one-sided p = 0.033): the rule of the study plan, 2026-10-28 13:10Z, after a quiet A/A set beside
+            // a noisy re-time made the published program itself "faster".
+            let medians = run.judge.aa_medians(&reference, aa_retimes)?;
+            let floor = medians.iter().cloned().fold(f64::INFINITY, f64::min);
+            let v = speed_verdict(&ratios, &medians).text();
+            rep.push_str(&format!("aa_set_medians\t{}\nnoise_floor_least_aa_median\t{floor:.4}\nspeed_claim_beats_noise_floor\t{}\nverdict\t{v}\n", fmt(&medians), if v.starts_with("beat") { "yes" } else { "no" }));
         }
     }
     // The best-ever program (the hall of fame's rank 1). For C, which has no selection, the best above is only the
