@@ -302,3 +302,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "v24_true_read"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "virtual_blocks_bench"
+path = "experiments/virtual_blocks/bench.rs"

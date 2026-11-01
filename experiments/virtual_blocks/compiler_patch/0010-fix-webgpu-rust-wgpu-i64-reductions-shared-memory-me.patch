@@ -1,0 +1,449 @@
+From ed2bc96bb316053c2524fc446235cb77cad176af Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Sun, 1 Nov 2026 21:21:44 +0000
+Subject: [PATCH] fix(webgpu, rust-wgpu): i64 reductions, shared memory merged
+ across element types, f32<->i64 conversions, u64 entry arguments
+
+- An atomic write is a plain write in WGSL, so its buffer needs an atomic type
+  only where WGSL has one: a non-segmented i64/u64 reduction (each block's
+  partial result is stored by an atomic write) failed with "Atomics not
+  supported for values of type IntType Int64".
+- A shared allocation accessed at several element types (memory block merging
+  gives disjoint-lifetime allocations one block whatever their types) is one
+  workgroup array a type; it failed with "Buffer used at multiple types",
+  which now names the buffer and the types.
+- f32->i64 and f32->u64 (FPToSI/FPToUI) were not implemented (the WGSL called
+  not_implemented(...)); u64->f32 scaled the high word by 2e32 (2*10^32), not
+  2^32; i64->f32 was wrong for negatives below -2^31. All four now convert as
+  C does (round to nearest even; truncation towards zero).
+- The rust-wgpu entry wrapper passed a converted scalar argument as
+  "(a0 as i64)", which rustc's unused_parens rejects under -D warnings (a u64
+  entry argument); arguments and scalar results are now bare.
+
+Tests: tests/webgpu/i64_reduce.fut, tests/webgpu/f32_i64_conversions.fut
+(pass on the c backend; the GPU check is fuller's).
+---
+ rts/wgsl/scalar64.wgsl                   |  47 +++++++--
+ src/Futhark/CodeGen/Backends/RustWGPU.hs |   9 +-
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs     | 124 +++++++++++++++++------
+ tests/webgpu/f32_i64_conversions.fut     |  31 ++++++
+ tests/webgpu/i64_reduce.fut              |  26 +++++
+ 5 files changed, 193 insertions(+), 44 deletions(-)
+ create mode 100644 tests/webgpu/f32_i64_conversions.fut
+ create mode 100644 tests/webgpu/i64_reduce.fut
+
+diff --git a/rts/wgsl/scalar64.wgsl b/rts/wgsl/scalar64.wgsl
+index cc7b24bcd..af66104cb 100644
+--- a/rts/wgsl/scalar64.wgsl
++++ b/rts/wgsl/scalar64.wgsl
+@@ -233,14 +233,12 @@ fn i64_to_f16(a: i64) -> f16 {
+   return f16(a.x);
+ }
+ 
+-// TODO: This is not accurate to a real i64->f32 conversion, but hopefully good
+-// enough for now.
++// A two's complement i64 to f32, rounded to nearest even (C's conversion):
++// the magnitude through u64_to_f32, then the sign. -2^63 negates to itself,
++// whose bits read as the u64 2^63, its magnitude.
+ fn i64_to_f32(a: i64) -> f32 {
+-  if (a.y == -1) {
+-    if (a.x > 0) { return -f32(a.x); }
+-    else { return f32(a.x); }
+-  }
+-  return f32(bitcast<u32>(a.x)) + f32(a.y) * 2e32f;
++  if (a.y < 0) { return -u64_to_f32(neg_i64(a)); }
++  return u64_to_f32(a);
+ }
+ 
+ fn u64_to_f16(a: i64) -> f16 {
+@@ -248,8 +246,41 @@ fn u64_to_f16(a: i64) -> f16 {
+   return f16(bitcast<u32>(a.x));
+ }
+ 
++// A u64 to f32, rounded to nearest even (C's conversion). Under 2^32 it is
++// WGSL's u32 conversion. Above, the top 32 bits from the leading one are
++// converted, with every lower bit folded into their lowest bit (a sticky bit:
++// the rounding position is bit 7 of the 32, so the sticky bit decides only
++// ties, as the dropped bits would), and scaled back by a power of two (exact).
++// (It was f32(lo) + f32(hi) * 2e32, which is 2*10^32, not 2^32.)
+ fn u64_to_f32(a: i64) -> f32 {
+-  return f32(bitcast<u32>(a.x)) + f32(bitcast<u32>(a.y)) * 2e32f;
++  let lo = bitcast<u32>(a.x);
++  let hi = bitcast<u32>(a.y);
++  if (hi == 0u) { return f32(lo); }
++  let n = countLeadingZeros(hi);
++  var top = hi;
++  var sticky = lo;
++  if (n > 0u) {
++    top = (hi << n) | (lo >> (32u - n));
++    sticky = lo << n;
++  }
++  if (sticky != 0u) { top = top | 1u; }
++  return ldexp(f32(top), i32(32u - n));
++}
++
++// An f32 to i64, truncated towards zero (C's conversion, for values in range;
++// NaN gives 0). The magnitude's high word is m / 2^32 truncated, exact as a
++// power-of-two scale; its low word is the remainder, exactly representable.
++fn f32_to_u64(a: f32) -> i64 {
++  let m = max(a, 0.0f);
++  let hi = u32(m * 2.3283064365386963e-10f);
++  let lo = u32(m - f32(hi) * 4294967296.0f);
++  return i64(bitcast<i32>(lo), bitcast<i32>(hi));
++}
++
++fn f32_to_i64(a: f32) -> i64 {
++  let v = f32_to_u64(abs(a));
++  if (a < 0.0f) { return neg_i64(v); }
++  return v;
+ }
+ 
+ // End of scalar64.wgsl
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index e61e78191..b03ed9396 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -852,7 +852,10 @@ genEntry fname fun ep = do
+         Nothing -> compilerLimitation $ "The rust-wgpu backend cannot bind the scalar parameter " <> prettyText v
+     let outs = functionOutput fun
+         outIdx = M.fromList $ zip (map (nameKey . paramName) outs) [(0 :: Int) ..]
+-        callText = funName fname <> "(" <> T.intercalate ", " ("ctx" : "&st" : inArgs) <> ")?"
++        -- A scalar argument converted to the internal type is a cast
++        -- (`(a0 as i64)`, a u64 entry argument): bare, or rustc's
++        -- unused_parens fires on the argument.
++        callText = funName fname <> "(" <> T.intercalate ", " ("ctx" : "&st" : map bare inArgs) <> ")?"
+     line $ (if null outs then "" else "let r = ") <> callText <> ";"
+     let dimExp (Constant (IntValue v)) = pure $ showT (valueIntegral v :: Integer) <> "i64"
+         dimExp (Constant v) = compilerLimitation $ "The rust-wgpu backend found a non-integer dimension " <> prettyText v
+@@ -885,10 +888,10 @@ genEntry fname fun ep = do
+     case result of
+       TransparentValue vd -> do
+         e <- resultOf vd
+-        line $ "Ok(" <> e <> ")"
++        line $ "Ok(" <> bare e <> ")"
+       OpaqueValue oname vds -> do
+         es <- mapM resultOf vds
+-        line $ "Ok(rt::Opaque::new(" <> strLit (nameToText oname) <> ", vec![" <> T.intercalate ", " (map (\e -> "rt::Value::from(" <> e <> ")") es) <> "]))"
++        line $ "Ok(rt::Opaque::new(" <> strLit (nameToText oname) <> ", vec![" <> T.intercalate ", " (map (\e -> "rt::Value::from(" <> bare e <> ")") es) <> "]))"
+   line "}"
+   -- The dynamic adapter.
+   let dname = "dyn_" <> unique (nameToText (entryPointName ep))
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index e9518b724..7949547bc 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -88,7 +88,12 @@ data KernelState = KernelState
+     ksBindingIds :: M.Map VName Int,
+     -- | The specialisation constants declared for this kernel's register
+     -- arrays (see 'scalarSpaceSize').
+-    ksSpecConsts :: S.Set WGSL.Ident
++    ksSpecConsts :: S.Set WGSL.Ident,
++    -- | A shared allocation accessed at several element types (Futhark's
++    -- memory block merging gives allocations with disjoint lifetimes one
++    -- block, whatever their types): its module-scope name, and the workgroup
++    -- array that holds it at each type ('genSharedDecl', 'memIdent').
++    ksTypedShared :: M.Map WGSL.Ident (M.Map PrimType WGSL.Ident)
+   }
+ 
+ type KernelM = RWST KernelR () KernelState WebGPUM
+@@ -124,6 +129,13 @@ getIdent name = gets (M.findWithDefault t t . ksNameReplacements)
+   where
+     t = zEncodeText $ prettyText name
+ 
++-- | The WGSL name of memory accessed at an element type: its binding, or for
++-- a shared allocation used at several types, that type's workgroup array.
++memIdent :: PrimType -> VName -> KernelM WGSL.Ident
++memIdent t mem = do
++  i <- getIdent mem
++  gets $ maybe i (M.findWithDefault i t) . M.lookup i . ksTypedShared
++
+ -- | Get a new, unused binding index and add it to the list of bind slots used
+ -- by the current kernel.
+ assignBindSlot :: KernelM Int
+@@ -209,7 +221,8 @@ genKernel kernel = do
+             ksMemCands = mempty,
+             ksMemSelect = mempty,
+             ksBindingIds = mempty,
+-            ksSpecConsts = mempty
++            ksSpecConsts = mempty,
++            ksTypedShared = mempty
+           }
+ 
+   ((), s, ()) <- runRWST gen (KernelR kernel) initial
+@@ -534,7 +547,7 @@ genReadExp ::
+   Count Elements (TExp Int64) ->
+   KernelM WGSL.Exp
+ genReadExp t s mem i = do
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   shared <- isShared mem'
+   atomic <- isAtomic mem'
+   i' <- indexExp i
+@@ -566,7 +579,7 @@ genArrayWrite ::
+   KernelM WGSL.Exp ->
+   KernelM WGSL.Stmt
+ genArrayWrite t s mem i v = do
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   shared <- isShared mem'
+   atomic <- isAtomic mem'
+   i' <- indexExp i
+@@ -588,7 +601,7 @@ genAtomicOp ::
+   Exp ->
+   KernelM WGSL.Stmt
+ genAtomicOp f t dest mem i e = do
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   shared <- isShared mem'
+   i' <- indexExp i
+   v' <- genWGSLExp e
+@@ -810,9 +823,10 @@ genSharedDecl name = do
+   moduleName <- mkGlobalIdent name'
+   sizeName <- mkGlobalIdent $ name' <> "_size"
+ 
+-  maybeElemPrimType <- findSingleMemoryType name
+-  case maybeElemPrimType of
+-    Just elemPrimType@(_, atomic, _) -> do
++  types <- sharedTypes name
++  case types of
++    [] -> pure $ WGSL.Comment $ "discard declare_shared: " <> name'
++    [elemPrimType@(_, atomic, _)] -> do
+       let bufType =
+             wgslSharedBufferType
+               elemPrimType
+@@ -823,8 +837,40 @@ genSharedDecl name = do
+       when atomic $ addAtomicMem moduleName
+       addRename name' moduleName
+       pure $ WGSL.Comment $ "declare_shared: " <> name'
+-    Nothing ->
+-      pure $ WGSL.Comment $ "discard declare_shared: " <> name'
++    _ -> do
++      -- One workgroup array a type, each the allocation's full size: the
++      -- accesses at a type use that type's array ('memIdent'). The merged
++      -- allocations have disjoint lifetimes, so no value passes between
++      -- the arrays; the cost is the shared memory the merging had saved.
++      views <- forM types $ \elemPrimType@(t, _, _) -> do
++        typed <- mkGlobalIdent $ sharedTypedName name' t
++        let typedSize = typed <> "_size"
++        addOverride typedSize (WGSL.Prim WGSL.Int32) (Just $ WGSL.IntExp 0)
++        addDecl $
++          WGSL.VarDecl [] WGSL.Workgroup typed $
++            wgslSharedBufferType elemPrimType (Just $ WGSL.VarExp typedSize)
++        pure (t, typed)
++      addRename name' moduleName
++      modify $ \s -> s {ksTypedShared = M.insert moduleName (M.fromList views) (ksTypedShared s)}
++      pure $ WGSL.Comment $ "declare_shared: " <> name' <> " at " <> prettyText (map fst views)
++
++-- | The name of a shared allocation's workgroup array at one element type.
++sharedTypedName :: WGSL.Ident -> PrimType -> WGSL.Ident
++sharedTypedName name' t = name' <> "_" <> prettyText t
++
++-- | The element types a shared allocation is accessed at. Several types are
++-- allowed only without atomic accesses.
++sharedTypes :: VName -> KernelM [(PrimType, Bool, Signedness)]
++sharedTypes name = do
++  types <- findMemoryTypes name
++  case nubOrd (map (\(t, _, _) -> t) types) of
++    [] -> pure []
++    [_] -> maybe [] pure <$> findSingleMemoryType name
++    prims
++      | any (\(_, a, _) -> a) types ->
++          compilerLimitation $
++            "WebGPU backend cannot access the shared allocation " <> prettyText name <> " atomically at several types: " <> prettyText prims
++      | otherwise -> pure [(t, False, Signed) | t <- prims]
+ 
+ genWGSLStm :: Code ImpGPU.KernelOp -> KernelM WGSL.Stmt
+ genWGSLStm stm@Copy {} = genMemAccess stm
+@@ -971,18 +1017,20 @@ genWGSLStm (Op (ImpGPU.SharedAlloc name size)) = do
+   let name' = nameToIdent name
+   sizeName <- mkGlobalIdent $ name' <> "_size"
+ 
+-  maybeElemPrimType <- findSingleMemoryType name
+-  case maybeElemPrimType of
+-    Just (elemPrimType, _, _) -> do
+-      let elemSize = primByteSize elemPrimType :: Int32
+-      let sizeExp =
+-            zExt Int32 (untyped (unCount size))
+-              ~/~ ValueExp (IntValue $ Int32Value elemSize)
+-
+-      addSharedMem sizeName sizeExp
++  types <- sharedTypes name
++  let sizeExp elemPrimType =
++        zExt Int32 (untyped (unCount size))
++          ~/~ ValueExp (IntValue $ Int32Value (primByteSize elemPrimType))
++  case types of
++    [] -> pure $ WGSL.Comment $ "discard shared_alloc: " <> name'
++    [(elemPrimType, _, _)] -> do
++      addSharedMem sizeName (sizeExp elemPrimType)
++      pure $ WGSL.Comment $ "shared_alloc: " <> name'
++    _ -> do
++      forM_ types $ \(t, _, _) -> do
++        typed <- mkGlobalIdent $ sharedTypedName name' t
++        addSharedMem (typed <> "_size") (sizeExp t)
+       pure $ WGSL.Comment $ "shared_alloc: " <> name'
+-    Nothing ->
+-      pure $ WGSL.Comment $ "discard shared_alloc: " <> name'
+ genWGSLStm (Op (ImpGPU.ErrorSync f)) = genWGSLStm $ Op (ImpGPU.Barrier f)
+ genWGSLStm GetUserParam {} = error "genWGSLStm: GetUserParam not handled."
+ 
+@@ -994,7 +1042,7 @@ genAccessStm (Write mem i Bool s _ v) = genArrayWrite Bool s mem i (genWGSLExp v
+ genAccessStm (Write mem i (IntType Int8) s _ v) = genArrayWrite (IntType Int8) s mem i (genWGSLExp v)
+ genAccessStm (Write mem i (IntType Int16) s _ v) = genArrayWrite (IntType Int16) s mem i (genWGSLExp v)
+ genAccessStm (Write mem i t s _ v) = do
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   i' <- indexExp i
+   v' <- genWGSLExp v
+   atomic <- isAtomic mem'
+@@ -1006,7 +1054,7 @@ genAccessStm (Read tgt mem i (IntType Int8) s _) = genArrayRead (IntType Int8) s
+ genAccessStm (Read tgt mem i (IntType Int16) s _) = genArrayRead (IntType Int16) s tgt mem i
+ genAccessStm (Read tgt mem i t s _) = do
+   tgt' <- getIdent tgt
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   i' <- indexExp i
+   atomic <- isAtomic mem'
+   if atomic
+@@ -1040,9 +1088,9 @@ genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicXchg _ dest mem i e))) = do
+   WGSL.Assign <$> getIdent dest <*> pure call
+ genAccessStm (Op (ImpGPU.Atomic s (ImpGPU.AtomicWrite t mem i v))) = genArrayWrite t s mem i (genWGSLExp v)
+ genAccessStm (Op (ImpGPU.Atomic _ (ImpGPU.AtomicFAdd t dest mem i e))) = genAtomicOp "fadd" (FloatType t) dest mem i e
+-genAccessStm (Op (ImpGPU.UniformRead tgt mem i _ _)) = do
++genAccessStm (Op (ImpGPU.UniformRead tgt mem i t _)) = do
+   tgt' <- getIdent tgt
+-  mem' <- getIdent mem
++  mem' <- memIdent t mem
+   i' <- indexExp i
+   pure $
+     WGSL.Assign tgt' $
+@@ -1173,12 +1221,14 @@ wgslConvOp op a = WGSL.CallExp (fun op) [a]
+     fun (FPToUI Float32 Int8) = "f32_to_u8"
+     fun (FPToUI Float32 Int16) = "f32_to_u16"
+     fun (FPToUI Float32 Int32) = "f32_to_u32"
++    fun (FPToUI Float32 Int64) = "f32_to_u64"
+     fun (FPToSI Float16 Int8) = "f16_to_i8"
+     fun (FPToSI Float16 Int16) = "f16_to_i16"
+     fun (FPToSI Float16 Int32) = "i32"
+     fun (FPToSI Float32 Int8) = "f32_to_i8"
+     fun (FPToSI Float32 Int16) = "f32_to_i16"
+     fun (FPToSI Float32 Int32) = "i32"
++    fun (FPToSI Float32 Int64) = "f32_to_i64"
+     fun (UIToFP Int8 Float16) = "u8_to_f16"
+     fun (UIToFP Int16 Float16) = "u16_to_f16"
+     fun (UIToFP Int32 Float16) = "u32_to_f16"
+@@ -1338,6 +1388,12 @@ findMemoryTypes name = do
+       find (ImpGPU.Read _ n _ t _ _) | this n = S.singleton (t, False, Signed)
+       find (ImpGPU.Copy t _ (n, _) _ (m, _) _)
+         | this n || this m = S.singleton (t, False, Signed)
++      -- An atomic WRITE is generated as a plain write (genAccessStm): the
++      -- buffer needs an atomic type only where WGSL has one. Futhark's
++      -- non-segmented reduction stores each block's partial result with
++      -- an atomic write, so an i64 reduction used to fail here.
++      find (Op (ImpGPU.Atomic _ (ImpGPU.AtomicWrite t n _ _)))
++        | this n = S.singleton (t, primCanBeAtomic t, Signed)
+       find (Op (ImpGPU.Atomic _ op))
+         | this (atomicOpArray op) =
+             let (t, sgn) = atomicOpType op
+@@ -1362,20 +1418,22 @@ findSingleMemoryType name = do
+       let atomic = L.find (\(_, a, _) -> a) types
+       case atomic of
+         Just (_, _, sgn)
+-          | canBeAtomic prim ->
++          | primCanBeAtomic prim ->
+               if all (\(_, _, s) -> s == sgn) types
+                 then pure $ Just (prim, True, sgn)
+                 else error "Atomic type used at multiple signednesses"
+         Just (t, _, _) ->
+           error $ "Atomics not supported for values of type " <> show t
+         Nothing -> pure $ Just (prim, False, Signed)
+-    _tooMany -> error "Buffer used at multiple types"
+-  where
+-    canBeAtomic (IntType Int64) = False
+-    canBeAtomic (IntType _) = True
+-    canBeAtomic (FloatType _) = True
+-    canBeAtomic Bool = True
+-    canBeAtomic _ = False
++    _tooMany -> error $ "Buffer " <> prettyString name <> " used at multiple types: " <> show prims
++
++-- | A primitive type WGSL can hold in an atomic buffer (no 64-bit atomics).
++primCanBeAtomic :: PrimType -> Bool
++primCanBeAtomic (IntType Int64) = False
++primCanBeAtomic (IntType _) = True
++primCanBeAtomic (FloatType _) = True
++primCanBeAtomic Bool = True
++primCanBeAtomic _ = False
+ 
+ -- | Generate binding declarations for memory buffers used by kernel. Produces
+ -- additional name replacements because it makes the binding names unique.
+diff --git a/tests/webgpu/f32_i64_conversions.fut b/tests/webgpu/f32_i64_conversions.fut
+new file mode 100644
+index 000000000..4b6477810
+--- /dev/null
++++ b/tests/webgpu/f32_i64_conversions.fut
+@@ -0,0 +1,31 @@
++-- f32 <-> i64/u64 conversions, rounded to nearest even and truncated towards
++-- zero as C converts. u64->f32 multiplied the high word by 2e32 (2*10^32), not
++-- 2^32, and f32->i64 was not implemented.
++
++-- ==
++-- entry: u64_to_f32
++-- input { [0u64, 1u64, 16777217u64, 4294967296u64, 4294967297u64, 0x0100000080000001u64, 0x0100000080000000u64, 0xFFFFFFFFFFFFFFFFu64] }
++-- output { [0f32, 1f32, 16777216f32, 4294967296f32, 4294967296f32, 72057596037927936f32, 72057594037927936f32, 18446744073709551616f32] }
++
++entry u64_to_f32 (xs: []u64) : []f32 = map f32.u64 xs
++
++-- ==
++-- entry: i64_to_f32
++-- input { [0i64, -1i64, -2147483649i64, -9223372036854775808i64, 9223372036854775807i64, -16777217i64] }
++-- output { [0f32, -1f32, -2147483648f32, -9223372036854775808f32, 9223372036854775808f32, -16777216f32] }
++
++entry i64_to_f32 (xs: []i64) : []f32 = map f32.i64 xs
++
++-- ==
++-- entry: f32_to_i64
++-- input { [0f32, 1.75f32, -1.75f32, 4294967296f32, -6442450944f32, 1e18f32, -2147483648f32] }
++-- output { [0i64, 1i64, -1i64, 4294967296i64, -6442450944i64, 999999984306749440i64, -2147483648i64] }
++
++entry f32_to_i64 (xs: []f32) : []i64 = map i64.f32 xs
++
++-- ==
++-- entry: f32_to_u64
++-- input { [0f32, 1.75f32, 4294967296f32, 1.8e19f32] }
++-- output { [0u64, 1u64, 4294967296u64, 18000000404716257280u64] }
++
++entry f32_to_u64 (xs: []f32) : []u64 = map u64.f32 xs
+diff --git a/tests/webgpu/i64_reduce.fut b/tests/webgpu/i64_reduce.fut
+new file mode 100644
+index 000000000..8b5726adf
+--- /dev/null
++++ b/tests/webgpu/i64_reduce.fut
+@@ -0,0 +1,26 @@
++-- A non-segmented i64 reduction: each block stores its partial result with an
++-- atomic write, which WGSL has no 64-bit type for (it failed to compile with
++-- "Atomics not supported for values of type IntType Int64").
++
++-- ==
++-- entry: sum_i64
++-- input { [1i64, -2i64, 0x100000000i64, 0x7FFFFFFF00000000i64] }
++-- output { 0x7FFFFFFFFFFFFFFFi64 }
++-- compiled random input { [100000]i64 } auto output
++
++entry sum_i64 (xs: []i64) : i64 = i64.sum xs
++
++-- ==
++-- entry: sum_u64
++-- input { [0xFFFFFFFFFFFFFFFFu64, 2u64] }
++-- output { 1u64 }
++-- compiled random input { [100000]u64 } auto output
++
++entry sum_u64 (xs: []u64) : u64 = u64.sum xs
++
++-- ==
++-- entry: count_i64
++-- input { [1f32, 5f32, 3f32] 2f32 }
++-- output { 2i64 }
++
++entry count_i64 (xs: []f32) (t: f32) : i64 = i64.sum (map (\x -> i64.bool (x >= t)) xs)
+-- 
+2.50.1 (Apple Git-155)
+
