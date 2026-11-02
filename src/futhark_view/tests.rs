@@ -1,6 +1,6 @@
-//! The view's regression: the Rust view of every committed specification writes the committed tables byte for byte
-//! (the tables `kingdoms/futhark/gen_tables.py` writes from the same master with `view.py`), so the two
-//! implementations of the view agree, and the engine's runtime kingdom is the table the witnesses checked.
+//! The view's regression: every signature view's written text is pinned by its fingerprint, A7's equals its committed
+//! tables byte for byte, and the writer writes what the witnesses (`kingdoms/futhark/gen_tables.py --views DIR`)
+//! check, so the engine's runtime kingdom is the table the witnesses checked.
 
 use super::*;
 
@@ -23,18 +23,33 @@ fn first_difference(a: &str, b: &str) -> String {
     }
 }
 
+/// THE REGRESSION OF THE WRITTEN VIEWS (`docs/PLAN_futhark_kingdom.md` 3g): the per-problem tables are no longer
+/// committed; each signature view's written text is pinned by its fingerprint. Until 3g the committed tables were
+/// compared byte for byte with the Python view's and this one's; the fingerprints below are of the text those
+/// committed tables had (commit 1fe8a742), so the retirement changed no byte.
 #[test]
-fn every_signature_view_writes_the_committed_tables_byte_for_byte() {
+fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
+    let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
+    assert_eq!(got, [("histogram", 0x2945_ea1e_1d1d_c2d8), ("pathfinder", 0xa262_fc80_5844_d42c), ("reduce", 0x0949_f66a_a873_425e), ("scan", 0x5dd6_33e7_ed01_2bb4)], "the views' written text changed");
     for (name, spec) in SIG {
-        let v = View::load(&master, spec).unwrap();
-        let arts = v.artefacts();
-        assert_eq!(arts.len(), 6, "{name}: a signature view writes six artefacts");
-        for (file, text) in arts {
-            let want = committed(&format!("kingdoms/futhark/sig/{name}/{file}"));
-            assert!(text == want, "{name}/{file}: the Rust view differs from the committed table at {}", first_difference(text, &want));
+        assert_eq!(View::load(&master, spec).unwrap().artefacts().len(), 6, "{name}: a signature view writes six artefacts");
+    }
+}
+
+/// The writer writes every committed view, and what it writes reads back as the view's own text.
+#[test]
+fn write_committed_writes_every_view_and_its_text() {
+    let dir = std::env::temp_dir().join(format!("futhark_view_write_{}", std::process::id()));
+    let views = write_committed(&dir).unwrap();
+    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/histogram", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
+    for (sub, v) in views {
+        for (file, text) in v.artefacts() {
+            let got = std::fs::read_to_string(dir.join(sub).join(file)).unwrap();
+            assert!(got == text, "{sub}/{file}: the written file differs at {}", first_difference(&got, text));
         }
     }
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

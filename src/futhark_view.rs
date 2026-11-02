@@ -17,8 +17,10 @@
 //!    by what the problem's source happens to use;
 //! 4. **writes** the exact table: `types.tsv`, `functions.tsv` and, for a signature view, the e-graph artefacts.
 //!
-//! This is the implementation the engine runs; `kingdoms/futhark/view.py` is the generator's, and the tests require
-//! both to write the committed tables byte for byte. The engine sees an ordinary flat typed table
+//! This is THE ONE implementation of the view (`docs/PLAN_futhark_kingdom.md` 3g): the engine runs it, and
+//! [`write_committed`] writes its tables for the generator's witnesses (`kingdoms/futhark/gen_tables.py --views DIR`);
+//! the per-problem tables are no longer committed, and each view's written text is pinned by its
+//! [`View::fingerprint`]. The engine sees an ordinary flat typed table
 //! ([`FutharkKingdom::from_tables`]): legality by construction is unchanged, the view only decides which rows exist.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -920,6 +922,45 @@ impl View {
         }
         Ok(())
     }
+}
+
+impl View {
+    /// THE FINGERPRINT of the written text: FNV-1a (64 bits) over every artefact's file name, a NUL, its text and a
+    /// NUL, in [`View::artefacts`] order. It pins a view's regression without committing the tables
+    /// (`docs/PLAN_futhark_kingdom.md` 3g): a change to any written byte changes it.
+    pub fn fingerprint(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for (name, text) in self.artefacts() {
+            for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+}
+
+/// Every committed specification, by the directory [`write_committed`] writes its tables into: the four signature
+/// problems (`sig/<problem>`) and A7's matrix view (`a7`).
+pub const COMMITTED: [(&str, &str); 5] = [
+    ("sig/histogram", include_str!("../kingdoms/futhark/sig/histogram/view.tsv")),
+    ("sig/pathfinder", include_str!("../kingdoms/futhark/sig/pathfinder/view.tsv")),
+    ("sig/reduce", include_str!("../kingdoms/futhark/sig/reduce/view.tsv")),
+    ("sig/scan", include_str!("../kingdoms/futhark/sig/scan/view.tsv")),
+    ("a7", include_str!("../kingdoms/futhark/view.tsv")),
+];
+
+/// THE ONE VIEW IMPLEMENTATION writes every committed view's exact table under `dir` (`dir/sig/<problem>/`,
+/// `dir/a7/`): what `kingdoms/futhark/gen_tables.py --views DIR` reads to run its witnesses, so the witnesses check
+/// the tables the engine computes. `examples/futhark_views.rs` is the command.
+pub fn write_committed(dir: &std::path::Path) -> Result<Vec<(&'static str, &'static View)>, String> {
+    let mut out = Vec::new();
+    for (sub, spec) in COMMITTED {
+        let v = cached(spec)?;
+        v.write(&dir.join(sub))?;
+        out.push((sub, v));
+    }
+    Ok(out)
 }
 
 /// The view of a committed specification over the committed master, computed once a process: every caller of one

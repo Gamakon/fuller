@@ -156,7 +156,8 @@ fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str, topics: bool) -> R
         entry.push_str(&format!(" ({}: {}{})", p.name, dims(&p.dims), p.elem));
     }
     entry.push_str(&format!(" : {}{} =", dims(&sig.output.dims), sig.output.elem));
-    let notes = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("kingdoms/futhark/sig/{pname}/functions.tsv"))).map_err(|e| e.to_string())?;
+    // The notes are the view's own table (computed from the master; the per-problem tables are no longer committed).
+    let notes = &problem(pname)?.instance.view()?.functions_tsv;
     let note_of: BTreeMap<&str, &str> = notes.lines().skip(1).filter_map(|l| {
         let f: Vec<&str> = l.split('\t').collect();
         (f.len() >= 7).then(|| (f[1], f[6]))

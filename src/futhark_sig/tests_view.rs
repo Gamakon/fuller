@@ -1,18 +1,25 @@
-//! THE VIEW REGRESSION (`docs/PLAN_futhark_kingdom.md`, design D6): each problem's kingdom, now computed at runtime
-//! from the master table and its view specification, is the kingdom its written-out table (the generator's record,
-//! byte for byte what the hand-declared signature gave before the view) loads: the same duals and rows, so the same
+//! THE VIEW REGRESSION (`docs/PLAN_futhark_kingdom.md`, design D6 and 3g): each problem's kingdom, computed at
+//! runtime from the master table and its view specification, is the kingdom its written-out table (`View::write`,
+//! read back from the files; the text is pinned by its fingerprint in `futhark_view::tests`) loads: the same duals and rows, so the same
 //! contract, constant lengths and alphabet at every cell of a layout, so the same genes express the same trees and the
 //! same Futhark programs; and its signature is the one the old `interface.tsv` declared.
 
 use super::*;
 use crate::typed_gep::express;
 
-const WRITTEN: [(&str, &str, &str); 4] = [
-    ("pathfinder", include_str!("../../kingdoms/futhark/sig/pathfinder/types.tsv"), include_str!("../../kingdoms/futhark/sig/pathfinder/functions.tsv")),
-    ("reduce", include_str!("../../kingdoms/futhark/sig/reduce/types.tsv"), include_str!("../../kingdoms/futhark/sig/reduce/functions.tsv")),
-    ("scan", include_str!("../../kingdoms/futhark/sig/scan/types.tsv"), include_str!("../../kingdoms/futhark/sig/scan/functions.tsv")),
-    ("histogram", include_str!("../../kingdoms/futhark/sig/histogram/types.tsv"), include_str!("../../kingdoms/futhark/sig/histogram/functions.tsv")),
-];
+/// The problems whose view is written out and loaded back.
+const WRITTEN: [&str; 4] = ["pathfinder", "reduce", "scan", "histogram"];
+
+/// A view's tables as `View::write` writes them, read back from the files: the written-out table (the option the plan
+/// keeps), which the generator's witnesses check (`gen_tables.py --views DIR`).
+fn written_tables(name: &str, view: &crate::futhark_view::View) -> (String, String) {
+    let dir = std::env::temp_dir().join(format!("futhark_sig_written_{name}_{}", std::process::id()));
+    view.write(&dir).unwrap();
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+    let out = (read("types.tsv"), read("functions.tsv"));
+    std::fs::remove_dir_all(&dir).unwrap();
+    out
+}
 
 fn p(name: &str, elem: &str, dims: &[&str]) -> Param {
     Param { name: name.into(), elem: elem.into(), dims: dims.iter().map(|d| d.to_string()).collect() }
@@ -38,10 +45,11 @@ fn declared(name: &str) -> Signature {
 
 #[test]
 fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_programs() {
-    for (name, types, functions) in WRITTEN {
+    for name in WRITTEN {
         let prob = problem(name).unwrap();
         let k = load(&prob.instance).unwrap();
-        let written = FutharkKingdom::from_tables(crate::futhark_table::FutharkFamily::Shape, &k.kingdom, types, functions).unwrap();
+        let (types, functions) = written_tables(name, prob.instance.view().unwrap());
+        let written = FutharkKingdom::from_tables(crate::futhark_table::FutharkFamily::Shape, &k.kingdom, &types, &functions).unwrap();
         let sig = signature(&prob.instance).unwrap();
         assert_eq!(sig, declared(name), "{name}: the view's signature is not the declared one");
         assert_eq!(k.duals, written.duals, "{name}: the duals differ");

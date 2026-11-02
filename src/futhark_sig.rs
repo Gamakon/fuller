@@ -38,8 +38,8 @@ use crate::typed_gep::{Domain, GeneLayout, Tree};
 /// One instance of the family: a problem's VIEW over the master Futhark table (`kingdoms/futhark/master/`), given by
 /// its specification (`kingdoms/futhark/sig/<problem>/view.tsv`, written by `kingdoms/futhark/sniff.py` from the
 /// problem's Futhark source). Its tables, signature and e-graph are computed at runtime from the master and the
-/// specification ([`crate::futhark_view`]), once a process; the written-out tables beside the specification are the
-/// generator's record and are never loaded.
+/// specification ([`crate::futhark_view`]), once a process. The tables are not committed: `View::write` writes them
+/// for the generator's witnesses, and each view's text is pinned by its fingerprint.
 #[derive(Debug, Clone, Copy)]
 pub struct Instance {
     pub name: &'static str,

@@ -33,7 +33,12 @@ mis-declared row cannot pass silently.
 Output: `types.tsv` and `functions.tsv`, the format `src/futhark_table.rs`
 loads.
 
-    python3 kingdoms/futhark/gen_tables.py
+    cargo run --release --example futhark_views -- DIR
+    python3 kingdoms/futhark/gen_tables.py --check --views DIR
+
+The views (A7's and the signature problems') are computed by the one view
+implementation, in Rust (`src/futhark_view.rs`); `--views DIR` is where it
+wrote them.
 """
 
 import itertools
@@ -56,10 +61,36 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # --------------------------------------------------------------------------
 
 # The A7 view's specification: the dimension roles and the root. The rows are
-# the master's matrix family (`master/rows.tsv`), expanded by the view
-# (`view.py`); this generator derives the cost table and the e-graph from them
-# and witnesses all of it.
+# the master's matrix family (`master/rows.tsv`), expanded by THE view, the one
+# implementation in Rust (`src/futhark_view.rs`), whose tables this generator
+# reads from `--views DIR` (written by `cargo run --release --example
+# futhark_views -- DIR`); it derives the cost table and the e-graph from them
+# and witnesses all of it. `view.py` keeps only the master and specification
+# readers.
 import view as master_view  # noqa: E402
+
+# The directory of the Rust-written views (`--views DIR`), set by `main`.
+VIEWS = None
+
+
+def views_file(sub, name):
+    """A Rust-written view table: `DIR/<sub>/<name>`."""
+    if VIEWS is None:
+        raise RuntimeError("our software has a bug: a view table was read before --views was given")
+    with open(os.path.join(VIEWS, sub, name)) as f:
+        return f.read()
+
+
+def read_rows(text):
+    """The rows of a written `functions.tsv`, as the view writes them."""
+    out = []
+    for line in text.splitlines()[1:]:
+        if not line.strip():
+            continue
+        f = line.split("\t")
+        out.append({"name": f[1], "kind": f[2], "out": f[3], "args": [a for a in f[4].split(";") if a],
+                    "spelling": f[5], "note": f[6]})
+    return out
 
 A7_SPEC_PATH = os.path.join(HERE, "view.tsv")
 with open(A7_SPEC_PATH) as _f:
@@ -146,9 +177,10 @@ OPERATORS = [
 
 
 def _matrix_view():
-    """The A7 view's tables and rows, from the master (computed once)."""
+    """The A7 view's tables and rows, as the Rust view writes them (`--views DIR/a7`), read once."""
     if not hasattr(_matrix_view, "cache"):
-        _matrix_view.cache = master_view.matrix_view(A7_SPEC_TEXT)
+        tables = {n: views_file("a7", n) for n in ("types.tsv", "functions.tsv")}
+        _matrix_view.cache = (tables, read_rows(tables["functions.tsv"]))
     return _matrix_view.cache
 
 
@@ -1681,10 +1713,12 @@ def sig_spec(name):
         return master_view.read_spec(f.read())
 
 
-def sig_tables(name):
-    """The written-out exact table of a problem's view: the tables and the e-graph."""
-    with open(sig_spec_path(name)) as f:
-        return master_view.signature_view(f.read())
+SIG_ARTEFACTS = ("types.tsv", "functions.tsv", "egraph.datatype", "egraph.rules", "egraph.rows", "egraph.sorts")
+
+
+def sig_views_dir(name):
+    """The directory of a problem's Rust-written view (`--views DIR/sig/<problem>`)."""
+    return os.path.join(VIEWS, "sig", name)
 
 
 # ---- the signature family's witness tests -----------------------------------
@@ -1890,11 +1924,11 @@ def sig_dir(name):
 
 
 def sig_main(mode):
-    """The signature family's instances: checked (the default) or written,
-    staged and witnessed as the pixel family's are."""
+    """The signature family's instances. The specification is the sniffer's reading of the problem's source, checked
+    byte for byte (the default) or written. The view's tables are the Rust view's (`--views DIR`), witnessed where
+    they were written: they are no longer committed, and their regression is pinned in Rust by each view's
+    fingerprint (`futhark_view::tests`)."""
     for name in sorted(SIG_PROBLEMS):
-        out_dir = sig_dir(name)
-        # The specification first: the sniffer's reading of the problem's source, byte for byte.
         src, entry = SIG_PROBLEMS[name]
         spec_text = sniff.sniff(os.path.join(REPO, src), entry)
         if mode == "--write":
@@ -1911,52 +1945,25 @@ def sig_main(mode):
                 print(f"THE SIGNATURE INSTANCE {name} FAILED: sig/{name}/view.tsv is not what the sniffer writes from "
                       f"{src} ({first_difference(got, spec_text.encode('utf-8'))}); run with --write to regenerate")
                 return 1
-        wanted = sig_tables(name)
-        if mode == "--write":
-            staged = os.path.join(out_dir, ".staged")
-            os.makedirs(staged, exist_ok=True)
-            for fname, text in wanted.items():
-                with open(os.path.join(staged, fname), "w") as f:
-                    f.write(text)
-            bad = witness_sig(staged, name)
-            if bad:
-                print(f"THE SIGNATURE WITNESS TESTS FAILED for {name} (the committed files are untouched):")
-                for b in bad[:40]:
-                    print("  " + b)
-                for fname in wanted:
-                    os.remove(os.path.join(staged, fname))
-                os.rmdir(staged)
-                return 1
-            for fname in wanted:
-                os.replace(os.path.join(staged, fname), os.path.join(out_dir, fname))
-            os.rmdir(staged)
-        else:
-            bad = []
-            for fname, text in wanted.items():
-                path = os.path.join(out_dir, fname)
-                try:
-                    with open(path, "rb") as f:
-                        got = f.read()
-                except OSError as e:
-                    bad.append(f"the artefact sig/{name}/{fname} cannot be read: {e}")
-                    continue
-                if got != text.encode("utf-8"):
-                    bad.append(f"the committed sig/{name}/{fname} is not what the generator produces "
-                               f"({first_difference(got, text.encode('utf-8'))}); run with --write to regenerate")
-            if not bad:
-                bad = witness_sig(out_dir, name)
-            if bad:
-                print(f"THE SIGNATURE INSTANCE {name} FAILED:")
-                for b in bad[:40]:
-                    print("  " + b)
-                return 1
+        out_dir = sig_views_dir(name)
+        missing = [f for f in SIG_ARTEFACTS if not os.path.exists(os.path.join(out_dir, f))]
+        if missing:
+            print(f"THE SIGNATURE INSTANCE {name} FAILED: the Rust view did not write {missing} under {out_dir}")
+            return 1
+        bad = witness_sig(out_dir, name)
+        if bad:
+            print(f"THE SIGNATURE INSTANCE {name} FAILED:")
+            for b in bad[:40]:
+                print("  " + b)
+            return 1
         types, funcs = read_tables(os.path.join(out_dir, "types.tsv"), os.path.join(out_dir, "functions.tsv"))
         kinds = {}
         for r in funcs:
             kinds[r[2]] = kinds.get(r[2], 0) + 1
         print(f"sig/{name}: {len(types)} types, {len(funcs)} rows "
               f"({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}); "
-              f"{'committed artefacts MATCH the generator, ' if mode == '--check' else 'written, '}witness tests PASS")
+              f"{'specification MATCHES the sniffer, ' if mode == '--check' else 'specification written, '}"
+              f"witness tests PASS on the Rust view")
     return 0
 
 
@@ -2155,11 +2162,21 @@ def main(argv):
     only ever see the generator's own output, and the corruption would be gone
     by the time they ran.
     """
-    mode = argv[1] if len(argv) > 1 else "--check"
-    if mode not in ("--check", "--write"):
-        print(f"usage: {os.path.basename(__file__)} [--check | --write]")
+    global VIEWS
+    args = argv[1:]
+    if "--views" in args:
+        i = args.index("--views")
+        if i + 1 >= len(args):
+            print("--views needs a directory")
+            return 2
+        VIEWS = args[i + 1]
+        del args[i:i + 2]
+    mode = args[0] if args else "--check"
+    if mode not in ("--check", "--write") or len(args) > 1 or VIEWS is None:
+        print(f"usage: {os.path.basename(__file__)} [--check | --write] --views DIR")
         print("  --check  verify the committed artefacts (the default)")
         print("  --write  regenerate them, then verify")
+        print("  --views  the views the Rust view wrote: cargo run --release --example futhark_views -- DIR")
         return 2
 
     types_path = os.path.join(HERE, "types.tsv")

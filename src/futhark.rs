@@ -943,9 +943,14 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let script = root.join("kingdoms/futhark/gen_tables.py");
         assert!(script.exists(), "the generator is at {script:?}");
+        // The views are the Rust view's (the one implementation), written where the witnesses read them.
+        let views = std::env::temp_dir().join(format!("futhark_views_check_{}", std::process::id()));
+        crate::futhark_view::write_committed(&views).expect("the views write");
         let out = Command::new("python3")
             .arg(&script)
             .arg("--check")
+            .arg("--views")
+            .arg(&views)
             .current_dir(root)
             .output()
             .expect("python3 runs the generator's check");
@@ -955,6 +960,7 @@ mod tests {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
+        std::fs::remove_dir_all(&views).expect("the scratch views are removed");
     }
 
     /// The kingdom's README states the size of the table, and a README that

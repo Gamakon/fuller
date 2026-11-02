@@ -16,13 +16,13 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
   element a view until step 4 of docs/PLAN_futhark_kingdom.md);
 * no FAMILY is chosen here: a view admits every family of the master and
   keeps the types reachable both ways, forward from the leaves and backward
-  from the root (`view.py`; docs/PLAN_futhark_kingdom.md, 3e), so what the
+  from the root (`src/futhark_view.rs`; docs/PLAN_futhark_kingdom.md, 3e), so what the
   problem's source happens to use limits nothing;
 * the depth, the literal pool and the master version are the master's
   defaults.
 
 It writes the specification `view.tsv` (the WHERE clause of the view, see
-`view.py`), replacing the hand-written `interface.tsv`.
+`src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
 
     python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--out view.tsv]
 """
