@@ -15,7 +15,17 @@ engine (the [HFF](https://github.com/Gamakon/HFF) equation-recovery work),
 where SymPy's complex-domain assumptions, native signal handling, and
 exponential simplification paths made expression cleanup unreliable. egglog is
 the right substrate: deterministic, bounded, declarative, and fast (the same
-engine family behind [Herbie](https://herbie.uwplse.org/)).
+engine family behind [Herbie](https://herbie.uwplse.org/)). The egglog in use
+is a vendored fork (`vendor-egglog/`) whose extractor is the HFF angular
+multi-objective extractor rather than a scalar cost.
+
+Since then fuller has grown into the home of the **kingdoms**: the typed
+symbol tables that let the same gene-expression-programming engine evolve
+expressions, regular expressions, Futhark kernels and WGSL kernels. The
+evolution loop itself (GPU populations, selection, the pump) lives in the
+sibling repository [phylu](https://github.com/Gamakon/phylu), which depends on
+fuller; fuller never depends on phylu. See
+[What is in this repository](#what-is-in-this-repository).
 
 ## The vision
 
@@ -158,9 +168,22 @@ See [`docs/USAGE.md`](docs/USAGE.md) for the full contract.
 - **Brainfuck simplifier** — the same machinery applied to a second, exact
   target (`bf_simplify`), where equivalence is decidable output-by-output.
 
-## Install
+## Build and install
 
-Requires a Rust toolchain (`rustup install stable`) and Python ≥ 3.9. Built with
+Requires a Rust toolchain (`rustup install stable`). The crate builds with no
+GPU, no Python and no Futhark installed:
+
+```bash
+cargo test                       # the Rust suite, plain build
+cargo clippy --all-targets       # must be clean: zero warnings, none silenced
+cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
+```
+
+Cargo features, all off by default: `python` (the PyO3 extension), `gpu` (the
+wgpu batch evaluator), `wgsl` (the WGSL kingdom's reader, naga in and out).
+The Futhark kingdom's compile-and-run paths need `futhark` 0.28.1 on the path.
+
+The Python extension needs Python 3.9 or later and
 [maturin](https://github.com/PyO3/maturin):
 
 ```bash
@@ -195,12 +218,13 @@ For the GEP/karva-chromosome API (`denoise_karva`, `snap_karva`,
 `concretize_karva`, `physics_mutate_karva`, `eclass_extract_hff_instrumented`),
 see [`docs/USAGE.md`](docs/USAGE.md).
 
-## Two proven targets: symbolic regression and Brainfuck
+## Targets: symbolic regression, Brainfuck, regular expressions
 
 fuller is not tied to one language. The core is *target-agnostic*: give it a
 grammar, a cost model, and a way to check equivalence, and it will minimise
-programs in that grammar. Two targets are included, chosen because they check
-equivalence in the two fundamentally different ways available:
+programs in that grammar. The first two targets check equivalence in the two
+fundamentally different ways available; the third is a kingdom in its own
+right (see below):
 
 **Symbolic regression (equivalence checked against data).** Evolved GEP
 expressions are noisy and bloated — `x·1 + 0·y`, `√(NA/r⁴)·…` where a physical
@@ -221,6 +245,69 @@ on every input. It demonstrates the same engine in the setting where behaviour
 preservation is decided exactly rather than statistically — and the same
 technique applies to any target with decidable equivalence (SQL, regex, sorting
 networks, compiler IR).
+
+**Regular expressions (an e-graph and a kingdom).** `regex_simplify` rewrites a
+POSIX regex AST under proved-equivalent rules, and the regex kingdom
+(`src/regex_typed.rs`, four types: pattern, character class, character,
+integer) evolves patterns on the typed GEP core. On UK postcodes it found a
+perfect training rule in 32 of 32 typed runs with held-out recall of 100 %
+(phylu `docs/reports/2026-10-20_regex_typed_gep.md`).
+
+## What is in this repository
+
+The expression library above is one part. The rest is the typed
+gene-expression-programming core and the kingdoms built on it. A **kingdom**
+is a symbol table with a type system: a head and a tail per output type,
+ordered argument types, no repair and no fallback, so every random gene
+expresses a legal program. Change the table and you change what can evolve
+without changing the search. The design is in
+[`kingdoms/README.md`](kingdoms/README.md).
+
+| kingdom | where | state |
+|---|---|---|
+| Symbolic regression | `kingdoms/symbolic-regression/`, `src/typed_gep.rs` | live; phylu's SRBench runs use it |
+| TSR, transcendental SR | `kingdoms/tsr/`, `src/tsr_kingdom.rs` | built; the distance between transcendental functions is a type, so illegal nesting is unrepresentable |
+| Regular expressions | `src/regex_typed.rs`, `src/regex/` | live; the postcode result above |
+| Futhark | `kingdoms/futhark/`, `src/futhark*.rs` | live; the measured result below |
+| WGSL | `kingdoms/wgsl_true/`, `src/wgsl/` (feature `wgsl`) | legal kernels are read, rebuilt, compiled and run; learning is not yet shown |
+
+**The Futhark kingdom** is the product decision: superoptimise shape-polymorphic
+Futhark kernels for the GPU, the Souper/STOKE idea aimed at a language that has
+nothing of the kind. A matrix shape IS a type (`mat.n.m` is the interface's
+`[n][m]`), the kingdom is a view computed over a master table of row templates
+(11 types, 71 rows in the signature family), and a program is checked against
+the reference bit for bit through fuller's own Futhark interpreter and the
+compiled program. Fitness is correctness plus a measured GPU cost (device
+allocations, shared memory, kernel count), with a static cost polynomial in
+the dimension roles as the filter. The measured result on the A7 kernel: the
+reference does not run on the GPU (its OpenCL kernel is too big for the
+device) and the search finds a form that does, with 40 % fewer device
+allocations. Read [`docs/REPORT_2026-10-27_shape_kingdom.md`](docs/REPORT_2026-10-27_shape_kingdom.md)
+first, then [`docs/PLAN_futhark_product.md`](docs/PLAN_futhark_product.md) and
+[`docs/measurements/2026-10-27_futhark_shapes_A7.md`](docs/measurements/2026-10-27_futhark_shapes_A7.md).
+
+**Shared machinery, owned here because phylu depends on fuller:**
+
+- `src/geneframe.rs` and `src/population_dag.rs`: the master symbol table and
+  the population DAG with homeotic rows (population-wide shared definitions,
+  memoised, hash-consed). Plan and measurements in
+  [`docs/PLAN_population_dag.md`](docs/PLAN_population_dag.md).
+- `src/fitness.rs`: every fitness function a runner offers, as a **named
+  scheme** chosen per experiment. A fixed fitness is a new name; old names
+  stay registered and marked not to be run as is.
+  [`docs/FITNESS_SCHEMES.md`](docs/FITNESS_SCHEMES.md).
+- `src/telemetry.rs`, `src/run_file.rs`, `src/runner.rs`: the standard every
+  evolution runner meets (a JSONL stream for the `evowatch` viewer, a kill
+  trigger file, guards, checkpoints).
+  [`docs/STANDARD_runners.md`](docs/STANDARD_runners.md).
+- `src/parity.rs`, `src/bin/parity.rs`: the SymPy-parity scorer, per rule
+  family, against frozen corpora in `parity/corpus/`. SymPy is never in the
+  scoring loop.
+- `src/gpu_eval.rs` (feature `gpu`): the wgpu batch evaluator behind
+  `gpu_score_karva` and `gpu_predict_karva`.
+- [`docs/index.html`](docs/index.html): an index of every markdown document in
+  this repository and in phylu, generated by `docs/build_index.py` and checked
+  by a test. [`docs/GOAL.md`](docs/GOAL.md) says what the repository is for.
 
 ## The evolution engine: phylu
 
@@ -263,17 +350,26 @@ genes, and share-equivalence as a mutation").
 
 ## Python API
 
+`equals`, `to_math` and `from_math` are in the Python shim (`python/fuller/`)
+and need SymPy; everything else is the Rust extension.
+
 | Function | Purpose |
 |---|---|
 | `denoise(expr, rows, tolerance=, k_variants=, positive_vars=, nonzero_vars=)` | Shrink a `Math` string, R²-gated against `rows`. |
 | `denoise_karva(head, tail, …)` | Same, as a GEP mutation operator on karva head/tail token lists. |
-| `snap_karva(head, tail, …)` | Up-flip: replace fitted numbers with named lattice constants. |
+| `denoise_karva_candidates(…)` / `denoise_karva_candidates_batch(…)` | The candidate forms without the gate, one gene or a batch, for the host to score. |
+| `smallest_form(expr, inputs, …)` | Saturate and extract the fewest-node equivalent form; the replacement for `sympy.simplify` at the end of a fit. |
+| `eclass_variants(…)` / `eclass_extract_hff(…)` / `eclass_extract_hff_instrumented(…)` | The k equivalent variants; tournament extraction, with per-variant metrics. |
+| `lint_forms(expr, inputs, …)` / `lint_karva_candidates_batch(…)` | The pattern linter: every tidier form at a chosen exactness level (bit, rounding, finite, prune, snap), unranked, for the host to execute and rank. |
+| `snap_karva(head, tail, …)` / `snap_karva_batch(…)` | Up-flip: replace fitted numbers with named lattice constants. |
 | `concretize_karva(head, tail)` | Down-flip: replace named constants with their numeric values. |
-| `equals(a, b)` / `proves_equal(a, b, …)` | Decide equivalence by equality saturation. |
+| `physics_mutate(expr, …)` / `physics_mutate_karva(…)` | Physics-prior structural mutations (inverse-square, etc.), one to many. |
+| `gpu_score_karva(…)` / `gpu_predict_karva(…)` | Score, or predict per row, a batch of genes on the GPU (feature `gpu`). |
+| `eval_math(expr, columns)` / `karva_to_math(head, tail, …)` | Evaluate a `Math` string on columns; express a gene as `Math`. |
+| `proves_equal(a, b, …)` / `equals(a, b)` | Decide equivalence by equality saturation. |
 | `to_math(expr)` / `from_math(s)` | SymPy ⇄ `Math` s-expression bridge. |
-| `physics_mutate_karva(…)` | Physics-prior structural mutations (inverse-square, etc.). |
-| `eclass_extract_hff_instrumented(…)` | Tournament extraction with per-variant metrics. |
 | `bf_simplify(source)` / `bf_parse` / `bf_unparse` | Brainfuck program simplification. |
+| `regex_simplify(ast)` / `regex_parse` / `regex_unparse` | Regular-expression simplification. |
 | `master_constants()` / `master_lattice()` / `master_pset()` | The constant lattice and primitive set. |
 
 ## Why an e-graph instead of SymPy
@@ -299,13 +395,18 @@ output. Equivalence is *proved* by saturation, not sampled.
 
 ## Status
 
-The core is complete and in regular use inside the
-[HFF](https://github.com/Gamakon/HFF) symbolic-regression engine. Denoising,
-the snap/concretize pair, the physics-prior mutations, the SymPy bridge and
-the Brainfuck simplifier are all implemented and tested. The rewrite ruleset
-is deliberately small and grows slowly: a rule is added only when it is either
-provably sound or guarded by the data check. The consumer guide is
-[`docs/USAGE.md`](docs/USAGE.md), with per-feature notes elsewhere in `docs/`.
+The expression library is complete and is the rewriter phylu's symbolic-regression
+runs call every generation: denoising, the snap/concretize pair, the
+physics-prior mutations, the SymPy bridge and the Brainfuck simplifier are
+implemented and tested. The rewrite ruleset is deliberately small and grows
+slowly: a rule is added only when it is either provably sound or guarded by
+the data check. The typed GEP core and the symbolic-regression, regex and
+Futhark kingdoms are live; TSR is built and its pre-registered experiments are
+not yet run; the WGSL kingdom builds and runs legal kernels but has not yet
+shown learning. Of the Futhark kernels, A7 is the one with a measured win.
+
+The consumer guide is [`docs/USAGE.md`](docs/USAGE.md); every other document
+is listed in [`docs/index.html`](docs/index.html).
 
 ## Citation
 
