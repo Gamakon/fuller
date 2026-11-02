@@ -1,8 +1,8 @@
 From ed2bc96bb316053c2524fc446235cb77cad176af Mon Sep 17 00:00:00 2001
 From: futhark-rust-backend <none>
 Date: Sun, 1 Nov 2026 21:21:44 +0000
-Subject: [PATCH] fix(webgpu, rust-wgpu): i64 reductions, shared memory merged
- across element types, f32<->i64 conversions, u64 entry arguments
+Subject: [PATCH 10/11] fix(webgpu, rust-wgpu): i64 reductions, shared memory
+ merged across element types, f32<->i64 conversions, u64 entry arguments
 
 - An atomic write is a plain write in WGSL, so its buffer needs an atomic type
   only where WGSL has one: a non-segmented i64/u64 reduction (each block's

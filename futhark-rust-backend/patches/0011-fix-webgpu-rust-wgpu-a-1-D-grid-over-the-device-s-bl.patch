@@ -1,0 +1,477 @@
+From 9b2fbe5bee90076675f19d21190d07bf871a9f86 Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Mon, 2 Nov 2026 01:33:31 +0000
+Subject: [PATCH] fix(webgpu, rust-wgpu): a 1-D grid over the device's
+ blocks-per-dimension limit
+
+WebGPU allows 65,535 workgroups a dispatch dimension, and both runtimes
+dispatched a kernel's 1-D grid as it was: a map over 2^24 elements at 256 a
+block (65,536 blocks) failed validation, as did any lmad copy of over
+16,777,216 elements. CUDA and OpenCL never saw this (their x-dimension is
+2^31), so the GPU code generator caps block counts at 1,048,576 and launches
+an unvirtualised SegMap at its full count.
+
+- Every generated kernel's scalars struct ends with its own block count
+  `futhark_grid_x` (u32); its offset is the kernel interface's
+  gridScalarOffset (-1 for a built-in kernel), the kernel table's
+  grid_offset (rust-wgpu) / grid_x_offset (C webgpu). The host writes the
+  real 1-D grid there at every launch.
+- The kernel's block id is `workgroup_id.x + workgroup_id.y *
+  num_workgroups.x`, and a block at or past its count does nothing; the test
+  is uniform over a workgroup, so barriers stay in uniform control flow.
+- A runtime dispatches a 1-D grid over the limit as x * y blocks, x <= the
+  limit, x * y >= the grid and fewer than y blocks of excess. A grid over the
+  limit in two dimensions is an error (none is generated).
+- lmad_copy reads its flat thread index the same way; its own bound (args.n)
+  returns the excess, so it needs no field. The template's line endings are
+  now LF like the rest of rts/wgsl (it was the one CRLF file, which git am
+  cannot apply a patch to without --keep-cr).
+
+Test: tests/webgpu/large_grid.fut (2^24 and 2^25 elements, both entries
+exercise the map kernel over the limit; the values are the sequential ones).
+---
+ rts/c/backends/webgpu.h                  |  22 ++-
+ rts/wgsl/lmad_copy.wgsl                  | 171 ++++++++++++-----------
+ src/Futhark/CodeGen/Backends/CWebGPU.hs  |   5 +
+ src/Futhark/CodeGen/Backends/RustWGPU.hs |   1 +
+ src/Futhark/CodeGen/ImpCode/WebGPU.hs    |   5 +
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs     |  51 +++++--
+ tests/webgpu/large_grid.fut              |  16 +++
+ 7 files changed, 178 insertions(+), 93 deletions(-)
+ create mode 100644 tests/webgpu/large_grid.fut
+
+diff --git a/rts/c/backends/webgpu.h b/rts/c/backends/webgpu.h
+index 280bdfb95..7369f183c 100644
+--- a/rts/c/backends/webgpu.h
++++ b/rts/c/backends/webgpu.h
+@@ -338,6 +338,9 @@ struct futhark_context {
+   size_t lockstep_width;
+   size_t max_thread_block_size;
+   size_t max_grid_size;
++  // The device's blocks per dispatch dimension; a 1-D grid over it is dispatched as a rectangle
++  // (gpu_launch_kernel), and the kernel reads its block count from its scalars (grid_x_offset).
++  uint32_t max_workgroups_per_dimension;
+   size_t max_tile_size;
+   size_t max_threshold;
+   size_t max_shared_memory;
+@@ -507,6 +510,7 @@ int backend_context_setup(struct futhark_context *ctx) {
+   required_limits.maxComputeWorkgroupSizeY = supported.maxComputeWorkgroupSizeY;
+   required_limits.maxComputeWorkgroupSizeZ = supported.maxComputeWorkgroupSizeZ;
+   required_limits.maxComputeWorkgroupsPerDimension = supported.maxComputeWorkgroupsPerDimension;
++  ctx->max_workgroups_per_dimension = supported.maxComputeWorkgroupsPerDimension;
+ 
+   // Require support for 16-bit floats
+   WGPUFeatureName required_features[] = { WGPUFeatureName_ShaderF16 };
+@@ -1007,6 +1011,22 @@ static int gpu_launch_kernel(struct futhark_context* ctx,
+     memcpy(scalars + kernel_info->scalar_offsets[i],
+         args[scalars_start + i], args_sizes[scalars_start + i]);
+   }
++  // The kernel's own block count, and the dispatch folded into two dimensions when the 1-D grid is over the
++  // device's limit: x * y >= grid[0] blocks with x <= the limit, the excess (fewer than y) returning at once.
++  uint32_t dispatch[3] = { (uint32_t)grid[0], (uint32_t)grid[1], (uint32_t)grid[2] };
++  if (kernel_info->grid_x_offset >= 0) {
++    uint32_t grid_x = (uint32_t)grid[0];
++    memcpy(scalars + kernel_info->grid_x_offset, &grid_x, sizeof grid_x);
++  }
++  if (dispatch[0] > ctx->max_workgroups_per_dimension) {
++    if (dispatch[1] != 1 || dispatch[2] != 1) {
++      futhark_panic(-1, "Kernel %s: a grid of %u x %u x %u blocks is over the device's %u blocks a dimension\n",
++                    name, dispatch[0], dispatch[1], dispatch[2], ctx->max_workgroups_per_dimension);
++    }
++    uint32_t y = (dispatch[0] + ctx->max_workgroups_per_dimension - 1) / ctx->max_workgroups_per_dimension;
++    dispatch[1] = y;
++    dispatch[0] = (dispatch[0] + y - 1) / y;
++  }
+ 
+   WGPUBindGroupEntry *bg_entries = calloc(1 + kernel_info->num_bindings,
+                                           sizeof(WGPUBindGroupEntry));
+@@ -1073,7 +1093,7 @@ static int gpu_launch_kernel(struct futhark_context* ctx,
+   wgpuComputePassEncoderSetPipeline(pass_encoder, pipeline);
+   wgpuComputePassEncoderSetBindGroup(pass_encoder, 0, bg, 0, NULL);
+   wgpuComputePassEncoderDispatchWorkgroups(pass_encoder,
+-                                           grid[0], grid[1], grid[2]);
++                                           dispatch[0], dispatch[1], dispatch[2]);
+   wgpuComputePassEncoderEnd(pass_encoder);
+ 
+   WGPUCommandBuffer cmd_buffer = wgpuCommandEncoderFinish(encoder, NULL);
+diff --git a/rts/wgsl/lmad_copy.wgsl b/rts/wgsl/lmad_copy.wgsl
+index f3f6f19d0..3cb210ca3 100644
+--- a/rts/wgsl/lmad_copy.wgsl
++++ b/rts/wgsl/lmad_copy.wgsl
+@@ -1,83 +1,88 @@
+-override block_size_x: i32 = 1;
+-override block_size_y: i32 = 1;
+-override block_size_z: i32 = 1;
+-
+-struct CopyParameters {
+-    dst_offset: i64,
+-    src_offset: i64,
+-    n: i64,
+-    r: i32,
+-    shape0: i64, dst_stride0: i64, src_stride0: i64,
+-    shape1: i64, dst_stride1: i64, src_stride1: i64,
+-    shape2: i64, dst_stride2: i64, src_stride2: i64,
+-    shape3: i64, dst_stride3: i64, src_stride3: i64,
+-    shape4: i64, dst_stride4: i64, src_stride4: i64,
+-    shape5: i64, dst_stride5: i64, src_stride5: i64,
+-    shape6: i64, dst_stride6: i64, src_stride6: i64,
+-    shape7: i64, dst_stride7: i64, src_stride7: i64
+-}
+-
+-@group(0) @binding(0) var<uniform> args: CopyParameters;
+-@group(0) @binding(1) var<storage, read_write> dst_mem: array<ELEM_TYPE>;
+-@group(0) @binding(2) var<storage, read_write> src_mem: array<ELEM_TYPE>;
+-@compute @workgroup_size(block_size_x, block_size_y, block_size_z)
+-fn lmad_copy_NAME(@builtin(global_invocation_id) global_id: vec3<u32>) {
+-    var remainder: i32 = i32(global_id.x);
+-    var dst_offset: i32 = args.dst_offset.x;
+-    var src_offset: i32 = args.src_offset.x;
+-
+-    if (i32(global_id.x) >= args.n.x) {
+-      return;
+-    }
+-
+-    if (args.r > 0) {
+-      let i: i32 = remainder % args.shape0.x;
+-      dst_offset += i * args.dst_stride0.x;
+-      src_offset += i * args.src_stride0.x;
+-      remainder  /= args.shape0.x;
+-    }
+-    if (args.r > 1) {
+-      let i: i32 = remainder % args.shape1.x;
+-      dst_offset += i * args.dst_stride1.x;
+-      src_offset += i * args.src_stride1.x;
+-      remainder  /= args.shape1.x;
+-    }
+-    if (args.r > 2) {
+-      let i: i32 = remainder % args.shape2.x;
+-      dst_offset += i * args.dst_stride2.x;
+-      src_offset += i * args.src_stride2.x;
+-      remainder  /= args.shape2.x;
+-    }
+-    if (args.r > 3) {
+-      let i: i32 = remainder % args.shape3.x;
+-      dst_offset += i * args.dst_stride3.x;
+-      src_offset += i * args.src_stride3.x;
+-      remainder  /= args.shape3.x;
+-    }
+-    if (args.r > 4) {
+-      let i: i32 = remainder % args.shape4.x;
+-      dst_offset += i * args.dst_stride4.x;
+-      src_offset += i * args.src_stride4.x;
+-      remainder  /= args.shape4.x;
+-    }
+-    if (args.r > 5) {
+-      let i: i32 = remainder % args.shape5.x;
+-      dst_offset += i * args.dst_stride5.x;
+-      src_offset += i * args.src_stride5.x;
+-      remainder  /= args.shape5.x;
+-    }
+-    if (args.r > 6) {
+-      let i: i32 = remainder % args.shape6.x;
+-      dst_offset += i * args.dst_stride6.x;
+-      src_offset += i * args.src_stride6.x;
+-      remainder  /= args.shape6.x;
+-    }
+-    if (args.r > 7) {
+-      let i: i32 = remainder % args.shape7.x;
+-      dst_offset += i * args.dst_stride7.x;
+-      src_offset += i * args.src_stride7.x;
+-      remainder  /= args.shape7.x;
+-    }
+-
+-    write_ELEM_TYPE(&dst_mem, dst_offset, read_ELEM_TYPE(&src_mem, src_offset));
+-}
++override block_size_x: i32 = 1;
++override block_size_y: i32 = 1;
++override block_size_z: i32 = 1;
++
++struct CopyParameters {
++    dst_offset: i64,
++    src_offset: i64,
++    n: i64,
++    r: i32,
++    shape0: i64, dst_stride0: i64, src_stride0: i64,
++    shape1: i64, dst_stride1: i64, src_stride1: i64,
++    shape2: i64, dst_stride2: i64, src_stride2: i64,
++    shape3: i64, dst_stride3: i64, src_stride3: i64,
++    shape4: i64, dst_stride4: i64, src_stride4: i64,
++    shape5: i64, dst_stride5: i64, src_stride5: i64,
++    shape6: i64, dst_stride6: i64, src_stride6: i64,
++    shape7: i64, dst_stride7: i64, src_stride7: i64
++}
++
++@group(0) @binding(0) var<uniform> args: CopyParameters;
++@group(0) @binding(1) var<storage, read_write> dst_mem: array<ELEM_TYPE>;
++@group(0) @binding(2) var<storage, read_write> src_mem: array<ELEM_TYPE>;
++@compute @workgroup_size(block_size_x, block_size_y, block_size_z)
++fn lmad_copy_NAME(@builtin(workgroup_id) workgroup_id: vec3<u32>,
++                  @builtin(num_workgroups) num_workgroups: vec3<u32>,
++                  @builtin(local_invocation_id) local_id: vec3<u32>) {
++    // The flat thread index over a dispatch the host may have folded into two dimensions (the blocks-per-dimension
++    // limit); the bound below returns the excess.
++    let global_id_x: u32 = (workgroup_id.x + workgroup_id.y * num_workgroups.x) * u32(block_size_x) + local_id.x;
++    var remainder: i32 = i32(global_id_x);
++    var dst_offset: i32 = args.dst_offset.x;
++    var src_offset: i32 = args.src_offset.x;
++
++    if (i32(global_id_x) >= args.n.x) {
++      return;
++    }
++
++    if (args.r > 0) {
++      let i: i32 = remainder % args.shape0.x;
++      dst_offset += i * args.dst_stride0.x;
++      src_offset += i * args.src_stride0.x;
++      remainder  /= args.shape0.x;
++    }
++    if (args.r > 1) {
++      let i: i32 = remainder % args.shape1.x;
++      dst_offset += i * args.dst_stride1.x;
++      src_offset += i * args.src_stride1.x;
++      remainder  /= args.shape1.x;
++    }
++    if (args.r > 2) {
++      let i: i32 = remainder % args.shape2.x;
++      dst_offset += i * args.dst_stride2.x;
++      src_offset += i * args.src_stride2.x;
++      remainder  /= args.shape2.x;
++    }
++    if (args.r > 3) {
++      let i: i32 = remainder % args.shape3.x;
++      dst_offset += i * args.dst_stride3.x;
++      src_offset += i * args.src_stride3.x;
++      remainder  /= args.shape3.x;
++    }
++    if (args.r > 4) {
++      let i: i32 = remainder % args.shape4.x;
++      dst_offset += i * args.dst_stride4.x;
++      src_offset += i * args.src_stride4.x;
++      remainder  /= args.shape4.x;
++    }
++    if (args.r > 5) {
++      let i: i32 = remainder % args.shape5.x;
++      dst_offset += i * args.dst_stride5.x;
++      src_offset += i * args.src_stride5.x;
++      remainder  /= args.shape5.x;
++    }
++    if (args.r > 6) {
++      let i: i32 = remainder % args.shape6.x;
++      dst_offset += i * args.dst_stride6.x;
++      src_offset += i * args.src_stride6.x;
++      remainder  /= args.shape6.x;
++    }
++    if (args.r > 7) {
++      let i: i32 = remainder % args.shape7.x;
++      dst_offset += i * args.dst_stride7.x;
++      src_offset += i * args.src_stride7.x;
++      remainder  /= args.shape7.x;
++    }
++
++    write_ELEM_TYPE(&dst_mem, dst_offset, read_ELEM_TYPE(&src_mem, src_offset));
++}
+diff --git a/src/Futhark/CodeGen/Backends/CWebGPU.hs b/src/Futhark/CodeGen/Backends/CWebGPU.hs
+index aa3bee7e9..4bfaf9258 100644
+--- a/src/Futhark/CodeGen/Backends/CWebGPU.hs
++++ b/src/Futhark/CodeGen/Backends/CWebGPU.hs
+@@ -42,6 +42,7 @@ mkKernelInfos kernels = do
+                typename size_t scalars_binding;
+                typename size_t scalars_size;
+                typename size_t *scalar_offsets;
++               typename int64_t grid_x_offset;
+                typename size_t num_bindings;
+                typename uint32_t *binding_indices;
+                typename size_t num_overrides;
+@@ -116,6 +117,7 @@ mkKernelInfos kernels = do
+                      .scalars_binding = $int:(scalarsBindSlot k),
+                      .scalars_size = $int:(scalarsSize k),
+                      .scalar_offsets = $id:(n <> "_scalar_offsets"),
++                     .grid_x_offset = $int:(gridScalarOffset k),
+                      .num_bindings = $int:num_bindings,
+                      .binding_indices = $id:(n <> "_binding_indices"),
+                      .num_overrides = $int:num_overrides,
+@@ -171,6 +173,7 @@ builtinKernels =
+         { safety = SafetyNone,
+           scalarsOffsets = [0, 8, 16, 20, 24, 28, 32, 36, 40],
+           scalarsSize = 48, -- uniform buffers must be multiple of 16 bytes
++          gridScalarOffset = -1,
+           scalarsBindSlot = 0,
+           memBindSlots = [1, 2],
+           overrideNames = ["block_size_x", "block_size_y", "block_size_z"],
+@@ -188,6 +191,7 @@ builtinKernels =
+         { safety = SafetyNone,
+           scalarsOffsets = [0, 8, 16, 24, 32, 40, 48, 56, 60],
+           scalarsSize = 64, -- uniform buffers must be multiple of 16 bytes
++          gridScalarOffset = -1,
+           scalarsBindSlot = 0,
+           memBindSlots = [1, 2],
+           overrideNames = ["block_size_x", "block_size_y", "block_size_z"],
+@@ -208,6 +212,7 @@ builtinKernels =
+           -- requirements
+           scalarsOffsets = [0, 8 .. 216],
+           scalarsSize = 224, -- uniform buffers must be multiple of 16 bytes
++          gridScalarOffset = -1,
+           scalarsBindSlot = 0,
+           memBindSlots = [1, 2],
+           overrideNames = ["block_size_x", "block_size_y", "block_size_z"],
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index b03ed9396..3ee1cbcc4 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -987,6 +987,7 @@ kernelInfo (n, k) =
+       "        scalars_binding: " <> showT (scalarsBindSlot k) <> ",",
+       "        scalars_size: " <> showT (scalarsSize k) <> ",",
+       "        scalar_offsets: &[" <> T.intercalate ", " (map showT (scalarsOffsets k)) <> "],",
++      "        grid_offset: " <> (if gridScalarOffset k < 0 then "None" else "Some(" <> showT (gridScalarOffset k) <> ")") <> ",",
+       "        binding_indices: &[" <> T.intercalate ", " (map showT (memBindSlots k)) <> "],",
+       "        used_overrides: &[" <> T.intercalate ", " (map strLit (overrideNames k)) <> "],",
+       "        dynamic_block_dims: &[" <> T.intercalate ", " ["(" <> showT i <> ", " <> strLit d <> ")" | (i, d) <- dynamicBlockDims k] <> "],",
+diff --git a/src/Futhark/CodeGen/ImpCode/WebGPU.hs b/src/Futhark/CodeGen/ImpCode/WebGPU.hs
+index 5f1856d72..21746a339 100644
+--- a/src/Futhark/CodeGen/ImpCode/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpCode/WebGPU.hs
+@@ -28,6 +28,11 @@ data KernelInterface = KernelInterface
+     scalarsOffsets :: [Int],
+     -- | Total size in bytes of the scalars uniform buffer.
+     scalarsSize :: Int,
++    -- | Offset in the scalars struct of the kernel's own block count `futhark_grid_x` (u32): the host writes the
++    -- 1-D grid there and may dispatch it as a 2-D grid when it exceeds the device's blocks-per-dimension limit
++    -- (WebGPU's is 65,535); the kernel's block id is `workgroup_id.x + workgroup_id.y * num_workgroups.x` and a
++    -- block at or past the count returns at once. -1 for a built-in kernel, which has no such field.
++    gridScalarOffset :: Int,
+     -- | Bind slot index for the scalars uniform buffer.
+     scalarsBindSlot :: Int,
+     -- | Bind slot indices for all memory arguments.
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index 7949547bc..8ac604ac2 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -15,7 +15,7 @@ import Data.Bifunctor (first, second)
+ import Data.Bits qualified as Bits
+ import Data.List qualified as L
+ import Data.Map qualified as M
+-import Data.Maybe (catMaybes, fromMaybe)
++import Data.Maybe (catMaybes)
+ import Data.Set qualified as S
+ import Data.Text qualified as T
+ import Debug.Trace (traceM)
+@@ -191,9 +191,22 @@ entryParams =
+     WGSL.Param
+       "local_id"
+       (WGSL.Prim (WGSL.Vec3 WGSL.UInt32))
+-      [WGSL.Attrib "builtin" [WGSL.VarExp "local_invocation_id"]]
++      [WGSL.Attrib "builtin" [WGSL.VarExp "local_invocation_id"]],
++    WGSL.Param
++      "num_workgroups"
++      (WGSL.Prim (WGSL.Vec3 WGSL.UInt32))
++      [WGSL.Attrib "builtin" [WGSL.VarExp "num_workgroups"]]
+   ]
+ 
++-- | The kernel's block id: the flat index of the workgroup in a dispatch the host may have folded into two
++-- dimensions (the blocks-per-dimension limit; `gridScalarOffset`).
++blockIdIdent :: WGSL.Ident
++blockIdIdent = "futhark_block_id"
++
++-- | The scalars field holding the kernel's own block count, written by the host at every launch.
++gridFieldIdent :: WGSL.Ident
++gridFieldIdent = "futhark_grid_x"
++
+ builtinLockstepWidth :: KernelM WGSL.Ident
+ builtinLockstepWidth = mkGlobalIdent "lockstep_width"
+ 
+@@ -236,19 +249,35 @@ genKernel kernel = do
+         [ WGSL.Attrib "compute" [],
+           WGSL.Attrib "workgroup_size" (map WGSL.VarExp blockDimNames)
+         ]
++  -- The block id is the flat index over a dispatch the host may fold into two dimensions, and a block at or
++  -- past the kernel's own block count (the last scalars field) does nothing: the host dispatches at most that
++  -- many blocks' worth of work, rounded up to a rectangle. The test is uniform over a workgroup, so the
++  -- barriers inside stay in uniform control flow.
++  let scalarsIdent = textToIdent name <> "_scalars"
++      flatBlockId =
++        WGSL.BinOpExp
++          "+"
++          (WGSL.IndexExp "workgroup_id" (WGSL.IntExp 0))
++          (WGSL.BinOpExp "*" (WGSL.IndexExp "workgroup_id" (WGSL.IntExp 1)) (WGSL.IndexExp "num_workgroups" (WGSL.IntExp 0)))
++      pastTheGrid =
++        WGSL.BinOpExp ">=" (WGSL.VarExp blockIdIdent) (WGSL.FieldExp (WGSL.VarExp scalarsIdent) gridFieldIdent)
+   let wgslFun =
+         WGSL.Function
+           { WGSL.funName = textToIdent name,
+             WGSL.funAttribs = attribs,
+             WGSL.funParams = entryParams,
+             WGSL.funOutput = [],
+-            WGSL.funBody = WGSL.stmts (ksInits s ++ ksBody s)
++            WGSL.funBody =
++              WGSL.Seq (WGSL.Let blockIdIdent flatBlockId) $
++                WGSL.If pastTheGrid WGSL.Skip (WGSL.stmts (ksInits s ++ ksBody s))
+           }
+   addCode $ prettyText wgslFun
+ 
+-  let (offsets, _align, size) =
+-        -- dummy layout with single i32 instead of empty structs
+-        fromMaybe ([], 4, 4) (WGSL.structLayout (ksScalars s))
++  -- The scalars struct always ends with the grid field (`genScalarDecls`), so the layout exists; the field's
++  -- offset is the interface's `gridScalarOffset`, not one of the kernel arguments' offsets.
++  let (offsets, gridOffset, size) = case WGSL.structLayout (ksScalars s) of
++        Just (offs, _align, sz) -> (init offs, last offs, sz)
++        Nothing -> error "genKernel: a scalars struct without the grid field"
+   let dynamicBlockDims = [(dim, n) | (dim, n, True) <- ksBlockDims s]
+   let (sharedMemOverrides, sharedMemExps) = unzip $ ksSharedMem s
+   let interface =
+@@ -256,6 +285,7 @@ genKernel kernel = do
+           { safety = SafetyNone, -- TODO
+             scalarsOffsets = offsets,
+             scalarsSize = size,
++            gridScalarOffset = gridOffset,
+             scalarsBindSlot = head (ksBindSlots s),
+             memBindSlots = tail (ksBindSlots s),
+             overrideNames = ksOverrides s,
+@@ -992,6 +1022,9 @@ genWGSLStm (Meta (MetaProvenance (Provenance _ l))) =
+   pure $ WGSL.Comment $ locText l
+ genWGSLStm (DebugPrint _ _) = pure WGSL.Skip
+ genWGSLStm (TracePrint _) = pure WGSL.Skip
++genWGSLStm (Op (ImpGPU.GetBlockId dest 0)) = do
++  destId <- getIdent dest
++  pure $ WGSL.Assign destId $ WGSL.to_i32 (WGSL.VarExp blockIdIdent)
+ genWGSLStm (Op (ImpGPU.GetBlockId dest i)) = do
+   destId <- getIdent dest
+   pure $
+@@ -1329,9 +1362,9 @@ genScalarDecls = do
+ 
+       pure (name, WGSL.Prim fieldPrimTyp)
+ 
+-  let scalarFields = case scalars of
+-        [] -> [("_dummy_scalar", WGSL.Prim WGSL.Int32)]
+-        sclrs -> sclrs
++  -- The kernel's own block count is the last field of every scalars struct (`gridScalarOffset`).
++  addScalar WGSL.UInt32
++  let scalarFields = scalars ++ [(gridFieldIdent, WGSL.Prim WGSL.UInt32)]
+   addDecl $
+     WGSL.StructDecl $
+       WGSL.Struct structName (map (uncurry WGSL.Field) scalarFields)
+diff --git a/tests/webgpu/large_grid.fut b/tests/webgpu/large_grid.fut
+new file mode 100644
+index 000000000..c2a1788e3
+--- /dev/null
++++ b/tests/webgpu/large_grid.fut
+@@ -0,0 +1,16 @@
++-- A map whose grid is over WebGPU's 65,535 blocks a dimension: 2^24 elements at 256 a block is 65,536 blocks, and
++-- 2^25 is 131,072. The host dispatches the grid as a rectangle and the kernel reads its block count from its scalars
++-- (every block past it returns), so the result equals the sequential one.
++--
++-- ==
++-- entry: main
++-- input { 16777216i64 } output { 50331645i64 }
++-- input { 33554432i64 } output { 100663291i64 }
++
++entry main (n: i64) : i64 =
++  let xs = map (\i -> i % 7) (iota n)
++  in i64.sum (map (\x -> x) xs)
++
++-- The map kept as the output, so it is not fused into the reduction: its kernel is the one over the limit.
++entry mapped (n: i64) : [n]i32 =
++  map (\i -> i32.i64 (i % 7)) (iota n)
+-- 
+2.50.1 (Apple Git-155)
+

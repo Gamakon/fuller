@@ -784,6 +784,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// THE GRID OVER WEBGPU'S LIMIT (series patch 0011): a 1-D grid over the device's 65,535 blocks a dimension is
+    /// dispatched as a rectangle by the runtime (`futhark_rust_rt::program::split_grid`), and every generated kernel
+    /// reads its own block count from the last field of its scalars and returns the excess blocks. This checks the
+    /// compiler's side on the CPU: every generated kernel's table entry names that field's offset, no built-in
+    /// kernel does, and the WGSL computes the flat block id from `workgroup_id` and `num_workgroups`. The GPU side
+    /// (the program's values on 2^24 and 2^25 elements against `futhark c`) is `tests/corpus/futhark_rust/large_grid.fut`
+    /// under the gpu feature.
+    #[test]
+    fn every_generated_kernel_reads_its_block_count_and_a_flat_block_id() {
+        assert!(compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
+        let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_rust/large_grid.fut")).expect("the program");
+        let dir = scratch("large_grid_text");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let fut = dir.join("prog.fut");
+        std::fs::write(&fut, &source).expect("write");
+        let out = Command::new(compiler()).arg("rust-wgpu").arg(&fut).arg("-o").arg(dir.join("prog")).output().expect("futhark rust-wgpu");
+        assert!(out.status.success(), "futhark rust-wgpu: {}", String::from_utf8_lossy(&out.stderr));
+        let prog = std::fs::read_to_string(dir.join("prog.rs")).expect("prog.rs");
+        let entries: Vec<&str> = prog.split("rt::KernelInfo {").skip(1).collect();
+        let generated = entries.iter().filter(|e| e.contains("builtin: None")).count();
+        let builtin = entries.len() - generated;
+        assert!(generated >= 1, "no generated kernel in prog.rs");
+        for e in &entries {
+            let head = e.split("},").next().unwrap_or(e);
+            if head.contains("builtin: None") {
+                assert!(head.contains("grid_offset: Some("), "a generated kernel without its grid field: {head}");
+            } else {
+                assert!(head.contains("grid_offset: None"), "a built-in kernel with a grid field: {head}");
+            }
+        }
+        assert!(prog.contains("@builtin(num_workgroups)"), "the kernels do not read num_workgroups");
+        assert!(prog.contains("let futhark_block_id") && prog.contains("futhark_grid_x"), "the kernels do not compute the flat block id against their block count");
+        eprintln!("{generated} generated kernels and {builtin} built-in kernels checked");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE GRID OVER WEBGPU'S LIMIT, ON THE GPU (series patch 0011): `tests/corpus/futhark_rust/large_grid.fut` on
+    /// 2^24 and 2^25 elements (65,536 and 131,072 blocks of 256), both entries, through the rust path against
+    /// `futhark c`, byte for byte; before the patch the dispatch failed validation at 65,536 blocks. (The fork
+    /// compiler, rustc, cc, the GPU; run under the GPU lock.)
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn on_the_gpu_a_grid_over_the_blocks_per_dimension_limit_equals_futhark_c() {
+        if !compiler().is_file() {
+            eprintln!("skipped: the fork compiler ({}) is not installed", compiler().display());
+            return;
+        }
+        let _gpu = crate::gpu_test_lock::acquire();
+        let base = scratch("large_grid");
+        std::fs::create_dir_all(&base).expect("a scratch directory");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let session = Session::new(&rt, Duration::from_secs(300)).expect("a session");
+        let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_rust/large_grid.fut")).expect("the program");
+        let c = crate::futhark_sig::compile_c(&src, &base.join("c")).expect("futhark c");
+        let (dylib, _) = compile_module(&src, &base.join("rust"), &rt, "large_grid", Duration::from_secs(600)).expect("the rust-wgpu compile");
+        for (entry, n, want_sum) in [("main", 1u64 << 24, Some(50_331_645i64)), ("main", 1 << 25, Some(100_663_291)), ("mapped", 1 << 24, None), ("mapped", 1 << 25, None)] {
+            // Futhark's binary format for an i64 scalar: 'b', version 2, 0 dimensions, the type "  i64", the value.
+            let mut input = b"b\x02\x00  i64".to_vec();
+            input.extend_from_slice(&n.to_le_bytes());
+            let want = crate::futhark_exec::output_with_timeout_bytes(Command::new(&c).arg("-b").arg("-e").arg(entry), Duration::from_secs(300), Some(&input)).expect("the C run").stdout;
+            let raw = session.run(&dylib, &format!("o {entry}\n"), &[], 0, 0, Some(&input)).expect("the rust path's run");
+            let recs = payloads(&raw);
+            let o = recs.iter().find(|r| r.0 == "o").unwrap_or_else(|| panic!("{entry} {n}: no output record: {recs:?}"));
+            assert!(o.1, "{entry} {n}: the rust path failed: {}", String::from_utf8_lossy(&o.3));
+            assert_eq!(o.3.as_slice(), want.trim_ascii_end(), "{entry} {n}: the rust path differs from futhark c");
+            if let Some(sum) = want_sum {
+                // Past the 7-byte scalar header: the value.
+                assert_eq!(i64::from_le_bytes(o.3[7..15].try_into().expect("8 bytes")), sum, "{entry} {n}: the value");
+            }
+            eprintln!("{entry} on {n} elements: the rust path equals futhark c ({} bytes)", o.3.len());
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// THE DEFAULT COMPILER IS THE COMMITTED SERIES: the compiler a run uses with no `FUTHARK_RUST_WGPU` or
     /// `FUTHARK_BRANCH` exists, and `build.sh` built it from exactly `futhark-rust-backend/patches` (the copy beside
     /// it, name for name and byte for byte). A patch added to the series without a rebuild fails here.

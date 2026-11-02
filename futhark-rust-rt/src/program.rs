@@ -20,6 +20,11 @@ pub struct KernelInfo {
     pub scalars_binding: u32,
     pub scalars_size: u64,
     pub scalar_offsets: &'static [u64],
+    /// Where the kernel's own block count (`futhark_grid_x`, u32) sits in its scalars: written at every launch,
+    /// because a 1-D grid over the device's blocks-per-dimension limit is dispatched as a rectangle
+    /// ([`split_grid`]) and the kernel returns every block at or past the count. `None` for a built-in kernel,
+    /// whose own bound returns the excess.
+    pub grid_offset: Option<u64>,
     pub binding_indices: &'static [u32],
     /// The override constants the kernel uses (only these are given: WebGPU rejects an unknown override).
     pub used_overrides: &'static [&'static str],
@@ -246,6 +251,20 @@ impl KArg {
     }
 }
 
+/// The dispatch of a grid under the device's blocks-per-dimension limit: a 1-D grid over it becomes `x * y` blocks
+/// with `x <= limit`, `x * y >= grid[0]` and fewer than `y` blocks of excess (each returns at once, reading the real
+/// count from its scalars). A grid under the limit is dispatched as it is; one over it in two dimensions is `None`.
+pub fn split_grid(grid: [u32; 3], limit: u32) -> Option<[u32; 3]> {
+    if grid[0] <= limit {
+        return Some(grid);
+    }
+    if grid[1] != 1 || grid[2] != 1 {
+        return None;
+    }
+    let y = grid[0].div_ceil(limit);
+    Some([grid[0].div_ceil(y), y, 1])
+}
+
 /// Launch kernel `idx` of the program: `grid` blocks of `block` threads. A launch with any dimension 0 does nothing,
 /// as the C kernel wrapper skips it. `vals` are the shared memory sizes then the scalars; `mems` the memory, in the
 /// kernel's binding order.
@@ -266,6 +285,15 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
     for (i, &off) in info.scalar_offsets.iter().enumerate() {
         vals[nsh + i].write(&mut scalars, off as usize);
     }
+    if let Some(off) = info.grid_offset {
+        let off = off as usize;
+        if off + 4 > scalars.len() {
+            return Err(Error::new(format!("the grid field of kernel {} at {off} is outside its {} bytes of scalars", info.name, scalars.len())));
+        }
+        scalars[off..off + 4].copy_from_slice(&grid[0].to_le_bytes());
+    }
+    let dispatch = split_grid(grid, ctx.device().limits().max_compute_workgroups_per_dimension)
+        .ok_or_else(|| Error::new(format!("kernel {}: a grid of {} x {} x {} blocks is over the device's blocks a dimension", info.name, grid[0], grid[1], grid[2])))?;
     if scalars.len() as u64 != info.scalars_size {
         return Err(Error::new(format!("the scalars of kernel {} overrun its {} bytes", info.name, info.scalars_size)));
     }
@@ -310,7 +338,7 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(info.name), timestamp_writes: writes });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups(grid[0], grid[1], grid[2]);
+        pass.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
     }
     ctx.queue().submit(Some(enc.finish()));
     if let Some(e) = scope.pop() {
@@ -339,5 +367,33 @@ mod tests {
         assert!(specialise(w, &[("other", 9.0)]).is_err(), "a marker of no macro");
         assert!(specialise(w, &[("k_rx_lo", 0.0)]).is_err(), "a size of 0");
         assert_eq!(specialise("no markers", &[]).expect("unchanged"), "no markers");
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::split_grid;
+
+    #[test]
+    fn a_grid_under_the_limit_is_dispatched_as_it_is() {
+        assert_eq!(split_grid([65_535, 1, 1], 65_535), Some([65_535, 1, 1]));
+        assert_eq!(split_grid([7, 3, 2], 65_535), Some([7, 3, 2]));
+        assert_eq!(split_grid([0, 1, 1], 65_535), Some([0, 1, 1]));
+    }
+
+    #[test]
+    fn a_1d_grid_over_the_limit_becomes_a_rectangle_covering_it_with_little_excess() {
+        for g in [65_536u32, 131_072, 262_144, 1 << 20, 65_535 * 7 + 1, u32::MAX / 4] {
+            let [x, y, z] = split_grid([g, 1, 1], 65_535).unwrap();
+            assert!(x <= 65_535 && z == 1, "{g}: {x} x {y}");
+            let blocks = u64::from(x) * u64::from(y);
+            assert!(blocks >= u64::from(g) && blocks - u64::from(g) < u64::from(y), "{g}: {x} x {y} = {blocks}");
+        }
+        assert_eq!(split_grid([262_144, 1, 1], 65_535), Some([52_429, 5, 1]));
+    }
+
+    #[test]
+    fn a_2d_grid_over_the_limit_is_not_split() {
+        assert_eq!(split_grid([65_536, 2, 1], 65_535), None);
     }
 }

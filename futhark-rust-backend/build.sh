@@ -11,6 +11,8 @@
 # compiler is built from exactly the committed series (a stale build fails them).
 #
 # Nothing is pushed anywhere: the clone has its remote removed once fetched.
+# Patches are applied with --keep-cr: patch 0011 rewrites rts/wgsl/lmad_copy.wgsl, the one CRLF file, to LF, and
+# git am strips the carriage returns from a patch unless told to keep them, so the removed lines would not match.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 dir=${1:-$HOME/.local/share/fuller/futhark-rust}
@@ -48,7 +50,7 @@ while read -r commit; do
 done < <(git -C "$dir" rev-list --reverse "$base"..HEAD)
 if [ "$have" -lt "${#patches[@]}" ]; then
   echo "build.sh: applying patches $((have + 1))..${#patches[@]} to $dir"
-  git -C "$dir" -c user.name=futhark-rust-backend -c user.email=none am -q "${patches[@]:$have}"
+  git -C "$dir" -c user.name=futhark-rust-backend -c user.email=none am -q --keep-cr "${patches[@]:$have}"
 fi
 "$dir/build_rust_wgpu.sh"
 rm -f "$dir"/bin/patches/*.patch
