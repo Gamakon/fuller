@@ -107,7 +107,8 @@ use fuller::population_fold::AdfTable;
 use fuller::runner::{interleaved_runs, write_aa_gate, AA_RETIMES, median, parse_ops, pick_op, save_checkpoint, slope_check, speed_verdict, FameEntry, FitnessStage, HallOfFame, Ledger, LedgerLine, OperatorTally, TimingSlots};
 use fuller::saturated_fold::{fold_saturated, Budget};
 use fuller::telemetry::{EventKind, GenerationStats, Mutation, RunInfo, RunTelemetry};
-use fuller::typed_gep::{express, frac_of_row, write_back, Domain, GeneLayout, Tree, FRAC_ONE};
+use fuller::typed_gep::{express, write_back, GeneLayout, Tree};
+use fuller::futhark_operators::{cross_rel_once, cross_rows_coding_once, cross_rows_once, crossover_once, invert_once, invert_rel_once, invert_rows_coding_once, invert_rows_once, transpose_once, transpose_rel_once, transpose_rows_coding_once, transpose_rows_once};
 use fuller::futhark_rings::{build_at, grow, load_pool, published_source, Rings, Source};
 use fuller::wgsl::oracle::device::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
 
@@ -898,15 +899,7 @@ impl Genetics<'_> {
     /// Homologous crossover: a range of the domain that holds one of `a`'s expressed cells, exchanged between `a`
     /// and `b` (both children kept).
     fn crossover(&self, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<(), String> {
-        let cells = self.coding_cells(a)?;
-        let pos = cells[rng.below(cells.len())];
-        let span = self.layout.spans().into_iter().find(|s| s.off <= pos && pos < s.off + s.len).ok_or("a cell in no span")?;
-        if span.domain == Domain::Dc && span.len < 2 {
-            return Ok(());
-        }
-        let lo = span.off + rng.below(pos - span.off + 1);
-        let hi = (pos + 1 + rng.below(span.off + span.len - pos)).min(span.off + span.len);
-        self.layout.swap_range(self.layout, a, b, lo, hi).map_err(|e| format!("crossover: {e}"))
+        crossover_once(self.contract, self.layout, self.const_len, a, b, rng)
     }
 
     /// MARRIAGE, typed subtree crossover: the domain is every pair (node of A, node of B) of one output type, not the
@@ -1166,224 +1159,15 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
 // THE WORK BOUND FOR TIMING, one for every evaluation path: `fuller::futhark_sig::TIMING_WORK_CAP` (its basis there).
 use fuller::futhark_sig::TIMING_WORK_CAP;
 
-/// INVERSION (plan section I, step 3): a run of at least two cells, inside the one domain of one type that holds a
-/// coding cell drawn uniformly, reversed (`GeneLayout::invert`). Every symbol stays in a cell of its own type and
-/// domain, so the child is legal by construction. `None` when the drawn cell's span is a single cell.
-fn invert_once(layout: &GeneLayout, gene: &mut [u32], coding: &[usize], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let pos = coding[rng.below(coding.len())];
-    let span = layout.spans().into_iter().find(|s| s.off <= pos && pos < s.off + s.len).ok_or("a coding cell in no span")?;
-    if span.len < 2 {
-        return Ok(None);
-    }
-    let lo = span.off + rng.below(pos - span.off + 1);
-    let hi = (pos + 1 + rng.below(span.off + span.len - pos)).min(span.off + span.len);
-    let (lo, hi) = if hi - lo < 2 { if hi < span.off + span.len { (lo, hi + 1) } else { (lo - 1, hi) } } else { (lo, hi) };
-    if gene[lo..hi].iter().zip(gene[lo..hi].iter().rev()).all(|(a, b)| a == b) {
-        return Ok(None);
-    }
-    layout.invert(gene, lo, hi).map_err(|e| format!("inversion: {e}"))?;
-    Ok(Some(format!("{} cells [{lo}, {hi}) of a {} span reversed", hi - lo, span.domain.name())))
-}
-
-/// TRANSPOSITION (GEP's IS and RIS, plan section I, step 2): inside the head of one type holding a coding cell drawn
-/// uniformly, a run of 1 to 3 cells is copied to another place in the same head; the cells after the insertion point
-/// shift right and the last ones fall off the head's end. IS inserts anywhere; RIS takes a run that starts at a
-/// function and inserts it at the head's start. Every symbol stays in its own type's head, so the child is legal by
-/// construction. `None` when the drawn copy changes nothing.
-fn transpose_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u32], coding: &[usize], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let heads: Vec<usize> = coding.iter().copied().filter(|p| layout.key(*p).domain == Domain::Head).collect();
-    if heads.is_empty() {
-        return Ok(None);
-    }
-    let pos = heads[rng.below(heads.len())];
-    let span = layout.spans().into_iter().find(|s| s.domain == Domain::Head && s.off <= pos && pos < s.off + s.len).ok_or("a coding head cell in no head span")?;
-    if span.len < 2 {
-        return Ok(None);
-    }
-    let ris = rng.below(2) == 1;
-    let src = if ris {
-        match (pos..span.off + span.len).find(|q| !contract.signature(gene[*q]).is_empty()) {
-            Some(q) => q,
-            None => return Ok(None),
-        }
-    } else {
-        pos
-    };
-    let len = (1 + rng.below(3)).min(span.off + span.len - src);
-    let dst = if ris { span.off } else { span.off + rng.below(span.len) };
-    if !layout.transpose(gene, src, len, dst).map_err(|e| format!("transposition: {e}"))? {
-        return Ok(None);
-    }
-    Ok(Some(format!("{} of {len} cells from {src} to {dst}, in a head of {} cells", if ris { "RIS" } else { "IS" }, span.len)))
-}
-
-// THE ROW OPERATORS (Andrew, 2026-11-01; `GeneLayout::invert_rows`, `transpose_rows`, `crossover_rows`): a domain of
-// the gene is a table, row = position, column = type; the operator acts on rows across EVERY column, so one
-// application touches every type's frame, not one of hundreds. Rows are drawn uniformly over the table's rows (its
-// longest column); a column takes part only where it has the row. Every symbol stays in its own column: legal by
-// construction.
-
-/// ROW INVERSION: a domain drawn uniformly among those of at least two rows, rows `[lo, hi)` (at least two) drawn
-/// uniformly, reversed in every column. `None` when no column changed.
-fn invert_rows_once(layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let domains: Vec<Domain> = [Domain::Head, Domain::Tail, Domain::Dc].into_iter().filter(|d| layout.domain_rows(*d) >= 2).collect();
-    if domains.is_empty() {
-        return Ok(None);
-    }
-    let d = domains[rng.below(domains.len())];
-    let rows = layout.domain_rows(d);
-    let lo = rng.below(rows - 1);
-    let hi = lo + 2 + rng.below(rows - lo - 1);
-    let changed = layout.invert_rows(gene, d, lo, hi).map_err(|e| format!("row inversion: {e}"))?;
-    if changed == 0 {
-        return Ok(None);
-    }
-    Ok(Some(format!("rows [{lo}, {hi}) of the {} table ({rows} rows) reversed in {changed} of {} columns", d.name(), layout.columns(d).len())))
-}
-
-/// ROW TRANSPOSITION (GEP's IS and RIS on the head table, one or the other with probability one half): a run of 1
-/// to 3 rows copied to another row in every column, the rows after it shifting down and the overflow falling off
-/// each column. IS: the run's first row and the destination uniform over the rows. RIS: from a row drawn uniformly,
-/// the first row where the root's column holds a function, inserted at row 0. `None` when no column changed.
-fn transpose_rows_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let rows = layout.domain_rows(Domain::Head);
-    if rows < 2 {
-        return Ok(None);
-    }
-    let ris = rng.below(2) == 1;
-    let src = if ris {
-        match layout.ris_row(contract, gene, rng.below(rows)) {
-            Some(r) => r,
-            None => return Ok(None),
-        }
-    } else {
-        rng.below(rows)
-    };
-    let len = 1 + rng.below(3);
-    let dst = if ris { 0 } else { rng.below(rows) };
-    let changed = layout.transpose_rows(gene, Domain::Head, src, len, dst).map_err(|e| format!("row transposition: {e}"))?;
-    if changed == 0 {
-        return Ok(None);
-    }
-    Ok(Some(format!("{} of rows [{src}, {}) to row {dst} of the head table ({rows} rows), {changed} of {} columns changed", if ris { "RIS" } else { "IS" }, src + len, layout.columns(Domain::Head).len())))
-}
-
-/// ROW CROSSOVER: GEP's one-point or two-point recombination (one or the other with probability one half) at rows of
-/// the whole gene's table, a column being `head_T`, `tail_T`, `Dc_T` (`GeneLayout::crossover_rows`): one-point
-/// exchanges rows `c..` for `c` uniform in `1 .. rows`, two-point rows `[c1, c2)` for `c1 < c2` uniform. Both
-/// children kept. `None` when the table has one row.
-fn cross_rows_once(layout: &GeneLayout, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let rows = layout.gene_rows();
-    if rows < 2 {
-        return Ok(None);
-    }
-    let (c1, c2) = if rng.below(2) == 0 {
-        (1 + rng.below(rows - 1), None)
-    } else {
-        let c1 = rng.below(rows - 1);
-        (c1, Some(c1 + 1 + rng.below(rows - c1 - 1)))
-    };
-    let cells = layout.crossover_rows(layout, a, b, c1, c2).map_err(|e| format!("row crossover: {e}"))?;
-    Ok(Some(match c2 {
-        None => format!("one-point at row {c1} of {rows}: {cells} cells exchanged"),
-        Some(c2) => format!("two-point, rows [{c1}, {c2}) of {rows}: {cells} cells exchanged"),
-    }))
-}
-
-// THE RELATIVE-ROW OPERATORS (2026-11-01; `GeneLayout::invert_rel`, `transpose_rel`, `crossover_rel`): the cuts and
-// runs are fractions in [0, 1), and each column applies them at its own row floor(f x len), so EVERY column takes
-// part in every application (with absolute rows a short column has no row past its end: pathfinder's gene table is
-// 2041 rows, its mean column 101). With one type they are the classic operators.
-
-/// A fraction uniform in `[0, 1)`, in parts of `FRAC_ONE`.
-fn frac(rng: &mut GeneRng) -> u64 {
-    rng.next_u64() >> 32
-}
-
-/// Two fractions `lo < hi <= 1`, `lo` uniform in `[0, 1)`, `hi` uniform above it.
-fn frac_pair(rng: &mut GeneRng) -> (u64, u64) {
-    let lo = frac(rng);
-    (lo, lo + 1 + rng.next_u64() % (FRAC_ONE - lo))
-}
-
-/// A fraction as a percentage, for the event's message.
-fn pct(f: u64) -> f64 {
-    100.0 * f as f64 / FRAC_ONE as f64
-}
-
-/// RELATIVE INVERSION: a domain drawn uniformly among those of at least two rows, fractions `lo < hi` drawn
-/// uniformly, each column's rows `[floor(lo x len), floor(hi x len))` reversed. `None` when no column changed.
-fn invert_rel_once(layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let domains: Vec<Domain> = [Domain::Head, Domain::Tail, Domain::Dc].into_iter().filter(|d| layout.domain_rows(*d) >= 2).collect();
-    if domains.is_empty() {
-        return Ok(None);
-    }
-    let d = domains[rng.below(domains.len())];
-    let (lo, hi) = frac_pair(rng);
-    let changed = layout.invert_rel(gene, d, lo, hi).map_err(|e| format!("relative inversion: {e}"))?;
-    if changed == 0 {
-        return Ok(None);
-    }
-    Ok(Some(format!("fractions [{:.1} %, {:.1} %) of every {} column reversed, {changed} of {} columns changed", pct(lo), pct(hi), d.name(), layout.columns(d).len())))
-}
-
-/// RELATIVE TRANSPOSITION (IS or RIS, one half each, the head table): IS, the run's start and the destination uniform
-/// fractions, the run 1 to 3 rows of the longest column long as a fraction (at least one row in every column); RIS,
-/// the run starts where the root's column holds a function (from a row drawn uniformly) at that row's fraction, and is
-/// inserted at row 0. `None` when no column changed.
-fn transpose_rel_once(contract: &KingdomContract, layout: &GeneLayout, gene: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let rows = layout.domain_rows(Domain::Head);
-    if rows < 2 {
-        return Ok(None);
-    }
-    let ris = rng.below(2) == 1;
-    let src = if ris {
-        let root_len = layout.frame(layout.root).map_or(0, |f| f.head_len);
-        if root_len == 0 {
-            return Ok(None);
-        }
-        match layout.ris_row(contract, gene, rng.below(root_len)) {
-            Some(r) => frac_of_row(r, root_len),
-            None => return Ok(None),
-        }
-    } else {
-        frac(rng)
-    };
-    let end = (src + frac_of_row(1 + rng.below(3), rows)).min(FRAC_ONE);
-    let dst = if ris { 0 } else { frac(rng) };
-    let changed = layout.transpose_rel(gene, Domain::Head, src, end, dst).map_err(|e| format!("relative transposition: {e}"))?;
-    if changed == 0 {
-        return Ok(None);
-    }
-    Ok(Some(format!("{} of fractions [{:.1} %, {:.1} %) to {:.1} % of every head column, {changed} of {} columns changed", if ris { "RIS" } else { "IS" }, pct(src), pct(end), pct(dst), layout.columns(Domain::Head).len())))
-}
-
-/// RELATIVE CROSSOVER: one-point at a fraction uniform in `[0, 1)` or two-point at fractions `lo < hi` (one half
-/// each), each whole column (`head_T`, `tail_T`, `Dc_T`) cut at its own rows. Both children kept.
-fn cross_rel_once(layout: &GeneLayout, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<Option<String>, String> {
-    let (c1, c2) = if rng.below(2) == 0 {
-        (frac(rng), None)
-    } else {
-        let (x, y) = frac_pair(rng);
-        (x, Some(y))
-    };
-    let cells = layout.crossover_rel(layout, a, b, c1, c2).map_err(|e| format!("relative crossover: {e}"))?;
-    if cells == 0 {
-        return Ok(None);
-    }
-    Ok(Some(match c2 {
-        None => format!("one-point at {:.1} % of every column: {cells} cells exchanged", pct(c1)),
-        Some(c2) => format!("two-point, [{:.1} %, {:.1} %) of every column: {cells} cells exchanged", pct(c1), pct(c2)),
-    }))
-}
-
 /// THE OPERATOR MIX (`--ops`, Andrew, 2026-10-31): every child draws ONE operator by its probability, so all of them
 /// run in the same generation and each child's operator is recorded. `marriage` is the share of children made by
 /// marriage (as `--marriage`); the others are drawn for each remaining child. The ROW operators (`invert-rows`,
 /// `transpose-rows`, `cross-rows`: Andrew, 2026-11-01) act on rows across every type's column; the old ones, inside
 /// one type's span, are unchanged beside them.
-/// The RELATIVE-row operators (`invert-rel`, `transpose-rel`, `cross-rel`) cut every column at its own row.
-const OPS: [&str; 12] = ["point", "invert", "transpose", "crossover", "walk", "marriage", "invert-rows", "transpose-rows", "cross-rows", "invert-rel", "transpose-rel", "cross-rel"];
+/// The RELATIVE-row operators (`invert-rel`, `transpose-rel`, `cross-rel`) cut every column at its own row. The AIMED
+/// row operators (`invert-rows-coding`, `transpose-rows-coding`, `cross-rows-coding`; `fuller::futhark_operators`)
+/// are the row operators with their rows drawn around a coding cell.
+const OPS: [&str; 15] = ["point", "invert", "transpose", "crossover", "walk", "marriage", "invert-rows", "transpose-rows", "cross-rows", "invert-rel", "transpose-rel", "cross-rel", "invert-rows-coding", "transpose-rows-coding", "cross-rows-coding"];
 
 /// The mutation event of a row operator's child (`docs/STANDARD_runners.md`): the operator, what it did, the child,
 /// its parents and the texts before and after.
@@ -1402,7 +1186,7 @@ const MEASURE_TAG: u64 = 0x4D45_4153_5552_4521;
 /// the row operators across every column (`invert-rows`, `transpose-rows`, `cross-rows`; `invert-rel`, `transpose-rel`,
 /// `cross-rel` at each column's own relative row), on the same parents and
 /// seeds, so old and new compare.
-const MEASURE_KINDS: [&str; 12] = ["grow", "point", "walk", "invert", "transpose", "crossover", "invert-rows", "transpose-rows", "cross-rows", "invert-rel", "transpose-rel", "cross-rel"];
+const MEASURE_KINDS: [&str; 15] = ["grow", "point", "walk", "invert", "transpose", "crossover", "invert-rows", "transpose-rows", "cross-rows", "invert-rel", "transpose-rel", "cross-rel", "invert-rows-coding", "transpose-rows-coding", "cross-rows-coding"];
 
 /// THE OPERATOR MEASUREMENT (`--measure KIND`, plan sections H and I), on the run's evaluation path (the GPU): `count`
 /// children, each ONE application of the operator to a parent, the parents Sonnet's task alternatives in order
@@ -1448,11 +1232,15 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
             "transpose-rows" => transpose_rows_once(run.gen.contract, run.gen.layout, &mut g, &mut op)?,
             "invert-rel" => invert_rel_once(run.gen.layout, &mut g, &mut op)?,
             "transpose-rel" => transpose_rel_once(run.gen.contract, run.gen.layout, &mut g, &mut op)?,
-            "crossover" | "cross-rows" | "cross-rel" => {
+            "invert-rows-coding" => invert_rows_coding_once(run.gen.layout, &mut g, &coding, &mut op)?,
+            "transpose-rows-coding" => transpose_rows_coding_once(run.gen.contract, run.gen.layout, &mut g, &coding, &mut op)?,
+            "crossover" | "cross-rows" | "cross-rel" | "cross-rows-coding" => {
                 // The partner: the next parent, on its own fresh padding; the child is this parent's side.
                 let mut h = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[(pi + 1) % parents.len()]).map_err(|e| format!("a partner's write-back: {e}"))?;
                 if kind == "cross-rows" {
                     cross_rows_once(run.gen.layout, &mut g, &mut h, &mut op)?
+                } else if kind == "cross-rows-coding" {
+                    cross_rows_coding_once(run.gen.contract, run.gen.layout, run.gen.const_len, &mut g, &mut h, &mut op)?
                 } else if kind == "cross-rel" {
                     cross_rel_once(run.gen.layout, &mut g, &mut h, &mut op)?
                 } else {
@@ -2660,7 +2448,7 @@ fn real_main() -> Result<(), String> {
             if let Some(o) = &ops {
                 // One operator drawn by its probability among the non-marriage operators.
                 let pick = pick_op(o, "marriage", rng.below(1_000_000) as f64 / 1e6).unwrap_or("point");
-                if pick == "cross-rows" || pick == "cross-rel" {
+                if pick == "cross-rows" || pick == "cross-rel" || pick == "cross-rows-coding" {
                     // ROW CROSSOVER: a partner of another identity (as crossover's), both children kept, each its
                     // own mutation event.
                     let mut b = tournament(&mut rng);
@@ -2671,11 +2459,17 @@ fn real_main() -> Result<(), String> {
                         b = tournament(&mut rng);
                     }
                     let (mut ga, mut gb) = (population[a].gene.clone(), population[b].gene.clone());
-                    let name = if pick == "cross-rows" { "cross_rows" } else { "cross_rel" };
+                    let name = match pick {
+                        "cross-rows" => "cross_rows",
+                        "cross-rows-coding" => "cross_rows_coding",
+                        _ => "cross_rel",
+                    };
                     let what = if population[b].identity(stage) == population[a].identity(stage) {
                         None
                     } else if pick == "cross-rows" {
                         cross_rows_once(run.gen.layout, &mut ga, &mut gb, &mut rng)?
+                    } else if pick == "cross-rows-coding" {
+                        cross_rows_coding_once(run.gen.contract, run.gen.layout, run.gen.const_len, &mut ga, &mut gb, &mut rng)?
                     } else {
                         cross_rel_once(run.gen.layout, &mut ga, &mut gb, &mut rng)?
                     };
@@ -2716,9 +2510,11 @@ fn real_main() -> Result<(), String> {
                         }
                         "invert" => invert_once(run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
                         "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
-                        "invert-rows" | "transpose-rows" | "invert-rel" | "transpose-rel" => {
+                        "invert-rows" | "transpose-rows" | "invert-rel" | "transpose-rel" | "invert-rows-coding" | "transpose-rows-coding" => {
                             let (what, name) = match pick {
                                 "invert-rows" => (invert_rows_once(run.gen.layout, &mut gene, &mut rng)?, "invert_rows"),
+                                "invert-rows-coding" => (invert_rows_coding_once(run.gen.layout, &mut gene, &coding, &mut rng)?, "invert_rows_coding"),
+                                "transpose-rows-coding" => (transpose_rows_coding_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?, "transpose_rows_coding"),
                                 "transpose-rows" => (transpose_rows_once(run.gen.contract, run.gen.layout, &mut gene, &mut rng)?, "transpose_rows"),
                                 "invert-rel" => (invert_rel_once(run.gen.layout, &mut gene, &mut rng)?, "invert_rel"),
                                 _ => (transpose_rel_once(run.gen.contract, run.gen.layout, &mut gene, &mut rng)?, "transpose_rel"),

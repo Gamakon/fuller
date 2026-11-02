@@ -63,6 +63,7 @@ pub mod futhark_pixel;
 pub mod futhark_sig;
 pub mod futhark_reader;
 pub mod futhark_rings;
+pub mod futhark_operators;
 pub mod futhark_1d_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
