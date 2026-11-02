@@ -1080,6 +1080,41 @@ pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
     Ok(out)
 }
 
+/// THE VALUES FINGERPRINT of a tree on a problem's stored cases: FNV-1a (64 bits) over, per case in order, its
+/// name, then the interpreter's output (its dims and data, little-endian) or the error text. Two trees with the same
+/// fingerprint compute the same value on every stored case (to the hash); it pins a pool program's meaning across a
+/// change of the kingdom's names (`docs/PLAN_futhark_kingdom.md` 3g).
+pub fn values_fingerprint(interp: &Interp<'_>, tree: &Tree, cases: &[Case]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for c in cases {
+        eat(c.name.as_bytes());
+        eat(&[0]);
+        match interp.eval(tree, &c.inputs) {
+            Ok(a) => {
+                eat(b"ok");
+                for d in &a.dims {
+                    eat(&(*d as u64).to_le_bytes());
+                }
+                for x in &a.data {
+                    eat(&x.to_le_bytes());
+                }
+            }
+            Err(e) => {
+                eat(b"error");
+                eat(e.as_bytes());
+            }
+        }
+        eat(&[0]);
+    }
+    h
+}
+
 /// Compile a program with Futhark's sequential C backend (`futhark c`, the released compiler) into `dir`.
 pub fn compile_c(source: &str, dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;

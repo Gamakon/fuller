@@ -1,0 +1,46 @@
+seq	dual	sexp	values
+1	a.cols:c	(tab (loop.rows 0 (add (add (add (add (add (add (add (add (add s2 (get.cols (row.rows.cols walls (prev i2)) (prev j1))) (get.cols (row.rows.cols walls (prev i2)) j1)) (get.cols (row.rows.cols walls (prev i2)) (next j1))) (get.cols (row.rows.cols walls i2) (prev j1))) (get.cols (row.rows.cols walls i2) j1)) (get.cols (row.rows.cols walls i2) (next j1))) (get.cols (row.rows.cols walls (next i2)) (prev j1))) (get.cols (row.rows.cols walls (next i2)) j1)) (get.cols (row.rows.cols walls (next i2)) (next j1)))))	d5da3e6dfde7a38f
+2	a.cols:c	(tab (loop.rows 0 (add (add s2 (abs (sub (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls i2) (next j1))))) (abs (sub (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls (next i2)) j1))))))	bea52c5670dc9cb2
+3	a.cols:c	(tab (loop.rows (add (ival.cols j1) 1) (add (sub (mul (add (mul s2 10) (get.cols (row.rows.cols walls i2) j1)) 2) (abs (sub s2 (get.cols (row.rows.cols walls i2) (next j1))))) (ival.rows i2))))	4bb240623b67fa86
+4	a.cols:c	(tab (add (add (get.cols (row.rows.cols walls zero) (prev j1)) (mul 2 (get.cols (row.rows.cols walls zero) j1))) (get.cols (row.rows.cols walls zero) (next j1))))	66bc909d25ddea54
+5	a.cols:c	(tab (add (add (get.cols (row.rows.cols walls zero) (prev j1)) (get.cols (row.rows.cols walls zero) j1)) (get.cols (row.rows.cols walls zero) (next j1))))	21fd32288ac088a1
+6	a.cols:c	(tab (loop.rows 0 (add (mul s2 2) (get.cols (row.rows.cols walls i2) j1))))	2e92d598d6a4c0ce
+7	a.cols:c	(tab (loop.rows 0 (add s2 (min 1 (max 0 (get.cols (row.rows.cols walls i2) j1))))))	d0c187ca08e77a3d
+8	a.cols:c	(tab (sub (max (get.cols (row.rows.cols walls zero) j1) (get.cols (row.rows.cols walls zero) (next j1))) (mul (mul (get.cols (row.rows.cols walls zero) (prev j1)) (get.cols (row.rows.cols walls zero) j1)) (get.cols (row.rows.cols walls zero) (next j1)))))	1f752f193264672c
+9	a.cols:c	(tab (get.cols (row.rows.cols walls (clamp (ival.cols j1))) j1))	fb7c3eb5387c5e42
+10	a.cols:c	(replicate (loop.cols 0 (add s1 (mul (get.cols (row.rows.cols walls zero) i1) (get.cols (row.rows.cols walls last) i1)))))	5d73a8356dfc9aef
+11	a.cols:c	(tab (loop.rows 0 (add s2 (max 0 (min 10 (get.cols (row.rows.cols walls i2) j1))))))	636142ea4622eba4
+12	a.cols:c	(tab (mul (sub 1 (min 1 (abs (get.cols (row.rows.cols walls zero) j1)))) (sub 1 (min 1 (abs (get.cols (row.rows.cols walls (next zero)) j1))))))	124cf9c52164143f
+13	a.cols:c	(tab (sel (loop.rows 0 (sel s2 s2 (sel (sub 10 (add (mul s2 s2) (min 2 (abs (get.cols (row.rows.cols walls zero) j1))))) (neg (add (ival.rows i2) 1)) (add (mul s2 s2) (min 2 (abs (get.cols (row.rows.cols walls zero) j1))))))) (neg (loop.rows 0 (sel s2 s2 (sel (sub 10 (add (mul s2 s2) (min 2 (abs (get.cols (row.rows.cols walls zero) j1))))) (neg (add (ival.rows i2) 1)) (add (mul s2 s2) (min 2 (abs (get.cols (row.rows.cols walls zero) j1)))))))) (add rows 1)))	f5ad05688906bd72
+14	a.cols:c	(loop.rows (row.rows.cols walls zero) (map2.max s1 (row.rows.cols walls i1)))	8e3ec295678141ed
+15	a.cols:c	(tab (loop1.rows 0 (add s2 (sel (sub (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls (prev i2)) j1)) 1 0))))	dce694a50e2b2365
+16	a.cols:c	(tab (loop.rows 0 (add s2 (mul (add 1 (mul (mul 10 10) (sub rows (ival.rows i2)))) (get.cols (row.rows.cols walls i2) j1)))))	b97d59f3bfa2dd84
+17	a.cols:c	(tab (loop.rows (get.cols (row.rows.cols walls zero) j1) (add (mul s2 (add (mul (mul (mul (mul 10 10) 10) 10) 10) 1)) (add (mul (mul (mul 10 10) 10) 10) 1))))	983f93cbfc57fdb1
+18	a.cols:c	(tab (loop.rows (abs (get.cols (row.rows.cols walls zero) j1)) (sel (sub (min s2 (abs (get.cols (row.rows.cols walls i2) j1))) 1) (abs (sub s2 (abs (get.cols (row.rows.cols walls i2) j1)))) (sel (sub (abs (sub s2 (abs (get.cols (row.rows.cols walls i2) j1)))) 1) (min s2 (abs (get.cols (row.rows.cols walls i2) j1))) (min (abs (sub s2 (abs (get.cols (row.rows.cols walls i2) j1)))) (min s2 (abs (get.cols (row.rows.cols walls i2) j1))))))))	cb0e6b384b868980
+19	a.cols:c	(loop.cols zeros (tab (add (add (max 0 (sub 1 (ival.cols j2))) (mul (get.cols s1 (prev j2)) (min 1 (ival.cols j2)))) (mul (get.cols s1 (clamp (sub (ival.cols j2) 2))) (max 0 (min 1 (sub (ival.cols j2) 1)))))))	51edb927b2d78c74
+20	a.cols:c	(tab (loop.rows 0 (add s2 (min 1 (max 0 (sub (sub (max 1 (get.cols (row.rows.cols walls zero) j1)) 1) (ival.rows i2)))))))	b09feb718679e59d
+21	a.cols:c	(tab (loop.cols 0 (add s2 (sel (sub (sub (ival.cols i2) (ival.cols j1)) 1) (ival.cols i2) 0))))	eab9f0070e33f80f
+22	a.cols:c	(map2.sub (row.rows.cols walls last) (row.rows.cols walls (prev last)))	8f662a76891da078
+23	a.cols:c	(loop.rows zeros (map2.add (map2.max zeros (map2.sub s1 (replicate 1))) (row.rows.cols walls i1)))	c231e76956d6e152
+24	a.cols:c	(tab (add (get.cols (row.rows.cols walls last) j1) (sub (sub (add (add (add (get.cols (row.rows.cols walls (prev last)) j1) (get.cols (row.rows.cols walls (next last)) j1)) (get.cols (row.rows.cols walls last) (prev j1))) (get.cols (row.rows.cols walls last) (next j1))) (mul (get.cols (row.rows.cols walls last) j1) 2)) (mul (get.cols (row.rows.cols walls last) j1) 2))))	bb82a29bd87fcde2
+25	a.cols:c	(tab (sel (sub (loop.rows 0 (max s2 (get.cols (row.rows.cols walls i2) j1))) 1) 0 1))	961575da0ebb9023
+26	a.cols:c	(tab (sel (sub 1 (add (add (get.cols (row.rows.cols walls zero) (prev j1)) (get.cols (row.rows.cols walls zero) (next j1))) (get.cols (row.rows.cols walls (next zero)) j1))) 1 0))	343c59b143b83f54
+27	a.cols:c	(tab (loop.rows 0 (sel (sub (get.cols (row.rows.cols walls (clamp s2)) j1) (get.cols (row.rows.cols walls i2) j1)) (ival.rows i2) s2)))	d26816ccf9b812e2
+28	a.cols:c	(tab (loop.cols 0 (add s2 (sel (sub (get.cols (row.rows.cols walls zero) i2) (get.cols (row.rows.cols walls zero) j1)) 1 0))))	315c6d898667e447
+29	a.cols:c	(tab (get.cols (row.rows.cols walls zero) (clamp (sub (sub cols 1) (ival.cols j1)))))	273ff7e4394b92c3
+30	a.cols:c	(tab (get.cols (row.rows.cols walls zero) (clamp (sel (sub (add (ival.cols j1) 1) cols) (add (ival.cols j1) 1) (sub (add (ival.cols j1) 1) cols)))))	d204e61ed63248d3
+31	a.cols:c	(loop.rows (replicate 1) (tab (mul (get.cols s1 j2) (get.cols (row.rows.cols walls i1) j2))))	82a344e94f909329
+32	a.cols:c	(tab (loop1.rows (add (get.cols (row.rows.cols walls zero) j1) (get.rows (tab (get.cols (row.rows.cols walls j2) last)) zero)) (min s2 (add (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls i2) last)))))	55187ca044b33902
+33	a.cols:c	(loop.rows zeros (tab (sel (sub (ival.cols j2) (abs (get.cols (row.rows.cols walls i1) zero))) (get.cols s1 j2) (max (get.cols s1 j2) (add (get.cols s1 (clamp (sub (ival.cols j2) (abs (get.cols (row.rows.cols walls i1) zero))))) (max 0 (get.cols (row.rows.cols walls i1) last)))))))	db3123a5f54bebc5
+34	a.cols:c	(loop.rows (tab (ival.cols j1)) (tab (min (add (get.cols s1 j2) 1) (add (get.cols s1 (prev j2)) (min 1 (abs (sub (get.cols (row.rows.cols walls i1) j2) (get.cols (row.rows.cols walls i1) (prev j2)))))))))	5c02e99e4f8945b5
+35	a.cols:c	(loop1.rows zeros (tab (max (get.cols s1 j2) (add (get.cols s1 (prev j2)) (sub 1 (min (abs (sub (get.cols (row.rows.cols walls zero) j2) (get.cols (row.rows.cols walls i1) zero))) 1))))))	b9890b6152018f88
+36	a.cols:c	(tab (sel (mul (get.cols (row.rows.cols walls zero) j1) (mul (mul (mul (mul (mul (mul (mul (mul 2 2) (mul 2 2)) (mul (mul 2 2) (mul 2 2))) (mul (mul (mul 2 2) (mul 2 2)) (mul (mul 2 2) (mul 2 2)))) (mul (mul (mul 2 2) (mul 2 2)) (mul (mul 2 2) (mul 2 2)))) (mul (mul 2 2) (mul 2 2))) (mul 2 2)) 2)) 1 0))	662285af43c62005
+37	a.cols:c	(loop.rows zeros (map2.min (map2.add s1 (row.rows.cols walls i1)) (replicate 10)))	48d98cac231285f5
+38	a.cols:c	(loop.rows zeros (map2.add s1 (tab (mul (add (ival.rows i1) 1) (get.cols (row.rows.cols walls i1) j2)))))	1bf53db445ecff1f
+39	a.cols:c	(tab (min (loop.cols 0 (sel (sub (ival.cols i2) (ival.cols j1)) (sel (sub (add s2 1) (max 2 (abs (get.cols (row.rows.cols walls zero) (clamp 0))))) (add s2 1) 0) s2)) (sub (sub (max 2 (abs (get.cols (row.rows.cols walls zero) (clamp 0)))) 1) (loop.cols 0 (sel (sub (ival.cols i2) (ival.cols j1)) (sel (sub (add s2 1) (max 2 (abs (get.cols (row.rows.cols walls zero) (clamp 0))))) (add s2 1) 0) s2)))))	9b38d218e94ce11d
+40	a.cols:c	(tab (loop.cols 1 (sel (sub (ival.cols i2) (ival.cols j1)) (min s2 (min 1 (max 0 (get.cols (row.rows.cols walls zero) i2)))) s2)))	4c7374c478854c99
+41	a.cols:c	(replicate (sum.cols (tab (abs (get.cols (map2.sub (row.rows.cols walls zero) (row.rows.cols walls last)) j1)))))	b2dc9ce3a5d16161
+42	a.cols:c	(tab (loop.rows 0 (add s2 (max 0 (min 1 (min (sub (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls i2) (prev j1))) (sub (get.cols (row.rows.cols walls i2) j1) (get.cols (row.rows.cols walls i2) (next j1)))))))))	53a76710839b5a6c
+43	a.cols:c	(tab (min (min (get.cols (row.rows.cols walls last) j1) (get.cols (row.rows.cols walls last) (prev j1))) (min (get.cols (row.rows.cols walls last) (next j1)) (get.cols (row.rows.cols walls (prev last)) j1))))	09288e1d30b4b7c4
+44	a.cols:c	(map2.sub (loop.rows (row.rows.cols walls zero) (map2.max s1 (row.rows.cols walls i1))) (loop.rows (row.rows.cols walls zero) (map2.min s1 (row.rows.cols walls i1))))	e1297ab8f6752c19
+45	a.cols:c	(tab (get.cols (row.rows.cols walls zero) (prev j1)))	f060d13f048c576d

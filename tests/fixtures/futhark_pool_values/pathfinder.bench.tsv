@@ -1,0 +1,10 @@
+seq	dual	sexp	values
+1	i32:c	0	c1ec47ab5c004410
+2	i32:c	0	c1ec47ab5c004410
+3	i32:c	0	c1ec47ab5c004410
+4	i32:c	1	3d2d881f02aba187
+5	i32:c	2	ef256064d144b2c6
+6	i32:c	10	fa1d1a01aefb5a3e
+7	i32:c	0	c1ec47ab5c004410
+8	i32:c	1	3d2d881f02aba187
+9	i32:c	(add (mul rows (add rows 1)) cols)	8089f47cd81300a1
