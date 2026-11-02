@@ -306,3 +306,7 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "virtual_blocks_bench"
 path = "experiments/virtual_blocks/bench.rs"
+
+[[example]]
+name = "vblock_wgsl"
+required-features = ["gpu"]
