@@ -251,9 +251,9 @@ fn the_tree_edit_distance_counts_relabels_insertions_and_deletions() {
     assert_eq!(tree_distance(&Tree { symbol: a, const_index: Some(1), kids: vec![] }, &Tree { symbol: a, const_index: Some(2), kids: vec![] }), 1);
     let k = load(&HISTOGRAM).unwrap();
     let r = build(&k, HISTOGRAM_REFERENCE).unwrap();
-    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (mod.k (get.n vs j1))) vs)").unwrap()), 1);
-    assert_eq!(tree_distance(&r, &build(&k, "(hist.min.n (tab (mod.k (get.n is j1))) vs)").unwrap()), 1);
-    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (get.n is j1)) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (mod.k (get.n vs i_n))) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.min.n (tab (mod.k (get.n is i_n))) vs)").unwrap()), 1);
+    assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n (tab (get.n is i_n)) vs)").unwrap()), 1);
     assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n zeros vs)").unwrap()), 5);
 }
 
@@ -267,7 +267,7 @@ fn the_timing_work_bound_admits_fable_s_exact_histogram_program() {
     let interp = Interp::new(&k, &sig).unwrap();
     let (bins, n) = (100u128, 15u128 << 20);
     let sizes: BTreeMap<String, usize> = [("k".to_string(), bins as usize), ("n".to_string(), n as usize)].into_iter().collect();
-    let fable = build(&k, "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))").unwrap();
+    let fable = build(&k, "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 1) (get.n vs i_n) 0))))").unwrap();
     let w = interp.work(&fable, &sizes).unwrap();
     assert_eq!(w, 16 * bins * n + 2 * bins + 1, "Fable's program's work at the timing input");
     assert!(w <= TIMING_WORK_CAP, "Fable's program's work {w} is over the timing bound {TIMING_WORK_CAP}");

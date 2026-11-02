@@ -1038,7 +1038,7 @@ micro/reduce_by_index-segmented.fut	bins	gap		untyped parameter		k
 micro/reduce_by_index-segmented.fut	sum_i32	gap		parameter [][]i32 (no input of rank 2 left)		iss
 micro/reduce_by_index.fut	replicate32	gap		untyped parameter		n
 micro/reduce_by_index.fut	bins	gap		untyped parameter		k
-micro/reduce_by_index.fut	sum_i32	read	a.k:c	(hist.add.n (tab (mod.k (get.n is j1))) vs)		
+micro/reduce_by_index.fut	sum_i32	read	a.k:c	(hist.add.n (tab (mod.k (get.n is i_n))) vs)		
 micro/reduce_by_index.fut	sum_f32	gap		parameter of type []f32		vs
 micro/reduce_by_index.fut	sum_i32_f32	gap		tuple		
 micro/reduce_by_index.fut	absmax	gap		if with condition < an expression	i32:c	no row of this type reads it

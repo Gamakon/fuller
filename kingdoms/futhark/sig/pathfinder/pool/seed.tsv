@@ -1,2 +1,2 @@
 seq	source	origin	function	dual	sexp
-1	llm	fable call_004 statement: an algorithm built from map2 over whole arrays, no explicit indexing	main	a.cols:c	(loop1.rows (row.rows.cols walls zero) (map2.add (row.rows.cols walls i1) (map2.min s1 (map2.min (tab (get.cols s1 (prev j2))) (tab (get.cols s1 (next j2)))))))
+1	llm	fable call_004 statement: an algorithm built from map2 over whole arrays, no explicit indexing	main	a.cols:c	(loop1.rows (row.rows.cols walls zero) (map2.add (row.rows.cols walls i_rows) (map2.min s_a_cols (map2.min (tab (get.cols s_a_cols (prev i_cols))) (tab (get.cols s_a_cols (next i_cols)))))))

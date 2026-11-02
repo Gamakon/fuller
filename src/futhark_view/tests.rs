@@ -25,13 +25,14 @@ fn first_difference(a: &str, b: &str) -> String {
 
 /// THE REGRESSION OF THE WRITTEN VIEWS (`docs/PLAN_futhark_kingdom.md` 3g): the per-problem tables are no longer
 /// committed; each signature view's written text is pinned by its fingerprint. Until 3g the committed tables were
-/// compared byte for byte with the Python view's and this one's; the fingerprints below are of the text those
-/// committed tables had (commit 1fe8a742), so the retirement changed no byte.
+/// compared byte for byte with the Python view's and this one's; at the retirement (commit 0d819cf4) the fingerprints
+/// were those of the removed files (histogram 2945ea1e1d1dc2d8, pathfinder a262fc805844d42c, reduce
+/// 0949f66aa873425e, scan 5dd633e7ed012bb4), so it changed no byte. Since the count contexts (3g) they are these.
 #[test]
 fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
     let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
-    assert_eq!(got, [("histogram", 0x2945_ea1e_1d1d_c2d8), ("pathfinder", 0xa262_fc80_5844_d42c), ("reduce", 0x0949_f66a_a873_425e), ("scan", 0x5dd6_33e7_ed01_2bb4)], "the views' written text changed");
+    assert_eq!(got, [("histogram", 0x2605_d528_715c_9478), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)], "the views' written text changed");
     for (name, spec) in SIG {
         assert_eq!(View::load(&master, spec).unwrap().artefacts().len(), 6, "{name}: a signature view writes six artefacts");
     }
@@ -63,16 +64,18 @@ fn the_a7_view_writes_the_committed_matrix_tables_byte_for_byte() {
 
 #[test]
 fn a_view_pinned_before_a_row_was_added_does_not_have_it() {
-    // A master whose `mod` row is of version 2: a view pinned to version 1 loses exactly that row's instances.
-    let rows = MASTER_ROWS.replace("\t1\tmod\t", "\t2\tmod\t");
+    // A master whose `mod` row is of version 3: a view pinned to version 2 (the committed specifications') loses
+    // exactly that row's instances.
+    let rows = MASTER_ROWS.replace("\t1\tmod\t", "\t3\tmod\t");
     assert_ne!(rows, MASTER_ROWS, "the master has a mod row");
-    let m = Master::parse("2", &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
+    let m = Master::parse("3", &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
     let spec = SIG[0].1;
-    let latest = View::load(&m, &spec.replace("master\t1\t", "master\t2\t")).unwrap();
+    assert!(spec.contains("master\t2\t"), "the specification pins version 2");
+    let latest = View::load(&m, &spec.replace("master\t2\t", "master\t3\t")).unwrap();
     let pinned = View::load(&m, spec).unwrap();
     let has_mod = |v: &View| v.functions_tsv.lines().filter(|l| l.split('\t').nth(1).is_some_and(|n| n.starts_with("mod."))).count();
-    assert!(has_mod(&latest) > 0, "version 2 has the mod rows");
-    assert_eq!(has_mod(&pinned), 0, "version 1 does not");
+    assert!(has_mod(&latest) > 0, "version 3 has the mod rows");
+    assert_eq!(has_mod(&pinned), 0, "version 2 does not");
 }
 
 #[test]
@@ -136,13 +139,13 @@ fn the_kept_rows_are_reachable_both_ways() {
     assert!(e.contains("cannot be built"), "{e}");
 }
 
-/// The measurement of `docs/PLAN_futhark_kingdom.md` 3e: per view, its types, function rows and leaf rows after the
-/// bidirectional reachability (the types and leaf rows are unchanged; the function rows grew: before 3e pathfinder
-/// 3395, reduce 351, scan 369, histogram 2610).
+/// The measurement of `docs/PLAN_futhark_kingdom.md` 3e and 3g: per view, its types, function rows and leaf rows.
+/// Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73, 408,
+/// 221). Count contexts (3g): these.
 #[test]
 fn the_view_sizes_are_the_measured_ones() {
     let master = Master::committed().unwrap();
-    for ((name, spec), want) in SIG.iter().zip([(607, 2700, 1779), (832, 3975, 2062), (73, 408, 221), (73, 408, 221)]) {
+    for ((name, spec), want) in SIG.iter().zip([(162, 1032, 455), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
         let v = View::load(&master, spec).unwrap();
         let types = v.types_tsv.lines().count() - 1;
         let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();

@@ -1540,6 +1540,12 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
                 then(vec![(*f.clone(), *g.clone()), (x, c[1].clone()), (y, c[0].clone())], holes, k);
             }
         }
+        // A binder's variable is named by its class (`futhark_view::var_name`), so the pattern's name may be one an
+        // outer binder already gave: renaming the source's binder to it would capture an outer variable the body
+        // reads (the body reads an outer variable through a same-class inner binder). No row can say that, so the
+        // match fails and the reader reports the gap.
+        (E::Lam(ps, _), E::Lam(qs, ebody)) if ps.len() == qs.len() && ps.iter().zip(qs).any(|(p, q)| p != q && ebody.mentions(p)) => {}
+        (E::Loop { state, var: v, .. }, E::Loop { state: s2, var: v2, body: b2, .. }) if (state != s2 && b2.mentions(state)) || (v != v2 && b2.mentions(v)) => {}
         (E::Lam(ps, body), E::Lam(qs, ebody)) if ps.len() == qs.len() => {
             let mut eb = *ebody.clone();
             for (p, q) in ps.iter().zip(qs) {

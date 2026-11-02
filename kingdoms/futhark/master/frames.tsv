@@ -1,4 +1,4 @@
 family	kind	code	scope	binds
-core	T	T-{D}	D:dims	j{K}:ix.{D}
-core	L	L-{D}-{S}	D:dims;S:states	s{K}:{S},i{K}:ix.{D}
-core	F	F-{D}-{S}	D:dims;S:states	s{K}:{S},i{K}:ix.{D}
+core	T	T-{D}	D:dims	ix.{D}
+core	L	L-{D}-{S}	D:dims;S:states	{S},ix.{D}
+core	F	F-{D}-{S}	D:dims;S:states	{S},ix.{D}

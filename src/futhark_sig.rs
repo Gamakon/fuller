@@ -29,7 +29,7 @@ use egglog::prelude::exprs;
 use egglog::{EGraph, Term, TermDag, TermId};
 
 use crate::futhark_table::{FutharkKind, FutharkKingdom, GeneRng};
-use crate::futhark_view::{Shape, View as TableView, ViewSpec};
+use crate::futhark_view::{var_name, Ctx, Shape, View as TableView, ViewSpec};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::saturated_fold::EgraphKingdom;
@@ -128,16 +128,16 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
 /// `j`, `j - 1` and `j + 1`, the published order of the two `min`s. The published kernel skips a neighbour that is off
 /// the edge; here the index is clamped, so the off-edge neighbour is `j` itself, which the least already holds.
 pub const PATHFINDER_REFERENCE: &str = "(loop1.rows (row.rows.cols walls zero)
-  (tab (add (get.cols (row.rows.cols walls i1) j2)
-            (min (min (get.cols s1 j2) (get.cols s1 (prev j2))) (get.cols s1 (next j2))))))";
+  (tab (add (get.cols (row.rows.cols walls i_rows) i_cols)
+            (min (min (get.cols s_a_cols i_cols) (get.cols s_a_cols (prev i_cols))) (get.cols s_a_cols (next i_cols))))))";
 
 pub const PATHFINDER_PLANTED: &str = "(map2.min
   (loop1.rows (row.rows.cols walls zero)
-    (tab (add (get.cols (row.rows.cols walls i1) j2)
-              (min (min (get.cols s1 j2) (get.cols s1 (prev j2))) (get.cols s1 (next j2))))))
+    (tab (add (get.cols (row.rows.cols walls i_rows) i_cols)
+              (min (min (get.cols s_a_cols i_cols) (get.cols s_a_cols (prev i_cols))) (get.cols s_a_cols (next i_cols))))))
   (loop1.rows (row.rows.cols walls zero)
-    (tab (add (get.cols (row.rows.cols walls i1) j2)
-              (min (get.cols s1 j2) (min (get.cols s1 (prev j2)) (get.cols s1 (next j2))))))))";
+    (tab (add (get.cols (row.rows.cols walls i_rows) i_cols)
+              (min (get.cols s_a_cols i_cols) (min (get.cols s_a_cols (prev i_cols)) (get.cols s_a_cols (next i_cols))))))))";
 
 pub const PATHFINDER_PROBLEM: Problem = Problem {
     name: "pathfinder",
@@ -185,9 +185,9 @@ pub const SCAN_PROBLEM: Problem = Problem {
 
 /// The histogram's published program, `hist (+) 0 k (map (% k) is) vs`, as a gene: the bins are the indices modulo
 /// `k`, tabulated over `n`, and the values are summed into them.
-pub const HISTOGRAM_REFERENCE: &str = "(hist.add.n (tab (mod.k (get.n is j1))) vs)";
+pub const HISTOGRAM_REFERENCE: &str = "(hist.add.n (tab (mod.k (get.n is i_n))) vs)";
 /// The histogram's planted slowdown: the values replaced by the elementwise least of the values and themselves.
-pub const HISTOGRAM_PLANTED: &str = "(hist.add.n (tab (mod.k (get.n is j1))) (map2.min vs vs))";
+pub const HISTOGRAM_PLANTED: &str = "(hist.add.n (tab (mod.k (get.n is i_n))) (map2.min vs vs))";
 
 pub const HISTOGRAM_PROBLEM: Problem = Problem {
     name: "histogram",
@@ -508,16 +508,16 @@ enum Op {
     /// The size of a dimension as a value.
     DimVal(usize),
     Const,
-    /// The state of frame k.
+    /// A loop state: its slot (a state class and the variable's ordinal in that class, [`var_name`]).
     State(usize),
-    /// The index of frame k (a tabulate's `jk`, a loop's `ik`).
+    /// An index: its slot (a dimension and the variable's ordinal over it, `i_D`, `i2_D`).
     Index(usize),
     Prev,
     Next(usize),
     Clamp(usize),
     Zero,
     Last(usize),
-    /// A tabulate over a dimension, binding frame k.
+    /// A tabulate over a dimension (its size), binding the index slot.
     Tab(usize, usize),
     Replicate(usize),
     /// An elementwise operation of two arrays of one class (`map2`): add, sub, min, max.
@@ -532,8 +532,8 @@ enum Op {
     Row,
     Input(usize),
     Zeros(usize),
-    /// A loop over a dimension binding frame k; `from1` runs its counter over 1 .. D-1.
-    Loop { dim: usize, k: usize, from1: bool },
+    /// A loop over a dimension binding an index slot and a state slot; `from1` runs its counter over 1 .. D-1.
+    Loop { dim: usize, index: usize, state: usize, from1: bool },
 }
 
 /// The elementwise operations of `map2`.
@@ -607,17 +607,13 @@ enum Val {
     A(View),
 }
 
-/// The frames' variables: a state and an index a frame (frame 0 is unused).
+/// The bound variables by slot (class and ordinal; a binder sets its slot and restores the outer value after).
 struct Env {
     sizes: Vec<usize>,
     inputs: Vec<View>,
     zeros: Vec<View>,
     state: Vec<Option<Val>>,
-    index: Vec<i64>,
-}
-
-fn depth_of(dual: &str) -> usize {
-    dual.split_once(':').map_or(0, |(_, ctx)| ctx.matches('/').count())
+    index: Vec<Option<i64>>,
 }
 
 impl<'a> Interp<'a> {
@@ -626,6 +622,18 @@ impl<'a> Interp<'a> {
         let class_dim = |dual: &str, prefix: &str| -> Result<usize, String> {
             let cls = dual.split(':').next().unwrap_or("");
             dim(cls.strip_prefix(prefix).ok_or_else(|| format!("{dual} is not a {prefix} class"))?)
+        };
+        // The variable slots: (class, ordinal) for every class a binder binds (an index over each dimension; a state
+        // of the element or of each dimension's rank-1 class) and every ordinal up to the depth.
+        let ords = sig.depth as usize + 1;
+        let states: Vec<String> = std::iter::once(sig.output.elem.clone()).chain(sig.dims.iter().map(|d| format!("a.{d}"))).collect();
+        let index_var: BTreeMap<String, usize> = sig.dims.iter().enumerate().flat_map(|(i, d)| (1..=ords).map(move |k| (var_name(&format!("ix.{d}"), k as u32), i * ords + k - 1))).collect();
+        let state_var: BTreeMap<String, usize> = states.iter().enumerate().flat_map(|(i, c)| (1..=ords).map(move |k| (var_name(c, k as u32), i * ords + k - 1))).collect();
+        // A binder's slot: the next ordinal of its class in its own (output's) context.
+        let binder_slot = |out: &str, cls: &str, table: &BTreeMap<String, usize>| -> Result<usize, String> {
+            let ctx = Ctx::of_dual(out)?.ok_or_else(|| format!("our software has a bug: a binder {out} outside a context"))?;
+            let name = var_name(cls, ctx.count(cls) + 1);
+            table.get(&name).copied().ok_or_else(|| format!("our software has a bug: no slot for the variable {name} of {out}"))
         };
         let mut ops = Vec::with_capacity(k.rows.len());
         let mut literals = Vec::with_capacity(k.duals.len());
@@ -639,8 +647,7 @@ impl<'a> Interp<'a> {
         for r in &k.rows {
             let out = &k.dual(r.output).ok_or("a row with no dual")?.dual;
             let (op, _) = r.name.split_once('@').unwrap_or((r.name.as_str(), ""));
-            let kk = depth_of(out) + 1;
-            let num = |s: &str| s.get(1..).and_then(|n| n.parse::<usize>().ok());
+            let out_class = out.split(':').next().unwrap_or("");
             let o = match op {
                 "add" => Op::Add,
                 "sub" => Op::Sub,
@@ -655,7 +662,10 @@ impl<'a> Interp<'a> {
                 "clamp" => Op::Clamp(class_dim(out, "ix.")?),
                 "zero" => Op::Zero,
                 "last" => Op::Last(class_dim(out, "ix.")?),
-                "tab" => Op::Tab(class_dim(out, "a.")?, kk),
+                "tab" => {
+                    let d = class_dim(out, "a.")?;
+                    Op::Tab(d, binder_slot(out, &format!("ix.{}", sig.dims[d]), &index_var)?)
+                }
                 "replicate" => Op::Replicate(class_dim(out, "a.")?),
                 "zeros" => Op::Zeros(class_dim(out, "a.")?),
                 _ if r.kind == FutharkKind::Const => Op::Const,
@@ -677,10 +687,15 @@ impl<'a> Interp<'a> {
                 _ if op.starts_with("mod.") => Op::Mod(dim(&op[4..])?),
                 // A size input's row is its dimension as a value, not an input array.
                 _ if sig.size_inputs.iter().any(|d| d == op) => Op::DimVal(dim(op)?),
-                _ if op.starts_with("loop1.") => Op::Loop { dim: dim(&op[6..])?, k: kk, from1: true },
-                _ if op.starts_with("loop.") => Op::Loop { dim: dim(&op[5..])?, k: kk, from1: false },
-                _ if op.starts_with('s') && num(op).is_some() => Op::State(num(op).unwrap_or(0)),
-                _ if (op.starts_with('i') || op.starts_with('j')) && num(op).is_some() => Op::Index(num(op).unwrap_or(0)),
+                _ if op.starts_with("loop1.") || op.starts_with("loop.") => {
+                    let (from1, d) = match op.strip_prefix("loop1.") {
+                        Some(d) => (true, d),
+                        None => (false, &op[5..]),
+                    };
+                    Op::Loop { dim: dim(d)?, index: binder_slot(out, &format!("ix.{d}"), &index_var)?, state: binder_slot(out, out_class, &state_var)?, from1 }
+                }
+                _ if r.kind == FutharkKind::Terminal && state_var.contains_key(op) => Op::State(state_var[op]),
+                _ if r.kind == FutharkKind::Terminal && index_var.contains_key(op) => Op::Index(index_var[op]),
                 _ => {
                     if let Some(i) = sig.inputs.iter().position(|p| p.name == op) {
                         Op::Input(i)
@@ -700,13 +715,12 @@ impl<'a> Interp<'a> {
     pub fn eval(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
         let sizes_map = self.sig.sizes(inputs)?;
         let sizes: Vec<usize> = self.sig.dims.iter().map(|d| sizes_map[d]).collect();
-        let depth = self.sig.depth as usize + 2;
         let mut env = Env {
             inputs: inputs.iter().map(|a| View { data: Rc::new(a.data.clone()), off: 0, dims: a.dims.clone() }).collect(),
             zeros: sizes.iter().map(|&n| View { data: Rc::new(vec![0; n]), off: 0, dims: vec![n] }).collect(),
+            state: vec![None; (1 + sizes.len()) * (self.sig.depth as usize + 1)],
+            index: vec![None; sizes.len() * (self.sig.depth as usize + 1)],
             sizes,
-            state: vec![None; depth],
-            index: vec![0; depth],
         };
         match self.at(tree, &mut env)? {
             Val::A(v) => Ok(Array { dims: v.dims.clone(), data: v.slice().to_vec() }),
@@ -773,20 +787,22 @@ impl<'a> Interp<'a> {
                 let pool = self.literals[ty].as_ref().ok_or("a constant of a type with no pool")?;
                 Val::S(*pool.get(t.const_index.ok_or("a constant with no index")? as usize).ok_or("a constant index past the pool")?)
             }
-            Op::State(k) => env.state.get(k).cloned().flatten().ok_or_else(|| format!("our software has a bug: s{k} is read unbound"))?,
-            Op::Index(k) => Val::I(*env.index.get(k).ok_or("an index frame past the depth")?),
+            Op::State(k) => env.state.get(k).cloned().flatten().ok_or_else(|| format!("our software has a bug: the state of slot {k} is read unbound"))?,
+            Op::Index(d) => Val::I(env.index.get(d).copied().flatten().ok_or_else(|| format!("our software has a bug: the index of slot {d} is read unbound"))?),
             Op::Prev => Val::I((self.i(kid(0)?, env)? - 1).max(0)),
             Op::Next(d) => Val::I((self.i(kid(0)?, env)? + 1).min(env.sizes[d] as i64 - 1)),
             Op::Clamp(d) => Val::I(i64::from(self.s(kid(0)?, env)?).min(env.sizes[d] as i64 - 1).max(0)),
             Op::Zero => Val::I(0),
             Op::Last(d) => Val::I(env.sizes[d] as i64 - 1),
-            Op::Tab(d, k) => {
+            Op::Tab(d, slot) => {
                 let n = env.sizes[d];
                 let mut out = Vec::with_capacity(n);
+                let outer = env.index[slot];
                 for j in 0..n {
-                    env.index[k] = j as i64;
+                    env.index[slot] = Some(j as i64);
                     out.push(self.s(kid(0)?, env)?);
                 }
+                env.index[slot] = outer;
                 Val::A(View { data: Rc::new(out), off: 0, dims: vec![n] })
             }
             Op::Replicate(d) => {
@@ -846,16 +862,18 @@ impl<'a> Interp<'a> {
             }
             Op::Input(i) => Val::A(env.inputs[i].clone()),
             Op::Zeros(d) => Val::A(env.zeros[d].clone()),
-            Op::Loop { dim, k, from1 } => {
+            Op::Loop { dim, index, state: slot, from1 } => {
                 let mut state = self.at(kid(0)?, env)?;
                 let n = env.sizes[dim];
                 let trips = if from1 { n.saturating_sub(1) } else { n };
+                let (outer_index, outer_state) = (env.index[index], env.state[slot].take());
                 for t in 0..trips {
-                    env.index[k] = (t + usize::from(from1)) as i64;
-                    env.state[k] = Some(state);
+                    env.index[index] = Some((t + usize::from(from1)) as i64);
+                    env.state[slot] = Some(state);
                     state = self.at(kid(1)?, env)?;
                 }
-                env.state[k] = None;
+                env.index[index] = outer_index;
+                env.state[slot] = outer_state;
                 state
             }
         })
@@ -970,6 +988,63 @@ fn build_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty: Ty) 
                 return Err(format!("{head}@{} takes {} arguments, given {}", dual.dual, inputs.len(), items.len() - 1));
             }
             let kids = items[1..].iter().zip(inputs).map(|(a, t)| build_at(k, by_name, a, t)).collect::<Result<Vec<_>, _>>()?;
+            Ok(Tree { symbol: sym, const_index: None, kids })
+        }
+    }
+}
+
+/// THE STACK-NAMED READER: a program written in the variable names of the stack contexts (before 2026-11-02: a
+/// variable named by its binder's frame number, outermost 1 — a tabulate's `j1`, a loop's `i2` and `s2`), as the
+/// pools, fixtures, reports and halls of fame of that time hold them, read as a tree of this kingdom at the dual
+/// `dual`. Each old name is the variable of its frame's class, now named by its class and its ordinal among the
+/// frames of that class around it ([`crate::futhark_view::var_name`]), so every old program has its new name.
+pub fn build_stack_named(k: &FutharkKingdom, text: &str, dual: &str) -> Result<Tree, String> {
+    let ty = k.ty(dual).ok_or_else(|| format!("the kingdom has no type {dual}"))?;
+    let by_name: HashMap<&str, u32> = k.rows.iter().enumerate().map(|(i, r)| (r.name.as_str(), i as u32)).collect();
+    let mut frames: Vec<Vec<(String, String)>> = Vec::new();
+    stack_named_at(k, &by_name, &parse_sexp(text)?, ty, &mut frames)
+}
+
+fn stack_named_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty: Ty, frames: &mut Vec<Vec<(String, String)>>) -> Result<Tree, String> {
+    let dual = k.dual(ty).ok_or("a slot of no dual")?;
+    match e {
+        Sexp::Atom(a) => {
+            let old = a.strip_prefix(['i', 'j', 's']).and_then(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1 && *n <= frames.len());
+            let Some(kk) = old else { return build_at(k, by_name, e, ty) };
+            let cls = frames[kk - 1].iter().find(|(n, _)| n == a).map(|(_, c)| c.clone()).ok_or_else(|| format!("{a} is not bound by frame {kk}"))?;
+            // Its ordinal: the frames up to its own that bind its class.
+            let ord = frames[..kk].iter().filter(|f| f.iter().any(|(_, c)| *c == cls)).count() as u32;
+            build_at(k, by_name, &Sexp::Atom(var_name(&cls, ord)), ty)
+        }
+        Sexp::List(items) => {
+            let Some(Sexp::Atom(head)) = items.first() else { return Err(format!("a list with no head in {}", dual.dual)) };
+            let sym = by_name.get(format!("{head}@{}", dual.dual).as_str()).copied().ok_or_else(|| format!("the kingdom has no row {head}@{}", dual.dual))?;
+            let inputs = k.rows[sym as usize].inputs.clone();
+            if inputs.len() != items.len() - 1 {
+                return Err(format!("{head}@{} takes {} arguments, given {}", dual.dual, inputs.len(), items.len() - 1));
+            }
+            let cls = dual.dual.split(':').next().unwrap_or("").to_string();
+            let kk = frames.len() + 1;
+            let frame: Option<Vec<(String, String)>> = if head == "tab" {
+                Some(vec![(format!("j{kk}"), format!("ix.{}", cls.strip_prefix("a.").ok_or("a tabulate of a non-array")?))])
+            } else if let Some(d) = head.strip_prefix("loop1.").or_else(|| head.strip_prefix("loop.")) {
+                Some(vec![(format!("s{kk}"), cls.clone()), (format!("i{kk}"), format!("ix.{d}"))])
+            } else {
+                None
+            };
+            let last = inputs.len().saturating_sub(1);
+            let mut kids = Vec::with_capacity(inputs.len());
+            for (i, (a, t)) in items[1..].iter().zip(inputs).enumerate() {
+                match (&frame, i == last) {
+                    (Some(f), true) => {
+                        frames.push(f.clone());
+                        let r = stack_named_at(k, by_name, a, t, frames);
+                        frames.pop();
+                        kids.push(r?);
+                    }
+                    _ => kids.push(stack_named_at(k, by_name, a, t, frames)?),
+                }
+            }
             Ok(Tree { symbol: sym, const_index: None, kids })
         }
     }
@@ -1548,3 +1623,5 @@ mod tests;
 mod tests_micro;
 #[cfg(test)]
 mod tests_view;
+#[cfg(test)]
+mod tests_pool;

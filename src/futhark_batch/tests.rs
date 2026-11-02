@@ -379,8 +379,8 @@ fn every_problems_random_programs_compile_to_rust() {
 const CROSS_PATH: [&str; 5] = [
     crate::futhark_sig::HISTOGRAM_REFERENCE,
     crate::futhark_sig::HISTOGRAM_PLANTED,
-    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0))))",
-    "(tab (sum.n (tab (get.n vs j2))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 1) (get.n vs i_n) 0))))",
+    "(tab (sum.n (tab (get.n vs i_n))))",
     "(tab 10)",
 ];
 
@@ -732,10 +732,10 @@ fn the_generation_0_programs_the_single_path_scored_worst_compile_on_the_webgpu_
     let shim = crate::futhark_wgpu_host::process_shim().unwrap();
     let base = scratch("bug5");
     let texts = [
-        "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k j1) (get.n is j2))) (mod.n (mod.k (mod.n 1)))) (get.n vs j2) 0))) (mul s2 (ival.k j1))))",
-        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev j2))) (ival.k j1))) -1) (get.n vs j2) 2))))",
-        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 10) (get.n vs j2) 0))))",
-        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs j2)) (ival.k j1))) 0) (get.n vs j2) (get.n is j2)))))",
+        "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k i_k) (get.n is i_n))) (mod.n (mod.k (mod.n 1)))) (get.n vs i_n) 0))) (mul s_i32 (ival.k i_k))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev i_n))) (ival.k i_k))) -1) (get.n vs i_n) 2))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 10) (get.n vs i_n) 0))))",
+        "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs i_n)) (ival.k i_k))) 0) (get.n vs i_n) (get.n is i_n)))))",
     ];
     for (i, text) in texts.iter().enumerate() {
         let t = crate::futhark_sig::build(&k, text).unwrap_or_else(|e| panic!("{text}: {e}"));
@@ -748,30 +748,30 @@ fn the_generation_0_programs_the_single_path_scored_worst_compile_on_the_webgpu_
 /// The 24 programs of histogram's generation 0 (`--gen0 fable-mutants-only`, seed 1, the runs of 2026-10-29), as the
 /// rust run's ledger holds them.
 const HISTOGRAM_GEN0: [&str; 24] = [
-    "(map2.add (replicate 0) (tab (mul (ival.k (prev (next j1))) (ival.k zero))))",
-    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add (ival.k j1) (add s2 s2))) (mod.k (mul s2 (sel 0 1 s2)))) s2 (sel 1 (get.n vs (clamp (sub s2 0))) (sub (get.n vs i2) s2)))))) (tab (ival.k (prev zero))))",
-    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel 0 (get.n vs (clamp (add (sub s2 s2) s2))) (sub (mul s2 (sel s2 1 0)) (get.n vs i2))))))) (tab (ival.k (prev zero))))",
-    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel s2 (get.n is (prev i2)) (sub (mul (add (sel s2 s2 1) (sub 0 s2)) s2) 0)))))) (tab (ival.k (prev zero))))",
-    "(map2.add (tab (loop.n 1 (max s2 (sel (add (sub (ival.k j1) (add s2 (ival.k j1))) 1) s2 (sel s2 (get.n vs (prev i2)) (sub (mul (add (sel s2 s2 1) (sub 0 s2)) s2) 0)))))) (tab (ival.k (prev zero))))",
-    "(tab (loop.n (ival.k (next j1)) (max s2 (ival.k j1))))",
-    "(tab (loop.n (ival.k (next zero)) (max s2 (ival.k j1))))",
-    "(tab (loop.n (minimum.k (hist.add.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 1) (get.n vs j2) 0)) vs)) (max k (ival.k j1))))",
-    "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k j1) (get.n is j2))) (mod.n (mod.k (mod.n 1)))) (get.n vs j2) 0))) (mul s2 (ival.k j1))))",
-    "(tab (loop.n 0 (max (get.n vs (clamp (add s2 (sel (sub (get.n vs i2) (get.n vs i2)) 0 -1)))) (ival.k last))))",
-    "(tab (loop.n 0 (max s2 (neg (add s2 (sel (sub (get.n vs (clamp (ival.k last))) (get.n vs i2)) 1 0))))))",
-    "(tab (loop.n 1 (get.n vs (clamp s2))))",
-    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub (add (ival.k j1) (add (mul s2 (ival.k j1)) (get.n vs i2))) (get.n vs i2)) 0 -1)))) (ival.k last))))",
-    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub (get.n vs i2) (get.n vs i2)) 0 -1)))) (ival.k last))))",
-    "(tab (loop.n 1 (max (get.n vs (clamp (add s2 (sel (sub n (get.n vs i2)) 0 -1)))) (ival.k zero))))",
-    "(tab (loop.n 1 (max s2 (ival.k j1))))",
-    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs (clamp (add (mul s2 (ival.k j1)) (get.n vs i2))))) (sub s2 (ival.k last)))) (neg s2))))",
-    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs zero)) (sub s2 (ival.k last)))) (neg s2))))",
-    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 k) (sub s2 (ival.k last)))) (neg s2))))",
+    "(map2.add (replicate 0) (tab (mul (ival.k (prev (next i_k))) (ival.k zero))))",
+    "(map2.add (tab (loop.n 1 (max s_i32 (sel (add (sub (ival.k i_k) (add (ival.k i_k) (add s_i32 s_i32))) (mod.k (mul s_i32 (sel 0 1 s_i32)))) s_i32 (sel 1 (get.n vs (clamp (sub s_i32 0))) (sub (get.n vs i_n) s_i32)))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s_i32 (sel (add (sub (ival.k i_k) (add s_i32 (ival.k i_k))) 1) s_i32 (sel 0 (get.n vs (clamp (add (sub s_i32 s_i32) s_i32))) (sub (mul s_i32 (sel s_i32 1 0)) (get.n vs i_n))))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s_i32 (sel (add (sub (ival.k i_k) (add s_i32 (ival.k i_k))) 1) s_i32 (sel s_i32 (get.n is (prev i_n)) (sub (mul (add (sel s_i32 s_i32 1) (sub 0 s_i32)) s_i32) 0)))))) (tab (ival.k (prev zero))))",
+    "(map2.add (tab (loop.n 1 (max s_i32 (sel (add (sub (ival.k i_k) (add s_i32 (ival.k i_k))) 1) s_i32 (sel s_i32 (get.n vs (prev i_n)) (sub (mul (add (sel s_i32 s_i32 1) (sub 0 s_i32)) s_i32) 0)))))) (tab (ival.k (prev zero))))",
+    "(tab (loop.n (ival.k (next i_k)) (max s_i32 (ival.k i_k))))",
+    "(tab (loop.n (ival.k (next zero)) (max s_i32 (ival.k i_k))))",
+    "(tab (loop.n (minimum.k (hist.add.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 1) (get.n vs i_n) 0)) vs)) (max k (ival.k i_k))))",
+    "(tab (loop.n (minimum.n (tab (sel (sub (abs (sub (ival.k i_k) (get.n is i_n))) (mod.n (mod.k (mod.n 1)))) (get.n vs i_n) 0))) (mul s_i32 (ival.k i_k))))",
+    "(tab (loop.n 0 (max (get.n vs (clamp (add s_i32 (sel (sub (get.n vs i_n) (get.n vs i_n)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 0 (max s_i32 (neg (add s_i32 (sel (sub (get.n vs (clamp (ival.k last))) (get.n vs i_n)) 1 0))))))",
+    "(tab (loop.n 1 (get.n vs (clamp s_i32))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s_i32 (sel (sub (add (ival.k i_k) (add (mul s_i32 (ival.k i_k)) (get.n vs i_n))) (get.n vs i_n)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s_i32 (sel (sub (get.n vs i_n) (get.n vs i_n)) 0 -1)))) (ival.k last))))",
+    "(tab (loop.n 1 (max (get.n vs (clamp (add s_i32 (sel (sub n (get.n vs i_n)) 0 -1)))) (ival.k zero))))",
+    "(tab (loop.n 1 (max s_i32 (ival.k i_k))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs (clamp (add (mul s_i32 (ival.k i_k)) (get.n vs i_n))))) (sub s_i32 (ival.k last)))) (neg s_i32))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 (get.n vs zero)) (sub s_i32 (ival.k last)))) (neg s_i32))))",
+    "(tab (loop.n 2 (max (mod.k (add (sel 0 0 k) (sub s_i32 (ival.k last)))) (neg s_i32))))",
     "(tab (mod.n n))",
     "(tab (sub 1 (mod.k (mul 10 10))))",
-    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev j2))) (ival.k j1))) -1) (get.n vs j2) 2))))",
-    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is j2)) (ival.k j1))) 10) (get.n vs j2) 0))))",
-    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs j2)) (ival.k j1))) 0) (get.n vs j2) (get.n is j2)))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is (prev i_n))) (ival.k i_k))) -1) (get.n vs i_n) 2))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 10) (get.n vs i_n) 0))))",
+    "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n vs i_n)) (ival.k i_k))) 0) (get.n vs i_n) (get.n is i_n)))))",
 ];
 
 /// BUG 7: A GENERATION IS ONE BATCH. Histogram's generation 0 (24 programs, each with its quality entry and its timed

@@ -1734,25 +1734,47 @@ def sig_views_dir(name):
 # e-graph maps every row to one constructor of its dual's sort, and no two
 # duals share a sort.
 
-SIG_FRAME_RE = re.compile(r"^(?:T-([a-z][a-z0-9]*)|([LF])-([a-z][a-z0-9]*)-(.+))$")
+SIG_CTX_RE = re.compile(r"^c/\{([^{}]+)\}@([1-9][0-9]*)$")
+SIG_CLASS_RE = re.compile(r"^(?:ix\.[a-z][a-z0-9_]*|a(?:\.[a-z][a-z0-9_]*)+|[a-z][a-z0-9]*)(?:\*([2-9]))?$")
 
 
 def sig_parse_dual(dual):
-    """`i32:c/F-rows-a.cols/T-cols` -> ("i32", [frames]); a context-free dual ->
-    (dual, None). Raises on a context that does not parse."""
+    """`i32:c/{a.cols,ix.cols*2}@3` -> ("i32", (frozenset of (class, count)), 3)); `cls:c` -> (cls, (frozenset(), 0));
+    a context-free dual -> (dual, None). A context is the COUNT of variables of each class in scope (`*n` when above
+    one) and the depth (docs/PLAN_futhark_kingdom.md 3g). Raises on a context that does not parse."""
     cls, sep, ctx = dual.partition(":")
     if not sep:
         return cls, None
-    parts = ctx.split("/")
-    if parts[0] != "c":
-        raise ValueError(f"the context of {dual} does not start at c")
-    frames = []
-    for p in parts[1:]:
-        m = SIG_FRAME_RE.match(p)
-        if not m:
-            raise ValueError(f"the frame {p} of {dual} does not parse")
-        frames.append(("T", m.group(1)) if m.group(1) else (m.group(2), m.group(3), m.group(4)))
-    return cls, frames
+    if ctx == "c":
+        return cls, (frozenset(), 0)
+    m = SIG_CTX_RE.match(ctx)
+    if not m:
+        raise ValueError(f"the context of {dual} does not parse")
+    items = m.group(1).split(",")
+    counts = {}
+    for it in items:
+        mm = SIG_CLASS_RE.match(it)
+        if not mm:
+            raise ValueError(f"the context of {dual} names the class {it!r}")
+        counts[it.split("*")[0]] = int(mm.group(1) or 1)
+    if [i.split("*")[0] for i in items] != sorted(counts):
+        raise ValueError(f"the context of {dual} is not sorted by class")
+    return cls, (frozenset(counts.items()), int(m.group(2)))
+
+
+def sig_var(cls, k=1):
+    """The name of the k-th variable of a class, restated apart from the view: `ix.D` is `i_D`, a state class `C` is
+    `s_C` with `.` as `_`; the k-th (k >= 2) puts k after the letter (`i2_D`, `s2_C`)."""
+    letter, rest = ("i", cls[3:]) if cls.startswith("ix.") else ("s", cls.replace(".", "_"))
+    return f"{letter}{'' if k == 1 else k}_{rest}"
+
+
+def sig_push(ctx, classes):
+    """The context inside a binder that binds `classes`: each one's count up by one, one deeper."""
+    counts = dict(ctx[0])
+    for c in classes:
+        counts[c] = counts.get(c, 0) + 1
+    return frozenset(counts.items()), ctx[1] + 1
 
 
 def witness_sig(dir_path, name):
@@ -1775,15 +1797,8 @@ def witness_sig(dir_path, name):
         except ValueError as e:
             bad.append(f"S2 {e}")
 
-    def bound(frames):
-        out = {}
-        for k, f in enumerate(frames, start=1):
-            if f[0] == "T":
-                out[f"j{k}"] = f"ix.{f[1]}"
-            else:
-                out[f"s{k}"] = f[2]
-                out[f"i{k}"] = f"ix.{f[1]}"
-        return out
+    def bound(ctx):
+        return {sig_var(c, k): c for c, n in ctx[0] for k in range(1, n + 1)}
 
     terminals = set()
     for row in funcs:
@@ -1793,7 +1808,7 @@ def witness_sig(dir_path, name):
                 bad.append(f"S2 row {rname} names the undeclared dual {d}")
         if out not in parsed:
             continue
-        cls, frames = parsed[out]
+        cls, octx = parsed[out]
         held = sorted({int(x) for x in PLACEHOLDER_RE.findall(spelling)})
         if kind == "function" and held != list(range(len(args))):
             bad.append(f"S3 row {rname}'s spelling holds {held}, it has {len(args)} arguments")
@@ -1805,7 +1820,7 @@ def witness_sig(dir_path, name):
         # S4: a terminal names a variable of its context and class, an input of
         # its class, a size, a zero array, or an index constant.
         if kind == "terminal":
-            vs = bound(frames or [])
+            vs = bound(octx or (frozenset(), 0))
             ok = ((spelling in vs and vs[spelling] == cls)
                   or (spelling in inputs and inputs[spelling] == cls)
                   or (cls == elem and spelling in {f"{elem}.i64 {d}" for d in dims})
@@ -1813,37 +1828,41 @@ def witness_sig(dir_path, name):
                   or (cls.startswith("ix.") and spelling in ("0i64", f"{cls[3:]} - 1")))
             if not ok:
                 bad.append(f"S4 the terminal {rname} ({spelling!r}) is not bound in {out}")
-        if frames is None:
+        if octx is None:
             if kind != "terminal" or spelling not in inputs:
                 bad.append(f"S4 the context-free dual {out} holds {rname}, not an input")
             continue
-        depth = len(frames)
-        k = depth + 1
+        depth = octx[1]
         # S5: every argument of a row is in the row's own context, except a
-        # binder's body, which is the context plus exactly its frame.
+        # binder's body, which is the context plus exactly its frame's classes
+        # (an index into its dimension; a loop's state of its own class), one
+        # deeper.
         binder = op == "tab" or op.startswith("loop")
         for i, a in enumerate(args):
             if a not in parsed:
                 continue
-            acls, aframes = parsed[a]
-            if aframes is None:
+            acls, actx = parsed[a]
+            if actx is None:
                 continue
             body = binder and i == len(args) - 1
             if body:
                 d = op.split(".")[1] if "." in op else cls[2:]
-                want = frames + ([("T", d)] if op == "tab" else [("L" if op.startswith("loop.") else "F", d, cls)])
-                if aframes != want:
+                frame = [f"ix.{d}"] + ([] if op == "tab" else [cls])
+                want = sig_push(octx, frame)
+                if actx != want:
                     bad.append(f"S5 the binder {rname}'s body is in {a}, not its context plus its frame")
                 if op != "tab" and acls != cls:
                     bad.append(f"S5 the loop {rname}'s body is a {acls}, its state a {cls}")
-            elif aframes != frames:
+            elif actx != octx:
                 bad.append(f"S5 the row {rname} reads {a} outside its context")
         if binder:
             d = op.split(".")[1] if "." in op else cls[2:]
             st = "".join(f"[{x}]" for x in cls.split(".")[1:]) + elem if cls.startswith("a.") else cls
-            want = {"tab": f"tabulate {d} (\\j{k} -> {{0}})",
-                    f"loop.{d}": f"loop (s{k}: {st}) = {{0}} for i{k} < {d} do {{1}}",
-                    f"loop1.{d}": f"loop (s{k}: {st}) = {{0}} for t{k} < {d} - 1 do let i{k} = t{k} + 1 in {{1}}"}.get(op)
+            have = dict(octx[0])
+            iv, sv = sig_var(f"ix.{d}", have.get(f"ix.{d}", 0) + 1), sig_var(cls, have.get(cls, 0) + 1)
+            want = {"tab": f"tabulate {d} (\\{iv} -> {{0}})",
+                    f"loop.{d}": f"loop ({sv}: {st}) = {{0}} for {iv} < {d} do {{1}}",
+                    f"loop1.{d}": f"loop ({sv}: {st}) = {{0}} for t{iv} < {d} - 1 do let {iv} = t{iv} + 1 in {{1}}"}.get(op)
             if spelling != want:
                 bad.append(f"S5 the binder {rname} is spelled {spelling!r}, not {want!r}")
         # S6: the work bound -- binders, reductions and replicates only above the depth.
@@ -1976,17 +1995,18 @@ def sig_main(mode):
 # --------------------------------------------------------------------------
 
 MASTER_GLOBALS = {"E", "K", "OUT", "CTX"}
-QUANT_VARS = {"dims": [""], "rank1": [""], "states": ["", ".type", ".dims", ".br", ".d0"],
-              "free": ["", ".type", ".dims", ".br", ".d0"], "rows": ["", ".type", ".dims", ".br", ".d0"],
+QUANT_VARS = {"dims": ["", ".ix"], "rank1": ["", ".ix"], "states": ["", ".var", ".type", ".dims", ".br", ".d0"],
+              "free": ["", ".var", ".type", ".dims", ".br", ".d0"], "rows": ["", ".var", ".type", ".dims", ".br", ".d0"],
               "vars": [""], "inputs": [""], "pairs": ["", ".a", ".b"], "swap": [""],
               "triples": ["", ".ab", ".bc", ".ac"]}
 HEAVY_OPS = {"tab", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "loop", "loop1"}
 BINDER_SPELLINGS = {
-    "tab": ("{E}+T-{D}", "tabulate {D} (\\j{K} -> {0})"),
-    "loop": ("{S}+L-{D}-{S}", "loop (s{K}: {S.type}) = {0} for i{K} < {D} do {1}"),
-    "loop1": ("{S}+F-{D}-{S}", "loop (s{K}: {S.type}) = {0} for t{K} < {D} - 1 do let i{K} = t{K} + 1 in {1}"),
+    "tab": ("{E}+T-{D}", "tabulate {D} (\\{D.ix} -> {0})"),
+    "loop": ("{S}+L-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}"),
+    "loop1": ("{S}+F-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}"),
 }
-FRAME_BINDS = {"T": "j{K}:ix.{D}", "L": "s{K}:{S},i{K}:ix.{D}", "F": "s{K}:{S},i{K}:ix.{D}"}
+# A frame binds CLASSES; a variable is named by its class (docs/PLAN_futhark_kingdom.md 3g).
+FRAME_BINDS = {"T": "ix.{D}", "L": "{S},ix.{D}", "F": "{S},ix.{D}"}
 INTEGER_ELEMS = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
 
 

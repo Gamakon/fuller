@@ -90,6 +90,7 @@ fn coding_share(name: &str) -> (usize, usize, usize, usize) {
 
 #[test]
 fn the_operators_measured_per_kind_on_pathfinder_and_histogram() {
+    let mut results = Vec::new();
     for name in ["pathfinder", "histogram"] {
         let (cs, s, cc, w) = coding_share(name);
         eprintln!("{name}: N = {DEFAULT_PROGRAM_SIZE}; spans coding {cs} of {s}; cells coding {cc} of {w}");
@@ -98,40 +99,44 @@ fn the_operators_measured_per_kind_on_pathfinder_and_histogram() {
             eprintln!("{name}\t{kind}\tapplied {applied}\tchanged the program {changed}\tcells changed {cells}\tof them coding {coding}");
         }
         // (operator, applications of 100, children whose program changed, cells changed, of them coding), measured
-        // 2026-11-02 (docs/PLAN_futhark_kingdom.md 3g). The unaimed row operators change the program in 0 to 44 of
-        // 100 applications (cross-rows in none), the aimed ones in 36 to 100.
+        // 2026-11-02 on the count-context layout (docs/PLAN_futhark_kingdom.md 3g; on the stack-context layout the
+        // programs changed were within 4 of these, cross-rows 0 and 0). The unaimed row operators change the program
+        // in 0 to 67 of 100 applications (cross-rows in 1 and 0), the aimed ones in 36 to 100.
         let want: &[(&str, usize, usize, usize, usize)] = match name {
             "pathfinder" => &[
-                ("invert", 89, 84, 2256, 571),
-                ("transpose", 92, 57, 3496, 368),
-                ("crossover", 100, 86, 2217, 528),
-                ("invert-rows", 72, 6, 715500, 90),
-                ("transpose-rows", 84, 44, 1194231, 1007),
-                ("cross-rows", 100, 0, 708347, 0),
-                ("invert-rel", 95, 11, 1102892, 76),
-                ("transpose-rel", 100, 67, 2049412, 1796),
-                ("cross-rel", 100, 6, 5409907, 78),
-                ("invert-rows-coding", 100, 100, 1661924, 2821),
-                ("transpose-rows-coding", 100, 59, 1776961, 1582),
-                ("cross-rows-coding", 100, 97, 13426250, 2561),
+                ("invert", 88, 88, 2286, 562),
+                ("transpose", 92, 57, 3518, 367),
+                ("crossover", 100, 88, 2239, 532),
+                ("invert-rows", 82, 6, 221674, 91),
+                ("transpose-rows", 83, 44, 293624, 1011),
+                ("cross-rows", 100, 1, 643936, 5),
+                ("invert-rel", 95, 11, 279592, 78),
+                ("transpose-rel", 100, 67, 493564, 1789),
+                ("cross-rel", 100, 6, 1371604, 62),
+                ("invert-rows-coding", 100, 100, 397628, 2785),
+                ("transpose-rows-coding", 100, 59, 430034, 1566),
+                ("cross-rows-coding", 100, 97, 3058715, 2584),
             ],
             _ => &[
-                ("invert", 99, 94, 2424, 157),
-                ("transpose", 100, 37, 4531, 83),
-                ("crossover", 100, 27, 2403, 65),
-                ("invert-rows", 100, 1, 743412, 5),
-                ("transpose-rows", 83, 42, 857052, 309),
-                ("cross-rows", 100, 0, 2148023, 0),
-                ("invert-rel", 95, 0, 791752, 0),
-                ("transpose-rel", 99, 54, 1480772, 441),
-                ("cross-rel", 100, 0, 3909097, 0),
-                ("invert-rows-coding", 100, 98, 1229324, 689),
-                ("transpose-rows-coding", 100, 36, 1259631, 122),
-                ("cross-rows-coding", 100, 93, 7888611, 255),
+                ("invert", 100, 92, 2404, 157),
+                ("transpose", 99, 36, 4522, 81),
+                ("crossover", 100, 29, 2398, 65),
+                ("invert-rows", 100, 1, 249930, 4),
+                ("transpose-rows", 84, 41, 261914, 289),
+                ("cross-rows", 100, 0, 808366, 0),
+                ("invert-rel", 95, 0, 257614, 0),
+                ("transpose-rel", 97, 53, 423655, 432),
+                ("cross-rel", 100, 0, 1273602, 0),
+                ("invert-rows-coding", 100, 98, 358288, 679),
+                ("transpose-rows-coding", 100, 36, 378587, 119),
+                ("cross-rows-coding", 100, 94, 2622237, 256),
             ],
         };
-        assert_eq!(got, want, "{name}: the operator measurement");
-        assert_eq!((cs, s, cc, w), if name == "pathfinder" { (8, 1819, 24, 217015) } else { (5, 1313, 7, 143977) }, "{name}: the coding spans and cells");
+        results.push((name, got == want, (cs, s, cc, w)));
+    }
+    for (name, same, shares) in results {
+        assert!(same, "{name}: the operator measurement differs from the pinned one (printed above)");
+        assert_eq!(shares, if name == "pathfinder" { (8, 404, 24, 57487) } else { (5, 354, 7, 47999) }, "{name}: the coding spans and cells");
     }
 }
 

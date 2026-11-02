@@ -54,12 +54,13 @@ struct MasterRow {
     note: String,
 }
 
-/// A frame template of `master/frames.tsv`: a binder that extends a context.
+/// A frame template of `master/frames.tsv`: a binder that extends a context, and the classes of the variables it
+/// binds (a variable is named by its class, [`var_name`]).
 #[derive(Debug, Clone)]
 struct FrameTemplate {
     code: String,
     scope: Vec<String>,
-    binds: Vec<(String, String)>,
+    binds: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,10 +147,10 @@ impl Master {
         let frames = tsv("frames.tsv", frames, &["family", "kind", "code", "scope", "binds"])?
             .into_iter()
             .map(|f| {
-                let binds = f[4]
-                    .split(',')
-                    .map(|b| b.split_once(':').map(|(n, c)| (n.to_string(), c.to_string())).ok_or_else(|| format!("master/frames.tsv: the binding {b:?}")))
-                    .collect::<Result<Vec<_>, String>>()?;
+                let binds: Vec<String> = f[4].split(',').map(str::to_string).collect();
+                if let Some(b) = binds.iter().find(|b| b.is_empty() || b.contains(':')) {
+                    return Err(format!("master/frames.tsv: the binding {b:?} is not a class (a variable is named by its class)"));
+                }
                 Ok(FrameTemplate { code: f[2].into(), scope: scope_list(f[3]), binds })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -293,11 +294,73 @@ fn futhark_type(cls: &str, elem: &str) -> String {
     class_dims(cls).iter().map(|d| format!("[{d}]")).collect::<String>() + elem
 }
 
+/// A CONTEXT: how many variables of each class are in scope, and the depth (the binders around a node, for the
+/// `shallow` rule and the work bound). Not the frame stack (one type a stack, the review's F1), and not only the set
+/// of classes: a set loses a program that reads an outer variable through an inner binder of its class (measured
+/// 2026-11-02, 4 of pathfinder's 45 model programs), so the count is kept (the review's control). Its name is `c` at
+/// depth 0, else `c/{<class>[*<count above one>], sorted, comma-separated}@<depth>`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct Ctx {
+    pub classes: BTreeMap<String, u32>,
+    pub depth: u32,
+}
+
+impl Ctx {
+    pub fn name(&self) -> String {
+        if self.depth == 0 {
+            "c".into()
+        } else {
+            let items: Vec<String> = self.classes.iter().map(|(c, n)| if *n == 1 { c.clone() } else { format!("{c}*{n}") }).collect();
+            format!("c/{{{}}}@{}", items.join(","), self.depth)
+        }
+    }
+
+    /// The context inside a binder that binds `classes`.
+    fn push(&self, classes: &[String]) -> Ctx {
+        let mut c = self.clone();
+        for k in classes {
+            *c.classes.entry(k.clone()).or_default() += 1;
+        }
+        c.depth += 1;
+        c
+    }
+
+    /// The variables in scope of a class.
+    pub fn count(&self, cls: &str) -> u32 {
+        self.classes.get(cls).copied().unwrap_or(0)
+    }
+
+    /// The context of a dual's name (`cls:c`, `cls:c/{a,b}@2`); `None` for a context-free dual.
+    pub fn of_dual(dual: &str) -> Result<Option<Ctx>, String> {
+        let Some((_, ctx)) = dual.split_once(':') else { return Ok(None) };
+        if ctx == "c" {
+            return Ok(Some(Ctx::default()));
+        }
+        let body = ctx.strip_prefix("c/{").ok_or_else(|| format!("the context of {dual} does not parse"))?;
+        let (set, depth) = body.split_once("}@").ok_or_else(|| format!("the context of {dual} does not parse"))?;
+        let depth: u32 = depth.parse().map_err(|_| format!("the depth of {dual} does not parse"))?;
+        let mut classes: BTreeMap<String, u32> = BTreeMap::new();
+        for item in set.split(',') {
+            let (c, n) = match item.split_once('*') {
+                Some((c, n)) => (c, n.parse::<u32>().map_err(|_| format!("the count of {item} in {dual} does not parse"))?),
+                None => (item, 1),
+            };
+            if c.is_empty() || n == 0 || classes.insert(c.to_string(), n).is_some() {
+                return Err(format!("the context of {dual} names {item:?}"));
+            }
+        }
+        if depth == 0 || classes.is_empty() {
+            return Err(format!("the context of {dual} is not a binder's"));
+        }
+        Ok(Some(Ctx { classes, depth }))
+    }
+}
+
 /// The bindings of an expansion: the template variables, and the context of a row inside the context loop.
 #[derive(Debug, Clone, Default)]
 struct Env {
     vars: BTreeMap<String, String>,
-    ctx: Option<Vec<String>>,
+    ctx: Option<Ctx>,
     shallow: bool,
 }
 
@@ -342,10 +405,28 @@ fn subst(text: &str, env: &Env) -> Result<String, String> {
     Ok(out)
 }
 
-fn class_env(var: &str, cls: &str, elem: &str) -> Vec<(String, String)> {
+/// THE NAME OF A BOUND VARIABLE: the `k`-th variable of its class in scope (`docs/PLAN_futhark_kingdom.md` 3g), so a
+/// context is the count of each class's variables, never the frame stack. An index `ix.D` is `i_D`, a loop state of
+/// class `C` is `s_C` with `.` as `_` (`s_i32`, `s_a_cols`); the `k`-th, `k >= 2`, puts `k` after the letter
+/// (`i2_cols`, `s2_a_cols`).
+pub fn var_name(cls: &str, k: u32) -> String {
+    let ord = if k == 1 { String::new() } else { k.to_string() };
+    match cls.strip_prefix("ix.") {
+        Some(d) => format!("i{ord}_{d}"),
+        None => format!("s{ord}_{}", cls.replace('.', "_")),
+    }
+}
+
+/// The name a binder of class `cls` gives its variable in context `ctx` (one past those in scope).
+fn next_var(cls: &str, ctx: Option<&Ctx>) -> String {
+    var_name(cls, ctx.map_or(0, |c| c.count(cls)) + 1)
+}
+
+fn class_env(var: &str, cls: &str, elem: &str, ctx: Option<&Ctx>) -> Vec<(String, String)> {
     let ds = class_dims(cls);
     vec![
         (var.to_string(), cls.to_string()),
+        (format!("{var}.var"), next_var(cls, ctx)),
         (format!("{var}.type"), futhark_type(cls, elem)),
         (format!("{var}.dims"), ds.join(".")),
         (format!("{var}.br"), ds.join("][")),
@@ -411,15 +492,14 @@ fn signature_sets(spec: &ViewSpec) -> Result<Sets, String> {
     Ok(Sets { elem, dims, classes, rank1, states, free: Vec::new(), inputs, ..Sets::default() })
 }
 
-/// The frames of a view (a frame template expanded over its scope): the code and the variables it binds, each a
-/// (name, class) template over the frame number `{K}`.
-type Frames = Vec<(String, Vec<(String, String, Env)>)>;
+/// The frames of a view (a frame template expanded over its scope): the code and the classes it binds.
+type Frames = Vec<(String, Vec<String>)>;
 
 struct Binder {
     sets: Sets,
     depth: u32,
     frames: Frames,
-    contexts: Vec<Vec<String>>,
+    contexts: Vec<Ctx>,
 }
 
 impl Binder {
@@ -428,7 +508,7 @@ impl Binder {
             Shape::Signature => Binder { sets: signature_sets(spec)?, depth: spec.depth, frames: Vec::new(), contexts: Vec::new() },
             Shape::Matrix => {
                 let pairs = spec.roles.iter().flat_map(|a| spec.roles.iter().map(move |c| (a.clone(), c.clone()))).collect();
-                Binder { sets: Sets { elem: spec.element.clone(), roles: spec.roles.clone(), pairs, ..Sets::default() }, depth: 0, frames: Vec::new(), contexts: vec![vec![]] }
+                Binder { sets: Sets { elem: spec.element.clone(), roles: spec.roles.clone(), pairs, ..Sets::default() }, depth: 0, frames: Vec::new(), contexts: vec![Ctx::default()] }
             }
         };
         if spec.shape == Shape::Signature {
@@ -436,31 +516,46 @@ impl Binder {
             for f in &master.frames {
                 for env in b.expand_scope(&f.scope, &base)? {
                     let code = subst(&f.code, &env)?;
-                    b.frames.push((code, f.binds.iter().map(|(n, c)| (n.clone(), c.clone(), env.clone())).collect()));
+                    b.frames.push((code, f.binds.iter().map(|c| subst(c, &env)).collect::<Result<Vec<_>, _>>()?));
                 }
             }
-            let (mut ctxs, mut frontier) = (vec![vec![]], vec![vec![]]);
+            // The contexts: the empty one, then every context of depth d extended by every frame (d < depth), each
+            // (set, depth) once, in order of first appearance.
+            let (mut ctxs, mut frontier) = (vec![Ctx::default()], vec![Ctx::default()]);
             for _ in 0..b.depth {
-                let next: Vec<Vec<String>> = frontier.iter().flat_map(|c: &Vec<String>| b.frames.iter().map(move |(code, _)| c.iter().cloned().chain(std::iter::once(code.clone())).collect())).collect();
+                let mut next: Vec<Ctx> = Vec::new();
+                for c in &frontier {
+                    for (_, binds) in &b.frames {
+                        let n = c.push(binds);
+                        if !next.contains(&n) {
+                            next.push(n);
+                        }
+                    }
+                }
                 ctxs.extend(next.iter().cloned());
                 frontier = next;
             }
             b.contexts = ctxs;
+            // A variable's name must not be an input's, a size's or a zero array's: it would shadow the interface.
+            let taken: BTreeSet<String> = b.sets.inputs.iter().map(|(n, _)| n.clone()).chain(b.sets.dims.iter().cloned()).chain(b.sets.dims.iter().map(|d| format!("zeros_{d}"))).collect();
+            for (_, binds) in &b.frames {
+                for c in binds {
+                    for k in 1..=b.depth.max(1) {
+                        let v = var_name(c, k);
+                        let t = c.strip_prefix("ix.").map(|_| format!("t{v}"));
+                        if let Some(x) = std::iter::once(&v).chain(t.as_ref()).find(|x| taken.contains(*x)) {
+                            return Err(format!("the bound variable {x} has the name of an input, a size or a zero array of the view"));
+                        }
+                    }
+                }
+            }
         }
         Ok(b)
     }
 
-    /// The variables a context binds: (name, class), outermost first.
-    fn frame_vars(&self, ctx: &[String]) -> Result<Vec<(String, String)>, String> {
-        let mut out = Vec::new();
-        for (k, code) in ctx.iter().enumerate() {
-            let (_, binds) = self.frames.iter().find(|(c, _)| c == code).ok_or_else(|| format!("our software has a bug: no frame {code}"))?;
-            for (name, cls, env) in binds {
-                let e = env.with(&[("K".into(), (k + 1).to_string())]);
-                out.push((subst(name, &e)?, subst(cls, &e)?));
-            }
-        }
-        Ok(out)
+    /// The variables a context binds: (name, class), by class, then outermost first.
+    fn frame_vars(&self, ctx: &Ctx) -> Vec<(String, String)> {
+        ctx.classes.iter().flat_map(|(c, n)| (1..=*n).map(move |k| (var_name(c, k), c.clone()))).collect()
     }
 
     fn expand_scope(&self, scope: &[String], env: &Env) -> Result<Vec<Env>, String> {
@@ -479,9 +574,9 @@ impl Binder {
                 .contexts
                 .iter()
                 .map(|ctx| {
-                    let mut e = env.with(&[("K".into(), (ctx.len() + 1).to_string()), ("CTX".into(), std::iter::once("c").chain(ctx.iter().map(String::as_str)).collect::<Vec<_>>().join("/"))]);
+                    let mut e = env.with(&[("K".into(), (ctx.depth + 1).to_string()), ("CTX".into(), ctx.name())]);
                     e.ctx = Some(ctx.clone());
-                    e.shallow = (ctx.len() as u32) < self.depth;
+                    e.shallow = ctx.depth < self.depth;
                     e
                 })
                 .collect());
@@ -496,13 +591,13 @@ impl Binder {
         let v = |x: &str| vec![(var.to_string(), x.to_string())];
         let arg = arg.unwrap_or_default();
         Ok(match kind {
-            "dims" => s.dims.iter().map(|d| one(v(d))).collect(),
-            "rank1" => s.rank1.iter().map(|c| one(v(class_dims(c)[0]))).collect(),
-            "states" => s.states.iter().map(|c| one(class_env(var, c, &s.elem))).collect(),
-            "free" => s.free.iter().map(|c| one(class_env(var, c, &s.elem))).collect(),
+            "dims" => s.dims.iter().map(|d| one(vec![(var.to_string(), d.clone()), (format!("{var}.ix"), next_var(&format!("ix.{d}"), env.ctx.as_ref()))])).collect(),
+            "rank1" => s.rank1.iter().map(|c| one(vec![(var.to_string(), class_dims(c)[0].to_string()), (format!("{var}.ix"), next_var(&format!("ix.{}", class_dims(c)[0]), env.ctx.as_ref()))])).collect(),
+            "states" => s.states.iter().map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
+            "free" => s.free.iter().map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
             "vars" => {
                 let ctx = env.ctx.as_ref().ok_or_else(|| format!("the quantifier {q} outside a context"))?;
-                self.frame_vars(ctx)?.into_iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(&n))).collect()
+                self.frame_vars(ctx).into_iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(&n))).collect()
             }
             "inputs" => s.inputs.iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(n))).collect(),
             "rows" => s
@@ -512,7 +607,7 @@ impl Binder {
                     let ys = class_dims(y);
                     ys.len() >= 2 && array_class(&ys[1..]) == arg
                 })
-                .map(|y| one(class_env(var, y, &s.elem)))
+                .map(|y| one(class_env(var, y, &s.elem, env.ctx.as_ref())))
                 .collect(),
             "pairs" => s.pairs.iter().map(|(a, b)| one(vec![(var.into(), format!("{a}.{b}")), (format!("{var}.a"), a.clone()), (format!("{var}.b"), b.clone())])).collect(),
             "swap" => {
@@ -560,14 +655,14 @@ impl Binder {
             }
             return Ok(cls);
         };
-        let mut ctx = ctx.clone();
-        if let Some(f) = frame {
-            if !self.frames.iter().any(|(c, _)| *c == f) {
-                return Err(format!("the type {ty} pushes the frame {f}, which the view does not have"));
+        let ctx = match frame {
+            Some(f) => {
+                let (_, binds) = self.frames.iter().find(|(c, _)| *c == f).ok_or_else(|| format!("the type {ty} pushes the frame {f}, which the view does not have"))?;
+                ctx.push(binds)
             }
-            ctx.push(f);
-        }
-        Ok(format!("{cls}:{}", std::iter::once("c").chain(ctx.iter().map(String::as_str)).collect::<Vec<_>>().join("/")))
+            None => ctx.clone(),
+        };
+        Ok(format!("{cls}:{}", ctx.name()))
     }
 }
 
@@ -686,7 +781,7 @@ fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, 
     for _ in 0..binder.sets.classes.len() + 2 {
         let mut rows = Vec::new();
         expand(&picked, &binder, &base, &mut rows)?;
-        let root = binder.dual(&cls, &Env { ctx: Some(vec![]), ..Env::default() })?;
+        let root = binder.dual(&cls, &Env { ctx: Some(Ctx::default()), ..Env::default() })?;
         let rows = reachable(rows, &root)?;
         let produced: BTreeSet<&str> = rows.iter().filter(|r| r.kind == "function").map(|r| r.out.split(':').next().unwrap_or("")).collect();
         let free: Vec<String> = binder.sets.classes.iter().filter(|c| !produced.contains(c.as_str())).cloned().collect();
@@ -722,7 +817,8 @@ fn signature_types(spec: &ViewSpec, rows: &[ViewRow], root: &str) -> Vec<ViewTyp
             }
         }
     }
-    named.sort_by(|a, b| (*a != root, a.matches('/').count(), *a).cmp(&(*b != root, b.matches('/').count(), *b)));
+    let depth = |d: &str| Ctx::of_dual(d).ok().flatten().map_or(0, |c| c.depth);
+    named.sort_by(|a, b| (*a != root, depth(a), *a).cmp(&(*b != root, depth(b), *b)));
     named
         .into_iter()
         .map(|d| {

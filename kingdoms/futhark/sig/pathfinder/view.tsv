@@ -1,6 +1,6 @@
 # kind	name	element	dims
 # written by kingdoms/futhark/sniff.py from tests/corpus/futhark_problems/pathfinder/yardstick.fut, entry main
-master	1		
+master	2		
 element	i32		
 input	walls	i32	rows,cols
 output	main	i32	cols

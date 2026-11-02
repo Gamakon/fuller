@@ -180,11 +180,11 @@ fn the_scan_hist_and_mod_rows_equal_the_interpreter() {
     for kb in [1, 4, 9] {
         let inputs = [Array { dims: vec![], data: vec![kb] }, xs.clone(), vs.clone()];
         for text in [
-            "(hist.add.n (tab (mod.k (get.n is j1))) vs)",
-            "(hist.min.n (tab (mod.k (get.n is j1))) vs)",
+            "(hist.add.n (tab (mod.k (get.n is i_n))) vs)",
+            "(hist.min.n (tab (mod.k (get.n is i_n))) vs)",
             "(hist.max.n is vs)",
             "(hist.add.n vs is)",
-            "(tab (mod.k (get.k (hist.add.n is vs) j1)))",
+            "(tab (mod.k (get.k (hist.add.n is vs) i_k)))",
         ] {
             let tree = build(&hist, text).unwrap();
             let exe = compile_c(&program(&hist, &hsig, &tree).unwrap(), &scratch("hist_rows")).unwrap();

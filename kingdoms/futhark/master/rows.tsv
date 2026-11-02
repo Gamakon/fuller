@@ -22,7 +22,7 @@ M0020	1	core	function	i32	C;D:dims		clamp@{OUT}	ix.{D}	{E}	i64.max 0 (i64.min ({
 M0021	1	core	terminal	i32	C;D:dims		zero@{OUT}	ix.{D}		0i64	the first index into [{D}]
 M0022	1	core	terminal	i32	C;D:dims		last@{OUT}	ix.{D}		{D} - 1	the last index into [{D}] (every dim is at least 1)
 M0023	1	core	terminal	i32	C;D:dims;V:vars(ix.{D})		{V}@{OUT}	ix.{D}		{V}	the bound index {V}
-M0024	1	core	function	i32	C;D:rank1	shallow	tab@{OUT}	a.{D}	{E}+T-{D}	tabulate {D} (\j{K} -> {0})	a [{D}] array, element j{K} by its body
+M0024	2	core	function	i32	C;D:rank1	shallow	tab@{OUT}	a.{D}	{E}+T-{D}	tabulate {D} (\{D.ix} -> {0})	a [{D}] array, element {D.ix} by its body
 M0025	1	core	function	i32	C;D:rank1	shallow	replicate@{OUT}	a.{D}	{E}	replicate {D} {0}	a [{D}] array of one value
 M0026	1	core	function	i32	C;D:rank1	shallow	map2.add@{OUT}	a.{D}	a.{D};a.{D}	map2 (+) {0} {1}	elementwise add of two [{D}] arrays
 M0027	1	core	function	i32	C;D:rank1	shallow	map2.sub@{OUT}	a.{D}	a.{D};a.{D}	map2 (-) {0} {1}	elementwise sub of two [{D}] arrays
@@ -38,8 +38,8 @@ M0036	1	core	function	i32	C;D:rank1;Y:rows(a.{D})		row.{Y.dims}@{OUT}	a.{D}	{Y};
 M0037	1	core	terminal	i32	C;D:rank1;V:vars(a.{D})		{V}@{OUT}	a.{D}		{V}	the loop state {V}
 M0038	1	core	terminal	i32	C;D:rank1;I:inputs(a.{D})		{I}@{OUT}	a.{D}		{I}	an input of the interface
 M0039	1	core	terminal	i32	C;D:rank1		zeros@{OUT}	a.{D}		zeros_{D}	the zero [{D}] array (bound once by the entry point)
-M0040	1	core	function	i32	C;S:states;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{S}+L-{D}-{S}	loop (s{K}: {S.type}) = {0} for i{K} < {D} do {1}	a loop over [{D}] carrying s{K}, its counter i{K}
-M0041	1	core	function	i32	C;S:states;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop (s{K}: {S.type}) = {0} for t{K} < {D} - 1 do let i{K} = t{K} + 1 in {1}	a loop over 1 .. {D} - 1 carrying s{K}, its counter i{K}
+M0040	2	core	function	i32	C;S:states;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{S}+L-{D}-{S}	loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}	a loop over [{D}] carrying {S.var}, its counter {D.ix}
+M0041	2	core	function	i32	C;S:states;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}	a loop over 1 .. {D} - 1 carrying {S.var}, its counter {D.ix}
 M0042	1	core	terminal	i32	X:free;I:inputs({X})		{I}@{OUT}	{X}		{I}	an input of the interface
 M0043	1	matrix	function	f32	P:pairs		map_rows@mat.{P}	mat.{P}	fn.arr_f32_arr_f32;mat.{P}	map {0} {1}	map a row function over the rows
 M0044	1	matrix	function	f32	P:pairs		map2_rows@mat.{P}	mat.{P}	fn.arr2_f32_arr_f32_arr_f32;mat.{P};mat.{P}	map2 {0} {1} {2}	map a binary row function over two matrices of the same class

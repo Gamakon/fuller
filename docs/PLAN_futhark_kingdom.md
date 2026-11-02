@@ -128,6 +128,43 @@ The types did not change: every type the new families' rows name was already in 
 
 **The relative rows, so every column takes part** (2026-11-01): `invert_rel`, `transpose_rel`, `crossover_rel` take the cuts and runs as fractions in [0, 1) (fixed point, `FRAC_ONE = 2^32` parts), and each column applies them at its own row `floor(f × len)` (`frac_row`, exact in integers). The absolute-row operators stay. With one type, `frac_of_row(r, len)` gives the fraction of any row exactly, so each relative operator is the absolute one and the classic one: tested beside the legality (every kingdom above, pathfinder and histogram) and the ragged layout by hand, where the relative inversion changes the short column the absolute one leaves alone. Runner: `--ops` and `--measure` take `invert-rel`, `transpose-rel` (IS or RIS; the IS run is 1 to 3 rows of the longest column as a fraction, at least one row in every column; RIS starts at the fraction of the root column's function row and inserts at 0) and `cross-rel` (one- or two-point); each child a `note` event.
 
+### 3g. The review's four fixes (2026-11-02)
+
+**Why.** Fable's review (`docs/reviews/2026-11-01_futhark_kingdom_design_fable.md`) found that writing each lambda scope's frame STACK into the type multiplied the types (pathfinder 832, histogram 607), padded the gene and diluted the operators. Andrew's ruling: gene width is never a memory constraint; narrowing is only for a smaller search space, and may remove only what cannot contribute. Four fixes, each its own commit with its tests.
+
+1. **Program size is an experiment parameter** (9e0f3061). `futhark_sig::DEFAULT_PROGRAM_SIZE = 32`, above every reference (pathfinder 13 functions, histogram 4, reduce and scan 1), the runner's default for `--program-size` (before: the reference's own count, so reduce and scan had N = 1, a gene of one root cell), recorded in the run card (`program_size`, `program_size_given`, `program_size_default`). The runner stops with a message if the reference or the planted slowdown does not fit (`typed_gep::fits`); tested for all four problems.
+2. **The domain operators** (1fe8a742, `src/futhark_operators.rs`, moved from the runner unchanged). Measured on the CPU, 100 applications each, the reference and planted slowdown on random padding at N = 32 (`futhark_operators::tests`):
+   - The review's 99.97 % is the share of CELLS that are non-coding (pathfinder 24 coding of 217,015 at N = 32; histogram 7 of 143,977), and its 98 % the share of (type, domain) spans (8 coding of 1,819; 5 of 1,313). It applies to an operator that picks a (type, domain) or a cell uniformly. **No operator of the runner does**: `invert`, `transpose` and `crossover` already draw a coding cell of the parent (crossover: of the first parent) and act on its span; they changed the program in 84, 57, 86 of 100 (pathfinder) and 94, 37, 27 (histogram).
+   - It does apply, in effect, to the ROW operators, which act on every column but draw their rows uniformly over the whole table, mostly past the expressed cells: `cross-rows` changed the program in 0 of 100 on both problems, `cross-rel` 6 and 0, `invert-rel` 11 and 0, `invert-rows` 6 and 1, `transpose-rows` 44 and 42, `transpose-rel` 67 and 54.
+   - New names, the existing ones unchanged: `invert-rows-coding`, `transpose-rows-coding`, `cross-rows-coding` draw a coding cell (of either parent for the crossover) and choose the rows around its row; 100, 59, 97 of 100 (pathfinder) and 98, 36, 93 (histogram). In `--ops` and `--measure`.
+3. **One view implementation, in Rust** (0d819cf4). `futhark_view::write_committed` (command `examples/futhark_views DIR`) writes every view's table; `gen_tables.py --views DIR` runs the witnesses on them (S1 to S10 per view, the master witnesses, A7's costs and e-graph, which stay generator-written until step 4). `view.py` keeps only the master and specification readers. The committed per-problem tables (`sig/<p>/types.tsv`, `functions.tsv`, `egraph.*`, 4.5 MB) are gone; each view's written text is pinned by `View::fingerprint` (FNV-1a), equal at the change to that of the removed files.
+4. **Contexts are sets, not stacks** (this section's last commit). A context was the frame stack (`c/F-rows-a.cols/T-cols`); it is now the COUNT of bound variables of each class plus the depth (`c/{a.cols,ix.cols,ix.rows}@2`, `ix.cols*2` when two binders over `cols` are in scope), and a variable is named by its class and its ordinal in that class (`futhark_view::var_name`: `i_cols`, `i2_cols`, `s_a_cols`, `s_i32`). Frames bind classes (`master/frames.tsv`); the three binder rows' spellings name their variable (`{D.ix}`, `{S.var}`, the next ordinal in the row's context); master VERSION 2, the specifications re-sniffed. The interpreter keeps a slot a (class, ordinal); the reader refuses a pattern rename that would capture an outer variable; `futhark_sig::build_stack_named` reads a program in the old names (the pools, fixtures and reports of before) and the committed pools were rewritten with it (`examples/futhark_pool_check --rename`).
+
+**A pure SET of classes was built and measured first, as the review proposed, and lost programs**: 4 of pathfinder's 45 model programs (`sig/pathfinder/pool/llm.tsv` seq 22, 29, 40, 41, e.g. `(tab (loop.cols 0 (add s2 (sel (sub (sub (ival.cols i2) (ival.cols j1)) 1) (ival.cols i2) 0))))`) read the tabulate's `cols` index from inside a loop over `cols`; the review had counted 0 of 112. So the review's control was applied: a count per class, which loses none.
+
+Measured (types; function rows; leaf rows = terminals and constants; gene width at the reference's function count N = 13, 4, 1, 1, and at the runner's default N = 32):
+
+| view | contexts | types | function rows | leaf rows | width at N = ref | width at N = 32 |
+|---|---|---:|---:|---:|---:|---:|
+| pathfinder | stack (before) | 832 | 3975 | 2062 | 84,015 | 217,015 |
+| | set (measured, not kept) | 151 | 1062 | 340 | | 50,419 |
+| | count (built) | 184 | 1188 | 441 | 22,261 | 57,487 |
+| histogram | stack | 607 | 2700 | 1779 | 13,945 | 143,977 |
+| | set | 141 | 972 | 374 | | 44,651 |
+| | count | 162 | 1032 | 455 | 4,655 | 47,999 |
+| reduce | stack | 73 | 408 | 221 | 13 | 22,799 |
+| | set | 24 | 188 | 61 | | 9,188 |
+| | count | 28 | 202 | 79 | 11 | 10,025 |
+| scan | stack | 73 | 408 | 221 | 9 | 22,794 |
+| | set | 24 | 188 | 61 | | 9,184 |
+| | count | 28 | 202 | 79 | 8 | 10,021 |
+
+The review expected at most 150 types for pathfinder and 120 for histogram (sets); measured 151 and 141 with sets, 184 and 162 with counts.
+
+**The programs** (`futhark_sig::tests_pool`, `tests_view`): all 842 pool programs (`bench`, `llm`, `alternatives` of histogram and pathfinder; 112 in `bench` + `llm`) read from their old text, compute the same values on every stored case as under the stack contexts (host interpreter, fingerprints recorded before the change in `tests/fixtures/futhark_pool_values/`), are written in the pools in the new names, and the 824 of the root type express through a gene at N = 32. The four references and planted slowdowns write programs that differ from the recorded ones (`tests/fixtures/futhark_view_programs/`) in binder names only (checked token by token) and are exact on every stored case; A7's program is unchanged byte for byte. The generator's witnesses (S1 to S10, S8 every type has a leaf) pass on every view; the random-gene, e-graph and compile tests of `futhark_sig` pass unchanged. On the new layout the operator measurement of fix 2 gives within 4 of the same counts (`futhark_operators::tests`).
+
+**To run on the GPU later** (not run: the GPU was allocated elsewhere): the review's measurements 2 to 5 with the before binary (`/private/tmp/claude-501/keep/futhark_evolve_before_setctx`, commit b195fc6f) against this one.
+
 ## Step 3 design (3b, 3c, 3d), 2026-11-01
 
 Read first, in full: `kingdoms/futhark/gen_tables.py` (the matrix kingdom, the signature family `sig_rows`, the pixel family, their witnesses), `src/futhark_sig.rs`, `src/futhark_table.rs`, `src/futhark.rs`'s loader, `src/futhark_reader.rs`'s parser. The design keeps every engine invariant: the engine still sees one flat typed table (`FutharkKingdom::from_tables`); only where the table comes from changes.

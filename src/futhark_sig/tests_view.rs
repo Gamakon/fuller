@@ -99,9 +99,11 @@ fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_program
 
 /// THE PROGRAMS BEFORE BIDIRECTIONAL REACHABILITY (`docs/PLAN_futhark_kingdom.md`, 3e): each problem's reference and
 /// planted slowdown, and A7's reference (the product twice, at n = 2, m = 3, p = 4), written as Futhark programs by
-/// the views of commit 97dbbb80, when a signature view still admitted only the families its source used. The views
-/// now admit every family and keep the types reachable both ways, so the tables are wider; these programs must not
-/// change.
+/// the views of commit 97dbbb80, when a signature view still admitted only the families its source used. Since the
+/// contexts became sets (3g) a bound variable is named by its class, so a signature program's text differs from the
+/// record in its binder names ONLY (checked token by token, one new name an old name, one old name a new name), and
+/// the program's values are exact on every stored case (host interpreter). A7's matrix view has no binders: its
+/// program is the record byte for byte.
 const RECORDED: [(&str, &str, &str); 4] = [
     ("pathfinder", include_str!("../../tests/fixtures/futhark_view_programs/pathfinder.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/pathfinder.planted.fut")),
     ("reduce", include_str!("../../tests/fixtures/futhark_view_programs/reduce.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/reduce.planted.fut")),
@@ -109,14 +111,65 @@ const RECORDED: [(&str, &str, &str); 4] = [
     ("histogram", include_str!("../../tests/fixtures/futhark_view_programs/histogram.reference.fut"), include_str!("../../tests/fixtures/futhark_view_programs/histogram.planted.fut")),
 ];
 
+/// Whether two Futhark texts differ only in binder names: equal token for token, except where the old token is a
+/// stack-context binder name (`j1`, `i2`, `s1`, `t1`) and the new one a count-context name (`i_D`, `i2_D`, `ti_D`, `s_C`), with
+/// one consistent renaming both ways. Returns the renaming.
+fn binder_renaming(old: &str, new: &str) -> Option<BTreeMap<String, String>> {
+    let toks = |t: &str| {
+        let mut v = Vec::new();
+        let mut cur = String::new();
+        for c in t.chars() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                cur.push(c);
+            } else {
+                if !cur.is_empty() {
+                    v.push(std::mem::take(&mut cur));
+                }
+                if !c.is_whitespace() {
+                    v.push(c.to_string());
+                }
+            }
+        }
+        if !cur.is_empty() {
+            v.push(cur);
+        }
+        v
+    };
+    let (a, b) = (toks(old), toks(new));
+    if a.len() != b.len() {
+        return None;
+    }
+    let is_old = |x: &str| x.strip_prefix(['i', 'j', 's', 't']).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    let is_new = |x: &str| x.strip_prefix('t').unwrap_or(x).strip_prefix(['i', 's']).is_some_and(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with('_'));
+    let (mut fwd, mut back): (BTreeMap<String, String>, BTreeMap<String, String>) = (BTreeMap::new(), BTreeMap::new());
+    for (x, y) in a.iter().zip(&b) {
+        if x == y {
+            continue;
+        }
+        if !(is_old(x) && is_new(y)) || fwd.insert(x.clone(), y.clone()).is_some_and(|p| p != *y) || back.insert(y.clone(), x.clone()).is_some_and(|p| p != *x) {
+            return None;
+        }
+    }
+    Some(fwd)
+}
+
 #[test]
-fn the_reference_programs_are_the_ones_recorded_before_bidirectional_reachability() {
+fn the_reference_programs_differ_from_the_recorded_ones_in_binder_names_only_and_are_exact() {
     for (name, reference, planted) in RECORDED {
         let prob = problem(name).unwrap();
         let k = load(&prob.instance).unwrap();
         let sig = signature(&prob.instance).unwrap();
-        assert_eq!(program(&k, &sig, &build(&k, prob.reference).unwrap()).unwrap(), reference, "{name}: the reference's program changed");
-        assert_eq!(program(&k, &sig, &build(&k, prob.planted).unwrap()).unwrap(), planted, "{name}: the planted slowdown's program changed");
+        let interp = Interp::new(&k, &sig).unwrap();
+        let cases = load_cases(&prob).unwrap();
+        for (what, text, recorded) in [("reference", prob.reference, reference), ("planted slowdown", prob.planted, planted)] {
+            let t = build(&k, text).unwrap();
+            let got = program(&k, &sig, &t).unwrap();
+            let renaming = binder_renaming(recorded, &got).unwrap_or_else(|| panic!("{name}: the {what}'s program differs from the record in more than binder names:\n{recorded}\n{got}"));
+            eprintln!("{name} {what}: renamed {renaming:?}");
+            for c in &cases {
+                assert_eq!(interp.eval(&t, &c.inputs).unwrap(), c.output, "{name}: the {what} on {}", c.name);
+            }
+        }
     }
     let k = FutharkKingdom::load().unwrap();
     let sizes: BTreeMap<String, usize> = [("n", 2), ("m", 3), ("p", 4)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
@@ -124,11 +177,18 @@ fn the_reference_programs_are_the_ones_recorded_before_bidirectional_reachabilit
     assert_eq!(got, include_str!("../../tests/fixtures/futhark_view_programs/a7.reference.fut"), "A7: the reference's program changed");
 }
 
+#[test]
+fn the_binder_renaming_check_finds_a_difference_that_is_not_a_name() {
+    assert!(binder_renaming("tabulate n (\\j1 -> xs[j1])", "tabulate n (\\i_n -> xs[i_n])").is_some());
+    assert!(binder_renaming("tabulate n (\\j1 -> xs[j1])", "tabulate n (\\i_n -> ys[i_n])").is_none(), "a changed input");
+    assert!(binder_renaming("f j1 j2", "f i_n i_n").is_none(), "two old names to one new name");
+    assert!(binder_renaming("f j1 j1", "f i_n i_k").is_none(), "one old name to two new names");
+}
+
 /// The gene layouts of `docs/PLAN_futhark_kingdom.md` 3e, at the runner's default program size (the reference's
 /// function count): the head length (the sum of the per-type heads) and the gene width in words. Before 3e (commit
-/// 97dbbb80): pathfinder 14065 and 82573, reduce 1 and 13, scan 1 and 9, histogram 2506 and 13945. Only pathfinder's
-/// width changed (the head length did not, so the tails or constant domains grew); at N = 1 a layout
-/// is the root's frame alone, so reduce's and scan's do not show their new rows.
+/// 97dbbb80): pathfinder 14065 and 82573, reduce 1 and 13, scan 1 and 9, histogram 2506 and 13945; after 3e (stack
+/// contexts) pathfinder 14065 and 84015, histogram 2506 and 13945. Count contexts (3g): these.
 #[test]
 fn the_gene_layouts_are_the_measured_ones() {
     let got: Vec<(&str, usize, usize, usize)> = ["pathfinder", "reduce", "scan", "histogram"]
@@ -142,7 +202,7 @@ fn the_gene_layouts_are_the_measured_ones() {
             (name, n, layout.head_lens().values().sum::<usize>(), layout.width)
         })
         .collect();
-    assert_eq!(got, [("pathfinder", 13, 14065, 84015), ("reduce", 1, 1, 13), ("scan", 1, 1, 9), ("histogram", 4, 2506, 13945)]);
+    assert_eq!(got, [("pathfinder", 13, 3289, 22261), ("reduce", 1, 1, 11), ("scan", 1, 1, 8), ("histogram", 4, 721, 4655)]);
 }
 
 /// THE PROGRAM SIZE IS AN EXPERIMENT PARAMETER (`docs/reviews/2026-11-01_futhark_kingdom_design_fable.md`, F3): the
@@ -164,5 +224,5 @@ fn the_default_program_size_is_above_every_reference_and_both_programs_fit() {
         assert!(layout.guaranteed_program_size(&contract) >= DEFAULT_PROGRAM_SIZE, "{name}: the layout guarantees fewer functions than asked");
         got.push((name, layout.head_lens().values().sum::<usize>(), layout.width));
     }
-    assert_eq!(got, [("pathfinder", 36333, 217015), ("reduce", 3752, 22799), ("scan", 3752, 22794), ("histogram", 25886, 143977)], "the head lengths and gene widths at N = {DEFAULT_PROGRAM_SIZE}");
+    assert_eq!(got, [("pathfinder", 8495, 57487), ("reduce", 1551, 10025), ("scan", 1551, 10021), ("histogram", 7441, 47999)], "the head lengths and gene widths at N = {DEFAULT_PROGRAM_SIZE}");
 }
