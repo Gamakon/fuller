@@ -199,6 +199,18 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     timing_n: 15 << 20,
 };
 
+/// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
+/// well above every reference (pathfinder's is 13 functions, histogram's 4, reduce's and scan's 1), as SR and regex
+/// fix theirs. Before 2026-11-02 the default was the reference's own function count, so reduce's and scan's layouts
+/// were the root's head of one cell and nothing with two functions could be expressed
+/// (`docs/reviews/2026-11-01_futhark_kingdom_design_fable.md`, F3). The run card records the size used.
+pub const DEFAULT_PROGRAM_SIZE: usize = 32;
+
+/// The number of functions (nodes with arguments) of a tree: the program size it needs at least.
+pub fn function_count(k: &FutharkKingdom, t: &Tree) -> usize {
+    t.level_order().iter().filter(|(n, _)| !k.rows[n.symbol as usize].inputs.is_empty()).count()
+}
+
 /// A problem by name.
 pub fn problem(name: &str) -> Result<Problem, String> {
     match name {

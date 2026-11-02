@@ -136,3 +136,25 @@ fn the_gene_layouts_are_the_measured_ones() {
         .collect();
     assert_eq!(got, [("pathfinder", 13, 14065, 84015), ("reduce", 1, 1, 13), ("scan", 1, 1, 9), ("histogram", 4, 2506, 13945)]);
 }
+
+/// THE PROGRAM SIZE IS AN EXPERIMENT PARAMETER (`docs/reviews/2026-11-01_futhark_kingdom_design_fable.md`, F3): the
+/// runner's default `DEFAULT_PROGRAM_SIZE` is above every problem's reference and planted slowdown, and both fit its
+/// layout, so a run that starts from either (regime P, the slope check) needs no `--program-size`.
+#[test]
+fn the_default_program_size_is_above_every_reference_and_both_programs_fit() {
+    let mut got = Vec::new();
+    for name in ["pathfinder", "reduce", "scan", "histogram"] {
+        let prob = problem(name).unwrap();
+        let k = load(&prob.instance).unwrap();
+        let contract = k.relations().check().unwrap();
+        let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
+        for text in [prob.reference, prob.planted] {
+            let t = build(&k, text).unwrap();
+            assert!(function_count(&k, &t) < DEFAULT_PROGRAM_SIZE, "{name}: {} functions, the default program size is {DEFAULT_PROGRAM_SIZE}", function_count(&k, &t));
+            crate::typed_gep::fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: {text} does not fit N = {DEFAULT_PROGRAM_SIZE}: {e}"));
+        }
+        assert!(layout.guaranteed_program_size(&contract) >= DEFAULT_PROGRAM_SIZE, "{name}: the layout guarantees fewer functions than asked");
+        got.push((name, layout.head_lens().values().sum::<usize>(), layout.width));
+    }
+    assert_eq!(got, [("pathfinder", 36333, 217015), ("reduce", 3752, 22799), ("scan", 3752, 22794), ("histogram", 25886, 143977)], "the head lengths and gene widths at N = {DEFAULT_PROGRAM_SIZE}");
+}
