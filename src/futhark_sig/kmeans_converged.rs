@@ -3,9 +3,13 @@
 //! STOPPING RULE on each fitness case, candidate and seed alike, and what the fitness reads is the clustering it
 //! reaches and how it got there: the quality of the final centroids (UltraDim's own two numbers) and the cost of
 //! reaching them (the program's own GPU time and its iterations), each relative to the seed's run in the same
-//! interleaving ([`kmeans_inputs`]). The scheme `futhark-kmeans-qqs` (`crate::fitness::qqs`; Andrew's ruling of
-//! 2026-11-03) reads the two groups in ONE FLAT VECTOR, the quality inputs entered m times (`--quality-weight`,
-//! default 2), and the HFF angle over it is the fitness, nothing after it. The retired `futhark-kmeans-quality-first`
+//! interleaving ([`kmeans_inputs`]). THE SCHEME TO RUN is `futhark-kmeans-better` (Andrew's specification of
+//! 2026-11-03): three quality inputs a case, each the cliff of a ratio to the seed, the convergence among them
+//! ([`kmeans_inputs_better`], [`further_iterations`]), in one flat vector at m = 3. The scheme before it,
+//! `futhark-kmeans-qqs` (`crate::fitness::qqs`; Andrew's ruling of 2026-11-03), reads the two groups in ONE FLAT
+//! VECTOR, the quality inputs entered m times (`--quality-weight`, default 2), and the HFF angle over it is the
+//! fitness, nothing after it; it is NOT TO BE RUN AS IS (it rewards early stopping: r/(1+r) compresses a quality
+//! loss). The retired `futhark-kmeans-quality-first`
 //! (the two-level HFF gated by an offset, which manipulated the HFF; its edge at 1/2 rejected every reordering of
 //! the seed's sums) and `futhark-kmeans-converged` (five inputs, [`kmeans_inputs_five`]) are NOT TO BE RUN AS IS
 //! (the advisor's reviews of 2026-11-03, rounds 1 and 2).
@@ -89,6 +93,10 @@ pub const QUALITY_NAMES: [&str; 2] = ["cosine inertia / seed", "seed mean log10 
 /// The names of the speed inputs a case, in [`kmeans_inputs`]' order.
 pub const SPEED_NAMES: [&str; 2] = ["program seconds to stop / seed", "iterations / seed"];
 
+/// The names of `futhark-kmeans-better`'s quality inputs a case, in [`kmeans_inputs_better`]' order; its speed inputs
+/// are [`SPEED_NAMES`].
+pub const QUALITY_NAMES_BETTER: [&str; 3] = ["final cosine inertia: cliff of I_cand / I_ref", "final mean log10 p (points off their centroid): cliff of L_ref / L_cand", "convergence: cliff of 1 + (k - k_ref), k the reference's further iterations from the final centroids"];
+
 /// The names of the retired five-input scheme's inputs ([`kmeans_inputs_five`]).
 pub const INPUT_NAMES_FIVE: [&str; 5] = ["cosine inertia / seed", "angular percentile p / seed", "wall seconds to stop / seed", "iterations / seed", "seed inertia gained an iteration / candidate"];
 
@@ -126,6 +134,11 @@ pub struct ConvergedRun {
     pub finished: bool,
     /// Why a run did not finish (empty for a finished run).
     pub failure: String,
+    /// THE CONVERGENCE MEASURE of `futhark-kmeans-better` ([`kmeans_inputs_better`]): the iterations UltraDim's rule
+    /// needs when the REFERENCE program's update is run on from this run's final centroids ([`further_iterations`],
+    /// or the runtime's `k` command with a further entry). `None` when it was not measured (the other schemes, a run
+    /// that did not finish).
+    pub further_iterations: Option<u32>,
 }
 
 /// The inputs of one case: the quality group and the speed group, each in [0, 1] with 0 best and 1/2 "equal to the
@@ -179,6 +192,75 @@ pub fn kmeans_inputs(candidate: &ConvergedRun, seed: &ConvergedRun) -> Inputs {
             squashed_ratio(f64::from(candidate.iterations), f64::from(seed.iterations)),     // iterations to the stopping point
         ],
     }
+}
+
+/// THE INPUTS OF ONE CASE UNDER `futhark-kmeans-better` (Andrew's specification of 2026-11-03,
+/// `docs/KMEANS_FITNESS.md`), each from `x` = the candidate relative to the reference program's run in the same
+/// interleaving (`x = 1` equal, `x > 1` worse), each QUALITY input the cliff `crate::fitness::quality_cliff(x, cliff)`:
+///
+/// 1. the final cosine inertia, `x = I_cand / I_ref`;
+/// 2. the final mean log10 angular percentile over the points off their centroid, `x = L_ref / L_cand` (both at most
+///    0: a looser candidate is less negative and `x > 1`; a candidate with no tightness, 0, is `x = inf`);
+/// 3. the convergence, `x = 1 + (k - k_ref)`: `k` the further iterations UltraDim's rule needs when the REFERENCE
+///    program's update is run on from the candidate's final centroids, `k_ref` likewise from the reference's own
+///    ([`ConvergedRun::further_iterations`]), so `x <= 1` when the candidate's centroids are at least as converged.
+///
+/// The two SPEED inputs are `futhark-kmeans-qqs`'s, each `r / (1 + r)`: the program's own seconds and the iterations
+/// to the stopping rule. A run that did not finish, or a non-finite measure, is 1 on every input. A ratio's divisor of
+/// 0 is the smallest positive f64 (as [`squashed_ratio`]). A finished run of either side without its further
+/// iterations is a bug of our software, named.
+pub fn kmeans_inputs_better(candidate: &ConvergedRun, reference: &ConvergedRun, cliff: f64) -> Result<Inputs, String> {
+    if !(cliff > 0.0 && cliff.is_finite()) {
+        return Err(format!("our software has a bug: a quality cliff of {cliff} (it must be positive and finite)"));
+    }
+    let worst = Inputs { quality: vec![1.0; QUALITY_NAMES_BETTER.len()], speed: vec![1.0; SPEED_NAMES.len()] };
+    if !candidate.finished {
+        return Ok(worst);
+    }
+    let k_ref = reference.further_iterations.ok_or("our software has a bug: the reference program's run has no further iterations measured (futhark-kmeans-better needs k_ref)")?;
+    let k = candidate.further_iterations.ok_or("our software has a bug: a finished candidate run has no further iterations measured (futhark-kmeans-better needs k)")?;
+    if ![candidate.inertia, candidate.mean_log10_p, candidate.seconds].iter().all(|v| v.is_finite()) {
+        return Ok(worst);
+    }
+    let ratio = |c: f64, s: f64| c.max(0.0) / s.max(f64::MIN_POSITIVE);
+    let x_inertia = ratio(candidate.inertia, reference.inertia);
+    let x_percentile = ratio(-reference.mean_log10_p, -candidate.mean_log10_p);
+    let x_convergence = 1.0 + (f64::from(k) - f64::from(k_ref));
+    Ok(Inputs {
+        quality: vec![crate::fitness::quality_cliff(x_inertia, cliff), crate::fitness::quality_cliff(x_percentile, cliff), crate::fitness::quality_cliff(x_convergence, cliff)],
+        speed: vec![squashed_ratio(candidate.seconds, reference.seconds), squashed_ratio(f64::from(candidate.iterations), f64::from(reference.iterations))],
+    })
+}
+
+/// The `x` of each of [`kmeans_inputs_better`]' quality inputs (before the cliff), for the reports: the inertia ratio,
+/// the percentile ratio and the convergence `1 + (k - k_ref)` (NaN where a side has no further iterations).
+pub fn better_ratios(candidate: &ConvergedRun, reference: &ConvergedRun) -> [f64; 3] {
+    let ratio = |c: f64, s: f64| c.max(0.0) / s.max(f64::MIN_POSITIVE);
+    let conv = match (candidate.further_iterations, reference.further_iterations) {
+        (Some(k), Some(r)) => 1.0 + (f64::from(k) - f64::from(r)),
+        _ => f64::NAN,
+    };
+    [ratio(candidate.inertia, reference.inertia), ratio(-reference.mean_log10_p, -candidate.mean_log10_p), conv]
+}
+
+/// THE FURTHER ITERATIONS from a run's final centroids (`futhark-kmeans-better`'s convergence measure): the REFERENCE
+/// program's step `reference` run on from `centroids` under UltraDim's loop and stopping rule ([`converge`]), and the
+/// iterations it takes. At a fixed point that is 2 (the first iteration has no previous inertia to compare). The
+/// reference's continuation not finishing is a bug of our software (the reference program on finite centroids).
+pub fn further_iterations<F>(points: &Array, centroids: &[Vec<f32>], reference: F) -> Result<u32, String>
+where
+    F: FnMut(&Array) -> Result<Stepped, String>,
+{
+    let d = points.dims.get(1).copied().ok_or("the points are not a [n][d] array")?;
+    if centroids.iter().any(|c| c.len() != d) {
+        return Err(format!("our software has a bug: final centroids that are not of the points' width {d}"));
+    }
+    let start = Array::f32s(vec![centroids.len(), d], centroids.concat());
+    let r = converge(points, &start, reference)?;
+    if !r.finished {
+        return Err(format!("our software has a bug: the reference program's continuation from a run's final centroids did not finish: {}", r.failure));
+    }
+    Ok(r.iterations)
 }
 
 /// THE RETIRED SCHEME'S FIVE INPUTS (`futhark-kmeans-converged`, fuller bd929652), kept so that the name computes
@@ -554,6 +636,7 @@ where
         converged,
         finished,
         failure,
+        further_iterations: None,
     })
 }
 
@@ -839,6 +922,13 @@ pub fn k_command(entry: &str, case: usize, start: usize, n: usize) -> String {
     format!("k {entry} {case} {start} {n} {MAX_ITERATIONS} {TOLERANCE:e}")
 }
 
+/// One `k` command WITH THE FURTHER ITERATIONS (`futhark-kmeans-better`): `k ENTRY CASE START N CAP TOL FURTHER`, after
+/// the loop the runtime runs the entry `further` (the reference program's) on from the final centroids, on the device,
+/// under the same rule, and the record's header carries its iterations ([`run_of_k_payload`]).
+pub fn k_command_further(entry: &str, case: usize, start: usize, n: usize, further: &str) -> String {
+    format!("{} {further}", k_command(entry, case, start, n))
+}
+
 /// THE RUN A `k` RECORD DESCRIBES, as [`converge`] would have built it: the payload's line (iterations, converged,
 /// finished, the program's own nanoseconds, the start and final Euclidean inertia) and, for a finished run, its final
 /// centres `[k][d]f32` and THE ASSIGNMENTS THE LOOP STOPPED ON, `[n]i32` (the harness's, made against the centres
@@ -848,19 +938,35 @@ pub fn k_command(entry: &str, case: usize, start: usize, n: usize) -> String {
 /// advisor's round-3 review, N1): at a fixed point the two agree, so the seed and every converged candidate read
 /// the same, but a candidate stopped by the cap or by a sub-tolerance move was scored on another partition than on
 /// the c backend. A finished record without its assignments is an error naming the runtime. `wall_ns` is the
-/// record's own span.
+/// record's own span. A record of a `k` command with a further entry ([`k_command_further`]) has two more header
+/// fields, the further iterations and whether that continuation converged: a finished run's are its
+/// [`ConvergedRun::further_iterations`] (a continuation that did not finish is the runtime's failure, a bug).
 pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: u64) -> Result<ConvergedRun, String> {
     let nl = payload.iter().position(|b| *b == b'\n').ok_or("a k-means record with no header line")?;
     let head = std::str::from_utf8(&payload[..nl]).map_err(|_| "a k-means record whose header is not text")?;
     let f: Vec<&str> = head.split(' ').collect();
-    let [iterations, converged, finished, ns, start_inertia, final_inertia] = f.as_slice() else { return Err(format!("a k-means record header {head:?}")) };
     let bad = |what: &str| format!("a k-means record with a bad {what}: {head:?}");
+    let (iterations, converged, finished, ns, start_inertia, final_inertia, further) = match f.as_slice() {
+        [a, b, c, d, e, g] => (a, b, c, d, e, g, None),
+        [a, b, c, d, e, g, k, kc] => (a, b, c, d, e, g, Some((k, kc))),
+        _ => return Err(format!("a k-means record header {head:?}")),
+    };
     let iterations: u32 = iterations.parse().map_err(|_| bad("iteration count"))?;
     let converged = *converged == "1";
     let finished = *finished == "1";
     let ns: f64 = ns.parse().map_err(|_| bad("nanoseconds"))?;
     let start_inertia: f32 = start_inertia.parse().map_err(|_| bad("start inertia"))?;
     let final_inertia: f32 = final_inertia.parse().map_err(|_| bad("final inertia"))?;
+    let further_iterations = match further {
+        None => None,
+        Some((k, kc)) => {
+            let k: u32 = k.parse().map_err(|_| bad("further iteration count"))?;
+            if finished && *kc != "1" && k < MAX_ITERATIONS {
+                return Err(format!("our software has a bug: the reference program's continuation stopped after {k} iterations without converging or reaching the cap: {head:?}"));
+            }
+            finished.then_some(k)
+        }
+    };
     let (flat, d) = flat_points(points)?;
     let n = flat.len() / d.max(1);
     let k = start.dims.first().copied().ok_or("the starting centres have no rows")?;
@@ -897,6 +1003,7 @@ pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: 
         converged,
         finished,
         failure,
+        further_iterations,
     })
 }
 
@@ -907,6 +1014,18 @@ pub fn k_payload(iterations: u32, converged: bool, finished: bool, ns: f64, star
     let mut p = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(finished)).into_bytes();
     p.extend_from_slice(tail);
     p
+}
+
+/// A `k` record's payload with THE FURTHER ITERATIONS added ([`k_command_further`]; a test's stand-in for the runtime,
+/// whose own text is `kmeans_payload` in `host.rs`): the header line of `payload` ([`k_payload`]) with two more fields,
+/// the further iterations and whether that continuation converged; the tail unchanged. A payload with no header line
+/// is an error.
+pub fn k_payload_further(payload: &[u8], further: (u32, bool)) -> Result<Vec<u8>, String> {
+    let nl = payload.iter().position(|b| *b == b'\n').ok_or("a k-means payload with no header line")?;
+    let mut p = payload[..nl].to_vec();
+    p.extend_from_slice(format!(" {} {}\n", further.0, u8::from(further.1)).as_bytes());
+    p.extend_from_slice(&payload[nl + 1..]);
+    Ok(p)
 }
 
 /// The tail of a finished `k` record, as the runtime writes it: the final centres, then the assignments the loop
@@ -1113,6 +1232,9 @@ pub fn ultradim_step_f64(points: &Array, centres: &Array) -> Result<(Vec<usize>,
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_better;
 
 #[cfg(test)]
 mod ultradim;

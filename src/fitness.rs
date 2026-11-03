@@ -15,8 +15,10 @@
 //! `π/2 + θ_quality` offset of the gated schemes did, and is a fault ([`OFFSET_FAULT`]). To weigh quality above
 //! speed the quality inputs are REPEATED in one flat vector, `(quality, quality, speed)`: [`qqs`], the repetition
 //! count `m` a run parameter (`--quality-weight`, [`DEFAULT_QUALITY_WEIGHT`] 2 is Andrew's written form; the
-//! answer-scored scheme's default [`ANSWER_QUALITY_WEIGHT`] is measured). The flat schemes are `futhark-kmeans-qqs`,
-//! `futhark-slope4-qqs`, `staged-qqs` and `shapes-hff-qqs`, each its family's default.
+//! answer-scored scheme's default [`ANSWER_QUALITY_WEIGHT`] is measured). The flat schemes are `futhark-kmeans-better`
+//! (k-means's default since the first k-means run found `futhark-kmeans-qqs` rewarding early stopping; its quality
+//! inputs are the cliff [`quality_cliff`] of a ratio, `--quality-cliff`), `futhark-slope4-qqs`, `staged-qqs` and
+//! `shapes-hff-qqs`, each its family's default (`futhark-kmeans-qqs` is old, [`EARLY_STOP_FAULT`]).
 //!
 //! A scheme belongs to one [`Family`] of runners (the runners that compute the same inputs); a runner asks for its
 //! scheme with [`scheme_for`], which refuses a name of another family, and takes [`default_for`] when none is given.
@@ -73,6 +75,43 @@ pub enum StageTwo {
 /// needs m > 1.68 to rank below the seed and recommends 3, both tested in `futhark_sig::kmeans_converged::tests`).
 pub const DEFAULT_QUALITY_WEIGHT: usize = 2;
 
+/// THE REPETITION COUNT of `futhark-kmeans-better` when a run gives none (Andrew's specification of 2026-11-03).
+pub const KMEANS_BETTER_QUALITY_WEIGHT: usize = 3;
+
+/// THE CLIFF'S WIDTH ε of `futhark-kmeans-better` when a run gives none (`--quality-cliff`; Andrew's specification of
+/// 2026-11-03): a quality input rises from 1/2 at `x = 1` (equal to the reference program) to 1 at `x = 1 + ε`.
+pub const DEFAULT_QUALITY_CLIFF: f64 = 0.005;
+
+/// THE QUALITY CLIFF of `futhark-kmeans-better` (Andrew's specification of 2026-11-03): an input on [0, 1] from `x`,
+/// the candidate relative to the reference program (`x = 1` equal, `x > 1` worse): `x / 2` for `x <= 1` (0 at
+/// `x <= 0`), `1/2 + 1/2 min(1, (x - 1) / ε)` for `x > 1`, so a loss of `ε` or more is the worst input there is, where
+/// `r / (1 + r)` moved a 16 % loss only from 0.500 to 0.537. A NaN `x` is 1. `ε` must be positive and finite.
+pub fn quality_cliff(x: f64, cliff: f64) -> f64 {
+    if x.is_nan() {
+        return 1.0;
+    }
+    if x <= 1.0 {
+        (x / 2.0).max(0.0)
+    } else {
+        0.5 + 0.5 * ((x - 1.0) / cliff).min(1.0)
+    }
+}
+
+/// THE HFF PERCENTILE of an angle (Andrew's specification of 2026-11-03): `F(θ) = I_{sin²θ}((d − 1)/2, 1/2)`, the
+/// probability that a direction drawn uniformly in `d` dimensions lies within `θ` of the ideal point's direction (the
+/// hff library's `higd::cdf_beta_correction`, Cai and Fang 2013). `d` is the length of the vector the angle was taken
+/// over; the angle of a vector on [0, 1] is in [0, π/2], where the formula is defined. Reported beside the angle,
+/// never read by selection. A vector of fewer than 2 inputs, or an angle outside [0, π/2], is a bug of our software.
+pub fn hff_percentile(theta: f64, d: usize) -> Result<f64, String> {
+    if d < 2 {
+        return Err(format!("our software has a bug: the HFF percentile of a vector of {d} inputs (it needs at least 2)"));
+    }
+    if !(0.0..=std::f64::consts::FRAC_PI_2).contains(&theta) {
+        return Err(format!("our software has a bug: the HFF percentile of the angle {theta}, outside [0, pi/2]"));
+    }
+    Ok(hff_core::higd::cdf_beta_correction(theta, d))
+}
+
 /// THE REPETITION COUNT of the answer-scored flat scheme (`futhark-slope4-qqs`, the i32 problems and A7) when a run
 /// gives none, MEASURED (`futhark_sig::tests_flat::an_inexact_program_ranks_below_the_exact_one_at_the_recorded_weight`):
 /// on histogram's and pathfinder's stored cases the inexact one-edit neighbours of the published program, each given
@@ -109,6 +148,13 @@ pub enum Definition {
     /// case as `FutharkConvergedGated` (`kmeans_inputs`), in ONE FLAT VECTOR: every fitness case's two quality inputs
     /// entered `m` times each, its two speed inputs once, TrueNorth over the whole ([`qqs`]). Nothing else.
     FutharkConvergedQqs,
+    /// [`Family::FutharkSig`], THE K-MEANS SCHEME `futhark-kmeans-better` (Andrew, 2026-11-03; `docs/KMEANS_FITNESS.md`,
+    /// `futhark_sig::kmeans_converged::kmeans_inputs_better`): the same runs to UltraDim's stopping rule; per case
+    /// THREE quality inputs, each the cliff [`quality_cliff`] of `x` = candidate relative to the reference program (the
+    /// final cosine inertia; the final mean log10 angular percentile; the convergence, `1 + (k - k_ref)` with `k` the
+    /// further iterations the reference program's update needs from the candidate's final centroids), and the two
+    /// speed inputs of `FutharkConvergedQqs`; ONE FLAT VECTOR, TrueNorth over the whole ([`qqs`]), nothing after it.
+    FutharkKmeansBetter,
     /// [`Family::Staged`]: [`staged`] under `stage_two` over the runner's own quality and speed inputs.
     Staged { stage_two: StageTwo },
     /// [`Family::Shapes`], THE TWO BANDS (fuller f3972766): a correct program scores `0.49 · t/(t + t_ref)` (`t` its
@@ -150,8 +196,23 @@ pub const OLD_SCHEME_WARNING: &str = "NOT TO BE RUN AS IS: this fitness has a kn
 /// manipulate it afterwards; the `π/2 + θ_quality` offset does.
 pub const OFFSET_FAULT: &str = "manipulates the HFF with a pi/2 + theta offset (Andrew, 2026-11-03)";
 
+/// THE FAULT OF `futhark-kmeans-qqs` (the first k-means run, 2026-11-03): its best individual stopped after 3
+/// iterations with a 16 % worse inertia and 31 of 32 clusters holding one point, because `r/(1+r)` moved that loss's
+/// input only from 0.500 to 0.537.
+pub const EARLY_STOP_FAULT: &str = "rewards early stopping: r/(1+r) compresses a quality loss (the first k-means run, kmeans_qqs_s1: the best individual stopped after 3 iterations with a 16 % worse inertia, its inertia input 0.537)";
+
 /// EVERY FITNESS SCHEME A RUNNER OFFERS. Never change what an entry computes: add a scheme.
 pub const SCHEMES: &[Scheme] = &[
+    Scheme {
+        name: "futhark-kmeans-better",
+        family: Family::FutharkSig,
+        description: "k-means run to UltraDim's stopping rule (Euclidean inertia change < 1e-4, or 100 iterations as a slow finished run) by the candidate and the reference program from the same starting centroids; per case, x = candidate relative to the reference's run in the same interleaving: quality = final cosine inertia (I_cand / I_ref), final mean log10 angular percentile (L_ref / L_cand, points off their centroid), convergence (1 + k - k_ref, k the further iterations the reference's update needs from the candidate's final centroids), each the cliff q = x/2 (x <= 1), 1/2 + 1/2 min(1, (x - 1)/eps) (x > 1), eps --quality-cliff (default 0.005); speed = the program's own seconds and the iterations, each r/(1+r); ONE FLAT VECTOR, the quality inputs m times (--quality-weight, default 3) beside the speed inputs once, TrueNorth over the whole; the HFF percentile F(theta) reported beside it (docs/KMEANS_FITNESS.md)",
+        commit: "fuller (Andrew's specification of 2026-11-03, after the first k-means run rewarded early stopping)",
+        inputs: "per fitness case, against the reference program's run in the same interleaving: quality (each the cliff of x, 1/2 equal, 1 at a loss of eps or more): cosine inertia; mean log10 p (points off their centroid); convergence 1 + (k - k_ref); speed (each r/(1+r)): the program's own seconds to the stopping point; iterations; a run that does not finish is 1 on all five",
+        stages: "one: TrueNorth over (every case's three quality inputs x m, every case's two speed inputs) in one vector; no gate, no offset",
+        fault: None,
+        definition: Definition::FutharkKmeansBetter,
+    },
     Scheme {
         name: "futhark-slope4-qqs",
         family: Family::FutharkSig,
@@ -200,6 +261,10 @@ pub const SCHEMES: &[Scheme] = &[
         fault: Some("the seven inputs reward the all-zeros output and fail the slope check on histogram (fuller 6f76baac, b8163635); stage 2 ungated (fuller f465a5cf)"),
         definition: Definition::FutharkSig { quality: &[QualityPart::Study], stage_two: StageTwo::Ungated },
     },
+    // NOT TO BE RUN AS IS: this fitness has a known fault (it rewards early stopping: r/(1+r) compresses a quality
+    // loss; the first k-means run, kmeans_qqs_s1, found a best individual that stops after 3 iterations with a 16 %
+    // worse inertia, which moved its inertia input only from 0.500 to 0.537). Redefine the fitness function before
+    // using it: futhark-kmeans-better.
     Scheme {
         name: "futhark-kmeans-qqs",
         family: Family::FutharkSig,
@@ -207,7 +272,7 @@ pub const SCHEMES: &[Scheme] = &[
         commit: "fuller (Andrew's ruling of 2026-11-03: the HFF angle is the final fitness; the advisor's round-2 review)",
         inputs: "per fitness case, each r/(1+r) of a ratio to the seed's run in the same interleaving (1/2 is equal to the seed), total on [0, 1]: quality: cosine inertia; seed's mean log10 p over the candidate's (points off their centroid); speed: the program's own seconds to the stopping point (GPU-timed passes; futhark c's runtime); iterations; a run that does not finish is 1 on all four",
         stages: "one: TrueNorth over (every case's quality inputs x m, every case's speed inputs) in one vector; no gate, no offset",
-        fault: None,
+        fault: Some(EARLY_STOP_FAULT),
         definition: Definition::FutharkConvergedQqs,
     },
     // NOT TO BE RUN AS IS: this fitness has a known fault (the gate's pi/2 + theta_quality manipulates the HFF after
@@ -404,21 +469,28 @@ impl Scheme {
     pub fn quality_parts(&self) -> Result<&'static [QualityPart], String> {
         match self.definition {
             Definition::FutharkSig { quality, .. } => Ok(quality),
-            Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs => Err(format!("the fitness scheme {} scores no program against stored answers: it runs the program to UltraDim's stopping rule and has no quality parts (docs/KMEANS_FITNESS.md)", self.name)),
+            Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter => Err(format!("the fitness scheme {} scores no program against stored answers: it runs the program to UltraDim's stopping rule and has no quality parts (docs/KMEANS_FITNESS.md)", self.name)),
             _ => Err(format!("our software has a bug: the fitness scheme {} is not a futhark_sig scheme", self.name)),
         }
     }
 
-    /// Whether this is a k-means scheme (`Definition::FutharkConverged`, `FutharkConvergedGated` or
-    /// `FutharkConvergedQqs`): the program is run to UltraDim's stopping rule, there are no answers and one stage.
+    /// Whether this is a k-means scheme (`Definition::FutharkConverged`, `FutharkConvergedGated`,
+    /// `FutharkConvergedQqs` or `FutharkKmeansBetter`): the program is run to UltraDim's stopping rule, there are no
+    /// answers and one stage.
     pub fn is_converged(&self) -> bool {
-        matches!(self.definition, Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs)
+        matches!(self.definition, Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter)
     }
 
-    /// Whether the scheme weighs quality by repetition (a flat vector with a `--quality-weight`): `futhark-kmeans-qqs`
-    /// and every `StageTwo::Flat` scheme.
+    /// Whether the scheme weighs quality by repetition (a flat vector with a `--quality-weight`): the flat k-means
+    /// schemes and every `StageTwo::Flat` scheme.
     pub fn is_flat(&self) -> bool {
-        matches!(self.definition, Definition::FutharkConvergedQqs | Definition::FutharkSig { stage_two: StageTwo::Flat, .. } | Definition::Staged { stage_two: StageTwo::Flat } | Definition::ShapesHff { stage_two: StageTwo::Flat, .. })
+        matches!(self.definition, Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter | Definition::FutharkSig { stage_two: StageTwo::Flat, .. } | Definition::Staged { stage_two: StageTwo::Flat } | Definition::ShapesHff { stage_two: StageTwo::Flat, .. })
+    }
+
+    /// Whether the scheme's quality inputs are the cliff of a ratio ([`quality_cliff`], `--quality-cliff`):
+    /// `futhark-kmeans-better`.
+    pub fn uses_cliff(&self) -> bool {
+        self.definition == Definition::FutharkKmeansBetter
     }
 
     /// THE REPETITION COUNT a run of this scheme takes when its configuration gives none: the measured
@@ -427,6 +499,7 @@ impl Scheme {
     pub fn default_quality_weight(&self) -> usize {
         match self.definition {
             Definition::FutharkSig { stage_two: StageTwo::Flat, .. } => ANSWER_QUALITY_WEIGHT,
+            Definition::FutharkKmeansBetter => KMEANS_BETTER_QUALITY_WEIGHT,
             _ if self.is_flat() => DEFAULT_QUALITY_WEIGHT,
             _ => 1,
         }
@@ -434,12 +507,13 @@ impl Scheme {
 
     /// THE FITNESS OF A K-MEANS SCHEME from a program's two input groups over the fitness cases: the quality group
     /// and the speed group of `kmeans_inputs` in one flat vector with the quality inputs `quality_weight` times
-    /// ([`qqs`]) for `futhark-kmeans-qqs`; the two-level gated angle ([`converged_gated`]) for the retired
+    /// ([`qqs`]) for `futhark-kmeans-better` (its quality group the three cliff inputs of `kmeans_inputs_better`)
+    /// and the retired `futhark-kmeans-qqs`; the two-level gated angle ([`converged_gated`]) for the retired
     /// `futhark-kmeans-quality-first`; for the retired five-input scheme, `quality` holds the five inputs a case and
     /// `speed` is empty ([`converged`]). The old schemes ignore the weight. Any other scheme is an error.
     pub fn converged_fitness(&self, quality: &[f64], speed: &[f64], quality_weight: usize) -> Result<TwoLevel, String> {
         match self.definition {
-            Definition::FutharkConvergedQqs => qqs(quality, speed, quality_weight),
+            Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter => qqs(quality, speed, quality_weight),
             Definition::FutharkConvergedGated => converged_gated(quality, speed),
             Definition::FutharkConverged => {
                 if !speed.is_empty() {
@@ -480,7 +554,13 @@ impl Scheme {
 
     /// [`Scheme::start`] recording the run's repetition count `quality_weight` (`None` on a scheme that is not flat).
     pub fn start_weighted(&self, quality_weight: usize) -> FitnessStart {
-        FitnessStart { name: self.name.to_string(), family: self.family.name().to_string(), commit: self.commit.to_string(), description: self.description.to_string(), quality_weight: self.is_flat().then_some(quality_weight) }
+        self.start_with(quality_weight, DEFAULT_QUALITY_CLIFF)
+    }
+
+    /// [`Scheme::start_weighted`] recording the run's cliff width `quality_cliff` too (`None` on a scheme without the
+    /// cliff, [`Scheme::uses_cliff`]).
+    pub fn start_with(&self, quality_weight: usize, quality_cliff: f64) -> FitnessStart {
+        FitnessStart { name: self.name.to_string(), family: self.family.name().to_string(), commit: self.commit.to_string(), description: self.description.to_string(), quality_weight: self.is_flat().then_some(quality_weight), quality_cliff: self.uses_cliff().then_some(quality_cliff) }
     }
 
     /// One line for a run's header and report: `fitness\t<name> (<commit>): <description>`, and for an old scheme
@@ -494,7 +574,7 @@ impl Scheme {
 }
 
 /// The fitness scheme as the stream's `run_start` carries it (`telemetry::RunStart::fitness`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FitnessStart {
     pub name: String,
     pub family: String,
@@ -505,6 +585,10 @@ pub struct FitnessStart {
     /// flat schemes existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_weight: Option<usize>,
+    /// THE CLIFF'S WIDTH ε of `futhark-kmeans-better` ([`quality_cliff`]), as the run was configured
+    /// (`--quality-cliff`); `None` on every other scheme, or on a stream written before the scheme existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_cliff: Option<f64>,
 }
 
 /// THE RETIRED K-MEANS SCHEME'S FITNESS (`Definition::FutharkConverged`, fuller bd929652): TrueNorth over every

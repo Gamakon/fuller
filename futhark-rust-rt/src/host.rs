@@ -7,7 +7,8 @@
 //!
 //! * commands, one a line: `q ENTRY` (the quality entry on every stored case), `t ENTRY RUNS` (`RUNS + 1` runs on the
 //!   timing input, the first a warm-up, each run's GPU nanoseconds), `o ENTRY` (once on the timing input, the
-//!   output), `k ENTRY CASE START N CAP TOL` (THE K-MEANS LOOP on a row range of the resident sample, [`kmeans_loop`]);
+//!   output), `k ENTRY CASE START N CAP TOL [FURTHER]` (THE K-MEANS LOOP on a row range of the resident sample,
+//!   [`kmeans_loop`], with FURTHER the entry run on from its final centroids);
 //!   entries are named, not numbered;
 //! * records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then the payload; TAG is `start`, `ctx`,
 //!   `u` (the resident sample's upload, once a session: its nanoseconds, 0 when it was resident already), `q`, `t`,
@@ -246,26 +247,78 @@ fn upload(ctx: &FutharkCtx, vs: &[HostValue]) -> Result<Vec<Value>, Error> {
 /// run finished (every step a finite `[k][d]f32`), the final centres and THE ASSIGNMENTS THE LOOP STOPPED ON (made
 /// against the centres the last step was given, as the stopping rule reads them: fuller's `converge` defines the
 /// final clustering so, and its `run_of_k_payload` reads these rather than assigning to the final centres, which is
-/// another partition on a run that did not converge), else the failure's text.
-fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec<u8>, Error> {
-    let KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol } = *case;
+/// another partition on a run that did not converge), else the failure's text. With a FURTHER entry (the 8-word
+/// command `k ENTRY CASE START N CAP TOL FURTHER`, fuller's `futhark-kmeans-better`), the further entry is then run on
+/// from the final centroids under the same rule, and the header carries its iterations and whether it converged.
+fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, further: Option<&EntryDesc>) -> Result<Vec<u8>, Error> {
+    let KmeansCase { points, d, starts_h, .. } = *case;
     if !ctx.timing() {
         return Err(Error::new("a k-means command in a run with no GPU timing"));
     }
-    let f32s = |h: &HostValue| -> Vec<f32> { h.bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() };
     let k = match (starts_h.elem, starts_h.shape.as_slice()) {
         (ElemType::F32, [k, dd]) if *dd as usize == d => *k as usize,
         _ => return Err(Error::new(format!("the starting centres are not a [k][{d}]f32"))),
     };
-    let rows = |v: &[f32]| -> Vec<Vec<f32>> { v.chunks_exact(d).map(<[f32]>::to_vec).collect() };
-    let mut centroids = rows(&f32s(starts_h));
+    let centroids = rows(&f32s(starts_h), d);
     let start_inertia = crate::kmeans_harness::euclidean_inertia(points, &centroids, &crate::kmeans_harness::assign(points, d, &centroids), d);
-    let mut centres_v = Value::from_host(ctx, starts_h)?;
+    let centres_v = Value::from_host(ctx, starts_h)?;
     ctx.sync()?;
+    let run = lloyd(ctx, e, case, k, centroids, centres_v)?;
+    let finished = run.failure.is_empty();
+    let final_inertia = if run.current.is_finite() { run.current } else { start_inertia };
+    // THE FURTHER ITERATIONS (fuller's `futhark-kmeans-better`): the further entry (the seed's) run on from this run's
+    // final centroids, ON THE DEVICE (the last step's output is its first argument), under the same rule; its
+    // iterations and whether it converged go in the header, its time in nothing. A continuation that does not finish
+    // is the command's failure.
+    let more = match (further, &run.last) {
+        (Some(f), Some((h, v))) if finished => {
+            let cont = lloyd(ctx, f, case, k, rows(&f32s(h), d), v.clone())?;
+            if !cont.failure.is_empty() {
+                return Err(Error::new(format!("the further entry {} from the final centroids did not finish: {}", f.name, cont.failure)));
+            }
+            Some((cont.iterations, cont.converged))
+        }
+        (Some(_), _) => Some((0, false)),
+        (None, _) => None,
+    };
+    // The cap is at least 1, so a finished run has its last step's centres; the starts stand in only if it has not.
+    let centres = run.last.as_ref().map_or(starts_h, |(h, _)| h);
+    Ok(kmeans_payload(run.iterations, run.converged, run.ns, start_inertia, final_inertia, more, if finished { Ok((centres, &run.assignments)) } else { Err(&run.failure) }))
+}
+
+/// A `[..]f32` host value's floats.
+fn f32s(h: &HostValue) -> Vec<f32> {
+    h.bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+}
+
+/// Rows of width `d`.
+fn rows(v: &[f32], d: usize) -> Vec<Vec<f32>> {
+    v.chunks_exact(d).map(<[f32]>::to_vec).collect()
+}
+
+/// Where UltraDim's loop stopped ([`lloyd`]): the iterations, whether the tolerance fired, the program's own GPU
+/// nanoseconds, the last Euclidean inertia (NaN before the first step), the last step's centres (on the host and on
+/// the device), the assignments the loop stopped on, and the failure's text (empty for a finished run).
+struct LoopEnd {
+    iterations: u32,
+    converged: bool,
+    ns: f64,
+    current: f32,
+    last: Option<(HostValue, Value)>,
+    assignments: Vec<usize>,
+    failure: String,
+}
+
+/// UltraDim's loop of the entry `e` on the case from `centroids` (on the host) and `centres_v` (the same centres on
+/// the device): for up to `cap` iterations the harness assigns each point to its nearest centre, the entry is called
+/// on (sample, start, n, centres) with the centres on the device, the new centres are read back for the harness, and
+/// the Euclidean inertia's change under `tol` stops the loop.
+fn lloyd(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, k: usize, mut centroids: Vec<Vec<f32>>, mut centres_v: Value) -> Result<LoopEnd, Error> {
+    let KmeansCase { points, d, sample_v, start, n, cap, tol, .. } = *case;
     let (mut prev, mut current) = (f32::INFINITY, f32::NAN);
     let (mut iterations, mut ns, mut converged) = (0u32, 0f64, false);
     let mut failure = String::new();
-    let mut final_h: Option<HostValue> = None;
+    let mut last: Option<(HostValue, Value)> = None;
     let mut assignments: Vec<usize> = Vec::new();
     for it in 0..cap {
         iterations = it + 1;
@@ -296,10 +349,10 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
             failure = format!("iteration {iterations}: a centroid is infinite or NaN");
             break;
         }
-        centroids = rows(&vals);
-        final_h = Some(h);
+        centroids = rows(&vals, d);
         // The next step takes this output as its centres, on the device: nothing is uploaded again.
         centres_v = out;
+        last = Some((h, centres_v.clone()));
         current = crate::kmeans_harness::euclidean_inertia(points, &centroids, &assignments, d);
         if (prev - current).abs() < tol {
             converged = true;
@@ -307,19 +360,17 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
         }
         prev = current;
     }
-    let finished = failure.is_empty();
-    let final_inertia = if current.is_finite() { current } else { start_inertia };
-    // The cap is at least 1, so a finished run has its last step's centres; the starts stand in only if it has not.
-    let centres = final_h.as_ref().unwrap_or(starts_h);
-    Ok(kmeans_payload(iterations, converged, ns, start_inertia, final_inertia, if finished { Ok((centres, &assignments)) } else { Err(&failure) }))
+    Ok(LoopEnd { iterations, converged, ns, current, last, assignments, failure })
 }
 
 /// THE PAYLOAD OF A `k` RECORD (fuller's `kmeans_converged::run_of_k_payload` reads it): the line `ITERATIONS
-/// CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, then for a finished run its final centres
-/// (`[k][d]f32`) and the assignments the loop stopped on (`[n]i32`), both in Futhark's binary format, else the
+/// CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, with ` FURTHER_ITERATIONS FURTHER_CONVERGED` after it
+/// for a command with a further entry (`0 0` for a run that did not finish), then for a finished run its final
+/// centres (`[k][d]f32`) and the assignments the loop stopped on (`[n]i32`), both in Futhark's binary format, else the
 /// failure's text.
-fn kmeans_payload(iterations: u32, converged: bool, ns: f64, start_inertia: f32, final_inertia: f32, end: Result<(&HostValue, &[usize]), &str>) -> Vec<u8> {
-    let mut payload = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(end.is_ok())).into_bytes();
+fn kmeans_payload(iterations: u32, converged: bool, ns: f64, start_inertia: f32, final_inertia: f32, further: Option<(u32, bool)>, end: Result<(&HostValue, &[usize]), &str>) -> Vec<u8> {
+    let more = further.map_or(String::new(), |(k, c)| format!(" {k} {}", u8::from(c)));
+    let mut payload = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}{more}\n", u8::from(converged), u8::from(end.is_ok())).into_bytes();
     match end {
         Ok((centres, assignments)) => {
             centres.write_binary(&mut payload);
@@ -361,7 +412,7 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
     let RunState { cases, timing, n_cases, n_in, resident, sample_rows } = st;
     let w: Vec<&str> = line.split_whitespace().collect();
     match w.as_slice() {
-        ["k", entry, case, start, n, cap, tol] => {
+        ["k", entry, case, start, n, cap, tol, further @ ..] if further.len() <= 1 => {
             let tag = "k";
             let bad = |what: &str| (tag, Error::new(format!("a k-means command with a bad {what}: {line:?}")));
             let case: usize = case.parse().map_err(|_| bad("case"))?;
@@ -373,6 +424,7 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
                 return Err(bad("cap or tolerance"));
             }
             let e = find(m, entry).map_err(|x| (tag, x))?;
+            let further = further.first().map(|f| find(m, f)).transpose().map_err(|x| (tag, x))?;
             let sample_h = timing.and_then(|t| t.first()).ok_or((tag, Error::new("a k-means command with no sample (the timing input)")))?;
             if n_in == 0 || case >= n_cases {
                 return Err(bad("case index"));
@@ -389,7 +441,7 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             }
             // The case's rows: a slice of the session's parsed sample, nothing converted or copied.
             let points = &rows[start * d..(start + n) * d];
-            kmeans_loop(ctx, e, &KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol }).map(|p| (tag, p)).map_err(|x| (tag, x))
+            kmeans_loop(ctx, e, &KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol }, further).map(|p| (tag, p)).map_err(|x| (tag, x))
         }
         ["q", entry] => {
             let tag = "q";
@@ -798,17 +850,24 @@ mod tests {
     #[test]
     fn a_k_records_payload_carries_the_final_centres_and_the_loops_assignments() {
         let centres = HostValue { elem: ElemType::F32, shape: vec![2, 3], bytes: [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0].iter().flat_map(|x| x.to_le_bytes()).collect() };
-        let p = kmeans_payload(7, false, 1234.5, 10.0, 2.5, Ok((&centres, &[1usize, 0, 1, 1])));
+        let p = kmeans_payload(7, false, 1234.5, 10.0, 2.5, None, Ok((&centres, &[1usize, 0, 1, 1])));
         let nl = p.iter().position(|b| *b == b'\n').expect("a header line");
         assert_eq!(std::str::from_utf8(&p[..nl]).expect("text"), "7 0 1 1234.5 10 2.5");
         let values = HostValue::read_all(&p[nl + 1..]).expect("two values");
         assert_eq!(values.len(), 2);
         assert_eq!(values[0], centres);
         assert_eq!(values[1], HostValue { elem: ElemType::I32, shape: vec![4], bytes: [1i32, 0, 1, 1].iter().flat_map(|x| x.to_le_bytes()).collect() });
-        let f = kmeans_payload(3, false, 0.0, 10.0, 10.0, Err("iteration 3: a centroid is infinite or NaN"));
+        let f = kmeans_payload(3, false, 0.0, 10.0, 10.0, None, Err("iteration 3: a centroid is infinite or NaN"));
         let nl = f.iter().position(|b| *b == b'\n').expect("a header line");
         assert_eq!(std::str::from_utf8(&f[..nl]).expect("text"), "3 0 0 0.0 10 10");
         assert_eq!(&f[nl + 1..], b"iteration 3: a centroid is infinite or NaN");
+        // With a further entry: two more header fields, the tail unchanged.
+        let q = kmeans_payload(7, false, 1234.5, 10.0, 2.5, Some((4, true)), Ok((&centres, &[1usize, 0, 1, 1])));
+        let nl = q.iter().position(|b| *b == b'\n').expect("a header line");
+        assert_eq!(std::str::from_utf8(&q[..nl]).expect("text"), "7 0 1 1234.5 10 2.5 4 1");
+        assert_eq!(&q[nl + 1..], &p[p.iter().position(|b| *b == b'\n').expect("a header line") + 1..]);
+        let g = kmeans_payload(3, false, 0.0, 10.0, 10.0, Some((0, false)), Err("iteration 3: a centroid is infinite or NaN"));
+        assert!(g.starts_with(b"3 0 0 0.0 10 10 0 0\n"));
     }
 
     /// THE SAMPLE'S ROWS ARE PARSED ONCE A SESSION (the advisor's round-3 review, N3): the dbpedia sample's size

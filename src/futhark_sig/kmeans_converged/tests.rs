@@ -8,7 +8,7 @@ use super::*;
 use crate::futhark_sig::{build, compile_c, load, load_cases, program, signature, Interp, KMEANS, KMEANS_PROBLEM, KMEANS_TEXTBOOK};
 
 fn run(inertia: f64, mean_log10_p: f64, seconds: f64, iterations: u32) -> ConvergedRun {
-    ConvergedRun { centroids: Vec::new(), assignments: Vec::new(), inertia, mean_log10_p, mean_log10_p_all: mean_log10_p, coincident: 0, seconds, wall_seconds: seconds, iterations, inertia_per_iteration: 1.0, converged: true, finished: true, failure: String::new() }
+    ConvergedRun { centroids: Vec::new(), assignments: Vec::new(), inertia, mean_log10_p, mean_log10_p_all: mean_log10_p, coincident: 0, seconds, wall_seconds: seconds, iterations, inertia_per_iteration: 1.0, converged: true, finished: true, failure: String::new(), further_iterations: None }
 }
 
 /// THE INPUTS' ARITHMETIC (`docs/KMEANS_FITNESS.md`): a run equal to the seed is 1/2 on every input; a worse one is
@@ -165,7 +165,7 @@ fn small_case() -> (Array, Array) {
 }
 
 /// UltraDim's step as a timed Rust step.
-fn ultradim(points: &Array) -> impl FnMut(&Array) -> Result<Stepped, String> + '_ {
+pub(super) fn ultradim(points: &Array) -> impl FnMut(&Array) -> Result<Stepped, String> + '_ {
     timed(move |c| ultradim_step_f32(points, c, true))
 }
 
@@ -277,13 +277,13 @@ fn the_programs_seconds_are_the_steps_own_time_and_the_harness_is_excluded() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn have_futhark() -> bool {
+pub(super) fn have_futhark() -> bool {
     std::process::Command::new("futhark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Rows of the dbpedia sample (`tests/corpus/futhark_problems/kmeans/dbpedia/sample_5000x1536.in`) with UltraDim's
 /// k-means++ starts at `seed`, as a case's two inputs.
-fn dbpedia_case(rows: std::ops::Range<usize>, k: usize, seed: u64) -> (Array, Array) {
+pub(super) fn dbpedia_case(rows: std::ops::Range<usize>, k: usize, seed: u64) -> (Array, Array) {
     let sample = crate::futhark_sig::read_one(&std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans/dbpedia/sample_5000x1536.in")).unwrap()).unwrap();
     let d = sample.dims[1];
     let flat = sample.f32_values().unwrap();
@@ -295,7 +295,7 @@ fn dbpedia_case(rows: std::ops::Range<usize>, k: usize, seed: u64) -> (Array, Ar
 
 /// UltraDim's step with the points of each cluster summed in REVERSE point order (Kahan as UltraDim): the same
 /// partition as the seed's step, another order of additions. An equal-partition reordering by construction.
-fn reversed_step(points: &Array, centres: &Array) -> Result<Array, String> {
+pub(super) fn reversed_step(points: &Array, centres: &Array) -> Result<Array, String> {
     let (flat, d) = flat_points(points)?;
     let k = centres.dims[0];
     let rows = centroid_rows(centres, k, d)?;

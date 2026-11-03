@@ -19,7 +19,7 @@ fn the_registry_names_every_scheme_once_and_marks_the_old_ones() {
     for s in SCHEMES {
         let fam_ok = matches!(
             (s.family, s.definition),
-            (Family::FutharkSig, Definition::FutharkSig { .. } | Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs) | (Family::Staged, Definition::Staged { .. }) | (Family::Shapes, Definition::ShapesTwoBand { .. } | Definition::ShapesHff { .. }) | (Family::Regex, Definition::Regex { .. })
+            (Family::FutharkSig, Definition::FutharkSig { .. } | Definition::FutharkConverged | Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter) | (Family::Staged, Definition::Staged { .. }) | (Family::Shapes, Definition::ShapesTwoBand { .. } | Definition::ShapesHff { .. }) | (Family::Regex, Definition::Regex { .. })
         );
         assert!(fam_ok, "{}: its definition is not of its family", s.name);
         assert_eq!(s.card_line().contains(OLD_SCHEME_WARNING), s.fault.is_some(), "{}", s.name);
@@ -31,16 +31,20 @@ fn the_registry_names_every_scheme_once_and_marks_the_old_ones() {
         }
         assert_eq!(s.start().quality_weight.is_some(), s.is_flat(), "{}: the run_start records a weight exactly for a flat scheme", s.name);
         assert_eq!(s.start_weighted(5).quality_weight, s.is_flat().then_some(5), "{}", s.name);
+        assert_eq!(s.start_with(5, 0.01).quality_cliff, s.uses_cliff().then_some(0.01), "{}: the run_start records a cliff exactly for a scheme with one", s.name);
     }
-    for old in ["futhark-slope4", "futhark-study7", "futhark-kmeans-converged", "staged", "shapes-hff", "shapes-two-band", "regex-colmax", "futhark-slope4-gated", "futhark-kmeans-quality-first", "staged-gated", "shapes-hff-gated"] {
+    for old in ["futhark-slope4", "futhark-study7", "futhark-kmeans-converged", "staged", "shapes-hff", "shapes-two-band", "regex-colmax", "futhark-slope4-gated", "futhark-kmeans-quality-first", "staged-gated", "shapes-hff-gated", "futhark-kmeans-qqs"] {
         assert!(scheme(old).unwrap().fault.is_some(), "{old} is an old scheme");
     }
-    for (flat, m) in [("futhark-kmeans-qqs", DEFAULT_QUALITY_WEIGHT), ("futhark-slope4-qqs", ANSWER_QUALITY_WEIGHT), ("staged-qqs", DEFAULT_QUALITY_WEIGHT), ("shapes-hff-qqs", DEFAULT_QUALITY_WEIGHT)] {
+    assert!(scheme("futhark-kmeans-qqs").unwrap().fault.is_some_and(|f| f.contains("rewards early stopping")), "the first k-means run's fault");
+    for (flat, m) in [("futhark-kmeans-better", KMEANS_BETTER_QUALITY_WEIGHT), ("futhark-slope4-qqs", ANSWER_QUALITY_WEIGHT), ("staged-qqs", DEFAULT_QUALITY_WEIGHT), ("shapes-hff-qqs", DEFAULT_QUALITY_WEIGHT)] {
         let s = scheme(flat).unwrap();
         assert!(s.is_flat() && s.fault.is_none(), "{flat}");
         assert_eq!(s.default_quality_weight(), m, "{flat}");
     }
-    assert!(scheme("futhark-kmeans-qqs").unwrap().is_converged());
+    assert!(scheme("futhark-kmeans-qqs").unwrap().is_converged() && scheme("futhark-kmeans-better").unwrap().is_converged());
+    assert!(scheme("futhark-kmeans-better").unwrap().uses_cliff() && SCHEMES.iter().filter(|s| s.uses_cliff()).count() == 1);
+    assert_eq!(crate::futhark_sig::KMEANS_PROBLEM.fitness, "futhark-kmeans-better", "k-means's default is its newest scheme");
     assert_eq!(scheme("regex-raw").unwrap().default_quality_weight(), 1);
 }
 
@@ -95,4 +99,52 @@ fn the_stage_two_rules_differ_only_on_an_inexact_program() {
     assert_eq!(g(&inexact).fitness, std::f64::consts::FRAC_PI_2 + u(&inexact).quality);
     assert_eq!(crate::runner::staged_hff(FitnessStage::QualityAndSpeed, &inexact, &speed).unwrap(), g(&inexact), "staged_hff is staged-gated");
     assert!(staged(StageTwo::Gated, FitnessStage::Quality, &inexact, &[0.1]).is_err(), "stage 1 takes no speed inputs");
+}
+
+/// THE CLIFF AND THE PERCENTILE of `futhark-kmeans-better` (Andrew's specification of 2026-11-03): `q = x/2` up to
+/// `x = 1` (equal to the reference program, 1/2), then a straight rise to 1 at `x = 1 + ε` and 1 beyond; a NaN is 1;
+/// a negative `x` is 0. The percentile is `I_{sin^2 theta}((d - 1)/2, 1/2)`: 0 at 0, 1 at pi/2, 1/2 at 1/2 for d = 2
+/// (`I_x(1/2, 1/2) = (2/pi) asin(sqrt x)`, so F(theta) = 2 theta / pi), increasing in the angle, smaller at a larger d
+/// for the same angle, and an error outside [0, pi/2] or below 2 inputs.
+#[test]
+fn the_quality_cliff_and_the_hff_percentile_are_as_specified() {
+    let eps = DEFAULT_QUALITY_CLIFF;
+    assert_eq!(eps, 0.005);
+    assert_eq!(quality_cliff(1.0, eps), 0.5);
+    assert_eq!(quality_cliff(0.5, eps), 0.25);
+    assert_eq!(quality_cliff(0.0, eps), 0.0);
+    assert_eq!(quality_cliff(-3.0, eps), 0.0);
+    assert!((quality_cliff(1.0025, eps) - 0.75).abs() < 1e-12, "{}", quality_cliff(1.0025, eps));
+    // x = 1 + eps in f64 is (x - 1)/eps = 0.99999999999998: the rise ends there, and 1 is reached past it.
+    assert!((quality_cliff(1.005, eps) - 1.0).abs() < 1e-12, "{}", quality_cliff(1.005, eps));
+    assert_eq!(quality_cliff(1.0051, eps), 1.0);
+    assert_eq!(quality_cliff(1.16, eps), 1.0, "the first run's best individual's 16 % loss is the worst input");
+    assert_eq!(quality_cliff(f64::INFINITY, eps), 1.0);
+    assert_eq!(quality_cliff(f64::NAN, eps), 1.0);
+    // Monotone and continuous at 1.
+    let mut prev = -1.0;
+    for i in 0..=400 {
+        let x = 0.9 + 0.0005 * f64::from(i);
+        let q = quality_cliff(x, eps);
+        assert!(q >= prev && (0.0..=1.0).contains(&q), "x {x}: {q} after {prev}");
+        prev = q;
+    }
+    assert!((quality_cliff(1.0 + 1e-12, eps) - 0.5).abs() < 1e-9);
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    for theta in [0.1, 0.4, 0.7227, 1.2] {
+        assert!((hff_percentile(theta, 2).unwrap() - theta / half_pi).abs() < 1e-9, "d = 2 at {theta}");
+    }
+    assert_eq!(hff_percentile(0.0, 22).unwrap(), 0.0);
+    assert!((hff_percentile(half_pi, 22).unwrap() - 1.0).abs() < 1e-12);
+    let mut prev = 0.0;
+    for i in 1..=50 {
+        let p = hff_percentile(half_pi * f64::from(i) / 50.0, 66).unwrap();
+        assert!(p >= prev, "the percentile falls at step {i}");
+        prev = p;
+    }
+    assert!(hff_percentile(0.7227, 66).unwrap() < hff_percentile(0.7227, 22).unwrap(), "the same angle is rarer in more dimensions");
+    assert!(hff_percentile(0.5, 1).is_err() && hff_percentile(-0.1, 22).is_err() && hff_percentile(1.6, 22).is_err() && hff_percentile(f64::NAN, 22).is_err());
+    let better = scheme("futhark-kmeans-better").unwrap();
+    assert_eq!(better.default_quality_weight(), 3);
+    assert_eq!(better.converged_fitness(&[0.5, 0.5, 0.5], &[0.5, 0.5], 3).unwrap().fitness, crate::score::truenorth_angle(&[0.5; 11]));
 }

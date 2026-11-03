@@ -40,7 +40,7 @@ use std::time::Duration;
 use crate::futhark_exec::{output_with_timeout_bytes, FUSION_BOUND};
 use crate::futhark_rust::{compile_module_with, Compile, DID_NOT_FINISH};
 use crate::futhark_table::FutharkKingdom;
-use crate::futhark_sig::kmeans_converged::{k_command as kmeans_command, range_entry};
+use crate::futhark_sig::kmeans_converged::{k_command as kmeans_command, k_command_further as kmeans_command_further, range_entry};
 use crate::futhark_sig::{entry_calling, prelude, program_cases_named_bare, program_named_bare, read_binary, Array, Signature};
 use crate::futhark_wgpu_host::{compile_library_prebuilt, compile_timeout, run_timeout, unix_ns, CompileStages, DriverOf, RunStages, ShimReport};
 use crate::typed_gep::Tree;
@@ -94,8 +94,10 @@ pub enum Step {
     /// `k` command): the member's range entry and the published program's (the seed's) run to UltraDim's stopping
     /// rule on stored case `case`, the row range `start..start + n` of the sample (the timing input's first value,
     /// uploaded once a session and kept), with the case's stored starting centres, INTERLEAVED `pairs` times (the
-    /// member first in the even pairs). One command a side a pair; the outcome holds every side's record.
-    Kmeans { case: usize, start: usize, n: usize, pairs: usize },
+    /// member first in the even pairs). One command a side a pair; the outcome holds every side's record. `further`
+    /// (`futhark-kmeans-better`): each side's command also runs the SEED'S entry on from that side's final centroids
+    /// on the device and records the iterations it needs (`kmeans_converged::k_command_further`).
+    Kmeans { case: usize, start: usize, n: usize, pairs: usize, further: bool },
 }
 
 /// The least wall time a side of a timed pair runs for (Andrew's rule, 2026-10-31): a fixed run count taken from the
@@ -913,7 +915,7 @@ impl<'a> Host<'a> {
         let mut cmds = Vec::new();
         for &i in idx {
             for (j, s) in members[i].steps.iter().enumerate() {
-                if let Step::Kmeans { case, start, n, pairs } = s {
+                if let Step::Kmeans { case, start, n, pairs, further } = s {
                     if !named {
                         return Err("our software has a bug: a k-means step on a backend without the rust path's in-process host (--eval rust)".into());
                     }
@@ -922,7 +924,8 @@ impl<'a> Host<'a> {
                     }
                     // The member first in the even pairs, the seed first in the odd (`kmeans_converged::converge_interleaved`).
                     for p in 0..*pairs {
-                        let (a, b) = (kmeans_command(&kname(i), *case, *start, *n), kmeans_command(KYARD, *case, *start, *n));
+                        let command = |entry: &str| if *further { kmeans_command_further(entry, *case, *start, *n, KYARD) } else { kmeans_command(entry, *case, *start, *n) };
+                        let (a, b) = (command(&kname(i)), command(KYARD));
                         let (first, second) = if p.is_multiple_of(2) { (a, b) } else { (b, a) };
                         cmds.push(Cmd { line: first, member: i, step: j });
                         cmds.push(Cmd { line: second, member: i, step: j });

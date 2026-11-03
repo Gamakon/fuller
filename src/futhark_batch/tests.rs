@@ -932,7 +932,7 @@ fn the_kmeans_steps_source_passes_futhark_check_and_its_commands_interleave_the_
     let seed_text = crate::futhark_sig::program(&k, &sig, &seed_tree).unwrap();
     let base = scratch("kmeans_source");
     let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: base.join("no_rt") }, &base.join("batch"), Inputs { cases_stdin: &[], timing_stdin: None, yardstick: Some(&seed_text) }).unwrap();
-    let steps = vec![Step::Kmeans { case: 3, start: 0, n: 200, pairs: 2 }, Step::Kmeans { case: 2, start: 2000, n: 500, pairs: 1 }];
+    let steps = vec![Step::Kmeans { case: 3, start: 0, n: 200, pairs: 2, further: false }, Step::Kmeans { case: 2, start: 2000, n: 500, pairs: 1, further: false }];
     let members = vec![Member { program: Program::Tree(&seed_tree), steps: steps.clone() }, Member { program: Program::Text(&seed_text), steps: steps.clone() }];
     let idx = [0usize, 1];
     let source = host.source(&members, &idx).unwrap();
@@ -948,6 +948,11 @@ fn the_kmeans_steps_source_passes_futhark_check_and_its_commands_interleave_the_
     let lines: Vec<&str> = cmds.iter().map(|c| c.line.as_str()).collect();
     assert_eq!(lines, ["k k0 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k k0 3 0 200 100 1e-4", "k k0 2 2000 500 100 1e-4", "k kyard 2 2000 500 100 1e-4", "k k1 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k k1 3 0 200 100 1e-4", "k k1 2 2000 500 100 1e-4", "k kyard 2 2000 500 100 1e-4"]);
     assert_eq!(cmds.iter().map(|c| (c.member, c.step)).collect::<Vec<_>>(), [(0, 0), (0, 0), (0, 0), (0, 0), (0, 1), (0, 1), (1, 0), (1, 0), (1, 0), (1, 0), (1, 1), (1, 1)]);
+    // THE FURTHER ITERATIONS (`futhark-kmeans-better`): each side's command names the seed's entry to run on from
+    // that side's final centroids.
+    let further = vec![Member { program: Program::Tree(&seed_tree), steps: vec![Step::Kmeans { case: 3, start: 0, n: 200, pairs: 2, further: true }] }];
+    let lines: Vec<String> = host.commands(&further, &[0]).unwrap().into_iter().map(|c| c.line).collect();
+    assert_eq!(lines, ["k k0 3 0 200 100 1e-4 kyard", "k kyard 3 0 200 100 1e-4 kyard", "k kyard 3 0 200 100 1e-4 kyard", "k k0 3 0 200 100 1e-4 kyard"]);
     // The C batch driver reads i32 alone: a k-means host on it is refused at its making, before any step.
     let refused = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("c"), Inputs { cases_stdin: &[], timing_stdin: None, yardstick: Some(&seed_text) }).err().expect("the C batch driver refuses a k-means host");
     assert!(refused.contains("i32"), "{refused}");
@@ -982,7 +987,7 @@ fn on_the_gpu_the_resident_sample_path_runs_the_seed_against_itself_with_one_upl
     idx.sort_by_key(|i| cases[*i].inputs[0].len() * cases[*i].inputs[1].dims[0]);
     idx.truncate(3);
     let cut = |name: &str| crate::futhark_sig::kmeans_converged::KMEANS_CASES.iter().find(|c| c.name == name).expect("a declared cut");
-    let steps: Vec<Step> = idx.iter().map(|i| { let c = cut(&cases[*i].name); Step::Kmeans { case: *i, start: c.start, n: c.end - c.start, pairs: 2 } }).collect();
+    let steps: Vec<Step> = idx.iter().map(|i| { let c = cut(&cases[*i].name); Step::Kmeans { case: *i, start: c.start, n: c.end - c.start, pairs: 2, further: false } }).collect();
     let members = vec![Member { program: Program::Tree(&seed_tree), steps: steps.clone() }];
     let r1 = host.run(&members).unwrap();
     let r2 = host.run(&members).unwrap();
@@ -1002,5 +1007,48 @@ fn on_the_gpu_the_resident_sample_path_runs_the_seed_against_itself_with_one_upl
         eprintln!("{}: GPU {} iterations, the program's own {:.4} s a side ({:.4} s wall), cosine inertia {:.5}; futhark c {} iterations, {:.5}; inputs {inputs:?}", c.name, cand.iterations, cand.seconds, cand.wall_seconds, cand.inertia, on_c.iterations, on_c.inertia);
         assert_eq!(cand.iterations, on_c.iterations, "{}: the GPU's loop and the c backend's stop at the same iteration", c.name);
     }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// ON THE GPU, THE FURTHER ITERATIONS OF THE RESIDENT-SAMPLE PATH (`futhark-kmeans-better`, the `k` command with a
+/// further entry): the seed as a member against the seed's entry on the smallest fitness case, two pairs, each side's
+/// command also running the seed's entry on from its final centroids on the device. Every side records its further
+/// iterations, the two sides agree on them, the candidate's three cliff inputs against the seed side are exactly 1/2,
+/// and the count equals the c backend's: the compiled seed (`futhark c`) run on from the GPU run's final centroids
+/// (`kmeans_converged::further_iterations`). (The fork compiler, rustc, the GPU; run under the GPU lock.)
+#[cfg(feature = "gpu")]
+#[test]
+fn on_the_gpu_the_k_command_counts_the_seeds_further_iterations_from_the_final_centroids() {
+    use crate::futhark_sig::kmeans_converged::{further_iterations, kmeans_inputs_better, run_of_k_payload, sides_of_runs, step_of_exe, StepTimer, KMEANS_CASES};
+    if !crate::futhark_rust::compiler().is_file() {
+        panic!("the fork compiler is not installed (futhark-rust-backend/build.sh)");
+    }
+    let p = problem("kmeans").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let seed_tree = crate::futhark_sig::build(&k, &crate::futhark_sig::kmeans_seed()).unwrap();
+    let seed_text = crate::futhark_sig::program(&k, &sig, &seed_tree).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().unwrap();
+    let base = scratch("kmeans_gpu_further");
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&timing), yardstick: Some(&seed_text) }).unwrap();
+    let i = (0..cases.len()).filter(|i| cases[*i].split.in_fitness()).min_by_key(|i| cases[*i].inputs[0].len() * cases[*i].inputs[1].dims[0]).unwrap();
+    let c = &cases[i];
+    let cut = KMEANS_CASES.iter().find(|x| x.name == c.name).expect("a declared cut");
+    let members = vec![Member { program: Program::Tree(&seed_tree), steps: vec![Step::Kmeans { case: i, start: cut.start, n: cut.end - cut.start, pairs: 2, further: true }] }];
+    let r = host.run(&members).unwrap();
+    let Outcome::Kmeans(sides) = &r.outcomes[0][0] else { panic!("{}: {:?}", c.name, r.outcomes[0][0]) };
+    assert_eq!(sides.len(), 4, "{}: 2 pairs, 4 sides", c.name);
+    let runs: Vec<(bool, crate::futhark_sig::kmeans_converged::ConvergedRun)> = sides.iter().map(|s| { let (pl, ns) = s.result.as_ref().unwrap_or_else(|e| panic!("{}: {e}", c.name)); (s.candidate, run_of_k_payload(&c.inputs[0], &c.inputs[1], pl, *ns).unwrap()) }).collect();
+    assert!(runs.iter().all(|(_, r)| r.further_iterations.is_some()), "every side records its further iterations: {:?}", runs.iter().map(|(_, r)| r.further_iterations).collect::<Vec<_>>());
+    let (cand, seed) = sides_of_runs(runs.iter().filter(|r| r.0).map(|r| r.1.clone()).collect(), runs.iter().filter(|r| !r.0).map(|r| r.1.clone()).collect()).unwrap();
+    assert_eq!(cand.further_iterations, seed.further_iterations);
+    let inputs = kmeans_inputs_better(&cand, &seed, crate::fitness::DEFAULT_QUALITY_CLIFF).unwrap();
+    assert_eq!(inputs.quality, vec![0.5, 0.5, 0.5], "{}: one program on one device is its own yardstick", c.name);
+    let exe = compile_c(&seed_text, &base.join("c")).unwrap();
+    let on_c = further_iterations(&c.inputs[0], &seed.centroids, step_of_exe(&exe, &c.inputs[0], StepTimer::FutharkC)).unwrap();
+    eprintln!("{}: GPU {} iterations, then {:?} further iterations of the seed from its final centroids; futhark c from the same centroids {on_c}", c.name, seed.iterations, seed.further_iterations);
+    assert_eq!(seed.further_iterations, Some(on_c), "{}: the GPU's continuation and the c backend's stop at the same iteration", c.name);
     let _ = std::fs::remove_dir_all(&base);
 }

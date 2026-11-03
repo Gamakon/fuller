@@ -1,6 +1,133 @@
 # The k-means fitness: the measures that go into the HFF
 
-*fuller, 2026-11-03, revised twice after the advisor's reviews of the same day
+*fuller, 2026-11-03. **The scheme to run is `futhark-kmeans-better`** (Andrew's specification of 2026-11-03,
+below, first): the first k-means run (`/private/tmp/claude-501/fbench/kmeans_qqs_s1`, scheme `futhark-kmeans-qqs`)
+did not produce a better k-means, because its fitness rewarded stopping early. `futhark-kmeans-qqs`, specified after
+it, is kept registered and is **NOT TO BE RUN AS IS**, with the fault "rewards early stopping: r/(1+r) compresses a
+quality loss". The schemes before it (`futhark-kmeans-quality-first`, `futhark-kmeans-converged`) are NOT TO BE RUN
+AS IS either (their faults are below). Andrew's ruling of 2026-11-03 holds for every scheme here: **the HFF angle is
+the final fitness, nothing may manipulate it afterwards; quality weighs more than speed by repetition in one flat
+vector.***
+
+## The scheme `futhark-kmeans-better` (the default for k-means)
+
+**Why it replaces `futhark-kmeans-qqs`.** The best individual of the first run stops after 3 iterations with a 16 %
+worse cosine inertia and 31 of 32 clusters holding one point. Under `r/(1+r)` a 16 % loss moved the inertia input
+only from 0.500 to 0.537, while stopping after 3 iterations put its iterations inputs at 0.16-0.25 and its seconds
+inputs at 0.003-0.013 (the run's `report.tsv`): the fitness traded a large quality loss for speed.
+
+**The run.** On each fitness data set, the candidate program and the reference program (UltraDim's centroid update,
+translated) each run from the same starting centroids under UltraDim's stopping rule (the Euclidean inertia changes by
+less than 1e-4, or 100 iterations), applied by the harness, interleaved `--pairs` times; the reference's run of the
+same interleaving is the yardstick. Everything about the loop, the measures and the cases is as described in the
+sections after this one.
+
+**The quality inputs of a data set**, each from `x` = the candidate relative to the reference (`x = 1` equal, `x > 1`
+worse):
+
+1. the final cosine inertia: `x = I_cand / I_ref`;
+2. the final mean log10 angular percentile over the points off their centroid (UltraDim's `exact_mean_log10_p`, the
+   variant described below): `x = L_ref / L_cand`;
+3. the convergence: `k` = the further iterations UltraDim's rule needs when the REFERENCE program's update is run on
+   from the candidate's final centroids, `k_ref` likewise from the reference's own final centroids; `x = 1 + (k −
+   k_ref)`, so `x ≤ 1` when the candidate's centroids are at least as converged. At a fixed point `k = 2` (the
+   first iteration has no previous inertia to compare with).
+
+Each `x` becomes an input on [0, 1] by the cliff (`fitness::quality_cliff`):
+
+```rust
+pub fn quality_cliff(x: f64, cliff: f64) -> f64 {
+    if x.is_nan() {
+        return 1.0;
+    }
+    if x <= 1.0 {
+        (x / 2.0).max(0.0)
+    } else {
+        0.5 + 0.5 * ((x - 1.0) / cliff).min(1.0)
+    }
+}
+```
+
+with `ε` = `--quality-cliff`, default 0.005, recorded in the run card (`quality_cliff`) and the stream's `run_start`
+(`fitness.quality_cliff`). A loss of `ε` (0.5 %) or more is the worst input there is. A run that does not finish (a
+NaN or infinite centroid, a wrong shape, a failed step) or a non-finite measure is 1 on every input.
+
+**The speed inputs of a data set:** the program's own compute time to the stopping rule (the GPU-timed passes, or
+`futhark c`'s runtime, as before) and the iterations to the stopping rule, each `r/(1+r)` of candidate / reference.
+
+**The fitness:** `truenorth_angle` (the hff library, normalisation off) over ONE flat vector: for every data set its
+three quality inputs, the whole quality group repeated `m` times (`--quality-weight`, default 3 for this scheme), and
+its two speed inputs once. Nothing else touches the angle: no offset, gate or stage. Beside the angle the runner
+reports the **HFF percentile** `F(θ) = I_{sin²θ}((d−1)/2, ½)` (`fitness::hff_percentile`, the hff library's
+`higd::cdf_beta_correction`) with `d` the length of the flat vector, in the per-generation log lines, in
+`per_generation.tsv` (`best_so_far_hff_percentile`, `best_this_generation_hff_percentile`, `hff_dimensions_d`) and in
+the report (`hff_dimensions_d`, `best_hff_percentile`, `best_ever_hff_percentile`). With the six fitness cases of the
+run, `d = 6 × (3 × 3 + 2) = 66`.
+
+**Where the further iterations are measured.** On the c backend (`--eval single`) the reference's server is stepped on
+from each side's final centroids (`kmeans_converged::further_iterations`). On the GPU (`--eval rust`) the runtime's `k`
+command takes the reference's entry as an eighth word (`k ENTRY CASE START N CAP TOL FURTHER`,
+`kmeans_converged::k_command_further`): after the loop it runs that entry on from the final centroids on the device,
+under the same rule, and the record's header carries the count and whether it converged (`run_of_k_payload` reads it
+into `ConvergedRun::further_iterations`). The continuation's time is in no input. The GPU test
+`futhark_batch::tests::on_the_gpu_the_k_command_counts_the_seeds_further_iterations_from_the_final_centroids` checks
+the device's count against `futhark c`'s from the same centroids.
+
+### The ordering table (measured 2026-11-03)
+
+Two dbpedia cases: the 500 rows of `train_n500_k8` (k = 8) and the 1,000 rows of `held_n1000_k32` (k = 32), k-means++
+starts, m = 3, ε = 0.005, the angle over the one flat vector of both cases, **d = 22**. Printed and asserted by
+`kmeans_converged::tests_better::the_better_scheme_ranks_every_quality_loss_below_the_reference_and_a_faster_identical_program_above`.
+Every individual except the last is a Rust step through the loop with a stated cost (the reference's measured seconds
+an iteration for a step that does the reference's work, 0 for one that returns a constant, half for the faster one:
+a Rust step's own clock is noise on this machine). The last is the first run's best individual (its hall of fame
+rank 1, `tests/corpus/futhark_problems/kmeans/first_run/kmeans_qqs_s1_rank1.txt`, read into a gene by `build`),
+compiled with `futhark c` and run as a Futhark server interleaved with the compiled reference (2 pairs), both sides'
+own times; the compiled reference equals the Rust step bit for bit (asserted). Each cell gives the two cases in order
+(500/k8, 1000/k32). x columns are the quality ratios before the cliff (1 equal, above 1 worse); the speed inputs are
+[seconds, iterations], 1/2 equal. The reference's own `k_ref` is 2 on both cases.
+
+| individual | iterations | further iterations k | x inertia | x percentile | x convergence | speed inputs [s, it] | HFF angle θ (rad) | HFF percentile F(θ) | d |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| the reference program (UltraDim's step) | 9, 10 | 2, 2 | 1.00000, 1.00000 | 1.00000, 1.00000 | 1.00000, 1.00000 | [0.500, 0.500], [0.500, 0.500] | 0.7227 | 3.7772e-5 | 22 |
+| returns the centroids unchanged | 2, 2 | 9, 10 | 1.76379, 1.71652 | 1.67775, 1.61390 | 8.00000, 9.00000 | [0.000, 0.182], [0.000, 0.167] | 1.3908 | 4.1367e-1 | 22 |
+| makes them worse (starts pushed off the data) | 3, 3 | 19, 24 | 4.38014, 4.65385 | 10.41018, 10.24655 | 18.00000, 23.00000 | [0.000, 0.250], [0.000, 0.231] | 1.3933 | 4.2031e-1 | 22 |
+| NaN at iteration 3 | 3 (unfinished), 3 (unfinished) | -, - | -, - | -, - | -, - | [1.000, 1.000], [1.000, 1.000] | 1.5708 | 1.0000e0 | 22 |
+| rounded to 1e-3 | 9, 9 | 2, 2 | 1.00079, 1.00042 | 1.00054, 1.00030 | 1.00000, 1.00000 | [0.500, 0.500], [0.474, 0.474] | 0.7630 | 9.7897e-5 | 22 |
+| rounded to 1e-2 | 12, 19 | 4, 10 | 1.04637, 1.04854 | 1.03384, 1.03403 | 3.00000, 9.00000 | [0.571, 0.571], [0.655, 0.655] | 1.4574 | 6.0735e-1 | 22 |
+| additions reordered: plain f32 sum | 9, 10 | 2, 2 | 1.00000, 1.00000 | 1.00000, 1.00000 | 1.00000, 1.00000 | [0.500, 0.500], [0.500, 0.500] | 0.7227 | 3.7772e-5 | 22 |
+| additions reordered: reversed Kahan sum | 9, 10 | 2, 2 | 1.00000, 1.00000 | 1.00000, 1.00000 | 1.00000, 1.00000 | [0.500, 0.500], [0.500, 0.500] | 0.7227 | 3.7772e-5 | 22 |
+| faster, identical output (seconds / 2) | 9, 10 | 2, 2 | 1.00000, 1.00000 | 1.00000, 1.00000 | 1.00000, 1.00000 | [0.333, 0.500], [0.333, 0.500] | 0.7034 | 2.3299e-5 | 22 |
+| one iteration, then unchanged | 3, 3 | 8, 9 | 1.02282, 1.03269 | 1.01634, 1.02258 | 7.00000, 8.00000 | [0.100, 0.250], [0.091, 0.231] | 1.3942 | 4.2254e-1 | 22 |
+| the first run's best individual (kmeans_qqs_s1 rank 1) | 3, 3 | 2, 19 | 1.09372, 1.16403 | 1.08055, 1.14535 | 1.00000, 18.00000 | [0.074, 0.250], [0.021, 0.231] | 1.2885 | 1.9807e-1 | 22 |
+
+What the table shows:
+
+- Every individual worse than the reference by more than ε on a final quality measure on some case (returns the
+  centroids unchanged; makes them worse; NaN; rounded to 1e-2; one iteration then unchanged; the first run's best)
+  has a higher HFF than the reference (asserted): 1.2885 to 1.5708 rad against 0.7227, percentile 0.198 to 1 against
+  3.8e-5.
+- **The first run's best individual ranks below the reference** (asserted): 1.2885 rad, F = 0.198, against 0.7227,
+  F = 3.8e-5. On the k = 32 case it is 16 % worse on the inertia and the reference needs 19 more iterations from its
+  centroids (x = 18); on the k = 8 case it is 9 % worse though its centroids happen to be a fixed point (k = 2).
+  Under `futhark-kmeans-qqs` it scored 0.6335 against the seed's 0.7227 and won the run.
+- The faster individual with identical output has a lower HFF (asserted): 0.7034 rad, F = 2.3e-5.
+- **The reorder noise** (asserted): the two reorderings of the reference's additions (a plain f32 sum; the Kahan sum
+  in reverse point order) take the same iterations and further iterations as the reference and differ from it on the
+  quality ratios by at most |x − 1| = 1.96e-7, which is 1/25,000 of ε. The angle that noise can move the reference
+  to is 0.722758 rad; the reorderings score 0.722734, the reference's angle to six places. They rank above every
+  individual that lost more than ε.
+- Rounded to 1e-3 (a 0.08 % and 0.04 % worse inertia, below ε, and one iteration fewer on the k = 32 case) scores
+  0.7630 rad, F = 9.8e-5: below the reference. That is the cliff's slope at work (x = 1.0008 puts the inertia input
+  at 0.58); it is reported, not asserted.
+
+# The scheme before it: `futhark-kmeans-qqs` (NOT TO BE RUN AS IS)
+
+**Fault: rewards early stopping: r/(1+r) compresses a quality loss** (the first k-means run, above). Kept registered
+so that the first run stays nameable and reproducible (`docs/FITNESS_SCHEMES.md`). What follows is its specification
+as it was built; the loop, the measures, the cases, the clock and the work guard are shared with `futhark-kmeans-better`.
+
+*Revised twice after the advisor's reviews of the same day
 (`docs/reviews/2026-11-03_kmeans_plan_advisor_round1.md`, `..._round2.md`) and after Andrew's ruling of 2026-11-03:
 **the HFF angle is the final fitness, nothing may manipulate it afterwards; quality weighs more than speed by
 repetition in one flat vector.** The specification of the named scheme `futhark-kmeans-qqs`. The code below is what
