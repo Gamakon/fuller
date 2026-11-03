@@ -275,6 +275,11 @@ fn the_timing_work_bound_admits_fable_s_exact_histogram_program() {
     let wp = interp.work(&published, &sizes).unwrap();
     assert!(wp < w && wp <= TIMING_WORK_CAP, "the published program's work {wp}");
     eprintln!("timing work: Fable's histogram {w}, the published program {wp}, the bound {TIMING_WORK_CAP}");
+    // The problem's bound is the constant for histogram (its published program is far under it) and four times the
+    // published program's work where that is larger (k-means).
+    assert_eq!(crate::futhark_sig::timing_work_cap(wp), TIMING_WORK_CAP);
+    assert_eq!(crate::futhark_sig::timing_work_cap(210_000_000_000), 840_000_000_000);
+    assert_eq!(crate::futhark_sig::timing_work_cap(u128::MAX), u128::MAX);
 }
 
 /// FAULT 13 (docs/reviews/2026-10-28_futhark_evolve_faults.md): pathfinder was timed on a quality case (256 x 256,

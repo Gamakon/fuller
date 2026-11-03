@@ -90,10 +90,10 @@ pub struct Problem {
     /// THE TIMING INPUT's size (`n`; 0: time on the largest training case). A micro benchmark is timed on its own
     /// large input ([`timing_input`]), used only for timing and never as a quality case: measured 2026-10-27, reduce
     /// timed on its 1,000-element training case gave A/A ratios in three clusters (0.30, 1.00, 3.3), the GPU's clock
-    /// states on a 10-30 us kernel, so selection in stage 2 chose on noise. At most 65,535 x 256: wgpu allows 65,535
-    /// workgroups a dispatch dimension, and an elementwise map over `n` dispatches `n / 256` (measured 2026-10-28: at
-    /// n = 2^24 every champion with a map over `n` failed, "[65536, 1, 1] must be less or equal to 65535"), so the
-    /// micro benchmarks use 15 x 2^20 (61,440 workgroups).
+    /// states on a 10-30 us kernel, so selection in stage 2 chose on noise. The micro benchmarks use 15 x 2^20: until
+    /// series patch 0011 (2026-11-02) a map over more than 65,535 x 256 elements could not be dispatched (wgpu allows
+    /// 65,535 workgroups a dimension; measured 2026-10-28 at n = 2^24, "[65536, 1, 1] must be less or equal to 65535");
+    /// the compiler now folds such a grid into two dimensions, and the size is kept so the timings stay comparable.
     pub timing_n: usize,
     /// THE PROGRAM SIZE `N` of the problem's gene layout when `--program-size` is not given: an experiment parameter
     /// above the reference and the planted slowdown ([`DEFAULT_PROGRAM_SIZE`] for the i32 benchmarks; k-means's
@@ -289,6 +289,14 @@ pub fn problem(name: &str) -> Result<Problem, String> {
 /// so still left it untimed ("ratio inf", 66 programs over the bound in that run). The per-command bound of the batch
 /// driver and of the in-process host stays the hard stop.
 pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
+
+/// THE PROBLEM'S TIMING BOUND: [`TIMING_WORK_CAP`], or four times the published program's own work at the timing
+/// input when that is larger. The constant was set on histogram (its published program is 2.5e9 of the 5.9e10); k-means's
+/// published program is 2.1e11 at its timing input (n 8192, d 256, k 1024), so under the constant alone the runner would
+/// never time the program it is meant to beat. A program is timed when its work is at most this bound.
+pub fn timing_work_cap(reference_work: u128) -> u128 {
+    TIMING_WORK_CAP.max(reference_work.saturating_mul(4))
+}
 
 /// Load an instance's kingdom: its view's table.
 pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {

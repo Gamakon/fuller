@@ -417,6 +417,9 @@ struct Judge<'a> {
     /// The input the speed is timed on: the problem's own large timing input (never a quality case) or, without one,
     /// the largest training case.
     timing: TimingInput,
+    /// The problem's timing bound (`futhark_sig::timing_work_cap`): a program whose work at the timing input is over it
+    /// is never timed.
+    timing_cap: u128,
     /// Programs over the work cap at the timing size, not timed (no speed credit).
     over_cap_untimed: u64,
     backend: Backend,
@@ -546,7 +549,7 @@ impl<'a> Judge<'a> {
             let (mut missing, mut fresh) = (0, false);
             if stage.measures_speed() && self.backend == Backend::Gpu && !self.batched_t.contains_key(*source) {
                 let m = self.slots.missing(source);
-                if m > 0 && self.interp.work(tree, &self.timing.sizes)? <= TIMING_WORK_CAP {
+                if m > 0 && self.interp.work(tree, &self.timing.sizes)? <= self.timing_cap {
                     (missing, fresh) = (m, m == self.slots.slots());
                     steps.extend(pair_steps(missing, fresh, self.runs));
                 }
@@ -759,7 +762,7 @@ impl<'a> Judge<'a> {
             }
             let missing = self.slots.missing(source);
             let timing_work = self.interp.work(tree, &self.timing.sizes)?;
-            if missing > 0 && timing_work > TIMING_WORK_CAP {
+            if missing > 0 && timing_work > self.timing_cap {
                 // Over the per-submit cap at the timing size: never dispatched (the work guard), no speed credit.
                 self.over_cap_untimed += 1;
                 self.slots.add(source, &vec![f64::INFINITY; missing])?;
@@ -1779,6 +1782,8 @@ fn real_main() -> Result<(), String> {
     }
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
     let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
+    let timing_cap = fuller::futhark_sig::timing_work_cap(interp.work(&reference, &timing.sizes)?);
+    println!("# {} timing bound: {timing_cap} node executions at the timing input (the published program's work {}, the constant {TIMING_WORK_CAP})", utc(), interp.work(&reference, &timing.sizes)?);
     println!(
         "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, eval {mode:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out, {} test cases never in the fitness), timing on {}{}",
         utc(),
@@ -1850,7 +1855,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -2655,7 +2660,7 @@ fn real_main() -> Result<(), String> {
         if !inrun_aa.is_empty() {
             rep.push_str(&format!("inrun_aa_ratios\t{}\ninrun_aa_median\t{:.4}\n", fmt(&inrun_aa), median(&inrun_aa)));
         }
-        rep.push_str(&format!("timing_input\t{}\nover_cap_untimed\t{}\n", run.judge.timing.label(), run.judge.over_cap_untimed));
+        rep.push_str(&format!("timing_input\t{}\ntiming_cap\t{}\nover_cap_untimed\t{}\n", run.judge.timing.label(), run.judge.timing_cap, run.judge.over_cap_untimed));
         rep.push_str(&format!("best_speed_inputs\t{}\nbest_speed_ratio_median\t{:.4}\n", fmt(&be.speed), be.ratio));
         if be.quality.perfect() {
             let (ratios, got) = run.judge.champion_batch(&best.tree, 11)?;
