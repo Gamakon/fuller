@@ -745,3 +745,39 @@ fn an_unconverged_candidate_reads_the_same_on_the_c_path_and_from_a_k_record() {
     let bad = k_payload(cycling.iterations, false, true, 1.0, start_inertia, final_inertia, &k_tail(&final_centres, &out_of_range));
     assert!(run_of_k_payload(&points, &start, &bad, 1).unwrap_err().contains("centre 3 of 3"));
 }
+
+/// THE MEDIAN OF A SIDE'S RUNS IS A MEDIAN (the advisor's round-3 review, N2): two runs give their mean, three the
+/// middle one, through `sides_of_runs` on hand-made runs and through `converge_interleaved` on a step whose stated
+/// cost grows with each run (the candidate's r-th run costs r + 1 an iteration, the seed's 1): at two pairs the
+/// candidate's seconds are 1.5 x its iterations, at three pairs 2 x; the former rule gave 2 x and 2 x.
+#[test]
+fn the_median_of_two_runs_is_their_mean_and_of_three_the_middle() {
+    assert_eq!(median_of_runs(&[3.0, 1.0]), 2.0);
+    assert_eq!(median_of_runs(&[5.0, 1.0, 3.0]), 3.0);
+    assert_eq!(median_of_runs(&[7.0]), 7.0);
+    assert_eq!(median_of_runs(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+    let (c, s) = sides_of_runs(vec![run(0.4, -2.0, 3.0, 9), run(0.4, -2.0, 1.0, 9)], vec![run(0.4, -2.0, 1.0, 9), run(0.4, -2.0, 1.0, 9)]).unwrap();
+    assert_eq!((c.seconds, c.wall_seconds, s.seconds), (2.0, 2.0, 1.0), "two runs: their mean");
+    let (c, _) = sides_of_runs(vec![run(0.4, -2.0, 5.0, 9), run(0.4, -2.0, 1.0, 9), run(0.4, -2.0, 3.0, 9)], vec![run(0.4, -2.0, 1.0, 9); 3]).unwrap();
+    assert_eq!(c.seconds, 3.0, "three runs: the middle one");
+    let (points, start) = small_case();
+    for (pairs, want) in [(2usize, 1.5), (3, 2.0)] {
+        let mut run_index = 0usize;
+        let mut first_call = true;
+        let candidate = |c: &Array| {
+            // A run starts when the step is given the starting centres again.
+            if c == &start && !first_call {
+                run_index += 1;
+            }
+            first_call = false;
+            Ok(Stepped { centres: ultradim_step_f32(&points, c, true)?, seconds: (run_index + 1) as f64 })
+        };
+        let seed = |c: &Array| Ok(Stepped { centres: ultradim_step_f32(&points, c, true)?, seconds: 1.0 });
+        let (c, s) = converge_interleaved(&points, &start, pairs, candidate, seed).unwrap();
+        assert_eq!(c.iterations, s.iterations);
+        assert_eq!(c.seconds, want * f64::from(c.iterations), "{pairs} pairs: the candidate's median seconds");
+        assert_eq!(s.seconds, f64::from(s.iterations));
+        let inputs = kmeans_inputs(&c, &s);
+        assert_eq!(inputs.speed[0], want / (1.0 + want), "{pairs} pairs: the seconds input");
+    }
+}

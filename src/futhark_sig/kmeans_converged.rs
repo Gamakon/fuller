@@ -557,11 +557,19 @@ where
     })
 }
 
+/// THE MEDIAN OF A SIDE'S RUNS (the advisor's round-3 review, N2): the values sorted; an odd count takes the middle
+/// value, an even count the MEAN of the two middle values, so two pairs give the mean of the two runs. Before
+/// 2026-11-03 this was `v[v.len() / 2]`, which of two sorted values is the larger: at `--pairs 2` each side's
+/// seconds was its slower run. `crate::runner::median` is that rule (the A/A verdicts take it).
+pub fn median_of_runs(seconds: &[f64]) -> f64 {
+    crate::runner::median(seconds)
+}
+
 /// The candidate and the seed run INTERLEAVED on one case, `pairs` times each (the candidate first in the even pairs,
 /// the seed first in the odd, so neither side always runs warm after the other): each side's run is its first, with
-/// its `seconds` and `wall_seconds` the median of its runs. One pair is the plain [`converge`] of each. THE SEED'S RUN
-/// RETURNED HERE IS THE YARDSTICK of that evaluation (the review's F5): the candidate's inputs are taken against it,
-/// never against a seed run from another time.
+/// its `seconds` and `wall_seconds` the median of its runs ([`median_of_runs`]: two pairs, their mean). One pair is
+/// the plain [`converge`] of each. THE SEED'S RUN RETURNED HERE IS THE YARDSTICK of that evaluation (the review's
+/// F5): the candidate's inputs are taken against it, never against a seed run from another time.
 pub fn converge_interleaved<C, S>(points: &Array, start: &Array, pairs: usize, mut candidate: C, mut seed: S) -> Result<(ConvergedRun, ConvergedRun), String>
 where
     C: FnMut(&Array) -> Result<Stepped, String>,
@@ -580,34 +588,20 @@ where
             c_runs.push(converge(points, start, &mut candidate)?);
         }
     }
-    let median = |v: &mut Vec<f64>| {
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    };
-    let mut c = c_runs[0].clone();
-    c.seconds = median(&mut c_runs.iter().map(|r| r.seconds).collect());
-    c.wall_seconds = median(&mut c_runs.iter().map(|r| r.wall_seconds).collect());
-    let mut s = s_runs[0].clone();
-    s.seconds = median(&mut s_runs.iter().map(|r| r.seconds).collect());
-    s.wall_seconds = median(&mut s_runs.iter().map(|r| r.wall_seconds).collect());
-    Ok((c, s))
+    sides_of_runs(c_runs, s_runs)
 }
 
-/// THE TWO SIDES OF AN INTERLEAVING FROM THEIR RUNS (the batch path, where the runs come back as records): each
-/// side's run is its first, with its `seconds` and `wall_seconds` the median of its runs, exactly as
-/// [`converge_interleaved`] takes them; no run on a side is a bug.
+/// THE TWO SIDES OF AN INTERLEAVING FROM THEIR RUNS (the batch path, where the runs come back as records, and
+/// [`converge_interleaved`]'s own runs): each side's run is its first, with its `seconds` and `wall_seconds` the
+/// median of its runs ([`median_of_runs`]); no run on a side is a bug.
 pub fn sides_of_runs(candidate: Vec<ConvergedRun>, seed: Vec<ConvergedRun>) -> Result<(ConvergedRun, ConvergedRun), String> {
     if candidate.is_empty() || seed.is_empty() || candidate.len() != seed.len() {
         return Err(format!("our software has a bug: an interleaving of {} candidate runs and {} seed runs", candidate.len(), seed.len()));
     }
-    let median = |v: &mut Vec<f64>| {
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    };
     let side = |runs: Vec<ConvergedRun>| {
         let mut r = runs[0].clone();
-        r.seconds = median(&mut runs.iter().map(|r| r.seconds).collect());
-        r.wall_seconds = median(&mut runs.iter().map(|r| r.wall_seconds).collect());
+        r.seconds = median_of_runs(&runs.iter().map(|r| r.seconds).collect::<Vec<f64>>());
+        r.wall_seconds = median_of_runs(&runs.iter().map(|r| r.wall_seconds).collect::<Vec<f64>>());
         r
     };
     Ok((side(candidate), side(seed)))
