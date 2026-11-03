@@ -60,9 +60,20 @@ struct MasterRow {
 struct FrameTemplate {
     /// The master version the frame was added in: a view pinned before it has no context through it.
     since: u32,
+    /// The frame's kind (`T`, `L`, `F`, `L2`, `F2`, `L3`, `F3`, `B`): `B` is the kernel boundary's (a `let` at the top of
+    /// the program), which binds a variable without a trip, so it does not deepen the context.
+    kind: String,
     code: String,
     scope: Vec<String>,
     binds: Vec<String>,
+}
+
+impl FrameTemplate {
+    /// Whether the frame is a `let`'s (master version 5): it binds its class once, at trip depth 0, and does not
+    /// count toward the depth (its bound expression and its body each run once).
+    fn is_let(&self) -> bool {
+        self.kind == "B"
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -157,7 +168,7 @@ impl Master {
                 if since > version {
                     return Err(format!("master/frames.tsv: the frame {} is of version {since}, the master is at {version}", f[1]));
                 }
-                Ok(FrameTemplate { since, code: f[3].into(), scope: scope_list(f[4]), binds })
+                Ok(FrameTemplate { since, kind: f[1].into(), code: f[3].into(), scope: scope_list(f[4]), binds })
             })
             .collect::<Result<Vec<_>, String>>()?;
         let rules = tsv("rules.tsv", rules, &["on", "elems", "needs", "rule"])?
@@ -223,6 +234,11 @@ pub struct ViewSpec {
     pub dims: Vec<String>,
     pub roles: Vec<String>,
     pub root: Vec<String>,
+    /// THE KERNEL BOUNDARIES (master version 5, `docs/PLAN_futhark_kingdom.md` 4c (c)): the array classes a program
+    /// may compute once and name at its top (`let s_a_i32_n = <kernel> in <the next kernel>`), each at most once, as
+    /// one of UltraDim's kernels writes a buffer the next one reads (the `lets` line of the specification; k-means
+    /// names its assignments, `a.i32.n`). A `let` binds without a trip, so it does not count toward the depth.
+    pub lets: Vec<Class>,
 }
 
 impl ViewSpec {
@@ -241,10 +257,12 @@ impl ViewSpec {
             dims: Vec::new(),
             roles: Vec::new(),
             root: Vec::new(),
+            lets: Vec::new(),
         };
         let list = |x: &str| x.split(',').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>();
         let mut families_line = false;
         let mut pools: Vec<(String, Vec<String>)> = Vec::new();
+        let mut lets: Vec<String> = Vec::new();
         for line in text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
             let f: Vec<&str> = line.split('\t').collect();
             let [kind, name, elem, dims] = f.as_slice() else {
@@ -282,6 +300,7 @@ impl ViewSpec {
                 "dims" => s.dims = list(name),
                 "roles" => s.roles = list(name),
                 "root" => s.root = list(name),
+                "lets" => lets = list(name),
                 other => return Err(format!("a specification line of kind {other}")),
             }
         }
@@ -329,6 +348,21 @@ impl ViewSpec {
             if let Some(e) = s.elements.iter().find(|e| !s.literals.contains_key(*e)) {
                 return Err(format!("the element {e} has no literals line"));
             }
+        }
+        // The kernel boundaries: each an array class of the view's elements over its dimensions, named once.
+        for text in &lets {
+            let c = Class::parse(text, &s.elements, None).map_err(|e| format!("the lets line: {e}"))?;
+            let dims = s.inputs.iter().flat_map(|p| if p.elem == "size" { vec![p.name.clone()] } else { p.dims.clone() }).collect::<Vec<_>>();
+            if c.dims().is_empty() || c.dims().iter().any(|d| !dims.contains(d)) {
+                return Err(format!("the lets line names {text}, which is not an array class over the inputs' dimensions"));
+            }
+            if s.lets.contains(&c) {
+                return Err(format!("the lets line names {text} twice"));
+            }
+            s.lets.push(c);
+        }
+        if !s.lets.is_empty() && s.shape != Shape::Signature {
+            return Err("a lets line belongs to a signature view".into());
         }
         Ok(s)
     }
@@ -498,11 +532,12 @@ fn is_dim(d: &str) -> bool {
 
 // ---- binding ----------------------------------------------------------------------------------------------------
 
-/// A CONTEXT: how many variables of each class are in scope, and the depth (the binders around a node, for the
+/// A CONTEXT: how many variables of each class are in scope, and the depth (the TRIP binders around a node, for the
 /// `shallow` rule and the work bound). Not the frame stack (one type a stack, the review's F1), and not only the set
 /// of classes: a set loses a program that reads an outer variable through an inner binder of its class (measured
-/// 2026-11-02, 4 of pathfinder's 45 model programs), so the count is kept (the review's control). Its name is `c` at
-/// depth 0, else `c/{<class>[*<count above one>], sorted, comma-separated}@<depth>`.
+/// 2026-11-02, 4 of pathfinder's 45 model programs), so the count is kept (the review's control). Its name is `c`
+/// with nothing bound, else `c/{<class>[*<count above one>], sorted, comma-separated}@<depth>`; a kernel boundary
+/// (`let`, master version 5) binds a class at depth 0 (`c/{a.i32.n}@0`), since it runs its body once.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Ctx {
     pub classes: BTreeMap<String, u32>,
@@ -511,7 +546,7 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn name(&self) -> String {
-        if self.depth == 0 {
+        if self.classes.is_empty() {
             "c".into()
         } else {
             let items: Vec<String> = self.classes.iter().map(|(c, n)| if *n == 1 { c.clone() } else { format!("{c}*{n}") }).collect();
@@ -519,13 +554,19 @@ impl Ctx {
         }
     }
 
-    /// The context inside a binder that binds `classes`.
+    /// The context inside a trip binder that binds `classes`: one deeper.
     fn push(&self, classes: &[String]) -> Ctx {
+        let mut c = self.push_let(classes);
+        c.depth += 1;
+        c
+    }
+
+    /// The context inside a `let` that binds `classes`: the same depth, since a `let` adds no trip.
+    fn push_let(&self, classes: &[String]) -> Ctx {
         let mut c = self.clone();
         for k in classes {
             *c.classes.entry(k.clone()).or_default() += 1;
         }
-        c.depth += 1;
         c
     }
 
@@ -553,7 +594,7 @@ impl Ctx {
                 return Err(format!("the context of {dual} names {item:?}"));
             }
         }
-        if depth == 0 || classes.is_empty() {
+        if classes.is_empty() {
             return Err(format!("the context of {dual} is not a binder's"));
         }
         Ok(Some(Ctx { classes, depth }))
@@ -641,6 +682,11 @@ struct Sets {
     /// The pairs of scalars a loop may carry (destructured: `loop (s, c) = ...`), every ordered pair of the
     /// elements.
     tuples: Vec<Class>,
+    /// The triples of scalars a loop may carry (master version 5: UltraDim's `update_centroids` carries (sum,
+    /// compensation, count)), every ordered triple of the elements.
+    tuples3: Vec<Class>,
+    /// The kernel boundaries: the array classes a `let` at the top may name (the specification's `lets`).
+    lets: Vec<Class>,
     free: Vec<Class>,
     inputs: Vec<(String, Class)>,
     roles: Vec<String>,
@@ -699,12 +745,24 @@ fn signature_sets(spec: &ViewSpec) -> Result<Sets, String> {
     let rank1: Vec<Class> = classes.iter().filter(|c| c.dims().len() == 1).cloned().collect();
     let states: Vec<Class> = elements.iter().map(|e| Class::Scalar(e.clone())).chain(rank1.iter().cloned()).collect();
     let tuples: Vec<Class> = elements.iter().flat_map(|a| elements.iter().map(move |b| Class::Tuple(vec![Class::Scalar(a.clone()), Class::Scalar(b.clone())]))).collect();
+    let mut tuples3: Vec<Class> = Vec::new();
+    for a in &elements {
+        for b in &elements {
+            for c in &elements {
+                tuples3.push(Class::Tuple(vec![Class::Scalar(a.clone()), Class::Scalar(b.clone()), Class::Scalar(c.clone())]));
+            }
+        }
+    }
+    if let Some(l) = spec.lets.iter().find(|l| !classes.contains(l)) {
+        return Err(format!("the lets line names {}, which is not a class of the view", l.text(elements.len() > 1)));
+    }
     let inputs = spec.inputs.iter().filter(|p| p.elem != "size").map(|p| (p.name.clone(), class_of(p))).collect();
-    Ok(Sets { multi: elements.len() > 1, elements, dims, classes, rank1, states, tuples, free: Vec::new(), inputs, ..Sets::default() })
+    Ok(Sets { multi: elements.len() > 1, elements, dims, classes, rank1, states, tuples, tuples3, lets: spec.lets.clone(), free: Vec::new(), inputs, ..Sets::default() })
 }
 
-/// The frames of a view (a frame template expanded over its scope): the code and the classes it binds.
-type Frames = Vec<(String, Vec<String>)>;
+/// The frames of a view (a frame template expanded over its scope): the code, the classes it binds, and whether it is
+/// a `let`'s (bound at depth 0, without a trip).
+type Frames = Vec<(String, Vec<String>, bool)>;
 
 struct Binder {
     sets: Sets,
@@ -729,16 +787,22 @@ impl Binder {
             for f in master.frames.iter().filter(|f| f.since <= spec.master.unwrap_or(master.version)) {
                 for env in b.expand_scope(&f.scope, &base)? {
                     let code = subst(&f.code, &env)?;
-                    b.frames.push((code, f.binds.iter().map(|c| subst(c, &env)).collect::<Result<Vec<_>, _>>()?));
+                    b.frames.push((code, f.binds.iter().map(|c| subst(c, &env)).collect::<Result<Vec<_>, _>>()?, f.is_let()));
                 }
             }
-            // The contexts: the empty one, then every context of depth d extended by every frame (d < depth), each
-            // (set, depth) once, in order of first appearance.
-            let (mut ctxs, mut frontier) = (vec![Ctx::default()], vec![Ctx::default()]);
+            // The contexts: the empty one and, at depth 0, the kernel boundaries (every set of the `lets` classes,
+            // each class named once, in the specification's order); then every context of depth d extended by every
+            // trip frame (d < depth), each (set, depth) once, in order of first appearance.
+            let mut ctxs = vec![Ctx::default()];
+            for (_, binds, _) in b.frames.iter().filter(|f| f.2) {
+                let more: Vec<Ctx> = ctxs.iter().filter(|c| binds.iter().all(|k| c.count(k) == 0)).map(|c| c.push_let(binds)).collect();
+                ctxs.extend(more);
+            }
+            let mut frontier = ctxs.clone();
             for _ in 0..b.depth {
                 let mut next: Vec<Ctx> = Vec::new();
                 for c in &frontier {
-                    for (_, binds) in &b.frames {
+                    for (_, binds, _) in b.frames.iter().filter(|f| !f.2) {
                         let n = c.push(binds);
                         if !next.contains(&n) {
                             next.push(n);
@@ -755,7 +819,7 @@ impl Binder {
             let zeros = b.sets.rank1.iter().map(|c| format!("zeros_{}", c.tag(b.sets.multi)));
             let taken: BTreeSet<String> = b.sets.inputs.iter().map(|(n, _)| n.clone()).chain(b.sets.dims.iter().cloned()).chain(zeros).collect();
             let mut named: BTreeMap<String, String> = BTreeMap::new();
-            for (_, binds) in &b.frames {
+            for (_, binds, _) in &b.frames {
                 for c in binds {
                     for k in 1..=b.depth.max(1) {
                         let v = var_name(c, k);
@@ -893,6 +957,18 @@ impl Binder {
                 .collect(),
             "states" => s.states.iter().filter_map(|c| self.class_env_elem(var, c, env)).collect(),
             "free" => s.free.iter().filter_map(|c| self.class_env_elem(var, c, env)).collect(),
+            // The kernel boundaries' classes, and every class of the view (the scalar of each element, then the
+            // array classes): neither binds the row's element, so a `let` of one class may hold a body of any.
+            "lets" => s.lets.iter().map(|c| one(self.class_env(var, c, env.ctx.as_ref()))).collect(),
+            "classes" => {
+                let mut all: Vec<Class> = s.elements.iter().map(|e| Class::Scalar(e.clone())).collect();
+                for c in &s.classes {
+                    if !all.contains(c) {
+                        all.push(c.clone());
+                    }
+                }
+                all.iter().map(|c| one(self.class_env(var, c, env.ctx.as_ref()))).collect()
+            }
             // The pairs of scalars a loop may carry, destructured: `{S}` the class, `.a` and `.b` its components,
             // `.type` its Futhark type, `.var` the pattern of its two variables (the next of each component's
             // class; the second one further when the components are of one class), `.tag` the components joined by
@@ -915,6 +991,31 @@ impl Binder {
                         (format!("{var}.var"), format!("({va}, {vb})")),
                         (format!("{var}.tag"), format!("{ta}.{tb}")),
                         (format!("{var}.zero"), format!("({}, {})", zero(a), zero(b))),
+                    ]))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            // The triples of scalars a loop may carry (master version 5), destructured as the pairs are: `.a`, `.b`
+            // and `.c` the components, `.var` the pattern of the three variables (each the next of its class, a later
+            // component one further for every earlier one of its class), `.tag` the components joined by `.`, `.zero`
+            // the triple of zeros.
+            "tuples3" => s
+                .tuples3
+                .iter()
+                .map(|t| {
+                    let Class::Tuple(parts) = t else { return Err(format!("our software has a bug: the triple {} is not a tuple", s.text(t))) };
+                    let [a, b, c] = parts.as_slice() else { return Err(format!("our software has a bug: the triple {} has {} components", s.text(t), parts.len())) };
+                    let texts = [s.text(a), s.text(b), s.text(c)];
+                    let vars: Vec<String> = (0..3).map(|i| var_name(&texts[i], env.ctx.as_ref().map_or(0, |cx| cx.count(&texts[i])) + 1 + texts[..i].iter().filter(|x| **x == texts[i]).count() as u32)).collect();
+                    let zero = |c: &Class| format!("0{}", c.elem().unwrap_or(""));
+                    Ok(one(vec![
+                        (var.to_string(), s.text(t)),
+                        (format!("{var}.a"), texts[0].clone()),
+                        (format!("{var}.b"), texts[1].clone()),
+                        (format!("{var}.c"), texts[2].clone()),
+                        (format!("{var}.type"), t.futhark_type()),
+                        (format!("{var}.var"), format!("({})", vars.join(", "))),
+                        (format!("{var}.tag"), texts.join(".")),
+                        (format!("{var}.zero"), format!("({}, {}, {})", zero(a), zero(b), zero(c))),
                     ]))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -993,8 +1094,8 @@ impl Binder {
         };
         let ctx = match frame {
             Some(f) => {
-                let (_, binds) = self.frames.iter().find(|(c, _)| *c == f).ok_or_else(|| format!("the type {ty} pushes the frame {f}, which the view does not have"))?;
-                ctx.push(binds)
+                let (_, binds, is_let) = self.frames.iter().find(|(c, _, _)| *c == f).ok_or_else(|| format!("the type {ty} pushes the frame {f}, which the view does not have"))?;
+                if *is_let { ctx.push_let(binds) } else { ctx.push(binds) }
             }
             None => ctx.clone(),
         };
@@ -1071,6 +1172,14 @@ fn leaf(row: &MasterRow, binder: &Binder, env: &Env, out: &mut Vec<ViewRow>) -> 
         "" => {}
         "shallow" if env.shallow => {}
         "shallow" => return Ok(()),
+        // A kernel boundary (`let`) stands at the top of the program (trip depth 0) and names its class once.
+        "top" => {
+            let ctx = env.ctx.as_ref().ok_or_else(|| format!("the row {} is at the top of no context", row.reference))?;
+            let cls = env.vars.get("S").ok_or_else(|| format!("the row {} has the condition top but binds no {{S}}", row.reference))?;
+            if ctx.depth != 0 || ctx.count(cls) > 0 {
+                return Ok(());
+            }
+        }
         other => return Err(format!("the row {} has the condition {other:?}", row.reference)),
     }
     let mine = binder.row_elements(row);
@@ -1203,7 +1312,7 @@ fn signature_types(spec: &ViewSpec, rows: &[ViewRow], root: &str) -> Result<Vec<
             let (slot, literals, meaning) = match &class {
                 Class::Index(dim) => ("ix".to_string(), vec![], format!("an index in range for [{dim}]")),
                 Class::Array { elem, dims } => ("arr".to_string(), vec![], format!("a [{}]{elem}", dims.join("]["))),
-                Class::Tuple(parts) => ("tuple".to_string(), vec![], format!("a pair of {}", parts.iter().map(|p| format!("a {}", p.futhark_type())).collect::<Vec<_>>().join(" and "))),
+                Class::Tuple(parts) => ("tuple".to_string(), vec![], format!("a {} of {}", if parts.len() == 2 { "pair" } else { "triple" }, parts.iter().map(|p| format!("a {}", p.futhark_type())).collect::<Vec<_>>().join(" and "))),
                 Class::Scalar(elem) => {
                     let pool = spec.literals.get(elem).ok_or_else(|| format!("the element {elem} has no literal pool"))?;
                     (elem.clone(), pool.iter().map(|l| format!("{l}{elem}")).collect(), format!("an {elem}"))
@@ -1321,9 +1430,9 @@ impl View {
 
     /// The signature view's e-graph: one sort a dual, one constructor a row (a constant takes its pool index), and the
     /// master's rules on every type they apply to (`elem`: the scalar types; `arr`: the rank-1 array types in a
-    /// context that hold the row the rule `needs`; `tuple`: the pair types, whose `{fst}` and `{snd}` are the
-    /// projections at the components' types), for the element types each rule is exact for (a pair's: both
-    /// components').
+    /// context that hold the row the rule `needs`; `tuple`: the pair types and `tuple3` the triple types, whose
+    /// `{fst}`, `{snd}` and `{thd}` are the projections at the components' types), for the element types each rule is
+    /// exact for (a tuple's: every component's).
     fn signature_egraph(&mut self, types: &[ViewType], rows: &[ViewRow], master: &Master) -> Result<(), String> {
         let elements = self.spec.elements.clone();
         let mut data = String::from("; The signature family's e-graph datatype, generated by gen_tables.py.\n; One sort per dual: the sort IS the type (class and context).\n\n");
@@ -1337,7 +1446,7 @@ impl View {
         }
         let names: BTreeSet<&str> = rows.iter().map(|r| r.name.as_str()).collect();
         let mut rules = String::from("; The signature family's e-graph ruleset, generated by gen_tables.py.\n(ruleset futhark_sig)\n\n");
-        for on in ["elem", "arr", "tuple"] {
+        for on in ["elem", "arr", "tuple", "tuple3"] {
             for t in types {
                 let d = &t.dual;
                 let (cls, ctx) = d.split_once(':').unwrap_or((d, ""));
@@ -1346,7 +1455,8 @@ impl View {
                 let exact_for: Vec<&str> = match (on, &class) {
                     ("elem", Class::Scalar(e)) => vec![e],
                     ("arr", Class::Array { elem, dims }) if dims.len() == 1 && !ctx.is_empty() => vec![elem],
-                    ("tuple", Class::Tuple(parts)) => parts.iter().filter_map(Class::elem).collect(),
+                    ("tuple", Class::Tuple(parts)) if parts.len() == 2 => parts.iter().filter_map(Class::elem).collect(),
+                    ("tuple3", Class::Tuple(parts)) if parts.len() == 3 => parts.iter().filter_map(Class::elem).collect(),
                     _ => continue,
                 };
                 let mine: Vec<&RuleTemplate> = master
@@ -1360,10 +1470,15 @@ impl View {
                 rules.push_str(&format!("; {d}\n"));
                 for r in mine {
                     let text = match &class {
+                        // A projection's row is named by the tuple's components and typed at its own component.
                         Class::Tuple(parts) => {
                             let tag = parts.iter().map(|p| p.text(self.spec.multi())).collect::<Vec<_>>().join(".");
                             let at = |p: &Class| format!("{}:{ctx}", p.text(self.spec.multi()));
-                            rule_text(&r.rule, d).replace(&sig_ctor(&format!("fst@{d}"), "function", d), &sig_ctor(&format!("fst.{tag}@{}", at(&parts[0])), "function", &at(&parts[0]))).replace(&sig_ctor(&format!("snd@{d}"), "function", d), &sig_ctor(&format!("snd.{tag}@{}", at(&parts[1])), "function", &at(&parts[1])))
+                            let mut text = rule_text(&r.rule, d);
+                            for (i, proj) in ["fst", "snd", "thd"].iter().enumerate().take(parts.len()) {
+                                text = text.replace(&sig_ctor(&format!("{proj}@{d}"), "function", d), &sig_ctor(&format!("{proj}.{tag}@{}", at(&parts[i])), "function", &at(&parts[i])));
+                            }
+                            text
                         }
                         _ => rule_text(&r.rule, d),
                     };
@@ -1430,12 +1545,14 @@ impl View {
 }
 
 /// Every committed specification, by the directory [`write_committed`] writes its tables into: the signature
-/// problems (`sig/<problem>`), the two test views of the pair constructs (`sig/argmin`, `sig/kahan`, sniffed from
-/// `kingdoms/futhark/sig/kahan/kahan.fut`) and A7's matrix view (`a7`).
-pub const COMMITTED: [(&str, &str); 8] = [
+/// problems (`sig/<problem>`), the test views of UltraDim's k-means constructs (`sig/argmin`, `sig/kahan`, `sig/cell`,
+/// `sig/kernels`, sniffed from `kingdoms/futhark/sig/kahan/kahan.fut`) and A7's matrix view (`a7`).
+pub const COMMITTED: [(&str, &str); 10] = [
     ("sig/argmin", include_str!("../kingdoms/futhark/sig/argmin/view.tsv")),
+    ("sig/cell", include_str!("../kingdoms/futhark/sig/cell/view.tsv")),
     ("sig/histogram", include_str!("../kingdoms/futhark/sig/histogram/view.tsv")),
     ("sig/kahan", include_str!("../kingdoms/futhark/sig/kahan/view.tsv")),
+    ("sig/kernels", include_str!("../kingdoms/futhark/sig/kernels/view.tsv")),
     ("sig/kmeans", include_str!("../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("sig/pathfinder", include_str!("../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("sig/reduce", include_str!("../kingdoms/futhark/sig/reduce/view.tsv")),

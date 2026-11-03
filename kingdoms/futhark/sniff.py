@@ -17,7 +17,10 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
   class with its element (`a.f32.n`, docs/PLAN_futhark_kingdom.md D7), a view
   of one keeps the names of before (`a.n`). `--elements E,..` adds elements
   the signature does not name, for values a program keeps inside (k-means's
-  assignments are i32 indices beside its f32 points);
+  assignments are i32 indices beside its f32 points); `--lets C,..` names the
+  array classes a `let` at the top of a program may bind, each once (master
+  version 5, the KERNEL BOUNDARY: one of UltraDim's kernels writes a buffer
+  the next one reads; k-means's assignments are `a.i32.n`);
 * no FAMILY is chosen here: a view admits every family of the master and
   keeps the types reachable both ways, forward from the leaves and backward
   from the root (`src/futhark_view.rs`; docs/PLAN_futhark_kingdom.md, 3e), so what the
@@ -33,7 +36,7 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
 It writes the specification `view.tsv` (the WHERE clause of the view, see
 `src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
 
-    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--elements E,..] [--out view.tsv]
+    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--elements E,..] [--lets CLASS,..] [--out view.tsv]
 """
 
 import os
@@ -113,9 +116,9 @@ def split_params(text):
     return sizes, params
 
 
-def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=()):
+def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=()):
     """The view specification of a problem, as text; `master` pins the view to a master version (the current one
-    when None); `elements` are added to the ones the signature names."""
+    when None); `elements` are added to the ones the signature names; `lets` are the kernel boundaries' classes."""
     check_compiler()
     if master is None:
         master = view.master()["version"]
@@ -181,6 +184,14 @@ def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=()):
         dims_seen += [d for d in names if d not in dims_seen]
     lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
     lines.append(f"depth\t{depth}\t\t")
+    if lets:
+        for c in lets:
+            parsed = view.parse_class(c, elems)
+            if parsed[0] != "arr":
+                raise ValueError(f"--lets names {c!r}, which is not an array class")
+            if view.class_text(parsed, elems) != c:
+                raise ValueError(f"--lets names {c!r}, which is not written as this view writes it ({view.class_text(parsed, elems)})")
+        lines.append(f"lets\t{','.join(lets)}\t\t")
     # One element's pool a line; a view of one element leaves the element column empty (the specifications of before).
     for e in elems:
         lines.append(f"literals\t{','.join(view.master()['pools'][e])}\t{e if len(elems) > 1 else ''}\t")
@@ -197,7 +208,8 @@ def main(argv):
     depth = int(args[args.index("--depth") + 1]) if "--depth" in args else DEFAULT_DEPTH
     master = int(args[args.index("--master") + 1]) if "--master" in args else None
     elements = [e for e in args[args.index("--elements") + 1].split(",") if e] if "--elements" in args else []
-    text = sniff(args[0], entry, depth, master, elements)
+    lets = [c for c in args[args.index("--lets") + 1].split(",") if c] if "--lets" in args else []
+    text = sniff(args[0], entry, depth, master, elements, lets)
     if "--out" in args:
         with open(args[args.index("--out") + 1], "w") as f:
             f.write(text)

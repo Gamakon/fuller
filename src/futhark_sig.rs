@@ -957,18 +957,20 @@ enum Op {
     Row,
     Input(usize),
     Zeros(usize, Elem),
-    /// A loop over a dimension binding an index slot and its state's slot (a pair state is DESTRUCTURED: its two
-    /// components' slots); `from1` runs its counter over 1 .. D-1.
-    Loop { dim: usize, index: usize, state: usize, state2: Option<usize>, from1: bool },
-    /// THE PAIR ROWS (master version 4). `({0}, {1})`.
-    Pair,
-    /// `{0}.0` and `{0}.1`.
-    Fst,
-    Snd,
-    /// `if {0} < 0 then {1} else {2}` over two pairs.
+    /// A loop over a dimension binding an index slot and its state's slots: one for a scalar or an array state, two
+    /// or three for a tuple state, which is DESTRUCTURED into its components' slots (`arity` of `states` are used);
+    /// `from1` runs its counter over 1 .. D-1.
+    Loop { dim: usize, index: usize, states: [usize; 3], arity: usize, from1: bool },
+    /// THE TUPLE ROWS (master versions 4 and 5): a pair `({0}, {1})` or a triple `({0}, {1}, {2})`.
+    Tuple,
+    /// A projection: `{0}.0`, `{0}.1` or `{0}.2`.
+    Proj(usize),
+    /// `if {0} < 0 then {1} else {2}` over two tuples.
     PSel,
-    /// The zero pair of two elements.
-    ZeroPair(Elem, Elem),
+    /// The zero tuple: `arity` components of the elements.
+    ZeroTuple([Elem; 3], usize),
+    /// THE KERNEL BOUNDARY (master version 5): `let {S.var} = {0} in {1}`, the bound array's slot.
+    Let(usize),
     /// A conversion into the element: `f32.i32` (exact below 2^24, else rounded to nearest), or the guarded
     /// `i32.f32` (a NaN is 0; the value clamped into i32's range, then truncated toward zero).
     Cvt(Elem),
@@ -1248,8 +1250,8 @@ enum Val {
     S(Num),
     I(i64),
     A(View),
-    /// A pair.
-    T(Box<Val>, Box<Val>),
+    /// A tuple (a pair or a triple).
+    Tup(Vec<Val>),
     /// A row function (the matrix family).
     F(RowFn),
     /// A binary row function (the matrix family).
@@ -1339,11 +1341,14 @@ impl<'a> Interp<'a> {
                 _ if bare("clamp") => Op::Clamp(class_dim(out)?),
                 "zero" => match class_of(out)? {
                     Class::Index(_) => Op::Zero,
-                    Class::Tuple(parts) => match parts.as_slice() {
-                        [a, b] => Op::ZeroPair(elem_of(a)?, elem_of(b)?),
-                        _ => return Err(format!("our software has a bug: the zero of {out} is not a pair's")),
-                    },
-                    _ => return Err(format!("our software has a bug: the zero row {} is not an index's or a pair's", r.name)),
+                    Class::Tuple(parts) if (2..=3).contains(&parts.len()) => {
+                        let mut elems = [Elem::I32; 3];
+                        for (slot, p) in elems.iter_mut().zip(&parts) {
+                            *slot = elem_of(p)?;
+                        }
+                        Op::ZeroTuple(elems, parts.len())
+                    }
+                    _ => return Err(format!("our software has a bug: the zero row {} is not an index's, a pair's or a triple's", r.name)),
                 },
                 "last" => Op::Last(class_dim(out)?),
                 "tab" => {
@@ -1358,11 +1363,18 @@ impl<'a> Interp<'a> {
                 "rowdiv" => Op::RowDiv,
                 "replicate" => Op::Replicate(class_dim(out)?, out_elem()?),
                 "zeros" => Op::Zeros(class_dim(out)?, out_elem()?),
-                "pair" => Op::Pair,
+                "pair" | "triple" => Op::Tuple,
                 _ if bare("psel") => Op::PSel,
+                // The kernel boundary binds its first argument's class: the next variable of that class in its
+                // context (the let's output's).
+                "let" => {
+                    let bound = &k.dual(*r.inputs.first().ok_or_else(|| format!("our software has a bug: the let {} has no bound argument", r.name))?).ok_or("a let with no dual")?.dual;
+                    Op::Let(binder_slot(out, bound.split(':').next().unwrap_or(""), 0)?)
+                }
                 _ if r.kind == FutharkKind::Const => Op::Const,
-                _ if op.starts_with("fst.") => Op::Fst,
-                _ if op.starts_with("snd.") => Op::Snd,
+                _ if op.starts_with("fst.") => Op::Proj(0),
+                _ if op.starts_with("snd.") => Op::Proj(1),
+                _ if op.starts_with("thd.") => Op::Proj(2),
                 _ if op.starts_with("cvt.") => Op::Cvt(out_elem()?),
                 _ if op.starts_with("get.") => Op::Get,
                 _ if op.starts_with("sum.") => Op::Sum,
@@ -1389,19 +1401,21 @@ impl<'a> Interp<'a> {
                         Some(d) => (true, d),
                         None => (false, &op[5..]),
                     };
-                    // A pair state is destructured: the loop binds its two components, the second one further on
-                    // when they are of one class (`(s_f32, s2_f32)`).
-                    let (state, state2) = match class_of(out)? {
-                        Class::Tuple(parts) => match parts.as_slice() {
-                            [a, b] => {
-                                let (ta, tb) = (a.text(multi), b.text(multi));
-                                (binder_slot(out, &ta, 0)?, Some(binder_slot(out, &tb, u32::from(ta == tb))?))
+                    // A tuple state is destructured: the loop binds its components, a later one further on for every
+                    // earlier one of its class (`(s_f32, s2_f32, s_i32)`).
+                    let (states, arity) = match class_of(out)? {
+                        Class::Tuple(parts) if (2..=3).contains(&parts.len()) => {
+                            let texts: Vec<String> = parts.iter().map(|p| p.text(multi)).collect();
+                            let mut slots = [0usize; 3];
+                            for (i, t) in texts.iter().enumerate() {
+                                slots[i] = binder_slot(out, t, texts[..i].iter().filter(|x| *x == t).count() as u32)?;
                             }
-                            _ => return Err(format!("our software has a bug: the loop {} carries a tuple that is not a pair", r.name)),
-                        },
-                        _ => (binder_slot(out, out_class, 0)?, None),
+                            (slots, parts.len())
+                        }
+                        Class::Tuple(parts) => return Err(format!("our software has a bug: the loop {} carries a tuple of {} components", r.name, parts.len())),
+                        _ => ([binder_slot(out, out_class, 0)?, 0, 0], 1),
                     };
-                    Op::Loop { dim: dim(d)?, index: binder_slot(out, &format!("ix.{d}"), 0)?, state, state2, from1 }
+                    Op::Loop { dim: dim(d)?, index: binder_slot(out, &format!("ix.{d}"), 0)?, states, arity, from1 }
                 }
                 _ if r.kind == FutharkKind::Terminal && slot_of.contains_key(op) => Op::Var(slot_of[op]),
                 // The matrix family (A7): its operators, its row functions (function rows of no arguments, and the
@@ -1437,7 +1451,7 @@ impl<'a> Interp<'a> {
             Val::A(v) => Ok(Array { dims: v.dims.clone(), elem: v.elem, data: v.slice().to_vec() }),
             Val::S(x) => Ok(Array { dims: vec![], elem: x.elem(), data: vec![x.word()] }),
             Val::I(_) => Err("our software has a bug: a program whose value is an index".into()),
-            Val::T(..) => Err("our software has a bug: a program whose value is a pair (a tuple root is not built)".into()),
+            Val::Tup(_) => Err("our software has a bug: a program whose value is a tuple (a tuple root is not built)".into()),
             Val::F(_) | Val::F2(_) => Err("our software has a bug: a program whose value is a row function".into()),
         }
     }
@@ -1460,10 +1474,10 @@ impl<'a> Interp<'a> {
             other => Err(format!("our software has a bug: an array slot holds {other:?}")),
         }
     }
-    fn pair(&self, t: &Tree, env: &mut Env) -> Result<(Val, Val), String> {
+    fn tuple(&self, t: &Tree, env: &mut Env) -> Result<Vec<Val>, String> {
         match self.at(t, env)? {
-            Val::T(a, b) => Ok((*a, *b)),
-            other => Err(format!("our software has a bug: a pair slot holds {other:?}")),
+            Val::Tup(v) => Ok(v),
+            other => Err(format!("our software has a bug: a tuple slot holds {other:?}")),
         }
     }
 
@@ -1498,14 +1512,24 @@ impl<'a> Interp<'a> {
                 let c = self.s(kid(0)?, env)?;
                 self.at(if c.is_negative() { kid(1)? } else { kid(2)? }, env)?
             }
-            Op::Pair => {
-                let a = self.at(kid(0)?, env)?;
-                let b = self.at(kid(1)?, env)?;
-                Val::T(Box::new(a), Box::new(b))
+            Op::Tuple => Val::Tup(t.kids.iter().map(|c| self.at(c, env)).collect::<Result<Vec<_>, _>>()?),
+            Op::Proj(i) => {
+                let mut v = self.tuple(kid(0)?, env)?;
+                if i >= v.len() {
+                    return Err(format!("our software has a bug: the projection {i} of a tuple of {}", v.len()));
+                }
+                v.swap_remove(i)
             }
-            Op::Fst => self.pair(kid(0)?, env)?.0,
-            Op::Snd => self.pair(kid(0)?, env)?.1,
-            Op::ZeroPair(a, b) => Val::T(Box::new(Val::S(Num::zero(a))), Box::new(Val::S(Num::zero(b)))),
+            Op::ZeroTuple(elems, arity) => Val::Tup(elems[..arity].iter().map(|e| Val::S(Num::zero(*e))).collect()),
+            Op::Let(slot) => {
+                // The bound expression runs once, then the body with the variable in scope; the outer value of the
+                // slot (none at the top) is restored after.
+                let bound = self.at(kid(0)?, env)?;
+                let outer = env.vars[slot].replace(bound);
+                let out = self.at(kid(1)?, env);
+                env.vars[slot] = outer;
+                out?
+            }
             Op::Cvt(into) => Val::S(self.s(kid(0)?, env)?.convert(into)),
             Op::Get => {
                 let a = self.a(kid(0)?, env)?;
@@ -1655,30 +1679,30 @@ impl<'a> Interp<'a> {
             }
             Op::Input(i) => Val::A(env.inputs[i].clone()),
             Op::Zeros(d, elem) => Val::A(View::of(vec![0; env.sizes[d]], vec![env.sizes[d]], elem)),
-            Op::Loop { dim, index, state: slot, state2, from1 } => {
+            Op::Loop { dim, index, states, arity, from1 } => {
                 let mut state = self.at(kid(0)?, env)?;
                 let n = env.sizes[dim];
                 let trips = if from1 { n.saturating_sub(1) } else { n };
+                let slots = &states[..arity];
                 let outer_index = env.vars[index].take();
-                let outer_state = env.vars[slot].take();
-                let outer_state2 = state2.map(|s| env.vars[s].take());
+                let outer: Vec<Option<Val>> = slots.iter().map(|s| env.vars[*s].take()).collect();
                 for t in 0..trips {
                     env.vars[index] = Some(Val::I((t + usize::from(from1)) as i64));
-                    match (state2, state) {
-                        // A pair state is destructured into its two variables.
-                        (Some(s2), Val::T(a, b)) => {
-                            env.vars[slot] = Some(*a);
-                            env.vars[s2] = Some(*b);
+                    match (arity, state) {
+                        // A tuple state is destructured into its components' variables.
+                        (2..=3, Val::Tup(parts)) if parts.len() == arity => {
+                            for (s, p) in slots.iter().zip(parts) {
+                                env.vars[*s] = Some(p);
+                            }
                         }
-                        (Some(_), other) => return Err(format!("our software has a bug: a pair loop's state is {other:?}")),
-                        (None, s) => env.vars[slot] = Some(s),
+                        (2..=3, other) => return Err(format!("our software has a bug: a tuple loop's state is {other:?}")),
+                        (_, s) => env.vars[slots[0]] = Some(s),
                     }
                     state = self.at(kid(1)?, env)?;
                 }
                 env.vars[index] = outer_index;
-                env.vars[slot] = outer_state;
-                if let (Some(s2), Some(v)) = (state2, outer_state2) {
-                    env.vars[s2] = v;
+                for (s, v) in slots.iter().zip(outer) {
+                    env.vars[*s] = v;
                 }
                 state
             }

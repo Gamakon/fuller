@@ -75,3 +75,13 @@ M0073	4	core	function	i32,f32	C;S:tuples;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{
 M0074	4	core	function	i32,f32	C;S:tuples;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}	a loop over 1 .. {D} - 1 carrying the pair {S.var}, its counter {D.ix}
 M0075	4	core	function	f32	C		cvt.i32@{OUT}	{E}	i32	{E}.i32 {0}	an i32 as an {E} (exact below 2^24, else rounded to nearest)
 M0076	4	core	function	i32	C		cvt.f32@{OUT}	{E}	f32	let x = {0} in if f32.isnan x then 0{E} else {E}.f32 (f32.max (-2147483648f32) (f32.min 2147483520f32 x))	an f32 as an {E}, truncated toward zero: a NaN is 0, and the value is clamped into {E}'s range first (Futhark leaves the conversion undefined there)
+M0077	5	core	function	i32,f32	C;S:tuples3		triple@{OUT}	{S}	{S.a};{S.b};{S.c}	({0}, {1}, {2})	a triple of a {S.a}, a {S.b} and a {S.c}
+M0078	5	core	function	i32,f32	C;S:tuples3		fst.{S.tag}@{OUT}	{S.a}	{S}	{0}.0	the first of a {S.type}
+M0079	5	core	function	i32,f32	C;S:tuples3		snd.{S.tag}@{OUT}	{S.b}	{S}	{0}.1	the second of a {S.type}
+M0080	5	core	function	i32,f32	C;S:tuples3		thd.{S.tag}@{OUT}	{S.c}	{S}	{0}.2	the third of a {S.type}
+M0081	5	core	terminal	i32,f32	C;S:tuples3		zero@{OUT}	{S}		{S.zero}	the triple of the components' zeros
+M0082	5	core	function	i32,f32	C;S:tuples3		psel{E.tag}@{OUT}	{S}	{E};{S};{S}	if {0} < 0{E} then {1} else {2}	the first triple when a value is negative, else the second
+M0083	5	core	function	i32,f32	C;S:tuples3;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{S}+L-{D}-{S}	loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}	a loop over [{D}] carrying the triple {S.var}, its counter {D.ix}
+M0084	5	core	function	i32,f32	C;S:tuples3;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}	a loop over 1 .. {D} - 1 carrying the triple {S.var}, its counter {D.ix}
+M0085	5	core	function	*	C;S:lets;Y:classes	top	let@{OUT}	{Y}	{S};{Y}+B-{S}	let {S.var} = {0} in {1}	the kernel boundary: a [{S.br}] array computed once and named, read anywhere in the body (the next kernel); at the top of the program only, each let class once
+M0086	5	core	terminal	i32,f32	C;D:rank1;Y:rows(a.{D});V:vars({Y})		{V}@{OUT}	{Y}		{V}	the bound array {V} (a kernel boundary's)

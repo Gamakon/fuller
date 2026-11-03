@@ -4,10 +4,12 @@
 
 use super::*;
 
-const SIG: [(&str, &str); 7] = [
+const SIG: [(&str, &str); 9] = [
     ("argmin", include_str!("../../kingdoms/futhark/sig/argmin/view.tsv")),
+    ("cell", include_str!("../../kingdoms/futhark/sig/cell/view.tsv")),
     ("histogram", include_str!("../../kingdoms/futhark/sig/histogram/view.tsv")),
     ("kahan", include_str!("../../kingdoms/futhark/sig/kahan/view.tsv")),
+    ("kernels", include_str!("../../kingdoms/futhark/sig/kernels/view.tsv")),
     ("kmeans", include_str!("../../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("pathfinder", include_str!("../../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("reduce", include_str!("../../kingdoms/futhark/sig/reduce/view.tsv")),
@@ -34,14 +36,16 @@ fn first_difference(a: &str, b: &str) -> String {
 /// the four i32 views are PINNED to master version 2, so the f32 rows of version 3 (step 4) changed none of them, and
 /// k-means (f32, version 3, depth 3) is pinned since 2026-11-03. The pair rows and the second element of version 4
 /// (step 4c (b)) changed none of the five; the two test views of the pair constructs (`argmin`, `kahan`: f32 and i32,
-/// version 4, depth 2) are pinned since 2026-11-03 too.
+/// version 4, depth 2) are pinned since 2026-11-03 too. The triple rows and the kernel boundary of version 5 (4c (c))
+/// changed none of the seven; their test views (`cell`: the triple state; `kernels`: a `let` of an `[n]i32` at the
+/// top) are pinned from the same day.
 #[test]
 fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
     let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
     assert_eq!(
         got,
-        [("argmin", 0x7d3d_cfe6_f1f6_b037), ("histogram", 0x2605_d528_715c_9478), ("kahan", 0x9550_5694_e22a_cb48), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)],
+        [("argmin", 0x7d3d_cfe6_f1f6_b037), ("cell", 0x5590_65d7_74ea_1544), ("histogram", 0x2605_d528_715c_9478), ("kahan", 0x9550_5694_e22a_cb48), ("kernels", 0x2a0f_8b0d_9e70_b161), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)],
         "the views' written text changed"
     );
     for (name, spec) in SIG {
@@ -54,7 +58,7 @@ fn every_signature_view_writes_the_pinned_text() {
 fn write_committed_writes_every_view_and_its_text() {
     let dir = std::env::temp_dir().join(format!("futhark_view_write_{}", std::process::id()));
     let views = write_committed(&dir).unwrap();
-    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/argmin", "sig/histogram", "sig/kahan", "sig/kmeans", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
+    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/argmin", "sig/cell", "sig/histogram", "sig/kahan", "sig/kernels", "sig/kmeans", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
     for (sub, v) in views {
         for (file, text) in v.artefacts() {
             let got = std::fs::read_to_string(dir.join(sub).join(file)).unwrap();
@@ -80,7 +84,7 @@ fn a_view_pinned_before_a_row_was_added_does_not_have_it() {
     let rows = MASTER_ROWS.replace("\t1\tmod\t", "\t3\tmod\t");
     assert_ne!(rows, MASTER_ROWS, "the master has a mod row");
     let m = Master::parse(MASTER_VERSION, &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
-    let spec = SIG[1].1;
+    let spec = SIG[2].1;
     assert!(spec.contains("master\t2\t"), "the specification pins version 2");
     let latest = View::load(&m, &spec.replace("master\t2\t", "master\t3\t")).unwrap();
     let pinned = View::load(&m, spec).unwrap();
@@ -94,14 +98,14 @@ fn a_specification_with_an_unknown_line_or_family_row_variable_is_an_error_not_a
     assert!(ViewSpec::parse("colour\tred\t\t\n").is_err());
     let rows = MASTER_ROWS.replacen("add on {E}", "add on {Q}", 1);
     let m = Master::parse(MASTER_VERSION, &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
-    let e = View::load(&m, SIG[5].1).unwrap_err();
+    let e = View::load(&m, SIG[7].1).unwrap_err();
     assert!(e.contains("{Q}"), "{e}");
 }
 
 #[test]
 fn the_cache_gives_one_view_a_specification() {
-    let a = cached(SIG[4].1).unwrap();
-    let b = cached(SIG[4].1).unwrap();
+    let a = cached(SIG[6].1).unwrap();
+    let b = cached(SIG[6].1).unwrap();
     assert!(std::ptr::eq(a, b));
 }
 
@@ -109,7 +113,7 @@ fn the_cache_gives_one_view_a_specification() {
 fn a_signature_view_carries_every_family_its_types_reach() {
     // Reduce's source has no `scan`, `hist` or `%`; before 3e its view had none of those rows. Every family is now
     // admitted and the reachability keeps each row whose types it reaches both ways.
-    let v = View::load(&Master::committed().unwrap(), SIG[5].1).unwrap();
+    let v = View::load(&Master::committed().unwrap(), SIG[7].1).unwrap();
     let ops: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).map(|n| n.split('.').next().unwrap_or("")).collect();
     for op in ["scan", "hist", "mod"] {
         assert!(ops.contains(op), "reduce's view has no {op} row: {ops:?}");
@@ -118,8 +122,8 @@ fn a_signature_view_carries_every_family_its_types_reach() {
 
 #[test]
 fn a_signature_specification_with_a_families_line_is_an_error() {
-    let spec = SIG[6].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
-    assert_ne!(spec, SIG[6].1);
+    let spec = SIG[8].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
+    assert_ne!(spec, SIG[8].1);
     let e = ViewSpec::parse(&spec).unwrap_err();
     assert!(e.contains("families"), "{e}");
 }
@@ -154,11 +158,13 @@ fn the_kept_rows_are_reachable_both_ways() {
 /// rows. Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73,
 /// 408, 221). Count contexts (3g): these; k-means at depth 3 over 9 classes (2026-11-03): 3804 types. The two test
 /// views of the pair constructs (4c (b), two elements over one dimension at depth 2, the four pair classes in every
-/// context): 328 types each.
+/// context): 328 types each. The triple rows (4c (c), the eight triple classes and their loop frames) take the same
+/// specification to 1,041 types (`cell`); one kernel boundary (`kernels`, `lets a.i32.n`) doubles the contexts below
+/// it: 1,892 types.
 #[test]
 fn the_view_sizes_are_the_measured_ones() {
     let master = Master::committed().unwrap();
-    for ((name, spec), want) in SIG.iter().zip([(328, 2196, 620), (162, 1032, 455), (328, 2196, 658), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
+    for ((name, spec), want) in SIG.iter().zip([(328, 2196, 620), (1041, 6749, 1721), (162, 1032, 455), (328, 2196, 658), (1892, 12371, 2962), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
         let v = View::load(&master, spec).unwrap();
         let types = v.types_tsv.lines().count() - 1;
         let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();
@@ -194,7 +200,7 @@ fn a_class_reads_one_way_and_writes_back_to_its_text() {
 /// a dimension named as an element is an error, a scalar input that is not a size is an error.
 #[test]
 fn a_specification_of_two_elements_is_checked() {
-    let spec = SIG[2].1;
+    let spec = SIG[3].1;
     let s = ViewSpec::parse(spec).unwrap();
     assert_eq!(s.elements, vec!["f32".to_string(), "i32".to_string()]);
     assert!(s.multi());
@@ -218,7 +224,7 @@ fn a_specification_of_two_elements_is_checked() {
 /// scalars, the two conversions, and the zero arrays named by their class.
 #[test]
 fn a_view_of_two_elements_has_both_elements_rows() {
-    let v = View::load(&Master::committed().unwrap(), SIG[2].1).unwrap();
+    let v = View::load(&Master::committed().unwrap(), SIG[3].1).unwrap();
     let names: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).collect();
     for n in ["add@f32:c", "add@i32:c", "mod.n@i32:c", "div@f32:c", "clamp.i32@ix.n:c", "clamp.f32@ix.n:c", "pair@(f32,i32):c", "fst.f32.i32@f32:c", "snd.f32.i32@i32:c", "psel.f32@(f32,f32):c", "psel.i32@(f32,f32):c", "zero@(i32,f32):c", "loop.n@(f32,f32):c", "loop1.n@(f32,i32):c", "cvt.i32@f32:c", "cvt.f32@i32:c", "zeros@a.f32.n:c", "zeros@a.i32.n:c", "s_f32@f32:c/{f32*2,ix.n}@1", "s2_f32@f32:c/{f32*2,ix.n}@1", "s_i32@i32:c/{f32,i32,ix.n}@1"] {
         assert!(names.contains(n), "the kahan view has no row {n}");
@@ -230,4 +236,45 @@ fn a_view_of_two_elements_has_both_elements_rows() {
     assert_eq!(spelling("zero@(f32,i32):c"), "(0f32, 0i32)");
     assert_eq!(spelling("zeros@a.i32.n:c"), "zeros_i32_n");
     assert!(v.rules.contains("(rewrite (Xfst_f32_i32__f32_c (Xpair___f32_i32__c a b)) a :ruleset futhark_sig)"), "the pair rule at (f32,i32):c");
+}
+
+/// THE TRIPLE ROWS AND THE KERNEL BOUNDARY (master version 5, step 4c (c)): a view of two elements has the eight
+/// triple classes with their constructor, three projections, zero, select and destructuring loops (the frames `L3`,
+/// `F3`); a view with a `lets` line has the `let` row for every class of the view at the top only, its body in the
+/// context that binds the let's class at depth 0 (`c/{a.i32.n}@0`, a context of no trip), and the bound array as a
+/// terminal there; a pinned view of version 4 has none of it; a `lets` line of a class the view lacks, or of a scalar,
+/// is an error.
+#[test]
+fn a_view_of_version_five_has_the_triple_rows_and_the_kernel_boundary() {
+    let master = Master::committed().unwrap();
+    let cell = View::load(&master, SIG[1].1).unwrap();
+    let names = |v: &View| v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1).map(str::to_string)).collect::<BTreeSet<String>>();
+    let spelling = |v: &View, name: &str| v.functions_tsv.lines().find(|l| l.split('\t').nth(1) == Some(name)).and_then(|l| l.split('\t').nth(5)).unwrap_or("").to_string();
+    let cn = names(&cell);
+    for n in ["triple@(f32,f32,i32):c", "fst.f32.f32.i32@f32:c", "snd.f32.f32.i32@f32:c", "thd.f32.f32.i32@i32:c", "zero@(f32,f32,i32):c", "psel.i32@(f32,f32,i32):c", "psel.f32@(f32,f32,i32):c", "loop.n@(f32,f32,i32):c", "loop1.n@(i32,i32,i32):c", "s_f32@f32:c/{f32*2,i32,ix.n}@1", "s2_f32@f32:c/{f32*2,i32,ix.n}@1", "s_i32@i32:c/{f32*2,i32,ix.n}@1", "s3_f32@f32:c/{f32*3,ix.n}@1"] {
+        assert!(cn.contains(n), "the cell view has no row {n}");
+    }
+    assert_eq!(spelling(&cell, "loop.n@(f32,f32,i32):c"), "loop ((s_f32, s2_f32, s_i32): (f32, f32, i32)) = {0} for i_n < n do {1}");
+    assert_eq!(spelling(&cell, "zero@(f32,f32,i32):c"), "(0f32, 0f32, 0i32)");
+    assert_eq!(spelling(&cell, "thd.f32.f32.i32@i32:c"), "{0}.2");
+    assert!(cell.rules.contains("(rewrite (Xthd_f32_f32_i32__i32_c (Xtriple___f32_f32_i32__c a b d)) d :ruleset futhark_sig)"), "the triple's third projection rule");
+    assert!(!cn.iter().any(|n| n.starts_with("let@")), "the cell view has no lets line, so no let");
+    let kernels = View::load(&master, SIG[4].1).unwrap();
+    let kn = names(&kernels);
+    for n in ["let@f32:c", "let@a.i32.n:c", "let@a.f32.n:c", "s_a_i32_n@a.i32.n:c/{a.i32.n}@0", "loop.n@f32:c/{a.i32.n}@0", "s_a_i32_n@a.i32.n:c/{a.i32.n,f32,ix.n}@1", "s2_a_i32_n@a.i32.n:c/{a.i32.n*2,ix.n}@1"] {
+        assert!(kn.contains(n), "the kernels view has no row {n}");
+    }
+    assert!(!kn.iter().any(|n| n.starts_with("let@") && !n.ends_with(":c")), "a let stands at the top only: {:?}", kn.iter().filter(|n| n.starts_with("let@")).collect::<Vec<_>>());
+    assert_eq!(spelling(&kernels, "let@f32:c"), "let s_a_i32_n = {0} in {1}");
+    let row = kernels.functions_tsv.lines().find(|l| l.split('\t').nth(1) == Some("let@f32:c")).unwrap();
+    assert_eq!(row.split('\t').nth(4), Some("a.i32.n:c;f32:c/{a.i32.n}@0"));
+    // The pinned pair views have no triple and no let.
+    let kahan = View::load(&master, SIG[3].1).unwrap();
+    assert!(!names(&kahan).iter().any(|n| n.starts_with("triple@") || n.starts_with("let@")));
+    // A lets line of a class the view lacks, or of a scalar.
+    for bad in ["lets\ta.i32.d\t\t\n", "lets\tf32\t\t\n", "lets\ta.i32.n,a.i32.n\t\t\n"] {
+        let spec = SIG[4].1.replace("lets\ta.i32.n\t\t\n", bad);
+        assert_ne!(spec, SIG[4].1);
+        assert!(ViewSpec::parse(&spec).is_err(), "{bad:?} parses");
+    }
 }

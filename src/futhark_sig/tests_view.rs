@@ -240,6 +240,10 @@ fn the_default_program_size_is_above_every_reference_and_both_programs_fit() {
 const KAHAN: Instance = Instance { name: "kahan", spec: include_str!("../../kingdoms/futhark/sig/kahan/view.tsv") };
 /// The argmin view: `(ds: [n]f32) -> i32`.
 const ARGMIN: Instance = Instance { name: "argmin", spec: include_str!("../../kingdoms/futhark/sig/argmin/view.tsv") };
+/// The cell view (master version 5, the triple): `(xs: [n]f32) (ms: [n]i32) (olds: [n]f32) -> f32`.
+const CELL: Instance = Instance { name: "cell", spec: include_str!("../../kingdoms/futhark/sig/cell/view.tsv") };
+/// The kernels view (master version 5, the kernel boundary): `(xs: [n]f32) -> f32`, `lets a.i32.n`.
+const KERNELS: Instance = Instance { name: "kernels", spec: include_str!("../../kingdoms/futhark/sig/kernels/view.tsv") };
 
 /// UltraDim's `update_centroids` for one cell, as a gene: the Kahan-compensated sum of the `xs` whose membership is 0
 /// (`|m| - 1 < 0`, that is `m == 0`), the state the pair (sum, compensation) destructured into `s_f32` and `s2_f32`,
@@ -256,6 +260,31 @@ const KAHAN_MEAN: &str = "(div (fst.f32.f32 (loop.n zero (psel.i32 (sub (abs (ge
 /// 0`, which is `d < best` for every pair of f32 values, the infinities and a NaN included); the index is the result.
 const ARGMIN_FIRST: &str = "(snd.f32.i32 (loop1.n (pair (get.n ds zero) 0)
   (psel.f32 (sub (get.n ds i_n) s_f32) (pair (get.n ds i_n) (ival.n i_n)) (pair s_f32 s_i32))))";
+
+/// UltraDim's `update_centroids` for one cell, as a gene, in ONE loop as the shader has it (step 4c (c)): the state
+/// is the TRIPLE (sum, compensation, count), destructured into `s_f32`, `s2_f32` and `s_i32`; a point whose
+/// membership is 0 (`|m| - 1 < 0`) steps `y = x - c; t = s + y; (t, (t - s) - y, count + 1)`, another leaves the
+/// triple; then `if (count > 0u)` (as `-(f32 count) < 0`) the sum over the count, else the previous centre. The loop is
+/// written three times (the kingdom has no `let` below the top; the compiler's CSE computes it once).
+const CELL_UPDATE: &str = "(sel (neg (cvt.i32 (thd.f32.f32.i32 LOOP)))
+  (div (fst.f32.f32.i32 LOOP) (cvt.i32 (thd.f32.f32.i32 LOOP)))
+  (get.n olds zero))";
+const CELL_LOOP: &str = "(loop.n zero (psel.i32 (sub (abs (get.n ms i_n)) 1)
+    (triple (add s_f32 (sub (get.n xs i_n) s2_f32))
+            (sub (sub (add s_f32 (sub (get.n xs i_n) s2_f32)) s_f32) (sub (get.n xs i_n) s2_f32))
+            (add s_i32 1))
+    (triple s_f32 s2_f32 s_i32)))";
+
+/// THE KERNEL BOUNDARY as a gene: one kernel writes a buffer the next one reads. The first kernel flags each point
+/// (`x - 0.5 < 0` is 0, else 1, an i32 by the exact conversion of 0 or 1); the `let` names it at the top; the second
+/// kernel is a loop over the points reading the flag (`flag == 1` as `-(f32 flag) < 0`).
+const KERNELS_PROGRAM: &str = "(let (tab (cvt.f32 (sel (sub (get.n xs i_n) 0.5) 0 1)))
+  (loop.n 0 (sel (neg (cvt.i32 (get.n s_a_i32_n i_n))) (add s_f32 (get.n xs i_n)) s_f32)))";
+
+/// The cell program with its loop written in.
+fn cell_update() -> String {
+    CELL_UPDATE.replace("LOOP", CELL_LOOP)
+}
 
 fn have_futhark() -> bool {
     std::process::Command::new("futhark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
@@ -298,7 +327,7 @@ fn pair_inputs(n: usize, rng: &mut GeneRng) -> (Array, Array) {
 
 #[test]
 fn the_pair_views_load_and_every_row_has_a_meaning() {
-    for (inst, root, functions) in [(&KAHAN, "f32:c", 2196), (&ARGMIN, "i32:c", 2196)] {
+    for (inst, root, functions) in [(&KAHAN, "f32:c", 2196), (&ARGMIN, "i32:c", 2196), (&CELL, "f32:c", 6749), (&KERNELS, "f32:c", 12371)] {
         let k = load(inst).unwrap();
         let sig = signature(inst).unwrap();
         assert_eq!(sig.elements, vec!["f32".to_string(), "i32".to_string()]);
@@ -421,9 +450,78 @@ fn the_conversions_equal_futhark_c_on_the_edges() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// Legality, measured on both views: 50 random genes at the runner's default program size express to programs
-/// `futhark check` accepts (the pair rows, the pair loops, the conversions and both elements' rows among them), and
-/// the first 8 of each compile with `futhark c` and equal the interpreter on three small cases, n = 1 included.
+/// The triple state and the kernel boundary (master version 5), as genes, compute what `futhark c` computes of the
+/// yardstick entries `cell` and `kernels` (Futhark's own triple loop and `let`), bit for bit, on inputs spanning
+/// magnitudes, n = 1 included, every point a member, no member (the previous centre is kept); the host interpreter
+/// agrees with both.
+#[test]
+fn the_cell_update_and_the_kernel_boundary_compute_what_futhark_c_computes() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let base = scratch("version5");
+    let yard = compile_c(include_str!("../../kingdoms/futhark/sig/kahan/kahan.fut"), &base.join("yardstick")).unwrap();
+    let mut rng = GeneRng::new(0x4A1A_0005);
+    let mut checked = 0;
+    let k = load(&CELL).unwrap();
+    let sig = signature(&CELL).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, &cell_update()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), cell_update().split_whitespace().collect::<String>(), "the cell update reads back");
+    let src = program(&k, &sig, &tree).unwrap();
+    assert!(src.contains("loop ((s_f32, s2_f32, s_i32): (f32, f32, i32)) = ((0f32, 0f32, 0i32)) for i_n < n do"), "{src}");
+    let exe = compile_c(&src, &base.join("cell")).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    for n in [1usize, 2, 7, 64, 1000] {
+        for round in 0..3 {
+            let (xs, mut ms) = pair_inputs(n, &mut rng);
+            let (olds, _) = pair_inputs(n, &mut rng);
+            if round == 1 {
+                ms = Array::i32s(vec![n], vec![0; n]);
+            } else if round == 2 {
+                ms = Array::i32s(vec![n], vec![1; n]);
+            }
+            let stdin = write_binary(&[&xs, &ms, &olds]);
+            let want = run_entry(&yard, "cell", &stdin).unwrap();
+            let got = run_exe(&exe, &stdin).unwrap();
+            let host = interp.eval(&tree, &[xs.clone(), ms.clone(), olds.clone()]).unwrap();
+            if round == 2 {
+                assert_eq!(want, Array::f32s(vec![], vec![olds.f32_values().unwrap()[0]]), "no member: the previous centre is kept");
+            }
+            assert_eq!(got, want, "the cell update compiled, n = {n}, round {round}: {:?} vs the yardstick's {:?}", got.f32_values(), want.f32_values());
+            assert_eq!(host, want, "the cell update interpreted, n = {n}, round {round}");
+            checked += 1;
+        }
+    }
+    let k = load(&KERNELS).unwrap();
+    let sig = signature(&KERNELS).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, KERNELS_PROGRAM).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), KERNELS_PROGRAM.split_whitespace().collect::<String>(), "the kernels program reads back");
+    let src = program(&k, &sig, &tree).unwrap();
+    assert!(src.contains("let s_a_i32_n = (tabulate n (\\i_n -> "), "{src}");
+    let exe = compile_c(&src, &base.join("kernels")).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    for n in [1usize, 2, 7, 64, 1000] {
+        for round in 0..3 {
+            let (xs, _) = pair_inputs(n, &mut rng);
+            let xs = if round == 1 { Array::f32s(vec![n], vec![0.75; n]) } else if round == 2 { Array::f32s(vec![n], vec![0.25; n]) } else { xs };
+            let stdin = write_binary(&[&xs]);
+            let want = run_entry(&yard, "kernels", &stdin).unwrap();
+            let got = run_exe(&exe, &stdin).unwrap();
+            let host = interp.eval(&tree, std::slice::from_ref(&xs)).unwrap();
+            assert_eq!(got, want, "the kernels program compiled, n = {n}, round {round}: {:?} vs the yardstick's {:?}", got.f32_values(), want.f32_values());
+            assert_eq!(host, want, "the kernels program interpreted, n = {n}, round {round}");
+            checked += 1;
+        }
+    }
+    eprintln!("version 5 constructs: {checked} runs of the cell update and the kernel boundary equal the yardstick and the interpreter bit for bit");
+    assert_eq!(checked, 30);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Legality, measured on the four views: 50 random genes at the runner's default program size express to programs
+/// `futhark check` accepts (the pair and triple rows, their loops, the kernel boundary, the conversions and both
+/// elements' rows among them), and the first 8 of each compile with `futhark c` and equal the interpreter on three
+/// small cases, n = 1 included.
 /// One outcome is the COMPILER'S: Futhark 0.28.1's "Fuse SOACs" pass stops with an internal error ("Name ... bound
 /// twice") on a legal program that reads a scan's result in two places (measured 2026-11-03 on
 /// `f32.sum (map2 (+) (hist (+) 0f32 n (map i64.f32 s) xs) s)` with `s` the scan written twice; `opaque` around the
@@ -437,7 +535,7 @@ fn random_pair_view_genes_are_accepted_by_futhark_check_and_equal_the_interprete
     let base = scratch("random");
     let mut rng = GeneRng::new(0x51C_0004);
     let mut used = BTreeMap::<String, usize>::new();
-    for inst in [&KAHAN, &ARGMIN] {
+    for inst in [&KAHAN, &ARGMIN, &CELL, &KERNELS] {
         let k = load(inst).unwrap();
         let sig = signature(inst).unwrap();
         let interp = Interp::new(&k, &sig).unwrap();
@@ -448,7 +546,12 @@ fn random_pair_view_genes_are_accepted_by_futhark_check_and_equal_the_interprete
             .iter()
             .map(|&n| {
                 let (xs, ms) = pair_inputs(n, &mut rng);
-                if inst.name == "kahan" { vec![xs, ms] } else { vec![xs] }
+                let (olds, _) = pair_inputs(n, &mut rng);
+                match inst.name {
+                    "kahan" => vec![xs, ms],
+                    "cell" => vec![xs, ms, olds],
+                    _ => vec![xs],
+                }
             })
             .collect();
         let (mut checked, mut compiled, mut compiler_bug) = (0, 0, 0);
@@ -486,7 +589,7 @@ fn random_pair_view_genes_are_accepted_by_futhark_check_and_equal_the_interprete
         assert!(compiled >= 6, "{}: only {compiled} of 8 genes compiled", inst.name);
     }
     eprintln!("rows used by the random genes: {used:?}");
-    for op in ["pair", "fst", "snd", "psel", "loop", "cvt", "zero"] {
+    for op in ["pair", "fst", "snd", "psel", "loop", "cvt", "zero", "triple", "thd", "let"] {
         assert!(used.contains_key(op), "no random gene used {op}: {used:?}");
     }
     let _ = std::fs::remove_dir_all(&base);
@@ -519,4 +622,37 @@ fn the_pair_rules_are_exact_and_the_kahan_form_survives_saturation() {
         assert!(sexp(&k, v).matches("(sub ").count() >= 3, "the variant {} lost the compensation", sexp(&k, v));
     }
     eprintln!("kahan: {} variants, every one the same bits on {} cases", vs.len(), cases.len());
+}
+
+/// THE KAHAN FORM SURVIVES SATURATION IN THE TRIPLE (step 4c (c)): the e-graph's rules for f32 are the bit-exact
+/// ones only (commutativity of `+` and `*`, `-(-a) = a`, the tuple projections), so no variant of the cell update
+/// simplifies `(t - s) - y` (0 in real arithmetic, not in f32): every variant computes the same bits on inputs
+/// spanning magnitudes and keeps its three subtractions; and the triple's projections are exact (`thd (triple a b c)
+/// = c`, so the variants of a projected triple hold the component alone).
+#[test]
+fn the_triple_rules_are_exact_and_the_kahan_form_survives_saturation_in_the_triple() {
+    let k = load(&CELL).unwrap();
+    let sig = signature(&CELL).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let bridge = Bridge::load(&CELL).unwrap();
+    let wrapped = build(&k, "(cvt.i32 (thd.f32.f32.i32 (triple (sum.n xs) (sum.n olds) (sum.n ms))))").unwrap();
+    let plain = build(&k, "(cvt.i32 (sum.n ms))").unwrap();
+    let vs = variants(&k, &bridge, &wrapped, 2, 16, 16).unwrap();
+    assert!(vs.contains(&plain), "the variants of thd (triple a b c) do not hold c: {:?}", vs.iter().map(|v| sexp(&k, v)).collect::<Vec<_>>());
+    let cell = build(&k, &cell_update()).unwrap();
+    let vs = variants(&k, &bridge, &cell, 3, 64, 64).unwrap();
+    assert!(!vs.is_empty(), "no variants of the cell update");
+    let mut rng = GeneRng::new(0x4A1A_0006);
+    let cases: Vec<Vec<Array>> = [1usize, 9, 300].into_iter().map(|n| {
+        let (xs, ms) = pair_inputs(n, &mut rng);
+        let (olds, _) = pair_inputs(n, &mut rng);
+        vec![xs, ms, olds]
+    }).collect();
+    for v in &vs {
+        for c in &cases {
+            assert_eq!(interp.eval(v, c).unwrap(), interp.eval(&cell, c).unwrap(), "the variant {} differs from the cell update", sexp(&k, v));
+        }
+        assert!(sexp(&k, v).matches("(sub ").count() >= 3, "the variant {} lost the compensation", sexp(&k, v));
+    }
+    eprintln!("cell: {} variants, every one the same bits on {} cases", vs.len(), cases.len());
 }

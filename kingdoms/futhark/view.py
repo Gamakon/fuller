@@ -62,8 +62,9 @@ def read_spec(text):
     """A view specification: four-column lines `kind name element dims`; `#` lines are comments. A `families` line
     belongs to the matrix view only: a signature view admits every family of the master. The `element` line lists
     the view's elements (`elements`; `element` is the first); a `literals` line is one element's pool (its element
-    in the third column, empty in a view of one element): `literals` maps each element to its pool."""
-    spec = {"inputs": [], "sizes": [], "families": [], "shape": "signature", "elements": [], "literals": {}}
+    in the third column, empty in a view of one element): `literals` maps each element to its pool. A `lets` line
+    names the array classes a `let` at the top of a program may bind, each once (master version 5, the kernel boundary)."""
+    spec = {"inputs": [], "sizes": [], "families": [], "shape": "signature", "elements": [], "literals": {}, "lets": []}
     pools = []
     for line in text.splitlines():
         if not line.strip() or line.startswith("#"):
@@ -89,7 +90,7 @@ def read_spec(text):
             spec["element"] = spec["elements"][0] if spec["elements"] else ""
         elif kind == "literals":
             pools.append((elem, [x for x in name.split(",") if x]))
-        elif kind in ("families", "dims", "roles", "root"):
+        elif kind in ("families", "dims", "roles", "root", "lets"):
             spec[kind] = [x for x in name.split(",") if x]
         else:
             raise ValueError(f"a specification line of kind {kind}")
