@@ -238,7 +238,7 @@ impl Backend {
 /// bound that compiles — the bound changes how *much* fusion happens, never
 /// what the program computes. A bound that is too small costs optimisation;
 /// a bound that is too large costs the compiler's convergence.
-const FUSION_BOUND: u32 = 10;
+pub const FUSION_BOUND: u32 = 10;
 
 /// The passes of Futhark's sequential pipeline, in the order its own pipeline
 /// runs them, so that the bounded-fusion path can run the same pipeline with
@@ -544,7 +544,7 @@ pub fn run_compiled(scalar_root: bool, input: &[f32], dir: &Path) -> Result<Vec<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The program Futhark 0.28.1's optimiser never finishes.
@@ -555,7 +555,7 @@ mod tests {
     /// conjunction Futhark's SOAC fusion pass cannot settle: an inner
     /// reduction over an accumulator, a reversed accumulator-derived operand,
     /// and an outer reduction.
-    const PATHOLOGICAL: &str = "entry main (xs: []f32) : f32 =\n  reduce (*) 1.0\n    (map2 f32.max\n      (map2 f32.min\n        (reverse (xs))\n        (map (\\x -> x - (reduce (+) 0.0 (map (\\x -> x) (scan (+) 0.0 xs)))) (xs)))\n      (reverse (map (\\x -> f32.round x)\n        (map2 (*) (map (\\x -> x) (scan (+) 0.0 xs)) (scan (*) 1.0 (xs))))))\n";
+    pub(crate) const PATHOLOGICAL: &str = "entry main (xs: []f32) : f32 =\n  reduce (*) 1.0\n    (map2 f32.max\n      (map2 f32.min\n        (reverse (xs))\n        (map (\\x -> x - (reduce (+) 0.0 (map (\\x -> x) (scan (+) 0.0 xs)))) (xs)))\n      (reverse (map (\\x -> f32.round x)\n        (map2 (*) (map (\\x -> x) (scan (+) 0.0 xs)) (scan (*) 1.0 (xs))))))\n";
 
     /// The compiler cannot compile this program; the bounded-fusion path can.
     ///

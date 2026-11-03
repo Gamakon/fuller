@@ -71,7 +71,7 @@ pub(crate) fn compile_failure_corpus() -> Vec<PathBuf> {
     files.sort();
     on_disk.sort();
     assert_eq!(files, on_disk, "index.tsv must list exactly the corpus's programs");
-    assert_eq!(files.len(), 374, "the corpus holds 374 programs");
+    assert_eq!(files.len(), 375, "the corpus holds 375 programs");
     let mut minimal: Vec<PathBuf> = std::fs::read_dir(corpus.join("minimal")).expect("the minimal reproducers").map(|e| e.expect("an entry").path()).collect();
     minimal.sort();
     assert_eq!(minimal.len(), 3, "one minimal reproducer a kind the fork has a patch for (the known compiler fault's reproducer is its corpus program)");
@@ -106,6 +106,19 @@ pub(crate) fn known_compiler_faults() -> Vec<KnownFault> {
             KnownFault { file: file.to_string(), issue: issue.to_string(), error_contains: error_contains.to_string() }
         })
         .collect()
+}
+
+/// The limit on one corpus program's compile in the corpus tests: 600 s (rustc under a loaded machine), except a
+/// program marked as one the compiler NEVER finishes ([`DID_NOT_FINISH`] in its mark), which is killed at 60 s: 300
+/// times a normal corpus compile (0.2 s), and the suite does not wait 600 s to learn what the mark says.
+#[cfg(test)]
+pub(crate) fn corpus_compile_limit(file: &Path, known: &[KnownFault]) -> Duration {
+    let name = file.file_name().and_then(|n| n.to_str()).expect("a program's name");
+    if known.iter().any(|k| k.file == name && k.error_contains == DID_NOT_FINISH) {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(600)
+    }
 }
 
 /// THE VERDICT ON ONE CORPUS PROGRAM'S COMPILE on either path (the rust path's test and the webgpu path's): its
@@ -181,14 +194,57 @@ futhark_rust_rt::host::ModuleExport { entries: prog::ENTRIES, program: &prog::PR
 
 /// Compile `source` (a Futhark program) in `dir` into a generation dylib against the runtime in `rt` (a
 /// [`prebuild_rt`] directory). `tag` names the crate (unique in the process: the host keeps every module it loads).
-/// The stages: `futhark` is the fork compiler, `cc` is rustc.
+/// The stages: `futhark` is the fork compiler, `cc` is rustc. The default compiler ([`compiler`]), the compiler's
+/// pipeline unbounded, and `timeout` on each stage: [`compile_module_with`] is the general form.
 pub fn compile_module(source: &str, dir: &Path, rt: &Path, tag: &str, timeout: Duration) -> Result<(PathBuf, CompileStages), String> {
+    compile_module_with(&Compile { compiler: compiler(), fuse_bound: None, futhark_limit: timeout, rustc_limit: timeout }, source, dir, rt, tag)
+}
+
+/// THE FORK COMPILER'S RUNTIME OPTIONS, on every compile we spawn (this path's and the webgpu path's,
+/// `futhark_wgpu_host`): one capability. The fork is built with GHC 9.14.1's threaded runtime and
+/// `-with-rtsopts=-maxN16 -qg1 -A32M`, and at 16 capabilities it sometimes never finishes a program it compiles in
+/// 0.3 s: measured 2026-11-03, 6 times in about 5,800 compiles (once in a 1,890-compile sweep, once in 5 of 6 runs of
+/// `tests::the_fusion_bound_against_the_unbounded_compiler_on_the_corpus`, 758 compiles each), never the same
+/// program twice, and never in 290 repeats of those programs from a shell. A stack sample of one stuck compiler
+/// (5 s): the main Haskell thread in `stg_BLACKHOLE_info` under `schedule` in every sample (waiting on a thunk another
+/// capability claimed), all 40 worker threads idle (`kevent`, condition waits): the runtime livelocked, not the
+/// compiler's passes. At `-N1` the same test ran twice, 1,516 compiles, no hang, 120 s a run (as at 16 capabilities
+/// without a hang), and every corpus program's `prog.rs` is byte-identical to the 16-capability compiler's (377 of
+/// 377 that compile). The batch time limit (`futhark_batch::COMPILE_LIMIT_FLOOR`) remains the backstop.
+pub const COMPILER_RTS: [&str; 3] = ["+RTS", "-N1", "-RTS"];
+
+/// The text of the error [`compile_module_with`] returns when a stage outlives its limit (`output_with_timeout`'s own
+/// words, so that the webgpu path's compile of the same program says the same: the compile-failure corpus marks a
+/// program the compiler never finishes by it).
+pub const DID_NOT_FINISH: &str = "no answer within";
+
+/// How [`compile_module_with`] compiles: the compiler (the fork's `futhark`), `fuse_bound` = `Some(n)` for
+/// `futhark rust-wgpu --fuse=n` (series patch 0012: the SOAC fusion pass at most `n` fusions a function, as
+/// `futhark dev --fuse=n` and the C path's bounded-fusion compile, `crate::futhark_exec::FUSION_BOUND`; `None` is
+/// the compiler's own fixpoint), `futhark_limit` on the compiler and `rustc_limit` on rustc.
+#[derive(Debug, Clone)]
+pub struct Compile {
+    pub compiler: PathBuf,
+    pub fuse_bound: Option<u32>,
+    pub futhark_limit: Duration,
+    pub rustc_limit: Duration,
+}
+
+/// [`compile_module`] as `how` says. A stage that outlives its limit is killed and the error says [`DID_NOT_FINISH`]
+/// and the limit.
+pub fn compile_module_with(how: &Compile, source: &str, dir: &Path, rt: &Path, tag: &str) -> Result<(PathBuf, CompileStages), String> {
+    let (futhark_limit, rustc_limit) = (how.futhark_limit, how.rustc_limit);
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let fut = dir.join("prog.fut");
     std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
     let mut stages = CompileStages::default();
     let t = Instant::now();
-    let out = output_with_timeout(Command::new(compiler()).arg("rust-wgpu").arg(&fut).arg("-o").arg(dir.join("prog")), timeout, None)?;
+    let mut cmd = Command::new(&how.compiler);
+    cmd.arg("rust-wgpu").args(COMPILER_RTS);
+    if let Some(n) = how.fuse_bound {
+        cmd.arg(format!("--fuse={n}"));
+    }
+    let out = output_with_timeout(cmd.arg(&fut).arg("-o").arg(dir.join("prog")), futhark_limit, None).map_err(|e| stage_error("futhark rust-wgpu", &e, futhark_limit))?;
     stages.futhark = t.elapsed().as_secs_f64();
     if !out.status.success() {
         return Err(format!("futhark rust-wgpu failed:\n{}", String::from_utf8_lossy(&out.stderr)));
@@ -208,12 +264,22 @@ pub fn compile_module(source: &str, dir: &Path, rt: &Path, tag: &str, timeout: D
     }
     cmd.arg(&lib).arg("-o").arg(&dylib);
     let t = Instant::now();
-    let out = output_with_timeout(&mut cmd, timeout, None)?;
+    let out = output_with_timeout(&mut cmd, rustc_limit, None).map_err(|e| stage_error("rustc of the generated module", &e, rustc_limit))?;
     stages.cc = t.elapsed().as_secs_f64();
     if !out.status.success() {
         return Err(format!("rustc of the generated module failed:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
     Ok((dylib, stages))
+}
+
+/// A stage's error, named by its stage: a kill at the limit keeps `output_with_timeout`'s words ([`DID_NOT_FINISH`])
+/// and adds that the stage was killed at the limit.
+fn stage_error(stage: &str, e: &str, limit: Duration) -> String {
+    if e.contains(DID_NOT_FINISH) {
+        format!("{stage}: {e} (killed at the limit of {:.0} s)", limit.as_secs_f64())
+    } else {
+        format!("{stage}: {e}")
+    }
 }
 
 // ---- the runtime's C entry points ------------------------------------------------------------------------------
@@ -877,7 +943,7 @@ mod tests {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(f) = files.get(i) else { break };
                     let source = std::fs::read_to_string(f).expect("a corpus program");
-                    let result = compile_module(&source, &base.join(format!("p{i}")), &rt, &format!("cf{i}"), Duration::from_secs(600)).map(|_| ());
+                    let result = compile_module(&source, &base.join(format!("p{i}")), &rt, &format!("cf{i}"), corpus_compile_limit(f, &known)).map(|_| ());
                     match corpus_verdict(f, &known, result) {
                         Ok(None) => {}
                         Ok(Some(note)) => known_failing.lock().expect("the known list").push(note),
@@ -891,6 +957,100 @@ mod tests {
         eprintln!("{} of {} corpus programs compiled through the rust path; {} known compiler faults still failing:\n{}", files.len() - failed.len() - known_failing.len(), files.len(), known_failing.len(), known_failing.join("\n"));
         assert_eq!(known_failing.len(), known.len(), "every known compiler fault must be met in the corpus (one line a program): {known:?}");
         assert!(failed.is_empty(), "{} of {} corpus programs did not compile:\n{}", failed.len(), files.len(), failed.join("\n"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// THE FUSION BOUND ON THE RUST PATH (series patch 0012, `futhark rust-wgpu --fuse=N`): the program whose fusion
+    /// Futhark never settles (`futhark_exec::PATHOLOGICAL`, `docs/RESCUE_futhark.md`) is killed at the limit by the
+    /// fork's unbounded compile (measured 2026-11-03: killed at 53 s; the released `futhark c` at 60 s), and
+    /// compiles through the rust path with `--fuse=10` (0.17 s), rustc included. CPU only, no device.
+    #[test]
+    fn the_fusion_divergent_program_compiles_through_the_rust_path_with_the_bound() {
+        assert!(compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
+        let base = scratch("fusion_bound");
+        let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
+        let limit = Duration::from_secs(20);
+        let unbounded = Compile { compiler: compiler(), fuse_bound: None, futhark_limit: limit, rustc_limit: Duration::from_secs(600) };
+        let e = compile_module_with(&unbounded, crate::futhark_exec::tests::PATHOLOGICAL, &base.join("unbounded"), &rt, "fusion_unbounded").expect_err("the fork now finishes the fusion of this program: the bound is no longer needed for it");
+        assert!(e.contains(DID_NOT_FINISH) && e.contains("killed at the limit of 20 s"), "{e}");
+        let bounded = Compile { fuse_bound: Some(crate::futhark_exec::FUSION_BOUND), ..unbounded };
+        let (dylib, stages) = compile_module_with(&bounded, crate::futhark_exec::tests::PATHOLOGICAL, &base.join("bounded"), &rt, "fusion_bounded").expect("the bounded compile");
+        assert!(dylib.is_file());
+        eprintln!("--fuse={}: futhark {:.2} s, rustc {:.2} s", crate::futhark_exec::FUSION_BOUND, stages.futhark, stages.cc);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// THE BOUND AGAINST THE UNBOUNDED COMPILER, on every corpus program, the minimal reproducers and the k-means
+    /// seed: `futhark rust-wgpu` and `futhark rust-wgpu --fuse=10` (the bound a single program that did not finish
+    /// is retried with), their `prog.rs` compared byte for byte (the compiler only; no rustc). The tallies are
+    /// pinned to what was measured on 2026-11-03, so a change of the compiler or of the bound fails here and is
+    /// re-measured: the bound is NOT applied to every compile because of them (`futhark_batch::Host::compile`): at
+    /// 10 most programs compile to other code and many do not compile at all (an unfused form the webgpu code
+    /// generator cannot copy, "Known compiler limitation"); measured over the same set with the shell sweep,
+    /// `--fuse=1000` was byte-identical on every program the unbounded compiler compiles, `--fuse=100` differed on
+    /// 35 and did not finish on one. The program the compiler never finishes (the known fault) and the known ICE
+    /// fail both ways. CPU only, no device.
+    #[test]
+    fn the_fusion_bound_against_the_unbounded_compiler_on_the_corpus() {
+        assert!(compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
+        let mut files = compile_failure_corpus();
+        files.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans/yardstick.fut"));
+        let known = known_compiler_faults();
+        let base = scratch("fusion_bound_corpus");
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let tally = Mutex::new((0usize, 0usize, 0usize, 0usize, Vec::new()));
+        // The compiler alone on one program, as `compile_module` runs it (the source written to `prog.fut` in a
+        // directory of its own), into `out`.rs beside it: its Rust, or its error. Both compiles of a program read
+        // the ONE `prog.fut`: the generated module's comments name the source's path (`// <path>:line:col`).
+        let futhark = |fuse: Option<u32>, f: &Path, fut: &Path, out: &str| -> Result<String, String> {
+            let mut cmd = Command::new(compiler());
+            cmd.arg("rust-wgpu").args(COMPILER_RTS);
+            if let Some(n) = fuse {
+                cmd.arg(format!("--fuse={n}"));
+            }
+            let limit = corpus_compile_limit(f, &known);
+            let dir = fut.parent().ok_or("a source with no directory")?;
+            let o = output_with_timeout(cmd.arg(fut).arg("-o").arg(dir.join(out)), limit, None)?;
+            if !o.status.success() {
+                return Err(String::from_utf8_lossy(&o.stderr).to_string());
+            }
+            std::fs::read_to_string(dir.join(format!("{out}.rs"))).map_err(|e| e.to_string())
+        };
+        std::thread::scope(|sc| {
+            for _ in 0..4 {
+                sc.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(f) = files.get(i) else { break };
+                    let dir = base.join(format!("p{i}"));
+                    let fut = dir.join("prog.fut");
+                    std::fs::create_dir_all(&dir).expect("a program's directory");
+                    std::fs::copy(f, &fut).expect("the program's source");
+                    let u = futhark(None, f, &fut, "unbounded");
+                    let b = futhark(Some(crate::futhark_exec::FUSION_BOUND), f, &fut, "bounded");
+                    let mut t = tally.lock().expect("the tally");
+                    match (u, b) {
+                        (Ok(x), Ok(y)) if x == y => t.0 += 1,
+                        (Ok(_), Ok(_)) => t.1 += 1,
+                        (Ok(_), Err(_)) => t.2 += 1,
+                        (Err(e), _) => {
+                            t.3 += 1;
+                            let first: Vec<&str> = e.lines().filter(|l| !l.starts_with("Warning at") && !l.trim_start().starts_with("Unused name") && !l.trim().is_empty()).take(3).collect();
+                            t.4.push(format!("{}: {}", f.file_name().and_then(|n| n.to_str()).unwrap_or("?"), first.join(" | ")));
+                        }
+                    }
+                });
+            }
+        });
+        let (same, differ, bound_fails, unbounded_fails, names) = tally.into_inner().expect("the tally");
+        eprintln!("{} programs: --fuse={} byte-identical to the unbounded compiler on {same}, other code on {differ}, fails on {bound_fails}; the unbounded compiler fails on {unbounded_fails}: {names:?}", files.len(), crate::futhark_exec::FUSION_BOUND);
+        // The unbounded compiler fails exactly on the known compiler faults (the ICE and the program it never finishes).
+        let mut failing: Vec<&str> = names.iter().map(|n| n.split(':').next().unwrap_or("")).collect();
+        failing.sort_unstable();
+        let mut marked: Vec<&str> = known.iter().map(|k| k.file.as_str()).collect();
+        marked.sort_unstable();
+        assert_eq!(failing, marked, "the unbounded compiler must fail on the known faults and nothing else: {names:?}");
+        assert_eq!((same + differ + bound_fails + unbounded_fails, files.len()), (files.len(), 379));
+        assert_eq!((same, differ, bound_fails), (34, 248, 95), "the bound's tallies changed (a compiler or bound change): re-measure and pin them");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -937,7 +1097,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let fut = dir.join("prog.fut");
         std::fs::write(&fut, &source).expect("write");
-        let out = Command::new(compiler()).arg("rust-wgpu").arg(&fut).arg("-o").arg(dir.join("prog")).output().expect("futhark rust-wgpu");
+        let out = Command::new(compiler()).arg("rust-wgpu").args(COMPILER_RTS).arg(&fut).arg("-o").arg(dir.join("prog")).output().expect("futhark rust-wgpu");
         assert!(out.status.success(), "futhark rust-wgpu: {}", String::from_utf8_lossy(&out.stderr));
         let prog = std::fs::read_to_string(dir.join("prog.rs")).expect("prog.rs");
         let entries: Vec<&str> = prog.split("rt::KernelInfo {").skip(1).collect();

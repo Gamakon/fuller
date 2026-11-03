@@ -399,7 +399,8 @@ fn compile_staged(source: &str, dir: &Path, prebuilt: Option<&Path>, build: &Bui
     }
     let compiler = &build.compiler;
     let mut cmd = Command::new(compiler);
-    cmd.arg("webgpu");
+    // The fork's runtime at one capability (`futhark_rust::COMPILER_RTS`: at 16 it sometimes livelocks).
+    cmd.arg("webgpu").args(crate::futhark_rust::COMPILER_RTS);
     if build.library.is_some() {
         cmd.arg("--library");
     }
