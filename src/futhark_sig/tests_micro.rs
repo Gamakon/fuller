@@ -122,11 +122,11 @@ fn random_micro_genes_compile_and_equal_the_interpreter() {
         let layout = GeneLayout::from_program_size(&contract, k.roots()[0], STUDY_PROGRAM_SIZE).unwrap();
         let const_len = k.const_len();
         let mut rng = GeneRng::new(0x51C_0002);
-        let vec_of = |n: usize, rng: &mut GeneRng| Array { dims: vec![n], data: (0..n).map(|_| rng.below(41) as i32 - 20).collect() };
+        let vec_of = |n: usize, rng: &mut GeneRng| Array::i32s(vec![n], (0..n).map(|_| rng.below(41) as i32 - 20).collect());
         // (k, n): the histogram's bins and length; reduce and scan read only n.
         let small: Vec<Vec<Array>> = [(3usize, 7usize), (1, 1), (5, 2)]
             .iter()
-            .map(|&(kb, n)| if p.name == "histogram" { vec![Array { dims: vec![], data: vec![kb as i32] }, vec_of(n, &mut rng), vec_of(n, &mut rng)] } else { vec![vec_of(n, &mut rng)] })
+            .map(|&(kb, n)| if p.name == "histogram" { vec![Array::scalar_i32(kb as i32), vec_of(n, &mut rng), vec_of(n, &mut rng)] } else { vec![vec_of(n, &mut rng)] })
             .collect();
         let base = scratch(&format!("random_{}", p.name));
         let mut used = BTreeMap::<String, usize>::new();
@@ -158,7 +158,7 @@ fn the_scan_hist_and_mod_rows_equal_the_interpreter() {
     if !have_futhark() {
         panic!("futhark 0.28.1 is needed for this test");
     }
-    let xs = Array { dims: vec![6], data: vec![-7, 3, i32::MAX, i32::MIN, 0, 5] };
+    let xs = Array::i32s(vec![6], vec![-7, 3, i32::MAX, i32::MIN, 0, 5]);
     let scan = load(&SCAN).unwrap();
     let ssig = signature(&SCAN).unwrap();
     let si = Interp::new(&scan, &ssig).unwrap();
@@ -176,9 +176,9 @@ fn the_scan_hist_and_mod_rows_equal_the_interpreter() {
     let hist = load(&HISTOGRAM).unwrap();
     let hsig = signature(&HISTOGRAM).unwrap();
     let hi = Interp::new(&hist, &hsig).unwrap();
-    let vs = Array { dims: vec![6], data: vec![1, -2, 3, 4, i32::MAX, 6] };
+    let vs = Array::i32s(vec![6], vec![1, -2, 3, 4, i32::MAX, 6]);
     for kb in [1, 4, 9] {
-        let inputs = [Array { dims: vec![], data: vec![kb] }, xs.clone(), vs.clone()];
+        let inputs = [Array::scalar_i32(kb), xs.clone(), vs.clone()];
         for text in [
             "(hist.add.n (tab (mod.k (get.n is i_n))) vs)",
             "(hist.min.n (tab (mod.k (get.n is i_n))) vs)",

@@ -55,9 +55,9 @@ fn real_main() -> Result<(), String> {
     };
     // The probes.
     let probe = |f: &dyn Fn(&Array) -> Array| -> (f64, f64) { score(&cases.iter().map(|c| f(&c.output)).collect::<Vec<_>>()) };
-    let zero = probe(&|w| Array { dims: w.dims.clone(), data: vec![0; w.data.len()] });
-    let half = probe(&|w| Array { dims: w.dims.clone(), data: w.data.iter().enumerate().map(|(i, x)| if i % 2 == 0 { *x } else { 0 }).collect() });
-    let near = probe(&|w| Array { dims: w.dims.clone(), data: w.data.iter().map(|x| x.wrapping_add(1)).collect() });
+    let zero = probe(&|w| Array::i32s(w.dims.clone(), vec![0; w.len()]));
+    let half = probe(&|w| Array::i32s(w.dims.clone(), w.i32_values().expect("i32 cases").iter().enumerate().map(|(i, x)| if i % 2 == 0 { *x } else { 0 }).collect()));
+    let near = probe(&|w| Array::i32s(w.dims.clone(), w.i32_values().expect("i32 cases").iter().map(|x| x.wrapping_add(1)).collect()));
     let exact = probe(&|w| w.clone());
     println!("{pname}: {n} random genes, program size {}, {} cases", n_funcs.max(8), cases.len());
     println!("probe                         current   proposed");

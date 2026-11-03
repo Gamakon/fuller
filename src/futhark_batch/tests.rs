@@ -820,3 +820,26 @@ fn a_pair_side_runs_for_at_least_a_second() {
         assert!(n as f64 * slower >= PAIR_SIDE_SECONDS && (n - 1) as f64 * slower < PAIR_SIDE_SECONDS || n == PAIR_MIN_RUNS, "{slower} s a run: {n} runs");
     }
 }
+
+/// The f32 signature (k-means) is a batch host's on the rust path, whose runtime reads every element of the binary
+/// format; the C driver (the shim, the c backend) reads i32 only and refuses it, naming what it reads.
+#[test]
+fn the_batch_host_takes_f32_on_the_rust_path_and_refuses_it_on_the_c_driver() {
+    let p = problem("kmeans").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let stdin = stdin_of(&cases);
+    let base = scratch("f32_host");
+    let inputs = || Inputs { cases_stdin: &stdin, timing_stdin: None, yardstick: Some(p.yardstick) };
+    Host::new(&k, &sig, cases.len(), Backend::Rust { rt: base.join("rt") }, &base.join("rust"), inputs()).expect("the rust path takes f32");
+    let e = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("c"), inputs()).err().expect("the C driver refuses f32");
+    assert!(e.contains("i32"), "{e}");
+    let hist = problem("histogram").unwrap();
+    let hk = load(&hist.instance).unwrap();
+    let hsig = signature(&hist.instance).unwrap();
+    let hcases = load_cases(&hist).unwrap();
+    let hstdin = stdin_of(&hcases);
+    Host::new(&hk, &hsig, hcases.len(), Backend::C, &base.join("hc"), Inputs { cases_stdin: &hstdin, timing_stdin: None, yardstick: Some(hist.yardstick) }).expect("the C driver takes i32");
+    let _ = std::fs::remove_dir_all(&base);
+}

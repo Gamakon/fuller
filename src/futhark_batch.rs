@@ -664,8 +664,11 @@ impl<'a> Host<'a> {
             }
             None => None,
         };
-        if sig.inputs.iter().chain(std::iter::once(&sig.output)).any(|p| p.elem != "i32" || p.dims.len() > 3) {
-            return Err("the batch driver reads and writes i32 values of rank at most 3".into());
+        // The C driver (the shim and the c backend) reads and writes i32 values of rank at most 3; the rust path's
+        // runtime reads and writes every element of the binary format (`futhark-rust-rt/src/values.rs`).
+        let rust = matches!(backend, Backend::Rust { .. });
+        if sig.inputs.iter().chain(std::iter::once(&sig.output)).any(|p| (p.elem != "i32" && !rust) || p.dims.len() > 3) {
+            return Err("the batch driver reads and writes i32 values of rank at most 3 (the rust path: i32 and f32)".into());
         }
         Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0), max_batch: std::cell::Cell::new(usize::MAX), session: std::cell::RefCell::new(None) })
     }

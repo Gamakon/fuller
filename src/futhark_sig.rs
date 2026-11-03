@@ -13,9 +13,11 @@
 //! most `max(D) ** depth` times. Every gene expresses a program Futhark accepts; the tests here check that Futhark
 //! agrees and that the compiled program computes what the host interpreter says.
 //!
-//! What this module holds: the loader and the declared signature, Futhark's binary value format for the cases, the
-//! program around an expressed tree (the entry point binding the interface), the host interpreter (the meaning of a
-//! gene, a test oracle, exact `i32` arithmetic as Futhark's: wrapping), the exact work of a tree on given sizes, a
+//! What this module holds: the loader and the declared signature, Futhark's binary value format for the cases (typed:
+//! `i32`, or `f32` as its raw bits, with the comparison policy on [`Array`]), the program around an expressed tree
+//! (the entry point binding the interface), the host interpreter (the meaning of a gene, a test oracle, exact
+//! arithmetic as Futhark's: `i32` wraps, `f32` is IEEE with `fmin`/`fmax` and `i64.f32` as measured through
+//! `futhark c`), the exact work of a tree on given sizes, a
 //! builder that writes a program given as an s-expression of the family's rows as a tree, the problem registry (the
 //! instance, its reference written as a gene, the published program as the speed yardstick, and its stored cases),
 //! and the instance's e-graph (one sort a type, constants by their pool index).
@@ -93,6 +95,10 @@ pub struct Problem {
     /// n = 2^24 every champion with a map over `n` failed, "[65536, 1, 1] must be less or equal to 65535"), so the
     /// micro benchmarks use 15 x 2^20 (61,440 workgroups).
     pub timing_n: usize,
+    /// THE PROGRAM SIZE `N` of the problem's gene layout when `--program-size` is not given: an experiment parameter
+    /// above the reference and the planted slowdown ([`DEFAULT_PROGRAM_SIZE`] for the i32 benchmarks; k-means's
+    /// reference has 72 functions, the membership written twice, so its layout is [`KMEANS_PROGRAM_SIZE`]).
+    pub program_size: usize,
 }
 
 /// The timing input of a problem with `timing_n > 0`, in Futhark's binary format (the entry point's parameters):
@@ -103,12 +109,19 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
         return Ok(None);
     }
     let mut rng = GeneRng::new(0x7131_6E00 ^ n as u64);
-    let mut any = |n: usize| Array { dims: vec![n], data: (0..n).map(|_| rng.next_u64() as u32 as i32).collect() };
+    let mut any = |n: usize| Array::i32s(vec![n], (0..n).map(|_| rng.next_u64() as u32 as i32).collect());
     match p.name {
         "reduce" | "scan" => Ok(Some(write_binary(&[&any(n)]))),
         "histogram" => {
             let (is, vs) = (any(n), any(n));
-            Ok(Some(write_binary(&[&Array { dims: vec![], data: vec![100] }, &is, &vs])))
+            Ok(Some(write_binary(&[&Array::scalar_i32(100), &is, &vs])))
+        }
+        // The k-means champion's timing case (`docs/kmeans_champion_s1/README.md`: n = 8,192 points, d = 256, k =
+        // 1,024), points and centres uniform in [0, 1) (multiples of 2^-24), a fixed seed.
+        "kmeans" => {
+            let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32).collect());
+            let (points, centres) = (unit(n), unit(KMEANS_TIMING_K));
+            Ok(Some(write_binary(&[&points, &centres])))
         }
         // The published benchmark's own shape (`published/pathfinder.fut`, data/medium.in: cols = 100000, rows =
         // 100) and its wall heights, 0 to 9 (the published walls are Sobol numbers modulo 10). Before 2026-11-01
@@ -116,7 +129,7 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
         // docs/reviews/2026-10-28_futhark_evolve_faults.md).
         "pathfinder" => {
             let (rows, cols) = (PATHFINDER_TIMING_ROWS, n / PATHFINDER_TIMING_ROWS);
-            let walls = Array { dims: vec![rows, cols], data: (0..rows * cols).map(|_| (rng.next_u64() % 10) as i32).collect() };
+            let walls = Array::i32s(vec![rows, cols], (0..rows * cols).map(|_| (rng.next_u64() % 10) as i32).collect());
             Ok(Some(write_binary(&[&walls])))
         }
         other => Err(format!("no timing input recipe for {other}")),
@@ -147,6 +160,7 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     planted: PATHFINDER_PLANTED,
     corpus: "tests/corpus/futhark_problems/pathfinder",
     timing_n: PATHFINDER_TIMING_ROWS * 100_000,
+    program_size: DEFAULT_PROGRAM_SIZE,
 };
 
 /// The rows of pathfinder's timing input (the published medium data set's); its columns are `timing_n / rows`.
@@ -166,6 +180,7 @@ pub const REDUCE_PROBLEM: Problem = Problem {
     planted: REDUCE_PLANTED,
     corpus: "tests/corpus/futhark_problems/reduce",
     timing_n: 15 << 20,
+    program_size: DEFAULT_PROGRAM_SIZE,
 };
 
 /// Scan's published program, `scan (+) 0`, as a gene.
@@ -181,6 +196,7 @@ pub const SCAN_PROBLEM: Problem = Problem {
     planted: SCAN_PLANTED,
     corpus: "tests/corpus/futhark_problems/scan",
     timing_n: 15 << 20,
+    program_size: DEFAULT_PROGRAM_SIZE,
 };
 
 /// The histogram's published program, `hist (+) 0 k (map (% k) is) vs`, as a gene: the bins are the indices modulo
@@ -197,7 +213,48 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     planted: HISTOGRAM_PLANTED,
     corpus: "tests/corpus/futhark_problems/histogram",
     timing_n: 15 << 20,
+    program_size: DEFAULT_PROGRAM_SIZE,
 };
+
+/// The k-means step (`rodinia/kmeans/kmeans.fut`, one step: the published `find_nearest_point` and `centroids_of`),
+/// over `f32` points: `(points: [n][d]f32) (centres: [k][d]f32) -> [k][d]f32` (`docs/PLAN_futhark_kingdom.md`,
+/// step 4). The view is pinned to master version 3 and has depth 3: a point's nearest centre is a loop over `k`
+/// inside the tabulate over `n`, and the distance inside it is a reduction over `d`.
+pub const KMEANS: Instance = Instance { name: "kmeans", spec: include_str!("../kingdoms/futhark/sig/kmeans/view.tsv") };
+
+/// The published k-means step as a gene (`find_nearest_point`, then `centroids_of`). Each point's membership is a loop
+/// over the centres carrying the nearest's index (as an `f32`, the view's one element; `clamp` makes it the centre's
+/// row index) from 0, kept when its distance is below the centre's and replaced by the centre otherwise (the
+/// published fold's `if p1.1 < p2.1 then p1 else p2`: on a tie, and on a NaN distance, the later centre); a distance
+/// is the published `euclid_dist_2`, the left-fold sum from 0 of the squared differences in order. The cluster sums
+/// are the elementwise add histogram of the points' rows at their memberships (`hist (map2 (+))`), each row divided
+/// by its cluster's count, a count of 0 taken as 1 (the published `if n == 0 then 1 else n`): the counts are the add
+/// histogram of ones, at least 1. The membership is written twice (the kingdom has no `let`; the values are one).
+pub const KMEANS_REFERENCE: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (replicate 1))))";
+
+/// The planted slowdown: the ones the counts are a histogram of, replaced by the elementwise least of the ones and
+/// themselves (`map2 min a a = a`, which the e-graph removes). The planted form of the other problems, the work
+/// twice, would write the membership a third time (108 functions, past [`KMEANS_PROGRAM_SIZE`]).
+pub const KMEANS_PLANTED: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (map2.min (replicate 1) (replicate 1)))))";
+
+pub const KMEANS_PROBLEM: Problem = Problem {
+    name: "kmeans",
+    instance: KMEANS,
+    reference: KMEANS_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
+    planted: KMEANS_PLANTED,
+    corpus: "tests/corpus/futhark_problems/kmeans",
+    timing_n: 8192,
+    program_size: KMEANS_PROGRAM_SIZE,
+};
+
+/// K-means's program size: its reference is 72 functions (the membership, 36, written twice: the kingdom has no
+/// `let`), so the i32 benchmarks' 32 cannot hold it; 96 holds both programs with a third to spare.
+pub const KMEANS_PROGRAM_SIZE: usize = 96;
+
+/// The dimensions of k-means's timing input beside its `timing_n` points.
+pub const KMEANS_TIMING_D: usize = 256;
+pub const KMEANS_TIMING_K: usize = 1024;
 
 /// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
 /// well above every reference (pathfinder's is 13 functions, histogram's 4, reduce's and scan's 1), as SR and regex
@@ -218,7 +275,8 @@ pub fn problem(name: &str) -> Result<Problem, String> {
         "reduce" => Ok(REDUCE_PROBLEM),
         "scan" => Ok(SCAN_PROBLEM),
         "histogram" => Ok(HISTOGRAM_PROBLEM),
-        other => Err(format!("no Futhark signature problem {other} (pathfinder, reduce, scan, histogram)")),
+        "kmeans" => Ok(KMEANS_PROBLEM),
+        other => Err(format!("no Futhark signature problem {other} (pathfinder, reduce, scan, histogram, kmeans)")),
     }
 }
 
@@ -294,10 +352,13 @@ impl Signature {
         }
         let mut out = BTreeMap::new();
         for (p, a) in self.inputs.iter().zip(inputs) {
+            if a.elem.name() != p.elem {
+                return Err(format!("the input {} is {}, declared {}", p.name, a.elem.name(), p.elem));
+            }
             if self.size_inputs.contains(&p.name) {
                 let n = match (a.dims.as_slice(), a.data.as_slice()) {
-                    ([], [n]) if *n >= 1 => *n as usize,
-                    _ => return Err(format!("the size input {} is {:?} {:?}, not one i32 of at least 1", p.name, a.dims, a.data)),
+                    ([], [n]) if (*n as i32) >= 1 => *n as usize,
+                    _ => return Err(format!("the size input {} is {:?} {:?}, not one i32 of at least 1", p.name, a.dims, a.values().collect::<Vec<_>>())),
                 };
                 if let Some(old) = out.insert(p.name.clone(), n) {
                     if old != n {
@@ -338,20 +399,147 @@ impl Signature {
 
 // ---- values: Futhark's binary format ----------------------------------------------------------------------------
 
-/// An `i32` array of any rank (a scalar has no dims), row-major.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Array {
-    pub dims: Vec<usize>,
-    pub data: Vec<i32>,
+/// An element type of the signature family's values: `i32` (Futhark's wrapping integer arithmetic) or `f32` (IEEE
+/// single precision, held as its raw bits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Elem {
+    I32,
+    F32,
 }
 
-/// Values in Futhark's binary format (`b`, version 2, rank, ` i32`, the dims as `i64`, the data), one after another:
-/// what a Futhark executable reads on stdin for its entry point's parameters, in order.
+impl Elem {
+    pub fn name(self) -> &'static str {
+        match self {
+            Elem::I32 => "i32",
+            Elem::F32 => "f32",
+        }
+    }
+
+    /// The element of a Futhark type name; another element is an error that names it.
+    pub fn of(name: &str) -> Result<Elem, String> {
+        match name {
+            "i32" => Ok(Elem::I32),
+            "f32" => Ok(Elem::F32),
+            other => Err(format!("the element {other} is not one of the signature family's (i32, f32)")),
+        }
+    }
+
+    /// The type tag of Futhark's binary format (four bytes, space-padded).
+    fn tag(self) -> &'static [u8; 4] {
+        match self {
+            Elem::I32 => b" i32",
+            Elem::F32 => b" f32",
+        }
+    }
+
+    fn of_tag(tag: &[u8]) -> Option<Elem> {
+        [Elem::I32, Elem::F32].into_iter().find(|e| e.tag() == tag)
+    }
+}
+
+/// A typed array of any rank (a scalar has no dims), row-major: its element and each value's RAW 32 BITS (an `i32`
+/// as itself, an `f32` as its IEEE bits), exactly as Futhark's binary format writes them.
+///
+/// THE COMPARISON POLICY (`==`, the exactness of every case): two arrays agree when their dims and element agree
+/// and every value agrees BIT FOR BIT, with one exception: any NaN agrees with any NaN. An `f32` NaN's payload is
+/// not a value: Futhark prints every NaN as `f32.nan`, and which payload an operation keeps (of two NaN operands, of
+/// `-x`) is the hardware's choice, so no program can be held to it. `-0.0` and `+0.0` are DIFFERENT values: different
+/// bits, and Futhark prints `-0.0`. This is what the stored cases' bytes (`futhark c -b`) compare as, what the
+/// k-means exact gate of `futhark_rust` compares (bytes), and `futhark_interpreter::identical`; the `i32` comparison
+/// is unchanged (every bit pattern is one value).
+#[derive(Debug, Clone)]
+pub struct Array {
+    pub dims: Vec<usize>,
+    pub elem: Elem,
+    /// The raw 32-bit words, row-major.
+    pub data: Vec<u32>,
+}
+
+impl PartialEq for Array {
+    fn eq(&self, o: &Array) -> bool {
+        self.dims == o.dims && self.elem == o.elem && self.data.len() == o.data.len() && self.data.iter().zip(&o.data).all(|(a, b)| same_value(self.elem, *a, *b))
+    }
+}
+
+impl Eq for Array {}
+
+/// Whether two raw words are one value under the comparison policy: the same bits, or two NaNs.
+pub fn same_value(elem: Elem, a: u32, b: u32) -> bool {
+    a == b || (elem == Elem::F32 && f32::from_bits(a).is_nan() && f32::from_bits(b).is_nan())
+}
+
+/// A raw word as an `f64`, exactly (every `i32` and every `f32` is one).
+pub fn word_value(elem: Elem, w: u32) -> f64 {
+    match elem {
+        Elem::I32 => f64::from(w as i32),
+        Elem::F32 => f64::from(f32::from_bits(w)),
+    }
+}
+
+impl Array {
+    /// An `i32` array.
+    pub fn i32s(dims: Vec<usize>, data: Vec<i32>) -> Array {
+        Array { dims, elem: Elem::I32, data: data.into_iter().map(|x| x as u32).collect() }
+    }
+
+    /// An `f32` array, each value as its bits.
+    pub fn f32s(dims: Vec<usize>, data: Vec<f32>) -> Array {
+        Array { dims, elem: Elem::F32, data: data.into_iter().map(f32::to_bits).collect() }
+    }
+
+    /// An `i32` scalar.
+    pub fn scalar_i32(x: i32) -> Array {
+        Array::i32s(Vec::new(), vec![x])
+    }
+
+    /// The number of values.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Every value as an `f64` (exact for both elements), in order.
+    pub fn values(&self) -> impl Iterator<Item = f64> + '_ {
+        self.data.iter().map(move |w| word_value(self.elem, *w))
+    }
+
+    /// The `i`-th value as an `f64`.
+    pub fn value(&self, i: usize) -> f64 {
+        word_value(self.elem, self.data[i])
+    }
+
+    /// The `i32` values of an `i32` array; an `f32` array is an error.
+    pub fn i32_values(&self) -> Result<Vec<i32>, String> {
+        match self.elem {
+            Elem::I32 => Ok(self.data.iter().map(|w| *w as i32).collect()),
+            Elem::F32 => Err("an f32 array has no i32 values".into()),
+        }
+    }
+
+    /// The `f32` values of an `f32` array; an `i32` array is an error.
+    pub fn f32_values(&self) -> Result<Vec<f32>, String> {
+        match self.elem {
+            Elem::F32 => Ok(self.data.iter().map(|w| f32::from_bits(*w)).collect()),
+            Elem::I32 => Err("an i32 array has no f32 values".into()),
+        }
+    }
+
+    /// Whether the `i`-th values of two arrays agree under the comparison policy.
+    pub fn same_at(&self, o: &Array, i: usize) -> bool {
+        self.elem == o.elem && same_value(self.elem, self.data[i], o.data[i])
+    }
+}
+
+/// Values in Futhark's binary format (`b`, version 2, rank, the element's tag, the dims as `i64`, the data), one after
+/// another: what a Futhark executable reads on stdin for its entry point's parameters, in order.
 pub fn write_binary(values: &[&Array]) -> Vec<u8> {
     let mut out = Vec::new();
     for v in values {
         out.extend_from_slice(&[b'b', 2, v.dims.len() as u8]);
-        out.extend_from_slice(b" i32");
+        out.extend_from_slice(v.elem.tag());
         for &d in &v.dims {
             out.extend_from_slice(&(d as i64).to_le_bytes());
         }
@@ -362,7 +550,7 @@ pub fn write_binary(values: &[&Array]) -> Vec<u8> {
     out
 }
 
-/// Every value of a stream in Futhark's binary format (`i32` only; whitespace between values is skipped).
+/// Every value of a stream in Futhark's binary format (`i32` and `f32`; whitespace between values is skipped).
 pub fn read_binary(raw: &[u8]) -> Result<Vec<Array>, String> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -377,9 +565,7 @@ pub fn read_binary(raw: &[u8]) -> Result<Vec<Array>, String> {
         if head[0] != b'b' || head[1] != 2 {
             return Err(format!("not Futhark's binary format: {:?}", &head[..2]));
         }
-        if &head[3..7] != b" i32" {
-            return Err(format!("a value that is not i32: {:?}", String::from_utf8_lossy(&head[3..7])));
-        }
+        let elem = Elem::of_tag(&head[3..7]).ok_or_else(|| format!("a value that is not i32 or f32: {:?}", String::from_utf8_lossy(&head[3..7])))?;
         let rank = head[2] as usize;
         i += 7;
         let mut dims = Vec::with_capacity(rank);
@@ -391,7 +577,7 @@ pub fn read_binary(raw: &[u8]) -> Result<Vec<Array>, String> {
         }
         let n: usize = dims.iter().product();
         let data = raw.get(i..i + 4 * n).ok_or("a value ends inside its data")?;
-        out.push(Array { dims, data: data.chunks_exact(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() });
+        out.push(Array { dims, elem, data: data.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() });
         i += 4 * n;
     }
 }
@@ -498,6 +684,10 @@ enum Op {
     Max,
     Neg,
     Abs,
+    /// `f32` only: IEEE division.
+    Div,
+    /// `f32` only: the square root (NaN below zero).
+    Sqrt,
     Sel,
     Get,
     Sum,
@@ -519,13 +709,19 @@ enum Op {
     Last(usize),
     /// A tabulate over a dimension (its size), binding the index slot.
     Tab(usize, usize),
+    /// A tabulate of ROWS over a dimension (the first of its rank-2 class), binding the index slot; its body is a row.
+    TabRows(usize, usize),
     Replicate(usize),
-    /// An elementwise operation of two arrays of one class (`map2`): add, sub, min, max.
+    /// An elementwise operation of two arrays of one class (`map2`): add, sub, mul, min, max.
     Map2(Bin),
     /// The inclusive scan of an array (the `scan` family): add, min, max.
     Scan(Bin),
     /// The histogram into a dimension's array of values at indices (the `hist` family): add, min, max.
     Hist(Bin, usize),
+    /// The elementwise add histogram of ROWS: into `[K][D]` (the two dimensions) of `[D2][D]` rows at `[D2]` indices.
+    HistRows(usize, usize),
+    /// Each row of a `[K][D]` array divided by its `[K]` scalar (`f32` only).
+    RowDiv,
     /// A value modulo a dimension's size (the `mod` family), Futhark's `%`: in `[0, D)`.
     Mod(usize),
     /// The row of an array.
@@ -541,37 +737,202 @@ enum Op {
 enum Bin {
     Add,
     Sub,
+    Mul,
     Min,
     Max,
 }
 
 impl Bin {
-    /// The neutral element Futhark's `scan` and `hist` start from (`sub` has none and is no scan or histogram).
-    fn neutral(self) -> i32 {
-        match self {
-            Bin::Add | Bin::Sub => 0,
-            Bin::Min => i32::MAX,
-            Bin::Max => i32::MIN,
-        }
-    }
-
     fn of(name: &str) -> Option<Bin> {
         match name {
             "add" => Some(Bin::Add),
             "sub" => Some(Bin::Sub),
+            "mul" => Some(Bin::Mul),
             "min" => Some(Bin::Min),
             "max" => Some(Bin::Max),
             _ => None,
         }
     }
 
-    fn apply(self, a: i32, b: i32) -> i32 {
-        match self {
-            Bin::Add => a.wrapping_add(b),
-            Bin::Sub => a.wrapping_sub(b),
-            Bin::Min => a.min(b),
-            Bin::Max => a.max(b),
+    /// Whether Futhark's `scan` and `hist` rows exist for it (`add`, `min`, `max`: the ones with a neutral element).
+    fn reduces(self) -> bool {
+        matches!(self, Bin::Add | Bin::Min | Bin::Max)
+    }
+}
+
+/// Futhark's `f32.min` (the C library's `fmin`, measured through `futhark c` 2026-11-03): a NaN loses to any number,
+/// and of the two zeros `-0.0` is the smaller.
+fn fmin(x: f32, y: f32) -> f32 {
+    if x.is_nan() {
+        y
+    } else if y.is_nan() || x < y {
+        x
+    } else if y < x {
+        y
+    } else if x.is_sign_negative() {
+        x
+    } else {
+        y
+    }
+}
+
+/// Futhark's `f32.max` (`fmax`): a NaN loses to any number, and of the two zeros `+0.0` is the larger.
+fn fmax(x: f32, y: f32) -> f32 {
+    if x.is_nan() {
+        y
+    } else if y.is_nan() || x > y {
+        x
+    } else if y > x {
+        y
+    } else if x.is_sign_positive() {
+        x
+    } else {
+        y
+    }
+}
+
+/// Futhark's `i64.f32` (measured through `futhark c` 2026-11-03): truncation toward zero; a NaN, an infinity or a
+/// value outside `i64`'s range is 0.
+fn f32_to_i64(x: f32) -> i64 {
+    if x.is_nan() || x.is_infinite() || x.abs() >= 9_223_372_036_854_775_808.0 {
+        0
+    } else {
+        x as i64
+    }
+}
+
+/// A scalar of the interpreter: the element's arithmetic is Futhark's (`i32` wraps; `f32` is IEEE, with Futhark's
+/// `min`, `max` and conversions as measured).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Num {
+    I(i32),
+    F(f32),
+}
+
+impl Num {
+    fn from_word(elem: Elem, w: u32) -> Num {
+        match elem {
+            Elem::I32 => Num::I(w as i32),
+            Elem::F32 => Num::F(f32::from_bits(w)),
         }
+    }
+
+    fn word(self) -> u32 {
+        match self {
+            Num::I(x) => x as u32,
+            Num::F(x) => x.to_bits(),
+        }
+    }
+
+    fn zero(elem: Elem) -> Num {
+        Num::from_word(elem, 0)
+    }
+
+    /// An index or a size as a value: `{E}.i64`.
+    fn of_i64(elem: Elem, i: i64) -> Num {
+        match elem {
+            Elem::I32 => Num::I(i as i32),
+            Elem::F32 => Num::F(i as f32),
+        }
+    }
+
+    /// A literal of a pool (`-1`, `0.5`; the element's suffix already removed).
+    fn parse(elem: Elem, text: &str) -> Result<Num, String> {
+        Ok(match elem {
+            Elem::I32 => Num::I(text.parse().map_err(|e| format!("the literal {text}: {e}"))?),
+            Elem::F32 => Num::F(text.parse().map_err(|e| format!("the literal {text}: {e}"))?),
+        })
+    }
+
+    /// The neutral element Futhark's `scan` and `hist` start from (`{E}.highest` is `i32.MAX`, `f32.inf`).
+    fn neutral(elem: Elem, b: Bin) -> Num {
+        match (elem, b) {
+            (Elem::I32, Bin::Min) => Num::I(i32::MAX),
+            (Elem::I32, Bin::Max) => Num::I(i32::MIN),
+            (Elem::F32, Bin::Min) => Num::F(f32::INFINITY),
+            (Elem::F32, Bin::Max) => Num::F(f32::NEG_INFINITY),
+            (_, Bin::Add | Bin::Sub | Bin::Mul) => Num::zero(elem),
+        }
+    }
+
+    fn bin(self, b: Bin, o: Num) -> Result<Num, String> {
+        Ok(match (self, o) {
+            (Num::I(x), Num::I(y)) => Num::I(match b {
+                Bin::Add => x.wrapping_add(y),
+                Bin::Sub => x.wrapping_sub(y),
+                Bin::Mul => x.wrapping_mul(y),
+                Bin::Min => x.min(y),
+                Bin::Max => x.max(y),
+            }),
+            (Num::F(x), Num::F(y)) => Num::F(match b {
+                Bin::Add => x + y,
+                Bin::Sub => x - y,
+                Bin::Mul => x * y,
+                Bin::Min => fmin(x, y),
+                Bin::Max => fmax(x, y),
+            }),
+            _ => return Err(format!("our software has a bug: {self:?} and {o:?} are of two elements")),
+        })
+    }
+
+    fn neg(self) -> Num {
+        match self {
+            Num::I(x) => Num::I(x.wrapping_neg()),
+            Num::F(x) => Num::F(-x),
+        }
+    }
+
+    fn abs(self) -> Num {
+        match self {
+            Num::I(x) => Num::I(x.wrapping_abs()),
+            Num::F(x) => Num::F(x.abs()),
+        }
+    }
+
+    /// `{0} < 0{E}` (a NaN is not).
+    fn is_negative(self) -> bool {
+        match self {
+            Num::I(x) => x < 0,
+            Num::F(x) => x < 0.0,
+        }
+    }
+
+    fn f32_only(self, what: &str) -> Result<f32, String> {
+        match self {
+            Num::F(x) => Ok(x),
+            Num::I(_) => Err(format!("our software has a bug: {what} on an i32")),
+        }
+    }
+
+    /// The `clamp` row: a value clamped into `[0, n)`. `i32`: `i64.max 0 (i64.min (n - 1) (i64.i32 x))`. `f32`: a NaN
+    /// is 0, else the value clamped into `[0, n - 1]` as an `f32` before the conversion (`f32.i64 (n - 1)` may round),
+    /// then clamped again as an `i64` (the master row M0056's spelling, mirrored).
+    fn clamp(self, n: usize) -> i64 {
+        let top = n as i64 - 1;
+        match self {
+            Num::I(x) => i64::from(x).min(top).max(0),
+            Num::F(x) => {
+                let i = if x.is_nan() { 0 } else { f32_to_i64(fmax(0.0, fmin(top as f32, x))) };
+                i.min(top).max(0)
+            }
+        }
+    }
+
+    /// The `hist` rows' index of a value into `[0, n)`: `i32`: `i64.i32 x`; `f32`: a NaN is -1, else the value
+    /// clamped into `[-1, n]` as an `f32` then truncated (the master rows M0057-M0059 and M0065, mirrored). Outside
+    /// `[0, n)` Futhark's `hist` ignores it: `None`.
+    fn hist_index(self, n: usize) -> Option<usize> {
+        let i = match self {
+            Num::I(x) => i64::from(x),
+            Num::F(x) => {
+                if x.is_nan() {
+                    -1
+                } else {
+                    f32_to_i64(fmax(-1.0, fmin(n as f32, x)))
+                }
+            }
+        };
+        usize::try_from(i).ok().filter(|i| *i < n)
     }
 }
 
@@ -579,30 +940,34 @@ impl Bin {
 pub struct Interp<'a> {
     k: &'a FutharkKingdom,
     sig: &'a Signature,
+    elem: Elem,
     ops: Vec<Op>,
-    literals: Vec<Option<Vec<i32>>>,
+    literals: Vec<Option<Vec<Num>>>,
 }
 
-/// An array value as a view: shared data, an offset, the dims.
+/// An array value as a view: shared raw words, an offset, the dims.
 #[derive(Debug, Clone)]
 struct View {
-    data: Rc<Vec<i32>>,
+    data: Rc<Vec<u32>>,
     off: usize,
     dims: Vec<usize>,
 }
 
 impl View {
+    fn of(data: Vec<u32>, dims: Vec<usize>) -> View {
+        View { data: Rc::new(data), off: 0, dims }
+    }
     fn len(&self) -> usize {
         self.dims.iter().product()
     }
-    fn slice(&self) -> &[i32] {
+    fn slice(&self) -> &[u32] {
         &self.data[self.off..self.off + self.len()]
     }
 }
 
 #[derive(Debug, Clone)]
 enum Val {
-    S(i32),
+    S(Num),
     I(i64),
     A(View),
 }
@@ -618,7 +983,13 @@ struct Env {
 
 impl<'a> Interp<'a> {
     pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Interp<'a>, String> {
+        let elem = Elem::of(&sig.output.elem)?;
         let dim = |d: &str| sig.dims.iter().position(|x| x == d).ok_or_else(|| format!("no dimension {d}"));
+        // The dimensions of an array class (`a.k.d` -> [k, d]), by index.
+        let class_dims = |dual: &str| -> Result<Vec<usize>, String> {
+            let cls = dual.split(':').next().unwrap_or("");
+            cls.strip_prefix("a.").ok_or_else(|| format!("{dual} is not an array class"))?.split('.').map(dim).collect()
+        };
         let class_dim = |dual: &str, prefix: &str| -> Result<usize, String> {
             let cls = dual.split(':').next().unwrap_or("");
             dim(cls.strip_prefix(prefix).ok_or_else(|| format!("{dual} is not a {prefix} class"))?)
@@ -641,7 +1012,7 @@ impl<'a> Interp<'a> {
             literals.push(if d.literals.is_empty() {
                 None
             } else {
-                Some(d.literals.iter().map(|l| l.trim_end_matches(sig.output.elem.as_str()).parse::<i32>().map_err(|e| format!("the literal {l}: {e}"))).collect::<Result<Vec<_>, _>>()?)
+                Some(d.literals.iter().map(|l| Num::parse(elem, l.trim_end_matches(sig.output.elem.as_str()))).collect::<Result<Vec<_>, _>>()?)
             });
         }
         for r in &k.rows {
@@ -656,6 +1027,8 @@ impl<'a> Interp<'a> {
                 "max" => Op::Max,
                 "neg" => Op::Neg,
                 "abs" => Op::Abs,
+                "div" => Op::Div,
+                "sqrt" => Op::Sqrt,
                 "sel" => Op::Sel,
                 "prev" => Op::Prev,
                 "next" => Op::Next(class_dim(out, "ix.")?),
@@ -666,6 +1039,12 @@ impl<'a> Interp<'a> {
                     let d = class_dim(out, "a.")?;
                     Op::Tab(d, binder_slot(out, &format!("ix.{}", sig.dims[d]), &index_var)?)
                 }
+                "tabrows" => {
+                    let ds = class_dims(out)?;
+                    let [kd, _] = ds.as_slice() else { return Err(format!("our software has a bug: the tabrows row {} is not of a rank-2 class", r.name)) };
+                    Op::TabRows(*kd, binder_slot(out, &format!("ix.{}", sig.dims[*kd]), &index_var)?)
+                }
+                "rowdiv" => Op::RowDiv,
                 "replicate" => Op::Replicate(class_dim(out, "a.")?),
                 "zeros" => Op::Zeros(class_dim(out, "a.")?),
                 _ if r.kind == FutharkKind::Const => Op::Const,
@@ -675,13 +1054,15 @@ impl<'a> Interp<'a> {
                 _ if op.starts_with("maximum.") => Op::Maximum,
                 _ if op.starts_with("ival.") => Op::Ival,
                 _ if op.starts_with("row.") => Op::Row,
-                "map2.add" => Op::Map2(Bin::Add),
-                "map2.sub" => Op::Map2(Bin::Sub),
-                "map2.min" => Op::Map2(Bin::Min),
-                "map2.max" => Op::Map2(Bin::Max),
-                _ if op.starts_with("scan.") => Op::Scan(Bin::of(&op[5..]).filter(|b| *b != Bin::Sub).ok_or_else(|| format!("our software has a bug: the scan row {}", r.name))?),
+                _ if op.starts_with("map2.") => Op::Map2(Bin::of(&op[5..]).ok_or_else(|| format!("our software has a bug: the map2 row {}", r.name))?),
+                _ if op.starts_with("scan.") => Op::Scan(Bin::of(&op[5..]).filter(|b| b.reduces()).ok_or_else(|| format!("our software has a bug: the scan row {}", r.name))?),
+                _ if op.starts_with("histrows.add.") => {
+                    let ds = class_dims(out)?;
+                    let [kd, dd] = ds.as_slice() else { return Err(format!("our software has a bug: the histrows row {} is not of a rank-2 class", r.name)) };
+                    Op::HistRows(*kd, *dd)
+                }
                 _ if op.starts_with("hist.") => {
-                    let b = op.split('.').nth(1).and_then(Bin::of).filter(|b| *b != Bin::Sub).ok_or_else(|| format!("our software has a bug: the histogram row {}", r.name))?;
+                    let b = op.split('.').nth(1).and_then(Bin::of).filter(|b| b.reduces()).ok_or_else(|| format!("our software has a bug: the histogram row {}", r.name))?;
                     Op::Hist(b, class_dim(out, "a.")?)
                 }
                 _ if op.starts_with("mod.") => Op::Mod(dim(&op[4..])?),
@@ -708,7 +1089,7 @@ impl<'a> Interp<'a> {
             };
             ops.push(o);
         }
-        Ok(Interp { k, sig, ops, literals })
+        Ok(Interp { k, sig, elem, ops, literals })
     }
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
@@ -716,20 +1097,20 @@ impl<'a> Interp<'a> {
         let sizes_map = self.sig.sizes(inputs)?;
         let sizes: Vec<usize> = self.sig.dims.iter().map(|d| sizes_map[d]).collect();
         let mut env = Env {
-            inputs: inputs.iter().map(|a| View { data: Rc::new(a.data.clone()), off: 0, dims: a.dims.clone() }).collect(),
-            zeros: sizes.iter().map(|&n| View { data: Rc::new(vec![0; n]), off: 0, dims: vec![n] }).collect(),
+            inputs: inputs.iter().map(|a| View::of(a.data.clone(), a.dims.clone())).collect(),
+            zeros: sizes.iter().map(|&n| View::of(vec![0; n], vec![n])).collect(),
             state: vec![None; (1 + sizes.len()) * (self.sig.depth as usize + 1)],
             index: vec![None; sizes.len() * (self.sig.depth as usize + 1)],
             sizes,
         };
         match self.at(tree, &mut env)? {
-            Val::A(v) => Ok(Array { dims: v.dims.clone(), data: v.slice().to_vec() }),
-            Val::S(x) => Ok(Array { dims: vec![], data: vec![x] }),
+            Val::A(v) => Ok(Array { dims: v.dims.clone(), elem: self.elem, data: v.slice().to_vec() }),
+            Val::S(x) => Ok(Array { dims: vec![], elem: self.elem, data: vec![x.word()] }),
             Val::I(_) => Err("our software has a bug: a program whose value is an index".into()),
         }
     }
 
-    fn s(&self, t: &Tree, env: &mut Env) -> Result<i32, String> {
+    fn s(&self, t: &Tree, env: &mut Env) -> Result<Num, String> {
         match self.at(t, env)? {
             Val::S(x) => Ok(x),
             other => Err(format!("our software has a bug: a scalar slot holds {other:?}")),
@@ -748,21 +1129,36 @@ impl<'a> Interp<'a> {
         }
     }
 
+    fn num(&self, w: u32) -> Num {
+        Num::from_word(self.elem, w)
+    }
+
+    /// A left fold over an array's values from a neutral element, in order (Futhark's sequential `reduce`).
+    fn fold(&self, v: &View, b: Bin) -> Result<Num, String> {
+        let mut acc = Num::neutral(self.elem, b);
+        for w in v.slice() {
+            acc = acc.bin(b, self.num(*w))?;
+        }
+        Ok(acc)
+    }
+
     fn at(&self, t: &Tree, env: &mut Env) -> Result<Val, String> {
         let op = *self.ops.get(t.symbol as usize).ok_or("a symbol that is not a row")?;
         let kid = |i: usize| t.kids.get(i).ok_or_else(|| format!("{} lacks argument {i}", self.k.rows[t.symbol as usize].name));
         Ok(match op {
-            Op::Add => Val::S(self.s(kid(0)?, env)?.wrapping_add(self.s(kid(1)?, env)?)),
-            Op::Sub => Val::S(self.s(kid(0)?, env)?.wrapping_sub(self.s(kid(1)?, env)?)),
-            Op::Mul => Val::S(self.s(kid(0)?, env)?.wrapping_mul(self.s(kid(1)?, env)?)),
-            Op::Min => Val::S(self.s(kid(0)?, env)?.min(self.s(kid(1)?, env)?)),
-            Op::Max => Val::S(self.s(kid(0)?, env)?.max(self.s(kid(1)?, env)?)),
-            Op::Neg => Val::S(self.s(kid(0)?, env)?.wrapping_neg()),
-            Op::Abs => Val::S(self.s(kid(0)?, env)?.wrapping_abs()),
+            Op::Add => Val::S(self.s(kid(0)?, env)?.bin(Bin::Add, self.s(kid(1)?, env)?)?),
+            Op::Sub => Val::S(self.s(kid(0)?, env)?.bin(Bin::Sub, self.s(kid(1)?, env)?)?),
+            Op::Mul => Val::S(self.s(kid(0)?, env)?.bin(Bin::Mul, self.s(kid(1)?, env)?)?),
+            Op::Min => Val::S(self.s(kid(0)?, env)?.bin(Bin::Min, self.s(kid(1)?, env)?)?),
+            Op::Max => Val::S(self.s(kid(0)?, env)?.bin(Bin::Max, self.s(kid(1)?, env)?)?),
+            Op::Neg => Val::S(self.s(kid(0)?, env)?.neg()),
+            Op::Abs => Val::S(self.s(kid(0)?, env)?.abs()),
+            Op::Div => Val::S(Num::F(self.s(kid(0)?, env)?.f32_only("div")? / self.s(kid(1)?, env)?.f32_only("div")?)),
+            Op::Sqrt => Val::S(Num::F(self.s(kid(0)?, env)?.f32_only("sqrt")?.sqrt())),
             Op::Sel => {
                 // Futhark evaluates only the branch taken.
                 let c = self.s(kid(0)?, env)?;
-                Val::S(if c < 0 { self.s(kid(1)?, env)? } else { self.s(kid(2)?, env)? })
+                Val::S(if c.is_negative() { self.s(kid(1)?, env)? } else { self.s(kid(2)?, env)? })
             }
             Op::Get => {
                 let a = self.a(kid(0)?, env)?;
@@ -771,13 +1167,13 @@ impl<'a> Interp<'a> {
                 if a.dims.len() != 1 || i < 0 || i as usize >= n {
                     return Err(format!("our software has a bug: the index {i} is out of range for {:?}", a.dims));
                 }
-                Val::S(a.data[a.off + i as usize])
+                Val::S(self.num(a.data[a.off + i as usize]))
             }
-            Op::Sum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(0i32, |s, x| s.wrapping_add(*x))),
-            Op::Minimum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(i32::MAX, |s, x| s.min(*x))),
-            Op::Maximum => Val::S(self.a(kid(0)?, env)?.slice().iter().fold(i32::MIN, |s, x| s.max(*x))),
-            Op::Ival => Val::S(self.i(kid(0)?, env)? as i32),
-            Op::DimVal(d) => Val::S(env.sizes[d] as i32),
+            Op::Sum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Add)?),
+            Op::Minimum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Min)?),
+            Op::Maximum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Max)?),
+            Op::Ival => Val::S(Num::of_i64(self.elem, self.i(kid(0)?, env)?)),
+            Op::DimVal(d) => Val::S(Num::of_i64(self.elem, env.sizes[d] as i64)),
             Op::Const => {
                 let row = &self.k.rows[t.symbol as usize];
                 let ty = match row.output {
@@ -791,7 +1187,7 @@ impl<'a> Interp<'a> {
             Op::Index(d) => Val::I(env.index.get(d).copied().flatten().ok_or_else(|| format!("our software has a bug: the index of slot {d} is read unbound"))?),
             Op::Prev => Val::I((self.i(kid(0)?, env)? - 1).max(0)),
             Op::Next(d) => Val::I((self.i(kid(0)?, env)? + 1).min(env.sizes[d] as i64 - 1)),
-            Op::Clamp(d) => Val::I(i64::from(self.s(kid(0)?, env)?).min(env.sizes[d] as i64 - 1).max(0)),
+            Op::Clamp(d) => Val::I(self.s(kid(0)?, env)?.clamp(env.sizes[d])),
             Op::Zero => Val::I(0),
             Op::Last(d) => Val::I(env.sizes[d] as i64 - 1),
             Op::Tab(d, slot) => {
@@ -800,15 +1196,33 @@ impl<'a> Interp<'a> {
                 let outer = env.index[slot];
                 for j in 0..n {
                     env.index[slot] = Some(j as i64);
-                    out.push(self.s(kid(0)?, env)?);
+                    out.push(self.s(kid(0)?, env)?.word());
                 }
                 env.index[slot] = outer;
-                Val::A(View { data: Rc::new(out), off: 0, dims: vec![n] })
+                Val::A(View::of(out, vec![n]))
+            }
+            Op::TabRows(d, slot) => {
+                let n = env.sizes[d];
+                let mut out = Vec::new();
+                let mut cols = None;
+                let outer = env.index[slot];
+                for j in 0..n {
+                    env.index[slot] = Some(j as i64);
+                    let row = self.a(kid(0)?, env)?;
+                    if row.dims.len() != 1 || cols.is_some_and(|c| c != row.dims[0]) {
+                        return Err(format!("our software has a bug: a tabulate of rows whose row {j} is {:?}", row.dims));
+                    }
+                    cols = Some(row.dims[0]);
+                    out.extend_from_slice(row.slice());
+                }
+                env.index[slot] = outer;
+                let cols = cols.ok_or("our software has a bug: a tabulate of rows over an empty dimension")?;
+                Val::A(View::of(out, vec![n, cols]))
             }
             Op::Replicate(d) => {
                 let n = env.sizes[d];
-                let x = self.s(kid(0)?, env)?;
-                Val::A(View { data: Rc::new(vec![x; n]), off: 0, dims: vec![n] })
+                let x = self.s(kid(0)?, env)?.word();
+                Val::A(View::of(vec![x; n], vec![n]))
             }
             Op::Map2(b) => {
                 let x = self.a(kid(0)?, env)?;
@@ -816,20 +1230,18 @@ impl<'a> Interp<'a> {
                 if x.dims != y.dims || x.dims.len() != 1 {
                     return Err(format!("our software has a bug: map2 over {:?} and {:?}", x.dims, y.dims));
                 }
-                let out: Vec<i32> = x.slice().iter().zip(y.slice()).map(|(p, q)| b.apply(*p, *q)).collect();
-                Val::A(View { data: Rc::new(out), off: 0, dims: x.dims.clone() })
+                let out: Vec<u32> = x.slice().iter().zip(y.slice()).map(|(p, q)| self.num(*p).bin(b, self.num(*q)).map(Num::word)).collect::<Result<_, _>>()?;
+                Val::A(View::of(out, x.dims.clone()))
             }
             Op::Scan(b) => {
                 let x = self.a(kid(0)?, env)?;
-                let out: Vec<i32> = x
-                    .slice()
-                    .iter()
-                    .scan(b.neutral(), |acc, v| {
-                        *acc = b.apply(*acc, *v);
-                        Some(*acc)
-                    })
-                    .collect();
-                Val::A(View { data: Rc::new(out), off: 0, dims: x.dims.clone() })
+                let mut acc = Num::neutral(self.elem, b);
+                let mut out = Vec::with_capacity(x.len());
+                for w in x.slice() {
+                    acc = acc.bin(b, self.num(*w))?;
+                    out.push(acc.word());
+                }
+                Val::A(View::of(out, x.dims.clone()))
             }
             Op::Hist(b, d) => {
                 let is = self.a(kid(0)?, env)?;
@@ -838,18 +1250,53 @@ impl<'a> Interp<'a> {
                     return Err(format!("our software has a bug: a histogram of {:?} at {:?}", vs.dims, is.dims));
                 }
                 let n = env.sizes[d];
-                let mut out = vec![b.neutral(); n];
+                let mut out = vec![Num::neutral(self.elem, b); n];
                 for (i, v) in is.slice().iter().zip(vs.slice()) {
                     // Futhark's hist ignores an index outside [0, n).
-                    if let Ok(i) = usize::try_from(*i) {
-                        if i < n {
-                            out[i] = b.apply(out[i], *v);
+                    if let Some(i) = self.num(*i).hist_index(n) {
+                        out[i] = out[i].bin(b, self.num(*v))?;
+                    }
+                }
+                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![n]))
+            }
+            Op::HistRows(kd, dd) => {
+                let is = self.a(kid(0)?, env)?;
+                let vs = self.a(kid(1)?, env)?;
+                let (k, d) = (env.sizes[kd], env.sizes[dd]);
+                if is.dims.len() != 1 || vs.dims.len() != 2 || vs.dims[0] != is.dims[0] || vs.dims[1] != d {
+                    return Err(format!("our software has a bug: a histogram of rows {:?} at {:?} into [{k}][{d}]", vs.dims, is.dims));
+                }
+                let mut out = vec![Num::zero(self.elem); k * d];
+                let rows = vs.slice();
+                for (i, idx) in is.slice().iter().enumerate() {
+                    if let Some(b) = self.num(*idx).hist_index(k) {
+                        for e in 0..d {
+                            out[b * d + e] = out[b * d + e].bin(Bin::Add, self.num(rows[i * d + e]))?;
                         }
                     }
                 }
-                Val::A(View { data: Rc::new(out), off: 0, dims: vec![n] })
+                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![k, d]))
             }
-            Op::Mod(d) => Val::S(self.s(kid(0)?, env)?.rem_euclid(env.sizes[d] as i32)),
+            Op::RowDiv => {
+                let m = self.a(kid(0)?, env)?;
+                let s = self.a(kid(1)?, env)?;
+                if m.dims.len() != 2 || s.dims.len() != 1 || s.dims[0] != m.dims[0] {
+                    return Err(format!("our software has a bug: the rows of {:?} divided by {:?}", m.dims, s.dims));
+                }
+                let d = m.dims[1];
+                let mut out = Vec::with_capacity(m.len());
+                for (r, sw) in s.slice().iter().enumerate() {
+                    let div = self.num(*sw).f32_only("rowdiv")?;
+                    for w in &m.slice()[r * d..(r + 1) * d] {
+                        out.push((self.num(*w).f32_only("rowdiv")? / div).to_bits());
+                    }
+                }
+                Val::A(View::of(out, m.dims.clone()))
+            }
+            Op::Mod(d) => match self.s(kid(0)?, env)? {
+                Num::I(x) => Val::S(Num::I(x.rem_euclid(env.sizes[d] as i32))),
+                other => return Err(format!("our software has a bug: mod on {other:?}")),
+            },
             Op::Row => {
                 let m = self.a(kid(0)?, env)?;
                 let i = self.i(kid(1)?, env)?;
@@ -881,28 +1328,39 @@ impl<'a> Interp<'a> {
 
     /// The node executions of a tree on given sizes ([`TIMING_WORK_CAP`] bounds them at the timing input's sizes):
     /// every node once, times the trips of the binders it is inside
-    /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length.
+    /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length,
+    /// a histogram of rows and a division of rows their `[K][D]` cells.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
         fn walk(me: &Interp<'_>, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
             let op = me.ops[t.symbol as usize];
             let (body_mult, own) = match op {
-                Op::Tab(d, _) => (n[d], 1),
+                Op::Tab(d, _) | Op::TabRows(d, _) => (n[d], 1),
                 Op::Loop { dim, from1, .. } => (n[dim].saturating_sub(u128::from(from1)), 1),
                 Op::Replicate(d) | Op::Hist(_, d) => (1, 1 + n[d]),
+                Op::HistRows(kd, dd) => (1, 1 + n[kd] * n[dd]),
                 _ => (1, 1),
             };
             let mut sum = mult * own;
-            if let (Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_) | Op::Scan(_) | Op::Hist(..), Some(kid)) = (op, t.kids.first()) {
-                // The array reduced has the length of its class's dimension.
+            // The array reduced, or the rows histogrammed (the second argument) or divided, costs its class's cells.
+            let costed = match op {
+                Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_) | Op::Scan(_) | Op::Hist(..) | Op::RowDiv => t.kids.first(),
+                Op::HistRows(..) => t.kids.get(1),
+                _ => None,
+            };
+            if let Some(kid) = costed {
                 let dual = &me.k.dual(me.k.rows[kid.symbol as usize].output).ok_or("a row with no dual")?.dual;
                 let cls = dual.split(':').next().unwrap_or("");
-                let d = me.sig.dims.iter().position(|x| Some(x.as_str()) == cls.strip_prefix("a.")).ok_or("a reduction of a non-array")?;
-                sum += mult * n[d];
+                let ds = cls.strip_prefix("a.").ok_or("a reduction of a non-array")?;
+                let mut cells = 1u128;
+                for d in ds.split('.') {
+                    cells *= n[me.sig.dims.iter().position(|x| x == d).ok_or("a reduction over an unknown dimension")?];
+                }
+                sum += mult * cells;
             }
             let last = t.kids.len().saturating_sub(1);
             for (i, kid) in t.kids.iter().enumerate() {
-                let binder = matches!(op, Op::Tab(..) | Op::Loop { .. }) && i == last;
+                let binder = matches!(op, Op::Tab(..) | Op::TabRows(..) | Op::Loop { .. }) && i == last;
                 sum += walk(me, kid, if binder { mult * body_mult } else { mult }, n)?;
             }
             Ok(sum)
@@ -911,10 +1369,10 @@ impl<'a> Interp<'a> {
     }
 
     /// The bound on any tree of a layout: its most nodes, each run at most `max(D) ** depth` times and each costing at
-    /// most `1 + max(D)` (a reduction, a `map2` or a replicate), on the given largest dimension.
+    /// most `1 + max(D) ** 2` (a histogram or a division of rows), on the given largest dimension.
     pub fn layout_bound(&self, layout: &GeneLayout, max_dim: usize) -> u128 {
         let d = max_dim as u128;
-        layout.max_nodes() as u128 * d.pow(self.sig.depth) * (1 + d)
+        layout.max_nodes() as u128 * d.pow(self.sig.depth) * (1 + d * d)
     }
 }
 
@@ -973,8 +1431,10 @@ fn build_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty: Ty) 
     let row = |op: &str| -> Result<u32, String> { by_name.get(format!("{op}@{}", dual.dual).as_str()).copied().ok_or_else(|| format!("the kingdom has no row {op}@{}", dual.dual)) };
     match e {
         Sexp::Atom(a) => {
-            if let Ok(v) = a.parse::<i64>() {
-                let i = dual.literals.iter().position(|l| l.trim_end_matches(dual.slot.as_str()).parse::<i64>() == Ok(v)).ok_or_else(|| format!("the literal {a} is not in the pool of {}", dual.dual))?;
+            // A literal: a number (an integer or, in an f32 pool, a decimal), matched by value against the pool.
+            let numeric = a.strip_prefix('-').unwrap_or(a).chars().next().is_some_and(|c| c.is_ascii_digit());
+            if let Some(v) = numeric.then(|| a.parse::<f64>().ok()).flatten() {
+                let i = dual.literals.iter().position(|l| l.trim_end_matches(dual.slot.as_str()).parse::<f64>() == Ok(v)).ok_or_else(|| format!("the literal {a} is not in the pool of {}", dual.dual))?;
                 let sym = by_name.get(format!("?_{}", dual.dual).as_str()).copied().ok_or_else(|| format!("{} has no constant", dual.dual))?;
                 return Ok(Tree { symbol: sym, const_index: Some(i as u32), kids: vec![] });
             }
@@ -1220,21 +1680,56 @@ pub fn run_exe(exe: &Path, stdin: &[u8]) -> Result<Array, String> {
 /// differ; the mean absolute error over the expected values' mean magnitude, and the largest absolute error over
 /// their largest magnitude, each mapped `e -> e / (1 + e)`. An output of another shape differs everywhere (1, 1, 1).
 pub fn compare(got: &Array, want: &Array) -> [f64; 3] {
-    if got.dims != want.dims {
+    if got.dims != want.dims || got.elem != want.elem {
         return [1.0; 3];
     }
-    let n = want.data.len().max(1) as f64;
+    let n = want.len().max(1) as f64;
     let (mut differ, mut sum, mut max) = (0usize, 0f64, 0f64);
-    for (g, w) in got.data.iter().zip(&want.data) {
-        let d = (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64;
-        differ += usize::from(d > 0.0);
+    for i in 0..want.len() {
+        let d = gap(got, want, i);
+        differ += usize::from(!got.same_at(want, i));
         sum += d;
         max = max.max(d);
     }
-    let mean_mag = (want.data.iter().map(|w| f64::from(*w).abs()).sum::<f64>() / n).max(1.0);
-    let max_mag = want.data.iter().map(|w| f64::from(*w).abs()).fold(1.0, f64::max);
-    let squash = |e: f64| e / (1.0 + e);
+    let mean_mag = (want.values().map(f64::abs).sum::<f64>() / n).max(1.0);
+    let max_mag = want.values().map(f64::abs).fold(1.0, f64::max);
     [differ as f64 / n, squash(sum / n / mean_mag), squash(max / max_mag)]
+}
+
+/// A cell's error: 0 when the two values agree under the comparison policy (the same bits, or two NaNs), else the
+/// absolute difference of the values (0 for the two zeros, which differ but are no distance apart); a difference
+/// that is not a number (one NaN, two infinities of one sign) is infinite. Exact for `i32` (as before the values
+/// were typed), where a cell differs exactly when its error is above 0.
+fn gap(got: &Array, want: &Array, i: usize) -> f64 {
+    if got.same_at(want, i) {
+        return 0.0;
+    }
+    let d = (got.value(i) - want.value(i)).abs();
+    if d.is_nan() {
+        f64::INFINITY
+    } else {
+        d
+    }
+}
+
+/// `e -> e / (1 + e)` on `[0, 1]`; an infinite error is 1.
+fn squash(e: f64) -> f64 {
+    if e.is_finite() {
+        e / (1.0 + e)
+    } else {
+        1.0
+    }
+}
+
+/// The sign of a step between two cells (up, down, flat); a step that is not a number is flat.
+fn step_sign(d: f64) -> i8 {
+    if d > 0.0 {
+        1
+    } else if d < 0.0 {
+        -1
+    } else {
+        0
+    }
 }
 
 /// One kind of quality input ([`QUALITY_PARTS`] lists the ones the fitness uses, in order).
@@ -1290,7 +1785,7 @@ pub fn quality_input_names(want: &Array) -> Vec<String> {
 
 /// [`quality_input_names`] for the parts `parts` (a fitness scheme's, `crate::fitness::Scheme::quality_parts`).
 pub fn quality_input_names_of(parts: &[QualityPart], want: &Array) -> Vec<String> {
-    let n = want.data.len();
+    let n = want.len();
     let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
     let mut out = Vec::new();
     for part in parts {
@@ -1315,30 +1810,29 @@ const STUDY_INPUTS: [&str; 7] = ["wrong_share", "outside_1pct", "outside_10pct",
 
 /// [`QualityPart::Study`]'s inputs, exactly the study's (checked against its ledgers).
 fn study_inputs(got: &Array, want: &Array) -> [f64; 7] {
-    let n = want.data.len().max(1) as f64;
-    let lo = want.data.iter().copied().min().unwrap_or(0);
-    let hi = want.data.iter().copied().max().unwrap_or(0);
-    let range = (i64::from(hi) - i64::from(lo)) as f64;
-    let mag = want.data.iter().map(|w| f64::from(*w).abs()).fold(0.0, f64::max);
+    let n = want.len().max(1) as f64;
+    let lo = want.values().fold(f64::INFINITY, f64::min);
+    let hi = want.values().fold(f64::NEG_INFINITY, f64::max);
+    let range = if want.is_empty() { 0.0 } else { hi - lo };
+    let mag = want.values().map(f64::abs).fold(0.0, f64::max);
     let scale = if range > 0.0 { range } else { mag }.max(1.0);
     let (mut wrong, mut o1, mut o10, mut o50, mut sum, mut max) = (0.0, 0.0, 0.0, 0.0, 0.0, 0f64);
-    for (g, w) in got.data.iter().zip(&want.data) {
-        let d = (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64;
-        let rel = d / f64::from(*w).abs().max(1.0);
-        wrong += f64::from(u8::from(d > 0.0));
+    for i in 0..want.len() {
+        let d = gap(got, want, i);
+        let rel = d / want.value(i).abs().max(1.0);
+        wrong += f64::from(u8::from(!got.same_at(want, i)));
         o1 += f64::from(u8::from(rel > 0.01));
         o10 += f64::from(u8::from(rel > 0.10));
         o50 += f64::from(u8::from(rel > 0.50));
         sum += d;
         max = max.max(d);
     }
-    let squash = |e: f64| e / (1.0 + e);
-    let steps = want.data.len().saturating_sub(1);
+    let steps = want.len().saturating_sub(1);
     let order = if steps == 0 {
         0.0
     } else {
-        let sign = |a: i32, b: i32| (i64::from(b) - i64::from(a)).signum();
-        (0..steps).filter(|&j| sign(got.data[j], got.data[j + 1]) != sign(want.data[j], want.data[j + 1])).count() as f64 / steps as f64
+        let sign = |a: &Array, j: usize| step_sign(a.value(j + 1) - a.value(j));
+        (0..steps).filter(|&j| sign(got, j) != sign(want, j)).count() as f64 / steps as f64
     };
     [wrong / n, o1 / n, o10 / n, o50 / n, squash(sum / n / scale), squash(max / scale), order]
 }
@@ -1353,35 +1847,38 @@ pub fn quality_inputs(got: &Array, want: &Array) -> Vec<f64> {
 /// [`quality_inputs`] for the parts `parts` (a fitness scheme's, `crate::fitness::Scheme::quality_parts`).
 pub fn quality_inputs_of(parts: &[QualityPart], got: &Array, want: &Array) -> Vec<f64> {
     let names = quality_input_names_of(parts, want).len();
-    if got.dims != want.dims {
+    if got.dims != want.dims || got.elem != want.elem {
         return vec![1.0; names];
     }
-    let n = want.data.len();
-    let d: Vec<f64> = got.data.iter().zip(&want.data).map(|(g, w)| (i64::from(*g) - i64::from(*w)).unsigned_abs() as f64).collect();
-    let big = want.data.iter().map(|w| f64::from(*w).abs()).fold(1.0, f64::max);
-    let mean = (want.data.iter().map(|w| f64::from(*w).abs()).sum::<f64>() / n.max(1) as f64).max(1.0);
+    let n = want.len();
+    let d: Vec<f64> = (0..n).map(|i| gap(got, want, i)).collect();
+    let big = want.values().map(f64::abs).fold(1.0, f64::max);
+    let mean = (want.values().map(f64::abs).sum::<f64>() / n.max(1) as f64).max(1.0);
     let distinct = want.data.iter().collect::<std::collections::BTreeSet<_>>().len();
     let mut out = Vec::with_capacity(names);
     for part in parts {
         match part {
-            QualityPart::Wrong => out.push(d.iter().filter(|x| **x > 0.0).count() as f64 / n.max(1) as f64),
+            QualityPart::Wrong => out.push((0..n).filter(|i| !got.same_at(want, *i)).count() as f64 / n.max(1) as f64),
             QualityPart::CellLog => out.extend(d.iter().map(|x| (x.ln_1p() / big.ln_1p()).min(1.0))),
-            QualityPart::CellLevel => out.extend(d.iter().map(|x| (x / mean) / (1.0 + x / mean))),
+            QualityPart::CellLevel => out.extend(d.iter().map(|x| squash(x / mean))),
             QualityPart::Step => {
-                let sign = |v: &[i32], j: usize| (i64::from(v[j + 1]) - i64::from(v[j])).signum();
-                out.extend((0..n.saturating_sub(1)).map(|j| f64::from(u8::from(sign(&got.data, j) != sign(&want.data, j)))));
+                let sign = |a: &Array, j: usize| step_sign(a.value(j + 1) - a.value(j));
+                out.extend((0..n.saturating_sub(1)).map(|j| f64::from(u8::from(sign(got, j) != sign(want, j)))));
             }
             QualityPart::Shape if distinct >= 2 => {
-                let g: Vec<f64> = got.data.iter().map(|x| f64::from(*x)).collect();
-                let w: Vec<f64> = want.data.iter().map(|x| f64::from(*x)).collect();
+                let g: Vec<f64> = got.values().collect();
+                let w: Vec<f64> = want.values().collect();
+                // A value that is not finite (an f32 NaN or infinity) has no rank or level to correlate: the answer
+                // agrees with itself (0), any other output is the worst (1) on both.
+                let finite = g.iter().chain(&w).all(|x| x.is_finite());
                 for r in [crate::runner::spearman(&g, &w), crate::runner::pearson(&g, &w)] {
-                    out.push(r.map_or(0.5, |r| (1.0 - r) / 2.0));
+                    out.push(if finite { r.map_or(0.5, |r| (1.0 - r) / 2.0) } else if got == want { 0.0 } else { 1.0 });
                 }
             }
             QualityPart::Shape => {}
             QualityPart::Order if n >= 2 && distinct < 2 => {}
             QualityPart::Order => out.push(study_inputs(got, want)[6]),
-            QualityPart::Outside(p) => out.push(got.data.iter().zip(&want.data).filter(|(g, w)| (i64::from(**g) - i64::from(**w)).unsigned_abs() as f64 / f64::from(**w).abs().max(1.0) > f64::from(*p) / 100.0).count() as f64 / n.max(1) as f64),
+            QualityPart::Outside(p) => out.push((0..n).filter(|i| d[*i] / want.value(*i).abs().max(1.0) > f64::from(*p) / 100.0).count() as f64 / n.max(1) as f64),
             QualityPart::Study => out.extend(study_inputs(got, want)),
         }
     }
@@ -1482,13 +1979,14 @@ pub fn quality_fingerprint() -> String {
 
 /// [`quality_fingerprint`] of the parts `parts` (a fitness scheme's).
 pub fn quality_fingerprint_of(parts: &[QualityPart]) -> String {
-    let want = Array { dims: vec![7], data: vec![3, -40, 900, 7, 7, 0, 123_456] };
+    let w: Vec<i32> = vec![3, -40, 900, 7, 7, 0, 123_456];
+    let want = Array::i32s(vec![7], w.clone());
     let probes = [
-        Array { dims: vec![7], data: want.data.iter().map(|x| x + 5).collect() },
-        Array { dims: vec![7], data: want.data.iter().rev().copied().collect() },
-        Array { dims: vec![7], data: vec![0; 7] },
-        Array { dims: vec![6], data: vec![1; 6] },
-        Array { dims: vec![7], data: vec![3, -40, 901, 7, 7, 0, 123_456] },
+        Array::i32s(vec![7], w.iter().map(|x| x + 5).collect()),
+        Array::i32s(vec![7], w.iter().rev().copied().collect()),
+        Array::i32s(vec![7], vec![0; 7]),
+        Array::i32s(vec![6], vec![1; 6]),
+        Array::i32s(vec![7], vec![3, -40, 901, 7, 7, 0, 123_456]),
     ];
     let text: String = probes.iter().flat_map(|g| quality_inputs_of(parts, g, &want)).map(|x| format!("{x:?},")).collect();
     fnv(&[text.as_bytes()])
@@ -1625,3 +2123,5 @@ mod tests_micro;
 mod tests_view;
 #[cfg(test)]
 mod tests_pool;
+#[cfg(test)]
+mod tests_kmeans;

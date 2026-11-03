@@ -93,7 +93,7 @@ fn real_main() -> Result<(), String> {
                     .collect()
             }
         };
-        let walls = Array { dims: vec![rows, cols], data };
+        let walls = Array::i32s(vec![rows, cols], data);
         let stdin = write_binary(&[&walls]);
         let out = run_exe(&exe, &stdin)?;
         if out.dims != vec![cols] {
@@ -102,7 +102,7 @@ fn real_main() -> Result<(), String> {
         std::fs::write(dir.join(format!("{case}.in")), &stdin).map_err(|e| e.to_string())?;
         std::fs::write(dir.join(format!("{case}.out")), write_binary(&[&out])).map_err(|e| e.to_string())?;
         index.push_str(&format!("{case}\t{split}\t{rows}\t{cols}\t{seed}\t{}\n", kind.name()));
-        println!("{case}: {rows}x{cols}, output min {} max {}", out.data.iter().min().unwrap_or(&0), out.data.iter().max().unwrap_or(&0));
+        println!("{case}: {rows}x{cols}, output min {} max {}", out.values().fold(f64::INFINITY, f64::min), out.values().fold(f64::NEG_INFINITY, f64::max));
     }
     std::fs::write(dir.join("cases.tsv"), index).map_err(|e| e.to_string())?;
     Ok(())
@@ -185,17 +185,17 @@ fn micro(name: &str, dir: &std::path::Path, exe: &std::path::Path) -> Result<(),
     let mut index = format!("# name\tsplit\tk\tn\tseed\tindices\tvalues ({name}: i32 drawn as the last two columns say, `any` over the whole range; outputs by yardstick.fut through futhark c)\n");
     for (case, split, k, n, seed, ix, vals) in cases {
         let mut rng = GeneRng::new(0x51C_3E7A ^ seed);
-        let xs = Array { dims: vec![n], data: (0..n).map(|_| match ix {
+        let xs = Array::i32s(vec![n], (0..n).map(|_| match ix {
             Ix::Any => any_i32(&mut rng),
             Ix::InRange => rng.below(k) as i32,
-        }).collect() };
+        }).collect());
         let stdin = if name == "histogram" {
-            let vs = Array { dims: vec![n], data: (0..n).map(|_| match vals {
+            let vs = Array::i32s(vec![n], (0..n).map(|_| match vals {
                 Vals::Any => any_i32(&mut rng),
                 Vals::Upto(hi) => rng.below(hi as usize + 1) as i32,
                 Vals::One => 1,
-            }).collect() };
-            write_binary(&[&Array { dims: vec![], data: vec![k as i32] }, &xs, &vs])
+            }).collect());
+            write_binary(&[&Array::scalar_i32(k as i32), &xs, &vs])
         } else {
             write_binary(&[&xs])
         };
@@ -220,7 +220,7 @@ fn micro(name: &str, dir: &std::path::Path, exe: &std::path::Path) -> Result<(),
             Vals::One => "1".to_string(),
         };
         index.push_str(&format!("{case}\t{split}\t{k}\t{n}\t{seed}\t{ixs}\t{vls}\n"));
-        println!("{case}: k {k}, n {n}, output {} values, min {} max {}", out.data.len(), out.data.iter().min().unwrap_or(&0), out.data.iter().max().unwrap_or(&0));
+        println!("{case}: k {k}, n {n}, output {} values, min {} max {}", out.len(), out.values().fold(f64::INFINITY, f64::min), out.values().fold(f64::NEG_INFINITY, f64::max));
     }
     std::fs::write(dir.join("cases.tsv"), index).map_err(|e| e.to_string())?;
     Ok(())

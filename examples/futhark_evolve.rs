@@ -99,7 +99,7 @@ use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
 use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
 use fuller::fitness::{Family, Scheme};
-use fuller::futhark_sig::{build, function_count, DEFAULT_PROGRAM_SIZE, cases_fingerprint, compare, quality_fingerprint_of, compile_c, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
+use fuller::futhark_sig::{build, function_count, cases_fingerprint, compare, quality_fingerprint_of, compile_c, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
@@ -272,7 +272,7 @@ impl TimingInput {
             let output = fuller::futhark_sig::run_exe(&exe, &stdin)?;
             return Ok(TimingInput { name: format!("{}'s timing input", p.name), sizes: sig.sizes(&inputs)?, stdin, output: Some(fuller::futhark_sig::write_binary(&[&output])) });
         }
-        let i = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.data.len() * cases[*i].inputs.iter().map(|a| a.data.len()).sum::<usize>()).ok_or("no training case")?;
+        let i = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.len() * cases[*i].inputs.iter().map(|a| a.len()).sum::<usize>()).ok_or("no training case")?;
         Ok(TimingInput { name: cases[i].name.clone(), stdin: cases[i].stdin.clone(), sizes: sig.sizes(&cases[i].inputs)?, output: None })
     }
 
@@ -325,7 +325,7 @@ impl Quality {
     }
     /// Every output is all zeros (the dead point random programs crowd at, plan section H).
     fn all_zero(&self) -> bool {
-        !self.outputs.is_empty() && self.outputs.iter().all(|a| a.data.iter().all(|x| *x == 0))
+        !self.outputs.is_empty() && self.outputs.iter().all(|a| a.values().all(|x| x == 0.0))
     }
     /// A legal gene's program that did not compile or run (our software has a bug, logged): wrong everywhere.
     fn worst(cases: &[Case], parts: &[QualityPart]) -> Quality {
@@ -1746,9 +1746,9 @@ fn real_main() -> Result<(), String> {
     let contract = k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
     let reference = build(&k, p.reference)?;
     let planted = build(&k, p.planted)?;
-    // THE PROGRAM SIZE is an experiment parameter (`--program-size`, default `DEFAULT_PROGRAM_SIZE`), never the
+    // THE PROGRAM SIZE is an experiment parameter (`--program-size`, default the problem's `program_size`), never the
     // reference's size; the run card records it. The reference and the planted slowdown must fit the layout.
-    let program_size: usize = num(&args, "--program-size", DEFAULT_PROGRAM_SIZE)?;
+    let program_size: usize = num(&args, "--program-size", p.program_size)?;
     let start_tree = if start == "planted" { planted.clone() } else { reference.clone() };
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], program_size).map_err(|e| e.to_string())?;
     for (what, t) in [("reference", &reference), ("planted slowdown", &planted)] {
@@ -1802,7 +1802,7 @@ fn real_main() -> Result<(), String> {
     for i in 0..pairs {
         objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
     }
-    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "program_size_given": args.iter().any(|a| a == "--program-size"), "program_size_default": DEFAULT_PROGRAM_SIZE, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
+    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "program_size_given": args.iter().any(|a| a == "--program-size"), "program_size_default": p.program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
     let tel = RunTelemetry::start_with_fitness(
         &out,
         format!("futhark-{pname}-{regime}-seed{seed}"),

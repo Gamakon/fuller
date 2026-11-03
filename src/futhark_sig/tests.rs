@@ -46,7 +46,7 @@ fn the_published_program_and_the_yardstick_give_the_published_outputs() {
     let text = std::fs::read_to_string(pub_dir.join("medium.out")).unwrap();
     let text = text.split("--").next().unwrap();
     let data: Vec<i32> = text.trim().trim_start_matches('[').trim_end_matches(']').split(',').map(|x| x.trim().trim_end_matches("i32").parse().unwrap()).collect();
-    let medium_out = Array { dims: vec![data.len()], data };
+    let medium_out = Array::i32s(vec![data.len()], data);
     assert_eq!(medium_out.dims, vec![100_000]);
     // The published program, unchanged, on its own data file.
     let b = scratch("published");
@@ -130,7 +130,7 @@ fn random_genes_compile_and_the_compiled_program_equals_the_interpreter() {
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], 13).unwrap();
     let const_len = k.const_len();
     let mut rng = GeneRng::new(0x51C_0001);
-    let mk = |rows: usize, cols: usize, rng: &mut GeneRng| Array { dims: vec![rows, cols], data: (0..rows * cols).map(|_| rng.below(10) as i32 - 2).collect() };
+    let mk = |rows: usize, cols: usize, rng: &mut GeneRng| Array::i32s(vec![rows, cols], (0..rows * cols).map(|_| rng.below(10) as i32 - 2).collect());
     let small = [mk(5, 7, &mut rng), mk(1, 4, &mut rng), mk(6, 1, &mut rng)];
     let base = scratch("random");
     let mut sizes_seen = Vec::new();
@@ -178,12 +178,12 @@ fn the_egraph_variants_of_the_reference_are_equal_programs() {
 
 #[test]
 fn the_binary_format_round_trips() {
-    let a = Array { dims: vec![2, 3], data: vec![1, -2, 3, i32::MIN, i32::MAX, 0] };
-    let s = Array { dims: vec![], data: vec![7] };
+    let a = Array::i32s(vec![2, 3], vec![1, -2, 3, i32::MIN, i32::MAX, 0]);
+    let s = Array::scalar_i32(7);
     let raw = write_binary(&[&a, &s]);
     assert_eq!(read_binary(&raw).unwrap(), vec![a.clone(), s]);
     assert!(read_one(&raw).is_err());
-    assert_eq!(compare(&a, &Array { dims: vec![3, 2], data: a.data.clone() }), [1.0; 3]);
+    assert_eq!(compare(&a, &Array { dims: vec![3, 2], elem: Elem::I32, data: a.data.clone() }), [1.0; 3]);
     let mut b = a.clone();
     b.data[0] = 2;
     let q = compare(&b, &a);
@@ -219,7 +219,7 @@ fn the_quality_inputs_give_partial_correctness_a_slope() {
     let angle = |q: &[f64]| crate::runner::staged_hff(crate::runner::FitnessStage::Quality, q, &[]).unwrap().quality;
     for c in load_cases(&PATHFINDER_PROBLEM).unwrap() {
         let w = &c.output;
-        let with = |f: &dyn Fn(usize, i32) -> i32| Array { dims: w.dims.clone(), data: w.data.iter().enumerate().map(|(i, x)| f(i, *x)).collect() };
+        let with = |f: &dyn Fn(usize, i32) -> i32| Array::i32s(w.dims.clone(), w.i32_values().unwrap().iter().enumerate().map(|(i, x)| f(i, *x)).collect());
         assert_eq!(quality_inputs(w, w), vec![0.0; quality_input_names(w).len()], "{}: the answer is not 0", c.name);
         let zero = angle(&quality_inputs(&with(&|_, _| 0), w));
         if w.data.len() >= 2 {
@@ -229,7 +229,7 @@ fn the_quality_inputs_give_partial_correctness_a_slope() {
         let near = angle(&quality_inputs(&with(&|_, x| x + 1), w));
         // A margin of 0.1: on held_1x37 (walls 0..9, the answer is row 0) one off is up to 100 % of a cell.
         assert!(near < zero - 0.1, "{}: off by one {near:.4}, all zero {zero:.4}", c.name);
-        assert_eq!(quality_inputs(&Array { dims: vec![w.data.len() + 1], data: vec![0; w.data.len() + 1] }, w), vec![1.0; quality_input_names(w).len()]);
+        assert_eq!(quality_inputs(&Array::i32s(vec![w.len() + 1], vec![0; w.len() + 1]), w), vec![1.0; quality_input_names(w).len()]);
     }
 }
 
@@ -289,19 +289,20 @@ fn pathfinder_is_timed_on_the_published_benchmarks_shape() {
     assert_eq!(inputs.len(), 1, "one input, the walls");
     let walls = &inputs[0];
     assert_eq!(walls.dims, vec![PATHFINDER_TIMING_ROWS, 100_000]);
-    assert!(walls.data.iter().all(|w| (0..10).contains(w)), "walls 0 to 9, as the published Sobol walls");
+    let walls_i32 = walls.i32_values().unwrap();
+    assert!(walls_i32.iter().all(|w| (0..10).contains(w)), "walls 0 to 9, as the published Sobol walls");
     let sizes = signature(&PATHFINDER).unwrap().sizes(&inputs).unwrap();
     assert_eq!((sizes["rows"], sizes["cols"]), (100, 100_000));
     assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed: the same bytes every time");
     // The recurrence: row 0, then each later row's wall plus the least of the neighbours (clamped at the edges).
     let (rows, cols) = (walls.dims[0], walls.dims[1]);
-    let mut state: Vec<i32> = walls.data[..cols].to_vec();
+    let mut state: Vec<i32> = walls_i32[..cols].to_vec();
     for r in 1..rows {
         let prev = state.clone();
         for j in 0..cols {
             let left = prev[j.saturating_sub(1)];
             let right = prev[(j + 1).min(cols - 1)];
-            state[j] = walls.data[r * cols + j] + prev[j].min(left).min(right);
+            state[j] = walls_i32[r * cols + j] + prev[j].min(left).min(right);
         }
     }
     if !have_futhark() {
@@ -310,5 +311,14 @@ fn pathfinder_is_timed_on_the_published_benchmarks_shape() {
     let exe = compile_c(p.yardstick, &scratch("pathfinder_timing")).unwrap();
     let got = run_exe(&exe, &stdin).unwrap();
     assert_eq!(got.dims, vec![cols]);
-    assert_eq!(got.data, state, "the published program on the timing input is the recurrence");
+    assert_eq!(got.i32_values().unwrap(), state, "the published program on the timing input is the recurrence");
+}
+
+/// THE QUALITY FINGERPRINT IS PINNED: the gate of a discovery run compares it with the slope check's record, so a
+/// change to the formula's values on i32 outputs would invalidate every recorded gate. Recorded at a535d464, before
+/// the values became typed (step 4): the i32 formula must give the same bits after.
+#[test]
+fn the_quality_fingerprint_of_the_i32_formula_is_pinned() {
+    let every = [QualityPart::Wrong, QualityPart::CellLog, QualityPart::CellLevel, QualityPart::Step, QualityPart::Shape, QualityPart::Order, QualityPart::Outside(10)];
+    assert_eq!((quality_fingerprint(), quality_fingerprint_of(&[QualityPart::Study]), quality_fingerprint_of(&every)), ("80b71efa5c5adfb0".to_string(), "7405ef68d2104e9c".to_string(), "756d9a9553fe716b".to_string()));
 }
