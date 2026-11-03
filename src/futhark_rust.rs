@@ -517,11 +517,6 @@ mod tests {
     ///   normal y, so |c^ - S^/m| <= 2.5 * 2^-23 |S^/m|.
     /// * Together, with e1 = gamma_{m-1}(u) sum |x_i| / m: |c^ - S/m| <= e1 + 2.5 * 2^-23 (|S/m| + e1), plus the f64
     ///   reference's own error gamma_{m+1}(2^-53) (sum |x_i| / m + |S/m|). An empty cluster's centre is exactly 0.
-    /// * A DYADIC INPUT (`futhark_sig::kmeans_dyadic`: every value a multiple of 2^-6 in [0, 1), n 2^6 and d 2^12 under
-    ///   2^24; the stored cases since 2026-11-03) has every distance and every cluster sum exact in f32 in any order,
-    ///   so the margin and e1 are 0: only the division rounds. A tie between two centres is then settled by the
-    ///   published fold (`closest_point` keeps the earlier centre only when it is strictly nearer, so the LATER index
-    ///   wins a tie), the same on every path, and the f64 reference settles it the same way.
     fn kmeans_bound(input: &[u8]) -> (Vec<f64>, Vec<f64>) {
         let m = f32_matrices(input);
         assert_eq!(m.len(), 2, "a k-means input is points then centres");
@@ -529,8 +524,7 @@ mod tests {
         assert_eq!(d, d2);
         let (n, d, k) = (*n, *d, *k);
         let (u32_, u64_) = (2f64.powi(-24), 2f64.powi(-53));
-        let dyadic = crate::futhark_sig::kmeans_dyadic(&crate::futhark_sig::Array::f32s(vec![n, d], pts.clone()), &crate::futhark_sig::Array::f32s(vec![k, d], cen.clone())).is_ok();
-        let margin = if dyadic { 0.0 } else { gamma(d + 2, u32_) + gamma(d + 2, u64_) };
+        let margin = gamma(d + 2, u32_) + gamma(d + 2, u64_);
         let mut sum = vec![0f64; k * d];
         let mut abs = vec![0f64; k * d];
         let mut count = vec![0usize; k];
@@ -538,8 +532,8 @@ mod tests {
             let p = &pts[i * d..(i + 1) * d];
             let dist: Vec<f64> = (0..k).map(|j| (0..d).map(|t| (f64::from(p[t]) - f64::from(cen[j * d + t])).powi(2)).sum()).collect();
             let mut order: Vec<usize> = (0..k).collect();
-            order.sort_by(|a, b| dist[*a].total_cmp(&dist[*b]).then(b.cmp(a)));
-            if k > 1 && !dyadic {
+            order.sort_by(|a, b| dist[*a].total_cmp(&dist[*b]).then(a.cmp(b)));
+            if k > 1 {
                 let (d1, d2) = (dist[order[0]], dist[order[1]]);
                 assert!(d2 - d1 > margin * (d1 + d2), "point {i}: its nearest centres are {d1} and {d2} apart by less than the f32 distance bound; the input cannot be judged by a bound");
             }
@@ -559,7 +553,7 @@ mod tests {
             for t in 0..d {
                 let x = j * d + t;
                 exact[x] = sum[x] / mc as f64;
-                let e1 = if dyadic { 0.0 } else { gamma(mc.saturating_sub(1), u32_) * abs[x] / mc as f64 };
+                let e1 = gamma(mc.saturating_sub(1), u32_) * abs[x] / mc as f64;
                 bound[x] = e1 + 2.5 * 2f64.powi(-23) * (exact[x].abs() + e1) + gamma(mc + 1, u64_) * (abs[x] / mc as f64 + exact[x].abs());
             }
         }

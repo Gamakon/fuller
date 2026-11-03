@@ -118,11 +118,9 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
             Ok(Some(write_binary(&[&Array::scalar_i32(100), &is, &vs])))
         }
         // The k-means champion's timing case (`docs/kmeans_champion_s1/README.md`: n = 8,192 points, d = 256, k =
-        // 1,024), points and centres DYADIC: uniform over the multiples of 2^-6 in [0, 1), a fixed seed, so every sum
-        // of every order is exact in f32 and the runner's timing-case output check is bit for bit on the GPU too
-        // ([`kmeans_dyadic`]; before 2026-11-03 multiples of 2^-24, whose sums round by the order).
+        // 1,024), points and centres uniform in [0, 1) (multiples of 2^-24), a fixed seed.
         "kmeans" => {
-            let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> (64 - KMEANS_GRANULE_BITS)) as f32 / (1u64 << KMEANS_GRANULE_BITS) as f32).collect());
+            let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32).collect());
             let (points, centres) = (unit(n), unit(KMEANS_TIMING_K));
             Ok(Some(write_binary(&[&points, &centres])))
         }
@@ -321,57 +319,6 @@ pub const A7_TIMING_N: usize = 256;
 /// The dimensions of k-means's timing input beside its `timing_n` points.
 pub const KMEANS_TIMING_D: usize = 256;
 pub const KMEANS_TIMING_K: usize = 1024;
-
-/// K-MEANS'S INPUTS ARE DYADIC: every point and centre coordinate is a multiple of 2^-6 in [0, 1), 64 levels (the stored
-/// cases through `quantise.fut`, the timing input by construction). Decided 2026-11-03 after the GPU run of
-/// `futhark_evolve --problem kmeans --check --eval rust` found the compiled reference inexact on 4 of the 5 stored
-/// cases (65-81 % of the cells one or two f32 bits from the host interpreter): the device adds a cluster's points and a
-/// distance's squares in another order than `futhark c` and the interpreter's left folds, and on uniforms of 24-bit
-/// mantissas the sums round differently. The policy is bit for bit with no tolerance, so the DATA makes the order
-/// irrelevant: with this granule every partial sum of every order is exact in f32 ([`kmeans_dyadic`] holds the bounds),
-/// and the only roundings left are the final divisions by the counts, one correctly-rounded operation each on every
-/// IEEE path.
-pub const KMEANS_GRANULE_BITS: u32 = 6;
-
-/// THE SUFFICIENT CONDITION for a k-means step's output to be one set of bits in every order of its additions, checked
-/// on the actual inputs (`points: [n][d]f32`, `centres: [k][d]f32`): every value is a multiple of 2^-G in [0, 1)
-/// (G = [`KMEANS_GRANULE_BITS`]), and the two sums fit f32's 24-bit significand whole:
-/// * a cluster sum is at most n terms, each a multiple of 2^-G below 1, so a multiple of 2^-G below n: it needs
-///   n * 2^G granules, and n * 2^G < 2^24 keeps every partial sum of every order exact (the differences `p - c` are
-///   exact too, multiples of 2^-G in (-1, 1));
-/// * a squared distance is at most d terms `(p - c)^2`, each a multiple of 2^-2G below 1, so d * 2^2G < 2^24 keeps every
-///   partial sum (and a fused multiply-add's) exact; the nearest centre is then the exact one, and a tie is settled by
-///   the published fold's index order, the same on every path.
-///
-/// The counts are exact (n < 2^24). What remains is `sum / count`, one IEEE division per cell. Returns the two granule
-/// counts, (n * 2^G, d * 2^2G), or the first value or bound that fails.
-pub fn kmeans_dyadic(points: &Array, centres: &Array) -> Result<(u64, u64), String> {
-    let g = KMEANS_GRANULE_BITS;
-    let scale = (1u64 << g) as f64;
-    for (what, a) in [("points", points), ("centres", centres)] {
-        if a.elem != Elem::F32 || a.dims.len() != 2 {
-            return Err(format!("{what} is not a [][]f32: {:?} {:?}", a.elem, a.dims));
-        }
-        for (i, v) in a.values().enumerate() {
-            let granules = v * scale;
-            if !(0.0..1.0).contains(&v) || granules.fract() != 0.0 {
-                return Err(format!("{what}[{i}] = {v} is not a multiple of 2^-{g} in [0, 1)"));
-            }
-        }
-    }
-    let (n, d) = (points.dims[0] as u64, points.dims[1] as u64);
-    if centres.dims[1] as u64 != d {
-        return Err(format!("the centres have {} coordinates, the points {d}", centres.dims[1]));
-    }
-    let (sum_granules, dist_granules) = (n << g, d << (2 * g));
-    if sum_granules >= 1 << 24 {
-        return Err(format!("a cluster sum of n = {n} multiples of 2^-{g} needs {sum_granules} granules, over f32's 2^24"));
-    }
-    if dist_granules >= 1 << 24 {
-        return Err(format!("a squared distance over d = {d} multiples of 2^-{} needs {dist_granules} granules, over f32's 2^24", 2 * g));
-    }
-    Ok((sum_granules, dist_granules))
-}
 
 /// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
 /// well above every reference (pathfinder's is 13 functions, histogram's 4, reduce's and scan's 1), as SR and regex

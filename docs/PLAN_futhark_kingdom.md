@@ -376,28 +376,6 @@ against `TIMING_WORK_CAP` = 5.9e10, so at this timing input the runner would not
 interpreter runs the reference at about 4e7 node executions a second (the stored cases in 0.5 s), so the timing input
 is checked through `futhark c` only (`tests_kmeans::the_kmeans_timing_input_...`).
 
-**The data is dyadic (2026-11-03).** The first GPU run, `futhark_evolve --problem kmeans --check --eval rust` (the
-lead's, 04:06Z), stopped at the control: "our software has a bug: the compiled reference is not exact" — on 4 of the
-5 stored cases 65-81 % of the output cells were one or two f32 bits (4e-8 to 3e-7) from the host interpreter; the
-n = 1 case was exact. The cause is the order of the additions: the device sums a cluster's points and a distance's
-squares in another order than the interpreter's and `futhark c`'s sequential left folds, and on `futhark dataset`'s
-uniforms (24-bit mantissas) the partial sums round differently. The policy stays bit for bit with no tolerance; the
-DATA makes the order irrelevant. Every point and centre is now a multiple of 2^-6 in [0, 1), 64 levels
-(`KMEANS_GRANULE_BITS`): the stored cases are the same `futhark dataset` draws through `quantise.fut` (floor(u 64) /
-64, every operation exact), the timing input draws 6 bits a value. The bounds, checked on the actual inputs by
-`kmeans_dyadic`: a cluster sum is at most n terms of granularity 2^-6, n 2^6 < 2^24 (n = 8,192 at the timing input:
-2^19 granules); a squared distance is at most d terms of granularity 2^-12, d 2^12 < 2^24 (d = 256: 2^20 granules);
-so every partial sum of every order, and a fused multiply-add's, is exact in f32, the nearest centre is the exact one
-(a tie, which the dyadic data does produce, is settled by the published fold's index order on every path), and the
-only roundings left are the final divisions by the counts, one correctly-rounded IEEE operation per cell.
-`tests_kmeans::every_stored_case_and_the_timing_input_are_dyadic_so_every_order_of_additions_is_exact` proves the
-sufficient condition on the stored bytes and the timing input; the exactness tests above re-ran on the regenerated
-cases (reference and planted on 5 of 5 interpreted, compiled and batched; the 256 variants on 5 of 5); `futhark_rust`'s
-bound takes a dyadic input as exact up to the division. One caveat the CPU cannot settle: `futhark_rust`'s GPU gate
-notes the device's f32 division is not correctly rounded on the shim path (WGSL allows 2.5 ulp, measured 1 ulp from C
-2026-11-01); if the rerun still shows single-bit differences, they are on cells whose count is not a power of two, and
-the next fix is the division, not the data.
-
 **Not done (step 4's next pieces):** two elements in one view (k-means's membership is an `f32` holding an index
 because the view has one element; D7's `a.f32.n` naming), tuples and records, GPU residency. A7 as a problem of the
 one runner: done, 4b.

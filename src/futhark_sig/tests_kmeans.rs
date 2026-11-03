@@ -302,48 +302,8 @@ fn the_comparison_policy_is_bit_for_bit_with_nans_equal() {
     }
 }
 
-/// THE DATA MAKES THE ORDER IRRELEVANT (`KMEANS_GRANULE_BITS`): every stored case's points and centres, and the timing
-/// input's, are multiples of 2^-6 in [0, 1), and the two sums of the step fit f32 whole for the case's n and d
-/// (`kmeans_dyadic`: n * 2^6 < 2^24 granules for a cluster sum, d * 2^12 < 2^24 for a squared distance), so every
-/// partial sum of every order of additions is exact and the step's output is one set of bits on every path up to the
-/// final divisions. The sufficient condition is what is proved; the cases' outputs are then checked exact on each CPU
-/// path by the other tests. Also counted: the points whose two nearest centres tie (distances are exact, so the
-/// published fold settles a tie by index, the same on every path); measured 0 of 1,678 on the stored cases.
-#[test]
-fn every_stored_case_and_the_timing_input_are_dyadic_so_every_order_of_additions_is_exact() {
-    let p = problem("kmeans").unwrap();
-    let cases = load_cases(&p).unwrap();
-    assert_eq!(cases.len(), 5);
-    let mut ties = 0usize;
-    for c in &cases {
-        let (sum_granules, dist_granules) = kmeans_dyadic(&c.inputs[0], &c.inputs[1]).unwrap_or_else(|e| panic!("{}: {e}", c.name));
-        let (n, d, k) = (c.inputs[0].dims[0], c.inputs[0].dims[1], c.inputs[1].dims[0]);
-        assert_eq!((sum_granules, dist_granules), ((n as u64) << 6, (d as u64) << 12));
-        // The squared distances in f64 are exact (multiples of 2^-12 below d); a point whose two nearest centres tie.
-        let (pts, cen) = (c.inputs[0].f32_values().unwrap(), c.inputs[1].f32_values().unwrap());
-        for i in 0..n {
-            let mut dist: Vec<f64> = (0..k).map(|j| (0..d).map(|t| (f64::from(pts[i * d + t]) - f64::from(cen[j * d + t])).powi(2)).sum()).collect();
-            dist.sort_by(f64::total_cmp);
-            ties += usize::from(k > 1 && dist[0] == dist[1]);
-        }
-        eprintln!("kmeans {}: dyadic, n = {n} (2^6 n = {sum_granules} < 2^24), d = {d} (2^12 d = {dist_granules} < 2^24)", c.name);
-    }
-    eprintln!("kmeans: {ties} points of the stored cases tie between their two nearest centres");
-    let stdin = timing_input(&p).unwrap().expect("k-means has its own timing input");
-    let inputs = read_binary(&stdin).unwrap();
-    let (sum_granules, dist_granules) = kmeans_dyadic(&inputs[0], &inputs[1]).unwrap_or_else(|e| panic!("the timing input: {e}"));
-    assert_eq!((sum_granules, dist_granules), (8192 << 6, 256 << 12), "the timing input's bounds: 2^19 and 2^20 granules");
-    // The condition is a condition: 2^18 points or 2^12 coordinates would not fit f32 whole.
-    let too_many = Array::f32s(vec![1 << 18, 1], vec![0.5; 1 << 18]);
-    assert!(kmeans_dyadic(&too_many, &Array::f32s(vec![1, 1], vec![0.5])).is_err());
-    let too_wide = Array::f32s(vec![1, 1 << 12], vec![0.5; 1 << 12]);
-    assert!(kmeans_dyadic(&too_wide, &too_wide).is_err());
-    assert!(kmeans_dyadic(&Array::f32s(vec![1, 1], vec![0.3]), &Array::f32s(vec![1, 1], vec![0.5])).is_err(), "0.3 is not a multiple of 2^-6");
-    assert!(kmeans_dyadic(&Array::f32s(vec![1, 1], vec![1.0]), &Array::f32s(vec![1, 1], vec![0.5])).is_err(), "1 is out of [0, 1)");
-}
-
 /// THE TIMING INPUT is the champion's shape (`docs/kmeans_champion_s1/README.md`: n = 8,192 points, d = 256, k =
-/// 1,024), fixed bytes, points and centres dyadic in [0, 1); the published program (the yardstick, `futhark c`) runs on it
+/// 1,024), fixed bytes, points and centres in [0, 1); the published program (the yardstick, `futhark c`) runs on it
 /// and gives a `[k][d]f32`. The host interpreter is not run on it: measured here at the rate it does the stored
 /// cases, the reference's work there (2.1e11 node executions, printed with the timing bound) would take over an
 /// hour, so the timing input's output is the yardstick's (as the runner takes it, `TimingInput::of`).
