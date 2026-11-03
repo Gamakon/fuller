@@ -63,6 +63,8 @@ fn description(problem: &str) -> Result<&'static str, String> {
         "pathfinder" => Ok("walls is a grid of rows by cols cell costs. Return, for every column of the last row, the least total cost of a path from the top row down to it: the cost of row 0 is the row itself; for each later row i, the cost of column j is walls[i][j] plus the least of the previous row's costs at columns j - 1, j and j + 1, a neighbour off the edge of the grid left out. Arithmetic is wrapping i32."),
         "reduce" => Ok("Return the sum of the elements of xs, with wrapping i32 arithmetic."),
         "scan" => Ok("Return the inclusive prefix sums of xs: element i is the sum of xs[0] .. xs[i], with wrapping i32 arithmetic."),
+        // UltraDim's k-means step (docs/kmeans_seed.md): what the step computes, never how the prototype's kernels do it.
+        "kmeans" => Ok("One step of k-means in f32. points is n points of d coordinates, centres the k current centres. Return the k new centres: assign each point to its nearest centre by Euclidean distance (the square root of the sum of squared coordinate differences; on a tie the centre with the smaller index), then each new centre is the mean over its points of each coordinate (any summation order or compensation you choose; the data span magnitudes from 1e-3 to 1e5, so accuracy matters); a centre with no points keeps its previous value (that is why the previous centres are an input). UltraDim's points are unit vectors (spherical k-means: on the unit sphere the nearest centre by Euclidean distance is the one with the largest cosine), but the step must not normalise anything: the inputs here are not unit. The step is run to convergence by a harness that measures the clustering's quality, the time to converge and the iterations, so a step that converges in fewer or faster iterations is better; its output must be the k x d centres as f32."),
         o => Err(format!("no task description for {o}")),
     }
 }
@@ -184,18 +186,53 @@ fn contract(k: &FutharkKingdom, sig: &Signature, pname: &str, topics: bool) -> R
             ops.push(format!("  {s}    -- <{cls}>: {}", note_of.get(r.name.as_str()).copied().unwrap_or("")));
         }
     }
-    let lits = k.duals.iter().find(|d| d.dual == "i32:c").map(|d| d.literals.iter().map(|l| l.trim_end_matches("i32").to_string()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    // The view's elements (`f32`, or `i32` and `f32`), their literal pools and their classes: the contract states the
+    // kingdom the program is read into, whatever its elements are.
+    let elems = &sig.elements;
+    let lits: Vec<String> = elems
+        .iter()
+        .filter_map(|e| k.duals.iter().find(|d| d.dual == format!("{e}:c")).map(|d| format!("{e}: {}", d.literals.iter().map(|l| l.trim_end_matches(e.as_str()).to_string()).collect::<Vec<_>>().join(", "))))
+        .collect();
     let sizes = if sig.size_inputs.is_empty() {
         String::new()
     } else {
         format!(" In these spellings {} is the size as an i64: begin the body with {} as the kingdom's own programs do.", sig.size_inputs.join(", "), sig.size_inputs.iter().map(|d| format!("let {d} = i64.i32 {d}")).collect::<Vec<_>>().join(" and "))
     };
-    let classes = sig.dims.iter().map(|d| format!("<a.{d}> is a [{d}]i32 array, <ix.{d}> an i64 index in range for [{d}]")).collect::<Vec<_>>().join("; ");
+    let multi = elems.len() > 1;
+    let values = elems.iter().map(|e| format!("<{e}> is an {e} value")).collect::<Vec<_>>().join(", ");
+    let arrays = sig
+        .dims
+        .iter()
+        .map(|d| {
+            let a = elems.iter().map(|e| if multi { format!("<a.{e}.{d}> is a [{d}]{e} array") } else { format!("<a.{d}> is a [{d}]{e} array") }).collect::<Vec<_>>().join(", ");
+            format!("{a}, <ix.{d}> an i64 index in range for [{d}]")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let rank2 = sig.inputs.iter().chain(std::iter::once(&sig.output)).filter(|p| p.dims.len() == 2).map(|p| format!("<a.{}{}> is a [{}][{}]{} array", if multi { format!("{}.", p.elem) } else { String::new() }, p.dims.join("."), p.dims[0], p.dims[1], p.elem)).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(", ");
+    let classes = if rank2.is_empty() { arrays } else { format!("{arrays}; {rank2}") };
+    let has = |op: &str| k.rows.iter().any(|r| r.name.starts_with(op));
+    let mut rules = Vec::new();
+    rules.push(if multi {
+        format!("- Values of the types {} only (no other numeric types), no bool values other than the condition below, no records, no array literals, no in-place updates (with), no while loops, no filter, scatter, zip, rotate, reverse, iota-based arithmetic on i64 values.", elems.join(" and "))
+    } else {
+        format!("- {} values only (no other numeric types), no bool values other than the condition below, no records, no array literals, no in-place updates (with), no while loops, no filter, scatter, zip, rotate, reverse, iota-based arithmetic on i64 values.", elems[0])
+    });
+    rules.push(format!("- Literals only from these pools: {}.", lits.join("; ")));
+    rules.push("- A conditional only as: if e < 0 then a else b.".to_string());
+    rules.push("- An index into an array must be in range by construction: a loop or tabulate counter over that array's size, 0, the size minus 1, i64.max 0 (j - 1), i64.min (D - 1) (j + 1), or the clamp of a value into [0, D) as the operations above spell it.".to_string());
+    rules.push(format!("- At most {} nested binders (tabulate, loop, or the lambda of a map); a loop's state is a scalar, a rank-1 array{}.", sig.depth, if has("triple@") { ", a pair or a triple of scalars (destructured: loop (s, c, k) = ...)" } else if has("pair@") { " or a pair of scalars (destructured: loop (s, c) = ...)" } else { "" }));
+    if has("let@") {
+        let lets: Vec<String> = k.rows.iter().filter(|r| r.name.starts_with("let@")).filter_map(|r| r.inputs.first().and_then(|t| k.dual(*t)).map(|d| d.dual.split(':').next().unwrap_or("").to_string())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        rules.push(format!("- A let of an intermediate ARRAY is allowed only at the top of the program, once a class, for an array of the class {}: let name = <array> in <the rest> (one kernel writes a buffer the next reads); no other let of an array.", lets.join(" or ")));
+    }
+    let folds = elems.iter().map(|e| format!("reduce (+) 0, reduce {e}.min {e}.highest, reduce {e}.max {e}.lowest")).collect::<Vec<_>>().join(", ");
+    rules.push(format!("- You may use let bindings of scalars, def helper functions, map and map2 with lambdas, {folds}, and |>."));
     Ok(format!(
-        "You write programs in Futhark (version 0.28). Every program you write must be a complete Futhark program with exactly this entry point:\n\n  {entry}\n\n{}\n\nYOUR PROGRAMS ARE READ INTO A RESTRICTED KINGDOM OF FUTHARK, which has only these operations (Futhark spelling; <i32> is an i32 value, {classes}; inside a binder the binder's own variables, under any names you choose, are values of those classes).{sizes}\n{}\n\nRULES a program must keep, or it cannot be read:\n- i32 values only: no floats, no bool values other than the condition below, no tuples, no records, no array literals, no in-place updates (with), no while loops, no filter, scatter, zip, rotate, reverse, iota-based arithmetic on i64 values.\n- Integer literals only {lits}.\n- A conditional only as: if e < 0 then a else b.\n- An index into an array must be in range by construction: a loop or tabulate counter over that array's size, 0, the size minus 1, i64.max 0 (j - 1), i64.min (D - 1) (j + 1), or i64.max 0 (i64.min (D - 1) (i64.i32 e)).\n- At most {} nested binders (tabulate, loop, or the lambda of a map).\n- You may use let bindings, def helper functions, map and map2 with lambdas, reduce (+) 0, reduce i32.min i32.highest, reduce i32.max i32.lowest, and |>.\n\n{}",
+        "You write programs in Futhark (version 0.28). Every program you write must be a complete Futhark program with exactly this entry point:\n\n  {entry}\n\n{}\n\nYOUR PROGRAMS ARE READ INTO A RESTRICTED KINGDOM OF FUTHARK, which has only these operations (Futhark spelling; {values}; {classes}; inside a binder the binder's own variables, under any names you choose, are values of those classes).{sizes}\n{}\n\nRULES a program must keep, or it cannot be read:\n{}\n\n{}",
         if topics { TOPIC_RULE.to_string() } else { format!("THE TASK. {}", description(pname)?) },
         ops.join("\n"),
-        sig.depth,
+        rules.join("\n"),
         if topics { "Answer with ONE correct program on the topic you are given, complete, in one ```futhark code block, and nothing else.".to_string() } else { format!("Answer with {PROGRAMS_PER_CALL} DISTINCT correct programs, each complete, each in its own ```futhark code block, and nothing else.") },
     ))
 }
@@ -395,8 +432,12 @@ fn result_of(v: &serde_json::Value) -> Option<&serde_json::Value> {
 
 /// Read every saved reply into `llm.tsv` and `llm_programs.tsv`, in call order.
 fn read_replies(c: &Ctx, tel: &mut RunTelemetry, generation: u32) -> Result<(usize, usize, usize), String> {
-    let reader = Reader::for_pool(&c.k, &c.sig)?;
     let dir = c.run.join("llm");
+    if calls_made(&dir).is_empty() {
+        println!("# {} {}: no saved replies under {}: nothing to read", utc(), c.pname, dir.display());
+        return Ok((0, 0, 0));
+    }
+    let reader = Reader::for_pool(&c.k, &c.sig)?;
     let mut pool = vec![POOL_HEADER.to_string()];
     let mut all = vec!["reply\tprogram\tstatus\tdual\tsexp_or_construct\tdual_of_gap\tdetail".to_string()];
     let (mut gaps, mut read, mut programs) = (Vec::new(), 0, 0);
@@ -541,6 +582,70 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
     }
     read_replies(c, &mut tel, calls as u32)?;
     tel.end(stopped, calls as u32, None)
+}
+
+/// THE POOL'S OWN PROGRAMS, re-read (`reread`): every `.tsv` pool file of `--out` (the seed, the textbook alternative,
+/// bench, llm, alternatives) has each gene built in the kingdom at its type, rendered, and `futhark check`ed; and every
+/// `.fut` program of `--out` is read through the Reader (the model programs' path), read or a gap named. A gap on the
+/// seed's own rendered program is a gap of the READER, reported as such, never hidden.
+fn pool_programs(c: &Ctx) -> Result<(), String> {
+    // The reader is the model programs' path; a kingdom it cannot read (an f32 kingdom: its spellings hold float
+    // literals and tuples the reader does not parse, measured 2026-11-03 on k-means) is reported as the reader's gap,
+    // and the genes are still built and checked.
+    let reader = Reader::for_pool(&c.k, &c.sig);
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&c.out).map_err(|e| format!("{}: {e}", c.out.display()))?.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    names.sort();
+    let mut built = 0;
+    for path in names.iter().filter(|p| p.extension().is_some_and(|x| x == "tsv") && !p.file_name().is_some_and(|f| f.to_string_lossy().contains("manifest") || f.to_string_lossy().contains("_programs") || f.to_string_lossy().contains("_functions") || f.to_string_lossy().contains("seed_log"))) {
+        let entries = match fuller::futhark_rings::load_pool(path) {
+            Ok(e) => e,
+            Err(e) => {
+                println!("# {} {}: not a pool file: {e}", utc(), path.display());
+                continue;
+            }
+        };
+        for e in &entries {
+            let t = fuller::futhark_rings::build_at(&c.k, &e.sexp, &e.dual)?;
+            let text = if c.k.ty(&e.dual) == c.k.roots().first().copied() { fuller::futhark_sig::program(&c.k, &c.sig, &t)? } else { c.k.render(&t)? };
+            let checked = if text.starts_with("entry ") {
+                let dir = c.run.join("pool_check").join(path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let fut = dir.join("prog.fut");
+                write(&fut, &text)?;
+                let out = fuller::futhark_exec::output_with_timeout(std::process::Command::new("futhark").arg("check").arg(&fut), std::time::Duration::from_secs(120), None)?;
+                if out.status.success() { "futhark check accepts it" } else { return Err(format!("{}: {}: futhark check:\n{}", path.display(), e.origin, String::from_utf8_lossy(&out.stderr))) }
+            } else {
+                "a program of another type (not an entry)"
+            };
+            println!("# {} {}: {} ({}): built at {}, {} nodes, {checked}", utc(), path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(), e.function, e.origin.split(';').next().unwrap_or(""), e.dual, t.level_order().len());
+            built += 1;
+        }
+    }
+    let (mut read, mut gaps) = (0, Vec::new());
+    for path in names.iter().filter(|p| p.extension().is_some_and(|x| x == "fut")) {
+        let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let reader = match &reader {
+            Ok(r) => r,
+            Err(e) => {
+                println!("# {} {}: NOT READ: the reader cannot read this kingdom at all: {e}", utc(), path.display());
+                gaps.push(format!("{}: the reader cannot read this kingdom: {e}", path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
+                continue;
+            }
+        };
+        match reader.read_program(&src) {
+            Ok(t) => {
+                println!("# {} {}: READ by the reader at the root, {} nodes: {}", utc(), path.display(), t.level_order().len(), sexp(&c.k, &t));
+                read += 1;
+            }
+            Err(g) => {
+                println!("# {} {}: NOT READ by the reader: a gap of the reader: {g}", utc(), path.display());
+                gaps.push(format!("{}: {g}", path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
+            }
+        }
+    }
+    println!("# {} {}: pool programs: {built} genes built and checked; .fut programs through the reader: {read} read, {} gaps", utc(), c.pname, gaps.len());
+    update_manifest(&c.out, "pool.", vec![("pool.genes_built_and_checked".to_string(), built.to_string()), ("pool.fut_read_by_reader".to_string(), read.to_string()), ("pool.fut_reader_gaps".to_string(), gaps.join(" | "))])?;
+    Ok(())
 }
 
 /// How many task alternatives (`alternatives.tsv`) pass the population's distance bar, greedily in order: a tree edit
@@ -691,6 +796,7 @@ fn real_main() -> Result<(), String> {
         }
         "reread" => {
             let calls = calls_made(&c.run.join("llm")).len();
+            pool_programs(&c)?;
             llm(&c, calls, 1, false)
         }
         "distinct" => {
