@@ -2106,13 +2106,25 @@ fn real_main() -> Result<(), String> {
         run.tel.end("early_stop", 0, None)?;
         return Ok(());
     }
-    // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots.
+    // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots. The converged
+    // scheme has no timing slots: its A/A is the seed judged as a candidate against itself (below, the control).
     let mut inrun_aa: Vec<f64> = Vec::new();
-    if regime == "P" && backend == Backend::Gpu {
+    if regime == "P" && backend == Backend::Gpu && !scheme.is_converged() {
         let r = batch_aa.as_ref().map(|a| a.inrun.clone()).ok_or("our software has a bug: the in-run A/A with no A/A sets")?;
         run.judge.slots.add(p.yardstick, &r)?;
         inrun_aa = run.judge.slots.full(p.yardstick)?.to_vec();
         let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in the batch process)" } else { " (in the timing process)" }, median(&inrun_aa), inrun_aa.iter().cloned().fold(f64::INFINITY, f64::min), inrun_aa.iter().cloned().fold(0.0, f64::max));
+        println!("# {} {msg}", utc());
+        run.tel.note(0, msg)?;
+    }
+    if scheme.is_converged() && backend == Backend::Gpu && !check {
+        // The converged scheme's A/A: the seed judged as a candidate against the seed. Equal runs give 1/2 on every
+        // input; the spread of the seconds and iterations inputs around 1/2 is the noise floor of this scheme.
+        let source = program(&k, &sig, &reference)?;
+        let e = run.judge.evaluate(&reference, &source, FitnessStage::Quality)?;
+        let inputs: Vec<String> = e.quality.inputs.iter().map(|x| format!("{x:.3}")).collect();
+        let worst = e.quality.inputs.iter().map(|x| (x - 0.5).abs()).fold(0.0, f64::max);
+        let msg = format!("in-run A/A (converged): the seed as a candidate against itself, {} inputs over the fitness cases, worst distance from 1/2 {worst:.3}: [{}]", inputs.len(), inputs.join(", "));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
