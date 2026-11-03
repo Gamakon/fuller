@@ -1913,10 +1913,20 @@ fn real_main() -> Result<(), String> {
             let mut texts: Vec<&str> = rows.iter().filter(|f| f[0].parse::<u64>().ok() == Some(last)).map(|f| f[5]).collect();
             texts.sort_unstable();
             texts.dedup();
+            // A ledger written before 2026-11-02 names variables by frame number (`j1`, `s2`); the stack-named reader
+            // gives each its class name (`fuller::futhark_sig::build_stack_named`).
+            let mut stack_named = 0;
             for t in texts {
-                parents.push(build_at(&k, t, &dual).map_err(|e| format!("--parents-from: {t}: {e}"))?);
+                let tree = match build_at(&k, t, &dual) {
+                    Ok(tree) => tree,
+                    Err(e) => {
+                        stack_named += 1;
+                        fuller::futhark_sig::build_stack_named(&k, t, &dual).map_err(|e2| format!("--parents-from: {t}: {e}; as a stack-named program: {e2}"))?
+                    }
+                };
+                parents.push(tree);
             }
-            println!("# {} measure: {} parents, the distinct programs of generation {last} of {dir}", utc(), parents.len());
+            println!("# {} measure: {} parents, the distinct programs of generation {last} of {dir}{}", utc(), parents.len(), if stack_named > 0 { format!("; {stack_named} read by their stack names") } else { String::new() });
         }
         for t in pool_programs.iter().filter(|_| arg(&args, "--parents-from").is_none()) {
             if tree_distance(t, &reference) >= bar && parents.iter().all(|o| tree_distance(t, o) >= bar) {
