@@ -1317,8 +1317,15 @@ impl RunTelemetry {
         RunTelemetry::start_with(out, run_id, fields, info.resume)
     }
 
-    /// [`RunTelemetry::start`] for a runner configured by a fitness scheme: the `run_start` records `scheme`.
+    /// [`RunTelemetry::start`] for a runner configured by a fitness scheme: the `run_start` records `scheme` (a flat
+    /// scheme at its default quality weight; a runner with a `--quality-weight` of its own uses
+    /// [`RunTelemetry::start_with_fitness_weighted`]).
     pub fn start_with_fitness(out: &std::path::Path, run_id: String, info: RunInfo, scheme: &crate::fitness::Scheme) -> Result<RunTelemetry, String> {
+        RunTelemetry::start_with_fitness_weighted(out, run_id, info, scheme, scheme.default_quality_weight())
+    }
+
+    /// [`RunTelemetry::start_with_fitness`] recording the run's quality weight (`crate::fitness::Scheme::start_weighted`).
+    pub fn start_with_fitness_weighted(out: &std::path::Path, run_id: String, info: RunInfo, scheme: &crate::fitness::Scheme, quality_weight: usize) -> Result<RunTelemetry, String> {
         let fields = RunStartFields {
             dataset: info.dataset,
             seed: info.seed,
@@ -1329,7 +1336,7 @@ impl RunTelemetry {
             config_json: info.config_json,
             kingdom: Some(info.kingdom),
             hff_objectives: info.hff_objectives,
-            fitness: Some(scheme.start()),
+            fitness: Some(scheme.start_weighted(quality_weight)),
             ..RunStartFields::default()
         };
         RunTelemetry::start_with(out, run_id, fields, info.resume)

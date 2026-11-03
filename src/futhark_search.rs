@@ -100,7 +100,7 @@ pub struct Config {
     pub seconds: f64,
     /// How many distinct individuals the hall of fame keeps.
     pub hall_of_fame: usize,
-    /// THE FITNESS SCHEME (`crate::fitness`, family `shapes`): what a program selects on. Default `shapes-hff-gated`.
+    /// THE FITNESS SCHEME (`crate::fitness`, family `shapes`): what a program selects on. Default `shapes-hff-qqs`.
     pub fitness: &'static crate::fitness::Scheme,
 }
 
@@ -1099,19 +1099,24 @@ impl Scorer {
 /// * **Speed:** one input per cost term, the program's over the program's plus the reference's (`x / (x + ref)`):
 ///   traffic, allocations, serial depth. The reference itself is 0.5 in each; strictly increasing and bounded by 1.
 ///
-/// The fitness is the hff library's TrueNorth over the two group angles, each divided by π/2, GATED BY CORRECTNESS
-/// ([`crate::runner::staged_hff`], stage 2; Andrew, 2026-10-29): a correct program (every quality input 0) scores the
-/// two-level angle, in `[0, π/2)`; an incorrect one scores `π/2 + θ_quality`, in `[π/2, π]`, so no incorrect program,
-/// however cheap, ranks above a correct one, and incorrect programs still rank by how much of their value disagrees.
-/// Until 2026-11-01 this kingdom's fitness was the ungated two-level HFF, under which a wrong but cheap program could
-/// rank above an exact but dear one.
+/// The fitness is the hff library's TrueNorth over ONE FLAT VECTOR (Andrew's ruling of 2026-11-03: the HFF angle is
+/// the final fitness, nothing manipulates it): the quality inputs entered `fitness::DEFAULT_QUALITY_WEIGHT` times
+/// beside the three speed inputs, under the default scheme `shapes-hff-qqs` (`fitness::stage_two`, `StageTwo::Flat`).
+/// Quality weighs more than speed by repetition only; the repetition count is the exchange rate between a quality
+/// loss and a cost gain, and the test `the_fitness_is_the_flat_hff` prints what it buys. From 2026-11-01 to
+/// 2026-11-03 the fitness was gated by correctness (`shapes-hff-gated`: an incorrect program `π/2 + θ_quality`),
+/// which manipulated the angle after the HFF and is retired with that fault; before 2026-11-01 it was the ungated
+/// two-level HFF.
 pub fn two_level(individual: &Individual, reference: &Score) -> TwoLevel {
     two_level_under(crate::fitness::default_for(crate::fitness::Family::Shapes), individual, reference)
 }
 
 /// A program's fitness under the shapes scheme `scheme` (`crate::fitness`), with the two group angles of
 /// [`two_level`] beside it (reported under every scheme):
-/// * `shapes-hff-gated` (the default, fuller f572a7cc): [`two_level`];
+/// * `shapes-hff-qqs` (the default; Andrew's ruling of 2026-11-03): ONE FLAT VECTOR, the log-scaled disagreements
+///   entered `fitness::DEFAULT_QUALITY_WEIGHT` times beside the three cost ratios, TrueNorth over the whole, and
+///   that angle is the fitness (`fitness::stage_two` under `StageTwo::Flat`): no gate, no offset;
+/// * `shapes-hff-gated` (fuller f572a7cc, NOT TO BE RUN AS IS: the offset manipulates the HFF): [`two_level`];
 /// * `shapes-hff` (fuller b1bccf66): the two-level HFF, ungated;
 /// * `shapes-two-band` (fuller f3972766): a correct program `0.49 · t/(t + t_ref)`, an incorrect one
 ///   `0.5 + 0.5 (1 − agreement)`, computed in `f32` exactly as that commit did.
@@ -1152,7 +1157,7 @@ pub fn fitness_under(scheme: &crate::fitness::Scheme, individual: &Individual, r
 }
 
 /// The fitness of a gene the layout cannot express under the shapes scheme `scheme`: 1.5 before the gate
-/// (`shapes-two-band`, `shapes-hff`), [`NOT_EXPRESSED_FITNESS`] under `shapes-hff-gated`.
+/// (`shapes-two-band`, `shapes-hff`), [`NOT_EXPRESSED_FITNESS`] under `shapes-hff-gated` and `shapes-hff-qqs`.
 pub fn not_expressed_under(scheme: &crate::fitness::Scheme) -> Result<f32, String> {
     match scheme.definition {
         crate::fitness::Definition::ShapesHff { not_expressed, .. } | crate::fitness::Definition::ShapesTwoBand { not_expressed } => Ok(not_expressed),
@@ -1164,8 +1169,8 @@ pub fn not_expressed_under(scheme: &crate::fitness::Scheme) -> Result<f32, Strin
 /// than any incorrect program; it cannot be shipped, so it cannot be a parent either.
 pub const NOT_EXPRESSED_FITNESS: f32 = 4.0;
 
-/// The fitness a GPU-resident population selects on: the gated [`two_level`] HFF, as phylu's device reads a fitness
-/// (lower fitter, 0 perfect; a correct program below π/2, an incorrect one in `[π/2, π]`).
+/// The fitness a GPU-resident population selects on: the flat [`two_level`] HFF, as phylu's device reads a fitness
+/// (lower fitter, 0 perfect, at most π).
 pub fn fitness_of(individual: &Individual, reference: &Score) -> f32 {
     two_level(individual, reference).fitness as f32
 }
@@ -1386,11 +1391,13 @@ mod tests {
         assert_eq!(expressed.tree(), reference, "the seed gene IS the reference");
     }
 
-    /// The fitness a device selects on is the two-level HFF: a correct program has a quality angle of 0 and is
-    /// ranked by its cost; an incorrect one is ranked by how much of its value disagrees; and at the same cost a
-    /// correct program is always fitter than an incorrect one, however nearly right.
+    /// The fitness a device selects on is the flat HFF (Andrew's ruling of 2026-11-03): a correct program has a
+    /// quality angle of 0 and is ranked by its cost; an incorrect one is ranked by how much of its value disagrees;
+    /// and at the reference's cost a correct program is fitter than an incorrect one, however nearly right. What the
+    /// repetition count buys is measured and printed: the least weight at which an exact program a hundred times
+    /// dearer on every cost still beats a nearly free program wrong in one element.
     #[test]
-    fn the_fitness_is_the_two_level_hff() {
+    fn the_fitness_is_the_flat_hff() {
         let k = kingdom();
         let reference = product_twice(&k);
         let cfg = config();
@@ -1407,16 +1414,18 @@ mod tests {
         let scored = scorer.score(&genes).expect("scored");
         let fitness = scorer.fitness(&scored);
         let r = *scorer.reference_score();
+        assert_eq!(cfg.fitness.name, "shapes-hff-qqs", "the default is the flat scheme");
         for (individual, f) in scored.iter().zip(&fitness) {
-            // Gated by correctness: a correct program below π/2, an incorrect one in [π/2, π].
-            if individual.correct {
-                assert!((0.0..std::f32::consts::FRAC_PI_2).contains(f), "a correct program's fitness is below pi/2: {f}");
-            } else {
-                assert!((std::f32::consts::FRAC_PI_2..=std::f32::consts::PI).contains(f), "an incorrect program's fitness is in [pi/2, pi]: {f}");
-            }
+            // The angle is the fitness: in [0, pi], below the unexpressed value, and the group angles are reported.
+            assert!((0.0..=std::f32::consts::PI).contains(f), "a fitness is an angle: {f}");
             assert!(*f < NOT_EXPRESSED_FITNESS);
             assert_eq!(individual.disagreement.len(), cfg.samples, "one quality input per input set");
             assert_eq!(two_level(individual, &r).quality == 0.0, individual.correct, "a quality angle of 0 is correctness");
+            let quality: Vec<f64> = individual.disagreement.iter().map(|d| log_scaled(*d)).collect();
+            let ratio = |x: u64, rr: u64| x as f64 / (x as f64 + rr.max(1) as f64);
+            let speed = [ratio(individual.score.traffic, r.traffic), ratio(individual.score.alloc, r.alloc), ratio(individual.score.depth, r.depth)];
+            let want = crate::fitness::qqs(&quality, &speed, crate::fitness::DEFAULT_QUALITY_WEIGHT).expect("the inputs are on [0, 1]").fitness as f32;
+            assert_eq!(*f, want, "the fitness is TrueNorth over the flat vector and nothing else");
         }
 
         // The reference itself is correct and sits at 0.5 in every speed input.
@@ -1438,16 +1447,23 @@ mod tests {
         assert!(fitness_of(&wrong(one_element), &r) < fitness_of(&wrong(0.9), &r));
         assert!(fitness_of(&dear, &r) < fitness_of(&wrong(one_element), &r));
 
-        // THE CORRECTNESS GATE (runner::staged_hff's rule): a correct program a hundred times dearer than the
-        // reference on every cost ranks above every incorrect program, however cheap, even one wrong in a single
-        // element; and incorrect programs still rank among themselves by their disagreement.
+        // THE EXCHANGE RATE, measured: an exact program a hundred times dearer than the reference on every cost
+        // against a nearly free program wrong by d in one of three input sets, at the default weight and at the least
+        // weight that ranks the exact one above every one of them (printed; the gate used to do this at every weight).
         let slow = Individual { score: Score { traffic: 100 * r.traffic, alloc: 100 * r.alloc.max(1), depth: 100 * r.depth.max(1) }, ..reference_individual.clone() };
         let cheap_wrong = |d: f64| Individual { score: Score { traffic: 1, alloc: 0, depth: 1 }, ..wrong(d) };
-        for d in [one_element, 0.01, 0.5, 1.0] {
-            assert!(fitness_of(&slow, &r) < fitness_of(&cheap_wrong(d), &r), "an exact program 100 times dearer ranks above a cheap one wrong by {d}");
-        }
+        let under = |i: &Individual, m: usize| {
+            let quality: Vec<f64> = i.disagreement.iter().map(|d| log_scaled(*d)).collect();
+            let ratio = |x: u64, rr: u64| x as f64 / (x as f64 + rr.max(1) as f64);
+            crate::fitness::qqs(&quality, &[ratio(i.score.traffic, r.traffic), ratio(i.score.alloc, r.alloc), ratio(i.score.depth, r.depth)], m).expect("inputs on [0, 1]").fitness
+        };
+        let ds = [one_element, 0.01, 0.5, 1.0];
+        let least = (1..=64).find(|m| ds.iter().all(|d| under(&slow, *m) < under(&cheap_wrong(*d), *m))).expect("a weight under 64 ranks the exact program above");
+        let at_default: Vec<String> = ds.iter().map(|d| format!("wrong by {d}: {:.4}", under(&cheap_wrong(*d), crate::fitness::DEFAULT_QUALITY_WEIGHT))).collect();
+        eprintln!("the exact program 100 x dearer on every cost scores {:.4} at m = {}; the nearly free programs [{}]; the least m that ranks the exact one above all of them is {least}", under(&slow, crate::fitness::DEFAULT_QUALITY_WEIGHT), crate::fitness::DEFAULT_QUALITY_WEIGHT, at_default.join(", "));
         assert!(fitness_of(&cheap_wrong(one_element), &r) < fitness_of(&cheap_wrong(0.5), &r));
         assert!(fitness_of(&cheap_wrong(1.0), &r) < NOT_EXPRESSED_FITNESS);
+        assert!(least >= 1 && under(&slow, least) < under(&cheap_wrong(one_element), least));
     }
 
     /// The premise of the transposed-product rule: the product computed the

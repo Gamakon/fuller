@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use crate::futhark_exec::output_with_timeout_bytes;
 use crate::futhark_table::FutharkKingdom;
+use crate::futhark_sig::kmeans_converged::{k_command as kmeans_command, range_entry};
 use crate::futhark_sig::{entry_calling, prelude, program_cases_named_bare, program_named_bare, read_binary, Array, Signature};
 use crate::futhark_wgpu_host::{compile_library_prebuilt, compile_timeout, run_timeout, unix_ns, CompileStages, DriverOf, RunStages, ShimReport};
 use crate::typed_gep::Tree;
@@ -88,6 +89,12 @@ pub enum Step {
     /// fastest run depended on where its runs fell; on one upload, back to back, they hold at 2.96 to 3.3 ms, and the
     /// two sides interleaved see the same clock.
     Pair { yard_first: bool, itself: bool },
+    /// THE K-MEANS LOOP ON THE RESIDENT SAMPLE (Andrew, 2026-11-03; `futhark_sig::kmeans_converged`, the rust path's
+    /// `k` command): the member's range entry and the published program's (the seed's) run to UltraDim's stopping
+    /// rule on stored case `case`, the row range `start..start + n` of the sample (the timing input's first value,
+    /// uploaded once a session and kept), with the case's stored starting centres, INTERLEAVED `pairs` times (the
+    /// member first in the even pairs). One command a side a pair; the outcome holds every side's record.
+    Kmeans { case: usize, start: usize, n: usize, pairs: usize },
 }
 
 /// The least wall time a side of a timed pair runs for (Andrew's rule, 2026-10-31): a fixed run count taken from the
@@ -120,6 +127,18 @@ impl Step {
     fn times_yard(&self) -> bool {
         matches!(self, Step::Time { yardstick: true, .. } | Step::Pair { .. })
     }
+    /// The step is a k-means loop (the member's range entry, and the published program's).
+    fn kmeans(&self) -> bool {
+        matches!(self, Step::Kmeans { .. })
+    }
+}
+
+/// One side's record of a k-means step: the member's (`candidate`) or the seed's loop on the case, its `k` record's
+/// payload (`kmeans_converged::run_of_k_payload` reads it) and the record's own nanoseconds, or the command's failure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KmeansSide {
+    pub candidate: bool,
+    pub result: Result<(Vec<u8>, u64), String>,
 }
 
 /// A member of a batch: a program and what to do with it.
@@ -140,6 +159,8 @@ pub enum Outcome {
     Output(Array),
     /// An interleaved pair's run times: the member's side and the published program's, each the warm-up first.
     Pair { own: Vec<Option<f64>>, yard: Vec<Option<f64>> },
+    /// A k-means step's sides, in command order (the member's and the seed's alternating, `2 * pairs` of them).
+    Kmeans(Vec<KmeansSide>),
     /// The step failed: the compiler's, the driver's or the process's own message.
     Failed(String),
 }
@@ -192,6 +213,11 @@ pub struct Cost {
     pub failed_compiles: usize,
     pub run: RunStages,
     pub processes: usize,
+    /// The seconds the resident sample's uploads took (the rust path's `u` records: once a session, 0 after), and
+    /// how many runs found it resident already.
+    pub upload_seconds: f64,
+    pub uploads: usize,
+    pub resident_hits: usize,
     /// The seconds each member's quality command took inside the driver, by member.
     pub member_quality_seconds: Vec<f64>,
     /// The seconds each member's timing and output commands took inside the driver, by member.
@@ -247,6 +273,14 @@ fn tname(i: usize) -> String {
     format!("t{i}")
 }
 const YARD: &str = "yard";
+/// The k-means range entries of a batch: a member's, its definition, and the seed's.
+fn kname(i: usize) -> String {
+    format!("k{i}")
+}
+fn kdef(i: usize) -> String {
+    format!("k{i}_main")
+}
+const KYARD: &str = "kyard";
 
 /// The published program's text with its entry point `main` renamed: exactly one `entry main ` must be in it.
 pub fn rename_main(text: &str, to: &str) -> Result<String, String> {
@@ -692,11 +726,14 @@ impl<'a> Host<'a> {
         let prelude = prelude(self.k);
         s.push_str(&prelude);
         let mut yard = false;
+        let mut kyard = false;
         for &i in idx {
             let m = &members[i];
             let quality = m.steps.contains(&Step::Quality);
             let timed = m.steps.iter().any(Step::times_own);
+            let kmeans = m.steps.iter().any(Step::kmeans);
             yard |= m.steps.iter().any(Step::times_yard);
+            kyard |= kmeans;
             match m.program {
                 Program::Tree(t) => {
                     if quality {
@@ -706,6 +743,11 @@ impl<'a> Host<'a> {
                     if timed {
                         s.push_str(&program_named_bare(self.k, self.sig, t, &tname(i))?);
                         s.push('\n');
+                    }
+                    if kmeans {
+                        // The member's program as a definition, and its range entry over the resident sample.
+                        let def = program_named_bare(self.k, self.sig, t, &kdef(i))?.replacen(&format!("entry {} ", kdef(i)), &format!("def {} ", kdef(i)), 1);
+                        s.push_str(&format!("{def}\n{}\n", range_entry(self.sig, &kname(i), &kdef(i))?));
                     }
                 }
                 Program::Text(text) => {
@@ -718,8 +760,18 @@ impl<'a> Host<'a> {
                         let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
                         s.push_str(&format!("module m{i} = {{\n{def}\n}}\n{}\n", entry_calling(self.sig, &tname(i), &format!("m{i}.main"))));
                     }
+                    if kmeans {
+                        let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
+                        s.push_str(&format!("module mk{i} = {{\n{def}\n}}\n{}\n", range_entry(self.sig, &kname(i), &format!("mk{i}.main"))?));
+                    }
                 }
             }
+        }
+        if kyard {
+            // The seed's range entry, in a module of its own (the seed as a member beside it is another copy).
+            let text = self.yardstick.as_deref().ok_or("a k-means step with no published program (the seed)")?;
+            let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
+            s.push_str(&format!("module m{KYARD} = {{\n{def}\n}}\n{}\n", range_entry(self.sig, KYARD, &format!("m{KYARD}.main"))?));
         }
         if yard {
             let text = self.yardstick.as_deref().ok_or("a pair timed with no published program")?;
@@ -760,6 +812,22 @@ impl<'a> Host<'a> {
         let mut cmds = Vec::new();
         for &i in idx {
             for (j, s) in members[i].steps.iter().enumerate() {
+                if let Step::Kmeans { case, start, n, pairs } = s {
+                    if !named {
+                        return Err("our software has a bug: a k-means step on a backend without the rust path's in-process host (--eval rust)".into());
+                    }
+                    if *pairs == 0 {
+                        return Err("our software has a bug: a k-means step of 0 pairs".into());
+                    }
+                    // The member first in the even pairs, the seed first in the odd (`kmeans_converged::converge_interleaved`).
+                    for p in 0..*pairs {
+                        let (a, b) = (kmeans_command(&kname(i), *case, *start, *n), kmeans_command(KYARD, *case, *start, *n));
+                        let (first, second) = if p.is_multiple_of(2) { (a, b) } else { (b, a) };
+                        cmds.push(Cmd { line: first, member: i, step: j });
+                        cmds.push(Cmd { line: second, member: i, step: j });
+                    }
+                    continue;
+                }
                 let line = match (s, named) {
                     (Step::Quality, false) => format!("q {}", q_of[&i]),
                     (Step::Time { yardstick: false, runs }, false) => format!("t {} {runs}", t_of[&i]),
@@ -771,6 +839,7 @@ impl<'a> Host<'a> {
                     (Step::Output, true) => format!("o {}", tname(i)),
                     (Step::Pair { yard_first, itself }, false) => format!("p {} {nt} {} {PAIR_MIN_RUNS} {}", if *itself { nt } else { t_of[&i] }, pair_side_ns(), u8::from(*yard_first)),
                     (Step::Pair { yard_first, itself }, true) => format!("p {} {YARD} {} {PAIR_MIN_RUNS} {}", if *itself { YARD.to_string() } else { tname(i) }, pair_side_ns(), u8::from(*yard_first)),
+                    (Step::Kmeans { .. }, _) => return Err("our software has a bug: a k-means step past its own branch".into()),
                 };
                 if !gpu && matches!(s, Step::Time { .. } | Step::Pair { .. }) {
                     return Err("our software has a bug: a timed step on the c backend, which has no GPU timing".into());
@@ -932,7 +1001,7 @@ impl<'a> Host<'a> {
         }
         std::fs::write(&cmd_path, cmds.iter().map(|c| format!("{}\n", c.line)).collect::<String>()).map_err(|e| format!("write {}: {e}", cmd_path.display()))?;
         // The timing input is read only by a process that runs on it (the histogram's is 128 MB).
-        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o "].iter().any(|k| c.line.starts_with(k)));
+        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o ", "k "].iter().any(|k| c.line.starts_with(k)));
         let timing = if on_timing { self.timing_path.as_deref().ok_or("a timed or output step with no timing input")? } else { Path::new("-") };
         // The driver bounds its device set-up and each command by the per-candidate path's bound of one process; this
         // bound on the whole process is a backstop.
@@ -976,7 +1045,7 @@ impl<'a> Host<'a> {
             *g = Some(crate::futhark_rust::Session::new(rt, run_timeout())?);
         }
         let session = g.as_ref().ok_or("our software has a bug: no session")?;
-        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o "].iter().any(|k| c.line.starts_with(k)));
+        let on_timing = cmds.iter().any(|c| ["t ", "p ", "o ", "k "].iter().any(|k| c.line.starts_with(k)));
         let cases = std::fs::read(&self.cases_path).map_err(|e| format!("{}: {e}", self.cases_path.display()))?;
         let timing = match (&self.timing_path, on_timing) {
             (Some(p), true) => Some(std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?),
@@ -1050,7 +1119,7 @@ impl<'a> Host<'a> {
                 return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost);
             }
         }
-        let timestamps = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("p "));
+        let timestamps = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("p ") || c.line.starts_with("k "));
         let mut from = 0;
         let mut first = true;
         while from < cmds.len() {
@@ -1070,8 +1139,34 @@ impl<'a> Host<'a> {
             first = false;
             let mut done = 0;
             let mut recorded_failure = false;
-            for r in records.iter().filter(|r| ["q", "t", "p", "o"].contains(&r.tag.as_str())) {
+            for u in records.iter().filter(|r| r.tag == "u") {
+                if !u.ok {
+                    return Err(format!("the resident sample did not upload: {}", String::from_utf8_lossy(&u.payload)));
+                }
+                if u.ns > 0 {
+                    cost.upload_seconds += u.ns as f64 / 1e9;
+                    cost.uploads += 1;
+                } else {
+                    cost.resident_hits += 1;
+                }
+            }
+            for r in records.iter().filter(|r| ["q", "t", "p", "o", "k"].contains(&r.tag.as_str())) {
                 let c = cmds.get(from + r.index as usize).ok_or("a results record of no command")?;
+                if r.tag == "k" {
+                    // A k-means side: appended to its step's outcome (2 * pairs records a step), a failed side its
+                    // own failure, never the step's (the seed's side beside it still reads).
+                    cost.member_timing_seconds[c.member] += r.ns as f64 / 1e9;
+                    cost.member_timing_pipeline_seconds[c.member] += r.pipeline_ns as f64 / 1e9;
+                    let candidate = c.line.split(' ').nth(1) != Some(KYARD);
+                    let result = if r.ok { Ok((r.payload.clone(), r.ns)) } else { Err(String::from_utf8_lossy(&r.payload).to_string()) };
+                    match &mut outcomes[c.member][c.step] {
+                        Some(Outcome::Kmeans(v)) => v.push(KmeansSide { candidate, result }),
+                        slot => *slot = Some(Outcome::Kmeans(vec![KmeansSide { candidate, result }])),
+                    }
+                    recorded_failure = !r.ok;
+                    done = r.index as usize + 1;
+                    continue;
+                }
                 if r.tag == "q" {
                     cost.member_quality_seconds[c.member] += r.ns as f64 / 1e9;
                     cost.member_quality_pipeline_seconds[c.member] += r.pipeline_ns as f64 / 1e9;

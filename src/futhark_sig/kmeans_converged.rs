@@ -3,9 +3,12 @@
 //! STOPPING RULE on each fitness case, candidate and seed alike, and what the fitness reads is the clustering it
 //! reaches and how it got there: the quality of the final centroids (UltraDim's own two numbers) and the cost of
 //! reaching them (the program's own GPU time and its iterations), each relative to the seed's run in the same
-//! interleaving ([`kmeans_inputs`]). The scheme `futhark-kmeans-quality-first` (`crate::fitness`) ranks the two
-//! groups with quality first; the retired `futhark-kmeans-converged` read five inputs ([`kmeans_inputs_five`]) and
-//! is NOT TO BE RUN AS IS (the advisor's review of 2026-11-03, round 1).
+//! interleaving ([`kmeans_inputs`]). The scheme `futhark-kmeans-qqs` (`crate::fitness::qqs`; Andrew's ruling of
+//! 2026-11-03) reads the two groups in ONE FLAT VECTOR, the quality inputs entered m times (`--quality-weight`,
+//! default 2), and the HFF angle over it is the fitness, nothing after it. The retired `futhark-kmeans-quality-first`
+//! (the two-level HFF gated by an offset, which manipulated the HFF; its edge at 1/2 rejected every reordering of
+//! the seed's sums) and `futhark-kmeans-converged` (five inputs, [`kmeans_inputs_five`]) are NOT TO BE RUN AS IS
+//! (the advisor's reviews of 2026-11-03, rounds 1 and 2).
 //!
 //! The prototype is `lib/projection-voting-kmeans` of UltraDim (read 2026-11-03, read-only, commit 4295c335):
 //! `gpu_kmeans.rs` 375-436 is the loop (assign, update, `calculate_inertia`; stop when the inertia changes by less
@@ -49,7 +52,8 @@ use std::time::Instant;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 
-use super::{read_one, write_binary, Array, Elem};
+use super::{read_one, write_binary, Array, Elem, Signature};
+use crate::typed_gep::Tree;
 
 /// UltraDim's `tolerance`: the loop stops when the inertia changes by less than this.
 pub const TOLERANCE: f32 = 1e-4;
@@ -589,6 +593,26 @@ where
     Ok((c, s))
 }
 
+/// THE TWO SIDES OF AN INTERLEAVING FROM THEIR RUNS (the batch path, where the runs come back as records): each
+/// side's run is its first, with its `seconds` and `wall_seconds` the median of its runs, exactly as
+/// [`converge_interleaved`] takes them; no run on a side is a bug.
+pub fn sides_of_runs(candidate: Vec<ConvergedRun>, seed: Vec<ConvergedRun>) -> Result<(ConvergedRun, ConvergedRun), String> {
+    if candidate.is_empty() || seed.is_empty() || candidate.len() != seed.len() {
+        return Err(format!("our software has a bug: an interleaving of {} candidate runs and {} seed runs", candidate.len(), seed.len()));
+    }
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let side = |runs: Vec<ConvergedRun>| {
+        let mut r = runs[0].clone();
+        r.seconds = median(&mut runs.iter().map(|r| r.seconds).collect());
+        r.wall_seconds = median(&mut runs.iter().map(|r| r.wall_seconds).collect());
+        r
+    };
+    Ok((side(candidate), side(seed)))
+}
+
 /// HOW A COMPILED STEP'S OWN TIME IS READ ([`step_of_exe`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepTimer {
@@ -629,6 +653,248 @@ pub fn step_of_exe<'a>(exe: &'a Path, points: &'a Array, timer: StepTimer) -> im
             }
         }
     }
+}
+
+// ---- the server: one process a program, kept alive across its iterations and cases ---------------------------------
+
+/// A COMPILED PROGRAM KEPT ALIVE AS A FUTHARK SERVER (`futhark c --server`, `futhark_sig::compile_c_server`; the
+/// Futhark server protocol: commands on stdin, each answered by lines and a `%%% OK`, a failure by `%%% FAILURE` and
+/// its message before the `%%% OK`). Before this (2026-11-03) every iteration of UltraDim's loop was its own process
+/// with the points written down the pipe (6-30 MB), 0.3-0.6 s a process: a candidate on the six fitness cases at
+/// one pair cost about two minutes. Here a case's points are loaded ONCE (`restore` from a file written once), each
+/// iteration restores the centres (16-300 KB), calls the entry point, stores the output and frees it, and the
+/// program's own time is the `runtime:` line of the call, the same entry-point microseconds as `-t` writes. One
+/// server serves a program's every case and every iteration; the seed's server lives for the whole run.
+pub struct Server {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    exe: std::path::PathBuf,
+    /// This server's own scratch files (the centres in, the output out).
+    dir: std::path::PathBuf,
+    /// The points files, `points_<case>.bin`, shared by every server of a run (written once, restored by each).
+    points_dir: std::path::PathBuf,
+    /// The cases whose points are loaded, by name.
+    loaded: std::collections::BTreeSet<String>,
+}
+
+impl Server {
+    /// Start the server executable `exe`, its own scratch files (the centres, the output) in `dir`, the points files
+    /// it restores in `points_dir` (shared: a case's file is written once), and read its greeting.
+    pub fn start(exe: &Path, dir: &Path, points_dir: &Path) -> Result<Server, String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(points_dir).map_err(|e| format!("mkdir {}: {e}", points_dir.display()))?;
+        let mut child = std::process::Command::new(exe)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("{}: {e}", exe.display()))?;
+        let stdin = child.stdin.take().ok_or("the server's stdin")?;
+        let stdout = std::io::BufReader::new(child.stdout.take().ok_or("the server's stdout")?);
+        let mut s = Server { child, stdin, stdout, exe: exe.to_path_buf(), dir: dir.to_path_buf(), points_dir: points_dir.to_path_buf(), loaded: std::collections::BTreeSet::new() };
+        s.response("the greeting")?;
+        Ok(s)
+    }
+
+    /// Read one response: the lines up to `%%% OK`; a `%%% FAILURE` block is the error, with its message.
+    fn response(&mut self, what: &str) -> Result<Vec<String>, String> {
+        use std::io::BufRead;
+        let mut lines = Vec::new();
+        let mut failure: Option<Vec<String>> = None;
+        loop {
+            let mut line = String::new();
+            let n = self.stdout.read_line(&mut line).map_err(|e| format!("{}: reading {what}: {e}", self.exe.display()))?;
+            if n == 0 {
+                let err = self.child.stderr.take().map(|mut e| { let mut s = String::new(); let _ = std::io::Read::read_to_string(&mut e, &mut s); s }).unwrap_or_default();
+                return Err(format!("{}: the server ended during {what}:\n{err}", self.exe.display()));
+            }
+            let line = line.trim_end_matches(['\n', '\r']).to_string();
+            if line == "%%% OK" {
+                return match failure {
+                    Some(f) => Err(format!("{}: {what} failed:\n{}", self.exe.display(), f.join("\n"))),
+                    None => Ok(lines),
+                };
+            }
+            if line == "%%% FAILURE" {
+                failure = Some(Vec::new());
+            } else if let Some(f) = &mut failure {
+                f.push(line);
+            } else {
+                lines.push(line);
+            }
+        }
+    }
+
+    /// Send one command and read its response.
+    fn command(&mut self, line: &str) -> Result<Vec<String>, String> {
+        use std::io::Write;
+        writeln!(self.stdin, "{line}").and_then(|()| self.stdin.flush()).map_err(|e| format!("{}: writing {line:?}: {e}", self.exe.display()))?;
+        self.response(line)
+    }
+
+    /// Load a case's points under its name, once: written to the shared file in Futhark's binary format when no
+    /// server has written it yet (the bytes are the case's, so an existing file of that name is the same bytes),
+    /// and restored.
+    pub fn load_points(&mut self, case: &str, points: &Array) -> Result<(), String> {
+        if self.loaded.contains(case) {
+            return Ok(());
+        }
+        let file = self.points_dir.join(format!("points_{case}.bin"));
+        let bytes = write_binary(&[points]);
+        if std::fs::metadata(&file).map_or(true, |m| m.len() != bytes.len() as u64) {
+            std::fs::write(&file, &bytes).map_err(|e| format!("write {}: {e}", file.display()))?;
+        }
+        self.command(&format!("restore {} p_{case} [][]f32", file.display()))?;
+        self.loaded.insert(case.to_string());
+        Ok(())
+    }
+
+    /// ONE STEP of the program on a loaded case: the centres restored, `main` called on the points and the centres,
+    /// the output stored and read, the values freed; `seconds` is the call's own `runtime:` (microseconds).
+    pub fn step(&mut self, case: &str, centres: &Array) -> Result<Stepped, String> {
+        if !self.loaded.contains(case) {
+            return Err(format!("our software has a bug: a step on {case}, whose points are not loaded in the server"));
+        }
+        let c_file = self.dir.join("centres.bin");
+        let o_file = self.dir.join("out.bin");
+        std::fs::write(&c_file, write_binary(&[centres])).map_err(|e| format!("write {}: {e}", c_file.display()))?;
+        self.command(&format!("restore {} c [][]f32", c_file.display()))?;
+        let called = self.command(&format!("call main o p_{case} c"));
+        // The centres are freed whatever the call did, so a failed call leaves no value behind.
+        let freed = self.command("free c");
+        let lines = called?;
+        freed?;
+        let us: u64 = lines
+            .iter()
+            .find_map(|l| l.strip_prefix("runtime: "))
+            .ok_or_else(|| format!("{}: the call wrote no runtime line: {lines:?}", self.exe.display()))?
+            .trim()
+            .parse()
+            .map_err(|_| format!("{}: a runtime that is not an integer of microseconds: {lines:?}", self.exe.display()))?;
+        self.command(&format!("store {} o", o_file.display()))?;
+        self.command("free o")?;
+        let bytes = std::fs::read(&o_file).map_err(|e| format!("read {}: {e}", o_file.display()))?;
+        Ok(Stepped { centres: read_one(&bytes)?, seconds: us as f64 / 1e6 })
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The step of a server on a loaded case, as [`converge`] takes it.
+pub fn step_of_server<'a>(server: &'a mut Server, case: &'a str) -> impl FnMut(&Array) -> Result<Stepped, String> + 'a {
+    move |centres: &Array| server.step(case, centres)
+}
+
+// ---- the resident-sample path: the sample on the device once, the cases as row ranges (`--eval rust`) -------------
+
+/// THE RANGE ENTRY of a k-means program on the resident sample (Andrew, 2026-11-03): every case is a row range of
+/// the one dbpedia sample, so the sample is uploaded to the device ONCE for a program and a case is `(start, n)`
+/// with its own starting centres. The entry takes the whole sample, the range and the centres, and applies the
+/// program's function to the range: `sample[start:start + n]` is a Futhark slice along the outer dimension of a
+/// row-major array, a contiguous range, which the compiled program reads through an offset (an index function) and
+/// never copies; `:> [n][d]f32` names its size. The runtime's `k` command (`futhark-rust-rt/src/host.rs`,
+/// `kmeans_loop`) calls it with the centres kept on the device between iterations.
+pub fn range_entry(sig: &Signature, entry: &str, callee: &str) -> Result<String, String> {
+    let (points, rest) = sig.inputs.split_first().ok_or("a signature with no inputs")?;
+    let [n, d] = points.dims.as_slice() else { return Err(format!("the first input {} is not a [n][d] array", points.name)) };
+    let dims: Vec<&String> = sig.shape_dims().filter(|x| *x != n).collect();
+    let mut s = format!("entry {entry} [m_sample]{}", dims.iter().map(|x| format!("[{x}]")).collect::<String>());
+    s.push_str(&format!(" (sample: [m_sample][{d}]{}) (start: i64) ({n}: i64)", points.elem));
+    for p in rest {
+        s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
+    }
+    let args: Vec<&str> = rest.iter().map(|p| p.name.as_str()).collect();
+    Ok(format!("{s} : {}{} =\n  {callee} (sample[start:start + {n}] :> [{n}][{d}]{}) {}\n", "[]".repeat(sig.output.dims.len()), sig.output.elem, points.elem, args.join(" ")))
+}
+
+/// A program's text with its `entry main` made a definition named `name` (the rest of the text unchanged).
+fn main_as_def(text: &str, name: &str) -> Result<String, String> {
+    if text.matches("entry main ").count() != 1 {
+        return Err(format!("the program has {} `entry main ` (wants exactly 1)", text.matches("entry main ").count()));
+    }
+    Ok(text.replacen("entry main ", &format!("def {name} "), 1))
+}
+
+/// The entry names of the resident-sample module: the candidate's range entry and the seed's.
+pub const RANGE_ENTRY_CANDIDATE: &str = "kc";
+pub const RANGE_ENTRY_SEED: &str = "ky";
+
+/// THE MODULE of the resident-sample path: the seed's program (its text, `entry main`) in a module of its own as
+/// the definition `ky_main` with the range entry [`RANGE_ENTRY_SEED`] over it, and, when given, the candidate's
+/// program as the definition `kc_main` with the range entry [`RANGE_ENTRY_CANDIDATE`]; the kingdom's prelude once.
+/// Candidate and seed in ONE module, so one `Session::run` interleaves them case by case with the sample resident.
+pub fn resident_module(k: &crate::futhark_table::FutharkKingdom, sig: &Signature, candidate: Option<&Tree>, seed_text: &str) -> Result<String, String> {
+    let mut s = format!("-- the resident-sample k-means module (fuller::futhark_sig::kmeans_converged)\n{}", super::prelude(k));
+    let seed_def = main_as_def(seed_text, "main")?;
+    s.push_str(&format!("module m_seed = {{\n{seed_def}\n}}\n{}\n", range_entry(sig, RANGE_ENTRY_SEED, "m_seed.main")?));
+    if let Some(t) = candidate {
+        let def = super::program_named_bare(k, sig, t, "kc_main")?.replacen("entry kc_main ", "def kc_main ", 1);
+        s.push_str(&format!("{def}\n{}\n", range_entry(sig, RANGE_ENTRY_CANDIDATE, "kc_main")?));
+    }
+    Ok(s)
+}
+
+/// One `k` command of the runtime's host: `k ENTRY CASE START N CAP TOL` (the cap and the tolerance UltraDim's).
+pub fn k_command(entry: &str, case: usize, start: usize, n: usize) -> String {
+    format!("k {entry} {case} {start} {n} {MAX_ITERATIONS} {TOLERANCE:e}")
+}
+
+/// THE RUN A `k` RECORD DESCRIBES, as [`converge`] would have built it: the payload's line (iterations, converged,
+/// finished, the program's own nanoseconds, the start and final Euclidean inertia) and its final centres (finished)
+/// or its failure; the assignments and the spherical measures are the harness's here, against the case's points,
+/// exactly as `converge` makes them at its end. `wall_ns` is the record's own span.
+pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: u64) -> Result<ConvergedRun, String> {
+    let nl = payload.iter().position(|b| *b == b'\n').ok_or("a k-means record with no header line")?;
+    let head = std::str::from_utf8(&payload[..nl]).map_err(|_| "a k-means record whose header is not text")?;
+    let f: Vec<&str> = head.split(' ').collect();
+    let [iterations, converged, finished, ns, start_inertia, final_inertia] = f.as_slice() else { return Err(format!("a k-means record header {head:?}")) };
+    let bad = |what: &str| format!("a k-means record with a bad {what}: {head:?}");
+    let iterations: u32 = iterations.parse().map_err(|_| bad("iteration count"))?;
+    let converged = *converged == "1";
+    let finished = *finished == "1";
+    let ns: f64 = ns.parse().map_err(|_| bad("nanoseconds"))?;
+    let start_inertia: f32 = start_inertia.parse().map_err(|_| bad("start inertia"))?;
+    let final_inertia: f32 = final_inertia.parse().map_err(|_| bad("final inertia"))?;
+    let (flat, d) = flat_points(points)?;
+    let k = start.dims.first().copied().ok_or("the starting centres have no rows")?;
+    let (centroids, failure) = if finished {
+        (centroid_rows(&read_one(&payload[nl + 1..])?, k, d)?, String::new())
+    } else {
+        (centroid_rows(start, k, d)?, String::from_utf8_lossy(&payload[nl + 1..]).into_owned())
+    };
+    // The assignments the loop last made: against the centres the last step was given. The loop keeps them with the
+    // centres it ends on only when the step ran; `converge` reads the final clustering the same way.
+    let assignments = assign(&flat, d, &centroids);
+    let s = spherical(&flat, &centroids, &assignments, d);
+    Ok(ConvergedRun {
+        centroids,
+        assignments,
+        inertia: s.inertia,
+        mean_log10_p: s.mean_log10_p,
+        mean_log10_p_all: s.mean_log10_p_all,
+        coincident: s.coincident,
+        seconds: ns / 1e9,
+        wall_seconds: wall_ns as f64 / 1e9,
+        iterations,
+        inertia_per_iteration: (f64::from(start_inertia) - f64::from(final_inertia)) / f64::from(iterations.max(1)),
+        converged,
+        finished,
+        failure,
+    })
+}
+
+/// The one line of a `k` record's payload, as the runtime writes it (a test's stand-in for the device; the runtime's
+/// own text is in `host.rs`).
+pub fn k_payload(iterations: u32, converged: bool, finished: bool, ns: f64, start_inertia: f32, final_inertia: f32, tail: &[u8]) -> Vec<u8> {
+    let mut p = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(finished)).into_bytes();
+    p.extend_from_slice(tail);
+    p
 }
 
 // ---- the cases ---------------------------------------------------------------------------------------------------

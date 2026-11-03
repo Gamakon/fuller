@@ -68,11 +68,11 @@ fn the_inputs_are_half_at_the_seed_above_when_worse_below_when_better_one_when_u
     assert_eq!(squashed_ratio(1.0, f64::NAN), 1.0);
     assert_eq!(squashed_ratio(f64::INFINITY, 1.0), 1.0);
     assert_eq!(squashed_ratio(0.0, 0.0), 0.0);
-    // The fitness, quality first: the better run scores below the seed, the worse above, the unfinished above that; a
+    // The flat fitness at m = 2: the better run scores below the seed, the worse above, the unfinished above that; a
     // run that is slower but no worse in quality scores above the seed and below a worse one.
     let f = |r: &ConvergedRun| {
         let i = kmeans_inputs(r, &seed);
-        crate::fitness::converged_gated(&i.quality, &i.speed).unwrap().fitness
+        crate::fitness::qqs(&i.quality, &i.speed, 2).unwrap().fitness
     };
     assert!(f(&better) < f(&seed) && f(&seed) < f(&slow) && f(&slow) < f(&worse) && f(&worse) < f(&unfinished), "{} {} {} {} {}", f(&better), f(&seed), f(&slow), f(&worse), f(&unfinished));
     assert!(crate::fitness::converged_gated(&[], &[]).is_err(), "no case, no fitness");
@@ -293,74 +293,141 @@ fn dbpedia_case(rows: std::ops::Range<usize>, k: usize, seed: u64) -> (Array, Ar
     (Array::f32s(vec![rows.len(), d], pts), Array::f32s(vec![k, d], starts))
 }
 
-/// THE MEASURED TABLE OF THE REVIEW'S F1, THROUGH THE WHOLE SCHEME, on 500 dbpedia rows with k = 8 (k-means++ starts):
-/// the seed (UltraDim's step), the identity step (the start centres returned), a worsening step (the start centres
-/// pushed off the data), a NaN step, the seed's step rounded to 1e-3 and to 1e-2, and the seed's step with its
-/// centroids made unit length (the spherical variant). The run continues on every one (no error); the identity, the
-/// worsening, the NaN and both rounded steps rank BELOW the seed; the identity does not beat the seed on the
-/// percentile input; the normalised step's rank is a finding, printed. Every input in [0, 1].
+/// UltraDim's step with the points of each cluster summed in REVERSE point order (Kahan as UltraDim): the same
+/// partition as the seed's step, another order of additions. An equal-partition reordering by construction.
+fn reversed_step(points: &Array, centres: &Array) -> Result<Array, String> {
+    let (flat, d) = flat_points(points)?;
+    let k = centres.dims[0];
+    let rows = centroid_rows(centres, k, d)?;
+    let assignments = assign(&flat, d, &rows);
+    let n = flat.len() / d;
+    let mut out = rows.clone();
+    for (j, row) in out.iter_mut().enumerate() {
+        for (t, cell) in row.iter_mut().enumerate() {
+            let (mut sum, mut sum_c, mut count) = (0f32, 0f32, 0u32);
+            for i in (0..n).rev() {
+                if assignments[i] == j {
+                    let y = flat[i * d + t] - sum_c;
+                    let tt = sum + y;
+                    sum_c = (tt - sum) - y;
+                    sum = tt;
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                *cell = sum / count as f32;
+            }
+        }
+    }
+    Ok(Array::f32s(vec![k, d], out.concat()))
+}
+
+/// THE ORDERING TABLE OF THE FLAT SCHEME `futhark-kmeans-qqs` AT m = 2 AND m = 3 (Andrew's ruling of 2026-11-03; the
+/// advisor's round-2 review), on 500 dbpedia rows with k = 8 (k-means++ starts), every step a Rust step through the
+/// loop against the seed (UltraDim's step): the identity (the start centres returned), a worsening (the starts pushed
+/// off the data), a NaN at iteration 3, the seed's step rounded to 1e-3 and to 1e-2, its centroids made unit length,
+/// two equal-partition reorderings of the seed's sums (the plain f32 sum; the Kahan sum in reverse point order), a
+/// faster-but-equal step (the seed's step reporting half its seconds), and an early stop (one seed step, then the
+/// identity: the review's exchange-rate case). The run continues on every one (no error). At m = 2 and m = 3 the
+/// identity, the worsening, the NaN and both rounded steps rank BELOW the seed and the faster-but-equal step ABOVE
+/// it; the reorderings are within 1e-4 of 1/2 on both quality inputs and, at the seed's speed, within 1e-3 of the
+/// seed's fitness (the retired gate's cliff at 1/2 is gone); at m = 1 the identity ranks above the seed (why m is at
+/// least 2). The normalised step and the early stop are findings, printed. Every input in [0, 1].
 #[test]
-fn the_identity_a_worsening_a_nan_and_a_rounded_step_rank_below_the_seed_through_the_scheme() {
+fn the_flat_scheme_at_m_2_and_3_ranks_the_identity_worsening_nan_and_rounded_steps_below_the_seed_and_a_faster_equal_step_above() {
     let (points, start) = dbpedia_case(2000..2500, 8, 3);
     let d = points.dims[1];
     let seed = converge(&points, &start, ultradim(&points)).unwrap();
     assert!(seed.converged, "{seed:?}");
-    let f = |r: &ConvergedRun| {
+    let inputs = |r: &ConvergedRun| {
         let i = kmeans_inputs(r, &seed);
-        let t = crate::fitness::converged_gated(&i.quality, &i.speed).unwrap();
         assert!(i.quality.iter().chain(&i.speed).all(|x| (0.0..=1.0).contains(x)), "{i:?}");
-        (t.fitness, i)
+        i
     };
-    let (seed_f, seed_i) = f(&seed);
+    let fit = |i: &Inputs, m: usize| crate::fitness::qqs(&i.quality, &i.speed, m).unwrap().fitness;
+    let seed_i = inputs(&seed);
     assert_eq!((seed_i.quality.clone(), seed_i.speed.clone()), (vec![0.5; 2], vec![0.5; 2]));
-    let identity = converge(&points, &start, timed(|c| Ok(c.clone()))).unwrap();
+    // THE COST MODEL OF THE TABLE: a Rust step's own clock is noise on this machine (the round-2 review's N3: the seed
+    // against itself jittered by 8 %), so every step here reports a stated cost instead: a step that does the seed's
+    // work (the seed's step, rounded, normalised, reordered) costs the seed's measured seconds an iteration, a step
+    // that returns a constant (the identity, the worsening) costs nothing, and the faster step costs half. The
+    // seconds input is then a function of the iterations alone, as the review's table read it.
+    let per = seed.seconds / f64::from(seed.iterations);
+    fn costed<'a>(mut f: impl FnMut(&Array) -> Result<Array, String> + 'a, cost: f64) -> impl FnMut(&Array) -> Result<Stepped, String> + 'a {
+        move |c: &Array| f(c).map(|centres| Stepped { centres, seconds: cost })
+    }
+    let identity = converge(&points, &start, costed(|c: &Array| Ok(c.clone()), 0.0)).unwrap();
     assert!(identity.converged && identity.iterations == 2, "{identity:?}");
     assert!(identity.coincident >= 8, "the identity's centres are its 8 start rows, each at its own centroid: {} coincident", identity.coincident);
-    let (identity_f, identity_i) = f(&identity);
     let pushed: Vec<f32> = start.f32_values().unwrap().chunks_exact(d).enumerate().flat_map(|(j, row)| row.iter().enumerate().map(|(t, x)| x + if (t + j) % 2 == 0 { 0.05 } else { -0.05 }).collect::<Vec<f32>>()).collect();
     let pushed = Array::f32s(vec![8, d], pushed);
-    let worsening = converge(&points, &start, timed(|_| Ok(pushed.clone()))).unwrap();
+    let worsening = converge(&points, &start, costed(|_: &Array| Ok(pushed.clone()), 0.0)).unwrap();
     assert!(worsening.converged && worsening.inertia_per_iteration < 0.0, "a worsening step: {worsening:?}");
-    let (worsening_f, worsening_i) = f(&worsening);
     let mut calls = 0;
-    let nan = converge(&points, &start, timed(|c| {
+    let nan = converge(&points, &start, costed(|c: &Array| {
         calls += 1;
         if calls == 3 { Ok(Array::f32s(vec![8, d], vec![f32::NAN; 8 * d])) } else { ultradim_step_f32(&points, c, true) }
-    }))
+    }, per))
     .unwrap();
     assert!(!nan.finished);
-    let (nan_f, nan_i) = f(&nan);
     let rounded = |q: f32| {
         let pts = &points;
-        converge(pts, &start, timed(move |c| {
+        converge(pts, &start, costed(move |c: &Array| {
             let s = ultradim_step_f32(pts, c, true)?;
             Ok(Array::f32s(s.dims.clone(), s.f32_values()?.iter().map(|x| (x / q).round() * q).collect()))
-        }))
+        }, per))
         .unwrap()
     };
     let (r3, r2) = (rounded(1e-3), rounded(1e-2));
     assert!(r3.converged && r2.converged);
-    let (r3_f, r3_i) = f(&r3);
-    let (r2_f, r2_i) = f(&r2);
-    let normalised = converge(&points, &start, timed(|c| {
+    let normalised = converge(&points, &start, costed(|c: &Array| {
         let s = ultradim_step_f32(&points, c, true)?;
         let rows: Vec<f32> = s.f32_values()?.chunks_exact(d).flat_map(unit).collect();
         Ok(Array::f32s(s.dims.clone(), rows))
-    }))
+    }, per))
     .unwrap();
-    let (norm_f, norm_i) = f(&normalised);
-    eprintln!("the scheme on 500 dbpedia rows, k 8 (quality: cosine inertia ratio, percentile ratio; speed: seconds ratio, iterations ratio; fitness, quality first):");
-    for (name, r, fit, i) in [("seed", &seed, seed_f, &seed_i), ("identity", &identity, identity_f, &identity_i), ("worsening", &worsening, worsening_f, &worsening_i), ("NaN at iteration 3", &nan, nan_f, &nan_i), ("rounded 1e-3", &r3, r3_f, &r3_i), ("rounded 1e-2", &r2, r2_f, &r2_i), ("normalised centroids", &normalised, norm_f, &norm_i)] {
-        eprintln!("  {name:22} iterations {:3} converged {:5} finished {:5} cosine inertia {:.5} mean log10 p {:9.2} (all points {:9.2}, {} at their centroid) quality [{:.4}, {:.4}] speed [{:.4}, {:.4}] fitness {fit:.4}", r.iterations, r.converged, r.finished, r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, i.quality[0], i.quality[1], i.speed[0], i.speed[1]);
+    let plain = converge(&points, &start, costed(|c: &Array| ultradim_step_f32(&points, c, false), per)).unwrap();
+    let reversed = converge(&points, &start, costed(|c: &Array| reversed_step(&points, c), per)).unwrap();
+    // The faster-but-equal step: the seed's own step, the same bits, at half the cost.
+    let faster = converge(&points, &start, costed(|c: &Array| ultradim_step_f32(&points, c, true), per / 2.0)).unwrap();
+    assert_eq!((faster.iterations, faster.inertia, faster.mean_log10_p), (seed.iterations, seed.inertia, seed.mean_log10_p));
+    let mut steps = 0;
+    let early = converge(&points, &start, |c| {
+        steps += 1;
+        if steps == 1 { Ok(Stepped { centres: ultradim_step_f32(&points, c, true)?, seconds: per }) } else { Ok(Stepped { centres: c.clone(), seconds: 0.0 }) }
+    })
+    .unwrap();
+    let rows: Vec<(&str, &ConvergedRun)> = vec![("seed", &seed), ("identity", &identity), ("worsening", &worsening), ("NaN at iteration 3", &nan), ("rounded 1e-3", &r3), ("rounded 1e-2", &r2), ("normalised centroids", &normalised), ("plain f32 sum (same partition)", &plain), ("reversed Kahan sum (same partition)", &reversed), ("faster, same bits (seconds / 2)", &faster), ("one seed step, then identity", &early)];
+    let table: Vec<(&str, Inputs, [f64; 3])> = rows.iter().map(|(name, r)| { let i = inputs(r); let f = [fit(&i, 1), fit(&i, 2), fit(&i, 3)]; (*name, i, f) }).collect();
+    let seed_f = table[0].2;
+    eprintln!("futhark-kmeans-qqs on 500 dbpedia rows, k 8 (quality: cosine inertia ratio, percentile ratio; speed: seconds ratio, iterations ratio; the fitness at m = 1, 2, 3; the seed {:.4}):", seed_f[1]);
+    eprintln!("  | step | iterations | converged | finished | cosine inertia | mean log10 p (off centroid) | all points | at centroid | quality [cos, pct] | speed [s, it] | m = 1 | m = 2 | m = 3 |");
+    for ((name, r), (_, i, f)) in rows.iter().zip(&table) {
+        eprintln!("  | {name} | {} | {} | {} | {:.5} | {:.2} | {:.2} | {} | {:.4}, {:.4} | {:.4}, {:.4} | {:.4}{} | {:.4}{} | {:.4}{} |", r.iterations, if r.converged { "yes" } else { "no" }, if r.finished { "yes" } else { "no" }, r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, i.quality[0], i.quality[1], i.speed[0], i.speed[1], f[0], if f[0] < seed_f[0] { "*" } else { "" }, f[1], if f[1] < seed_f[1] { "*" } else { "" }, f[2], if f[2] < seed_f[2] { "*" } else { "" });
     }
-    assert!(identity_f > seed_f, "the identity beats the seed: {identity_f} against {seed_f}");
-    assert!(identity_i.quality[1] >= 0.5, "the identity beats the seed on the percentile input: {identity_i:?}");
-    assert!(identity_i.quality[0] > 0.5, "the identity beats the seed on the cosine inertia: {identity_i:?}");
-    assert!(worsening_f > seed_f, "a worsening step beats the seed: {worsening_f} against {seed_f}");
-    assert!(nan_f > worsening_f, "a NaN step is not the worst: {nan_f} against {worsening_f}");
-    assert!(r3_f > seed_f, "the step rounded to 1e-3 beats the seed: {r3_f} against {seed_f} ({r3_i:?})");
-    assert!(r2_f > seed_f, "the step rounded to 1e-2 beats the seed: {r2_f} against {seed_f} ({r2_i:?})");
-    assert!(norm_f.is_finite());
+    let of = |name: &str| table.iter().find(|t| t.0 == name).map(|t| (t.1.clone(), t.2)).unwrap();
+    let (identity_i, identity_f) = of("identity");
+    assert!(identity_i.quality[1] >= 0.5 && identity_i.quality[0] > 0.5, "the identity beats the seed on a quality input: {identity_i:?}");
+    assert!(identity_f[0] < seed_f[0], "at m = 1 the identity is expected ABOVE the seed (the review's measurement, why m is at least 2): {} against {}", identity_f[0], seed_f[0]);
+    for m in [1usize, 2] {
+        let (f, s) = (m, seed_f[m]);
+        assert!(identity_f[f] > s, "m = {}: the identity beats the seed: {} against {s}", m + 1, identity_f[f]);
+        assert!(of("worsening").1[f] > s, "m = {}: a worsening step beats the seed", m + 1);
+        assert!(of("NaN at iteration 3").1[f] > of("worsening").1[f], "m = {}: a NaN step is not the worst", m + 1);
+        assert!(of("rounded 1e-3").1[f] > s, "m = {}: the step rounded to 1e-3 beats the seed: {:?}", m + 1, of("rounded 1e-3"));
+        assert!(of("rounded 1e-2").1[f] > s, "m = {}: the step rounded to 1e-2 beats the seed: {:?}", m + 1, of("rounded 1e-2"));
+        assert!(of("faster, same bits (seconds / 2)").1[f] < s, "m = {}: a faster equal step does not beat the seed", m + 1);
+        for name in ["plain f32 sum (same partition)", "reversed Kahan sum (same partition)"] {
+            let (i, _) = of(name);
+            assert!(i.quality.iter().all(|x| (x - 0.5).abs() < 1e-4), "{name}: the quality inputs are not the seed's to 1e-4: {i:?}");
+            // At the seed's cost the reordering scores the seed's fitness: no cliff.
+            assert!((i.speed[0] - 0.5).abs() < 1e-9 && i.speed[1] == 0.5, "{name}: {i:?}");
+            assert!((of(name).1[f] - s).abs() < 1e-3, "{name} at m = {}: {} against the seed's {s}", m + 1, of(name).1[f]);
+        }
+        assert!(of("normalised centroids").1[f].is_finite() && of("one seed step, then identity").1[f].is_finite());
+    }
+    // The retired gated scheme on the same inputs still computes what it did (the registry's rule), for the record.
+    assert!(crate::fitness::converged_gated(&identity_i.quality, &identity_i.speed).unwrap().fitness > std::f64::consts::FRAC_PI_2);
 }
 
 /// THE REIMPLEMENTED MEASURES AGAINST ULTRADIM'S OWN FUNCTIONS (the review's F11), the vendored copies in
@@ -470,7 +537,7 @@ fn the_textbook_program_runs_to_the_stopping_point_interpreted_and_compiled_alik
     let inputs = kmeans_inputs(&textbook, &seed);
     assert!(inputs.quality.iter().chain(&inputs.speed).all(|x| (0.0..=1.0).contains(x)), "{inputs:?}");
     eprintln!("textbook against UltraDim's step on {}: inputs {inputs:?}; textbook {} iterations, seed {}", c.name, textbook.iterations, seed.iterations);
-    let fit = crate::fitness::converged_gated(&inputs.quality, &inputs.speed).unwrap();
+    let fit = crate::fitness::qqs(&inputs.quality, &inputs.speed, 2).unwrap();
     assert!(fit.fitness.is_finite());
     if !have_futhark() {
         panic!("futhark 0.28.1 is needed for this test");
@@ -481,5 +548,139 @@ fn the_textbook_program_runs_to_the_stopping_point_interpreted_and_compiled_alik
     assert_eq!((compiled.iterations, compiled.converged, &compiled.centroids, &compiled.assignments), (textbook.iterations, true, &textbook.centroids, &textbook.assignments));
     assert_eq!((compiled.inertia, compiled.mean_log10_p, compiled.coincident, compiled.inertia_per_iteration), (textbook.inertia, textbook.mean_log10_p, textbook.coincident, textbook.inertia_per_iteration));
     eprintln!("textbook compiled on {}: the same {} iterations, the program's own {:.3} s of {:.3} s wall", c.name, compiled.iterations, compiled.seconds, compiled.wall_seconds);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// THE SERVER (one process a program, 2026-11-03): the seed through `futhark c --server` on 200 dbpedia rows gives
+/// the process-a-step path's run bit for bit (iterations, centroids, assignments, the measures), its own seconds
+/// positive (the call's `runtime:`, the same microseconds `-t` writes) and under the wall clock; the wall clock of
+/// the whole run is measured on both paths and printed (the throughput before and after). A program whose call fails
+/// (an index out of bounds) is an error that names it, and the server answers the next command.
+#[test]
+fn the_server_steps_the_seed_bit_for_bit_with_the_process_path_and_survives_a_failed_call() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let (points, start) = dbpedia_case(0..200, 4, 1);
+    let k = load(&KMEANS).unwrap();
+    let sig = signature(&KMEANS).unwrap();
+    let source = program(&k, &sig, &build(&k, &crate::futhark_sig::kmeans_seed()).unwrap()).unwrap();
+    let dir = std::env::temp_dir().join(format!("kmeans_converged_server_{}", std::process::id()));
+    let exe = compile_c(&source, &dir.join("process")).unwrap();
+    let srv = crate::futhark_sig::compile_c_server(&source, &dir.join("server")).unwrap();
+    let t = Instant::now();
+    let by_process = converge(&points, &start, step_of_exe(&exe, &points, StepTimer::FutharkC)).unwrap();
+    let process_wall = t.elapsed().as_secs_f64();
+    let mut server = Server::start(&srv, &dir.join("server").join("scratch"), &dir.join("points")).unwrap();
+    let t = Instant::now();
+    let by_server = converge(&points, &start, {
+        server.load_points("small", &points).unwrap();
+        step_of_server(&mut server, "small")
+    })
+    .unwrap();
+    let server_wall = t.elapsed().as_secs_f64();
+    assert!(by_server.converged, "{by_server:?}");
+    assert_eq!((by_server.iterations, &by_server.centroids, &by_server.assignments), (by_process.iterations, &by_process.centroids, &by_process.assignments));
+    assert_eq!((by_server.inertia, by_server.mean_log10_p, by_server.coincident), (by_process.inertia, by_process.mean_log10_p, by_process.coincident));
+    assert!(by_server.seconds > 0.0 && by_server.seconds < by_server.wall_seconds, "{} s own, {} s wall", by_server.seconds, by_server.wall_seconds);
+    // The points loaded once: a second run on the same name restores nothing again and agrees.
+    let again = converge(&points, &start, step_of_server(&mut server, "small")).unwrap();
+    assert_eq!(again.centroids, by_server.centroids);
+    assert!(server.step("unloaded", &start).unwrap_err().contains("not loaded"));
+    eprintln!("the seed on 200 x 1536 x 4 through futhark c: {} iterations; a process a step {process_wall:.3} s wall (the program's own {:.4} s); the server {server_wall:.3} s wall (the program's own {:.4} s); {:.1} x", by_process.iterations, by_process.seconds, by_server.seconds, process_wall / server_wall.max(1e-9));
+    // A failed call: an error naming the failure; the server lives on.
+    let bad = "entry main [n][d][k] (points: [n][d]f32) (centres: [k][d]f32) : [k][d]f32 = map (\\c -> map2 (+) c points[n + 5]) centres\n";
+    let bad_exe = crate::futhark_sig::compile_c_server(bad, &dir.join("bad")).unwrap();
+    let mut bad_server = Server::start(&bad_exe, &dir.join("bad").join("scratch"), &dir.join("points")).unwrap();
+    bad_server.load_points("small", &points).unwrap();
+    let err = bad_server.step("small", &start).unwrap_err();
+    assert!(err.contains("out of bounds"), "{err}");
+    let err2 = bad_server.step("small", &start).unwrap_err();
+    assert!(err2.contains("out of bounds"), "the server did not answer after a failed call: {err2}");
+    bad_server.load_points("second", &points).unwrap();
+    let r = converge(&points, &start, step_of_server(&mut bad_server, "second")).unwrap();
+    assert!(!r.finished && r.failure.contains("out of bounds"), "{r:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The runtime's copy of the harness (`futhark-rust-rt/src/kmeans_harness.rs`), included by path.
+#[path = "../../../futhark-rust-rt/src/kmeans_harness.rs"]
+mod rt_harness;
+
+/// THE RUNTIME'S HARNESS IS FULLER'S: the runtime's `assign` and `euclidean_inertia` (the `k` command's stopping
+/// rule on the GPU path) give fuller's assignments and the same inertia bits on the tie case and on 200 dbpedia rows
+/// against UltraDim's starts and against the seed's centroids.
+#[test]
+fn the_runtimes_harness_is_fullers() {
+    let (points, start) = small_case();
+    let flat = points.f32_values().unwrap();
+    let rows: Vec<Vec<f32>> = start.f32_values().unwrap().chunks_exact(2).map(<[f32]>::to_vec).collect();
+    let tie = [0.0f32, 0.0, 4.0, 0.0, 2.0, 0.0];
+    let two = vec![vec![0.0f32, 0.0], vec![4.0, 0.0]];
+    assert_eq!(rt_harness::assign(&tie, 2, &two), assign(&tie, 2, &two));
+    assert_eq!(rt_harness::assign(&flat, 2, &rows), assign(&flat, 2, &rows));
+    let (points, start) = dbpedia_case(0..200, 4, 1);
+    let d = points.dims[1];
+    let flat = points.f32_values().unwrap();
+    let starts: Vec<Vec<f32>> = start.f32_values().unwrap().chunks_exact(d).map(<[f32]>::to_vec).collect();
+    let seed = converge(&points, &start, ultradim(&points)).unwrap();
+    for c in [&starts, &seed.centroids] {
+        let ours = assign(&flat, d, c);
+        assert_eq!(rt_harness::assign(&flat, d, c), ours);
+        assert_eq!(rt_harness::euclidean_inertia(&flat, c, &ours, d).to_bits(), euclidean_inertia(&flat, c, &ours, d).to_bits());
+    }
+}
+
+/// THE RANGE ENTRY (the resident-sample path) through `futhark c`: the module of the seed (as the candidate and as
+/// the seed) compiled, each range entry run on the whole dbpedia sample with a case's (start, n) and its stored
+/// starts, equals the seed's plain program on the case's cut points, bit for bit, on two cases; and a `k` record's
+/// payload built from a finished run reads back as `converge`'s run (centroids, measures, iterations), an
+/// unfinished one as its failure.
+#[test]
+fn the_range_entry_equals_the_program_on_the_cut_case_and_a_k_payload_reads_back() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let k = load(&KMEANS).unwrap();
+    let sig = signature(&KMEANS).unwrap();
+    let seed_tree = build(&k, &crate::futhark_sig::kmeans_seed()).unwrap();
+    let seed_text = program(&k, &sig, &seed_tree).unwrap();
+    let module = resident_module(&k, &sig, Some(&seed_tree), &seed_text).unwrap();
+    assert!(module.contains("entry kc [m_sample][d][k] (sample: [m_sample][d]f32) (start: i64) (n: i64) (centres: [k][d]f32) : [][]f32") && module.contains("entry ky "), "{}", &module[..400]);
+    assert!(module.contains("kc_main (sample[start:start + n] :> [n][d]f32) centres"), "{module}");
+    let dir = std::env::temp_dir().join(format!("kmeans_converged_range_{}", std::process::id()));
+    let exe = compile_c(&module, &dir.join("module")).unwrap();
+    let plain = compile_c(&seed_text, &dir.join("plain")).unwrap();
+    let sample = crate::futhark_sig::read_one(&std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans/dbpedia/sample_5000x1536.in")).unwrap()).unwrap();
+    let scalar_i64 = |x: i64| { let mut b = vec![b'b', 2, 0]; b.extend_from_slice(b" i64"); b.extend_from_slice(&x.to_le_bytes()); b };
+    for (cut, entry) in [(&KMEANS_CASES[3], RANGE_ENTRY_CANDIDATE), (&KMEANS_CASES[2], RANGE_ENTRY_SEED)] {
+        let (points, start) = cut_case(&sample, cut).unwrap();
+        let mut stdin = write_binary(&[&sample]);
+        stdin.extend(scalar_i64(cut.start as i64));
+        stdin.extend(scalar_i64((cut.end - cut.start) as i64));
+        stdin.extend(write_binary(&[&start]));
+        let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(&exe).arg("-b").arg("-e").arg(entry), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let ranged = read_one(&out.stdout).unwrap();
+        let direct = crate::futhark_sig::run_exe(&plain, &write_binary(&[&points, &start])).unwrap();
+        assert_eq!(ranged, direct, "{}: the range entry {entry} differs from the plain program", cut.name);
+        eprintln!("{}: the range entry {entry} on the sample rows {}..{} equals the plain program on the cut, {} x {} centres", cut.name, cut.start, cut.end, ranged.dims[0], ranged.dims[1]);
+    }
+    // The payload round trip on the small case's converged run.
+    let (points, start) = cut_case(&sample, &KMEANS_CASES[3]).unwrap();
+    let r = converge(&points, &start, ultradim(&points)).unwrap();
+    let final_centres = Array::f32s(vec![r.centroids.len(), points.dims[1]], r.centroids.concat());
+    let start_inertia = euclidean_inertia(&points.f32_values().unwrap(), &start.f32_values().unwrap().chunks_exact(points.dims[1]).map(<[f32]>::to_vec).collect::<Vec<_>>(), &assign(&points.f32_values().unwrap(), points.dims[1], &start.f32_values().unwrap().chunks_exact(points.dims[1]).map(<[f32]>::to_vec).collect::<Vec<_>>()), points.dims[1]);
+    let final_inertia = euclidean_inertia(&points.f32_values().unwrap(), &r.centroids, &r.assignments, points.dims[1]);
+    let payload = k_payload(r.iterations, true, true, 12_345.0, start_inertia, final_inertia, &write_binary(&[&final_centres]));
+    let back = run_of_k_payload(&points, &start, &payload, 7_000_000).unwrap();
+    assert_eq!((back.iterations, back.converged, back.finished, &back.centroids, &back.assignments), (r.iterations, true, true, &r.centroids, &r.assignments));
+    assert_eq!((back.inertia, back.mean_log10_p, back.mean_log10_p_all, back.coincident, back.inertia_per_iteration), (r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, r.inertia_per_iteration));
+    assert_eq!((back.seconds, back.wall_seconds), (12_345.0 / 1e9, 0.007));
+    let failed = run_of_k_payload(&points, &start, &k_payload(3, false, false, 0.0, start_inertia, start_inertia, b"iteration 3: a centroid is infinite or NaN"), 1).unwrap();
+    assert!(!failed.finished && !failed.converged && failed.iterations == 3 && failed.failure.contains("NaN"), "{failed:?}");
+    assert_eq!(kmeans_inputs(&failed, &r), Inputs::worst());
+    assert_eq!(k_command("kc", 2, 2000, 500), "k kc 2 2000 500 100 1e-4");
+    assert!(run_of_k_payload(&points, &start, b"no header", 1).is_err());
     let _ = std::fs::remove_dir_all(dir);
 }

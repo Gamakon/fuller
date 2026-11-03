@@ -843,3 +843,94 @@ fn the_batch_host_takes_f32_on_the_rust_path_and_refuses_it_on_the_c_driver() {
     Host::new(&hk, &hsig, hcases.len(), Backend::C, &base.join("hc"), Inputs { cases_stdin: &hstdin, timing_stdin: None, yardstick: Some(hist.yardstick) }).expect("the C driver takes i32");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// THE K-MEANS STEP'S SOURCE AND COMMANDS (the resident-sample path): a batch of the seed as a tree and as a text
+/// with a k-means step on two cases, two pairs, renders each member's definition and range entry and the seed's
+/// range entry in a module of its own, the text passes `futhark check`, and the commands interleave the member's
+/// entry and the seed's (the member first in the even pairs); the C batch driver (i32 alone) refuses a k-means host
+/// at its making.
+#[test]
+fn the_kmeans_steps_source_passes_futhark_check_and_its_commands_interleave_the_seed() {
+    if !have("futhark") {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let p = problem("kmeans").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let seed_tree = crate::futhark_sig::build(&k, &crate::futhark_sig::kmeans_seed()).unwrap();
+    let seed_text = crate::futhark_sig::program(&k, &sig, &seed_tree).unwrap();
+    let base = scratch("kmeans_source");
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: base.join("no_rt") }, &base.join("batch"), Inputs { cases_stdin: &[], timing_stdin: None, yardstick: Some(&seed_text) }).unwrap();
+    let steps = vec![Step::Kmeans { case: 3, start: 0, n: 200, pairs: 2 }, Step::Kmeans { case: 2, start: 2000, n: 500, pairs: 1 }];
+    let members = vec![Member { program: Program::Tree(&seed_tree), steps: steps.clone() }, Member { program: Program::Text(&seed_text), steps: steps.clone() }];
+    let idx = [0usize, 1];
+    let source = host.source(&members, &idx).unwrap();
+    for want in ["def k0_main ", "entry k0 [m_sample][d][k] (sample: [m_sample][d]f32) (start: i64) (n: i64) (centres: [k][d]f32)", "module mk1 = {", "entry k1 ", "module mkyard = {", "entry kyard ", "mkyard.main (sample[start:start + n] :> [n][d]f32) centres"] {
+        assert!(source.contains(want), "the source lacks {want:?}:\n{source}");
+    }
+    std::fs::create_dir_all(&base).unwrap();
+    let fut = base.join("batch.fut");
+    std::fs::write(&fut, &source).unwrap();
+    let out = Command::new("futhark").arg("check").arg(&fut).output().unwrap();
+    assert!(out.status.success(), "futhark check: {}", String::from_utf8_lossy(&out.stderr));
+    let cmds = host.commands(&members, &idx).unwrap();
+    let lines: Vec<&str> = cmds.iter().map(|c| c.line.as_str()).collect();
+    assert_eq!(lines, ["k k0 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k k0 3 0 200 100 1e-4", "k k0 2 2000 500 100 1e-4", "k kyard 2 2000 500 100 1e-4", "k k1 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k kyard 3 0 200 100 1e-4", "k k1 3 0 200 100 1e-4", "k k1 2 2000 500 100 1e-4", "k kyard 2 2000 500 100 1e-4"]);
+    assert_eq!(cmds.iter().map(|c| (c.member, c.step)).collect::<Vec<_>>(), [(0, 0), (0, 0), (0, 0), (0, 0), (0, 1), (0, 1), (1, 0), (1, 0), (1, 0), (1, 0), (1, 1), (1, 1)]);
+    // The C batch driver reads i32 alone: a k-means host on it is refused at its making, before any step.
+    let refused = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("c"), Inputs { cases_stdin: &[], timing_stdin: None, yardstick: Some(&seed_text) }).err().expect("the C batch driver refuses a k-means host");
+    assert!(refused.contains("i32"), "{refused}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// ON THE GPU, THE RESIDENT-SAMPLE PATH (`--eval rust`, the `k` command; Andrew, 2026-11-03): the seed as a member
+/// against the seed's entry on the three smallest fitness cases, two pairs, through the in-process host with the
+/// dbpedia sample uploaded once; every side converges, the seed's two sides agree on their iterations, the
+/// candidate side's quality inputs against the seed side are exactly 1/2 (one program, one device), the sample is
+/// uploaded exactly once across two runs (the second run's `u` record is 0 ns), and the GPU runs agree with the c
+/// backend's run of the same program on the iteration count. (The fork compiler, rustc, the GPU; run under the GPU
+/// lock.)
+#[cfg(feature = "gpu")]
+#[test]
+fn on_the_gpu_the_resident_sample_path_runs_the_seed_against_itself_with_one_upload() {
+    if !crate::futhark_rust::compiler().is_file() {
+        panic!("the fork compiler is not installed (futhark-rust-backend/build.sh)");
+    }
+    let p = problem("kmeans").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let seed_tree = crate::futhark_sig::build(&k, &crate::futhark_sig::kmeans_seed()).unwrap();
+    let seed_text = crate::futhark_sig::program(&k, &sig, &seed_tree).unwrap();
+    let timing = crate::futhark_sig::timing_input(&p).unwrap().unwrap();
+    let base = scratch("kmeans_gpu");
+    let rt = crate::futhark_rust::prebuild_rt(&base.join("rt")).unwrap();
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&timing), yardstick: Some(&seed_text) }).unwrap();
+    // The three smallest fitness cases by points, as declared row ranges.
+    let mut idx: Vec<usize> = (0..cases.len()).filter(|i| cases[*i].split.in_fitness()).collect();
+    idx.sort_by_key(|i| cases[*i].inputs[0].len() * cases[*i].inputs[1].dims[0]);
+    idx.truncate(3);
+    let cut = |name: &str| crate::futhark_sig::kmeans_converged::KMEANS_CASES.iter().find(|c| c.name == name).expect("a declared cut");
+    let steps: Vec<Step> = idx.iter().map(|i| { let c = cut(&cases[*i].name); Step::Kmeans { case: *i, start: c.start, n: c.end - c.start, pairs: 2 } }).collect();
+    let members = vec![Member { program: Program::Tree(&seed_tree), steps: steps.clone() }];
+    let r1 = host.run(&members).unwrap();
+    let r2 = host.run(&members).unwrap();
+    assert_eq!((r1.cost.uploads, r1.cost.resident_hits, r2.cost.uploads, r2.cost.resident_hits), (1, 0, 0, 1), "the sample is uploaded once a session");
+    eprintln!("the resident sample: uploaded in {:.3} s; the first run {:.1} s, the second {:.1} s (compile {:.1} s a run)", r1.cost.upload_seconds, r1.cost.run.total, r2.cost.run.total, r1.cost.compile.futhark + r1.cost.compile.cc);
+    for (o, i) in r1.outcomes[0].iter().zip(&idx) {
+        let c = &cases[*i];
+        let Outcome::Kmeans(sides) = o else { panic!("{}: {o:?}", c.name) };
+        assert_eq!(sides.len(), 4, "{}: 2 pairs, 4 sides", c.name);
+        let runs: Vec<(bool, crate::futhark_sig::kmeans_converged::ConvergedRun)> = sides.iter().map(|s| { let (pl, ns) = s.result.as_ref().unwrap_or_else(|e| panic!("{}: {e}", c.name)); (s.candidate, crate::futhark_sig::kmeans_converged::run_of_k_payload(&c.inputs[0], &c.inputs[1], pl, *ns).unwrap()) }).collect();
+        let (cand, seed) = crate::futhark_sig::kmeans_converged::sides_of_runs(runs.iter().filter(|r| r.0).map(|r| r.1.clone()).collect(), runs.iter().filter(|r| !r.0).map(|r| r.1.clone()).collect()).unwrap();
+        assert!(cand.converged && seed.converged, "{}: {cand:?} {seed:?}", c.name);
+        let inputs = crate::futhark_sig::kmeans_converged::kmeans_inputs(&cand, &seed);
+        assert_eq!(inputs.quality, vec![0.5, 0.5], "{}: one program on one device is its own yardstick", c.name);
+        assert_eq!(cand.iterations, seed.iterations);
+        let on_c = crate::futhark_sig::kmeans_converged::converge(&c.inputs[0], &c.inputs[1], crate::futhark_sig::kmeans_converged::step_of_exe(&compile_c(&seed_text, &base.join("c")).unwrap(), &c.inputs[0], crate::futhark_sig::kmeans_converged::StepTimer::FutharkC)).unwrap();
+        eprintln!("{}: GPU {} iterations, the program's own {:.4} s a side ({:.4} s wall), cosine inertia {:.5}; futhark c {} iterations, {:.5}; inputs {inputs:?}", c.name, cand.iterations, cand.seconds, cand.wall_seconds, cand.inertia, on_c.iterations, on_c.inertia);
+        assert_eq!(cand.iterations, on_c.iterations, "{}: the GPU's loop and the c backend's stop at the same iteration", c.name);
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}

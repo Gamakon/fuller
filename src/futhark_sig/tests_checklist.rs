@@ -19,7 +19,7 @@ pub const ITEMS: [&str; 20] = [
     "interpreter covers every row",
     "default fitness scheme",
     "slope check (`--check`)",
-    "correctness gate (stage 2 gated)",
+    "quality weight (stage 2, one flat vector)",
     "reference exact, host interpreter",
     "reference exact, compiled",
     "planted slowdown, equal and recoverable",
@@ -39,8 +39,8 @@ pub const ITEMS: [&str; 20] = [
 #[test]
 fn every_problem_loads_has_a_default_scheme_and_its_programs_are_exact_on_the_host() {
     let scheme = scheme_for(Family::FutharkSig, None).unwrap();
-    assert_eq!(scheme.name, "futhark-slope4-gated", "the family's default is its newest scheme");
-    assert!(scheme.fault.is_none());
+    assert_eq!(scheme.name, "futhark-slope4-qqs", "the family's default is its newest scheme");
+    assert!(scheme.fault.is_none() && scheme.is_flat(), "no default carries the offset (Andrew, 2026-11-03)");
     let mut report = Vec::new();
     for name in PROBLEM_NAMES {
         let p = problem(name).unwrap_or_else(|e| panic!("{name}: {e}"));

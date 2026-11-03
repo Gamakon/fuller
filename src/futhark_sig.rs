@@ -85,8 +85,8 @@ pub struct Problem {
     pub seed: Seed,
     pub yardstick: &'static str,
     /// THE PROBLEM'S DEFAULT FITNESS SCHEME (`fuller::fitness::SCHEMES`, by name): the newest scheme of its kind. The
-    /// i32 problems and A7 are scored against their stored answers (`futhark-slope4-gated`); k-means is scored on its
-    /// clustering objective run to UltraDim's stopping rule (`futhark-kmeans-quality-first`, `docs/KMEANS_FITNESS.md`),
+    /// i32 problems and A7 are scored against their stored answers (`futhark-slope4-qqs`); k-means is scored on its
+    /// clustering objective run to UltraDim's stopping rule (`futhark-kmeans-qqs`, `docs/KMEANS_FITNESS.md`),
     /// because a k-means step has no exact answer. `--fitness` may name another scheme of the same kind only
     /// ([`crate::fitness::scheme_for_problem`]).
     pub fitness: &'static str,
@@ -152,7 +152,7 @@ impl Problem {
     }
 
     /// Whether the stored cases carry an answer (`<name>.out`) the program is scored against. A problem scored on its
-    /// own objective (the k-means schemes, `futhark-kmeans-quality-first`) stores inputs only: there is no exact
+    /// own objective (the k-means schemes, `futhark-kmeans-qqs`) stores inputs only: there is no exact
     /// answer to store.
     pub fn cases_have_answers(&self) -> bool {
         !crate::fitness::scheme(self.fitness).is_ok_and(|s| s.is_converged())
@@ -228,7 +228,7 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     instance: PATHFINDER,
     seed: Seed::Program { reference: PATHFINDER_REFERENCE, planted: PATHFINDER_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/pathfinder/yardstick.fut"),
-    fitness: "futhark-slope4-gated",
+    fitness: "futhark-slope4-qqs",
     corpus: "tests/corpus/futhark_problems/pathfinder",
     timing_n: PATHFINDER_TIMING_ROWS * 100_000,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -248,7 +248,7 @@ pub const REDUCE_PROBLEM: Problem = Problem {
     instance: REDUCE,
     seed: Seed::Program { reference: REDUCE_REFERENCE, planted: REDUCE_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/reduce/yardstick.fut"),
-    fitness: "futhark-slope4-gated",
+    fitness: "futhark-slope4-qqs",
     corpus: "tests/corpus/futhark_problems/reduce",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -264,7 +264,7 @@ pub const SCAN_PROBLEM: Problem = Problem {
     instance: SCAN,
     seed: Seed::Program { reference: SCAN_REFERENCE, planted: SCAN_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/scan/yardstick.fut"),
-    fitness: "futhark-slope4-gated",
+    fitness: "futhark-slope4-qqs",
     corpus: "tests/corpus/futhark_problems/scan",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -281,7 +281,7 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     instance: HISTOGRAM,
     seed: Seed::Program { reference: HISTOGRAM_REFERENCE, planted: HISTOGRAM_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/histogram/yardstick.fut"),
-    fitness: "futhark-slope4-gated",
+    fitness: "futhark-slope4-qqs",
     corpus: "tests/corpus/futhark_problems/histogram",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -372,7 +372,7 @@ pub const KMEANS_PROBLEM: Problem = Problem {
     instance: KMEANS,
     seed: Seed::Translated { reference: kmeans_seed_static, planted: kmeans_planted_static },
     yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
-    fitness: "futhark-kmeans-quality-first",
+    fitness: "futhark-kmeans-qqs",
     corpus: "tests/corpus/futhark_problems/kmeans",
     timing_n: KMEANS_TIMING_N,
     program_size: KMEANS_PROGRAM_SIZE,
@@ -415,7 +415,7 @@ pub const A7_PROBLEM: Problem = Problem {
     instance: A7,
     seed: Seed::Program { reference: A7_REFERENCE, planted: A7_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/a7/yardstick.fut"),
-    fitness: "futhark-slope4-gated",
+    fitness: "futhark-slope4-qqs",
     corpus: "tests/corpus/futhark_problems/a7",
     timing_n: A7_TIMING_N,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -2247,6 +2247,25 @@ pub fn compile_c(source: &str, dir: &Path) -> Result<PathBuf, String> {
     Ok(exe)
 }
 
+/// Compile a program with Futhark's sequential C backend AS A SERVER (`futhark c --server`): the executable reads the
+/// Futhark server protocol on stdin and keeps its values between commands, so one process serves every iteration and
+/// every case of a k-means evaluation (`kmeans_converged::Server`).
+pub fn compile_c_server(source: &str, dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let fut = dir.join("prog.fut");
+    std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
+    let exe = dir.join("prog_server");
+    let out = crate::futhark_exec::output_with_timeout(
+        std::process::Command::new("futhark").arg("c").arg("--server").arg(&fut).arg("-o").arg(&exe),
+        std::time::Duration::from_secs(120),
+        None,
+    )?;
+    if !out.status.success() {
+        return Err(format!("futhark c --server failed:\n{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(exe)
+}
+
 /// Run a compiled executable (either backend's) on a case's binary input and read its one output value.
 pub fn run_exe(exe: &Path, stdin: &[u8]) -> Result<Array, String> {
     let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b"), std::time::Duration::from_secs(120), Some(stdin))?;
@@ -2711,7 +2730,7 @@ mod tests_micro;
 mod tests_view;
 #[cfg(test)]
 mod tests_pool;
-/// THE K-MEANS FITNESS (`futhark-kmeans-quality-first`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
+/// THE K-MEANS FITNESS (`futhark-kmeans-qqs`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
 /// its measures, the two input groups a case, the cases cut from the dbpedia sample.
 pub mod kmeans_converged;
 
@@ -2723,3 +2742,5 @@ mod tests_kmeans_seed;
 mod tests_a7;
 #[cfg(test)]
 mod tests_checklist;
+#[cfg(test)]
+mod tests_flat;
