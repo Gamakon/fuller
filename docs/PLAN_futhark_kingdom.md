@@ -512,6 +512,22 @@ here is to the measurement's data and criterion, not to what evolution may find.
   UltraDim's vendored functions to the bit (`ln B` from statrs as UltraDim has it). The loop is Euclidean Lloyd scored
   on UltraDim's spherical measures, stated in the specification with what normalisation does. Not run: the GPU
   (the oracle, item 4; the in-run A/A and the run, item 5; the script is `/private/tmp/claude-501/fbench/kmeans_gpu_controls.sh`).
+- (h) DONE on the CPU (2026-11-03, after the advisor's round-2 review and Andrew's ruling of the day: the HFF angle
+  is the final fitness, nothing manipulates it; quality weighs more by repetition in one flat vector): the scheme is
+  `futhark-kmeans-qqs` (`fitness::qqs`: every case's quality inputs m times beside its speed inputs once, TrueNorth
+  over the whole; `--quality-weight`, default 2, in the run card and `run_start`), and every gated scheme is retired
+  with the offset named as its fault, the defaults of the i32 problems, the staged runners and the shapes kingdom
+  moving to `futhark-slope4-qqs` (m = 8, measured on histogram and pathfinder), `staged-qqs` and `shapes-hff-qqs`.
+  The ordering table at m = 2 and 3 (the identity, a worsening, a NaN, two rounded steps, the normalised step, two
+  same-partition reorderings of the seed's sums, a faster equal step, an early stop) is in `docs/KMEANS_FITNESS.md`
+  and asserted by the kingdom's test. The round-2 faults: the test case is run every generation the champion changes
+  and at the end (`OUT/test_case.tsv`, the report); the in-run A/A runs on both backends and its speed inputs' spread
+  is the noise floor a speed claim must clear; the default pairs is 2; the P start's cost measured (149 s the
+  e-graph, 193 s the fold, 19.5 GB); the index regenerated. Throughput: the c backend's program is a Futhark server
+  (19.3 s to 13.2 s an evaluation of the seed); the GPU's **resident-sample path** (`--eval rust`: the sample on
+  the device once a session, a generation's programs one module, each candidate's cases interleaved with the seed's
+  entry, the runtime's `k` command) is built and tested on the c path, not run on the GPU
+  (`/private/tmp/claude-501/fbench/kmeans_gpu_controls.sh`, then `kmeans_run_s1.sh`).
 
 - (f): after the GPU runs.
 

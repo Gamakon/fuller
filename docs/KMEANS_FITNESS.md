@@ -1,11 +1,15 @@
 # The k-means fitness: the measures that go into the HFF
 
-*fuller, 2026-11-03, revised after the advisor's review of the same day
-(`docs/reviews/2026-11-03_kmeans_plan_advisor_round1.md`, every finding fixed). The specification of the named scheme
-`futhark-kmeans-quality-first`. The code below is what the scheme computes; `src/fitness.rs` and
-`src/futhark_sig/kmeans_converged.rs` implement it as written. The scheme it replaces, `futhark-kmeans-converged`
-(fuller bd929652), stays registered and is NOT TO BE RUN AS IS: a candidate that gained nothing gave it a NaN input
-and the run stopped; four of its five inputs rewarded the step that returns the centres unchanged.*
+*fuller, 2026-11-03, revised twice after the advisor's reviews of the same day
+(`docs/reviews/2026-11-03_kmeans_plan_advisor_round1.md`, `..._round2.md`) and after Andrew's ruling of 2026-11-03:
+**the HFF angle is the final fitness, nothing may manipulate it afterwards; quality weighs more than speed by
+repetition in one flat vector.** The specification of the named scheme `futhark-kmeans-qqs`. The code below is what
+the scheme computes; `src/fitness.rs` (`qqs`) and `src/futhark_sig/kmeans_converged.rs` implement it as written. The
+schemes it replaces stay registered and are NOT TO BE RUN AS IS: `futhark-kmeans-quality-first` (fuller 92922521: the
+two-level HFF gated by quality, whose `π/2 + θ_quality` offset manipulated the HFF, and whose edge at exactly 1/2
+rejected every same-partition reordering of the seed's f32 sums) and `futhark-kmeans-converged` (fuller bd929652: a
+candidate that gained nothing gave it a NaN input and the run stopped; four of its five inputs rewarded the step that
+returns the centres unchanged).*
 
 ## What UltraDim does (the prototype, read 2026-11-03, commit 4295c335)
 
@@ -91,7 +95,7 @@ every case from the sample and requires the stored bytes.
 
 Both the candidate and the seed are run on each fitness case with UltraDim's loop and stopping rule (the two kernels
 being evolved are the body of that loop; the loop, the stopping test and the quality measures are the harness's, in
-Rust, and are not evolved), INTERLEAVED (`--pairs` times each, default 1; the candidate first in the even pairs), and
+Rust, and are not evolved), INTERLEAVED (`--pairs` times each, default 2, the least that interleaves: with one pair the candidate always ran first and the seed second, the review's N4; the candidate first in the even pairs), and
 **the seed's run of that interleaving is the yardstick of the candidate's inputs**, never a seed run from another time.
 
 ```rust
@@ -189,67 +193,82 @@ their centroid); **the program's own seconds / seed's**; **iterations / seed's**
 Euclidean inertia gained an iteration, was the iterations input a second time (two candidates at the same inertia
 differ on it exactly by 1 / iterations) and is reported only.
 
-## The fitness: quality first
+## The fitness: one flat vector, the quality inputs repeated
 
 ```rust
-/// THE K-MEANS SCHEME'S FITNESS, QUALITY FIRST: the two-level HFF of the quality group (every fitness case's cosine
-/// inertia ratio and percentile ratio) and the speed group (every case's seconds ratio and iterations ratio), GATED
-/// BY QUALITY: a candidate no worse than the seed on every quality input (each at most 1/2) scores the two-level
-/// angle, in [0, π/2); one worse than the seed on any quality input scores π/2 + θ_quality.
-pub fn converged_gated(quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
+/// THE ONE FLAT VECTOR (Andrew, 2026-11-03: `(quality, quality, speed)`): every quality input entered
+/// `quality_weight` times (the whole quality group repeated, in order), then every speed input once.
+pub fn flat_vector(quality: &[f64], speed: &[f64], quality_weight: usize) -> Vec<f64> {
+    let mut v = Vec::with_capacity(quality.len() * quality_weight + speed.len());
+    for _ in 0..quality_weight {
+        v.extend_from_slice(quality);
+    }
+    v.extend_from_slice(speed);
+    v
+}
+
+/// THE FLAT FITNESS: the hff library's TrueNorth over the flat vector, and THAT ANGLE IS THE FITNESS. Nothing
+/// manipulates it: no gate, no offset, no nesting. The two group angles are reported beside it, never read by
+/// selection. Every input must be on [0, 1]; no quality input, no speed input, or a weight of 0 is a bug.
+pub fn qqs(quality: &[f64], speed: &[f64], quality_weight: usize) -> Result<TwoLevel, String> {
     if quality.is_empty() || speed.is_empty() {
-        return Err("our software has a bug: the k-means scheme was given no inputs (no fitness case)".into());
+        return Err("our software has a bug: the flat fitness was given an empty group (no fitness case, or no speed input)".into());
+    }
+    if quality_weight == 0 {
+        return Err("our software has a bug: the flat fitness was given a quality weight of 0 (the quality inputs would not be entered)".into());
     }
     if let Some(x) = quality.iter().chain(speed).find(|x| !(0.0..=1.0).contains(*x)) {
-        return Err(format!("our software has a bug: a k-means input {x} is outside [0, 1]"));
+        return Err(format!("our software has a bug: a fitness input {x} is outside [0, 1]"));
     }
-    let t = two_level_hff(quality, speed);
-    if quality.iter().all(|x| *x <= 0.5) {
-        Ok(t)
-    } else {
-        Ok(TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t })
-    }
+    let fitness = crate::score::truenorth_angle(&flat_vector(quality, speed, quality_weight));
+    Ok(TwoLevel { fitness, quality: crate::score::truenorth_angle(quality), speed: crate::score::truenorth_angle(speed) })
 }
 ```
 
-The HFF (TrueNorth, the library, normalisation off) takes every case's inputs as its own inputs inside each group;
-nothing is averaged across cases; the two group angles are combined as the other runners combine them
-(`runner::two_level_hff`, each over π/2). No candidate that loses quality on any case ranks above the seed however
-fast; a candidate that keeps the seed's quality ranks on its speed; one that gains quality ranks above the seed by
-its quality angle. There is no stage: speed is measured in the same run as quality.
+The vector of one evaluation is every fitness case's two quality inputs, the whole group entered **m** times, then
+every case's two speed inputs once; the HFF (TrueNorth, the library, normalisation off) over it is the fitness.
+Nothing is averaged across cases, nothing is gated, nothing is added after the angle. **m is the run's
+`--quality-weight`** (default 2, Andrew's written form `(quality, quality, speed)`), recorded in the header, the run
+card and the stream's `run_start` (`fitness.quality_weight`).
 
-**Why a gate.** With four independent ratios and no gate, a step that rounds its centroids to 1e-3 converges in 17
-iterations instead of 20 at a cosine inertia 0.07 % worse and would rank above the seed on the sum of its inputs
-(the review's F3): rounding games the stopping rule, it is not a faster k-means. Quality first is Andrew's standing
-rule for every runner ("quality first, then performance"); the gate is the problem's own objective, not a
-comparison of bits. Its edge is where two programs reach the same partition and differ only in the order of their
-f32 additions (a 1e-7 difference in the inertia): whichever lands a hair better passes, the other does not, and no
-program that is worse passes. Measured on the seed against its plain-sum variant (no Kahan) the quality inputs are
-within 1e-4 of 1/2 both ways.
+**What m buys, exactly.** TrueNorth is `θ = acos(1 − mean(x²))`, so with Q quality inputs and S speed inputs the seed
+(1/2 everywhere) scores `acos(3/4) = 0.7227` at every m, and a candidate beats it exactly when
+`m · (Σq² − Q/4) < S/4 − Σs²`: m is the exchange rate between a quality loss and a speed gain. The round-2 review
+measured the identity step needing m > 1.68 to rank below the seed and recommended 3; the table below has both.
 
-## What the inputs are on the cases (measured 2026-11-03)
+## The ordering at m = 2 and m = 3 (measured 2026-11-03)
 
-500 dbpedia rows (`train_n500_k8`'s rows), k 8, k-means++ starts, every step a Rust step through the loop, printed by
-`kmeans_converged::tests::the_identity_a_worsening_a_nan_and_a_rounded_step_rank_below_the_seed_through_the_scheme`,
-which asserts the ranks below:
+500 dbpedia rows (`train_n500_k8`'s rows), k 8, k-means++ starts, every step a Rust step through the loop against the
+seed (UltraDim's step), printed and asserted by
+`kmeans_converged::tests::the_flat_scheme_at_m_2_and_3_ranks_the_identity_worsening_nan_and_rounded_steps_below_the_seed_and_a_faster_equal_step_above`.
+A Rust step's own clock is noise on this machine (the review's N3), so every step reports a stated cost: a step that
+does the seed's work costs the seed's measured seconds an iteration, a step that returns a constant costs nothing, the
+faster step costs half; the seconds input is then a function of the iterations alone. `*` ranks above the seed
+(0.7227).
 
-| step | iterations | converged | cosine inertia | mean log10 p (off centroid) | over every point | at centroid | quality [cos, pct] | speed [s, it] | fitness |
-|---|---:|---|---:|---:|---:|---:|---|---|---:|
-| the seed (UltraDim's step) | 9 | yes | 0.15227 | -425.78 | -425.78 | 0 | 0.5000, 0.5000 | 0.5000, 0.5000 | **0.663** |
-| identity: return the centres | 2 | yes | 0.26857 | -253.78 | -3105.85 | 8 | 0.6382, 0.6266 | 0.0002, 0.1818 | 2.498 |
-| worsening: the starts pushed off the data | 3 | yes | 0.66696 | -40.90 | -40.90 | 0 | 0.8141, 0.9124 | 0.0004, 0.2500 | 2.886 |
-| a NaN at iteration 3 | 3 | no (unfinished) | - | - | - | - | 1, 1 | 1, 1 | 3.142 |
-| centres rounded to 1e-3 | 9 | yes | 0.15239 | -425.55 | -425.55 | 0 | 0.5002, 0.5001 | 0.5006, 0.5000 | 2.294 |
-| centres rounded to 1e-2 | 12 | yes | 0.15933 | -411.84 | -411.84 | 0 | 0.5113, 0.5083 | 0.5648, 0.5714 | 2.308 |
-| mean then unit length (spherical) | 9 | yes | 0.15231 | -425.71 | -425.71 | 0 | 0.5001, 0.5000 | 0.5093, 0.5000 | 2.294 |
+| step | iterations | converged | finished | cosine inertia | mean log10 p (off centroid) | all points | at centroid | quality [cos, pct] | speed [s, it] | m = 1 | m = 2 | m = 3 |
+|---|---:|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|
+| the seed (UltraDim's step) | 9 | yes | yes | 0.15227 | -425.78 | -425.78 | 0 | 0.5000, 0.5000 | 0.5000, 0.5000 | 0.7227 | 0.7227 | 0.7227 |
+| identity: return the centres | 2 | yes | yes | 0.26857 | -253.78 | -3105.85 | 8 | 0.6382, 0.6266 | 0.0000, 0.1818 | 0.6571* | 0.7556 | 0.8011 |
+| worsening: the starts pushed off the data | 3 | yes | yes | 0.66696 | -40.90 | -40.90 | 0 | 0.8141, 0.9124 | 0.0000, 0.2500 | 0.9140 | 1.0574 | 1.1247 |
+| a NaN at iteration 3 | 3 | no | no | - | - | - | - | 1, 1 | 1, 1 | 1.5708 | 1.5708 | 1.5708 |
+| centres rounded to 1e-3 | 9 | yes | yes | 0.15239 | -425.55 | -425.55 | 0 | 0.5002, 0.5001 | 0.5000, 0.5000 | 0.7229 | 0.7229 | 0.7229 |
+| centres rounded to 1e-2 | 12 | yes | yes | 0.15933 | -411.84 | -411.84 | 0 | 0.5113, 0.5083 | 0.5714, 0.5714 | 0.7859 | 0.7701 | 0.7620 |
+| mean then unit length (spherical) | 9 | yes | yes | 0.15231 | -425.71 | -425.71 | 0 | 0.5001, 0.5000 | 0.5000, 0.5000 | 0.7228 | 0.7228 | 0.7228 |
+| plain f32 sum (the seed's partition) | 9 | yes | yes | 0.15227 | -425.78 | -425.78 | 0 | 0.5000, 0.5000 | 0.5000, 0.5000 | 0.7227 | 0.7227 | 0.7227 |
+| reversed Kahan sum (the seed's partition) | 9 | yes | yes | 0.15227 | -425.78 | -425.78 | 0 | 0.5000, 0.5000 | 0.5000, 0.5000 | 0.7227 | 0.7227 | 0.7227 |
+| faster, the same bits (seconds / 2) | 9 | yes | yes | 0.15227 | -425.78 | -425.78 | 0 | 0.5000, 0.5000 | 0.3333, 0.5000 | 0.6685* | 0.6870* | 0.6961* |
+| one seed step, then identity | 3 | yes | yes | 0.15574 | -418.94 | -418.94 | 0 | 0.5056, 0.5041 | 0.1000, 0.2500 | 0.5463* | 0.6129* | 0.6439* |
 
-The identity's percentile over every point is -3,106 (its 8 start rows at their own centroids); over the points off
-their centroid it is -254, worse than the seed's -426, and the input reads 0.63. The normalised-centroid step on THIS
-case is a hair worse than the seed on both quality inputs (0.15231 against 0.15227) and ranks below it; on the
-review's measurement (2,000 rows, k 32) it was a hair better (0.14178 against 0.14209) and would rank above. Both are
-findings; the scheme reports what the measure says. On the compiled path the seed on 200 x 1,536 x 4 through
-`futhark c` takes 13 iterations, the program's own 0.026 s of 0.657 s wall: the harness is 96 % of the clock there
-and none of the fitness.
+The test asserts, at m = 2 and m = 3: the identity, the worsening, the NaN and both rounded steps rank below the
+seed and the faster-but-equal step above it; the two reorderings of the seed's sums are within 1e-4 of 1/2 on both
+quality inputs and within 1e-3 of the seed's fitness (the retired gate's cliff at 1/2 is gone: they score the seed's
+0.7227 to four places); at m = 1 the identity ranks above the seed, which is why m is at least 2. Two findings,
+printed, not asserted: on this case the normalised step is a hair worse than the seed (0.15231 against 0.15227; on
+the review's 2,000-row case it was a hair better), and **the early stop** — one seed step, then the identity, 1-2 %
+worse in the clustering in a third of the iterations — ranks above the seed at every m up to 32-44 (the review's
+measurement). That is the problem's own exchange rate under the ruling; the run prints the champion's quality inputs
+beside its speed inputs every generation so a worse-but-faster champion is read as what it is.
 
 ## The work guard
 
@@ -269,13 +288,44 @@ under 1.7e6 and refused every dbpedia case; the seed's own work on the timing in
 - The seed's own run of the same interleaving is the yardstick on every case, so the inputs read "better or worse
   than what we started from, measured beside it".
 
+## The run (the round-2 review's N2-N5)
+
+- **The test case** (`test_n1000_k32`, never a fitness input) is run every generation the champion's text changes,
+  champion and seed interleaved as a fitness case is, and at the end: `OUT/test_case.tsv` (the learning curve: the
+  four inputs and both sides' raw measures a generation) and the report's `test_case` line.
+- **The noise floor** (N3): the in-run A/A, the seed judged as a candidate against itself through the same
+  interleaving, on every backend; its quality inputs must be exactly 1/2 (one program; a value off 1/2 is a
+  non-deterministic reduction and is written down), and the widest distance of its speed inputs from 1/2 is the
+  floor (`seed_aa_speed_floor`). A champion's speed claim counts when every one of its seconds inputs is below
+  1/2 − floor (`speed_claim_beats_noise_floor`). Measured on the c backend, 2 pairs: the floor 0.0029 (the seconds
+  inputs 0.4988-0.5029, the iterations inputs 0.5000, 13.2 s an evaluation); 3 pairs: the floor 0.0009 (0.4991-0.5004, 19.2 s an evaluation; a first 3-pair run that overlapped a test build read 0.053: the floor is the machine's, measured quiet).
+- **The pairs** (N4): the default is 2.
+- **The P start's cost** (N5), measured on the c backend 2026-11-03 (`--evaluations 2`, the 131-function seed): the
+  e-graph's 31 variants of the seed 149 s, the saturated fold 193 s, 19.5 GB resident at the peak; then generation 0.
+  The pump every 5 generations runs the variants on the best (2 iterations, 16 members) at a fraction of that.
+- **Throughput.** Before 2026-11-03 each iteration was its own process with the points down the pipe. On the c
+  backend one evaluation of the seed (6 cases, 2 pairs, both sides) took 19.3 s that way and takes 13.2 s with the
+  program kept alive as a Futhark server (`futhark c --server`, `kmeans_converged::Server`: the points loaded once a
+  case, the centres restored an iteration): 3.1 against 4.5 evaluations a minute, the process overhead 23 ms an
+  iteration on the host. On the GPU a process cost 0.3-0.6 s, which is what the **resident-sample path** removes
+  (`--eval rust`, Andrew's design of 2026-11-03): every case is a row range of the one dbpedia sample, so the sample
+  is uploaded ONCE for the run and kept on the device (the runtime's session holds it: `futhark-rust-rt`, `host.rs`,
+  `Resident`), a generation's programs are ONE module with the seed's range entry (`futhark_batch::Step::Kmeans`),
+  loaded into the in-process host, and each candidate's seven cases run against the resident sample interleaved with
+  the seed's entry, the centres staying on the device between iterations (the previous call's output is the next
+  call's argument), the harness's assignment and the stopping rule on the host from the k × d centres read back
+  (16-300 KB). The program's entry takes the whole sample and the range and slices it itself
+  (`kmeans_converged::range_entry`: `sample[start:start + n] :> [n][d]f32`, an outer-dimension slice of a row-major
+  array, an offset in the compiled program, no copy; equal to the plain program on the cut bit for bit through
+  `futhark c`, tested). The runtime's harness is fuller's to the bit (`kmeans_harness.rs`, included by path in
+  fuller's test). The report splits each generation's cost into compile, upload (once a session; `upload_s` and
+  `resident_hits` in the stream's extras) and run. The GPU measurement before (`--eval single`, a process an
+  iteration) and after (`--eval rust`) is `/private/tmp/claude-501/fbench/kmeans_gpu_controls.sh`, not yet run.
+
 ## Known limits, stated
 
-- Each iteration is one process of the compiled program with the points written down the pipe (6-30 MB): the budget,
-  not the measure, pays for it (about 0.3-0.5 s a process on the GPU path: a candidate on the six cases at one pair
-  is of the order of two minutes). Futhark's `--server` mode (the process kept alive, the points loaded once) is the
-  next cut of that cost and is not built; the shim's executable has no server mode.
 - `KMEANS_PROGRAM_SIZE` = 192: a host population of 64 genes is 7 GB of genes, fine on this machine and impossible on
   the device; "GPU residency" for k-means is not this view.
 - The dbpedia-sized cases are never run through the host interpreter; its agreement with the compiled program is
   tested on the small case, and the runner's controls are the compiled program's.
+- The shim's executable (`--eval single --backend gpu`) has no server mode: that path is still a process an iteration.
