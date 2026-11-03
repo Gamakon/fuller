@@ -616,34 +616,42 @@ mod tests {
     }
 
     /// THE COMPILE-FAILURE CORPUS ON THE WEBGPU PATH (`--eval single`, `--eval batch`): every program of
-    /// `tests/corpus/futhark_compile_failures` (373, and the 3 minimal reproducers) compiles with the default compiler's
-    /// `webgpu` backend to C and links against the shim. The unpatched branch stopped on all of them (SetMem in a
-    /// kernel, a unit kernel argument, the flatten pass's SegHist). CPU only, no device.
+    /// `tests/corpus/futhark_compile_failures` (374, and the 3 minimal reproducers) compiles with the default compiler's
+    /// `webgpu` backend to C and links against the shim, except the KNOWN COMPILER FAULTS (`known_faults.tsv`,
+    /// `futhark_rust::corpus_verdict`: the GPU code generator both backends share), each of which must still fail
+    /// with the error its issue names and fails this test the day it compiles. The unpatched branch stopped on all
+    /// of them (SetMem in a kernel, a unit kernel argument, the flatten pass's SegHist). CPU only, no device.
     #[test]
     fn every_program_of_the_compile_failure_corpus_compiles_through_the_webgpu_path() {
         assert!(std::env::var_os("FUTHARK_BRANCH").is_none() && std::env::var_os("FUTHARK_RUST_WGPU").is_none(), "FUTHARK_BRANCH or FUTHARK_RUST_WGPU overrides the default compiler, which this test checks");
         assert_eq!(branch_compiler(), crate::futhark_rust::default_compiler());
         assert!(branch_compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", branch_compiler().display());
         let files = crate::futhark_rust::compile_failure_corpus();
+        let known = crate::futhark_rust::known_compiler_faults();
         let shim = process_shim().unwrap();
         let base = std::env::temp_dir().join(format!("futhark_wgpu_corpus_{}", std::process::id()));
         let next = std::sync::atomic::AtomicUsize::new(0);
         let failed = std::sync::Mutex::new(Vec::new());
+        let known_failing = std::sync::Mutex::new(Vec::new());
         std::thread::scope(|sc| {
             for _ in 0..4 {
                 sc.spawn(|| loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(f) = files.get(i) else { break };
                     let source = std::fs::read_to_string(f).expect("a corpus program");
-                    if let Err(e) = compile_program_prebuilt(&source, &base.join(format!("p{i}")), &shim) {
-                        let tail: Vec<&str> = e.lines().filter(|l| !l.starts_with("Warning at") && !l.trim_start().starts_with("Unused name") && !l.trim().is_empty()).take(6).collect();
-                        failed.lock().expect("the failure list").push(format!("{}: {}", f.display(), tail.join(" | ")));
+                    let result = compile_program_prebuilt(&source, &base.join(format!("p{i}")), &shim).map(|_| ());
+                    match crate::futhark_rust::corpus_verdict(f, &known, result) {
+                        Ok(None) => {}
+                        Ok(Some(note)) => known_failing.lock().expect("the known list").push(note),
+                        Err(e) => failed.lock().expect("the failure list").push(e),
                     }
                 });
             }
         });
         let failed = failed.into_inner().expect("the failure list");
-        eprintln!("{} of {} corpus programs compiled and linked through the webgpu path", files.len() - failed.len(), files.len());
+        let known_failing = known_failing.into_inner().expect("the known list");
+        eprintln!("{} of {} corpus programs compiled and linked through the webgpu path; {} known compiler faults still failing:\n{}", files.len() - failed.len() - known_failing.len(), files.len(), known_failing.len(), known_failing.join("\n"));
+        assert_eq!(known_failing.len(), known.len(), "every known compiler fault must be met in the corpus (one line a program): {known:?}");
         assert!(failed.is_empty(), "{} of {} corpus programs did not compile:\n{}", failed.len(), files.len(), failed.join("\n"));
         let _ = std::fs::remove_dir_all(&base);
     }

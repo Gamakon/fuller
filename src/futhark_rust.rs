@@ -71,12 +71,69 @@ pub(crate) fn compile_failure_corpus() -> Vec<PathBuf> {
     files.sort();
     on_disk.sort();
     assert_eq!(files, on_disk, "index.tsv must list exactly the corpus's programs");
-    assert_eq!(files.len(), 373, "the corpus holds 373 programs");
+    assert_eq!(files.len(), 374, "the corpus holds 374 programs");
     let mut minimal: Vec<PathBuf> = std::fs::read_dir(corpus.join("minimal")).expect("the minimal reproducers").map(|e| e.expect("an entry").path()).collect();
     minimal.sort();
-    assert_eq!(minimal.len(), 3, "one minimal reproducer a kind");
+    assert_eq!(minimal.len(), 3, "one minimal reproducer a kind the fork has a patch for (the known compiler fault's reproducer is its corpus program)");
     files.extend(minimal);
     files
+}
+
+/// A KNOWN COMPILER FAULT in the corpus (`tests/corpus/futhark_compile_failures/known_faults.tsv`): a program the
+/// fork compiler still fails on, with the issue that reports it and the text its error must carry. The corpus test
+/// expects it to FAIL with that error and reports it as known; the day it compiles, the test fails loudly, saying to
+/// remove the line (and the day it fails with another error, too).
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KnownFault {
+    pub file: String,
+    pub issue: String,
+    pub error_contains: String,
+}
+
+/// The known compiler faults, from `known_faults.tsv` (`file`, `issue`, `error_contains`; tab-separated, a header).
+#[cfg(test)]
+pub(crate) fn known_compiler_faults() -> Vec<KnownFault> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_compile_failures/known_faults.tsv");
+    let text = std::fs::read_to_string(&path).expect("the known faults table");
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("file\tissue\terror_contains"), "{}: the header", path.display());
+    lines
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            let [file, issue, error_contains] = f.as_slice() else { panic!("{}: a line of {} columns, wants 3: {l:?}", path.display(), f.len()) };
+            KnownFault { file: file.to_string(), issue: issue.to_string(), error_contains: error_contains.to_string() }
+        })
+        .collect()
+}
+
+/// THE VERDICT ON ONE CORPUS PROGRAM'S COMPILE on either path (the rust path's test and the webgpu path's): its
+/// mark looked up by name (a mark names a corpus program, never a minimal reproducer), its error cut to the first
+/// six lines that are not warnings, then [`known_fault_verdict`].
+#[cfg(test)]
+pub(crate) fn corpus_verdict(file: &Path, known: &[KnownFault], result: Result<(), String>) -> Result<Option<String>, String> {
+    let name = file.file_name().and_then(|n| n.to_str()).expect("a program's name");
+    let in_corpus = file.parent().is_some_and(|p| p.file_name().is_some_and(|d| d == "futhark_compile_failures"));
+    let mark = known.iter().find(|k| k.file == name && in_corpus);
+    let tail: Option<String> = result.as_ref().err().map(|e| e.lines().filter(|l| !l.starts_with("Warning at") && !l.trim_start().starts_with("Unused name") && !l.trim().is_empty()).take(6).collect::<Vec<&str>>().join(" | "));
+    known_fault_verdict(&file.display().to_string(), mark, tail.as_deref().map_or(Ok(()), Err))
+}
+
+/// THE VERDICT ON ONE CORPUS PROGRAM'S COMPILE given its known-fault mark, if any: `Ok(None)` for a program with no
+/// mark that compiled; `Ok(Some(note))` for a marked program that failed with the error its mark names (known,
+/// reported, the suite green); `Err` for a failure with no mark, for a marked program that COMPILED (the mark is
+/// stale: remove its line), and for a marked program that failed with another error (another fault, or the fault
+/// changed: the mark must be revised).
+#[cfg(test)]
+pub(crate) fn known_fault_verdict(file: &str, known: Option<&KnownFault>, result: Result<(), &str>) -> Result<Option<String>, String> {
+    match (known, result) {
+        (None, Ok(())) => Ok(None),
+        (None, Err(e)) => Err(format!("{file}: {e}")),
+        (Some(k), Ok(())) => Err(format!("{file}: THE KNOWN COMPILER FAULT NOW COMPILES ({}): remove its line from known_faults.tsv", k.issue)),
+        (Some(k), Err(e)) if e.contains(&k.error_contains) => Ok(Some(format!("{file}: known compiler fault, still failing as {} says ({:?})", k.issue, k.error_contains))),
+        (Some(k), Err(e)) => Err(format!("{file}: the known compiler fault ({}) failed with ANOTHER error than {:?}: {e}", k.issue, k.error_contains)),
+    }
 }
 
 /// The runtime crate.
@@ -800,33 +857,69 @@ mod tests {
     /// THE COMPILE-FAILURE CORPUS (`tests/corpus/futhark_compile_failures`): every distinct program a legal gene
     /// expressed that the rust-wgpu path once failed to compile (from the evolution runs' `bugs.log`, `index.tsv`
     /// names each one's error and first failing stage), and the minimal reproducers, compiles through the rust path:
-    /// the fork compiler's `rust-wgpu`, then `rustc -D warnings` against the runtime. CPU only, no device.
+    /// the fork compiler's `rust-wgpu`, then `rustc -D warnings` against the runtime; except the KNOWN COMPILER
+    /// FAULTS (`known_faults.tsv`, [`known_fault_verdict`]), each of which must still fail with the error its issue
+    /// names, reported here as known, and fails this test the day it compiles. CPU only, no device.
     #[test]
     fn every_program_of_the_compile_failure_corpus_compiles_through_the_rust_path() {
         assert_eq!(compiler(), default_compiler(), "FUTHARK_RUST_WGPU overrides the default compiler, which this test checks");
         assert!(compiler().is_file(), "the default compiler {} is not built: run futhark-rust-backend/build.sh", compiler().display());
         let files = compile_failure_corpus();
+        let known = known_compiler_faults();
         let base = scratch("compile_failures");
         let rt = prebuild_rt(&base.join("rt")).expect("the runtime");
         let next = std::sync::atomic::AtomicUsize::new(0);
         let failed = Mutex::new(Vec::new());
+        let known_failing = Mutex::new(Vec::new());
         std::thread::scope(|sc| {
             for _ in 0..4 {
                 sc.spawn(|| loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(f) = files.get(i) else { break };
                     let source = std::fs::read_to_string(f).expect("a corpus program");
-                    if let Err(e) = compile_module(&source, &base.join(format!("p{i}")), &rt, &format!("cf{i}"), Duration::from_secs(600)) {
-                        let tail: Vec<&str> = e.lines().filter(|l| !l.starts_with("Warning at") && !l.trim_start().starts_with("Unused name") && !l.trim().is_empty()).take(6).collect();
-                        failed.lock().expect("the failure list").push(format!("{}: {}", f.display(), tail.join(" | ")));
+                    let result = compile_module(&source, &base.join(format!("p{i}")), &rt, &format!("cf{i}"), Duration::from_secs(600)).map(|_| ());
+                    match corpus_verdict(f, &known, result) {
+                        Ok(None) => {}
+                        Ok(Some(note)) => known_failing.lock().expect("the known list").push(note),
+                        Err(e) => failed.lock().expect("the failure list").push(e),
                     }
                 });
             }
         });
         let failed = failed.into_inner().expect("the failure list");
-        eprintln!("{} of {} corpus programs compiled through the rust path", files.len() - failed.len(), files.len());
+        let known_failing = known_failing.into_inner().expect("the known list");
+        eprintln!("{} of {} corpus programs compiled through the rust path; {} known compiler faults still failing:\n{}", files.len() - failed.len() - known_failing.len(), files.len(), known_failing.len(), known_failing.join("\n"));
+        assert_eq!(known_failing.len(), known.len(), "every known compiler fault must be met in the corpus (one line a program): {known:?}");
         assert!(failed.is_empty(), "{} of {} corpus programs did not compile:\n{}", failed.len(), files.len(), failed.join("\n"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// THE KNOWN-FAULT MARK: every line of `known_faults.tsv` names a corpus program that is on disk and in the
+    /// index, an issue file that exists, and a non-empty error text; and the verdict is the one stated: a marked
+    /// program that fails with its error is known (reported, not a failure), one that COMPILES is a failure that
+    /// says to remove the mark, one that fails otherwise is a failure that names the other error, and an unmarked
+    /// program fails on any error and passes on none. No compiler.
+    #[test]
+    fn a_known_compiler_fault_is_reported_while_it_fails_and_fails_the_suite_the_day_it_compiles() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_compile_failures");
+        let index = std::fs::read_to_string(corpus.join("index.tsv")).expect("the corpus index");
+        let known = known_compiler_faults();
+        assert!(!known.is_empty(), "the table is empty: the hist-with-vector-buckets fault of 2026-11-03 is known");
+        for k in &known {
+            assert!(corpus.join(&k.file).is_file(), "{}: not in the corpus", k.file);
+            assert!(index.lines().skip(1).any(|l| l.split('\t').next() == Some(k.file.as_str())), "{}: not in index.tsv", k.file);
+            assert!(Path::new(env!("CARGO_MANIFEST_DIR")).join(&k.issue).is_file(), "{}: the issue {} is not a file", k.file, k.issue);
+            assert!(!k.error_contains.trim().is_empty(), "{}: an empty error text would mark any failure as known", k.file);
+        }
+        let k = KnownFault { file: "x.fut".into(), issue: "docs/issues/x.md".into(), error_contains: "copyDWIMDest".into() };
+        assert_eq!(known_fault_verdict("x.fut", None, Ok(())), Ok(None));
+        assert_eq!(known_fault_verdict("x.fut", None, Err("futhark rust-wgpu failed: type error")), Err("x.fut: futhark rust-wgpu failed: type error".into()));
+        let note = known_fault_verdict("x.fut", Some(&k), Err("Internal compiler error. copyDWIMDest: array-typed target")).expect("known");
+        assert!(note.as_deref().is_some_and(|n| n.contains("known compiler fault") && n.contains("docs/issues/x.md")), "{note:?}");
+        let stale = known_fault_verdict("x.fut", Some(&k), Ok(())).unwrap_err();
+        assert!(stale.contains("NOW COMPILES") && stale.contains("remove its line from known_faults.tsv"), "{stale}");
+        let other = known_fault_verdict("x.fut", Some(&k), Err("rustc of the generated module failed")).unwrap_err();
+        assert!(other.contains("ANOTHER error") && other.contains("copyDWIMDest") && other.contains("rustc of the generated module failed"), "{other}");
     }
 
     /// THE GRID OVER WEBGPU'S LIMIT (series patch 0011): a 1-D grid over the device's 65,535 blocks a dimension is

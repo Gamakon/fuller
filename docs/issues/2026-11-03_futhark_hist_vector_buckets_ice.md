@@ -70,3 +70,11 @@ A fix in the GPU histogram code generator (or a diagnostic that names the limita
 either compiled or rejected with a message; an internal error in the middle of a batch cannot be told from our own bug.
 Until then our workaround is the batch split; we will add the fix to our patch series (`futhark-rust-backend/patches`)
 when it exists.
+
+## In our test suite
+
+The reproducer is in the compile-failure corpus as `tests/corpus/futhark_compile_failures/hist_vector_buckets_ice__287064009a25.fut`,
+marked in `known_faults.tsv` beside it as a known compiler fault with this issue's path and the error text
+(`copyDWIMDest: array-typed target and prim-typed source`). The corpus test
+(`every_program_of_the_compile_failure_corpus_compiles_through_the_rust_path`) expects it to fail with that error
+and reports it as known; the day the fork compiles it, the test fails and says to remove the mark.
