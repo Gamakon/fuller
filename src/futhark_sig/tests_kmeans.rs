@@ -1,10 +1,11 @@
 //! THE K-MEANS PROBLEM, the first f32 view (`docs/PLAN_futhark_kingdom.md`, step 4): the kingdom loads from the
-//! master and the sniffer's specification; the published step written as a gene is exact (the comparison policy of
-//! `Array`: bit for bit, two NaNs agree) on every stored case through the host interpreter, through `futhark c` and
-//! batched; the f32 rows' semantics equal `futhark c`'s on the edges (NaN, the signed zeros, the infinities, a
-//! denormal); random genes express to programs `futhark check` accepts and `futhark c` computes as the interpreter
-//! does; the planted slowdown is equal and the e-graph recovers the reference's work; the layout at the runner's
-//! default program size holds both.
+//! master and the sniffer's specification; the textbook step (`KMEANS_TEXTBOOK`, a pool alternative: the seed is not
+//! yet translated, 4c) computes the same bits through the host interpreter and through `futhark c` on every stored
+//! case (the cases store inputs only: k-means is scored on its objective, `docs/KMEANS_FITNESS.md`); the f32 rows'
+//! semantics equal `futhark c`'s on the edges (NaN, the signed zeros, the infinities, a denormal); random genes
+//! express to programs `futhark check` accepts and `futhark c` computes as the interpreter does; the planted slowdown
+//! is equal and the e-graph recovers the textbook step's work; the layout at the runner's default program size holds
+//! both.
 
 use super::*;
 use crate::typed_gep::{express, fits, write_back};
@@ -60,63 +61,54 @@ fn the_kmeans_kingdom_loads_from_the_master_and_its_specification() {
 /// (types, function rows, leaf rows), measured 2026-11-03.
 const KMEANS_SIZES: (usize, usize, usize) = (3804, 21620, 8421);
 
+/// The textbook step and its planted slowdown build, round-trip through `sexp`, fit the layout at the default program
+/// size, and compute the same bits through the host interpreter, through `futhark c` (the plain program and the quality
+/// program of every case) on every stored case: the kingdom's f32 rows mean what the compiler computes. (The cases
+/// store no answer: k-means is scored on its clustering objective, `docs/KMEANS_FITNESS.md`.)
 #[test]
-fn the_kmeans_reference_and_planted_slowdown_are_exact_on_every_stored_case_interpreted() {
+fn the_kmeans_textbook_step_and_planted_slowdown_compute_the_same_bits_interpreted_and_compiled() {
     let k = load(&KMEANS).unwrap();
     let sig = signature(&KMEANS).unwrap();
     let interp = Interp::new(&k, &sig).unwrap();
-    let cases = load_cases(&KMEANS_PROBLEM).unwrap();
-    let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
-    assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (3, 2, 0));
-    let mut exact = 0;
-    for (what, text) in [("reference", KMEANS_REFERENCE), ("planted slowdown", KMEANS_PLANTED)] {
-        let tree = build(&k, text).unwrap();
-        assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>());
-        for c in &cases {
-            let t = std::time::Instant::now();
-            let got = interp.eval(&tree, &c.inputs).unwrap();
-            assert_eq!(got.elem, Elem::F32);
-            assert_eq!(got, c.output, "the {what} on {}", c.name);
-            eprintln!("kmeans {what} on {}: exact ({} cells, {:.3} s)", c.name, got.len(), t.elapsed().as_secs_f64());
-            exact += 1;
-        }
-    }
-    assert_eq!(exact, 2 * cases.len());
-    let reference = build(&k, KMEANS_REFERENCE).unwrap();
-    eprintln!("kmeans reference: {} functions", function_count(&k, &reference));
-}
-
-#[test]
-fn the_kmeans_reference_is_exact_compiled_and_batched_and_fits_the_default_layout() {
-    let k = load(&KMEANS).unwrap();
-    let sig = signature(&KMEANS).unwrap();
     let contract = k.relations().check().unwrap();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], KMEANS_PROGRAM_SIZE).unwrap();
     let const_len = k.const_len();
-    let tree = build(&k, KMEANS_REFERENCE).unwrap();
-    for (what, text) in [("reference", KMEANS_REFERENCE), ("planted slowdown", KMEANS_PLANTED)] {
-        let t = build(&k, text).unwrap();
-        assert!(function_count(&k, &t) < KMEANS_PROGRAM_SIZE, "the {what} has {} functions", function_count(&k, &t));
-        fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("the {what} does not fit N = {KMEANS_PROGRAM_SIZE}: {e}"));
-    }
+    let cases = load_cases(&KMEANS_PROBLEM).unwrap();
+    assert!(cases.iter().all(|c| c.output.is_none()), "k-means stores no answers");
+    let tree = build(&k, KMEANS_TEXTBOOK).unwrap();
     let mut rng = GeneRng::new(3);
     let gene = write_back(&contract, &layout, &random_gene(&contract, &layout, &const_len, &mut rng).unwrap(), &tree).unwrap();
     assert_eq!(express(&contract, &layout, &gene, &const_len).unwrap().tree(), tree, "the write-back");
+    eprintln!("kmeans textbook step: {} functions", function_count(&k, &tree));
     if !have_futhark() {
         panic!("futhark 0.28.1 is needed for this test");
     }
-    let cases = load_cases(&KMEANS_PROBLEM).unwrap();
-    let src = program(&k, &sig, &tree).unwrap();
-    let exe = compile_c(&src, &scratch("reference")).unwrap_or_else(|e| panic!("{e}\n{src}"));
-    for c in &cases {
-        assert_eq!(run_exe(&exe, &c.stdin).unwrap(), c.output, "the compiled reference on {}", c.name);
+    let mut same = 0;
+    for (what, text) in [("textbook step", KMEANS_TEXTBOOK), ("planted slowdown", KMEANS_TEXTBOOK_PLANTED)] {
+        let t = build(&k, text).unwrap();
+        assert_eq!(sexp(&k, &t).split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>());
+        assert!(function_count(&k, &t) < KMEANS_PROGRAM_SIZE, "the {what} has {} functions", function_count(&k, &t));
+        fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("the {what} does not fit N = {KMEANS_PROGRAM_SIZE}: {e}"));
+        let src = program(&k, &sig, &t).unwrap();
+        let exe = compile_c(&src, &scratch(&format!("textbook_{}", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{src}"));
+        let mut wants = Vec::new();
+        for c in &cases {
+            let t0 = std::time::Instant::now();
+            let want = interp.eval(&t, &c.inputs).unwrap();
+            assert_eq!((want.elem, want.dims.clone()), (Elem::F32, vec![c.inputs[1].dims[0], c.inputs[1].dims[1]]));
+            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), want, "the compiled {what} on {}", c.name);
+            eprintln!("kmeans {what} on {}: interpreted and compiled agree ({} cells, {:.3} s interpreted)", c.name, want.len(), t0.elapsed().as_secs_f64());
+            same += 1;
+            wants.push(want);
+        }
+        let batch = program_cases(&k, &sig, &t, cases.len()).unwrap();
+        let bexe = compile_c(&batch, &scratch(&format!("textbook_batch_{}", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{batch}"));
+        let stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
+        let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(read_binary(&out.stdout).unwrap(), wants, "the batched {what}");
     }
-    let batch = program_cases(&k, &sig, &tree, cases.len()).unwrap();
-    let bexe = compile_c(&batch, &scratch("reference_batch")).unwrap_or_else(|e| panic!("{e}\n{batch}"));
-    let stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
-    let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.output.clone()).collect::<Vec<_>>(), "the batched reference");
+    assert_eq!(same, 2 * cases.len());
 }
 
 /// THE F32 SEMANTICS, compiled against the interpreter on purpose (a random gene may not draw them): every f32 row on
@@ -246,9 +238,10 @@ fn the_kmeans_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() 
     let k = load(&KMEANS).unwrap();
     let sig = signature(&KMEANS).unwrap();
     let interp = Interp::new(&k, &sig).unwrap();
-    let planted = build(&k, KMEANS_PLANTED).unwrap();
-    let reference = build(&k, KMEANS_REFERENCE).unwrap();
+    let planted = build(&k, KMEANS_TEXTBOOK_PLANTED).unwrap();
+    let reference = build(&k, KMEANS_TEXTBOOK).unwrap();
     let cases = load_cases(&KMEANS_PROBLEM).unwrap();
+    let wants: Vec<Array> = cases.iter().map(|c| interp.eval(&reference, &c.inputs).unwrap()).collect();
     let sizes = sig.sizes(&cases[2].inputs).unwrap();
     let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
     assert!(wp > wr, "planted {wp}, reference {wr}");
@@ -259,9 +252,12 @@ fn the_kmeans_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() 
     let bridge = Bridge::load(&KMEANS).unwrap();
     let vs = variants(&k, &bridge, &planted, 3, 256, 64).unwrap();
     assert!(!vs.is_empty(), "no variants");
+    for c in &cases {
+        assert_eq!(interp.eval(&planted, &c.inputs).unwrap(), wants[cases.iter().position(|x| x.name == c.name).unwrap()], "the planted slowdown on {}", c.name);
+    }
     for v in &vs {
-        for c in &cases {
-            assert_eq!(interp.eval(v, &c.inputs).unwrap(), c.output, "the variant {} on {}", sexp(&k, v), c.name);
+        for (c, want) in cases.iter().zip(&wants) {
+            assert_eq!(interp.eval(v, &c.inputs).unwrap(), *want, "the variant {} on {}", sexp(&k, v), c.name);
         }
     }
     for v in &vs {
@@ -317,17 +313,23 @@ fn the_kmeans_timing_input_is_the_champions_shape_and_the_yardstick_runs_on_it()
     assert_eq!((inputs[1].dims.clone(), inputs[1].elem), (vec![KMEANS_TIMING_K, KMEANS_TIMING_D], Elem::F32));
     assert!(inputs.iter().all(|a| a.values().all(|x| (0.0..1.0).contains(&x))), "points and centres in [0, 1)");
     assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed: the same bytes every time");
+    // The second timing input, at scale 10^3 (plan 4c item 3): the same shape, values in [0, 1000), other bytes.
+    let big = read_binary(&kmeans_timing_input(p.timing_n, 1000.0)).unwrap();
+    assert_eq!((big[0].dims.clone(), big[1].dims.clone()), (inputs[0].dims.clone(), inputs[1].dims.clone()));
+    assert!(big.iter().all(|a| a.values().all(|x| (0.0..1000.0).contains(&x))) && big[0].values().any(|x| x > 500.0), "points and centres in [0, 1000)");
+    assert_ne!(big[0].data, inputs[0].data);
     let k = load(&KMEANS).unwrap();
     let sig = signature(&KMEANS).unwrap();
     let sizes = sig.sizes(&inputs).unwrap();
     assert_eq!((sizes["n"], sizes["d"], sizes["k"]), (8192, 256, 1024));
     let interp = Interp::new(&k, &sig).unwrap();
-    let reference = build(&k, KMEANS_REFERENCE).unwrap();
+    let reference = build(&k, KMEANS_TEXTBOOK).unwrap();
     // The interpreter's rate on the largest stored case, and the work at the timing input.
     let cases = load_cases(&p).unwrap();
     let big = cases.iter().max_by_key(|c| c.inputs[0].len()).unwrap();
     let t = std::time::Instant::now();
-    assert_eq!(interp.eval(&reference, &big.inputs).unwrap(), big.output);
+    let big_out = interp.eval(&reference, &big.inputs).unwrap();
+    assert_eq!(big_out.dims, vec![big.inputs[1].dims[0], big.inputs[1].dims[1]]);
     let secs = t.elapsed().as_secs_f64();
     let w_big = interp.work(&reference, &sig.sizes(&big.inputs).unwrap()).unwrap();
     let w_timing = interp.work(&reference, &sizes).unwrap();
@@ -341,4 +343,89 @@ fn the_kmeans_timing_input_is_the_champions_shape_and_the_yardstick_runs_on_it()
     eprintln!("kmeans: the yardstick (futhark c) on the timing input in {:.2} s", t.elapsed().as_secs_f64());
     assert_eq!((got.dims.clone(), got.elem), (vec![KMEANS_TIMING_K, KMEANS_TIMING_D], Elem::F32));
     assert!(got.values().all(|x| x.is_finite() && (0.0..1.0).contains(&x)), "every centre is a mean of points in [0, 1), or zero");
+}
+
+/// THE MAGNITUDE CASES (plan 4c item 3; `make_cases.sh`): eight cases, inputs only, at the scales 10^-3, 1, 10^3 and
+/// 10^5, one of mixed scales across its coordinates, one of very unequal cluster sizes, one built to break an
+/// uncompensated sum; each the declared n, d, k; and the f64 reference of UltraDim's step (`reference64.fut` through
+/// `futhark c`) equals the Rust f64 step bit for bit on every case (both sequential f64: the translation's check,
+/// never a score). The breaking case does break: on it the plain-sum step is farther from the f64 reference than the
+/// Kahan-compensated step, and the two differ.
+#[test]
+fn the_magnitude_cases_are_the_declared_shapes_and_scales_and_the_f64_reference_agrees_with_the_rust_step() {
+    use crate::futhark_sig::kmeans_converged::{assign, ultradim_step_f32, ultradim_step_f64};
+    let p = problem("kmeans").unwrap();
+    let cases = load_cases(&p).unwrap();
+    let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
+    assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (5, 2, 1));
+    assert!(cases.iter().all(|c| c.output.is_none()));
+    let index = std::fs::read_to_string(corpus_dir(&p).join("cases.tsv")).unwrap();
+    let rows: Vec<Vec<&str>> = index.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| l.split('\t').collect()).collect();
+    assert_eq!(rows.len(), cases.len());
+    let exe = have_futhark().then(|| compile_c(&std::fs::read_to_string(corpus_dir(&p).join("reference64.fut")).unwrap(), &scratch("reference64")).unwrap());
+    assert!(exe.is_some(), "futhark 0.28.1 is needed for this test");
+    let mut seen_shapes = BTreeSet::new();
+    for (c, row) in cases.iter().zip(&rows) {
+        let (n, d, k): (usize, usize, usize) = (row[2].parse().unwrap(), row[3].parse().unwrap(), row[4].parse().unwrap());
+        let scale: f32 = row[6].parse().unwrap();
+        let shape = row[7];
+        assert_eq!((c.inputs[0].dims.clone(), c.inputs[1].dims.clone()), (vec![n, d], vec![k, d]), "{}", c.name);
+        assert!(d >= 2, "{}: the spherical percentile needs d >= 2", c.name);
+        let pts = c.inputs[0].f32_values().unwrap();
+        let cen = c.inputs[1].f32_values().unwrap();
+        let rows_c: Vec<Vec<f32>> = cen.chunks_exact(d).map(<[f32]>::to_vec).collect();
+        let counts = assign(&pts, d, &rows_c).into_iter().fold(vec![0usize; k], |mut v, a| { v[a] += 1; v });
+        let max_p = pts.iter().cloned().fold(0f32, f32::max);
+        match shape {
+            "plain" => assert!(max_p <= scale && max_p > 0.9 * scale, "{}: the points' largest value {max_p} at scale {scale}", c.name),
+            "mixed" => {
+                let per_coord: Vec<f32> = (0..d).map(|t| (0..n).map(|i| pts[i * d + t]).fold(0f32, f32::max)).collect();
+                assert!(per_coord[0] < 1e-3 * 1.01 && per_coord[3] <= 1.0 && per_coord[6] > 900.0 && per_coord[6] <= 1000.0, "{}: {per_coord:?}", c.name);
+            }
+            "unequal" => {
+                let nonempty: Vec<usize> = counts.iter().cloned().filter(|x| *x > 0).collect();
+                let ratio = *nonempty.iter().max().unwrap() as f64 / *nonempty.iter().min().unwrap() as f64;
+                assert!(ratio >= 100.0 && nonempty.len() < k, "{}: the cluster sizes {counts:?} (ratio {ratio:.0})", c.name);
+            }
+            "breaking" => {
+                assert!(pts[4 * d..].iter().all(|x| *x <= 1.0) && pts[..4 * d].iter().all(|x| *x > 10.0), "{}: the first 4 points are the big ones (U[0, 1] x 10^4)", c.name);
+                // Both magnitudes in one cluster, and the plain sum farther from the f64 reference than the compensated one.
+                let big_cluster = counts.iter().position(|x| *x > 0).unwrap();
+                assert!(counts.iter().all(|x| *x > 4), "{}: every cluster holds small points: {counts:?}", c.name);
+                let (_, exact) = ultradim_step_f64(&c.inputs[0], &c.inputs[1]).unwrap();
+                let err = |kahan: bool| ultradim_step_f32(&c.inputs[0], &c.inputs[1], kahan).unwrap().f32_values().unwrap().iter().zip(&exact).map(|(x, y)| (f64::from(*x) - y).abs()).fold(0f64, f64::max);
+                let (compensated, plain) = (err(true), err(false));
+                eprintln!("breaking case: largest cell error from the f64 reference, Kahan {compensated:.3e}, plain sum {plain:.3e} (cluster {big_cluster} takes the big points)");
+                assert!(plain > compensated, "the plain sum ({plain:.3e}) is not worse than the compensated one ({compensated:.3e}) on the breaking case");
+            }
+            other => panic!("{}: an unknown shape {other}", c.name),
+        }
+        seen_shapes.insert(shape.to_string());
+        // The f64 reference through futhark c against the Rust f64 step, bit for bit.
+        let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(exe.as_ref().unwrap()).arg("-b"), std::time::Duration::from_secs(120), Some(&c.stdin)).unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let (got_a, got_c) = read_i32_then_f64(&out.stdout, n, k * d);
+        let (want_a, want_c) = ultradim_step_f64(&c.inputs[0], &c.inputs[1]).unwrap();
+        assert_eq!(got_a, want_a.iter().map(|a| *a as i32).collect::<Vec<_>>(), "{}: the assignments", c.name);
+        assert_eq!(got_c.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), want_c.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), "{}: the f64 centres differ in bits", c.name);
+        eprintln!("{}: n {n} d {d} k {k} scale {scale} {shape}; counts {counts:?}; the f64 reference agrees bit for bit", c.name);
+    }
+    assert_eq!(seen_shapes.into_iter().collect::<Vec<_>>(), ["breaking", "mixed", "plain", "unequal"]);
+}
+
+/// The two values `reference64.fut` writes, from Futhark's binary format: `[n]i32`, then `[k][d]f64` (`read_binary`
+/// reads the signature family's i32 and f32 only).
+fn read_i32_then_f64(raw: &[u8], n: usize, cells: usize) -> (Vec<i32>, Vec<f64>) {
+    assert_eq!(&raw[..7], b"b\x02\x01 i32", "the assignments' header");
+    let mut at = 7 + 8;
+    let a: Vec<i32> = raw[at..at + 4 * n].chunks_exact(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    at += 4 * n;
+    // Futhark writes a newline between two values.
+    while raw[at].is_ascii_whitespace() {
+        at += 1;
+    }
+    assert_eq!(&raw[at..at + 7], b"b\x02\x02 f64", "the centres' header: {:?}", &raw[at..at + 7]);
+    at += 7 + 16;
+    let c: Vec<f64> = raw[at..at + 8 * cells].chunks_exact(8).map(|b| f64::from_le_bytes(b.try_into().unwrap())).collect();
+    (a, c)
 }

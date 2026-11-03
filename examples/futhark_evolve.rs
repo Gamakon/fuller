@@ -57,6 +57,18 @@
 //!   5 % false "beat"; fault 13: until 2026-11-01 it was the least single ratio of the two A/A sets) and at least 9
 //!   of 11 pairs faster (`speed_claim_beats_noise_floor` in the report).
 //!
+//! THE K-MEANS SCHEME, `futhark-kmeans-converged` (`docs/KMEANS_FITNESS.md`; k-means's own default, `Problem::fitness`,
+//! an answer-scored scheme being refused for it: a k-means step has no exact answer): the candidate and the seed are
+//! each run to UltraDim's stopping rule on every fitness case (`futhark_sig::kmeans_converged::converge`: the harness
+//! assigns, the program steps, the Euclidean inertia's change under 1e-4 stops, 100 iterations is the cap), interleaved
+//! `--pairs` times (the candidate first in the even pairs), and the five inputs a case are relative to the seed's run:
+//! cosine inertia and mean log10 angular percentile of the final centroids, seconds to the stopping point, iterations,
+//! inertia gained an iteration. One stage, no gate, no timing input and no A/A sets: TrueNorth over every case's five
+//! inputs. Each iteration is one process of the compiled plain program (`--eval single`; `--backend c` is the whole
+//! measure with the processes' wall clock; `--backend gpu` the shim's executable). The control at the start is that the
+//! seed's run finishes on every fitness case. k-means's seed is NOT YET TRANSLATED (`Seed::NotYetTranslated`, plan 4c):
+//! the runner stops with that statement before anything else, so this path has not run on a k-means seed.
+//!
 //! The BUDGET is `--evaluations` fitness evaluations (an individual scored, a cache hit included, so R and C are
 //! counted alike); the wall clock (`--minutes`) is a guard. The work guard: every candidate's exact node executions
 //! on every case (`Interp::work`) are computed before it runs, and one over the per-submit cap stops the run as a
@@ -101,7 +113,8 @@ use std::time::Instant;
 use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
 use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
-use fuller::fitness::{Family, Scheme};
+use fuller::fitness::Scheme;
+use fuller::futhark_sig::kmeans_converged::{converge, converge_interleaved, kmeans_inputs, step_of_exe, ConvergedRun, INPUT_NAMES};
 use fuller::futhark_sig::{build, function_count, cases_fingerprint, compare, quality_fingerprint_of, compile_c, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
@@ -268,14 +281,20 @@ struct TimingInput {
 impl TimingInput {
     /// The problem's own timing input (`futhark_sig::timing_input`, `Problem::timing_n`) with the published
     /// program's output on it (the yardstick through `futhark c`), or the largest training case.
-    fn of(p: &fuller::futhark_sig::Problem, sig: &Signature, cases: &[Case], build_dir: &Path) -> Result<TimingInput, String> {
+    /// `with_output` false (the k-means scheme, whose speed is measured in the run and whose timing-case check is not
+    /// bit for bit) leaves the published program's output out.
+    fn of(p: &fuller::futhark_sig::Problem, sig: &Signature, cases: &[Case], build_dir: &Path, with_output: bool) -> Result<TimingInput, String> {
         if let Some(stdin) = fuller::futhark_sig::timing_input(p)? {
             let inputs = read_binary(&stdin)?;
-            let exe = compile_c(p.yardstick, build_dir)?;
-            let output = fuller::futhark_sig::run_exe(&exe, &stdin)?;
-            return Ok(TimingInput { name: format!("{}'s timing input", p.name), sizes: sig.sizes(&inputs)?, stdin, output: Some(fuller::futhark_sig::write_binary(&[&output])) });
+            let output = if with_output {
+                let exe = compile_c(p.yardstick, build_dir)?;
+                Some(fuller::futhark_sig::write_binary(&[&fuller::futhark_sig::run_exe(&exe, &stdin)?]))
+            } else {
+                None
+            };
+            return Ok(TimingInput { name: format!("{}'s timing input", p.name), sizes: sig.sizes(&inputs)?, stdin, output });
         }
-        let i = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.len() * cases[*i].inputs.iter().map(|a| a.len()).sum::<usize>()).ok_or("no training case")?;
+        let i = (0..cases.len()).filter(|i| cases[*i].split == Split::Train).max_by_key(|i| cases[*i].output.as_ref().map_or(0, Array::len) * cases[*i].inputs.iter().map(|a| a.len()).sum::<usize>()).ok_or("no training case")?;
         Ok(TimingInput { name: cases[i].name.clone(), stdin: cases[i].stdin.clone(), sizes: sig.sizes(&cases[i].inputs)?, output: None })
     }
 
@@ -333,7 +352,7 @@ impl Quality {
     /// A legal gene's program that did not compile or run (our software has a bug, logged): wrong everywhere.
     fn worst(cases: &[Case], parts: &[QualityPart]) -> Quality {
         let fit: Vec<&Case> = cases.iter().filter(|c| c.split.in_fitness()).collect();
-        let inputs = fit.iter().flat_map(|c| vec![1.0; quality_input_names_of(parts, &c.output).len()]).collect();
+        let inputs = fit.iter().flat_map(|c| vec![1.0; c.output.as_ref().map_or(0, |o| quality_input_names_of(parts, o).len())]).collect();
         Quality { raw: vec![[1.0; 3]; fit.len()], inputs, exact_train: 0, exact_held: 0, exact_test: 0, work: 0, outputs: Vec::new(), behaviour: "failed".into() }
     }
     /// The quality of a program's outputs on the cases: the fitness's inputs and exactness from the training and
@@ -341,9 +360,10 @@ impl Quality {
     fn of(outs: Vec<Array>, cases: &[Case], work: u128, parts: &[QualityPart]) -> Quality {
         let mut q = Quality { raw: Vec::with_capacity(cases.len()), inputs: Vec::new(), exact_train: 0, exact_held: 0, exact_test: 0, work, outputs: Vec::new(), behaviour: String::new() };
         for (got, c) in outs.iter().zip(cases) {
-            let r = compare(got, &c.output);
+            let Some(want) = &c.output else { continue };
+            let r = compare(got, want);
             if c.split.in_fitness() {
-                q.inputs.extend(quality_inputs_of(parts, got, &c.output));
+                q.inputs.extend(quality_inputs_of(parts, got, want));
                 q.raw.push(r);
             }
             if r == [0.0; 3] {
@@ -470,6 +490,17 @@ struct Judge<'a> {
     batch_splits: u64,
     /// The last evaluation's path (`single`, `batch`, `hit`), its batch's size and its stages, for the ledger.
     last: (&'static str, usize, Stages),
+    /// THE K-MEANS SCHEME's judge (`futhark-kmeans-converged`), when that is the scheme.
+    converged: Option<ConvergedJudge>,
+}
+
+/// The k-means scheme's state: the seed's compiled program and its run on every fitness case (the yardstick of every
+/// input), and how many interleaved pairs each candidate is run against it.
+struct ConvergedJudge {
+    seed_exe: PathBuf,
+    /// The seed's run on each fitness case, in case order (`Case::split.in_fitness()`).
+    seed_runs: Vec<ConvergedRun>,
+    pairs: usize,
 }
 
 impl<'a> Judge<'a> {
@@ -743,10 +774,73 @@ impl<'a> Judge<'a> {
         }
     }
 
+    /// THE K-MEANS SCHEME's evaluation (`docs/KMEANS_FITNESS.md`): the plain program compiled once (its own directory,
+    /// `--eval single`), then on every fitness case the candidate and the seed run to UltraDim's stopping rule
+    /// interleaved `pairs` times, the five inputs a case against the seed's run, and the fitness TrueNorth over them
+    /// (one stage: the stage is not read). A program that fails to compile is a bug of our software (logged) and
+    /// scores 1 on every input, as a run that does not finish does. The quality's `outputs` are the final centroids a
+    /// case (the behaviour), its exactness counts 0 (there is no exact answer).
+    fn evaluate_converged(&mut self, tree: &Tree, source: &str) -> Result<Eval, String> {
+        let work = self.work_of(tree)?;
+        if work > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT {
+            return Err(format!("THE WORK GUARD: a candidate runs {work} node executions on a case, over the per-submit cap {CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT}; the experiment's sizes are misconfigured for this layout\n{source}"));
+        }
+        self.max_work = self.max_work.max(work);
+        let cj = self.converged.as_ref().ok_or("our software has a bug: a converged evaluation with no converged judge")?;
+        let (seed_exe, pairs) = (cj.seed_exe.clone(), cj.pairs);
+        let fit: Vec<usize> = (0..self.cases.len()).filter(|i| self.cases[*i].split.in_fitness()).collect();
+        let t = Instant::now();
+        let dir = self.work_dir.join("converged");
+        let mut st = Stages::default();
+        let compiled = self.compile_staged(source, &dir);
+        let q = match compiled {
+            Ok((exe, cs)) => {
+                st.add(&cs);
+                let t_runs = Instant::now();
+                let mut inputs = Vec::with_capacity(5 * fit.len());
+                let mut outputs = Vec::with_capacity(fit.len());
+                for (slot, i) in fit.iter().enumerate() {
+                    let c = &self.cases[*i];
+                    let (points, start) = (&c.inputs[0], &c.inputs[1]);
+                    let (cand, _seed) = converge_interleaved(points, start, pairs, step_of_exe(&exe, points), step_of_exe(&seed_exe, points))?;
+                    inputs.extend(kmeans_inputs(&cand, &cj_seed(self.converged.as_ref(), slot)?));
+                    if !cand.finished {
+                        self.log_bug(&format!("{}: the run did not finish: {}", c.name, cand.failure), source);
+                    }
+                    outputs.push(Array::f32s(vec![cand.centroids.len(), cand.centroids.first().map_or(0, Vec::len)], cand.centroids.concat()));
+                }
+                st.runs = t_runs.elapsed().as_secs_f64();
+                let behaviour = text_hash_bytes(&fuller::futhark_sig::write_binary(&outputs.iter().collect::<Vec<_>>()));
+                Quality { raw: vec![[1.0; 3]; fit.len()], inputs, exact_train: 0, exact_held: 0, exact_test: 0, work, outputs, behaviour }
+            }
+            Err(e) => {
+                self.log_bug(&e, source);
+                Quality { raw: vec![[1.0; 3]; fit.len()], inputs: vec![1.0; 5 * fit.len()], exact_train: 0, exact_held: 0, exact_test: 0, work, outputs: Vec::new(), behaviour: "failed".into() }
+            }
+        };
+        st.timing = t.elapsed().as_secs_f64() - st.total();
+        self.gen_stages.add(&st);
+        self.last = ("single", 1, st);
+        let f = fuller::fitness::converged(&q.inputs)?;
+        Ok(Eval { fitness: f.fitness, theta_q: f.quality, theta_s: 0.0, quality: q, speed: Vec::new(), ratio: f64::NAN })
+    }
+
     /// Score one individual in a stage.
     fn evaluate(&mut self, tree: &Tree, source: &str, stage: FitnessStage) -> Result<Eval, String> {
         self.scored += 1;
         self.last = ("hit", 0, Stages::default());
+        if self.converged.is_some() {
+            if let Some(q) = self.quality_cache.get(source) {
+                self.hits += 1;
+                let f = fuller::fitness::converged(&q.inputs)?;
+                return Ok(Eval { fitness: f.fitness, theta_q: f.quality, theta_s: 0.0, quality: q.clone(), speed: Vec::new(), ratio: f64::NAN });
+            }
+            self.evaluations += 1;
+            self.compiled += 1;
+            let e = self.evaluate_converged(tree, source)?;
+            self.quality_cache.insert(source.to_string(), e.quality.clone());
+            return Ok(e);
+        }
         let q = if let Some(q) = self.quality_cache.get(source) {
             self.hits += 1;
             q.clone()
@@ -809,6 +903,11 @@ impl<'a> Judge<'a> {
         let t = self.scheme.staged(stage, &q.inputs(), &speed)?;
         Ok(Eval { fitness: t.fitness, theta_q: t.quality, theta_s: t.speed, quality: q, speed, ratio })
     }
+}
+
+/// The seed's run on the `slot`-th fitness case.
+fn cj_seed(cj: Option<&ConvergedJudge>, slot: usize) -> Result<ConvergedRun, String> {
+    cj.and_then(|c| c.seed_runs.get(slot)).cloned().ok_or_else(|| format!("our software has a bug: no seed run for fitness case {slot}"))
 }
 
 /// The genetic side: the contract, the layout and the variation operators.
@@ -1478,7 +1577,7 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
         if replay.is_some() { "yes" } else { "no" },
         run.judge.cases.len(),
         quality_fingerprint_of(run.judge.parts()),
-        run.judge.cases.iter().map(|k| quality_input_names_of(run.judge.parts(), &k.output).len()).sum::<usize>(),
+        run.judge.cases.iter().map(|k| k.output.as_ref().map_or(0, |o| quality_input_names_of(run.judge.parts(), o).len())).sum::<usize>(),
         c.neighbours,
         c.exact_neighbours,
         c.random,
@@ -1651,9 +1750,16 @@ fn real_main() -> Result<(), String> {
     // THE OPERATOR MEASUREMENT (`--measure grow|point|walk`, plan sections H and I): a measurement, not a run, like
     // the slope check (regime "A", no timing).
     let measure = arg(&args, "--measure");
-    // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`; default the family's newest, futhark-slope4-gated).
-    let scheme = fuller::fitness::scheme_for(Family::FutharkSig, arg(&args, "--fitness").as_deref())?;
-    let parts = scheme.quality_parts()?;
+    let p = problem(&pname)?;
+    // THE SEED: a problem whose prototype is not yet translated has no reference program and stops here, plainly
+    // (`futhark_sig::Seed::NotYetTranslated`; k-means until plan 4c (d) lands).
+    let (reference_text, planted_text) = (p.reference()?, p.planted()?);
+    println!("# {}", p.seed_state());
+    // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`; default the problem's own, `Problem::fitness`: the
+    // newest scheme of its kind).
+    let scheme = fuller::fitness::scheme_for_problem(&p, arg(&args, "--fitness").as_deref())?;
+    // The k-means scheme has no quality parts (nothing is compared with an answer): its judge is `evaluate_converged`.
+    let parts: &'static [QualityPart] = if scheme.is_converged() { &[] } else { scheme.quality_parts()? };
     println!("# {}", scheme.card_line());
     let check = args.iter().any(|a| a == "--check") || measure.is_some();
     let regime = match arg(&args, "--regime") {
@@ -1690,6 +1796,9 @@ fn real_main() -> Result<(), String> {
         "single" => EvalMode::Single,
         o => return Err(format!("--eval {o}: batch, rust or single")),
     };
+    if scheme.is_converged() && mode != EvalMode::Single {
+        return Err(format!("the fitness scheme {} runs each iteration of UltraDim's loop as its own process of the compiled plain program: it takes --eval single (batch and rust evaluate fixed steps in one process)", scheme.name));
+    }
     let minutes: f64 = num(&args, "--minutes", 60.0)?;
     let budget: u64 = num(&args, "--evaluations", 6000)?;
     let pop: usize = num(&args, "--pop", 24)?;
@@ -1734,6 +1843,9 @@ fn real_main() -> Result<(), String> {
     if rescore.is_some() && regime != "P" {
         return Err("--rescore needs --regime P (its in-run A/A set is the noise floor beside the re-time)".into());
     }
+    if stop_at_exact && scheme.is_converged() {
+        return Err(format!("--stop-at-exact: the fitness scheme {} has no exact program to stop at (k-means has no exact answer)", scheme.name));
+    }
     if stop_at_exact && regime == "P" {
         return Err("--stop-at-exact is for the discovery regimes R and C; P starts exact and measures speed".into());
     }
@@ -1744,14 +1856,13 @@ fn real_main() -> Result<(), String> {
     let spent = checkpoint.as_ref().and_then(|c| c["seconds"].as_f64()).unwrap_or(0.0);
     let limit = std::time::Duration::from_secs_f64((minutes * 60.0 - spent).max(0.0));
 
-    let p = problem(&pname)?;
     let inst = p.instance;
     let k = load(&inst)?;
     let sig = signature(&inst)?;
     let interp = Interp::new(&k, &sig)?;
     let contract = k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
-    let reference = build(&k, p.reference)?;
-    let planted = build(&k, p.planted)?;
+    let reference = build(&k, reference_text)?;
+    let planted = build(&k, planted_text)?;
     // THE PROGRAM SIZE is an experiment parameter (`--program-size`, default the problem's `program_size`), never the
     // reference's size; the run card records it. The reference and the planted slowdown must fit the layout.
     let program_size: usize = num(&args, "--program-size", p.program_size)?;
@@ -1784,7 +1895,7 @@ fn real_main() -> Result<(), String> {
         println!("# {} the gate: the slope check in {g} passed for these cases and quality inputs", utc());
     }
     let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
-    let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
+    let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"), !scheme.is_converged())?;
     let timing_cap = fuller::futhark_sig::timing_work_cap(interp.work(&reference, &timing.sizes)?);
     println!("# {} timing bound: {timing_cap} node executions at the timing input (the published program's work {}, the constant {TIMING_WORK_CAP})", utc(), interp.work(&reference, &timing.sizes)?);
     // THE STATIC COST (the matrix kingdom, A7: `fuller::futhark_cost`), reported at the timing input's sizes; a
@@ -1806,17 +1917,35 @@ fn real_main() -> Result<(), String> {
         timing.label(),
         if resume { "; RESUMED" } else { "" }
     );
-    // Control: the reference gene is exact on every case (interpreted), so the kingdom expresses the published program.
-    for c in &cases {
-        if interp.eval(&reference, &c.inputs)? != c.output {
-            return Err(format!("our software has a bug: the reference gene is not exact on {}", c.name));
+    if scheme.is_converged() {
+        // Control (the k-means scheme): the seed runs to UltraDim's stopping point on every fitness case through the
+        // host interpreter; the seed's compiled run is the yardstick of every input (below, the converged judge).
+        for c in cases.iter().filter(|c| c.split.in_fitness()) {
+            let r = converge(&c.inputs[0], &c.inputs[1], |cen| interp.eval(&reference, &[c.inputs[0].clone(), cen.clone()]))?;
+            if !r.finished {
+                return Err(format!("our software has a bug: the seed's run does not finish on {} (host interpreter): {}", c.name, r.failure));
+            }
         }
+        println!("# {} control: the seed runs to UltraDim's stopping point on every fitness case (host interpreter)", utc());
+    } else {
+        // Control: the reference gene is exact on every case (interpreted), so the kingdom expresses the published program.
+        for c in &cases {
+            if interp.eval(&reference, &c.inputs)? != *c.answer()? {
+                return Err(format!("our software has a bug: the reference gene is not exact on {}", c.name));
+            }
+        }
+        println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
     }
-    println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
 
-    let mut objectives: Vec<String> = cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| quality_input_names_of(parts, &c.output).into_iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect();
-    for i in 0..pairs {
-        objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
+    let mut objectives: Vec<String> = if scheme.is_converged() {
+        cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| INPUT_NAMES.iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect()
+    } else {
+        cases.iter().filter(|c| c.split.in_fitness()).flat_map(|c| c.output.as_ref().map_or_else(Vec::new, |o| quality_input_names_of(parts, o)).into_iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect()
+    };
+    if !scheme.is_converged() {
+        for i in 0..pairs {
+            objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
+        }
     }
     let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "program_size_given": args.iter().any(|a| a == "--program-size"), "program_size_default": p.program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
     let tel = RunTelemetry::start_with_fitness(
@@ -1843,7 +1972,7 @@ fn real_main() -> Result<(), String> {
     // path has no shim and no C: its runtime is built once instead, into the run's own directory.
     let with_shim = backend == Backend::Gpu && mode != EvalMode::Rust;
     let shim = if with_shim { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
-    let yard_exe = if with_shim { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
+    let yard_exe = if with_shim && !scheme.is_converged() { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
     let host = match mode {
         EvalMode::Rust => {
             let rt = fuller::futhark_rust::prebuild_rt(&out.join("rust_rt"))?;
@@ -1857,7 +1986,7 @@ fn real_main() -> Result<(), String> {
         }
         EvalMode::Single => None,
     };
-    let timer = if mode == EvalMode::Single && backend == Backend::Gpu {
+    let timer = if mode == EvalMode::Single && backend == Backend::Gpu && !scheme.is_converged() {
         Some(Host::new(&k, &sig, cases.len(), fuller::futhark_batch::Backend::Gpu { shim: shim.clone() }, &out.join("timing_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(p.yardstick) })?)
     } else {
         None
@@ -1866,7 +1995,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()) },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()), converged: None },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -1881,7 +2010,7 @@ fn real_main() -> Result<(), String> {
     let mut noise = Vec::new();
     // Batch mode: both A/A sets (and the gate's single timings) in one batch process, as every candidate is timed.
     let mut batch_aa: Option<AaSets> = None;
-    if backend == Backend::Gpu && !check {
+    if backend == Backend::Gpu && !check && !scheme.is_converged() {
         // Every path times its pairs with the driver's interleaved pairs (`Step::Pair`): the batch process, this
         // process (rust), or the single path's own timing process.
         let a = run.judge.aa_batch(p.yardstick, if regime == "P" { pairs } else { 0 }, if aa_only { 3 } else { 0 })?;
@@ -1907,12 +2036,28 @@ fn real_main() -> Result<(), String> {
         run.tel.end("early_stop", 0, None)?;
         return Ok(());
     }
-    run.judge.prefetch(&[(&reference, ref_source.as_str())], FitnessStage::Quality)?;
-    let ref_q = run.judge.quality(&reference, &ref_source)?;
-    if !ref_q.perfect() {
-        return Err(format!("our software has a bug: the compiled reference is not exact ({:?})", ref_q.raw));
+    if scheme.is_converged() {
+        // THE K-MEANS SCHEME's yardstick: the seed compiled once (the run's own directory), run to the stopping point on
+        // every fitness case; a run that does not finish is our bug. Each candidate is then run interleaved with it.
+        let (seed_exe, _) = run.judge.compile_staged(&ref_source, &out.join("seed_build"))?;
+        let mut seed_runs = Vec::new();
+        for c in run.judge.cases.iter().filter(|c| c.split.in_fitness()) {
+            let r = converge(&c.inputs[0], &c.inputs[1], step_of_exe(&seed_exe, &c.inputs[0]))?;
+            if !r.finished {
+                return Err(format!("our software has a bug: the compiled seed's run does not finish on {} ({backend:?}): {}", c.name, r.failure));
+            }
+            println!("# {} control: the compiled seed on {}: {} iterations to the stopping point in {:.3} s, cosine inertia {:.4e}, mean log10 p {:.3}", utc(), c.name, r.iterations, r.seconds, r.inertia, r.mean_log10_p);
+            seed_runs.push(r);
+        }
+        run.judge.converged = Some(ConvergedJudge { seed_exe, seed_runs, pairs });
+    } else {
+        run.judge.prefetch(&[(&reference, ref_source.as_str())], FitnessStage::Quality)?;
+        let ref_q = run.judge.quality(&reference, &ref_source)?;
+        if !ref_q.perfect() {
+            return Err(format!("our software has a bug: the compiled reference is not exact ({:?})", ref_q.raw));
+        }
+        println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
     }
-    println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
     std::fs::write(out.join("reference.fut"), &ref_source).map_err(|e| e.to_string())?;
     if let Some(kind) = &measure {
         let count: usize = num(&args, "--count", 1400)?;
@@ -1987,7 +2132,7 @@ fn real_main() -> Result<(), String> {
         // Each case's inputs by name (a report: the fitness takes every input on its own).
         let mut at = 0;
         for c in run.judge.cases.iter().filter(|c| c.split.in_fitness()) {
-            let names = quality_input_names_of(run.judge.parts(), &c.output);
+            let names = quality_input_names_of(run.judge.parts(), c.answer()?);
             let vals = &q.inputs[at..at + names.len()];
             at += names.len();
             let cells: Vec<String> = names.iter().zip(vals).map(|(n, v)| format!("{n}={v:.6}")).collect();
@@ -2656,7 +2801,7 @@ fn real_main() -> Result<(), String> {
         best.tree.level_order().len(),
         reference.level_order().len(),
         be.quality.work,
-        ref_q.work,
+        run.judge.work_of(&reference)?,
         sexp(&k, &best.tree),
         run.judge.max_work,
         run.judge.scored,

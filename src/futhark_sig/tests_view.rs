@@ -79,8 +79,8 @@ fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_program
             }
         }
         // The reference and 200 random genes: the same trees, the same programs.
-        let reference = build(&k, prob.reference).unwrap();
-        assert_eq!(program(&k, &sig, &reference).unwrap(), program(&written, &sig, &build(&written, prob.reference).unwrap()).unwrap(), "{name}: the reference's program differs");
+        let reference = build(&k, prob.reference().unwrap()).unwrap();
+        assert_eq!(program(&k, &sig, &reference).unwrap(), program(&written, &sig, &build(&written, prob.reference().unwrap()).unwrap()).unwrap(), "{name}: the reference's program differs");
         let mut rng = GeneRng::new(0x71E3_0001);
         for g in 0..200 {
             let gene = random_gene(&ca, &layout, &const_len, &mut rng).unwrap();
@@ -92,7 +92,7 @@ fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_program
         // The CPU interpreter on the view's kingdom: the reference is exact on every stored case.
         let interp = Interp::new(&k, &sig).unwrap();
         for c in load_cases(&prob).unwrap() {
-            assert_eq!(interp.eval(&reference, &c.inputs).unwrap(), c.output, "{name}: the reference on {}", c.name);
+            assert_eq!(interp.eval(&reference, &c.inputs).unwrap(), *c.answer().unwrap(), "{name}: the reference on {}", c.name);
         }
     }
 }
@@ -161,13 +161,13 @@ fn the_reference_programs_differ_from_the_recorded_ones_in_binder_names_only_and
         let sig = signature(&prob.instance).unwrap();
         let interp = Interp::new(&k, &sig).unwrap();
         let cases = load_cases(&prob).unwrap();
-        for (what, text, recorded) in [("reference", prob.reference, reference), ("planted slowdown", prob.planted, planted)] {
+        for (what, text, recorded) in [("reference", prob.reference().unwrap(), reference), ("planted slowdown", prob.planted().unwrap(), planted)] {
             let t = build(&k, text).unwrap();
             let got = program(&k, &sig, &t).unwrap();
             let renaming = binder_renaming(recorded, &got).unwrap_or_else(|| panic!("{name}: the {what}'s program differs from the record in more than binder names:\n{recorded}\n{got}"));
             eprintln!("{name} {what}: renamed {renaming:?}");
             for c in &cases {
-                assert_eq!(interp.eval(&t, &c.inputs).unwrap(), c.output, "{name}: the {what} on {}", c.name);
+                assert_eq!(interp.eval(&t, &c.inputs).unwrap(), *c.answer().unwrap(), "{name}: the {what} on {}", c.name);
             }
         }
     }
@@ -196,7 +196,7 @@ fn the_gene_layouts_are_the_measured_ones() {
         .map(|name| {
             let prob = problem(name).unwrap();
             let k = load(&prob.instance).unwrap();
-            let reference = build(&k, prob.reference).unwrap();
+            let reference = build(&k, prob.reference().unwrap()).unwrap();
             let n = reference.level_order().iter().filter(|(t, _)| !k.rows[t.symbol as usize].inputs.is_empty()).count();
             let layout = GeneLayout::from_program_size(&k.relations().check().unwrap(), k.roots()[0], n).unwrap();
             (name, n, layout.head_lens().values().sum::<usize>(), layout.width)
@@ -216,7 +216,7 @@ fn the_default_program_size_is_above_every_reference_and_both_programs_fit() {
         let k = load(&prob.instance).unwrap();
         let contract = k.relations().check().unwrap();
         let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
-        for text in [prob.reference, prob.planted] {
+        for text in [prob.reference().unwrap(), prob.planted().unwrap()] {
             let t = build(&k, text).unwrap();
             assert!(function_count(&k, &t) < DEFAULT_PROGRAM_SIZE, "{name}: {} functions, the default program size is {DEFAULT_PROGRAM_SIZE}", function_count(&k, &t));
             crate::typed_gep::fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: {text} does not fit N = {DEFAULT_PROGRAM_SIZE}: {e}"));

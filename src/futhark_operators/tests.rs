@@ -42,7 +42,7 @@ fn measure(name: &str, trials: usize) -> Vec<(&'static str, usize, usize, usize,
     let contract = k.relations().check().unwrap();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
     let const_len = k.const_len();
-    let parents: Vec<Tree> = [prob.reference, prob.planted].iter().map(|t| build(&k, t).unwrap()).collect();
+    let parents: Vec<Tree> = [prob.reference().unwrap(), prob.planted().unwrap()].iter().map(|t| build(&k, t).unwrap()).collect();
     let mut out = Vec::new();
     for kind in KINDS {
         let (mut pad, mut op) = (GeneRng::new(0x0FE7_0001), GeneRng::new(0x0FE7_0002));
@@ -81,7 +81,7 @@ fn coding_share(name: &str) -> (usize, usize, usize, usize) {
     let contract = k.relations().check().unwrap();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
     let const_len = k.const_len();
-    let g = write_back(&contract, &layout, &random_gene(&contract, &layout, &const_len, &mut GeneRng::new(0x0FE7_0003)).unwrap(), &build(&k, prob.reference).unwrap()).unwrap();
+    let g = write_back(&contract, &layout, &random_gene(&contract, &layout, &const_len, &mut GeneRng::new(0x0FE7_0003)).unwrap(), &build(&k, prob.reference().unwrap()).unwrap()).unwrap();
     let coding = coding_cells(&contract, &layout, &g, &const_len).unwrap();
     let spans = layout.spans();
     let coding_spans = spans.iter().filter(|s| coding.iter().any(|p| (s.off..s.off + s.len).contains(p))).count();

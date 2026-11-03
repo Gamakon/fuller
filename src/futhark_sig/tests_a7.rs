@@ -109,8 +109,8 @@ fn the_a7_reference_winner_and_planted_slowdown_are_exact_on_every_stored_case_i
         let tree = build(&k, text).unwrap();
         for c in &cases {
             let got = interp.eval(&tree, &c.inputs).unwrap();
-            assert_eq!((got.elem, got.dims.clone()), (Elem::F32, c.output.dims.clone()));
-            assert_eq!(got, c.output, "the {what} on {}", c.name);
+            assert_eq!((got.elem, got.dims.clone()), (Elem::F32, c.answer().unwrap().dims.clone()));
+            assert_eq!(got, *c.answer().unwrap(), "the {what} on {}", c.name);
             exact += 1;
         }
     }
@@ -143,7 +143,7 @@ fn the_a7_programs_are_exact_compiled_and_as_quality_programs_and_the_batch_sour
         let src = program(&k, &sig, &tree).unwrap();
         let exe = compile_c(&src, &scratch(&format!("{}_plain", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{src}"));
         for c in &cases {
-            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), c.output, "the compiled {what} on {}", c.name);
+            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), *c.answer().unwrap(), "the compiled {what} on {}", c.name);
             exact += 1;
         }
         let batch = program_cases(&k, &sig, &tree, cases.len()).unwrap();
@@ -151,7 +151,7 @@ fn the_a7_programs_are_exact_compiled_and_as_quality_programs_and_the_batch_sour
         let bexe = compile_c(&batch, &scratch(&format!("{}_cases", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{batch}"));
         let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.output.clone()).collect::<Vec<_>>(), "the {what}'s quality program");
+        assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.answer().unwrap().clone()).collect::<Vec<_>>(), "the {what}'s quality program");
     }
     eprintln!("a7: the three programs compiled with futhark c are exact on {exact} of {} case runs", 3 * cases.len());
     // THE BATCH SOURCE (`futhark_batch::Host::source`, the GPU and rust paths): two members with quality and timed
@@ -202,7 +202,7 @@ fn the_a7_egraph_variants_of_the_reference_hold_the_winner_and_are_exact() {
     let mut exact = 0;
     for v in &vs {
         for c in &cases {
-            assert_eq!(interp.eval(v, &c.inputs).unwrap(), c.output, "the variant {} on {}", sexp(&k, v), c.name);
+            assert_eq!(interp.eval(v, &c.inputs).unwrap(), *c.answer().unwrap(), "the variant {} on {}", sexp(&k, v), c.name);
             exact += 1;
         }
     }

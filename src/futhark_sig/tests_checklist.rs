@@ -1,13 +1,14 @@
 //! THE CHECKLIST, CHECKED (`docs/CHECKLIST_futhark_problem.md`, `docs/PLAN_futhark_kingdom.md` step 4): what every
 //! Futhark problem of the one runner gets. The cheap claims are checked here for every problem of [`PROBLEM_NAMES`]:
 //! the problem loads (its view, its kingdom, its signature, an interpreter that covers every row), it has a default
-//! fitness scheme, its reference and planted slowdown build from their s-expressions and fit the layout at the
-//! problem's program size, its reference and planted slowdown are exact on every stored case through the host
-//! interpreter, it has a timing input of the declared shape; and the checklist's table has a column for every problem
-//! and a row for every item, every cell filled, a "not yet" cell with its reason.
+//! fitness scheme of its own kind, its reference and planted slowdown build from their s-expressions and fit the
+//! layout at the problem's program size, its reference and planted slowdown are exact on every stored case through
+//! the host interpreter (a problem whose seed is not yet translated, k-means, reports that state instead, and its
+//! cases carry no answers), it has a timing input of the declared shape; and the checklist's table has a column for
+//! every problem and a row for every item, every cell filled, a "not yet" cell with its reason.
 
 use super::*;
-use crate::fitness::{scheme_for, Family};
+use crate::fitness::{scheme_for, scheme_for_problem, Family};
 use crate::typed_gep::fits;
 
 /// The items of the checklist, in the table's order (one row each).
@@ -51,26 +52,48 @@ fn every_problem_loads_has_a_default_scheme_and_its_programs_are_exact_on_the_ho
         let layout = GeneLayout::from_program_size(&contract, k.roots()[0], p.program_size).unwrap_or_else(|e| panic!("{name}: the layout at N = {}: {e}", p.program_size));
         let cases = load_cases(&p).unwrap_or_else(|e| panic!("{name}: the cases: {e}"));
         assert!(cases.iter().any(|c| c.split == Split::Train) && cases.iter().any(|c| c.split == Split::Held), "{name}: training and held-out cases");
-        let mut exact = 0;
-        for (what, text) in [("reference", p.reference), ("planted slowdown", p.planted)] {
-            let t = build(&k, text).unwrap_or_else(|e| panic!("{name}: the {what} does not build: {e}"));
-            assert!(function_count(&k, &t) < p.program_size, "{name}: the {what} has {} functions, the program size is {}", function_count(&k, &t), p.program_size);
-            fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: the {what} does not fit N = {}: {e}", p.program_size));
-            for c in &cases {
-                assert_eq!(interp.eval(&t, &c.inputs).unwrap_or_else(|e| panic!("{name}: the {what} on {}: {e}", c.name)), c.output, "{name}: the {what} on {}", c.name);
-                exact += 1;
-            }
-        }
-        // The timing input: the problem's own, of the declared shape, and the reference's work there is under the
-        // problem's timing bound.
+        // The problem's own default scheme is of its kind, and a scheme of the other kind is refused by name.
+        let own = scheme_for_problem(&p, None).unwrap_or_else(|e| panic!("{name}: the default scheme: {e}"));
+        assert_eq!(own.name, p.fitness);
+        assert!(own.fault.is_none(), "{name}: a default is never an old scheme");
+        assert_eq!(cases.iter().all(|c| c.output.is_some()), p.cases_have_answers(), "{name}: the cases carry answers exactly when the problem is scored against answers");
+        let other = if own.is_converged() { "futhark-slope4-gated" } else { "futhark-kmeans-converged" };
+        let refused = scheme_for_problem(&p, Some(other)).unwrap_err();
+        assert!(refused.contains("not of") && refused.contains(name), "{name}: {refused}");
+        // The timing input: the problem's own, of the declared shape.
         assert!(p.timing_n > 0, "{name}: no timing input");
         let stdin = timing_input(&p).unwrap_or_else(|e| panic!("{name}: the timing input: {e}")).unwrap_or_else(|| panic!("{name}: no timing input recipe"));
         let inputs = read_binary(&stdin).unwrap();
         let sizes = sig.sizes(&inputs).unwrap_or_else(|e| panic!("{name}: the timing input is not of the declared shape: {e}"));
-        let reference = build(&k, p.reference).unwrap();
-        let work = interp.work(&reference, &sizes).unwrap();
-        assert!(work <= timing_work_cap(work), "{name}: the reference is over its own timing bound");
-        report.push(format!("{name}: {} rows, {} cases, reference and planted slowdown exact on all ({exact} runs), timing input {sizes:?}, work {work}", k.rows.len(), cases.len()));
+        match p.seed {
+            Seed::Program { .. } => {
+                let mut exact = 0;
+                for (what, text) in [("reference", p.reference().unwrap()), ("planted slowdown", p.planted().unwrap())] {
+                    let t = build(&k, text).unwrap_or_else(|e| panic!("{name}: the {what} does not build: {e}"));
+                    assert!(function_count(&k, &t) < p.program_size, "{name}: the {what} has {} functions, the program size is {}", function_count(&k, &t), p.program_size);
+                    fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: the {what} does not fit N = {}: {e}", p.program_size));
+                    for c in &cases {
+                        assert_eq!(interp.eval(&t, &c.inputs).unwrap_or_else(|e| panic!("{name}: the {what} on {}: {e}", c.name)), *c.answer().unwrap(), "{name}: the {what} on {}", c.name);
+                        exact += 1;
+                    }
+                }
+                // The reference's work at the timing input is under the problem's timing bound.
+                let reference = build(&k, p.reference().unwrap()).unwrap();
+                let work = interp.work(&reference, &sizes).unwrap();
+                assert!(work <= timing_work_cap(work), "{name}: the reference is over its own timing bound");
+                report.push(format!("{name}: {} rows, {} cases, reference and planted slowdown exact on all ({exact} runs), timing input {sizes:?}, work {work}", k.rows.len(), cases.len()));
+            }
+            Seed::NotYetTranslated { .. } => {
+                // THE SEED IS NOT YET TRANSLATED (k-means, plan 4c): the slot says so plainly, both accessors refuse with
+                // that text, and the problem is the one scored on its objective (no answers to be exact on).
+                let state = p.seed_state();
+                assert!(state.contains("not yet translated") && state.contains("UltraDim"), "{name}: {state}");
+                assert_eq!(p.reference().unwrap_err(), state);
+                assert_eq!(p.planted().unwrap_err(), state);
+                assert!(own.is_converged(), "{name}: a problem with no seed is scored on its objective, never against answers");
+                report.push(format!("{name}: {} rows, {} cases (no answers), {state}; timing input {sizes:?}", k.rows.len(), cases.len()));
+            }
+        }
     }
     for line in &report {
         eprintln!("{line}");

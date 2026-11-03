@@ -299,7 +299,7 @@ fn on_the_gpu_the_rust_backend_equals_the_batch_backend() {
         let batch = Host::new(&k, &sig, cases.len(), Backend::Gpu { shim: shim.clone() }, &base.join(format!("{name}_batch")), inputs).unwrap();
         let rust = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: rt.clone() }, &base.join(format!("{name}_rust")), inputs).unwrap();
         let mut ts = trees(&k, 8, 0xBA7C_0010 + pi as u64);
-        ts.push(crate::futhark_sig::build(&k, p.reference).unwrap());
+        ts.push(crate::futhark_sig::build(&k, p.reference().unwrap()).unwrap());
         let mut members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality] }).collect();
         members.push(Member { program: Program::Text(p.yardstick), steps: vec![Step::Time { yardstick: false, runs: 3 }, Step::Time { yardstick: true, runs: 3 }, Step::Output] });
         let want = batch.run(&members).unwrap();
@@ -349,7 +349,7 @@ fn every_problems_random_programs_compile_to_rust() {
         let cases = load_cases(&p).unwrap();
         let inputs = Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&cases[0].stdin), yardstick: Some(p.yardstick) };
         let mut ts = trees(&k, 24, 0xC0DE_0100 + pi as u64);
-        ts.push(crate::futhark_sig::build(&k, p.reference).unwrap());
+        ts.push(crate::futhark_sig::build(&k, p.reference().unwrap()).unwrap());
         let members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality, Step::Time { yardstick: false, runs: 1 }] }).collect();
         let idx: Vec<usize> = (0..members.len()).collect();
         let rust = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: rt.clone() }, &base.join(format!("{name}_rust")), inputs).unwrap();
@@ -564,9 +564,9 @@ fn on_the_gpu_the_three_evaluation_paths_agree() {
         for path in 1..3 {
             assert_eq!(quality[path][i], quality[0][i], "{}: the {} path's quality outputs differ from the single path's", CROSS_PATH[i], names[path]);
             let fit = cases.iter().zip(&quality[path][i]).filter(|(c, _)| c.split.in_fitness());
-            let qa: Vec<u64> = fit.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, &c.output)).map(f64::to_bits).collect();
+            let qa: Vec<u64> = fit.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, c.answer().unwrap())).map(f64::to_bits).collect();
             let fit0 = cases.iter().zip(&quality[0][i]).filter(|(c, _)| c.split.in_fitness());
-            let q0: Vec<u64> = fit0.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, &c.output)).map(f64::to_bits).collect();
+            let q0: Vec<u64> = fit0.flat_map(|(c, g)| crate::futhark_sig::quality_inputs(g, c.answer().unwrap())).map(f64::to_bits).collect();
             assert_eq!(qa, q0, "{}: the {} path's quality inputs differ", CROSS_PATH[i], names[path]);
         }
     }

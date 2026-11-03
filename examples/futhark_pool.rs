@@ -548,7 +548,7 @@ fn llm(c: &Ctx, calls: usize, parallel: usize, new_calls: bool) -> Result<(), St
 /// GPU). With the distribution of the distances to the reference, to choose the bar from the data.
 fn distinct(c: &Ctx, bar: usize, program_size: Option<usize>) -> Result<(), String> {
     let p = problem(&c.pname)?;
-    let reference = fuller::futhark_sig::build(&c.k, p.reference)?;
+    let reference = fuller::futhark_sig::build(&c.k, p.reference()?)?;
     let contract = c.k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
     let n_funcs = reference.level_order().iter().filter(|(t, _)| !c.k.rows[t.symbol as usize].inputs.is_empty()).count();
     let n = program_size.unwrap_or(n_funcs);
@@ -606,7 +606,7 @@ fn distinct(c: &Ctx, bar: usize, program_size: Option<usize>) -> Result<(), Stri
 /// `OUT/seed_log.tsv`, so every seed and both regimes of the runs use the same program.
 fn seed(c: &Ctx, bar: usize, program_size: Option<usize>, tries: usize, model: &str) -> Result<(), String> {
     let p = problem(&c.pname)?;
-    let reference = fuller::futhark_sig::build(&c.k, p.reference)?;
+    let reference = fuller::futhark_sig::build(&c.k, p.reference()?)?;
     let contract_k = c.k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
     let n_funcs = reference.level_order().iter().filter(|(t, _)| !c.k.rows[t.symbol as usize].inputs.is_empty()).count();
     let layout = fuller::typed_gep::GeneLayout::from_program_size(&contract_k, c.k.roots()[0], program_size.unwrap_or(n_funcs)).map_err(|e| e.to_string())?;

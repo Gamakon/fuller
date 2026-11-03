@@ -40,7 +40,7 @@ fn real_main() -> Result<(), String> {
     let sig = signature(&p.instance)?;
     let interp = Interp::new(&k, &sig)?;
     let contract = k.relations().check().map_err(|d| format!("{:?}", &d[..d.len().min(3)]))?;
-    let reference = build(&k, p.reference)?;
+    let reference = build(&k, p.reference()?)?;
     let n_funcs = reference.level_order().iter().filter(|(t, _)| !k.rows[t.symbol as usize].inputs.is_empty()).count();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], n_funcs.max(8)).map_err(|e| e.to_string())?;
     let const_len = k.const_len();
@@ -48,13 +48,13 @@ fn real_main() -> Result<(), String> {
     let score = |outs: &[Array]| -> (f64, f64) {
         let (mut a, mut b) = (Vec::new(), Vec::new());
         for (o, c) in outs.iter().zip(&cases) {
-            a.extend(current(o, &c.output));
-            b.extend(quality_inputs(o, &c.output));
+            a.extend(current(o, c.answer().expect("a stored answer")));
+            b.extend(quality_inputs(o, c.answer().expect("a stored answer")));
         }
         (angle(&a), angle(&b))
     };
     // The probes.
-    let probe = |f: &dyn Fn(&Array) -> Array| -> (f64, f64) { score(&cases.iter().map(|c| f(&c.output)).collect::<Vec<_>>()) };
+    let probe = |f: &dyn Fn(&Array) -> Array| -> (f64, f64) { score(&cases.iter().map(|c| f(c.answer().expect("a stored answer"))).collect::<Vec<_>>()) };
     let zero = probe(&|w| Array::i32s(w.dims.clone(), vec![0; w.len()]));
     let half = probe(&|w| Array::i32s(w.dims.clone(), w.i32_values().expect("i32 cases").iter().enumerate().map(|(i, x)| if i % 2 == 0 { *x } else { 0 }).collect()));
     let near = probe(&|w| Array::i32s(w.dims.clone(), w.i32_values().expect("i32 cases").iter().map(|x| x.wrapping_add(1)).collect()));

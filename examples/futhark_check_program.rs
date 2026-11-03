@@ -22,7 +22,7 @@ fn main() -> Result<(), String> {
     let mut exact = 0;
     for c in &cases {
         let out = interp.eval(&tree, &c.inputs)?;
-        let ok = out == c.output;
+        let ok = out == *c.answer()?;
         exact += usize::from(ok);
         println!("{}\t{:?}\t{}", c.name, c.split, if ok { "exact" } else { "DIFFERS" });
     }

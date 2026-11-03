@@ -32,7 +32,7 @@ fn the_reference_and_planted_genes_read_back_to_their_own_trees() {
         let p = problem(name).unwrap();
         let (k, sig) = setup(&p);
         let r = Reader::new(&k, &sig).unwrap();
-        for text in [p.reference, p.planted] {
+        for text in [p.reference().unwrap(), p.planted().unwrap()] {
             let tree = build(&k, text).unwrap();
             let src = program(&k, &sig, &tree).unwrap();
             let got = r.read_program(&src).unwrap_or_else(|g| panic!("{name}: {g}\n{src}"));
@@ -60,7 +60,7 @@ fn every_rendered_random_gene_reads_back_to_its_own_tree() {
         let (k, sig) = setup(&p);
         let r = Reader::new(&k, &sig).unwrap();
         let contract = k.relations().check().unwrap();
-        let reference = build(&k, p.reference).unwrap();
+        let reference = build(&k, p.reference().unwrap()).unwrap();
         let layout = GeneLayout::from_program_size(&contract, k.roots()[0], functions(&k, &reference)).unwrap();
         let const_len = k.const_len();
         let mut rng = GeneRng::new(0x2EAD_0001);
@@ -90,7 +90,7 @@ fn the_published_yardsticks_read_to_the_reference_or_name_their_gap() {
         let p = problem(name).unwrap();
         let (k, sig) = setup(&p);
         let r = Reader::new(&k, &sig).unwrap();
-        let reference = build(&k, p.reference).unwrap();
+        let reference = build(&k, p.reference().unwrap()).unwrap();
         match r.read_program(p.yardstick) {
             Ok(t) => assert_eq!(sexp(&k, &t), sexp(&k, &reference), "{name}: the published program reads to another program"),
             Err(g) => {
@@ -109,9 +109,9 @@ fn hand_written_forms_read_to_the_kingdoms_rows() {
     let (k, sig) = setup(&p);
     let r = Reader::new(&k, &sig).unwrap();
     let cases = [
-        ("entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : []i32 = hist (+) 0 (i64.i32 k) (map (\\i -> i64.i32 (i % k)) is) vs", p.reference),
-        ("entry main [m] (bins: i32) (idx: [m]i32) (val: [m]i32) : []i32 =\n  let k64 = i64.i32 bins\n  let b = map (\\x -> x % bins) idx\n  in reduce_by_index (replicate k64 0) (+) 0 (map i64.i32 b) val", p.reference),
-        ("entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : []i32 = hist (+) 0 (i64.i32 k) (map (\\i -> i64.i32 i % i64.i32 k) is) vs", p.reference),
+        ("entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : []i32 = hist (+) 0 (i64.i32 k) (map (\\i -> i64.i32 (i % k)) is) vs", p.reference().unwrap()),
+        ("entry main [m] (bins: i32) (idx: [m]i32) (val: [m]i32) : []i32 =\n  let k64 = i64.i32 bins\n  let b = map (\\x -> x % bins) idx\n  in reduce_by_index (replicate k64 0) (+) 0 (map i64.i32 b) val", p.reference().unwrap()),
+        ("entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : []i32 = hist (+) 0 (i64.i32 k) (map (\\i -> i64.i32 i % i64.i32 k) is) vs", p.reference().unwrap()),
     ];
     for (src, want) in cases {
         let t = r.read_program(src).unwrap_or_else(|g| panic!("{g}\n{src}"));

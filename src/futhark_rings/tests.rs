@@ -15,7 +15,7 @@ fn kingdom(name: &str) -> (FutharkKingdom, KingdomContract, GeneLayout, Tree) {
     let p = problem(name).unwrap();
     let k = load(&p.instance).unwrap();
     let contract = k.relations().check().unwrap();
-    let reference = build(&k, p.reference).unwrap();
+    let reference = build(&k, p.reference().unwrap()).unwrap();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], functions(&k, &reference)).unwrap();
     (k, contract, layout, reference)
 }

@@ -84,8 +84,8 @@ fn the_reference_gene_is_exact_on_every_case_interpreted_and_compiled() {
     let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
     assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (13, 6, 4), "training, held-out and test cases");
     for c in &cases {
-        assert_eq!(interp.eval(&tree, &c.inputs).unwrap(), c.output, "the interpreter on {}", c.name);
-        assert_eq!(compare(&c.output, &c.output), [0.0; 3]);
+        assert_eq!(interp.eval(&tree, &c.inputs).unwrap(), *c.answer().unwrap(), "the interpreter on {}", c.name);
+        assert_eq!(compare(c.answer().unwrap(), c.answer().unwrap()), [0.0; 3]);
     }
     // Its write-back into a gene of the layout at its own program size expresses the same tree.
     let contract = k.relations().check().unwrap();
@@ -100,7 +100,7 @@ fn the_reference_gene_is_exact_on_every_case_interpreted_and_compiled() {
     let src = program(&k, &sig, &tree).unwrap();
     let exe = compile_c(&src, &scratch("reference")).unwrap_or_else(|e| panic!("{e}\n{src}"));
     for c in &cases {
-        assert_eq!(run_exe(&exe, &c.stdin).unwrap(), c.output, "the compiled reference on {}", c.name);
+        assert_eq!(run_exe(&exe, &c.stdin).unwrap(), *c.answer().unwrap(), "the compiled reference on {}", c.name);
     }
     // The quality program: every case in one process, the same outputs.
     let batch = program_cases(&k, &sig, &tree, cases.len()).unwrap();
@@ -109,7 +109,7 @@ fn the_reference_gene_is_exact_on_every_case_interpreted_and_compiled() {
     let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let got = read_binary(&out.stdout).unwrap();
-    assert_eq!(got, cases.iter().map(|c| c.output.clone()).collect::<Vec<_>>(), "the batched reference");
+    assert_eq!(got, cases.iter().map(|c| c.answer().unwrap().clone()).collect::<Vec<_>>(), "the batched reference");
     // The work of the reference on 256 x 256: 13 functions and 7 terminals, the loop body run 255 times.
     let sizes: BTreeMap<String, usize> = [("rows".to_string(), 256), ("cols".to_string(), 256)].into_iter().collect();
     let w = interp.work(&tree, &sizes).unwrap();
@@ -171,7 +171,7 @@ fn the_egraph_variants_of_the_reference_are_equal_programs() {
     let cases = load_cases(&PATHFINDER_PROBLEM).unwrap();
     for v in &vs {
         for c in &cases {
-            assert_eq!(interp.eval(v, &c.inputs).unwrap(), c.output, "the variant {} on {}", sexp(&k, v), c.name);
+            assert_eq!(interp.eval(v, &c.inputs).unwrap(), *c.answer().unwrap(), "the variant {} on {}", sexp(&k, v), c.name);
         }
     }
 }
@@ -200,7 +200,7 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
     let reference = build(&k, PATHFINDER_REFERENCE).unwrap();
     let cases = load_cases(&PATHFINDER_PROBLEM).unwrap();
     for c in &cases {
-        assert_eq!(interp.eval(&planted, &c.inputs).unwrap(), c.output, "the planted slowdown on {}", c.name);
+        assert_eq!(interp.eval(&planted, &c.inputs).unwrap(), *c.answer().unwrap(), "the planted slowdown on {}", c.name);
     }
     let sizes: BTreeMap<String, usize> = [("rows".to_string(), 256), ("cols".to_string(), 256)].into_iter().collect();
     let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
@@ -218,7 +218,7 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
 fn the_quality_inputs_give_partial_correctness_a_slope() {
     let angle = |q: &[f64]| crate::runner::staged_hff(crate::runner::FitnessStage::Quality, q, &[]).unwrap().quality;
     for c in load_cases(&PATHFINDER_PROBLEM).unwrap() {
-        let w = &c.output;
+        let w = c.answer().unwrap();
         let with = |f: &dyn Fn(usize, i32) -> i32| Array::i32s(w.dims.clone(), w.i32_values().unwrap().iter().enumerate().map(|(i, x)| f(i, *x)).collect());
         assert_eq!(quality_inputs(w, w), vec![0.0; quality_input_names(w).len()], "{}: the answer is not 0", c.name);
         let zero = angle(&quality_inputs(&with(&|_, _| 0), w));

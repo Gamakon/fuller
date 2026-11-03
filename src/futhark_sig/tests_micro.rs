@@ -66,8 +66,8 @@ fn the_published_micro_programs_and_yardsticks_give_the_stored_outputs() {
         for c in &cases {
             let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&exe).arg("-e").arg("sum_i32").arg("-b"), std::time::Duration::from_secs(120), Some(&c.stdin)).unwrap();
             assert!(out.status.success(), "{}: {}", p.name, String::from_utf8_lossy(&out.stderr));
-            assert_eq!(read_one(&out.stdout).unwrap(), c.output, "{}: the published entry on {}", p.name, c.name);
-            assert_eq!(run_exe(&ys, &c.stdin).unwrap(), c.output, "{}: the yardstick on {}", p.name, c.name);
+            assert_eq!(read_one(&out.stdout).unwrap(), *c.answer().unwrap(), "{}: the published entry on {}", p.name, c.name);
+            assert_eq!(run_exe(&ys, &c.stdin).unwrap(), *c.answer().unwrap(), "{}: the yardstick on {}", p.name, c.name);
         }
         let _ = std::fs::remove_dir_all(&b);
     }
@@ -79,11 +79,11 @@ fn the_micro_reference_genes_are_exact_on_every_case_interpreted_compiled_and_ba
         let k = load(&p.instance).unwrap();
         let sig = signature(&p.instance).unwrap();
         let interp = Interp::new(&k, &sig).unwrap();
-        let tree = build(&k, p.reference).unwrap();
-        assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), p.reference.split_whitespace().collect::<String>());
+        let tree = build(&k, p.reference().unwrap()).unwrap();
+        assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), p.reference().unwrap().split_whitespace().collect::<String>());
         let cases = load_cases(&p).unwrap();
         for c in &cases {
-            assert_eq!(interp.eval(&tree, &c.inputs).unwrap(), c.output, "{}: the interpreter on {}", p.name, c.name);
+            assert_eq!(interp.eval(&tree, &c.inputs).unwrap(), *c.answer().unwrap(), "{}: the interpreter on {}", p.name, c.name);
         }
         let contract = k.relations().check().unwrap();
         let layout = GeneLayout::from_program_size(&contract, k.roots()[0], STUDY_PROGRAM_SIZE).unwrap();
@@ -97,13 +97,13 @@ fn the_micro_reference_genes_are_exact_on_every_case_interpreted_compiled_and_ba
         let src = program(&k, &sig, &tree).unwrap();
         let exe = compile_c(&src, &scratch(&format!("reference_{}", p.name))).unwrap_or_else(|e| panic!("{e}\n{src}"));
         for c in &cases {
-            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), c.output, "{}: the compiled reference on {}", p.name, c.name);
+            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), *c.answer().unwrap(), "{}: the compiled reference on {}", p.name, c.name);
         }
         let batch = program_cases(&k, &sig, &tree, cases.len()).unwrap();
         let bexe = compile_c(&batch, &scratch(&format!("reference_batch_{}", p.name))).unwrap_or_else(|e| panic!("{e}\n{batch}"));
         let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin_of(&cases))).unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.output.clone()).collect::<Vec<_>>(), "{}: the batched reference", p.name);
+        assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.answer().unwrap().clone()).collect::<Vec<_>>(), "{}: the batched reference", p.name);
     }
 }
 
@@ -200,11 +200,11 @@ fn the_micro_planted_slowdowns_are_equal_and_the_egraph_recovers_the_reference()
         let k = load(&p.instance).unwrap();
         let sig = signature(&p.instance).unwrap();
         let interp = Interp::new(&k, &sig).unwrap();
-        let planted = build(&k, p.planted).unwrap();
-        let reference = build(&k, p.reference).unwrap();
+        let planted = build(&k, p.planted().unwrap()).unwrap();
+        let reference = build(&k, p.reference().unwrap()).unwrap();
         let cases = load_cases(&p).unwrap();
         for c in &cases {
-            assert_eq!(interp.eval(&planted, &c.inputs).unwrap(), c.output, "{}: the planted slowdown on {}", p.name, c.name);
+            assert_eq!(interp.eval(&planted, &c.inputs).unwrap(), *c.answer().unwrap(), "{}: the planted slowdown on {}", p.name, c.name);
         }
         let sizes = sig.sizes(&cases[2].inputs).unwrap();
         let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
@@ -213,7 +213,7 @@ fn the_micro_planted_slowdowns_are_equal_and_the_egraph_recovers_the_reference()
         let vs = variants(&k, &bridge, &planted, 3, 32, 64).unwrap();
         for v in &vs {
             for c in &cases {
-                assert_eq!(interp.eval(v, &c.inputs).unwrap(), c.output, "{}: the variant {} on {}", p.name, sexp(&k, v), c.name);
+                assert_eq!(interp.eval(v, &c.inputs).unwrap(), *c.answer().unwrap(), "{}: the variant {} on {}", p.name, sexp(&k, v), c.name);
             }
         }
         let small = vs.iter().map(|v| interp.work(v, &sizes).unwrap()).min().unwrap_or(wp);

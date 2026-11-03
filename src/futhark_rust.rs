@@ -385,9 +385,15 @@ mod tests {
             let (mut rust_launches, mut shim_dispatches) = (0.0, 0.0);
             let mut kmeans_repeatable = 0;
             let mut kmeans_worst_seen = 0f64;
+            // The answer each case is held to: the stored one, or (k-means, which stores none: it is scored on its
+            // objective) the yardstick's through `futhark c`.
+            let c_exe = (name == "kmeans").then(|| crate::futhark_sig::compile_c(&yard, &base.join(format!("{name}_c")), ).expect("futhark c on the yardstick"));
             for input in &inputs {
                 let stdin = std::fs::read(input).expect("a case's input");
-                let want = std::fs::read(input.with_extension("out")).expect("a case's output");
+                let want = match &c_exe {
+                    Some(exe) => crate::futhark_sig::write_binary(&[&crate::futhark_sig::run_exe(exe, &stdin).expect("the yardstick's run")]),
+                    None => std::fs::read(input.with_extension("out")).expect("a case's output"),
+                };
                 let raw = session.run(&dylib, &format!("o main\ns\nt main {runs}\ns\n"), &[], 0, 0, Some(&stdin)).expect("the rust path's run");
                 let recs = payloads(&raw);
                 let o = recs.iter().find(|r| r.0 == "o").expect("an output record");
@@ -572,18 +578,23 @@ mod tests {
     }
 
     /// THE K-MEANS BOUND HOLDS FOR FUTHARK C (CPU, no device): every k-means corpus case's membership is unambiguous
-    /// under the f32 distance bound, and futhark c's output (`.out`, IEEE division, 0.5 ulp) lies within
-    /// [`kmeans_bound`] of the exact step. The GPU check (`on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`)
-    /// holds each device path to the same bound.
+    /// under the f32 distance bound, and futhark c's output of the published step (the yardstick compiled here: the
+    /// corpus stores no answers since 2026-11-03, k-means being scored on its objective; IEEE division, 0.5 ulp) lies
+    /// within [`kmeans_bound`] of the exact step. The GPU check (`on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`)
+    /// holds each device path to the same bound. The bound is a tool of the device checks, not of the fitness.
     #[test]
     fn futhark_c_s_kmeans_steps_lie_within_the_bound_of_the_exact_step() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans");
         let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect();
         inputs.sort();
-        assert_eq!(inputs.len(), 5);
+        assert!(inputs.len() >= 5, "{} inputs", inputs.len());
+        let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
+        let exe = crate::futhark_sig::compile_c(&yard, &scratch("kmeans_bound_yardstick")).expect("futhark c on the yardstick");
         for input in &inputs {
-            let (exact, bound) = kmeans_bound(&std::fs::read(input).expect("an input"));
-            let worst = kmeans_worst(&std::fs::read(input.with_extension("out")).expect("an output"), &exact, &bound);
+            let stdin = std::fs::read(input).expect("an input");
+            let (exact, bound) = kmeans_bound(&stdin);
+            let out = crate::futhark_sig::run_exe(&exe, &stdin).expect("the yardstick's run");
+            let worst = kmeans_worst(&crate::futhark_sig::write_binary(&[&out]), &exact, &bound);
             eprintln!("{}: futhark c at {worst:.3} of the bound", input.display());
             assert!(worst <= 1.0, "{}: futhark c's output is {worst} times the bound from the exact step", input.display());
         }

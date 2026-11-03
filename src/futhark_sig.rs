@@ -79,13 +79,17 @@ pub const RULESET: &str = "futhark_sig";
 pub struct Problem {
     pub name: &'static str,
     pub instance: Instance,
-    pub reference: &'static str,
+    /// THE SEED: the prototype's program written as a gene (the reference) with its planted slowdown, or the explicit
+    /// state that the prototype is not yet translated ([`Seed`]). Read through [`Problem::reference`] and
+    /// [`Problem::planted`], which name the state plainly instead of a program.
+    pub seed: Seed,
     pub yardstick: &'static str,
-    /// THE PLANTED SLOWDOWN (a control of regime P): an equal program that does the work twice, which the search must
-    /// recover from. For pathfinder: the elementwise least of the reference and its re-associated twin (the `min`s
-    /// grouped the other way), which Futhark cannot merge and the e-graph can (associativity puts the twins in one
-    /// class, and `min a a = a` removes the `map2`).
-    pub planted: &'static str,
+    /// THE PROBLEM'S DEFAULT FITNESS SCHEME (`fuller::fitness::SCHEMES`, by name): the newest scheme of its kind. The
+    /// i32 problems and A7 are scored against their stored answers (`futhark-slope4-gated`); k-means is scored on its
+    /// clustering objective run to UltraDim's stopping rule (`futhark-kmeans-converged`, `docs/KMEANS_FITNESS.md`),
+    /// because a k-means step has no exact answer. `--fitness` may name another scheme of the same kind only
+    /// ([`crate::fitness::scheme_for_problem`]).
+    pub fitness: &'static str,
     /// Relative to the crate's root.
     pub corpus: &'static str,
     /// THE TIMING INPUT's size (`n`; 0: time on the largest training case). A micro benchmark is timed on its own
@@ -100,6 +104,54 @@ pub struct Problem {
     /// above the reference and the planted slowdown ([`DEFAULT_PROGRAM_SIZE`] for the i32 benchmarks; k-means's
     /// reference has 72 functions, the membership written twice, so its layout is [`KMEANS_PROGRAM_SIZE`]).
     pub program_size: usize,
+}
+
+/// The state of a problem's reference slot.
+#[derive(Debug, Clone, Copy)]
+pub enum Seed {
+    /// The prototype's program as a gene (an s-expression of the kingdom's rows, for [`build`]), and THE PLANTED
+    /// SLOWDOWN (a control of regime P): an equal program that does the work twice, which the search must recover
+    /// from. For pathfinder: the elementwise least of the reference and its re-associated twin (the `min`s grouped
+    /// the other way), which Futhark cannot merge and the e-graph can (associativity puts the twins in one class, and
+    /// `min a a = a` removes the `map2`).
+    Program { reference: &'static str, planted: &'static str },
+    /// THE SEED IS NOT YET TRANSLATED: the prototype is named, the translation is planned, and until it lands the
+    /// problem has no reference program. The runner stops with this text; no program stands in (the textbook form
+    /// that stood in the slot until 2026-11-03 is a pool alternative, never the seed: `docs/PLAN_futhark_kingdom.md`
+    /// 4c).
+    NotYetTranslated { prototype: &'static str, plan: &'static str, pool: &'static str },
+}
+
+impl Problem {
+    /// The reference program's text, or the plain statement that the seed is not yet translated.
+    pub fn reference(&self) -> Result<&'static str, String> {
+        match self.seed {
+            Seed::Program { reference, .. } => Ok(reference),
+            Seed::NotYetTranslated { .. } => Err(self.seed_state()),
+        }
+    }
+
+    /// The planted slowdown's text, or the plain statement that the seed is not yet translated.
+    pub fn planted(&self) -> Result<&'static str, String> {
+        match self.seed {
+            Seed::Program { planted, .. } => Ok(planted),
+            Seed::NotYetTranslated { .. } => Err(self.seed_state()),
+        }
+    }
+
+    /// One sentence on the seed's state, for the runner's header, the checklist and an error.
+    pub fn seed_state(&self) -> String {
+        match self.seed {
+            Seed::Program { .. } => format!("{}: the seed is the prototype's program as a gene", self.name),
+            Seed::NotYetTranslated { prototype, plan, pool } => format!("{}: the seed is not yet translated -- the prototype is {prototype}; the translation is {plan}; until it lands the problem has no reference program and cannot be run (the textbook program is a pool alternative at {pool}, never the seed)", self.name),
+        }
+    }
+
+    /// Whether the stored cases carry an answer (`<name>.out`) the program is scored against. A problem scored on its
+    /// own objective (`futhark-kmeans-converged`) stores inputs only: there is no exact answer to store.
+    pub fn cases_have_answers(&self) -> bool {
+        !matches!(crate::fitness::scheme(self.fitness).map(|s| s.definition), Ok(crate::fitness::Definition::FutharkConverged))
+    }
 }
 
 /// The timing input of a problem with `timing_n > 0`, in Futhark's binary format (the entry point's parameters):
@@ -117,13 +169,9 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
             let (is, vs) = (any(n), any(n));
             Ok(Some(write_binary(&[&Array::scalar_i32(100), &is, &vs])))
         }
-        // The k-means champion's timing case (`docs/kmeans_champion_s1/README.md`: n = 8,192 points, d = 256, k =
-        // 1,024), points and centres uniform in [0, 1) (multiples of 2^-24), a fixed seed.
-        "kmeans" => {
-            let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32).collect());
-            let (points, centres) = (unit(n), unit(KMEANS_TIMING_K));
-            Ok(Some(write_binary(&[&points, &centres])))
-        }
+        // The k-means timing input at scale 1 ([`kmeans_timing_input`]; the scale-10^3 one is the second timing input
+        // of plan 4c item 3).
+        "kmeans" => Ok(Some(kmeans_timing_input(n, 1.0))),
         // The published benchmark's own shape (`published/pathfinder.fut`, data/medium.in: cols = 100000, rows =
         // 100) and its wall heights, 0 to 9 (the published walls are Sobol numbers modulo 10). Before 2026-11-01
         // pathfinder was timed on its largest quality case (256 x 256, about 1 ms a run; fault 13 of
@@ -174,9 +222,9 @@ pub const PATHFINDER_PLANTED: &str = "(map2.min
 pub const PATHFINDER_PROBLEM: Problem = Problem {
     name: "pathfinder",
     instance: PATHFINDER,
-    reference: PATHFINDER_REFERENCE,
+    seed: Seed::Program { reference: PATHFINDER_REFERENCE, planted: PATHFINDER_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/pathfinder/yardstick.fut"),
-    planted: PATHFINDER_PLANTED,
+    fitness: "futhark-slope4-gated",
     corpus: "tests/corpus/futhark_problems/pathfinder",
     timing_n: PATHFINDER_TIMING_ROWS * 100_000,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -194,9 +242,9 @@ pub const REDUCE_PLANTED: &str = "(sum.n (map2.min xs xs))";
 pub const REDUCE_PROBLEM: Problem = Problem {
     name: "reduce",
     instance: REDUCE,
-    reference: REDUCE_REFERENCE,
+    seed: Seed::Program { reference: REDUCE_REFERENCE, planted: REDUCE_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/reduce/yardstick.fut"),
-    planted: REDUCE_PLANTED,
+    fitness: "futhark-slope4-gated",
     corpus: "tests/corpus/futhark_problems/reduce",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -210,9 +258,9 @@ pub const SCAN_PLANTED: &str = "(scan.add (map2.max xs xs))";
 pub const SCAN_PROBLEM: Problem = Problem {
     name: "scan",
     instance: SCAN,
-    reference: SCAN_REFERENCE,
+    seed: Seed::Program { reference: SCAN_REFERENCE, planted: SCAN_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/scan/yardstick.fut"),
-    planted: SCAN_PLANTED,
+    fitness: "futhark-slope4-gated",
     corpus: "tests/corpus/futhark_problems/scan",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -227,9 +275,9 @@ pub const HISTOGRAM_PLANTED: &str = "(hist.add.n (tab (mod.k (get.n is i_n))) (m
 pub const HISTOGRAM_PROBLEM: Problem = Problem {
     name: "histogram",
     instance: HISTOGRAM,
-    reference: HISTOGRAM_REFERENCE,
+    seed: Seed::Program { reference: HISTOGRAM_REFERENCE, planted: HISTOGRAM_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/histogram/yardstick.fut"),
-    planted: HISTOGRAM_PLANTED,
+    fitness: "futhark-slope4-gated",
     corpus: "tests/corpus/futhark_problems/histogram",
     timing_n: 15 << 20,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -241,7 +289,11 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
 /// inside the tabulate over `n`, and the distance inside it is a reduction over `d`.
 pub const KMEANS: Instance = Instance { name: "kmeans", spec: include_str!("../kingdoms/futhark/sig/kmeans/view.tsv") };
 
-/// The published k-means step as a gene (`find_nearest_point`, then `centroids_of`). Each point's membership is a loop
+/// THE TEXTBOOK K-MEANS STEP as a gene: the published `find_nearest_point`, then `centroids_of`. A POOL ALTERNATIVE
+/// (`kingdoms/futhark/sig/kmeans/pool/`), NOT the seed: it stood in the reference slot until 2026-11-03, when the
+/// review (`docs/PLAN_futhark_kingdom.md` 4c) found the seed swapped -- the job is to translate UltraDim's own kernels
+/// (`gpu_kmeans.rs`: the distance kernel, `assign_points`, `update_centroids` with its Kahan-compensated sum), and that
+/// translation is another step's ([`Seed::NotYetTranslated`]). Each point's membership is a loop
 /// over the centres carrying the nearest's index (as an `f32`, the view's one element; `clamp` makes it the centre's
 /// row index) from 0, kept when its distance is below the centre's and replaced by the centre otherwise (the
 /// published fold's `if p1.1 < p2.1 then p1 else p2`: on a tie, and on a NaN distance, the later centre); a distance
@@ -249,26 +301,32 @@ pub const KMEANS: Instance = Instance { name: "kmeans", spec: include_str!("../k
 /// are the elementwise add histogram of the points' rows at their memberships (`hist (map2 (+))`), each row divided
 /// by its cluster's count, a count of 0 taken as 1 (the published `if n == 0 then 1 else n`): the counts are the add
 /// histogram of ones, at least 1. The membership is written twice (the kingdom has no `let`; the values are one).
-pub const KMEANS_REFERENCE: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (replicate 1))))";
+pub const KMEANS_TEXTBOOK: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (replicate 1))))";
 
-/// The planted slowdown: the ones the counts are a histogram of, replaced by the elementwise least of the ones and
-/// themselves (`map2 min a a = a`, which the e-graph removes). The planted form of the other problems, the work
-/// twice, would write the membership a third time (108 functions, past [`KMEANS_PROGRAM_SIZE`]).
-pub const KMEANS_PLANTED: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (map2.min (replicate 1) (replicate 1)))))";
+/// The textbook step's planted slowdown (a test of the e-graph on this view, as the seeded problems' planted
+/// slowdowns are): the ones the counts are a histogram of, replaced by the elementwise least of the ones and themselves
+/// (`map2 min a a = a`, which the e-graph removes). The planted form of the other problems, the work twice, would
+/// write the membership a third time (108 functions, past [`KMEANS_PROGRAM_SIZE`]).
+pub const KMEANS_TEXTBOOK_PLANTED: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (map2.min (replicate 1) (replicate 1)))))";
 
 pub const KMEANS_PROBLEM: Problem = Problem {
     name: "kmeans",
     instance: KMEANS,
-    reference: KMEANS_REFERENCE,
+    seed: Seed::NotYetTranslated {
+        prototype: "UltraDim's k-means kernels (qdrant lib/projection-voting-kmeans/src/gpu_kmeans.rs: the distance kernel, assign_points, update_centroids with its Kahan-compensated sum)",
+        plan: "docs/PLAN_futhark_kingdom.md 4c (b) tuples and a second element in a view, (c) the Kahan rows, (d) the translation (docs/kmeans_seed.md) checked against the f64 reference (tests/corpus/futhark_problems/kmeans/reference64.fut) and the WGSL oracle",
+        pool: "kingdoms/futhark/sig/kmeans/pool/seed.tsv (KMEANS_TEXTBOOK)",
+    },
     yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
-    planted: KMEANS_PLANTED,
+    fitness: "futhark-kmeans-converged",
     corpus: "tests/corpus/futhark_problems/kmeans",
     timing_n: 8192,
     program_size: KMEANS_PROGRAM_SIZE,
 };
 
-/// K-means's program size: its reference is 72 functions (the membership, 36, written twice: the kingdom has no
-/// `let`), so the i32 benchmarks' 32 cannot hold it; 96 holds both programs with a third to spare.
+/// K-means's program size: the textbook step is 72 functions (the membership, 36, written twice: the kingdom has no
+/// `let`), so the i32 benchmarks' 32 cannot hold it; 96 holds the textbook step and its planted slowdown with a
+/// third to spare. The translated seed's size is measured when it lands (4c (d)).
 pub const KMEANS_PROGRAM_SIZE: usize = 96;
 
 /// A7, THE MATRIX KINGDOM AS A PROBLEM OF THE ONE RUNNER (`docs/PLAN_futhark_kingdom.md`, step 4; the product
@@ -301,9 +359,9 @@ pub const A7_PLANTED: &str = "(map_rows fn.arr_f32_arr_f32.id
 pub const A7_PROBLEM: Problem = Problem {
     name: "a7",
     instance: A7,
-    reference: A7_REFERENCE,
+    seed: Seed::Program { reference: A7_REFERENCE, planted: A7_PLANTED },
     yardstick: include_str!("../tests/corpus/futhark_problems/a7/yardstick.fut"),
-    planted: A7_PLANTED,
+    fitness: "futhark-slope4-gated",
     corpus: "tests/corpus/futhark_problems/a7",
     timing_n: A7_TIMING_N,
     program_size: DEFAULT_PROGRAM_SIZE,
@@ -319,6 +377,16 @@ pub const A7_TIMING_N: usize = 256;
 /// The dimensions of k-means's timing input beside its `timing_n` points.
 pub const KMEANS_TIMING_D: usize = 256;
 pub const KMEANS_TIMING_K: usize = 1024;
+
+/// K-MEANS'S TIMING INPUT at UltraDim's shape (`docs/kmeans_champion_s1/README.md`: `n` points, d = 256, k = 1,024)
+/// and a magnitude `scale`: points and centres uniform in [0, scale) (multiples of scale 2^-24, never quantised), a
+/// fixed seed for each scale, in Futhark's binary format. Plan 4c item 3 keeps the shape at scale 1 and at 10^3.
+pub fn kmeans_timing_input(n: usize, scale: f32) -> Vec<u8> {
+    let mut rng = GeneRng::new(0x7131_6E00 ^ n as u64 ^ u64::from(scale.to_bits()) << 8);
+    let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32 * scale).collect());
+    let (points, centres) = (unit(n), unit(KMEANS_TIMING_K));
+    write_binary(&[&points, &centres])
+}
 
 /// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
 /// well above every reference (pathfinder's is 13 functions, histogram's 4, reduce's and scan's 1), as SR and regex
@@ -1850,15 +1918,26 @@ impl Split {
     }
 }
 
-/// One stored case: the inputs and the published program's output on them.
+/// One stored case: the inputs and, for a problem scored against answers, the published program's output on them.
 #[derive(Debug, Clone)]
 pub struct Case {
     pub name: String,
     pub split: Split,
     pub inputs: Vec<Array>,
-    pub output: Array,
+    /// THE STORED ANSWER (`<name>.out`): the published program's output, for a problem scored against it
+    /// ([`Problem::cases_have_answers`]); `None` for a problem scored on its own objective (k-means: the fitness runs
+    /// the program to UltraDim's stopping rule and measures the clustering, `docs/KMEANS_FITNESS.md`). Read through
+    /// [`Case::answer`] where an answer is required.
+    pub output: Option<Array>,
     /// The inputs in Futhark's binary format, as the executable reads them.
     pub stdin: Vec<u8>,
+}
+
+impl Case {
+    /// The stored answer, or the plain statement that this case has none.
+    pub fn answer(&self) -> Result<&Array, String> {
+        self.output.as_ref().ok_or_else(|| format!("the case {} has no stored answer: its problem is scored on its own objective (docs/KMEANS_FITNESS.md), not against an output", self.name))
+    }
 }
 
 /// The case directory of a problem.
@@ -1866,8 +1945,10 @@ pub fn corpus_dir(p: &Problem) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(p.corpus)
 }
 
-/// The stored cases (`cases.tsv`: name, split, then `<name>.in` and `<name>.out` in Futhark's binary format).
+/// The stored cases (`cases.tsv`: name, split, then `<name>.in` and, for a problem scored against answers, `<name>.out`
+/// in Futhark's binary format; a problem scored on its objective has no `.out`, and one present is an error).
 pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
+    let answers = p.cases_have_answers();
     let dir = corpus_dir(p);
     let index = std::fs::read_to_string(dir.join("cases.tsv")).map_err(|e| format!("{}: {e}", dir.join("cases.tsv").display()))?;
     let mut out = Vec::new();
@@ -1882,7 +1963,14 @@ pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
         };
         let stdin = std::fs::read(dir.join(format!("{name}.in"))).map_err(|e| format!("{name}.in: {e}"))?;
         let inputs = read_binary(&stdin)?;
-        let output = read_one(&std::fs::read(dir.join(format!("{name}.out"))).map_err(|e| format!("{name}.out: {e}"))?)?;
+        let out_path = dir.join(format!("{name}.out"));
+        let output = if answers {
+            Some(read_one(&std::fs::read(&out_path).map_err(|e| format!("{name}.out: {e}"))?)?)
+        } else if out_path.exists() {
+            return Err(format!("{}: {} is scored on its own objective and stores no answers, but {name}.out exists", out_path.display(), p.name));
+        } else {
+            None
+        };
         out.push(Case { name: name.to_string(), split, inputs, output, stdin });
     }
     Ok(out)
@@ -2239,7 +2327,7 @@ pub fn cases_fingerprint(cases: &[Case]) -> String {
     for c in cases {
         parts.push(format!("{}\t{:?}", c.name, c.split).into_bytes());
         parts.push(c.stdin.clone());
-        parts.push(write_binary(&[&c.output]));
+        parts.push(c.output.as_ref().map_or_else(|| b"no answer".to_vec(), |o| write_binary(&[o])));
     }
     fnv(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>())
 }
@@ -2404,6 +2492,10 @@ mod tests_micro;
 mod tests_view;
 #[cfg(test)]
 mod tests_pool;
+/// THE K-MEANS FITNESS (`futhark-kmeans-converged`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
+/// its measures and the five inputs a case.
+pub mod kmeans_converged;
+
 #[cfg(test)]
 mod tests_kmeans;
 #[cfg(test)]
