@@ -25,11 +25,15 @@
 //!   starts in stage 2 (the reference is exact).
 //!
 //! FITNESS, a NAMED SCHEME (`--fitness NAME`, `fuller::fitness`, family `futhark_sig`; `docs/FITNESS_SCHEMES.md`),
-//! stated in the header, the stream's `run_start` and `report.tsv`. The default, `futhark-slope4-gated`, is described
-//! below. The old schemes, `futhark-slope4` (stage 2 ungated, the 2026-10-29 reruns) and `futhark-study7` (the
-//! study's seven inputs, stage 2 ungated, the 2026-10-27/28 study), are NOT TO BE RUN AS IS: each has a known fault,
-//! named in its header line; redefine the fitness function before using one. Staged
-//! (`fuller::runner::FitnessStage`, `fuller::fitness::Scheme::staged`):
+//! stated in the header, the stream's `run_start` and `report.tsv`. The default, `futhark-slope4-qqs`, is described
+//! below; its stage 2 is ONE FLAT VECTOR (Andrew's ruling of 2026-11-03: the HFF angle is the final fitness and
+//! nothing manipulates it): the quality inputs entered `--quality-weight` times (default
+//! `fitness::ANSWER_QUALITY_WEIGHT`, measured) beside the timing slots, TrueNorth over the whole. The old schemes,
+//! `futhark-slope4-gated` (stage 2 gated by an offset `π/2 + θ_quality`, the runs of 2026-10-29 to 2026-11-03),
+//! `futhark-slope4` (stage 2 ungated, the 2026-10-29 reruns) and `futhark-study7` (the study's seven inputs, stage 2
+//! ungated, the 2026-10-27/28 study), are NOT TO BE RUN AS IS: each has a known fault, named in its header line;
+//! redefine the fitness function before using one. Staged (`fuller::runner::FitnessStage`,
+//! `fuller::fitness::Scheme::staged_weighted`):
 //! * stage 1, quality only, no timing: for every stored case, training and held-out alike, the inputs of
 //!   `futhark_sig::quality_inputs` in the order of `futhark_sig::QUALITY_PARTS` (plan section B, 2026-10-29), each its
 //!   own, linear: the share of cells not exact; the two shape inputs, `(1 - r)/2` for Spearman's and for Pearson's
@@ -37,8 +41,8 @@
 //!   over 50 % and over 1 % of the correct value's magnitude. (The study of 2026-10-27 used seven inputs, now
 //!   `QualityPart::Study`; its pilot used three on HFF's log scale, which put every inexact program within 0.03 of 1
 //!   and ranked its whole population alike for 26 generations.)
-//! * stage 2, once the best is exact on every case (a `stage_change` event, never back): the two-level HFF of that
-//!   quality group and the speed group: the program's TIMING SLOTS (`fuller::runner::TimingSlots`, `--pairs` of
+//! * stage 2, once the best is exact on every case (a `stage_change` event, never back): the flat HFF of that
+//!   quality group (repeated `--quality-weight` times) and the speed group: the program's TIMING SLOTS (`fuller::runner::TimingSlots`, `--pairs` of
 //!   them, 11 by default), interleaved timed pairs against the published program (the yardstick) on the largest
 //!   training case, kept by the program's text and filled before it is scored, so a program re-scored in a later
 //!   generation reads the same pairs and is never timed again; each pair is its own speed input, `r/(1+r)` with `r`
@@ -57,25 +61,33 @@
 //!   5 % false "beat"; fault 13: until 2026-11-01 it was the least single ratio of the two A/A sets) and at least 9
 //!   of 11 pairs faster (`speed_claim_beats_noise_floor` in the report).
 //!
-//! THE K-MEANS SCHEME, `futhark-kmeans-quality-first` (`docs/KMEANS_FITNESS.md`; k-means's own default,
-//! `Problem::fitness`, an answer-scored scheme being refused for it: a k-means step has no exact answer): the candidate
-//! and the seed are each run to UltraDim's stopping rule on every fitness case (`futhark_sig::kmeans_converged::converge`:
-//! the harness assigns, the program steps, the Euclidean inertia's change under 1e-4 stops; the 100-iteration cap is
-//! UltraDim's `converged: false`, a slow finished run), interleaved `--pairs` times (default 1 for this scheme; the
-//! candidate first in the even pairs), and the inputs a case are against THE SEED'S RUN OF THAT INTERLEAVING: the
-//! quality group (cosine inertia ratio; the ratio of the seed's mean log10 angular percentile to the candidate's over
-//! the points off their centroid) and the speed group (THE PROGRAM'S OWN TIME to the stopping point, the shim's
-//! GPU-timed passes or `futhark c`'s `-t` runtime, summed over the iterations, the harness's assignment and the
-//! processes excluded; the iterations ratio). The fitness is the two-level HFF gated by quality
-//! (`fitness::converged_gated`): a candidate worse than the seed on either quality input scores π/2 + θ_quality. No
-//! timing input and no A/A sets. Each iteration is one process of the compiled plain program (`--eval single`;
-//! `--backend c` with `futhark c`, `--backend gpu` the shim's executable). The work guard of this scheme is the
-//! problem's own: a candidate's work model on a fitness case over 10 x the seed's on that case is not run and takes
-//! the worst score (never a stop of the run). The control at the start is that the compiled seed's run CONVERGES on
-//! every fitness case, and the seed judged as a candidate against itself is the in-run A/A. k-means's seed is
+//! THE K-MEANS SCHEME, `futhark-kmeans-qqs` (`docs/KMEANS_FITNESS.md`; k-means's own default, `Problem::fitness`, an
+//! answer-scored scheme being refused for it: a k-means step has no exact answer): the candidate and the seed are
+//! each run to UltraDim's stopping rule on every fitness case (`futhark_sig::kmeans_converged::converge`: the harness
+//! assigns, the program steps, the Euclidean inertia's change under 1e-4 stops; the 100-iteration cap is UltraDim's
+//! `converged: false`, a slow finished run), interleaved `--pairs` times (default 2 for this scheme, so that neither
+//! side always runs after the other: the candidate first in the even pairs), and the inputs a case are against THE
+//! SEED'S RUN OF THAT INTERLEAVING: the quality group (cosine inertia ratio; the ratio of the seed's mean log10
+//! angular percentile to the candidate's over the points off their centroid) and the speed group (THE PROGRAM'S OWN
+//! TIME to the stopping point, the shim's GPU-timed passes or `futhark c`'s runtime, summed over the iterations, the
+//! harness's assignment and the processes excluded; the iterations ratio). The fitness is ONE FLAT VECTOR
+//! (`fitness::qqs`): every case's quality inputs entered `--quality-weight` times (default 2), its speed inputs once,
+//! TrueNorth over the whole, and that angle is the fitness: no gate, no offset. No timing input and no timed A/A sets;
+//! the in-run A/A is the seed judged as a candidate against itself, on both backends, and the spread of its speed
+//! inputs around 1/2 is the noise floor a speed claim must clear (the report's `seed_aa_speed_floor`). ONE PROCESS A
+//! PROGRAM: on the c backend the compiled program is a Futhark server (`futhark c --server`,
+//! `kmeans_converged::Server`), kept alive across its iterations and its cases with each case's points loaded once
+//! (until 2026-11-03 every iteration was its own process with the points down the pipe: about two minutes a
+//! candidate); on the GPU backend each iteration is still one process of the shim's executable, which has no server
+//! mode. The work guard of this scheme is the problem's own: a candidate's work model on a fitness case over 10 x the
+//! seed's on that case is not run and takes the worst score (never a stop of the run). The control at the start is
+//! that the compiled seed's run CONVERGES on every fitness case. THE TEST CASE (`test_n1000_k32`, never a fitness
+//! input) is run every generation the champion changes, champion and seed interleaved, and at the end:
+//! `OUT/test_case.tsv` and the report carry the four inputs and the raw measures of both. k-means's seed is
 //! UltraDim's own kernels translated construct for construct (`futhark_sig::kmeans_seed`, `docs/kmeans_seed.md`;
-//! `Seed::Translated`), on the CPU 2026-11-03; the GPU has not run it. The retired `futhark-kmeans-converged` (five
-//! inputs, the harness's clock; NOT TO BE RUN AS IS) still runs through the same judge with its own inputs.
+//! `Seed::Translated`), on the CPU 2026-11-03; the GPU has not run it. The retired `futhark-kmeans-quality-first`
+//! (the two-level HFF gated by an offset) and `futhark-kmeans-converged` (five inputs, the harness's clock), both
+//! NOT TO BE RUN AS IS, still run through the same judge with their own inputs.
 //!
 //! The BUDGET is `--evaluations` fitness evaluations (an individual scored, a cache hit included, so R and C are
 //! counted alike); the wall clock (`--minutes`) is a guard. The work guard: every candidate's exact node executions
@@ -120,10 +132,10 @@ use std::time::Instant;
 
 use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::futhark_exec::output_with_timeout_bytes;
-use fuller::futhark_batch::{Host, Inputs, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
+use fuller::futhark_batch::{Host, Inputs, KmeansSide, Member, Outcome, Program, Step, PAIR_SIDE_SECONDS};
 use fuller::fitness::{Definition, Scheme};
-use fuller::futhark_sig::kmeans_converged::{converge, converge_interleaved, converged_work_cap, kmeans_inputs, kmeans_inputs_five, step_of_exe, ConvergedRun, StepTimer, INPUT_NAMES_FIVE, QUALITY_NAMES, SPEED_NAMES, WORK_CAP_TIMES_SEED};
-use fuller::futhark_sig::{build, function_count, cases_fingerprint, compare, quality_fingerprint_of, compile_c, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
+use fuller::futhark_sig::kmeans_converged::{converge, converge_interleaved, converged_work_cap, kmeans_inputs, kmeans_inputs_five, run_of_k_payload, sides_of_runs, step_of_exe, step_of_server, ConvergedRun, Server, StepTimer, Stepped, INPUT_NAMES_FIVE, KMEANS_CASES, QUALITY_NAMES, SPEED_NAMES, WORK_CAP_TIMES_SEED};
+use fuller::futhark_sig::{build, function_count, cases_fingerprint, compare, quality_fingerprint_of, compile_c, compile_c_server, load, load_cases, problem, program, program_cases, quality_input_names_of, quality_inputs_of, random_gene, read_binary, sexp, signature, tree_distance, variants, Array, Bridge, Case, FoldEgraph, Instance, Interp, QualityPart, Signature, Split};
 use fuller::futhark_wgpu_host::{compile_program_prebuilt, compile_program_prebuilt_staged, prebuild_shim, run_program_bytes, run_program_bytes_staged, CompileStages, RunStages};
 use fuller::geneframe::Ty;
 use fuller::kingdom_contract::KingdomContract;
@@ -498,8 +510,8 @@ struct Judge<'a> {
     batch_splits: u64,
     /// The last evaluation's path (`single`, `batch`, `hit`), its batch's size and its stages, for the ledger.
     last: (&'static str, usize, Stages),
-    /// THE K-MEANS SCHEME's judge (`futhark-kmeans-quality-first`, or the retired `futhark-kmeans-converged`), when
-    /// that is the scheme.
+    /// THE K-MEANS SCHEME's judge (`futhark-kmeans-qqs`, or the retired `futhark-kmeans-quality-first` and
+    /// `futhark-kmeans-converged`), when that is the scheme.
     converged: Option<ConvergedJudge>,
     /// The k-means scheme's speed group of every program scored, by text (its quality group is in `quality_cache`).
     converged_speed: HashMap<String, Vec<f64>>,
@@ -508,20 +520,87 @@ struct Judge<'a> {
     /// The k-means scheme's candidate runs that did not finish (a NaN or infinite centroid, a wrong shape, a step that
     /// failed): the candidate's worst score on that case, not a bug of our software.
     unfinished: u64,
+    /// THE REPETITION COUNT of a flat scheme (`--quality-weight`): the quality inputs are entered this many times in
+    /// the one vector the HFF reads (`fitness::qqs`); 1 for a scheme that is not flat.
+    quality_weight: usize,
+    /// `--kmeans-step process` (the c backend): one process an iteration instead of a server, for the measurement.
+    step_process: bool,
+    /// The resident-sample path: the runs of the programs batched this generation, by text, with each one's share of
+    /// the batch's stages (`Judge::prefetch`), taken when the program is scored.
+    batched_k: HashMap<String, (BatchedKmeans, Stages)>,
+    /// The resident sample's upload seconds this generation (0 once resident) and the runs that found it resident.
+    upload_seconds: f64,
+    resident_hits: u64,
 }
 
-/// The k-means scheme's state: the seed's compiled program and its run on every fitness case at the start (the
-/// control and the report; every input is against the seed's run interleaved with the candidate's), the work cap of
-/// every fitness case (`converged_work_cap` of the seed's work on it), how the program's own time is read, and how
-/// many interleaved pairs each candidate is run against the seed.
+/// HOW A COMPILED K-MEANS PROGRAM IS STEPPED: on the GPU one process of the shim's executable an iteration (the
+/// program's own time its GPU timestamps); on the c backend a Futhark server kept alive across the iterations and the
+/// cases (`kmeans_converged::Server`, the program's own time the call's `runtime:`).
+enum Stepper {
+    Exe(PathBuf, StepTimer),
+    Server(Server),
+}
+
+/// A step on a case, as `converge` takes it, boxed (the two steppers' closures differ in type).
+type BoxedStep<'s> = Box<dyn FnMut(&Array) -> Result<Stepped, String> + 's>;
+
+impl Stepper {
+    /// The step on a case, as `converge` takes it; a server loads the case's points once.
+    fn step<'s>(&'s mut self, case: &'s Case) -> Result<BoxedStep<'s>, String> {
+        match self {
+            Stepper::Exe(exe, timer) => Ok(Box::new(step_of_exe(exe, &case.inputs[0], *timer))),
+            Stepper::Server(s) => {
+                s.load_points(&case.name, &case.inputs[0])?;
+                Ok(Box::new(step_of_server(s, &case.name)))
+            }
+        }
+    }
+}
+
+/// The k-means scheme's state: the seed's compiled program (a server on the c backend, kept for the whole run) and
+/// its run on every fitness case at the start (the control and the report; every input is against the seed's run
+/// interleaved with the candidate's), the work cap of every fitness case (`converged_work_cap` of the seed's work on
+/// it), how many interleaved pairs each candidate is run against the seed, and the test cases (never a fitness
+/// input) the champion is run on.
 struct ConvergedJudge {
-    seed_exe: PathBuf,
+    /// The seed's stepper (`--eval single`); none on the resident-sample path, where the seed is an entry of every
+    /// generation's module.
+    seed: Option<Stepper>,
     /// The seed's run on each fitness case at the start, in case order (`Case::split.in_fitness()`).
     seed_runs: Vec<ConvergedRun>,
     /// The work cap of each fitness case, in case order.
     work_caps: Vec<u128>,
-    timer: StepTimer,
     pairs: usize,
+    /// The shared points files of the servers (`Server::start`'s `points_dir`).
+    points_dir: PathBuf,
+    /// THE RESIDENT-SAMPLE PATH (`--eval rust`; Andrew, 2026-11-03): every stored case's row range `(start, n)` of
+    /// the one sample, in case order, checked at the start against the case's points. The sample is uploaded once a
+    /// session and kept on the device; a generation's programs are one module; each candidate's cases run against
+    /// the resident sample interleaved with the seed's entry (`futhark_batch::Step::Kmeans`).
+    cuts: Option<Vec<(usize, usize)>>,
+}
+
+/// A k-means program's runs on the resident-sample path, by its text: the (candidate, seed) runs a case, or the
+/// program's failure (a compile the module refused, found by the batch's halving).
+type BatchedKmeans = Result<Vec<(ConvergedRun, ConvergedRun)>, String>;
+
+/// THE CHAMPION ON A TEST CASE (the round-2 review's N2): the candidate's and the seed's runs of one interleaving on
+/// a case that is never a fitness input, with the candidate's four inputs against that seed run.
+struct TestCaseRun {
+    case: String,
+    candidate: ConvergedRun,
+    seed: ConvergedRun,
+    quality: Vec<f64>,
+    speed: Vec<f64>,
+}
+
+impl TestCaseRun {
+    /// One line: the inputs, then the raw measures of both sides.
+    fn line(&self) -> String {
+        let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
+        let raw = |r: &ConvergedRun| format!("inertia {:.5} log10p {:.2} (all {:.2}, {} at centroid) seconds {:.4} iterations {} converged {} finished {}", r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, r.seconds, r.iterations, r.converged, r.finished);
+        format!("{}: quality [{}] speed [{}]; champion {}; seed {}", self.case, fmt(&self.quality), fmt(&self.speed), raw(&self.candidate), raw(&self.seed))
+    }
 }
 
 impl<'a> Judge<'a> {
@@ -587,6 +666,9 @@ impl<'a> Judge<'a> {
     fn prefetch(&mut self, items: &[(&Tree, &str)], stage: FitnessStage) -> Result<(), String> {
         if !self.mode.batched() {
             return Ok(());
+        }
+        if self.converged.is_some() {
+            return self.prefetch_kmeans(items);
         }
         let t0 = Instant::now();
         let mut seen: HashSet<&str> = HashSet::new();
@@ -672,6 +754,64 @@ impl<'a> Judge<'a> {
             }
         }
         println!("# {} batch: {n} programs, {} compile(s) ({} failed), {} process(es), {} halving(s), {:.1} s", utc(), c.compiles, c.failed_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64());
+        Ok(())
+    }
+
+    /// THE RESIDENT-SAMPLE PATH'S GENERATION (`--eval rust`; Andrew, 2026-11-03): every program of `items` not scored
+    /// before and under the work cap on every fitness case, in ONE module with the seed's entry, run against the
+    /// resident sample on every fitness case `pairs` times interleaved with the seed; the runs kept by text and taken
+    /// when the program is scored (`evaluate_converged`). The batch's stages are shared out as the quality batch's
+    /// are; the upload (once a session) and the resident hits are counted for the generation's report.
+    fn prefetch_kmeans(&mut self, items: &[(&Tree, &str)]) -> Result<(), String> {
+        let t0 = Instant::now();
+        let (caps, pairs) = self.converged.as_ref().map(|cj| (cj.work_caps.clone(), cj.pairs)).ok_or("our software has a bug: a k-means batch with no converged judge")?;
+        let fit: Vec<usize> = (0..self.cases.len()).filter(|i| self.cases[*i].split.in_fitness()).collect();
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut programs: Vec<Program> = Vec::new();
+        let mut keys: Vec<String> = Vec::new();
+        for (tree, source) in items {
+            if !seen.insert(source) || self.quality_cache.contains_key(*source) || self.batched_k.contains_key(*source) {
+                continue;
+            }
+            let over = fit.iter().enumerate().any(|(slot, i)| self.interp.work(tree, &self.sizes[*i]).is_ok_and(|w| w > caps[slot]));
+            if over {
+                continue;
+            }
+            programs.push(Program::Tree(tree));
+            keys.push(source.to_string());
+        }
+        if programs.is_empty() {
+            return Ok(());
+        }
+        let (runs, c) = self.kmeans_batch(&programs, &fit, pairs)?;
+        let n = programs.len();
+        let mut shared = Stages::compiled(&c.compile);
+        shared.render = c.render;
+        shared.futhark += c.failed_compile_seconds;
+        shared.start = c.run.start;
+        shared.device = c.run.device;
+        let own: f64 = c.member_timing_seconds.iter().sum();
+        shared.pipelines = c.run.pipelines;
+        shared.runs = (c.run.runs - own).max(0.0);
+        let mut whole = shared;
+        whole.timing = own;
+        self.gen_stages.add(&whole);
+        self.upload_seconds += c.upload_seconds;
+        self.resident_hits += c.resident_hits as u64;
+        self.batch_splits += c.splits.len() as u64;
+        for why in &c.splits {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
+                let _ = writeln!(f, "==== {} our software has a bug: a batch had to be halved (no candidate is charged; the halves were scored)\n{why}", utc());
+            }
+        }
+        let share = shared.scaled(1.0 / n as f64);
+        for (i, (key, r)) in keys.into_iter().zip(runs).enumerate() {
+            let mut mine = share;
+            mine.timing = c.member_timing_seconds[i] - c.member_timing_pipeline_seconds[i];
+            mine.pipelines += c.member_timing_pipeline_seconds[i];
+            self.batched_k.insert(key, (r, mine));
+        }
+        println!("# {} k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", utc(), c.compiles, c.failed_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -798,9 +938,120 @@ impl<'a> Judge<'a> {
     /// The k-means scheme's inputs a fitness case: (quality, speed) counts.
     fn converged_widths(&self) -> (usize, usize) {
         match self.scheme.definition {
-            Definition::FutharkConvergedGated => (QUALITY_NAMES.len(), SPEED_NAMES.len()),
+            Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs => (QUALITY_NAMES.len(), SPEED_NAMES.len()),
             _ => (INPUT_NAMES_FIVE.len(), 0),
         }
+    }
+
+    /// The k-means scheme's compiled candidate: on the c backend a server (`futhark c --server`, started here and
+    /// kept for the candidate's cases), on the GPU the shim's executable, with the compile's stages.
+    fn compile_converged(&self, source: &str, dir: &Path) -> Result<(Stepper, Stages), String> {
+        match self.backend {
+            Backend::Gpu => compile_program_prebuilt_staged(source, dir, &self.shim).map(|(e, c)| (Stepper::Exe(e, StepTimer::Gpu), Stages::compiled(&c))),
+            Backend::C if self.step_process => {
+                // `--kmeans-step process`: the path before 2026-11-03, one process an iteration, kept for the
+                // throughput measurement beside the server.
+                let t = Instant::now();
+                let exe = compile_c(source, dir)?;
+                Ok((Stepper::Exe(exe, StepTimer::FutharkC), Stages { futhark: t.elapsed().as_secs_f64(), ..Stages::default() }))
+            }
+            Backend::C => {
+                let t = Instant::now();
+                let exe = compile_c_server(source, dir)?;
+                let points_dir = self.converged.as_ref().map_or_else(|| self.work_dir.join("points"), |cj| cj.points_dir.clone());
+                let s = Server::start(&exe, &dir.join("server"), &points_dir)?;
+                Ok((Stepper::Server(s), Stages { futhark: t.elapsed().as_secs_f64(), ..Stages::default() }))
+            }
+        }
+    }
+
+    /// The candidate and the seed run INTERLEAVED on `case`, `pairs` times, the seed's run of that interleaving the
+    /// yardstick; the seed's run not converging beside a candidate is our bug.
+    fn converged_pair(cj: &mut ConvergedJudge, candidate: &mut Stepper, case: &Case) -> Result<(ConvergedRun, ConvergedRun), String> {
+        let (points, start) = (&case.inputs[0], &case.inputs[1]);
+        let pairs = cj.pairs;
+        let seed_stepper = cj.seed.as_mut().ok_or("our software has a bug: a stepped pair on the resident-sample path")?;
+        let (cand, seed) = converge_interleaved(points, start, pairs, candidate.step(case)?, seed_stepper.step(case)?)?;
+        if !seed.converged {
+            return Err(format!("our software has a bug: the seed's run beside a candidate on {} did not converge ({} iterations, finished {}: {})", case.name, seed.iterations, seed.finished, seed.failure));
+        }
+        Ok((cand, seed))
+    }
+
+    /// THE RESIDENT-SAMPLE BATCH (`--eval rust`): every program of `members` with a k-means step on each case of
+    /// `case_idx` (`pairs` interleaved pairs against the seed's entry), one module, one run of the in-process host on
+    /// the resident sample; each program's (candidate, seed) runs a case, in `case_idx` order, read from the `k`
+    /// records (`run_of_k_payload`, the medians of the pairs as `converge_interleaved` takes them), or its failure. A
+    /// seed side that failed or did not converge is our bug.
+    fn kmeans_batch(&mut self, members: &[Program], case_idx: &[usize], pairs: usize) -> Result<(Vec<BatchedKmeans>, fuller::futhark_batch::Cost), String> {
+        let cuts = self.converged.as_ref().and_then(|cj| cj.cuts.clone()).ok_or("our software has a bug: a resident-sample batch with no cuts")?;
+        let host = self.host.as_ref().ok_or("our software has a bug: the resident-sample path with no in-process host")?;
+        let steps: Vec<Step> = case_idx.iter().map(|i| Step::Kmeans { case: *i, start: cuts[*i].0, n: cuts[*i].1, pairs }).collect();
+        let ms: Vec<Member> = members.iter().map(|p| Member { program: *p, steps: steps.clone() }).collect();
+        let r = host.run(&ms)?;
+        let mut out = Vec::with_capacity(members.len());
+        for outs in &r.outcomes {
+            let mut runs = Vec::with_capacity(case_idx.len());
+            let mut failed: Option<String> = None;
+            for (o, i) in outs.iter().zip(case_idx) {
+                let c = &self.cases[*i];
+                let sides = match o {
+                    Outcome::Kmeans(v) => v,
+                    Outcome::Failed(e) => {
+                        failed = Some(e.clone());
+                        break;
+                    }
+                    other => return Err(format!("our software has a bug: a k-means step's outcome {other:?}")),
+                };
+                let (mut cand, mut seed) = (Vec::new(), Vec::new());
+                for KmeansSide { candidate, result } in sides {
+                    match result {
+                        Ok((payload, ns)) => {
+                            let run = run_of_k_payload(&c.inputs[0], &c.inputs[1], payload, *ns)?;
+                            if *candidate { cand.push(run) } else { seed.push(run) }
+                        }
+                        // The candidate's side failing in the host (a panic, a lost device) is its run not finishing.
+                        Err(e) if *candidate => cand.push(run_of_k_payload(&c.inputs[0], &c.inputs[1], &fuller::futhark_sig::kmeans_converged::k_payload(0, false, false, 0.0, 0.0, 0.0, format!("the step failed in the host: {e}").as_bytes()), 0)?),
+                        Err(e) => return Err(format!("our software has a bug: the seed's side on {} failed in the host: {e}", c.name)),
+                    }
+                }
+                let (cand, seed) = sides_of_runs(cand, seed)?;
+                if !seed.converged {
+                    return Err(format!("our software has a bug: the seed's run beside a candidate on {} did not converge ({} iterations, finished {}: {})", c.name, seed.iterations, seed.finished, seed.failure));
+                }
+                runs.push((cand, seed));
+            }
+            out.push(match failed { Some(e) => Err(e), None => Ok(runs) });
+        }
+        Ok((out, r.cost))
+    }
+
+    /// THE CHAMPION ON THE TEST CASES (the round-2 review's N2): the program compiled again (its build directory
+    /// is every candidate's) and run interleaved with the seed on every case that is not a fitness input, with its
+    /// four inputs against that seed run; on the resident-sample path its own module and run. Reported, never a
+    /// fitness input.
+    fn converged_on_test(&mut self, tree: &Tree, source: &str) -> Result<Vec<TestCaseRun>, String> {
+        let test: Vec<usize> = (0..self.cases.len()).filter(|i| !self.cases[*i].split.in_fitness()).collect();
+        let mut out = Vec::new();
+        if self.mode == EvalMode::Rust {
+            let pairs = self.converged.as_ref().map_or(1, |cj| cj.pairs);
+            let (runs, _) = self.kmeans_batch(&[Program::Tree(tree)], &test, pairs)?;
+            let runs = runs.into_iter().next().ok_or("our software has a bug: a test batch of no member")??;
+            for ((cand, seed), i) in runs.into_iter().zip(&test) {
+                let inp = kmeans_inputs(&cand, &seed);
+                out.push(TestCaseRun { case: self.cases[*i].name.clone(), candidate: cand, seed, quality: inp.quality, speed: inp.speed });
+            }
+            return Ok(out);
+        }
+        let (mut candidate, _) = self.compile_converged(source, &self.work_dir.join("test_case"))?;
+        let cj = self.converged.as_mut().ok_or("our software has a bug: a test-case run with no converged judge")?;
+        for i in &test {
+            let case = &self.cases[*i];
+            let (cand, seed) = Judge::converged_pair(cj, &mut candidate, case)?;
+            let inp = kmeans_inputs(&cand, &seed);
+            out.push(TestCaseRun { case: case.name.clone(), candidate: cand, seed, quality: inp.quality, speed: inp.speed });
+        }
+        Ok(out)
     }
 
     /// THE K-MEANS SCHEME's evaluation (`docs/KMEANS_FITNESS.md`), returning the quality group (in `Quality::inputs`)
@@ -815,8 +1066,7 @@ impl<'a> Judge<'a> {
     /// quality's `outputs` are the final centroids a case (the behaviour), its exactness counts 0 (there is no exact
     /// answer).
     fn evaluate_converged(&mut self, tree: &Tree, source: &str) -> Result<(Quality, Vec<f64>), String> {
-        let cj = self.converged.as_ref().ok_or("our software has a bug: a converged evaluation with no converged judge")?;
-        let (seed_exe, pairs, timer, caps) = (cj.seed_exe.clone(), cj.pairs, cj.timer, cj.work_caps.clone());
+        let caps = self.converged.as_ref().ok_or("our software has a bug: a converged evaluation with no converged judge")?.work_caps.clone();
         let fit: Vec<usize> = (0..self.cases.len()).filter(|i| self.cases[*i].split.in_fitness()).collect();
         let (qw, sw) = self.converged_widths();
         let worst = |work: u128, behaviour: &str| (Quality { raw: vec![[1.0; 3]; fit.len()], inputs: vec![1.0; qw * fit.len()], exact_train: 0, exact_held: 0, exact_test: 0, work, outputs: Vec::new(), behaviour: behaviour.into() }, vec![1.0; sw * fit.len()]);
@@ -835,35 +1085,50 @@ impl<'a> Judge<'a> {
         let t = Instant::now();
         let dir = self.work_dir.join("converged");
         let mut st = Stages::default();
-        let compiled = self.compile_staged(source, &dir);
-        let (q, speed) = match compiled {
-            Ok((exe, cs)) => {
-                st.add(&cs);
-                let t_runs = Instant::now();
+        let definition = self.scheme.definition;
+        // The runs a case: the resident-sample path's batch (this generation's module), or the candidate's own
+        // compile and its stepped pairs against the seed.
+        let runs: Result<Vec<(ConvergedRun, ConvergedRun)>, String> = if self.mode == EvalMode::Rust {
+            let (r, bs) = self.batched_k.remove(source).ok_or_else(|| format!("our software has a bug: a k-means program scored on the resident-sample path that no batch held\n{source}"))?;
+            st.add(&bs);
+            r
+        } else {
+            match self.compile_converged(source, &dir) {
+                Ok((mut candidate, cs)) => {
+                    st.add(&cs);
+                    let t_runs = Instant::now();
+                    let cj = self.converged.as_mut().ok_or("our software has a bug: a converged evaluation with no converged judge")?;
+                    let mut runs = Vec::with_capacity(fit.len());
+                    for i in &fit {
+                        runs.push(Judge::converged_pair(cj, &mut candidate, &self.cases[*i])?);
+                    }
+                    st.runs = t_runs.elapsed().as_secs_f64();
+                    Ok(runs)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        let (q, speed) = match runs {
+            Ok(runs) => {
                 let mut quality = Vec::with_capacity(qw * fit.len());
                 let mut speed = Vec::with_capacity(sw * fit.len());
                 let mut outputs = Vec::with_capacity(fit.len());
-                for i in &fit {
-                    let c = &self.cases[*i];
-                    let (points, start) = (&c.inputs[0], &c.inputs[1]);
-                    let (cand, seed) = converge_interleaved(points, start, pairs, step_of_exe(&exe, points, timer), step_of_exe(&seed_exe, points, timer))?;
-                    if !seed.converged {
-                        return Err(format!("our software has a bug: the seed's run beside a candidate on {} did not converge ({} iterations, finished {}: {})", c.name, seed.iterations, seed.finished, seed.failure));
-                    }
+                let mut unfinished = 0;
+                for (cand, seed) in &runs {
                     if !cand.finished {
-                        self.unfinished += 1;
+                        unfinished += 1;
                     }
-                    match self.scheme.definition {
-                        Definition::FutharkConvergedGated => {
-                            let inputs = kmeans_inputs(&cand, &seed);
+                    match definition {
+                        Definition::FutharkConvergedGated | Definition::FutharkConvergedQqs => {
+                            let inputs = kmeans_inputs(cand, seed);
                             quality.extend(inputs.quality);
                             speed.extend(inputs.speed);
                         }
-                        _ => quality.extend(kmeans_inputs_five(&cand, &seed)),
+                        _ => quality.extend(kmeans_inputs_five(cand, seed)),
                     }
                     outputs.push(Array::f32s(vec![cand.centroids.len(), cand.centroids.first().map_or(0, Vec::len)], cand.centroids.concat()));
                 }
-                st.runs = t_runs.elapsed().as_secs_f64();
+                self.unfinished += unfinished;
                 let behaviour = text_hash_bytes(&fuller::futhark_sig::write_binary(&outputs.iter().collect::<Vec<_>>()));
                 (Quality { raw: vec![[1.0; 3]; fit.len()], inputs: quality, exact_train: 0, exact_held: 0, exact_test: 0, work, outputs, behaviour }, speed)
             }
@@ -872,9 +1137,13 @@ impl<'a> Judge<'a> {
                 worst(work, "failed")
             }
         };
-        st.timing = t.elapsed().as_secs_f64() - st.total();
-        self.gen_stages.add(&st);
-        self.last = ("single", 1, st);
+        if self.mode == EvalMode::Rust {
+            self.last = ("rust", 1, st);
+        } else {
+            st.timing = t.elapsed().as_secs_f64() - st.total();
+            self.gen_stages.add(&st);
+            self.last = ("single", 1, st);
+        }
         Ok((q, speed))
     }
 
@@ -889,13 +1158,13 @@ impl<'a> Judge<'a> {
             if let Some(q) = self.quality_cache.get(source) {
                 self.hits += 1;
                 let speed = self.converged_speed.get(source).cloned().ok_or("our software has a bug: a k-means program with a cached quality group and no speed group")?;
-                let f = self.scheme.converged_fitness(&q.inputs, &speed)?;
+                let f = self.scheme.converged_fitness(&q.inputs, &speed, self.quality_weight)?;
                 return Ok(eval(f, q.clone(), speed));
             }
             self.evaluations += 1;
             self.compiled += 1;
             let (q, speed) = self.evaluate_converged(tree, source)?;
-            let f = self.scheme.converged_fitness(&q.inputs, &speed)?;
+            let f = self.scheme.converged_fitness(&q.inputs, &speed, self.quality_weight)?;
             self.quality_cache.insert(source.to_string(), q.clone());
             self.converged_speed.insert(source.to_string(), speed.clone());
             return Ok(eval(f, q, speed));
@@ -959,7 +1228,7 @@ impl<'a> Judge<'a> {
             speed = ratios.iter().map(|r| if r.is_finite() { r / (1.0 + r) } else { 1.0 }).collect();
             ratio = median(&ratios);
         }
-        let t = self.scheme.staged(stage, &q.inputs(), &speed)?;
+        let t = self.scheme.staged_weighted(stage, &q.inputs(), &speed, self.quality_weight)?;
         Ok(Eval { fitness: t.fitness, theta_q: t.quality, theta_s: t.speed, quality: q, speed, ratio })
     }
 }
@@ -1850,19 +2119,44 @@ fn real_main() -> Result<(), String> {
         "single" => EvalMode::Single,
         o => return Err(format!("--eval {o}: batch, rust or single")),
     };
-    if scheme.is_converged() && mode != EvalMode::Single {
-        return Err(format!("the fitness scheme {} runs each iteration of UltraDim's loop as its own process of the compiled plain program: it takes --eval single (batch and rust evaluate fixed steps in one process)", scheme.name));
+    if scheme.is_converged() && mode == EvalMode::Batch {
+        return Err(format!("the fitness scheme {} runs UltraDim's loop: it takes --eval single (one process or server a program) or --eval rust (the resident sample on the device, the rust path's in-process host); the C batch driver evaluates fixed steps only", scheme.name));
     }
     let minutes: f64 = num(&args, "--minutes", 60.0)?;
     let budget: u64 = num(&args, "--evaluations", 6000)?;
     let pop: usize = num(&args, "--pop", 24)?;
     let seed: u64 = num(&args, "--seed", 1)?;
     // The k-means scheme runs the candidate and the seed to the stopping point `--pairs` times each on every fitness
-    // case (a pair is two full runs, about 20 iterations each), so its default is one pair; the timed-pairs schemes
-    // keep 11.
-    let pairs: usize = num(&args, "--pairs", if scheme.is_converged() { 1 } else { 11 })?;
+    // case (a pair is two full runs, about 20 iterations each): its default is TWO pairs, the least that interleaves
+    // (with one pair the candidate always runs first and the seed second: the round-2 review's N4); the timed-pairs
+    // schemes keep 11.
+    let pairs: usize = num(&args, "--pairs", if scheme.is_converged() { 2 } else { 11 })?;
     if pairs == 0 {
         return Err("--pairs 0: stage 2 needs at least one timing slot".into());
+    }
+    // THE QUALITY WEIGHT of a flat scheme (`--quality-weight`, Andrew's ruling of 2026-11-03): the quality inputs
+    // entered this many times in the one vector the HFF reads; the scheme's own default when not given (2 for
+    // k-means, the measured `fitness::ANSWER_QUALITY_WEIGHT` for the answer-scored scheme). A scheme that is not
+    // flat has none, and giving it one is an error that says so.
+    let quality_weight: usize = num(&args, "--quality-weight", scheme.default_quality_weight())?;
+    // THE K-MEANS STEP on the c backend (`--kmeans-step server|process`): a Futhark server a program (the default
+    // since 2026-11-03) or one process an iteration (the path before, kept for the throughput measurement).
+    let step_process = match arg(&args, "--kmeans-step").as_deref().unwrap_or("server") {
+        "server" => false,
+        "process" => true,
+        o => return Err(format!("--kmeans-step {o}: server or process")),
+    };
+    if step_process && (backend != Backend::C || !scheme.is_converged()) {
+        return Err("--kmeans-step process is the c backend's k-means path (the GPU path is one process an iteration already)".into());
+    }
+    if scheme.is_flat() && quality_weight == 0 {
+        return Err("--quality-weight 0: the quality inputs would not be entered at all (1 is no repetition)".into());
+    }
+    if !scheme.is_flat() && arg(&args, "--quality-weight").is_some() {
+        return Err(format!("--quality-weight: the fitness scheme {} is not a flat scheme and has no quality weight", scheme.name));
+    }
+    if scheme.is_flat() {
+        println!("# {} quality weight m = {quality_weight}: every quality input is entered {quality_weight} times in the one vector the HFF reads, the speed inputs once", utc());
     }
     let runs: usize = num(&args, "--runs", 20)?;
     let elites: usize = num(&args, "--elites", 2)?;
@@ -1994,7 +2288,13 @@ fn real_main() -> Result<(), String> {
         println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), cases.len());
     }
 
-    let mut objectives: Vec<String> = if scheme.definition == Definition::FutharkConvergedGated {
+    let mut objectives: Vec<String> = if scheme.definition == Definition::FutharkConvergedQqs {
+        // The one flat vector's columns, in its order: every case's quality inputs, the whole group m times, then
+        // every case's speed inputs once.
+        let fit = || cases.iter().filter(|c| c.split.in_fitness());
+        let quality: Vec<String> = fit().flat_map(|c| QUALITY_NAMES.iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).collect();
+        (0..quality_weight).flat_map(|i| quality.iter().map(move |q| if quality_weight > 1 { format!("{q} (copy {} of {quality_weight})", i + 1) } else { q.clone() })).chain(fit().flat_map(|c| SPEED_NAMES.iter().map(|m| format!("speed {} {m}", c.name)).collect::<Vec<_>>())).collect()
+    } else if scheme.definition == Definition::FutharkConvergedGated {
         let fit = || cases.iter().filter(|c| c.split.in_fitness());
         fit().flat_map(|c| QUALITY_NAMES.iter().map(|m| format!("quality {} {m}", c.name)).collect::<Vec<_>>()).chain(fit().flat_map(|c| SPEED_NAMES.iter().map(|m| format!("speed {} {m}", c.name)).collect::<Vec<_>>())).collect()
     } else if scheme.is_converged() {
@@ -2007,8 +2307,8 @@ fn real_main() -> Result<(), String> {
             objectives.push(format!("speed pair {i} r/(1+r) (stage 2)"));
         }
     }
-    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "program_size_given": args.iter().any(|a| a == "--program-size"), "program_size_default": p.program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description});
-    let tel = RunTelemetry::start_with_fitness(
+    let card = serde_json::json!({"problem": pname, "regime": regime, "start": start, "backend": format!("{backend:?}"), "eval": format!("{mode:?}"), "evaluations": budget, "minutes": minutes, "pop": pop, "seed": seed, "stop_at_exact": stop_at_exact, "pairs": pairs, "runs": runs, "elites": elites, "pump_every": pump_every, "fold_every": fold_every, "marriage": marriage, "program_size": program_size, "program_size_given": args.iter().any(|a| a == "--program-size"), "program_size_default": p.program_size, "gene_words": layout.width, "fitness": scheme.name, "fitness_commit": scheme.commit, "fitness_definition": scheme.description, "quality_weight": scheme.is_flat().then_some(quality_weight), "kmeans_step": if step_process { "process" } else { "server" }});
+    let tel = RunTelemetry::start_with_fitness_weighted(
         &out,
         format!("futhark-{pname}-{regime}-seed{seed}"),
         RunInfo {
@@ -2024,6 +2324,7 @@ fn real_main() -> Result<(), String> {
             already_spent_seconds: spent,
         },
         scheme,
+        quality_weight,
     )?;
     if mode == EvalMode::Rust && backend != Backend::Gpu {
         return Err("--eval rust runs on the GPU: it takes --backend gpu".into());
@@ -2033,11 +2334,14 @@ fn real_main() -> Result<(), String> {
     let with_shim = backend == Backend::Gpu && mode != EvalMode::Rust;
     let shim = if with_shim { prebuild_shim(&out.join("shim"))? } else { out.join("shim") };
     let yard_exe = if with_shim && !scheme.is_converged() { Some(compile_program_prebuilt(p.yardstick, &out.join("yardstick_build"), &shim)?) } else { None };
+    // The other side of every pair: the published program, or for k-means THE SEED (the reference gene's program:
+    // the yardstick of its fitness), whose range entry every generation's module carries.
+    let ref_source = program(&k, &sig, &reference)?;
     let host = match mode {
         EvalMode::Rust => {
             let rt = fuller::futhark_rust::prebuild_rt(&out.join("rust_rt"))?;
             let b = fuller::futhark_batch::Backend::Rust { rt };
-            Some(Host::new(&k, &sig, cases.len(), b, &out.join("rust_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(p.yardstick) })?)
+            Some(Host::new(&k, &sig, cases.len(), b, &out.join("rust_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(if scheme.is_converged() { ref_source.as_str() } else { p.yardstick }) })?)
         }
         EvalMode::Batch => {
             let b = if backend == Backend::Gpu { fuller::futhark_batch::Backend::Gpu { shim: shim.clone() } } else { fuller::futhark_batch::Backend::C };
@@ -2055,7 +2359,7 @@ fn real_main() -> Result<(), String> {
         inst,
         out: out.clone(),
         gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()), converged: None, converged_speed: HashMap::new(), over_cap_unrun: 0, unfinished: 0 },
+        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()), converged: None, converged_speed: HashMap::new(), over_cap_unrun: 0, unfinished: 0, quality_weight, step_process, batched_k: HashMap::new(), upload_seconds: 0.0, resident_hits: 0 },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -2088,7 +2392,6 @@ fn real_main() -> Result<(), String> {
         }
         println!("# {} control: the yardstick on the GPU gives futhark c's output on {} (GPU)", utc(), run.judge.timing.label());
     }
-    let ref_source = program(&k, &sig, &reference)?;
     if check_replay.is_some() && measure.is_none() {
         // A REPLAYED check runs nothing on the GPU: the stored outputs are the GPU's, the reference's own among them,
         // and the check stops with our bug if the reference does not score 0 on them.
@@ -2101,24 +2404,49 @@ fn real_main() -> Result<(), String> {
         // every fitness case with the program's own time read as every candidate's will be; a run that does not
         // CONVERGE is our bug. Each candidate is then run interleaved with it, and scored against that run. The work
         // cap of every fitness case is the seed's work on it times `WORK_CAP_TIMES_SEED`.
-        let timer = match backend {
-            Backend::Gpu => StepTimer::Gpu,
-            Backend::C => StepTimer::FutharkC,
-        };
-        let (seed_exe, _) = run.judge.compile_staged(&ref_source, &out.join("seed_build"))?;
-        let mut seed_runs = Vec::new();
-        let mut work_caps = Vec::new();
-        for (i, c) in run.judge.cases.iter().enumerate().filter(|(_, c)| c.split.in_fitness()) {
-            let r = converge(&c.inputs[0], &c.inputs[1], step_of_exe(&seed_exe, &c.inputs[0], timer))?;
-            if !r.converged {
-                return Err(format!("our software has a bug: the compiled seed's run does not converge on {} ({backend:?}): {} iterations, finished {}: {}", c.name, r.iterations, r.finished, r.failure));
+        let points_dir = out.join("candidate_build").join("points");
+        let fit: Vec<usize> = (0..run.judge.cases.len()).filter(|i| run.judge.cases[*i].split.in_fitness()).collect();
+        let t_control = Instant::now();
+        let (seed_stepper, seed_runs, cuts) = if mode == EvalMode::Rust {
+            // THE RESIDENT-SAMPLE PATH: every stored case is a row range of the sample (the timing input's first
+            // value), checked here against the case's points; the seed's control is the seed as a member against
+            // the seed's entry, one pair, on every fitness case.
+            let sample = read_binary(&run.judge.timing.stdin)?.into_iter().next().ok_or("the timing input holds no sample")?;
+            let mut cuts = Vec::with_capacity(run.judge.cases.len());
+            for c in &run.judge.cases {
+                let cut = KMEANS_CASES.iter().chain(std::iter::once(&fuller::futhark_sig::kmeans_converged::KMEANS_TIMING_CUT)).find(|x| x.name == c.name).ok_or_else(|| format!("the case {} is not a declared row range of the sample (kmeans_converged::KMEANS_CASES)", c.name))?;
+                let d = sample.dims[1];
+                if c.inputs[0].dims != [cut.end - cut.start, d] || c.inputs[0].data != sample.data[cut.start * d..cut.end * d] {
+                    return Err(format!("our software has a bug: the case {} is not the sample's rows {}..{}", c.name, cut.start, cut.end));
+                }
+                cuts.push((cut.start, cut.end - cut.start));
             }
-            let seed_work = run.judge.interp.work(&reference, &run.judge.sizes[i])?;
+            run.judge.converged = Some(ConvergedJudge { seed: None, seed_runs: Vec::new(), work_caps: Vec::new(), pairs, points_dir: points_dir.clone(), cuts: Some(cuts.clone()) });
+            let (runs, c) = run.judge.kmeans_batch(&[Program::Text(&ref_source)], &fit, 1)?;
+            let runs = runs.into_iter().next().ok_or("our software has a bug: the seed's control batch of no member")??;
+            println!("# {} control: the seed's module compiled in {:.1} s, the sample uploaded in {:.3} s ({} MB), the seed's {} runs in {:.1} s", utc(), c.compile.futhark + c.compile.cc, c.upload_seconds, sample.data.len() * 4 / 1_000_000, 2 * fit.len(), c.run.total);
+            (None, runs.into_iter().map(|(_, seed)| seed).collect::<Vec<_>>(), Some(cuts))
+        } else {
+            let (mut seed_stepper, _) = run.judge.compile_converged(&ref_source, &out.join("seed_build"))?;
+            let mut seed_runs = Vec::new();
+            for i in &fit {
+                let c = &run.judge.cases[*i];
+                seed_runs.push(converge(&c.inputs[0], &c.inputs[1], seed_stepper.step(c)?)?);
+            }
+            (Some(seed_stepper), seed_runs, None)
+        };
+        let mut work_caps = Vec::new();
+        for (i, r) in fit.iter().zip(&seed_runs) {
+            let c = &run.judge.cases[*i];
+            if !r.converged {
+                return Err(format!("our software has a bug: the compiled seed's run does not converge on {} ({backend:?}, {mode:?}): {} iterations, finished {}: {}", c.name, r.iterations, r.finished, r.failure));
+            }
+            let seed_work = run.judge.interp.work(&reference, &run.judge.sizes[*i])?;
             println!("# {} control: the compiled seed on {}: {} iterations to the stopping point, the program's own {:.3} s ({:.3} s wall), cosine inertia {:.5}, mean log10 p {:.2} ({:.2} over every point, {} at their centroid); work {seed_work}, the cap {}", utc(), c.name, r.iterations, r.seconds, r.wall_seconds, r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, converged_work_cap(seed_work));
-            seed_runs.push(r);
             work_caps.push(converged_work_cap(seed_work));
         }
-        run.judge.converged = Some(ConvergedJudge { seed_exe, seed_runs, work_caps, timer, pairs });
+        println!("# {} control: the seed's {} runs took {:.1} s ({})", utc(), seed_runs.len(), t_control.elapsed().as_secs_f64(), match (backend, step_process, mode) { (_, _, EvalMode::Rust) => "the resident sample on the device, the in-process host", (Backend::C, false, _) => "one Futhark server, the points loaded once a case", (Backend::C, true, _) => "one process of the futhark c executable an iteration (--kmeans-step process)", (Backend::Gpu, _, _) => "one process of the shim's executable an iteration" });
+        run.judge.converged = Some(ConvergedJudge { seed: seed_stepper, seed_runs, work_caps, pairs, points_dir, cuts });
     } else {
         run.judge.prefetch(&[(&reference, ref_source.as_str())], FitnessStage::Quality)?;
         let ref_q = run.judge.quality(&reference, &ref_source)?;
@@ -2186,17 +2514,24 @@ fn real_main() -> Result<(), String> {
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
     }
-    if scheme.is_converged() && backend == Backend::Gpu && !check {
-        // The converged scheme's A/A: the seed judged as a candidate against the seed. Equal runs give 1/2 on every
-        // input; the spread of the seconds and iterations inputs around 1/2 is the noise floor of this scheme.
+    // THE K-MEANS SCHEME'S A/A, on both backends (the round-2 review's N3): the seed judged as a candidate against the
+    // seed through the same interleaving every candidate gets. Equal runs give 1/2 on every quality input (a quality
+    // input off 1/2 is a non-deterministic reduction, written down here); the spread of the seconds and iterations
+    // inputs around 1/2 is THE NOISE FLOOR of this scheme, which a champion's speed claim must clear.
+    let mut aa_quality: Vec<f64> = Vec::new();
+    let mut aa_speed: Vec<f64> = Vec::new();
+    if scheme.is_converged() && !check {
         let source = program(&k, &sig, &reference)?;
+        let t_aa = Instant::now();
+        run.judge.prefetch(&[(&reference, source.as_str())], FitnessStage::Quality)?;
         let e = run.judge.evaluate(&reference, &source, FitnessStage::Quality)?;
-        let all: Vec<f64> = e.quality.inputs.iter().chain(&e.speed).copied().collect();
-        let inputs: Vec<String> = all.iter().map(|x| format!("{x:.3}")).collect();
-        let worst = all.iter().map(|x| (x - 0.5).abs()).fold(0.0, f64::max);
-        let msg = format!("in-run A/A (converged): the seed as a candidate against itself, {} quality and {} speed inputs over the fitness cases, worst distance from 1/2 {worst:.3}, fitness {:.4}: [{}]", e.quality.inputs.len(), e.speed.len(), e.fitness, inputs.join(", "));
+        let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(", ");
+        let worst = |v: &[f64]| v.iter().map(|x| (x - 0.5).abs()).fold(0.0, f64::max);
+        let msg = format!("in-run A/A (k-means): the seed as a candidate against itself through {pairs} interleaved pair(s) on every fitness case, {:.1} s: fitness {:.4}; quality inputs [{}], worst distance from 1/2 {:.2e}{}; speed inputs [{}], worst distance from 1/2 {:.4} (the noise floor of a speed claim)", t_aa.elapsed().as_secs_f64(), e.fitness, fmt(&e.quality.inputs), worst(&e.quality.inputs), if worst(&e.quality.inputs) > 0.0 { " (A QUALITY INPUT OFF 1/2: the program's reduction is not deterministic on this backend)" } else { "" }, fmt(&e.speed), worst(&e.speed));
         println!("# {} {msg}", utc());
         run.tel.note(0, msg)?;
+        aa_quality = e.quality.inputs.clone();
+        aa_speed = e.speed.clone();
     }
     // The A/A gate's evidence, on every run that timed its A/A sets (every evaluation path: batch, single, rust).
     if let Some(a) = &batch_aa {
@@ -2365,6 +2700,12 @@ fn real_main() -> Result<(), String> {
     let mut last_pumped: Option<String> = None;
     let mut per_gen = if resume { std::fs::read_to_string(out.join("per_generation.tsv")).unwrap_or_default() } else { String::new() };
     let mut prev_so_far: Option<f64> = per_gen.lines().last().and_then(|l| l.split('\t').nth(2)).and_then(|v| v.parse().ok());
+    // THE TEST CASE (k-means, the round-2 review's N2): the champion run on every test case, interleaved with the
+    // seed, in every generation its text changes; `OUT/test_case.tsv` keeps the learning curve, `last_test` the
+    // latest for the report. Never a fitness input.
+    let mut test_tsv = if resume { std::fs::read_to_string(out.join("test_case.tsv")).unwrap_or_default() } else { String::new() };
+    let mut last_tested: Option<String> = None;
+    let mut last_test: Vec<TestCaseRun> = Vec::new();
     loop {
         if run.tel.stop_requested() {
             stopped_by = "killed";
@@ -2493,6 +2834,12 @@ fn real_main() -> Result<(), String> {
         extras.insert("evaluations_per_second".to_string(), gen_evals as f64 / gen_wall.max(1e-9));
         extras.insert("batched".to_string(), f64::from(u8::from(mode.batched())));
         extras.insert("batch_halvings".to_string(), run.judge.batch_splits as f64);
+        if mode == EvalMode::Rust && scheme.is_converged() {
+            extras.insert("upload_s".to_string(), run.judge.upload_seconds);
+            extras.insert("resident_hits".to_string(), run.judge.resident_hits as f64);
+            run.judge.upload_seconds = 0.0;
+            run.judge.resident_hits = 0;
+        }
         let before = run.tel.individuals();
         run.tel.generation(GenerationStats { generation, fitness: &fits, distinct: Some(distinct as u32), angle_groups: groups, extras, evaluated: run.judge.evaluations.saturating_sub(before) })?;
         let gen_seconds = gen_start.elapsed().as_secs_f64();
@@ -2555,6 +2902,42 @@ fn real_main() -> Result<(), String> {
             run.judge.hits,
             run.judge.bugs
         );
+        if scheme.is_converged() {
+            // THE K-MEANS LINES A GENERATION (Andrew): the HFF of the best and its four measures against the seed on
+            // every fitness case (each r/(1+r), 1/2 equal to the seed, below better), then the champion on the test
+            // case when its text changed.
+            let (qw, sw) = run.judge.converged_widths();
+            let names: Vec<&str> = run.judge.cases.iter().filter(|c| c.split.in_fitness()).map(|c| c.name.as_str()).collect();
+            let per_case: Vec<String> = names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let q = &be.quality.inputs[i * qw..(i + 1) * qw];
+                    let s = &be.speed[i * sw..(i + 1) * sw];
+                    format!("{n} q [{}] s [{}]", q.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(" "), s.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(" "))
+                })
+                .collect();
+            println!("# {} gen {generation} best HFF {:.5} against the seed (cosine inertia, percentile; seconds, iterations): {}", utc(), be.fitness, per_case.join("; "));
+            let champion = run.champion.clone().unwrap_or_else(|| best.clone());
+            if last_tested.as_deref() != Some(champion.source.as_str()) && run.judge.cases.iter().any(|c| !c.split.in_fitness()) {
+                let t_test = Instant::now();
+                let rows = run.judge.converged_on_test(&champion.tree, &champion.source)?;
+                for r in &rows {
+                    println!("# {} gen {generation} champion (id {}, HFF {:.5}) on the test case {} ({:.1} s)", utc(), champion.id, champion.fit(), r.line(), t_test.elapsed().as_secs_f64());
+                    if test_tsv.is_empty() {
+                        test_tsv = String::from("generation\tevaluations\tchampion_id\tchampion_hff\tcase\tquality_inputs\tspeed_inputs\tchampion_inertia\tchampion_log10p\tchampion_log10p_all\tchampion_seconds\tchampion_iterations\tchampion_finished\tseed_inertia\tseed_log10p\tseed_log10p_all\tseed_seconds\tseed_iterations\n");
+                    }
+                    let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(",");
+                    test_tsv.push_str(&format!(
+                        "{generation}\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{:.6}\t{:.4}\t{:.4}\t{:.6}\t{}\t{}\t{:.6}\t{:.4}\t{:.4}\t{:.6}\t{}\n",
+                        run.judge.evaluations, champion.id, champion.fit(), r.case, fmt(&r.quality), fmt(&r.speed), r.candidate.inertia, r.candidate.mean_log10_p, r.candidate.mean_log10_p_all, r.candidate.seconds, r.candidate.iterations, r.candidate.finished, r.seed.inertia, r.seed.mean_log10_p, r.seed.mean_log10_p_all, r.seed.seconds, r.seed.iterations
+                    ));
+                }
+                std::fs::write(out.join("test_case.tsv"), &test_tsv).map_err(|e| e.to_string())?;
+                last_tested = Some(champion.source.clone());
+                last_test = rows;
+            }
+        }
         let rng_state = stream.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(generation + 1);
         if generation.is_multiple_of(checkpoint_every.max(1)) {
             let rows = run.hof.write(&out)?;
@@ -2922,12 +3305,27 @@ fn real_main() -> Result<(), String> {
         // The k-means scheme's own lines: the candidates not run (over the work cap), the runs that did not finish,
         // and the champion's two input groups.
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
-        rep.push_str(&format!("over_work_cap_not_run\t{}\nruns_not_finished\t{}\nbest_quality_inputs\t{}\nbest_speed_inputs\t{}\n", run.judge.over_cap_unrun, run.judge.unfinished, fmt(&be.quality.inputs), fmt(&be.speed)));
+        rep.push_str(&format!("quality_weight\t{}\npairs\t{pairs}\nover_work_cap_not_run\t{}\nruns_not_finished\t{}\nbest_quality_inputs\t{}\nbest_speed_inputs\t{}\n", if scheme.is_flat() { quality_weight.to_string() } else { "-".to_string() }, run.judge.over_cap_unrun, run.judge.unfinished, fmt(&be.quality.inputs), fmt(&be.speed)));
         // The seed's runs at the start (the control), a case: iterations, the program's own seconds, cosine inertia,
         // mean log10 p over the points off their centroid, the coincident count.
         if let Some(cj) = &run.judge.converged {
             let seed_lines: Vec<String> = run.judge.cases.iter().filter(|c| c.split.in_fitness()).zip(&cj.seed_runs).map(|(c, r)| format!("{}:{}:{:.4}:{:.5}:{:.2}:{}", c.name, r.iterations, r.seconds, r.inertia, r.mean_log10_p, r.coincident)).collect();
             rep.push_str(&format!("seed_runs_at_start\t{}\n", seed_lines.join(",")));
+        }
+        // THE NOISE FLOOR (N3) and the champion's margin: the seed against itself through the same interleaving gave
+        // these inputs; the floor is the widest distance of its speed inputs from 1/2. The champion's seconds claim is
+        // its widest seconds input below 1/2 over the cases (the seconds input is the first of each case's speed
+        // pair); it beats the floor when every seconds input is below 1/2 - floor.
+        if !aa_speed.is_empty() {
+            let (_, sw) = run.judge.converged_widths();
+            let floor = aa_speed.iter().map(|x| (x - 0.5).abs()).fold(0.0, f64::max);
+            let seconds: Vec<f64> = be.speed.iter().step_by(sw.max(1)).copied().collect();
+            let slowest = seconds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            rep.push_str(&format!("seed_aa_quality_inputs\t{}\nseed_aa_speed_inputs\t{}\nseed_aa_speed_floor\t{floor:.4}\nbest_seconds_inputs\t{}\nbest_seconds_margin_below_half\t{:.4}\nspeed_claim_beats_noise_floor\t{}\n", fmt(&aa_quality), fmt(&aa_speed), fmt(&seconds), 0.5 - slowest, if seconds.iter().all(|s| *s < 0.5 - floor) { "yes" } else { "no" }));
+        }
+        // THE TEST CASE (N2): the champion and the seed on every case that is never a fitness input, the latest run.
+        for r in &last_test {
+            rep.push_str(&format!("test_case\t{}\n", r.line()));
         }
     }
     // The best-ever program (the hall of fame's rank 1). For C, which has no selection, the best above is only the
