@@ -31,9 +31,9 @@ In stage 2, the speed inputs are the runner's timing slots, each r/(1+r).
 
 | family | runners | how to choose |
 |---|---|---|
-| futhark_sig | fuller `examples/futhark_evolve.rs` | `--fitness` |
+| futhark_sig | fuller `examples/futhark_evolve.rs` (every problem, A7 included since 2026-11-03: `--problem a7`) | `--fitness` |
 | staged | phylu `examples/wgsl_true_case_fit.rs`, fuller `examples/futhark_pixel_evolve.rs` | `--fitness` |
-| shapes | fuller `examples/futhark_a7_evolve.rs` (`Config::fitness`), phylu `examples/shape_fit.rs` (`ShapeConfig::fitness`) | `--fitness` |
+| shapes | fuller `examples/futhark_a7_evolve.rs` (`Config::fitness`; DEPRECATED 2026-11-03, A7 runs under `futhark_evolve` on the `futhark_sig` schemes; the shapes schemes stay registered, unchanged), phylu `examples/shape_fit.rs` (`ShapeConfig::fitness`) | `--fitness` |
 | regex | phylu `examples/regex_fit.rs` (engine `regex_fitness_scheme`) | `EVOLVE_FITNESS`. Without it, `EVOLVE_REGEX_PARSIMONY=1` selects `regex-raw-length`, as it always did. If both are set and they disagree, the run stops and names the conflict. |
 
 ## Past experiments: commit and fitness as it was then

@@ -211,7 +211,7 @@ literals	0,1,2,-1,10
 dims	k,n		            (derived: order of first appearance, size inputs included)
 ```
 
-Since 3e a signature specification has no `families` line (the readers reject one): the view admits every family. A7's spec (`kingdoms/futhark/view.tsv`) is `shape matrix`, `roles n,m,p`, `root n,p`, `families matrix`: hand-written, since A7 has no entry source until step 4 makes it a view problem of `futhark_evolve`.
+Since 3e a signature specification has no `families` line (the readers reject one): the view admits every family. A7's spec (`kingdoms/futhark/view.tsv`) is `shape matrix`, `roles n,m,p`, `root n,p`, `families matrix`: hand-written, since A7 has no entry source (it is a problem of `futhark_evolve` since step 4b, through the same specification).
 
 ### D3. The view algorithm (one in Python, one in Rust; a test requires them equal)
 
@@ -258,8 +258,51 @@ The **Rust** side (`src/futhark_view.rs`): `View::load(master, spec) -> View { t
   - the ring canvas;
   - the operator mix with per-operator logging;
   - the runner standard: stream, killme.trigger, checkpoints, hall of fame and aa_gate.tsv.
+  **Written (2026-11-03): `docs/CHECKLIST_futhark_problem.md`**, one row an item, one column a problem (reduce, scan,
+  histogram, pathfinder, kmeans, a7), each cell the code or test that proves it or `not yet` with its reason (14 cells:
+  the slope check not run for reduce, scan, kmeans, a7; no test split for reduce, scan, kmeans; the GPU timing not run
+  for kmeans, a7; no ring-canvas pool for reduce, scan, kmeans, a7; the measured GPU cost not wired for a7); the cheap
+  claims are checked by `futhark_sig::tests_checklist` (every problem loads, has a default scheme, its reference and
+  planted slowdown fit the layout and are exact on every stored case by the host interpreter, its timing input is the
+  declared shape; the table has every problem and every item).
 - **`--eval rust` is the default.** The shim paths stay as test references, in the cross-path test.
-- **One runner:** A7 becomes a view problem under `futhark_evolve`, and `futhark_a7_evolve` (with its loop, `fuller::futhark_search`) is deprecated. phylu's shape_typed engine keeps working through the shared types.
+- **One runner:** A7 becomes a view problem under `futhark_evolve`, and `futhark_a7_evolve` (with its loop, `fuller::futhark_search`) is deprecated. phylu's shape_typed engine keeps working through the shared types. **Done (2026-11-03), 4b below.**
+
+### 4b. One runner: A7 as a problem of `futhark_evolve` (done 2026-11-03)
+
+- `futhark_sig::A7_PROBLEM` (`--problem a7`): the instance is the matrix view (`kingdoms/futhark/view.tsv`, `shape
+  matrix`, the one `FutharkKingdom::load` loads); `signature` gives the matrix view its signature from the kingdom
+  (`matrix_signature`: the nine input terminals' spellings `m_n_n .. m_p_p` with their classes' roles as dimensions,
+  the root `[n][p]f32`, depth 0); the program renderer emits the kingdom's **prelude** (`futhark_sig::prelude`, the
+  `matmul` helper) before the entry, and no `zeros_D` let a row does not spell; the batch host emits the prelude once
+  and puts the yardstick in a module when there is one (its own `def matmul` cannot clash); the host interpreter
+  covers the matrix rows (`transpose`, `matmul` as the helper's left fold, `map` and `map2` over rows, the row
+  functions) and `Interp::work` costs them (a traversal its cells, the product n x m x p); the builder reads a row's
+  full name when `op@dual` is not that row (`matmul@mat.n.mxmat.m.p`, `transpose@mat.n.m`, `mat.n.m.input`) and
+  `sexp` writes it so; the bridge carries its ruleset's name, and the matrix view's is the generator's
+  (`kingdoms/futhark/egraph.*`, `futhark_shape`), so `variants` and the saturated fold work unchanged.
+- The reference is the product computed twice (`A7_REFERENCE` = `futhark_search::product_twice`), the winner the
+  product once (`A7_WINNER`), the planted slowdown the reference under `map id` (`A7_PLANTED`). **Measured
+  (`futhark_sig::tests_a7`):** the three programs are exact on 6 of 6 stored cases each by the host interpreter and
+  on 18 of 18 case runs compiled with `futhark c` (the plain program and the quality program of every case); the
+  e-graph's variants of the reference hold the winner, and the planted slowdown's hold both; 40 random genes at
+  N = 32 are accepted by `futhark check` and the first 10 compile and equal the interpreter bit for bit; the batch
+  source (two members with quality and timed entries, the text copy and the yardstick) holds the helper once at the
+  top level and passes `futhark check`; the timing input (n = m = p = 256, the first of every matrix -0.0) has the
+  declared shape, the reference's work on it is 3.4e7 node executions (under the bound), and the interpreter equals
+  `futhark c` on it.
+- The stored cases: `tests/corpus/futhark_problems/a7/` (`make_cases.sh`: `futhark dataset`, f32 in [-8, 8]; 3 train,
+  2 held, 1 test at 64 x 64 x 64; outputs by the yardstick through `futhark c`).
+- The static cost (`futhark_sig::static_cost` -> `futhark_cost`) is reported by the runner (`reference_static_cost`,
+  `best_static_cost` at the timing input) and stays a speed input where a scheme asks; the `futhark_sig` schemes time
+  the GPU. The measured GPU cost (`futhark_gpu::measure`) is the deprecated runner's and phylu `shape_fit`'s, not
+  wired into this runner (the checklist's one a7 not-yet besides the GPU runs).
+- `examples/futhark_a7_evolve.rs` is DEPRECATED: it stays, prints a deprecation line pointing to
+  `futhark_evolve --problem a7`, and its tests (`tests/runner_standard.rs`, `futhark_search::tests`) pass unchanged;
+  phylu's `evolve::shape_typed` compiles on the same types.
+- **Not run (the GPU is the lead's):** `futhark_evolve --problem a7 --check --eval rust` (the slope check and the
+  gate) and `--regime P --eval rust` (the first A7 run on the one runner: the timed pairs, `aa_gate.tsv`); the
+  commands are in the checklist. The C path ran: see the checklist's smoke run.
 - **Types:** f32 first (k-means and image problems), then tuples, then records, all in the master table, so every view gains them. f32 and k-means: done, 4a below.
 - **GPU residency** (the core paper's table): today only program execution runs on the device for the signature runner. The target is a device population, with expression, variation and selection on the device and fitness that stays there, as in SR and regex.
 
@@ -334,7 +377,8 @@ interpreter runs the reference at about 4e7 node executions a second (the stored
 is checked through `futhark c` only (`tests_kmeans::the_kmeans_timing_input_...`).
 
 **Not done (step 4's next pieces):** two elements in one view (k-means's membership is an `f32` holding an index
-because the view has one element; D7's `a.f32.n` naming), tuples and records, A7 as a view problem, GPU residency.
+because the view has one element; D7's `a.f32.n` naming), tuples and records, GPU residency. A7 as a problem of the
+one runner: done, 4b.
 
 ## Steps 5 to 7 (unchanged)
 
