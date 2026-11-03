@@ -568,3 +568,241 @@ the step 6 run. Vocabulary: the kingdom documents say "test", not "witness", and
 5. Prove the Futhark kingdom works: the improvement run from Fable's histogram program on the fixed build, with speed reported every generation; then timing screening (a few pairs first, the full 11 for contenders).
 6. Prove the k-means kingdom works: a full run with all operators and working model edits, 3 seeds, and a random-search control.
 7. Done: the scratch clean-up.
+
+## Step 5a: phylu runs the Futhark problems (plan, 2026-11-03; no code yet)
+
+### Context
+
+**Objective.** Every Futhark problem (`futhark_sig::PROBLEM_NAMES`: reduce, scan, histogram, pathfinder, kmeans, a7)
+is evolved by phylu's engine (`phylu/src/evolve/engine.rs`: the islands, the pump, virtual ALPS, the generation loop),
+and fuller is the library that scores a generation. Andrew's ruling of 2026-11-03, at the top of `CLAUDE.md`: fuller
+does not evolve code.
+
+**Approach.** fuller exposes ONE seam, `FutharkEvaluator`: it scores a whole generation in one compiled module and
+returns each individual's HFF input vector and the angle the run's fitness scheme makes of it. phylu's engine takes
+the Futhark kingdom as a typed kingdom with an external fitness, as it already takes the regex and TSR kingdoms on
+the typed core, and does selection, ALPS, the pump and the islands. Everything `examples/futhark_evolve.rs` does that
+is not the generation loop moves into fuller library modules; the loop's work moves into the engine's own
+mechanisms, never into a second loop beside them.
+
+**What is new.** The pump's refill (the 80 % of an intake island the pump redraws) receives the e-graph's variants of
+the best individual and the saturated fold's forms, with a fresh cohort label: Andrew's design in
+`docs/SPLIT_fuller_phylu.md` §3a ("throw it in to the empty slots that we fill when we do the promotions"), which the
+SR engine never wired. The deprecated runner had no islands, no cohorts and no refill: its "pump" put the variants
+into the next generation's children.
+
+**Status.** Planned, 2026-11-03. Read for this plan, in full: `examples/futhark_evolve.rs` (3,448 lines),
+`src/futhark_search.rs`, `src/futhark_batch.rs`, `src/futhark_sig/kmeans_converged.rs`, `src/fitness.rs`,
+`src/runner.rs`'s public items, `src/futhark_operators.rs`'s; phylu `src/evolve/shape_typed.rs`,
+`examples/shape_fit.rs`, `engine.rs`'s `External`, `evaluate_external`, `fresh`, `pump` and `Engine::new_with_table`,
+`typed_device.rs`'s paging, `marriage.rs`'s header, `true_wgsl_fit.rs`'s `expressed_hits`.
+
+**Why now.** Two loops evolve Futhark programs today: `futhark_evolve` (one population of 24, a tournament of 3, two
+elites) and phylu's `shape_typed` (one island, A7 only, scored by the deprecated loop's interpreter). Neither has the
+engine's islands, cohorts or pump, and every improvement to the engine misses them.
+
+### 5a.1 What the engine has, and what it lacks for the Futhark problems
+
+| capability | the engine today | what the Futhark problems need | task |
+|---|---|---|---|
+| a typed population on the device | the typed core for regex and TSR (`Engine::new_with_table`: `regex_typed`, `tsr_typed`, `TypedDevice::with_parts`); `shape_typed` builds a Futhark device (the walk-only stage, the paged genome, `check_layout`) but in a one-island loop of its own | the six problems' layouts (gene words at the default program size N = 32: reduce 10,025, scan 10,021, histogram 47,999, pathfinder 57,487; kmeans 27.6 million at N = 192) on the engine's device, paged | P1 |
+| an external fitness | `External` (`engine.rs`: `fitness` fills every NaN row of the generation, `fresh` gives the pump's refills, a third field the first rows); built for the safeWGSL kingdom, an untyped `Layout`, keyed on that name in `combinations_for`; no caller today | the same hook on a typed layout | P1, P2 |
+| batch evaluation of a generation | none: the hook is called once a generation with the whole generation, which is what a batch needs | one compiled module a generation (`futhark_batch::Host`), every program not scored before in it | F3 |
+| the budget | `max_evaluations` over `eval_counts`, every scored NaN row | the Futhark budget: programs not scored before, by text; an elite, a repeat or a pump child equal to a scored program is free | P2 |
+| two fitness stages (`futhark-slope4-qqs`) | none | quality alone until the best is exact on every case, then the flat vector with the timing slots; at the change every row is scored again and the hall of fame restarts | F3, P2 |
+| the k-means fitness (`futhark-kmeans-better`) | none, and none needed: the engine sees one vector a row | a whole run per candidate to UltraDim's stopping rule, interleaved with the reference program `--pairs` times, the further iterations from the final centroids; all inside the evaluator (`futhark_batch`'s k-means command on the resident sample) | F2, F3 |
+| data resident on the GPU across generations | the engine's own data buffer (SR) | the dbpedia sample (and the timing input) held by the `futhark-rust-rt` session inside the batch host for the whole run: the evaluator lives as long as the run. The engine's wgpu device and the runtime's (loaded by `dlopen`, its own wgpu) are then two devices in one process: not yet measured | F1, G2 |
+| the batch compile's time limit and split | none needed | already in `futhark_batch::Host` (`COMPILE_LIMIT_FLOOR` 30 s, `COMPILE_LIMIT_FACTOR` 30 x the median, the halving, the source under `bugs/`, the fusion bound, the compiler at `-N1`): the evaluator inherits it unchanged | none |
+| the measures of a generation | the snapshot's `extras` are empty for an external kingdom | the best's HFF as an angle AND as the percentile F(θ) with its d (today only `futhark-kmeans-better` reports the percentile); its quality and speed inputs against the reference program, per case; its exact counts; the test set's measures, reported, never a fitness input | F4, P2 |
+| checkpoints | the genome, cohorts and counters (`checkpoint.rs`) | also the evaluator's state: the quality cache by text, the timing slots, the stage, the counts, the first exact program | F7, P2 |
+| variation | on the device: point mutation by a per-cell rate, inversion, IS, RIS, the Dc operators, one- and two-point crossover per type | a mutation rate in EXPRESSED cells (histogram's gene is 47,999 words, its reference program 7 coding cells; `true_wgsl_fit`'s `expressed_hits`); marriage, the typed subtree crossover (phylu `marriage.rs`, used only by `true_wgsl_fit` today); the row operators of 3f and the ring walk (fuller host operators) | P3, P3b |
+| the start | random rows, or `External`'s given first rows | regime P (the reference program, its e-graph variants, the saturated fold's forms), the ring canvas, the task alternatives, the mutants of one program | F5 |
+| the runner standard | `standard_outputs` (stream, `killme.trigger`, checkpoints), the genealogy | the ledger with the evaluator's columns, the hall of fame with program text, `per_generation.tsv`, `series.tsv`, `report.tsv`, the chart, `aa_gate.tsv` | P4 |
+
+### 5a.2 The interface fuller exposes
+
+One owned object (no borrowed lifetimes: the engine keeps it inside a `'static` closure for the whole run), in a new
+module `src/futhark_evaluator.rs`:
+
+```rust
+pub struct EvaluatorConfig {
+    pub problem: String,               // futhark_sig::PROBLEM_NAMES
+    pub fitness: Option<String>,       // a fuller::fitness scheme; None: the problem's own default
+    pub quality_weight: Option<usize>, // the scheme's default when None
+    pub quality_cliff: Option<f64>,    // futhark-kmeans-better only
+    pub backend: Backend,              // Gpu | C
+    pub eval: EvalMode,                // Rust (the default) | Batch | Single
+    pub pairs: usize,
+    pub runs: usize,
+    pub program_size: Option<usize>,   // the problem's own default when None
+    pub out: PathBuf,                  // bugs.log, bugs/, the build directories
+}
+
+impl FutharkEvaluator {
+    pub fn new(cfg: &EvaluatorConfig) -> Result<FutharkEvaluator, String>;
+    /// The controls at the start: the reference program exact (interpreted and compiled), its output on the timing
+    /// input, the A/A noise floor and the in-run A/A; for k-means its run converges on every case, the work caps.
+    pub fn controls(&mut self, regime: Regime) -> Result<Controls, String>;
+    pub fn contract(&self) -> &KingdomContract;
+    pub fn layout(&self) -> &GeneLayout;
+    pub fn const_len(&self) -> &BTreeMap<Ty, u32>;
+    /// The names of the HFF input vector's columns, in order (the stream's `run_start`).
+    pub fn input_names(&self) -> Vec<String>;
+    /// THE SEAM: every row of the generation, in row order; a program scored before is a cache hit and costs nothing.
+    pub fn evaluate_generation(&mut self, genes: &[&[u32]], generation: u32) -> Result<GenerationScores, String>;
+    /// The measures of the generation's best (and the k-means test case when the champion's text changed).
+    pub fn report(&mut self, generation: u32, best: usize, scores: &GenerationScores) -> Result<GenerationReport, String>;
+    /// New individuals for the engine to place: the start population, the pump's refill, the fold beat's forms.
+    pub fn fresh(&mut self, request: FreshRequest) -> Result<Vec<FreshIndividual>, String>;
+    pub fn state(&self) -> serde_json::Value;
+    pub fn restore(&mut self, state: &serde_json::Value) -> Result<(), String>;
+    /// The end: the champion's 11-pair re-time, the A/A medians, the speed verdict, the report's lines.
+    pub fn final_report(&mut self, champion: &[u32]) -> Result<FinalReport, String>;
+}
+
+pub struct RowScore {
+    pub expressed: bool,
+    pub text: String,
+    /// THE HFF INPUT VECTOR as the scheme builds it: in stage 1 the quality group; in stage 2, and for k-means, the
+    /// quality group `quality_weight` times and the speed group once (`fitness::flat_vector`).
+    pub inputs: Vec<f64>,
+    /// The scheme's angle of `inputs` (TrueNorth, `fuller::fitness`): THE number the engine's selection reads.
+    pub fitness: f64,
+    pub theta_quality: f64,
+    pub theta_speed: f64,
+    pub percentile: f64, // F(theta), fitness::hff_percentile
+    pub d: usize,
+    pub quality: Vec<f64>, // per case, for the report
+    pub speed: Vec<f64>,
+    pub exact: [usize; 3], // train, held, test
+    pub behaviour: String,
+    pub new_evaluation: bool,
+    pub ledger: Vec<String>, // the deprecated runner's LEDGER_STAGE_COLUMNS
+}
+
+pub struct GenerationScores {
+    pub rows: Vec<RowScore>,
+    pub stage: FitnessStage,
+    /// The best became exact on every case: every row was scored again in stage 2 within this call.
+    pub stage_changed: bool,
+    pub evaluations: u64,
+    pub cost: GenerationCost, // compile, upload, run and timing seconds; halvings; unfinished compiles; resident hits
+}
+```
+
+The angle is computed in fuller, by the scheme, so one implementation defines every fitness (`docs/FITNESS_SCHEMES.md`:
+a new fitness is a new scheme); phylu writes it as the `f32` its tournament reads and never recomputes it. A gene that
+does not express is a bug of our software (the layout defines what a cell may hold) and stops the run, as in
+`futhark_evolve`.
+
+**What moves where.**
+
+| from `examples/futhark_evolve.rs` | to | owner |
+|---|---|---|
+| `Judge` and its types (`Quality`, `Eval`, `Stages`, `TimingInput`, `AaSets`, `ConvergedJudge` with its program runner, `TestCaseRun`, `pair_steps`, `pair_ratios`, `LEDGER_STAGE_COLUMNS`, `hff_dimensions`) | `src/futhark_evaluator.rs` | fuller |
+| the controls at the start (reference exact interpreted and compiled, the timing input's output on the GPU, the A/A sets, the k-means reference program's runs, work caps and row ranges) | `FutharkEvaluator::controls` | fuller |
+| the per-generation measures (`per_generation.tsv` columns, the k-means lines, `test_case.tsv`) | `FutharkEvaluator::report` | fuller |
+| the P start, `ring_canvas`, `alternatives_population`, `fable_mutants_population`, the e-graph variants of the best, the saturated fold's forms | `src/futhark_start.rs`, behind `FutharkEvaluator::fresh` | fuller |
+| the champion's re-time, `aa_medians`, `speed_verdict`, `report.tsv`, the chart | `FutharkEvaluator::final_report` | fuller |
+| the measurements that are not evolution: the slope check (`--check`, `--check-replay`), `--measure`, `--rescore`, `--aa-only`, and regime C (random search: no selection) | `examples/futhark_measure.rs`, over the library | fuller |
+| the generation loop: elites, tournaments, marriage pairing, the pump and fold beats, the stage change, the stop rules, the population's checkpoint, the stream's snapshots, the ledger and the hall of fame | the engine, `src/evolve/futhark_typed.rs`, `examples/futhark_fit.rs` | phylu |
+| `futhark_operators`, `futhark_rings`, `saturated_fold`, `futhark_batch`, `kmeans_converged`, `fitness` | unchanged | fuller |
+
+### 5a.3 The tasks
+
+Every brief given to an agent starts "Read docs/Rules.md, then:", then this section's context. Every task is a commit
+(or a few) with its tests, zero warnings, clippy clean (fuller default and `gpu,wgsl`; phylu default and `gpu`), on
+fuller's `feat/futhark-kingdom` and a phylu branch. **Agents never use the GPU**: a task's GPU tests and runs are
+written as a script under `/private/tmp/claude-501/fbench/plan5a/`, `nohup` with a kill guard and a log, and the lead
+runs them, one GPU process at a time, announced. A test that needs a compiler but no GPU uses the C backend.
+
+```
+F1 ──> F2 ──┬──> F3 ──┬──> F4 ──┐
+            │         └──> F7 ──┤
+            ├──> F5 ────────────┤
+            └──> F6 ──> F8      ├──> P4 ──> G3 ──> R1 ──> R2 ──> R3 ──> R4 ──> X1
+P1 ──> P2 ──┬───────────────────┤
+            └──> P3 ────────────┘          P3b after R1 (A/B)
+G1 after P1;  G2 after F3 and P1
+```
+
+The fuller chain (F1 to F8) and the phylu chain (P1 to P3) run in parallel; P4 joins them.
+
+| task | repo | what | files | tests (no GPU) | GPU script (the lead) | depends |
+|---|---|---|---|---|---|---|
+| F1 | fuller | The batch host and the judge OWN what they read: `Host` holds the kingdom and the signature by `Arc` (today `Host<'a>` borrows them), so an owned, `'static` evaluator can exist | `src/futhark_batch.rs`, `src/futhark_sig.rs` (`load`, `signature` returning shared handles), callers | every `futhark_batch` and `futhark_sig` test unchanged; a host built from handles whose originals were dropped runs a C batch | none | none |
+| F2 | fuller | `FutharkEvaluator::new` and the judge moved out of the runner unchanged; `futhark_evolve.rs` calls the library, its behaviour unchanged | `src/futhark_evaluator.rs`, `src/lib.rs`, `examples/futhark_evolve.rs` | **the plumbing test**: histogram R, 2 generations, random seed 1, C backend, before and after the move: the ledger byte-identical except the milliseconds columns; the k-means C-backend run (`--evaluations 2`): the same quality and speed inputs bit for bit | none | F1 |
+| F3 | fuller | `evaluate_generation`: express, render, one batch a generation, score every row, the stage change inside the call (every row scored again in stage 2), the HFF input vector and the scheme's angle a row | `src/futhark_evaluator.rs` | the programs of F2's plumbing runs (histogram R and the k-means run, C backend) through the seam give the inputs the runner recorded, bit for bit; a cached row is free; the stage change re-scores every row once (a mock host, as `futhark_batch::tests` mocks a compile) | `f3_rust_generation.sh`: histogram and kmeans, `--eval rust`, 3 generations of 24 through the seam: one module a generation, the inputs equal the runner's on the same programs | F2 |
+| F4 | fuller | `report`: the best's angle and percentile with d for EVERY scheme (a report, not a fitness change), its inputs a case against the reference program, its exact counts, the test cases' measures (the answer-scored problems' test cases are in the quality program already; k-means's `converged_on_test` when the champion's text changes) | `src/futhark_evaluator.rs` | the percentile equals `fitness::hff_percentile` at the vector's d; the test set never enters `inputs` (asserted on every problem) | in `f3_rust_generation.sh` | F3 |
+| F5 | fuller | `fresh`: the start populations and the pump and fold candidates, each with its origin, parent rows and mutation event; the P start's cost (k-means: 149 s the e-graph, 193 s the fold, 19.5 GB) reported | `src/futhark_start.rs`, `src/futhark_evaluator.rs` | histogram P at random seed 1 gives `futhark_evolve`'s generation 0 (same programs, same order); the ring canvas and the alternatives as the runner builds them; a variant equal to a scored program is not offered | none | F2 |
+| F6 | fuller | `controls` and `final_report`: the A/A sets, `aa_gate.tsv`, the in-run A/A, the k-means A/A noise floor, the champion's re-time and verdict, `report.tsv`, the chart | `src/futhark_evaluator.rs` | the report's keys equal the runner's (a test lists them); the C-backend controls pass for all six problems | `f6_controls.sh`: `controls` on the GPU for histogram, pathfinder, kmeans, a7 | F2 |
+| F7 | fuller | `state` and `restore` | `src/futhark_evaluator.rs` | a round trip; after `restore`, a recorded generation scores with no new evaluation and the same inputs bit for bit (C backend) | none | F3 |
+| F8 | fuller | `examples/futhark_measure.rs`: the slope check, the operator measurement, the rescore, the A/A set alone and regime C, all over the library; the same flags and output files as today | `examples/futhark_measure.rs` | A7's slope check on the C path with 30 random genes gives `docs/measurements/2026-11-03_futhark_a7_slope_check_cpu.tsv`'s counts (63 neighbours, 7 exact) | `f8_check.sh`: the slope checks still not run (reduce, scan, a7 at 1,400 random genes) | F2, F6 |
+| P1 | phylu | The Futhark kingdom on the engine: `evolve::futhark_typed` builds the shape, sampling, walk-only stage and paged device parts from the evaluator's contract and layout (`shape_typed`'s `ShapeRun::new` and `check_layout`, moved); `Engine::new_with_table` takes `kingdom = "futhark"` beside regex and TSR, with a placeholder `Data`; `combinations_for` keys on "an external kingdom", not on the name `safeWGSL` | `src/evolve/futhark_typed.rs`, `src/evolve/engine.rs`, `src/evolve/mod.rs` | `check_layout` for all six problems at their program sizes (host only) | `g1_futhark_device.sh` (G1) | none |
+| P2 | phylu | The external fitness of a typed kingdom: (a) the budget is the evaluator's evaluation count; (b) a stage change marks every row scored again, restarts the hall of fame and writes a `stage_change` event; (c) an `extras` hook fills the snapshot with the evaluator's report; (d) a `state`/`restore` hook rides in the engine's checkpoint; (e) `fresh` feeds the pump's refill AND a fold beat, its individuals take the refill's fresh cohort label, each with its mutation event (`pump`, `saturated_fold`, `egraph_exact`) | `src/evolve/engine.rs`, `src/evolve/checkpoint.rs` | the pure parts on the host: the budget arithmetic, the refill's row placement and cohort labels (`fresh_plan` with a mock hook) | `cargo test --features gpu futhark_typed`: a mock external fitness (a hash of the gene, no compiler) through 10 generations: the refill holds the hook's genes with fresh cohorts, the stage change re-scores every row, a resume continues with the same state | P1 |
+| P3 | phylu | Variation for wide typed genes: the point mutation's rate in expressed cells (`expressed_hits` over the median node count, as `true_wgsl_fit`), and marriage (phylu `marriage.rs`) as an engine beat for a typed external kingdom, parents never duplicates | `src/evolve/engine.rs`, `src/evolve/marriage.rs` | the rate on the histogram and pathfinder layouts gives the stated expected hits (host twin) | in the P2 GPU test: the children of a generation change 1 to 4 expressed cells, marriage's offspring both legal | P1 |
+| P3b | phylu | The row operators of 3f (`invert-rows-coding`, `transpose-rows-coding`, `cross-rows-coding`, the relative rows) on the device, host twin first | `src/evolve/typed_vary.rs`, `typed_vary.wgsl` | the host twin equals `fuller::futhark_operators` on 20,000 genes a problem | an A/B against R1 | R1 |
+| P4 | phylu | `examples/futhark_fit.rs` and `evolve::futhark_run`: the flags of a `futhark_evolve` run (problem, regime R or P, start, fitness, quality weight, cliff, pairs, eval, backend, evaluations, minutes, random seed, program size, pump and fold beats) plus the island shape (pairs, intake, champion); the stream (kingdom `futhark_sig`, the evaluator's column names), `killme.trigger`, checkpoints, the ledger with the evaluator's columns, the hall of fame with the program text, `per_generation.tsv`, `series.tsv`, `report.tsv`, the chart; registered in phylu `tests/runner_standard.rs` | `examples/futhark_fit.rs`, `src/evolve/futhark_run.rs`, `tests/runner_standard.rs`, `experiments/README.md` | the runner-standard test (source markers); the card holds every flag | G3 | F3-F7, P2, P3 |
+
+**The GPU scripts, with what is expected before they run.**
+
+| script | measures | expected |
+|---|---|---|
+| G1 `g1_futhark_device.sh` (after P1) | the engine's device for each problem at its program size, 24 rows: init seconds, device memory, the walk's node count of every row against the host's expression | every row's node count equal; reduce to pathfinder well under 1 GB; kmeans 27.6 million words a row, 110 MB, about 2.6 GB for 24 rows on each of the store's two sides |
+| G2 `g2_two_devices.sh` (after F3, P1) | the evaluator's A/A noise floor on histogram (11 pairs) alone and with the engine's device made and idle; the resident sample over 3 k-means generations | the two floors within the spread of the A/A medians measured 2026-11-01; one upload in 3 generations, the rest resident hits |
+| G3 `g3_smoke.sh` (after P4) | histogram P, 3 generations, `--eval rust`; then `--resume` to 5; then a long run stopped by deleting `killme.trigger` | the stream, ledger, hall of fame, `per_generation.tsv` and `report.tsv` written; the resume continues at generation 4; the stop is `killed` |
+
+### 5a.4 The regression: phylu reproduces the deprecated runner
+
+Not bit-identical runs: ALPS, the islands and the refill change the search. The comparison is on the measures, both
+runners on the same problem, fitness scheme, quality weight, reference program, cases, budget and `--eval rust`.
+
+1. **The plumbing, bit for bit (CPU, F2 and F3):** the same programs give the same HFF input vectors through the
+   runner and through the seam. Without it no run comparison means anything.
+2. **R1, histogram, regime P** (`futhark-slope4-qqs`, m = 8, 11 pairs, 2,000 evaluations, a 60-minute guard), random
+   seeds 1, 2, 3 on each runner: `futhark_evolve` (population 24) and `futhark_fit` (one pair, intake 16, champion 8,
+   the pump every 5 generations; open question 2). **R2, pathfinder**, the same. Then **R2b, histogram regime R**
+   from random (the slope check passed 2026-10-29), measuring the evaluations to the first exact program.
+3. **R3, k-means, the first runs with `futhark-kmeans-better`** (m = 3, ε = 0.005, 2 pairs, regime P from UltraDim's
+   kernels translated, 60 minutes): one run of the deprecated runner (no run of this scheme exists to compare with)
+   and one of phylu, the in-run A/A first (its quality inputs exactly 1/2, its speed floor written). Expected: the
+   reference program's angle is acos(3/4) = 0.7227 at every m (all inputs 1/2), d = 6 x (3 x 3 + 2) = 66; an
+   individual below 0.7227 is better than the reference program on the flat vector, and its per-case inputs say on
+   which measure.
+4. **R4, a7, regime P** on phylu (replacing `shape_fit`), with the scheme `futhark-slope4-qqs`.
+
+The table each comparison fills, one row a measure, each with its units and conditions, a column a runner (the three
+random seeds) and the difference in percent: the best's HFF angle (rad) and percentile F(θ) with d; exact cases of
+train, held and test; the champion's 11-pair re-time median against the published program and its speed verdict
+against the A/A medians; the champion exact on the timing input; evaluations to the first exact program (R2b);
+evaluations a second; the learning curve (`per_generation.tsv`). For k-means: the per-case quality inputs (inertia,
+percentile, convergence) and speed inputs of the best, and the test case's.
+
+**phylu reproduces the deprecated runner** when the plumbing test holds and, on each problem, every measure is
+produced by both runners and phylu's three runs lie within the deprecated runner's range or better. A worse result is
+reported as measured and blocks X1 until its cause is found and fixed in our software; the engine is never tuned
+toward the old runner's numbers.
+
+### 5a.5 When `futhark_evolve` and the `futhark_search` loop are removed
+
+X1, one commit in each repo, when: P4 is registered in phylu's runner-standard test; Andrew has read the R1, R2 and
+R2b tables; R3 and R4 have run on phylu; `futhark_measure` covers every non-evolution command (F8). Then:
+`examples/futhark_evolve.rs`, `examples/futhark_a7_evolve.rs` and `futhark_search::evolve` with its `Config` go; phylu's
+`shape_typed` and `shape_fit` go with them, and with them `futhark_search::Scorer`, `fitness_of` and `product_twice`
+(A7 runs through the evaluator); the `shapes` fitness schemes stay registered (the rule of `docs/FITNESS_SCHEMES.md`),
+their runner column naming the commit that last ran them. `docs/CHECKLIST_futhark_problem.md`'s cells move to
+`futhark_fit`, `docs/STANDARD_runners.md`'s inventory, `docs/FITNESS_SCHEMES.md`'s runners table, both
+`tests/runner_standard.rs` and `CLAUDE.md` (by Andrew or on his word) follow. A past experiment is reproduced at its
+own commit, as listed in `docs/FITNESS_SCHEMES.md`.
+
+### 5a.6 Open questions for Andrew
+
+1. **k-means on the device.** At N = 192 a gene is 27.6 million words (110 MB); 24 individuals are about 2.6 GB a
+   side of the store, 5.3 GB with both sides, before the variation's tables. G1 measures it. If the device cannot
+   hold it: a smaller population, or a smaller N (the reference program has 131 functions)?
+2. **The island shape at a Futhark budget** (2,000 evaluations, about 80 generations of 24): proposed one pair,
+   intake 16 and champion 8, the pump every 5 generations, the engine's default cohorts.
+3. **The row operators and the ring walk** are fuller host operators; the device has its own per-type inversion, IS,
+   RIS and crossover. Proposed: the regression on the device's operators plus marriage, then P3b as an A/B.
+4. **Regime C** (random search, no selection) is a control, not evolution: proposed to keep it in fuller as a
+   measurement (`futhark_measure`). Within the ruling?
