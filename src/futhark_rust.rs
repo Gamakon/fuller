@@ -840,8 +840,8 @@ mod tests {
         let c = crate::futhark_sig::compile_c(&src, &base.join("c")).expect("futhark c");
         let (dylib, _) = compile_module(&src, &base.join("rust"), &rt, "large_grid", Duration::from_secs(600)).expect("the rust-wgpu compile");
         for (entry, n, want_sum) in [("main", 1u64 << 24, Some(50_331_645i64)), ("main", 1 << 25, Some(100_663_291)), ("mapped", 1 << 24, None), ("mapped", 1 << 25, None)] {
-            // Futhark's binary format for an i64 scalar: 'b', version 2, 0 dimensions, the type "  i64", the value.
-            let mut input = b"b\x02\x00  i64".to_vec();
+            // Futhark's binary format for an i64 scalar: 'b', version 2, 0 dimensions, the 4-byte type " i64", the value.
+            let mut input = b"b\x02\x00 i64".to_vec();
             input.extend_from_slice(&n.to_le_bytes());
             let want = crate::futhark_exec::output_with_timeout_bytes(Command::new(&c).arg("-b").arg("-e").arg(entry), Duration::from_secs(300), Some(&input)).expect("the C run").stdout;
             let raw = session.run(&dylib, &format!("o {entry}\n"), &[], 0, 0, Some(&input)).expect("the rust path's run");
