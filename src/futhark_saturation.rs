@@ -52,8 +52,11 @@ pub const SHAPE_DATATYPE: &str = include_str!("../kingdoms/futhark/egraph.dataty
 /// The generated ruleset.
 pub const SHAPE_RULESET: &str = include_str!("../kingdoms/futhark/egraph.rules");
 
+/// The name of the generated ruleset (the `(ruleset ...)` of `egraph.rules`).
+pub const SHAPE_RULESET_NAME: &str = "futhark_shape";
+
 /// The generated bridge: the row name, its constructor, and its sort.
-const SHAPE_ROWS: &str = include_str!("../kingdoms/futhark/egraph.rows");
+pub const SHAPE_ROWS: &str = include_str!("../kingdoms/futhark/egraph.rows");
 
 /// The generated bridge: the class and its sort.
 const SHAPE_SORTS: &str = include_str!("../kingdoms/futhark/egraph.sorts");
@@ -217,7 +220,7 @@ pub fn to_tree(termdag: &TermDag, id: TermId, kingdom: &FutharkKingdom, bridge: 
 /// The schedule is bounded: a rewrite that stopped shrinking would otherwise
 /// hang the never-raise API with no cap.
 pub fn saturate(term: &str, iters: u32) -> Result<(EGraph, ArcSort, Value), String> {
-    saturate_with(term, SHAPE_RULESET, &["futhark_shape"], iters)
+    saturate_with(term, SHAPE_RULESET, &[SHAPE_RULESET_NAME], iters)
 }
 
 /// The e-graph, saturated under a chosen ruleset.
@@ -389,7 +392,7 @@ impl EgraphKingdom for FoldEgraph<'_> {
         vec![SHAPE_DATATYPE, SHAPE_RULESET]
     }
     fn rulesets(&self) -> Vec<&str> {
-        vec!["futhark_shape"]
+        vec![SHAPE_RULESET_NAME]
     }
     fn import(&self, tree: &Tree) -> Result<String, String> {
         import(tree, self.kingdom, self.bridge)

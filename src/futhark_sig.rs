@@ -30,6 +30,7 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{EGraph, Term, TermDag, TermId};
 
+use crate::futhark_interpreter::{row2_fn, row_fn, Row2Fn, RowFn};
 use crate::futhark_table::{FutharkKind, FutharkKingdom, GeneRng};
 use crate::futhark_view::{var_name, Ctx, Shape, View as TableView, ViewSpec};
 use crate::geneframe::Ty;
@@ -131,6 +132,24 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
             let (rows, cols) = (PATHFINDER_TIMING_ROWS, n / PATHFINDER_TIMING_ROWS);
             let walls = Array::i32s(vec![rows, cols], (0..rows * cols).map(|_| (rng.next_u64() % 10) as i32).collect());
             Ok(Some(write_binary(&[&walls])))
+        }
+        // A7: the interface's nine matrices at n = m = p = `timing_n`, in the signature's order, values uniform in
+        // [-8, 8) (multiples of 2^-20) with the first of every matrix `-0.0`.
+        "a7" => {
+            let sig = signature(&p.instance)?;
+            let mats: Vec<Array> = sig
+                .inputs
+                .iter()
+                .map(|q| {
+                    let cells = n.pow(q.dims.len() as u32);
+                    let mut data: Vec<f32> = (0..cells).map(|_| ((rng.next_u64() >> 40) as f32) / 16_777_216.0 * 16.0 - 8.0).collect();
+                    if let Some(first) = data.first_mut() {
+                        *first = -0.0;
+                    }
+                    Array::f32s(vec![n; q.dims.len()], data)
+                })
+                .collect();
+            Ok(Some(write_binary(&mats.iter().collect::<Vec<_>>())))
         }
         other => Err(format!("no timing input recipe for {other}")),
     }
@@ -252,6 +271,51 @@ pub const KMEANS_PROBLEM: Problem = Problem {
 /// `let`), so the i32 benchmarks' 32 cannot hold it; 96 holds both programs with a third to spare.
 pub const KMEANS_PROGRAM_SIZE: usize = 96;
 
+/// A7, THE MATRIX KINGDOM AS A PROBLEM OF THE ONE RUNNER (`docs/PLAN_futhark_kingdom.md`, step 4; the product
+/// decision in `docs/PLAN_futhark_product.md`): the master's matrix family over the roles `n`, `m`, `p`, rooted at
+/// `[n][p]` (`kingdoms/futhark/view.tsv`, the same view `FutharkKingdom::load` and the deprecated
+/// `examples/futhark_a7_evolve.rs` load). Its signature is the interface's nine matrices, one a class, in the view's
+/// class order (`m_n_n: [n][n]f32`, ... `m_p_p: [p][p]f32`), and its output `[n][p]f32`.
+pub const A7: Instance = Instance { name: "a7", spec: include_str!("../kingdoms/futhark/view.tsv") };
+
+/// A7's published program, the product of two matrices computed TWICE (once directly, once the transposed way) and the
+/// two added, as a gene. A matrix row is named by its argument classes (`matmul@mat.n.mxmat.m.p`) or its input class
+/// (`transpose@mat.n.m`, whose output is `mat.m.n`), so the s-expression names those rows in full ([`build`]).
+pub const A7_REFERENCE: &str = "(map2_rows fn.arr2_f32_arr_f32_arr_f32.add
+  (matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input)
+  (transpose@mat.p.n (matmul@mat.p.mxmat.m.n (transpose@mat.m.p mat.m.p.input) (transpose@mat.n.m mat.n.m.input))))";
+
+/// A7's winner (`docs/measurements/2026-10-27_futhark_shapes_A7.md`): the e-graph's transposed-product rule,
+/// `(Y' . X')' = X . Y`, rewrites the second operand into the first, and the compiler's CSE computes the product once.
+pub const A7_WINNER: &str = "(map2_rows fn.arr2_f32_arr_f32_arr_f32.add
+  (matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input)
+  (matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input))";
+
+/// A7's planted slowdown: the reference under a `map` of the identity row function, a traversal Futhark keeps and the
+/// e-graph's `map id = id` rule removes.
+pub const A7_PLANTED: &str = "(map_rows fn.arr_f32_arr_f32.id
+  (map2_rows fn.arr2_f32_arr_f32_arr_f32.add
+    (matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input)
+    (transpose@mat.p.n (matmul@mat.p.mxmat.m.n (transpose@mat.m.p mat.m.p.input) (transpose@mat.n.m mat.n.m.input)))))";
+
+pub const A7_PROBLEM: Problem = Problem {
+    name: "a7",
+    instance: A7,
+    reference: A7_REFERENCE,
+    yardstick: include_str!("../tests/corpus/futhark_problems/a7/yardstick.fut"),
+    planted: A7_PLANTED,
+    corpus: "tests/corpus/futhark_problems/a7",
+    timing_n: A7_TIMING_N,
+    program_size: DEFAULT_PROGRAM_SIZE,
+};
+
+/// The side of A7's timing input, every role: n = m = p = 256, so the two products are 2 x 256^3 multiply-adds and the
+/// traffic, not a GPU program's fixed overhead, is what the time measures (the product plan's 64^3 measurement had the
+/// reference's OpenCL kernel too big for the device; the webgpu backend is what this runner times). The values are
+/// uniform in [-8, 8) with the first of every matrix `-0.0`, as A7's correctness suite draws them
+/// (`futhark_search::input_set`).
+pub const A7_TIMING_N: usize = 256;
+
 /// The dimensions of k-means's timing input beside its `timing_n` points.
 pub const KMEANS_TIMING_D: usize = 256;
 pub const KMEANS_TIMING_K: usize = 1024;
@@ -276,9 +340,13 @@ pub fn problem(name: &str) -> Result<Problem, String> {
         "scan" => Ok(SCAN_PROBLEM),
         "histogram" => Ok(HISTOGRAM_PROBLEM),
         "kmeans" => Ok(KMEANS_PROBLEM),
-        other => Err(format!("no Futhark signature problem {other} (pathfinder, reduce, scan, histogram, kmeans)")),
+        "a7" => Ok(A7_PROBLEM),
+        other => Err(format!("no Futhark problem {other} ({})", PROBLEM_NAMES.join(", "))),
     }
 }
+
+/// Every problem of the runner, by name, in the order the checklist lists them (`docs/CHECKLIST_futhark_problem.md`).
+pub const PROBLEM_NAMES: [&str; 6] = ["reduce", "scan", "histogram", "pathfinder", "kmeans", "a7"];
 
 /// THE WORK BOUND FOR TIMING: a program whose [`Interp::work`] at the timing input's sizes is above it is not timed
 /// (no speed credit), on every evaluation path alike (`examples/futhark_evolve.rs`). 0.5 s a run at the rate measured
@@ -301,6 +369,18 @@ pub fn timing_work_cap(reference_work: u128) -> u128 {
 /// Load an instance's kingdom: its view's table.
 pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {
     inst.view()?.kingdom(&format!("Futhark Sig {}", inst.name))
+}
+
+/// THE STATIC COST of a program of the matrix kingdom (A7; `crate::futhark_cost`, the generator's `costs.tsv`: a
+/// polynomial in the roles): its traffic, allocations and serial depth at the given sizes. `None` for a kingdom with no
+/// cost table (the signature family). It is reported, and available as a speed input where a fitness scheme asks for it
+/// (the `shapes` schemes of `crate::futhark_search` do; the `futhark_sig` schemes time the GPU instead).
+pub fn static_cost(k: &FutharkKingdom, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Option<crate::futhark_cost::Score>, String> {
+    if !k.duals.iter().any(|d| d.slot == "mat") {
+        return Ok(None);
+    }
+    let table = crate::futhark_cost::CostTable::load(k)?;
+    Ok(Some(crate::futhark_cost::score_at(&crate::futhark_cost::program_cost(tree, k, &table)?, sizes)?))
 }
 
 // ---- the declared signature -------------------------------------------------------------------------------------
@@ -327,9 +407,37 @@ pub struct Signature {
     pub size_inputs: Vec<String>,
 }
 
-/// The signature of an instance, from its view's specification.
+/// The signature of an instance: a signature view's from its specification ([`signature_of`]), a matrix view's from
+/// its kingdom ([`matrix_signature`]).
 pub fn signature(inst: &Instance) -> Result<Signature, String> {
-    signature_of(&inst.view()?.spec).map_err(|e| format!("{}: {e}", inst.name))
+    let view = inst.view()?;
+    match view.spec.shape {
+        Shape::Signature => signature_of(&view.spec).map_err(|e| format!("{}: {e}", inst.name)),
+        Shape::Matrix => matrix_signature(&view.kingdom(inst.name)?, &view.spec).map_err(|e| format!("{}: {e}", inst.name)),
+    }
+}
+
+/// THE MATRIX VIEW'S SIGNATURE (A7): one input a matrix class, in the kingdom's class order, named by its input
+/// terminal's spelling (`m_n_m`, the Futhark variable the program binds) with the class's roles as its dimensions; the
+/// output the root class; the dims the specification's roles; depth 0 (the matrix family has no binders), no size inputs.
+pub fn matrix_signature(k: &FutharkKingdom, spec: &ViewSpec) -> Result<Signature, String> {
+    if spec.shape != Shape::Matrix {
+        return Err("the specification is not a matrix view".into());
+    }
+    let elem = spec.element.clone();
+    let mut inputs = Vec::new();
+    for d in k.duals.iter().filter(|d| d.slot == "mat") {
+        let ty = k.ty(&d.dual).ok_or_else(|| format!("our software has a bug: the dual {} has no type", d.dual))?;
+        let term = k.rows.iter().find(|r| r.kind == FutharkKind::Terminal && r.output == ty).ok_or_else(|| format!("the matrix class {} has no input terminal", d.dual))?;
+        inputs.push(Param { name: term.spelling.clone(), elem: elem.clone(), dims: d.form.split('.').map(str::to_string).collect() });
+    }
+    let root = k.roots();
+    let [root] = root.as_slice() else { return Err(format!("the matrix view has {} roots, wants 1", root.len())) };
+    let root = k.dual(*root).ok_or("our software has a bug: the root has no dual")?;
+    if spec.roles.is_empty() {
+        return Err("the matrix specification names no roles".into());
+    }
+    Ok(Signature { inputs, output: Param { name: "main".into(), elem, dims: root.form.split('.').map(str::to_string).collect() }, depth: 0, dims: spec.roles.clone(), size_inputs: Vec::new() })
 }
 
 /// The signature a view specification declares: its inputs (a size input as an `i32` scalar), its output, its depth
@@ -608,26 +716,54 @@ pub fn program(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<Strin
     program_named(k, sig, tree, "main")
 }
 
-/// [`program`] with its entry point named `entry` (a member of a batch program, `crate::futhark_batch`): the text is
-/// [`program`]'s but for the name.
+/// [`program`] with its entry point named `entry`: the text is [`program`]'s but for the name.
 pub fn program_named(k: &FutharkKingdom, sig: &Signature, tree: &Tree, entry: &str) -> Result<String, String> {
+    Ok(format!("{}{}", prelude(k), program_named_bare(k, sig, tree, entry)?))
+}
+
+/// THE PRELUDE a program of this kingdom needs before its entry: the `matmul` helper
+/// (`crate::futhark::MATMUL_HELPER`) when a row spells `matmul` (the matrix family: Futhark 0.28.1 has no `matmul`),
+/// else nothing. A batch program (`crate::futhark_batch`) holds many programs of one kingdom and emits the prelude
+/// ONCE, before their bare texts: a definition repeated is a Futhark error.
+pub fn prelude(k: &FutharkKingdom) -> String {
+    if k.rows.iter().any(|r| r.spelling.starts_with("matmul ")) {
+        format!("{}\n", crate::futhark::MATMUL_HELPER)
+    } else {
+        String::new()
+    }
+}
+
+/// The entry point's parameter list and result type (`[n][m] (xs: [n][m]i32) : [m]i32`): the declared signature.
+fn entry_header(sig: &Signature) -> String {
+    let mut s = sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>();
+    for p in &sig.inputs {
+        s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
+    }
+    format!("{s} : {}", sig.futhark_type(&sig.output, ""))
+}
+
+/// The body of a program: the size inputs rebound as sizes, the zero array of every dimension a row spells
+/// (`zeros_D`, the signature family's `zeros` rows; the matrix family spells none), then the rendered tree.
+fn program_body(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<String, String> {
     let root = k.rows.get(tree.symbol as usize).ok_or("the root is not a row")?;
     if !k.dual(root.output).is_some_and(|d| d.root) {
         return Err(format!("the root {} is not the declared output", root.name));
     }
-    let mut s = format!("entry {entry} {} ", sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
-    for p in &sig.inputs {
-        s.push_str(&format!("({}: {}) ", p.name, sig.futhark_type(p, "")));
-    }
-    s.push_str(&format!(": {} =\n", sig.futhark_type(&sig.output, "")));
+    let mut s = String::new();
     for d in &sig.size_inputs {
         s.push_str(&format!("  let {d} = i64.i32 {d}\n"));
     }
-    for d in &sig.dims {
+    for d in sig.dims.iter().filter(|d| k.rows.iter().any(|r| r.spelling == format!("zeros_{d}"))) {
         s.push_str(&format!("  let zeros_{d} = replicate {d} 0{}\n", sig.output.elem));
     }
-    s.push_str(&format!("  in {}\n", k.render(tree)?));
+    // A body with no `let` (the matrix family) is the expression alone.
+    s.push_str(&format!("  {}{}\n", if s.is_empty() { "" } else { "in " }, k.render(tree)?));
     Ok(s)
+}
+
+/// [`program_named`] WITHOUT the kingdom's [`prelude`]: a member of a batch program, which emits the prelude once.
+pub fn program_named_bare(k: &FutharkKingdom, sig: &Signature, tree: &Tree, entry: &str) -> Result<String, String> {
+    Ok(format!("entry {entry} {} =\n{}", entry_header(sig), program_body(k, sig, tree)?))
 }
 
 /// An entry point `entry` with the declared signature that returns `callee` applied to its parameters, in order (its
@@ -654,18 +790,17 @@ pub fn program_cases(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize)
 /// [`program_cases`] with its function named `kernel` and its entry point `entry` (a member of a batch program,
 /// `crate::futhark_batch`): the text is [`program_cases`]'s but for the two names.
 pub fn program_cases_named(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize, kernel: &str, entry: &str) -> Result<String, String> {
+    Ok(format!("{}{}", prelude(k), program_cases_named_bare(k, sig, tree, n, kernel, entry)?))
+}
+
+/// [`program_cases_named`] WITHOUT the kingdom's [`prelude`]: a member of a batch program, which emits the prelude once.
+pub fn program_cases_named_bare(k: &FutharkKingdom, sig: &Signature, tree: &Tree, n: usize, kernel: &str, entry: &str) -> Result<String, String> {
     if n == 0 {
         return Err("a quality program of no cases".into());
     }
-    let single = program(k, sig, tree)?;
-    let body = single.split_once("=\n").map(|(_, b)| b).ok_or("our software has a bug: the program has no body")?;
+    let body = program_body(k, sig, tree)?;
     let ty = |p: &Param, i: usize| sig.futhark_type(p, &i.to_string());
-    let mut s = format!("#[noinline]\ndef {kernel} ");
-    s.push_str(&sig.shape_dims().map(|d| format!("[{d}]")).collect::<String>());
-    for p in &sig.inputs {
-        s.push_str(&format!(" ({}: {})", p.name, sig.futhark_type(p, "")));
-    }
-    s.push_str(&format!(" : {} =\n{body}\nentry {entry} ", sig.futhark_type(&sig.output, "")));
+    let mut s = format!("#[noinline]\ndef {kernel} {} =\n{body}\nentry {entry} ", entry_header(sig));
     for i in 0..n {
         s.push_str(&sig.shape_dims().map(|d| format!("[{d}{i}]")).collect::<String>());
     }
@@ -738,6 +873,19 @@ enum Op {
     Zeros(usize),
     /// A loop over a dimension binding an index slot and a state slot; `from1` runs its counter over 1 .. D-1.
     Loop { dim: usize, index: usize, state: usize, from1: bool },
+    /// THE MATRIX FAMILY (A7). `transpose` of a rank-2 array.
+    Transpose,
+    /// The `matmul` helper: a result cell is the left fold from `0.0` of the products of a row of the first and a
+    /// column of the second, in order (`crate::futhark_interpreter::matmul`).
+    Matmul,
+    /// `map f A`: a row function over the rows of a matrix.
+    MapRows,
+    /// `map2 f A B`: a binary row function over the pairs of rows of two matrices of one class.
+    Map2Rows,
+    /// A row function as a value (the matrix family's function classes).
+    RowFn(RowFn),
+    /// A binary row function as a value.
+    Row2Fn(Row2Fn),
 }
 
 /// The elementwise operations of `map2`.
@@ -978,6 +1126,10 @@ enum Val {
     S(Num),
     I(i64),
     A(View),
+    /// A row function (the matrix family).
+    F(RowFn),
+    /// A binary row function (the matrix family).
+    F2(Row2Fn),
 }
 
 /// The bound variables by slot (class and ordinal; a binder sets its slot and restores the outer value after).
@@ -1085,6 +1237,15 @@ impl<'a> Interp<'a> {
                 }
                 _ if r.kind == FutharkKind::Terminal && state_var.contains_key(op) => Op::State(state_var[op]),
                 _ if r.kind == FutharkKind::Terminal && index_var.contains_key(op) => Op::Index(index_var[op]),
+                // The matrix family (A7): its operators, its row functions (function rows of no arguments, and the
+                // constant terminals), and its inputs, named by their spelling (`mat.n.m.input` spells `m_n_m`).
+                "transpose" => Op::Transpose,
+                "matmul" => Op::Matmul,
+                "map_rows" => Op::MapRows,
+                "map2_rows" => Op::Map2Rows,
+                _ if row_fn(&r.name).is_some() => Op::RowFn(row_fn(&r.name).ok_or("a row function")?),
+                _ if row2_fn(&r.name).is_some() => Op::Row2Fn(row2_fn(&r.name).ok_or("a binary row function")?),
+                _ if r.kind == FutharkKind::Terminal && sig.inputs.iter().any(|p| p.name == r.spelling) => Op::Input(sig.inputs.iter().position(|p| p.name == r.spelling).ok_or("an input")?),
                 _ => {
                     if let Some(i) = sig.inputs.iter().position(|p| p.name == op) {
                         Op::Input(i)
@@ -1115,6 +1276,7 @@ impl<'a> Interp<'a> {
             Val::A(v) => Ok(Array { dims: v.dims.clone(), elem: self.elem, data: v.slice().to_vec() }),
             Val::S(x) => Ok(Array { dims: vec![], elem: self.elem, data: vec![x.word()] }),
             Val::I(_) => Err("our software has a bug: a program whose value is an index".into()),
+            Val::F(_) | Val::F2(_) => Err("our software has a bug: a program whose value is a row function".into()),
         }
     }
 
@@ -1331,6 +1493,78 @@ impl<'a> Interp<'a> {
                 env.state[slot] = outer_state;
                 state
             }
+            Op::RowFn(f) => Val::F(f),
+            Op::Row2Fn(f) => Val::F2(f),
+            Op::Transpose => {
+                let m = self.a(kid(0)?, env)?;
+                let [rows, cols] = m.dims[..] else { return Err(format!("our software has a bug: a transpose of {:?}", m.dims)) };
+                let src = m.slice();
+                let mut out = vec![0u32; rows * cols];
+                for i in 0..rows {
+                    for j in 0..cols {
+                        out[j * rows + i] = src[i * cols + j];
+                    }
+                }
+                Val::A(View::of(out, vec![cols, rows]))
+            }
+            Op::Matmul => {
+                // The helper's arithmetic (`crate::futhark_interpreter::matmul`): `acc + a * b` in f32 from 0.0, a
+                // multiply then an add, in order; the compiled program is a left fold too (measured bit-identical).
+                let a = self.a(kid(0)?, env)?;
+                let b = self.a(kid(1)?, env)?;
+                let ([n, m], [m2, p]) = (&a.dims[..], &b.dims[..]) else { return Err(format!("our software has a bug: a matmul of {:?} and {:?}", a.dims, b.dims)) };
+                if m != m2 {
+                    return Err(format!("our software has a bug: a matmul whose inner dimensions are {m} and {m2}"));
+                }
+                let (n, m, p) = (*n, *m, *p);
+                let (sa, sb) = (a.slice(), b.slice());
+                let mut out = Vec::with_capacity(n * p);
+                for i in 0..n {
+                    for j in 0..p {
+                        let mut acc = 0.0f32;
+                        for kk in 0..m {
+                            acc += f32::from_bits(sa[i * m + kk]) * f32::from_bits(sb[kk * p + j]);
+                        }
+                        out.push(acc.to_bits());
+                    }
+                }
+                Val::A(View::of(out, vec![n, p]))
+            }
+            Op::MapRows => {
+                let f = match self.at(kid(0)?, env)? {
+                    Val::F(f) => f,
+                    other => return Err(format!("our software has a bug: a row function slot holds {other:?}")),
+                };
+                let m = self.a(kid(1)?, env)?;
+                let [rows, cols] = m.dims[..] else { return Err(format!("our software has a bug: a map over the rows of {:?}", m.dims)) };
+                let src = m.slice();
+                let mut out = Vec::with_capacity(rows * cols);
+                for i in 0..rows {
+                    let row: Vec<f32> = src[i * cols..(i + 1) * cols].iter().map(|w| f32::from_bits(*w)).collect();
+                    out.extend(f.apply(&row).into_iter().map(f32::to_bits));
+                }
+                Val::A(View::of(out, vec![rows, cols]))
+            }
+            Op::Map2Rows => {
+                let f = match self.at(kid(0)?, env)? {
+                    Val::F2(f) => f,
+                    other => return Err(format!("our software has a bug: a binary row function slot holds {other:?}")),
+                };
+                let a = self.a(kid(1)?, env)?;
+                let b = self.a(kid(2)?, env)?;
+                if a.dims != b.dims || a.dims.len() != 2 {
+                    return Err(format!("our software has a bug: a map2 over the rows of {:?} and {:?}", a.dims, b.dims));
+                }
+                let (rows, cols) = (a.dims[0], a.dims[1]);
+                let (sa, sb) = (a.slice(), b.slice());
+                let mut out = Vec::with_capacity(rows * cols);
+                for i in 0..rows {
+                    let x: Vec<f32> = sa[i * cols..(i + 1) * cols].iter().map(|w| f32::from_bits(*w)).collect();
+                    let y: Vec<f32> = sb[i * cols..(i + 1) * cols].iter().map(|w| f32::from_bits(*w)).collect();
+                    out.extend(f.apply(&x, &y)?.into_iter().map(f32::to_bits));
+                }
+                Val::A(View::of(out, vec![rows, cols]))
+            }
         })
     }
 
@@ -1342,11 +1576,25 @@ impl<'a> Interp<'a> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
         fn walk(me: &Interp<'_>, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
             let op = me.ops[t.symbol as usize];
+            // The cells of a node's matrix class (`mat.X.Y`: the product of its roles' sizes).
+            let cells = |node: &Tree| -> Result<u128, String> {
+                let d = me.k.dual(me.k.rows[node.symbol as usize].output).ok_or("a row with no dual")?;
+                d.form.split('.').map(|r| me.sig.dims.iter().position(|x| x == r).map(|i| n[i]).ok_or_else(|| format!("the role {r} has no size"))).product()
+            };
             let (body_mult, own) = match op {
                 Op::Tab(d, _) | Op::TabRows(d, _) => (n[d], 1),
                 Op::Loop { dim, from1, .. } => (n[dim].saturating_sub(u128::from(from1)), 1),
                 Op::Replicate(d) | Op::Hist(_, d) => (1, 1 + n[d]),
                 Op::HistRows(kd, dd) => (1, 1 + n[kd] * n[dd]),
+                // The matrix family: a traversal costs its output's cells; the product its n x m x p multiply-adds (the
+                // output's cells times the inner role, the first argument's second role).
+                Op::Transpose | Op::MapRows | Op::Map2Rows => (1, 1 + cells(t)?),
+                Op::Matmul => {
+                    let a = t.kids.first().ok_or("a matmul with no first argument")?;
+                    let inner = me.k.dual(me.k.rows[a.symbol as usize].output).ok_or("a row with no dual")?.form.split('.').nth(1).ok_or("a matmul of a non-matrix")?.to_string();
+                    let m = me.sig.dims.iter().position(|x| *x == inner).map(|i| n[i]).ok_or_else(|| format!("the role {inner} has no size"))?;
+                    (1, 1 + cells(t)? * m)
+                }
                 _ => (1, 1),
             };
             let mut sum = mult * own;
@@ -1436,7 +1684,18 @@ pub fn build(k: &FutharkKingdom, text: &str) -> Result<Tree, String> {
 
 fn build_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty: Ty) -> Result<Tree, String> {
     let dual = k.dual(ty).ok_or("a slot of no dual")?;
-    let row = |op: &str| -> Result<u32, String> { by_name.get(format!("{op}@{}", dual.dual).as_str()).copied().ok_or_else(|| format!("the kingdom has no row {op}@{}", dual.dual)) };
+    // `op@T` for a slot of dual `T`; else `op` is a row's FULL name whose output is `T` (the matrix family names a
+    // row by its arguments or its input class: `matmul@mat.n.mxmat.m.p`, `transpose@mat.n.m`, `mat.n.m.input`).
+    let row = |op: &str| -> Result<u32, String> {
+        if let Some(s) = by_name.get(format!("{op}@{}", dual.dual).as_str()) {
+            return Ok(*s);
+        }
+        match by_name.get(op) {
+            Some(s) if k.rows[*s as usize].output == ty => Ok(*s),
+            Some(s) => Err(format!("the row {op} is of {}, not {}", k.dual(k.rows[*s as usize].output).map_or("?", |d| d.dual.as_str()), dual.dual)),
+            None => Err(format!("the kingdom has no row {op}@{}", dual.dual)),
+        }
+    };
     match e {
         Sexp::Atom(a) => {
             // A literal: a number (an integer or, in an f32 pool, a decimal), matched by value against the pool.
@@ -1521,7 +1780,13 @@ fn stack_named_at(k: &FutharkKingdom, by_name: &HashMap<&str, u32>, e: &Sexp, ty
 /// A tree as the builder's s-expression (the inverse of [`build`]): for the hall of fame and the reports.
 pub fn sexp(k: &FutharkKingdom, t: &Tree) -> String {
     let row = &k.rows[t.symbol as usize];
-    let op = row.name.split_once('@').map_or(row.name.as_str(), |(o, _)| o);
+    // The head is `op` when the row is `op@<its output's dual>` (every row of a signature view), else the row's full
+    // name (the matrix family), which [`build`] reads back.
+    let out = k.dual(row.output).map_or("", |d| d.dual.as_str());
+    let op = match row.name.split_once('@') {
+        Some((o, d)) if d == out => o,
+        _ => row.name.as_str(),
+    };
     if row.kind == FutharkKind::Const {
         let lit = k.dual(row.output).and_then(|d| t.const_index.and_then(|i| d.literals.get(i as usize)).map(|l| l.trim_end_matches(d.slot.as_str()).to_string()));
         return lit.unwrap_or_else(|| "?".into());
@@ -2010,15 +2275,25 @@ pub struct Bridge {
     /// The view's e-graph datatype and ruleset, the programs the mapping is of.
     pub datatype: &'static str,
     pub rules: &'static str,
+    /// The name of the ruleset the rules are in ([`RULESET`] for a signature view; the matrix view's generated
+    /// `futhark_shape`).
+    pub ruleset: &'static str,
 }
 
 impl Bridge {
-    /// Read an instance's mapping; a repeated row or constructor is an error (the generator's witness refuses one).
+    /// Read an instance's mapping; a repeated row or constructor is an error (the generator's witness refuses one). A
+    /// signature view's e-graph is the view's own; the matrix view's (A7) is the generator's
+    /// (`kingdoms/futhark/egraph.*`, `crate::futhark_saturation`), written from the same view and kept there by
+    /// `gen_tables.py --check`.
     pub fn load(inst: &Instance) -> Result<Bridge, String> {
         let view = inst.view()?;
+        let (rows, datatype, rules, ruleset): (&'static str, &'static str, &'static str, &'static str) = match view.spec.shape {
+            Shape::Signature => (&view.egraph_rows, &view.datatype, &view.rules, RULESET),
+            Shape::Matrix => (crate::futhark_saturation::SHAPE_ROWS, crate::futhark_saturation::SHAPE_DATATYPE, crate::futhark_saturation::SHAPE_RULESET, crate::futhark_saturation::SHAPE_RULESET_NAME),
+        };
         let mut ctor_of_row = BTreeMap::new();
         let mut row_of_ctor = BTreeMap::new();
-        for line in view.egraph_rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        for line in rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
             let f: Vec<&str> = line.split('\t').collect();
             if f.len() != 3 {
                 return Err(format!("the mapping line {line:?} is malformed"));
@@ -2027,7 +2302,7 @@ impl Bridge {
                 return Err(format!("the mapping line {line:?} repeats a row or a constructor"));
             }
         }
-        Ok(Bridge { ctor_of_row, row_of_ctor, datatype: &view.datatype, rules: &view.rules })
+        Ok(Bridge { ctor_of_row, row_of_ctor, datatype, rules, ruleset })
     }
 }
 
@@ -2066,13 +2341,12 @@ fn term_cost(termdag: &TermDag, id: TermId) -> u64 {
 /// class (HFF extraction, `members` a class), up to `n` distinct trees other than the tree itself, smallest first and
 /// then by their rendered text, so the order is deterministic. Every rule is an identity of wrapping `i32`
 /// arithmetic and of `min`/`max`, so every variant computes the same values.
-pub fn variants(inst: &Instance, k: &FutharkKingdom, bridge: &Bridge, tree: &Tree, iters: u32, members: usize, n: usize) -> Result<Vec<Tree>, String> {
+pub fn variants(k: &FutharkKingdom, bridge: &Bridge, tree: &Tree, iters: u32, members: usize, n: usize) -> Result<Vec<Tree>, String> {
     let term = import(tree, k, bridge)?;
-    let view = inst.view()?;
     let mut egraph = EGraph::default();
-    egraph.parse_and_run_program(None, &view.datatype).map_err(|e| format!("the datatype does not load: {e}"))?;
-    egraph.parse_and_run_program(None, &view.rules).map_err(|e| format!("the ruleset does not load: {e}"))?;
-    egraph.parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule (repeat {iters} (run {RULESET})))")).map_err(|e| format!("the term does not load: {e}"))?;
+    egraph.parse_and_run_program(None, bridge.datatype).map_err(|e| format!("the datatype does not load: {e}"))?;
+    egraph.parse_and_run_program(None, bridge.rules).map_err(|e| format!("the ruleset does not load: {e}"))?;
+    egraph.parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule (repeat {iters} (run {})))", bridge.ruleset)).map_err(|e| format!("the term does not load: {e}"))?;
     let (sort, value) = egraph.eval_expr(&exprs::var("__root")).map_err(|e| format!("the root does not evaluate: {e}"))?;
     let mut termdag = TermDag::default();
     let score = |td: &TermDag, t: TermId| term_cost(td, t) as f64;
@@ -2095,9 +2369,8 @@ pub fn variants(inst: &Instance, k: &FutharkKingdom, bridge: &Bridge, tree: &Tre
     Ok(out.into_iter().map(|(_, _, t)| t).collect())
 }
 
-/// The instance's e-graph as the saturated fold needs it.
+/// The instance's e-graph as the saturated fold needs it: the bridge carries the view's datatype, rules and ruleset.
 pub struct FoldEgraph<'a> {
-    pub inst: &'a Instance,
     pub kingdom: &'a FutharkKingdom,
     pub bridge: &'a Bridge,
 }
@@ -2107,7 +2380,7 @@ impl EgraphKingdom for FoldEgraph<'_> {
         vec![self.bridge.datatype, self.bridge.rules]
     }
     fn rulesets(&self) -> Vec<&str> {
-        vec![RULESET]
+        vec![self.bridge.ruleset]
     }
     fn import(&self, tree: &Tree) -> Result<String, String> {
         import(tree, self.kingdom, self.bridge)
@@ -2133,3 +2406,7 @@ mod tests_view;
 mod tests_pool;
 #[cfg(test)]
 mod tests_kmeans;
+#[cfg(test)]
+mod tests_a7;
+#[cfg(test)]
+mod tests_checklist;

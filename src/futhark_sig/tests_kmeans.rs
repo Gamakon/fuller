@@ -257,7 +257,7 @@ fn the_kmeans_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() 
     let wt = interp.work(&reference, &timing).unwrap();
     eprintln!("kmeans work: reference {wr}, planted {wp} on {sizes:?}; the reference at the timing input {wt} (the bound {TIMING_WORK_CAP})");
     let bridge = Bridge::load(&KMEANS).unwrap();
-    let vs = variants(&KMEANS, &k, &bridge, &planted, 3, 256, 64).unwrap();
+    let vs = variants(&k, &bridge, &planted, 3, 256, 64).unwrap();
     assert!(!vs.is_empty(), "no variants");
     for v in &vs {
         for c in &cases {

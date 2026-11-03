@@ -5,10 +5,11 @@
 //! generated C and Futhark's runtime, the link) and runs it in a process of its own (the device's set-up, Metal's
 //! pipeline compiles, the runs). Here a batch of programs is one Futhark source, each program its own entry point:
 //!
-//! * a member's QUALITY entry `q<i>` is [`program_cases_named`]'s text (the program as a `#[noinline]` function
+//! * the kingdom's prelude (`futhark_sig::prelude`, the matrix family's `matmul` helper) once, then
+//! * a member's QUALITY entry `q<i>` is [`program_cases_named_bare`]'s text (the program as a `#[noinline]` function
 //!   `kq<i>` and an entry applying it to every stored case), the per-candidate quality program but for its two names,
 //!   so the compiler sees the same program;
-//! * a member's TIMED entry `t<i>` is [`program_named`]'s text, the plain program with the declared signature, the
+//! * a member's TIMED entry `t<i>` is [`program_named_bare`]'s text, the plain program with the declared signature, the
 //!   per-candidate timed program but for its name;
 //! * the published program, when anything is timed against it, is the entry `yard` (its own text, its `main` so
 //!   named), placed last so its own definitions cannot shadow a member's names.
@@ -38,7 +39,7 @@ use std::time::Duration;
 
 use crate::futhark_exec::output_with_timeout_bytes;
 use crate::futhark_table::FutharkKingdom;
-use crate::futhark_sig::{entry_calling, program_cases_named, program_named, read_binary, Array, Signature};
+use crate::futhark_sig::{entry_calling, prelude, program_cases_named_bare, program_named_bare, read_binary, Array, Signature};
 use crate::futhark_wgpu_host::{compile_library_prebuilt, compile_timeout, run_timeout, unix_ns, CompileStages, DriverOf, RunStages, ShimReport};
 use crate::typed_gep::Tree;
 
@@ -677,10 +678,19 @@ impl<'a> Host<'a> {
         self.sig.inputs.iter().map(|p| p.dims.len()).collect()
     }
 
+    /// The Futhark source of a batch of every member, as [`Host::run`] would compile it (for a check of the text).
+    pub fn batch_source(&self, members: &[Member]) -> Result<String, String> {
+        self.source(members, &(0..members.len()).collect::<Vec<_>>())
+    }
+
     /// The Futhark source of the members `idx` (their entries, then the published program's when one of them is timed
     /// against it).
     fn source(&self, members: &[Member], idx: &[usize]) -> Result<String, String> {
         let mut s = format!("-- a batch of {} programs (fuller::futhark_batch)\n", idx.len());
+        // The kingdom's prelude (`futhark_sig::prelude`: the matrix family's `matmul` helper) ONCE, before every
+        // member's bare text; a definition repeated is a Futhark error.
+        let prelude = prelude(self.k);
+        s.push_str(&prelude);
         let mut yard = false;
         for &i in idx {
             let m = &members[i];
@@ -690,11 +700,11 @@ impl<'a> Host<'a> {
             match m.program {
                 Program::Tree(t) => {
                     if quality {
-                        s.push_str(&program_cases_named(self.k, self.sig, t, self.n_cases, &format!("kq{i}"), &qname(i))?);
+                        s.push_str(&program_cases_named_bare(self.k, self.sig, t, self.n_cases, &format!("kq{i}"), &qname(i))?);
                         s.push('\n');
                     }
                     if timed {
-                        s.push_str(&program_named(self.k, self.sig, t, &tname(i))?);
+                        s.push_str(&program_named_bare(self.k, self.sig, t, &tname(i))?);
                         s.push('\n');
                     }
                 }
@@ -712,7 +722,15 @@ impl<'a> Host<'a> {
             }
         }
         if yard {
-            s.push_str(&rename_main(self.yardstick.as_deref().ok_or("a pair timed with no published program")?, YARD)?);
+            let text = self.yardstick.as_deref().ok_or("a pair timed with no published program")?;
+            if prelude.is_empty() {
+                s.push_str(&rename_main(text, YARD)?);
+            } else {
+                // The published program of a kingdom with a prelude defines the same helper itself (A7's yardstick
+                // has its own `def matmul`): in a module of its own, as the in-run A/A copy is, so the two cannot clash.
+                let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
+                s.push_str(&format!("module m{YARD} = {{\n{def}\n}}\n{}", entry_calling(self.sig, YARD, &format!("m{YARD}.main"))));
+            }
             s.push('\n');
         }
         Ok(s)

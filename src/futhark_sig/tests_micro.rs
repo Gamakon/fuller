@@ -210,7 +210,7 @@ fn the_micro_planted_slowdowns_are_equal_and_the_egraph_recovers_the_reference()
         let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
         assert!(wp > wr, "{}: planted {wp}, reference {wr}", p.name);
         let bridge = Bridge::load(&p.instance).unwrap();
-        let vs = variants(&p.instance, &k, &bridge, &planted, 3, 32, 64).unwrap();
+        let vs = variants(&k, &bridge, &planted, 3, 32, 64).unwrap();
         for v in &vs {
             for c in &cases {
                 assert_eq!(interp.eval(v, &c.inputs).unwrap(), c.output, "{}: the variant {} on {}", p.name, sexp(&k, v), c.name);

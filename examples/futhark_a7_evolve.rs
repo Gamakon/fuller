@@ -1,3 +1,9 @@
+//! DEPRECATED (step 4 of `docs/PLAN_futhark_kingdom.md`, 2026-11-03): A7 is a problem of the one runner,
+//! `futhark_evolve --problem a7` (`fuller::futhark_sig::A7_PROBLEM`), with the standard runner's machinery (a named
+//! `futhark_sig` fitness scheme, the stored cases, the operator mix, the slope check, the interleaved timing,
+//! `aa_gate.tsv`). This example and its loop (`fuller::futhark_search::evolve`) stay as they were, print a deprecation
+//! line, and keep their tests passing; phylu's `evolve::shape_typed` is built on the same loop's types.
+//!
 //! The Futhark kingdom's evolution loop, and what it wins.
 //!
 //! The kernel is the one the kingdom's vocabulary can make *expensive*:
@@ -157,6 +163,7 @@ fn layout_for(k: &FutharkKingdom, reference: &Tree) -> Result<(GeneLayout, usize
 }
 
 fn main() {
+    println!("# DEPRECATED: futhark_a7_evolve is A7 on its own loop; A7 is a problem of the one runner since 2026-11-03: cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem a7 --regime P --out DIR (docs/CHECKLIST_futhark_problem.md)");
     let mut generations = 8usize;
     let mut population = 32usize;
     let mut seed = 0x5EED_1234_ABCD_0010u64;

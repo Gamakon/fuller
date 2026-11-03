@@ -1,7 +1,10 @@
-//! THE GENERAL FUTHARK RUNNER: evolve a program for a published benchmark in the signature family of the shape
-//! kingdom (`fuller::futhark_sig`), from its stored cases alone (data in, the published program's exact outputs out;
-//! HFF 0 is exact). A new benchmark is a problem folder and a problem entry, never a new runner. The study it serves:
-//! `docs/STUDY_evolving_benchmarks.md`.
+//! THE GENERAL FUTHARK RUNNER: evolve a program for a published benchmark of the Futhark kingdom
+//! (`fuller::futhark_sig`: a problem is a view over the master table), from its stored cases alone (data in, the
+//! published program's exact outputs out; HFF 0 is exact). A new benchmark is a problem folder and a problem entry,
+//! never a new runner (`fuller::futhark_sig::PROBLEM_NAMES`: reduce, scan, histogram, pathfinder, kmeans, and since
+//! step 4 of `docs/PLAN_futhark_kingdom.md` A7, the matrix kingdom, `--problem a7`, which the deprecated
+//! `examples/futhark_a7_evolve.rs` ran on a loop of its own). What every problem gets: `docs/CHECKLIST_futhark_problem.md`.
+//! The study it serves: `docs/STUDY_evolving_benchmarks.md`.
 //!
 //!   cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem pathfinder --regime R \
 //!       --evaluations 6000 --minutes 60 --seed 1 --out /private/tmp/claude-501/fbench/pathfinder_R_s1
@@ -1784,6 +1787,14 @@ fn real_main() -> Result<(), String> {
     let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"))?;
     let timing_cap = fuller::futhark_sig::timing_work_cap(interp.work(&reference, &timing.sizes)?);
     println!("# {} timing bound: {timing_cap} node executions at the timing input (the published program's work {}, the constant {TIMING_WORK_CAP})", utc(), interp.work(&reference, &timing.sizes)?);
+    // THE STATIC COST (the matrix kingdom, A7: `fuller::futhark_cost`), reported at the timing input's sizes; a
+    // signature problem has none.
+    let timing_sizes = timing.sizes.clone();
+    let static_cost = |t: &Tree| -> Result<String, String> { Ok(fuller::futhark_sig::static_cost(&k, t, &timing_sizes)?.map_or("-".to_string(), |s| format!("traffic {} alloc {} depth {}", s.traffic, s.alloc, s.depth))) };
+    let reference_static = static_cost(&reference)?;
+    if reference_static != "-" {
+        println!("# {} static cost of the published program at the timing input: {reference_static}", utc());
+    }
     println!(
         "# {} futhark_evolve: problem {pname}, regime {regime}{}, budget {budget} evaluations, guard {minutes} min, population {pop}, seed {seed}, backend {backend:?}, eval {mode:?}, program size N = {program_size} ({} words a gene); {} cases ({} held out, {} test cases never in the fitness), timing on {}{}",
         utc(),
@@ -2063,7 +2074,7 @@ fn real_main() -> Result<(), String> {
             let sid = s.id;
             let ssrc = s.source.clone();
             cands.push(s);
-            let vs = variants(&run.inst, &k, &bridge, &start_tree, 3, 32, pop * 2)?;
+            let vs = variants(&k, &bridge, &start_tree, 3, 32, pop * 2)?;
             println!("# {} e-graph: {} variants of the {start} program", utc(), vs.len());
             for v in &vs {
                 let g = write_back(&contract, &layout, &start_gene, v).map_err(|e| format!("a variant's write-back: {e}"))?;
@@ -2079,7 +2090,7 @@ fn real_main() -> Result<(), String> {
             let trees: Vec<Tree> = cands.iter().map(|c| c.tree.clone()).collect();
             let genes: Vec<Vec<u32>> = cands.iter().map(|c| c.gene.clone()).collect();
             let mut table = AdfTable::default();
-            let fe = FoldEgraph { inst: &run.inst, kingdom: &k, bridge: &bridge };
+            let fe = FoldEgraph { kingdom: &k, bridge: &bridge };
             let fold = fold_saturated(&mut table, &fe, &contract, &layout, &const_len, &genes, &trees, &Budget::default())?;
             let mut m = Mutation::new(EventKind::SaturatedFold, "saturated_fold", format!("{} shared parts over {} genes; {} forms differ", fold.used.len(), genes.len(), fold.reformed));
             m.count = Some(fold.used.len() as u32);
@@ -2364,7 +2375,7 @@ fn real_main() -> Result<(), String> {
             // before (a repeat would take a child's place for nothing).
             let b = population[0].clone();
             last_pumped = Some(b.source.clone());
-            for v in variants(&run.inst, &k, &bridge, &b.tree, 2, 16, 4)? {
+            for v in variants(&k, &bridge, &b.tree, 2, 16, 4)? {
                 if children.len() >= pop {
                     break;
                 }
@@ -2390,7 +2401,7 @@ fn real_main() -> Result<(), String> {
             let trees: Vec<Tree> = population.iter().map(|c| c.tree.clone()).collect();
             let genes: Vec<Vec<u32>> = population.iter().map(|c| c.gene.clone()).collect();
             let mut table = AdfTable::default();
-            let fe = FoldEgraph { inst: &run.inst, kingdom: &k, bridge: &bridge };
+            let fe = FoldEgraph { kingdom: &k, bridge: &bridge };
             let fold = fold_saturated(&mut table, &fe, &contract, &layout, &const_len, &genes, &trees, &Budget::default())?;
             let mut entered = 0u32;
             for (i, f) in fold.forms.iter().enumerate() {
@@ -2654,6 +2665,8 @@ fn real_main() -> Result<(), String> {
         run.judge.ice,
         binary_identity(),
     );
+    // The static cost (the matrix kingdom; `-` for a signature problem), at the timing input's sizes.
+    rep.push_str(&format!("reference_static_cost\t{reference_static}\nbest_static_cost\t{}\n", static_cost(&best.tree)?));
     if backend == Backend::Gpu {
         let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(",");
         rep.push_str(&format!("noise_floor_ratios_published_vs_itself\t{}\nnoise_floor_median\t{:.4}\n", fmt(&noise), median(&noise)));

@@ -166,7 +166,7 @@ fn the_egraph_variants_of_the_reference_are_equal_programs() {
     let interp = Interp::new(&k, &sig).unwrap();
     let bridge = Bridge::load(&PATHFINDER).unwrap();
     let tree = build(&k, PATHFINDER_REFERENCE).unwrap();
-    let vs = variants(&PATHFINDER, &k, &bridge, &tree, 2, 16, 12).unwrap();
+    let vs = variants(&k, &bridge, &tree, 2, 16, 12).unwrap();
     assert!(vs.len() >= 4, "only {} variants", vs.len());
     let cases = load_cases(&PATHFINDER_PROBLEM).unwrap();
     for v in &vs {
@@ -206,7 +206,7 @@ fn the_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() {
     let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
     assert!(wp > 2 * wr, "planted {wp}, reference {wr}");
     let bridge = Bridge::load(&PATHFINDER).unwrap();
-    let vs = variants(&PATHFINDER, &k, &bridge, &planted, 3, 32, 64).unwrap();
+    let vs = variants(&k, &bridge, &planted, 3, 32, 64).unwrap();
     let small = vs.iter().map(|v| interp.work(v, &sizes).unwrap()).min().unwrap();
     assert!(small <= wr, "the smallest variant's work {small}, the reference's {wr}");
 }

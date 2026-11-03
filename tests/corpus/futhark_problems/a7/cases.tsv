@@ -1,0 +1,7 @@
+# name	split	n	m	p	seed (futhark dataset -s seed, f32 in [-8, 8]; the nine matrices m_n_n .. m_p_p in the class order; outputs by yardstick.fut through futhark c)
+train_n8_m8_p8_s1	train	8	8	8	1
+train_n16_m12_p8_s2	train	16	12	8	2
+train_n32_m32_p32_s3	train	32	32	32	3
+held_n7_m5_p3_s4	held	7	5	3	4
+held_n1_m1_p1_s5	held	1	1	1	5
+test_n64_m64_p64_s6	test	64	64	64	6

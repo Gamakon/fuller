@@ -183,7 +183,7 @@ pub enum MValue {
 }
 
 /// The row function a kingdom row denotes, if it is one.
-fn row_fn(name: &str) -> Option<RowFn> {
+pub fn row_fn(name: &str) -> Option<RowFn> {
     match name {
         "fn.arr_f32_arr_f32.id" => Some(RowFn::Id),
         "fn.arr_f32_arr_f32.add1" => Some(RowFn::Add1),
@@ -194,7 +194,7 @@ fn row_fn(name: &str) -> Option<RowFn> {
 }
 
 /// The binary row function a kingdom row denotes, if it is one.
-fn row2_fn(name: &str) -> Option<Row2Fn> {
+pub fn row2_fn(name: &str) -> Option<Row2Fn> {
     match name {
         "fn.arr2_f32_arr_f32_arr_f32.id" => Some(Row2Fn::Id2),
         "fn.arr2_f32_arr_f32_arr_f32.add1" => Some(Row2Fn::Add1_2),
