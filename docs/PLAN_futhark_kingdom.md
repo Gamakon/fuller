@@ -426,7 +426,18 @@ here is to the measurement's data and criterion, not to what evolution may find.
    view — "two elements in one view" is therefore required now; the compensated-sum step as rows (`y = x - c; t = s +
    y; c = (t - s) - y; s = t`), which the e-graph must NOT simplify (`(t - s) - y` is 0 in real arithmetic and not in
    f32: no real-number rule may touch it; the rule table gets a test that the Kahan form survives saturation).
-2. **Correctness for f32 is a bound, not bits.** The reference is the same algorithm computed in f64 (the seed's
+2. **SUPERSEDED (Andrew, 2026-11-03, twice: see `docs/KMEANS_FITNESS.md`, the specification as code).** k-means is not
+   an exact computation: the centroid update is an approximate, iterative process with no unique right answer, so
+   agreement with a reference -- bits, memberships, a distance to f64 centres under a rounding bound -- is the wrong
+   measure. The fitness is the PROBLEM'S OWN OBJECTIVE: the program is run to UltraDim's stopping rule (assignment,
+   update, inertia change < 1e-4 or 100 iterations), candidate and seed alike, on each fitness case, and five inputs a
+   case go to the HFF, each relative to the seed's run: UltraDim's cosine inertia and mean log10 angular percentile
+   of the final centroids, the wall clock to the stopping point (interleaved with the seed), the iterations, the
+   inertia gained an iteration. No gate, no stage 2. The loop, the stopping test and the measures are the harness's
+   (Rust, `futhark_sig::kmeans_converged`, reimplementing `cosine_inertia` and `exact_mean_log10_p`; read-only on
+   UltraDim). The f64 reference program (`reference64.fut`) is kept only as a check of the translation, never to
+   score. The paragraph below is the superseded design, kept for the record:
+   *Correctness for f32 is a bound, not bits.* The reference is the same algorithm computed in f64 (the seed's
    semantics, Kahan included). A program is correct on a case when every output cell lies within the rounding bound
    derived from that case's inputs (Higham's gamma bound for a sum of m terms in any order, plus the division's ulps:
    the machinery of `futhark_rust::kmeans_bound`, without the dyadic shortcut) AND its total error against the f64
@@ -444,6 +455,26 @@ here is to the measurement's data and criterion, not to what evolution may find.
    a textbook form.
 5. **Then step 6 as planned**, from this seed, with speed measured after correctness, and the change request to
    UltraDim re-issued from what that run finds.
+
+**Status (2026-11-03).**
+- (a) DONE: fc013686 reverts 06126f86; bd929652 makes the reference slot an explicit state (`futhark_sig::Seed`:
+  `Program` or `NotYetTranslated`, which k-means is, with the prototype, the plan and the pool named; the runner and
+  the checklist test say so and stop), moves the textbook step to `kingdoms/futhark/sig/kmeans/pool/` as
+  `KMEANS_TEXTBOOK`, and makes the stored answer optional (`Case::output`, `Case::answer`): k-means stores inputs only.
+- (e) DONE as `docs/KMEANS_FITNESS.md` specifies it (not as item 2 above): bd929652 adds the scheme
+  `futhark-kmeans-converged` (`fuller::fitness`, k-means's default by `Problem::fitness`; `scheme_for_problem` refuses
+  a scheme of the other kind), the loop, the measures and the five inputs (`futhark_sig::kmeans_converged`), the
+  runner's converged judge (`--eval single`, the C backend the whole measure with the processes' wall clock, the GPU
+  backend the shim's executable; not run: the seed is not translated), and the magnitude cases
+  (`tests/corpus/futhark_problems/kmeans/`: scales 10^-3, 1, 10^3, 10^5; mixed scales across coordinates; cluster
+  sizes 352:50:97:1 with two empty; the breaking case, 4 points at 10^4 first among 2,000 around 1, on which the plain
+  f32 sum is 3.4e-5 from the f64 reference and the Kahan sum 1.1e-6; 5 train, 2 held, 1 test; the timing input at
+  UltraDim's shape at scale 1 and 10^3, `kmeans_timing_input`). Tests: the inputs' arithmetic on hand-made runs; the
+  measures against closed forms and UltraDim's anchors; the loop on UltraDim's step in Rust (`ultradim_step_f32`, the
+  oracle of (d)), on a NaN, a wrong shape, a cycling step and a failing step; the textbook program through the
+  interpreter and `futhark c` alike; the eight cases' shapes and scales; `reference64.fut` against the Rust f64 step
+  bit for bit on every case. A7 is NOT included: its f32 criterion is still the bit-for-bit scheme, open.
+- (b), (c), (d): another agent's (tuples, a second element, the Kahan rows, the translation); (f) after them.
 
 **Order of work (each a commit with tests; no GPU step until the translation is reviewed).**
 (a) revert 06126f86 and remove the textbook seed from the reference slot; (b) tuples as loop state and a second element

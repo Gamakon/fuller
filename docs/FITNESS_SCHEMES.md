@@ -13,7 +13,8 @@ Every fitness function an experiment in fuller or phylu has selected on, by name
 
 | name | family | commit | definition | status |
 |---|---|---|---|---|
-| **`futhark-slope4-gated`** | futhark_sig | fuller f465a5cf | Quality, per case: the wrong share; Spearman and Pearson disagreement; the shares off by over 50 % and 1 % (`QUALITY_PARTS`). Stage 2 is gated: an inexact program scores π/2 + θ_quality. | default |
+| **`futhark-kmeans-converged`** | futhark_sig (k-means only: `Problem::fitness`, `fitness::scheme_for_problem`) | fuller bd929652 | The candidate and the seed are each run to UltraDim's stopping rule (assignment, update, Euclidean inertia change < 1e-4 or 100 iterations) on every fitness case, interleaved `--pairs` times; per case, five inputs relative to the seed's run, each r/(1+r) (1/2 is "equal to the seed"): cosine inertia of the final centroids; UltraDim's mean log10 angular percentile, as a ratio of p; seconds to the stopping point; iterations; the seed's inertia gained an iteration over the candidate's. A run that does not finish is 1 on all five. One stage, no gate: TrueNorth over every case's inputs (`docs/KMEANS_FITNESS.md`, `futhark_sig::kmeans_converged`). | default for k-means |
+| **`futhark-slope4-gated`** | futhark_sig (the problems with stored answers: reduce, scan, histogram, pathfinder, a7) | fuller f465a5cf | Quality, per case: the wrong share; Spearman and Pearson disagreement; the shares off by over 50 % and 1 % (`QUALITY_PARTS`). Stage 2 is gated: an inexact program scores π/2 + θ_quality. | default |
 | `futhark-slope4` | futhark_sig | fuller b8163635 | The same quality inputs, with stage 2 ungated. | **NOT TO BE RUN AS IS.** Known fault: with stage 2 ungated, a fast inexact program ranks above an exact one (fixed in f465a5cf). Redefine the fitness function before using it. |
 | `futhark-study7` | futhark_sig | fuller 38216485 | Quality, per case: the wrong share; the shares off by over 1, 10 and 50 %; the mean and largest error over the output's range, each e/(1+e); the order-wrong share. Stage 2 ungated. | **NOT TO BE RUN AS IS.** Known faults: the seven inputs reward the all-zeros output and fail the slope check on histogram (6f76baac, b8163635), and stage 2 is ungated (f465a5cf). Redefine the fitness function before using it. |
 | **`staged-gated`** | staged | fuller f465a5cf | Stage 1: TrueNorth over the runner's quality inputs until the best is exact. Stage 2: the two-level HFF, gated. | default |
@@ -27,11 +28,23 @@ Every fitness function an experiment in fuller or phylu has selected on, by name
 
 In stage 2, the speed inputs are the runner's timing slots, each r/(1+r).
 
+**Why k-means is scored on its clustering objective and not against a reference (Andrew, 2026-11-03).** k-means is
+not an exact computation: the centroid update is an approximate, iterative process with no unique right answer, so
+agreement with a reference program (a bit-for-bit output, a membership match, a distance to f64 centres, a rounding
+bound) is the wrong measure. `futhark-slope4-gated`'s bit-for-bit comparison was used on k-means until 2026-11-03 and
+is **NOT TO BE RUN AS IS on k-means**: the GPU run of that day (`futhark_evolve --problem kmeans --check --eval rust`,
+04:06Z) called a correct program wrong because the device adds f32 in another order than the sequential reference
+(65-81 % of the cells one or two f32 bits off on 4 of 5 cases), and the fix tried (quantising the data to multiples of
+2^-6, 06126f86) was reverted (fc013686): customer data has no such bound, and a compensated sum is MORE accurate than
+the reference such a rule compares against. `scheme_for_problem` refuses an answer-scored scheme for k-means by
+name. The i32 problems and A7 keep their schemes (A7's own f32 criterion is still open: its bit-for-bit comparison
+has not run on the GPU).
+
 ## Runners
 
 | family | runners | how to choose |
 |---|---|---|
-| futhark_sig | fuller `examples/futhark_evolve.rs` (every problem, A7 included since 2026-11-03: `--problem a7`) | `--fitness` |
+| futhark_sig | fuller `examples/futhark_evolve.rs` (every problem, A7 included since 2026-11-03: `--problem a7`) | `--fitness`; the default is the PROBLEM's (`Problem::fitness`): `futhark-kmeans-converged` for k-means, `futhark-slope4-gated` for the others; a scheme of the other kind is refused. The k-means scheme takes `--eval single` (each iteration its own process of the compiled plain program; `--backend c` is the whole measure with the processes' wall clock). k-means's seed is not yet translated (`Seed::NotYetTranslated`), so the runner stops at that statement until plan 4c (d) lands. |
 | staged | phylu `examples/wgsl_true_case_fit.rs`, fuller `examples/futhark_pixel_evolve.rs` | `--fitness` |
 | shapes | fuller `examples/futhark_a7_evolve.rs` (`Config::fitness`; DEPRECATED 2026-11-03, A7 runs under `futhark_evolve` on the `futhark_sig` schemes; the shapes schemes stay registered, unchanged), phylu `examples/shape_fit.rs` (`ShapeConfig::fitness`) | `--fitness` |
 | regex | phylu `examples/regex_fit.rs` (engine `regex_fitness_scheme`) | `EVOLVE_FITNESS`. Without it, `EVOLVE_REGEX_PARSIMONY=1` selects `regex-raw-length`, as it always did. If both are set and they disagree, the run stops and names the conflict. |

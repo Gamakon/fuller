@@ -150,7 +150,7 @@ pub const SCHEMES: &[Scheme] = &[
         name: "futhark-kmeans-converged",
         family: Family::FutharkSig,
         description: "k-means run to UltraDim's stopping rule (inertia change < 1e-4 or 100 iterations); per case, relative to the seed's run: cosine inertia and mean log10 angular percentile of the final centroids, seconds to the stopping point, iterations, inertia gained an iteration; one stage, no gate (docs/KMEANS_FITNESS.md)",
-        commit: "fuller (this commit)",
+        commit: "fuller bd929652",
         inputs: "per fitness case, each r/(1+r) of a ratio to the seed's run (1/2 is equal to the seed): cosine inertia; 10^(mean log10 p - seed's); seconds to the stopping point; iterations; seed's inertia gained an iteration over the candidate's; a run that does not finish is 1 on all five",
         stages: "one: TrueNorth over every case's five inputs",
         fault: None,
