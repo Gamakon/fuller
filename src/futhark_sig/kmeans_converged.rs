@@ -21,6 +21,9 @@
 use std::path::Path;
 use std::time::Instant;
 
+use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
+
 use super::{read_one, write_binary, Array, Elem};
 
 /// UltraDim's `tolerance`: the loop stops when the inertia changes by less than this.
@@ -443,6 +446,106 @@ pub fn step_of_exe<'a>(exe: &'a Path, points: &'a Array) -> impl FnMut(&Array) -
         }
         read_one(&out.stdout)
     }
+}
+
+// ---- the cases ---------------------------------------------------------------------------------------------------
+
+/// One stored case of the k-means problem, cut from the dbpedia sample: its name, split, the sample rows
+/// `start..end` it holds, its `k`, and the seed of its k-means++ starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaseCut {
+    pub name: &'static str,
+    pub split: &'static str,
+    pub start: usize,
+    pub end: usize,
+    pub k: usize,
+    pub seed: u64,
+}
+
+/// THE CASES (the advisor's review of 2026-11-03, "What the data section should decide"): six disjoint row sets of
+/// the 5,000-row sample, 5,000 rows used once, k at most n / 20 so singleton clusters are rare (the review's list had
+/// 1,000 rows with k 64, over its own rule; k 50 here); the held cases hold
+/// out rows; the test case is never a fitness input. The seventh, `train_n200_k4`, is the first 200 rows of
+/// `train_n1000_k16` (its rows are training rows twice): the one case small enough for the host interpreter, which
+/// the kingdom's tests run through (random genes, the textbook program, the seed against its Rust port); the runner
+/// compiles every case. The starting centres are UltraDim's k-means++ draws over the case's rows at the case's seed
+/// ([`kmeans_plus_plus_rows`]), stored in the case's `.in` after its points, so every candidate and the seed start
+/// from the same centres (the iterations depend on them, the module header). `make_cases.sh` writes the files from
+/// the sample alone (`examples/kmeans_cases.rs`), and `cases.tsv` records this table.
+pub const KMEANS_CASES: [CaseCut; 7] = [
+    CaseCut { name: "train_n1000_k16", split: "train", start: 0, end: 1000, k: 16, seed: 1 },
+    CaseCut { name: "train_n1000_k50", split: "train", start: 1000, end: 2000, k: 50, seed: 2 },
+    CaseCut { name: "train_n500_k8", split: "train", start: 2000, end: 2500, k: 8, seed: 3 },
+    CaseCut { name: "train_n200_k4", split: "train", start: 0, end: 200, k: 4, seed: 4 },
+    CaseCut { name: "held_n1000_k32", split: "held", start: 2500, end: 3500, k: 32, seed: 5 },
+    CaseCut { name: "held_n500_k16", split: "held", start: 3500, end: 4000, k: 16, seed: 6 },
+    CaseCut { name: "test_n1000_k32", split: "test", start: 4000, end: 5000, k: 32, seed: 7 },
+];
+
+/// The timing input's cut: every row of the sample, k = 256, its starts at this seed.
+pub const KMEANS_TIMING_CUT: CaseCut = CaseCut { name: "timing_n5000_k256", split: "timing", start: 0, end: 5000, k: 256, seed: 8 };
+
+/// A cut's points (the sample's rows `start..end`) and its k-means++ starts, as the case's two inputs.
+pub fn cut_case(sample: &Array, cut: &CaseCut) -> Result<(Array, Array), String> {
+    let (flat, d) = flat_points(sample)?;
+    let n = flat.len() / d.max(1);
+    if cut.start >= cut.end || cut.end > n {
+        return Err(format!("{}: the rows {}..{} are not within the sample's {n}", cut.name, cut.start, cut.end));
+    }
+    let pts: Vec<f32> = flat[cut.start * d..cut.end * d].to_vec();
+    let chosen = kmeans_plus_plus_rows(&pts, d, cut.k, cut.seed)?;
+    let starts: Vec<f32> = chosen.iter().flat_map(|i| pts[i * d..(i + 1) * d].to_vec()).collect();
+    Ok((Array::f32s(vec![cut.end - cut.start, d], pts), Array::f32s(vec![cut.k, d], starts)))
+}
+
+// ---- UltraDim's starting centres -------------------------------------------------------------------------------
+
+/// UltraDim's `squared_distance` (`gpu_kmeans.rs` 1894): the in-order `f32` sum of squared differences.
+fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
+}
+
+/// ULTRADIM'S K-MEANS++ STARTING CENTRES (`gpu_kmeans.rs` `init_centroids_plus_plus`, 480-534, with `random_seed:
+/// Some(seed)`, `init_rng` 470: `ChaCha8Rng::seed_from_u64`), line for line: the first centre a uniform row
+/// (`random_range(0..n)`), each next one a row drawn with probability proportional to its squared distance to the
+/// nearest centre so far (`random::<f32>() * total`, the cumulative sum in row order, the first row at or past the
+/// target), all rows identical duplicating the first. The chosen row indices, in the order drawn; the draws are
+/// UltraDim's (the same crates at the same versions, `Cargo.toml`). The distances are computed in parallel over the
+/// rows (each row's fold over the centres in order), the total summed in row order, so the result is the sequential one.
+pub fn kmeans_plus_plus_rows(points: &[f32], d: usize, k: usize, seed: u64) -> Result<Vec<usize>, String> {
+    let n = points.len() / d.max(1);
+    if n == 0 || k == 0 || k > n {
+        return Err(format!("k-means++ needs 0 < k <= n: n = {n}, k = {k}"));
+    }
+    let row = |i: usize| &points[i * d..(i + 1) * d];
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+    let mut chosen: Vec<usize> = Vec::with_capacity(k);
+    chosen.push(rng.random_range(0..n));
+    for _ in 1..k {
+        let distances: Vec<f32> = (0..n).into_par_iter().map(|i| chosen.iter().map(|c| squared_distance(row(i), row(*c))).fold(f32::INFINITY, f32::min)).collect();
+        let mut total_distance = 0.0f32;
+        for x in &distances {
+            total_distance += x;
+        }
+        if total_distance == 0.0 {
+            chosen.push(chosen[0]);
+            continue;
+        }
+        let target = rng.random::<f32>() * total_distance;
+        let mut cumulative = 0.0f32;
+        let mut next = None;
+        for (idx, dist) in distances.iter().enumerate() {
+            cumulative += dist;
+            if cumulative >= target {
+                next = Some(idx);
+                break;
+            }
+        }
+        // UltraDim's loop pushes nothing when the cumulative sum stays under the target by rounding; the centre
+        // count would then be short, which its callers do not check. Here that is an error, named.
+        chosen.push(next.ok_or_else(|| format!("k-means++: the cumulative distance {cumulative} never reached the target {target} of {total_distance}"))?);
+    }
+    Ok(chosen)
 }
 
 // ---- UltraDim's step in Rust, the oracle of the translation -------------------------------------------------------

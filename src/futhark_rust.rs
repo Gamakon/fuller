@@ -378,7 +378,9 @@ mod tests {
             let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
             let (dylib, _) = compile_module(&yard, &base.join(format!("{name}_rust")), &rt, &format!("bench_{name}"), Duration::from_secs(600)).expect("the rust-wgpu compile");
             let exe = crate::futhark_wgpu_host::compile_program_prebuilt(&yard, &base.join(format!("{name}_shim")), &shim).expect("the shim compile");
-            let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect();
+            // The k-means corpus cases are real embeddings the bound cannot judge (`kmeans_bound_inputs`): the device
+            // gate for k-means runs on the uniform inputs built to be judgeable; the corpus cases are the runner's.
+            let mut inputs: Vec<PathBuf> = if name == "kmeans" { kmeans_bound_inputs(&base.join("kmeans_bound_inputs")) } else { std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect() };
             inputs.sort();
             let (mut same_c, mut same_shim) = (0, 0);
             let (mut rust_gpu, mut shim_gpu, mut rust_wall) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
@@ -577,16 +579,48 @@ mod tests {
         }).fold(0.0, f64::max)
     }
 
-    /// THE K-MEANS BOUND HOLDS FOR FUTHARK C (CPU, no device): every k-means corpus case's membership is unambiguous
-    /// under the f32 distance bound, and futhark c's output of the published step (the yardstick compiled here: the
-    /// corpus stores no answers since 2026-11-03, k-means being scored on its objective; IEEE division, 0.5 ulp) lies
-    /// within [`kmeans_bound`] of the exact step. The GPU check (`on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`)
-    /// holds each device path to the same bound. The bound is a tool of the device checks, not of the fitness.
+    /// THE INPUTS THE K-MEANS BOUND CAN JUDGE: uniform random f32 points and centres in [0, 1) at the shapes of the
+    /// uniform cases of 2026-11-03 09:27Z (n x d x k: 200 x 4 x 5, 300 x 6 x 8, 400 x 7 x 6, 500 x 3 x 6, 2,000 x 4 x
+    /// 2), from a fixed xorshift seed, written to `dir` as `<name>.in` (Futhark's binary format: points, then
+    /// centres). The k-means corpus cases are real embeddings (the dbpedia sample, `docs/KMEANS_FITNESS.md`) and
+    /// CANNOT be judged by the bound: measured 2026-11-03 on `train_n200_k4`, point 207's two nearest centres are
+    /// 0.48775 and 0.48783 away, closer than the f32 distance margin, so no order of the additions is "wrong" there,
+    /// which is why k-means is scored on its objective and not against a bound. The bound stays a tool of the device
+    /// checks on inputs built to be judgeable.
+    fn kmeans_bound_inputs(dir: &Path) -> Vec<PathBuf> {
+        std::fs::create_dir_all(dir).expect("mkdir");
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut draw = |count: usize| -> Vec<f32> {
+            (0..count)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x >> 40) as f32 / 16_777_216.0
+                })
+                .collect()
+        };
+        let mut out = Vec::new();
+        for (n, d, k) in [(200usize, 4usize, 5usize), (300, 6, 8), (400, 7, 6), (500, 3, 6), (2000, 4, 2)] {
+            let points = crate::futhark_sig::Array::f32s(vec![n, d], draw(n * d));
+            let centres = crate::futhark_sig::Array::f32s(vec![k, d], draw(k * d));
+            let path = dir.join(format!("uniform_n{n}_d{d}_k{k}.in"));
+            std::fs::write(&path, crate::futhark_sig::write_binary(&[&points, &centres])).expect("write an input");
+            out.push(path);
+        }
+        out
+    }
+
+    /// THE K-MEANS BOUND HOLDS FOR FUTHARK C (CPU, no device): every input of [`kmeans_bound_inputs`] has an
+    /// unambiguous membership under the f32 distance bound, and futhark c's output of the published step (the
+    /// yardstick compiled here; IEEE division, 0.5 ulp) lies within [`kmeans_bound`] of the exact step. The GPU check
+    /// (`on_the_gpu_the_benchmarks_equal_futhark_c_and_the_shim`) holds each device path to the same bound on the
+    /// same inputs. The bound is a tool of the device checks, not of the fitness; the corpus cases (real embeddings)
+    /// cannot be judged by it (see [`kmeans_bound_inputs`]).
     #[test]
     fn futhark_c_s_kmeans_steps_lie_within_the_bound_of_the_exact_step() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/futhark_problems/kmeans");
-        let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).expect("the corpus").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "in")).collect();
-        inputs.sort();
+        let inputs = kmeans_bound_inputs(&scratch("kmeans_bound_inputs"));
         assert!(inputs.len() >= 5, "{} inputs", inputs.len());
         let yard = std::fs::read_to_string(dir.join("yardstick.fut")).expect("the yardstick");
         let exe = crate::futhark_sig::compile_c(&yard, &scratch("kmeans_bound_yardstick")).expect("futhark c on the yardstick");

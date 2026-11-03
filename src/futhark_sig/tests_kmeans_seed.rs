@@ -1,8 +1,10 @@
 //! THE PROOF OF THE TRANSLATION (`docs/PLAN_futhark_kingdom.md` 4c (d), `docs/kmeans_seed.md`): the k-means seed,
 //! UltraDim's three kernels as a gene of the kingdom, computes on every stored case what a straight Rust port of the
 //! three shaders in f32 with the same loop order computes (`kmeans_converged::ultradim_step_f32`, Kahan included):
-//! the assignments identical as integers, the centres bit for bit; through the host interpreter and compiled with
-//! `futhark c` alike; and no farther from the f64 reference (`reference64.fut`, `ultradim_step_f64`) than the port.
+//! the assignments identical as integers, the centres bit for bit; compiled with `futhark c` on every dbpedia case
+//! and through the host interpreter on the case small enough for it (`train_n200_k4`: the interpreter does about
+//! 4e7 node executions a second, a minute a step at 1,000 x 1,536 x 16); and no farther from the f64 reference
+//! (`reference64.fut`, `ultradim_step_f64`) than the port.
 //! The planted slowdown is the same bits, and the seed, the planted slowdown and the textbook pool programs fit the
 //! layout at the problem's program size. The faithful two-element view (i32 assignments, `lets a.i32.n`) is measured:
 //! 131,825 types without the kernel boundary and 237,325 with it, over the 65,536 type codes, so it does not load as a
@@ -76,10 +78,11 @@ fn the_seed_builds_reads_back_fits_the_layout_and_its_size_is_measured() {
 const SEED_FUNCTIONS: usize = 131;
 const PLANTED_FUNCTIONS: usize = 183;
 
-/// THE PROOF on every stored case: the assignments equal the f32 port's as integers; the centres are the f32 port's
-/// bit for bit (the same order of additions, both sequential), interpreted and compiled with `futhark c` (the plain
-/// program and the quality program of every case); no farther from the f64 reference than the port (the same, since
-/// the bits are); the planted slowdown the same bits. The counts are printed.
+/// THE PROOF on every stored case: the assignments equal the f32 port's as integers (through the interpreter on the
+/// small case; through the f64 reference's on every case); the centres are the f32 port's bit for bit (the same
+/// order of additions, both sequential), compiled with `futhark c` on every case (the plain program and the quality
+/// program) and interpreted on the small case; no farther from the f64 reference than the port (the same, since the
+/// bits are); the planted slowdown the same bits (interpreted, the small case). The counts are printed.
 #[test]
 fn the_seed_equals_the_f32_port_bit_for_bit_and_the_f64_reference_within_the_ports_distance_on_every_case() {
     if !have_futhark() {
@@ -95,7 +98,7 @@ fn the_seed_equals_the_f32_port_bit_for_bit_and_the_f64_reference_within_the_por
     let exe = compile_c(&src, &scratch("seed")).unwrap_or_else(|e| panic!("{e}\n{src}"));
     let batch = program_cases(&k, &sig, &seed, cases.len()).unwrap();
     let bexe = compile_c(&batch, &scratch("seed_batch")).unwrap_or_else(|e| panic!("{e}\n{batch}"));
-    let (mut n_cases, mut assignments_equal, mut centres_identical, mut within) = (0, 0, 0, 0);
+    let (mut n_cases, mut assignments_equal, mut centres_identical, mut within, mut interpreted) = (0, 0, 0, 0, 0);
     let mut wants = Vec::new();
     for c in &cases {
         let (points, centres) = (&c.inputs[0], &c.inputs[1]);
@@ -105,21 +108,27 @@ fn the_seed_equals_the_f32_port_bit_for_bit_and_the_f64_reference_within_the_por
         let port = ultradim_step_f32(points, centres, true).unwrap();
         let (f64_assign, exact) = ultradim_step_f64(points, centres).unwrap();
         let t0 = std::time::Instant::now();
-        let got = interp.eval(&seed, &c.inputs).unwrap();
+        let got = run_exe(&exe, &c.stdin).unwrap();
         let secs = t0.elapsed().as_secs_f64();
-        assert_eq!(seed_assignments(&k, &interp, c), port_assign, "{}: the assignments", c.name);
         assert_eq!(port_assign, f64_assign, "{}: the f32 port's assignments differ from the f64 reference's", c.name);
         assignments_equal += 1;
         assert_eq!(got.dims, centres.dims);
-        assert!(got.data == port.data, "{}: the seed's centres differ in bits from the f32 port's", c.name);
+        assert!(got.data == port.data, "{}: the compiled seed's centres differ in bits from the f32 port's", c.name);
         centres_identical += 1;
         let (d_seed, d_port) = (distance_from_f64(&got, &exact), distance_from_f64(&port, &exact));
         assert!(d_seed <= d_port, "{}: the seed is farther from the f64 reference ({d_seed:.3e}) than the port ({d_port:.3e})", c.name);
         within += 1;
-        let compiled = run_exe(&exe, &c.stdin).unwrap();
-        assert!(compiled.data == got.data, "{}: compiled and interpreted differ", c.name);
-        assert!(interp.eval(&planted, &c.inputs).unwrap().data == got.data, "{}: the planted slowdown differs", c.name);
-        eprintln!("{}: n {} d {d} k {}: assignments equal, centres bit-identical to the f32 port (interpreted {secs:.3} s, compiled), {:.3e} from the f64 reference (the port {:.3e})", c.name, points.dims[0], centres.dims[0], d_seed, d_port);
+        let mut how = format!("compiled {secs:.3} s");
+        if points.dims[0] <= 200 {
+            let t0 = std::time::Instant::now();
+            let interp_out = interp.eval(&seed, &c.inputs).unwrap();
+            assert_eq!(seed_assignments(&k, &interp, c), port_assign, "{}: the interpreted assignments", c.name);
+            assert!(interp_out.data == got.data, "{}: compiled and interpreted differ", c.name);
+            assert!(interp.eval(&planted, &c.inputs).unwrap().data == got.data, "{}: the planted slowdown differs", c.name);
+            how.push_str(&format!(", interpreted {:.3} s and the planted slowdown the same bits", t0.elapsed().as_secs_f64()));
+            interpreted += 1;
+        }
+        eprintln!("{}: n {} d {d} k {}: assignments equal, centres bit-identical to the f32 port ({how}), {:.3e} from the f64 reference (the port {:.3e})", c.name, points.dims[0], centres.dims[0], d_seed, d_port);
         n_cases += 1;
         wants.push(got);
     }
@@ -131,8 +140,9 @@ fn the_seed_equals_the_f32_port_bit_for_bit_and_the_f64_reference_within_the_por
     for (b, w) in batched.iter().zip(&wants) {
         assert!(b.data == w.data, "the batched seed differs");
     }
-    eprintln!("the seed: {n_cases} cases, assignments equal {assignments_equal}, centres bit-identical to the f32 port {centres_identical}, within the f64 reference's distance {within}; compiled and batched alike");
+    eprintln!("the seed: {n_cases} cases, assignments equal {assignments_equal}, centres bit-identical to the f32 port {centres_identical}, within the f64 reference's distance {within}, {interpreted} interpreted; compiled and batched alike");
     assert_eq!((n_cases, assignments_equal, centres_identical, within), (cases.len(), cases.len(), cases.len(), cases.len()));
+    assert!(interpreted >= 1, "no case small enough for the host interpreter");
 }
 
 /// THE FAITHFUL TWO-ELEMENT VIEW, the one the plan's item 1 asked for (the assignments an `i32` array beside the f32

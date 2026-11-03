@@ -173,9 +173,8 @@ pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
             let (is, vs) = (any(n), any(n));
             Ok(Some(write_binary(&[&Array::scalar_i32(100), &is, &vs])))
         }
-        // The k-means timing input at scale 1 ([`kmeans_timing_input`]; the scale-10^3 one is the second timing input
-        // of plan 4c item 3).
-        "kmeans" => Ok(Some(kmeans_timing_input(n, 1.0))),
+        // The k-means timing input: the whole dbpedia sample with its stored k-means++ starts ([`kmeans_timing_input`]).
+        "kmeans" => Ok(Some(kmeans_timing_input(p)?)),
         // The published benchmark's own shape (`published/pathfinder.fut`, data/medium.in: cols = 100000, rows =
         // 100) and its wall heights, 0 to 9 (the published walls are Sobol numbers modulo 10). Before 2026-11-01
         // pathfinder was timed on its largest quality case (256 x 256, about 1 ms a run; fault 13 of
@@ -374,7 +373,7 @@ pub const KMEANS_PROBLEM: Problem = Problem {
     yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
     fitness: "futhark-kmeans-converged",
     corpus: "tests/corpus/futhark_problems/kmeans",
-    timing_n: 8192,
+    timing_n: KMEANS_TIMING_N,
     program_size: KMEANS_PROGRAM_SIZE,
 };
 
@@ -428,18 +427,36 @@ pub const A7_PROBLEM: Problem = Problem {
 /// (`futhark_search::input_set`).
 pub const A7_TIMING_N: usize = 256;
 
-/// The dimensions of k-means's timing input beside its `timing_n` points.
-pub const KMEANS_TIMING_D: usize = 256;
-pub const KMEANS_TIMING_K: usize = 1024;
+/// K-MEANS'S TIMING INPUT'S SHAPE: the whole dbpedia sample, n = 5,000 rows of d = 1,536, with k = 256 starting
+/// centres (n / k about 20, as the fitness cases keep it; the advisor's review of 2026-11-03: UltraDim's k = 1,024
+/// belongs with its n = 8,192, and at n = 5,000 it gives 5 points a cluster and a percentile that counts singletons).
+pub const KMEANS_TIMING_N: usize = 5000;
+pub const KMEANS_TIMING_D: usize = 1536;
+pub const KMEANS_TIMING_K: usize = 256;
 
-/// K-MEANS'S TIMING INPUT at UltraDim's shape (`docs/kmeans_champion_s1/README.md`: `n` points, d = 256, k = 1,024)
-/// and a magnitude `scale`: points and centres uniform in [0, scale) (multiples of scale 2^-24, never quantised), a
-/// fixed seed for each scale, in Futhark's binary format. Plan 4c item 3 keeps the shape at scale 1 and at 10^3.
-pub fn kmeans_timing_input(n: usize, scale: f32) -> Vec<u8> {
-    let mut rng = GeneRng::new(0x7131_6E00 ^ n as u64 ^ u64::from(scale.to_bits()) << 8);
-    let mut unit = |m: usize| Array::f32s(vec![m, KMEANS_TIMING_D], (0..m * KMEANS_TIMING_D).map(|_| (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32 * scale).collect());
-    let (points, centres) = (unit(n), unit(KMEANS_TIMING_K));
-    write_binary(&[&points, &centres])
+/// The sample every k-means case is cut from, relative to the problem's corpus directory (`dbpedia/sample.py`).
+pub const KMEANS_SAMPLE: &str = "dbpedia/sample_5000x1536.in";
+
+/// The timing input's stored starting centres, relative to the corpus directory (`make_cases.sh`, `kmeans_cases.rs`:
+/// UltraDim's k-means++ draws over the whole sample at the seed `cases.tsv` records).
+pub const KMEANS_TIMING_STARTS: &str = "timing_n5000_k256_starts.in";
+
+/// K-MEANS'S TIMING INPUT: the whole dbpedia sample ([`KMEANS_SAMPLE`]) and its stored k-means++ starts
+/// ([`KMEANS_TIMING_STARTS`]), in Futhark's binary format, the two files read as they are (`make_cases.sh` writes the
+/// starts; the sample is fixed by `dbpedia/sample.py`). Of the declared shape or an error that says so.
+pub fn kmeans_timing_input(p: &Problem) -> Result<Vec<u8>, String> {
+    let dir = corpus_dir(p);
+    let read = |name: &str, dims: [usize; 2]| -> Result<Array, String> {
+        let path = dir.join(name);
+        let a = read_one(&std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
+        if a.elem != Elem::F32 || a.dims != dims {
+            return Err(format!("{}: a [{}][{}]f32 was expected, not {:?} {:?}", path.display(), dims[0], dims[1], a.elem, a.dims));
+        }
+        Ok(a)
+    };
+    let points = read(KMEANS_SAMPLE, [KMEANS_TIMING_N, KMEANS_TIMING_D])?;
+    let starts = read(KMEANS_TIMING_STARTS, [KMEANS_TIMING_K, KMEANS_TIMING_D])?;
+    Ok(write_binary(&[&points, &starts]))
 }
 
 /// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
@@ -2694,7 +2711,7 @@ mod tests_view;
 #[cfg(test)]
 mod tests_pool;
 /// THE K-MEANS FITNESS (`futhark-kmeans-converged`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
-/// its measures and the five inputs a case.
+/// its measures and the five inputs a case; the cases cut from the dbpedia sample.
 pub mod kmeans_converged;
 
 #[cfg(test)]

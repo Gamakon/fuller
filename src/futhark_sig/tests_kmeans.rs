@@ -1,11 +1,13 @@
 //! THE K-MEANS PROBLEM, the first f32 view (`docs/PLAN_futhark_kingdom.md`, step 4): the kingdom loads from the
-//! master and the sniffer's specification; the textbook step (`KMEANS_TEXTBOOK`, a pool alternative: the seed is not
-//! yet translated, 4c) computes the same bits through the host interpreter and through `futhark c` on every stored
-//! case (the cases store inputs only: k-means is scored on its objective, `docs/KMEANS_FITNESS.md`); the f32 rows'
-//! semantics equal `futhark c`'s on the edges (NaN, the signed zeros, the infinities, a denormal); random genes
-//! express to programs `futhark check` accepts and `futhark c` computes as the interpreter does; the planted slowdown
-//! is equal and the e-graph recovers the textbook step's work; the layout at the runner's default program size holds
-//! both.
+//! master and the sniffer's specification; the textbook step (`KMEANS_TEXTBOOK`, a pool alternative; the seed is
+//! UltraDim's kernels, 4c (d)) computes the same bits through the host interpreter and through `futhark c` on the
+//! stored case small enough for the interpreter (the cases are cut from the dbpedia sample and store inputs only:
+//! k-means is scored on its objective, `docs/KMEANS_FITNESS.md`; the interpreter does about 4e7 node executions a
+//! second, so one step of 1,000 x 1,536 x 16 is a minute: the dbpedia-sized cases are the compiled program's); the
+//! f32 rows' semantics equal `futhark c`'s on the edges (NaN, the signed zeros, the infinities, a denormal); random
+//! genes express to programs `futhark check` accepts and `futhark c` computes as the interpreter does; the planted
+//! slowdown is equal and the e-graph recovers the textbook step's work; the layout at the runner's default program
+//! size holds both; the cases are the declared cuts with UltraDim's starts.
 
 use super::*;
 use crate::typed_gep::{express, fits, write_back};
@@ -76,8 +78,9 @@ fn the_kmeans_textbook_step_and_planted_slowdown_compute_the_same_bits_interpret
     let contract = k.relations().check().unwrap();
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], KMEANS_PROGRAM_SIZE).unwrap();
     let const_len = k.const_len();
-    let cases = load_cases(&KMEANS_PROBLEM).unwrap();
-    assert!(cases.iter().all(|c| c.output.is_none()), "k-means stores no answers");
+    let all = load_cases(&KMEANS_PROBLEM).unwrap();
+    assert!(all.iter().all(|c| c.output.is_none()), "k-means stores no answers");
+    let cases = interpreter_cases(&all);
     let tree = build(&k, KMEANS_TEXTBOOK).unwrap();
     let mut rng = GeneRng::new(3);
     let gene = write_back(&contract, &layout, &random_gene(&contract, &layout, &const_len, &mut rng).unwrap(), &tree).unwrap();
@@ -113,6 +116,17 @@ fn the_kmeans_textbook_step_and_planted_slowdown_compute_the_same_bits_interpret
     }
     assert_eq!(same, 2 * cases.len());
 }
+
+/// The stored cases the host interpreter is run on: those of at most [`INTERPRETER_ROWS`] rows (`train_n200_k4`;
+/// `kmeans_converged::KMEANS_CASES`). At least one, or the test says so.
+fn interpreter_cases(cases: &[Case]) -> Vec<Case> {
+    let small: Vec<Case> = cases.iter().filter(|c| c.inputs[0].dims[0] <= INTERPRETER_ROWS).cloned().collect();
+    assert!(!small.is_empty(), "no stored case of at most {INTERPRETER_ROWS} rows for the host interpreter");
+    small
+}
+
+/// The most rows of a case the host interpreter is run on in these tests.
+const INTERPRETER_ROWS: usize = 200;
 
 /// THE F32 SEMANTICS, compiled against the interpreter on purpose (a random gene may not draw them): every f32 row on
 /// arrays holding a NaN, the two zeros, the two infinities, a denormal and ordinary values, through `futhark c`, bit
@@ -243,9 +257,9 @@ fn the_kmeans_planted_slowdown_is_equal_and_the_egraph_recovers_the_reference() 
     let interp = Interp::new(&k, &sig).unwrap();
     let planted = build(&k, KMEANS_TEXTBOOK_PLANTED).unwrap();
     let reference = build(&k, KMEANS_TEXTBOOK).unwrap();
-    let cases = load_cases(&KMEANS_PROBLEM).unwrap();
+    let cases = interpreter_cases(&load_cases(&KMEANS_PROBLEM).unwrap());
     let wants: Vec<Array> = cases.iter().map(|c| interp.eval(&reference, &c.inputs).unwrap()).collect();
-    let sizes = sig.sizes(&cases[2].inputs).unwrap();
+    let sizes = sig.sizes(&cases[0].inputs).unwrap();
     let (wp, wr) = (interp.work(&planted, &sizes).unwrap(), interp.work(&reference, &sizes).unwrap());
     assert!(wp > wr, "planted {wp}, reference {wr}");
     // The work at the timing input's sizes, against the timing bound.
@@ -301,42 +315,51 @@ fn the_comparison_policy_is_bit_for_bit_with_nans_equal() {
     }
 }
 
-/// THE TIMING INPUT is the champion's shape (`docs/kmeans_champion_s1/README.md`: n = 8,192 points, d = 256, k =
-/// 1,024), fixed bytes, points and centres in [0, 1); the published program (the yardstick, `futhark c`) runs on it
-/// and gives a `[k][d]f32`. The host interpreter is not run on it: measured here at the rate it does the stored
-/// cases, the reference's work there (2.1e11 node executions, printed with the timing bound) would take over an
-/// hour, so the timing input's output is the yardstick's (as the runner takes it, `TimingInput::of`).
+/// THE TIMING INPUT is the whole dbpedia sample (n = 5,000 rows of d = 1,536) with k = 256 stored starting centres:
+/// the starts are UltraDim's k-means++ draws over the sample at the recorded seed (recomputed here, byte for byte),
+/// every row a unit vector, fixed bytes; the published program (the yardstick, `futhark c`) runs on it and gives a
+/// `[k][d]f32` of finite values. The host interpreter is not run on it: measured here at the rate it does the small
+/// case, the reference's work there (printed with the timing bound) would take hours, so the timing input's output
+/// is the yardstick's (as the runner takes it, `TimingInput::of`).
 #[test]
-fn the_kmeans_timing_input_is_the_champions_shape_and_the_yardstick_runs_on_it() {
+fn the_kmeans_timing_input_is_the_dbpedia_sample_with_its_stored_starts_and_the_yardstick_runs_on_it() {
+    use crate::futhark_sig::kmeans_converged::{cut_case, KMEANS_TIMING_CUT};
     let p = problem("kmeans").unwrap();
     let stdin = timing_input(&p).unwrap().expect("k-means has its own timing input");
     let inputs = read_binary(&stdin).unwrap();
     assert_eq!(inputs.len(), 2, "the points and the centres");
-    assert_eq!((inputs[0].dims.clone(), inputs[0].elem), (vec![8192, KMEANS_TIMING_D], Elem::F32));
+    assert_eq!((inputs[0].dims.clone(), inputs[0].elem), (vec![KMEANS_TIMING_N, KMEANS_TIMING_D], Elem::F32));
     assert_eq!((inputs[1].dims.clone(), inputs[1].elem), (vec![KMEANS_TIMING_K, KMEANS_TIMING_D], Elem::F32));
-    assert!(inputs.iter().all(|a| a.values().all(|x| (0.0..1.0).contains(&x))), "points and centres in [0, 1)");
+    assert_eq!((p.timing_n, KMEANS_TIMING_CUT.k, KMEANS_TIMING_CUT.end), (KMEANS_TIMING_N, KMEANS_TIMING_K, KMEANS_TIMING_N));
+    for a in &inputs {
+        let d = a.dims[1];
+        let v = a.f32_values().unwrap();
+        assert!(v.chunks_exact(d).all(|r| (r.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt() - 1.0).abs() < 1e-3), "every row is a unit vector");
+    }
+    let sample = read_one(&std::fs::read(corpus_dir(&p).join(KMEANS_SAMPLE)).unwrap()).unwrap();
+    assert_eq!(sample, inputs[0], "the points are the sample as it is");
+    let t = std::time::Instant::now();
+    let (_, starts) = cut_case(&sample, &KMEANS_TIMING_CUT).unwrap();
+    eprintln!("kmeans: the timing input's {} k-means++ starts recomputed in {:.1} s", KMEANS_TIMING_K, t.elapsed().as_secs_f64());
+    assert_eq!(starts, inputs[1], "the stored starts are UltraDim's k-means++ draws at seed {}", KMEANS_TIMING_CUT.seed);
     assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed: the same bytes every time");
-    // The second timing input, at scale 10^3 (plan 4c item 3): the same shape, values in [0, 1000), other bytes.
-    let big = read_binary(&kmeans_timing_input(p.timing_n, 1000.0)).unwrap();
-    assert_eq!((big[0].dims.clone(), big[1].dims.clone()), (inputs[0].dims.clone(), inputs[1].dims.clone()));
-    assert!(big.iter().all(|a| a.values().all(|x| (0.0..1000.0).contains(&x))) && big[0].values().any(|x| x > 500.0), "points and centres in [0, 1000)");
-    assert_ne!(big[0].data, inputs[0].data);
     let k = load(&KMEANS).unwrap();
     let sig = signature(&KMEANS).unwrap();
     let sizes = sig.sizes(&inputs).unwrap();
-    assert_eq!((sizes["n"], sizes["d"], sizes["k"]), (8192, 256, 1024));
+    assert_eq!((sizes["n"], sizes["d"], sizes["k"]), (KMEANS_TIMING_N, KMEANS_TIMING_D, KMEANS_TIMING_K));
     let interp = Interp::new(&k, &sig).unwrap();
     let reference = build(&k, kmeans_seed_static()).unwrap();
-    // The interpreter's rate on the largest stored case, and the work at the timing input.
+    // The interpreter's rate on the small case, and the work at the timing input.
     let cases = load_cases(&p).unwrap();
-    let big = cases.iter().max_by_key(|c| c.inputs[0].len()).unwrap();
+    let small = &interpreter_cases(&cases)[0];
     let t = std::time::Instant::now();
-    let big_out = interp.eval(&reference, &big.inputs).unwrap();
-    assert_eq!(big_out.dims, vec![big.inputs[1].dims[0], big.inputs[1].dims[1]]);
+    let small_out = interp.eval(&reference, &small.inputs).unwrap();
+    assert_eq!(small_out.dims, vec![small.inputs[1].dims[0], small.inputs[1].dims[1]]);
     let secs = t.elapsed().as_secs_f64();
-    let w_big = interp.work(&reference, &sig.sizes(&big.inputs).unwrap()).unwrap();
+    let w_small = interp.work(&reference, &sig.sizes(&small.inputs).unwrap()).unwrap();
     let w_timing = interp.work(&reference, &sizes).unwrap();
-    eprintln!("kmeans: the reference on {} ({w_big} node executions) in {secs:.3} s, {:.2e} a second; at the timing input {w_timing} node executions, {:.0} s at that rate; the timing bound {TIMING_WORK_CAP}", big.name, w_big as f64 / secs, w_timing as f64 / (w_big as f64 / secs));
+    eprintln!("kmeans: the reference on {} ({w_small} node executions) in {secs:.3} s, {:.2e} a second; at the timing input {w_timing} node executions, {:.0} s at that rate; the timing bound {}", small.name, w_small as f64 / secs, w_timing as f64 / (w_small as f64 / secs), timing_work_cap(w_timing));
+    assert!(w_timing <= timing_work_cap(w_timing));
     if !have_futhark() {
         panic!("futhark is not installed: the published program cannot be checked on the timing input");
     }
@@ -345,75 +368,65 @@ fn the_kmeans_timing_input_is_the_champions_shape_and_the_yardstick_runs_on_it()
     let got = run_exe(&exe, &stdin).unwrap();
     eprintln!("kmeans: the yardstick (futhark c) on the timing input in {:.2} s", t.elapsed().as_secs_f64());
     assert_eq!((got.dims.clone(), got.elem), (vec![KMEANS_TIMING_K, KMEANS_TIMING_D], Elem::F32));
-    assert!(got.values().all(|x| x.is_finite() && (0.0..1.0).contains(&x)), "every centre is a mean of points in [0, 1), or zero");
+    assert!(got.values().all(|x| x.is_finite() && x.abs() <= 1.0), "every centre is a mean of unit vectors, or zero");
 }
 
-/// THE MAGNITUDE CASES (plan 4c item 3; `make_cases.sh`): eight cases, inputs only, at the scales 10^-3, 1, 10^3 and
-/// 10^5, one of mixed scales across its coordinates, one of very unequal cluster sizes, one built to break an
-/// uncompensated sum; each the declared n, d, k; and the f64 reference of UltraDim's step (`reference64.fut` through
-/// `futhark c`) equals the Rust f64 step bit for bit on every case (both sequential f64: the translation's check,
-/// never a score). The breaking case does break: on it the plain-sum step is farther from the f64 reference than the
-/// Kahan-compensated step, and the two differ.
+/// THE CASES (the advisor's review of 2026-11-03; `make_cases.sh`, `kmeans_converged::KMEANS_CASES`): every stored
+/// case is its declared cut of the dbpedia sample byte for byte, with UltraDim's k-means++ starts at its seed
+/// (recomputed here), `cases.tsv` records the table, the six fitness and test cuts are disjoint and use the 5,000 rows
+/// once (the small training case lies inside the first training case), k is at most n / 20, every row is a unit
+/// vector, the splits are 4 train, 2 held, 1 test; and the f64 reference of UltraDim's step (`reference64.fut`
+/// through `futhark c`) equals the Rust f64 step bit for bit on every case (both sequential f64: the translation's
+/// check, never a score).
 #[test]
-fn the_magnitude_cases_are_the_declared_shapes_and_scales_and_the_f64_reference_agrees_with_the_rust_step() {
-    use crate::futhark_sig::kmeans_converged::{assign, ultradim_step_f32, ultradim_step_f64};
+fn the_dbpedia_cases_are_the_declared_cuts_with_ultradims_starts_and_the_f64_reference_agrees_with_the_rust_step() {
+    use crate::futhark_sig::kmeans_converged::{cut_case, ultradim_step_f64, KMEANS_CASES};
     let p = problem("kmeans").unwrap();
     let cases = load_cases(&p).unwrap();
     let count = |s: Split| cases.iter().filter(|c| c.split == s).count();
-    assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (5, 2, 1));
+    assert_eq!((count(Split::Train), count(Split::Held), count(Split::Test)), (4, 2, 1));
     assert!(cases.iter().all(|c| c.output.is_none()));
+    assert_eq!(cases.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), KMEANS_CASES.iter().map(|c| c.name).collect::<Vec<_>>(), "cases.tsv lists the table's cases in order");
     let index = std::fs::read_to_string(corpus_dir(&p).join("cases.tsv")).unwrap();
     let rows: Vec<Vec<&str>> = index.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| l.split('\t').collect()).collect();
     assert_eq!(rows.len(), cases.len());
+    let sample = read_one(&std::fs::read(corpus_dir(&p).join(KMEANS_SAMPLE)).unwrap()).unwrap();
+    assert_eq!(sample.dims, vec![KMEANS_TIMING_N, KMEANS_TIMING_D]);
     let exe = have_futhark().then(|| compile_c(&std::fs::read_to_string(corpus_dir(&p).join("reference64.fut")).unwrap(), &scratch("reference64")).unwrap());
     assert!(exe.is_some(), "futhark 0.28.1 is needed for this test");
-    let mut seen_shapes = BTreeSet::new();
-    for (c, row) in cases.iter().zip(&rows) {
-        let (n, d, k): (usize, usize, usize) = (row[2].parse().unwrap(), row[3].parse().unwrap(), row[4].parse().unwrap());
-        let scale: f32 = row[6].parse().unwrap();
-        let shape = row[7];
+    let mut covered = vec![0u8; KMEANS_TIMING_N];
+    for ((c, row), cut) in cases.iter().zip(&rows).zip(&KMEANS_CASES) {
+        let (n, d, k): (usize, usize, usize) = (row[3].parse().unwrap(), row[4].parse().unwrap(), row[5].parse().unwrap());
+        let seed: u64 = row[6].parse().unwrap();
+        assert_eq!((row[0], row[1], row[2], n, d, k, seed), (cut.name, cut.split, format!("{}..{}", cut.start, cut.end).as_str(), cut.end - cut.start, KMEANS_TIMING_D, cut.k, cut.seed), "{}: cases.tsv against the table", c.name);
+        assert_eq!(format!("{:?}", c.split).to_lowercase(), cut.split, "{}", c.name);
         assert_eq!((c.inputs[0].dims.clone(), c.inputs[1].dims.clone()), (vec![n, d], vec![k, d]), "{}", c.name);
-        assert!(d >= 2, "{}: the spherical percentile needs d >= 2", c.name);
+        assert!(k * 20 <= n, "{}: k {k} over n / 20 ({n})", c.name);
+        let (points, starts) = cut_case(&sample, cut).unwrap();
+        assert_eq!(c.inputs[0], points, "{}: the points are not the sample's rows {}..{}", c.name, cut.start, cut.end);
+        assert_eq!(c.inputs[1], starts, "{}: the starts are not UltraDim's k-means++ draws at seed {}", c.name, cut.seed);
+        assert_eq!(c.stdin, write_binary(&[&points, &starts]), "{}: the stored bytes", c.name);
         let pts = c.inputs[0].f32_values().unwrap();
-        let cen = c.inputs[1].f32_values().unwrap();
-        let rows_c: Vec<Vec<f32>> = cen.chunks_exact(d).map(<[f32]>::to_vec).collect();
-        let counts = assign(&pts, d, &rows_c).into_iter().fold(vec![0usize; k], |mut v, a| { v[a] += 1; v });
-        let max_p = pts.iter().cloned().fold(0f32, f32::max);
-        match shape {
-            "plain" => assert!(max_p <= scale && max_p > 0.9 * scale, "{}: the points' largest value {max_p} at scale {scale}", c.name),
-            "mixed" => {
-                let per_coord: Vec<f32> = (0..d).map(|t| (0..n).map(|i| pts[i * d + t]).fold(0f32, f32::max)).collect();
-                assert!(per_coord[0] < 1e-3 * 1.01 && per_coord[3] <= 1.0 && per_coord[6] > 900.0 && per_coord[6] <= 1000.0, "{}: {per_coord:?}", c.name);
+        assert!(pts.chunks_exact(d).all(|r| (r.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt() - 1.0).abs() < 1e-3), "{}: every row is a unit vector", c.name);
+        if cut.name != "train_n200_k4" {
+            for r in &mut covered[cut.start..cut.end] {
+                *r += 1;
             }
-            "unequal" => {
-                let nonempty: Vec<usize> = counts.iter().cloned().filter(|x| *x > 0).collect();
-                let ratio = *nonempty.iter().max().unwrap() as f64 / *nonempty.iter().min().unwrap() as f64;
-                assert!(ratio >= 100.0 && nonempty.len() < k, "{}: the cluster sizes {counts:?} (ratio {ratio:.0})", c.name);
-            }
-            "breaking" => {
-                assert!(pts[4 * d..].iter().all(|x| *x <= 1.0) && pts[..4 * d].iter().all(|x| *x > 10.0), "{}: the first 4 points are the big ones (U[0, 1] x 10^4)", c.name);
-                // Both magnitudes in one cluster, and the plain sum farther from the f64 reference than the compensated one.
-                let big_cluster = counts.iter().position(|x| *x > 0).unwrap();
-                assert!(counts.iter().all(|x| *x > 4), "{}: every cluster holds small points: {counts:?}", c.name);
-                let (_, exact) = ultradim_step_f64(&c.inputs[0], &c.inputs[1]).unwrap();
-                let err = |kahan: bool| ultradim_step_f32(&c.inputs[0], &c.inputs[1], kahan).unwrap().f32_values().unwrap().iter().zip(&exact).map(|(x, y)| (f64::from(*x) - y).abs()).fold(0f64, f64::max);
-                let (compensated, plain) = (err(true), err(false));
-                eprintln!("breaking case: largest cell error from the f64 reference, Kahan {compensated:.3e}, plain sum {plain:.3e} (cluster {big_cluster} takes the big points)");
-                assert!(plain > compensated, "the plain sum ({plain:.3e}) is not worse than the compensated one ({compensated:.3e}) on the breaking case");
-            }
-            other => panic!("{}: an unknown shape {other}", c.name),
+        } else {
+            assert!(KMEANS_CASES.iter().any(|o| o.split == "train" && o.name != cut.name && o.start <= cut.start && cut.end <= o.end), "the small case lies inside a training case");
         }
-        seen_shapes.insert(shape.to_string());
         // The f64 reference through futhark c against the Rust f64 step, bit for bit.
-        let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(exe.as_ref().unwrap()).arg("-b"), std::time::Duration::from_secs(120), Some(&c.stdin)).unwrap();
+        let t = std::time::Instant::now();
+        let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(exe.as_ref().unwrap()).arg("-b"), std::time::Duration::from_secs(600), Some(&c.stdin)).unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let (got_a, got_c) = read_i32_then_f64(&out.stdout, n, k * d);
         let (want_a, want_c) = ultradim_step_f64(&c.inputs[0], &c.inputs[1]).unwrap();
         assert_eq!(got_a, want_a.iter().map(|a| *a as i32).collect::<Vec<_>>(), "{}: the assignments", c.name);
         assert_eq!(got_c.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), want_c.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), "{}: the f64 centres differ in bits", c.name);
-        eprintln!("{}: n {n} d {d} k {k} scale {scale} {shape}; counts {counts:?}; the f64 reference agrees bit for bit", c.name);
+        let counts = want_a.iter().fold(vec![0usize; k], |mut v, a| { v[*a] += 1; v });
+        eprintln!("{}: rows {}..{} ({n} x {d}), k {k}, seed {seed}; the first step's cluster sizes {}..{}; the f64 reference agrees bit for bit ({:.1} s)", c.name, cut.start, cut.end, counts.iter().min().unwrap(), counts.iter().max().unwrap(), t.elapsed().as_secs_f64());
     }
-    assert_eq!(seen_shapes.into_iter().collect::<Vec<_>>(), ["breaking", "mixed", "plain", "unequal"]);
+    assert!(covered.iter().all(|r| *r == 1), "the six cuts use every one of the 5,000 rows exactly once");
 }
 
 /// The two values `reference64.fut` writes, from Futhark's binary format: `[n]i32`, then `[k][d]f64` (`read_binary`

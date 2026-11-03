@@ -1,9 +1,9 @@
-# name	split	n	d	k	seed	scale	shape (futhark dataset -s seed; points and centres U[0, scale], never quantised; shape: plain, mixed = coordinate t scaled by 10^((t mod 7) - 3), unequal = centres U[0, 2 scale], breaking = the first 4 points scaled by 10^4; inputs only, no output is stored: k-means is scored on its clustering objective run to UltraDim stopping rule, docs/KMEANS_FITNESS.md)
-train_s1_n200_d4_k5	train	200	4	5	1	1	plain
-train_s1e-3_n200_d4_k5	train	200	4	5	2	0.001	plain
-train_s1e3_n300_d6_k8	train	300	6	8	3	1000	plain
-train_s1e5_n200_d4_k5	train	200	4	5	4	100000	plain
-train_breaking_n2000_d4_k2	train	2000	4	2	7	1	breaking
-held_mixed_n400_d7_k6	held	400	7	6	5	1	mixed
-held_unequal_n500_d3_k6	held	500	3	6	11	1	unequal
-test_s1_n300_d5_k4	test	300	5	4	8	1	plain
+# name	split	rows (of dbpedia/sample_5000x1536.in, start..end)	n	d	k	init seed (UltraDim k-means++, ChaCha8; the starts are stored after the points in <name>.in; inputs only, no output: k-means is scored on its clustering objective run to UltraDim's stopping rule, docs/KMEANS_FITNESS.md; written by examples/kmeans_cases.rs through make_cases.sh)
+train_n1000_k16	train	0..1000	1000	1536	16	1
+train_n1000_k50	train	1000..2000	1000	1536	50	2
+train_n500_k8	train	2000..2500	500	1536	8	3
+train_n200_k4	train	0..200	200	1536	4	4
+held_n1000_k32	held	2500..3500	1000	1536	32	5
+held_n500_k16	held	3500..4000	500	1536	16	6
+test_n1000_k32	test	4000..5000	1000	1536	32	7
+# the timing input: timing_n5000_k256 = the whole sample with the starts in timing_n5000_k256_starts.in (rows 0..5000, k 256, seed 8)
