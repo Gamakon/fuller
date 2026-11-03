@@ -17,6 +17,11 @@ crate-type = ["rlib", "cdylib"]
 # are present in vendor-egglog) — do NOT pin crates.io egglog here.
 egglog = { path = "vendor-egglog" }
 rayon = "1.10"
+# THE K-MEANS FITNESS (src/futhark_sig/kmeans_converged.rs) reimplements UltraDim's angular-percentile quality
+# measure line for line, and UltraDim takes `ln B(a, b)` from statrs (`lib/projection-voting-kmeans/src/quality.rs`
+# line 50), so the same library call keeps the reimplementation bit-identical (tested against a vendored copy). The
+# pure functions only: no nalgebra, no rand.
+statrs = { version = "0.18", default-features = false }
 # UltraDim's k-means++ starting centres draw from a ChaCha8 stream seeded with `random_seed` (`gpu_kmeans.rs`
 # `init_rng`, rand 0.9 / rand_chacha 0.9); the stored cases' starts are drawn with the same crates at the same
 # versions, so they are UltraDim's draws (`kmeans_converged::kmeans_plus_plus_rows`).

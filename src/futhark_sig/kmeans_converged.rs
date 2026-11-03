@@ -271,7 +271,7 @@ fn unit(v: &[f32]) -> Vec<f32> {
 /// UltraDim's `cosine_inertia` (`lib.rs` 5709): `(1/n) sum (1 - x_i . mu_{a_i})` with unit centroids, each term in
 /// `f32`, an assignment out of range contributing nothing. UltraDim sums the terms in rayon chunks whose count is its
 /// thread count, so its bits depend on the machine; here the sum is in order, which is UltraDim's own result on one
-/// thread. `points` and
+/// thread (tested against a vendored copy, `tests::the_measures_equal_ultradims_vendored_functions`). `points` and
 /// `centroids` are given as unit vectors by [`spherical`].
 pub fn cosine_inertia(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], d: usize) -> f32 {
     let n = points.len() / d.max(1);
@@ -332,39 +332,9 @@ pub fn at_centroid(cos_t: f64) -> bool {
 
 // ---- quality.rs: the dimension-corrected spherical percentile ----------------------------------------------------
 
-/// `ln Gamma(x)` for `x > 0`: the Lanczos approximation (g = 7, nine coefficients), good to about 1e-15 relative over
-/// the arguments the percentile uses (`(d - 1) / 2`, `1/2` and their sum). `statrs::function::beta::ln_beta`, which
-/// UltraDim calls, is `ln Gamma(a) + ln Gamma(b) - ln Gamma(a + b)` too.
-pub fn ln_gamma(x: f64) -> f64 {
-    const G: f64 = 7.0;
-    const C: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
-    if x < 0.5 {
-        // The reflection formula keeps the series on x >= 0.5.
-        let s = (std::f64::consts::PI * x).sin();
-        return (std::f64::consts::PI / s.abs()).ln() - ln_gamma(1.0 - x);
-    }
-    let x = x - 1.0;
-    let mut a = C[0];
-    let t = x + G + 0.5;
-    for (i, c) in C.iter().enumerate().skip(1) {
-        a += c / (x + i as f64);
-    }
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
-}
-
-/// `ln B(a, b)`.
+/// `ln B(a, b)`, UltraDim's own library call (`quality.rs` line 50: `use statrs::function::beta::ln_beta`).
 pub fn ln_beta(a: f64, b: f64) -> f64 {
-    ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
+    statrs::function::beta::ln_beta(a, b)
 }
 
 /// Natural log of the regularised incomplete beta `I_x(a, b)` (UltraDim `quality.rs` `ln_betainc`, line for line):
@@ -854,3 +824,6 @@ pub fn ultradim_step_f64(points: &Array, centres: &Array) -> Result<(Vec<usize>,
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ultradim;

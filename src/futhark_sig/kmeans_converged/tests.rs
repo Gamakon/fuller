@@ -112,7 +112,7 @@ fn the_measures_are_ultradims_on_hand_made_data() {
     assert_eq!(s_unit.mean_log10_p_all, (log10_angular_percentile(1.0, 2) + log10_angular_percentile(0.5, 2)) / 2.0);
     assert!(s_unit.mean_log10_p_all < s_unit.mean_log10_p, "the coincident point drags UltraDim's mean down");
     assert!(at_centroid(1.0) && at_centroid(1.0 - 1e-7) && !at_centroid(0.999) && !at_centroid(0.0) && !at_centroid(-1.0) && !at_centroid(-(1.0 - 1e-7)), "the antipode is not at the centroid");
-    // ln B anchors: B(1, 1) = 1, B(1/2, 1/2) = pi.
+    // ln B anchors through statrs: B(1, 1) = 1, B(1/2, 1/2) = pi.
     assert!(ln_beta(1.0, 1.0).abs() < 1e-14, "{}", ln_beta(1.0, 1.0));
     assert!((ln_beta(0.5, 0.5) - std::f64::consts::PI.ln()).abs() < 1e-14);
     // I_x(1, 1) = x; I_x(1/2, 1/2) = (2/pi) asin(sqrt x).
@@ -359,6 +359,44 @@ fn the_identity_a_worsening_a_nan_and_a_rounded_step_rank_below_the_seed_through
     assert!(r3_f > seed_f, "the step rounded to 1e-3 beats the seed: {r3_f} against {seed_f} ({r3_i:?})");
     assert!(r2_f > seed_f, "the step rounded to 1e-2 beats the seed: {r2_f} against {seed_f} ({r2_i:?})");
     assert!(norm_f.is_finite());
+}
+
+/// THE REIMPLEMENTED MEASURES AGAINST ULTRADIM'S OWN FUNCTIONS (the review's F11), the vendored copies in
+/// `ultradim.rs`: on the seed's clustering of 500 dbpedia rows (k 8), `exact_mean_log10_p` is bit-identical over every
+/// point and over the points off their centroid, as is `log10_angular_percentile` on 200 cosines across [-1, 1] at
+/// d = 2, 10, 1,536 and 50,000; `cosine_inertia` is bit-identical to UltraDim's on ONE thread (its chunked sum is then
+/// the in-order sum) and within 4 f32 ulps at this machine's thread count (UltraDim's own number depends on it).
+#[test]
+fn the_measures_equal_ultradims_vendored_functions() {
+    let (points, start) = dbpedia_case(2000..2500, 8, 3);
+    let d = points.dims[1];
+    let seed = converge(&points, &start, ultradim(&points)).unwrap();
+    let flat = points.f32_values().unwrap();
+    let n = flat.len() / d;
+    let unit_points: Vec<f32> = (0..n).flat_map(|i| unit(&flat[i * d..(i + 1) * d])).collect();
+    let unit_centroids: Vec<Vec<f32>> = seed.centroids.iter().map(|c| unit(c)).collect();
+    let ours = cosine_inertia(&unit_points, &unit_centroids, &seed.assignments, d);
+    let theirs_one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap().install(|| super::ultradim::cosine_inertia(&unit_points, &unit_centroids, &seed.assignments, d));
+    assert_eq!(ours.to_bits(), theirs_one.to_bits(), "cosine inertia: ours {ours} against UltraDim's on one thread {theirs_one}");
+    let theirs = super::ultradim::cosine_inertia(&unit_points, &unit_centroids, &seed.assignments, d);
+    let ulps = (ours.to_bits() as i64 - theirs.to_bits() as i64).abs();
+    eprintln!("cosine inertia: ours {ours:e}, UltraDim's on {} threads {theirs:e}, {ulps} ulps apart; on one thread bit-identical", rayon::current_num_threads());
+    assert!(ulps <= 4, "cosine inertia {ulps} ulps from UltraDim's at this thread count");
+    let cosines: Vec<f64> = (0..n).map(|i| unit_points[i * d..(i + 1) * d].iter().zip(&unit_centroids[seed.assignments[i]]).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum::<f64>().clamp(-1.0, 1.0)).collect();
+    let off: Vec<f64> = cosines.iter().copied().filter(|c| !at_centroid(*c)).collect();
+    assert_eq!(seed.mean_log10_p_all.to_bits(), super::ultradim::exact_mean_log10_p(&cosines, d).to_bits(), "mean log10 p over every point");
+    assert_eq!(seed.mean_log10_p.to_bits(), super::ultradim::exact_mean_log10_p(&off, d).to_bits(), "mean log10 p over the points off their centroid");
+    assert_eq!(exact_mean_log10_p(&cosines, d).to_bits(), super::ultradim::exact_mean_log10_p(&cosines, d).to_bits());
+    let mut checked = 0;
+    for dim in [2usize, 10, 1536, 50_000] {
+        for i in 0..=200 {
+            let c = -1.0 + 0.01 * f64::from(i);
+            assert_eq!(log10_angular_percentile(c, dim).to_bits(), super::ultradim::log10_angular_percentile(c, dim).to_bits(), "cos {c} at d = {dim}");
+            checked += 1;
+        }
+    }
+    eprintln!("UltraDim's numbers on the seed's clustering of 500 rows: cosine inertia {ours:e}, mean log10 p {} (every point), {} ({} points off their centroid); {checked} percentiles bit-identical", seed.mean_log10_p_all, seed.mean_log10_p, off.len());
+    assert_eq!(checked, 4 * 201);
 }
 
 /// ULTRADIM'S K-MEANS++ RULE on hand-made data: three tight groups far apart draw one start from each group (the D^2
