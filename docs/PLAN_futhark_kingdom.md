@@ -476,6 +476,31 @@ here is to the measurement's data and criterion, not to what evolution may find.
   bit for bit on every case. A7 is NOT included: its f32 criterion is still the bit-for-bit scheme, open.
 - (b), (c), (d): another agent's (tuples, a second element, the Kahan rows, the translation); (f) after them.
 
+**Status of (b), 2026-11-03: done** (`kingdoms/futhark/README.md`, "The class", "Two elements in one view", "Pairs").
+The class is an AST with an injective text (`futhark_view::Class`: `a.f32.n` in a view of several elements, `a.n` in a
+view of one, `(f32,i32)` a pair); a view lists its elements and has every element's rows, a rank-1 class of each
+element per dimension, the two conversions (`f32.i32` total, `i32.f32` guarded); master version 4 adds pairs of scalars
+as a class with `pair`, `fst`/`snd`, the zero pair, `psel` and the pair loops, which destructure the pair into two
+bound variables (the frames `L2`/`F2`, versioned), so a pair is never a bound class and the context count stays where
+it was. Test views `sig/kahan` (xs f32, ms i32 to f32) and `sig/argmin` (ds f32 to i32), 328 types each: UltraDim's
+Kahan step and argmin as genes compute the yardstick's bits through `futhark c` on 30 runs, 50 random genes a view
+pass `futhark check`, 8 compile and equal the interpreter; the five committed views' fingerprints are unchanged.
+What (d) will want beyond pairs: UltraDim's `update_centroids` carries a TRIPLE (sum, compensation, count); with
+pairs the count is a second loop over the points (the same values, twice the passes). A view of f32 and i32 at
+k-means's depth 3 is the next measurement: the second element doubles the scalar and rank-1 classes and the contexts
+grow with them.
+
+**The paper's protocol (Andrew, 2026-11-03), which this step serves.** The point of the paper (EvoStar): a type system
+for GEP, then a facility for shape scopes, carefully constructed; a gene of about 3 million words that is rich enough
+to evolve efficient ML algorithms, k-means being the example. The protocol: because the search space is vast, LLMs
+hallucinate 25 initial implementations at high perplexity; each is converted to a gene; population, generations, the
+fitness functions and the mutation functions are set; fuller simplifies, snaps, folds and shares equivalent parts; then
+evolution runs to see whether it improves on Fable's implementation. So item (d) also produces the k-means pool: 25
+LLM implementations in Futhark (`futhark_pool`'s prompts extended to f32 and to UltraDim's spherical k-means), each
+read into the gene by the same translation path as the prototype, Fable's among them as the one to beat; the
+prototype's own translation (UltraDim's kernels, Kahan included) is in the pool as well. Histogram and pathfinder are
+not ML: they stay the exact benchmarks on which the method is shown to learn.
+
 **Order of work (each a commit with tests; no GPU step until the translation is reviewed).**
 (a) revert 06126f86 and remove the textbook seed from the reference slot; (b) tuples as loop state and a second element
 in a view (master rows and view code; the i32 views' fingerprints unchanged); (c) the Kahan rows and the saturation
