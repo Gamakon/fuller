@@ -38,14 +38,14 @@ fn first_difference(a: &str, b: &str) -> String {
 /// (step 4c (b)) changed none of the five; the two test views of the pair constructs (`argmin`, `kahan`: f32 and i32,
 /// version 4, depth 2) are pinned since 2026-11-03 too. The triple rows and the kernel boundary of version 5 (4c (c))
 /// changed none of the seven; their test views (`cell`: the triple state; `kernels`: a `let` of an `[n]i32` at the
-/// top) are pinned from the same day.
+/// top) are pinned from the same day, and k-means moved to version 5 with its seed (4c (d): `lets a.n`, re-pinned).
 #[test]
 fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
     let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
     assert_eq!(
         got,
-        [("argmin", 0x7d3d_cfe6_f1f6_b037), ("cell", 0x5590_65d7_74ea_1544), ("histogram", 0x2605_d528_715c_9478), ("kahan", 0x9550_5694_e22a_cb48), ("kernels", 0x2a0f_8b0d_9e70_b161), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)],
+        [("argmin", 0x7d3d_cfe6_f1f6_b037), ("cell", 0x5590_65d7_74ea_1544), ("histogram", 0x2605_d528_715c_9478), ("kahan", 0x9550_5694_e22a_cb48), ("kernels", 0x2a0f_8b0d_9e70_b161), ("kmeans", 0xa466_222b_ab4e_bdaf), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)],
         "the views' written text changed"
     );
     for (name, spec) in SIG {
@@ -158,13 +158,13 @@ fn the_kept_rows_are_reachable_both_ways() {
 /// rows. Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73,
 /// 408, 221). Count contexts (3g): these; k-means at depth 3 over 9 classes (2026-11-03): 3804 types. The two test
 /// views of the pair constructs (4c (b), two elements over one dimension at depth 2, the four pair classes in every
-/// context): 328 types each. The triple rows (4c (c), the eight triple classes and their loop frames) take the same
+/// context): 328 types each; k-means at version 5 with its kernel boundary (4c (d)): 14,359 types. The triple rows (4c (c), the eight triple classes and their loop frames) take the same
 /// specification to 1,041 types (`cell`); one kernel boundary (`kernels`, `lets a.i32.n`) doubles the contexts below
 /// it: 1,892 types.
 #[test]
 fn the_view_sizes_are_the_measured_ones() {
     let master = Master::committed().unwrap();
-    for ((name, spec), want) in SIG.iter().zip([(328, 2196, 620), (1041, 6749, 1721), (162, 1032, 455), (328, 2196, 658), (1892, 12371, 2962), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
+    for ((name, spec), want) in SIG.iter().zip([(328, 2196, 620), (1041, 6749, 1721), (162, 1032, 455), (328, 2196, 658), (1892, 12371, 2962), (14359, 79660, 31211), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
         let v = View::load(&master, spec).unwrap();
         let types = v.types_tsv.lines().count() - 1;
         let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();
