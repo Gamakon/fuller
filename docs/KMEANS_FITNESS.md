@@ -151,6 +151,9 @@ reported beside it.
 /// positive candidate measure is 1, the worst), a negative candidate measure is 0 (better than perfect), an infinite
 /// or NaN ratio is 1. The seed's own measure against itself is exactly 1/2.
 pub fn squashed_ratio(c: f64, s: f64) -> f64 {
+    if c.is_nan() || s.is_nan() {
+        return 1.0;
+    }
     let r = c.max(0.0) / s.max(f64::MIN_POSITIVE);
     if r.is_finite() {
         (r / (1.0 + r)).clamp(0.0, 1.0)

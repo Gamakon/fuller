@@ -19,12 +19,12 @@ fn the_registry_names_every_scheme_once_and_marks_the_old_ones() {
     for s in SCHEMES {
         let fam_ok = matches!(
             (s.family, s.definition),
-            (Family::FutharkSig, Definition::FutharkSig { .. } | Definition::FutharkConverged) | (Family::Staged, Definition::Staged { .. }) | (Family::Shapes, Definition::ShapesTwoBand { .. } | Definition::ShapesHff { .. }) | (Family::Regex, Definition::Regex { .. })
+            (Family::FutharkSig, Definition::FutharkSig { .. } | Definition::FutharkConverged | Definition::FutharkConvergedGated) | (Family::Staged, Definition::Staged { .. }) | (Family::Shapes, Definition::ShapesTwoBand { .. } | Definition::ShapesHff { .. }) | (Family::Regex, Definition::Regex { .. })
         );
         assert!(fam_ok, "{}: its definition is not of its family", s.name);
         assert_eq!(s.card_line().contains(OLD_SCHEME_WARNING), s.fault.is_some(), "{}", s.name);
     }
-    for old in ["futhark-slope4", "futhark-study7", "staged", "shapes-hff", "shapes-two-band", "regex-colmax"] {
+    for old in ["futhark-slope4", "futhark-study7", "futhark-kmeans-converged", "staged", "shapes-hff", "shapes-two-band", "regex-colmax"] {
         assert!(scheme(old).unwrap().fault.is_some(), "{old} is an old scheme");
     }
 }

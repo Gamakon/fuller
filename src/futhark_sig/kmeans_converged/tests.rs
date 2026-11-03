@@ -80,7 +80,9 @@ fn the_inputs_are_half_at_the_seed_above_when_worse_below_when_better_one_when_u
     assert!(crate::fitness::converged_gated(&[0.5, 0.5], &[f64::NAN, 0.5]).is_err(), "a NaN input is a bug");
     // The retired scheme's inputs on the same runs: its NaN on no gain is why it is retired.
     let no_gain = ConvergedRun { inertia_per_iteration: 0.0, ..identity.clone() };
-    assert!(kmeans_inputs_five(&no_gain, &seed)[4].is_nan(), "the retired rate input on no gain");
+    let gaining = ConvergedRun { inertia_per_iteration: 10.0, ..seed.clone() };
+    assert!(kmeans_inputs_five(&no_gain, &gaining)[4].is_nan(), "the retired rate input on no gain: 10 / MIN_POSITIVE overflows and squash(inf) is NaN");
+    assert!(kmeans_inputs(&no_gain, &gaining).quality.iter().chain(&kmeans_inputs(&no_gain, &gaining).speed).all(|x| x.is_finite()));
     assert_eq!(converged_work_cap(7), 70);
 }
 
