@@ -260,8 +260,81 @@ The **Rust** side (`src/futhark_view.rs`): `View::load(master, spec) -> View { t
   - the runner standard: stream, killme.trigger, checkpoints, hall of fame and aa_gate.tsv.
 - **`--eval rust` is the default.** The shim paths stay as test references, in the cross-path test.
 - **One runner:** A7 becomes a view problem under `futhark_evolve`, and `futhark_a7_evolve` (with its loop, `fuller::futhark_search`) is deprecated. phylu's shape_typed engine keeps working through the shared types.
-- **Types:** f32 first (k-means and image problems), then tuples, then records, all in the master table, so every view gains them.
+- **Types:** f32 first (k-means and image problems), then tuples, then records, all in the master table, so every view gains them. f32 and k-means: done, 4a below.
 - **GPU residency** (the core paper's table): today only program execution runs on the device for the signature runner. The target is a device population, with expression, variation and selection on the device and fitness that stays there, as in SR and regex.
+
+### 4a. f32 first: typed values, the f32 rows, k-means as a view (done 2026-11-03)
+
+**Typed values.** `futhark_sig::Array` carries its element (`Elem::I32 | Elem::F32`) and each value's raw 32 bits;
+Futhark's binary format is read and written for both (` i32`, ` f32`); the interpreter's scalar is `Num::I | Num::F`
+with Futhark's arithmetic (i32 wraps; f32 is IEEE with `fmin`/`fmax`, `i64.f32` and the folds as measured through
+`futhark c`, `kingdoms/futhark/README.md`); the quality inputs are computed over the values as `f64` (exact for both)
+and give the i32 formula the same bits as before (`quality_fingerprint` pinned at a535d464: `80b71efa5c5adfb0`,
+the study's `7405ef68d2104e9c`, every part `756d9a9553fe716b`). **The comparison policy:** bit for bit; any NaN
+agrees with any NaN (the payload is not a value: Futhark prints every NaN as `f32.nan`, hardware chooses the
+payload); `-0.0` and `+0.0` differ. It is what the stored cases' bytes (`futhark c -b`) and `futhark_rust`'s k-means
+exact gate compare as, and `futhark_interpreter::identical`. A cell differs when the policy says so (a sign of a zero
+counts), its error is the values' distance (0 for the two zeros; infinite for a NaN against a number, squashed to 1).
+
+**Rows added or widened (master version 3).** Widening `elems` keeps a row's `since` (a view of another element sees
+what it saw); the four i32 specifications are pinned to version 2 (`SIG_PROBLEMS`, `sniff.py --master`), so their
+tables and fingerprints are unchanged. Separate f32 rows where the spelling differs (the `i64.f32` conversion is
+undefined for a NaN, an infinity or a value out of range, so the f32 spellings test `f32.isnan` and clamp as an f32
+before converting; `x == x` is folded to true by Futhark's simplifier, measured).
+
+| family | rows | elements | note |
+|---|---|---|---|
+| core (widened) | add, sub, mul, min, max, neg, abs, sel, get, sum, minimum, maximum, ival, the size, the literal, the variables, prev, next, zero, last, tab, replicate, map2.{add,sub,min,max}, row, zeros, loop, loop1, the inputs | i32 → i32,f32 | M0001-M0014, M0016-M0019, M0021-M0029, M0036-M0042 |
+| scan (widened) | scan.{add,min,max} | i32 → i32,f32 | M0030-M0032 |
+| core (new) | clamp (f32 spelling) | f32 | M0056 |
+| hist (new) | hist.{add,min,max} (f32 spelling) | f32 | M0057-M0059 |
+| core (new) | div `{0} / {1}`, sqrt | f32 | M0060, M0061: total on f32 only |
+| core (new) | map2.mul | i32,f32 | M0062 |
+| core (new) | tabrows: `tabulate K (\i_K -> <row>)`, a rank-2 class from its rows | i32,f32 | M0063; the binder's frame is T-K |
+| hist (new) | histrows.add: `hist (map2 (+)) (replicate D 0) K (map .. is) rows` | i32 (M0064), f32 (M0065) | the published k-means's cluster sums; a new quantifier `V2:class(a.{D2}.{D})` |
+| core (new) | rowdiv: `map2 (\r s -> map (/ s) r)` | f32 | M0066 |
+| core (new) | a rank-2 input as a terminal in every context | i32,f32 | M0067: once a row produces a rank-2 class it is no longer context-free |
+| i32 only | mod, clamp (i32), hist.* (i32) | i32 | unchanged |
+
+Pools: `f32 0,1,2,-1,0.5,10`. Rules (f32, bit-exact only): commutativity of add and mul, `neg neg a = a`, `map2.add`
+and `map2.mul` commutative, `map2.min a a = a`, `map2.max a a = a`; `sub a b = add a (neg b)` dropped (see the
+README: the extraction never returned the `sub` form). The witnesses: M1-M9 over both elements (M9 evaluates each
+rule on its element's edges under the policy), S1-S10 extended to f32 (the clamp template, the hist spellings, the
+tabulate of rows' frame, histrows and rowdiv, the f32 pool).
+
+**k-means as a view.** `sniff.py --depth 3` writes `sig/kmeans/view.tsv` from `kmeans/yardstick.fut` (points
+`[n][d]f32`, centres `[k][d]f32`, output `[k][d]f32`, master 3). Depth 3: a point's nearest centre is a loop over
+`k` inside the tabulate over `n`, and its distance is a reduction over `d` inside that (a heavy row holds only above
+the depth). Measured: 3,804 types, 30,041 rows (21,620 functions, 8,421 leaves); the gene at N = 96 is 3,044,186
+words (N = 32: 993,370). The reference (`KMEANS_REFERENCE`, 72 functions: the membership written twice, the kingdom
+has no `let`) is the published step: `rowdiv (histrows.add.n M points) (map2.max (replicate 1) (hist.add.n M
+(replicate 1)))` with `M = tab (loop.k 0 (sel (dist best - dist j) best j))`. **Exact (the policy) on 5 of 5
+stored cases through the host interpreter, through `futhark c`, and batched; the planted slowdown (the ones under a
+`map2 min a a`, 74 functions) exact on 5 of 5, and the e-graph's variants (256 members) exact on 5 of 5 with the
+smallest at the reference's work.** The f32 rows equal `futhark c` bit for bit on 37 programs over arrays holding
+NaN, the two zeros, the two infinities, a denormal and 2^24 + 1 (`tests_kmeans::the_f32_rows_equal_futhark_c_on_the_edges`).
+50 random genes at N = 96 are accepted by `futhark check` and the first 12 compile and equal the interpreter on three
+small cases (n = d = k = 1 included). **The champion** (`docs/kmeans_champion_s1/`) is a WGSL kernel of the scatter
+form: a stable counting sort by cluster, then each cell's sum over its cluster's points in point order, which on the
+sequential backend is the same left fold as `hist`; its program in the Futhark kingdom is the published (hist) form
+above. Its distinct algorithm (the counting sort) has no Futhark rows: a data-dependent reorder is the dynamic-shapes
+design (`docs/ASSESSMENT_dynamic_shapes.md`), not step 4.
+
+**The runner.** `futhark_evolve --problem kmeans` loads the view, builds the layout at the problem's program size
+(`Problem::program_size`, k-means 96, the i32 benchmarks `DEFAULT_PROGRAM_SIZE` = 32; recorded in the run card as
+before), passes both controls (the reference exact on all 5 cases by the host interpreter and compiled), computes the
+yardstick's output on the timing input (the champion's shape, n = 8,192, d = 256, k = 1,024, `timing_input`) with
+`futhark c`, and starts the slope check (1,756 one-edit neighbours of the reference's gene); run on the CPU to that
+point 2026-11-03 (`--backend c --eval single`, 24 programs scored in 18 s, then stopped: the check is the GPU's).
+The batch host admits f32 on the rust path (`futhark-rust-rt` reads every element) and still refuses it on the C
+driver (i32 only). **Not run (the GPU is the lead's):** `--eval rust` end to end. **Measured, to decide:** the
+reference's work at the timing input is 2.1e11 node executions (the host interpreter's model, the membership twice)
+against `TIMING_WORK_CAP` = 5.9e10, so at this timing input the runner would not time the reference; the host
+interpreter runs the reference at about 4e7 node executions a second (the stored cases in 0.5 s), so the timing input
+is checked through `futhark c` only (`tests_kmeans::the_kmeans_timing_input_...`).
+
+**Not done (step 4's next pieces):** two elements in one view (k-means's membership is an `f32` holding an index
+because the view has one element; D7's `a.f32.n` naming), tuples and records, A7 as a view problem, GPU residency.
 
 ## Steps 5 to 7 (unchanged)
 

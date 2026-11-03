@@ -270,6 +270,57 @@ committed (3g): `examples/futhark_views` writes them, `gen_tables.py --views
 DIR` runs the witnesses on them, and each view's written text is pinned in
 Rust by its fingerprint.
 
+### The elements: `i32` and `f32` (master version 3, step 4)
+
+A view holds **one element**, the one its interface has (the sniffer stops on a
+program that mixes them). The master's rows say which elements each is defined
+for (`elems`): the arithmetic, the comparisons, `min`, `max`, `abs`, `neg`, the
+reductions, scans, histograms, `map2`, the binders, the index rows and the
+inputs are `i32,f32`; `div` (`/`) and `sqrt` are **f32 only**, because they are
+total there (NaN, the infinities) and trap on an integer 0; `mod` is `i32` only.
+Widening a row's `elems` keeps its `since`: a view of another element sees the
+same rows as before. Where an `f32` row's spelling must differ from the `i32`
+one it is a row of its own: `clamp` and the histograms convert a value to an
+index with `i64.f32`, which Futhark leaves undefined for a NaN, an infinity or a
+value out of range, so the `f32` spellings test `f32.isnan` (a NaN is 0 for
+`clamp`, ignored by a histogram) and clamp the value as an `f32` before the
+conversion. (`x == x` is not a NaN test in Futhark: the simplifier folds it to
+true; measured 2026-11-03 through `futhark c`.)
+
+**The f32 semantics the interpreter mirrors**, measured through `futhark c`
+2026-11-03 and checked bit for bit by `futhark_sig::tests_kmeans`: `f32.min`
+and `f32.max` are the C library's `fmin`/`fmax` (a NaN loses to any number;
+`-0.0` is below `+0.0`); `i64.f32` truncates toward zero and is 0 for a NaN, an
+infinity or a value outside `i64`; `f32.sum`, `f32.minimum` and `f32.maximum`
+are left folds from `0`, `f32.inf` and `-f32.inf`; division and `sqrt` are
+IEEE.
+
+**The comparison policy** (`futhark_sig::Array`, every case's exactness): bit
+for bit, with one exception: any NaN agrees with any NaN (a NaN's payload is not
+a value: Futhark prints every NaN as `f32.nan`, and which payload an operation
+keeps is the hardware's choice). `-0.0` and `+0.0` are different values. The
+stored cases are `futhark c -b`'s bytes, and the k-means exact gate of
+`futhark_rust` compares bytes, so this is what they compare as.
+
+**The f32 e-graph rules** (`master/rules.tsv`) are only the bit-exact ones:
+commutativity of `+` and `*` (and of `map2 (+)`, `map2 (*)`), `-(-a) = a`,
+`map2 min a a = a`, `map2 max a a = a`. No associativity, no distributivity, no
+`x * 0 = 0` (a NaN), no reordering of a reduction, no commutativity of
+`min`/`max` (`fmin(0, -0)` is the C library's choice). `a - b = a + (-b)` is
+exact but was dropped for f32: measured on the k-means planted slowdown, the 256
+ranked members of its e-class were all `add (neg ..)` forms and the reference
+was not among them. The rule witness (M9) evaluates both sides of every rule on
+its element's edges (the two zeros, NaN, the infinities, a denormal) under the
+comparison policy.
+
+**The pins.** The four i32 benchmarks' specifications are pinned to master
+version 2 (`gen_tables.py`'s `SIG_PROBLEMS`, the sniffer's `--master`), so the
+rows of version 3 changed none of their tables (the fingerprints in
+`futhark_view::tests` are unchanged); k-means (`sig/kmeans/`, f32, depth 3) is
+the first version-3 view: 3,804 types, 30,041 rows, a gene of 3,044,186 words
+at its program size N = 96. Moving a pin is a decision with its regression
+re-measured.
+
 ## The pixel family (`pixel/<shader>/`)
 
 A second family from the same generator: a picture as a map over the pixels of
