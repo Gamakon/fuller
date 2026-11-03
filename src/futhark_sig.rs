@@ -86,7 +86,7 @@ pub struct Problem {
     pub yardstick: &'static str,
     /// THE PROBLEM'S DEFAULT FITNESS SCHEME (`fuller::fitness::SCHEMES`, by name): the newest scheme of its kind. The
     /// i32 problems and A7 are scored against their stored answers (`futhark-slope4-gated`); k-means is scored on its
-    /// clustering objective run to UltraDim's stopping rule (`futhark-kmeans-converged`, `docs/KMEANS_FITNESS.md`),
+    /// clustering objective run to UltraDim's stopping rule (`futhark-kmeans-quality-first`, `docs/KMEANS_FITNESS.md`),
     /// because a k-means step has no exact answer. `--fitness` may name another scheme of the same kind only
     /// ([`crate::fitness::scheme_for_problem`]).
     pub fitness: &'static str,
@@ -152,9 +152,10 @@ impl Problem {
     }
 
     /// Whether the stored cases carry an answer (`<name>.out`) the program is scored against. A problem scored on its
-    /// own objective (`futhark-kmeans-converged`) stores inputs only: there is no exact answer to store.
+    /// own objective (the k-means schemes, `futhark-kmeans-quality-first`) stores inputs only: there is no exact
+    /// answer to store.
     pub fn cases_have_answers(&self) -> bool {
-        !matches!(crate::fitness::scheme(self.fitness).map(|s| s.definition), Ok(crate::fitness::Definition::FutharkConverged))
+        !crate::fitness::scheme(self.fitness).is_ok_and(|s| s.is_converged())
     }
 }
 
@@ -371,7 +372,7 @@ pub const KMEANS_PROBLEM: Problem = Problem {
     instance: KMEANS,
     seed: Seed::Translated { reference: kmeans_seed_static, planted: kmeans_planted_static },
     yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
-    fitness: "futhark-kmeans-converged",
+    fitness: "futhark-kmeans-quality-first",
     corpus: "tests/corpus/futhark_problems/kmeans",
     timing_n: KMEANS_TIMING_N,
     program_size: KMEANS_PROGRAM_SIZE,
@@ -2710,8 +2711,8 @@ mod tests_micro;
 mod tests_view;
 #[cfg(test)]
 mod tests_pool;
-/// THE K-MEANS FITNESS (`futhark-kmeans-converged`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
-/// its measures and the five inputs a case; the cases cut from the dbpedia sample.
+/// THE K-MEANS FITNESS (`futhark-kmeans-quality-first`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
+/// its measures, the two input groups a case, the cases cut from the dbpedia sample.
 pub mod kmeans_converged;
 
 #[cfg(test)]

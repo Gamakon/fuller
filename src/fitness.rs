@@ -66,12 +66,18 @@ pub enum Definition {
     /// [`Family::FutharkSig`]: the quality inputs a case are the parts `quality` (`futhark_sig::quality_inputs_of`);
     /// the fitness is [`staged`] under `stage_two`.
     FutharkSig { quality: &'static [QualityPart], stage_two: StageTwo },
-    /// [`Family::FutharkSig`], THE K-MEANS SCHEME (`docs/KMEANS_FITNESS.md`, `futhark_sig::kmeans_converged`): the
-    /// program is run to UltraDim's stopping rule on every fitness case, candidate and seed alike, and the five
-    /// inputs a case are each relative to the seed's run (`kmeans_inputs`): cosine inertia and mean log10 angular
-    /// percentile of the final centroids, wall clock to the stopping point, iterations, inertia gained an iteration.
-    /// One stage: TrueNorth over every case's five inputs; no gate, speed is in the same run.
+    /// [`Family::FutharkSig`], THE RETIRED K-MEANS SCHEME (fuller bd929652, `futhark_sig::kmeans_converged::kmeans_inputs_five`):
+    /// the program is run to UltraDim's stopping rule on every fitness case, candidate and seed alike, and the five
+    /// inputs a case are each relative to the seed's run: cosine inertia and mean log10 angular percentile of the
+    /// final centroids, the harness's wall clock to the stopping point, iterations, inertia gained an iteration.
+    /// One stage: TrueNorth over every case's five inputs; no gate. NOT TO BE RUN AS IS (the review of 2026-11-03).
     FutharkConverged,
+    /// [`Family::FutharkSig`], THE K-MEANS SCHEME (`docs/KMEANS_FITNESS.md`, `futhark_sig::kmeans_converged::kmeans_inputs`):
+    /// run to UltraDim's stopping rule as above; per case a QUALITY group (cosine inertia ratio; the ratio of the
+    /// seed's mean log10 angular percentile to the candidate's over the points off their centroid) and a SPEED group
+    /// (the program's own GPU seconds ratio; the iterations ratio), each against the seed's run in the same
+    /// interleaving. The fitness is [`converged_gated`]: quality first.
+    FutharkConvergedGated,
     /// [`Family::Staged`]: [`staged`] under `stage_two` over the runner's own quality and speed inputs.
     Staged { stage_two: StageTwo },
     /// [`Family::Shapes`], THE TWO BANDS (fuller f3972766): a correct program scores `0.49 · t/(t + t_ref)` (`t` its
@@ -147,13 +153,27 @@ pub const SCHEMES: &[Scheme] = &[
         definition: Definition::FutharkSig { quality: &[QualityPart::Study], stage_two: StageTwo::Ungated },
     },
     Scheme {
+        name: "futhark-kmeans-quality-first",
+        family: Family::FutharkSig,
+        description: "k-means run to UltraDim's stopping rule (Euclidean inertia change < 1e-4, or 100 iterations as a slow finished run); per case, against the seed's run in the same interleaving: quality = cosine inertia ratio and the ratio of the seed's mean log10 angular percentile to the candidate's (points off their centroid); speed = the program's own GPU seconds ratio and the iterations ratio; the two-level HFF, gated by quality (docs/KMEANS_FITNESS.md)",
+        commit: "fuller (the review of 2026-11-03, round 1)",
+        inputs: "per fitness case, each r/(1+r) of a ratio to the seed's run in the same interleaving (1/2 is equal to the seed), total on [0, 1]: quality: cosine inertia; seed's mean log10 p over the candidate's (points off their centroid); speed: the program's own seconds to the stopping point (GPU-timed passes; futhark c's -t); iterations; a run that does not finish is 1 on all four",
+        stages: "one: the two-level HFF of the quality group and the speed group for a candidate no worse than the seed on every quality input; pi/2 + theta_quality for one worse on any",
+        fault: None,
+        definition: Definition::FutharkConvergedGated,
+    },
+    // NOT TO BE RUN AS IS: this fitness has a known fault (the advisor's review of 2026-11-03, round 1: a candidate
+    // that gains nothing has a NaN input and one that worsens a negative one, which stop the run; four of its five
+    // inputs reward the do-nothing step; three reward fewer iterations and two are the same number; the clock is the
+    // harness's, not the program's). Redefine the fitness function before using it.
+    Scheme {
         name: "futhark-kmeans-converged",
         family: Family::FutharkSig,
-        description: "k-means run to UltraDim's stopping rule (inertia change < 1e-4 or 100 iterations); per case, relative to the seed's run: cosine inertia and mean log10 angular percentile of the final centroids, seconds to the stopping point, iterations, inertia gained an iteration; one stage, no gate (docs/KMEANS_FITNESS.md)",
+        description: "k-means run to UltraDim's stopping rule (inertia change < 1e-4 or 100 iterations); per case, relative to the seed's run at start-up: cosine inertia and mean log10 angular percentile of the final centroids, the harness's wall clock to the stopping point, iterations, inertia gained an iteration; one stage, no gate",
         commit: "fuller bd929652",
-        inputs: "per fitness case, each r/(1+r) of a ratio to the seed's run (1/2 is equal to the seed): cosine inertia; 10^(mean log10 p - seed's); seconds to the stopping point; iterations; seed's inertia gained an iteration over the candidate's; a run that does not finish is 1 on all five",
+        inputs: "per fitness case, each r/(1+r) of a ratio to the seed's run (1/2 is equal to the seed): cosine inertia; 10^(mean log10 p - seed's); wall seconds to the stopping point; iterations; seed's inertia gained an iteration over the candidate's; a run that does not finish is 1 on all five",
         stages: "one: TrueNorth over every case's five inputs",
-        fault: None,
+        fault: Some("a candidate that gains nothing (the identity step) has a NaN rate input and a worsening one a negative input, and the run stops on either; four of five inputs reward the do-nothing step; three reward fewer iterations; the clock is the harness's (the advisor's review, docs/reviews/2026-11-03_kmeans_plan_advisor_round1.md)"),
         definition: Definition::FutharkConverged,
     },
     Scheme {
@@ -276,9 +296,8 @@ pub fn scheme_for_problem(p: &crate::futhark_sig::Problem, name: Option<&str>) -
     let own = scheme(p.fitness)?;
     let Some(name) = name else { return Ok(own) };
     let s = scheme_for(Family::FutharkSig, Some(name))?;
-    let converged = |d: Definition| matches!(d, Definition::FutharkConverged);
-    if converged(s.definition) != converged(own.definition) {
-        return Err(format!("the fitness scheme {name:?} is not of {}'s kind: {} is scored {}, and its schemes are {}", p.name, p.name, if converged(own.definition) { "on its clustering objective run to UltraDim's stopping rule (docs/KMEANS_FITNESS.md), with no stored answers" } else { "against its stored answers" }, names_for(Family::FutharkSig).into_iter().filter(|n| scheme(n).is_ok_and(|x| converged(x.definition) == converged(own.definition))).collect::<Vec<_>>().join(", ")));
+    if s.is_converged() != own.is_converged() {
+        return Err(format!("the fitness scheme {name:?} is not of {}'s kind: {} is scored {}, and its schemes are {}", p.name, p.name, if own.is_converged() { "on its clustering objective run to UltraDim's stopping rule (docs/KMEANS_FITNESS.md), with no stored answers" } else { "against its stored answers" }, names_for(Family::FutharkSig).into_iter().filter(|n| scheme(n).is_ok_and(|x| x.is_converged() == own.is_converged())).collect::<Vec<_>>().join(", ")));
     }
     Ok(s)
 }
@@ -299,14 +318,31 @@ impl Scheme {
     pub fn quality_parts(&self) -> Result<&'static [QualityPart], String> {
         match self.definition {
             Definition::FutharkSig { quality, .. } => Ok(quality),
-            Definition::FutharkConverged => Err(format!("the fitness scheme {} scores no program against stored answers: it runs the program to UltraDim's stopping rule and has no quality parts (docs/KMEANS_FITNESS.md)", self.name)),
+            Definition::FutharkConverged | Definition::FutharkConvergedGated => Err(format!("the fitness scheme {} scores no program against stored answers: it runs the program to UltraDim's stopping rule and has no quality parts (docs/KMEANS_FITNESS.md)", self.name)),
             _ => Err(format!("our software has a bug: the fitness scheme {} is not a futhark_sig scheme", self.name)),
         }
     }
 
-    /// Whether this is the k-means scheme (`Definition::FutharkConverged`): one stage, no answers, no gate.
+    /// Whether this is a k-means scheme (`Definition::FutharkConverged` or `FutharkConvergedGated`): the program is
+    /// run to UltraDim's stopping rule, there are no answers and one stage.
     pub fn is_converged(&self) -> bool {
-        matches!(self.definition, Definition::FutharkConverged)
+        matches!(self.definition, Definition::FutharkConverged | Definition::FutharkConvergedGated)
+    }
+
+    /// THE FITNESS OF A K-MEANS SCHEME from a program's two input groups over the fitness cases: the quality group
+    /// and the speed group of `kmeans_inputs` for [`converged_gated`]; for the retired scheme, `quality` holds the
+    /// five inputs a case and `speed` is empty ([`converged`]). Any other scheme is an error.
+    pub fn converged_fitness(&self, quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
+        match self.definition {
+            Definition::FutharkConvergedGated => converged_gated(quality, speed),
+            Definition::FutharkConverged => {
+                if !speed.is_empty() {
+                    return Err(format!("our software has a bug: the fitness scheme {} has no speed group", self.name));
+                }
+                converged(quality)
+            }
+            _ => Err(format!("our software has a bug: the fitness scheme {} is not a k-means scheme", self.name)),
+        }
     }
 
     /// The stage-2 rule of a staged scheme (`FutharkSig`, `Staged`, `ShapesHff`).
@@ -347,10 +383,11 @@ pub struct FitnessStart {
     pub description: String,
 }
 
-/// THE K-MEANS SCHEME'S FITNESS (`Definition::FutharkConverged`, `docs/KMEANS_FITNESS.md`): TrueNorth over every
-/// fitness case's five inputs (`futhark_sig::kmeans_converged::kmeans_inputs`, each in [0, 1], 0 best, 1/2 equal to
-/// the seed), in case order; one stage, no speed group (the wall clock is one of the five). No inputs is an error:
-/// a problem with no fitness case cannot be scored.
+/// THE RETIRED K-MEANS SCHEME'S FITNESS (`Definition::FutharkConverged`, fuller bd929652): TrueNorth over every
+/// fitness case's five inputs (`futhark_sig::kmeans_converged::kmeans_inputs_five`, each in [0, 1], 0 best, 1/2 equal
+/// to the seed), in case order; one stage, no speed group (the wall clock is one of the five). No inputs is an error:
+/// a problem with no fitness case cannot be scored; an input outside [0, 1] (the NaN the retired inputs give a
+/// candidate that gains nothing) is the error that retired the scheme.
 pub fn converged(inputs: &[f64]) -> Result<TwoLevel, String> {
     if inputs.is_empty() {
         return Err("our software has a bug: the k-means scheme was given no inputs (no fitness case)".into());
@@ -360,6 +397,30 @@ pub fn converged(inputs: &[f64]) -> Result<TwoLevel, String> {
     }
     let q = crate::score::truenorth_angle(inputs);
     Ok(TwoLevel { fitness: q, quality: q, speed: 0.0 })
+}
+
+/// THE K-MEANS SCHEME'S FITNESS, QUALITY FIRST (`Definition::FutharkConvergedGated`, `docs/KMEANS_FITNESS.md`): the
+/// two-level HFF ([`two_level_hff`]) of the quality group (every fitness case's cosine inertia ratio and percentile
+/// ratio, `futhark_sig::kmeans_converged::kmeans_inputs`) and the speed group (every case's seconds ratio and
+/// iterations ratio), GATED BY QUALITY: a candidate no worse than the seed on every quality input (each at most 1/2)
+/// scores the two-level angle, in `[0, π/2)`; one worse than the seed on any quality input scores `π/2 + θ_quality`.
+/// So no candidate that loses quality ranks above the seed however fast (the identity step, a step rounded to 1e-3,
+/// a worsening step), a candidate that keeps the seed's quality ranks on its speed, and one that gains quality ranks
+/// above the seed by its quality angle. The inputs are total on [0, 1] by construction (`kmeans_inputs`), so an
+/// input outside it, or a NaN, is a bug of our software, named; no inputs is a bug too (no fitness case).
+pub fn converged_gated(quality: &[f64], speed: &[f64]) -> Result<TwoLevel, String> {
+    if quality.is_empty() || speed.is_empty() {
+        return Err("our software has a bug: the k-means scheme was given no inputs (no fitness case)".into());
+    }
+    if let Some(x) = quality.iter().chain(speed).find(|x| !(0.0..=1.0).contains(*x)) {
+        return Err(format!("our software has a bug: a k-means input {x} is outside [0, 1]"));
+    }
+    let t = two_level_hff(quality, speed);
+    if quality.iter().all(|x| *x <= 0.5) {
+        Ok(t)
+    } else {
+        Ok(TwoLevel { fitness: std::f64::consts::FRAC_PI_2 + t.quality, ..t })
+    }
 }
 
 /// A STAGED FITNESS: stage 1 is TrueNorth over the quality inputs (the speed inputs must be empty, and the speed

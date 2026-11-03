@@ -1,22 +1,47 @@
-//! THE K-MEANS FITNESS, `futhark-kmeans-converged` (`docs/KMEANS_FITNESS.md`, the specification as code; Andrew,
-//! 2026-11-03): k-means has no exact answer, so a program is not compared with a reference program's bits, cells or
-//! memberships. It is RUN TO ULTRADIM'S STOPPING RULE on each fitness case, candidate and seed alike, and what the
-//! fitness reads is the clustering it reaches and how it got there: the quality of the final centroids (UltraDim's own
-//! two numbers), the wall clock to the stopping point, the iterations, and the inertia gained an iteration, each
-//! relative to the seed's run on the same case ([`kmeans_inputs`]). One stage, no gate.
+//! THE K-MEANS FITNESS (`docs/KMEANS_FITNESS.md`, the specification as code; Andrew, 2026-11-03): k-means has no exact
+//! answer, so a program is not compared with a reference program's bits, cells or memberships. It is RUN TO ULTRADIM'S
+//! STOPPING RULE on each fitness case, candidate and seed alike, and what the fitness reads is the clustering it
+//! reaches and how it got there: the quality of the final centroids (UltraDim's own two numbers) and the cost of
+//! reaching them (the program's own GPU time and its iterations), each relative to the seed's run in the same
+//! interleaving ([`kmeans_inputs`]). The scheme `futhark-kmeans-quality-first` (`crate::fitness`) ranks the two
+//! groups with quality first; the retired `futhark-kmeans-converged` read five inputs ([`kmeans_inputs_five`]) and
+//! is NOT TO BE RUN AS IS (the advisor's review of 2026-11-03, round 1).
 //!
-//! The prototype is `lib/projection-voting-kmeans` of UltraDim (read 2026-11-03, read-only): `gpu_kmeans.rs` 375-425
-//! is the loop (assign, update, `calculate_inertia`; stop when the inertia changes by less than `tolerance` = 1e-4 or
-//! after `max_iterations` = 100), `lib.rs` 5705 `cosine_inertia` and `quality.rs` 188 `exact_mean_log10_p` are the
-//! quality measures. The loop, the stopping test and the measures are the harness's, here in Rust; the program being
-//! evolved is the BODY of the loop, one step `(points, centres) -> centres` (the two kernels, assignment and update).
-//! The harness's assignment of each point for the measures is UltraDim's `assign_points` rule (the nearest centre by
-//! Euclidean distance, the first on a tie), made against the centres the step was given, as UltraDim's loop makes it.
+//! The prototype is `lib/projection-voting-kmeans` of UltraDim (read 2026-11-03, read-only, commit 4295c335):
+//! `gpu_kmeans.rs` 375-436 is the loop (assign, update, `calculate_inertia`; stop when the inertia changes by less
+//! than `tolerance` = 1e-4 or after `max_iterations` = 100, which leaves `converged` false), `lib.rs` 5709
+//! `cosine_inertia` and `quality.rs` 188 `exact_mean_log10_p` are the quality measures. The loop, the stopping test
+//! and the measures are the harness's, here in Rust; the program being evolved is the BODY of the loop, one step
+//! `(points, centres) -> centres` (the two kernels, assignment and update).
+//!
+//! THE STOPPING RULE IS EUCLIDEAN, THE SCORE IS SPHERICAL (the review's F8). The loop stops on `calculate_inertia`,
+//! the sum of squared Euclidean distances to the centroids (`gpu_kmeans.rs` 1794-1822, no normalisation anywhere in
+//! the loop), as the prototype does; the quality is read with UltraDim's spherical measures, which normalise the
+//! centroids for the measure only. The two objectives differ on unit data: a step that returns unit-length centroids
+//! reaches a lower cosine inertia than the prototype's (measured in the review: 0.14178 against 0.14209), so the
+//! first thing evolution can find is a normalisation UltraDim already has in its cosine path (`lib.rs`, Pass C). That
+//! is a finding to record when it comes, never to suppress: the measures are UltraDim's exactly.
+//!
+//! WHAT THE STOPPING RULE DOES ON THIS DATA (the review's F9): on the dbpedia sample the f32 spacing of the inertia
+//! (1,100-1,270 at n = 5,000) is 1.2e-4, so the tolerance 1e-4 fires only on a bit-identical inertia, which is "the
+//! assignments stopped changing": Lloyd's fixed point. Measured: every seed run stopped with a last change of exactly
+//! 0 after 4 to 33 iterations. So `iterations` is the fixed-point count, which depends on the starting centres (16
+//! against 33 at n = 2,000, k = 32, first rows against random rows): the starting centres are part of the case
+//! (`tests/corpus/futhark_problems/kmeans/`, k-means++ starts stored per case). A candidate whose output jitters by
+//! one ulp between iterations never stops: it reaches the cap, which UltraDim reports as `converged: false` with the
+//! centroids it has, and here too (`ConvergedRun::converged` false, `finished` true): its quality is measured on
+//! those centroids and its cost is 100 iterations, so it is scored SLOW, not worst.
+//!
+//! THE HARNESS'S ASSIGNMENT (the review's F12): the measures read each point's nearest centre by Euclidean distance
+//! (UltraDim's `assign_points` rule, the first on a tie) against the centres the last step was given, as UltraDim's
+//! loop makes its assignments before the update; the assignments a step makes inside itself are never read. A
+//! candidate that assigns by cosine inside its step is measured on Euclidean assignments to its centroids. On unit
+//! points `|x - c|^2 = 1 + |c|^2 - 2 x . c`, so the two rules agree only on unit centroids.
 //!
 //! UltraDim's quality measures are spherical: its points are unit vectors by construction and its centroids are
-//! normalised, so `cosine_inertia` reads `1 - x . mu` as a cosine. The cases here are not unit (magnitudes from 10^-3 to
-//! 10^5), so the harness normalises each point and each centroid before the two spherical measures; on unit data this
-//! is the identity and the measures are UltraDim's exactly. A zero vector has cosine 0 to everything.
+//! normalised, so `cosine_inertia` reads `1 - x . mu` as a cosine. The harness normalises each point and each
+//! centroid before the two spherical measures; on the dbpedia rows (every norm 1.00000) this is the identity and the
+//! measures are UltraDim's exactly. A zero vector has cosine 0 to everything.
 
 use std::path::Path;
 use std::time::Instant;
@@ -29,11 +54,39 @@ use super::{read_one, write_binary, Array, Elem};
 /// UltraDim's `tolerance`: the loop stops when the inertia changes by less than this.
 pub const TOLERANCE: f32 = 1e-4;
 
-/// UltraDim's `max_iterations`: a run that reaches it without converging did not finish.
+/// UltraDim's `max_iterations`: a run that reaches it stops there with `converged` false.
 pub const MAX_ITERATIONS: u32 = 100;
 
-/// The names of the five inputs a case, in [`kmeans_inputs`]' order.
-pub const INPUT_NAMES: [&str; 5] = ["cosine inertia / seed", "angular percentile p / seed", "seconds to stop / seed", "iterations / seed", "seed inertia gained an iteration / candidate"];
+/// A POINT AT ITS CENTROID: `sin^2` of its angle to the centroid below this, 0.01 radians (0.57 degrees). UltraDim
+/// clamps such a point's `sin^2` at the smallest positive f64 so that a singleton cluster stays finite
+/// (`quality.rs` 157-170): `ln_betainc(767.5, 0.5, 2.2e-308)` is about -236,000 for that one point at d = 1,536,
+/// and a point one f32 rounding off its centroid is about -5,400, where every other point is near -450. The
+/// measured identity step (the k-means++ start rows returned as the centres) owed its -4,053 against the seed's
+/// -448 to its k rows at their own centroids (the review's F2). The fitness's percentile is the mean over the points
+/// that are NOT at their centroid, and their count is reported; in 1,536 dimensions two distinct embeddings are
+/// never within 0.57 degrees (nearest neighbours are 15 degrees apart and more), so the rule excludes duplicates and
+/// singletons and nothing else. UltraDim's own number over every point is kept beside it, reported, never an input.
+pub const AT_CENTROID_SIN2: f64 = 1e-4;
+
+/// THE WORK CAP of the converged path (the review's F6): a candidate's work model on a fitness case may be at most
+/// this many times the seed's on the same case; over it the candidate is not run and takes the worst score. The
+/// WGSL per-submit cap (1.7e8 node executions) admitted n x k x d under 1.7e6 and refused every dbpedia case; the
+/// seed's own work on the 5,000 x 1,536 x 256 timing case is 2.3e11.
+pub const WORK_CAP_TIMES_SEED: u128 = 10;
+
+/// The bound a candidate's work on a case must not exceed, from the seed's work on that case.
+pub fn converged_work_cap(seed_work: u128) -> u128 {
+    seed_work.saturating_mul(WORK_CAP_TIMES_SEED)
+}
+
+/// The names of the quality inputs a case, in [`kmeans_inputs`]' order.
+pub const QUALITY_NAMES: [&str; 2] = ["cosine inertia / seed", "seed mean log10 p / candidate (points off their centroid)"];
+
+/// The names of the speed inputs a case, in [`kmeans_inputs`]' order.
+pub const SPEED_NAMES: [&str; 2] = ["program seconds to stop / seed", "iterations / seed"];
+
+/// The names of the retired five-input scheme's inputs ([`kmeans_inputs_five`]).
+pub const INPUT_NAMES_FIVE: [&str; 5] = ["cosine inertia / seed", "angular percentile p / seed", "wall seconds to stop / seed", "iterations / seed", "seed inertia gained an iteration / candidate"];
 
 /// One run of a k-means program to UltraDim's stopping point, and what the fitness reads from it.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,42 +95,101 @@ pub struct ConvergedRun {
     /// against the centres the last step was given, as UltraDim's loop makes them).
     pub centroids: Vec<Vec<f32>>,
     pub assignments: Vec<usize>,
-    /// 1. QUALITY of the final centroids, both of UltraDim's numbers: `cosine_inertia(points, centroids, assignments,
-    ///    d)` and `exact_mean_log10_p(cosines of each point to its assigned unit centroid, d)`.
+    /// 1. QUALITY of the final centroids: UltraDim's `cosine_inertia(points, centroids, assignments, d)`, and its
+    ///    `exact_mean_log10_p` over the cosines of the points that are not at their centroid ([`AT_CENTROID_SIN2`]).
     pub inertia: f64,
     pub mean_log10_p: f64,
-    /// 2. ELAPSED CONVERGENCE SPEED: the wall clock from the first assignment to the stopping point, in seconds
-    ///    (measured interleaved with the seed's run on the same device: [`converge_interleaved`]).
+    /// UltraDim's `exact_mean_log10_p` over EVERY point, the prototype's own number: reported, never an input.
+    pub mean_log10_p_all: f64,
+    /// The points at their centroid, left out of `mean_log10_p`.
+    pub coincident: usize,
+    /// 2. THE PROGRAM'S OWN TIME to the stopping point, in seconds: the sum over the iterations of what the step
+    ///    itself took (the GPU-timed passes of the shim's executable; `futhark c`'s own `-t` runtime), the
+    ///    harness's assignment, the process and the pipe excluded exactly (the review's F4).
     pub seconds: f64,
-    /// 3. RATE OF CONVERGENCE: the iterations to the stopping point (UltraDim's `iterations`), and the quality gained
-    ///    per iteration, (the Euclidean inertia of the starting centres - the inertia at the stop) / iterations.
+    /// The harness's wall clock from the first assignment to the stop (the budget's number; never an input).
+    pub wall_seconds: f64,
+    /// 3. The iterations to the stopping point (UltraDim's `iterations`), and the Euclidean inertia gained an
+    ///    iteration, (the inertia of the starting centres - the inertia at the stop) / iterations (the retired
+    ///    scheme's input, reported).
     pub iterations: u32,
     pub inertia_per_iteration: f64,
-    /// A run that did not finish (an infinite or NaN centroid, a wrong shape, the iteration cap with no convergence)
-    /// takes the worst value on every input.
+    /// UltraDim's `converged`: the tolerance fired before the cap. False at the cap: the run is measured on the
+    /// centroids it has (`finished` true) and its cost is [`MAX_ITERATIONS`].
+    pub converged: bool,
+    /// Whether the run could be measured: every step returned a `[k][d]f32` of finite values. A run that did not
+    /// finish (an infinite or NaN centroid, a wrong shape, a step that failed) takes the worst value on every input.
     pub finished: bool,
     /// Why a run did not finish (empty for a finished run).
     pub failure: String,
 }
 
-/// The HFF inputs of one case: every measure its own input, each relative to the seed's run on the same case, each
-/// in [0, 1] with 0 best, by `r / (1 + r)` of a ratio (1/2 is "equal to the seed") or a difference squashed the same
-/// way. Exactly `docs/KMEANS_FITNESS.md`.
-pub fn kmeans_inputs(candidate: &ConvergedRun, seed: &ConvergedRun) -> Vec<f64> {
+/// The inputs of one case: the quality group and the speed group, each in [0, 1] with 0 best and 1/2 "equal to the
+/// seed", by `r / (1 + r)` of a ratio to the seed's run in the same interleaving.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Inputs {
+    pub quality: Vec<f64>,
+    pub speed: Vec<f64>,
+}
+
+impl Inputs {
+    /// The worst inputs: 1 on every input of both groups.
+    pub fn worst() -> Inputs {
+        Inputs { quality: vec![1.0; QUALITY_NAMES.len()], speed: vec![1.0; SPEED_NAMES.len()] }
+    }
+}
+
+/// `r / (1 + r)` of the ratio `c / s`, TOTAL on [0, 1]: a seed measure of 0 divides the smallest positive f64 (so a
+/// positive candidate measure is 1, the worst), a negative candidate measure is 0 (better than perfect), an infinite
+/// or NaN ratio is 1. The seed's own measure against itself is exactly 1/2.
+pub fn squashed_ratio(c: f64, s: f64) -> f64 {
+    let r = c.max(0.0) / s.max(f64::MIN_POSITIVE);
+    if r.is_finite() {
+        (r / (1.0 + r)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// THE INPUTS OF ONE CASE (`docs/KMEANS_FITNESS.md`), each defined for every outcome (the review's F1): the quality
+/// group is the cosine inertia ratio and the ratio of the seed's mean log10 p to the candidate's (both are at most 0,
+/// so the sign is dropped: a tighter candidate is more negative and scores below 1/2; a candidate with no tightness
+/// at all, 0, scores 1); the speed group is the ratio of the program's own seconds and the ratio of the iterations.
+/// A run that did not finish is 1 on every input. Nothing here is a function of another input: the Euclidean gain an
+/// iteration of the retired scheme was the iterations input a second time (the review's F3).
+pub fn kmeans_inputs(candidate: &ConvergedRun, seed: &ConvergedRun) -> Inputs {
     if !candidate.finished {
+        return Inputs::worst();
+    }
+    Inputs {
+        quality: vec![
+            squashed_ratio(candidate.inertia, seed.inertia),             // cosine inertia, candidate / seed
+            squashed_ratio(-seed.mean_log10_p, -candidate.mean_log10_p), // the angular percentile: the seed's tightness over the candidate's
+        ],
+        speed: vec![
+            squashed_ratio(candidate.seconds, seed.seconds),                                 // the program's own time to the stopping point
+            squashed_ratio(f64::from(candidate.iterations), f64::from(seed.iterations)),     // iterations to the stopping point
+        ],
+    }
+}
+
+/// THE RETIRED SCHEME'S FIVE INPUTS (`futhark-kmeans-converged`, fuller bd929652), kept so that the name computes
+/// what it did: cosine inertia ratio; 10^(difference of the mean log10 p over every point); the harness's WALL
+/// CLOCK ratio; the iterations ratio; the seed's Euclidean gain an iteration over the candidate's. NOT TO BE RUN AS IS:
+/// a candidate that gains nothing has a NaN here (`squash(inf)`), one that worsens a negative input, and the clock is
+/// the harness's (the review's F1, F3, F4).
+pub fn kmeans_inputs_five(candidate: &ConvergedRun, seed: &ConvergedRun) -> Vec<f64> {
+    if !candidate.finished || !candidate.converged {
         return vec![1.0; 5];
     }
     let ratio = |c: f64, s: f64| c / s.max(f64::MIN_POSITIVE);
     let squash = |r: f64| r / (1.0 + r);
     vec![
-        // 1. quality of the final centroids
-        squash(ratio(candidate.inertia, seed.inertia)),                             // cosine inertia, candidate / seed
-        squash(10f64.powf(candidate.mean_log10_p - seed.mean_log10_p)),             // the angular-percentile metric, as a ratio of p
-        // 2. elapsed convergence speed
-        squash(ratio(candidate.seconds, seed.seconds)),                             // wall clock to the stopping point
-        // 3. rate of convergence
-        squash(ratio(f64::from(candidate.iterations), f64::from(seed.iterations))), // iterations to the stopping point
-        squash(ratio(seed.inertia_per_iteration, candidate.inertia_per_iteration)), // quality gained an iteration (more is better, so inverted)
+        squash(ratio(candidate.inertia, seed.inertia)),
+        squash(10f64.powf(candidate.mean_log10_p_all - seed.mean_log10_p_all)),
+        squash(ratio(candidate.wall_seconds, seed.wall_seconds)),
+        squash(ratio(f64::from(candidate.iterations), f64::from(seed.iterations))),
+        squash(ratio(seed.inertia_per_iteration, candidate.inertia_per_iteration)),
     ]
 }
 
@@ -100,10 +212,13 @@ fn centroid_rows(centres: &Array, k: usize, d: usize) -> Result<Vec<Vec<f32>>, S
 
 /// UltraDim's `compute_distances` + `assign_points`: each point's nearest centroid by Euclidean distance (the sum of
 /// squared differences in order, in `f32`, then `sqrt`), the first centroid on a tie (`distance < best_distance`
-/// replaces only a strictly smaller one; a NaN distance never replaces).
+/// replaces only a strictly smaller one; a NaN distance never replaces). The points are assigned in parallel, each
+/// point's sums in order, so the result is the sequential one bit for bit (the review's change 3: the harness's
+/// assignment was 0.35-5.6 s an iteration sequential at 5,000 x 1,536).
 pub fn assign(points: &[f32], d: usize, centroids: &[Vec<f32>]) -> Vec<usize> {
     let n = points.len() / d.max(1);
     (0..n)
+        .into_par_iter()
         .map(|i| {
             let p = &points[i * d..(i + 1) * d];
             let dist = |c: &[f32]| {
@@ -127,8 +242,9 @@ pub fn assign(points: &[f32], d: usize, centroids: &[Vec<f32>]) -> Vec<usize> {
         .collect()
 }
 
-/// UltraDim's `calculate_inertia` (the stopping rule's number): the sum over points of the squared Euclidean distance
-/// to the assigned centroid, in `f32`, an assignment out of range contributing nothing.
+/// UltraDim's `calculate_inertia` (the stopping rule's number, `gpu_kmeans.rs` 1794): the sum over points of the
+/// squared EUCLIDEAN distance to the assigned centroid, in `f32`, an assignment out of range contributing nothing.
+/// Nothing is normalised: the loop is Euclidean Lloyd (the module header).
 pub fn euclidean_inertia(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], d: usize) -> f32 {
     let n = points.len() / d.max(1);
     let mut inertia = 0f32;
@@ -152,9 +268,11 @@ fn unit(v: &[f32]) -> Vec<f32> {
     v.iter().map(|x| (f64::from(*x) / norm) as f32).collect()
 }
 
-/// UltraDim's `cosine_inertia`: `(1/n) sum (1 - x_i . mu_{a_i})` with unit centroids, each term in `f32`, an
-/// assignment out of range contributing nothing (UltraDim sums the terms in parallel chunks whose count is the
-/// thread count; here in order). `points` and `centroids` are given as unit vectors by [`spherical`].
+/// UltraDim's `cosine_inertia` (`lib.rs` 5709): `(1/n) sum (1 - x_i . mu_{a_i})` with unit centroids, each term in
+/// `f32`, an assignment out of range contributing nothing. UltraDim sums the terms in rayon chunks whose count is its
+/// thread count, so its bits depend on the machine; here the sum is in order, which is UltraDim's own result on one
+/// thread. `points` and
+/// `centroids` are given as unit vectors by [`spherical`].
 pub fn cosine_inertia(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], d: usize) -> f32 {
     let n = points.len() / d.max(1);
     if n == 0 {
@@ -172,10 +290,25 @@ pub fn cosine_inertia(points: &[f32], centroids: &[Vec<f32>], assignments: &[usi
     acc / n as f32
 }
 
-/// UltraDim's two spherical measures of a clustering: the points and the centroids made unit (see the module header),
-/// then `cosine_inertia` and `exact_mean_log10_p` over each point's cosine to its assigned unit centroid (an
-/// assignment out of range has no cosine, as it has no term in UltraDim's inertia).
-pub fn spherical(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], d: usize) -> (f64, f64) {
+/// UltraDim's two spherical measures of a clustering.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spherical {
+    /// `cosine_inertia`.
+    pub inertia: f64,
+    /// `exact_mean_log10_p` over the points that are not at their centroid (the fitness's).
+    pub mean_log10_p: f64,
+    /// `exact_mean_log10_p` over every point (UltraDim's number as it is).
+    pub mean_log10_p_all: f64,
+    /// The points at their centroid ([`AT_CENTROID_SIN2`]).
+    pub coincident: usize,
+}
+
+/// UltraDim's two spherical measures of a clustering: the points and the centroids made unit (see the module
+/// header), then `cosine_inertia` and `exact_mean_log10_p` over each point's cosine to its assigned unit centroid, over
+/// every point and over the points not at their centroid (an assignment out of range has no cosine, as it has no term
+/// in UltraDim's inertia). The cosines are the `f64` dots of the unit `f32` vectors, clamped to [-1, 1] as
+/// `log10_angular_percentile` clamps them.
+pub fn spherical(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], d: usize) -> Spherical {
     let n = points.len() / d.max(1);
     let unit_points: Vec<f32> = (0..n).flat_map(|i| unit(&points[i * d..(i + 1) * d])).collect();
     let unit_centroids: Vec<Vec<f32>> = centroids.iter().map(|c| unit(c)).collect();
@@ -184,10 +317,17 @@ pub fn spherical(points: &[f32], centroids: &[Vec<f32>], assignments: &[usize], 
         .filter(|i| assignments[*i] < centroids.len())
         .map(|i| {
             let v = &unit_points[i * d..(i + 1) * d];
-            v.iter().zip(&unit_centroids[assignments[i]]).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum::<f64>()
+            v.iter().zip(&unit_centroids[assignments[i]]).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum::<f64>().clamp(-1.0, 1.0)
         })
         .collect();
-    (inertia, exact_mean_log10_p(&cosines, d))
+    let off: Vec<f64> = cosines.iter().copied().filter(|c| !at_centroid(*c)).collect();
+    Spherical { inertia, mean_log10_p: exact_mean_log10_p(&off, d), mean_log10_p_all: exact_mean_log10_p(&cosines, d), coincident: cosines.len() - off.len() }
+}
+
+/// Whether a point with this cosine to its centroid is AT the centroid ([`AT_CENTROID_SIN2`]): on the centroid's side
+/// (a positive cosine; the antipode has the same `sin^2` and is the worst point, not a coincident one).
+pub fn at_centroid(cos_t: f64) -> bool {
+    cos_t > 0.0 && 1.0 - cos_t * cos_t < AT_CENTROID_SIN2
 }
 
 // ---- quality.rs: the dimension-corrected spherical percentile ----------------------------------------------------
@@ -227,8 +367,9 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
     ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
 }
 
-/// Natural log of the regularised incomplete beta `I_x(a, b)` (UltraDim `quality.rs` `ln_betainc`): the prefactor in
-/// log space, the Lentz continued fraction, the reflection `I_x(a, b) = 1 - I_{1-x}(b, a)` past `(a + 1)/(a + b + 2)`.
+/// Natural log of the regularised incomplete beta `I_x(a, b)` (UltraDim `quality.rs` `ln_betainc`, line for line):
+/// the prefactor in log space, the Lentz continued fraction, the reflection `I_x(a, b) = 1 - I_{1-x}(b, a)` past
+/// `(a + 1)/(a + b + 2)`.
 pub fn ln_betainc(a: f64, b: f64, x: f64) -> f64 {
     debug_assert!(a > 0.0 && b > 0.0, "ln_betainc: a,b must be > 0");
     let x = x.clamp(0.0, 1.0);
@@ -307,8 +448,9 @@ fn betacf(a: f64, b: f64, x: f64) -> f64 {
 }
 
 /// `log10` of the fixed-direction angular percentile `F(theta)` of a point whose cosine to its unit centroid is `cos_t`,
-/// in dimension `d` (UltraDim `quality.rs` `log10_angular_percentile`): no folding, the sign of the cosine selects
-/// the branch, `sin^2` clamped to the smallest positive normal so a coincident point stays finite and tightest.
+/// in dimension `d` (UltraDim `quality.rs` `log10_angular_percentile`, line for line): no folding, the sign of the
+/// cosine selects the branch, `sin^2` clamped to the smallest positive normal so a coincident point stays finite and
+/// tightest.
 pub fn log10_angular_percentile(cos_t: f64, d: usize) -> f64 {
     debug_assert!(d >= 2, "spherical CDF needs d >= 2");
     let cos_t = cos_t.clamp(-1.0, 1.0);
@@ -324,27 +466,50 @@ pub fn log10_angular_percentile(cos_t: f64, d: usize) -> f64 {
     }
 }
 
-/// UltraDim's REAL metric (`quality.rs` `exact_mean_log10_p`): the mean over points of `log10 F(theta_i)`; smaller
-/// (more negative) is tighter than chance. The empty set is 0.
+/// UltraDim's REAL metric (`quality.rs` `exact_mean_log10_p`, line for line): the mean over points of
+/// `log10 F(theta_i)`; smaller (more negative) is tighter than chance. The empty set is 0.
 pub fn exact_mean_log10_p(cosines: &[f64], d: usize) -> f64 {
     if cosines.is_empty() {
         return 0.0;
     }
-    cosines.iter().map(|&c| log10_angular_percentile(c, d)).sum::<f64>() / cosines.len() as f64
+    let sum: f64 = cosines.iter().map(|&c| log10_angular_percentile(c, d)).sum();
+    sum / cosines.len() as f64
 }
 
 // ---- the loop ------------------------------------------------------------------------------------------------------
 
-/// THE LOOP (UltraDim `gpu_kmeans.rs` 375-425) around a program `step: centres -> centres` (the points fixed): for up to
-/// [`MAX_ITERATIONS`], the harness assigns each point to its nearest of the current centres, the program makes the
-/// next centres, and the Euclidean inertia of the new centres under those assignments is compared with the last
-/// iteration's: a change under [`TOLERANCE`] stops. The wall clock is this function's, from the first assignment to
-/// the stop. A step whose output is not a `[k][d]f32` of finite values, or that fails, or the cap reached without
-/// convergence, is a run that did not finish (`finished` false, `failure` says why); every measure is still filled
-/// from what there is.
-pub fn converge<F>(points: &Array, start: &Array, mut step: F) -> Result<ConvergedRun, String>
+/// What one step of a program returns: the next centres and THE PROGRAM'S OWN TIME for them, in seconds (the GPU-timed
+/// passes of the shim's executable, `futhark c`'s own runtime, a Rust step's clock around itself), never the
+/// harness's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stepped {
+    pub centres: Array,
+    pub seconds: f64,
+}
+
+/// A Rust step as the loop takes it: the step's own clock around the call.
+pub fn timed<F>(mut f: F) -> impl FnMut(&Array) -> Result<Stepped, String>
 where
     F: FnMut(&Array) -> Result<Array, String>,
+{
+    move |c: &Array| {
+        let t = Instant::now();
+        let centres = f(c)?;
+        Ok(Stepped { centres, seconds: t.elapsed().as_secs_f64() })
+    }
+}
+
+/// THE LOOP (UltraDim `gpu_kmeans.rs` 375-436) around a program `step: centres -> centres` (the points fixed): for up to
+/// [`MAX_ITERATIONS`], the harness assigns each point to its nearest of the current centres, the program makes the
+/// next centres, and the Euclidean inertia of the new centres under those assignments is compared with the last
+/// iteration's: a change under [`TOLERANCE`] stops with `converged` true; the cap stops with `converged` false and the
+/// centroids it has, as UltraDim's loop does. `seconds` is the sum of the steps' own times ([`Stepped::seconds`]) and
+/// `wall_seconds` this function's clock from the first assignment to the stop. A step whose output is not a
+/// `[k][d]f32` of finite values, or that fails, is a run that did not finish (`finished` false, `failure` says why);
+/// every measure is still filled from what there is.
+pub fn converge<F>(points: &Array, start: &Array, mut step: F) -> Result<ConvergedRun, String>
+where
+    F: FnMut(&Array) -> Result<Stepped, String>,
 {
     let (flat, d) = flat_points(points)?;
     if d < 2 {
@@ -360,19 +525,21 @@ where
     let mut prev_inertia = f32::INFINITY;
     let mut current_inertia = f32::NAN;
     let mut iterations = 0u32;
-    let mut finished = false;
+    let mut seconds = 0.0;
+    let mut converged = false;
     let mut failure = String::new();
     for iteration in 0..MAX_ITERATIONS {
         iterations = iteration + 1;
         assignments = assign(&flat, d, &centroids);
         let next = match step(&centres) {
-            Ok(a) => a,
+            Ok(s) => s,
             Err(e) => {
                 failure = format!("iteration {iterations}: the step failed: {e}");
                 break;
             }
         };
-        match centroid_rows(&next, k, d) {
+        seconds += next.seconds;
+        match centroid_rows(&next.centres, k, d) {
             Ok(rows) if rows.iter().flatten().all(|x| x.is_finite()) => centroids = rows,
             Ok(_) => {
                 failure = format!("iteration {iterations}: a centroid is infinite or NaN");
@@ -383,30 +550,44 @@ where
                 break;
             }
         }
-        centres = next;
+        centres = next.centres;
         current_inertia = euclidean_inertia(&flat, &centroids, &assignments, d);
         if (prev_inertia - current_inertia).abs() < TOLERANCE {
-            finished = true;
+            converged = true;
             break;
         }
         prev_inertia = current_inertia;
     }
-    let seconds = t0.elapsed().as_secs_f64();
-    if !finished && failure.is_empty() {
-        failure = format!("the iteration cap {MAX_ITERATIONS} reached without convergence (the last change {})", (prev_inertia - current_inertia).abs());
-    }
-    let (inertia, mean_log10_p) = spherical(&flat, &centroids, &assignments, d);
+    let wall_seconds = t0.elapsed().as_secs_f64();
+    let finished = failure.is_empty();
+    let s = spherical(&flat, &centroids, &assignments, d);
     let final_inertia = if current_inertia.is_finite() { f64::from(current_inertia) } else { start_inertia };
-    Ok(ConvergedRun { centroids, assignments, inertia, mean_log10_p, seconds, iterations, inertia_per_iteration: (start_inertia - final_inertia) / f64::from(iterations.max(1)), finished, failure })
+    Ok(ConvergedRun {
+        centroids,
+        assignments,
+        inertia: s.inertia,
+        mean_log10_p: s.mean_log10_p,
+        mean_log10_p_all: s.mean_log10_p_all,
+        coincident: s.coincident,
+        seconds,
+        wall_seconds,
+        iterations,
+        inertia_per_iteration: (start_inertia - final_inertia) / f64::from(iterations.max(1)),
+        converged,
+        finished,
+        failure,
+    })
 }
 
 /// The candidate and the seed run INTERLEAVED on one case, `pairs` times each (the candidate first in the even pairs,
 /// the seed first in the odd, so neither side always runs warm after the other): each side's run is its first, with
-/// its `seconds` the median of its runs. One pair is the plain [`converge`] of each.
+/// its `seconds` and `wall_seconds` the median of its runs. One pair is the plain [`converge`] of each. THE SEED'S RUN
+/// RETURNED HERE IS THE YARDSTICK of that evaluation (the review's F5): the candidate's inputs are taken against it,
+/// never against a seed run from another time.
 pub fn converge_interleaved<C, S>(points: &Array, start: &Array, pairs: usize, mut candidate: C, mut seed: S) -> Result<(ConvergedRun, ConvergedRun), String>
 where
-    C: FnMut(&Array) -> Result<Array, String>,
-    S: FnMut(&Array) -> Result<Array, String>,
+    C: FnMut(&Array) -> Result<Stepped, String>,
+    S: FnMut(&Array) -> Result<Stepped, String>,
 {
     if pairs == 0 {
         return Err("our software has a bug: an interleaved run of 0 pairs".into());
@@ -421,30 +602,58 @@ where
             c_runs.push(converge(points, start, &mut candidate)?);
         }
     }
-    let median = |runs: &[ConvergedRun]| {
-        let mut s: Vec<f64> = runs.iter().map(|r| r.seconds).collect();
-        s.sort_by(f64::total_cmp);
-        s[s.len() / 2]
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
     };
     let mut c = c_runs[0].clone();
-    c.seconds = median(&c_runs);
+    c.seconds = median(&mut c_runs.iter().map(|r| r.seconds).collect());
+    c.wall_seconds = median(&mut c_runs.iter().map(|r| r.wall_seconds).collect());
     let mut s = s_runs[0].clone();
-    s.seconds = median(&s_runs);
+    s.seconds = median(&mut s_runs.iter().map(|r| r.seconds).collect());
+    s.wall_seconds = median(&mut s_runs.iter().map(|r| r.wall_seconds).collect());
     Ok((c, s))
+}
+
+/// HOW A COMPILED STEP'S OWN TIME IS READ ([`step_of_exe`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepTimer {
+    /// A `futhark c` executable: its `-t FILE` runtime, the entry point's microseconds with the input's reading and
+    /// the output's writing excluded (Futhark's own measure).
+    FutharkC,
+    /// The GPU shim's executable: the sum of the GPU-timed compute passes of the one run
+    /// (`futhark_wgpu_host::run_program_bytes` with timestamps, `ShimReport::fastest_run_ns(1)`): the device's clock
+    /// around the program's dispatches only, as the other schemes' interleaved pairs time them.
+    Gpu,
 }
 
 /// The step of a compiled program with the declared signature `(points: [n][d]f32) (centres: [k][d]f32) -> [k][d]f32`
 /// (`futhark c`, or the GPU shim's executable: both read Futhark's binary format on stdin with `-b`), as [`converge`]
-/// takes it: one process per iteration, the points written each time. This is the CPU path's whole measure
-/// (`--backend c`): the wall clock is the processes'.
-pub fn step_of_exe<'a>(exe: &'a Path, points: &'a Array) -> impl FnMut(&Array) -> Result<Array, String> + 'a {
+/// takes it: one process per iteration, the points written each time, and the step's own time read by `timer`.
+pub fn step_of_exe<'a>(exe: &'a Path, points: &'a Array, timer: StepTimer) -> impl FnMut(&Array) -> Result<Stepped, String> + 'a {
     move |centres: &Array| {
         let stdin = write_binary(&[points, centres]);
-        let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin))?;
-        if !out.status.success() {
-            return Err(format!("{} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
+        match timer {
+            StepTimer::FutharkC => {
+                let dir = exe.parent().ok_or("an executable with no directory")?;
+                let runtime = dir.join(format!("runtime_{}.txt", std::process::id()));
+                let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b").arg("-t").arg(&runtime), std::time::Duration::from_secs(120), Some(&stdin))?;
+                if !out.status.success() {
+                    return Err(format!("{} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
+                }
+                let text = std::fs::read_to_string(&runtime).map_err(|e| format!("{} wrote no runtime ({}): {e}", exe.display(), runtime.display()))?;
+                let us: u64 = text.trim().lines().last().unwrap_or("").trim().parse().map_err(|_| format!("{} wrote a runtime that is not an integer of microseconds: {text:?}", exe.display()))?;
+                Ok(Stepped { centres: read_one(&out.stdout)?, seconds: us as f64 / 1e6 })
+            }
+            StepTimer::Gpu => {
+                let (out, report) = crate::futhark_wgpu_host::run_program_bytes(exe, &stdin, true, 1)?;
+                if report.backend != "Metal" {
+                    return Err(format!("the program ran on {}, not Metal", report.backend));
+                }
+                let ns = report.fastest_run_ns(1)?;
+                Ok(Stepped { centres: read_one(&out)?, seconds: ns / 1e9 })
+            }
         }
-        read_one(&out.stdout)
     }
 }
 
@@ -564,7 +773,7 @@ pub fn ultradim_step_f32(points: &Array, centres: &Array, kahan: bool) -> Result
     let assignments = assign(&flat, d, &rows);
     let n = flat.len() / d.max(1);
     let mut out = rows.clone();
-    for (j, row) in out.iter_mut().enumerate() {
+    out.par_iter_mut().enumerate().for_each(|(j, row)| {
         for (t, cell) in row.iter_mut().enumerate() {
             let (mut sum, mut sum_c, mut count) = (0f32, 0f32, 0u32);
             for i in 0..n {
@@ -585,7 +794,7 @@ pub fn ultradim_step_f32(points: &Array, centres: &Array, kahan: bool) -> Result
                 *cell = sum / count as f32;
             }
         }
-    }
+    });
     Ok(Array::f32s(vec![k, d], out.concat()))
 }
 
@@ -600,6 +809,7 @@ pub fn ultradim_step_f64(points: &Array, centres: &Array) -> Result<(Vec<usize>,
     let p64: Vec<f64> = flat.iter().map(|x| f64::from(*x)).collect();
     let c64: Vec<f64> = rows.concat().iter().map(|x| f64::from(*x)).collect();
     let assignments: Vec<usize> = (0..n)
+        .into_par_iter()
         .map(|i| {
             let dist = |j: usize| {
                 let mut s = 0f64;
@@ -621,8 +831,8 @@ pub fn ultradim_step_f64(points: &Array, centres: &Array) -> Result<(Vec<usize>,
         })
         .collect();
     let mut out = c64.clone();
-    for j in 0..k {
-        for t in 0..d {
+    out.par_chunks_mut(d.max(1)).enumerate().for_each(|(j, row)| {
+        for (t, cell) in row.iter_mut().enumerate() {
             let (mut sum, mut sum_c, mut count) = (0f64, 0f64, 0u64);
             for i in 0..n {
                 if assignments[i] == j {
@@ -635,10 +845,10 @@ pub fn ultradim_step_f64(points: &Array, centres: &Array) -> Result<(Vec<usize>,
                 }
             }
             if count > 0 {
-                out[j * d + t] = sum / count as f64;
+                *cell = sum / count as f64;
             }
         }
-    }
+    });
     Ok((assignments, out))
 }
 

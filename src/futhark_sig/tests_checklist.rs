@@ -74,10 +74,17 @@ fn every_problem_loads_has_a_default_scheme_and_its_programs_are_exact_on_the_ho
                     assert!(function_count(&k, &t) < p.program_size, "{name}: the {what} has {} functions, the program size is {}", function_count(&k, &t), p.program_size);
                     fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: the {what} does not fit N = {}: {e}", p.program_size));
                     if own.is_converged() {
-                        // The seed's control (the runner's): its run finishes on every fitness case, host interpreter.
+                        // The seed's control (the runner's): its run CONVERGES on every fitness case, compiled with
+                        // `futhark c` (the dbpedia cases are the compiled program's: the host interpreter is a minute a
+                        // step on them).
+                        use crate::futhark_sig::kmeans_converged::{converge, step_of_exe, StepTimer};
+                        if !std::process::Command::new("futhark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+                            panic!("futhark 0.28.1 is needed for this test");
+                        }
+                        let exe = compile_c(&program(&k, &sig, &t).unwrap(), &std::env::temp_dir().join(format!("futhark_sig_checklist_{name}_{}_{}", what.replace(' ', "_"), std::process::id()))).unwrap();
                         for c in cases.iter().filter(|c| c.split.in_fitness()) {
-                            let r = crate::futhark_sig::kmeans_converged::converge(&c.inputs[0], &c.inputs[1], |cen| interp.eval(&t, &[c.inputs[0].clone(), cen.clone()])).unwrap();
-                            assert!(r.finished, "{name}: the {what}'s run on {} does not finish: {}", c.name, r.failure);
+                            let r = converge(&c.inputs[0], &c.inputs[1], step_of_exe(&exe, &c.inputs[0], StepTimer::FutharkC)).unwrap();
+                            assert!(r.converged, "{name}: the {what}'s run on {} does not converge: {} iterations, finished {}: {}", c.name, r.iterations, r.finished, r.failure);
                             exact += 1;
                         }
                     } else {
