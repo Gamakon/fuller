@@ -1,0 +1,228 @@
+From cc09b312ecabdd1acebc5753a827a1d9c62eb246 Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Tue, 3 Nov 2026 17:05:31 +0000
+Subject: [PATCH] feat(rust-wgpu): --fuse=N bounds the SOAC fusion pass of the
+ backend's pipeline
+
+The standard pipeline runs the fusion pass to a fixpoint (fuseSOACs Nothing),
+and the fixpoint does not exist for every legal program: on some the fusion
+graph keeps changing and the compiler never finishes (fuller measured one such
+program of its k-means search at 19 minutes of CPU before it was killed, and
+another of its pathfinder search at 5 hours). The pass takes a bound (its gas:
+at most N fusions a function), which only `futhark dev --fuse=N` exposed, and
+`futhark dev` cannot spell the GPU pipeline out (mergeGPUBodies is not an
+option), so no bounded GPU compile existed.
+
+`futhark rust-wgpu --fuse=N` runs the same pipeline with the bound:
+standardPipelineWith, gpuPipelineWith and gpumemPipelineWith take the bound
+(the unbounded pipelines are the bounded ones at Nothing, byte for byte the
+same passes), and compilerMainWith lets a backend choose its pipeline from the
+configuration its options built (compilerMain is compilerMainWith with a
+constant pipeline). The AD pipeline's fusion takes the same bound. Without
+--fuse the backend compiles exactly as before.
+---
+ src/Futhark/CLI/RustWGPU.hs | 37 ++++++++++++++++++++++++++++------
+ src/Futhark/Compiler/CLI.hs | 27 +++++++++++++++++++++++--
+ src/Futhark/Passes.hs       | 40 +++++++++++++++++++++++++++----------
+ 3 files changed, 86 insertions(+), 18 deletions(-)
+
+diff --git a/src/Futhark/CLI/RustWGPU.hs b/src/Futhark/CLI/RustWGPU.hs
+index 4b683b1a4..0b202fff8 100644
+--- a/src/Futhark/CLI/RustWGPU.hs
++++ b/src/Futhark/CLI/RustWGPU.hs
+@@ -3,15 +3,40 @@ module Futhark.CLI.RustWGPU (main) where
+ 
+ import Futhark.Actions (compileRustWGPUAction)
+ import Futhark.Compiler.CLI
+-import Futhark.Passes (gpumemPipeline)
++import Futhark.Passes (gpumemPipelineWith)
++import Futhark.Util.Options
++import System.Exit
++import System.IO
++
++-- | The backend's own options: @--fuse=N@, a bound on the SOAC fusion
++-- pass (at most @N@ fusions a function, as @futhark dev --fuse=N@).
++-- Without it the pass iterates to a fixpoint, which does not exist for
++-- every legal program: a compiler driving a search over generated
++-- programs sets the bound so that one such program cannot hang it.
++options :: [CompilerOption (Maybe Int)]
++options =
++  [ Option
++      []
++      ["fuse"]
++      ( ReqArg
++          ( \s -> case reads s of
++              [(n, "")] | n >= (0 :: Int) -> Right $ const $ Just n
++              _ -> Left $ do
++                hPutStrLn stderr $ "--fuse: not a count of fusions: " <> s
++                exitWith $ ExitFailure 1
++          )
++          "N"
++      )
++      "Bound the SOAC fusion pass to N fusions a function (default: iterate to a fixpoint)."
++  ]
+ 
+ -- | Run @futhark rust-wgpu@.
+ main :: String -> [String] -> IO ()
+-main = compilerMain
+-  ()
+-  []
++main = compilerMainWith
++  Nothing
++  options
+   "Compile to Rust over wgpu-rs"
+   "Generate a Rust module (WGSL kernels and a host over wgpu-rs) from an optimised Futhark program."
+-  gpumemPipeline
+-  $ \fcfg () _mode outpath prog ->
++  gpumemPipelineWith
++  $ \fcfg _fuse_bound _mode outpath prog ->
+     actionProcedure (compileRustWGPUAction fcfg outpath) prog
+diff --git a/src/Futhark/Compiler/CLI.hs b/src/Futhark/Compiler/CLI.hs
+index a4e6b1e8b..c9a9b63c4 100644
+--- a/src/Futhark/Compiler/CLI.hs
++++ b/src/Futhark/Compiler/CLI.hs
+@@ -4,6 +4,7 @@
+ -- options.
+ module Futhark.Compiler.CLI
+   ( compilerMain,
++    compilerMainWith,
+     CompilerOption,
+     CompilerMode (..),
+     module Futhark.Pipeline,
+@@ -46,7 +47,29 @@ compilerMain ::
+   -- | Command line arguments.
+   [String] ->
+   IO ()
+-compilerMain cfg cfg_opts name desc pipeline doIt =
++compilerMain cfg cfg_opts name desc pipeline =
++  compilerMainWith cfg cfg_opts name desc (const pipeline)
++
++-- | 'compilerMain' whose pipeline is chosen by the configuration the
++-- options built (a backend whose options change its pipeline, such as a
++-- bound on a pass).
++compilerMainWith ::
++  cfg ->
++  [CompilerOption cfg] ->
++  String ->
++  String ->
++  (cfg -> Pipeline SOACS rep) ->
++  ( FutharkConfig ->
++    cfg ->
++    CompilerMode ->
++    FilePath ->
++    Prog rep ->
++    FutharkM ()
++  ) ->
++  String ->
++  [String] ->
++  IO ()
++compilerMainWith cfg cfg_opts name desc pipelineOf doIt =
+   mainWithOptions
+     (newCompilerConfig cfg)
+     (commandLineOptions ++ map wrapOption cfg_opts)
+@@ -59,7 +82,7 @@ compilerMain cfg cfg_opts name desc pipeline doIt =
+     compile config filepath =
+       runCompilerOnProgram
+         (futharkConfig config)
+-        pipeline
++        (pipelineOf (compilerConfig config))
+         (action config filepath)
+         filepath
+ 
+diff --git a/src/Futhark/Passes.hs b/src/Futhark/Passes.hs
+index c8b1cc13d..8955ccdec 100644
+--- a/src/Futhark/Passes.hs
++++ b/src/Futhark/Passes.hs
+@@ -3,10 +3,13 @@
+ -- | Optimisation pipelines.
+ module Futhark.Passes
+   ( standardPipeline,
++    standardPipelineWith,
+     seqPipeline,
+     gpuPipeline,
++    gpuPipelineWith,
+     seqmemPipeline,
+     gpumemPipeline,
++    gpumemPipelineWith,
+     mcPipeline,
+     mcmemPipeline,
+   )
+@@ -52,7 +55,16 @@ import Futhark.Pipeline
+ -- fusion, and various forms of cleanup.  This pipeline will be
+ -- followed by another one that deals with parallelism and memory.
+ standardPipeline :: Pipeline SOACS SOACS
+-standardPipeline =
++standardPipeline = standardPipelineWith Nothing
++
++-- | 'standardPipeline' with a bound on the fusion pass: @Just n@ runs
++-- 'fuseSOACs' with at most @n@ fusions a function (its gas), @Nothing@
++-- iterates to a fixpoint. The fixpoint does not exist for every legal
++-- program (the fusion graph of some keeps changing, and the compiler
++-- never finishes), so a compiler driving a search over generated
++-- programs bounds it; @futhark dev --fuse=n@ exposes the same bound.
++standardPipelineWith :: Maybe Int -> Pipeline SOACS SOACS
++standardPipelineWith fuse_bound =
+   passes
+     [ simplifySOACS,
+       inlineConservatively,
+@@ -61,22 +73,22 @@ standardPipeline =
+       simplifySOACS,
+       performCSE True,
+       simplifySOACS,
+-      fuseSOACs Nothing,
++      fuseSOACs fuse_bound,
+       performCSE True,
+       simplifySOACS,
+       removeDeadFunctions
+     ]
+-    >>> condPipeline usesAD adPipeline
++    >>> condPipeline usesAD (adPipelineWith fuse_bound)
+ 
+ -- | This is the pipeline that applies the AD transformation and
+ -- subsequent interesting optimisations.
+-adPipeline :: Pipeline SOACS SOACS
+-adPipeline =
++adPipelineWith :: Maybe Int -> Pipeline SOACS SOACS
++adPipelineWith fuse_bound =
+   passes
+     [ applyAD,
+       simplifySOACS,
+       performCSE True,
+-      fuseSOACs Nothing,
++      fuseSOACs fuse_bound,
+       performCSE True,
+       simplifySOACS
+     ]
+@@ -84,8 +96,12 @@ adPipeline =
+ -- | The pipeline used by the CUDA, HIP, and OpenCL backends, but before
+ -- adding memory information.  Includes 'standardPipeline'.
+ gpuPipeline :: Pipeline SOACS GPU
+-gpuPipeline =
+-  standardPipeline
++gpuPipeline = gpuPipelineWith Nothing
++
++-- | 'gpuPipeline' over 'standardPipelineWith' (the fusion bound).
++gpuPipelineWith :: Maybe Int -> Pipeline SOACS GPU
++gpuPipelineWith fuse_bound =
++  standardPipelineWith fuse_bound
+     >>> onePass (flattenSOACs mempty)
+     >>> passes
+       [ simplifyGPU,
+@@ -147,8 +163,12 @@ seqmemPipeline =
+ -- | Run 'gpuPipeline', then add memory information (and optimise
+ -- it a lot).
+ gpumemPipeline :: Pipeline SOACS GPUMem
+-gpumemPipeline =
+-  gpuPipeline
++gpumemPipeline = gpumemPipelineWith Nothing
++
++-- | 'gpumemPipeline' over 'gpuPipelineWith' (the fusion bound).
++gpumemPipelineWith :: Maybe Int -> Pipeline SOACS GPUMem
++gpumemPipelineWith fuse_bound =
++  gpuPipelineWith fuse_bound
+     >>> onePass GPU.explicitAllocations
+     >>> passes
+       [ simplifyGPUMem,
+-- 
+2.50.1 (Apple Git-155)
+
