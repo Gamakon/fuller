@@ -27,6 +27,7 @@ mod compat;
 pub mod copy;
 pub mod ctx;
 pub mod host;
+pub mod kmeans_harness;
 pub mod mem;
 pub mod port;
 pub mod program;

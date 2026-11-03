@@ -7,9 +7,11 @@
 //!
 //! * commands, one a line: `q ENTRY` (the quality entry on every stored case), `t ENTRY RUNS` (`RUNS + 1` runs on the
 //!   timing input, the first a warm-up, each run's GPU nanoseconds), `o ENTRY` (once on the timing input, the
-//!   output); entries are named, not numbered;
+//!   output), `k ENTRY CASE START N CAP TOL` (THE K-MEANS LOOP on a row range of the resident sample, [`kmeans_loop`]);
+//!   entries are named, not numbered;
 //! * records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then the payload; TAG is `start`, `ctx`,
-//!   `q`, `t`, `o` or `end`.
+//!   `u` (the resident sample's upload, once a session: its nanoseconds, 0 when it was resident already), `q`, `t`,
+//!   `p`, `o`, `k` or `end`.
 //!
 //! A command that fails writes its failure record and the context is made again for the next command, as the
 //! driver's process stops and a new one runs the commands after it. A wait past the bound, or a lost device, also
@@ -24,7 +26,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::values::HostValue;
+use crate::values::{ElemType, HostValue, Scalar};
 use crate::{EntryDesc, Error, FutharkCtx, ProgramDesc, Value};
 
 /// What a generation's dylib exports, by the Rust ABI (`futhark_rust_module`): its entries and its program.
@@ -86,17 +88,66 @@ fn new_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
     pollster::block_on(adapter.request_device(&desc)).map_err(|e| Error::new(format!("Could not get WebGPU device: {e}")))
 }
 
-/// A session: a device, kept while it works, and the modules loaded.
+/// THE RESIDENT SAMPLE (Andrew, 2026-11-03): the k-means sample uploaded ONCE for the run and kept on the device
+/// across every generation's run and module; a `k` command reads it as the entry's first argument. It is a buffer
+/// the session owns (`DevMem::from_buffer`: never in a context's free list), dropped with the device, and replaced
+/// only when a run brings another sample (its fingerprint differs).
+struct Resident {
+    buffer: wgpu::Buffer,
+    elem: ElemType,
+    shape: Vec<i64>,
+    fingerprint: u64,
+}
+
+impl Resident {
+    /// The value a context reads the resident buffer through.
+    fn value(&self) -> Result<Value, Error> {
+        Ok(Value::Array(crate::values::AnyArray { elem: self.elem, shape: self.shape.clone(), mem: crate::DevMem::from_buffer(self.buffer.clone())? }))
+    }
+}
+
+/// FNV-1a of a sample's bytes: whether the resident sample is this one.
+fn fingerprint(h: &HostValue) -> u64 {
+    let mut x = 0xcbf2_9ce4_8422_2325u64;
+    for b in h.bytes.iter().chain(h.elem.binary_name().as_bytes()).chain(h.shape.iter().flat_map(|d| d.to_le_bytes().to_vec()).collect::<Vec<u8>>().iter()) {
+        x ^= u64::from(*b);
+        x = x.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    x
+}
+
+/// A session: a device, kept while it works, the modules loaded, and the resident sample.
 pub struct Session {
     device: Option<(wgpu::Device, wgpu::Queue)>,
     modules: HashMap<PathBuf, ModuleExport>,
     wait: Duration,
     devices_made: u64,
+    resident: Option<Resident>,
 }
 
 impl Session {
     pub fn new(wait: Duration) -> Session {
-        Session { device: None, modules: HashMap::new(), wait, devices_made: 0 }
+        Session { device: None, modules: HashMap::new(), wait, devices_made: 0, resident: None }
+    }
+
+    /// The resident sample as `sample` (uploaded now when it is not, or is another sample): the value a context reads
+    /// it through, and the nanoseconds of the upload (0 when it was resident already).
+    fn resident_sample(&mut self, ctx: &FutharkCtx, sample: &HostValue) -> Result<(Value, u128), Error> {
+        let fp = fingerprint(sample);
+        if self.resident.as_ref().is_none_or(|r| r.fingerprint != fp) {
+            let t = Instant::now();
+            let size = (sample.bytes.len() as u64).div_ceil(4) * 4;
+            let buffer = ctx.device().create_buffer(&wgpu::BufferDescriptor { label: Some("futhark resident sample"), size: size.max(4), usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            let mut bytes = sample.bytes.clone();
+            bytes.resize(size as usize, 0);
+            ctx.queue().write_buffer(&buffer, 0, &bytes);
+            ctx.sync()?;
+            self.resident = Some(Resident { buffer, elem: sample.elem, shape: sample.shape.clone(), fingerprint: fp });
+            let r = self.resident.as_ref().ok_or_else(|| Error::new("our software has a bug: no resident sample"))?;
+            return Ok((r.value()?, t.elapsed().as_nanos()));
+        }
+        let r = self.resident.as_ref().ok_or_else(|| Error::new("our software has a bug: no resident sample"))?;
+        Ok((r.value()?, 0))
     }
 
     fn ctx(&mut self, timing: bool) -> Result<FutharkCtx, Error> {
@@ -148,10 +199,144 @@ fn upload(ctx: &FutharkCtx, vs: &[HostValue]) -> Result<Vec<Value>, Error> {
     vs.iter().map(|h| Value::from_host(ctx, h)).collect()
 }
 
+/// THE K-MEANS LOOP ON THE DEVICE-RESIDENT SAMPLE (Andrew, 2026-11-03; fuller `futhark_sig::kmeans_converged`): the
+/// sample (`[m][d]f32`, the first value of the run's timing input) is uploaded ONCE for the session and kept
+/// ([`Resident`]) across every run and module, and each `k` command runs UltraDim's loop on one case, a row range
+/// `start..start+n` of it with the case's starting centres (the LAST input value of `cases[case]`, the k-means
+/// signature's `centres`): for up to `cap` iterations the harness assigns each point to its nearest
+/// centre ([`crate::kmeans_harness::assign`], on the host, over the sample's rows it holds), the entry is called on
+/// (sample, start, n, centres) with the centres ON THE DEVICE (the previous call's output, never uploaded again; the
+/// entry slices the range itself, `kmeans_converged::range_entry`), the new centres are read back (k x d f32, 16-300
+/// KB) for the harness, and the Euclidean inertia's change under `tol` stops the loop (the cap stops it with
+/// `converged` 0). The program's own time is the sum of the GPU-timed passes of its calls. The payload: a line
+/// `ITERATIONS CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, then the final centres in Futhark's
+/// binary format when the run finished (every step a finite `[k][d]f32`), else the failure's text.
+fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec<u8>, Error> {
+    let KmeansCase { sample_h, sample_v, starts_h, start, n, cap, tol } = *case;
+    if !ctx.timing() {
+        return Err(Error::new("a k-means command in a run with no GPU timing"));
+    }
+    let f32s = |h: &HostValue| -> Vec<f32> { h.bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() };
+    let (m, d) = match (sample_h.elem, sample_h.shape.as_slice()) {
+        (ElemType::F32, [m, d]) => (*m as usize, *d as usize),
+        _ => return Err(Error::new("the sample is not a [m][d]f32")),
+    };
+    if start + n > m || n == 0 {
+        return Err(Error::new(format!("the range {start}..{} is not within the sample's {m} rows", start + n)));
+    }
+    let k = match (starts_h.elem, starts_h.shape.as_slice()) {
+        (ElemType::F32, [k, dd]) if *dd as usize == d => *k as usize,
+        _ => return Err(Error::new(format!("the starting centres are not a [k][{d}]f32"))),
+    };
+    let points: Vec<f32> = f32s(sample_h)[start * d..(start + n) * d].to_vec();
+    let rows = |v: &[f32]| -> Vec<Vec<f32>> { v.chunks_exact(d).map(<[f32]>::to_vec).collect() };
+    let mut centroids = rows(&f32s(starts_h));
+    let start_inertia = crate::kmeans_harness::euclidean_inertia(&points, &centroids, &crate::kmeans_harness::assign(&points, d, &centroids), d);
+    let mut centres_v = Value::from_host(ctx, starts_h)?;
+    ctx.sync()?;
+    let (mut prev, mut current) = (f32::INFINITY, f32::NAN);
+    let (mut iterations, mut ns, mut converged) = (0u32, 0f64, false);
+    let mut failure = String::new();
+    let mut final_h: Option<HostValue> = None;
+    for it in 0..cap {
+        iterations = it + 1;
+        // The harness's assignment against the centres the step is given (UltraDim's loop assigns before the update).
+        let assignments = crate::kmeans_harness::assign(&points, d, &centroids);
+        let args = [sample_v.clone(), Value::Scalar(Scalar::I64(start as i64)), Value::Scalar(Scalar::I64(n as i64)), centres_v.clone()];
+        let m0 = ctx.timed_passes();
+        let outs = match (e.call)(ctx, &args).and_then(|o| ctx.sync().map(|()| o)) {
+            Ok(o) => o,
+            Err(x) => {
+                failure = format!("iteration {iterations}: the step failed: {x}");
+                break;
+            }
+        };
+        let m1 = ctx.timed_passes();
+        ns += (m0..m1).map(|p| ctx.pass_ns(p).unwrap_or(0.0)).sum::<f64>();
+        let Some(out) = outs.into_iter().next() else {
+            failure = format!("iteration {iterations}: the step returned no value");
+            break;
+        };
+        let h = out.to_host(ctx)?;
+        if h.elem != ElemType::F32 || h.shape != [k as i64, d as i64] {
+            failure = format!("iteration {iterations}: the centres are not a [{k}][{d}]f32: {:?} {:?}", h.elem, h.shape);
+            break;
+        }
+        let vals = f32s(&h);
+        if !vals.iter().all(|x| x.is_finite()) {
+            failure = format!("iteration {iterations}: a centroid is infinite or NaN");
+            break;
+        }
+        centroids = rows(&vals);
+        final_h = Some(h);
+        // The next step takes this output as its centres, on the device: nothing is uploaded again.
+        centres_v = out;
+        current = crate::kmeans_harness::euclidean_inertia(&points, &centroids, &assignments, d);
+        if (prev - current).abs() < tol {
+            converged = true;
+            break;
+        }
+        prev = current;
+    }
+    let finished = failure.is_empty();
+    let final_inertia = if current.is_finite() { current } else { start_inertia };
+    let mut payload = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(finished)).into_bytes();
+    match (finished, final_h) {
+        (true, Some(h)) => h.write_binary(&mut payload),
+        (true, None) => starts_h.write_binary(&mut payload),
+        (false, _) => payload.extend_from_slice(failure.as_bytes()),
+    }
+    Ok(payload)
+}
+
+/// One `k` command's case: the sample on the host and on the device, the case's starting centres, its row range, the
+/// loop's cap and tolerance.
+#[derive(Clone, Copy)]
+struct KmeansCase<'a> {
+    sample_h: &'a HostValue,
+    sample_v: &'a Value,
+    starts_h: &'a HostValue,
+    start: usize,
+    n: usize,
+    cap: u32,
+    tol: f32,
+}
+
+/// What every command of a run reads: the cases' values, the timing input's, their counts, and the resident sample
+/// the `k` commands share (the session's, through this run's context).
+struct RunState<'a> {
+    cases: &'a [HostValue],
+    timing: Option<&'a [HostValue]>,
+    n_cases: usize,
+    n_in: usize,
+    resident: Option<&'a Value>,
+}
+
 /// One command: its payload, or its failure.
-fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, cases: &[HostValue], timing: Option<&[HostValue]>, n_cases: usize) -> Result<(&'static str, Vec<u8>), (&'static str, Error)> {
+fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Result<(&'static str, Vec<u8>), (&'static str, Error)> {
+    let RunState { cases, timing, n_cases, n_in, resident } = st;
     let w: Vec<&str> = line.split_whitespace().collect();
     match w.as_slice() {
+        ["k", entry, case, start, n, cap, tol] => {
+            let tag = "k";
+            let bad = |what: &str| (tag, Error::new(format!("a k-means command with a bad {what}: {line:?}")));
+            let case: usize = case.parse().map_err(|_| bad("case"))?;
+            let start: usize = start.parse().map_err(|_| bad("start"))?;
+            let n: usize = n.parse().map_err(|_| bad("row count"))?;
+            let cap: u32 = cap.parse().map_err(|_| bad("cap"))?;
+            let tol: f32 = tol.parse().map_err(|_| bad("tolerance"))?;
+            if cap == 0 || tol.is_nan() || tol <= 0.0 {
+                return Err(bad("cap or tolerance"));
+            }
+            let e = find(m, entry).map_err(|x| (tag, x))?;
+            let sample_h = timing.and_then(|t| t.first()).ok_or((tag, Error::new("a k-means command with no sample (the timing input)")))?;
+            if n_in == 0 || case >= n_cases {
+                return Err(bad("case index"));
+            }
+            let starts_h = cases.get(case * n_in + n_in - 1).ok_or_else(|| bad("case index"))?;
+            let sample_v = resident.ok_or((tag, Error::new("our software has a bug: a k-means command with no resident sample")))?;
+            kmeans_loop(ctx, e, &KmeansCase { sample_h, sample_v, starts_h, start, n, cap, tol }).map(|p| (tag, p)).map_err(|x| (tag, x))
+        }
         ["q", entry] => {
             let tag = "q";
             let e = find(m, entry).map_err(|x| (tag, x))?;
@@ -303,7 +488,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         }
         None => None,
     };
-    let timed = commands.lines().any(|l| l.starts_with("t ") || l.starts_with("p "));
+    let timed = commands.lines().any(|l| l.starts_with("t ") || l.starts_with("p ") || l.starts_with("k "));
     if !s.modules.contains_key(path) {
         match load(path) {
             Ok(m) => {
@@ -332,12 +517,53 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         }
     };
     r.record("ctx", -1, true, unix_ns(), 0, &[]);
+    // THE RESIDENT SAMPLE of the `k` commands: the session's, uploaded now only when it is not there yet (the first
+    // run of the session, or a device made again), as the `u` record says (its nanoseconds; 0 when resident).
+    let mut resident: Option<Value> = None;
+    if commands.lines().any(|l| l.starts_with("k ")) {
+        let Some(sample) = timing.as_ref().and_then(|t| t.first()) else {
+            r.record("u", -1, false, 0, 0, b"a k-means run with no sample (the timing input)");
+            return r.out;
+        };
+        let got = match ctx.as_ref() {
+            Some(c) => s.resident_sample(c, sample),
+            None => Err(Error::new("our software has a bug: no context for the upload")),
+        };
+        match got {
+            Ok((v, ns)) => {
+                r.record("u", -1, true, ns, 0, sample.bytes.len().to_string().as_bytes());
+                resident = Some(v);
+            }
+            Err(e) => {
+                r.record("u", -1, false, 0, 0, e.message().as_bytes());
+                return r.out;
+            }
+        }
+    }
     let mut index = 0i64;
     for line in commands.lines().filter(|l| !l.trim().is_empty()) {
         let c = match ctx.take() {
             Some(c) => c,
             None => match s.ctx(timed) {
-                Ok(c) => c,
+                Ok(c) => {
+                    // A context made again after a device was: the resident sample is uploaded again for it.
+                    if resident.is_none() && commands.lines().any(|l| l.starts_with("k ")) {
+                        if let Some(sample) = timing.as_ref().and_then(|t| t.first()) {
+                            match s.resident_sample(&c, sample) {
+                                Ok((v, ns)) => {
+                                    r.record("u", -1, true, ns, 0, sample.bytes.len().to_string().as_bytes());
+                                    resident = Some(v);
+                                }
+                                Err(e) => {
+                                    r.record("u", index, false, 0, 0, e.message().as_bytes());
+                                    index += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    c
+                }
                 Err(e) => {
                     r.record("q", index, false, 0, 0, format!("the context could not be made again: {e}").as_bytes());
                     index += 1;
@@ -350,7 +576,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         // One bound on the whole command, as the driver's `alarm(bound)`: every wait respects the deadline, and a
         // command that ends past it is a failure too.
         c.set_deadline(Some(t0 + s.wait));
-        let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, &cases, timing.as_deref(), inputs.n_cases)));
+        let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, RunState { cases: &cases, timing: timing.as_deref(), n_cases: inputs.n_cases, n_in: inputs.n_in, resident: resident.as_ref() })));
         c.set_deadline(None);
         let ns = t0.elapsed().as_nanos();
         let over = t0.elapsed() >= s.wait;
@@ -367,10 +593,13 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
             }
             Ok(Err((tag, e))) => {
                 r.record(tag, index, false, 0, pns, e.message().as_bytes());
-                // A new context for the next command, as a new driver process; a device that failed is made again too.
+                // A new context for the next command, as a new driver process; a device that failed is made again too,
+                // and the resident sample with it.
                 drop(c);
                 if e.is_device_failure() {
+                    resident = None;
                     s.device = None;
+                    s.resident = None;
                 }
             }
             Err(p) => {
@@ -378,11 +607,14 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
                     Some("t") => "t",
                     Some("p") => "p",
                     Some("o") => "o",
+                    Some("k") => "k",
                     _ => "q",
                 };
                 r.record(tag, index, false, 0, pns, format!("the generated module panicked: {}", panic_text(&*p)).as_bytes());
+                resident = None;
                 drop(c);
                 s.device = None;
+                s.resident = None;
             }
         }
         index += 1;
