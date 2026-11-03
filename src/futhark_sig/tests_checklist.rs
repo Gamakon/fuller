@@ -3,9 +3,10 @@
 //! the problem loads (its view, its kingdom, its signature, an interpreter that covers every row), it has a default
 //! fitness scheme of its own kind, its reference and planted slowdown build from their s-expressions and fit the
 //! layout at the problem's program size, its reference and planted slowdown are exact on every stored case through
-//! the host interpreter (a problem whose seed is not yet translated, k-means, reports that state instead, and its
-//! cases carry no answers), it has a timing input of the declared shape; and the checklist's table has a column for
-//! every problem and a row for every item, every cell filled, a "not yet" cell with its reason.
+//! the host interpreter (a problem scored on its own objective, k-means, stores no answers: its control is that the
+//! seed's run finishes on every fitness case through the host interpreter), it has a timing input of the declared
+//! shape; and the checklist's table has a column for every problem and a row for every item, every cell filled, a
+//! "not yet" cell with its reason.
 
 use super::*;
 use crate::fitness::{scheme_for, scheme_for_problem, Family};
@@ -66,22 +67,31 @@ fn every_problem_loads_has_a_default_scheme_and_its_programs_are_exact_on_the_ho
         let inputs = read_binary(&stdin).unwrap();
         let sizes = sig.sizes(&inputs).unwrap_or_else(|e| panic!("{name}: the timing input is not of the declared shape: {e}"));
         match p.seed {
-            Seed::Program { .. } => {
+            Seed::Program { .. } | Seed::Translated { .. } => {
                 let mut exact = 0;
                 for (what, text) in [("reference", p.reference().unwrap()), ("planted slowdown", p.planted().unwrap())] {
                     let t = build(&k, text).unwrap_or_else(|e| panic!("{name}: the {what} does not build: {e}"));
                     assert!(function_count(&k, &t) < p.program_size, "{name}: the {what} has {} functions, the program size is {}", function_count(&k, &t), p.program_size);
                     fits(&contract, &layout, &t).unwrap_or_else(|e| panic!("{name}: the {what} does not fit N = {}: {e}", p.program_size));
-                    for c in &cases {
-                        assert_eq!(interp.eval(&t, &c.inputs).unwrap_or_else(|e| panic!("{name}: the {what} on {}: {e}", c.name)), *c.answer().unwrap(), "{name}: the {what} on {}", c.name);
-                        exact += 1;
+                    if own.is_converged() {
+                        // The seed's control (the runner's): its run finishes on every fitness case, host interpreter.
+                        for c in cases.iter().filter(|c| c.split.in_fitness()) {
+                            let r = crate::futhark_sig::kmeans_converged::converge(&c.inputs[0], &c.inputs[1], |cen| interp.eval(&t, &[c.inputs[0].clone(), cen.clone()])).unwrap();
+                            assert!(r.finished, "{name}: the {what}'s run on {} does not finish: {}", c.name, r.failure);
+                            exact += 1;
+                        }
+                    } else {
+                        for c in &cases {
+                            assert_eq!(interp.eval(&t, &c.inputs).unwrap_or_else(|e| panic!("{name}: the {what} on {}: {e}", c.name)), *c.answer().unwrap(), "{name}: the {what} on {}", c.name);
+                            exact += 1;
+                        }
                     }
                 }
                 // The reference's work at the timing input is under the problem's timing bound.
                 let reference = build(&k, p.reference().unwrap()).unwrap();
                 let work = interp.work(&reference, &sizes).unwrap();
                 assert!(work <= timing_work_cap(work), "{name}: the reference is over its own timing bound");
-                report.push(format!("{name}: {} rows, {} cases, reference and planted slowdown exact on all ({exact} runs), timing input {sizes:?}, work {work}", k.rows.len(), cases.len()));
+                report.push(format!("{name}: {} rows, {} cases, reference and planted slowdown {} ({exact} runs), timing input {sizes:?}, work {work}", k.rows.len(), cases.len(), if own.is_converged() { "run to the stopping point on every fitness case" } else { "exact on all" }));
             }
             Seed::NotYetTranslated { .. } => {
                 // THE SEED IS NOT YET TRANSLATED (k-means, plan 4c): the slot says so plainly, both accessors refuse with

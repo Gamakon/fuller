@@ -115,10 +115,12 @@ pub enum Seed {
     /// the other way), which Futhark cannot merge and the e-graph can (associativity puts the twins in one class, and
     /// `min a a = a` removes the `map2`).
     Program { reference: &'static str, planted: &'static str },
+    /// The prototype's program and its planted slowdown as genes whose text is assembled once from parts (k-means's
+    /// seed, `docs/kmeans_seed.md`): the same as [`Seed::Program`] with the texts made at first use.
+    Translated { reference: fn() -> &'static str, planted: fn() -> &'static str },
     /// THE SEED IS NOT YET TRANSLATED: the prototype is named, the translation is planned, and until it lands the
-    /// problem has no reference program. The runner stops with this text; no program stands in (the textbook form
-    /// that stood in the slot until 2026-11-03 is a pool alternative, never the seed: `docs/PLAN_futhark_kingdom.md`
-    /// 4c).
+    /// problem has no reference program. The runner stops with this text; no program stands in (k-means was in this
+    /// state from the review of 2026-11-03 until its translation landed, `docs/PLAN_futhark_kingdom.md` 4c).
     NotYetTranslated { prototype: &'static str, plan: &'static str, pool: &'static str },
 }
 
@@ -127,6 +129,7 @@ impl Problem {
     pub fn reference(&self) -> Result<&'static str, String> {
         match self.seed {
             Seed::Program { reference, .. } => Ok(reference),
+            Seed::Translated { reference, .. } => Ok(reference()),
             Seed::NotYetTranslated { .. } => Err(self.seed_state()),
         }
     }
@@ -135,6 +138,7 @@ impl Problem {
     pub fn planted(&self) -> Result<&'static str, String> {
         match self.seed {
             Seed::Program { planted, .. } => Ok(planted),
+            Seed::Translated { planted, .. } => Ok(planted()),
             Seed::NotYetTranslated { .. } => Err(self.seed_state()),
         }
     }
@@ -142,7 +146,7 @@ impl Problem {
     /// One sentence on the seed's state, for the runner's header, the checklist and an error.
     pub fn seed_state(&self) -> String {
         match self.seed {
-            Seed::Program { .. } => format!("{}: the seed is the prototype's program as a gene", self.name),
+            Seed::Program { .. } | Seed::Translated { .. } => format!("{}: the seed is the prototype's program as a gene", self.name),
             Seed::NotYetTranslated { prototype, plan, pool } => format!("{}: the seed is not yet translated -- the prototype is {prototype}; the translation is {plan}; until it lands the problem has no reference program and cannot be run (the textbook program is a pool alternative at {pool}, never the seed)", self.name),
         }
     }
@@ -283,17 +287,69 @@ pub const HISTOGRAM_PROBLEM: Problem = Problem {
     program_size: DEFAULT_PROGRAM_SIZE,
 };
 
-/// The k-means step (`rodinia/kmeans/kmeans.fut`, one step: the published `find_nearest_point` and `centroids_of`),
-/// over `f32` points: `(points: [n][d]f32) (centres: [k][d]f32) -> [k][d]f32` (`docs/PLAN_futhark_kingdom.md`,
-/// step 4). The view is pinned to master version 3 and has depth 3: a point's nearest centre is a loop over `k`
-/// inside the tabulate over `n`, and the distance inside it is a reduction over `d`.
+/// THE K-MEANS STEP: `(points: [n][d]f32) (centres: [k][d]f32) -> [k][d]f32` (`docs/PLAN_futhark_kingdom.md`, step
+/// 4; the seed is UltraDim's own kernels, 4c (d), `docs/kmeans_seed.md`). The view is at master version 5, depth 3
+/// (a point's nearest centre is a loop over `k` inside the tabulate over `n`, with the distance's loop over `d`
+/// inside; a cell's compensated sum is a loop over `n` inside a tabulate over `d` inside the tabulate of rows over
+/// `k`), with ONE KERNEL BOUNDARY, `lets a.n`: the assignments the first kernel writes and the second reads. Its one
+/// element is `f32`: the assignments and the counts are integers held exactly in f32 (below 2^24). The faithful
+/// two-element view (`i32` assignments, `lets a.i32.n`) is measured in `tests_kmeans_seed`: 131,825 types without the
+/// kernel boundary and 237,325 with it, over the 65,536 type codes, so it does not load (the measurement and the
+/// decision are in `docs/kmeans_seed.md`).
 pub const KMEANS: Instance = Instance { name: "kmeans", spec: include_str!("../kingdoms/futhark/sig/kmeans/view.tsv") };
+
+/// THE SEED: UltraDim's three k-means kernels (`lib/projection-voting-kmeans/src/gpu_kmeans.rs`: `compute_distances`,
+/// `assign_points`, `update_centroids`) translated construct for construct, `docs/kmeans_seed.md` line by line. The
+/// kernel boundary `let` names the assignments (`s_a_n`, the `[n]` buffer `assign_points` writes): a tabulate over the
+/// points of the argmin over the centres as the pair (best distance, best index) from the first centre's distance, a
+/// later centre winning only when its distance is strictly smaller (`d - best < 0`), each distance `sqrt` of the loop
+/// over `d` accumulating `(v - c) * (v - c)` from 0 (the distance kernel, computed where it is read: see the document).
+/// The body is `update_centroids`: for each (cluster, coordinate) cell a loop over the points carrying the TRIPLE
+/// (sum, compensation, count), stepping only a point whose assignment is the cluster (`|a - j| - 1 < 0`) by
+/// `y = x - c; t = s + y; c = (t - s) - y; s = t; count + 1`, then the sum over the count when the count is positive
+/// (`-count < 0`), else the previous centre. The loop is written three times (the kingdom has no `let` below the top;
+/// the values are one, and the compiler's CSE computes it once); the distance of the centre under test is written
+/// twice (the compare and the replacement). `KMEANS_SEED_ASSIGN`, `KMEANS_SEED_UPDATE` and `KMEANS_SEED_CELL_LOOP` are
+/// its parts; [`kmeans_seed`] assembles the program text.
+pub const KMEANS_SEED_ASSIGN: &str = "(tab (snd.f32.f32 (loop1.k (pair (sqrt (loop.d 0 (add s_f32 (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres zero) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres zero) i_d)))))) 0)
+  (psel (sub DIST s_f32) (pair DIST (ival.k i_k)) (pair s_f32 s2_f32)))))";
+/// The distance of the centre under test (`i_k`) inside the argmin loop, where the loop over `d` binds the third f32.
+pub const KMEANS_SEED_DIST: &str = "(sqrt (loop.d 0 (add s3_f32 (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d))))))";
+pub const KMEANS_SEED_UPDATE: &str = "(tabrows (tab (sel (neg (thd.f32.f32.f32 LOOP)) (div (fst.f32.f32.f32 LOOP) (thd.f32.f32.f32 LOOP)) (get.d (row.k.d centres i_k) i_d))))";
+pub const KMEANS_SEED_CELL_LOOP: &str = "(loop.n zero (psel (sub (abs (sub (get.n s_a_n i_n) (ival.k i_k))) 1)
+    (triple (add s_f32 (sub (get.d (row.n.d points i_n) i_d) s2_f32))
+            (sub (sub (add s_f32 (sub (get.d (row.n.d points i_n) i_d) s2_f32)) s_f32) (sub (get.d (row.n.d points i_n) i_d) s2_f32))
+            (add s3_f32 1))
+    (triple s_f32 s2_f32 s3_f32)))";
+
+/// The seed program as a gene: `(let <assignments> <update>)`.
+pub fn kmeans_seed() -> String {
+    format!("(let {} {})", KMEANS_SEED_ASSIGN.replace("DIST", KMEANS_SEED_DIST), KMEANS_SEED_UPDATE.replace("LOOP", KMEANS_SEED_CELL_LOOP))
+}
+
+/// The seed's planted slowdown (a control of regime P): the assignments computed twice and the elementwise least of
+/// the two taken (`map2 f32.min a a`, a traversal Futhark keeps and the e-graph's `map2.min a a = a` removes).
+pub fn kmeans_planted() -> String {
+    let assign = KMEANS_SEED_ASSIGN.replace("DIST", KMEANS_SEED_DIST);
+    format!("(let (map2.min {assign} {assign}) {})", KMEANS_SEED_UPDATE.replace("LOOP", KMEANS_SEED_CELL_LOOP))
+}
+
+/// The seed's text, made once (the problem registry holds a `&'static str`).
+pub fn kmeans_seed_static() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(kmeans_seed)
+}
+
+/// The planted slowdown's text, made once.
+pub fn kmeans_planted_static() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(kmeans_planted)
+}
 
 /// THE TEXTBOOK K-MEANS STEP as a gene: the published `find_nearest_point`, then `centroids_of`. A POOL ALTERNATIVE
 /// (`kingdoms/futhark/sig/kmeans/pool/`), NOT the seed: it stood in the reference slot until 2026-11-03, when the
-/// review (`docs/PLAN_futhark_kingdom.md` 4c) found the seed swapped -- the job is to translate UltraDim's own kernels
-/// (`gpu_kmeans.rs`: the distance kernel, `assign_points`, `update_centroids` with its Kahan-compensated sum), and that
-/// translation is another step's ([`Seed::NotYetTranslated`]). Each point's membership is a loop
+/// review (`docs/PLAN_futhark_kingdom.md` 4c) found the seed swapped -- the seed is UltraDim's own kernels
+/// ([`kmeans_seed`], `docs/kmeans_seed.md`). Each point's membership is a loop
 /// over the centres carrying the nearest's index (as an `f32`, the view's one element; `clamp` makes it the centre's
 /// row index) from 0, kept when its distance is below the centre's and replaced by the centre otherwise (the
 /// published fold's `if p1.1 < p2.1 then p1 else p2`: on a tie, and on a NaN distance, the later centre); a distance
@@ -309,14 +365,12 @@ pub const KMEANS_TEXTBOOK: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (
 /// write the membership a third time (108 functions, past [`KMEANS_PROGRAM_SIZE`]).
 pub const KMEANS_TEXTBOOK_PLANTED: &str = "(rowdiv (histrows.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) points) (map2.max (replicate 1) (hist.add.n (tab (loop.k 0 (sel (sub (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres (clamp s_f32)) i_d))))) (sum.d (tab (mul (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)) (sub (get.d (row.n.d points i_n) i_d) (get.d (row.k.d centres i_k) i_d)))))) s_f32 (ival.k i_k)))) (map2.min (replicate 1) (replicate 1)))))";
 
+/// The k-means problem. Its seed is a `Seed::Translated`: the program text is assembled from its parts once
+/// ([`kmeans_seed_static`]), so the registry stays a constant.
 pub const KMEANS_PROBLEM: Problem = Problem {
     name: "kmeans",
     instance: KMEANS,
-    seed: Seed::NotYetTranslated {
-        prototype: "UltraDim's k-means kernels (qdrant lib/projection-voting-kmeans/src/gpu_kmeans.rs: the distance kernel, assign_points, update_centroids with its Kahan-compensated sum)",
-        plan: "docs/PLAN_futhark_kingdom.md 4c (b) tuples and a second element in a view, (c) the Kahan rows, (d) the translation (docs/kmeans_seed.md) checked against the f64 reference (tests/corpus/futhark_problems/kmeans/reference64.fut) and the WGSL oracle",
-        pool: "kingdoms/futhark/sig/kmeans/pool/seed.tsv (KMEANS_TEXTBOOK)",
-    },
+    seed: Seed::Translated { reference: kmeans_seed_static, planted: kmeans_planted_static },
     yardstick: include_str!("../tests/corpus/futhark_problems/kmeans/yardstick.fut"),
     fitness: "futhark-kmeans-converged",
     corpus: "tests/corpus/futhark_problems/kmeans",
@@ -324,10 +378,10 @@ pub const KMEANS_PROBLEM: Problem = Problem {
     program_size: KMEANS_PROGRAM_SIZE,
 };
 
-/// K-means's program size: the textbook step is 72 functions (the membership, 36, written twice: the kingdom has no
-/// `let`), so the i32 benchmarks' 32 cannot hold it; 96 holds the textbook step and its planted slowdown with a
-/// third to spare. The translated seed's size is measured when it lands (4c (d)).
-pub const KMEANS_PROGRAM_SIZE: usize = 96;
+/// K-means's program size: the seed is 131 functions (the cell's loop written three times, the centre's distance
+/// twice: the kingdom has no `let` below the top) and its planted slowdown 183, so 192 holds both; the textbook pool
+/// programs (72 and 74) fit too. The gene at this size is measured in `tests_kmeans_seed` (27.6 million words).
+pub const KMEANS_PROGRAM_SIZE: usize = 192;
 
 /// A7, THE MATRIX KINGDOM AS A PROBLEM OF THE ONE RUNNER (`docs/PLAN_futhark_kingdom.md`, step 4; the product
 /// decision in `docs/PLAN_futhark_product.md`): the master's matrix family over the roles `n`, `m`, `p`, rooted at
@@ -2645,6 +2699,8 @@ pub mod kmeans_converged;
 
 #[cfg(test)]
 mod tests_kmeans;
+#[cfg(test)]
+mod tests_kmeans_seed;
 #[cfg(test)]
 mod tests_a7;
 #[cfg(test)]

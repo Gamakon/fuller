@@ -1642,7 +1642,9 @@ SIG_PROBLEMS = {
     "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main", 2, 2, (), ()),
     "kahan": ("kingdoms/futhark/sig/kahan/kahan.fut", "kahan", 2, 4, (), ()),
     "kernels": ("kingdoms/futhark/sig/kahan/kahan.fut", "kernels", 2, 5, ("i32",), ("a.i32.n",)),
-    "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 3, (), ()),
+    # k-means (4c (d)): master 5, one kernel boundary for the assignments (`a.n`, integers held exactly in f32: the
+    # two-element view is 14x the size, docs/kmeans_seed.md).
+    "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 5, (), ("a.n",)),
     "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main", 2, 2, (), ()),
     "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2, (), ()),
     "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main", 2, 2, (), ()),

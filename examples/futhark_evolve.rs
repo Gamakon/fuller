@@ -66,8 +66,8 @@
 //! inertia gained an iteration. One stage, no gate, no timing input and no A/A sets: TrueNorth over every case's five
 //! inputs. Each iteration is one process of the compiled plain program (`--eval single`; `--backend c` is the whole
 //! measure with the processes' wall clock; `--backend gpu` the shim's executable). The control at the start is that the
-//! seed's run finishes on every fitness case. k-means's seed is NOT YET TRANSLATED (`Seed::NotYetTranslated`, plan 4c):
-//! the runner stops with that statement before anything else, so this path has not run on a k-means seed.
+//! seed's run finishes on every fitness case. k-means's seed is UltraDim's own kernels translated construct for construct
+//! (`futhark_sig::kmeans_seed`, `docs/kmeans_seed.md`; `Seed::Translated`), on the CPU 2026-11-03; the GPU has not run it.
 //!
 //! The BUDGET is `--evaluations` fitness evaluations (an individual scored, a cache hit included, so R and C are
 //! counted alike); the wall clock (`--minutes`) is a guard. The work guard: every candidate's exact node executions
@@ -1752,7 +1752,7 @@ fn real_main() -> Result<(), String> {
     let measure = arg(&args, "--measure");
     let p = problem(&pname)?;
     // THE SEED: a problem whose prototype is not yet translated has no reference program and stops here, plainly
-    // (`futhark_sig::Seed::NotYetTranslated`; k-means until plan 4c (d) lands).
+    // (`futhark_sig::Seed::NotYetTranslated`; no problem is in that state since k-means's translation, plan 4c (d)).
     let (reference_text, planted_text) = (p.reference()?, p.planted()?);
     println!("# {}", p.seed_state());
     // THE FITNESS SCHEME (`--fitness NAME`, `fuller::fitness`; default the problem's own, `Problem::fitness`: the

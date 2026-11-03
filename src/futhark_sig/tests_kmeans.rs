@@ -45,21 +45,24 @@ fn the_kmeans_kingdom_loads_from_the_master_and_its_specification() {
     assert_eq!(k.roots(), vec![k.ty("a.k.d:c").unwrap()]);
     Interp::new(&k, &sig).unwrap();
     let view = KMEANS.view().unwrap();
-    assert_eq!(view.spec.master, Some(3));
+    assert_eq!(view.spec.master, Some(5));
+    assert_eq!(view.spec.lets.iter().map(|c| c.text(false)).collect::<Vec<_>>(), ["a.n"], "the kernel boundary names the assignments");
     let functions = k.rows.iter().filter(|r| r.kind == FutharkKind::Function).count();
     let ops: BTreeSet<&str> = k.rows.iter().map(|r| r.name.split('@').next().unwrap_or("").split('.').next().unwrap_or("")).collect();
-    for op in ["div", "sqrt", "tabrows", "histrows", "rowdiv", "hist", "clamp", "map2", "sum", "loop"] {
+    for op in ["div", "sqrt", "tabrows", "histrows", "rowdiv", "hist", "clamp", "map2", "sum", "loop", "let", "triple", "thd", "pair", "psel"] {
         assert!(ops.contains(op), "the k-means view has no {op} row: {ops:?}");
     }
     assert!(!ops.contains("mod"), "the mod row is i32 only");
     let layout = GeneLayout::from_program_size(&contract, k.roots()[0], KMEANS_PROGRAM_SIZE).unwrap();
     eprintln!("kmeans: {} types, {} rows ({functions} functions, {} leaves); N = {KMEANS_PROGRAM_SIZE}: {} words a gene, head {}, at most {} nodes; fingerprint {:016x}", k.duals.len(), k.rows.len(), k.rows.len() - functions, layout.width, layout.head_lens().values().sum::<usize>(), layout.max_nodes(), view.fingerprint());
-    // Measured 2026-11-03 (count contexts at depth 3; pinned, as the i32 views' sizes are in futhark_view::tests).
+    // Measured 2026-11-03 (count contexts at depth 3, master 5 with the pairs, the triples and one kernel boundary;
+    // pinned, as the i32 views' sizes are in futhark_view::tests). Before the kernel boundary and the tuples (master 3)
+    // the view was 3,804 types, 21,620 functions and 8,421 leaves.
     assert_eq!((k.duals.len(), functions, k.rows.len() - functions), KMEANS_SIZES, "the k-means view's sizes changed");
 }
 
 /// (types, function rows, leaf rows), measured 2026-11-03.
-const KMEANS_SIZES: (usize, usize, usize) = (3804, 21620, 8421);
+const KMEANS_SIZES: (usize, usize, usize) = (14359, 79660, 31211);
 
 /// The textbook step and its planted slowdown build, round-trip through `sexp`, fit the layout at the default program
 /// size, and compute the same bits through the host interpreter, through `futhark c` (the plain program and the quality
@@ -323,7 +326,7 @@ fn the_kmeans_timing_input_is_the_champions_shape_and_the_yardstick_runs_on_it()
     let sizes = sig.sizes(&inputs).unwrap();
     assert_eq!((sizes["n"], sizes["d"], sizes["k"]), (8192, 256, 1024));
     let interp = Interp::new(&k, &sig).unwrap();
-    let reference = build(&k, KMEANS_TEXTBOOK).unwrap();
+    let reference = build(&k, kmeans_seed_static()).unwrap();
     // The interpreter's rate on the largest stored case, and the work at the timing input.
     let cases = load_cases(&p).unwrap();
     let big = cases.iter().max_by_key(|c| c.inputs[0].len()).unwrap();

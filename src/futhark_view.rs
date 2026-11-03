@@ -1182,6 +1182,11 @@ fn leaf(row: &MasterRow, binder: &Binder, env: &Env, out: &mut Vec<ViewRow>) -> 
         }
         other => return Err(format!("the row {} has the condition {other:?}", row.reference)),
     }
+    // A row whose template names another element outright (the conversions: `cvt.i32` takes an `i32`) has no instance
+    // in a view without that element.
+    if row.args.iter().chain(std::iter::once(&row.out)).any(|t| ELEMENT_NAMES.contains(&t.as_str()) && !binder.sets.elements.iter().any(|e| e == t)) {
+        return Ok(());
+    }
     let mine = binder.row_elements(row);
     match env.vars.get("E") {
         Some(e) => {

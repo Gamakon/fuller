@@ -474,7 +474,27 @@ here is to the measurement's data and criterion, not to what evolution may find.
   oracle of (d)), on a NaN, a wrong shape, a cycling step and a failing step; the textbook program through the
   interpreter and `futhark c` alike; the eight cases' shapes and scales; `reference64.fut` against the Rust f64 step
   bit for bit on every case. A7 is NOT included: its f32 criterion is still the bit-for-bit scheme, open.
-- (b), (c), (d): another agent's (tuples, a second element, the Kahan rows, the translation); (f) after them.
+- (c) DONE (9cbeb292, master version 5): the triple state (`S:tuples3`, frames `L3`/`F3`: UltraDim's (sum,
+  compensation, count) in ONE loop, as the shader has it; the coordinator's ruling of 2026-11-03: triple rows, not a
+  nested pair, since a pair loop destructures into scalar variables) and the kernel boundary (`let@C`, the frame `B`
+  binding a class at depth 0 without a trip; the specification's `lets` line, `sniff.py --lets`). The e-graph's rules
+  for the triple are its three projections; the Kahan form survives saturation in the triple (tested). Test views `cell`
+  (`update_centroids` for one cell, 1,041 types) and `kernels` (a `let` of an `[n]i32`, 1,892 types) equal `futhark c`
+  on 30 runs; 50 random genes a view pass `futhark check`, 8 compile and equal the interpreter.
+- (d) DONE on the CPU: `docs/kmeans_seed.md` (the three shaders and the seed side by side, every line to its row; the
+  points that are not one-to-one and why; the two views measured), `futhark_sig::kmeans_seed` in the problem's slot
+  (`Seed::Translated`), `pool/seed.fut` and `seed.tsv` the rendered program and the gene, the textbook step moved to
+  `pool/textbook.*`. Proven (`tests_kmeans_seed`): on 8 of 8 stored cases the assignments equal the Rust port of the
+  three shaders (and the f64 reference's) as integers, the centres are bit-identical to the f32 port through the host
+  interpreter and `futhark c` (plain and quality program), and no farther from the f64 reference than the port; the
+  planted slowdown (the assignments twice under `map2 f32.min`) the same bits. The runner's two controls pass on the CPU
+  (`--backend c --eval single`). THE DECISION FOR ANDREW: the plan's view (i32 assignments beside f32) is 53,773 types
+  and 62.7 million words a gene at N = 96 with the pairs alone (the layout 488 s), which the device's 128 MiB binding
+  cannot hold, and at master 5 131,825 types without the kernel boundary and 237,325 with it, over the 65,536 type codes
+  (the kingdom does not load); the problem's view holds the assignments and the count as integers in f32 (exact below 2^24), 14,359 types,
+  27.6 million words at N = 192 (the seed is 131 functions). Not run: the GPU (the WGSL oracle, item 4, and the run,
+  item 5).
+- (f): after the GPU runs.
 
 **Status of (b), 2026-11-03: done** (`kingdoms/futhark/README.md`, "The class", "Two elements in one view", "Pairs").
 The class is an AST with an injective text (`futhark_view::Class`: `a.f32.n` in a view of several elements, `a.n` in a

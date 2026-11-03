@@ -393,14 +393,56 @@ all-member, no-member (0 / 0, a NaN), tied and NaN distances
 (`futhark_sig::tests_view`). Random genes of both views are accepted by
 `futhark check` (50 each) and the first 8 compile and equal the interpreter.
 
+### Triples and the kernel boundary (master version 5, step 4c (c))
+
+UltraDim's `update_centroids` carries THREE states in one loop, (sum,
+compensation, count), and its kernels write buffers the next kernel reads. The
+kingdom expresses both since version 5:
+
+* **a triple of scalars** is a class, one for every ordered triple of the
+  elements (`(f32,f32,i32)`, eight in a view of two elements), with `triple`,
+  `fst.A.B.C` / `snd.A.B.C` / `thd.A.B.C` (`{0}.0`, `{0}.1`, `{0}.2`), the zero
+  triple, `psel.E`, and `loop.D` / `loop1.D` destructuring it (the frames `L3`,
+  `F3`: `loop ((s_f32, s2_f32, s_i32): (f32, f32, i32)) = ...`). The e-graph's
+  rules are the three exact projections (`on tuple3`); the Kahan step survives
+  saturation in the triple (tested, 64 variants the same bits);
+* **the kernel boundary** is a `let` at the top of the program naming an array
+  class once (`let s_a_i32_n = {0} in {1}`, the row `let@C` for every class `C`
+  of the view, the condition `top`). Its frame `B` binds the class WITHOUT a
+  trip, so the context inside it is `c/{a.i32.n}@0`, a context at depth 0: a
+  `let` does not count toward the depth or the work bound (its bound expression
+  and its body each run once). Which classes a view may bind is the
+  specification's `lets` line (`sniff.py --lets a.i32.n`); each is bound at
+  most once, so one let class doubles the contexts below it (the measured cost
+  is in `docs/kmeans_seed.md`).
+
+**Their test views** (`kahan.fut`'s entries `cell` and `kernels`): `cell` is
+`update_centroids` for one (cluster, coordinate) cell, construct for construct,
+the triple's loop with the membership test inside and the sum over the count
+when the count is positive, else the previous centre (1,041 types); `kernels`
+flags each point in a first kernel, names the `[n]i32` at the top and sums the
+flagged points in a second (1,892 types). Both compute the yardstick's bits
+through `futhark c` and the interpreter on 30 runs; 50 random genes a view pass
+`futhark check` and 8 compile and equal the interpreter. **The k-means view**
+(`sig/kmeans/`, `docs/kmeans_seed.md`) is the first with a kernel boundary:
+f32, depth 3, `lets a.n` (the assignments, integers held exactly in f32), master
+5: 14,359 types, 110,871 rows, a gene of 27,563,026 words at its program size
+N = 192 (the seed is 131 functions). The faithful two-element view (`i32`
+assignments) is 53,773 types and 62.7 million words at N = 96 with the pairs
+alone (a layout of 488 s), 131,825 types with the triples and 237,325 with the
+kernel boundary, over the 65,536 type codes: measured, and not the problem's
+view for that reason.
+
 **The pins.** The four i32 benchmarks' specifications are pinned to master
 version 2 (`gen_tables.py`'s `SIG_PROBLEMS`, the sniffer's `--master`), so the
 rows of version 3 changed none of their tables (the fingerprints in
 `futhark_view::tests` are unchanged); k-means (`sig/kmeans/`, f32, depth 3) is
 the first version-3 view: 3,804 types, 30,041 rows, a gene of 3,044,186 words
-at its program size N = 96, pinned to version 3; the pair rows and the frames
-of version 4 changed none of the five (the fingerprints are unchanged). Moving
-a pin is a decision with its regression re-measured.
+at its program size N = 96, pinned to version 3 until 2026-11-03, when its
+seed (UltraDim's kernels) moved it to version 5 with the kernel boundary (the
+sizes above); the pair rows and the frames of version 4, and the triple rows and
+the `let` of version 5, changed none of the other pinned views (the fingerprints
+are unchanged). Moving a pin is a decision with its regression re-measured.
 
 ## The pixel family (`pixel/<shader>/`)
 
