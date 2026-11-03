@@ -416,17 +416,19 @@ diversions, no skirting issues), and Andrew found them:
    program was called wrong under "bit for bit". The fix chosen (06126f86) quantised the inputs to multiples of 2^-6
    and assumed every sum stays under 2^24 granules. Customer data has no such bound (magnitudes of 10^3 give sums in
    the 10^5s), and compensated sums are MORE accurate than the reference, so a bit-for-bit rule against a sequential
-   fold would reject the better program. Robustness is the rule: Kahan stays and is to be expressible; test data must
-   span magnitudes; correctness must not punish accuracy.
+   fold would reject the better program. The seed must carry the prototype's compensation, the kingdom must be able
+   to express it, the test data must span magnitudes, and the correctness criterion must not punish accuracy. What
+   evolution then keeps or drops is evolution's result, measured by that criterion.
 
 **What stands.** The i32 problems (reduce, scan, histogram, pathfinder) are seeded from the published programs of
 `diku-dk/futhark-benchmarks`, which are the prototypes of the Futhark product; A7 is UltraDim's own matrix product.
 The master table's f32 rows, the typed values and the Futhark binary format for f32 (4a) are needed and stay. The
 view machinery (step 3) is untouched. The WGSL k-means champion (`docs/kmeans_champion_s1`) was seeded from UltraDim's
-own kernel text, so its seed is right; but it dropped A7's Kahan compensation for 1.6 % of speed, measured only on
-Metal (where the compiler had already removed it): under the robustness rule that change is NOT accepted as an
-improvement until the compensation is kept or its removal is shown harmless across magnitudes and on Vulkan. The
-change request (`docs/papers/2026-10-31_kmeans_centroid_update.md`) is to say so.
+own kernel text, so its seed is right. It dropped A7's Kahan compensation for 1.6 % of speed, and that result was
+measured on [0, 1) data on Metal only (where the compiler had already removed the compensation): the change request
+(`docs/papers/2026-10-31_kmeans_centroid_update.md`) states those conditions, and the magnitude cases of item 3 below
+are the measurement that says whether it holds on harder data. Evolution's result stands as measured; the correction
+here is to the measurement's data and criterion, not to what evolution may find.
 
 **What is invalidated and reverted.**
 - 06126f86 (dyadic cases and timing input, `quantise.fut`, `kmeans_dyadic`, the plan paragraph "The data is dyadic").
@@ -450,8 +452,8 @@ change request (`docs/papers/2026-10-31_kmeans_centroid_update.md`) is to say so
    semantics, Kahan included). A program is correct on a case when every output cell lies within the rounding bound
    derived from that case's inputs (Higham's gamma bound for a sum of m terms in any order, plus the division's ulps:
    the machinery of `futhark_rust::kmeans_bound`, without the dyadic shortcut) AND its total error against the f64
-   reference is no larger than the seed's. The second clause is what rewards a compensated sum and refuses an
-   uncompensated one on hard data. The membership (assignments) is compared exactly, as integers, with a tie rule
+   reference is no larger than the seed's. The second clause makes the criterion measure accuracy rather than
+   agreement with one order of additions; a program that keeps the seed's accuracy by any means passes it. The membership (assignments) is compared exactly, as integers, with a tie rule
    stated. The policy is a named fitness scheme (`fuller::fitness`), so the bit-for-bit schemes stay registered and
    marked, per the fitness rule.
 3. **Test data spans magnitudes.** Cases at scales 10^-3, 1, 10^3 and 10^5, mixed scales within a case, clusters of
