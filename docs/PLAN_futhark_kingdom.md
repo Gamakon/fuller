@@ -402,6 +402,76 @@ the next fix is the division, not the data.
 because the view has one element; D7's `a.f32.n` naming), tuples and records, GPU residency. A7 as a problem of the
 one runner: done, 4b.
 
+### 4c. Corrections after the review of 2026-11-03 (planned, for review)
+
+**What went wrong.** Two decisions in 4a broke the project rules (`Rules.md`: no shortcuts, no failovers, no graceful
+diversions, no skirting issues), and Andrew found them:
+
+1. **The k-means seed was swapped.** The job was to translate the existing working software, UltraDim's k-means
+   (`lib/projection-voting-kmeans/src/gpu_kmeans.rs`: the distance kernel, `assign_points`, and `update_centroids` with
+   its Kahan-compensated sum), into a gene of this kingdom. Instead the seed became a textbook Futhark form
+   (`KMEANS_REFERENCE`: `hist` cluster sums, no compensation), because the kingdom could express it. That moved the
+   start of the search away from the prototype.
+2. **The data was bent to a rule.** The GPU adds f32 in another order than the sequential reference, so the correct
+   program was called wrong under "bit for bit". The fix chosen (06126f86) quantised the inputs to multiples of 2^-6
+   and assumed every sum stays under 2^24 granules. Customer data has no such bound (magnitudes of 10^3 give sums in
+   the 10^5s), and compensated sums are MORE accurate than the reference, so a bit-for-bit rule against a sequential
+   fold would reject the better program. Robustness is the rule: Kahan stays and is to be expressible; test data must
+   span magnitudes; correctness must not punish accuracy.
+
+**What stands.** The i32 problems (reduce, scan, histogram, pathfinder) are seeded from the published programs of
+`diku-dk/futhark-benchmarks`, which are the prototypes of the Futhark product; A7 is UltraDim's own matrix product.
+The master table's f32 rows, the typed values and the Futhark binary format for f32 (4a) are needed and stay. The
+view machinery (step 3) is untouched. The WGSL k-means champion (`docs/kmeans_champion_s1`) was seeded from UltraDim's
+own kernel text, so its seed is right; but it dropped A7's Kahan compensation for 1.6 % of speed, measured only on
+Metal (where the compiler had already removed it): under the robustness rule that change is NOT accepted as an
+improvement until the compensation is kept or its removal is shown harmless across magnitudes and on Vulkan. The
+change request (`docs/papers/2026-10-31_kmeans_centroid_update.md`) is to say so.
+
+**What is invalidated and reverted.**
+- 06126f86 (dyadic cases and timing input, `quantise.fut`, `kmeans_dyadic`, the plan paragraph "The data is dyadic").
+- `KMEANS_REFERENCE` as the seed; the program may stay in the pool as one alternative, never as the reference.
+- The bit-for-bit comparison as the correctness criterion for f32 problems (k-means AND A7: A7's GPU check has not
+  run, and f32 matrix products meet the same ordering). The i32 problems keep bit for bit, which is exact there.
+- The checklist rows "reference exact" for kmeans and a7 are re-pointed at the new criterion once built.
+
+**The corrected design.**
+1. **The seed is the prototype, construct for construct.** UltraDim's three k-means kernels become one Futhark
+   program: the n x k distance matrix, the per-point argmin over k in index order (`assign_points`: the first centre
+   wins a tie), and the per-(cluster, dimension) compensated sum over the points in point order with the count and the
+   division (`update_centroids`). The translation is written out side by side with the WGSL (`docs/kmeans_seed.md`)
+   and checked line by line BEFORE any run. What the kingdom lacks is added to the master table as rows with tests,
+   never worked around: a sequential loop whose state is a PAIR (sum, compensation) — tuples, the next type of step
+   4, are therefore required now, not later; an element type for the assignments (u32/i32 indices) beside f32 in one
+   view — "two elements in one view" is therefore required now; the compensated-sum step as rows (`y = x - c; t = s +
+   y; c = (t - s) - y; s = t`), which the e-graph must NOT simplify (`(t - s) - y` is 0 in real arithmetic and not in
+   f32: no real-number rule may touch it; the rule table gets a test that the Kahan form survives saturation).
+2. **Correctness for f32 is a bound, not bits.** The reference is the same algorithm computed in f64 (the seed's
+   semantics, Kahan included). A program is correct on a case when every output cell lies within the rounding bound
+   derived from that case's inputs (Higham's gamma bound for a sum of m terms in any order, plus the division's ulps:
+   the machinery of `futhark_rust::kmeans_bound`, without the dyadic shortcut) AND its total error against the f64
+   reference is no larger than the seed's. The second clause is what rewards a compensated sum and refuses an
+   uncompensated one on hard data. The membership (assignments) is compared exactly, as integers, with a tie rule
+   stated. The policy is a named fitness scheme (`fuller::fitness`), so the bit-for-bit schemes stay registered and
+   marked, per the fitness rule.
+3. **Test data spans magnitudes.** Cases at scales 10^-3, 1, 10^3 and 10^5, mixed scales within a case, clusters of
+   very unequal counts, and a case built to break an uncompensated sum (a few large values among many small ones).
+   Random draws (`futhark dataset`), never quantised. The timing input keeps UltraDim's shape (n 8,192, d 256,
+   k 1,024) at scale 1 and at 10^3.
+4. **The oracle for the translation.** Before evolution, the Futhark seed is run against UltraDim's own WGSL kernels
+   (through fuller's wgpu harness, as the WGSL kingdom already does) on the same cases: the assignments equal, the
+   centres within the bound and with the same error class (compensated). That proves the translation, not a test of
+   a textbook form.
+5. **Then step 6 as planned**, from this seed, with speed measured after correctness, and the change request to
+   UltraDim re-issued from what that run finds.
+
+**Order of work (each a commit with tests; no GPU step until the translation is reviewed).**
+(a) revert 06126f86 and remove the textbook seed from the reference slot; (b) tuples as loop state and a second element
+in a view (master rows and view code; the i32 views' fingerprints unchanged); (c) the Kahan rows and the saturation
+test; (d) the translation document and the seed program, exact on the host interpreter against the f64 reference,
+and the WGSL oracle run; (e) the f32 correctness scheme and the magnitude cases, A7 included; (f) the GPU check, then
+the step 6 run. Vocabulary: the kingdom documents say "test", not "witness", and "type", not "dual", from here on.
+
 ## Steps 5 to 7 (unchanged)
 
 5. Prove the Futhark kingdom works: the improvement run from Fable's histogram program on the fixed build, with speed reported every generation; then timing screening (a few pairs first, the full 11 for contenders).
