@@ -29,15 +29,16 @@ fn p(name: &str, elem: &str, dims: &[&str]) -> Param {
 fn declared(name: &str) -> Signature {
     let strs = |v: &[&str]| v.iter().map(|d| d.to_string()).collect::<Vec<_>>();
     match name {
-        "pathfinder" => Signature { inputs: vec![p("walls", "i32", &["rows", "cols"])], output: p("main", "i32", &["cols"]), depth: 2, dims: strs(&["rows", "cols"]), size_inputs: vec![] },
-        "reduce" => Signature { inputs: vec![p("xs", "i32", &["n"])], output: p("main", "i32", &[]), depth: 2, dims: strs(&["n"]), size_inputs: vec![] },
-        "scan" => Signature { inputs: vec![p("xs", "i32", &["n"])], output: p("main", "i32", &["n"]), depth: 2, dims: strs(&["n"]), size_inputs: vec![] },
+        "pathfinder" => Signature { inputs: vec![p("walls", "i32", &["rows", "cols"])], output: p("main", "i32", &["cols"]), depth: 2, dims: strs(&["rows", "cols"]), size_inputs: vec![], elements: strs(&["i32"]) },
+        "reduce" => Signature { inputs: vec![p("xs", "i32", &["n"])], output: p("main", "i32", &[]), depth: 2, dims: strs(&["n"]), size_inputs: vec![], elements: strs(&["i32"]) },
+        "scan" => Signature { inputs: vec![p("xs", "i32", &["n"])], output: p("main", "i32", &["n"]), depth: 2, dims: strs(&["n"]), size_inputs: vec![], elements: strs(&["i32"]) },
         "histogram" => Signature {
             inputs: vec![p("k", "i32", &[]), p("is", "i32", &["n"]), p("vs", "i32", &["n"])],
             output: p("main", "i32", &["k"]),
             depth: 2,
             dims: strs(&["k", "n"]),
             size_inputs: strs(&["k"]),
+            elements: strs(&["i32"]),
         },
         other => panic!("no declared signature for {other}"),
     }
@@ -225,4 +226,297 @@ fn the_default_program_size_is_above_every_reference_and_both_programs_fit() {
         got.push((name, layout.head_lens().values().sum::<usize>(), layout.width));
     }
     assert_eq!(got, [("pathfinder", 8495, 57487), ("reduce", 1551, 10025), ("scan", 1551, 10021), ("histogram", 7441, 47999)], "the head lengths and gene widths at N = {DEFAULT_PROGRAM_SIZE}");
+}
+
+// ---- THE PAIR CONSTRUCTS (docs/PLAN_futhark_kingdom.md, step 4c (b)) ---------------------------------------------
+//
+// Two test views over two elements (f32 and i32), sniffed from `kingdoms/futhark/sig/kahan/kahan.fut`: the kingdom
+// must express UltraDim's k-means constructs construct for construct (`update_centroids`: a sequential loop whose state
+// is the pair (sum, compensation), each step guarded by the membership; `assign_points`: the pair (best distance, best
+// index) from the first distance over the rest). The programs below are those constructs as genes; `futhark c`
+// computes the same bits as the yardstick entries of `kahan.fut` and as the host interpreter.
+
+/// The Kahan view: `(xs: [n]f32) (ms: [n]i32) -> f32`.
+const KAHAN: Instance = Instance { name: "kahan", spec: include_str!("../../kingdoms/futhark/sig/kahan/view.tsv") };
+/// The argmin view: `(ds: [n]f32) -> i32`.
+const ARGMIN: Instance = Instance { name: "argmin", spec: include_str!("../../kingdoms/futhark/sig/argmin/view.tsv") };
+
+/// UltraDim's `update_centroids` for one cell, as a gene: the Kahan-compensated sum of the `xs` whose membership is 0
+/// (`|m| - 1 < 0`, that is `m == 0`), the state the pair (sum, compensation) destructured into `s_f32` and `s2_f32`,
+/// each step `y = x - c; t = s + y; (t, (t - s) - y)` (the kingdom has no `let`: `t` and `y` are written out), over the
+/// count of those members (a second loop, UltraDim's third state), the count made an f32 by the conversion row.
+const KAHAN_MEAN: &str = "(div (fst.f32.f32 (loop.n zero (psel.i32 (sub (abs (get.n ms i_n)) 1)
+    (pair (add s_f32 (sub (get.n xs i_n) s2_f32))
+          (sub (sub (add s_f32 (sub (get.n xs i_n) s2_f32)) s_f32) (sub (get.n xs i_n) s2_f32)))
+    (pair s_f32 s2_f32))))
+  (cvt.i32 (loop.n 0 (sel (sub (abs (get.n ms i_n)) 1) (add s_i32 1) s_i32))))";
+
+/// UltraDim's `assign_points` for one point, as a gene: the pair (best distance, best index) starts at the first
+/// distance and index 0, and over the indices 1 .. n-1 a distance replaces it only when strictly smaller (`d - best <
+/// 0`, which is `d < best` for every pair of f32 values, the infinities and a NaN included); the index is the result.
+const ARGMIN_FIRST: &str = "(snd.f32.i32 (loop1.n (pair (get.n ds zero) 0)
+  (psel.f32 (sub (get.n ds i_n) s_f32) (pair (get.n ds i_n) (ival.n i_n)) (pair s_f32 s_i32))))";
+
+fn have_futhark() -> bool {
+    std::process::Command::new("futhark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("futhark_sig_pairs_{name}_{}", std::process::id()))
+}
+
+/// `futhark check` on a program: Futhark's type checker accepts it.
+fn futhark_check(src: &str, dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let fut = dir.join("prog.fut");
+    std::fs::write(&fut, src).map_err(|e| format!("write {}: {e}", fut.display()))?;
+    let out = crate::futhark_exec::output_with_timeout(std::process::Command::new("futhark").arg("check").arg(&fut), std::time::Duration::from_secs(120), None)?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("futhark check:\n{}", String::from_utf8_lossy(&out.stderr)))
+    }
+}
+
+/// A compiled executable's one output for an entry point, on binary input.
+fn run_entry(exe: &std::path::Path, entry: &str, stdin: &[u8]) -> Result<Array, String> {
+    let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b").arg("-e").arg(entry), std::time::Duration::from_secs(120), Some(stdin))?;
+    if !out.status.success() {
+        return Err(format!("{} -e {entry} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
+    }
+    read_one(&out.stdout)
+}
+
+/// Random f32 values spanning magnitudes (10^-3 to 10^5, a few large among many small, both signs), and memberships in
+/// {-1, 0, 1, 2}.
+fn pair_inputs(n: usize, rng: &mut GeneRng) -> (Array, Array) {
+    let scales = [1e-3f32, 1.0, 1e3, 1e5];
+    let xs: Vec<f32> = (0..n).map(|_| ((rng.below(1 << 24) as f32) / 16_777_216.0 - 0.5) * scales[if rng.below(8) == 0 { 3 } else { rng.below(3) }]).collect();
+    let ms: Vec<i32> = (0..n).map(|_| rng.below(4) as i32 - 1).collect();
+    (Array::f32s(vec![n], xs), Array::i32s(vec![n], ms))
+}
+
+#[test]
+fn the_pair_views_load_and_every_row_has_a_meaning() {
+    for (inst, root, functions) in [(&KAHAN, "f32:c", 2196), (&ARGMIN, "i32:c", 2196)] {
+        let k = load(inst).unwrap();
+        let sig = signature(inst).unwrap();
+        assert_eq!(sig.elements, vec!["f32".to_string(), "i32".to_string()]);
+        assert_eq!(k.roots(), vec![k.ty(root).unwrap()], "{}", inst.name);
+        let contract = k.relations().check().unwrap_or_else(|d| panic!("{}: the kingdom check: {:?}", inst.name, &d[..d.len().min(3)]));
+        // Every row of the view has a meaning (`Interp::new` refuses one that has none).
+        Interp::new(&k, &sig).unwrap_or_else(|e| panic!("{}: {e}", inst.name));
+        assert_eq!(k.rows.iter().filter(|r| r.kind == FutharkKind::Function).count(), functions, "{}", inst.name);
+        let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
+        eprintln!("{}: {} types, {} rows; N = {DEFAULT_PROGRAM_SIZE}: {} words a gene, head {}", inst.name, k.duals.len(), k.rows.len(), layout.width, layout.head_lens().values().sum::<usize>());
+    }
+}
+
+/// The two constructs, as genes, compute what `futhark c` computes of the yardstick entries (`kahan.fut`, spelled
+/// with Futhark's own tuple loop, a triple state and a range loop) and of the kingdom's own rendering, bit for bit,
+/// on inputs spanning magnitudes, n = 1 included; the host interpreter agrees with both.
+#[test]
+fn the_kahan_mean_and_the_argmin_compute_what_futhark_c_computes() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let base = scratch("constructs");
+    let yard = compile_c(include_str!("../../kingdoms/futhark/sig/kahan/kahan.fut"), &base.join("yardstick")).unwrap();
+    let mut rng = GeneRng::new(0x4A1A_0001);
+    let mut checked = 0;
+    // The Kahan view.
+    let k = load(&KAHAN).unwrap();
+    let sig = signature(&KAHAN).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, KAHAN_MEAN).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), KAHAN_MEAN.split_whitespace().collect::<String>(), "the Kahan mean reads back");
+    let src = program(&k, &sig, &tree).unwrap();
+    assert!(src.contains("loop ((s_f32, s2_f32): (f32, f32)) = ((0f32, 0f32)) for i_n < n do"), "{src}");
+    assert!(src.contains("let zeros_f32_n = replicate n 0f32") == k.rows.iter().any(|r| r.spelling == "zeros_f32_n"));
+    let exe = compile_c(&src, &base.join("kahan")).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    for n in [1usize, 2, 7, 64, 1000] {
+        for round in 0..3 {
+            let (xs, mut ms) = pair_inputs(n, &mut rng);
+            // Round 1: every value a member; round 2: none (a count of 0: 0 / 0 is a NaN, which agrees with a NaN).
+            if round == 1 {
+                ms = Array::i32s(vec![n], vec![0; n]);
+            } else if round == 2 {
+                ms = Array::i32s(vec![n], vec![1; n]);
+            }
+            let stdin = write_binary(&[&xs, &ms]);
+            let want = run_entry(&yard, "kahan", &stdin).unwrap();
+            let got = run_exe(&exe, &stdin).unwrap();
+            let host = interp.eval(&tree, &[xs.clone(), ms.clone()]).unwrap();
+            assert_eq!(got, want, "the Kahan mean compiled, n = {n}, round {round}: {:?} vs the yardstick's {:?}", got.f32_values(), want.f32_values());
+            assert_eq!(host, want, "the Kahan mean interpreted, n = {n}, round {round}");
+            checked += 1;
+        }
+    }
+    // The argmin view.
+    let k = load(&ARGMIN).unwrap();
+    let sig = signature(&ARGMIN).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, ARGMIN_FIRST).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(sexp(&k, &tree).split_whitespace().collect::<String>(), ARGMIN_FIRST.split_whitespace().collect::<String>(), "the argmin reads back");
+    let src = program(&k, &sig, &tree).unwrap();
+    assert!(src.contains("loop ((s_f32, s_i32): (f32, i32)) = ") && src.contains(" for ti_n < n - 1 do let i_n = ti_n + 1 in "), "{src}");
+    let exe = compile_c(&src, &base.join("argmin")).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    for n in [1usize, 2, 7, 64, 1000] {
+        for round in 0..3 {
+            let (mut ds, _) = pair_inputs(n, &mut rng);
+            // Round 1: distances from a set of four, so the least ties and the first wins; round 2: a NaN among them.
+            if round == 1 {
+                ds = Array::f32s(vec![n], (0..n).map(|_| [0.5f32, 1.0, 0.5, 2.0][rng.below(4)]).collect());
+            } else if round == 2 && n > 1 {
+                let mut v = ds.f32_values().unwrap();
+                v[rng.below(n)] = f32::NAN;
+                ds = Array::f32s(vec![n], v);
+            }
+            let stdin = write_binary(&[&ds]);
+            let want = run_entry(&yard, "argmin", &stdin).unwrap();
+            let got = run_exe(&exe, &stdin).unwrap();
+            let host = interp.eval(&tree, std::slice::from_ref(&ds)).unwrap();
+            assert_eq!((got.elem, got.dims.clone()), (Elem::I32, vec![]));
+            assert_eq!(got, want, "the argmin compiled, n = {n}, round {round}: {:?} vs the yardstick's {:?}", got.i32_values(), want.i32_values());
+            assert_eq!(host, want, "the argmin interpreted, n = {n}, round {round}");
+            checked += 1;
+        }
+    }
+    eprintln!("pair constructs: {checked} runs of the Kahan mean and the argmin equal the yardstick and the interpreter bit for bit");
+    assert_eq!(checked, 30);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The two conversions equal `futhark c` on the edges: an f32 to an i32 on a NaN, the infinities, values past i32's
+/// range, 2147483520 and 2147483584 (the last f32 below 2^31 and the first at it), fractions of both signs; an i32 to
+/// an f32 on i32's bounds and on 16777217 (the first integer an f32 cannot hold).
+#[test]
+fn the_conversions_equal_futhark_c_on_the_edges() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let base = scratch("cvt");
+    let k = load(&ARGMIN).unwrap();
+    let sig = signature(&ARGMIN).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, "(cvt.f32 (get.n ds zero))").unwrap();
+    let exe = compile_c(&program(&k, &sig, &tree).unwrap(), &base.join("to_i32")).unwrap();
+    let edges = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 3e9, -3e9, 2.5, -2.5, 2_147_483_520.0, 2_147_483_584.0, -2_147_483_648.0, -2_147_483_904.0, 0.0, -0.0, 1e-45, 16_777_217.0];
+    for v in edges {
+        let ds = Array::f32s(vec![1], vec![v]);
+        let got = run_exe(&exe, &write_binary(&[&ds])).unwrap();
+        assert_eq!(interp.eval(&tree, std::slice::from_ref(&ds)).unwrap(), got, "i32.f32 of {v}");
+    }
+    let k = load(&KAHAN).unwrap();
+    let sig = signature(&KAHAN).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let tree = build(&k, "(cvt.i32 (get.n ms zero))").unwrap();
+    let exe = compile_c(&program(&k, &sig, &tree).unwrap(), &base.join("to_f32")).unwrap();
+    for v in [0i32, 1, -1, i32::MAX, i32::MIN, 16_777_216, 16_777_217, -16_777_217, 123_456_789] {
+        let xs = Array::f32s(vec![1], vec![0.0]);
+        let ms = Array::i32s(vec![1], vec![v]);
+        let got = run_exe(&exe, &write_binary(&[&xs, &ms])).unwrap();
+        assert_eq!(interp.eval(&tree, &[xs, ms]).unwrap(), got, "f32.i32 of {v}");
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Legality, measured on both views: 50 random genes at the runner's default program size express to programs
+/// `futhark check` accepts (the pair rows, the pair loops, the conversions and both elements' rows among them), and
+/// the first 8 of each compile with `futhark c` and equal the interpreter on three small cases, n = 1 included.
+/// One outcome is the COMPILER'S: Futhark 0.28.1's "Fuse SOACs" pass stops with an internal error ("Name ... bound
+/// twice") on a legal program that reads a scan's result in two places (measured 2026-11-03 on
+/// `f32.sum (map2 (+) (hist (+) 0f32 n (map i64.f32 s) xs) s)` with `s` the scan written twice; `opaque` around the
+/// scan's result avoids it, which would change the scan rows' spelling in every pinned view, a decision for the lead);
+/// such a gene is counted and printed, never taken as a fault of the kingdom, and the rest must compile and agree.
+#[test]
+fn random_pair_view_genes_are_accepted_by_futhark_check_and_equal_the_interpreter() {
+    if !have_futhark() {
+        panic!("futhark 0.28.1 is needed for this test");
+    }
+    let base = scratch("random");
+    let mut rng = GeneRng::new(0x51C_0004);
+    let mut used = BTreeMap::<String, usize>::new();
+    for inst in [&KAHAN, &ARGMIN] {
+        let k = load(inst).unwrap();
+        let sig = signature(inst).unwrap();
+        let interp = Interp::new(&k, &sig).unwrap();
+        let contract = k.relations().check().unwrap();
+        let layout = GeneLayout::from_program_size(&contract, k.roots()[0], DEFAULT_PROGRAM_SIZE).unwrap();
+        let const_len = k.const_len();
+        let small: Vec<Vec<Array>> = [5usize, 1, 3]
+            .iter()
+            .map(|&n| {
+                let (xs, ms) = pair_inputs(n, &mut rng);
+                if inst.name == "kahan" { vec![xs, ms] } else { vec![xs] }
+            })
+            .collect();
+        let (mut checked, mut compiled, mut compiler_bug) = (0, 0, 0);
+        for g in 0..50 {
+            let gene = random_gene(&contract, &layout, &const_len, &mut rng).unwrap();
+            let tree = express(&contract, &layout, &gene, &const_len).unwrap().tree();
+            for (t, _) in tree.level_order() {
+                let op = k.rows[t.symbol as usize].name.split('@').next().unwrap_or("").split('.').next().unwrap_or("").to_string();
+                *used.entry(op).or_default() += 1;
+            }
+            let src = program(&k, &sig, &tree).unwrap();
+            futhark_check(&src, &base.join(format!("{}_c{g}", inst.name))).unwrap_or_else(|e| panic!("{}: gene {g} is not accepted: {e}\n{src}", inst.name));
+            checked += 1;
+            if g < 8 {
+                let batch = program_cases(&k, &sig, &tree, small.len()).unwrap();
+                let bexe = match compile_c(&batch, &base.join(format!("{}_b{g}", inst.name))) {
+                    Ok(exe) => exe,
+                    Err(e) if e.contains("Internal compiler error") && e.contains("Fuse SOACs") => {
+                        eprintln!("{}: gene {g} trips Futhark 0.28.1's fusion pass (the compiler's bug, not the kingdom's): {}", inst.name, sexp(&k, &tree));
+                        compiler_bug += 1;
+                        continue;
+                    }
+                    Err(e) => panic!("{}: gene {g}'s quality program does not compile: {e}\n{batch}", inst.name),
+                };
+                let refs: Vec<&Array> = small.iter().flatten().collect();
+                let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&write_binary(&refs))).unwrap();
+                assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+                let wants: Vec<Array> = small.iter().map(|w| interp.eval(&tree, w).unwrap()).collect();
+                assert_eq!(read_binary(&out.stdout).unwrap(), wants, "{}: gene {g}: compiled and interpreted differ\n{src}", inst.name);
+                compiled += 1;
+            }
+        }
+        eprintln!("{}: {checked} random genes accepted by futhark check, {compiled} compiled and equal to the interpreter, {compiler_bug} stopped by the compiler's fusion bug", inst.name);
+        assert_eq!((checked, compiled + compiler_bug), (50, 8));
+        assert!(compiled >= 6, "{}: only {compiled} of 8 genes compiled", inst.name);
+    }
+    eprintln!("rows used by the random genes: {used:?}");
+    for op in ["pair", "fst", "snd", "psel", "loop", "cvt", "zero"] {
+        assert!(used.contains_key(op), "no random gene used {op}: {used:?}");
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The pair rules of the e-graph: the first of a built pair is its first component (`fst (pair a b) = a`), so the
+/// e-graph's variants of a program that builds a pair and takes it apart hold the component alone; and every variant
+/// of the Kahan mean computes the same bits (the rules are only commutativity of `+`/`*`, `-(-a) = a` and the two
+/// projections: no real-number identity touches `(t - s) - y`).
+#[test]
+fn the_pair_rules_are_exact_and_the_kahan_form_survives_saturation() {
+    let k = load(&KAHAN).unwrap();
+    let sig = signature(&KAHAN).unwrap();
+    let interp = Interp::new(&k, &sig).unwrap();
+    let bridge = Bridge::load(&KAHAN).unwrap();
+    let wrapped = build(&k, "(fst.f32.f32 (pair (sum.n xs) (cvt.i32 (sum.n ms))))").unwrap();
+    let plain = build(&k, "(sum.n xs)").unwrap();
+    let vs = variants(&k, &bridge, &wrapped, 2, 16, 16).unwrap();
+    assert!(vs.contains(&plain), "the variants of fst (pair a b) do not hold a: {:?}", vs.iter().map(|v| sexp(&k, v)).collect::<Vec<_>>());
+    let kahan = build(&k, KAHAN_MEAN).unwrap();
+    let vs = variants(&k, &bridge, &kahan, 3, 64, 64).unwrap();
+    assert!(!vs.is_empty(), "no variants of the Kahan mean");
+    let mut rng = GeneRng::new(0x4A1A_0002);
+    let cases: Vec<(Array, Array)> = [1usize, 9, 300].into_iter().map(|n| pair_inputs(n, &mut rng)).collect();
+    for v in &vs {
+        for (xs, ms) in &cases {
+            assert_eq!(interp.eval(v, &[xs.clone(), ms.clone()]).unwrap(), interp.eval(&kahan, &[xs.clone(), ms.clone()]).unwrap(), "the variant {} differs from the Kahan mean", sexp(&k, v));
+        }
+        // Every variant keeps the compensation: three subtractions remain.
+        assert!(sexp(&k, v).matches("(sub ").count() >= 3, "the variant {} lost the compensation", sexp(&k, v));
+    }
+    eprintln!("kahan: {} variants, every one the same bits on {} cases", vs.len(), cases.len());
 }

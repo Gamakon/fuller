@@ -32,7 +32,7 @@ use egglog::{EGraph, Term, TermDag, TermId};
 
 use crate::futhark_interpreter::{row2_fn, row_fn, Row2Fn, RowFn};
 use crate::futhark_table::{FutharkKind, FutharkKingdom, GeneRng};
-use crate::futhark_view::{var_name, Ctx, Shape, View as TableView, ViewSpec};
+use crate::futhark_view::{var_name, Class, Ctx, Shape, View as TableView, ViewSpec};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::saturated_fold::EgraphKingdom;
@@ -473,6 +473,10 @@ pub struct Signature {
     /// The SIZE INPUTS: dimensions given as an `i32` value parameter of the entry point (a `size` line of the
     /// specification; the parameter is in `inputs`, a scalar), rather than by an array's shape.
     pub size_inputs: Vec<String>,
+    /// The view's element types, in the specification's order (`futhark_view::ViewSpec::elements`): the classes'
+    /// texts carry an array's element when there are several (`a.f32.n`), and a program may hold values of any of
+    /// them.
+    pub elements: Vec<String>,
 }
 
 /// The signature of an instance: a signature view's from its specification ([`signature_of`]), a matrix view's from
@@ -505,7 +509,7 @@ pub fn matrix_signature(k: &FutharkKingdom, spec: &ViewSpec) -> Result<Signature
     if spec.roles.is_empty() {
         return Err("the matrix specification names no roles".into());
     }
-    Ok(Signature { inputs, output: Param { name: "main".into(), elem, dims: root.form.split('.').map(str::to_string).collect() }, depth: 0, dims: spec.roles.clone(), size_inputs: Vec::new() })
+    Ok(Signature { inputs, output: Param { name: "main".into(), elem: elem.clone(), dims: root.form.split('.').map(str::to_string).collect() }, depth: 0, dims: spec.roles.clone(), size_inputs: Vec::new(), elements: vec![elem] })
 }
 
 /// The signature a view specification declares: its inputs (a size input as an `i32` scalar), its output, its depth
@@ -524,6 +528,7 @@ pub fn signature_of(spec: &ViewSpec) -> Result<Signature, String> {
         depth: spec.depth,
         dims: spec.dims.clone(),
         size_inputs: spec.sizes.clone(),
+        elements: spec.elements.clone(),
     })
 }
 
@@ -810,8 +815,9 @@ fn entry_header(sig: &Signature) -> String {
     format!("{s} : {}", sig.futhark_type(&sig.output, ""))
 }
 
-/// The body of a program: the size inputs rebound as sizes, the zero array of every dimension a row spells
-/// (`zeros_D`, the signature family's `zeros` rows; the matrix family spells none), then the rendered tree.
+/// The body of a program: the size inputs rebound as sizes, the zero array of every rank-1 class a row spells
+/// (`zeros_n`, or `zeros_f32_n` in a view of several elements: the signature family's `zeros` rows, each named by
+/// its class; the matrix family spells none), in dimension order then element order, then the rendered tree.
 fn program_body(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<String, String> {
     let root = k.rows.get(tree.symbol as usize).ok_or("the root is not a row")?;
     if !k.dual(root.output).is_some_and(|d| d.root) {
@@ -821,8 +827,21 @@ fn program_body(k: &FutharkKingdom, sig: &Signature, tree: &Tree) -> Result<Stri
     for d in &sig.size_inputs {
         s.push_str(&format!("  let {d} = i64.i32 {d}\n"));
     }
-    for d in sig.dims.iter().filter(|d| k.rows.iter().any(|r| r.spelling == format!("zeros_{d}"))) {
-        s.push_str(&format!("  let zeros_{d} = replicate {d} 0{}\n", sig.output.elem));
+    let mut zeros: Vec<(usize, usize, String)> = Vec::new();
+    for r in k.rows.iter().filter(|r| r.kind == FutharkKind::Terminal && r.spelling.starts_with("zeros_")) {
+        let dual = &k.dual(r.output).ok_or("a row with no dual")?.dual;
+        let class = Class::parse(dual.split(':').next().unwrap_or(""), &sig.elements, None)?;
+        let (Some(elem), [dim]) = (class.elem(), class.dims()) else { return Err(format!("our software has a bug: the zero array {} is not of a rank-1 class", r.name)) };
+        let d = sig.dims.iter().position(|x| x == dim).ok_or_else(|| format!("our software has a bug: the zero array {} is over no dimension of the signature", r.name))?;
+        let e = sig.elements.iter().position(|x| x == elem).ok_or_else(|| format!("our software has a bug: the zero array {} is of no element of the signature", r.name))?;
+        let line = format!("  let {} = replicate {dim} 0{elem}\n", r.spelling);
+        if !zeros.iter().any(|(_, _, l)| *l == line) {
+            zeros.push((d, e, line));
+        }
+    }
+    zeros.sort();
+    for (_, _, line) in zeros {
+        s.push_str(&line);
     }
     // A body with no `let` (the matrix family) is the expression alone.
     s.push_str(&format!("  {}{}\n", if s.is_empty() { "" } else { "in " }, k.render(tree)?));
@@ -885,7 +904,7 @@ pub fn program_cases_named_bare(k: &FutharkKingdom, sig: &Signature, tree: &Tree
 
 // ---- the host interpreter ---------------------------------------------------------------------------------------
 
-/// What a row does, parsed once from its name.
+/// What a row does, parsed once from its name and its output class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
     Add,
@@ -904,33 +923,32 @@ enum Op {
     Sum,
     Minimum,
     Maximum,
-    /// An index as a value.
-    Ival,
-    /// The size of a dimension as a value.
-    DimVal(usize),
+    /// An index as a value of the element.
+    Ival(Elem),
+    /// The size of a dimension as a value of the element.
+    DimVal(usize, Elem),
     Const,
-    /// A loop state: its slot (a state class and the variable's ordinal in that class, [`var_name`]).
-    State(usize),
-    /// An index: its slot (a dimension and the variable's ordinal over it, `i_D`, `i2_D`).
-    Index(usize),
+    /// A bound variable (a loop state or an index): its slot, one a variable name of the kingdom's contexts
+    /// ([`var_name`]: a class and the variable's ordinal in that class).
+    Var(usize),
     Prev,
     Next(usize),
     Clamp(usize),
     Zero,
     Last(usize),
-    /// A tabulate over a dimension (its size), binding the index slot.
-    Tab(usize, usize),
+    /// A tabulate over a dimension (its size), binding the index slot; its element.
+    Tab(usize, usize, Elem),
     /// A tabulate of ROWS over a dimension (the first of its rank-2 class), binding the index slot; its body is a row.
     TabRows(usize, usize),
-    Replicate(usize),
+    Replicate(usize, Elem),
     /// An elementwise operation of two arrays of one class (`map2`): add, sub, mul, min, max.
     Map2(Bin),
     /// The inclusive scan of an array (the `scan` family): add, min, max.
     Scan(Bin),
-    /// The histogram into a dimension's array of values at indices (the `hist` family): add, min, max.
-    Hist(Bin, usize),
+    /// The histogram into a dimension's array of values at indices (the `hist` family): add, min, max; its element.
+    Hist(Bin, usize, Elem),
     /// The elementwise add histogram of ROWS: into `[K][D]` (the two dimensions) of `[D2][D]` rows at `[D2]` indices.
-    HistRows(usize, usize),
+    HistRows(usize, usize, Elem),
     /// Each row of a `[K][D]` array divided by its `[K]` scalar (`f32` only).
     RowDiv,
     /// A value modulo a dimension's size (the `mod` family), Futhark's `%`: in `[0, D)`.
@@ -938,9 +956,22 @@ enum Op {
     /// The row of an array.
     Row,
     Input(usize),
-    Zeros(usize),
-    /// A loop over a dimension binding an index slot and a state slot; `from1` runs its counter over 1 .. D-1.
-    Loop { dim: usize, index: usize, state: usize, from1: bool },
+    Zeros(usize, Elem),
+    /// A loop over a dimension binding an index slot and its state's slot (a pair state is DESTRUCTURED: its two
+    /// components' slots); `from1` runs its counter over 1 .. D-1.
+    Loop { dim: usize, index: usize, state: usize, state2: Option<usize>, from1: bool },
+    /// THE PAIR ROWS (master version 4). `({0}, {1})`.
+    Pair,
+    /// `{0}.0` and `{0}.1`.
+    Fst,
+    Snd,
+    /// `if {0} < 0 then {1} else {2}` over two pairs.
+    PSel,
+    /// The zero pair of two elements.
+    ZeroPair(Elem, Elem),
+    /// A conversion into the element: `f32.i32` (exact below 2^24, else rounded to nearest), or the guarded
+    /// `i32.f32` (a NaN is 0; the value clamped into i32's range, then truncated toward zero).
+    Cvt(Elem),
     /// THE MATRIX FAMILY (A7). `transpose` of a rank-2 array.
     Transpose,
     /// The `matmul` helper: a result cell is the left fold from `0.0` of the products of a row of the first and a
@@ -1045,6 +1076,13 @@ impl Num {
         match self {
             Num::I(x) => x as u32,
             Num::F(x) => x.to_bits(),
+        }
+    }
+
+    fn elem(self) -> Elem {
+        match self {
+            Num::I(_) => Elem::I32,
+            Num::F(_) => Elem::F32,
         }
     }
 
@@ -1158,34 +1196,50 @@ impl Num {
         };
         usize::try_from(i).ok().filter(|i| *i < n)
     }
+
+    /// The conversion rows (master version 4). Into `f32`: Futhark's `f32.i32`, exact below 2^24 and rounded to
+    /// nearest above (Rust's `as`). Into `i32`: the guarded `i32.f32` of M0076, mirrored: a NaN is 0, the value is
+    /// clamped into `[-2^31, 2147483520]` (the largest `f32` below 2^31) as an `f32`, then truncated toward zero.
+    fn convert(self, into: Elem) -> Num {
+        match (self, into) {
+            (Num::I(x), Elem::F32) => Num::F(x as f32),
+            (Num::F(x), Elem::I32) => Num::I(if x.is_nan() { 0 } else { fmax(-2_147_483_648.0, fmin(2_147_483_520.0, x)) as i32 }),
+            (n, _) => n,
+        }
+    }
 }
 
 /// The interpreter of one instance: each row's meaning, parsed once.
 pub struct Interp<'a> {
     k: &'a FutharkKingdom,
     sig: &'a Signature,
-    elem: Elem,
     ops: Vec<Op>,
     literals: Vec<Option<Vec<Num>>>,
+    /// The number of variable slots (one a variable name of the kingdom's contexts).
+    slots: usize,
 }
 
-/// An array value as a view: shared raw words, an offset, the dims.
+/// An array value as a view: shared raw words, an offset, the dims, the element.
 #[derive(Debug, Clone)]
 struct View {
     data: Rc<Vec<u32>>,
     off: usize,
     dims: Vec<usize>,
+    elem: Elem,
 }
 
 impl View {
-    fn of(data: Vec<u32>, dims: Vec<usize>) -> View {
-        View { data: Rc::new(data), off: 0, dims }
+    fn of(data: Vec<u32>, dims: Vec<usize>, elem: Elem) -> View {
+        View { data: Rc::new(data), off: 0, dims, elem }
     }
     fn len(&self) -> usize {
         self.dims.iter().product()
     }
     fn slice(&self) -> &[u32] {
         &self.data[self.off..self.off + self.len()]
+    }
+    fn num(&self, w: u32) -> Num {
+        Num::from_word(self.elem, w)
     }
 }
 
@@ -1194,59 +1248,81 @@ enum Val {
     S(Num),
     I(i64),
     A(View),
+    /// A pair.
+    T(Box<Val>, Box<Val>),
     /// A row function (the matrix family).
     F(RowFn),
     /// A binary row function (the matrix family).
     F2(Row2Fn),
 }
 
-/// The bound variables by slot (class and ordinal; a binder sets its slot and restores the outer value after).
+/// The bound variables by slot (a binder sets its slots and restores the outer values after).
 struct Env {
     sizes: Vec<usize>,
     inputs: Vec<View>,
-    zeros: Vec<View>,
-    state: Vec<Option<Val>>,
-    index: Vec<Option<i64>>,
+    vars: Vec<Option<Val>>,
 }
 
 impl<'a> Interp<'a> {
     pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Interp<'a>, String> {
-        let elem = Elem::of(&sig.output.elem)?;
         let dim = |d: &str| sig.dims.iter().position(|x| x == d).ok_or_else(|| format!("no dimension {d}"));
+        // A dual's class, read through the class grammar with the view's elements.
+        let class_of = |dual: &str| -> Result<Class, String> { Class::parse(dual.split(':').next().unwrap_or(""), &sig.elements, None).map_err(|e| format!("{dual}: {e}")) };
+        let elem_of = |c: &Class| -> Result<Elem, String> { Elem::of(c.elem().ok_or_else(|| format!("the class {} has no element", c.text(sig.elements.len() > 1)))?) };
         // The dimensions of an array class (`a.k.d` -> [k, d]), by index.
         let class_dims = |dual: &str| -> Result<Vec<usize>, String> {
-            let cls = dual.split(':').next().unwrap_or("");
-            cls.strip_prefix("a.").ok_or_else(|| format!("{dual} is not an array class"))?.split('.').map(dim).collect()
+            let c = class_of(dual)?;
+            if c.dims().is_empty() {
+                return Err(format!("{dual} is not an array class"));
+            }
+            c.dims().iter().map(|d| dim(d)).collect()
         };
-        let class_dim = |dual: &str, prefix: &str| -> Result<usize, String> {
-            let cls = dual.split(':').next().unwrap_or("");
-            dim(cls.strip_prefix(prefix).ok_or_else(|| format!("{dual} is not a {prefix} class"))?)
+        let class_dim = |dual: &str| -> Result<usize, String> {
+            match class_of(dual)? {
+                Class::Index(d) => dim(&d),
+                Class::Array { dims, .. } if dims.len() == 1 => dim(&dims[0]),
+                _ => Err(format!("{dual} is not an index or a rank-1 class")),
+            }
         };
-        // The variable slots: (class, ordinal) for every class a binder binds (an index over each dimension; a state
-        // of the element or of each dimension's rank-1 class) and every ordinal up to the depth.
-        let ords = sig.depth as usize + 1;
-        let states: Vec<String> = std::iter::once(sig.output.elem.clone()).chain(sig.dims.iter().map(|d| format!("a.{d}"))).collect();
-        let index_var: BTreeMap<String, usize> = sig.dims.iter().enumerate().flat_map(|(i, d)| (1..=ords).map(move |k| (var_name(&format!("ix.{d}"), k as u32), i * ords + k - 1))).collect();
-        let state_var: BTreeMap<String, usize> = states.iter().enumerate().flat_map(|(i, c)| (1..=ords).map(move |k| (var_name(c, k as u32), i * ords + k - 1))).collect();
-        // A binder's slot: the next ordinal of its class in its own (output's) context.
-        let binder_slot = |out: &str, cls: &str, table: &BTreeMap<String, usize>| -> Result<usize, String> {
+        // THE VARIABLE SLOTS: one a variable name of the kingdom's contexts (a class and an ordinal, `var_name`: the
+        // indices over each dimension, the loop states of every class a context binds), read from the duals.
+        let mut slot_of: BTreeMap<String, usize> = BTreeMap::new();
+        for d in &k.duals {
+            if let Some(ctx) = Ctx::of_dual(&d.dual)? {
+                for (c, n) in &ctx.classes {
+                    for ord in 1..=*n {
+                        let next = slot_of.len();
+                        slot_of.entry(var_name(c, ord)).or_insert(next);
+                    }
+                }
+            }
+        }
+        // A binder's slot: the next ordinal of its class in its own (output's) context, `more` further on.
+        let binder_slot = |out: &str, cls: &str, more: u32| -> Result<usize, String> {
             let ctx = Ctx::of_dual(out)?.ok_or_else(|| format!("our software has a bug: a binder {out} outside a context"))?;
-            let name = var_name(cls, ctx.count(cls) + 1);
-            table.get(&name).copied().ok_or_else(|| format!("our software has a bug: no slot for the variable {name} of {out}"))
+            let name = var_name(cls, ctx.count(cls) + 1 + more);
+            slot_of.get(&name).copied().ok_or_else(|| format!("our software has a bug: no slot for the variable {name} of {out}"))
         };
+        let multi = sig.elements.len() > 1;
         let mut ops = Vec::with_capacity(k.rows.len());
         let mut literals = Vec::with_capacity(k.duals.len());
         for d in &k.duals {
             literals.push(if d.literals.is_empty() {
                 None
             } else {
-                Some(d.literals.iter().map(|l| Num::parse(elem, l.trim_end_matches(sig.output.elem.as_str()))).collect::<Result<Vec<_>, _>>()?)
+                let elem = Elem::of(&d.slot).map_err(|e| format!("the type {} has a literal pool: {e}", d.dual))?;
+                Some(d.literals.iter().map(|l| Num::parse(elem, l.trim_end_matches(elem.name()))).collect::<Result<Vec<_>, _>>()?)
             });
         }
         for r in &k.rows {
             let out = &k.dual(r.output).ok_or("a row with no dual")?.dual;
             let (op, _) = r.name.split_once('@').unwrap_or((r.name.as_str(), ""));
             let out_class = out.split(':').next().unwrap_or("");
+            // The row's element: its output's, for a scalar or an array.
+            let out_elem = || -> Result<Elem, String> { elem_of(&class_of(out)?) };
+            // A row named by its element where its output class has none (`clamp.f32`, `psel.i32` in a view of
+            // several elements; `clamp`, `psel` in a view of one): the op without the element.
+            let bare = |head: &str| -> bool { op == head || (multi && op.strip_prefix(head).and_then(|rest| rest.strip_prefix('.')).is_some_and(|e| sig.elements.iter().any(|x| x == e))) };
             let o = match op {
                 "add" => Op::Add,
                 "sub" => Op::Sub,
@@ -1259,52 +1335,75 @@ impl<'a> Interp<'a> {
                 "sqrt" => Op::Sqrt,
                 "sel" => Op::Sel,
                 "prev" => Op::Prev,
-                "next" => Op::Next(class_dim(out, "ix.")?),
-                "clamp" => Op::Clamp(class_dim(out, "ix.")?),
-                "zero" => Op::Zero,
-                "last" => Op::Last(class_dim(out, "ix.")?),
+                "next" => Op::Next(class_dim(out)?),
+                _ if bare("clamp") => Op::Clamp(class_dim(out)?),
+                "zero" => match class_of(out)? {
+                    Class::Index(_) => Op::Zero,
+                    Class::Tuple(parts) => match parts.as_slice() {
+                        [a, b] => Op::ZeroPair(elem_of(a)?, elem_of(b)?),
+                        _ => return Err(format!("our software has a bug: the zero of {out} is not a pair's")),
+                    },
+                    _ => return Err(format!("our software has a bug: the zero row {} is not an index's or a pair's", r.name)),
+                },
+                "last" => Op::Last(class_dim(out)?),
                 "tab" => {
-                    let d = class_dim(out, "a.")?;
-                    Op::Tab(d, binder_slot(out, &format!("ix.{}", sig.dims[d]), &index_var)?)
+                    let d = class_dim(out)?;
+                    Op::Tab(d, binder_slot(out, &format!("ix.{}", sig.dims[d]), 0)?, out_elem()?)
                 }
                 "tabrows" => {
                     let ds = class_dims(out)?;
                     let [kd, _] = ds.as_slice() else { return Err(format!("our software has a bug: the tabrows row {} is not of a rank-2 class", r.name)) };
-                    Op::TabRows(*kd, binder_slot(out, &format!("ix.{}", sig.dims[*kd]), &index_var)?)
+                    Op::TabRows(*kd, binder_slot(out, &format!("ix.{}", sig.dims[*kd]), 0)?)
                 }
                 "rowdiv" => Op::RowDiv,
-                "replicate" => Op::Replicate(class_dim(out, "a.")?),
-                "zeros" => Op::Zeros(class_dim(out, "a.")?),
+                "replicate" => Op::Replicate(class_dim(out)?, out_elem()?),
+                "zeros" => Op::Zeros(class_dim(out)?, out_elem()?),
+                "pair" => Op::Pair,
+                _ if bare("psel") => Op::PSel,
                 _ if r.kind == FutharkKind::Const => Op::Const,
+                _ if op.starts_with("fst.") => Op::Fst,
+                _ if op.starts_with("snd.") => Op::Snd,
+                _ if op.starts_with("cvt.") => Op::Cvt(out_elem()?),
                 _ if op.starts_with("get.") => Op::Get,
                 _ if op.starts_with("sum.") => Op::Sum,
                 _ if op.starts_with("minimum.") => Op::Minimum,
                 _ if op.starts_with("maximum.") => Op::Maximum,
-                _ if op.starts_with("ival.") => Op::Ival,
+                _ if op.starts_with("ival.") => Op::Ival(out_elem()?),
                 _ if op.starts_with("row.") => Op::Row,
                 _ if op.starts_with("map2.") => Op::Map2(Bin::of(&op[5..]).ok_or_else(|| format!("our software has a bug: the map2 row {}", r.name))?),
                 _ if op.starts_with("scan.") => Op::Scan(Bin::of(&op[5..]).filter(|b| b.reduces()).ok_or_else(|| format!("our software has a bug: the scan row {}", r.name))?),
                 _ if op.starts_with("histrows.add.") => {
                     let ds = class_dims(out)?;
                     let [kd, dd] = ds.as_slice() else { return Err(format!("our software has a bug: the histrows row {} is not of a rank-2 class", r.name)) };
-                    Op::HistRows(*kd, *dd)
+                    Op::HistRows(*kd, *dd, out_elem()?)
                 }
                 _ if op.starts_with("hist.") => {
                     let b = op.split('.').nth(1).and_then(Bin::of).filter(|b| b.reduces()).ok_or_else(|| format!("our software has a bug: the histogram row {}", r.name))?;
-                    Op::Hist(b, class_dim(out, "a.")?)
+                    Op::Hist(b, class_dim(out)?, out_elem()?)
                 }
                 _ if op.starts_with("mod.") => Op::Mod(dim(&op[4..])?),
                 // A size input's row is its dimension as a value, not an input array.
-                _ if sig.size_inputs.iter().any(|d| d == op) => Op::DimVal(dim(op)?),
+                _ if sig.size_inputs.iter().any(|d| d == op) => Op::DimVal(dim(op)?, out_elem()?),
                 _ if op.starts_with("loop1.") || op.starts_with("loop.") => {
                     let (from1, d) = match op.strip_prefix("loop1.") {
                         Some(d) => (true, d),
                         None => (false, &op[5..]),
                     };
-                    Op::Loop { dim: dim(d)?, index: binder_slot(out, &format!("ix.{d}"), &index_var)?, state: binder_slot(out, out_class, &state_var)?, from1 }
+                    // A pair state is destructured: the loop binds its two components, the second one further on
+                    // when they are of one class (`(s_f32, s2_f32)`).
+                    let (state, state2) = match class_of(out)? {
+                        Class::Tuple(parts) => match parts.as_slice() {
+                            [a, b] => {
+                                let (ta, tb) = (a.text(multi), b.text(multi));
+                                (binder_slot(out, &ta, 0)?, Some(binder_slot(out, &tb, u32::from(ta == tb))?))
+                            }
+                            _ => return Err(format!("our software has a bug: the loop {} carries a tuple that is not a pair", r.name)),
+                        },
+                        _ => (binder_slot(out, out_class, 0)?, None),
+                    };
+                    Op::Loop { dim: dim(d)?, index: binder_slot(out, &format!("ix.{d}"), 0)?, state, state2, from1 }
                 }
-                _ if r.kind == FutharkKind::Terminal && state_var.contains_key(op) => Op::State(state_var[op]),
-                _ if r.kind == FutharkKind::Terminal && index_var.contains_key(op) => Op::Index(index_var[op]),
+                _ if r.kind == FutharkKind::Terminal && slot_of.contains_key(op) => Op::Var(slot_of[op]),
                 // The matrix family (A7): its operators, its row functions (function rows of no arguments, and the
                 // constant terminals), and its inputs, named by their spelling (`mat.n.m.input` spells `m_n_m`).
                 "transpose" => Op::Transpose,
@@ -1318,7 +1417,7 @@ impl<'a> Interp<'a> {
                     if let Some(i) = sig.inputs.iter().position(|p| p.name == op) {
                         Op::Input(i)
                     } else if let Ok(d) = dim(op) {
-                        Op::DimVal(d)
+                        Op::DimVal(d, out_elem()?)
                     } else {
                         return Err(format!("our software has a bug: the row {} has no meaning in the interpreter", r.name));
                     }
@@ -1326,24 +1425,19 @@ impl<'a> Interp<'a> {
             };
             ops.push(o);
         }
-        Ok(Interp { k, sig, elem, ops, literals })
+        Ok(Interp { k, sig, ops, literals, slots: slot_of.len() })
     }
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
     pub fn eval(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
         let sizes_map = self.sig.sizes(inputs)?;
         let sizes: Vec<usize> = self.sig.dims.iter().map(|d| sizes_map[d]).collect();
-        let mut env = Env {
-            inputs: inputs.iter().map(|a| View::of(a.data.clone(), a.dims.clone())).collect(),
-            zeros: sizes.iter().map(|&n| View::of(vec![0; n], vec![n])).collect(),
-            state: vec![None; (1 + sizes.len()) * (self.sig.depth as usize + 1)],
-            index: vec![None; sizes.len() * (self.sig.depth as usize + 1)],
-            sizes,
-        };
+        let mut env = Env { inputs: inputs.iter().map(|a| View::of(a.data.clone(), a.dims.clone(), a.elem)).collect(), vars: vec![None; self.slots], sizes };
         match self.at(tree, &mut env)? {
-            Val::A(v) => Ok(Array { dims: v.dims.clone(), elem: self.elem, data: v.slice().to_vec() }),
-            Val::S(x) => Ok(Array { dims: vec![], elem: self.elem, data: vec![x.word()] }),
+            Val::A(v) => Ok(Array { dims: v.dims.clone(), elem: v.elem, data: v.slice().to_vec() }),
+            Val::S(x) => Ok(Array { dims: vec![], elem: x.elem(), data: vec![x.word()] }),
             Val::I(_) => Err("our software has a bug: a program whose value is an index".into()),
+            Val::T(..) => Err("our software has a bug: a program whose value is a pair (a tuple root is not built)".into()),
             Val::F(_) | Val::F2(_) => Err("our software has a bug: a program whose value is a row function".into()),
         }
     }
@@ -1366,16 +1460,18 @@ impl<'a> Interp<'a> {
             other => Err(format!("our software has a bug: an array slot holds {other:?}")),
         }
     }
-
-    fn num(&self, w: u32) -> Num {
-        Num::from_word(self.elem, w)
+    fn pair(&self, t: &Tree, env: &mut Env) -> Result<(Val, Val), String> {
+        match self.at(t, env)? {
+            Val::T(a, b) => Ok((*a, *b)),
+            other => Err(format!("our software has a bug: a pair slot holds {other:?}")),
+        }
     }
 
     /// A left fold over an array's values from a neutral element, in order (Futhark's sequential `reduce`).
     fn fold(&self, v: &View, b: Bin) -> Result<Num, String> {
-        let mut acc = Num::neutral(self.elem, b);
+        let mut acc = Num::neutral(v.elem, b);
         for w in v.slice() {
-            acc = acc.bin(b, self.num(*w))?;
+            acc = acc.bin(b, v.num(*w))?;
         }
         Ok(acc)
     }
@@ -1398,6 +1494,19 @@ impl<'a> Interp<'a> {
                 let c = self.s(kid(0)?, env)?;
                 Val::S(if c.is_negative() { self.s(kid(1)?, env)? } else { self.s(kid(2)?, env)? })
             }
+            Op::PSel => {
+                let c = self.s(kid(0)?, env)?;
+                self.at(if c.is_negative() { kid(1)? } else { kid(2)? }, env)?
+            }
+            Op::Pair => {
+                let a = self.at(kid(0)?, env)?;
+                let b = self.at(kid(1)?, env)?;
+                Val::T(Box::new(a), Box::new(b))
+            }
+            Op::Fst => self.pair(kid(0)?, env)?.0,
+            Op::Snd => self.pair(kid(0)?, env)?.1,
+            Op::ZeroPair(a, b) => Val::T(Box::new(Val::S(Num::zero(a))), Box::new(Val::S(Num::zero(b)))),
+            Op::Cvt(into) => Val::S(self.s(kid(0)?, env)?.convert(into)),
             Op::Get => {
                 let a = self.a(kid(0)?, env)?;
                 let i = self.i(kid(1)?, env)?;
@@ -1405,13 +1514,13 @@ impl<'a> Interp<'a> {
                 if a.dims.len() != 1 || i < 0 || i as usize >= n {
                     return Err(format!("our software has a bug: the index {i} is out of range for {:?}", a.dims));
                 }
-                Val::S(self.num(a.data[a.off + i as usize]))
+                Val::S(a.num(a.data[a.off + i as usize]))
             }
             Op::Sum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Add)?),
             Op::Minimum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Min)?),
             Op::Maximum => Val::S(self.fold(&self.a(kid(0)?, env)?, Bin::Max)?),
-            Op::Ival => Val::S(Num::of_i64(self.elem, self.i(kid(0)?, env)?)),
-            Op::DimVal(d) => Val::S(Num::of_i64(self.elem, env.sizes[d] as i64)),
+            Op::Ival(elem) => Val::S(Num::of_i64(elem, self.i(kid(0)?, env)?)),
+            Op::DimVal(d, elem) => Val::S(Num::of_i64(elem, env.sizes[d] as i64)),
             Op::Const => {
                 let row = &self.k.rows[t.symbol as usize];
                 let ty = match row.output {
@@ -1421,99 +1530,98 @@ impl<'a> Interp<'a> {
                 let pool = self.literals[ty].as_ref().ok_or("a constant of a type with no pool")?;
                 Val::S(*pool.get(t.const_index.ok_or("a constant with no index")? as usize).ok_or("a constant index past the pool")?)
             }
-            Op::State(k) => env.state.get(k).cloned().flatten().ok_or_else(|| format!("our software has a bug: the state of slot {k} is read unbound"))?,
-            Op::Index(d) => Val::I(env.index.get(d).copied().flatten().ok_or_else(|| format!("our software has a bug: the index of slot {d} is read unbound"))?),
+            Op::Var(k) => env.vars.get(k).cloned().flatten().ok_or_else(|| format!("our software has a bug: the variable of slot {k} is read unbound"))?,
             Op::Prev => Val::I((self.i(kid(0)?, env)? - 1).max(0)),
             Op::Next(d) => Val::I((self.i(kid(0)?, env)? + 1).min(env.sizes[d] as i64 - 1)),
             Op::Clamp(d) => Val::I(self.s(kid(0)?, env)?.clamp(env.sizes[d])),
             Op::Zero => Val::I(0),
             Op::Last(d) => Val::I(env.sizes[d] as i64 - 1),
-            Op::Tab(d, slot) => {
+            Op::Tab(d, slot, elem) => {
                 let n = env.sizes[d];
                 let mut out = Vec::with_capacity(n);
-                let outer = env.index[slot];
+                let outer = env.vars[slot].take();
                 for j in 0..n {
-                    env.index[slot] = Some(j as i64);
+                    env.vars[slot] = Some(Val::I(j as i64));
                     out.push(self.s(kid(0)?, env)?.word());
                 }
-                env.index[slot] = outer;
-                Val::A(View::of(out, vec![n]))
+                env.vars[slot] = outer;
+                Val::A(View::of(out, vec![n], elem))
             }
             Op::TabRows(d, slot) => {
                 let n = env.sizes[d];
                 let mut out = Vec::new();
                 let mut cols = None;
-                let outer = env.index[slot];
+                let outer = env.vars[slot].take();
                 for j in 0..n {
-                    env.index[slot] = Some(j as i64);
+                    env.vars[slot] = Some(Val::I(j as i64));
                     let row = self.a(kid(0)?, env)?;
-                    if row.dims.len() != 1 || cols.is_some_and(|c| c != row.dims[0]) {
+                    if row.dims.len() != 1 || cols.is_some_and(|(c, e)| c != row.dims[0] || e != row.elem) {
                         return Err(format!("our software has a bug: a tabulate of rows whose row {j} is {:?}", row.dims));
                     }
-                    cols = Some(row.dims[0]);
+                    cols = Some((row.dims[0], row.elem));
                     out.extend_from_slice(row.slice());
                 }
-                env.index[slot] = outer;
-                let cols = cols.ok_or("our software has a bug: a tabulate of rows over an empty dimension")?;
-                Val::A(View::of(out, vec![n, cols]))
+                env.vars[slot] = outer;
+                let (cols, elem) = cols.ok_or("our software has a bug: a tabulate of rows over an empty dimension")?;
+                Val::A(View::of(out, vec![n, cols], elem))
             }
-            Op::Replicate(d) => {
+            Op::Replicate(d, elem) => {
                 let n = env.sizes[d];
                 let x = self.s(kid(0)?, env)?.word();
-                Val::A(View::of(vec![x; n], vec![n]))
+                Val::A(View::of(vec![x; n], vec![n], elem))
             }
             Op::Map2(b) => {
                 let x = self.a(kid(0)?, env)?;
                 let y = self.a(kid(1)?, env)?;
-                if x.dims != y.dims || x.dims.len() != 1 {
+                if x.dims != y.dims || x.dims.len() != 1 || x.elem != y.elem {
                     return Err(format!("our software has a bug: map2 over {:?} and {:?}", x.dims, y.dims));
                 }
-                let out: Vec<u32> = x.slice().iter().zip(y.slice()).map(|(p, q)| self.num(*p).bin(b, self.num(*q)).map(Num::word)).collect::<Result<_, _>>()?;
-                Val::A(View::of(out, x.dims.clone()))
+                let out: Vec<u32> = x.slice().iter().zip(y.slice()).map(|(p, q)| x.num(*p).bin(b, y.num(*q)).map(Num::word)).collect::<Result<_, _>>()?;
+                Val::A(View::of(out, x.dims.clone(), x.elem))
             }
             Op::Scan(b) => {
                 let x = self.a(kid(0)?, env)?;
-                let mut acc = Num::neutral(self.elem, b);
+                let mut acc = Num::neutral(x.elem, b);
                 let mut out = Vec::with_capacity(x.len());
                 for w in x.slice() {
-                    acc = acc.bin(b, self.num(*w))?;
+                    acc = acc.bin(b, x.num(*w))?;
                     out.push(acc.word());
                 }
-                Val::A(View::of(out, x.dims.clone()))
+                Val::A(View::of(out, x.dims.clone(), x.elem))
             }
-            Op::Hist(b, d) => {
+            Op::Hist(b, d, elem) => {
                 let is = self.a(kid(0)?, env)?;
                 let vs = self.a(kid(1)?, env)?;
-                if is.dims != vs.dims || is.dims.len() != 1 {
+                if is.dims != vs.dims || is.dims.len() != 1 || vs.elem != elem {
                     return Err(format!("our software has a bug: a histogram of {:?} at {:?}", vs.dims, is.dims));
                 }
                 let n = env.sizes[d];
-                let mut out = vec![Num::neutral(self.elem, b); n];
+                let mut out = vec![Num::neutral(elem, b); n];
                 for (i, v) in is.slice().iter().zip(vs.slice()) {
                     // Futhark's hist ignores an index outside [0, n).
-                    if let Some(i) = self.num(*i).hist_index(n) {
-                        out[i] = out[i].bin(b, self.num(*v))?;
+                    if let Some(i) = is.num(*i).hist_index(n) {
+                        out[i] = out[i].bin(b, vs.num(*v))?;
                     }
                 }
-                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![n]))
+                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![n], elem))
             }
-            Op::HistRows(kd, dd) => {
+            Op::HistRows(kd, dd, elem) => {
                 let is = self.a(kid(0)?, env)?;
                 let vs = self.a(kid(1)?, env)?;
                 let (k, d) = (env.sizes[kd], env.sizes[dd]);
-                if is.dims.len() != 1 || vs.dims.len() != 2 || vs.dims[0] != is.dims[0] || vs.dims[1] != d {
+                if is.dims.len() != 1 || vs.dims.len() != 2 || vs.dims[0] != is.dims[0] || vs.dims[1] != d || vs.elem != elem {
                     return Err(format!("our software has a bug: a histogram of rows {:?} at {:?} into [{k}][{d}]", vs.dims, is.dims));
                 }
-                let mut out = vec![Num::zero(self.elem); k * d];
+                let mut out = vec![Num::zero(elem); k * d];
                 let rows = vs.slice();
                 for (i, idx) in is.slice().iter().enumerate() {
-                    if let Some(b) = self.num(*idx).hist_index(k) {
+                    if let Some(b) = is.num(*idx).hist_index(k) {
                         for e in 0..d {
-                            out[b * d + e] = out[b * d + e].bin(Bin::Add, self.num(rows[i * d + e]))?;
+                            out[b * d + e] = out[b * d + e].bin(Bin::Add, vs.num(rows[i * d + e]))?;
                         }
                     }
                 }
-                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![k, d]))
+                Val::A(View::of(out.into_iter().map(Num::word).collect(), vec![k, d], elem))
             }
             Op::RowDiv => {
                 let m = self.a(kid(0)?, env)?;
@@ -1524,12 +1632,12 @@ impl<'a> Interp<'a> {
                 let d = m.dims[1];
                 let mut out = Vec::with_capacity(m.len());
                 for (r, sw) in s.slice().iter().enumerate() {
-                    let div = self.num(*sw).f32_only("rowdiv")?;
+                    let div = s.num(*sw).f32_only("rowdiv")?;
                     for w in &m.slice()[r * d..(r + 1) * d] {
-                        out.push((self.num(*w).f32_only("rowdiv")? / div).to_bits());
+                        out.push((m.num(*w).f32_only("rowdiv")? / div).to_bits());
                     }
                 }
-                Val::A(View::of(out, m.dims.clone()))
+                Val::A(View::of(out, m.dims.clone(), m.elem))
             }
             Op::Mod(d) => match self.s(kid(0)?, env)? {
                 Num::I(x) => Val::S(Num::I(x.rem_euclid(env.sizes[d] as i32))),
@@ -1543,22 +1651,35 @@ impl<'a> Interp<'a> {
                 }
                 let dims = m.dims[1..].to_vec();
                 let stride: usize = dims.iter().product();
-                Val::A(View { data: m.data.clone(), off: m.off + i as usize * stride, dims })
+                Val::A(View { data: m.data.clone(), off: m.off + i as usize * stride, dims, elem: m.elem })
             }
             Op::Input(i) => Val::A(env.inputs[i].clone()),
-            Op::Zeros(d) => Val::A(env.zeros[d].clone()),
-            Op::Loop { dim, index, state: slot, from1 } => {
+            Op::Zeros(d, elem) => Val::A(View::of(vec![0; env.sizes[d]], vec![env.sizes[d]], elem)),
+            Op::Loop { dim, index, state: slot, state2, from1 } => {
                 let mut state = self.at(kid(0)?, env)?;
                 let n = env.sizes[dim];
                 let trips = if from1 { n.saturating_sub(1) } else { n };
-                let (outer_index, outer_state) = (env.index[index], env.state[slot].take());
+                let outer_index = env.vars[index].take();
+                let outer_state = env.vars[slot].take();
+                let outer_state2 = state2.map(|s| env.vars[s].take());
                 for t in 0..trips {
-                    env.index[index] = Some((t + usize::from(from1)) as i64);
-                    env.state[slot] = Some(state);
+                    env.vars[index] = Some(Val::I((t + usize::from(from1)) as i64));
+                    match (state2, state) {
+                        // A pair state is destructured into its two variables.
+                        (Some(s2), Val::T(a, b)) => {
+                            env.vars[slot] = Some(*a);
+                            env.vars[s2] = Some(*b);
+                        }
+                        (Some(_), other) => return Err(format!("our software has a bug: a pair loop's state is {other:?}")),
+                        (None, s) => env.vars[slot] = Some(s),
+                    }
                     state = self.at(kid(1)?, env)?;
                 }
-                env.index[index] = outer_index;
-                env.state[slot] = outer_state;
+                env.vars[index] = outer_index;
+                env.vars[slot] = outer_state;
+                if let (Some(s2), Some(v)) = (state2, outer_state2) {
+                    env.vars[s2] = v;
+                }
                 state
             }
             Op::RowFn(f) => Val::F(f),
@@ -1573,7 +1694,7 @@ impl<'a> Interp<'a> {
                         out[j * rows + i] = src[i * cols + j];
                     }
                 }
-                Val::A(View::of(out, vec![cols, rows]))
+                Val::A(View::of(out, vec![cols, rows], m.elem))
             }
             Op::Matmul => {
                 // The helper's arithmetic (`crate::futhark_interpreter::matmul`): `acc + a * b` in f32 from 0.0, a
@@ -1596,7 +1717,7 @@ impl<'a> Interp<'a> {
                         out.push(acc.to_bits());
                     }
                 }
-                Val::A(View::of(out, vec![n, p]))
+                Val::A(View::of(out, vec![n, p], Elem::F32))
             }
             Op::MapRows => {
                 let f = match self.at(kid(0)?, env)? {
@@ -1611,7 +1732,7 @@ impl<'a> Interp<'a> {
                     let row: Vec<f32> = src[i * cols..(i + 1) * cols].iter().map(|w| f32::from_bits(*w)).collect();
                     out.extend(f.apply(&row).into_iter().map(f32::to_bits));
                 }
-                Val::A(View::of(out, vec![rows, cols]))
+                Val::A(View::of(out, vec![rows, cols], Elem::F32))
             }
             Op::Map2Rows => {
                 let f = match self.at(kid(0)?, env)? {
@@ -1631,7 +1752,7 @@ impl<'a> Interp<'a> {
                     let y: Vec<f32> = sb[i * cols..(i + 1) * cols].iter().map(|w| f32::from_bits(*w)).collect();
                     out.extend(f.apply(&x, &y)?.into_iter().map(f32::to_bits));
                 }
-                Val::A(View::of(out, vec![rows, cols]))
+                Val::A(View::of(out, vec![rows, cols], Elem::F32))
             }
         })
     }
@@ -1639,7 +1760,7 @@ impl<'a> Interp<'a> {
     /// The node executions of a tree on given sizes ([`TIMING_WORK_CAP`] bounds them at the timing input's sizes):
     /// every node once, times the trips of the binders it is inside
     /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length,
-    /// a histogram of rows and a division of rows their `[K][D]` cells.
+    /// a histogram of rows and a division of rows their `[K][D]` cells. A pair row costs one, as a scalar's does.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
         fn walk(me: &Interp<'_>, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
@@ -1650,10 +1771,10 @@ impl<'a> Interp<'a> {
                 d.form.split('.').map(|r| me.sig.dims.iter().position(|x| x == r).map(|i| n[i]).ok_or_else(|| format!("the role {r} has no size"))).product()
             };
             let (body_mult, own) = match op {
-                Op::Tab(d, _) | Op::TabRows(d, _) => (n[d], 1),
+                Op::Tab(d, ..) | Op::TabRows(d, _) => (n[d], 1),
                 Op::Loop { dim, from1, .. } => (n[dim].saturating_sub(u128::from(from1)), 1),
-                Op::Replicate(d) | Op::Hist(_, d) => (1, 1 + n[d]),
-                Op::HistRows(kd, dd) => (1, 1 + n[kd] * n[dd]),
+                Op::Replicate(d, _) | Op::Hist(_, d, _) => (1, 1 + n[d]),
+                Op::HistRows(kd, dd, _) => (1, 1 + n[kd] * n[dd]),
                 // The matrix family: a traversal costs its output's cells; the product its n x m x p multiply-adds (the
                 // output's cells times the inner role, the first argument's second role).
                 Op::Transpose | Op::MapRows | Op::Map2Rows => (1, 1 + cells(t)?),
@@ -1674,10 +1795,12 @@ impl<'a> Interp<'a> {
             };
             if let Some(kid) = costed {
                 let dual = &me.k.dual(me.k.rows[kid.symbol as usize].output).ok_or("a row with no dual")?.dual;
-                let cls = dual.split(':').next().unwrap_or("");
-                let ds = cls.strip_prefix("a.").ok_or("a reduction of a non-array")?;
+                let class = Class::parse(dual.split(':').next().unwrap_or(""), &me.sig.elements, None)?;
+                if class.dims().is_empty() {
+                    return Err("a reduction of a non-array".into());
+                }
                 let mut cells = 1u128;
-                for d in ds.split('.') {
+                for d in class.dims() {
                     cells *= n[me.sig.dims.iter().position(|x| x == d).ok_or("a reduction over an unknown dimension")?];
                 }
                 sum += mult * cells;
