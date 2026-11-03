@@ -175,16 +175,24 @@ same loop order (`ultradim_step_f32`, Kahan on) and the f64 reference (`ultradim
 | within the f64 reference's distance: the seed's largest cell error equals the port's on every case (4.2e-8 at scale 1, 3.4e-11 at 10^-3, 3.6e-5 at 10^3, 4.5e-3 at 10^5, 1.07e-6 on the breaking case, where the plain sum is 3.4e-5) | 8 of 8 |
 | the planted slowdown (the assignments computed twice, `map2 f32.min a a`) the same bits | 8 of 8 |
 
-The seed runs to UltraDim's stopping point on every fitness case through the host interpreter and compiled (the
-runner's two controls, `futhark_evolve --problem kmeans --backend c --eval single`; `tests_checklist`).
+The seed runs to UltraDim's stopping point on every fitness case compiled (the runner's control and `tests_checklist`,
+`futhark c`); the table above was measured on the eight uniform magnitude cases of 2026-11-03 09:27Z, replaced the
+same day by the dbpedia cases (`docs/KMEANS_FITNESS.md`; `tests_kmeans_seed` now proves the seed on 7 of 7 of them,
+compiled, and on the small one interpreted). The host interpreter is not run on the dbpedia-sized cases (a minute a
+step at 1,000 x 1,536 x 16).
 
 ## The GPU (the lead's)
 
+The script `/private/tmp/claude-501/fbench/kmeans_gpu_controls.sh` runs these in order and writes the logs beside it:
+
 ```
-# the seed through the converged judge on the GPU: the controls (the seed finishes on every fitness case, compiled)
-cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem kmeans --regime P --eval single --backend gpu --evaluations 1 --minutes 10 --seed 1 --out /private/tmp/claude-501/fbench/kmeans_seed_gpu
-# the run from the seed, P regime, the k-means scheme (the five inputs a case against the seed's run, interleaved --pairs times)
-cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem kmeans --regime P --eval single --backend gpu --evaluations 2000 --minutes 60 --pairs 3 --seed 1 --out /private/tmp/claude-501/fbench/kmeans_P_s1
+# the seed through the converged judge on the GPU: the controls (the compiled seed CONVERGES on every fitness case,
+# the program's own GPU time read from the shim's timestamps) and the in-run A/A (the seed as a candidate against
+# itself: every input 1/2 if the device is deterministic)
+cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem kmeans --regime P --eval single --backend gpu --evaluations 1 --minutes 30 --seed 1 --out /private/tmp/claude-501/fbench/kmeans_seed_gpu
+# the run from the seed, P regime, the k-means scheme (quality first; one interleaved pair a case; the budget: a
+# candidate is 6 cases x about 20 iterations x 2 sides of one process each, of the order of two minutes)
+cargo run --release --features gpu,wgsl --example futhark_evolve -- --problem kmeans --regime P --eval single --backend gpu --evaluations 200 --minutes 600 --seed 1 --out /private/tmp/claude-501/fbench/kmeans_P_s1
 evowatch /private/tmp/claude-501/fbench/kmeans_P_s1
 ```
 

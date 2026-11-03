@@ -494,6 +494,25 @@ here is to the measurement's data and criterion, not to what evolution may find.
   (the kingdom does not load); the problem's view holds the assignments and the count as integers in f32 (exact below 2^24), 14,359 types,
   27.6 million words at N = 192 (the seed is 131 functions). Not run: the GPU (the WGSL oracle, item 4, and the run,
   item 5).
+- (g) DONE on the CPU (2026-11-03, after the advisor's review of the k-means plan,
+  `docs/reviews/2026-11-03_kmeans_plan_advisor_round1.md`, every finding fixed; `docs/KMEANS_FITNESS.md` revised):
+  the scheme is now `futhark-kmeans-quality-first` (the retired `futhark-kmeans-converged` registered, NOT TO BE RUN
+  AS IS): per case a quality group (cosine inertia ratio; the ratio of the seed's mean log10 angular percentile to
+  the candidate's over the points off their centroid, UltraDim's number over every point reported beside it) and a
+  speed group (the program's OWN time to the stopping point, the shim's GPU-timed passes or `futhark c`'s `-t`, the
+  harness excluded exactly; the iterations), every input total on [0, 1], against the seed's run of the same
+  interleaving; the two-level HFF gated by quality, so the identity step, a worsening step, a NaN step and a step
+  rounded to 1e-3 rank below the seed and the run goes on (measured through the scheme on 500 dbpedia rows,
+  `kmeans_converged::tests`). The cap is UltraDim's `converged: false`, a slow finished run. The work guard is 10 x
+  the seed's work a case. **The data** is the dbpedia sample cut into six disjoint cases (train 1,000/16, 1,000/50,
+  500/8; held 1,000/32, 500/16; test 1,000/32) plus the small `train_n200_k4` for the interpreter's tests, UltraDim's
+  k-means++ starts stored per case (the same crates at the same versions), the timing input the whole sample with k
+  256 (`make_cases.sh`, `examples/kmeans_cases.rs`); the uniform magnitude cases of item 3 are gone (the breaking
+  case's lesson, Kahan against the plain sum, is in `docs/kmeans_seed.md`). The reimplemented measures equal
+  UltraDim's vendored functions to the bit (`ln B` from statrs as UltraDim has it). The loop is Euclidean Lloyd scored
+  on UltraDim's spherical measures, stated in the specification with what normalisation does. Not run: the GPU
+  (the oracle, item 4; the in-run A/A and the run, item 5; the script is `/private/tmp/claude-501/fbench/kmeans_gpu_controls.sh`).
+
 - (f): after the GPU runs.
 
 **Status of (b), 2026-11-03: done** (`kingdoms/futhark/README.md`, "The class", "Two elements in one view", "Pairs").
