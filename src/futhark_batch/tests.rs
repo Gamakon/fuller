@@ -159,6 +159,76 @@ fn a_timing_is_the_fastest_run_after_the_warm_up() {
     assert_eq!(Outcome::Failed("x".into()).fastest_ns(), Err("x".into()));
 }
 
+/// THE COMPILE LIMIT'S ARITHMETIC: the floor alone before any compile finished; the factor times the median once
+/// some did, and never under the floor.
+#[test]
+fn the_compile_limit_is_the_floor_or_the_factor_times_the_median() {
+    let floor = Duration::from_secs(30);
+    assert_eq!(compile_limit(floor, &[]), floor);
+    assert_eq!(compile_limit(floor, &[0.3, 0.2, 0.4]), floor, "30 x 0.3 s is under the floor");
+    assert_eq!(compile_limit(floor, &[2.0, 1.0, 3.0]), Duration::from_secs(60), "30 x the median 2 s");
+    assert_eq!(compile_limit(floor, &[f64::NAN]), floor);
+    assert_eq!(COMPILE_LIMIT_FACTOR, 30.0);
+    assert_eq!(COMPILE_LIMIT_FLOOR, floor);
+}
+
+/// A COMPILE THAT DOES NOT FINISH DOES NOT STALL THE RUN: a mock compiler that only sleeps (the Futhark fork on the
+/// program of `docs/issues/2026-11-03_futhark_inline_nonterminating_kmeans.md`, which ran 19 minutes before it was
+/// killed) is killed at the host's limit (a 2 s floor here, `COMPILE_LIMIT_FLOOR` in a run), the batch's source is
+/// saved under the bugs directory, and the batch is split as a failed compile is: 3 members become the whole, [0],
+/// [1, 2], [1], [2], five compiles that did not finish, two halvings naming the saved sources, every member's step a
+/// failure naming the limit and its saved source. A single program is tried once more with the fusion bound
+/// (`--fuse=10`) before it is given up: the mock logs its arguments, 8 invocations, 3 of them bounded. No real
+/// compiler, no runtime, no device: the batch is driven through [`Host::group`], as [`Host::run`] drives it, since
+/// `run`'s GPU turn is the feature rule for a test that reaches the device, which a compile that never finishes
+/// cannot.
+#[test]
+fn a_compile_that_does_not_finish_is_killed_at_the_limit_and_the_batch_is_split() {
+    let p = problem("reduce").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("unfinished_compile");
+    std::fs::create_dir_all(&base).unwrap();
+    let log = base.join("mock_calls.log");
+    let mock = base.join("mock_futhark.sh");
+    // `exec`: the sleeping process is the compiler process itself, so the kill at the limit ends it.
+    std::fs::write(&mock, format!("#!/bin/sh\necho \"$@\" >> {}\nexec sleep 1000\n", log.display())).unwrap();
+    std::fs::set_permissions(&mock, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let timing = cases.last().unwrap().stdin.clone();
+    let host = Host::new(&k, &sig, cases.len(), Backend::Rust { rt: base.join("no_runtime_needed") }, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&timing), yardstick: Some(p.yardstick) })
+        .unwrap()
+        .with_compiler(&mock)
+        .with_bugs_dir(&base.join("bugs"))
+        .with_compile_floor(Duration::from_secs(2));
+    let texts = ["entry main [n] (xs: [n]i32) : i32 = xs[0]\n", "entry main [n] (xs: [n]i32) : i32 = xs[1]\n", "entry main [n] (xs: [n]i32) : i32 = xs[2]\n"];
+    let members: Vec<Member> = texts.iter().map(|t| Member { program: Program::Text(t), steps: vec![Step::Output] }).collect();
+    let t = std::time::Instant::now();
+    let mut outcomes: Vec<Vec<Option<Outcome>>> = members.iter().map(|m| vec![None; m.steps.len()]).collect();
+    let mut cost = Cost::default();
+    host.group(&members, &[0, 1, 2], &mut outcomes, &mut cost).unwrap();
+    let took = t.elapsed();
+    for (i, o) in outcomes.iter().enumerate() {
+        match &o[0] {
+            Some(Outcome::Failed(e)) => assert!(e.contains(DID_NOT_FINISH) && e.contains("killed at the limit of 2 s") && e.contains("--fuse=10") && e.contains("saved at"), "member {i}: {e}"),
+            o => panic!("member {i} was scored by a compiler that never finished: {o:?}"),
+        }
+    }
+    assert_eq!((cost.compiles, cost.failed_compiles, cost.unfinished_compiles, cost.bounded_fusion_compiles), (0, 5, 5, 0), "{cost:?}");
+    assert_eq!(cost.splits.len(), 2, "{:?}", cost.splits);
+    assert!(cost.splits[0].contains("a batch of 3 programs was halved") && cost.splits[0].contains("the batch's source (3 programs) is saved at"), "{}", cost.splits[0]);
+    let mut saved: Vec<String> = std::fs::read_dir(base.join("bugs")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    saved.sort();
+    assert_eq!(saved, ["b0_unfinished.fut", "b1_unfinished.fut", "b2_unfinished.fut", "b3_unfinished.fut", "b4_unfinished.fut"]);
+    assert_eq!(std::fs::read_to_string(base.join("bugs/b0_unfinished.fut")).unwrap(), host.batch_source(&members).unwrap(), "the whole batch's source, as compiled");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let bounded = calls.lines().filter(|l| l.contains("--fuse=10")).count();
+    assert_eq!((calls.lines().count(), bounded), (8, 3), "{calls}");
+    // Five compiles of 2 s, three bounded retries of 2 s: 16 s of limits, and nothing waited for the sleep.
+    assert!(took >= Duration::from_secs(16) && took < Duration::from_secs(40), "took {took:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// The results file's records, payloads of any bytes included.
 #[test]
 fn the_results_records_parse() {

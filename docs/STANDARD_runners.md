@@ -96,6 +96,35 @@ Not runners (no generation loop over a population, checked): phylu `wgsl_typed_p
 `regex_holdout_score`, `kitchen_sink`; fuller `wgsl_gram_hgp` (one round of model calls), `population_*`,
 `st9_champion_time`, `wgsl_mine_rewrites`, `wgsl_symmetric_table`.
 
+## A compile that does not finish must not stall the run (2026-11-03)
+
+Futhark's compiler runs for ever on some legal programs (its fusion pass on one, `docs/RESCUE_futhark.md`; its
+inliner on another, `docs/issues/2026-11-03_futhark_inline_nonterminating_kmeans.md`: the k-means run of 2026-11-03
+waited 19 minutes on one 13-program batch before it was killed, and a pathfinder run's compile ran 5 h 34 min). The
+rule, for every runner that compiles a batch (`futhark_batch::Host`, every backend):
+
+1. The Futhark compiler's stage has a time limit derived from measurement:
+   `max(COMPILE_LIMIT_FLOOR, COMPILE_LIMIT_FACTOR x median)`, the median over the seconds that stage took in the host's
+   finished compiles, the floor alone before the first. Floor 30 s, factor 30: measured batch compiles (both stages)
+   are 0.5 to 2.4 s for 1 to 23 programs (k-means), the Futhark stage alone 0.21 s for one program and 0.36 s for
+   five, and 0.40 to 2.39 s for 25 random programs of the four micro problems; the floor is 12.5 times the largest
+   Futhark stage measured, and the factor follows a loaded machine. Never `n` times a
+   per-program bound on it (26 minutes for a batch of 13). The second stage (rustc, cc) is a compiler that terminates
+   and keeps `n` times the per-candidate path's 120 s: measured, rustc of a 25-program histogram batch passed 30 s
+   while the whole test suite loaded the machine, so the Futhark stage's limit is not a limit for rustc.
+2. A stage killed at its limit is a failed compile: the batch is halved as any failed compile is, down to the one
+   program, which is scored as failed with a message naming the limit; the halves are scored.
+3. The stuck batch's source is saved under the run's `bugs/` (`b<n>_unfinished.fut`) and the halving is logged in
+   `bugs.log` ("a batch had to be halved: ... the batch's source (N programs) is saved at ...").
+4. A single program that did not finish is tried once more with the fusion bound (`futhark rust-wgpu --fuse=10`,
+   series patch 0012; the C path's bounded-fusion compile) before it is given up; the count of each is in the batch's
+   cost (`unfinished_compiles`, `bounded_fusion_compiles`) and the runner's batch line.
+
+5. The fork compiler runs at one capability (`+RTS -N1 -RTS`, `futhark_rust::COMPILER_RTS`): at its built-in 16 it
+   livelocks in the GHC runtime about once in 1,000 compiles when several run at once (measured, the issue note above).
+
+Tested without a compiler by a mock that sleeps (`futhark_batch::tests::a_compile_that_does_not_finish_is_killed_at_the_limit_and_the_batch_is_split`).
+
 ## The telemetry stream (`fuller::telemetry`)
 
 One JSON object a line in `OUT/stream.jsonl`, tagged by `type`. Every record carries the header `schema_version`

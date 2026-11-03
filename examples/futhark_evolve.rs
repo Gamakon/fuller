@@ -753,7 +753,7 @@ impl<'a> Judge<'a> {
                 self.batched_t.insert(key, (pair_ratios(&outs[at..], missing, fresh), mine.timing));
             }
         }
-        println!("# {} batch: {n} programs, {} compile(s) ({} failed), {} process(es), {} halving(s), {:.1} s", utc(), c.compiles, c.failed_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64());
+        println!("# {} batch: {n} programs, {} compile(s) ({} failed, {} not finished within the limit), {} process(es), {} halving(s), {:.1} s", utc(), c.compiles, c.failed_compiles, c.unfinished_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -811,7 +811,7 @@ impl<'a> Judge<'a> {
             mine.pipelines += c.member_timing_pipeline_seconds[i];
             self.batched_k.insert(key, (r, mine));
         }
-        println!("# {} k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", utc(), c.compiles, c.failed_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64());
+        println!("# {} k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed, {} not finished within the limit, {} compiled with the fusion bound), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", utc(), c.compiles, c.failed_compiles, c.unfinished_compiles, c.bounded_fusion_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -2341,12 +2341,14 @@ fn real_main() -> Result<(), String> {
         EvalMode::Rust => {
             let rt = fuller::futhark_rust::prebuild_rt(&out.join("rust_rt"))?;
             let b = fuller::futhark_batch::Backend::Rust { rt };
-            Some(Host::new(&k, &sig, cases.len(), b, &out.join("rust_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(if scheme.is_converged() { ref_source.as_str() } else { p.yardstick }) })?)
+            // A batch whose compile does not finish within the host's limit has its source saved under the run's
+            // bugs/ (`futhark_batch::COMPILE_LIMIT_FLOOR`; the split is logged in bugs.log as any halving).
+            Some(Host::new(&k, &sig, cases.len(), b, &out.join("rust_build"), Inputs { cases_stdin: &all_stdin, timing_stdin: Some(timing.stdin.as_slice()), yardstick: Some(if scheme.is_converged() { ref_source.as_str() } else { p.yardstick }) })?.with_bugs_dir(&out.join("bugs")))
         }
         EvalMode::Batch => {
             let b = if backend == Backend::Gpu { fuller::futhark_batch::Backend::Gpu { shim: shim.clone() } } else { fuller::futhark_batch::Backend::C };
             let timing_stdin = if backend == Backend::Gpu { Some(timing.stdin.as_slice()) } else { None };
-            Some(Host::new(&k, &sig, cases.len(), b, &out.join("batch_build"), Inputs { cases_stdin: &all_stdin, timing_stdin, yardstick: Some(p.yardstick) })?)
+            Some(Host::new(&k, &sig, cases.len(), b, &out.join("batch_build"), Inputs { cases_stdin: &all_stdin, timing_stdin, yardstick: Some(p.yardstick) })?.with_bugs_dir(&out.join("bugs")))
         }
         EvalMode::Single => None,
     };

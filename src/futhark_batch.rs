@@ -37,7 +37,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::futhark_exec::output_with_timeout_bytes;
+use crate::futhark_exec::{output_with_timeout_bytes, FUSION_BOUND};
+use crate::futhark_rust::{compile_module_with, Compile, DID_NOT_FINISH};
 use crate::futhark_table::FutharkKingdom;
 use crate::futhark_sig::kmeans_converged::{k_command as kmeans_command, range_entry};
 use crate::futhark_sig::{entry_calling, prelude, program_cases_named_bare, program_named_bare, read_binary, Array, Signature};
@@ -202,6 +203,50 @@ impl Outcome {
     }
 }
 
+/// THE BATCH COMPILE'S TIME LIMIT (2026-11-03), on the FUTHARK COMPILER's stage: `max(COMPILE_LIMIT_FLOOR,
+/// COMPILE_LIMIT_FACTOR * median)`, the median over the seconds the Futhark stage took in every compile of this host
+/// that finished (the floor alone before the first). The second stage (rustc on the rust path, cc on the others) is
+/// a compiler that terminates and keeps its bound of `n` times the per-candidate path's 120 s: measured 2026-11-03,
+/// rustc of a 25-program histogram batch passed 30 s while the whole test suite loaded the machine.
+///
+/// Derivation. Measured in the k-means run of 2026-11-03 (`kmeans_qqs_s1`, `--eval rust`): a batch compile that
+/// succeeded at once (the Futhark stage and rustc together) took 0.5 s (1 program), 1.8 s (13 and 16) and 2.4 s
+/// (23); the Futhark stage alone 0.21 s for one program and 0.36 s for five (measured on the run's saved batches),
+/// and 0.40, 1.25, 2.39 and 0.74 s for 25 random programs of reduce, scan, histogram and pathfinder (rustc of the same
+/// batches 3.7 to 16.6 s; `tests::every_problems_random_programs_compile_to_rust`, an unloaded machine).
+/// The compile that stalled the run ran 19 minutes at 99 % CPU before it was killed, and a sibling run's 5 hours 34
+/// minutes (`docs/issues/2026-11-03_futhark_inline_nonterminating_kmeans.md`): a compiler that does not finish never
+/// finishes, so any finite limit tells the two apart, and the limit only sets what a stuck batch costs. The floor is
+/// 12.5 times the largest Futhark stage measured (2.39 s), so a loaded machine (the run shared the CPU at a load of
+/// 30) does not reach it; the factor lets the limit follow the machine and the problem: at a median Futhark stage of
+/// 1 s it is the floor, at 2 s it is 60 s. Before this limit a batch of `n` programs had `n` times the per-candidate
+/// path's 120 s on the Futhark stage: 26 minutes for the batch of 13.
+pub const COMPILE_LIMIT_FLOOR: Duration = Duration::from_secs(30);
+pub const COMPILE_LIMIT_FACTOR: f64 = 30.0;
+
+/// The seconds the Futhark stage took in this host's finished compiles, and the floor: [`compile_limit`] reads it.
+#[derive(Debug, Clone)]
+struct CompileClock {
+    floor: Duration,
+    futhark_seconds: Vec<f64>,
+}
+
+/// The limit on a stage: `max(floor, COMPILE_LIMIT_FACTOR * median(seconds))`, the floor alone with no seconds.
+fn compile_limit(floor: Duration, seconds: &[f64]) -> Duration {
+    let m = crate::runner::median(seconds);
+    if m.is_finite() && m > 0.0 {
+        floor.max(Duration::from_secs_f64(COMPILE_LIMIT_FACTOR * m))
+    } else {
+        floor
+    }
+}
+
+/// A compile's error says its stage was killed at the limit ([`DID_NOT_FINISH`], `output_with_timeout`'s words on
+/// every path).
+fn did_not_finish(e: &str) -> bool {
+    e.contains(DID_NOT_FINISH)
+}
+
 /// What a batch took, in wall seconds: rendering the source, the compiles that succeeded, the ones that failed (the
 /// halving), the processes, and each member's own command time (its quality step, its timing and output steps).
 #[derive(Debug, Clone, Default)]
@@ -211,6 +256,11 @@ pub struct Cost {
     pub compiles: usize,
     pub failed_compile_seconds: f64,
     pub failed_compiles: usize,
+    /// Compiles the compiler did not finish within the limit (killed; the batch split, the source saved under the
+    /// host's bugs directory), and of the single-program ones, those that then compiled with the fusion bound
+    /// (`futhark rust-wgpu --fuse=N`, the rust path).
+    pub unfinished_compiles: usize,
+    pub bounded_fusion_compiles: usize,
     pub run: RunStages,
     pub processes: usize,
     /// The seconds the resident sample's uploads took (the rust path's `u` records: once a session, 0 after), and
@@ -263,6 +313,14 @@ pub struct Host<'a> {
     max_batch: std::cell::Cell<usize>,
     /// The rust-wgpu backend's in-process session, made on first use.
     session: std::cell::RefCell<Option<crate::futhark_rust::Session>>,
+    /// The rust path's compiler (`futhark_rust::compiler()` unless [`Host::with_compiler`] names another: a test's
+    /// mock).
+    compiler: PathBuf,
+    /// Each compile stage's seconds so far and the floor of its limit ([`compile_limit`]).
+    clock: std::cell::RefCell<CompileClock>,
+    /// Where the source of a batch whose compile did not finish is saved (`<dir>/bugs` unless
+    /// [`Host::with_bugs_dir`] names the run's own).
+    bugs_dir: PathBuf,
 }
 
 /// The number of a member's entry in a batch.
@@ -705,7 +763,50 @@ impl<'a> Host<'a> {
         if sig.inputs.iter().chain(std::iter::once(&sig.output)).any(|p| (p.elem != "i32" && !rust) || p.dims.len() > 3) {
             return Err("the batch driver reads and writes i32 values of rank at most 3 (the rust path: i32 and f32)".into());
         }
-        Ok(Host { k, sig, n_cases, backend, dir: dir.to_path_buf(), cases_path, timing_path, yardstick: yardstick.map(str::to_string), built: std::cell::Cell::new(0), max_batch: std::cell::Cell::new(usize::MAX), session: std::cell::RefCell::new(None) })
+        Ok(Host {
+            k,
+            sig,
+            n_cases,
+            backend,
+            dir: dir.to_path_buf(),
+            cases_path,
+            timing_path,
+            yardstick: yardstick.map(str::to_string),
+            built: std::cell::Cell::new(0),
+            max_batch: std::cell::Cell::new(usize::MAX),
+            session: std::cell::RefCell::new(None),
+            compiler: crate::futhark_rust::compiler(),
+            clock: std::cell::RefCell::new(CompileClock { floor: COMPILE_LIMIT_FLOOR, futhark_seconds: Vec::new() }),
+            bugs_dir: dir.join("bugs"),
+        })
+    }
+
+    /// The rust path's compiler, in place of `futhark_rust::compiler()` (a test's mock compiler).
+    pub fn with_compiler(mut self, compiler: &Path) -> Host<'a> {
+        self.compiler = compiler.to_path_buf();
+        self
+    }
+
+    /// Where a batch whose compile did not finish has its source saved (the run's `bugs/`).
+    pub fn with_bugs_dir(mut self, bugs: &Path) -> Host<'a> {
+        self.bugs_dir = bugs.to_path_buf();
+        self
+    }
+
+    /// The floor of the compile limit, in place of [`COMPILE_LIMIT_FLOOR`] (a test's mock compiler sleeps: a run
+    /// keeps the floor).
+    pub fn with_compile_floor(self, floor: Duration) -> Host<'a> {
+        self.clock.borrow_mut().floor = floor;
+        self
+    }
+
+    /// The limits on the two stages of the next compile of `programs` programs: the Futhark stage's from the host's
+    /// finished compiles ([`compile_limit`]); the second stage's (rustc, cc) `programs` times the per-candidate
+    /// path's bound.
+    fn compile_limits(&self, programs: usize) -> Result<(Duration, Duration), String> {
+        let c = self.clock.borrow();
+        let second = compile_timeout() * u32::try_from(programs.max(1)).map_err(|_| "a batch too large")?;
+        Ok((compile_limit(c.floor, &c.futhark_seconds), second))
     }
 
     fn in_ranks(&self) -> Vec<usize> {
@@ -972,16 +1073,66 @@ impl<'a> Host<'a> {
         cost.render += t.elapsed().as_secs_f64();
         let cmds = self.commands(members, idx)?;
         let driver = |manifest: &serde_json::Value| self.driver(members, idx, manifest);
-        // Each program its own compile bound, as on the per-candidate path.
-        let timeout = compile_timeout() * u32::try_from(idx.len().max(1)).map_err(|_| "a batch too large")?;
-        let (exe, stages) = match &self.backend {
-            Backend::Gpu { shim } => compile_library_prebuilt(&source, &driver, &dir, shim, timeout)?,
-            Backend::C => compile_c_library(&source, &driver, &dir, timeout)?,
+        // THE TIME LIMIT on the Futhark stage, from this host's finished compiles (`COMPILE_LIMIT_FLOOR`): a compiler
+        // that does not finish (Futhark's inliner and its fusion pass each have a program they never settle on) is
+        // killed at it, the batch's source is saved under the bugs directory, and the batch is split as any failed
+        // compile.
+        let (futhark_limit, cc_limit) = self.compile_limits(idx.len())?;
+        let built = match &self.backend {
+            Backend::Gpu { shim } => compile_library_prebuilt(&source, &driver, &dir, shim, futhark_limit),
+            Backend::C => compile_c_library(&source, &driver, &dir, futhark_limit, cc_limit),
             // The crate's name is unique in the process (a process-wide count, not this host's `n`: two hosts of one
             // process both build a b0): the host keeps every module it loads.
-            Backend::Rust { rt } => crate::futhark_rust::compile_module(&source, &dir, rt, &format!("p{}_m{}", std::process::id(), RUST_MODULES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)), timeout)?,
+            Backend::Rust { rt } => {
+                let tag = format!("p{}_m{}", std::process::id(), RUST_MODULES.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                let how = Compile { compiler: self.compiler.clone(), fuse_bound: None, futhark_limit, rustc_limit: cc_limit };
+                match compile_module_with(&how, &source, &dir, rt, &tag) {
+                    // One program alone that the compiler could not finish: once more with the fusion bound, the
+                    // C path's compile of a program whose fusion never settles (measured 2026-11-03 on the program
+                    // of docs/RESCUE_futhark.md: `futhark rust-wgpu` killed at 53 s, `--fuse=10` 0.17 s). The
+                    // bound is not applied to every compile: measured on the 378 programs of the compile-failure
+                    // corpus, the minimal reproducers and the k-means seed, `--fuse=10` compiles to other code on
+                    // 248 and fails 96 the unbounded compiler compiles (an unfused form the webgpu code generator
+                    // cannot copy), `--fuse=100` differs on 39 and does not finish on one; only `--fuse=1000`
+                    // compiled every program byte for byte as the unbounded compiler (futhark-rust-backend/README.md).
+                    Err(e) if did_not_finish(&e) && idx.len() == 1 => {
+                        cost.unfinished_compiles += 1;
+                        let saved = self.save_unfinished(n, &source)?;
+                        let bounded = Compile { fuse_bound: Some(FUSION_BOUND), ..how };
+                        match compile_module_with(&bounded, &source, &dir, rt, &tag) {
+                            Ok(r) => {
+                                cost.bounded_fusion_compiles += 1;
+                                Ok(r)
+                            }
+                            Err(e2) => return Err(format!("{e}; with --fuse={FUSION_BOUND}: {e2}; the program's source is saved at {}", saved.display())),
+                        }
+                    }
+                    other => other,
+                }
+            }
         };
+        let (exe, stages) = match built {
+            Ok(b) => b,
+            Err(e) if did_not_finish(&e) => {
+                cost.unfinished_compiles += 1;
+                let saved = self.save_unfinished(n, &source)?;
+                return Err(format!("{e}; the batch's source ({} programs) is saved at {}", idx.len(), saved.display()));
+            }
+            Err(e) => return Err(e),
+        };
+        {
+            let mut c = self.clock.borrow_mut();
+            c.futhark_seconds.push(stages.futhark);
+        }
         Ok((exe, cmds, stages))
+    }
+
+    /// Save the source of batch `n`, whose compile did not finish, under the bugs directory: `b<n>_unfinished.fut`.
+    fn save_unfinished(&self, n: u64, source: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(&self.bugs_dir).map_err(|e| format!("mkdir {}: {e}", self.bugs_dir.display()))?;
+        let path = self.bugs_dir.join(format!("b{n}_unfinished.fut"));
+        std::fs::write(&path, source).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Ok(path)
     }
 
     /// One process of `exe` on `cmds` (all of them, from the first): the records it wrote, its stages, and how it
@@ -1266,14 +1417,15 @@ fn max_binding_index(c: &str) -> u64 {
     top
 }
 
-/// The c backend's library build: `futhark c --library` (the released compiler), then `cc` of its C and the driver.
-fn compile_c_library(source: &str, driver: DriverOf, dir: &Path, timeout: Duration) -> Result<(PathBuf, CompileStages), String> {
+/// The c backend's library build: `futhark c --library` (the released compiler) within `futhark_limit`, then `cc` of
+/// its C and the driver within `cc_limit`.
+fn compile_c_library(source: &str, driver: DriverOf, dir: &Path, futhark_limit: Duration, cc_limit: Duration) -> Result<(PathBuf, CompileStages), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let fut = dir.join("prog.fut");
     std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
     let mut stages = CompileStages::default();
     let t = std::time::Instant::now();
-    let out = crate::futhark_exec::output_with_timeout(Command::new("futhark").arg("c").arg("--library").arg(&fut).arg("-o").arg(dir.join("prog")), timeout, None)?;
+    let out = crate::futhark_exec::output_with_timeout(Command::new("futhark").arg("c").arg("--library").arg(&fut).arg("-o").arg(dir.join("prog")), futhark_limit, None)?;
     stages.futhark = t.elapsed().as_secs_f64();
     if !out.status.success() {
         return Err(format!("futhark c --library failed:\n{}", String::from_utf8_lossy(&out.stderr)));
@@ -1284,7 +1436,7 @@ fn compile_c_library(source: &str, driver: DriverOf, dir: &Path, timeout: Durati
     std::fs::write(&d, driver(&manifest)?).map_err(|e| format!("write {}: {e}", d.display()))?;
     let exe = dir.join("prog_c");
     let t = std::time::Instant::now();
-    let cc = crate::futhark_exec::output_with_timeout(Command::new("cc").arg("-O2").arg(dir.join("prog.c")).arg(&d).arg("-o").arg(&exe).arg("-lm"), timeout, None)?;
+    let cc = crate::futhark_exec::output_with_timeout(Command::new("cc").arg("-O2").arg(dir.join("prog.c")).arg(&d).arg("-o").arg(&exe).arg("-lm"), cc_limit, None)?;
     stages.cc = t.elapsed().as_secs_f64();
     if !cc.status.success() {
         return Err(format!("cc of the c backend's library failed:\n{}", String::from_utf8_lossy(&cc.stderr)));
