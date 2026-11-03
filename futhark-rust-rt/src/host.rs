@@ -208,9 +208,12 @@ fn upload(ctx: &FutharkCtx, vs: &[HostValue]) -> Result<Vec<Value>, Error> {
 /// (sample, start, n, centres) with the centres ON THE DEVICE (the previous call's output, never uploaded again; the
 /// entry slices the range itself, `kmeans_converged::range_entry`), the new centres are read back (k x d f32, 16-300
 /// KB) for the harness, and the Euclidean inertia's change under `tol` stops the loop (the cap stops it with
-/// `converged` 0). The program's own time is the sum of the GPU-timed passes of its calls. The payload: a line
-/// `ITERATIONS CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, then the final centres in Futhark's
-/// binary format when the run finished (every step a finite `[k][d]f32`), else the failure's text.
+/// `converged` 0). The program's own time is the sum of the GPU-timed passes of its calls. The payload is
+/// [`kmeans_payload`]: a line `ITERATIONS CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, then, when the
+/// run finished (every step a finite `[k][d]f32`), the final centres and THE ASSIGNMENTS THE LOOP STOPPED ON (made
+/// against the centres the last step was given, as the stopping rule reads them: fuller's `converge` defines the
+/// final clustering so, and its `run_of_k_payload` reads these rather than assigning to the final centres, which is
+/// another partition on a run that did not converge), else the failure's text.
 fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec<u8>, Error> {
     let KmeansCase { sample_h, sample_v, starts_h, start, n, cap, tol } = *case;
     if !ctx.timing() {
@@ -238,10 +241,11 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
     let (mut iterations, mut ns, mut converged) = (0u32, 0f64, false);
     let mut failure = String::new();
     let mut final_h: Option<HostValue> = None;
+    let mut assignments: Vec<usize> = Vec::new();
     for it in 0..cap {
         iterations = it + 1;
         // The harness's assignment against the centres the step is given (UltraDim's loop assigns before the update).
-        let assignments = crate::kmeans_harness::assign(&points, d, &centroids);
+        assignments = crate::kmeans_harness::assign(&points, d, &centroids);
         let args = [sample_v.clone(), Value::Scalar(Scalar::I64(start as i64)), Value::Scalar(Scalar::I64(n as i64)), centres_v.clone()];
         let m0 = ctx.timed_passes();
         let outs = match (e.call)(ctx, &args).and_then(|o| ctx.sync().map(|()| o)) {
@@ -280,13 +284,26 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
     }
     let finished = failure.is_empty();
     let final_inertia = if current.is_finite() { current } else { start_inertia };
-    let mut payload = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(finished)).into_bytes();
-    match (finished, final_h) {
-        (true, Some(h)) => h.write_binary(&mut payload),
-        (true, None) => starts_h.write_binary(&mut payload),
-        (false, _) => payload.extend_from_slice(failure.as_bytes()),
+    // The cap is at least 1, so a finished run has its last step's centres; the starts stand in only if it has not.
+    let centres = final_h.as_ref().unwrap_or(starts_h);
+    Ok(kmeans_payload(iterations, converged, ns, start_inertia, final_inertia, if finished { Ok((centres, &assignments)) } else { Err(&failure) }))
+}
+
+/// THE PAYLOAD OF A `k` RECORD (fuller's `kmeans_converged::run_of_k_payload` reads it): the line `ITERATIONS
+/// CONVERGED FINISHED NANOSECONDS START_INERTIA FINAL_INERTIA`, then for a finished run its final centres
+/// (`[k][d]f32`) and the assignments the loop stopped on (`[n]i32`), both in Futhark's binary format, else the
+/// failure's text.
+fn kmeans_payload(iterations: u32, converged: bool, ns: f64, start_inertia: f32, final_inertia: f32, end: Result<(&HostValue, &[usize]), &str>) -> Vec<u8> {
+    let mut payload = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(end.is_ok())).into_bytes();
+    match end {
+        Ok((centres, assignments)) => {
+            centres.write_binary(&mut payload);
+            let assigned = HostValue { elem: ElemType::I32, shape: vec![assignments.len() as i64], bytes: assignments.iter().flat_map(|a| (*a as i32).to_le_bytes()).collect() };
+            assigned.write_binary(&mut payload);
+        }
+        Err(failure) => payload.extend_from_slice(failure.as_bytes()),
     }
-    Ok(payload)
+    payload
 }
 
 /// One `k` command's case: the sample on the host and on the device, the case's starting centres, its row range, the
@@ -716,4 +733,28 @@ pub unsafe extern "C" fn futhark_rust_rt_free_bytes(p: *mut u8, len: usize) {
 #[no_mangle]
 pub extern "C" fn futhark_rust_rt_last_error() -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A finished `k` record's payload carries its header line, then the final centres and the assignments the loop
+    /// stopped on as a `[n]i32`, in Futhark's binary format (fuller's `run_of_k_payload` wants exactly those two
+    /// values); an unfinished one carries its header and the failure's text. No device.
+    #[test]
+    fn a_k_records_payload_carries_the_final_centres_and_the_loops_assignments() {
+        let centres = HostValue { elem: ElemType::F32, shape: vec![2, 3], bytes: [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0].iter().flat_map(|x| x.to_le_bytes()).collect() };
+        let p = kmeans_payload(7, false, 1234.5, 10.0, 2.5, Ok((&centres, &[1usize, 0, 1, 1])));
+        let nl = p.iter().position(|b| *b == b'\n').expect("a header line");
+        assert_eq!(std::str::from_utf8(&p[..nl]).expect("text"), "7 0 1 1234.5 10 2.5");
+        let values = HostValue::read_all(&p[nl + 1..]).expect("two values");
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], centres);
+        assert_eq!(values[1], HostValue { elem: ElemType::I32, shape: vec![4], bytes: [1i32, 0, 1, 1].iter().flat_map(|x| x.to_le_bytes()).collect() });
+        let f = kmeans_payload(3, false, 0.0, 10.0, 10.0, Err("iteration 3: a centroid is infinite or NaN"));
+        let nl = f.iter().position(|b| *b == b'\n').expect("a header line");
+        assert_eq!(std::str::from_utf8(&f[..nl]).expect("text"), "3 0 0 0.0 10 10");
+        assert_eq!(&f[nl + 1..], b"iteration 3: a centroid is infinite or NaN");
+    }
 }

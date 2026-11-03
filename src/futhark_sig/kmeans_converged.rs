@@ -846,9 +846,15 @@ pub fn k_command(entry: &str, case: usize, start: usize, n: usize) -> String {
 }
 
 /// THE RUN A `k` RECORD DESCRIBES, as [`converge`] would have built it: the payload's line (iterations, converged,
-/// finished, the program's own nanoseconds, the start and final Euclidean inertia) and its final centres (finished)
-/// or its failure; the assignments and the spherical measures are the harness's here, against the case's points,
-/// exactly as `converge` makes them at its end. `wall_ns` is the record's own span.
+/// finished, the program's own nanoseconds, the start and final Euclidean inertia) and, for a finished run, its final
+/// centres `[k][d]f32` and THE ASSIGNMENTS THE LOOP STOPPED ON, `[n]i32` (the harness's, made against the centres
+/// the last step was given: UltraDim's loop assigns before the update, the module header's F12), else its failure.
+/// The spherical measures are taken on those centres under those assignments, which is the ONE definition of the
+/// final clustering, `converge`'s. Before 2026-11-03 this function assigned the points to the FINAL centres (the
+/// advisor's round-3 review, N1): at a fixed point the two agree, so the seed and every converged candidate read
+/// the same, but a candidate stopped by the cap or by a sub-tolerance move was scored on another partition than on
+/// the c backend. A finished record without its assignments is an error naming the runtime. `wall_ns` is the
+/// record's own span.
 pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: u64) -> Result<ConvergedRun, String> {
     let nl = payload.iter().position(|b| *b == b'\n').ok_or("a k-means record with no header line")?;
     let head = std::str::from_utf8(&payload[..nl]).map_err(|_| "a k-means record whose header is not text")?;
@@ -862,15 +868,26 @@ pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: 
     let start_inertia: f32 = start_inertia.parse().map_err(|_| bad("start inertia"))?;
     let final_inertia: f32 = final_inertia.parse().map_err(|_| bad("final inertia"))?;
     let (flat, d) = flat_points(points)?;
+    let n = flat.len() / d.max(1);
     let k = start.dims.first().copied().ok_or("the starting centres have no rows")?;
-    let (centroids, failure) = if finished {
-        (centroid_rows(&read_one(&payload[nl + 1..])?, k, d)?, String::new())
+    let (centroids, assignments, failure) = if finished {
+        let values = super::read_binary(&payload[nl + 1..])?;
+        let [centres, assigned] = values.as_slice() else {
+            return Err(format!("a finished k-means record with {} values after its header, wants 2 (the final centres and the assignments the loop stopped on): the runtime that wrote it is older than this reader", values.len()));
+        };
+        let centroids = centroid_rows(centres, k, d)?;
+        if assigned.elem != Elem::I32 || assigned.dims != [n] {
+            return Err(format!("a k-means record whose assignments are not a [{n}]i32: {:?} {:?}", assigned.elem, assigned.dims));
+        }
+        let assignments: Vec<usize> = assigned.i32_values()?.into_iter().map(|a| usize::try_from(a).ok().filter(|a| *a < k).ok_or_else(|| format!("our software has a bug: a k-means record assigns a point to centre {a} of {k}"))).collect::<Result<_, String>>()?;
+        (centroids, assignments, String::new())
     } else {
-        (centroid_rows(start, k, d)?, String::from_utf8_lossy(&payload[nl + 1..]).into_owned())
+        // A run that did not finish takes the worst inputs whatever its clustering: the start, as `converge` would
+        // hold before its first step.
+        let centroids = centroid_rows(start, k, d)?;
+        let assignments = assign(&flat, d, &centroids);
+        (centroids, assignments, String::from_utf8_lossy(&payload[nl + 1..]).into_owned())
     };
-    // The assignments the loop last made: against the centres the last step was given. The loop keeps them with the
-    // centres it ends on only when the step ran; `converge` reads the final clustering the same way.
-    let assignments = assign(&flat, d, &centroids);
     let s = spherical(&flat, &centroids, &assignments, d);
     Ok(ConvergedRun {
         centroids,
@@ -890,11 +907,19 @@ pub fn run_of_k_payload(points: &Array, start: &Array, payload: &[u8], wall_ns: 
 }
 
 /// The one line of a `k` record's payload, as the runtime writes it (a test's stand-in for the device; the runtime's
-/// own text is in `host.rs`).
+/// own text is `kmeans_payload` in `host.rs`), then `tail`: [`k_tail`] of a finished run, the failure's text of one
+/// that did not finish.
 pub fn k_payload(iterations: u32, converged: bool, finished: bool, ns: f64, start_inertia: f32, final_inertia: f32, tail: &[u8]) -> Vec<u8> {
     let mut p = format!("{iterations} {} {} {ns:.1} {start_inertia} {final_inertia}\n", u8::from(converged), u8::from(finished)).into_bytes();
     p.extend_from_slice(tail);
     p
+}
+
+/// The tail of a finished `k` record, as the runtime writes it: the final centres, then the assignments the loop
+/// stopped on as a `[n]i32`, both in Futhark's binary format.
+pub fn k_tail(centres: &Array, assignments: &[usize]) -> Vec<u8> {
+    let assigned = Array::i32s(vec![assignments.len()], assignments.iter().map(|a| *a as i32).collect());
+    write_binary(&[centres, &assigned])
 }
 
 // ---- the cases ---------------------------------------------------------------------------------------------------

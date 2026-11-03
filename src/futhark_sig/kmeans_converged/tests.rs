@@ -672,7 +672,7 @@ fn the_range_entry_equals_the_program_on_the_cut_case_and_a_k_payload_reads_back
     let final_centres = Array::f32s(vec![r.centroids.len(), points.dims[1]], r.centroids.concat());
     let start_inertia = euclidean_inertia(&points.f32_values().unwrap(), &start.f32_values().unwrap().chunks_exact(points.dims[1]).map(<[f32]>::to_vec).collect::<Vec<_>>(), &assign(&points.f32_values().unwrap(), points.dims[1], &start.f32_values().unwrap().chunks_exact(points.dims[1]).map(<[f32]>::to_vec).collect::<Vec<_>>()), points.dims[1]);
     let final_inertia = euclidean_inertia(&points.f32_values().unwrap(), &r.centroids, &r.assignments, points.dims[1]);
-    let payload = k_payload(r.iterations, true, true, 12_345.0, start_inertia, final_inertia, &write_binary(&[&final_centres]));
+    let payload = k_payload(r.iterations, true, true, 12_345.0, start_inertia, final_inertia, &k_tail(&final_centres, &r.assignments));
     let back = run_of_k_payload(&points, &start, &payload, 7_000_000).unwrap();
     assert_eq!((back.iterations, back.converged, back.finished, &back.centroids, &back.assignments), (r.iterations, true, true, &r.centroids, &r.assignments));
     assert_eq!((back.inertia, back.mean_log10_p, back.mean_log10_p_all, back.coincident, back.inertia_per_iteration), (r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, r.inertia_per_iteration));
@@ -683,4 +683,65 @@ fn the_range_entry_equals_the_program_on_the_cut_case_and_a_k_payload_reads_back
     assert_eq!(k_command("kc", 2, 2000, 500), "k kc 2 2000 500 100 1e-4");
     assert!(run_of_k_payload(&points, &start, b"no header", 1).is_err());
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// ONE DEFINITION OF THE FINAL CLUSTERING ON BOTH PATHS (the advisor's round-3 review, N1): a candidate that does
+/// NOT converge, run through `converge` (the c backend's path) and read back from a `k` record written as the
+/// runtime writes it (the final centres and the assignments the loop stopped on), gives the same measures and the
+/// same inputs against the seed, field for field. The candidate is a step that permutes three placements of the
+/// centres every call: the loop never settles (the cap, `converged` false), and the assignments made against the
+/// centres the last step was given put every group on another centre than its nearest one of the final centres, so
+/// the former definition of the record path (assign the points to the final centres) reads a DIFFERENT clustering,
+/// which the test states; and a finished record without its assignments is an error naming the runtime.
+#[test]
+fn an_unconverged_candidate_reads_the_same_on_the_c_path_and_from_a_k_record() {
+    let (points, start) = small_case();
+    let d = points.dims[1];
+    let flat = points.f32_values().unwrap();
+    let seed = converge(&points, &start, ultradim(&points)).unwrap();
+    assert!(seed.converged);
+    // Three placements, one centre on each group, rotated every call and drifted by 0.01 a call (the three rotations
+    // alone give one inertia under the small case's symmetry, which the stopping rule reads as converged): the final
+    // centres are one rotation, the loop's assignments were made against the one before.
+    let placements = [vec![0.0f32, 0.0, 10.0, 0.0, 0.0, 10.0], vec![10.0, 0.0, 0.0, 10.0, 0.0, 0.0], vec![0.0, 10.0, 0.0, 0.0, 10.0, 0.0]];
+    let mut calls = 0usize;
+    let cycling = converge(&points, &start, timed(|_| {
+        calls += 1;
+        Ok(Array::f32s(vec![3, 2], placements[calls % 3].iter().map(|x| x + 0.01 * calls as f32).collect()))
+    }))
+    .unwrap();
+    assert!(cycling.finished && !cycling.converged && cycling.iterations == MAX_ITERATIONS, "{cycling:?}");
+    let final_centres = Array::f32s(vec![3, d], cycling.centroids.concat());
+    let start_inertia = {
+        let rows: Vec<Vec<f32>> = start.f32_values().unwrap().chunks_exact(d).map(<[f32]>::to_vec).collect();
+        euclidean_inertia(&flat, &rows, &assign(&flat, d, &rows), d)
+    };
+    let final_inertia = euclidean_inertia(&flat, &cycling.centroids, &cycling.assignments, d);
+    let payload = k_payload(cycling.iterations, false, true, cycling.seconds * 1e9, start_inertia, final_inertia, &k_tail(&final_centres, &cycling.assignments));
+    let record = run_of_k_payload(&points, &start, &payload, (cycling.wall_seconds * 1e9) as u64).unwrap();
+    assert_eq!((record.iterations, record.converged, record.finished, &record.centroids, &record.assignments), (cycling.iterations, false, true, &cycling.centroids, &cycling.assignments));
+    assert_eq!((record.inertia, record.mean_log10_p, record.mean_log10_p_all, record.coincident), (cycling.inertia, cycling.mean_log10_p, cycling.mean_log10_p_all, cycling.coincident));
+    // The quality inputs and the iterations input exactly; the seconds input to the record's rounding of the
+    // nanoseconds (the record path's seconds are the device's timer, written to 0.1 ns).
+    let (from_record, from_loop) = (kmeans_inputs(&record, &seed), kmeans_inputs(&cycling, &seed));
+    assert_eq!((from_record.quality, from_record.speed[1]), (from_loop.quality, from_loop.speed[1]));
+    assert!((from_record.speed[0] - from_loop.speed[0]).abs() < 1e-9, "{} against {}", from_record.speed[0], from_loop.speed[0]);
+    // The partition the loop stopped on is not the nearest-centre partition of the final centres: the former
+    // record reader measured the latter.
+    let nearest = assign(&flat, d, &cycling.centroids);
+    assert_ne!(nearest, cycling.assignments, "the test's cycling step must leave the loop's assignments off the final centres' nearest");
+    let other = spherical(&flat, &cycling.centroids, &nearest, d);
+    assert_ne!(other.inertia, cycling.inertia, "the two definitions must differ on this candidate for the test to tell them apart");
+    eprintln!("the cycling candidate: cosine inertia {:.4} under the loop's assignments on both paths; {:.4} under the final centres' nearest (the former record reader)", cycling.inertia, other.inertia);
+    // A record of a finished run without its assignments: an error naming the runtime, never a different measure.
+    let old = k_payload(cycling.iterations, false, true, 1.0, start_inertia, final_inertia, &write_binary(&[&final_centres]));
+    let err = run_of_k_payload(&points, &start, &old, 1).unwrap_err();
+    assert!(err.contains("wants 2") && err.contains("runtime"), "{err}");
+    // Assignments of the wrong length, or to a centre that is not there: errors too.
+    let short = k_payload(cycling.iterations, false, true, 1.0, start_inertia, final_inertia, &k_tail(&final_centres, &cycling.assignments[..59]));
+    assert!(run_of_k_payload(&points, &start, &short, 1).unwrap_err().contains("[60]i32"));
+    let mut out_of_range = cycling.assignments.clone();
+    out_of_range[0] = 3;
+    let bad = k_payload(cycling.iterations, false, true, 1.0, start_inertia, final_inertia, &k_tail(&final_centres, &out_of_range));
+    assert!(run_of_k_payload(&points, &start, &bad, 1).unwrap_err().contains("centre 3 of 3"));
 }
