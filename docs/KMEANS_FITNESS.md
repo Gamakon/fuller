@@ -451,8 +451,17 @@ under 1.7e6 and refused every dbpedia case; the seed's own work on the timing in
 
 ## Known limits, stated
 
-- `KMEANS_PROGRAM_SIZE` = 192: a host population of 64 genes is 7 GB of genes, fine on this machine and impossible on
-  the device; "GPU residency" for k-means is not this view.
+- `KMEANS_PROGRAM_SIZE` = 192: one gene is 27.6 million words, 110.4 MB, so a population of 64 genes is 7.1 GB and
+  the 24 of phylu's runs (step 5a, one pair of 16 + 8) 2.65 GB a side of the device's store, 5.3 GB with both sides.
+  That fits the device: the typed device is requested with the adapter's limits (phylu `examples/shape_fit.rs`
+  100-104, `src/evolve/typed_device.rs` 950-951), this machine's adapter (Apple M3 Max, Metal) reports 4,294,967,292
+  bytes a storage binding and 4,294,967,295 bytes a buffer (phylu
+  `docs/reports/2026-10-22_ST9_volumepassage_champion/timing_151/log.txt` line 8), the store is paged at the binding
+  limit (`with_parts_paged`), and the machine has 128 GB of unified memory. (An earlier line here called 64 genes
+  "impossible on the device": that was written against the default 128 MiB binding, not the limits the device is
+  requested with.) Not yet measured: Metal's `recommendedMaxWorkingSetSize` and the device's seconds at this size,
+  which the plan's G1 (`docs/PLAN_futhark_kingdom.md` step 5a) prints. The bound on the population is the evaluation
+  cost (a whole k-means run a new text, 13.2 s on the c backend), not memory.
 - The dbpedia-sized cases are never run through the host interpreter; its agreement with the compiled program is
   tested on the small case, and the runner's controls are the compiled program's.
 - The shim's executable (`--eval single --backend gpu`) has no server mode: that path is still a process an iteration.
