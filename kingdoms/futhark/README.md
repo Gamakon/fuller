@@ -272,8 +272,8 @@ Rust by its fingerprint.
 
 ### The elements: `i32` and `f32` (master version 3, step 4)
 
-A view holds **one element**, the one its interface has (the sniffer stops on a
-program that mixes them). The master's rows say which elements each is defined
+A view holds the elements its interface has (one, or several since master
+version 4: "Two elements in one view" below). The master's rows say which elements each is defined
 for (`elems`): the arithmetic, the comparisons, `min`, `max`, `abs`, `neg`, the
 reductions, scans, histograms, `map2`, the binders, the index rows and the
 inputs are `i32,f32`; `div` (`/`) and `sqrt` are **f32 only**, because they are
@@ -313,13 +313,94 @@ was not among them. The rule witness (M9) evaluates both sides of every rule on
 its element's edges (the two zeros, NaN, the infinities, a denormal) under the
 comparison policy.
 
+### The class (master version 4, step 4c (b))
+
+A class is the type of a value apart from its context, and its text reads
+one way (the review's finding 1: a dotted string such as `t.a.n.a.m` reads two
+ways, so the class became an AST, `src/futhark_view.rs::Class`, with this
+grammar; `kingdoms/futhark/view.py::parse_class` reads it for the checks):
+
+```
+class  ::= elem                          a scalar: i32, f32
+         | 'ix.' dim                     an index in range for a dimension: ix.n
+         | 'a.' [elem '.'] dim {'.' dim}  an array: a.n.d, or a.f32.n.d in a view of several elements
+         | '(' class ',' class ')'       a pair: (f32,i32), Futhark's own notation without the space
+```
+
+A dimension is never named as an element type, so the piece after `a.` is an
+element exactly when it is one; a pair's components sit inside its own
+parentheses, so `(a.f32.n.d,f32)` and `(a.f32.n,a.f32.d)` are two texts. A
+view of **one** element leaves an array's element implied (`a.n`, the names of
+before, so the pinned views are unchanged); a view of **several** writes it
+(`a.f32.n`, `a.i32.n`). A type is a class in a context (`(f32,i32):c/{f32,i32,ix.n}@1`);
+a context binds scalars, rank-1 arrays and indices, never a pair.
+
+### Two elements in one view
+
+The specification's `element` line lists the elements (`f32,i32`, in order of
+first appearance in the entry's signature; the sniffer's `--elements` adds one
+the signature does not name, for values a program keeps inside, as k-means's
+assignments), and each has its own `literals` line. Every element's rows exist
+(`add@f32:c` and `add@i32:c`; `mod` and the i32 `clamp` for i32, `div`, `sqrt`
+and the f32 `clamp` for f32), each dimension has a rank-1 class of each element
+(`a.f32.n`, `a.i32.n`, each with its zero array `zeros_f32_n`, `zeros_i32_n`),
+and a loop may carry a scalar or a rank-1 array of either. A row's element `{E}`
+is bound by the first quantifier that picks a class of one element, or iterated
+over the elements the row is defined for; a row whose output class has no
+element of its own is named by it where two could clash (`clamp.f32@ix.n:c`
+beside `clamp.i32@ix.n:c`; in a view of one element `clamp@ix.n:c`, as before).
+The two conversions: `cvt.i32@f32:c` is Futhark's `f32.i32` (total: exact
+below 2^24, rounded to nearest above); `cvt.f32@i32:c` is `i32.f32` guarded as
+the f32 `clamp` is (a NaN is 0, the value clamped into i32's range first, then
+truncated toward zero), because Futhark leaves the conversion undefined there.
+
+### Pairs
+
+A pair of scalars is a class, one for every ordered pair of the view's elements
+(`(f32,f32)`, `(f32,i32)`, `(i32,f32)`, `(i32,i32)`), in every context. Its
+rows: `pair` builds one (`({0}, {1})`); `fst.A.B` and `snd.A.B` take a
+component (`{0}.0`, `{0}.1`; the components' elements are in the name, since
+two pairs may share a component type); `zero` is the pair of zeros, the
+terminal every type needs; `psel.E` chooses between two pairs on a scalar's
+sign (`if {0} < 0E then {1} else {2}`, the kingdom's one comparison, as `sel`);
+and `loop.D` / `loop1.D` carry a pair state. **A loop over a pair destructures
+it:** Futhark's own `loop (s, c) = (0f32, 0f32) for i < n do ...`, spelled
+`loop ((s_f32, s2_f32): (f32, f32)) = {0} for i_n < n do {1}`, whose frame
+(`L2`, `F2` in `master/frames.tsv`, versioned 4) binds the two components as
+variables of their own classes, so the body reads `s_f32` and `s2_f32` directly
+and the context is `c/{f32*2,ix.n}@1`, a count of classes as every context is.
+The pair is never a bound variable, which is what keeps the context count where
+it was: a view of two elements over one dimension at depth 2 has 328 types
+(`sig/kahan`, `sig/argmin`).
+
+The e-graph's pair rules are the two exact ones, `fst (pair a b) = a` and
+`snd (pair a b) = b` (M9 evaluates them); no real-number identity exists, so
+the Kahan step `(t - s) - y` survives saturation (tested).
+
+**The test views** (`sig/kahan/kahan.fut`, two entries, two views): UltraDim's
+k-means constructs, construct for construct. `kahan` (`xs: [n]f32`, `ms: [n]i32`
+to `f32`) holds the compensated mean of the members of cluster 0: the loop over
+the points whose state is the pair (sum, compensation), each step `y = x - c;
+t = s + y; (t, (t - s) - y)` guarded by `|m| - 1 < 0` (that is `m == 0`), over
+the count from a second loop, converted (UltraDim's third state, the count, is
+a second loop here: the pair holds two). `argmin` (`ds: [n]f32` to `i32`) is
+`assign_points`: the pair (best distance, best index) from the first distance,
+over 1 .. n-1 with `loop1`, a later distance winning only when strictly smaller
+(`d - best < 0`). Both compute, compiled with `futhark c`, the bits of the
+yardstick entries (spelled with Futhark's own tuple loop, a triple state and a
+range loop) and of the host interpreter, on 30 runs spanning magnitudes, n = 1,
+all-member, no-member (0 / 0, a NaN), tied and NaN distances
+(`futhark_sig::tests_view`). Random genes of both views are accepted by
+`futhark check` (50 each) and the first 8 compile and equal the interpreter.
+
 **The pins.** The four i32 benchmarks' specifications are pinned to master
 version 2 (`gen_tables.py`'s `SIG_PROBLEMS`, the sniffer's `--master`), so the
 rows of version 3 changed none of their tables (the fingerprints in
 `futhark_view::tests` are unchanged); k-means (`sig/kmeans/`, f32, depth 3) is
 the first version-3 view: 3,804 types, 30,041 rows, a gene of 3,044,186 words
-at its program size N = 96. Moving a pin is a decision with its regression
-re-measured.
+at its program size N = 96, pinned to version 3; the pair rows and the frames
+of version 4 changed none of the five (the fingerprints are unchanged). Moving
+a pin is a decision with its regression re-measured.
 
 ## The pixel family (`pixel/<shader>/`)
 
