@@ -1,0 +1,10 @@
+# kind	name	element	dims
+# written by kingdoms/futhark/sniff.py from tests/corpus/futhark_problems/kmeans/yardstick.fut, entry main
+master	3		
+element	f32		
+input	points	f32	n,d
+input	centres	f32	k,d
+output	main	f32	k,d
+depth	3		
+literals	0,1,2,-1,0.5,10		
+dims	n,d,k		

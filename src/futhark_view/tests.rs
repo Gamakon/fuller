@@ -4,8 +4,9 @@
 
 use super::*;
 
-const SIG: [(&str, &str); 4] = [
+const SIG: [(&str, &str); 5] = [
     ("histogram", include_str!("../../kingdoms/futhark/sig/histogram/view.tsv")),
+    ("kmeans", include_str!("../../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("pathfinder", include_str!("../../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("reduce", include_str!("../../kingdoms/futhark/sig/reduce/view.tsv")),
     ("scan", include_str!("../../kingdoms/futhark/sig/scan/view.tsv")),
@@ -27,12 +28,14 @@ fn first_difference(a: &str, b: &str) -> String {
 /// committed; each signature view's written text is pinned by its fingerprint. Until 3g the committed tables were
 /// compared byte for byte with the Python view's and this one's; at the retirement (commit 0d819cf4) the fingerprints
 /// were those of the removed files (histogram 2945ea1e1d1dc2d8, pathfinder a262fc805844d42c, reduce
-/// 0949f66aa873425e, scan 5dd633e7ed012bb4), so it changed no byte. Since the count contexts (3g) they are these.
+/// 0949f66aa873425e, scan 5dd633e7ed012bb4), so it changed no byte. Since the count contexts (3g) they are these;
+/// the four i32 views are PINNED to master version 2, so the f32 rows of version 3 (step 4) changed none of them, and
+/// k-means (f32, version 3, depth 3) is pinned since 2026-11-03.
 #[test]
 fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
     let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
-    assert_eq!(got, [("histogram", 0x2605_d528_715c_9478), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)], "the views' written text changed");
+    assert_eq!(got, [("histogram", 0x2605_d528_715c_9478), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)], "the views' written text changed");
     for (name, spec) in SIG {
         assert_eq!(View::load(&master, spec).unwrap().artefacts().len(), 6, "{name}: a signature view writes six artefacts");
     }
@@ -43,7 +46,7 @@ fn every_signature_view_writes_the_pinned_text() {
 fn write_committed_writes_every_view_and_its_text() {
     let dir = std::env::temp_dir().join(format!("futhark_view_write_{}", std::process::id()));
     let views = write_committed(&dir).unwrap();
-    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/histogram", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
+    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/histogram", "sig/kmeans", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
     for (sub, v) in views {
         for (file, text) in v.artefacts() {
             let got = std::fs::read_to_string(dir.join(sub).join(file)).unwrap();
@@ -83,14 +86,14 @@ fn a_specification_with_an_unknown_line_or_family_row_variable_is_an_error_not_a
     assert!(ViewSpec::parse("colour\tred\t\t\n").is_err());
     let rows = MASTER_ROWS.replacen("add on {E}", "add on {Q}", 1);
     let m = Master::parse(MASTER_VERSION, &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
-    let e = View::load(&m, SIG[2].1).unwrap_err();
+    let e = View::load(&m, SIG[3].1).unwrap_err();
     assert!(e.contains("{Q}"), "{e}");
 }
 
 #[test]
 fn the_cache_gives_one_view_a_specification() {
-    let a = cached(SIG[1].1).unwrap();
-    let b = cached(SIG[1].1).unwrap();
+    let a = cached(SIG[2].1).unwrap();
+    let b = cached(SIG[2].1).unwrap();
     assert!(std::ptr::eq(a, b));
 }
 
@@ -98,7 +101,7 @@ fn the_cache_gives_one_view_a_specification() {
 fn a_signature_view_carries_every_family_its_types_reach() {
     // Reduce's source has no `scan`, `hist` or `%`; before 3e its view had none of those rows. Every family is now
     // admitted and the reachability keeps each row whose types it reaches both ways.
-    let v = View::load(&Master::committed().unwrap(), SIG[2].1).unwrap();
+    let v = View::load(&Master::committed().unwrap(), SIG[3].1).unwrap();
     let ops: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).map(|n| n.split('.').next().unwrap_or("")).collect();
     for op in ["scan", "hist", "mod"] {
         assert!(ops.contains(op), "reduce's view has no {op} row: {ops:?}");
@@ -107,8 +110,8 @@ fn a_signature_view_carries_every_family_its_types_reach() {
 
 #[test]
 fn a_signature_specification_with_a_families_line_is_an_error() {
-    let spec = SIG[3].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
-    assert_ne!(spec, SIG[3].1);
+    let spec = SIG[4].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
+    assert_ne!(spec, SIG[4].1);
     let e = ViewSpec::parse(&spec).unwrap_err();
     assert!(e.contains("families"), "{e}");
 }
@@ -139,13 +142,13 @@ fn the_kept_rows_are_reachable_both_ways() {
     assert!(e.contains("cannot be built"), "{e}");
 }
 
-/// The measurement of `docs/PLAN_futhark_kingdom.md` 3e and 3g: per view, its types, function rows and leaf rows.
-/// Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73, 408,
-/// 221). Count contexts (3g): these.
+/// The measurement of `docs/PLAN_futhark_kingdom.md` 3e, 3g and step 4: per view, its types, function rows and leaf
+/// rows. Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73,
+/// 408, 221). Count contexts (3g): these; k-means at depth 3 over 9 classes (2026-11-03): 3804 types.
 #[test]
 fn the_view_sizes_are_the_measured_ones() {
     let master = Master::committed().unwrap();
-    for ((name, spec), want) in SIG.iter().zip([(162, 1032, 455), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
+    for ((name, spec), want) in SIG.iter().zip([(162, 1032, 455), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
         let v = View::load(&master, spec).unwrap();
         let types = v.types_tsv.lines().count() - 1;
         let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();

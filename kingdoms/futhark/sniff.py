@@ -12,19 +12,25 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
   over named dimensions;
 * the result type is the output; its dimensions must all be dimensions of an
   input (a size the inputs do not fix would be unknown);
-* the element type is the one element of the parameters and the result (one
-  element a view until step 4 of docs/PLAN_futhark_kingdom.md);
+* the element type is the one element of the parameters and the result (i32
+  or f32; a view holds one element: a program that mixes them is step 4's
+  next piece, docs/PLAN_futhark_kingdom.md D7);
 * no FAMILY is chosen here: a view admits every family of the master and
   keeps the types reachable both ways, forward from the leaves and backward
   from the root (`src/futhark_view.rs`; docs/PLAN_futhark_kingdom.md, 3e), so what the
   problem's source happens to use limits nothing;
-* the depth, the literal pool and the master version are the master's
-  defaults.
+* the literal pool is the master's for the element; the depth is the
+  master's default (2) unless `--depth N` says otherwise (k-means needs 3: a
+  reduction over `d` inside a loop over `k` inside a tabulate over `n`); the
+  master version is the current one unless `--master N` PINS the view to an
+  older one (the four i32 benchmarks are pinned to version 2, so the rows
+  added since do not change their tables; moving a pin is a decision, with
+  its regression re-measured).
 
 It writes the specification `view.tsv` (the WHERE clause of the view, see
 `src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
 
-    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--out view.tsv]
+    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--out view.tsv]
 """
 
 import os
@@ -104,9 +110,14 @@ def split_params(text):
     return sizes, params
 
 
-def sniff(path, entry="main"):
-    """The view specification of a problem, as text."""
+def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None):
+    """The view specification of a problem, as text; `master` pins the view to a master version (the current one
+    when None)."""
     check_compiler()
+    if master is None:
+        master = view.master()["version"]
+    elif not 1 <= master <= view.master()["version"]:
+        raise ValueError(f"the master version {master} is not one of 1 .. {view.master()['version']}")
     printed = typecheck(path)
     line = entry_line(printed, entry)
     head = line[len(f"entry {entry} "):].rstrip()[:-1].rstrip()
@@ -137,9 +148,11 @@ def sniff(path, entry="main"):
     if len(elems) != 1 or next(iter(elems)) not in ELEMENTS:
         raise ValueError(f"the problem has the element types {sorted(elems)}: a view holds one (step 4 adds more)")
     elem = next(iter(elems))
+    if elem not in view.master()["pools"]:
+        raise ValueError(f"the master has no literal pool for the element {elem} (its rows have no {elem} yet)")
     lines = ["# kind\tname\telement\tdims",
              f"# written by kingdoms/futhark/sniff.py from {os.path.relpath(os.path.abspath(path), REPO)}, entry {entry}",
-             f"master\t{view.master()['version']}\t\t",
+             f"master\t{master}\t\t",
              f"element\t{elem}\t\t"]
     dims_seen = []
     for n, dims, e in typed:
@@ -151,7 +164,7 @@ def sniff(path, entry="main"):
         lines.append(f"input\t{n}\t{e}\t{','.join(names)}")
         dims_seen += [d for d in names if d not in dims_seen]
     lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
-    lines.append(f"depth\t{DEFAULT_DEPTH}\t\t")
+    lines.append(f"depth\t{depth}\t\t")
     lines.append(f"literals\t{','.join(view.master()['pools'][elem])}\t\t")
     lines.append(f"dims\t{','.join(dims_seen)}\t\t")
     return "\n".join(lines) + "\n"
@@ -163,7 +176,9 @@ def main(argv):
         print(__doc__.strip().splitlines()[-1])
         return 2
     entry = args[args.index("--entry") + 1] if "--entry" in args else "main"
-    text = sniff(args[0], entry)
+    depth = int(args[args.index("--depth") + 1]) if "--depth" in args else DEFAULT_DEPTH
+    master = int(args[args.index("--master") + 1]) if "--master" in args else None
+    text = sniff(args[0], entry, depth, master)
     if "--out" in args:
         with open(args[args.index("--out") + 1], "w") as f:
             f.write(text)

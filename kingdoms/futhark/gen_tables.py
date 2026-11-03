@@ -1629,11 +1629,16 @@ def pixel_dir(instance):
 # view (`view.py`) filters, binds and keeps the types reachable both ways (docs/PLAN_futhark_kingdom.md, 3e).
 import sniff  # noqa: E402
 
+# (source, entry, depth, the master version the view is PINNED to). The four i32 benchmarks stay pinned to version 2:
+# the rows added since (version 3: the f32 rows, `div`, `sqrt`, `map2.mul`, the tabulate and histogram of rows,
+# `rowdiv`) would change their tables and gene layouts, so moving a pin is a decision with its regression
+# re-measured, never a side effect of a master change. k-means is at version 3 and depth 3 (sniff.py).
 SIG_PROBLEMS = {
-    "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main"),
-    "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main"),
-    "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main"),
-    "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main"),
+    "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main", 2, 2),
+    "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 3),
+    "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main", 2, 2),
+    "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2),
+    "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main", 2, 2),
 }
 
 # THE WITNESS MODELS of the optional families and of the element rows: the templates restated by hand, apart from the
@@ -1649,10 +1654,23 @@ SIG_PROBLEMS = {
 # a map of one): `scan (+) 0 (scan (+) 0 xs)` is an internal compiler error ("Name ... bound twice", measured
 # 2026-10-27), and `opaque` stops that fusion. A legal gene must compile, so every scan carries it.
 SIG_SCANS = {"i32": [("add", "scan (+) 0i32 (opaque {0})"), ("min", "scan i32.min i32.highest (opaque {0})"),
-                     ("max", "scan i32.max i32.lowest (opaque {0})")]}
+                     ("max", "scan i32.max i32.lowest (opaque {0})")],
+             "f32": [("add", "scan (+) 0f32 (opaque {0})"), ("min", "scan f32.min f32.highest (opaque {0})"),
+                     ("max", "scan f32.max f32.lowest (opaque {0})")]}
+# An f32 index into a histogram: a NaN is -1 and a value is clamped into [-1, {D}] before the conversion (Futhark
+# leaves `i64.f32` undefined out of range), then truncated; -1 and {D} are outside [0, {D}), which `hist` ignores.
+SIG_F32_INDEX = "(\\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {D}) x)))"
 SIG_HISTS = {"i32": [("add", "hist (+) 0i32 {D} (map i64.i32 {0}) {1}"),
                      ("min", "hist i32.min i32.highest {D} (map i64.i32 {0}) {1}"),
-                     ("max", "hist i32.max i32.lowest {D} (map i64.i32 {0}) {1}")]}
+                     ("max", "hist i32.max i32.lowest {D} (map i64.i32 {0}) {1}")],
+             "f32": [("add", "hist (+) 0f32 {D} (map " + SIG_F32_INDEX + " {0}) {1}"),
+                     ("min", "hist f32.min f32.highest {D} (map " + SIG_F32_INDEX + " {0}) {1}"),
+                     ("max", "hist f32.max f32.lowest {D} (map " + SIG_F32_INDEX + " {0}) {1}")]}
+# The elementwise add histogram of ROWS into [{K}][{D}] of [{D2}][{D}] rows at [{D2}] indices.
+SIG_HISTROWS = {"i32": "hist (map2 (+)) (replicate {D} 0i32) {K} (map i64.i32 {0}) {1}",
+                "f32": "hist (map2 (+)) (replicate {D} 0f32) {K} (map " + SIG_F32_INDEX.replace("{D}", "{K}") + " {0}) {1}"}
+# Each row of a [{K}][{D}] array divided by its [{K}] scalar (f32: division is total).
+SIG_ROWDIV = {"f32": "map2 (\\r s -> map (/ s) r) {0} {1}"}
 SIG_MOD = "{0} % i32.i64 {D}"
 
 # The element operators, by element type: (name, arity, spelling), restated for the witnesses. Every one is total
@@ -1668,20 +1686,39 @@ SIG_ELEMENT_OPS = {
         ("abs", 1, "i32.abs {0}"),
         ("sel", 3, "if {0} < 0i32 then {1} else {2}"),
     ],
+    # f32: IEEE arithmetic; division and the square root are total (NaN, infinities), so f32 has them.
+    "f32": [
+        ("add", 2, "{0} + {1}"),
+        ("sub", 2, "{0} - {1}"),
+        ("mul", 2, "{0} * {1}"),
+        ("div", 2, "{0} / {1}"),
+        ("min", 2, "f32.min {0} {1}"),
+        ("max", 2, "f32.max {0} {1}"),
+        ("neg", 1, "-{0}"),
+        ("abs", 1, "f32.abs {0}"),
+        ("sqrt", 1, "f32.sqrt {0}"),
+        ("sel", 3, "if {0} < 0f32 then {1} else {2}"),
+    ],
 }
 
 # The reductions over a rank-1 array: (name, spelling).
-SIG_REDUCTIONS = {"i32": [("sum", "i32.sum {0}"), ("minimum", "i32.minimum {0}"), ("maximum", "i32.maximum {0}")]}
+SIG_REDUCTIONS = {"i32": [("sum", "i32.sum {0}"), ("minimum", "i32.minimum {0}"), ("maximum", "i32.maximum {0}")],
+                  "f32": [("sum", "f32.sum {0}"), ("minimum", "f32.minimum {0}"), ("maximum", "f32.maximum {0}")]}
 
 # The elementwise rows over two rank-1 arrays of one class: (name, spelling). Each costs its array's length, so only
 # a context shallower than the depth holds one.
-SIG_MAP2 = {"i32": [("add", "map2 (+) {0} {1}"), ("sub", "map2 (-) {0} {1}"), ("min", "map2 i32.min {0} {1}"),
-                    ("max", "map2 i32.max {0} {1}")]}
+SIG_MAP2 = {"i32": [("add", "map2 (+) {0} {1}"), ("sub", "map2 (-) {0} {1}"), ("mul", "map2 (*) {0} {1}"),
+                    ("min", "map2 i32.min {0} {1}"), ("max", "map2 i32.max {0} {1}")],
+            "f32": [("add", "map2 (+) {0} {1}"), ("sub", "map2 (-) {0} {1}"), ("mul", "map2 (*) {0} {1}"),
+                    ("min", "map2 f32.min {0} {1}"), ("max", "map2 f32.max {0} {1}")]}
 
 # The index templates. The witness checks every index row against these.
 SIG_IX_PREV = "i64.max 0 ({0} - 1)"
 SIG_IX_NEXT = "i64.min ({D} - 1) ({0} + 1)"
 SIG_IX_CLAMP = "i64.max 0 (i64.min ({D} - 1) (i64.i32 {0}))"
+# f32: a NaN is 0; the value is clamped into [0, {D} - 1] as an f32 before the conversion (Futhark leaves `i64.f32`
+# undefined out of range; `f32.i64 ({D} - 1)` may round up, so the i64 clamp stays).
+SIG_IX_CLAMP_F32 = "let x = {0} in i64.max 0 (i64.min ({D} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({D} - 1)) x))))"
 
 
 def sig_class(elem, dims):
@@ -1837,7 +1874,9 @@ def witness_sig(dir_path, name):
         # binder's body, which is the context plus exactly its frame's classes
         # (an index into its dimension; a loop's state of its own class), one
         # deeper.
-        binder = op == "tab" or op.startswith("loop")
+        binder = op in ("tab", "tabrows") or op.startswith("loop")
+        # A binder's dimension: a tabulate's class's (a tabulate of rows: the first of its rank-2 class), a loop's own.
+        bdim = op.split(".")[1] if "." in op else cls.split(".")[1] if cls.startswith("a.") else ""
         for i, a in enumerate(args):
             if a not in parsed:
                 continue
@@ -1846,27 +1885,29 @@ def witness_sig(dir_path, name):
                 continue
             body = binder and i == len(args) - 1
             if body:
-                d = op.split(".")[1] if "." in op else cls[2:]
-                frame = [f"ix.{d}"] + ([] if op == "tab" else [cls])
+                frame = [f"ix.{bdim}"] + ([] if op in ("tab", "tabrows") else [cls])
                 want = sig_push(octx, frame)
                 if actx != want:
                     bad.append(f"S5 the binder {rname}'s body is in {a}, not its context plus its frame")
-                if op != "tab" and acls != cls:
+                if op.startswith("loop") and acls != cls:
                     bad.append(f"S5 the loop {rname}'s body is a {acls}, its state a {cls}")
+                if op == "tabrows" and (cls.count(".") != 2 or acls != "a." + cls.split(".", 2)[2]):
+                    bad.append(f"S5 the tabulate of rows {rname}'s body is a {acls}, not a row of {cls}")
             elif actx != octx:
                 bad.append(f"S5 the row {rname} reads {a} outside its context")
         if binder:
-            d = op.split(".")[1] if "." in op else cls[2:]
+            d = bdim
             st = "".join(f"[{x}]" for x in cls.split(".")[1:]) + elem if cls.startswith("a.") else cls
             have = dict(octx[0])
             iv, sv = sig_var(f"ix.{d}", have.get(f"ix.{d}", 0) + 1), sig_var(cls, have.get(cls, 0) + 1)
-            want = {"tab": f"tabulate {d} (\\{iv} -> {{0}})",
+            want = {"tab": f"tabulate {d} (\\{iv} -> {{0}})", "tabrows": f"tabulate {d} (\\{iv} -> {{0}})",
                     f"loop.{d}": f"loop ({sv}: {st}) = {{0}} for {iv} < {d} do {{1}}",
                     f"loop1.{d}": f"loop ({sv}: {st}) = {{0}} for t{iv} < {d} - 1 do let {iv} = t{iv} + 1 in {{1}}"}.get(op)
             if spelling != want:
                 bad.append(f"S5 the binder {rname} is spelled {spelling!r}, not {want!r}")
         # S6: the work bound -- binders, reductions and replicates only above the depth.
-        heavy = (binder or op == "replicate" or op.startswith("map2.") or op.startswith("scan.") or op.startswith("hist.")
+        heavy = (binder or op in ("replicate", "rowdiv") or op.startswith("map2.") or op.startswith("scan.")
+                 or op.startswith("hist.") or op.startswith("histrows.")
                  or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS[elem]})
         # S10: an optional family's row is of its template. (Every view carries every family since 3e; which of
         # its rows a view keeps is the reachability's, not the specification's.)
@@ -1880,6 +1921,22 @@ def witness_sig(dir_path, name):
                     or args[0] != args[1] or parsed.get(args[0], ("",))[0] != f"a.{parts[2]}"):
                 bad.append(f"S10 the histogram row {rname} is not two [{parts[-1]}] arrays of one type into its class: "
                            f"{args} {spelling!r}")
+        if fam == "histrows":
+            parts = op.split(".")
+            cd = cls.split(".")
+            ok = (len(parts) == 3 and parts[1] == "add" and len(cd) == 3 and len(args) == 2
+                  and parsed.get(args[0], ("",))[0] == f"a.{parts[2]}"
+                  and parsed.get(args[1], ("",))[0] == f"a.{parts[2]}.{cd[2]}"
+                  and spelling == SIG_HISTROWS[elem].replace("{K}", cd[1]).replace("{D}", cd[2]))
+            if not ok:
+                bad.append(f"S10 the histogram of rows {rname} is not [{parts[-1]}] indices and [{parts[-1]}][{cd[-1]}] "
+                           f"rows into its class: {args} {spelling!r}")
+        if op == "rowdiv":
+            cd = cls.split(".")
+            if (len(cd) != 3 or args != [out, parsed.get(args[1] if len(args) > 1 else "", ("",))[0] and args[1]]
+                    or parsed.get(args[1], ("",))[0] != f"a.{cd[1]}" or spelling != SIG_ROWDIV[elem]):
+                bad.append(f"S10 the row division {rname} is not its class and a [{cd[1] if len(cd) == 3 else '?'}] "
+                           f"array: {args} {spelling!r}")
         if fam == "mod" and (args != [out] or cls != elem or op[4:] not in dims
                              or spelling != SIG_MOD.replace("{D}", op[4:])):
             bad.append(f"S10 the modulo row {rname} is not a value modulo a dimension: {args} {spelling!r}")
@@ -1890,8 +1947,9 @@ def witness_sig(dir_path, name):
         # S7: an index row is one of the clamped templates of its own dim.
         if cls.startswith("ix.") and kind == "function":
             d = cls[3:]
+            clamp = {"i32": SIG_IX_CLAMP, "f32": SIG_IX_CLAMP_F32}[elem]
             if (op, spelling) not in {("prev", SIG_IX_PREV), ("next", SIG_IX_NEXT.replace("{D}", d)),
-                                      ("clamp", SIG_IX_CLAMP.replace("{D}", d))}:
+                                      ("clamp", clamp.replace("{D}", d))}:
                 bad.append(f"S7 the index row {rname} is not a clamped template: {spelling!r}")
         if op.startswith("get.") and (len(args) != 2 or parsed.get(args[1], ("",))[0] != f"ix.{op[4:]}"
                                       or parsed.get(args[0], ("",))[0] != f"a.{op[4:]}"):
@@ -1906,7 +1964,11 @@ def witness_sig(dir_path, name):
             bad.append(f"S8 the dual {t[1]} has no terminal")
         if t[2] == elem:
             lits = t[4].split(",")
-            if not all(re.fullmatch(r"-?\d+" + elem, l) and -2**31 <= int(l[:-len(elem)]) < 2**31 for l in lits):
+            if elem == "i32":
+                ok = all(re.fullmatch(r"-?\d+" + elem, l) and -2**31 <= int(l[:-len(elem)]) < 2**31 for l in lits)
+            else:
+                ok = all(re.fullmatch(r"-?\d+(\.\d+)?" + elem, l) for l in lits)
+            if not ok:
                 bad.append(f"S8 the pool of {t[1]} is not a list of {elem} literals")
             if len(set(lits)) != len(lits):
                 bad.append(f"S8 the pool of {t[1]} repeats a literal")
@@ -1948,8 +2010,8 @@ def sig_main(mode):
     they were written: they are no longer committed, and their regression is pinned in Rust by each view's
     fingerprint (`futhark_view::tests`)."""
     for name in sorted(SIG_PROBLEMS):
-        src, entry = SIG_PROBLEMS[name]
-        spec_text = sniff.sniff(os.path.join(REPO, src), entry)
+        src, entry, depth, master = SIG_PROBLEMS[name]
+        spec_text = sniff.sniff(os.path.join(REPO, src), entry, depth, master)
         if mode == "--write":
             with open(sig_spec_path(name), "w") as f:
                 f.write(spec_text)
@@ -1995,13 +2057,15 @@ def sig_main(mode):
 # --------------------------------------------------------------------------
 
 MASTER_GLOBALS = {"E", "K", "OUT", "CTX"}
-QUANT_VARS = {"dims": ["", ".ix"], "rank1": ["", ".ix"], "states": ["", ".var", ".type", ".dims", ".br", ".d0"],
-              "free": ["", ".var", ".type", ".dims", ".br", ".d0"], "rows": ["", ".var", ".type", ".dims", ".br", ".d0"],
-              "vars": [""], "inputs": [""], "pairs": ["", ".a", ".b"], "swap": [""],
+CLASS_VARS = ["", ".var", ".type", ".dims", ".br", ".d0", ".ix"]
+QUANT_VARS = {"dims": ["", ".ix"], "rank1": ["", ".ix"], "states": CLASS_VARS, "free": CLASS_VARS, "rows": CLASS_VARS,
+              "class": CLASS_VARS, "vars": [""], "inputs": [""], "pairs": ["", ".a", ".b"], "swap": [""],
               "triples": ["", ".ab", ".bc", ".ac"]}
-HEAVY_OPS = {"tab", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "loop", "loop1"}
+HEAVY_OPS = {"tab", "tabrows", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "histrows", "rowdiv",
+             "loop", "loop1"}
 BINDER_SPELLINGS = {
     "tab": ("{E}+T-{D}", "tabulate {D} (\\{D.ix} -> {0})"),
+    "tabrows": ("a.{D}+T-{Y.d0}", "tabulate {Y.d0} (\\{Y.ix} -> {0})"),
     "loop": ("{S}+L-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}"),
     "loop1": ("{S}+F-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}"),
 }
@@ -2070,12 +2134,13 @@ def witness_master(path=None):
         # M6: an index row is one of the clamped templates (restated by hand).
         if r["out"].startswith("ix.") and r["kind"] == "function":
             if (op, r["spelling"]) not in {("prev", SIG_IX_PREV), ("next", SIG_IX_NEXT),
-                                           ("clamp", SIG_IX_CLAMP.replace("i64.i32", "i64.{E}"))}:
+                                           ("clamp", SIG_IX_CLAMP.replace("i64.i32", "i64.{E}")),
+                                           ("clamp", SIG_IX_CLAMP_F32)}:
                 bad.append(f"M6 the index row {ref} is not a clamped template: {r['spelling']!r}")
         # M7: no integer element admits a division or a modulus by a value (each traps on 0); `mod` divides by a
         # dimension, which is at least 1.
         elems = INTEGER_ELEMS if r["elems"] == "*" else set(r["elems"].split(","))
-        if elems & INTEGER_ELEMS and (re.search(r"\{\d\} / ", r["spelling"])
+        if elems & INTEGER_ELEMS and (re.search(r"[/] ", r["spelling"])
                                       or (re.search(r"% ", r["spelling"]) and "% {E}.i64 {D}" not in r["spelling"])):
             bad.append(f"M7 the row {ref} divides an integer by a value: {r['spelling']!r}")
     # M8: the frames are the three binders' frames, with their variables.
@@ -2087,21 +2152,61 @@ def witness_master(path=None):
     return bad
 
 
-# The element operators' meanings, for the rule witness: wrapping i32 arithmetic, restated.
+# The element operators' meanings, for the rule witness, restated by element: wrapping i32 arithmetic; IEEE f32
+# arithmetic (each operation computed in double and rounded to single, which is the correctly rounded single result
+# for + - * since a double carries more than twice a single's bits), with Futhark's `f32.min`/`f32.max` as measured
+# through `futhark c` 2026-11-03 (a NaN loses to any number; -0.0 is below +0.0).
 def _wrap(x):
     return (x + 2**31) % 2**32 - 2**31
 
 
+def _f32(x):
+    import struct
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def _fmin(x, y):
+    if x != x:
+        return y
+    if y != y or x < y:
+        return x
+    if y < x:
+        return y
+    import math
+    return x if math.copysign(1.0, x) < 0 else y
+
+
+def _fmax(x, y):
+    if x != x:
+        return y
+    if y != y or x > y:
+        return x
+    if y > x:
+        return y
+    import math
+    return x if math.copysign(1.0, x) > 0 else y
+
+
 RULE_SEMANTICS = {
-    "add": lambda a, b: _wrap(a + b), "sub": lambda a, b: _wrap(a - b), "mul": lambda a, b: _wrap(a * b),
-    "min": min, "max": max, "neg": lambda a: _wrap(-a),
-    "map2.add": lambda a, b: [_wrap(x + y) for x, y in zip(a, b)], "map2.min": lambda a, b: [min(x, y) for x, y in zip(a, b)],
-    "map2.max": lambda a, b: [max(x, y) for x, y in zip(a, b)], "map2.sub": lambda a, b: [_wrap(x - y) for x, y in zip(a, b)],
+    "i32": {
+        "add": lambda a, b: _wrap(a + b), "sub": lambda a, b: _wrap(a - b), "mul": lambda a, b: _wrap(a * b),
+        "min": min, "max": max, "neg": lambda a: _wrap(-a),
+        "map2.add": lambda a, b: [_wrap(x + y) for x, y in zip(a, b)], "map2.min": lambda a, b: [min(x, y) for x, y in zip(a, b)],
+        "map2.max": lambda a, b: [max(x, y) for x, y in zip(a, b)], "map2.sub": lambda a, b: [_wrap(x - y) for x, y in zip(a, b)],
+        "map2.mul": lambda a, b: [_wrap(x * y) for x, y in zip(a, b)],
+    },
+    "f32": {
+        "add": lambda a, b: _f32(a + b), "sub": lambda a, b: _f32(a - b), "mul": lambda a, b: _f32(a * b),
+        "min": _fmin, "max": _fmax, "neg": lambda a: -a,
+        "map2.add": lambda a, b: [_f32(x + y) for x, y in zip(a, b)], "map2.min": lambda a, b: [_fmin(x, y) for x, y in zip(a, b)],
+        "map2.max": lambda a, b: [_fmax(x, y) for x, y in zip(a, b)], "map2.sub": lambda a, b: [_f32(x - y) for x, y in zip(a, b)],
+        "map2.mul": lambda a, b: [_f32(x * y) for x, y in zip(a, b)],
+    },
 }
 
 
-def _rule_eval(text, env):
-    """Evaluate one side of a rule template: `({op} x y)` with `{op}` an operator of RULE_SEMANTICS."""
+def _rule_eval(text, env, semantics):
+    """Evaluate one side of a rule template: `({op} x y)` with `{op}` an operator of `semantics`."""
     toks = text.replace("(", " ( ").replace(")", " ) ").split()
 
     def at(i):
@@ -2109,13 +2214,13 @@ def _rule_eval(text, env):
             return env[toks[i]], i + 1
         op = toks[i + 1]
         m = re.fullmatch(r"\{(.+)\}", op)
-        if not m or m.group(1) not in RULE_SEMANTICS:
+        if not m or m.group(1) not in semantics:
             raise ValueError(f"the operator {op}")
         args, j = [], i + 2
         while toks[j] != ")":
             v, j = at(j)
             args.append(v)
-        return RULE_SEMANTICS[m.group(1)](*args), j + 1
+        return semantics[m.group(1)](*args), j + 1
 
     v, end = at(0)
     if end != len(toks):
@@ -2123,16 +2228,32 @@ def _rule_eval(text, env):
     return v
 
 
+def _same_value(elem, x, y):
+    """The comparison policy of the kingdom's values (src/futhark_sig.rs, `Array`): the same bits, or two NaNs
+    (an f32 NaN's payload is not a value); -0.0 and +0.0 differ."""
+    if isinstance(x, list):
+        return len(x) == len(y) and all(_same_value(elem, a, b) for a, b in zip(x, y))
+    if elem == "i32":
+        return x == y
+    import struct
+    if x != x and y != y:
+        return True
+    return struct.pack("f", x) == struct.pack("f", y)
+
+
 def witness_rules(mst):
-    """Both sides of every rule agree on random values of the element (i32 today), with the operators' own
-    meaning: a rule that changed a value would let the e-graph justify a candidate that computes something else."""
+    """Both sides of every rule agree on random values of its element, with the operators' own meaning and under the
+    kingdom's comparison policy (bit for bit; two NaNs agree): a rule that changed a value, a sign of a zero included,
+    would let the e-graph justify a candidate that computes something else."""
     import random
     bad = []
     rnd = random.Random(20261101)
-    edges = [0, 1, -1, 2**31 - 1, -2**31, 7, -40]
+    edges = {"i32": [0, 1, -1, 2**31 - 1, -2**31, 7, -40],
+             "f32": [0.0, -0.0, float("nan"), float("inf"), float("-inf"), 1.0, -1.0, 3e38, 1e-45, 2.5, 7.0, -40.0, 16777217.0]}
     for r in mst["rules"]:
-        if r["elems"] != "i32":
-            bad.append(f"M9 the rule {r['rule']!r} is admitted for {r['elems']}: the witness checks wrapping i32 only")
+        elems = r["elems"].split(",")
+        if any(e not in RULE_SEMANTICS for e in elems):
+            bad.append(f"M9 the rule {r['rule']!r} is admitted for {r['elems']}: the witness knows {sorted(RULE_SEMANTICS)}")
             continue
         m = re.fullmatch(r"\(rewrite (.+) :ruleset futhark_sig\)", r["rule"])
         if not m or r["on"] not in ("elem", "arr"):
@@ -2146,18 +2267,32 @@ def witness_rules(mst):
                 cut = i + 1
                 break
         lhs, rhs = body[:cut], body[cut:].strip()
-        for trial in range(200):
-            if r["on"] == "elem":
-                env = {v: (edges[trial % len(edges)] if trial < 50 else rnd.randint(-2**31, 2**31 - 1)) for v in "abd"}
-            else:
-                env = {v: [rnd.choice(edges + [rnd.randint(-2**31, 2**31 - 1)]) for _ in range(5)] for v in "abd"}
-            try:
-                if _rule_eval(lhs, env) != _rule_eval(rhs, env):
-                    bad.append(f"M9 the rule {r['rule']!r} changes a value at {env}")
+        for elem in elems:
+            sem, ed = RULE_SEMANTICS[elem], edges[elem]
+
+            def draw(trial):
+                if trial < 3 * len(ed):
+                    return ed[trial % len(ed)]
+                if elem == "i32":
+                    return rnd.randint(-2**31, 2**31 - 1)
+                return _f32(rnd.uniform(-1e3, 1e3)) if rnd.random() < 0.8 else rnd.choice(ed)
+
+            for trial in range(300):
+                if r["on"] == "elem":
+                    # Every edge pairs with every edge once (the signed zeros and the NaNs together are the cases).
+                    if trial < len(ed) ** 2:
+                        env = {"a": ed[trial // len(ed)], "b": ed[trial % len(ed)], "d": ed[(trial * 7) % len(ed)]}
+                    else:
+                        env = {v: draw(trial) for v in "abd"}
+                else:
+                    env = {v: [draw(rnd.randrange(300)) for _ in range(5)] for v in "abd"}
+                try:
+                    if not _same_value(elem, _rule_eval(lhs, env, sem), _rule_eval(rhs, env, sem)):
+                        bad.append(f"M9 the rule {r['rule']!r} changes a value on {elem} at {env}")
+                        break
+                except (ValueError, KeyError, IndexError) as e:
+                    bad.append(f"M9 the rule {r['rule']!r} does not evaluate on {elem}: {e}")
                     break
-            except (ValueError, KeyError, IndexError) as e:
-                bad.append(f"M9 the rule {r['rule']!r} does not evaluate: {e}")
-                break
     return bad
 
 

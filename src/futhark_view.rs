@@ -422,6 +422,9 @@ fn next_var(cls: &str, ctx: Option<&Ctx>) -> String {
     var_name(cls, ctx.map_or(0, |c| c.count(cls)) + 1)
 }
 
+/// The variables a class binds: the class, the next variable of its class (`.var`), its Futhark type, its dimensions
+/// (`.dims`, `.br` as brackets, `.d0` the first), and `.ix`, the next index variable over its first dimension (a
+/// tabulate of its rows binds it).
 fn class_env(var: &str, cls: &str, elem: &str, ctx: Option<&Ctx>) -> Vec<(String, String)> {
     let ds = class_dims(cls);
     vec![
@@ -431,6 +434,7 @@ fn class_env(var: &str, cls: &str, elem: &str, ctx: Option<&Ctx>) -> Vec<(String
         (format!("{var}.dims"), ds.join(".")),
         (format!("{var}.br"), ds.join("][")),
         (format!("{var}.d0"), ds.first().map_or(String::new(), |d| d.to_string())),
+        (format!("{var}.ix"), ds.first().map_or(String::new(), |d| next_var(&format!("ix.{d}"), ctx))),
     ]
 }
 
@@ -600,6 +604,8 @@ impl Binder {
                 self.frame_vars(ctx).into_iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(&n))).collect()
             }
             "inputs" => s.inputs.iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(n))).collect(),
+            // The named class, when the view has it (`V2:class(a.{D2}.{D})`: the rows a histogram of rows reads).
+            "class" => s.classes.iter().filter(|c| **c == arg).map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
             "rows" => s
                 .classes
                 .iter()
@@ -1038,8 +1044,9 @@ impl View {
 
 /// Every committed specification, by the directory [`write_committed`] writes its tables into: the four signature
 /// problems (`sig/<problem>`) and A7's matrix view (`a7`).
-pub const COMMITTED: [(&str, &str); 5] = [
+pub const COMMITTED: [(&str, &str); 6] = [
     ("sig/histogram", include_str!("../kingdoms/futhark/sig/histogram/view.tsv")),
+    ("sig/kmeans", include_str!("../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("sig/pathfinder", include_str!("../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("sig/reduce", include_str!("../kingdoms/futhark/sig/reduce/view.tsv")),
     ("sig/scan", include_str!("../kingdoms/futhark/sig/scan/view.tsv")),
