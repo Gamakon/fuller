@@ -12,9 +12,12 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
   over named dimensions;
 * the result type is the output; its dimensions must all be dimensions of an
   input (a size the inputs do not fix would be unknown);
-* the element type is the one element of the parameters and the result (i32
-  or f32; a view holds one element: a program that mixes them is step 4's
-  next piece, docs/PLAN_futhark_kingdom.md D7);
+* the element types are those of the parameters and the result (i32, f32),
+  in order of first appearance; a view of several elements writes an array
+  class with its element (`a.f32.n`, docs/PLAN_futhark_kingdom.md D7), a view
+  of one keeps the names of before (`a.n`). `--elements E,..` adds elements
+  the signature does not name, for values a program keeps inside (k-means's
+  assignments are i32 indices beside its f32 points);
 * no FAMILY is chosen here: a view admits every family of the master and
   keeps the types reachable both ways, forward from the leaves and backward
   from the root (`src/futhark_view.rs`; docs/PLAN_futhark_kingdom.md, 3e), so what the
@@ -30,7 +33,7 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
 It writes the specification `view.tsv` (the WHERE clause of the view, see
 `src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
 
-    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--out view.tsv]
+    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--elements E,..] [--out view.tsv]
 """
 
 import os
@@ -110,14 +113,17 @@ def split_params(text):
     return sizes, params
 
 
-def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None):
+def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=()):
     """The view specification of a problem, as text; `master` pins the view to a master version (the current one
-    when None)."""
+    when None); `elements` are added to the ones the signature names."""
     check_compiler()
     if master is None:
         master = view.master()["version"]
     elif not 1 <= master <= view.master()["version"]:
         raise ValueError(f"the master version {master} is not one of 1 .. {view.master()['version']}")
+    for e in elements:
+        if e not in ELEMENTS:
+            raise ValueError(f"--elements names {e!r}, which is not a Futhark primitive type")
     printed = typecheck(path)
     line = entry_line(printed, entry)
     head = line[len(f"entry {entry} "):].rstrip()[:-1].rstrip()
@@ -144,16 +150,26 @@ def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None):
     out_dims, out_elem = parse_type(result)
     out_dims = [dim(d) for d in out_dims]
     size_inputs |= {n for n, s in out_dims if s}
-    elems = {e for n, dims, e in typed if n not in size_inputs} | {out_elem}
-    if len(elems) != 1 or next(iter(elems)) not in ELEMENTS:
-        raise ValueError(f"the problem has the element types {sorted(elems)}: a view holds one (step 4 adds more)")
-    elem = next(iter(elems))
-    if elem not in view.master()["pools"]:
-        raise ValueError(f"the master has no literal pool for the element {elem} (its rows have no {elem} yet)")
+    # The elements in order of first appearance (the parameters, then the result), then the ones added.
+    elems = []
+    for e in [e for n, dims, e in typed if n not in size_inputs] + [out_elem] + list(elements):
+        if e not in elems:
+            elems.append(e)
+    for n, dims, e in typed:
+        if n not in size_inputs and not dims:
+            raise ValueError(f"the parameter {n} is a scalar that is not a size: the master has no row for a scalar input")
+    if any(e not in ELEMENTS for e in elems):
+        raise ValueError(f"the problem has the element types {elems}: not all are primitive types")
+    for e in elems:
+        if e not in view.master()["pools"]:
+            raise ValueError(f"the master has no literal pool for the element {e} (its rows have no {e} yet)")
+    for d in set(sizes) | {n for n, _, _ in typed if n in size_inputs}:
+        if d in ELEMENTS:
+            raise ValueError(f"the dimension {d} is named as an element type: the class text would read two ways")
     lines = ["# kind\tname\telement\tdims",
              f"# written by kingdoms/futhark/sniff.py from {os.path.relpath(os.path.abspath(path), REPO)}, entry {entry}",
              f"master\t{master}\t\t",
-             f"element\t{elem}\t\t"]
+             f"element\t{','.join(elems)}\t\t"]
     dims_seen = []
     for n, dims, e in typed:
         if n in size_inputs:
@@ -165,7 +181,9 @@ def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None):
         dims_seen += [d for d in names if d not in dims_seen]
     lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
     lines.append(f"depth\t{depth}\t\t")
-    lines.append(f"literals\t{','.join(view.master()['pools'][elem])}\t\t")
+    # One element's pool a line; a view of one element leaves the element column empty (the specifications of before).
+    for e in elems:
+        lines.append(f"literals\t{','.join(view.master()['pools'][e])}\t{e if len(elems) > 1 else ''}\t")
     lines.append(f"dims\t{','.join(dims_seen)}\t\t")
     return "\n".join(lines) + "\n"
 
@@ -178,7 +196,8 @@ def main(argv):
     entry = args[args.index("--entry") + 1] if "--entry" in args else "main"
     depth = int(args[args.index("--depth") + 1]) if "--depth" in args else DEFAULT_DEPTH
     master = int(args[args.index("--master") + 1]) if "--master" in args else None
-    text = sniff(args[0], entry, depth, master)
+    elements = [e for e in args[args.index("--elements") + 1].split(",") if e] if "--elements" in args else []
+    text = sniff(args[0], entry, depth, master, elements)
     if "--out" in args:
         with open(args[args.index("--out") + 1], "w") as f:
             f.write(text)

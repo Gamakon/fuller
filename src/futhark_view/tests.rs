@@ -4,8 +4,10 @@
 
 use super::*;
 
-const SIG: [(&str, &str); 5] = [
+const SIG: [(&str, &str); 7] = [
+    ("argmin", include_str!("../../kingdoms/futhark/sig/argmin/view.tsv")),
     ("histogram", include_str!("../../kingdoms/futhark/sig/histogram/view.tsv")),
+    ("kahan", include_str!("../../kingdoms/futhark/sig/kahan/view.tsv")),
     ("kmeans", include_str!("../../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("pathfinder", include_str!("../../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("reduce", include_str!("../../kingdoms/futhark/sig/reduce/view.tsv")),
@@ -30,12 +32,18 @@ fn first_difference(a: &str, b: &str) -> String {
 /// were those of the removed files (histogram 2945ea1e1d1dc2d8, pathfinder a262fc805844d42c, reduce
 /// 0949f66aa873425e, scan 5dd633e7ed012bb4), so it changed no byte. Since the count contexts (3g) they are these;
 /// the four i32 views are PINNED to master version 2, so the f32 rows of version 3 (step 4) changed none of them, and
-/// k-means (f32, version 3, depth 3) is pinned since 2026-11-03.
+/// k-means (f32, version 3, depth 3) is pinned since 2026-11-03. The pair rows and the second element of version 4
+/// (step 4c (b)) changed none of the five; the two test views of the pair constructs (`argmin`, `kahan`: f32 and i32,
+/// version 4, depth 2) are pinned since 2026-11-03 too.
 #[test]
 fn every_signature_view_writes_the_pinned_text() {
     let master = Master::committed().unwrap();
     let got: Vec<(&str, u64)> = SIG.iter().map(|(name, spec)| (*name, View::load(&master, spec).unwrap().fingerprint())).collect();
-    assert_eq!(got, [("histogram", 0x2605_d528_715c_9478), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)], "the views' written text changed");
+    assert_eq!(
+        got,
+        [("argmin", 0x7d3d_cfe6_f1f6_b037), ("histogram", 0x2605_d528_715c_9478), ("kahan", 0x9550_5694_e22a_cb48), ("kmeans", 0xec8a_d19c_c33e_da6c), ("pathfinder", 0xfc02_c5a2_4062_3234), ("reduce", 0x6281_6de9_35b3_f197), ("scan", 0x0a38_fd72_a536_0859)],
+        "the views' written text changed"
+    );
     for (name, spec) in SIG {
         assert_eq!(View::load(&master, spec).unwrap().artefacts().len(), 6, "{name}: a signature view writes six artefacts");
     }
@@ -46,7 +54,7 @@ fn every_signature_view_writes_the_pinned_text() {
 fn write_committed_writes_every_view_and_its_text() {
     let dir = std::env::temp_dir().join(format!("futhark_view_write_{}", std::process::id()));
     let views = write_committed(&dir).unwrap();
-    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/histogram", "sig/kmeans", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
+    assert_eq!(views.iter().map(|(s, _)| *s).collect::<Vec<_>>(), ["sig/argmin", "sig/histogram", "sig/kahan", "sig/kmeans", "sig/pathfinder", "sig/reduce", "sig/scan", "a7"]);
     for (sub, v) in views {
         for (file, text) in v.artefacts() {
             let got = std::fs::read_to_string(dir.join(sub).join(file)).unwrap();
@@ -71,8 +79,8 @@ fn a_view_pinned_before_a_row_was_added_does_not_have_it() {
     // exactly that row's instances.
     let rows = MASTER_ROWS.replace("\t1\tmod\t", "\t3\tmod\t");
     assert_ne!(rows, MASTER_ROWS, "the master has a mod row");
-    let m = Master::parse("3", &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
-    let spec = SIG[0].1;
+    let m = Master::parse(MASTER_VERSION, &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
+    let spec = SIG[1].1;
     assert!(spec.contains("master\t2\t"), "the specification pins version 2");
     let latest = View::load(&m, &spec.replace("master\t2\t", "master\t3\t")).unwrap();
     let pinned = View::load(&m, spec).unwrap();
@@ -86,14 +94,14 @@ fn a_specification_with_an_unknown_line_or_family_row_variable_is_an_error_not_a
     assert!(ViewSpec::parse("colour\tred\t\t\n").is_err());
     let rows = MASTER_ROWS.replacen("add on {E}", "add on {Q}", 1);
     let m = Master::parse(MASTER_VERSION, &rows, MASTER_FRAMES, MASTER_RULES, MASTER_POOLS, MASTER_TYPES).unwrap();
-    let e = View::load(&m, SIG[3].1).unwrap_err();
+    let e = View::load(&m, SIG[5].1).unwrap_err();
     assert!(e.contains("{Q}"), "{e}");
 }
 
 #[test]
 fn the_cache_gives_one_view_a_specification() {
-    let a = cached(SIG[2].1).unwrap();
-    let b = cached(SIG[2].1).unwrap();
+    let a = cached(SIG[4].1).unwrap();
+    let b = cached(SIG[4].1).unwrap();
     assert!(std::ptr::eq(a, b));
 }
 
@@ -101,7 +109,7 @@ fn the_cache_gives_one_view_a_specification() {
 fn a_signature_view_carries_every_family_its_types_reach() {
     // Reduce's source has no `scan`, `hist` or `%`; before 3e its view had none of those rows. Every family is now
     // admitted and the reachability keeps each row whose types it reaches both ways.
-    let v = View::load(&Master::committed().unwrap(), SIG[3].1).unwrap();
+    let v = View::load(&Master::committed().unwrap(), SIG[5].1).unwrap();
     let ops: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).map(|n| n.split('.').next().unwrap_or("")).collect();
     for op in ["scan", "hist", "mod"] {
         assert!(ops.contains(op), "reduce's view has no {op} row: {ops:?}");
@@ -110,8 +118,8 @@ fn a_signature_view_carries_every_family_its_types_reach() {
 
 #[test]
 fn a_signature_specification_with_a_families_line_is_an_error() {
-    let spec = SIG[4].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
-    assert_ne!(spec, SIG[4].1);
+    let spec = SIG[6].1.replace("depth\t2\t\t\n", "depth\t2\t\t\nfamilies\tscan\t\t\n");
+    assert_ne!(spec, SIG[6].1);
     let e = ViewSpec::parse(&spec).unwrap_err();
     assert!(e.contains("families"), "{e}");
 }
@@ -144,15 +152,82 @@ fn the_kept_rows_are_reachable_both_ways() {
 
 /// The measurement of `docs/PLAN_futhark_kingdom.md` 3e, 3g and step 4: per view, its types, function rows and leaf
 /// rows. Stack contexts after 3e: histogram (607, 2700, 1779), pathfinder (832, 3975, 2062), reduce and scan (73,
-/// 408, 221). Count contexts (3g): these; k-means at depth 3 over 9 classes (2026-11-03): 3804 types.
+/// 408, 221). Count contexts (3g): these; k-means at depth 3 over 9 classes (2026-11-03): 3804 types. The two test
+/// views of the pair constructs (4c (b), two elements over one dimension at depth 2, the four pair classes in every
+/// context): 328 types each.
 #[test]
 fn the_view_sizes_are_the_measured_ones() {
     let master = Master::committed().unwrap();
-    for ((name, spec), want) in SIG.iter().zip([(162, 1032, 455), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
+    for ((name, spec), want) in SIG.iter().zip([(328, 2196, 620), (162, 1032, 455), (328, 2196, 658), (3804, 21620, 8421), (184, 1188, 441), (28, 202, 79), (28, 202, 79)]) {
         let v = View::load(&master, spec).unwrap();
         let types = v.types_tsv.lines().count() - 1;
         let funcs = v.functions_tsv.lines().skip(1).filter(|l| l.split('\t').nth(2) == Some("function")).count();
         let leaves = v.functions_tsv.lines().count() - 1 - funcs;
         assert_eq!((types, funcs, leaves), want, "{name}");
     }
+}
+
+/// THE CLASS GRAMMAR (review finding 1): the text of a class reads one way. A view of one element implies the
+/// element of an array (`a.n`); a view of several writes it (`a.f32.n`); a tuple's components are inside its own
+/// parentheses, so `(a.n.d,f32)` and `(a.n,a.d)` differ where a dotted spelling would not; a dimension named as an
+/// element, or an array without its element in a view of several, does not parse.
+#[test]
+fn a_class_reads_one_way_and_writes_back_to_its_text() {
+    let one = vec!["i32".to_string()];
+    let two = vec!["f32".to_string(), "i32".to_string()];
+    for (text, elements) in [("i32", &one), ("ix.n", &one), ("a.n", &one), ("a.rows.cols", &one), ("(i32,i32)", &one), ("f32", &two), ("a.f32.n", &two), ("a.i32.k.d", &two), ("(f32,i32)", &two), ("(a.f32.n.d,f32)", &two), ("(a.f32.n,a.f32.d)", &two)] {
+        let c = Class::parse(text, elements, None).unwrap_or_else(|e| panic!("{text}: {e}"));
+        assert_eq!(c.text(elements.len() > 1), text, "{text} does not write back");
+    }
+    assert_eq!(Class::parse("a.n", &one, None).unwrap(), Class::Array { elem: "i32".into(), dims: vec!["n".into()] }, "the one element is implied");
+    assert_eq!(Class::parse("a.n", &two, Some("i32")).unwrap().text(true), "a.i32.n", "the row's element is taken");
+    assert_ne!(Class::parse("(a.f32.n.d,f32)", &two, None).unwrap(), Class::parse("(a.f32.n,a.f32.d)", &two, None).unwrap());
+    for text in ["a.n", "a.f64.n", "f64", "(f32)", "(f32,i32", "a.", "ix.f32", "a.f32.i32", "colour"] {
+        assert!(Class::parse(text, &two, None).is_err(), "{text} parses in a view of two elements");
+    }
+    assert_eq!(Class::Tuple(vec![Class::Scalar("f32".into()), Class::Scalar("i32".into())]).futhark_type(), "(f32, i32)");
+    assert_eq!(Class::parse("a.f32.n", &two, None).unwrap().tag(true), "f32_n");
+    assert_eq!(Class::parse("a.n", &one, None).unwrap().tag(false), "n");
+}
+
+/// A specification of several elements: each element's pool on its own line, an element the pools miss is an error,
+/// a dimension named as an element is an error, a scalar input that is not a size is an error.
+#[test]
+fn a_specification_of_two_elements_is_checked() {
+    let spec = SIG[2].1;
+    let s = ViewSpec::parse(spec).unwrap();
+    assert_eq!(s.elements, vec!["f32".to_string(), "i32".to_string()]);
+    assert!(s.multi());
+    assert_eq!(s.literals["i32"], vec!["0", "1", "2", "-1", "10"]);
+    assert_eq!(s.literals["f32"].len(), 6);
+    let e = ViewSpec::parse(&spec.replace("literals\t0,1,2,-1,10\ti32\t\n", "")).unwrap_err();
+    assert!(e.contains("no literals line"), "{e}");
+    let e = ViewSpec::parse(&spec.replace("\tf32\tn\n", "\tf32\tf64\n")).unwrap_err();
+    assert!(e.contains("f64"), "{e}");
+    let e = ViewSpec::parse(&spec.replace("input\tms\ti32\tn\n", "input\tms\ti32\t\n")).unwrap_err();
+    assert!(e.contains("scalar that is not a size"), "{e}");
+    // An element the line drops: its literals line and its input are both out of place; the first found is the error.
+    let e = ViewSpec::parse(&spec.replace("element\tf32,i32", "element\tf32")).unwrap_err();
+    assert!(e.contains("i32"), "{e}");
+    let e = ViewSpec::parse(&spec.replace("element\tf32,i32", "element\tf32").replace("literals\t0,1,2,-1,10\ti32\t\n", "")).unwrap_err();
+    assert!(e.contains("does not list"), "{e}");
+}
+
+/// A view of two elements has every element's rows, the rows of one element only (`mod` and the i32 `clamp`, `div`
+/// and the f32 `clamp`) named by their element where their output class has none, the pair rows of every pair of
+/// scalars, the two conversions, and the zero arrays named by their class.
+#[test]
+fn a_view_of_two_elements_has_both_elements_rows() {
+    let v = View::load(&Master::committed().unwrap(), SIG[2].1).unwrap();
+    let names: BTreeSet<&str> = v.functions_tsv.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).collect();
+    for n in ["add@f32:c", "add@i32:c", "mod.n@i32:c", "div@f32:c", "clamp.i32@ix.n:c", "clamp.f32@ix.n:c", "pair@(f32,i32):c", "fst.f32.i32@f32:c", "snd.f32.i32@i32:c", "psel.f32@(f32,f32):c", "psel.i32@(f32,f32):c", "zero@(i32,f32):c", "loop.n@(f32,f32):c", "loop1.n@(f32,i32):c", "cvt.i32@f32:c", "cvt.f32@i32:c", "zeros@a.f32.n:c", "zeros@a.i32.n:c", "s_f32@f32:c/{f32*2,ix.n}@1", "s2_f32@f32:c/{f32*2,ix.n}@1", "s_i32@i32:c/{f32,i32,ix.n}@1"] {
+        assert!(names.contains(n), "the kahan view has no row {n}");
+    }
+    assert!(!names.contains("mod.n@f32:c") && !names.contains("div@i32:c") && !names.contains("clamp@ix.n:c"));
+    let spelling = |name: &str| v.functions_tsv.lines().find(|l| l.split('\t').nth(1) == Some(name)).and_then(|l| l.split('\t').nth(5)).unwrap_or("").to_string();
+    assert_eq!(spelling("loop.n@(f32,f32):c"), "loop ((s_f32, s2_f32): (f32, f32)) = {0} for i_n < n do {1}");
+    assert_eq!(spelling("loop.n@(f32,i32):c"), "loop ((s_f32, s_i32): (f32, i32)) = {0} for i_n < n do {1}");
+    assert_eq!(spelling("zero@(f32,i32):c"), "(0f32, 0i32)");
+    assert_eq!(spelling("zeros@a.i32.n:c"), "zeros_i32_n");
+    assert!(v.rules.contains("(rewrite (Xfst_f32_i32__f32_c (Xpair___f32_i32__c a b)) a :ruleset futhark_sig)"), "the pair rule at (f32,i32):c");
 }

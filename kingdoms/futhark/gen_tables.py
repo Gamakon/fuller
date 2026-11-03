@@ -1634,7 +1634,10 @@ import sniff  # noqa: E402
 # `rowdiv`) would change their tables and gene layouts, so moving a pin is a decision with its regression
 # re-measured, never a side effect of a master change. k-means is at version 3 and depth 3 (sniff.py).
 SIG_PROBLEMS = {
+    # The two TEST VIEWS of the pair constructs (step 4c (b)): two elements, the pair rows, from one source's two entries.
+    "argmin": ("kingdoms/futhark/sig/kahan/kahan.fut", "argmin", 2, 4),
     "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main", 2, 2),
+    "kahan": ("kingdoms/futhark/sig/kahan/kahan.fut", "kahan", 2, 4),
     "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 3),
     "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main", 2, 2),
     "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2),
@@ -1817,25 +1820,37 @@ def sig_push(ctx, classes):
 def witness_sig(dir_path, name):
     bad = []
     inst = sig_spec(name)
-    elem = inst["element"]
+    elems = inst["elements"]
+    multi = len(elems) > 1
     depth_bound = inst["depth"]
     types, funcs = read_tables(os.path.join(dir_path, "types.tsv"), os.path.join(dir_path, "functions.tsv"))
     declared = {t[1] for t in types}
     roots = [t[1] for t in types if t[5] == "yes"]
-    want_root = f"{sig_class(elem, inst['output'][1])}:c"
+    out_elem, out_dims = inst["output"]
+    want_root = master_view.class_text(("arr", out_elem, tuple(out_dims)) if out_dims else ("scalar", out_elem), elems) + ":c"
     if roots != [want_root]:
         bad.append(f"S1 the roots are {roots}, the declared output is {want_root}")
-    inputs = {n: f"a.{'.'.join(ds)}" for n, e, ds in inst["inputs"] if e != "size"}
+    inputs = {n: ("arr", e, tuple(ds)) for n, e, ds in inst["inputs"] if e != "size"}
     dims = [n for n, e, _ in inst["inputs"] if e == "size"] + [d for _, _, ds in inst["inputs"] for d in ds]
     parsed = {}
+    classes = {}
     for t in types:
         try:
-            parsed[t[1]] = sig_parse_dual(t[1])
+            cls, ctx = sig_parse_dual(t[1])
+            parsed[t[1]] = (cls, ctx)
+            classes[t[1]] = master_view.parse_class(cls, elems)
         except ValueError as e:
             bad.append(f"S2 {e}")
 
     def bound(ctx):
         return {sig_var(c, k): c for c, n in ctx[0] for k in range(1, n + 1)}
+
+    def cls_of(dual):
+        """The parsed class of a dual, or None when it did not parse."""
+        return classes.get(dual)
+
+    def is_arr(c, rank=None):
+        return c is not None and c[0] == "arr" and (rank is None or len(c[2]) == rank)
 
     terminals = set()
     for row in funcs:
@@ -1846,6 +1861,9 @@ def witness_sig(dir_path, name):
         if out not in parsed:
             continue
         cls, octx = parsed[out]
+        oc = classes[out]
+        # The row's element: the output's for a scalar or an array; a tuple row's and an index row's is in its name.
+        elem = oc[1] if oc[0] in ("scalar", "arr") else None
         held = sorted({int(x) for x in PLACEHOLDER_RE.findall(spelling)})
         if kind == "function" and held != list(range(len(args))):
             bad.append(f"S3 row {rname}'s spelling holds {held}, it has {len(args)} arguments")
@@ -1854,15 +1872,17 @@ def witness_sig(dir_path, name):
             if args:
                 bad.append(f"S3 the {kind} {rname} has arguments")
         op = rname.split("@", 1)[0]
-        # S4: a terminal names a variable of its context and class, an input of
-        # its class, a size, a zero array, or an index constant.
+        # S4: a terminal names a variable of its context and class, an input of its class, a size as a value, a zero
+        # array of its class, an index constant, or the zero pair of its tuple class.
         if kind == "terminal":
             vs = bound(octx or (frozenset(), 0))
             ok = ((spelling in vs and vs[spelling] == cls)
-                  or (spelling in inputs and inputs[spelling] == cls)
-                  or (cls == elem and spelling in {f"{elem}.i64 {d}" for d in dims})
-                  or (cls.startswith("a.") and spelling == f"zeros_{cls[2:]}" and cls.count(".") == 1)
-                  or (cls.startswith("ix.") and spelling in ("0i64", f"{cls[3:]} - 1")))
+                  or (spelling in inputs and inputs[spelling] == oc)
+                  or (oc[0] == "scalar" and spelling in {f"{oc[1]}.i64 {d}" for d in dims})
+                  or (is_arr(oc, 1) and spelling == f"zeros_{master_view.class_tag(oc, elems)}")
+                  or (oc[0] == "ix" and spelling in ("0i64", f"{oc[1]} - 1"))
+                  or (oc[0] == "tuple" and spelling == "(" + ", ".join(f"0{p[1]}" for p in oc[1]) + ")"
+                      and all(p[0] == "scalar" for p in oc[1])))
             if not ok:
                 bad.append(f"S4 the terminal {rname} ({spelling!r}) is not bound in {out}")
         if octx is None:
@@ -1870,13 +1890,13 @@ def witness_sig(dir_path, name):
                 bad.append(f"S4 the context-free dual {out} holds {rname}, not an input")
             continue
         depth = octx[1]
-        # S5: every argument of a row is in the row's own context, except a
-        # binder's body, which is the context plus exactly its frame's classes
-        # (an index into its dimension; a loop's state of its own class), one
-        # deeper.
+        # S5: every argument of a row is in the row's own context, except a binder's body, which is the context plus
+        # exactly its frame's classes (an index into its dimension; a loop's state of its own class, a pair's two
+        # components), one deeper.
         binder = op in ("tab", "tabrows") or op.startswith("loop")
         # A binder's dimension: a tabulate's class's (a tabulate of rows: the first of its rank-2 class), a loop's own.
-        bdim = op.split(".")[1] if "." in op else cls.split(".")[1] if cls.startswith("a.") else ""
+        bdim = op.split(".")[1] if "." in op else oc[2][0] if is_arr(oc) else ""
+        state_classes = [master_view.class_text(p, elems) for p in oc[1]] if oc[0] == "tuple" else [cls]
         for i, a in enumerate(args):
             if a not in parsed:
                 continue
@@ -1885,21 +1905,26 @@ def witness_sig(dir_path, name):
                 continue
             body = binder and i == len(args) - 1
             if body:
-                frame = [f"ix.{bdim}"] + ([] if op in ("tab", "tabrows") else [cls])
+                frame = [f"ix.{bdim}"] + ([] if op in ("tab", "tabrows") else state_classes)
                 want = sig_push(octx, frame)
                 if actx != want:
                     bad.append(f"S5 the binder {rname}'s body is in {a}, not its context plus its frame")
                 if op.startswith("loop") and acls != cls:
                     bad.append(f"S5 the loop {rname}'s body is a {acls}, its state a {cls}")
-                if op == "tabrows" and (cls.count(".") != 2 or acls != "a." + cls.split(".", 2)[2]):
+                if op == "tabrows" and not (is_arr(oc, 2) and cls_of(a) == ("arr", oc[1], oc[2][1:])):
                     bad.append(f"S5 the tabulate of rows {rname}'s body is a {acls}, not a row of {cls}")
             elif actx != octx:
                 bad.append(f"S5 the row {rname} reads {a} outside its context")
         if binder:
             d = bdim
-            st = "".join(f"[{x}]" for x in cls.split(".")[1:]) + elem if cls.startswith("a.") else cls
+            st = master_view.class_futhark_type(oc)
             have = dict(octx[0])
-            iv, sv = sig_var(f"ix.{d}", have.get(f"ix.{d}", 0) + 1), sig_var(cls, have.get(cls, 0) + 1)
+            iv = sig_var(f"ix.{d}", have.get(f"ix.{d}", 0) + 1)
+            if oc[0] == "tuple":
+                a, b = state_classes
+                sv = "(" + sig_var(a, have.get(a, 0) + 1) + ", " + sig_var(b, have.get(b, 0) + 1 + (a == b)) + ")"
+            else:
+                sv = sig_var(cls, have.get(cls, 0) + 1)
             want = {"tab": f"tabulate {d} (\\{iv} -> {{0}})", "tabrows": f"tabulate {d} (\\{iv} -> {{0}})",
                     f"loop.{d}": f"loop ({sv}: {st}) = {{0}} for {iv} < {d} do {{1}}",
                     f"loop1.{d}": f"loop ({sv}: {st}) = {{0}} for t{iv} < {d} - 1 do let {iv} = t{iv} + 1 in {{1}}"}.get(op)
@@ -1908,70 +1933,100 @@ def witness_sig(dir_path, name):
         # S6: the work bound -- binders, reductions and replicates only above the depth.
         heavy = (binder or op in ("replicate", "rowdiv") or op.startswith("map2.") or op.startswith("scan.")
                  or op.startswith("hist.") or op.startswith("histrows.")
-                 or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS[elem]})
+                 or op.split(".")[0] in {r for r, _ in SIG_REDUCTIONS["i32"]})
         # S10: an optional family's row is of its template. (Every view carries every family since 3e; which of
         # its rows a view keeps is the reachability's, not the specification's.)
         fam = op.split(".")[0]
-        if fam == "scan" and (args != [out] or (op[5:], spelling) not in set(SIG_SCANS[elem])):
+        if fam == "scan" and (args != [out] or elem is None or (op[5:], spelling) not in set(SIG_SCANS[elem])):
             bad.append(f"S10 the scan row {rname} does not take one array of its own class: {args} {spelling!r}")
         if fam == "hist":
             parts = op.split(".")
-            want = {m: t.replace("{D}", cls[2:]) for m, t in SIG_HISTS[elem]}.get(parts[1] if len(parts) == 3 else "")
-            if (len(parts) != 3 or not cls.startswith("a.") or cls.count(".") != 1 or spelling != want or len(args) != 2
-                    or args[0] != args[1] or parsed.get(args[0], ("",))[0] != f"a.{parts[2]}"):
+            want = {m: t.replace("{D}", oc[2][0]) for m, t in SIG_HISTS[elem]}.get(parts[1] if len(parts) == 3 else "") if is_arr(oc, 1) else None
+            if (len(parts) != 3 or not is_arr(oc, 1) or spelling != want or len(args) != 2
+                    or args[0] != args[1] or cls_of(args[0]) != ("arr", elem, (parts[2],))):
                 bad.append(f"S10 the histogram row {rname} is not two [{parts[-1]}] arrays of one type into its class: "
                            f"{args} {spelling!r}")
         if fam == "histrows":
             parts = op.split(".")
-            cd = cls.split(".")
-            ok = (len(parts) == 3 and parts[1] == "add" and len(cd) == 3 and len(args) == 2
-                  and parsed.get(args[0], ("",))[0] == f"a.{parts[2]}"
-                  and parsed.get(args[1], ("",))[0] == f"a.{parts[2]}.{cd[2]}"
-                  and spelling == SIG_HISTROWS[elem].replace("{K}", cd[1]).replace("{D}", cd[2]))
+            ok = (len(parts) == 3 and parts[1] == "add" and is_arr(oc, 2) and len(args) == 2
+                  and cls_of(args[0]) == ("arr", elem, (parts[2],))
+                  and cls_of(args[1]) == ("arr", elem, (parts[2], oc[2][1]))
+                  and spelling == SIG_HISTROWS[elem].replace("{K}", oc[2][0]).replace("{D}", oc[2][1]))
             if not ok:
-                bad.append(f"S10 the histogram of rows {rname} is not [{parts[-1]}] indices and [{parts[-1]}][{cd[-1]}] "
+                bad.append(f"S10 the histogram of rows {rname} is not [{parts[-1]}] indices and [{parts[-1]}][{oc[2][-1] if is_arr(oc) else '?'}] "
                            f"rows into its class: {args} {spelling!r}")
         if op == "rowdiv":
-            cd = cls.split(".")
-            if (len(cd) != 3 or args != [out, parsed.get(args[1] if len(args) > 1 else "", ("",))[0] and args[1]]
-                    or parsed.get(args[1], ("",))[0] != f"a.{cd[1]}" or spelling != SIG_ROWDIV[elem]):
-                bad.append(f"S10 the row division {rname} is not its class and a [{cd[1] if len(cd) == 3 else '?'}] "
+            if (not is_arr(oc, 2) or len(args) != 2 or args[0] != out
+                    or cls_of(args[1]) != ("arr", elem, (oc[2][0],)) or spelling != SIG_ROWDIV[elem]):
+                bad.append(f"S10 the row division {rname} is not its class and a [{oc[2][0] if is_arr(oc, 2) else '?'}] "
                            f"array: {args} {spelling!r}")
-        if fam == "mod" and (args != [out] or cls != elem or op[4:] not in dims
+        if fam == "mod" and (args != [out] or oc[0] != "scalar" or op[4:] not in dims
                              or spelling != SIG_MOD.replace("{D}", op[4:])):
             bad.append(f"S10 the modulo row {rname} is not a value modulo a dimension: {args} {spelling!r}")
-        if op.startswith("map2.") and (args != [out, out] or (op[5:], spelling) not in set(SIG_MAP2[elem])):
+        if op.startswith("map2.") and (args != [out, out] or elem is None or (op[5:], spelling) not in set(SIG_MAP2[elem])):
             bad.append(f"S7 the elementwise row {rname} does not take two arrays of its own class: {args} {spelling!r}")
         if heavy and depth >= depth_bound:
             bad.append(f"S6 the row {rname} multiplies the work at depth {depth} (the bound is {depth_bound})")
-        # S7: an index row is one of the clamped templates of its own dim.
-        if cls.startswith("ix.") and kind == "function":
-            d = cls[3:]
-            clamp = {"i32": SIG_IX_CLAMP, "f32": SIG_IX_CLAMP_F32}[elem]
+        # S7: an index row is one of the clamped templates of its own dim; its clamp's element is its argument's.
+        if oc[0] == "ix" and kind == "function":
+            d = oc[1]
+            ac = cls_of(args[0]) if args else None
+            clamp = {"i32": SIG_IX_CLAMP, "f32": SIG_IX_CLAMP_F32}.get(ac[1] if ac and ac[0] == "scalar" else "")
             if (op, spelling) not in {("prev", SIG_IX_PREV), ("next", SIG_IX_NEXT.replace("{D}", d)),
-                                      ("clamp", clamp.replace("{D}", d))}:
+                                      (("clamp." + ac[1] if multi else "clamp") if ac else "", clamp.replace("{D}", d) if clamp else None)}:
                 bad.append(f"S7 the index row {rname} is not a clamped template: {spelling!r}")
-        if op.startswith("get.") and (len(args) != 2 or parsed.get(args[1], ("",))[0] != f"ix.{op[4:]}"
-                                      or parsed.get(args[0], ("",))[0] != f"a.{op[4:]}"):
+        if op.startswith("get.") and (len(args) != 2 or cls_of(args[1]) != ("ix", op[4:])
+                                      or cls_of(args[0]) != ("arr", elem, (op[4:],))):
             bad.append(f"S7 the read {rname} does not index a [{op[4:]}] by an ix.{op[4:]}")
         if op.startswith("row."):
-            ys = op[4:].split(".")
-            if (len(args) != 2 or parsed.get(args[0], ("",))[0] != f"a.{'.'.join(ys)}"
-                    or parsed.get(args[1], ("",))[0] != f"ix.{ys[0]}" or cls != f"a.{'.'.join(ys[1:])}"):
+            ys = tuple(op[4:].split("."))
+            if (len(args) != 2 or cls_of(args[0]) != ("arr", elem, ys)
+                    or cls_of(args[1]) != ("ix", ys[0]) or oc != ("arr", elem, ys[1:])):
                 bad.append(f"S7 the row read {rname} does not index the first dim of its array")
+        # S11: the pair rows (master version 4). A pair class is a pair of scalars; its constructor takes its two
+        # components, a projection names the pair's components and gives one, the select takes a scalar whose element
+        # is in its name and two pairs, a loop over a pair is checked by S5 (its frame binds the components); the
+        # conversions are the restated templates between the two elements.
+        if oc[0] == "tuple" and not (len(oc[1]) == 2 and all(p[0] == "scalar" for p in oc[1])):
+            bad.append(f"S11 the tuple class {cls} is not a pair of scalars")
+        tag = ".".join(p[1] for p in oc[1]) if oc[0] == "tuple" else None
+        if op == "pair" and (oc[0] != "tuple" or [cls_of(a) for a in args] != list(oc[1]) or spelling != SIG_PAIR):
+            bad.append(f"S11 the pair row {rname} does not take its two components: {args} {spelling!r}")
+        if fam in ("fst", "snd"):
+            pc = cls_of(args[0]) if len(args) == 1 else None
+            ok = (pc is not None and pc[0] == "tuple" and len(pc[1]) == 2 and op == f"{fam}.{pc[1][0][1]}.{pc[1][1][1]}"
+                  and oc == pc[1][0 if fam == "fst" else 1] and spelling == (SIG_FST if fam == "fst" else SIG_SND))
+            if not ok:
+                bad.append(f"S11 the projection {rname} does not take a pair of its components: {args} {spelling!r}")
+        if fam == "psel":
+            cc = cls_of(args[0]) if len(args) == 3 else None
+            ok = (oc[0] == "tuple" and cc is not None and cc[0] == "scalar" and op == ("psel." + cc[1] if multi else "psel")
+                  and args[1] == out and args[2] == out and spelling == SIG_PSEL.replace("{E}", cc[1]))
+            if not ok:
+                bad.append(f"S11 the pair select {rname} is not a scalar's sign choosing between two pairs: {args} {spelling!r}")
+        if fam == "cvt":
+            ac = cls_of(args[0]) if len(args) == 1 else None
+            ok = (oc[0] == "scalar" and ac is not None and ac[0] == "scalar" and op == f"cvt.{ac[1]}"
+                  and spelling == SIG_CVT.get((oc[1], ac[1])))
+            if not ok:
+                bad.append(f"S11 the conversion {rname} is not the template from {ac} to {oc}: {spelling!r}")
     for t in types:
         if t[1] not in terminals:
             bad.append(f"S8 the dual {t[1]} has no terminal")
-        if t[2] == elem:
+        if t[2] in elems:
             lits = t[4].split(",")
-            if elem == "i32":
-                ok = all(re.fullmatch(r"-?\d+" + elem, l) and -2**31 <= int(l[:-len(elem)]) < 2**31 for l in lits)
+            if t[2] == "i32":
+                ok = all(re.fullmatch(r"-?\d+" + t[2], l) and -2**31 <= int(l[:-len(t[2])]) < 2**31 for l in lits)
             else:
-                ok = all(re.fullmatch(r"-?\d+(\.\d+)?" + elem, l) for l in lits)
+                ok = all(re.fullmatch(r"-?\d+(\.\d+)?" + t[2], l) for l in lits)
             if not ok:
-                bad.append(f"S8 the pool of {t[1]} is not a list of {elem} literals")
+                bad.append(f"S8 the pool of {t[1]} is not a list of {t[2]} literals")
             if len(set(lits)) != len(lits):
                 bad.append(f"S8 the pool of {t[1]} repeats a literal")
+            if lits != [f"{l}{t[2]}" for l in inst["literals"].get(t[2], [])]:
+                bad.append(f"S8 the pool of {t[1]} is not the specification's pool of {t[2]}")
+        if t[2] == "tuple" and t[4]:
+            bad.append(f"S8 the tuple {t[1]} has a literal pool")
     # S9: the e-graph maps every row to one constructor of its dual's sort.
     with open(os.path.join(dir_path, "egraph.rows")) as f:
         mapping = [l.rstrip("\n").split("\t") for l in f if l.strip() and not l.startswith("#")]
@@ -1997,8 +2052,15 @@ def witness_sig(dir_path, name):
         want_args = ["i64"] if r[2] == "const" else [sort_of.get(a) for a in r[4].split(";") if a]
         if ctors[ctor] != (want_args, sort_of.get(r[3])) or sort != sort_of.get(r[3]):
             bad.append(f"S9 the constructor {ctor} of {rname} has the sorts {ctors[ctor]}")
+    # S9: every rule's constructors are the datatype's (a rule naming a constructor that is not there would make the
+    # e-graph refuse the ruleset), and the pair rules are the two projections of a pair.
+    with open(os.path.join(dir_path, "egraph.rules")) as f:
+        rules = [l.strip() for l in f if l.strip().startswith("(rewrite ")]
+    for rule in rules:
+        for c in re.findall(r"\((\w+)", rule):
+            if c != "rewrite" and c not in ctors:
+                bad.append(f"S9 the rule {rule!r} names the constructor {c}, which the datatype does not declare")
     return bad
-
 
 def sig_dir(name):
     return os.path.join(HERE, "sig", name)
@@ -2056,11 +2118,16 @@ def sig_main(mode):
 # and the e-graph rules' soundness.
 # --------------------------------------------------------------------------
 
-MASTER_GLOBALS = {"E", "K", "OUT", "CTX"}
-CLASS_VARS = ["", ".var", ".type", ".dims", ".br", ".d0", ".ix"]
-QUANT_VARS = {"dims": ["", ".ix"], "rank1": ["", ".ix"], "states": CLASS_VARS, "free": CLASS_VARS, "rows": CLASS_VARS,
+# `{E.tag}` is the element as a piece of a row's name: `.f32` in a view of several elements, nothing in a view of one
+# (so `clamp@ix.n:c` keeps its name there and is `clamp.f32@ix.n:c` beside `clamp.i32@ix.n:c` in a view of two).
+MASTER_GLOBALS = {"E", "E.tag", "K", "OUT", "CTX"}
+CLASS_VARS = ["", ".var", ".type", ".dims", ".br", ".d0", ".ix", ".tag"]
+QUANT_VARS = {"dims": ["", ".ix"], "rank1": ["", ".ix", ".tag"], "states": CLASS_VARS, "free": CLASS_VARS, "rows": CLASS_VARS,
               "class": CLASS_VARS, "vars": [""], "inputs": [""], "pairs": ["", ".a", ".b"], "swap": [""],
-              "triples": ["", ".ab", ".bc", ".ac"]}
+              "triples": ["", ".ab", ".bc", ".ac"],
+              # A pair of scalars a loop may carry (destructured): its components, Futhark type, variable pattern,
+              # the components joined by `.` (a row's name) and the pair of the components' zeros.
+              "tuples": ["", ".a", ".b", ".type", ".var", ".tag", ".zero"]}
 HEAVY_OPS = {"tab", "tabrows", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "histrows", "rowdiv",
              "loop", "loop1"}
 BINDER_SPELLINGS = {
@@ -2069,9 +2136,19 @@ BINDER_SPELLINGS = {
     "loop": ("{S}+L-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}"),
     "loop1": ("{S}+F-{D}-{S}", "loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}"),
 }
-# A frame binds CLASSES; a variable is named by its class (docs/PLAN_futhark_kingdom.md 3g).
-FRAME_BINDS = {"T": "ix.{D}", "L": "{S},ix.{D}", "F": "{S},ix.{D}"}
+# A frame binds CLASSES; a variable is named by its class (docs/PLAN_futhark_kingdom.md 3g). A loop over a pair
+# DESTRUCTURES it: its frame binds the two components (L2, F2, master version 4), never the pair.
+FRAME_BINDS = {"T": "ix.{D}", "L": "{S},ix.{D}", "F": "{S},ix.{D}", "L2": "{S.a},{S.b},ix.{D}", "F2": "{S.a},{S.b},ix.{D}"}
 INTEGER_ELEMS = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+# The pair rows (master version 4), restated for the master and the per-view checks: the constructor, the two
+# projections, the zero pair, the select between two pairs on a scalar's sign, and the two element conversions
+# (`f32.i32` is total; `i32.f32` is guarded: a NaN is 0 and the value is clamped into i32's range first, Futhark
+# leaving the conversion undefined there).
+SIG_PAIR = "({0}, {1})"
+SIG_FST, SIG_SND = "{0}.0", "{0}.1"
+SIG_PSEL = "if {0} < 0{E} then {1} else {2}"
+SIG_CVT = {("f32", "i32"): "f32.i32 {0}",
+           ("i32", "f32"): "let x = {0} in if f32.isnan x then 0i32 else i32.f32 (f32.max (-2147483648f32) (f32.min 2147483520f32 x))"}
 
 
 def witness_master(path=None):
@@ -2118,7 +2195,7 @@ def witness_master(path=None):
         if r["kind"] != "function" and (held or args):
             bad.append(f"M3 the leaf {ref} has arguments or placeholders")
         # M4: a binder's body is its own frame and its spelling binds that frame's variables; no other row pushes.
-        op = r["name"].split("@", 1)[0].split(".")[0]
+        op = r["name"].replace("{E.tag}", "").split("@", 1)[0].split(".")[0]
         pushes = [a for a in args if "+" in a]
         if op in BINDER_SPELLINGS and r["family"] != "matrix":
             body, spelling = BINDER_SPELLINGS[op]
@@ -2143,10 +2220,27 @@ def witness_master(path=None):
         if elems & INTEGER_ELEMS and (re.search(r"[/] ", r["spelling"])
                                       or (re.search(r"% ", r["spelling"]) and "% {E}.i64 {D}" not in r["spelling"])):
             bad.append(f"M7 the row {ref} divides an integer by a value: {r['spelling']!r}")
-    # M8: the frames are the three binders' frames, with their variables.
+    # M8: the frames are the binders' frames, with their variables, each of a version the master has.
     for f in mst["frames"]:
         if FRAME_BINDS.get(f["kind"]) != f["binds"]:
             bad.append(f"M8 the frame {f['kind']} binds {f['binds']!r}")
+        if not f["since"].isdigit() or not 1 <= int(f["since"]) <= mst["version"]:
+            bad.append(f"M8 the frame {f['kind']} has the version {f['since']}, the master is at {mst['version']}")
+    # M10: the pair rows are the restated templates (the tuple rows over `S:tuples`, the conversions over `C`).
+    for r in mst["rows"]:
+        op = r["name"].replace("{E.tag}", "").split("@", 1)[0]
+        args = [a for a in r["args"].split(";") if a]
+        want = {"pair": ("{S}", ["{S.a}", "{S.b}"], SIG_PAIR), "fst.{S.tag}": ("{S.a}", ["{S}"], SIG_FST),
+                "snd.{S.tag}": ("{S.b}", ["{S}"], SIG_SND), "psel": ("{S}", ["{E}", "{S}", "{S}"], SIG_PSEL),
+                "zero": ("{S}", [], "{S.zero}") if "S:tuples" in r["scope"] else None,
+                "cvt.i32": ("{E}", ["i32"], SIG_CVT[("f32", "i32")].replace("f32.i32", "{E}.i32")),
+                "cvt.f32": ("{E}", ["f32"], SIG_CVT[("i32", "f32")].replace("0i32", "0{E}").replace("i32.f32", "{E}.f32"))}.get(op)
+        if want is None:
+            continue
+        if (r["out"], args, r["spelling"]) != want or ("S:tuples" in r["scope"]) != (not op.startswith("cvt.")):
+            bad.append(f"M10 the pair row {r['ref']} ({r['name']}) is not its template: {r['out']} {args} {r['spelling']!r}")
+        if op == "cvt.i32" and r["elems"] != "f32" or op == "cvt.f32" and r["elems"] != "i32":
+            bad.append(f"M10 the conversion {r['ref']} is defined for {r['elems']}")
     # M9: every rule's constructors name element or array rows of the master, and every rule is an identity.
     bad += witness_rules(mst)
     return bad
@@ -2203,6 +2297,9 @@ RULE_SEMANTICS = {
         "map2.mul": lambda a, b: [_f32(x * y) for x, y in zip(a, b)],
     },
 }
+# The pair rows' meanings (any element): a pair is built, and its parts are its components.
+for _sem in RULE_SEMANTICS.values():
+    _sem.update({"pair": lambda a, b: (a, b), "fst": lambda t: t[0], "snd": lambda t: t[1]})
 
 
 def _rule_eval(text, env, semantics):
@@ -2231,8 +2328,8 @@ def _rule_eval(text, env, semantics):
 def _same_value(elem, x, y):
     """The comparison policy of the kingdom's values (src/futhark_sig.rs, `Array`): the same bits, or two NaNs
     (an f32 NaN's payload is not a value); -0.0 and +0.0 differ."""
-    if isinstance(x, list):
-        return len(x) == len(y) and all(_same_value(elem, a, b) for a, b in zip(x, y))
+    if isinstance(x, (list, tuple)):
+        return type(x) is type(y) and len(x) == len(y) and all(_same_value(elem, a, b) for a, b in zip(x, y))
     if elem == "i32":
         return x == y
     import struct
@@ -2256,8 +2353,8 @@ def witness_rules(mst):
             bad.append(f"M9 the rule {r['rule']!r} is admitted for {r['elems']}: the witness knows {sorted(RULE_SEMANTICS)}")
             continue
         m = re.fullmatch(r"\(rewrite (.+) :ruleset futhark_sig\)", r["rule"])
-        if not m or r["on"] not in ("elem", "arr"):
-            bad.append(f"M9 the rule {r['rule']!r} is not a rewrite of the futhark_sig ruleset on elem or arr")
+        if not m or r["on"] not in ("elem", "arr", "tuple"):
+            bad.append(f"M9 the rule {r['rule']!r} is not a rewrite of the futhark_sig ruleset on elem, arr or tuple")
             continue
         body = m.group(1)
         depth, cut = 0, None
@@ -2278,7 +2375,7 @@ def witness_rules(mst):
                 return _f32(rnd.uniform(-1e3, 1e3)) if rnd.random() < 0.8 else rnd.choice(ed)
 
             for trial in range(300):
-                if r["on"] == "elem":
+                if r["on"] in ("elem", "tuple"):
                     # Every edge pairs with every edge once (the signed zeros and the NaNs together are the cases).
                     if trial < len(ed) ** 2:
                         env = {"a": ed[trial // len(ed)], "b": ed[trial % len(ed)], "d": ed[(trial * 7) % len(ed)]}

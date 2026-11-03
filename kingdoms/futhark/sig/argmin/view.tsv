@@ -1,0 +1,10 @@
+# kind	name	element	dims
+# written by kingdoms/futhark/sniff.py from kingdoms/futhark/sig/kahan/kahan.fut, entry argmin
+master	4		
+element	f32,i32		
+input	ds	f32	n
+output	argmin	i32	
+depth	2		
+literals	0,1,2,-1,0.5,10	f32	
+literals	0,1,2,-1,10	i32	
+dims	n		

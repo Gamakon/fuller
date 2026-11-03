@@ -58,6 +58,8 @@ struct MasterRow {
 /// binds (a variable is named by its class, [`var_name`]).
 #[derive(Debug, Clone)]
 struct FrameTemplate {
+    /// The master version the frame was added in: a view pinned before it has no context through it.
+    since: u32,
     code: String,
     scope: Vec<String>,
     binds: Vec<String>,
@@ -144,14 +146,18 @@ impl Master {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let frames = tsv("frames.tsv", frames, &["family", "kind", "code", "scope", "binds"])?
+        let frames = tsv("frames.tsv", frames, &["family", "kind", "since", "code", "scope", "binds"])?
             .into_iter()
             .map(|f| {
-                let binds: Vec<String> = f[4].split(',').map(str::to_string).collect();
+                let binds: Vec<String> = f[5].split(',').map(str::to_string).collect();
                 if let Some(b) = binds.iter().find(|b| b.is_empty() || b.contains(':')) {
                     return Err(format!("master/frames.tsv: the binding {b:?} is not a class (a variable is named by its class)"));
                 }
-                Ok(FrameTemplate { code: f[2].into(), scope: scope_list(f[3]), binds })
+                let since = f[2].parse().map_err(|e| format!("master/frames.tsv: the frame {} has the version {:?}: {e}", f[1], f[2]))?;
+                if since > version {
+                    return Err(format!("master/frames.tsv: the frame {} is of version {since}, the master is at {version}", f[1]));
+                }
+                Ok(FrameTemplate { since, code: f[3].into(), scope: scope_list(f[4]), binds })
             })
             .collect::<Result<Vec<_>, String>>()?;
         let rules = tsv("rules.tsv", rules, &["on", "elems", "needs", "rule"])?
@@ -192,12 +198,18 @@ pub struct SpecInput {
 }
 
 /// A view specification (`view.tsv`): four-column lines `kind name element dims`; `#` lines are comments. A
-/// `families` line belongs to the matrix view only: a signature view admits every family of the master.
+/// `families` line belongs to the matrix view only: a signature view admits every family of the master. The
+/// `element` line lists the view's element types (one, or several: `f32,i32`), and a `literals` line gives one
+/// element's pool (the element in its third column, empty for a view of one element).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewSpec {
     pub shape: Shape,
     pub master: Option<u32>,
+    /// The first of the view's elements (the matrix view's one).
     pub element: String,
+    /// The view's element types, in the order the `element` line gives them. A view of several elements writes an
+    /// array class with its element (`a.f32.n`); a view of one keeps the names of before (`a.n`).
+    pub elements: Vec<String>,
     /// The inputs in order, a size input with the element `size`.
     pub inputs: Vec<SpecInput>,
     pub sizes: Vec<String>,
@@ -206,7 +218,8 @@ pub struct ViewSpec {
     pub depth: u32,
     /// The matrix view's families (a signature view has none: it admits every family).
     pub families: Vec<String>,
-    pub literals: Vec<String>,
+    /// The literal pool of each element.
+    pub literals: BTreeMap<String, Vec<String>>,
     pub dims: Vec<String>,
     pub roles: Vec<String>,
     pub root: Vec<String>,
@@ -218,18 +231,20 @@ impl ViewSpec {
             shape: Shape::Signature,
             master: None,
             element: String::new(),
+            elements: Vec::new(),
             inputs: Vec::new(),
             sizes: Vec::new(),
             output: None,
             depth: 0,
             families: Vec::new(),
-            literals: Vec::new(),
+            literals: BTreeMap::new(),
             dims: Vec::new(),
             roles: Vec::new(),
             root: Vec::new(),
         };
         let list = |x: &str| x.split(',').filter(|v| !v.is_empty()).map(str::to_string).collect::<Vec<_>>();
         let mut families_line = false;
+        let mut pools: Vec<(String, Vec<String>)> = Vec::new();
         for line in text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
             let f: Vec<&str> = line.split('\t').collect();
             let [kind, name, elem, dims] = f.as_slice() else {
@@ -248,7 +263,10 @@ impl ViewSpec {
                 "output" => s.output = Some(SpecInput { name: name.to_string(), elem: elem.to_string(), dims: list(dims) }),
                 "master" => s.master = Some(num(name)?),
                 "depth" => s.depth = num(name)?,
-                "element" => s.element = name.to_string(),
+                "element" => {
+                    s.elements = list(name);
+                    s.element = s.elements.first().cloned().unwrap_or_default();
+                }
                 "shape" => {
                     s.shape = match *name {
                         "matrix" => Shape::Matrix,
@@ -260,39 +278,225 @@ impl ViewSpec {
                     families_line = true;
                     s.families = list(name);
                 }
-                "literals" => s.literals = list(name),
+                "literals" => pools.push((elem.to_string(), list(name))),
                 "dims" => s.dims = list(name),
                 "roles" => s.roles = list(name),
                 "root" => s.root = list(name),
                 other => return Err(format!("a specification line of kind {other}")),
             }
         }
-        if s.element.is_empty() {
+        if s.elements.is_empty() {
             return Err("the specification names no element".into());
+        }
+        if let Some(e) = s.elements.iter().find(|e| !ELEMENT_NAMES.contains(&e.as_str())) {
+            return Err(format!("the element {e} is not a Futhark primitive type"));
+        }
+        if (1..s.elements.len()).any(|i| s.elements[i..].contains(&s.elements[i - 1])) {
+            return Err(format!("the element line repeats an element: {:?}", s.elements));
+        }
+        for (elem, pool) in pools {
+            let elem = if elem.is_empty() {
+                let [one] = s.elements.as_slice() else { return Err(format!("a literals line names no element and the view has {}", s.elements.len())) };
+                one.clone()
+            } else if s.elements.contains(&elem) {
+                elem
+            } else {
+                return Err(format!("a literals line is of the element {elem}, which the view does not have"));
+            };
+            if s.literals.insert(elem.clone(), pool).is_some() {
+                return Err(format!("two literals lines for the element {elem}"));
+            }
         }
         if s.shape == Shape::Signature && families_line {
             return Err("a signature specification has a families line: a signature view admits every family".into());
         }
-        if s.shape == Shape::Signature && s.output.is_none() {
-            return Err("the signature specification has no output".into());
+        if s.shape == Shape::Signature {
+            let output = s.output.as_ref().ok_or("the signature specification has no output")?;
+            for p in s.inputs.iter().filter(|p| p.elem != "size").chain(std::iter::once(output)) {
+                if !s.elements.contains(&p.elem) {
+                    return Err(format!("{} is of the element {}, which the element line does not list", p.name, p.elem));
+                }
+                if p.dims.is_empty() && p.name != output.name {
+                    return Err(format!("the input {} is a scalar that is not a size: the master has no row for a scalar input", p.name));
+                }
+                if let Some(d) = p.dims.iter().find(|d| !is_dim(d)) {
+                    return Err(format!("the dimension {d} of {} is not a dimension name (a lower-case identifier that is not an element's)", p.name));
+                }
+            }
+            if let Some(d) = s.dims.iter().chain(&s.sizes).find(|d| !is_dim(d)) {
+                return Err(format!("the dimension {d} is not a dimension name (a lower-case identifier that is not an element's)"));
+            }
+            if let Some(e) = s.elements.iter().find(|e| !s.literals.contains_key(*e)) {
+                return Err(format!("the element {e} has no literals line"));
+            }
         }
         Ok(s)
     }
+
+    /// Whether the view has several elements, so an array class is written with its element.
+    pub fn multi(&self) -> bool {
+        self.elements.len() > 1
+    }
+}
+
+// ---- the class --------------------------------------------------------------------------------------------------
+
+/// The element types a class may name (Futhark's primitive types). A dimension may not be named as one: the text of
+/// an array class would then read two ways.
+pub const ELEMENT_NAMES: [&str; 12] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "bool"];
+
+/// A CLASS: the type of a value apart from its context, as an AST with an INJECTIVE text (the review's finding 1:
+/// a dotted string such as `t.a.n.a.m` reads two ways; this grammar reads one way). The grammar, as the tables write
+/// it (`kingdoms/futhark/README.md`, "The class"):
+///
+/// ```text
+/// class  ::= elem                         a scalar: `i32`, `f32`
+///          | 'ix.' dim                    an index in range for a dimension: `ix.n`
+///          | 'a.' [elem '.'] dim {'.' dim} an array: `a.n.d`; `a.f32.n.d` in a view of more than one element
+///          | '(' class ',' class ')'      a tuple: `(f32,i32)` (no space; Futhark's own notation)
+///          | name                         a class the matrix family declares: `mat.n.m`, `fn.arr_f32_arr_f32`
+/// ```
+///
+/// The array's element is written only in a view of several elements: a view of one element keeps the names of
+/// before (`a.n`), its one element implied (D7's naming rule, `docs/PLAN_futhark_kingdom.md`). Both texts are
+/// injective: a dimension is never named as an element ([`ELEMENT_NAMES`]), so the piece after `a.` is an element
+/// exactly when it is one. A tuple's components are separated by a comma inside its own parentheses, so a tuple of a
+/// rank-2 array and a scalar cannot be confused with a tuple of a rank-1 array and an array.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Class {
+    Scalar(String),
+    Index(String),
+    Array { elem: String, dims: Vec<String> },
+    Tuple(Vec<Class>),
+    /// A class the matrix family declares by name (`master/types.tsv`).
+    Named(String),
+}
+
+/// The pieces of `text` between its top-level commas (a comma inside parentheses separates a tuple's components).
+fn split_top(text: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (Vec::new(), 0usize, 0usize);
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&text[start..]);
+    out
+}
+
+impl Class {
+    /// A class from its text in a view whose elements are `elements`. An array written without its element takes
+    /// `default_elem` (the row's `{E}`), which a view of one element always has; an error names what does not parse.
+    pub fn parse(text: &str, elements: &[String], default_elem: Option<&str>) -> Result<Class, String> {
+        if let Some(inner) = text.strip_prefix('(') {
+            let inner = inner.strip_suffix(')').ok_or_else(|| format!("the class {text} opens a tuple it does not close"))?;
+            let parts = split_top(inner);
+            if parts.len() < 2 {
+                return Err(format!("the tuple class {text} has {} component", parts.len()));
+            }
+            return Ok(Class::Tuple(parts.iter().map(|p| Class::parse(p, elements, default_elem)).collect::<Result<_, _>>()?));
+        }
+        if let Some(d) = text.strip_prefix("ix.") {
+            return if is_dim(d) { Ok(Class::Index(d.to_string())) } else { Err(format!("the index class {text} is not over a dimension")) };
+        }
+        if let Some(rest) = text.strip_prefix("a.") {
+            let mut pieces: Vec<&str> = rest.split('.').collect();
+            let elem = if pieces.first().is_some_and(|p| ELEMENT_NAMES.contains(p)) {
+                let e = pieces.remove(0);
+                if !elements.iter().any(|x| x == e) {
+                    return Err(format!("the class {text} is of the element {e}, which the view does not have"));
+                }
+                e.to_string()
+            } else {
+                match (default_elem, elements) {
+                    (Some(e), _) => e.to_string(),
+                    (None, [e]) => e.clone(),
+                    (None, _) => return Err(format!("the array class {text} names no element and the view has {}", elements.len())),
+                }
+            };
+            if pieces.is_empty() || !pieces.iter().all(|d| is_dim(d)) {
+                return Err(format!("the array class {text} is not over dimensions"));
+            }
+            return Ok(Class::Array { elem, dims: pieces.iter().map(|d| d.to_string()).collect() });
+        }
+        if elements.iter().any(|e| e == text) {
+            return Ok(Class::Scalar(text.to_string()));
+        }
+        if ELEMENT_NAMES.contains(&text) {
+            return Err(format!("the class {text} is an element the view does not have"));
+        }
+        if text.starts_with("mat.") || text.starts_with("fn.") {
+            return Ok(Class::Named(text.to_string()));
+        }
+        Err(format!("the class {text:?} does not parse"))
+    }
+
+    /// The class's text in a view of one element (`multi` false: an array leaves its element implied) or of several.
+    pub fn text(&self, multi: bool) -> String {
+        match self {
+            Class::Scalar(e) => e.clone(),
+            Class::Index(d) => format!("ix.{d}"),
+            Class::Array { elem, dims } => {
+                if multi {
+                    format!("a.{elem}.{}", dims.join("."))
+                } else {
+                    format!("a.{}", dims.join("."))
+                }
+            }
+            Class::Tuple(parts) => format!("({})", parts.iter().map(|p| p.text(multi)).collect::<Vec<_>>().join(",")),
+            Class::Named(n) => n.clone(),
+        }
+    }
+
+    /// The element of a scalar or an array; an index, a tuple and a named class have none.
+    pub fn elem(&self) -> Option<&str> {
+        match self {
+            Class::Scalar(e) | Class::Array { elem: e, .. } => Some(e),
+            _ => None,
+        }
+    }
+
+    /// An array's dimensions (empty for every other class).
+    pub fn dims(&self) -> &[String] {
+        match self {
+            Class::Array { dims, .. } => dims,
+            _ => &[],
+        }
+    }
+
+    /// The class's Futhark type: `f32`, `[n][d]f32`, `(f32, i32)`; an index is an `i64`.
+    pub fn futhark_type(&self) -> String {
+        match self {
+            Class::Scalar(e) => e.clone(),
+            Class::Index(_) => "i64".into(),
+            Class::Array { elem, dims } => dims.iter().map(|d| format!("[{d}]")).collect::<String>() + elem,
+            Class::Tuple(parts) => format!("({})", parts.iter().map(Class::futhark_type).collect::<Vec<_>>().join(", ")),
+            Class::Named(n) => n.clone(),
+        }
+    }
+
+    /// The class as a piece of a Futhark identifier: the text without its `a.` or `ix.` prefix, `.` as `_` (`n`,
+    /// `f32_n`; a tuple's parentheses and comma as `_`). The zero array of a rank-1 class is `zeros_<tag>`.
+    pub fn tag(&self, multi: bool) -> String {
+        let t = self.text(multi);
+        let t = t.strip_prefix("a.").or_else(|| t.strip_prefix("ix.")).unwrap_or(&t);
+        t.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
+    }
+}
+
+/// Whether `d` may name a dimension: a lower-case identifier that is not an element's name.
+fn is_dim(d: &str) -> bool {
+    let mut c = d.chars();
+    c.next().is_some_and(|x| x.is_ascii_lowercase()) && c.all(|x| x.is_ascii_lowercase() || x.is_ascii_digit() || x == '_') && !ELEMENT_NAMES.contains(&d)
 }
 
 // ---- binding ----------------------------------------------------------------------------------------------------
-
-fn class_dims(cls: &str) -> Vec<&str> {
-    cls.strip_prefix("a.").map(|r| r.split('.').collect()).unwrap_or_default()
-}
-
-fn array_class(dims: &[&str]) -> String {
-    format!("a.{}", dims.join("."))
-}
-
-fn futhark_type(cls: &str, elem: &str) -> String {
-    class_dims(cls).iter().map(|d| format!("[{d}]")).collect::<String>() + elem
-}
 
 /// A CONTEXT: how many variables of each class are in scope, and the depth (the binders around a node, for the
 /// `shallow` rule and the work bound). Not the frame stack (one type a stack, the review's F1), and not only the set
@@ -422,41 +626,38 @@ fn next_var(cls: &str, ctx: Option<&Ctx>) -> String {
     var_name(cls, ctx.map_or(0, |c| c.count(cls)) + 1)
 }
 
-/// The variables a class binds: the class, the next variable of its class (`.var`), its Futhark type, its dimensions
-/// (`.dims`, `.br` as brackets, `.d0` the first), and `.ix`, the next index variable over its first dimension (a
-/// tabulate of its rows binds it).
-fn class_env(var: &str, cls: &str, elem: &str, ctx: Option<&Ctx>) -> Vec<(String, String)> {
-    let ds = class_dims(cls);
-    vec![
-        (var.to_string(), cls.to_string()),
-        (format!("{var}.var"), next_var(cls, ctx)),
-        (format!("{var}.type"), futhark_type(cls, elem)),
-        (format!("{var}.dims"), ds.join(".")),
-        (format!("{var}.br"), ds.join("][")),
-        (format!("{var}.d0"), ds.first().map_or(String::new(), |d| d.to_string())),
-        (format!("{var}.ix"), ds.first().map_or(String::new(), |d| next_var(&format!("ix.{d}"), ctx))),
-    ]
-}
-
 /// The sets a view's quantifiers range over.
 #[derive(Debug, Clone, Default)]
 struct Sets {
-    elem: String,
+    /// The view's elements, in order; `multi` when there are several (an array class is then written with its
+    /// element).
+    elements: Vec<String>,
+    multi: bool,
     dims: Vec<String>,
-    classes: Vec<String>,
-    rank1: Vec<String>,
-    states: Vec<String>,
-    free: Vec<String>,
-    inputs: Vec<(String, String)>,
+    classes: Vec<Class>,
+    rank1: Vec<Class>,
+    /// The classes a loop may carry: the scalar of each element, then the rank-1 classes.
+    states: Vec<Class>,
+    /// The pairs of scalars a loop may carry (destructured: `loop (s, c) = ...`), every ordered pair of the
+    /// elements.
+    tuples: Vec<Class>,
+    free: Vec<Class>,
+    inputs: Vec<(String, Class)>,
     roles: Vec<String>,
     pairs: Vec<(String, String)>,
 }
 
+impl Sets {
+    fn text(&self, c: &Class) -> String {
+        c.text(self.multi)
+    }
+}
+
 /// The sets of a signature view, derived from the specification: the dims in order of first appearance, the classes
-/// (each input's, its rows', the output's, each dim's rank-1 class), the rank-1 classes, the states a loop may carry.
-/// The context-free classes are derived by [`view_rows`].
+/// (each input's, its rows', the output's, each dim's rank-1 class of each element), the rank-1 classes, the states
+/// a loop may carry, the pairs of scalars. The context-free classes are derived by [`view_rows`].
 fn signature_sets(spec: &ViewSpec) -> Result<Sets, String> {
-    let elem = spec.element.clone();
+    let elements = spec.elements.clone();
     let mut dims: Vec<String> = Vec::new();
     for p in &spec.inputs {
         if p.elem == "size" {
@@ -472,28 +673,34 @@ fn signature_sets(spec: &ViewSpec) -> Result<Sets, String> {
     if let Some(d) = output.dims.iter().find(|d| !dims.contains(d)) {
         return Err(format!("the output's dimension {d} is not a dimension of an input {dims:?}"));
     }
-    let mut classes: Vec<String> = Vec::new();
-    fn add(classes: &mut Vec<String>, c: String) {
+    let mut classes: Vec<Class> = Vec::new();
+    fn add(classes: &mut Vec<Class>, c: Class) {
         if !classes.contains(&c) {
-            let ds: Vec<String> = class_dims(&c).iter().map(|d| d.to_string()).collect();
+            let rows = match &c {
+                Class::Array { elem, dims } if dims.len() >= 2 => Some(Class::Array { elem: elem.clone(), dims: dims[1..].to_vec() }),
+                _ => None,
+            };
             classes.push(c);
-            if ds.len() >= 2 {
-                add(classes, array_class(&ds[1..].iter().map(String::as_str).collect::<Vec<_>>()));
+            if let Some(r) = rows {
+                add(classes, r);
             }
         }
     }
-    let class_of = |p: &SpecInput| if p.dims.is_empty() { elem.clone() } else { array_class(&p.dims.iter().map(String::as_str).collect::<Vec<_>>()) };
+    let class_of = |p: &SpecInput| if p.dims.is_empty() { Class::Scalar(p.elem.clone()) } else { Class::Array { elem: p.elem.clone(), dims: p.dims.clone() } };
     for p in spec.inputs.iter().filter(|p| p.elem != "size") {
         add(&mut classes, class_of(p));
     }
     add(&mut classes, class_of(output));
     for d in &dims {
-        add(&mut classes, array_class(&[d.as_str()]));
+        for e in &elements {
+            add(&mut classes, Class::Array { elem: e.clone(), dims: vec![d.clone()] });
+        }
     }
-    let rank1: Vec<String> = classes.iter().filter(|c| class_dims(c).len() == 1).cloned().collect();
-    let states = std::iter::once(elem.clone()).chain(rank1.iter().cloned()).collect();
+    let rank1: Vec<Class> = classes.iter().filter(|c| c.dims().len() == 1).cloned().collect();
+    let states: Vec<Class> = elements.iter().map(|e| Class::Scalar(e.clone())).chain(rank1.iter().cloned()).collect();
+    let tuples: Vec<Class> = elements.iter().flat_map(|a| elements.iter().map(move |b| Class::Tuple(vec![Class::Scalar(a.clone()), Class::Scalar(b.clone())]))).collect();
     let inputs = spec.inputs.iter().filter(|p| p.elem != "size").map(|p| (p.name.clone(), class_of(p))).collect();
-    Ok(Sets { elem, dims, classes, rank1, states, free: Vec::new(), inputs, ..Sets::default() })
+    Ok(Sets { multi: elements.len() > 1, elements, dims, classes, rank1, states, tuples, free: Vec::new(), inputs, ..Sets::default() })
 }
 
 /// The frames of a view (a frame template expanded over its scope): the code and the classes it binds.
@@ -512,12 +719,14 @@ impl Binder {
             Shape::Signature => Binder { sets: signature_sets(spec)?, depth: spec.depth, frames: Vec::new(), contexts: Vec::new() },
             Shape::Matrix => {
                 let pairs = spec.roles.iter().flat_map(|a| spec.roles.iter().map(move |c| (a.clone(), c.clone()))).collect();
-                Binder { sets: Sets { elem: spec.element.clone(), roles: spec.roles.clone(), pairs, ..Sets::default() }, depth: 0, frames: Vec::new(), contexts: vec![Ctx::default()] }
+                Binder { sets: Sets { elements: spec.elements.clone(), roles: spec.roles.clone(), pairs, ..Sets::default() }, depth: 0, frames: Vec::new(), contexts: vec![Ctx::default()] }
             }
         };
         if spec.shape == Shape::Signature {
-            let base = Env::default().with(&[("E".into(), spec.element.clone())]);
-            for f in &master.frames {
+            let base = b.base_env();
+            // The frames the pinned master version has (a frame added later, as the pair loop's, makes contexts a
+            // view of before must not see).
+            for f in master.frames.iter().filter(|f| f.since <= spec.master.unwrap_or(master.version)) {
                 for env in b.expand_scope(&f.scope, &base)? {
                     let code = subst(&f.code, &env)?;
                     b.frames.push((code, f.binds.iter().map(|c| subst(c, &env)).collect::<Result<Vec<_>, _>>()?));
@@ -541,20 +750,93 @@ impl Binder {
             }
             b.contexts = ctxs;
             // A variable's name must not be an input's, a size's or a zero array's: it would shadow the interface.
-            let taken: BTreeSet<String> = b.sets.inputs.iter().map(|(n, _)| n.clone()).chain(b.sets.dims.iter().cloned()).chain(b.sets.dims.iter().map(|d| format!("zeros_{d}"))).collect();
+            // And two classes a frame binds must not share a variable name (the name is made from the class's text,
+            // so it is a Futhark identifier, and one name a class).
+            let zeros = b.sets.rank1.iter().map(|c| format!("zeros_{}", c.tag(b.sets.multi)));
+            let taken: BTreeSet<String> = b.sets.inputs.iter().map(|(n, _)| n.clone()).chain(b.sets.dims.iter().cloned()).chain(zeros).collect();
+            let mut named: BTreeMap<String, String> = BTreeMap::new();
             for (_, binds) in &b.frames {
                 for c in binds {
                     for k in 1..=b.depth.max(1) {
                         let v = var_name(c, k);
+                        if !v.chars().all(|x| x.is_ascii_alphanumeric() || x == '_') {
+                            return Err(format!("the bound variable {v} of the class {c} is not a Futhark identifier"));
+                        }
                         let t = c.strip_prefix("ix.").map(|_| format!("t{v}"));
                         if let Some(x) = std::iter::once(&v).chain(t.as_ref()).find(|x| taken.contains(*x)) {
                             return Err(format!("the bound variable {x} has the name of an input, a size or a zero array of the view"));
+                        }
+                        if let Some(other) = named.insert(v.clone(), c.clone()).filter(|o| o != c) {
+                            return Err(format!("the classes {other} and {c} would both name a variable {v}"));
                         }
                     }
                 }
             }
         }
         Ok(b)
+    }
+
+    /// The base bindings of an expansion: the element `{E}` when the view has one (a view of several binds it per
+    /// row, from the class a quantifier picks or by iterating the elements).
+    fn base_env(&self) -> Env {
+        match self.sets.elements.as_slice() {
+            [one] => self.elem_env(&Env::default(), one),
+            _ => Env::default(),
+        }
+    }
+
+    /// The bindings with the element `{E}` set to `e`, and `{E.tag}`, the element as a piece of a row's name: `.e`
+    /// in a view of several elements, nothing in a view of one (`clamp@ix.n:c` keeps its name; a view of two has
+    /// `clamp.f32@ix.n:c` and `clamp.i32@ix.n:c`, two rows of one output type told apart by their element).
+    fn elem_env(&self, env: &Env, e: &str) -> Env {
+        env.with(&[("E".into(), e.to_string()), ("E.tag".into(), if self.sets.multi { format!(".{e}") } else { String::new() })])
+    }
+
+    /// The elements a row is defined for among the view's, in the view's order.
+    fn row_elements(&self, row: &MasterRow) -> Vec<String> {
+        self.sets.elements.iter().filter(|e| row.elems == "*" || row.elems.split(',').any(|x| x == e.as_str())).cloned().collect()
+    }
+
+    /// A class from a template's text, bound: an array written without its element is of the row's `{E}`.
+    fn class_of(&self, text: &str, env: &Env) -> Result<Class, String> {
+        let t = subst(text, env)?;
+        if self.sets.elements.is_empty() || t.starts_with("mat.") || t.starts_with("fn.") {
+            return Ok(Class::Named(t));
+        }
+        Class::parse(&t, &self.sets.elements, env.vars.get("E").map(String::as_str))
+    }
+
+    /// The variables a class binds: the class, the next variable of its class (`.var`), its Futhark type, its
+    /// dimensions (`.dims`, `.br` as brackets, `.d0` the first), `.ix`, the next index variable over its first
+    /// dimension (a tabulate of its rows binds it), and `.tag`, the class as a piece of an identifier (`zeros_{D.tag}`).
+    fn class_env(&self, var: &str, cls: &Class, ctx: Option<&Ctx>) -> Vec<(String, String)> {
+        let text = self.sets.text(cls);
+        let ds = cls.dims();
+        vec![
+            (var.to_string(), text.clone()),
+            (format!("{var}.var"), next_var(&text, ctx)),
+            (format!("{var}.type"), cls.futhark_type()),
+            (format!("{var}.dims"), ds.join(".")),
+            (format!("{var}.br"), ds.join("][")),
+            (format!("{var}.d0"), ds.first().cloned().unwrap_or_default()),
+            (format!("{var}.ix"), ds.first().map_or(String::new(), |d| next_var(&format!("ix.{d}"), ctx))),
+            (format!("{var}.tag"), cls.tag(self.sets.multi)),
+        ]
+    }
+
+    /// The bindings with the row's element `{E}` set from a class a quantifier picked: the class's own when `{E}` is
+    /// unbound; unchanged when it is the bound one; a class of another element binds nothing (`None`).
+    fn with_elem(&self, env: &Env, cls: &Class) -> Option<Env> {
+        match (cls.elem(), env.vars.get("E")) {
+            (Some(elem), Some(bound)) if bound != elem => None,
+            (Some(elem), None) => Some(self.elem_env(env, elem)),
+            _ => Some(env.clone()),
+        }
+    }
+
+    /// A class's bindings ([`Self::class_env`]) with the row's element ([`Self::with_elem`]).
+    fn class_env_elem(&self, var: &str, cls: &Class, env: &Env) -> Option<Env> {
+        self.with_elem(env, cls).map(|e| e.with(&self.class_env(var, cls, env.ctx.as_ref())))
     }
 
     /// The variables a context binds: (name, class), by class, then outermost first.
@@ -594,27 +876,73 @@ impl Binder {
         let one = |pairs: Vec<(String, String)>| env.with(&pairs);
         let v = |x: &str| vec![(var.to_string(), x.to_string())];
         let arg = arg.unwrap_or_default();
+        // A quantifier's class argument, bound (`vars(a.{D})`, `rows(a.{D})`, `class(a.{D2}.{D})`, `inputs({X})`).
+        let arg_class =|| -> Result<Option<Class>, String> { Ok(if arg.is_empty() { None } else { Some(self.class_of(&arg, env)?) }) };
         Ok(match kind {
             "dims" => s.dims.iter().map(|d| one(vec![(var.to_string(), d.clone()), (format!("{var}.ix"), next_var(&format!("ix.{d}"), env.ctx.as_ref()))])).collect(),
-            "rank1" => s.rank1.iter().map(|c| one(vec![(var.to_string(), class_dims(c)[0].to_string()), (format!("{var}.ix"), next_var(&format!("ix.{}", class_dims(c)[0]), env.ctx.as_ref()))])).collect(),
-            "states" => s.states.iter().map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
-            "free" => s.free.iter().map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
+            // A rank-1 class binds its dimension, and the row's element: the class's own, or none of another
+            // element's when `{E}` is bound already.
+            "rank1" => s
+                .rank1
+                .iter()
+                .filter_map(|c| {
+                    let d = c.dims()[0].clone();
+                    let e = self.with_elem(env, c)?;
+                    Some(e.with(&[(var.to_string(), d.clone()), (format!("{var}.ix"), next_var(&format!("ix.{d}"), env.ctx.as_ref())), (format!("{var}.tag"), c.tag(s.multi))]))
+                })
+                .collect(),
+            "states" => s.states.iter().filter_map(|c| self.class_env_elem(var, c, env)).collect(),
+            "free" => s.free.iter().filter_map(|c| self.class_env_elem(var, c, env)).collect(),
+            // The pairs of scalars a loop may carry, destructured: `{S}` the class, `.a` and `.b` its components,
+            // `.type` its Futhark type, `.var` the pattern of its two variables (the next of each component's
+            // class; the second one further when the components are of one class), `.tag` the components joined by
+            // `.` (a row's name), `.zero` the pair of the components' zeros.
+            "tuples" => s
+                .tuples
+                .iter()
+                .map(|t| {
+                    let Class::Tuple(parts) = t else { return Err(format!("our software has a bug: the tuple {} is not one", s.text(t))) };
+                    let [a, b] = parts.as_slice() else { return Err(format!("our software has a bug: the tuple {} is not a pair", s.text(t))) };
+                    let (ta, tb) = (s.text(a), s.text(b));
+                    let va = next_var(&ta, env.ctx.as_ref());
+                    let vb = var_name(&tb, env.ctx.as_ref().map_or(0, |c| c.count(&tb)) + 1 + u32::from(a == b));
+                    let zero = |c: &Class| format!("0{}", c.elem().unwrap_or(""));
+                    Ok(one(vec![
+                        (var.to_string(), s.text(t)),
+                        (format!("{var}.a"), ta.clone()),
+                        (format!("{var}.b"), tb.clone()),
+                        (format!("{var}.type"), t.futhark_type()),
+                        (format!("{var}.var"), format!("({va}, {vb})")),
+                        (format!("{var}.tag"), format!("{ta}.{tb}")),
+                        (format!("{var}.zero"), format!("({}, {})", zero(a), zero(b))),
+                    ]))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
             "vars" => {
                 let ctx = env.ctx.as_ref().ok_or_else(|| format!("the quantifier {q} outside a context"))?;
-                self.frame_vars(ctx).into_iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(&n))).collect()
+                let want = arg_class()?.map(|c| s.text(&c)).unwrap_or_default();
+                self.frame_vars(ctx).into_iter().filter(|(_, c)| *c == want).map(|(n, _)| one(v(&n))).collect()
             }
-            "inputs" => s.inputs.iter().filter(|(_, c)| *c == arg).map(|(n, _)| one(v(n))).collect(),
+            "inputs" => {
+                let want = arg_class()?;
+                s.inputs.iter().filter(|(_, c)| Some(c) == want.as_ref()).map(|(n, _)| one(v(n))).collect()
+            }
             // The named class, when the view has it (`V2:class(a.{D2}.{D})`: the rows a histogram of rows reads).
-            "class" => s.classes.iter().filter(|c| **c == arg).map(|c| one(class_env(var, c, &s.elem, env.ctx.as_ref()))).collect(),
-            "rows" => s
-                .classes
-                .iter()
-                .filter(|y| {
-                    let ys = class_dims(y);
-                    ys.len() >= 2 && array_class(&ys[1..]) == arg
-                })
-                .map(|y| one(class_env(var, y, &s.elem, env.ctx.as_ref())))
-                .collect(),
+            "class" => {
+                let want = arg_class()?;
+                s.classes.iter().filter(|c| Some(*c) == want.as_ref()).filter_map(|c| self.class_env_elem(var, c, env)).collect()
+            }
+            "rows" => {
+                let want = arg_class()?;
+                s.classes
+                    .iter()
+                    .filter(|y| match y {
+                        Class::Array { elem, dims } if dims.len() >= 2 => Some(Class::Array { elem: elem.clone(), dims: dims[1..].to_vec() }) == want,
+                        _ => false,
+                    })
+                    .filter_map(|y| self.class_env_elem(var, y, env))
+                    .collect()
+            }
             "pairs" => s.pairs.iter().map(|(a, b)| one(vec![(var.into(), format!("{a}.{b}")), (format!("{var}.a"), a.clone()), (format!("{var}.b"), b.clone())])).collect(),
             "swap" => {
                 let (a, b) = arg.split_once('.').ok_or_else(|| format!("the swap of {arg:?}"))?;
@@ -655,7 +983,9 @@ impl Binder {
             Some((c, f)) => (c.to_string(), Some(f.to_string())),
             None => (ty.clone(), None),
         };
-        let Some(ctx) = env.ctx.as_ref().filter(|_| !self.sets.free.contains(&cls)) else {
+        let class = self.class_of(&cls, env)?;
+        let cls = self.sets.text(&class);
+        let Some(ctx) = env.ctx.as_ref().filter(|_| !self.sets.free.contains(&class)) else {
             if frame.is_some() {
                 return Err(format!("the type {ty} pushes a frame outside a context"));
             }
@@ -691,20 +1021,26 @@ pub struct ViewRow {
 fn admitted(row: &MasterRow, spec: &ViewSpec, master: &Master) -> bool {
     (spec.shape == Shape::Signature || spec.families.contains(&row.family))
         && row.since <= spec.master.unwrap_or(master.version)
-        && (row.elems == "*" || row.elems.split(',').any(|e| e == spec.element))
+        && (row.elems == "*" || row.elems.split(',').any(|e| spec.elements.iter().any(|v| v == e)))
 }
 
+/// Whether a template's text reads the element `{E}`.
+fn reads_elem(text: &str) -> bool {
+    text.contains("{E}")
+}
+
+/// THE ELEMENT OF A ROW in a view of several elements. `{E}` is bound by the first quantifier that picks a class of
+/// one element (`rank1`, `states`, `free`, `rows`, `class`: the class's own), and a class of another element binds
+/// nothing then. A quantifier whose argument reads `{E}` before any binds it (`V:vars({E})`), and a row whose
+/// templates read `{E}` with none bound (`add@{OUT}` over `{E};{E}`, `ival.{D}` over `D:dims`), iterate the
+/// elements the row is defined for, in the view's order. A row whose templates read no `{E}` is one row. In a view
+/// of one element `{E}` is bound from the start, so the rows are those of before.
 fn expand(rows: &[(&MasterRow, &[String])], binder: &Binder, env: &Env, out: &mut Vec<ViewRow>) -> Result<(), String> {
     let mut i = 0;
     while i < rows.len() {
         let (row, scope) = rows[i];
         let Some(q) = scope.first() else {
-            match row.when.as_str() {
-                "" => out.push(instantiate(row, binder, env)?),
-                "shallow" if env.shallow => out.push(instantiate(row, binder, env)?),
-                "shallow" => {}
-                other => return Err(format!("the row {} has the condition {other:?}", row.reference)),
-            }
+            leaf(row, binder, env, out)?;
             i += 1;
             continue;
         };
@@ -713,10 +1049,43 @@ fn expand(rows: &[(&MasterRow, &[String])], binder: &Binder, env: &Env, out: &mu
             j += 1;
         }
         let block: Vec<(&MasterRow, &[String])> = rows[i..j].iter().map(|(r, s)| (*r, &s[1..])).collect();
-        for b in binder.quantifier(q, env)? {
-            expand(&block, binder, &b, out)?;
+        let envs: Vec<Env> = if reads_elem(q) && !env.vars.contains_key("E") {
+            binder.sets.elements.iter().map(|e| binder.elem_env(env, e)).collect()
+        } else {
+            vec![env.clone()]
+        };
+        for e in &envs {
+            for b in binder.quantifier(q, e)? {
+                expand(&block, binder, &b, out)?;
+            }
         }
         i = j;
+    }
+    Ok(())
+}
+
+/// A row with every quantifier bound: instantiated when its condition holds, once an element it is defined for
+/// (the bound `{E}`, or each of the view's it reads `{E}` for; see [`expand`]).
+fn leaf(row: &MasterRow, binder: &Binder, env: &Env, out: &mut Vec<ViewRow>) -> Result<(), String> {
+    match row.when.as_str() {
+        "" => {}
+        "shallow" if env.shallow => {}
+        "shallow" => return Ok(()),
+        other => return Err(format!("the row {} has the condition {other:?}", row.reference)),
+    }
+    let mine = binder.row_elements(row);
+    match env.vars.get("E") {
+        Some(e) => {
+            if mine.contains(e) {
+                out.push(instantiate(row, binder, env)?);
+            }
+        }
+        None if [&row.name, &row.out, &row.spelling, &row.note].into_iter().any(|t| reads_elem(t)) || row.args.iter().any(|a| reads_elem(a)) => {
+            for e in mine {
+                out.push(instantiate(row, binder, &binder.elem_env(env, &e))?);
+            }
+        }
+        None => out.push(instantiate(row, binder, env)?),
     }
     Ok(())
 }
@@ -769,7 +1138,7 @@ fn reachable(rows: Vec<ViewRow>, root: &str) -> Result<Vec<ViewRow>, String> {
 fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, Binder), String> {
     let mut binder = Binder::new(spec, master)?;
     let picked: Vec<(&MasterRow, &[String])> = master.rows.iter().filter(|r| admitted(r, spec, master)).map(|r| (r, r.scope.as_slice())).collect();
-    let base = Env::default().with(&[("E".into(), spec.element.clone())]);
+    let base = binder.base_env();
     let o = match spec.shape {
         Shape::Matrix => {
             let root = format!("mat.{}", spec.root.join("."));
@@ -779,7 +1148,7 @@ fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, 
         }
         Shape::Signature => spec.output.as_ref().ok_or("the signature specification has no output")?,
     };
-    let cls = if o.dims.is_empty() { spec.element.clone() } else { array_class(&o.dims.iter().map(String::as_str).collect::<Vec<_>>()) };
+    let cls = binder.sets.text(&if o.dims.is_empty() { Class::Scalar(o.elem.clone()) } else { Class::Array { elem: o.elem.clone(), dims: o.dims.clone() } });
     // A class that no KEPT function row of the view produces is CONTEXT-FREE (the interface's value, one type in every
     // context). Which rows are kept depends on which classes are free, so the view iterates expand -> keep ->
     // recompute until the free classes settle (from none free; bounded by the class count: a run that does not settle
@@ -790,7 +1159,7 @@ fn view_rows(spec: &ViewSpec, master: &Master) -> Result<(Vec<ViewRow>, String, 
         let root = binder.dual(&cls, &Env { ctx: Some(Ctx::default()), ..Env::default() })?;
         let rows = reachable(rows, &root)?;
         let produced: BTreeSet<&str> = rows.iter().filter(|r| r.kind == "function").map(|r| r.out.split(':').next().unwrap_or("")).collect();
-        let free: Vec<String> = binder.sets.classes.iter().filter(|c| !produced.contains(c.as_str())).cloned().collect();
+        let free: Vec<Class> = binder.sets.classes.iter().filter(|c| !produced.contains(binder.sets.text(c).as_str())).cloned().collect();
         if free == binder.sets.free {
             return Ok((rows, root, binder));
         }
@@ -812,9 +1181,10 @@ struct ViewType {
     meaning: String,
 }
 
-fn signature_types(spec: &ViewSpec, rows: &[ViewRow], root: &str) -> Vec<ViewType> {
-    let elem = spec.element.as_str();
-    let literals: Vec<String> = spec.literals.iter().map(|l| format!("{l}{elem}")).collect();
+/// The types of a signature view: every dual its kept rows name, the root first, then by depth and name. A scalar's
+/// slot is its element and it carries the element's literal pool; an index's is `ix`, an array's `arr`, a tuple's
+/// `tuple`.
+fn signature_types(spec: &ViewSpec, rows: &[ViewRow], root: &str) -> Result<Vec<ViewType>, String> {
     let mut named: Vec<&str> = Vec::new();
     for r in rows {
         for d in std::iter::once(&r.out).chain(&r.args) {
@@ -829,19 +1199,19 @@ fn signature_types(spec: &ViewSpec, rows: &[ViewRow], root: &str) -> Vec<ViewTyp
         .into_iter()
         .map(|d| {
             let (cls, ctx) = d.split_once(':').unwrap_or((d, ""));
-            let slot = if cls.starts_with("ix.") {
-                "ix"
-            } else if cls.starts_with("a.") {
-                "arr"
-            } else {
-                elem
+            let class = Class::parse(cls, &spec.elements, None)?;
+            let (slot, literals, meaning) = match &class {
+                Class::Index(dim) => ("ix".to_string(), vec![], format!("an index in range for [{dim}]")),
+                Class::Array { elem, dims } => ("arr".to_string(), vec![], format!("a [{}]{elem}", dims.join("]["))),
+                Class::Tuple(parts) => ("tuple".to_string(), vec![], format!("a pair of {}", parts.iter().map(|p| format!("a {}", p.futhark_type())).collect::<Vec<_>>().join(" and "))),
+                Class::Scalar(elem) => {
+                    let pool = spec.literals.get(elem).ok_or_else(|| format!("the element {elem} has no literal pool"))?;
+                    (elem.clone(), pool.iter().map(|l| format!("{l}{elem}")).collect(), format!("an {elem}"))
+                }
+                Class::Named(n) => return Err(format!("our software has a bug: the signature view names the class {n}")),
             };
-            let meaning = match slot {
-                "ix" => format!("an index in range for [{}]", &cls[3..]),
-                "arr" => format!("a [{}]{elem}", class_dims(cls).join("][")),
-                _ => format!("an {elem}"),
-            } + &if ctx.is_empty() { ", the interface's input class".to_string() } else { format!(", in the context {ctx}") };
-            ViewType { dual: d.to_string(), slot: slot.to_string(), form: cls.to_string(), literals: if slot == elem { literals.clone() } else { vec![] }, root: d == root, meaning }
+            let meaning = meaning + &if ctx.is_empty() { ", the interface's input class".to_string() } else { format!(", in the context {ctx}") };
+            Ok(ViewType { dual: d.to_string(), slot, form: cls.to_string(), literals, root: d == root, meaning })
         })
         .collect()
 }
@@ -925,16 +1295,16 @@ impl View {
         let (rows, root, binder) = view_rows(&spec, master)?;
         match spec.shape {
             Shape::Signature => {
-                let types = signature_types(&spec, &rows, &root);
+                let types = signature_types(&spec, &rows, &root)?;
                 let rows = ordered(rows);
                 let mut v = View { types_tsv: types_text(&types), functions_tsv: functions_text(&rows), datatype: String::new(), rules: String::new(), egraph_rows: String::new(), sorts: String::new(), spec };
-                v.signature_egraph(&types, &rows, master);
+                v.signature_egraph(&types, &rows, master)?;
                 Ok(v)
             }
             Shape::Matrix => {
                 let named: BTreeSet<&str> = rows.iter().flat_map(|r| std::iter::once(r.out.as_str()).chain(r.args.iter().map(String::as_str))).collect();
                 let mut types = Vec::new();
-                let base = Env::default().with(&[("E".into(), spec.element.clone())]);
+                let base = binder.base_env();
                 for t in master.types.iter().filter(|t| spec.families.contains(&t.family)) {
                     for env in binder.expand_scope(&t.scope, &base)? {
                         let dual = subst(&t.dual, &env)?;
@@ -950,10 +1320,12 @@ impl View {
     }
 
     /// The signature view's e-graph: one sort a dual, one constructor a row (a constant takes its pool index), and the
-    /// master's rules on every type they apply to (`elem`: the element types; `arr`: the rank-1 array types in a
-    /// context that hold the row the rule `needs`), for the element types each rule is exact for.
-    fn signature_egraph(&mut self, types: &[ViewType], rows: &[ViewRow], master: &Master) {
-        let elem = self.spec.element.clone();
+    /// master's rules on every type they apply to (`elem`: the scalar types; `arr`: the rank-1 array types in a
+    /// context that hold the row the rule `needs`; `tuple`: the pair types, whose `{fst}` and `{snd}` are the
+    /// projections at the components' types), for the element types each rule is exact for (a pair's: both
+    /// components').
+    fn signature_egraph(&mut self, types: &[ViewType], rows: &[ViewRow], master: &Master) -> Result<(), String> {
+        let elements = self.spec.elements.clone();
         let mut data = String::from("; The signature family's e-graph datatype, generated by gen_tables.py.\n; One sort per dual: the sort IS the type (class and context).\n\n");
         for t in types {
             data.push_str(&format!("(sort {})\n", sig_sort(&t.dual)));
@@ -965,23 +1337,37 @@ impl View {
         }
         let names: BTreeSet<&str> = rows.iter().map(|r| r.name.as_str()).collect();
         let mut rules = String::from("; The signature family's e-graph ruleset, generated by gen_tables.py.\n(ruleset futhark_sig)\n\n");
-        for on in ["elem", "arr"] {
+        for on in ["elem", "arr", "tuple"] {
             for t in types {
                 let d = &t.dual;
-                let applies = match on {
-                    "elem" => t.slot == elem,
-                    _ => t.slot == "arr" && t.form.matches('.').count() == 1 && d.contains(':'),
+                let (cls, ctx) = d.split_once(':').unwrap_or((d, ""));
+                let class = Class::parse(cls, &elements, None)?;
+                // The elements a rule must be exact for to apply at this type.
+                let exact_for: Vec<&str> = match (on, &class) {
+                    ("elem", Class::Scalar(e)) => vec![e],
+                    ("arr", Class::Array { elem, dims }) if dims.len() == 1 && !ctx.is_empty() => vec![elem],
+                    ("tuple", Class::Tuple(parts)) => parts.iter().filter_map(Class::elem).collect(),
+                    _ => continue,
                 };
-                if !applies {
-                    continue;
-                }
-                let mine: Vec<&RuleTemplate> = master.rules.iter().filter(|r| r.on == on && r.elems.split(',').any(|e| e == elem) && (r.needs.is_empty() || names.contains(format!("{}@{d}", r.needs).as_str()))).collect();
+                let mine: Vec<&RuleTemplate> = master
+                    .rules
+                    .iter()
+                    .filter(|r| r.on == on && exact_for.iter().all(|e| r.elems == "*" || r.elems.split(',').any(|x| x == *e)) && (r.needs.is_empty() || names.contains(format!("{}@{d}", r.needs).as_str())))
+                    .collect();
                 if mine.is_empty() {
                     continue;
                 }
                 rules.push_str(&format!("; {d}\n"));
                 for r in mine {
-                    rules.push_str(&rule_text(&r.rule, d));
+                    let text = match &class {
+                        Class::Tuple(parts) => {
+                            let tag = parts.iter().map(|p| p.text(self.spec.multi())).collect::<Vec<_>>().join(".");
+                            let at = |p: &Class| format!("{}:{ctx}", p.text(self.spec.multi()));
+                            rule_text(&r.rule, d).replace(&sig_ctor(&format!("fst@{d}"), "function", d), &sig_ctor(&format!("fst.{tag}@{}", at(&parts[0])), "function", &at(&parts[0]))).replace(&sig_ctor(&format!("snd@{d}"), "function", d), &sig_ctor(&format!("snd.{tag}@{}", at(&parts[1])), "function", &at(&parts[1])))
+                        }
+                        _ => rule_text(&r.rule, d),
+                    };
+                    rules.push_str(&text);
                     rules.push('\n');
                 }
                 rules.push('\n');
@@ -999,6 +1385,7 @@ impl View {
         self.rules = rules;
         self.egraph_rows = rtext;
         self.sorts = stext;
+        Ok(())
     }
 
     /// The kingdom the view is, as the engine loads every Futhark kingdom.
@@ -1042,10 +1429,13 @@ impl View {
     }
 }
 
-/// Every committed specification, by the directory [`write_committed`] writes its tables into: the four signature
-/// problems (`sig/<problem>`) and A7's matrix view (`a7`).
-pub const COMMITTED: [(&str, &str); 6] = [
+/// Every committed specification, by the directory [`write_committed`] writes its tables into: the signature
+/// problems (`sig/<problem>`), the two test views of the pair constructs (`sig/argmin`, `sig/kahan`, sniffed from
+/// `kingdoms/futhark/sig/kahan/kahan.fut`) and A7's matrix view (`a7`).
+pub const COMMITTED: [(&str, &str); 8] = [
+    ("sig/argmin", include_str!("../kingdoms/futhark/sig/argmin/view.tsv")),
     ("sig/histogram", include_str!("../kingdoms/futhark/sig/histogram/view.tsv")),
+    ("sig/kahan", include_str!("../kingdoms/futhark/sig/kahan/view.tsv")),
     ("sig/kmeans", include_str!("../kingdoms/futhark/sig/kmeans/view.tsv")),
     ("sig/pathfinder", include_str!("../kingdoms/futhark/sig/pathfinder/view.tsv")),
     ("sig/reduce", include_str!("../kingdoms/futhark/sig/reduce/view.tsv")),

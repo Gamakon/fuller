@@ -18,7 +18,7 @@ M0016	1	core	const	i32,f32	C		?_{OUT}	{E}			a literal of the constant pool
 M0017	1	core	terminal	i32,f32	C;V:vars({E})		{V}@{OUT}	{E}		{V}	the loop state {V}
 M0018	1	core	function	i32,f32	C;D:dims		prev@{OUT}	ix.{D}	ix.{D}	i64.max 0 ({0} - 1)	the previous index into [{D}], clamped at 0
 M0019	1	core	function	i32,f32	C;D:dims		next@{OUT}	ix.{D}	ix.{D}	i64.min ({D} - 1) ({0} + 1)	the next index into [{D}], clamped at {D} - 1
-M0020	1	core	function	i32	C;D:dims		clamp@{OUT}	ix.{D}	{E}	i64.max 0 (i64.min ({D} - 1) (i64.{E} {0}))	a value clamped into an index of [{D}]
+M0020	1	core	function	i32	C;D:dims		clamp{E.tag}@{OUT}	ix.{D}	{E}	i64.max 0 (i64.min ({D} - 1) (i64.{E} {0}))	a value clamped into an index of [{D}]
 M0021	1	core	terminal	i32,f32	C;D:dims		zero@{OUT}	ix.{D}		0i64	the first index into [{D}]
 M0022	1	core	terminal	i32,f32	C;D:dims		last@{OUT}	ix.{D}		{D} - 1	the last index into [{D}] (every dim is at least 1)
 M0023	1	core	terminal	i32,f32	C;D:dims;V:vars(ix.{D})		{V}@{OUT}	ix.{D}		{V}	the bound index {V}
@@ -37,7 +37,7 @@ M0035	1	hist	function	i32	C;D:rank1;D2:rank1	shallow	hist.max.{D2}@{OUT}	a.{D}	a
 M0036	1	core	function	i32,f32	C;D:rank1;Y:rows(a.{D})		row.{Y.dims}@{OUT}	a.{D}	{Y};ix.{Y.d0}	{0}[{1}]	a row of a [{Y.br}] array
 M0037	1	core	terminal	i32,f32	C;D:rank1;V:vars(a.{D})		{V}@{OUT}	a.{D}		{V}	the loop state {V}
 M0038	1	core	terminal	i32,f32	C;D:rank1;I:inputs(a.{D})		{I}@{OUT}	a.{D}		{I}	an input of the interface
-M0039	1	core	terminal	i32,f32	C;D:rank1		zeros@{OUT}	a.{D}		zeros_{D}	the zero [{D}] array (bound once by the entry point)
+M0039	1	core	terminal	i32,f32	C;D:rank1		zeros@{OUT}	a.{D}		zeros_{D.tag}	the zero [{D}] array (bound once by the entry point)
 M0040	2	core	function	i32,f32	C;S:states;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{S}+L-{D}-{S}	loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}	a loop over [{D}] carrying {S.var}, its counter {D.ix}
 M0041	2	core	function	i32,f32	C;S:states;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}	a loop over 1 .. {D} - 1 carrying {S.var}, its counter {D.ix}
 M0042	1	core	terminal	i32,f32	X:free;I:inputs({X})		{I}@{OUT}	{X}		{I}	an input of the interface
@@ -54,7 +54,7 @@ M0052	1	matrix	function	f32			fn.arr2_f32_arr_f32_arr_f32.add	fn.arr2_f32_arr_f3
 M0053	1	matrix	terminal	f32	P:pairs		mat.{P}.input	mat.{P}		m_{P.a}_{P.b}	the interface's {P.a}x{P.b} matrix
 M0054	1	matrix	terminal	f32			fn.arr_f32_arr_f32.const	fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs	the constant zero row function
 M0055	1	matrix	terminal	f32			fn.arr2_f32_arr_f32_arr_f32.const	fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs	the constant zero binary row function
-M0056	3	core	function	f32	C;D:dims		clamp@{OUT}	ix.{D}	{E}	let x = {0} in i64.max 0 (i64.min ({D} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({D} - 1)) x))))	a value clamped into an index of [{D}] (a NaN is 0; the value is clamped before the conversion, which Futhark leaves undefined out of range)
+M0056	3	core	function	f32	C;D:dims		clamp{E.tag}@{OUT}	ix.{D}	{E}	let x = {0} in i64.max 0 (i64.min ({D} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({D} - 1)) x))))	a value clamped into an index of [{D}] (a NaN is 0; the value is clamped before the conversion, which Futhark leaves undefined out of range)
 M0057	3	hist	function	f32	C;D:rank1;D2:rank1	shallow	hist.add.{D2}@{OUT}	a.{D}	a.{D2};a.{D2}	hist (+) 0{E} {D} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {D}) x))) {0}) {1}	the add histogram into [{D}] of [{D2}] values at [{D2}] indices (an index is the value truncated; a NaN or one outside [0, {D}) ignored)
 M0058	3	hist	function	f32	C;D:rank1;D2:rank1	shallow	hist.min.{D2}@{OUT}	a.{D}	a.{D2};a.{D2}	hist {E}.min {E}.highest {D} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {D}) x))) {0}) {1}	the min histogram into [{D}] of [{D2}] values at [{D2}] indices (an index is the value truncated; a NaN or one outside [0, {D}) ignored)
 M0059	3	hist	function	f32	C;D:rank1;D2:rank1	shallow	hist.max.{D2}@{OUT}	a.{D}	a.{D2};a.{D2}	hist {E}.max {E}.lowest {D} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {D}) x))) {0}) {1}	the max histogram into [{D}] of [{D2}] values at [{D2}] indices (an index is the value truncated; a NaN or one outside [0, {D}) ignored)
@@ -66,3 +66,12 @@ M0064	3	hist	function	i32	C;D:rank1;Y:rows(a.{D});D2:rank1;V2:class(a.{D2}.{D})	
 M0065	3	hist	function	f32	C;D:rank1;Y:rows(a.{D});D2:rank1;V2:class(a.{D2}.{D})	shallow	histrows.add.{D2}@{OUT}	{Y}	a.{D2};{V2}	hist (map2 (+)) (replicate {D} 0{E}) {Y.d0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {Y.d0}) x))) {0}) {1}	the elementwise add histogram into [{Y.br}] of [{D2}][{D}] rows at [{D2}] indices (an index is the value truncated; a NaN or one outside [0, {Y.d0}) ignored)
 M0066	3	core	function	f32	C;D:rank1;Y:rows(a.{D})	shallow	rowdiv@{OUT}	{Y}	{Y};a.{Y.d0}	map2 (\r s -> map (/ s) r) {0} {1}	each row of a [{Y.br}] array divided by its [{Y.d0}] scalar
 M0067	3	core	terminal	i32,f32	C;D:rank1;Y:rows(a.{D});I:inputs({Y})		{I}@{OUT}	{Y}		{I}	an input of the interface (a class of rows, once a row of the view produces it)
+M0068	4	core	function	i32,f32	C;S:tuples		pair@{OUT}	{S}	{S.a};{S.b}	({0}, {1})	a pair of a {S.a} and a {S.b}
+M0069	4	core	function	i32,f32	C;S:tuples		fst.{S.tag}@{OUT}	{S.a}	{S}	{0}.0	the first of a {S.type}
+M0070	4	core	function	i32,f32	C;S:tuples		snd.{S.tag}@{OUT}	{S.b}	{S}	{0}.1	the second of a {S.type}
+M0071	4	core	terminal	i32,f32	C;S:tuples		zero@{OUT}	{S}		{S.zero}	the pair of the components' zeros
+M0072	4	core	function	i32,f32	C;S:tuples		psel{E.tag}@{OUT}	{S}	{E};{S};{S}	if {0} < 0{E} then {1} else {2}	the first pair when a value is negative, else the second
+M0073	4	core	function	i32,f32	C;S:tuples;D:dims	shallow	loop.{D}@{OUT}	{S}	{S};{S}+L-{D}-{S}	loop ({S.var}: {S.type}) = {0} for {D.ix} < {D} do {1}	a loop over [{D}] carrying the pair {S.var}, its counter {D.ix}
+M0074	4	core	function	i32,f32	C;S:tuples;D:dims	shallow	loop1.{D}@{OUT}	{S}	{S};{S}+F-{D}-{S}	loop ({S.var}: {S.type}) = {0} for t{D.ix} < {D} - 1 do let {D.ix} = t{D.ix} + 1 in {1}	a loop over 1 .. {D} - 1 carrying the pair {S.var}, its counter {D.ix}
+M0075	4	core	function	f32	C		cvt.i32@{OUT}	{E}	i32	{E}.i32 {0}	an i32 as an {E} (exact below 2^24, else rounded to nearest)
+M0076	4	core	function	i32	C		cvt.f32@{OUT}	{E}	f32	let x = {0} in if f32.isnan x then 0{E} else {E}.f32 (f32.max (-2147483648f32) (f32.min 2147483520f32 x))	an f32 as an {E}, truncated toward zero: a NaN is 0, and the value is clamped into {E}'s range first (Futhark leaves the conversion undefined there)

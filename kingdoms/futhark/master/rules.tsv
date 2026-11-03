@@ -20,3 +20,5 @@ arr	f32	map2.min	(rewrite ({map2.add} a b) ({map2.add} b a) :ruleset futhark_sig
 arr	f32	map2.min	(rewrite ({map2.mul} a b) ({map2.mul} b a) :ruleset futhark_sig)
 arr	f32	map2.min	(rewrite ({map2.min} a a) a :ruleset futhark_sig)
 arr	f32	map2.min	(rewrite ({map2.max} a a) a :ruleset futhark_sig)
+tuple	i32,f32		(rewrite ({fst} ({pair} a b)) a :ruleset futhark_sig)
+tuple	i32,f32		(rewrite ({snd} ({pair} a b)) b :ruleset futhark_sig)
