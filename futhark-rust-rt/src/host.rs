@@ -116,24 +116,57 @@ fn fingerprint(h: &HostValue) -> u64 {
     x
 }
 
-/// A session: a device, kept while it works, the modules loaded, and the resident sample.
+/// THE SAMPLE'S ROWS ON THE HOST (the advisor's round-3 review, N3): the resident sample's `f32` values, parsed from
+/// its bytes ONCE a session and kept beside the device's copy, so a `k` command slices its case's rows from them.
+/// Before 2026-11-03 every `k` command converted the whole sample (5,000 x 1,536 floats, 30 MB) to slice its case:
+/// 2 pairs x 2 sides x 6 cases x 24 programs = 576 conversions a generation. Replaced only by another sample (its
+/// fingerprint differs); it outlives the device, which a lost context makes again without it.
+struct SampleRows {
+    fingerprint: u64,
+    floats: std::sync::Arc<Vec<f32>>,
+}
+
+/// A session: a device, kept while it works, the modules loaded, the resident sample and its rows on the host.
 pub struct Session {
     device: Option<(wgpu::Device, wgpu::Queue)>,
     modules: HashMap<PathBuf, ModuleExport>,
     wait: Duration,
     devices_made: u64,
     resident: Option<Resident>,
+    sample_rows: Option<SampleRows>,
+    /// How many times a sample's rows were parsed (a measurement aid: once a session for one sample).
+    sample_parses: u64,
 }
 
 impl Session {
     pub fn new(wait: Duration) -> Session {
-        Session { device: None, modules: HashMap::new(), wait, devices_made: 0, resident: None }
+        Session { device: None, modules: HashMap::new(), wait, devices_made: 0, resident: None, sample_rows: None, sample_parses: 0 }
     }
 
-    /// The resident sample as `sample` (uploaded now when it is not, or is another sample): the value a context reads
-    /// it through, and the nanoseconds of the upload (0 when it was resident already).
-    fn resident_sample(&mut self, ctx: &FutharkCtx, sample: &HostValue) -> Result<(Value, u128), Error> {
-        let fp = fingerprint(sample);
+    /// The sample's rows as `f32` ([`SampleRows`]): parsed now when no sample's rows are kept, or another sample's
+    /// (`fp` its fingerprint), else the kept ones, shared.
+    fn sample_rows(&mut self, sample: &HostValue, fp: u64) -> Result<std::sync::Arc<Vec<f32>>, Error> {
+        if sample.elem != ElemType::F32 || sample.shape.len() != 2 {
+            return Err(Error::new("the sample is not a [m][d]f32"));
+        }
+        if let Some(r) = self.sample_rows.as_ref().filter(|r| r.fingerprint == fp) {
+            return Ok(r.floats.clone());
+        }
+        let floats: Vec<f32> = sample.bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        self.sample_parses += 1;
+        let floats = std::sync::Arc::new(floats);
+        self.sample_rows = Some(SampleRows { fingerprint: fp, floats: floats.clone() });
+        Ok(floats)
+    }
+
+    /// How many times a sample's rows were parsed in this session.
+    pub fn sample_parses(&self) -> u64 {
+        self.sample_parses
+    }
+
+    /// The resident sample as `sample` (its fingerprint `fp`; uploaded now when it is not, or is another sample):
+    /// the value a context reads it through, and the nanoseconds of the upload (0 when it was resident already).
+    fn resident_sample(&mut self, ctx: &FutharkCtx, sample: &HostValue, fp: u64) -> Result<(Value, u128), Error> {
         if self.resident.as_ref().is_none_or(|r| r.fingerprint != fp) {
             let t = Instant::now();
             let size = (sample.bytes.len() as u64).div_ceil(4) * 4;
@@ -215,26 +248,18 @@ fn upload(ctx: &FutharkCtx, vs: &[HostValue]) -> Result<Vec<Value>, Error> {
 /// final clustering so, and its `run_of_k_payload` reads these rather than assigning to the final centres, which is
 /// another partition on a run that did not converge), else the failure's text.
 fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec<u8>, Error> {
-    let KmeansCase { sample_h, sample_v, starts_h, start, n, cap, tol } = *case;
+    let KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol } = *case;
     if !ctx.timing() {
         return Err(Error::new("a k-means command in a run with no GPU timing"));
     }
     let f32s = |h: &HostValue| -> Vec<f32> { h.bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect() };
-    let (m, d) = match (sample_h.elem, sample_h.shape.as_slice()) {
-        (ElemType::F32, [m, d]) => (*m as usize, *d as usize),
-        _ => return Err(Error::new("the sample is not a [m][d]f32")),
-    };
-    if start + n > m || n == 0 {
-        return Err(Error::new(format!("the range {start}..{} is not within the sample's {m} rows", start + n)));
-    }
     let k = match (starts_h.elem, starts_h.shape.as_slice()) {
         (ElemType::F32, [k, dd]) if *dd as usize == d => *k as usize,
         _ => return Err(Error::new(format!("the starting centres are not a [k][{d}]f32"))),
     };
-    let points: Vec<f32> = f32s(sample_h)[start * d..(start + n) * d].to_vec();
     let rows = |v: &[f32]| -> Vec<Vec<f32>> { v.chunks_exact(d).map(<[f32]>::to_vec).collect() };
     let mut centroids = rows(&f32s(starts_h));
-    let start_inertia = crate::kmeans_harness::euclidean_inertia(&points, &centroids, &crate::kmeans_harness::assign(&points, d, &centroids), d);
+    let start_inertia = crate::kmeans_harness::euclidean_inertia(points, &centroids, &crate::kmeans_harness::assign(points, d, &centroids), d);
     let mut centres_v = Value::from_host(ctx, starts_h)?;
     ctx.sync()?;
     let (mut prev, mut current) = (f32::INFINITY, f32::NAN);
@@ -245,7 +270,7 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
     for it in 0..cap {
         iterations = it + 1;
         // The harness's assignment against the centres the step is given (UltraDim's loop assigns before the update).
-        assignments = crate::kmeans_harness::assign(&points, d, &centroids);
+        assignments = crate::kmeans_harness::assign(points, d, &centroids);
         let args = [sample_v.clone(), Value::Scalar(Scalar::I64(start as i64)), Value::Scalar(Scalar::I64(n as i64)), centres_v.clone()];
         let m0 = ctx.timed_passes();
         let outs = match (e.call)(ctx, &args).and_then(|o| ctx.sync().map(|()| o)) {
@@ -275,7 +300,7 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase) -> Result<Vec
         final_h = Some(h);
         // The next step takes this output as its centres, on the device: nothing is uploaded again.
         centres_v = out;
-        current = crate::kmeans_harness::euclidean_inertia(&points, &centroids, &assignments, d);
+        current = crate::kmeans_harness::euclidean_inertia(points, &centroids, &assignments, d);
         if (prev - current).abs() < tol {
             converged = true;
             break;
@@ -306,11 +331,12 @@ fn kmeans_payload(iterations: u32, converged: bool, ns: f64, start_inertia: f32,
     payload
 }
 
-/// One `k` command's case: the sample on the host and on the device, the case's starting centres, its row range, the
-/// loop's cap and tolerance.
+/// One `k` command's case: the case's rows on the host (a slice of the session's [`SampleRows`]) and their width,
+/// the sample on the device, the case's starting centres, its row range, the loop's cap and tolerance.
 #[derive(Clone, Copy)]
 struct KmeansCase<'a> {
-    sample_h: &'a HostValue,
+    points: &'a [f32],
+    d: usize,
     sample_v: &'a Value,
     starts_h: &'a HostValue,
     start: usize,
@@ -319,19 +345,20 @@ struct KmeansCase<'a> {
     tol: f32,
 }
 
-/// What every command of a run reads: the cases' values, the timing input's, their counts, and the resident sample
-/// the `k` commands share (the session's, through this run's context).
+/// What every command of a run reads: the cases' values, the timing input's, their counts, the resident sample the
+/// `k` commands share (the session's, through this run's context) and its rows on the host.
 struct RunState<'a> {
     cases: &'a [HostValue],
     timing: Option<&'a [HostValue]>,
     n_cases: usize,
     n_in: usize,
     resident: Option<&'a Value>,
+    sample_rows: Option<&'a [f32]>,
 }
 
 /// One command: its payload, or its failure.
 fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Result<(&'static str, Vec<u8>), (&'static str, Error)> {
-    let RunState { cases, timing, n_cases, n_in, resident } = st;
+    let RunState { cases, timing, n_cases, n_in, resident, sample_rows } = st;
     let w: Vec<&str> = line.split_whitespace().collect();
     match w.as_slice() {
         ["k", entry, case, start, n, cap, tol] => {
@@ -352,7 +379,17 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             }
             let starts_h = cases.get(case * n_in + n_in - 1).ok_or_else(|| bad("case index"))?;
             let sample_v = resident.ok_or((tag, Error::new("our software has a bug: a k-means command with no resident sample")))?;
-            kmeans_loop(ctx, e, &KmeansCase { sample_h, sample_v, starts_h, start, n, cap, tol }).map(|p| (tag, p)).map_err(|x| (tag, x))
+            let rows = sample_rows.ok_or((tag, Error::new("our software has a bug: a k-means command with no sample rows on the host")))?;
+            let (m, d) = match (sample_h.elem, sample_h.shape.as_slice()) {
+                (ElemType::F32, [m, d]) => (*m as usize, *d as usize),
+                _ => return Err((tag, Error::new("the sample is not a [m][d]f32"))),
+            };
+            if start + n > m || n == 0 || rows.len() != m * d {
+                return Err((tag, Error::new(format!("the range {start}..{} is not within the sample's {m} rows", start + n))));
+            }
+            // The case's rows: a slice of the session's parsed sample, nothing converted or copied.
+            let points = &rows[start * d..(start + n) * d];
+            kmeans_loop(ctx, e, &KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol }).map(|p| (tag, p)).map_err(|x| (tag, x))
         }
         ["q", entry] => {
             let tag = "q";
@@ -537,18 +574,34 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
     // THE RESIDENT SAMPLE of the `k` commands: the session's, uploaded now only when it is not there yet (the first
     // run of the session, or a device made again), as the `u` record says (its nanoseconds; 0 when resident).
     let mut resident: Option<Value> = None;
+    // The sample's fingerprint, once a run (30 MB hashed), for the device's copy and the host's rows alike; the rows
+    // parsed once a session ([`SampleRows`]). The `u` record's payload: the sample's bytes, then whether this run
+    // parsed the rows (`rows_parsed 1`) or found them kept (`rows_parsed 0`).
+    let mut sample_fp = 0u64;
+    let mut sample_rows: Option<std::sync::Arc<Vec<f32>>> = None;
     if commands.lines().any(|l| l.starts_with("k ")) {
         let Some(sample) = timing.as_ref().and_then(|t| t.first()) else {
             r.record("u", -1, false, 0, 0, b"a k-means run with no sample (the timing input)");
             return r.out;
         };
+        sample_fp = fingerprint(sample);
+        let parses_before = s.sample_parses();
+        let rows = match s.sample_rows(sample, sample_fp) {
+            Ok(rows) => rows,
+            Err(e) => {
+                r.record("u", -1, false, 0, 0, e.message().as_bytes());
+                return r.out;
+            }
+        };
+        let parsed = s.sample_parses() - parses_before;
+        sample_rows = Some(rows);
         let got = match ctx.as_ref() {
-            Some(c) => s.resident_sample(c, sample),
+            Some(c) => s.resident_sample(c, sample, sample_fp),
             None => Err(Error::new("our software has a bug: no context for the upload")),
         };
         match got {
             Ok((v, ns)) => {
-                r.record("u", -1, true, ns, 0, sample.bytes.len().to_string().as_bytes());
+                r.record("u", -1, true, ns, 0, format!("{} rows_parsed {parsed}", sample.bytes.len()).as_bytes());
                 resident = Some(v);
             }
             Err(e) => {
@@ -566,9 +619,9 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
                     // A context made again after a device was: the resident sample is uploaded again for it.
                     if resident.is_none() && commands.lines().any(|l| l.starts_with("k ")) {
                         if let Some(sample) = timing.as_ref().and_then(|t| t.first()) {
-                            match s.resident_sample(&c, sample) {
+                            match s.resident_sample(&c, sample, sample_fp) {
                                 Ok((v, ns)) => {
-                                    r.record("u", -1, true, ns, 0, sample.bytes.len().to_string().as_bytes());
+                                    r.record("u", -1, true, ns, 0, format!("{} rows_parsed 0", sample.bytes.len()).as_bytes());
                                     resident = Some(v);
                                 }
                                 Err(e) => {
@@ -593,7 +646,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         // One bound on the whole command, as the driver's `alarm(bound)`: every wait respects the deadline, and a
         // command that ends past it is a failure too.
         c.set_deadline(Some(t0 + s.wait));
-        let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, RunState { cases: &cases, timing: timing.as_deref(), n_cases: inputs.n_cases, n_in: inputs.n_in, resident: resident.as_ref() })));
+        let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, RunState { cases: &cases, timing: timing.as_deref(), n_cases: inputs.n_cases, n_in: inputs.n_in, resident: resident.as_ref(), sample_rows: sample_rows.as_deref().map(Vec::as_slice) })));
         c.set_deadline(None);
         let ns = t0.elapsed().as_nanos();
         let over = t0.elapsed() >= s.wait;
@@ -756,5 +809,38 @@ mod tests {
         let nl = f.iter().position(|b| *b == b'\n').expect("a header line");
         assert_eq!(std::str::from_utf8(&f[..nl]).expect("text"), "3 0 0 0.0 10 10");
         assert_eq!(&f[nl + 1..], b"iteration 3: a centroid is infinite or NaN");
+    }
+
+    /// THE SAMPLE'S ROWS ARE PARSED ONCE A SESSION (the advisor's round-3 review, N3): the dbpedia sample's size
+    /// (5,000 x 1,536 f32, 30 MB) asked for twice gives the one parsed vector (the same allocation, one parse); another
+    /// sample is parsed again; a sample that is not a `[m][d]f32` is refused. The parse is timed and the saving
+    /// stated at the first run's count: 576 conversions a generation (2 pairs x 2 sides x 6 cases x 24 programs).
+    /// No device.
+    #[test]
+    fn the_samples_rows_are_parsed_once_a_session_and_shared_by_every_k_command() {
+        let (m, d) = (5000usize, 1536usize);
+        let bytes: Vec<u8> = (0..m * d).flat_map(|i| ((i % 977) as f32 / 977.0).to_le_bytes()).collect();
+        let sample = HostValue { elem: ElemType::F32, shape: vec![m as i64, d as i64], bytes };
+        let fp = fingerprint(&sample);
+        let mut s = Session::new(Duration::from_secs(1));
+        let t = Instant::now();
+        let a = s.sample_rows(&sample, fp).expect("the rows");
+        let parse = t.elapsed();
+        let t = Instant::now();
+        let b = s.sample_rows(&sample, fp).expect("the rows again");
+        let reuse = t.elapsed();
+        assert!(std::sync::Arc::ptr_eq(&a, &b), "the second request must share the first parse");
+        assert_eq!(s.sample_parses(), 1);
+        assert_eq!(a.len(), m * d);
+        assert_eq!(a[d + 1], (1537 % 977) as f32 / 977.0);
+        assert_eq!(&a[d..2 * d], &sample.bytes[4 * d..8 * d].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect::<Vec<f32>>()[..]);
+        let other = HostValue { elem: ElemType::F32, shape: vec![2, 2], bytes: vec![0; 16] };
+        let c = s.sample_rows(&other, fingerprint(&other)).expect("another sample's rows");
+        assert_eq!((c.len(), s.sample_parses()), (4, 2), "another sample is parsed again");
+        assert!(s.sample_rows(&sample, fp).is_ok() && s.sample_parses() == 3, "the first sample again, after another: parsed again (one sample is kept)");
+        let wrong = HostValue { elem: ElemType::I32, shape: vec![4], bytes: vec![0; 16] };
+        assert!(s.sample_rows(&wrong, fingerprint(&wrong)).unwrap_err().message().contains("[m][d]f32"));
+        let per_generation = 2 * 2 * 6 * 24;
+        eprintln!("the sample's rows ({} MB): parsed once in {:.1} ms, found kept in {:.3} ms; before, {per_generation} parses a generation = {:.2} s of host time a generation", sample.bytes.len() / 1_000_000, parse.as_secs_f64() * 1e3, reuse.as_secs_f64() * 1e3, parse.as_secs_f64() * per_generation as f64);
     }
 }
