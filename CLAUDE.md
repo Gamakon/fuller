@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## FULLER DOES NOT EVOLVE CODE (Andrew, 2026-11-03)
+
+**fuller is the library: kingdoms (symbol tables and views), the typed GEP core, evaluators (compilers, GPU
+runtimes), fitness schemes, the e-graph. It is NOT the place to run evolution.** Every evolution run, of every
+kingdom, goes through phylu's engine (`../phylu`: virtual ALPS, the pump, the islands, the generation loop). Never
+add a generation loop, a population, selection or a runner that evolves anything to fuller; when phylu needs
+something from fuller, expose it here as library code (as `futhark_search::Scorer` is for phylu's
+`evolve::shape_typed`). `examples/futhark_evolve.rs` and the loop in `src/futhark_search.rs` are a mistake of
+2026-10-27 to 11-03 that grew into a second engine without ALPS, the pump or the islands: they are DEPRECATED, to be
+removed once phylu runs the Futhark problems (`docs/PLAN_futhark_kingdom.md`).
+
 ## What this is
 
 fuller is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/gamakon/hff/`: deterministic, real-domain, bounded.
