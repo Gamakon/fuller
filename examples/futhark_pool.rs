@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use fuller::futhark_table::FutharkKingdom;
 use fuller::futhark_reader::{Gap, Reader};
@@ -264,8 +264,8 @@ struct Ctx {
     /// The programs are on topics of their own, never the benchmark's task (`topics`).
     topics: bool,
     pname: String,
-    k: FutharkKingdom,
-    sig: Signature,
+    k: Arc<FutharkKingdom>,
+    sig: Arc<Signature>,
     out: PathBuf,
     run: PathBuf,
 }

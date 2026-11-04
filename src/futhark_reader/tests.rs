@@ -13,7 +13,7 @@ fn functions(k: &FutharkKingdom, t: &Tree) -> usize {
     usize::from(!k.rows[t.symbol as usize].inputs.is_empty()) + t.kids.iter().map(|c| functions(k, c)).sum::<usize>()
 }
 
-fn setup(p: &Problem) -> (FutharkKingdom, Signature) {
+fn setup(p: &Problem) -> (std::sync::Arc<FutharkKingdom>, std::sync::Arc<Signature>) {
     (load(&p.instance).unwrap(), signature(&p.instance).unwrap())
 }
 

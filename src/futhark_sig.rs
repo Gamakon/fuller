@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
@@ -506,9 +507,10 @@ pub fn timing_work_cap(reference_work: u128) -> u128 {
     TIMING_WORK_CAP.max(reference_work.saturating_mul(4))
 }
 
-/// Load an instance's kingdom: its view's table.
-pub fn load(inst: &Instance) -> Result<FutharkKingdom, String> {
-    inst.view()?.kingdom(&format!("Futhark Sig {}", inst.name))
+/// Load an instance's kingdom: its view's table, as a SHARED HANDLE, so a host, an interpreter or an evaluator that
+/// holds it owns what it reads and can outlive the caller's scope (plan step 5a, F1).
+pub fn load(inst: &Instance) -> Result<Arc<FutharkKingdom>, String> {
+    inst.view()?.kingdom(&format!("Futhark Sig {}", inst.name)).map(Arc::new)
 }
 
 /// THE STATIC COST of a program of the matrix kingdom (A7; `crate::futhark_cost`, the generator's `costs.tsv`: a
@@ -552,13 +554,14 @@ pub struct Signature {
 }
 
 /// The signature of an instance: a signature view's from its specification ([`signature_of`]), a matrix view's from
-/// its kingdom ([`matrix_signature`]).
-pub fn signature(inst: &Instance) -> Result<Signature, String> {
+/// its kingdom ([`matrix_signature`]); a shared handle, as [`load`]'s kingdom.
+pub fn signature(inst: &Instance) -> Result<Arc<Signature>, String> {
     let view = inst.view()?;
     match view.spec.shape {
         Shape::Signature => signature_of(&view.spec).map_err(|e| format!("{}: {e}", inst.name)),
         Shape::Matrix => matrix_signature(&view.kingdom(inst.name)?, &view.spec).map_err(|e| format!("{}: {e}", inst.name)),
     }
+    .map(Arc::new)
 }
 
 /// THE MATRIX VIEW'S SIGNATURE (A7): one input a matrix class, in the kingdom's class order, named by its input
@@ -1283,10 +1286,11 @@ impl Num {
     }
 }
 
-/// The interpreter of one instance: each row's meaning, parsed once.
-pub struct Interp<'a> {
-    k: &'a FutharkKingdom,
-    sig: &'a Signature,
+/// The interpreter of one instance: each row's meaning, parsed once. It OWNS the kingdom and the signature it reads
+/// (shared handles), so it lives as long as its holder, never as long as a caller's borrow.
+pub struct Interp {
+    k: Arc<FutharkKingdom>,
+    sig: Arc<Signature>,
     ops: Vec<Op>,
     literals: Vec<Option<Vec<Num>>>,
     /// The number of variable slots (one a variable name of the kingdom's contexts).
@@ -1337,8 +1341,9 @@ struct Env {
     vars: Vec<Option<Val>>,
 }
 
-impl<'a> Interp<'a> {
-    pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Interp<'a>, String> {
+impl Interp {
+    /// The interpreter of a kingdom and its signature; it keeps a clone of each handle.
+    pub fn new(k: &Arc<FutharkKingdom>, sig: &Arc<Signature>) -> Result<Interp, String> {
         let dim = |d: &str| sig.dims.iter().position(|x| x == d).ok_or_else(|| format!("no dimension {d}"));
         // A dual's class, read through the class grammar with the view's elements.
         let class_of = |dual: &str| -> Result<Class, String> { Class::parse(dual.split(':').next().unwrap_or(""), &sig.elements, None).map_err(|e| format!("{dual}: {e}")) };
@@ -1511,7 +1516,7 @@ impl<'a> Interp<'a> {
             };
             ops.push(o);
         }
-        Ok(Interp { k, sig, ops, literals, slots: slot_of.len() })
+        Ok(Interp { k: Arc::clone(k), sig: Arc::clone(sig), ops, literals, slots: slot_of.len() })
     }
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
@@ -1859,7 +1864,7 @@ impl<'a> Interp<'a> {
     /// a histogram of rows and a division of rows their `[K][D]` cells. A pair row costs one, as a scalar's does.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
-        fn walk(me: &Interp<'_>, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
+        fn walk(me: &Interp, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
             let op = me.ops[t.symbol as usize];
             // The cells of a node's matrix class (`mat.X.Y`: the product of its roles' sizes).
             let cells = |node: &Tree| -> Result<u128, String> {
@@ -2199,7 +2204,7 @@ pub fn load_cases(p: &Problem) -> Result<Vec<Case>, String> {
 /// name, then the interpreter's output (its dims and data, little-endian) or the error text. Two trees with the same
 /// fingerprint compute the same value on every stored case (to the hash); it pins a pool program's meaning across a
 /// change of the kingdom's names (`docs/PLAN_futhark_kingdom.md` 3g).
-pub fn values_fingerprint(interp: &Interp<'_>, tree: &Tree, cases: &[Case]) -> u64 {
+pub fn values_fingerprint(interp: &Interp, tree: &Tree, cases: &[Case]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |bytes: &[u8]| {
         for b in bytes {

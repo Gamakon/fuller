@@ -138,6 +138,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use fuller::futhark_table::{FutharkKingdom, GeneRng};
@@ -453,13 +454,14 @@ impl Individual {
 /// batch's size.
 type Batched = (Result<Vec<Array>, String>, Stages, usize);
 
-/// The fitness machinery: the cases, the yardstick's executable, the caches by program text.
-struct Judge<'a> {
-    k: &'a FutharkKingdom,
-    sig: &'a Signature,
+/// The fitness machinery: the cases, the yardstick's executable, the caches by program text. It owns what it reads
+/// (shared handles: plan step 5a, F1).
+struct Judge {
+    k: Arc<FutharkKingdom>,
+    sig: Arc<Signature>,
     /// Every case's input, in case order, as one stdin for the quality program.
     all_stdin: Vec<u8>,
-    interp: Interp<'a>,
+    interp: Interp,
     cases: Vec<Case>,
     /// THE FITNESS SCHEME (`--fitness`, `fuller::fitness`, family `futhark_sig`): the quality parts and the stage-2
     /// rule.
@@ -501,13 +503,13 @@ struct Judge<'a> {
     max_work: u128,
     mode: EvalMode,
     /// The batch host (`--eval batch`).
-    host: Option<Host<'a>>,
+    host: Option<Host>,
     /// `--eval single`'s TIMING HOST: a candidate's timed pairs are its own library build and its own process, the
     /// batch driver's interleaved pairs on one upload (`Step::Pair`), so the three paths time alike. Measured
     /// 2026-10-31: Futhark's own command line re-uploads the timing input every run, and the GPU's clock stepped down
     /// in the gaps (the runner's A/A gate, 9 of 22 pairs within 5 % on histogram). Futhark's command line still gives
     /// the quality outputs.
-    timer: Option<Host<'a>>,
+    timer: Option<Host>,
     /// Batch mode: the quality outputs of the programs batched this generation, by text, with each one's share of its
     /// batch's stages and the batch's size; taken when the program is scored (so the counts, the bugs and the ledger
     /// are the per-candidate path's).
@@ -616,7 +618,7 @@ impl TestCaseRun {
     }
 }
 
-impl<'a> Judge<'a> {
+impl Judge {
     /// The fitness scheme's quality parts.
     fn parts(&self) -> &'static [QualityPart] {
         self.parts
@@ -878,7 +880,7 @@ impl<'a> Judge<'a> {
     }
 
     /// The host that times pairs: the batch host (`--eval batch`, `--eval rust`) or the single path's timing host.
-    fn timing_host(&self) -> Result<&Host<'a>, String> {
+    fn timing_host(&self) -> Result<&Host, String> {
         match self.mode {
             EvalMode::Single => self.timer.as_ref().ok_or_else(|| "our software has a bug: --eval single times on the GPU with no timing host (the c backend has no GPU timing)".to_string()),
             EvalMode::Batch | EvalMode::Rust => self.host.as_ref().ok_or_else(|| "our software has a bug: batch mode with no batch host".to_string()),
@@ -917,7 +919,7 @@ impl<'a> Judge<'a> {
         }
         self.max_work = self.max_work.max(work);
         let t = Instant::now();
-        let batch = program_cases(self.k, self.sig, tree, self.cases.len())?;
+        let batch = program_cases(&self.k, &self.sig, tree, self.cases.len())?;
         let render = t.elapsed().as_secs_f64();
         let got = match self.mode {
             EvalMode::Single => {
@@ -1279,26 +1281,27 @@ impl<'a> Judge<'a> {
     }
 }
 
-/// The genetic side: the contract, the layout and the variation operators.
-struct Genetics<'a> {
-    k: &'a FutharkKingdom,
-    contract: &'a KingdomContract,
-    layout: &'a GeneLayout,
-    const_len: &'a BTreeMap<Ty, u32>,
+/// The genetic side: the contract, the layout and the variation operators. It owns what it reads (shared handles:
+/// plan step 5a, F1).
+struct Genetics {
+    k: Arc<FutharkKingdom>,
+    contract: Arc<KingdomContract>,
+    layout: Arc<GeneLayout>,
+    const_len: Arc<BTreeMap<Ty, u32>>,
     /// THE RING CANVAS (`--start llm-ring`, plan section H): every fresh gene is a canvas of these rings, not random.
-    canvas: Option<&'a Rings>,
+    canvas: Option<Arc<Rings>>,
     /// `--mutation ring-walk` (plan section I.1): ring walk replaces point mutation.
     ring_walk: bool,
 }
 
-impl Genetics<'_> {
+impl Genetics {
     /// A FRESH gene: a ring canvas with `--start llm-ring` (`fuller::futhark_rings::Rings::canvas`), else a random
     /// gene. Every fresh gene of a run comes from here: generation 0's padding, C's draws, a resumed tree's padding,
     /// the slope check's draws.
     fn random_gene(&self, rng: &mut GeneRng) -> Result<Vec<u32>, String> {
-        match self.canvas {
-            Some(r) => r.canvas(self.contract, self.layout, rng),
-            None => random_gene(self.contract, self.layout, self.const_len, rng),
+        match &self.canvas {
+            Some(r) => r.canvas(&self.contract, &self.layout, rng),
+            None => random_gene(&self.contract, &self.layout, &self.const_len, rng),
         }
     }
 
@@ -1310,9 +1313,9 @@ impl Genetics<'_> {
             self.mutate(gene, m, rng)?;
             return Ok(None);
         }
-        let rings = self.canvas.ok_or("our software has a bug: ring walk with no rings")?;
+        let rings = self.canvas.as_ref().ok_or("our software has a bug: ring walk with no rings")?;
         let coding = self.coding_cells(gene)?;
-        rings.walk(self.layout, gene, &coding, m, rng)
+        rings.walk(&self.layout, gene, &coding, m, rng)
     }
 
     /// The event of a ring walk on a child.
@@ -1320,7 +1323,7 @@ impl Genetics<'_> {
         let mut m = Mutation::new(EventKind::RingWalk, "ring_walk", format!("{} {} advanced {} along its ring", self.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k));
         m.id = Some(child.id);
         m.parents = vec![parent];
-        m.text_after = Some(sexp(self.k, &child.tree));
+        m.text_after = Some(sexp(&self.k, &child.tree));
         m
     }
 
@@ -1334,17 +1337,17 @@ impl Genetics<'_> {
     }
 
     fn tree(&self, gene: &[u32]) -> Result<Tree, String> {
-        Ok(express(self.contract, self.layout, gene, self.const_len).map_err(|e| format!("a gene does not express: {e}"))?.tree())
+        Ok(express(&self.contract, &self.layout, gene, &self.const_len).map_err(|e| format!("a gene does not express: {e}"))?.tree())
     }
 
     /// The cells the walk reads: every expressed node's symbol cell and, for an expressed constant, its Dc cell.
     fn coding_cells(&self, gene: &[u32]) -> Result<Vec<usize>, String> {
-        fuller::futhark_rings::coding_cells(self.contract, self.layout, gene, self.const_len)
+        fuller::futhark_rings::coding_cells(&self.contract, &self.layout, gene, &self.const_len)
     }
 
     /// LOW-CHANGE mutation: `m` expressed cells, each set to another member of its own alphabet.
     fn mutate(&self, gene: &mut [u32], m: usize, rng: &mut GeneRng) -> Result<(), String> {
-        fuller::futhark_rings::point_mutate(self.contract, self.layout, self.const_len, gene, m, rng)
+        fuller::futhark_rings::point_mutate(&self.contract, &self.layout, &self.const_len, gene, m, rng)
     }
 
     /// THE ONE-EDIT NEIGHBOURS of a gene: every expressed cell set to every other member of its own alphabet (the
@@ -1355,12 +1358,12 @@ impl Genetics<'_> {
         let mut seen: HashSet<Tree> = HashSet::new();
         let mut out = Vec::new();
         for pos in self.coding_cells(gene)? {
-            for v in self.layout.alphabet(self.contract, pos, self.const_len) {
+            for v in self.layout.alphabet(&self.contract, pos, &self.const_len) {
                 if v == gene[pos] {
                     continue;
                 }
                 let mut g = gene.to_vec();
-                self.layout.mutate(self.contract, &mut g, pos, v, self.const_len).map_err(|e| format!("a neighbour: {e}"))?;
+                self.layout.mutate(&self.contract, &mut g, pos, v, &self.const_len).map_err(|e| format!("a neighbour: {e}"))?;
                 let t = self.tree(&g)?;
                 if t != own && seen.insert(t.clone()) {
                     out.push((pos, t));
@@ -1373,7 +1376,7 @@ impl Genetics<'_> {
     /// Homologous crossover: a range of the domain that holds one of `a`'s expressed cells, exchanged between `a`
     /// and `b` (both children kept).
     fn crossover(&self, a: &mut [u32], b: &mut [u32], rng: &mut GeneRng) -> Result<(), String> {
-        crossover_once(self.contract, self.layout, self.const_len, a, b, rng)
+        crossover_once(&self.contract, &self.layout, &self.const_len, a, b, rng)
     }
 
     /// MARRIAGE, typed subtree crossover: the domain is every pair (node of A, node of B) of one output type, not the
@@ -1399,7 +1402,7 @@ impl Genetics<'_> {
         for (pa, pb, sa, sb) in domain {
             let ca = replace(&a.tree, &pa, &sb);
             let cb = replace(&b.tree, &pb, &sa);
-            if let (Ok(ga), Ok(gb)) = (write_back(self.contract, self.layout, &a.gene, &ca), write_back(self.contract, self.layout, &b.gene, &cb)) {
+            if let (Ok(ga), Ok(gb)) = (write_back(&self.contract, &self.layout, &a.gene, &ca), write_back(&self.contract, &self.layout, &b.gene, &cb)) {
                 return Ok(Some((ga, gb)));
             }
         }
@@ -1541,25 +1544,25 @@ fn alternatives_population(run: &mut Run, sig: &Signature, alternatives: &[Tree]
                 batch.push((next, t.clone()));
                 "kept by distance"
             };
-            lines.push_str(&format!("{next}\t{verdict}\t{dr}\t{}\t{}\n", if d_other == usize::MAX { "-".to_string() } else { d_other.to_string() }, sexp(run.gen.k, t)));
+            lines.push_str(&format!("{next}\t{verdict}\t{dr}\t{}\t{}\n", if d_other == usize::MAX { "-".to_string() } else { d_other.to_string() }, sexp(&run.gen.k, t)));
             next += 1;
         }
-        let sources: Vec<String> = batch.iter().map(|b| program(run.gen.k, sig, &b.1)).collect::<Result<_, _>>()?;
+        let sources: Vec<String> = batch.iter().map(|b| program(&run.gen.k, sig, &b.1)).collect::<Result<_, _>>()?;
         let items: Vec<(&Tree, &str)> = batch.iter().zip(&sources).map(|(b, s)| (&b.1, s.as_str())).collect();
         run.judge.prefetch(&items, FitnessStage::Quality)?;
         for ((i, t), src) in batch.iter().zip(&sources) {
             let e = run.judge.evaluate(t, src, FitnessStage::Quality)?;
             if !behaviours.insert(e.quality.behaviour.clone()) {
                 same_output += 1;
-                lines.push_str(&format!("{i}\tthrown: the output of another individual\t-\t-\t{}\n", sexp(run.gen.k, t)));
+                lines.push_str(&format!("{i}\tthrown: the output of another individual\t-\t-\t{}\n", sexp(&run.gen.k, t)));
                 continue;
             }
             taken.push(t.clone());
-            let g = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(rng)?, t).map_err(|e| format!("an alternative's write-back: {e}"))?;
+            let g = write_back(&run.gen.contract, &run.gen.layout, &run.gen.random_gene(rng)?, t).map_err(|e| format!("an alternative's write-back: {e}"))?;
             let ind = run.fresh(sig, vec![], "llm_alternative", g, 0)?;
             let mut m = Mutation::new(EventKind::ModelRewrite, "llm_alternative", format!("generation 0: Sonnet's task alternative {i} on a ring canvas"));
             m.id = Some(ind.id);
-            m.text_after = Some(sexp(run.gen.k, &ind.tree));
+            m.text_after = Some(sexp(&run.gen.k, &ind.tree));
             m.entered = Some(true);
             run.tel.mutation(0, m)?;
             out.push(ind);
@@ -1590,17 +1593,17 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
         return Err("--gen0 fable-mutants writes the seed onto a ring canvas: it needs --start llm-ring".into());
     }
     let e = load_pool(&dir.join("seed.tsv"))?.into_iter().next().ok_or("seed.tsv holds no program")?;
-    let seed = build_at(run.gen.k, &e.sexp, &e.dual)?;
-    fuller::typed_gep::fits(run.gen.contract, run.gen.layout, &seed).map_err(|x| format!("the seed program does not fit the layout: {x}"))?;
-    let g0 = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(rng)?, &seed).map_err(|x| format!("the seed's write-back: {x}"))?;
-    let spec = fuller::futhark_rings::MutantSpec { contract: run.gen.contract, layout: run.gen.layout, const_len: run.gen.const_len, pop: pop + usize::from(!keep_seed), max_tries: 200 * pop };
+    let seed = build_at(&run.gen.k, &e.sexp, &e.dual)?;
+    fuller::typed_gep::fits(&run.gen.contract, &run.gen.layout, &seed).map_err(|x| format!("the seed program does not fit the layout: {x}"))?;
+    let g0 = write_back(&run.gen.contract, &run.gen.layout, &run.gen.random_gene(rng)?, &seed).map_err(|x| format!("the seed's write-back: {x}"))?;
+    let spec = fuller::futhark_rings::MutantSpec { contract: &run.gen.contract, layout: &run.gen.layout, const_len: &run.gen.const_len, pop: pop + usize::from(!keep_seed), max_tries: 200 * pop };
     let m = {
         let gen = &run.gen;
         let mut mutate = |g: &mut Vec<u32>, r: &mut GeneRng| -> Result<(), String> {
             let m = 1 + r.below(4);
             gen.mutation(g, m, r).map(|_| ())
         };
-        let render = |t: &Tree| program(gen.k, sig, t);
+        let render = |t: &Tree| program(&gen.k, sig, t);
         fuller::futhark_rings::mutants(&spec, g0, &mut mutate, &render, rng)?
     };
     let operator = if run.gen.ring_walk { "ring_walk" } else { "mutation" };
@@ -1610,11 +1613,11 @@ fn fable_mutants_population(run: &mut Run, sig: &Signature, dir: &Path, pop: usi
         let parents: Vec<u64> = m.parents[i].map(|p| vec![out[p].id]).unwrap_or_default();
         let ind = run.fresh(sig, parents.clone(), if i == 0 { "fable_seed" } else { "gen0_mutant" }, g.clone(), 0)?;
         let d = tree_distance(&ind.tree, &seed);
-        lines.push_str(&format!("{i}\t{}\t{d}\t{}\n", m.parents[i].map_or("-".to_string(), |p| p.to_string()), sexp(run.gen.k, &ind.tree)));
+        lines.push_str(&format!("{i}\t{}\t{d}\t{}\n", m.parents[i].map_or("-".to_string(), |p| p.to_string()), sexp(&run.gen.k, &ind.tree)));
         let mut ev = Mutation::new(if i == 0 { EventKind::ModelRewrite } else if run.gen.ring_walk { EventKind::RingWalk } else { EventKind::Note }, if i == 0 { "fable_seed" } else { "gen0_mutant" }, if i == 0 { format!("generation 0: the seed program ({}) on a ring canvas", e.origin) } else { format!("generation 0: a {operator} mutant of member {}, {d} tree edits from the seed", m.parents[i].unwrap_or(0)) });
         ev.id = Some(ind.id);
         ev.parents = parents;
-        ev.text_after = Some(sexp(run.gen.k, &ind.tree));
+        ev.text_after = Some(sexp(&run.gen.k, &ind.tree));
         ev.entered = Some(true);
         run.tel.mutation(0, ev)?;
         out.push(ind);
@@ -1692,37 +1695,37 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     while children.len() < count {
         let pi = i % parents.len();
         i += 1;
-        let mut g = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[pi]).map_err(|e| format!("a parent's write-back: {e}"))?;
-        let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &g, run.gen.const_len)?;
+        let mut g = write_back(&run.gen.contract, &run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[pi]).map_err(|e| format!("a parent's write-back: {e}"))?;
+        let coding = fuller::futhark_rings::coding_cells(&run.gen.contract, &run.gen.layout, &g, &run.gen.const_len)?;
         let what = match kind {
-            "grow" => grow(run.gen.contract, run.gen.layout, &mut g, &coding, run.gen.const_len, &mut op).map(|(p, a, b)| format!("cell {p}: {} -> {}", run.gen.k.rows[a as usize].name, run.gen.k.rows[b as usize].name)),
+            "grow" => grow(&run.gen.contract, &run.gen.layout, &mut g, &coding, &run.gen.const_len, &mut op).map(|(p, a, b)| format!("cell {p}: {} -> {}", run.gen.k.rows[a as usize].name, run.gen.k.rows[b as usize].name)),
             "point" => {
                 run.gen.mutate(&mut g, 1, &mut op)?;
                 Some("one coding cell".to_string())
             }
-            "invert" => invert_once(run.gen.layout, &mut g, &coding, &mut op)?,
-            "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut g, &coding, &mut op)?,
-            "invert-rows" => invert_rows_once(run.gen.layout, &mut g, &mut op)?,
-            "transpose-rows" => transpose_rows_once(run.gen.contract, run.gen.layout, &mut g, &mut op)?,
-            "invert-rel" => invert_rel_once(run.gen.layout, &mut g, &mut op)?,
-            "transpose-rel" => transpose_rel_once(run.gen.contract, run.gen.layout, &mut g, &mut op)?,
-            "invert-rows-coding" => invert_rows_coding_once(run.gen.layout, &mut g, &coding, &mut op)?,
-            "transpose-rows-coding" => transpose_rows_coding_once(run.gen.contract, run.gen.layout, &mut g, &coding, &mut op)?,
+            "invert" => invert_once(&run.gen.layout, &mut g, &coding, &mut op)?,
+            "transpose" => transpose_once(&run.gen.contract, &run.gen.layout, &mut g, &coding, &mut op)?,
+            "invert-rows" => invert_rows_once(&run.gen.layout, &mut g, &mut op)?,
+            "transpose-rows" => transpose_rows_once(&run.gen.contract, &run.gen.layout, &mut g, &mut op)?,
+            "invert-rel" => invert_rel_once(&run.gen.layout, &mut g, &mut op)?,
+            "transpose-rel" => transpose_rel_once(&run.gen.contract, &run.gen.layout, &mut g, &mut op)?,
+            "invert-rows-coding" => invert_rows_coding_once(&run.gen.layout, &mut g, &coding, &mut op)?,
+            "transpose-rows-coding" => transpose_rows_coding_once(&run.gen.contract, &run.gen.layout, &mut g, &coding, &mut op)?,
             "crossover" | "cross-rows" | "cross-rel" | "cross-rows-coding" => {
                 // The partner: the next parent, on its own fresh padding; the child is this parent's side.
-                let mut h = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[(pi + 1) % parents.len()]).map_err(|e| format!("a partner's write-back: {e}"))?;
+                let mut h = write_back(&run.gen.contract, &run.gen.layout, &run.gen.random_gene(&mut pad)?, &parents[(pi + 1) % parents.len()]).map_err(|e| format!("a partner's write-back: {e}"))?;
                 if kind == "cross-rows" {
-                    cross_rows_once(run.gen.layout, &mut g, &mut h, &mut op)?
+                    cross_rows_once(&run.gen.layout, &mut g, &mut h, &mut op)?
                 } else if kind == "cross-rows-coding" {
-                    cross_rows_coding_once(run.gen.contract, run.gen.layout, run.gen.const_len, &mut g, &mut h, &mut op)?
+                    cross_rows_coding_once(&run.gen.contract, &run.gen.layout, &run.gen.const_len, &mut g, &mut h, &mut op)?
                 } else if kind == "cross-rel" {
-                    cross_rel_once(run.gen.layout, &mut g, &mut h, &mut op)?
+                    cross_rel_once(&run.gen.layout, &mut g, &mut h, &mut op)?
                 } else {
                     run.gen.crossover(&mut g, &mut h, &mut op)?;
                     Some(format!("a range of one span exchanged with parent {}", (pi + 1) % parents.len()))
                 }
             }
-            _ => run.gen.canvas.ok_or("no rings")?.walk(run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
+            _ => run.gen.canvas.as_ref().ok_or("no rings")?.walk(&run.gen.layout, &mut g, &coding, 4, &mut op)?.map(|w| format!("{} {} by {}", run.gen.k.dual(w.ty).map(|d| d.dual.as_str()).unwrap_or(""), w.domain.name(), w.k)),
         };
         match what {
             Some(w) => children.push((pi, run.gen.tree(&g)?, w)),
@@ -1739,7 +1742,7 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
     // Score the parents, then the children, on the run's path.
     let mut progs: Vec<&Tree> = parents.iter().collect();
     progs.extend(children.iter().map(|c| &c.1));
-    let sources: Vec<String> = progs.iter().map(|t| program(run.gen.k, sig, t)).collect::<Result<_, _>>()?;
+    let sources: Vec<String> = progs.iter().map(|t| program(&run.gen.k, sig, t)).collect::<Result<_, _>>()?;
     let mut scored: Vec<(f64, Quality)> = Vec::with_capacity(progs.len());
     // THE INTERIM RESULTS (Rules.md, logging: decision-critical, so a run stopped early still teaches): after every
     // batch, the running shares over the children scored so far, printed and appended to OUT/measure_progress.tsv.
@@ -1803,13 +1806,13 @@ fn measure_command(run: &mut Run, sig: &Signature, kind: &str, parents: &[Tree],
         same += usize::from(q.behaviour == pq.behaviour);
         distinct.insert(q.behaviour.as_str());
         tsv.push_str(&format!("{j}	{pi}	{what}	{f:?}	{pf:?}	{}	{}	{}	{}	{}
-", u8::from(q.all_zero()), u8::from(is_new), u8::from(q.behaviour == pq.behaviour), q.behaviour, sexp(run.gen.k, tree)));
+", u8::from(q.all_zero()), u8::from(is_new), u8::from(q.behaviour == pq.behaviour), q.behaviour, sexp(&run.gen.k, tree)));
         let mut m = Mutation::new(if kind == "walk" { EventKind::RingWalk } else { EventKind::Note }, &format!("measure_{kind}"), format!("{what}: fitness {pf:.4} -> {f:.4}{}", if is_new { ", an unseen output" } else { "" }));
         m.fitness_before = Some(*pf);
         m.fitness_after = Some(*f);
         m.improved = Some(f < pf);
-        m.text_before = Some(sexp(run.gen.k, &parents[*pi]));
-        m.text_after = Some(sexp(run.gen.k, tree));
+        m.text_before = Some(sexp(&run.gen.k, &parents[*pi]));
+        m.text_after = Some(sexp(&run.gen.k, tree));
         run.tel.mutation(0, m)?;
     }
     std::fs::write(run.out.join("measure.tsv"), &tsv).map_err(|e| e.to_string())?;
@@ -1866,7 +1869,7 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
         None => None,
     };
     let mut rng = GeneRng::new(seed ^ CHECK_TAG);
-    let ref_gene = write_back(run.gen.contract, run.gen.layout, &run.gen.random_gene(&mut rng)?, reference).map_err(|e| format!("the reference's write-back: {e}"))?;
+    let ref_gene = write_back(&run.gen.contract, &run.gen.layout, &run.gen.random_gene(&mut rng)?, reference).map_err(|e| format!("the reference's write-back: {e}"))?;
     let mut progs: Vec<(&'static str, Option<usize>, Tree)> = vec![("reference", None, reference.clone())];
     for (pos, t) in run.gen.neighbours(&ref_gene)? {
         progs.push(("neighbour", Some(pos), t));
@@ -1877,7 +1880,7 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
         progs.push(("random", None, run.gen.tree(&g)?));
     }
     println!("# {} slope check: the reference, {n_neigh} one-edit neighbours of its gene, {n_random} random genes; program size N = {program_size}; {}", utc(), if replay.is_some() { "outputs replayed from the stored GPU outputs" } else { "scored on the run's evaluation path" });
-    let sources: Vec<String> = progs.iter().map(|p| program(run.gen.k, sig, &p.2)).collect::<Result<_, _>>()?;
+    let sources: Vec<String> = progs.iter().map(|p| program(&run.gen.k, sig, &p.2)).collect::<Result<_, _>>()?;
     let mut scored: Vec<(f64, Quality)> = Vec::with_capacity(progs.len());
     for (ci, idx) in (0..progs.len()).collect::<Vec<_>>().chunks(chunk.max(1)).enumerate() {
         if stored.is_none() {
@@ -1888,7 +1891,7 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
             let (tree, source) = (&progs[i].2, &sources[i]);
             let e = match &stored {
                 Some(m) => {
-                    let text = sexp(run.gen.k, tree);
+                    let text = sexp(&run.gen.k, tree);
                     let outs = m.get(&text).ok_or_else(|| format!("the stored outputs have no program {text}"))?;
                     let q = if outs.is_empty() { Quality::worst(&run.judge.cases, run.judge.parts()) } else { Quality::of(outs.clone(), &run.judge.cases, run.judge.work_of(tree)?, run.judge.parts()) };
                     (run.judge.scheme.staged(FitnessStage::Quality, &q.inputs, &[])?.fitness, q)
@@ -1914,7 +1917,7 @@ fn slope_check_command(run: &mut Run, sig: &Signature, reference: &Tree, chunk: 
     let (mut neigh, mut rand) = (Vec::new(), Vec::new());
     for (p, (f, q)) in progs.iter().zip(&scored) {
         let d = tree_distance(&p.2, reference);
-        let text = sexp(run.gen.k, &p.2);
+        let text = sexp(&run.gen.k, &p.2);
         tsv.push_str(&format!("{}\t{}\t{f:?}\t{d}\t{}\t{}\t{}\t{}\t{}\t{text}\n", p.0, p.1.map_or("-".to_string(), |c| c.to_string()), p.2.level_order().len(), q.exact_train, q.exact_held, u8::from(q.all_zero()), q.behaviour));
         if written.insert(text.clone()) {
             let raw = if q.outputs.is_empty() { Vec::new() } else { fuller::futhark_sig::write_binary(&q.outputs.iter().collect::<Vec<_>>()) };
@@ -2032,11 +2035,11 @@ fig.savefig(sys.argv[2], dpi=120)
 "##;
 
 /// Everything the run carries between generations.
-struct Run<'a> {
+struct Run {
     inst: Instance,
     out: PathBuf,
-    gen: Genetics<'a>,
-    judge: Judge<'a>,
+    gen: Genetics,
+    judge: Judge,
     tel: RunTelemetry,
     ledger: Ledger,
     next_id: u64,
@@ -2051,10 +2054,10 @@ struct Run<'a> {
     champion: Option<Individual>,
 }
 
-impl Run<'_> {
+impl Run {
     fn fresh(&mut self, sig: &Signature, parents: Vec<u64>, operator: &str, gene: Vec<u32>, born: u32) -> Result<Individual, String> {
         let tree = self.gen.tree(&gene)?;
-        let source = program(self.gen.k, sig, &tree)?;
+        let source = program(&self.gen.k, sig, &tree)?;
         self.next_id += 1;
         Ok(Individual { id: self.next_id, parents, born, operator: operator.to_string(), gene, tree, source, eval: None })
     }
@@ -2066,9 +2069,9 @@ impl Run<'_> {
             self.first_exact = Some((self.judge.evaluations, generation, ind.id));
             self.first_exact_test = Some(e.quality.exact_test);
             self.tel.note(generation, format!("first exact program on every case (training and held-out): evaluation {}, generation {generation}, id {}", self.judge.evaluations, ind.id))?;
-            println!("# {} FIRST EXACT on every case at evaluation {}, generation {generation}: {}", utc(), self.judge.evaluations, sexp(self.gen.k, &ind.tree));
+            println!("# {} FIRST EXACT on every case at evaluation {}, generation {generation}: {}", utc(), self.judge.evaluations, sexp(&self.gen.k, &ind.tree));
         }
-        let text = sexp(self.gen.k, &ind.tree);
+        let text = sexp(&self.gen.k, &ind.tree);
         let (path, batch, st) = self.judge.last;
         let mut cols = vec![path.to_string(), batch.to_string()];
         cols.extend(st.values().iter().map(|v| format!("{:.1}", v * 1e3)));
@@ -2269,24 +2272,24 @@ fn real_main() -> Result<(), String> {
     let k = load(&inst)?;
     let sig = signature(&inst)?;
     let interp = Interp::new(&k, &sig)?;
-    let contract = k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?;
+    let contract = Arc::new(k.relations().check().map_err(|d| format!("the kingdom check: {:?}", &d[..d.len().min(3)]))?);
     let reference = build(&k, reference_text)?;
     let planted = build(&k, planted_text)?;
     // THE PROGRAM SIZE is an experiment parameter (`--program-size`, default the problem's `program_size`), never the
     // reference's size; the run card records it. The reference and the planted slowdown must fit the layout.
     let program_size: usize = num(&args, "--program-size", p.program_size)?;
     let start_tree = if start == "planted" { planted.clone() } else { reference.clone() };
-    let layout = GeneLayout::from_program_size(&contract, k.roots()[0], program_size).map_err(|e| e.to_string())?;
+    let layout = Arc::new(GeneLayout::from_program_size(&contract, k.roots()[0], program_size).map_err(|e| e.to_string())?);
     for (what, t) in [("reference", &reference), ("planted slowdown", &planted)] {
         fuller::typed_gep::fits(&contract, &layout, t).map_err(|e| format!("the {what} ({} functions) does not fit the layout of program size N = {program_size}: {e}", function_count(&k, t)))?;
     }
-    let const_len = k.const_len();
+    let const_len = Arc::new(k.const_len());
     let (canvas, pool_programs) = if start == "llm-ring" || measure.is_some() {
         let dir = PathBuf::from(arg(&args, "--pool").ok_or("--start llm-ring and --measure need --pool DIR (bench.tsv and llm.tsv, examples/futhark_pool.rs)")?);
         let sources = Source::set(arg(&args, "--ring-sources").as_deref().unwrap_or("both"))?;
         let (r, progs) = ring_canvas(&k, &contract, &layout, &dir, &pname, &sources, &out)?;
         // A measurement with random padding (no `--start llm-ring`) takes its parents from the pool, not its rings.
-        (if start == "llm-ring" { Some(r) } else { None }, progs)
+        (if start == "llm-ring" { Some(Arc::new(r)) } else { None }, progs)
     } else {
         (None, Vec::new())
     };
@@ -2418,8 +2421,8 @@ fn real_main() -> Result<(), String> {
     let mut run = Run {
         inst,
         out: out.clone(),
-        gen: Genetics { k: &k, contract: &contract, layout: &layout, const_len: &const_len, canvas: canvas.as_ref(), ring_walk },
-        judge: Judge { k: &k, sig: &sig, all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()), converged: None, converged_speed: HashMap::new(), over_cap_unrun: 0, unfinished: 0, quality_weight, quality_cliff, step_process, batched_k: HashMap::new(), upload_seconds: 0.0, resident_hits: 0 },
+        gen: Genetics { k: Arc::clone(&k), contract: Arc::clone(&contract), layout: Arc::clone(&layout), const_len: Arc::clone(&const_len), canvas: canvas.clone(), ring_walk },
+        judge: Judge { k: Arc::clone(&k), sig: Arc::clone(&sig), all_stdin, interp, cases, scheme, parts, sizes, timing, timing_cap, over_cap_untimed: 0, backend, runs, yard_exe, shim: shim.clone(), work_dir: out.join("candidate_build"), quality_cache: HashMap::new(), slots: TimingSlots::new(pairs), evaluations: 0, scored: 0, compiled: 0, hits: 0, bugs: 0, setmem: 0, ice: 0, bug_log: out.join("bugs.log"), max_work: 0, mode, host, timer, batched_q: HashMap::new(), batched_t: HashMap::new(), gen_stages: Stages::default(), batch_splits: 0, last: ("hit", 0, Stages::default()), converged: None, converged_speed: HashMap::new(), over_cap_unrun: 0, unfinished: 0, quality_weight, quality_cliff, step_process, batched_k: HashMap::new(), upload_seconds: 0.0, resident_hits: 0 },
         tel,
         ledger: Ledger::open_with(&out, resume, &LEDGER_STAGE_COLUMNS)?,
         next_id: 0,
@@ -3176,11 +3179,11 @@ fn real_main() -> Result<(), String> {
                     let what = if population[b].identity(stage) == population[a].identity(stage) {
                         None
                     } else if pick == "cross-rows" {
-                        cross_rows_once(run.gen.layout, &mut ga, &mut gb, &mut rng)?
+                        cross_rows_once(&run.gen.layout, &mut ga, &mut gb, &mut rng)?
                     } else if pick == "cross-rows-coding" {
-                        cross_rows_coding_once(run.gen.contract, run.gen.layout, run.gen.const_len, &mut ga, &mut gb, &mut rng)?
+                        cross_rows_coding_once(&run.gen.contract, &run.gen.layout, &run.gen.const_len, &mut ga, &mut gb, &mut rng)?
                     } else {
-                        cross_rel_once(run.gen.layout, &mut ga, &mut gb, &mut rng)?
+                        cross_rel_once(&run.gen.layout, &mut ga, &mut gb, &mut rng)?
                     };
                     match what {
                         Some(what) => {
@@ -3189,7 +3192,7 @@ fn real_main() -> Result<(), String> {
                                     break;
                                 }
                                 let ind = run.fresh(&sig, vec![population[a].id, population[b].id], name, g, g1)?;
-                                run.tel.mutation(generation, row_event(run.gen.k, name, &what, &ind, &population[before].tree))?;
+                                run.tel.mutation(generation, row_event(&run.gen.k, name, &what, &ind, &population[before].tree))?;
                                 children.push(ind);
                             }
                         }
@@ -3210,34 +3213,34 @@ fn real_main() -> Result<(), String> {
                 }
                 if pick != "crossover" {
                     let mut gene = population[a].gene.clone();
-                    let coding = fuller::futhark_rings::coding_cells(run.gen.contract, run.gen.layout, &gene, run.gen.const_len)?;
+                    let coding = fuller::futhark_rings::coding_cells(&run.gen.contract, &run.gen.layout, &gene, &run.gen.const_len)?;
                     let done = match pick {
                         "point" => {
                             let m = m_of(&mut rng);
                             run.gen.mutate(&mut gene, m, &mut rng)?;
                             true
                         }
-                        "invert" => invert_once(run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
-                        "transpose" => transpose_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
+                        "invert" => invert_once(&run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
+                        "transpose" => transpose_once(&run.gen.contract, &run.gen.layout, &mut gene, &coding, &mut rng)?.is_some(),
                         "invert-rows" | "transpose-rows" | "invert-rel" | "transpose-rel" | "invert-rows-coding" | "transpose-rows-coding" => {
                             let (what, name) = match pick {
-                                "invert-rows" => (invert_rows_once(run.gen.layout, &mut gene, &mut rng)?, "invert_rows"),
-                                "invert-rows-coding" => (invert_rows_coding_once(run.gen.layout, &mut gene, &coding, &mut rng)?, "invert_rows_coding"),
-                                "transpose-rows-coding" => (transpose_rows_coding_once(run.gen.contract, run.gen.layout, &mut gene, &coding, &mut rng)?, "transpose_rows_coding"),
-                                "transpose-rows" => (transpose_rows_once(run.gen.contract, run.gen.layout, &mut gene, &mut rng)?, "transpose_rows"),
-                                "invert-rel" => (invert_rel_once(run.gen.layout, &mut gene, &mut rng)?, "invert_rel"),
-                                _ => (transpose_rel_once(run.gen.contract, run.gen.layout, &mut gene, &mut rng)?, "transpose_rel"),
+                                "invert-rows" => (invert_rows_once(&run.gen.layout, &mut gene, &mut rng)?, "invert_rows"),
+                                "invert-rows-coding" => (invert_rows_coding_once(&run.gen.layout, &mut gene, &coding, &mut rng)?, "invert_rows_coding"),
+                                "transpose-rows-coding" => (transpose_rows_coding_once(&run.gen.contract, &run.gen.layout, &mut gene, &coding, &mut rng)?, "transpose_rows_coding"),
+                                "transpose-rows" => (transpose_rows_once(&run.gen.contract, &run.gen.layout, &mut gene, &mut rng)?, "transpose_rows"),
+                                "invert-rel" => (invert_rel_once(&run.gen.layout, &mut gene, &mut rng)?, "invert_rel"),
+                                _ => (transpose_rel_once(&run.gen.contract, &run.gen.layout, &mut gene, &mut rng)?, "transpose_rel"),
                             };
                             if let Some(what) = what {
                                 let ind = run.fresh(&sig, vec![population[a].id], name, gene, g1)?;
-                                run.tel.mutation(generation, row_event(run.gen.k, name, &what, &ind, &population[a].tree))?;
+                                run.tel.mutation(generation, row_event(&run.gen.k, name, &what, &ind, &population[a].tree))?;
                                 children.push(ind);
                             }
                             continue;
                         }
                         _ => {
-                            let rings = run.gen.canvas.ok_or("--ops walk needs the rings: --start llm-ring")?;
-                            match rings.walk(run.gen.layout, &mut gene, &coding, 4, &mut rng)? {
+                            let rings = run.gen.canvas.as_ref().ok_or("--ops walk needs the rings: --start llm-ring")?;
+                            match rings.walk(&run.gen.layout, &mut gene, &coding, 4, &mut rng)? {
                                 Some(w) => {
                                     let ind = run.fresh(&sig, vec![population[a].id], "ring_walk", gene, g1)?;
                                     run.tel.mutation(generation, run.gen.walk_event(&w, &ind, population[a].id))?;

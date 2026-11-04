@@ -35,6 +35,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::futhark_exec::{output_with_timeout_bytes, FUSION_BOUND};
@@ -297,10 +298,11 @@ pub struct Inputs<'b> {
     pub yardstick: Option<&'b str>,
 }
 
-/// The batch host of one instance and one run: the signature, the cases, the timing input, where it builds.
-pub struct Host<'a> {
-    k: &'a FutharkKingdom,
-    sig: &'a Signature,
+/// The batch host of one instance and one run: the signature, the cases, the timing input, where it builds. It OWNS
+/// the kingdom and the signature it reads (shared handles), so one host can live for a whole run inside its holder.
+pub struct Host {
+    k: Arc<FutharkKingdom>,
+    sig: Arc<Signature>,
     n_cases: usize,
     backend: Backend,
     dir: PathBuf,
@@ -744,9 +746,10 @@ fn parse_records(raw: &[u8]) -> Result<Vec<Record>, String> {
     Ok(out)
 }
 
-impl<'a> Host<'a> {
-    /// A host building under `dir`; the cases and the timing input are written there once, here.
-    pub fn new(k: &'a FutharkKingdom, sig: &'a Signature, n_cases: usize, backend: Backend, dir: &Path, inputs: Inputs) -> Result<Host<'a>, String> {
+impl Host {
+    /// A host building under `dir`; the cases and the timing input are written there once, here. It keeps a clone of
+    /// each handle.
+    pub fn new(k: &Arc<FutharkKingdom>, sig: &Arc<Signature>, n_cases: usize, backend: Backend, dir: &Path, inputs: Inputs) -> Result<Host, String> {
         let Inputs { cases_stdin, timing_stdin, yardstick } = inputs;
         std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
         let cases_path = dir.join("cases.bin");
@@ -766,8 +769,8 @@ impl<'a> Host<'a> {
             return Err("the batch driver reads and writes i32 values of rank at most 3 (the rust path: i32 and f32)".into());
         }
         Ok(Host {
-            k,
-            sig,
+            k: Arc::clone(k),
+            sig: Arc::clone(sig),
             n_cases,
             backend,
             dir: dir.to_path_buf(),
@@ -784,20 +787,20 @@ impl<'a> Host<'a> {
     }
 
     /// The rust path's compiler, in place of `futhark_rust::compiler()` (a test's mock compiler).
-    pub fn with_compiler(mut self, compiler: &Path) -> Host<'a> {
+    pub fn with_compiler(mut self, compiler: &Path) -> Host {
         self.compiler = compiler.to_path_buf();
         self
     }
 
     /// Where a batch whose compile did not finish has its source saved (the run's `bugs/`).
-    pub fn with_bugs_dir(mut self, bugs: &Path) -> Host<'a> {
+    pub fn with_bugs_dir(mut self, bugs: &Path) -> Host {
         self.bugs_dir = bugs.to_path_buf();
         self
     }
 
     /// The floor of the compile limit, in place of [`COMPILE_LIMIT_FLOOR`] (a test's mock compiler sleeps: a run
     /// keeps the floor).
-    pub fn with_compile_floor(self, floor: Duration) -> Host<'a> {
+    pub fn with_compile_floor(self, floor: Duration) -> Host {
         self.clock.borrow_mut().floor = floor;
         self
     }
@@ -826,7 +829,7 @@ impl<'a> Host<'a> {
         let mut s = format!("-- a batch of {} programs (fuller::futhark_batch)\n", idx.len());
         // The kingdom's prelude (`futhark_sig::prelude`: the matrix family's `matmul` helper) ONCE, before every
         // member's bare text; a definition repeated is a Futhark error.
-        let prelude = prelude(self.k);
+        let prelude = prelude(&self.k);
         s.push_str(&prelude);
         let mut yard = false;
         let mut kyard = false;
@@ -840,17 +843,17 @@ impl<'a> Host<'a> {
             match m.program {
                 Program::Tree(t) => {
                     if quality {
-                        s.push_str(&program_cases_named_bare(self.k, self.sig, t, self.n_cases, &format!("kq{i}"), &qname(i))?);
+                        s.push_str(&program_cases_named_bare(&self.k, &self.sig, t, self.n_cases, &format!("kq{i}"), &qname(i))?);
                         s.push('\n');
                     }
                     if timed {
-                        s.push_str(&program_named_bare(self.k, self.sig, t, &tname(i))?);
+                        s.push_str(&program_named_bare(&self.k, &self.sig, t, &tname(i))?);
                         s.push('\n');
                     }
                     if kmeans {
                         // The member's program as a definition, and its range entry over the resident sample.
-                        let def = program_named_bare(self.k, self.sig, t, &kdef(i))?.replacen(&format!("entry {} ", kdef(i)), &format!("def {} ", kdef(i)), 1);
-                        s.push_str(&format!("{def}\n{}\n", range_entry(self.sig, &kname(i), &kdef(i))?));
+                        let def = program_named_bare(&self.k, &self.sig, t, &kdef(i))?.replacen(&format!("entry {} ", kdef(i)), &format!("def {} ", kdef(i)), 1);
+                        s.push_str(&format!("{def}\n{}\n", range_entry(&self.sig, &kname(i), &kdef(i))?));
                     }
                 }
                 Program::Text(text) => {
@@ -861,11 +864,11 @@ impl<'a> Host<'a> {
                         // In a module of its own: a second copy of the published program (the in-run A/A beside
                         // `yard`) would define its helpers twice, which Futhark refuses.
                         let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
-                        s.push_str(&format!("module m{i} = {{\n{def}\n}}\n{}\n", entry_calling(self.sig, &tname(i), &format!("m{i}.main"))));
+                        s.push_str(&format!("module m{i} = {{\n{def}\n}}\n{}\n", entry_calling(&self.sig, &tname(i), &format!("m{i}.main"))));
                     }
                     if kmeans {
                         let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
-                        s.push_str(&format!("module mk{i} = {{\n{def}\n}}\n{}\n", range_entry(self.sig, &kname(i), &format!("mk{i}.main"))?));
+                        s.push_str(&format!("module mk{i} = {{\n{def}\n}}\n{}\n", range_entry(&self.sig, &kname(i), &format!("mk{i}.main"))?));
                     }
                 }
             }
@@ -874,7 +877,7 @@ impl<'a> Host<'a> {
             // The seed's range entry, in a module of its own (the seed as a member beside it is another copy).
             let text = self.yardstick.as_deref().ok_or("a k-means step with no published program (the seed)")?;
             let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
-            s.push_str(&format!("module m{KYARD} = {{\n{def}\n}}\n{}\n", range_entry(self.sig, KYARD, &format!("m{KYARD}.main"))?));
+            s.push_str(&format!("module m{KYARD} = {{\n{def}\n}}\n{}\n", range_entry(&self.sig, KYARD, &format!("m{KYARD}.main"))?));
         }
         if yard {
             let text = self.yardstick.as_deref().ok_or("a pair timed with no published program")?;
@@ -884,7 +887,7 @@ impl<'a> Host<'a> {
                 // The published program of a kingdom with a prelude defines the same helper itself (A7's yardstick
                 // has its own `def matmul`): in a module of its own, as the in-run A/A copy is, so the two cannot clash.
                 let def = rename_main(text, "main")?.replacen("entry main ", "def main ", 1);
-                s.push_str(&format!("module m{YARD} = {{\n{def}\n}}\n{}", entry_calling(self.sig, YARD, &format!("m{YARD}.main"))));
+                s.push_str(&format!("module m{YARD} = {{\n{def}\n}}\n{}", entry_calling(&self.sig, YARD, &format!("m{YARD}.main"))));
             }
             s.push('\n');
         }

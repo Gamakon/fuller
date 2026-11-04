@@ -77,6 +77,43 @@ fn a_batch_gives_each_programs_outputs_exactly_as_its_own_program() {
     }
 }
 
+/// Plan step 5a, F1: a host and an interpreter OWN what they read. Built from shared handles whose originals were
+/// dropped (the host and the interpreter hold the only references left), the host runs a C batch whose outputs equal
+/// each program's own quality program, and the interpreter gives the reference program's stored answers on every case.
+#[test]
+fn a_host_and_an_interpreter_built_from_dropped_handles_run_a_c_batch() {
+    assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
+    let p = problem("histogram").unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("owned");
+    let timing = cases.last().unwrap().stdin.clone();
+    let (host, interp) = {
+        let k = load(&p.instance).unwrap();
+        let sig = signature(&p.instance).unwrap();
+        let host = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
+        let interp = crate::futhark_sig::Interp::new(&k, &sig).unwrap();
+        (host, interp)
+    };
+    assert_eq!((Arc::strong_count(&host.k), Arc::strong_count(&host.sig)), (2, 2), "the host and the interpreter hold the only handles left");
+    // The programs and the per-candidate side come from a kingdom loaded afresh: the same table, its own handle.
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let reference = crate::futhark_sig::build(&k, p.reference().unwrap()).unwrap();
+    let mut ts = trees(&k, 5, 0xBA7C_0005);
+    ts.push(reference.clone());
+    let members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality] }).collect();
+    let got = host.run(&members).unwrap();
+    assert_eq!(got.cost.compiles, 1, "one compile");
+    for (i, t) in ts.iter().enumerate() {
+        let want = per_candidate(&k, &sig, t, &cases, &base.join(format!("single{i}")));
+        assert_eq!(got.outcomes[i][0], Outcome::Quality(want), "program {i}'s quality outputs");
+    }
+    for c in &cases {
+        assert_eq!(interp.eval(&reference, &c.inputs).unwrap(), *c.answer().unwrap(), "the reference program on {}", c.name);
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A program the compiler refuses (here a text naming no definition: legal genes cannot be made to fail on the c
 /// backend) is found by halving the batch: its steps are failures carrying the compiler's own message, and every
 /// other program is scored from its half, exactly.

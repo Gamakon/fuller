@@ -11,7 +11,7 @@ fn functions(k: &FutharkKingdom, t: &Tree) -> usize {
     usize::from(!k.rows[t.symbol as usize].inputs.is_empty()) + t.kids.iter().map(|c| functions(k, c)).sum::<usize>()
 }
 
-fn kingdom(name: &str) -> (FutharkKingdom, KingdomContract, GeneLayout, Tree) {
+fn kingdom(name: &str) -> (std::sync::Arc<FutharkKingdom>, KingdomContract, GeneLayout, Tree) {
     let p = problem(name).unwrap();
     let k = load(&p.instance).unwrap();
     let contract = k.relations().check().unwrap();
@@ -216,7 +216,7 @@ fn the_committed_pools_fill_every_ring_of_the_default_layout() {
 }
 
 /// The seed of `--gen0 fable-mutants` from the committed pool, on a canvas of the committed rings.
-fn fable_setup(name: &str) -> (FutharkKingdom, KingdomContract, GeneLayout, Rings, Tree) {
+fn fable_setup(name: &str) -> (std::sync::Arc<FutharkKingdom>, KingdomContract, GeneLayout, Rings, Tree) {
     let p = problem(name).unwrap();
     let k = load(&p.instance).unwrap();
     let contract = k.relations().check().unwrap();

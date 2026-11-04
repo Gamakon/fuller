@@ -52,7 +52,7 @@ fn every_view_is_the_written_kingdom_and_the_same_genes_express_the_same_program
         let (types, functions) = written_tables(name, prob.instance.view().unwrap());
         let written = FutharkKingdom::from_tables(crate::futhark_table::FutharkFamily::Shape, &k.kingdom, &types, &functions).unwrap();
         let sig = signature(&prob.instance).unwrap();
-        assert_eq!(sig, declared(name), "{name}: the view's signature is not the declared one");
+        assert_eq!(*sig, declared(name), "{name}: the view's signature is not the declared one");
         assert_eq!(k.duals, written.duals, "{name}: the duals differ");
         assert_eq!(k.rows, written.rows, "{name}: the rows differ");
         assert_eq!(format!("{:?}", k.relations()), format!("{:?}", written.relations()), "{name}: the contract relations differ");

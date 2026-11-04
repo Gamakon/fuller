@@ -24,7 +24,7 @@ fn scratch(name: &str) -> PathBuf {
 
 /// The assignments the seed's kernel boundary binds, as integers, through the interpreter: the `let`'s bound
 /// expression built at its own type (`a.n:c`) and evaluated on the case.
-fn seed_assignments(k: &FutharkKingdom, interp: &Interp<'_>, c: &Case) -> Vec<usize> {
+fn seed_assignments(k: &FutharkKingdom, interp: &Interp, c: &Case) -> Vec<usize> {
     let t = crate::futhark_rings::build_at(k, &KMEANS_SEED_ASSIGN.replace("DIST", KMEANS_SEED_DIST), "a.n:c").unwrap();
     let a = interp.eval(&t, &c.inputs).unwrap();
     assert_eq!((a.elem, a.dims.clone()), (Elem::F32, vec![c.inputs[0].dims[0]]));
