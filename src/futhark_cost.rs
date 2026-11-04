@@ -8,7 +8,7 @@
 //!   fusion and traversal counts matter differently there, and a search
 //!   that optimises for the wrong machine is worse than no search. This
 //!   model is the cheap *filter*; the cost that decides is measured on the
-//!   GPU, in [`crate::futhark_gpu`].
+//!   GPU, in phylu's `futhark_eval::gpu` (moved in plan 5b).
 //! * **Not a measurement.** The numbers come from the kingdom's own table
 //!   (`kingdoms/futhark/costs.tsv`, generated), so they are a
 //!   *model* that the table and the generator's witness tests keep honest,

@@ -47,18 +47,6 @@ pub fn check_marked() -> Result<(), String> {
     }
 }
 
-/// THE FEATURE RULE (2026-11-01): a plain `cargo test` never touches the GPU. A Futhark GPU executable, the batch
-/// driver on the webgpu backend, or the rust path's in-process runtime run by a test is GPU work, so the test must
-/// be built with the `gpu` feature, and named for the GPU, and it takes its turn like a wgpu device. A default
-/// `cargo test` once ran the `on_the_gpu` tests of `futhark_batch` and `futhark_rust` on the GPU, outside the
-/// machine's GPU lock, beside another agent's timing runs.
-pub fn futhark_gpu_turn(site: &str) -> Token {
-    if !cfg!(feature = "gpu") {
-        panic!("our software has a bug: {site} runs GPU work in a test built without the gpu feature; gate the test with #[cfg(feature = \"gpu\")]");
-    }
-    acquire()
-}
-
 /// Wait for the GPU's turn (or join this thread's). Panics, before any device
 /// is made, when the test making one is not named for the GPU (`check_marked`).
 pub fn acquire() -> Token {
@@ -92,7 +80,8 @@ impl Drop for Token {
 mod tests {
     /// At default features no test named for a GPU run is compiled at all: the harness lists its own tests, and
     /// none carries `on_the_gpu` or `on_the_device`. (Tests named `gpu` or `device` that only build tables, read
-    /// generated code or check WGSL text stay; a GPU launch from any of them is caught by `futhark_gpu_turn`.)
+    /// generated code or check WGSL text stay. The Futhark GPU launches and their feature rule, `futhark_gpu_turn`, moved
+    /// to phylu with the Futhark evaluator, plan 5b.)
     #[cfg(not(feature = "gpu"))]
     #[test]
     fn no_test_named_for_a_gpu_run_is_built_at_default_features() {
@@ -102,15 +91,6 @@ mod tests {
         let named: Vec<&str> = list.lines().filter(|l| l.contains("on_the_gpu") || l.contains("on_the_device")).collect();
         assert!(list.lines().count() > 100, "the harness listed its tests: {}", list.lines().count());
         assert!(named.is_empty(), "built without the gpu feature: {named:?}");
-    }
-
-    /// At default features a Futhark GPU launch in a test is our bug, before anything runs.
-    #[cfg(not(feature = "gpu"))]
-    #[test]
-    fn a_futhark_gpu_launch_without_the_gpu_feature_is_a_bug() {
-        let r = std::panic::catch_unwind(|| super::futhark_gpu_turn("a site"));
-        let msg = r.expect_err("the launch must panic").downcast::<String>().map(|b| *b).unwrap_or_default();
-        assert!(msg.contains("built without the gpu feature"), "{msg}");
     }
 
     use super::*;

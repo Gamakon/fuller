@@ -543,19 +543,65 @@ pub fn run_compiled(scalar_root: bool, input: &[f32], dir: &Path) -> Result<Vec<
         .collect())
 }
 
+// ---- One f32 vector in Futhark's value formats (moved from `futhark_wgpu_host` in plan 5b: the pixel family's
+// `run_exe` and the GPU host both read and write them) ----
+
+/// The input array in Futhark's textual value format. `{:?}` prints the
+/// shortest decimal that reads back as the same `f32`, so the program sees
+/// exactly these values.
+pub fn input_text(input: &[f32]) -> Result<String, String> {
+    if input.is_empty() {
+        return Ok("empty([0]f32)\n".to_string());
+    }
+    let mut parts = Vec::with_capacity(input.len());
+    for x in input {
+        if !x.is_finite() {
+            return Err(format!("an input value that is not finite: {x}"));
+        }
+        parts.push(format!("{x:?}f32"));
+    }
+    Ok(format!("[{}]\n", parts.join(", ")))
+}
+
+/// One value of Futhark's binary format holding `f32`s, as written by `-b`.
+pub fn read_binary_f32(raw: &[u8]) -> Result<Vec<f32>, String> {
+    let mut i = 0;
+    while i < raw.len() && raw[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let head = raw.get(i..i + 7).ok_or("the program wrote too little")?;
+    if head[0] != b'b' || head[1] != 2 {
+        return Err(format!("the program's output is not Futhark's binary format: {:?}", &head[..2]));
+    }
+    let rank = head[2] as usize;
+    if &head[3..7] != b" f32" {
+        return Err(format!("the program's output is not f32: {:?}", String::from_utf8_lossy(&head[3..7])));
+    }
+    i += 7;
+    let mut n = 1usize;
+    for _ in 0..rank {
+        let d = raw.get(i..i + 8).ok_or("the program's output ends inside its shape")?;
+        n *= i64::from_le_bytes(d.try_into().map_err(|_| "a shape that is not 8 bytes")?) as usize;
+        i += 8;
+    }
+    let data = raw.get(i..i + 4 * n).ok_or("the program's output ends inside its values")?;
+    Ok(data.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect())
+}
+
+/// The program Futhark 0.28.1's optimiser never finishes.
+///
+/// It is the program the experiment found
+/// (`docs/EGRAPH_futhark.md` §3.1), written out here so that the tests
+/// do not depend on the kingdom's gene machinery. The trigger is the
+/// conjunction Futhark's SOAC fusion pass cannot settle: an inner
+/// reduction over an accumulator, a reversed accumulator-derived operand,
+/// and an outer reduction.
+pub const PATHOLOGICAL: &str = "entry main (xs: []f32) : f32 =\n  reduce (*) 1.0\n    (map2 f32.max\n      (map2 f32.min\n        (reverse (xs))\n        (map (\\x -> x - (reduce (+) 0.0 (map (\\x -> x) (scan (+) 0.0 xs)))) (xs)))\n      (reverse (map (\\x -> f32.round x)\n        (map2 (*) (map (\\x -> x) (scan (+) 0.0 xs)) (scan (*) 1.0 (xs))))))\n";
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
-    /// The program Futhark 0.28.1's optimiser never finishes.
-    ///
-    /// It is the program the experiment found
-    /// (`docs/EGRAPH_futhark.md` §3.1), written out here so that this test
-    /// does not depend on the kingdom's gene machinery. The trigger is the
-    /// conjunction Futhark's SOAC fusion pass cannot settle: an inner
-    /// reduction over an accumulator, a reversed accumulator-derived operand,
-    /// and an outer reduction.
-    pub(crate) const PATHOLOGICAL: &str = "entry main (xs: []f32) : f32 =\n  reduce (*) 1.0\n    (map2 f32.max\n      (map2 f32.min\n        (reverse (xs))\n        (map (\\x -> x - (reduce (+) 0.0 (map (\\x -> x) (scan (+) 0.0 xs)))) (xs)))\n      (reverse (map (\\x -> f32.round x)\n        (map2 (*) (map (\\x -> x) (scan (+) 0.0 xs)) (scan (*) 1.0 (xs))))))\n";
 
     /// The compiler cannot compile this program; the bounded-fusion path can.
     ///

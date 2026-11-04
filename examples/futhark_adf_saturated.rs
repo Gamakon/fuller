@@ -20,7 +20,7 @@ use fuller::futhark_exec::run_text_program;
 use fuller::futhark_table::{FutharkKingdom, GeneRng};
 use fuller::futhark::program_folded;
 use fuller::futhark_saturation::{Bridge, FoldEgraph};
-use fuller::futhark_search::{product_twice, suite};
+use fuller::futhark::{product_twice, suite};
 use fuller::futhark_interpreter::{format_matrix, identical, parse_matrix, MValue};
 use fuller::population_fold::AdfTable;
 use fuller::saturated_fold::{fold_saturated, Budget};

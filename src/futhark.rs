@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use crate::futhark_table::{FutharkDual, FutharkKind, FutharkKingdom};
 use crate::geneframe::Ty;
 use crate::typed_chromosome::{AdfSet, Epoch};
+use crate::futhark_interpreter::Mat;
 use crate::typed_gep::Tree;
 
 /// The Futhark kingdom's name in the symbol table. It is a SEPARATE kingdom
@@ -168,6 +169,108 @@ fn program_text(
          -- the entry point: concrete sizes\n\
          entry main {entry_params} : {entry_result} = kernel {args}\n"
     ))
+}
+
+// ---- A7's reference program and its deterministic input suite (moved from the deprecated `futhark_search`, plan 5b:
+// they are the kingdom's own test inputs and reference program, not a runner's) ----
+
+/// A tree of one row over the given trees.
+fn tree_with(k: &FutharkKingdom, name: &str, kids: Vec<Tree>) -> Tree {
+    let symbol = k
+        .rows
+        .iter()
+        .position(|r| r.name == name)
+        .unwrap_or_else(|| panic!("the kingdom has no row {name}")) as u32;
+    Tree { symbol, const_index: None, kids }
+}
+
+/// A leaf: a row with no children.
+fn leaf(k: &FutharkKingdom, name: &str) -> Tree {
+    tree_with(k, name, Vec::new())
+}
+
+/// The kernel the kingdom's vocabulary can make **expensive**: the product
+/// of two matrices, computed twice — once directly and once the transposed
+/// way — and the two added.
+///
+/// ```text
+/// map2 (add) (A . B) (transpose ((B\' . A\')))
+/// ```
+///
+/// The second product is the same matrix as the first, but the compiler
+/// cannot see that: the two are different expressions, so its CSE leaves
+/// both and the GPU program does the work twice. The e-graph's
+/// transposed-product rule is what closes the gap.
+pub fn product_twice(k: &FutharkKingdom) -> Tree {
+    let a = leaf(k, "mat.n.m.input");
+    let b = leaf(k, "mat.m.p.input");
+    let direct = tree_with(k, "matmul@mat.n.mxmat.m.p", vec![a.clone(), b.clone()]);
+    let transposed = tree_with(
+        k,
+        "transpose@mat.p.n",
+        vec![tree_with(
+            k,
+            "matmul@mat.p.mxmat.m.n",
+            vec![
+                tree_with(k, "transpose@mat.m.p", vec![b.clone()]),
+                tree_with(k, "transpose@mat.n.m", vec![a.clone()]),
+            ],
+        )],
+    );
+    tree_with(
+        k,
+        "map2_rows@mat.n.p",
+        vec![leaf(k, "fn.arr2_f32_arr_f32_arr_f32.add"), direct, transposed],
+    )
+}
+
+/// One set of inputs, drawn from a seed.
+///
+/// The values are in `[-8, 8]`, and the first of every matrix is `-0.0`, so
+/// the suite exercises the sign of zero as well as the magnitudes.
+pub fn input_set(
+    k: &FutharkKingdom,
+    sizes: &BTreeMap<String, usize>,
+    seed: u64,
+) -> BTreeMap<Ty, Mat> {
+    let mut map: BTreeMap<Ty, Mat> = BTreeMap::new();
+    let mut rng: u64 = seed;
+    for d in &k.duals {
+        if d.slot != "mat" {
+            continue;
+        }
+        let dims: Vec<usize> = d.form.split('.').map(|r| *sizes.get(r).unwrap_or(&1)).collect();
+        let mut data = Vec::with_capacity(dims[0] * dims[1]);
+        for _ in 0..dims[0] * dims[1] {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            data.push(((rng >> 40) as f32) / 16777216.0 * 16.0 - 8.0);
+        }
+        if !data.is_empty() {
+            data[0] = -0.0;
+        }
+        let mat = Mat::new(dims[0], dims[1], data).expect("the shape matches the values");
+        let ty = k.ty(&d.dual).expect("a dual's own type");
+        map.insert(ty, mat);
+    }
+    map
+}
+
+/// A suite of independent input sets, drawn deterministically.
+///
+/// Every set is drawn from its own seed, so the sets do not agree with one
+/// another by construction, and the suite is the same for the same count and
+/// the same sizes.
+pub fn suite(
+    k: &FutharkKingdom,
+    sizes: &BTreeMap<String, usize>,
+    count: usize,
+) -> Vec<BTreeMap<Ty, Mat>> {
+    (0..count)
+        .map(|i| {
+            let step = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            input_set(k, sizes, 0x1234_5678_9ABC_DEF0u64.wrapping_add(step))
+        })
+        .collect()
 }
 
 #[cfg(test)]

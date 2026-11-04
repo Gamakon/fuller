@@ -174,7 +174,7 @@ fn the_reference_programs_differ_from_the_recorded_ones_in_binder_names_only_and
     }
     let k = FutharkKingdom::load().unwrap();
     let sizes: BTreeMap<String, usize> = [("n", 2), ("m", 3), ("p", 4)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
-    let got = crate::futhark::program(&k, k.roots()[0], &crate::futhark_search::product_twice(&k), &sizes).unwrap();
+    let got = crate::futhark::program(&k, k.roots()[0], &crate::futhark::product_twice(&k), &sizes).unwrap();
     assert_eq!(got, include_str!("../../tests/fixtures/futhark_view_programs/a7.reference.fut"), "A7: the reference's program changed");
 }
 

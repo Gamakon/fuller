@@ -160,54 +160,6 @@ impl Problem {
     }
 }
 
-/// The timing input of a problem with `timing_n > 0`, in Futhark's binary format (the entry point's parameters):
-/// `n` values uniform over the whole `i32` range (the histogram: k = 100, indices and values so drawn), a fixed seed.
-pub fn timing_input(p: &Problem) -> Result<Option<Vec<u8>>, String> {
-    let n = p.timing_n;
-    if n == 0 {
-        return Ok(None);
-    }
-    let mut rng = GeneRng::new(0x7131_6E00 ^ n as u64);
-    let mut any = |n: usize| Array::i32s(vec![n], (0..n).map(|_| rng.next_u64() as u32 as i32).collect());
-    match p.name {
-        "reduce" | "scan" => Ok(Some(write_binary(&[&any(n)]))),
-        "histogram" => {
-            let (is, vs) = (any(n), any(n));
-            Ok(Some(write_binary(&[&Array::scalar_i32(100), &is, &vs])))
-        }
-        // The k-means timing input: the whole dbpedia sample with its stored k-means++ starts ([`kmeans_timing_input`]).
-        "kmeans" => Ok(Some(kmeans_timing_input(p)?)),
-        // The published benchmark's own shape (`published/pathfinder.fut`, data/medium.in: cols = 100000, rows =
-        // 100) and its wall heights, 0 to 9 (the published walls are Sobol numbers modulo 10). Before 2026-11-01
-        // pathfinder was timed on its largest quality case (256 x 256, about 1 ms a run; fault 13 of
-        // docs/reviews/2026-10-28_futhark_evolve_faults.md).
-        "pathfinder" => {
-            let (rows, cols) = (PATHFINDER_TIMING_ROWS, n / PATHFINDER_TIMING_ROWS);
-            let walls = Array::i32s(vec![rows, cols], (0..rows * cols).map(|_| (rng.next_u64() % 10) as i32).collect());
-            Ok(Some(write_binary(&[&walls])))
-        }
-        // A7: the interface's nine matrices at n = m = p = `timing_n`, in the signature's order, values uniform in
-        // [-8, 8) (multiples of 2^-20) with the first of every matrix `-0.0`.
-        "a7" => {
-            let sig = signature(&p.instance)?;
-            let mats: Vec<Array> = sig
-                .inputs
-                .iter()
-                .map(|q| {
-                    let cells = n.pow(q.dims.len() as u32);
-                    let mut data: Vec<f32> = (0..cells).map(|_| ((rng.next_u64() >> 40) as f32) / 16_777_216.0 * 16.0 - 8.0).collect();
-                    if let Some(first) = data.first_mut() {
-                        *first = -0.0;
-                    }
-                    Array::f32s(vec![n; q.dims.len()], data)
-                })
-                .collect();
-            Ok(Some(write_binary(&mats.iter().collect::<Vec<_>>())))
-        }
-        other => Err(format!("no timing input recipe for {other}")),
-    }
-}
-
 /// Pathfinder's published algorithm (`rodinia/pathfinder/pathfinder.fut`) as a gene: the state starts as row 0 of
 /// the walls; for each later row `i` (1 .. rows-1), each column `j` becomes the wall plus the least of the state's
 /// `j`, `j - 1` and `j + 1`, the published order of the two `min`s. The published kernel skips a neighbour that is off
@@ -234,9 +186,6 @@ pub const PATHFINDER_PROBLEM: Problem = Problem {
     timing_n: PATHFINDER_TIMING_ROWS * 100_000,
     program_size: DEFAULT_PROGRAM_SIZE,
 };
-
-/// The rows of pathfinder's timing input (the published medium data set's); its columns are `timing_n / rows`.
-pub const PATHFINDER_TIMING_ROWS: usize = 100;
 
 /// Reduce's published program, `i32.sum` (`reduce (+) 0`), as a gene.
 pub const REDUCE_REFERENCE: &str = "(sum.n xs)";
@@ -422,44 +371,27 @@ pub const A7_PROBLEM: Problem = Problem {
     program_size: DEFAULT_PROGRAM_SIZE,
 };
 
+// ---- The timing inputs' shapes: the problems' data (the timing inputs themselves are drawn by phylu's
+// `futhark_eval::measure`, plan 5b) ----
+
+/// The rows of pathfinder's timing input (the published medium data set's); its columns are `timing_n / rows`.
+pub const PATHFINDER_TIMING_ROWS: usize = 100;
+
 /// The side of A7's timing input, every role: n = m = p = 256, so the two products are 2 x 256^3 multiply-adds and the
 /// traffic, not a GPU program's fixed overhead, is what the time measures (the product plan's 64^3 measurement had the
 /// reference's OpenCL kernel too big for the device; the webgpu backend is what this runner times). The values are
 /// uniform in [-8, 8) with the first of every matrix `-0.0`, as A7's correctness suite draws them
-/// (`futhark_search::input_set`).
+/// (`fuller::futhark::input_set`).
 pub const A7_TIMING_N: usize = 256;
 
 /// K-MEANS'S TIMING INPUT'S SHAPE: the whole dbpedia sample, n = 5,000 rows of d = 1,536, with k = 256 starting
 /// centres (n / k about 20, as the fitness cases keep it; the advisor's review of 2026-11-03: UltraDim's k = 1,024
 /// belongs with its n = 8,192, and at n = 5,000 it gives 5 points a cluster and a percentile that counts singletons).
 pub const KMEANS_TIMING_N: usize = 5000;
+
 pub const KMEANS_TIMING_D: usize = 1536;
+
 pub const KMEANS_TIMING_K: usize = 256;
-
-/// The sample every k-means case is cut from, relative to the problem's corpus directory (`dbpedia/sample.py`).
-pub const KMEANS_SAMPLE: &str = "dbpedia/sample_5000x1536.in";
-
-/// The timing input's stored starting centres, relative to the corpus directory (`make_cases.sh`, `kmeans_cases.rs`:
-/// UltraDim's k-means++ draws over the whole sample at the seed `cases.tsv` records).
-pub const KMEANS_TIMING_STARTS: &str = "timing_n5000_k256_starts.in";
-
-/// K-MEANS'S TIMING INPUT: the whole dbpedia sample ([`KMEANS_SAMPLE`]) and its stored k-means++ starts
-/// ([`KMEANS_TIMING_STARTS`]), in Futhark's binary format, the two files read as they are (`make_cases.sh` writes the
-/// starts; the sample is fixed by `dbpedia/sample.py`). Of the declared shape or an error that says so.
-pub fn kmeans_timing_input(p: &Problem) -> Result<Vec<u8>, String> {
-    let dir = corpus_dir(p);
-    let read = |name: &str, dims: [usize; 2]| -> Result<Array, String> {
-        let path = dir.join(name);
-        let a = read_one(&std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
-        if a.elem != Elem::F32 || a.dims != dims {
-            return Err(format!("{}: a [{}][{}]f32 was expected, not {:?} {:?}", path.display(), dims[0], dims[1], a.elem, a.dims));
-        }
-        Ok(a)
-    };
-    let points = read(KMEANS_SAMPLE, [KMEANS_TIMING_N, KMEANS_TIMING_D])?;
-    let starts = read(KMEANS_TIMING_STARTS, [KMEANS_TIMING_K, KMEANS_TIMING_D])?;
-    Ok(write_binary(&[&points, &starts]))
-}
 
 /// THE PROGRAM SIZE `N` of a run's gene layout when `--program-size` is not given: an experiment parameter, fixed and
 /// well above every reference (pathfinder's is 13 functions, histogram's 4, reduce's and scan's 1), as SR and regex
@@ -489,16 +421,6 @@ pub fn problem(name: &str) -> Result<Problem, String> {
 /// Every problem of the runner, by name, in the order the checklist lists them (`docs/CHECKLIST_futhark_problem.md`).
 pub const PROBLEM_NAMES: [&str; 6] = ["reduce", "scan", "histogram", "pathfinder", "kmeans", "a7"];
 
-/// THE WORK BOUND FOR TIMING: a program whose [`Interp::work`] at the timing input's sizes is above it is not timed
-/// (no speed credit), on every evaluation path alike (`examples/futhark_evolve.rs`). 0.5 s a run at the rate measured
-/// 2026-10-29 on Fable's exact histogram program `(tab (sum.n (tab (sel ...))))`: its work at histogram's timing input
-/// (k = 100, n = 15 x 2^20) is 16kn + 2k + 1 = 2.517e10 node executions (fifteen nodes in the inner body, the sum's own
-/// pass over n), and it ran 71 times the published program's 3.0 ms, 0.213 s a run: 1.18e11 node executions a second.
-/// The bound of commit 514602a3 (3.5e9) took that program's work as k x n = 1.57e9, the trips without the nodes, and
-/// so still left it untimed ("ratio inf", 66 programs over the bound in that run). The per-command bound of the batch
-/// driver and of the in-process host stays the hard stop.
-pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
-
 /// Node executions one submit may be bounded by, on this machine (Apple M3 Max, the laptop that also drives the
 /// display). Basis: the evaluator throughput measured earlier, about 17 G node evaluations per second (phylu tsr
 /// speed report), times 0.1 s (a submit stays well under the second the display can wait), divided by a safety
@@ -506,14 +428,6 @@ pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
 /// on a stored case (`futhark_evaluator`) and every WGSL submit (`wgsl::work_guard`, which re-exports it); it lives
 /// here, ungated, so the Futhark evaluator needs no `wgsl` feature.
 pub const CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT: u128 = 170_000_000;
-
-/// THE PROBLEM'S TIMING BOUND: [`TIMING_WORK_CAP`], or four times the published program's own work at the timing
-/// input when that is larger. The constant was set on histogram (its published program is 2.5e9 of the 5.9e10); k-means's
-/// published program is 2.1e11 at its timing input (n 8192, d 256, k 1024), so under the constant alone the runner would
-/// never time the program it is meant to beat. A program is timed when its work is at most this bound.
-pub fn timing_work_cap(reference_work: u128) -> u128 {
-    TIMING_WORK_CAP.max(reference_work.saturating_mul(4))
-}
 
 /// Load an instance's kingdom: its view's table, as a SHARED HANDLE, so a host, an interpreter or an evaluator that
 /// holds it owns what it reads and can outlive the caller's scope (plan step 5a, F1).
@@ -657,13 +571,13 @@ impl Signature {
     }
 
     /// The dimensions bound by an array's shape (the entry point's size parameters): every one but the size inputs.
-    fn shape_dims(&self) -> impl Iterator<Item = &String> {
+    pub fn shape_dims(&self) -> impl Iterator<Item = &String> {
         self.dims.iter().filter(|d| !self.size_inputs.contains(d))
     }
 
     /// A parameter's or the output's Futhark type, its dimensions suffixed with `i` (a case of the quality program;
     /// empty for the plain program); a size input's dimension is `i64.i32` of its parameter.
-    fn futhark_type(&self, p: &Param, i: &str) -> String {
+    pub fn futhark_type(&self, p: &Param, i: &str) -> String {
         let dim = |d: &String| if self.size_inputs.contains(d) { format!("[i64.i32 {d}{i}]") } else { format!("[{d}{i}]") };
         format!("{}{}", p.dims.iter().map(dim).collect::<String>(), p.elem)
     }
@@ -2260,25 +2174,6 @@ pub fn compile_c(source: &str, dir: &Path) -> Result<PathBuf, String> {
     Ok(exe)
 }
 
-/// Compile a program with Futhark's sequential C backend AS A SERVER (`futhark c --server`): the executable reads the
-/// Futhark server protocol on stdin and keeps its values between commands, so one process serves every iteration and
-/// every case of a k-means evaluation (`kmeans_converged::Server`).
-pub fn compile_c_server(source: &str, dir: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-    let fut = dir.join("prog.fut");
-    std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
-    let exe = dir.join("prog_server");
-    let out = crate::futhark_exec::output_with_timeout(
-        std::process::Command::new("futhark").arg("c").arg("--server").arg(&fut).arg("-o").arg(&exe),
-        std::time::Duration::from_secs(120),
-        None,
-    )?;
-    if !out.status.success() {
-        return Err(format!("futhark c --server failed:\n{}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(exe)
-}
-
 /// Run a compiled executable (either backend's) on a case's binary input and read its one output value.
 pub fn run_exe(exe: &Path, stdin: &[u8]) -> Result<Array, String> {
     let out = crate::futhark_exec::output_with_timeout_bytes(std::process::Command::new(exe).arg("-b"), std::time::Duration::from_secs(120), Some(stdin))?;
@@ -2741,11 +2636,6 @@ mod tests;
 mod tests_micro;
 #[cfg(test)]
 mod tests_view;
-#[cfg(test)]
-mod tests_pool;
-/// THE K-MEANS FITNESS (`futhark-kmeans-better`, `docs/KMEANS_FITNESS.md`): the loop to UltraDim's stopping rule,
-/// its measures, the two input groups a case, the cases cut from the dbpedia sample.
-pub mod kmeans_converged;
 
 #[cfg(test)]
 mod tests_kmeans;
@@ -2755,5 +2645,3 @@ mod tests_kmeans_seed;
 mod tests_a7;
 #[cfg(test)]
 mod tests_checklist;
-#[cfg(test)]
-mod tests_flat;

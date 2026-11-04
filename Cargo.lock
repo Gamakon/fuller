@@ -738,13 +738,10 @@ dependencies = [
  "ndarray",
  "pollster",
  "pyo3",
- "rand 0.9.4",
- "rand_chacha 0.9.0",
  "rayon",
  "regex",
  "serde",
  "serde_json",
- "statrs 0.18.0",
  "toml",
  "wgpu",
  "wgpu-naga-bridge",
@@ -945,7 +942,7 @@ dependencies = [
  "rand 0.8.6",
  "rand_distr",
  "rayon",
- "statrs 0.16.1",
+ "statrs",
 ]
 
 [[package]]
@@ -2108,16 +2105,6 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "rand 0.8.6",
-]
-
-[[package]]
-name = "statrs"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a3fe7c28c6512e766b0874335db33c94ad7b8f9054228ae1c2abd47ce7d335e"
-dependencies = [
- "approx",
- "num-traits",
 ]
 
 [[package]]

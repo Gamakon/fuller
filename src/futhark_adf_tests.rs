@@ -15,7 +15,7 @@ use crate::futhark_1d_interp::Value;
 use crate::futhark_table::{FutharkKingdom, GeneRng};
 use crate::futhark::program_folded;
 use crate::futhark_saturation::{Bridge, FoldEgraph as ShapeFold};
-use crate::futhark_search::suite;
+use crate::futhark::suite;
 use crate::futhark_interpreter::{format_matrix, identical, parse_matrix, MValue, Mat};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;

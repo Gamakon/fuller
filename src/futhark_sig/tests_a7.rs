@@ -7,7 +7,6 @@
 //! declared shape and the yardstick runs on it.
 
 use super::*;
-use crate::futhark_batch::{Backend as BatchBackend, Host, Inputs, Member, Program, Step};
 use crate::typed_gep::{express, fits, write_back};
 use std::process::Command;
 
@@ -77,10 +76,10 @@ fn the_a7_programs_read_back_from_their_sexps_and_fit_the_default_layout() {
         let gene = write_back(&contract, &layout, &random_gene(&contract, &layout, &const_len, &mut rng).unwrap(), &tree).unwrap();
         assert_eq!(express(&contract, &layout, &gene, &const_len).unwrap().tree(), tree, "the {what}'s write-back");
     }
-    // The reference is the deprecated runner's own tree (`futhark_search::product_twice`), and its program renders
+    // The reference is the deprecated runner's own tree (`futhark::product_twice`, from the deprecated `futhark_search`), and its program renders
     // the recorded text's kernel.
     let reference = build(&k, A7_REFERENCE).unwrap();
-    assert_eq!(reference, crate::futhark_search::product_twice(&k), "the reference gene is product_twice");
+    assert_eq!(reference, crate::futhark::product_twice(&k), "the reference gene is product_twice");
     let sizes: BTreeMap<String, usize> = [("n", 2), ("m", 3), ("p", 4)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
     let old = crate::futhark::program(&k, k.roots()[0], &reference, &sizes).unwrap();
     let new = program(&k, &signature(&p.instance).unwrap(), &reference).unwrap();
@@ -125,65 +124,6 @@ fn the_a7_reference_winner_and_planted_slowdown_are_exact_on_every_stored_case_i
     // A one-cell matrix: the degenerate roles.
     let one = &cases.iter().find(|c| c.name.contains("n1_m1_p1")).unwrap();
     assert_eq!(interp.eval(&build(&k, A7_WINNER).unwrap(), &one.inputs).unwrap().dims, vec![1, 1]);
-}
-
-#[test]
-fn the_a7_programs_are_exact_compiled_and_as_quality_programs_and_the_batch_source_has_one_helper() {
-    if !have_futhark() {
-        panic!("futhark 0.28.1 is needed for this test");
-    }
-    let p = problem("a7").unwrap();
-    let k = load(&p.instance).unwrap();
-    let sig = signature(&p.instance).unwrap();
-    let cases = load_cases(&p).unwrap();
-    let stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
-    let mut exact = 0;
-    for (what, text) in programs() {
-        let tree = build(&k, text).unwrap();
-        let src = program(&k, &sig, &tree).unwrap();
-        let exe = compile_c(&src, &scratch(&format!("{}_plain", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{src}"));
-        for c in &cases {
-            assert_eq!(run_exe(&exe, &c.stdin).unwrap(), *c.answer().unwrap(), "the compiled {what} on {}", c.name);
-            exact += 1;
-        }
-        let batch = program_cases(&k, &sig, &tree, cases.len()).unwrap();
-        assert_eq!(batch.matches("def matmul").count(), 1, "the helper once:\n{batch}");
-        let bexe = compile_c(&batch, &scratch(&format!("{}_cases", what.replace(' ', "_")))).unwrap_or_else(|e| panic!("{e}\n{batch}"));
-        let out = crate::futhark_exec::output_with_timeout_bytes(Command::new(&bexe).arg("-b"), std::time::Duration::from_secs(120), Some(&stdin)).unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(read_binary(&out.stdout).unwrap(), cases.iter().map(|c| c.answer().unwrap().clone()).collect::<Vec<_>>(), "the {what}'s quality program");
-    }
-    eprintln!("a7: the three programs compiled with futhark c are exact on {exact} of {} case runs", 3 * cases.len());
-    // THE BATCH SOURCE (`futhark_batch::Host::source`, the GPU and rust paths): two members with quality and timed
-    // entries and the yardstick, one `def matmul`, accepted by `futhark check`. The host is built on the rust backend
-    // (the C driver is i32 only); nothing is run.
-    let dir = scratch("batch");
-    let timing = timing_input(&p).unwrap().unwrap();
-    let host = Host::new(&k, &sig, cases.len(), BatchBackend::Rust { rt: dir.join("rt") }, &dir, Inputs { cases_stdin: &stdin, timing_stdin: Some(&timing), yardstick: Some(p.yardstick) }).unwrap();
-    let (reference, winner) = (build(&k, A7_REFERENCE).unwrap(), build(&k, A7_WINNER).unwrap());
-    let members = [
-        Member { program: Program::Tree(&reference), steps: vec![Step::Quality, Step::Pair { yard_first: true, itself: false }] },
-        Member { program: Program::Tree(&winner), steps: vec![Step::Quality, Step::Pair { yard_first: false, itself: false }] },
-        Member { program: Program::Text(p.yardstick), steps: vec![Step::Pair { yard_first: true, itself: false }] },
-    ];
-    let src = host.batch_source(&members).unwrap();
-    // The prelude's helper once at the top level; the yardstick's own copy inside each module (the text member's and
-    // the yard's), where it cannot clash.
-    assert_eq!(src.matches("\ndef matmul").count(), 3, "the prelude once, one inside each module:\n{src}");
-    assert_eq!(src.matches("module ").count(), 2, "the yardstick and the text member each in a module:\n{src}");
-    assert_eq!(src.matches("\n}\nentry yard ").count() + src.matches("\n}\nentry t2 ").count(), 2, "each module's entry follows it:\n{src}");
-    futhark_check(&src, &dir.join("check")).unwrap_or_else(|e| panic!("the batch source is not accepted: {e}\n{src}"));
-    // A signature view's batch source is unchanged: no prelude, the yardstick bare.
-    let rk = load(&REDUCE).unwrap();
-    let rsig = signature(&REDUCE).unwrap();
-    let rcases = load_cases(&REDUCE_PROBLEM).unwrap();
-    let rstdin: Vec<u8> = rcases.iter().flat_map(|c| c.stdin.clone()).collect();
-    let rhost = Host::new(&rk, &rsig, rcases.len(), BatchBackend::C, &dir.join("reduce"), Inputs { cases_stdin: &rstdin, timing_stdin: None, yardstick: Some(REDUCE_PROBLEM.yardstick) }).unwrap();
-    let rref = build(&rk, REDUCE_REFERENCE).unwrap();
-    let rsrc = rhost.batch_source(&[Member { program: Program::Tree(&rref), steps: vec![Step::Quality, Step::Pair { yard_first: true, itself: false }] }]).unwrap();
-    assert!(rsrc.contains("entry yard [n]"), "the yardstick stays a bare entry without a prelude:\n{rsrc}");
-    assert!(!rsrc.contains("module "), "{rsrc}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -260,35 +200,4 @@ fn random_a7_genes_are_accepted_by_futhark_check_and_equal_the_interpreter() {
     eprintln!("a7: {checked} random genes accepted by futhark check, {compiled} compiled and equal to the interpreter bit for bit");
     assert_eq!((checked, compiled), (40, 10));
     let _ = std::fs::remove_dir_all(&base);
-}
-
-#[test]
-fn the_a7_timing_input_is_the_declared_shape_and_the_yardstick_runs_on_it() {
-    let p = problem("a7").unwrap();
-    let stdin = timing_input(&p).unwrap().expect("A7 has its own timing input");
-    let inputs = read_binary(&stdin).unwrap();
-    assert_eq!(inputs.len(), 9);
-    assert!(inputs.iter().all(|a| a.dims == vec![A7_TIMING_N, A7_TIMING_N] && a.elem == Elem::F32));
-    assert!(inputs.iter().all(|a| a.values().all(|x| (-8.0..8.0).contains(&x))));
-    assert!(inputs.iter().all(|a| a.data[0] == (-0.0f32).to_bits()), "the first of every matrix is -0.0");
-    assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed");
-    let sig = signature(&p.instance).unwrap();
-    let sizes = sig.sizes(&inputs).unwrap();
-    assert_eq!((sizes["n"], sizes["m"], sizes["p"]), (A7_TIMING_N, A7_TIMING_N, A7_TIMING_N));
-    let k = load(&p.instance).unwrap();
-    let interp = Interp::new(&k, &sig).unwrap();
-    let reference = build(&k, A7_REFERENCE).unwrap();
-    let w = interp.work(&reference, &sizes).unwrap();
-    assert!(w <= TIMING_WORK_CAP, "the reference's work at the timing input {w} is over the bound {TIMING_WORK_CAP}");
-    assert_eq!(timing_work_cap(w), TIMING_WORK_CAP);
-    if !have_futhark() {
-        panic!("futhark 0.28.1 is needed for this test");
-    }
-    let exe = compile_c(p.yardstick, &scratch("timing")).unwrap();
-    let got = run_exe(&exe, &stdin).unwrap();
-    assert_eq!((got.dims.clone(), got.elem), (vec![A7_TIMING_N, A7_TIMING_N], Elem::F32));
-    // The host interpreter agrees with the yardstick on the timing input too (2 x 256^3 multiply-adds, under a second).
-    let t = std::time::Instant::now();
-    assert_eq!(interp.eval(&reference, &inputs).unwrap(), got, "the interpreter against futhark c on the timing input");
-    eprintln!("a7: the reference on the timing input, {w} node executions, interpreted in {:.2} s and equal to futhark c", t.elapsed().as_secs_f64());
 }

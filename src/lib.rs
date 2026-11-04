@@ -26,6 +26,12 @@
 /// no real gene reaches — deeper inputs degrade safely to Err/unchanged.
 pub const MAX_EXPR_DEPTH: usize = 256;
 
+/// fuller's checkout (the directory of its `Cargo.toml`). The Futhark problems' corpus (`tests/corpus/`), the kingdom
+/// tables (`kingdoms/`) and the rust runtime's crates (`futhark-rust-rt/`, `futhark-rust-backend/`,
+/// `futhark-wgpu-shim/`) live under it; phylu's Futhark evaluator finds them through this one constant until the
+/// repositories merge (`docs/PLAN_futhark_kingdom.md` 5b).
+pub const CHECKOUT: &str = env!("CARGO_MANIFEST_DIR");
+
 pub mod bf;
 pub mod calibration;
 pub mod clamp;
@@ -51,19 +57,12 @@ pub mod futhark_1d_kingdom;
 pub mod futhark;
 pub mod futhark_cost;
 pub mod futhark_saturation;
-pub mod futhark_search;
-pub mod futhark_gpu;
 pub mod futhark_interpreter;
 pub mod futhark_1d_interp;
 pub mod futhark_exec;
-pub mod futhark_wgpu_host;
-pub mod futhark_batch;
-pub mod futhark_rust;
 pub mod futhark_pixel;
 pub mod futhark_sig;
 pub mod futhark_reader;
-pub mod futhark_rings;
-pub mod futhark_operators;
 pub mod futhark_1d_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
@@ -98,8 +97,6 @@ pub mod snap;
 pub mod snap_karva;
 #[cfg(feature = "wgsl")]
 pub mod wgsl;
-/// The Futhark evaluator (plan step 5a).
-pub mod futhark_evaluator;
 
 #[cfg(feature = "python")]
 mod python;

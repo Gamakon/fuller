@@ -373,50 +373,12 @@ pub fn run_exe(exe: &std::path::Path, ps: &[f32]) -> Result<Vec<f32>, String> {
     let out = crate::futhark_exec::output_with_timeout(
         std::process::Command::new(exe).arg("-b"),
         std::time::Duration::from_secs(120),
-        Some(&crate::futhark_wgpu_host::input_text(ps)?),
+        Some(&crate::futhark_exec::input_text(ps)?),
     )?;
     if !out.status.success() {
         return Err(format!("{} failed:\n{}", exe.display(), String::from_utf8_lossy(&out.stderr)));
     }
-    crate::futhark_wgpu_host::read_binary_f32(&out.stdout)
-}
-
-/// Draw a picture with a compiled program, tile by tile: on the GPU through
-/// the shim (`gpu`, every pass timed by the GPU, which must be Metal) or with
-/// a C-backend executable. Each tile's process runs the program `runs` times
-/// (Futhark's `-r`, after its warm-up run) and the tile's time is the FASTEST
-/// run's GPU nanoseconds (the sum of that run's timed passes); the picture's
-/// time is the sum over its tiles (0 for the C backend). The fastest, because
-/// the GPU's clock ramps up within a process: measured 2026-10-27 on the
-/// reference at 64 x 64, the first runs of a process take 280 us and the last
-/// 74 us, so a median moves with the ramp (pairs of the reference against
-/// itself from 0.62 to 3.6), while the fastest of 40 runs was 73.3 to 74.2 us
-/// over 8 processes. Returns the RGBA picture (halves, alpha 1) of
-/// the last run and that time.
-pub fn draw(exe: &std::path::Path, gpu: bool, ps_of: &dyn Fn(Tile) -> Result<Vec<f32>, String>, plan: &[Tile], width: u32, height: u32, runs: usize) -> Result<(Vec<f32>, f64), String> {
-    let mut rgba = vec![0f32; (width * height * 4) as usize];
-    let mut ns = 0.0;
-    for &tile in plan {
-        let ps = ps_of(tile)?;
-        let values = if gpu {
-            let run = crate::futhark_wgpu_host::run_program_times(exe, &ps, true, runs)?;
-            let passes = &run.report.passes;
-            // Futhark's `-r N` (N > 1) runs once more first, untimed by its
-            // own clock: a warm-up. Its passes are in the report and are dropped.
-            let total = runs + usize::from(runs > 1);
-            if run.report.backend != "Metal" || passes.is_empty() || run.report.timed_passes() != passes.len() || passes.len() % total != 0 {
-                return Err(format!("a tile did not run timed on Metal, {total} runs of equal passes: {:?}", run.report));
-            }
-            let per = passes.len() / total;
-            let times: Vec<f64> = passes[(total - runs) * per..].chunks_exact(per).map(|c| c.iter().map(|p| p.2).sum::<f64>()).collect();
-            ns += times.iter().cloned().fold(f64::INFINITY, f64::min);
-            run.values
-        } else {
-            run_exe(exe, &ps)?
-        };
-        place(&mut rgba, width, tile, &values)?;
-    }
-    Ok((rgba, ns))
+    crate::futhark_exec::read_binary_f32(&out.stdout)
 }
 
 // ---- the host interpreter: what a gene means, as a test oracle ---------------
@@ -1283,38 +1245,6 @@ mod tests {
             medians.push(sizes[500]);
         }
         assert!(medians[1] < medians[0], "the half draw's median tree {} is not below the uniform draw's {}", medians[1], medians[0]);
-    }
-
-    /// The host side of a candidate's cost: 20 half-draw cuneus genes at program size 60 rendered, compiled by the
-    /// branch compiler's webgpu backend and linked against the shim (no GPU run). Every one must compile (a legal
-    /// gene), and the times are printed for the report.
-    #[test]
-    fn half_draw_candidates_compile_for_the_gpu_on_the_host() {
-        let have_branch = Command::new(crate::futhark_wgpu_host::branch_compiler()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-        if !have_branch || !have("cc") {
-            eprintln!("skipped: the branch compiler or cc is not installed");
-            return;
-        }
-        let k = load(&CUNEUS).unwrap();
-        let contract = k.relations().check().unwrap();
-        let iface = interface(&CUNEUS).unwrap();
-        let root = k.ty("image").unwrap();
-        let layout = GeneLayout::from_program_size(&contract, root, 60).unwrap();
-        let const_len = k.const_len();
-        let mut rng = crate::futhark_table::GeneRng::new(0xC0DE);
-        let dir = std::env::temp_dir().join("futhark_pixel_compile").join(format!("t{}", std::process::id()));
-        let mut times = Vec::new();
-        for i in 0..20 {
-            let g = random_gene(&k, &contract, &layout, &const_len, HeadDraw::Half, &mut rng).unwrap();
-            let tree = express(&contract, &layout, &g, &const_len).unwrap().tree();
-            let src = program(&k, &iface, &tree).unwrap();
-            let t = std::time::Instant::now();
-            crate::futhark_wgpu_host::compile_program(&src, &dir.join(format!("g{i}"))).unwrap_or_else(|e| panic!("gene {i} did not compile: {e}\n{src}"));
-            times.push((t.elapsed().as_secs_f64(), tree.level_order().len()));
-        }
-        let mut s: Vec<f64> = times.iter().map(|t| t.0).collect();
-        s.sort_by(|a, b| a.total_cmp(b));
-        eprintln!("20 half-draw cuneus candidates compiled and linked on the host: seconds min {:.2}, median {:.2}, max {:.2}; (seconds, nodes) {:?}", s[0], s[10], s[19], times.iter().map(|(a, b)| (format!("{a:.2}"), *b)).collect::<Vec<_>>());
     }
 
     /// The interpreter means what Futhark's C backend computes: 12 random image-target genes (half draw, program

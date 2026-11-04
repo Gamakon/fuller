@@ -257,68 +257,6 @@ fn the_tree_edit_distance_counts_relabels_insertions_and_deletions() {
     assert_eq!(tree_distance(&r, &build(&k, "(hist.add.n zeros vs)").unwrap()), 5);
 }
 
-/// THE TIMING WORK BOUND admits the programs it was set for: Fable's exact histogram program, at histogram's timing
-/// input (k = 100, n = 15 x 2^20), is 16kn + 2k + 1 node executions, within the bound, and so is the published program (less work). Commit 514602a3 set the bound
-/// from k x n, and this program stayed untimed on every evaluation path.
-#[test]
-fn the_timing_work_bound_admits_fable_s_exact_histogram_program() {
-    let k = load(&HISTOGRAM).unwrap();
-    let sig = signature(&HISTOGRAM).unwrap();
-    let interp = Interp::new(&k, &sig).unwrap();
-    let (bins, n) = (100u128, 15u128 << 20);
-    let sizes: BTreeMap<String, usize> = [("k".to_string(), bins as usize), ("n".to_string(), n as usize)].into_iter().collect();
-    let fable = build(&k, "(tab (sum.n (tab (sel (sub (abs (sub (mod.k (get.n is i_n)) (ival.k i_k))) 1) (get.n vs i_n) 0))))").unwrap();
-    let w = interp.work(&fable, &sizes).unwrap();
-    assert_eq!(w, 16 * bins * n + 2 * bins + 1, "Fable's program's work at the timing input");
-    assert!(w <= TIMING_WORK_CAP, "Fable's program's work {w} is over the timing bound {TIMING_WORK_CAP}");
-    let published = build(&k, HISTOGRAM_REFERENCE).unwrap();
-    let wp = interp.work(&published, &sizes).unwrap();
-    assert!(wp < w && wp <= TIMING_WORK_CAP, "the published program's work {wp}");
-    eprintln!("timing work: Fable's histogram {w}, the published program {wp}, the bound {TIMING_WORK_CAP}");
-    // The problem's bound is the constant for histogram (its published program is far under it) and four times the
-    // published program's work where that is larger (k-means).
-    assert_eq!(crate::futhark_sig::timing_work_cap(wp), TIMING_WORK_CAP);
-    assert_eq!(crate::futhark_sig::timing_work_cap(210_000_000_000), 840_000_000_000);
-    assert_eq!(crate::futhark_sig::timing_work_cap(u128::MAX), u128::MAX);
-}
-
-/// FAULT 13 (docs/reviews/2026-10-28_futhark_evolve_faults.md): pathfinder was timed on a quality case (256 x 256,
-/// about 1 ms a run). Its timing input is now the published benchmark's own shape (data/medium.in: rows = 100, cols
-/// = 100000) with walls 0 to 9, and the published program (the yardstick, through `futhark c`) gives on it what the
-/// recurrence gives, computed here directly.
-#[test]
-fn pathfinder_is_timed_on_the_published_benchmarks_shape() {
-    let p = problem("pathfinder").unwrap();
-    let stdin = timing_input(&p).unwrap().expect("pathfinder has its own timing input");
-    let inputs = read_binary(&stdin).unwrap();
-    assert_eq!(inputs.len(), 1, "one input, the walls");
-    let walls = &inputs[0];
-    assert_eq!(walls.dims, vec![PATHFINDER_TIMING_ROWS, 100_000]);
-    let walls_i32 = walls.i32_values().unwrap();
-    assert!(walls_i32.iter().all(|w| (0..10).contains(w)), "walls 0 to 9, as the published Sobol walls");
-    let sizes = signature(&PATHFINDER).unwrap().sizes(&inputs).unwrap();
-    assert_eq!((sizes["rows"], sizes["cols"]), (100, 100_000));
-    assert_eq!(timing_input(&p).unwrap().unwrap(), stdin, "the input is fixed: the same bytes every time");
-    // The recurrence: row 0, then each later row's wall plus the least of the neighbours (clamped at the edges).
-    let (rows, cols) = (walls.dims[0], walls.dims[1]);
-    let mut state: Vec<i32> = walls_i32[..cols].to_vec();
-    for r in 1..rows {
-        let prev = state.clone();
-        for j in 0..cols {
-            let left = prev[j.saturating_sub(1)];
-            let right = prev[(j + 1).min(cols - 1)];
-            state[j] = walls_i32[r * cols + j] + prev[j].min(left).min(right);
-        }
-    }
-    if !have_futhark() {
-        panic!("futhark is not installed: the published program cannot be checked on the timing input");
-    }
-    let exe = compile_c(p.yardstick, &scratch("pathfinder_timing")).unwrap();
-    let got = run_exe(&exe, &stdin).unwrap();
-    assert_eq!(got.dims, vec![cols]);
-    assert_eq!(got.i32_values().unwrap(), state, "the published program on the timing input is the recurrence");
-}
-
 /// THE QUALITY FINGERPRINT IS PINNED: the gate of a discovery run compares it with the slope check's record, so a
 /// change to the formula's values on i32 outputs would invalidate every recorded gate. Recorded at a535d464, before
 /// the values became typed (step 4): the i32 formula must give the same bits after.
