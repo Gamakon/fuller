@@ -877,6 +877,35 @@ expressed cells reach at most 307, 141 and 392, fuller's random genes 204, 152 a
 is made like `Genetics::random_gene` (a matter for P2a/P4). Test: a cell-by-cell histogram gene over 448 nodes,
 twice beside one of the runner's genes: 2 oversized rows at pi/2, one module, 2 evaluations. fuller: 784 tests pass (default), the 9 evaluator tests with `wgsl`; clippy clean default, `wgsl`, `gpu,wgsl`.
 
+F3a's code review corrections (`docs/reviews/2026-11-04_step5a_F3a_code_review.md`, `ac153b30`; findings 2 to 6;
+finding 1, phylu's start draw, is phylu's, fixed in phylu `e6a7ad2b`). **The size bound is one generous safety
+bound** (finding 2): `SIZE_BOUND_NODES` = 4,096 for every problem, or 4 x the reference program when larger
+(`size_bound_for`; every reference program and its mutants are admitted). The real protection is the batch compile's
+time limit (30 s, then the batch is split); the huge programs came from phylu's head draw. Beside it, a module's node
+budget: `futhark_batch::MODULE_NODE_BUDGET` = 2,048 nodes, `Host::run` cuts a batch into modules of at most that many
+expressed nodes before it compiles (a program's quality, timed and k-means entries each count it once; a program over
+the budget is a module alone), raised by the evaluator to 32 x the reference program (`module_budget_for`: 8,192 for
+k-means, so 24 of its mutants stay one module). Measured on the CPU, the rust path's Futhark stage of one module grows
+faster than its nodes (24 histogram rows of 250 nodes: 37 s; 4 a7 rows of 1,000: 40 s; 2,000 nodes: 4 to 8.5 s); the
+deprecated runner's generations are far under the budget (24 rows of 278 nodes in all). **The guard counts before it
+builds** (finding 3): `typed_gep::walk_expressed` walks the expression without building the tree and stops at the
+bound + 1; an oversized row is keyed by a hash of its expressed nodes' words (`Genetics::expressed_key`), and its
+tree, s-expression and Futhark text are never built. **The run file inside a halving** (finding 4): `Host::run_until`
+checks it before every compile (each chunk, each half); when it is gone no compile starts, the steps not run are
+`Outcome::NotRun`, `cost.stopped` is set; `Judge::prefetch_until` caches none of them, and the evaluator returns the
+rows before the first one not run, with `stopped` (tests: a mock c compiler that removes the run file and fails, in
+`futhark_batch` and through the seam). **The GPU script** (finding 5):
+`/private/tmp/claude-501/fbench/plan5a/f3a_rust_generation.sh`, a replay through the seam, not evolution: the runner on
+`--backend gpu --eval rust`, histogram R, random seed 1, 72 evaluations, then the `gpu` test
+`on_the_gpu_the_rust_path_replays_the_runner_s_generations_through_the_seam`, which scores the runner's first three
+generations through `evaluate_generation` and asserts one module a call and the quality inputs, behaviours and angles
+bit for bit; written, not run (the lead runs it). **Tests for the stage change and batch mode** (findings 6 and 8): the
+run file gone before the stage-2 batch returns the stage-1 rows, `stopped`, the stage still 1; the batch test now runs
+the runner's generation 1 too (one module, 6 new, 30 in all, the runner's angles bit for bit). `pub judge`/`pub gen`
+stay until X1. Found on the way: Futhark 0.28.1 internal errors (a type error after the pass Fuse SOACs) on random
+histogram and pathfinder rows of 225 to 1,100 nodes, 1 to 4 rows in 25 to 28; one kept at
+`/private/tmp/claude-501/fbench/plan5a/size_bound/ice/histogram_225_275_k04.fut`.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
