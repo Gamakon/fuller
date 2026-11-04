@@ -148,3 +148,72 @@ fn the_quality_cliff_and_the_hff_percentile_are_as_specified() {
     assert_eq!(better.default_quality_weight(), 3);
     assert_eq!(better.converged_fitness(&[0.5, 0.5, 0.5], &[0.5, 0.5], 3).unwrap().fitness, crate::score::truenorth_angle(&[0.5; 11]));
 }
+
+/// THE A7 F32 BOUND (`futhark-a7-f32bound-qqs`, F6 2026-11-04): A7's default on the GPU and not on futhark c; for A7
+/// only. On every fitness case the GPU's published output, whose largest cell error the F6 log records (the third raw
+/// measure, `e / (1 + e)` of the largest absolute error over the answer's largest magnitude), is within the bound, so
+/// an output off by that error at every cell is the answer under the bound and not under the bits; a wrong program
+/// (one product where A7 adds two) is wrong under the bound, and so is one cell off by more than the bound.
+#[test]
+fn the_a7_f32_bound_accepts_the_gpus_published_output_and_rejects_a_wrong_program() {
+    use crate::futhark_sig::{build, compare, load, load_cases, problem, signature, Interp};
+    let a7 = problem("a7").unwrap();
+    let s = scheme_for_problem_on(&a7, None, true).unwrap();
+    assert_eq!((s.name, s.fault, s.is_flat(), s.default_quality_weight()), (A7_F32_BOUND, None, true, ANSWER_QUALITY_WEIGHT));
+    assert_eq!(s.exactness(), Exactness::F32SumBound { products: 2 });
+    assert!(s.description.contains("A7's DEFAULT ON THE GPU"));
+    assert_eq!(scheme_for_problem_on(&a7, None, false).unwrap().name, "futhark-slope4-qqs", "futhark c keeps A7's own default");
+    assert_eq!(scheme_for_problem_on(&a7, Some("futhark-slope4-qqs"), true).unwrap().name, "futhark-slope4-qqs", "a named scheme is kept on the GPU");
+    let histogram = problem("histogram").unwrap();
+    assert_eq!(scheme_for_problem_on(&histogram, None, true).unwrap().name, histogram.fitness);
+    assert!(scheme_for_problem(&histogram, Some(A7_F32_BOUND)).unwrap_err().contains("is not A7"));
+    assert!(SCHEMES.iter().filter(|x| x.name != A7_F32_BOUND).all(|x| x.exactness() == Exactness::Bits), "every other scheme computes what it did");
+    // The bound itself: 2 gamma_n n B^2.
+    let u = F32_UNIT_ROUNDOFF;
+    assert_eq!(f32_sum_bound(64, 64.0), 2.0 * (64.0 * u / (1.0 - 64.0 * u)) * 64.0 * 64.0);
+    assert_eq!((f32_sum_bound(0, 64.0), f32_sum_bound(1 << 24, 1.0)), (0.0, 0.0));
+    // The F6 log's raw measures of the compiled published program on the GPU, in fitness-case order.
+    const F6_GPU_RAW: [[f64; 3]; 5] = [
+        [0.515625, 4.202031436407259e-8, 8.201833339402689e-8],
+        [0.640625, 6.661820104110497e-8, 2.1048699534164214e-7],
+        [0.744140625, 1.0334259968714284e-7, 2.1409319862303817e-7],
+        [0.5714285714285714, 4.3589009701055455e-8, 7.427139942839245e-8],
+        [0.0, 0.0, 0.0],
+    ];
+    let ex = s.exactness();
+    let cases = load_cases(&a7).unwrap();
+    let fit: Vec<_> = cases.iter().filter(|c| c.split.in_fitness()).collect();
+    assert_eq!(fit.len(), F6_GPU_RAW.len());
+    for (c, raw) in fit.iter().zip(F6_GPU_RAW) {
+        let want = c.answer().unwrap();
+        assert_eq!(raw[0] * want.len() as f64, (raw[0] * want.len() as f64).round(), "{}: the F6 share is of this case's cells", c.name);
+        let max_mag = want.values().map(f64::abs).fold(1.0, f64::max);
+        let largest = raw[2] / (1.0 - raw[2]) * max_mag;
+        let tau = ex.tolerance(&c.inputs);
+        assert!(largest <= tau, "{}: the GPU's largest error {largest:e} over the bound {tau:e}", c.name);
+        eprintln!("{}: the bound {tau:.3e}, the GPU's largest cell error {largest:.3e} ({:.0}x below)", c.name, if largest > 0.0 { tau / largest } else { f64::INFINITY });
+        let mut got = want.clone();
+        for i in 0..got.len() {
+            let d = if i % 2 == 0 { largest } else { -largest };
+            got.data[i] = ((want.value(i) + d) as f32).to_bits();
+        }
+        assert_eq!(compare(&ex.as_judged(&got, want, &c.inputs), want), [0.0; 3], "{}: exact under the bound", c.name);
+        assert!(ex.agrees(&got, want, &c.inputs));
+        assert_eq!(Exactness::Bits.agrees(&got, want, &c.inputs), largest == 0.0, "{}: under the bits", c.name);
+        // One cell off by twice the bound is wrong in that cell alone.
+        let mut one = want.clone();
+        one.data[0] = ((want.value(0) + 2.0 * tau.max(1e-3)) as f32).to_bits();
+        let r = compare(&ex.as_judged(&one, want, &c.inputs), want);
+        assert_eq!(r[0], 1.0 / want.len() as f64, "{}: one cell over the bound", c.name);
+    }
+    // A wrong program: the one product, where A7 adds two.
+    let k = load(&a7.instance).unwrap();
+    let interp = Interp::new(&k, &signature(&a7.instance).unwrap()).unwrap();
+    let wrong = build(&k, "(matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input)").unwrap();
+    for c in &fit {
+        let want = c.answer().unwrap();
+        let got = interp.eval(&wrong, &c.inputs).unwrap();
+        let r = compare(&ex.as_judged(&got, want, &c.inputs), want);
+        assert!(!ex.agrees(&got, want, &c.inputs) && r[0] > 0.9, "{}: the one product is wrong under the bound: {r:?}", c.name);
+    }
+}

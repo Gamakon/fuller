@@ -125,12 +125,85 @@ pub const SHAPES_NOT_EXPRESSED_BEFORE_GATE: f32 = 1.5;
 /// The unexpressed fitness of the gated shape fitness: above every gated value (at most π).
 pub const SHAPES_NOT_EXPRESSED_GATED: f32 = 4.0;
 
+/// THE UNIT ROUNDOFF of `f32`, `u = 2^-24`: a correctly rounded operation's relative error is at most `u`.
+pub const F32_UNIT_ROUNDOFF: f64 = 1.0 / 16_777_216.0;
+
+/// HOW A SCHEME DECIDES THAT AN OUTPUT CELL IS THE ANSWER (an answer-scored scheme's exactness check).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exactness {
+    /// The same bits (two NaNs agree): every answer-scored scheme before `futhark-a7-f32bound-qqs`.
+    Bits,
+    /// AN ERROR BOUND DERIVED FROM THE PROBLEM (Andrew's rule: f32 correctness is a bound, not bit-identical). Every
+    /// output cell is a sum of `products` dot products of length `K`, `2K` f32 products in all, and two correct
+    /// programs differ only in the order of the additions (futhark c folds sequentially, the GPU in a tree, the
+    /// compiler may fuse). For any order, `|fl(s) - s| <= gamma_n sum |x_i y_i|` with `n` the number of terms and
+    /// `gamma_n = n u / (1 - n u)` (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., section 3.1), so
+    /// two correct programs differ by at most `tau = 2 gamma_n n B^2` ([`f32_sum_bound`]), `B` the largest input
+    /// magnitude. From the case: `K` is its largest input dimension (at least the reduction length), `B` its largest
+    /// input magnitude ([`Exactness::tolerance`]). A cell within `tau` of the answer IS the answer.
+    F32SumBound { products: usize },
+}
+
+impl Exactness {
+    /// The cell tolerance `tau` on a case with these inputs: 0 for [`Exactness::Bits`]; for the bound,
+    /// [`f32_sum_bound`] of `products x K` terms of at most `B^2` each. An input that is not finite gives no bound
+    /// (0: only the answer's own value, or the other zero, is the answer).
+    pub fn tolerance(&self, inputs: &[crate::futhark_sig::Array]) -> f64 {
+        match *self {
+            Exactness::Bits => 0.0,
+            Exactness::F32SumBound { products } => {
+                let k = inputs.iter().flat_map(|a| a.dims.iter().copied()).max().unwrap_or(0);
+                let b = inputs.iter().flat_map(|a| a.values()).map(f64::abs).fold(0.0, f64::max);
+                if !b.is_finite() {
+                    return 0.0;
+                }
+                f32_sum_bound(products * k, b * b)
+            }
+        }
+    }
+
+    /// THE OUTPUT AS THE SCHEME JUDGES IT, against the answer `want` on a case with `inputs`: under
+    /// [`Exactness::Bits`] the output itself; under the bound, every cell within [`Exactness::tolerance`] of the
+    /// answer replaced by the answer's own word, so every measure downstream (the differing share, the quality
+    /// inputs, the exact counts) reads a cell within the bound as exact and every other cell as it is. An output of
+    /// another shape or element is returned as it is (it differs everywhere).
+    pub fn as_judged(&self, got: &crate::futhark_sig::Array, want: &crate::futhark_sig::Array, inputs: &[crate::futhark_sig::Array]) -> crate::futhark_sig::Array {
+        let mut out = got.clone();
+        if *self == Exactness::Bits || got.dims != want.dims || got.elem != want.elem {
+            return out;
+        }
+        let tau = self.tolerance(inputs);
+        for i in 0..want.len() {
+            if (got.value(i) - want.value(i)).abs() <= tau {
+                out.data[i] = want.data[i];
+            }
+        }
+        out
+    }
+
+    /// Whether the output is the answer under this exactness check (every cell).
+    pub fn agrees(&self, got: &crate::futhark_sig::Array, want: &crate::futhark_sig::Array, inputs: &[crate::futhark_sig::Array]) -> bool {
+        self.as_judged(got, want, inputs) == *want
+    }
+}
+
+/// THE F32 SUMMATION BOUND (`Exactness::F32SumBound`): two evaluations, in any two orders, of a sum of `terms` f32
+/// products each at most `largest_term` in magnitude differ by at most `2 gamma_n n largest_term`, `n = terms`,
+/// `gamma_n = n u / (1 - n u)`, `u` [`F32_UNIT_ROUNDOFF`]. 0 for no terms; 0 (no bound) when `n u >= 1`.
+pub fn f32_sum_bound(terms: usize, largest_term: f64) -> f64 {
+    let nu = terms as f64 * F32_UNIT_ROUNDOFF;
+    if terms == 0 || nu >= 1.0 {
+        return 0.0;
+    }
+    2.0 * (nu / (1.0 - nu)) * terms as f64 * largest_term
+}
+
 /// A scheme's definition: what the runner computes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Definition {
-    /// [`Family::FutharkSig`]: the quality inputs a case are the parts `quality` (`futhark_sig::quality_inputs_of`);
-    /// the fitness is [`staged`] under `stage_two`.
-    FutharkSig { quality: &'static [QualityPart], stage_two: StageTwo },
+    /// [`Family::FutharkSig`]: the quality inputs a case are the parts `quality` (`futhark_sig::quality_inputs_of`)
+    /// of the output as `exactness` judges it ([`Exactness::as_judged`]); the fitness is [`staged`] under `stage_two`.
+    FutharkSig { quality: &'static [QualityPart], stage_two: StageTwo, exactness: Exactness },
     /// [`Family::FutharkSig`], THE RETIRED K-MEANS SCHEME (fuller bd929652, `futhark_sig::kmeans_converged::kmeans_inputs_five`):
     /// the program is run to UltraDim's stopping rule on every fitness case, candidate and seed alike, and the five
     /// inputs a case are each relative to the seed's run: cosine inertia and mean log10 angular percentile of the
@@ -221,7 +294,17 @@ pub const SCHEMES: &[Scheme] = &[
         inputs: "per fitness case: wrong share; (1-r)/2 for Spearman's and Pearson's r with the correct output (absent for a constant answer); shares off by over 50 % and 1 %; speed: r/(1+r) a timing slot",
         stages: "1: TrueNorth over quality until the best is exact; 2: TrueNorth over (quality x m, speed) in one vector; m is --quality-weight, default fitness::ANSWER_QUALITY_WEIGHT",
         fault: None,
-        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Flat },
+        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Flat, exactness: Exactness::Bits },
+    },
+    Scheme {
+        name: A7_F32_BOUND,
+        family: Family::FutharkSig,
+        description: "A7's DEFAULT ON THE GPU (the published program compiled for the GPU differs from futhark c's in the last bits, ~1e-7 relative; F6, 2026-11-04): futhark-slope4-qqs with the exactness check an error bound, not the bits: a cell within tau = 2 gamma_n n B^2 of the answer is the answer (n = 2 K f32 products a cell, the two products of length K, K the case's largest input dimension, B its largest input magnitude, gamma_n = n u / (1 - n u), u = 2^-24: any two summation orders of a correct program differ by at most tau); quality: the slope check's formula over the output so judged; stage 2 ONE FLAT VECTOR, the quality inputs m times beside the timing slots, TrueNorth over the whole",
+        commit: "fuller (Andrew's rule: f32 correctness is a bound, not bit-identical; plan 5a, F6)",
+        inputs: "as futhark-slope4-qqs, of the output with every cell within tau of the answer counted as the answer: per fitness case: wrong share; (1-r)/2 for Spearman's and Pearson's r; shares off by over 50 % and 1 %; speed: r/(1+r) a timing slot",
+        stages: "1: TrueNorth over quality until the best is exact (within the bound); 2: TrueNorth over (quality x m, speed) in one vector; m is --quality-weight, default fitness::ANSWER_QUALITY_WEIGHT",
+        fault: None,
+        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Flat, exactness: Exactness::F32SumBound { products: 2 } },
     },
     // NOT TO BE RUN AS IS: this fitness has a known fault (the gate's pi/2 + theta_quality manipulates the HFF after
     // it is computed; Andrew, 2026-11-03: the HFF angle is the final fitness and nothing may manipulate it). Redefine
@@ -234,7 +317,7 @@ pub const SCHEMES: &[Scheme] = &[
         inputs: "per fitness case: wrong share; (1-r)/2 for Spearman's and Pearson's r with the correct output (absent for a constant answer); shares off by over 50 % and 1 %; speed: r/(1+r) a timing slot",
         stages: "1: TrueNorth over quality until the best is exact; 2: two-level HFF for an exact program, pi/2 + theta_quality for an inexact one",
         fault: Some(OFFSET_FAULT),
-        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Gated },
+        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Gated, exactness: Exactness::Bits },
     },
     // NOT TO BE RUN AS IS: this fitness has a known fault (stage 2 ungated: a fast inexact program ranks above an
     // exact one; found and fixed in fuller f465a5cf). Redefine the fitness function before using it.
@@ -246,7 +329,7 @@ pub const SCHEMES: &[Scheme] = &[
         inputs: "as futhark-slope4-gated",
         stages: "1: TrueNorth over quality; 2: two-level HFF, ungated",
         fault: Some("stage 2 ungated: a fast inexact program ranks above an exact one (fuller f465a5cf)"),
-        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Ungated },
+        definition: Definition::FutharkSig { quality: QUALITY_PARTS, stage_two: StageTwo::Ungated, exactness: Exactness::Bits },
     },
     // NOT TO BE RUN AS IS: this fitness has a known fault (the study's seven inputs reward the all-zeros output and
     // fail the slope check on histogram, found by the slope check of 2026-10-29, fuller 6f76baac/b8163635; and stage 2
@@ -259,7 +342,7 @@ pub const SCHEMES: &[Scheme] = &[
         inputs: "per fitness case: wrong share; shares off by over 1, 10, 50 % of the correct magnitude; mean and largest error over the correct output's range (e/(1+e)); share of neighbouring pairs in the wrong order; speed: r/(1+r) a timing slot",
         stages: "1: TrueNorth over quality; 2: two-level HFF, ungated",
         fault: Some("the seven inputs reward the all-zeros output and fail the slope check on histogram (fuller 6f76baac, b8163635); stage 2 ungated (fuller f465a5cf)"),
-        definition: Definition::FutharkSig { quality: &[QualityPart::Study], stage_two: StageTwo::Ungated },
+        definition: Definition::FutharkSig { quality: &[QualityPart::Study], stage_two: StageTwo::Ungated, exactness: Exactness::Bits },
     },
     // NOT TO BE RUN AS IS: this fitness has a known fault (it rewards early stopping: r/(1+r) compresses a quality
     // loss; the first k-means run, kmeans_qqs_s1, found a best individual that stops after 3 iterations with a 16 %
@@ -450,7 +533,27 @@ pub fn scheme_for_problem(p: &crate::futhark_sig::Problem, name: Option<&str>) -
     if s.is_converged() != own.is_converged() {
         return Err(format!("the fitness scheme {name:?} is not of {}'s kind: {} is scored {}, and its schemes are {}", p.name, p.name, if own.is_converged() { "on its clustering objective run to UltraDim's stopping rule (docs/KMEANS_FITNESS.md), with no stored answers" } else { "against its stored answers" }, names_for(Family::FutharkSig).into_iter().filter(|n| scheme(n).is_ok_and(|x| x.is_converged() == own.is_converged())).collect::<Vec<_>>().join(", ")));
     }
+    if s.exactness() != Exactness::Bits && p.name != "a7" {
+        return Err(format!("the fitness scheme {name:?} derives its error bound from A7's output (two f32 products a cell); {} is not A7", p.name));
+    }
     Ok(s)
+}
+
+/// THE A7 SCHEME WITH THE F32 ERROR BOUND ([`Exactness::F32SumBound`]).
+pub const A7_F32_BOUND: &str = "futhark-a7-f32bound-qqs";
+
+/// THE PROBLEMS WHOSE DEFAULT ON THE GPU IS NOT THEIR OWN ([`crate::futhark_sig::Problem::fitness`], the default on
+/// futhark c): A7's compiled published program differs from futhark c's in the last bits on the GPU (F6,
+/// 2026-11-04), so its GPU default is [`A7_F32_BOUND`].
+pub const GPU_DEFAULTS: &[(&str, &str)] = &[("a7", A7_F32_BOUND)];
+
+/// [`scheme_for_problem`] on a backend: with no `name` on the GPU, the problem's GPU default ([`GPU_DEFAULTS`]) when
+/// it has one; otherwise as [`scheme_for_problem`].
+pub fn scheme_for_problem_on(p: &crate::futhark_sig::Problem, name: Option<&str>, on_gpu: bool) -> Result<&'static Scheme, String> {
+    match (name, on_gpu, GPU_DEFAULTS.iter().find(|(problem, _)| *problem == p.name)) {
+        (None, true, Some((_, gpu))) => scheme_for_problem(p, Some(gpu)),
+        _ => scheme_for_problem(p, name),
+    }
 }
 
 /// The scheme a runner of `family` was configured with: `name`, or the family's default when `None`. A name of
@@ -465,6 +568,14 @@ pub fn scheme_for(family: Family, name: Option<&str>) -> Result<&'static Scheme,
 }
 
 impl Scheme {
+    /// The exactness check of the scheme: an answer-scored scheme's own, [`Exactness::Bits`] for every other.
+    pub fn exactness(&self) -> Exactness {
+        match self.definition {
+            Definition::FutharkSig { exactness, .. } => exactness,
+            _ => Exactness::Bits,
+        }
+    }
+
     /// The quality parts of an answer-scored `FutharkSig` scheme.
     pub fn quality_parts(&self) -> Result<&'static [QualityPart], String> {
         match self.definition {
