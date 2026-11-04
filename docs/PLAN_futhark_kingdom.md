@@ -852,6 +852,21 @@ phylu's P4 or `futhark_measure`). fuller: 783 tests pass (default, the 8 evaluat
 `wgsl`; clippy clean with default, `wgsl` and `gpu,wgsl`. Commits `2948db62` and `c4d4d90d` carried a clippy
 `type_complexity` warning (the sink's type), fixed in this commit by the `Sink` alias. F3a's code is `1a7ba021`.
 
+P2a DONE (phylu `db3fc88d`, `54e7d4f9`, `1ce1b8d0`; GPU fixes `84a80116`, `b6045261`; review fixes `8973a6b7`): the
+fitness hook (`ExternalFitness`, `ExternalScored`) and the fresh hook (`ExternalFresh`, asked once a pair); the budget
+charges `evaluations_new`; the external fold rides the engine's `fold_every` beat and lands through `fold_landing`; a
+stop, also in generation 0, ends the run as killed; the hook's individuals enter the genealogy with their parents and
+origin. Review: `docs/reviews/2026-11-04_step5a_P2a_code_review.md`.
+
+P2b DONE (phylu `4f648bce`; review fixes `dce9a96b`): the stage change restarts the hall of fame and writes a
+`stage_change` event; the `columns`, `extras` and `state` hooks; checkpoint format 4 with the hook's state (format 3 is
+a named error); a killed run writes no last checkpoint, so a resume never meets unscored rows (P4 must checkpoint every
+generation); every hall-of-fame line has its header's columns. The fold beat asks for the forms of each island's best
+`fold_top_k`, one request a winner, with `fold_top_k` bounded to 1..=4 by `futhark_config_errors` (one k-means fold
+took 193 s); one request a pair carrying all its winners needs a `FreshRequest` change in fuller (F5). Review:
+`docs/reviews/2026-11-04_step5a_P2b_code_review.md`. GPU: `p2a_mock.sh`, 6 of 6 tests pass (2026-11-04 03:18Z), phylu
+`dce9a96b`, fuller `d2fafb00`'s tree.
+
 F3a's size guard (the P1 code review, `f18d50c6`): in `evaluate_generation` an expressed tree of more than
 `SIZE_BOUND_FACTOR` = 64 times the reference program's node count is scored worst on every input (as a program that
 does not run), never rendered or compiled, charged once, and counted in `GenerationScores::oversized`. Basis, measured
