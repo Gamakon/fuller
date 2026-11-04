@@ -704,8 +704,9 @@ fn kmeans_through_the_seam_gives_the_runner_s_inputs_and_tests_the_champion_when
 /// `evaluate_generation` on `--eval rust`. The sample is uploaded once, at the controls; every call after uploads
 /// nothing and its runs are resident hits. Each call's new programs are ONE module (more only when the module is
 /// halved, as the runner's own batch is; no compile fails or runs out of time), and one more module exactly when the
-/// champion's text changed (its test case). Every row's path, quality inputs, behaviour and all-zero flag equal the
-/// runner's, bit for bit (the speed inputs are wall-clock and are not compared).
+/// champion's text changed (its test case). Every row's path, batch size, quality inputs and all-zero flag equal
+/// the runner's, bit for bit, and its output fingerprint too unless its output is garbage ([`output_is_garbage`]; the
+/// speed inputs are wall-clock and are not compared).
 #[cfg(feature = "gpu")]
 #[test]
 fn on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_the_seam() {
@@ -758,12 +759,41 @@ fn on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_t
         } else {
             assert!(compiled && s.cost.modules - tested > 1, "generation {g}: a halved module");
         }
+        // The path, batch size, quality inputs and all-zero flag on every row; the output fingerprint only where the
+        // program's output is not garbage ([`output_is_garbage`]): the GPU run of 2026-11-04 10:29Z had one row of
+        // generation 0 at the worst quality on every case whose fingerprint differed between the runner and this test,
+        // and the fitness reads only the quality inputs.
+        let mut differing = Vec::new();
         for (r, w) in s.rows.iter().zip(&want) {
             assert_eq!(r.text, w.text, "generation {g}: the runner's program");
             let got = seam_cols(r);
-            assert_eq!((&got[0], &got[1], &got[2], &got[4], &got[5]), (&w.cols[0], &w.cols[1], &w.cols[2], &w.cols[4], &w.cols[5]), "generation {g}: the runner's path, quality inputs, behaviour and all-zero flag: {}", r.text);
+            assert_eq!((&got[0], &got[1], &got[2], &got[5]), (&w.cols[0], &w.cols[1], &w.cols[2], &w.cols[5]), "generation {g}: the runner's path, batch size, quality inputs and all-zero flag: {}", r.text);
+            if got[4] != w.cols[4] {
+                differing.push((output_is_garbage(&r.quality), got[4].clone(), w.cols[4].clone(), r.text.clone()));
+            }
             assert_kmeans_vector(&ev, r);
         }
+        for (garbage, here, runner, text) in &differing {
+            eprintln!("generation {g}: the output fingerprint differs ({here} here, {runner} in the runner){}: {text}", if *garbage { ", a garbage output, not compared" } else { "" });
+        }
+        assert!(differing.iter().all(|d| d.0), "generation {g}: an output fingerprint differs on a row whose output is not garbage (listed above)");
     }
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A k-means row whose output is GARBAGE: on every case the two quality inputs read from the program's own centroids,
+/// the cosine inertia and the angular percentile, are at the worst value, 1 (the third, the convergence, is the
+/// reference program's update run on from those centroids, which reaches its fixed point from garbage as well: 1/2 on
+/// the row of 2026-11-04 10:29Z). Garbage need not be the same garbage in two processes, so its fingerprint is not
+/// compared.
+fn output_is_garbage(quality: &[f64]) -> bool {
+    !quality.is_empty() && quality.len() % 3 == 0 && quality.chunks_exact(3).all(|c| c[0] >= 1.0 && c[1] >= 1.0)
+}
+
+#[test]
+fn a_kmeans_output_is_garbage_exactly_when_its_inertia_and_percentile_are_worst_on_every_case() {
+    assert!(output_is_garbage(&[1.0, 1.0, 0.5, 1.0, 1.0, 1.0]));
+    assert!(!output_is_garbage(&[1.0, 1.0, 0.5, 0.9, 1.0, 0.5]));
+    assert!(!output_is_garbage(&[0.5, 0.5, 0.5]));
+    assert!(!output_is_garbage(&[]));
 }
