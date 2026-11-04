@@ -1784,6 +1784,10 @@ impl Interp {
     /// every node once, times the trips of the binders it is inside
     /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length,
     /// a histogram of rows and a division of rows their `[K][D]` cells. A pair row costs one, as a scalar's does.
+    /// A LOOP whose state holds arrays also costs their cells on every trip (the state written each trip; a tuple's
+    /// arrays summed, a scalar nothing more): the G3 GPU check of 2026-11-04 found histogram mutants
+    /// `(loop1.k X (loop.k (hist.add.n vs zeros) zeros))`, whose `[n]` state is rewritten k x k times, counted at 1
+    /// a trip (3.2e9, under the 5.9e10 bound) and timed for minutes; with the state's cells they are 1.6e11.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
         fn walk(me: &Interp, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
@@ -1810,6 +1814,9 @@ impl Interp {
                 _ => (1, 1),
             };
             let mut sum = mult * own;
+            if let Op::Loop { dim, from1, .. } = op {
+                sum += mult * n[dim].saturating_sub(u128::from(from1)) * state_cells(me, t, n)?;
+            }
             // The array reduced, or the rows histogrammed (the second argument) or divided, costs its class's cells.
             let costed = match op {
                 Op::Sum | Op::Minimum | Op::Maximum | Op::Map2(_) | Op::Scan(_) | Op::Hist(..) | Op::RowDiv => t.kids.first(),
@@ -1834,6 +1841,18 @@ impl Interp {
                 sum += walk(me, kid, if binder { mult * body_mult } else { mult }, n)?;
             }
             Ok(sum)
+        }
+        // The cells of a loop's state: its arrays' (a tuple's summed), 0 for a scalar or an index.
+        fn state_cells(me: &Interp, t: &Tree, n: &[u128]) -> Result<u128, String> {
+            let dual = &me.k.dual(me.k.rows[t.symbol as usize].output).ok_or("a row with no dual")?.dual;
+            fn cells(c: &Class, me: &Interp, n: &[u128]) -> Result<u128, String> {
+                match c {
+                    Class::Tuple(parts) => parts.iter().map(|p| cells(p, me, n)).sum(),
+                    Class::Array { dims, .. } => dims.iter().map(|d| me.sig.dims.iter().position(|x| x == d).map(|i| n[i]).ok_or_else(|| format!("a loop's state over an unknown dimension {d}"))).product(),
+                    _ => Ok(0),
+                }
+            }
+            cells(&Class::parse(dual.split(':').next().unwrap_or(""), &me.sig.elements, None)?, me, n)
         }
         walk(self, tree, 1, &n)
     }

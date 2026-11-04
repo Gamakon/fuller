@@ -276,6 +276,8 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
     }
     let info = &prog.desc.kernels[idx];
     let k = prog.kernel(ctx, idx)?;
+    // Past a bound, nothing more is submitted (its work could not be stopped once queued).
+    ctx.check_bounds()?;
     let nsh = info.shared_mem_overrides.len();
     let nsc = info.scalar_offsets.len();
     if vals.len() != nsh + nsc || mems.len() != info.binding_indices.len() {
@@ -340,7 +342,7 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
     }
-    ctx.queue().submit(Some(enc.finish()));
+    let submission = ctx.queue().submit(Some(enc.finish()));
     if let Some(e) = scope.pop() {
         return Err(Error::new(format!("the launch of kernel {} failed: {e}", info.name)));
     }
@@ -348,6 +350,7 @@ pub fn launch(ctx: &FutharkCtx, prog: &Program, idx: usize, grid: [u32; 3], bloc
         s.launches += 1;
         s.submits += 1;
     });
+    ctx.submitted(submission)?;
     if let Some(t) = timed {
         let ns = t.read(ctx)?;
         ctx.record_pass(ns);

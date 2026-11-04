@@ -220,3 +220,45 @@ fn the_micro_planted_slowdowns_are_equal_and_the_egraph_recovers_the_reference()
         assert!(small <= wr, "{}: the smallest variant's work {small}, the reference's {wr}", p.name);
     }
 }
+
+/// THE FIVE HISTOGRAM MUTANTS OF THE G3 GPU CHECK (2026-11-04, phylu 20b352ad, regime P, generation 0), as the run's
+/// ledger holds them: each timed for minutes on the GPU, each counted under the timing bound (5.9e10 node executions)
+/// before a loop's array state was charged a trip. The work at histogram's timing input (k = 100, n = 15 x 2^20).
+const G3_SLOW_MUTANTS: [&str; 5] = [
+    "(hist.add.n (tab (neg (get.n vs i_n))) (loop1.k zeros (loop.k (hist.add.n vs zeros) zeros)))",
+    "(hist.add.n (tab (neg (get.n vs i_n))) (loop1.k (loop1.n (scan.add vs) s_a_n) (loop.k (hist.add.n vs zeros) zeros)))",
+    "(hist.add.n (tab (neg (get.n vs i_n))) (loop1.k (loop1.n (scan.add vs) s_a_n) (loop.k (hist.add.n zeros zeros) vs)))",
+    "(hist.add.n (scan.add (loop1.n vs s_a_n)) (loop1.k (scan.add (hist.max.n (map2.max vs vs) (hist.max.k (hist.min.k zeros (loop.k zeros (hist.min.n is (loop.n zeros vs)))) zeros))) (loop.k (hist.add.n zeros zeros) vs)))",
+    "(hist.add.n (scan.add (loop1.n vs s_a_n)) (loop1.k (hist.add.k (hist.min.k zeros (loop.k zeros (hist.min.n (loop.n zeros vs) (loop.n (hist.add.k s_a_k s_a_k) zeros)))) zeros) (loop.k (hist.add.n zeros zeros) vs)))",
+];
+
+/// A LOOP'S ARRAY STATE COSTS ITS CELLS EVERY TRIP (the work estimate's rule of 2026-11-04): `(loop.k zeros s_a_k)`
+/// on k = 3 is the loop (1), its start (1), its body's variable a trip (3) and its `[k]` state a trip (3 x 3); a
+/// scalar state costs nothing more; and the five slow mutants of the G3 GPU check are each over 1e11 at histogram's
+/// timing input, where the published program is 7.9e7.
+#[test]
+fn a_loops_array_state_costs_its_cells_every_trip() {
+    let hist = load(&HISTOGRAM).unwrap();
+    let sig = signature(&HISTOGRAM).unwrap();
+    let interp = Interp::new(&hist, &sig).unwrap();
+    let small: BTreeMap<String, usize> = [("k".to_string(), 3), ("n".to_string(), 5)].into_iter().collect();
+    let w = |text: &str, sizes: &BTreeMap<String, usize>| interp.work(&build(&hist, text).unwrap(), sizes).unwrap();
+    assert_eq!(w("(loop.k zeros s_a_k)", &small), 1 + 1 + 3 + 3 * 3);
+    assert_eq!(w("(loop1.k zeros s_a_k)", &small), 1 + 1 + 2 + 2 * 3, "a loop from 1 makes k - 1 trips");
+    // A scalar state: `(tab (loop.n 0 s_i32))` is the tabulate (1), and k times the loop (1), its start (1) and n
+    // trips of its body (5): no state cells.
+    assert_eq!(w("(tab (loop.n 0 s_i32))", &small), 1 + 3 * (1 + 1 + 5));
+    let timing: BTreeMap<String, usize> = [("k".to_string(), 100), ("n".to_string(), 15 << 20)].into_iter().collect();
+    let published = w("(hist.add.n (tab (mod.k (get.n is i_n))) vs)", &timing);
+    assert_eq!(published, 78_643_303, "the published program's work at the timing input, as the G3 run printed it");
+    for c in load_cases(&HISTOGRAM_PROBLEM).unwrap() {
+        let sz = sig.sizes(&c.inputs).unwrap();
+        let most = G3_SLOW_MUTANTS.iter().map(|t| w(t, &sz)).max().unwrap();
+        eprintln!("case {} {:?}: the most work of the five {most}", c.name, sz);
+    }
+    for text in G3_SLOW_MUTANTS {
+        let got = w(text, &timing);
+        assert!(got > 100_000_000_000, "{got} for {text}");
+        eprintln!("G3 slow mutant: {got:.3e} node executions ({:.0} x the published program's): {text}", got as f64 / published as f64);
+    }
+}

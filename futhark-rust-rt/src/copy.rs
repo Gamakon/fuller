@@ -205,8 +205,11 @@ fn memcpy_dev2dev(ctx: &FutharkCtx, dst: &DevMem, dst_offset: u64, src: &DevMem,
         ctx.sync()?;
         tmp.destroy();
     } else {
+        ctx.check_bounds()?;
         enc.copy_buffer_to_buffer(sb.buffer(), src_offset, db.buffer(), dst_offset, Some(size));
-        ctx.queue().submit(Some(enc.finish()));
+        let submission = ctx.queue().submit(Some(enc.finish()));
+        ctx.count(|s| s.submits += 1);
+        return ctx.submitted(submission);
     }
     ctx.count(|s| s.submits += 1);
     Ok(())

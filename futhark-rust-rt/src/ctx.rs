@@ -3,7 +3,7 @@
 
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,6 +21,17 @@ const MAX_THRESHOLD: i64 = 65536;
 const MAX_SHARED_MEMORY: i64 = 16384;
 const MAX_REGISTERS: i64 = 65536;
 const MAX_CACHE: i64 = 2097152;
+
+/// THE SUBMISSIONS IN FLIGHT a context allows (the G3 GPU check's fault of 2026-11-04): after a
+/// submission, the host waits (within every bound) for the one this many before it, so the queue never holds more.
+/// A submission on the GPU cannot be cancelled: a wait that gives up at a bound leaves the queued work running, and
+/// the next command's work behind it. With the queue bounded, a wait given up at a bound leaves at most this many
+/// submissions to finish. The GPU still has the others queued while the host waits, so a fast program is not slowed.
+pub const MAX_IN_FLIGHT: usize = 32;
+
+/// The text of every failure at a run's bound ([`FutharkCtx::set_run_bound`]): a legal program too slow to time, never
+/// a fault of the program or of the software. The evaluator reads a timing failure that contains it as too slow.
+pub const RUN_BOUND_MARK: &str = "ran past the timed run's bound";
 
 /// What the runtime has done on a context: for the cost tables and the tests.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -67,6 +78,9 @@ pub struct FutharkCtx {
     passes: RefCell<Vec<f64>>,
     wait_timeout: Cell<Option<Duration>>,
     deadline: Cell<Option<Instant>>,
+    /// A run's bound: its start, the pipeline creation time at its start, and the bound.
+    run_bound: Cell<Option<(Instant, u128, Duration)>>,
+    in_flight: RefCell<VecDeque<wgpu::SubmissionIndex>>,
     stats: Cell<CtxStats>,
     trace: Cell<bool>,
 }
@@ -98,6 +112,8 @@ impl FutharkCtx {
             passes: RefCell::new(Vec::new()),
             wait_timeout: Cell::new(None),
             deadline: Cell::new(None),
+            run_bound: Cell::new(None),
+            in_flight: RefCell::new(VecDeque::new()),
             stats: Cell::new(CtxStats::default()),
             trace: Cell::new(false),
         })
@@ -146,6 +162,66 @@ impl FutharkCtx {
     /// driver's `alarm` bounds one command): a wait that reaches it is a device failure.
     pub fn set_deadline(&self, d: Option<Instant>) {
         self.deadline.set(d);
+    }
+
+    /// A BOUND ON ONE RUN of an entry, from now (`None` clears it): every wait for the device and every submission
+    /// respects it, and one that reaches it is a device failure whose text holds [`RUN_BOUND_MARK`]. The time the run
+    /// spends creating shader modules and pipelines (on the host, before its first launches) is not counted against it,
+    /// so a warm-up run is bounded like the others.
+    pub fn set_run_bound(&self, bound: Option<Duration>) {
+        self.run_bound.set(bound.map(|b| (Instant::now(), self.stats.get().pipeline_ns, b)));
+    }
+
+    /// The instant the run's bound falls at: its start, plus its bound, plus the pipeline creation since its start.
+    fn run_deadline(&self) -> Option<(Instant, Duration)> {
+        self.run_bound.get().map(|(t0, p0, b)| {
+            let pipelines = Duration::from_nanos(u64::try_from(self.stats.get().pipeline_ns.saturating_sub(p0)).unwrap_or(u64::MAX));
+            (t0 + b + pipelines, b)
+        })
+    }
+
+    /// The failure of a run at its bound of `bound`: a device failure (the device is still busy) whose text holds
+    /// [`RUN_BOUND_MARK`].
+    pub fn run_bound_failure(bound: Duration) -> Error {
+        Error::device(format!("the run {RUN_BOUND_MARK} of {:.1} s (a legal program too slow to time)", bound.as_secs_f64()))
+    }
+
+    /// An error when the command's deadline or the run's bound has passed (checked before a submission, so a host loop
+    /// stops submitting at a bound instead of queueing work no one will wait for).
+    pub(crate) fn check_bounds(&self) -> Result<(), Error> {
+        let now = Instant::now();
+        if let Some((d, b)) = self.run_deadline() {
+            if now >= d {
+                return Err(FutharkCtx::run_bound_failure(b));
+            }
+        }
+        if self.deadline.get().is_some_and(|d| now >= d) {
+            return Err(Error::device("the command ran past its bound (a submission at the deadline)"));
+        }
+        Ok(())
+    }
+
+    /// A submission made: kept in the queue of those in flight, and when it holds more than [`MAX_IN_FLIGHT`], the
+    /// oldest waited for (within every bound).
+    pub(crate) fn submitted(&self, index: wgpu::SubmissionIndex) -> Result<(), Error> {
+        let oldest = {
+            let mut q = self.in_flight.borrow_mut();
+            q.push_back(index);
+            if q.len() > MAX_IN_FLIGHT {
+                q.pop_front()
+            } else {
+                None
+            }
+        };
+        match oldest {
+            Some(i) => self.wait(Some(i)),
+            None => Ok(()),
+        }
+    }
+
+    /// How many submissions are in flight (not yet waited for).
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.borrow().len()
     }
 
     /// Print the program's trace messages (`TracePrint`) on standard error.
@@ -324,18 +400,36 @@ impl FutharkCtx {
 
     /// `futhark_context_sync`: wait until the device has done everything submitted.
     pub fn sync(&self) -> Result<(), Error> {
-        let left = self.deadline.get().map(|d| d.saturating_duration_since(Instant::now()));
-        let timeout = match (self.wait_timeout.get(), left) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
-        if timeout == Some(Duration::ZERO) {
+        self.wait(None)?;
+        self.in_flight.borrow_mut().clear();
+        Ok(())
+    }
+
+    /// Wait for submission `index` (`None`: every submission) within every bound: the wait timeout, the command's
+    /// deadline and the run's bound. A wait that reaches the run's bound is [`FutharkCtx::run_bound_failure`].
+    fn wait(&self, index: Option<wgpu::SubmissionIndex>) -> Result<(), Error> {
+        let now = Instant::now();
+        let run = self.run_deadline();
+        let left = |d: Instant| d.saturating_duration_since(now);
+        let (cmd_left, run_left) = (self.deadline.get().map(left), run.map(|(d, _)| left(d)));
+        if let (Some(Duration::ZERO), Some((_, b))) = (run_left, run) {
+            return Err(FutharkCtx::run_bound_failure(b));
+        }
+        if cmd_left == Some(Duration::ZERO) {
             return Err(Error::device("the command ran past its bound (a wait at the deadline)"));
         }
-        self.device
-            .poll(wgpu::PollType::Wait { submission_index: None, timeout })
-            .map(|_| ())
-            .map_err(|e| Error::device(format!("Failed to wait for work to be done: {e}")))
+        let timeout = [self.wait_timeout.get(), cmd_left, run_left].into_iter().flatten().min();
+        match self.device.poll(wgpu::PollType::Wait { submission_index: index, timeout }) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let now = Instant::now();
+                match run {
+                    Some((d, b)) if now >= d => Err(FutharkCtx::run_bound_failure(b)),
+                    _ if self.deadline.get().is_some_and(|d| now >= d) => Err(Error::device(format!("the command ran past its bound (a wait at the deadline): {e}"))),
+                    _ => Err(Error::device(format!("Failed to wait for work to be done: {e}"))),
+                }
+            }
+        }
     }
 
     /// Map a buffer for reading and wait for it.

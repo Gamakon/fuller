@@ -21,7 +21,7 @@
 //! fuller reaches this through the C entry points below only (`futhark_rust_rt_*`), as it reaches the shim: fuller
 //! never links this crate.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -29,6 +29,32 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::values::{ElemType, HostValue, Scalar};
 use crate::{EntryDesc, Error, FutharkCtx, ProgramDesc, Value};
+
+/// THE BOUND ON ONE TIMED RUN (the G3 GPU check's fault of 2026-11-04): a run of a timed entry (`t`, `p`), warm-up
+/// included and its pipeline creation not counted, that takes longer is stopped at its next submission or wait, and
+/// its command fails with [`crate::ctx::RUN_BOUND_MARK`]: the program is legal and too slow to time. Twice the least
+/// time a side of a timed pair runs (phylu's `PAIR_SIDE_SECONDS`, 1 s): every published program times in milliseconds
+/// (histogram's 3 ms, A7's at 256^3), and a program over 2 s is over 600 times histogram's, whose speed input
+/// `r/(1+r)` would be 0.998 or more had it been timed. Before it, a slow mutant's run had only the command's bound
+/// (the per-candidate 120 s), and each of its pair commands spent it: five such mutants cost 3,476 s of one batch.
+pub const TIMED_RUN_BOUND: Duration = Duration::from_secs(2);
+
+/// The entry of a `t` or `p` command (its candidate's timed entry), else None.
+fn timed_entry(line: &str) -> Option<&str> {
+    let mut w = line.split_whitespace();
+    match w.next() {
+        Some("t") | Some("p") => w.next(),
+        _ => None,
+    }
+}
+
+/// A `t` or `p` command whose entry already reached [`TIMED_RUN_BOUND`] in this run: its tag and its failure's text
+/// (it is not run again), else None.
+fn known_too_slow(line: &str, too_slow: &HashSet<String>) -> Option<(&'static str, String)> {
+    let e = timed_entry(line).filter(|e| too_slow.contains(*e))?;
+    let tag = if line.starts_with('t') { "t" } else { "p" };
+    Some((tag, format!("the timed entry failed: the run of {e} {} in an earlier command (not run again)", crate::ctx::RUN_BOUND_MARK)))
+}
 
 /// What a generation's dylib exports, by the Rust ABI (`futhark_rust_module`): its entries and its program.
 #[derive(Clone, Copy)]
@@ -408,6 +434,18 @@ struct RunState<'a> {
 }
 
 /// One command: its payload, or its failure.
+/// An entry's failure as its command's: `what` ("the timed entry failed") then the failure's own text, and a device
+/// failure (a bound reached, a lost device) still one, so the context and the device are made again (before
+/// 2026-11-04 the text was kept and the kind lost: a wait given up at a bound left the busy device in use).
+fn entry_failure(what: &str, x: Error) -> Error {
+    let msg = format!("{what}: {}", x.message());
+    if x.is_device_failure() {
+        Error::device(msg)
+    } else {
+        Error::new(msg)
+    }
+}
+
 fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Result<(&'static str, Vec<u8>), (&'static str, Error)> {
     let RunState { cases, timing, n_cases, n_in, resident, sample_rows } = st;
     let w: Vec<&str> = line.split_whitespace().collect();
@@ -448,8 +486,8 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             let e = find(m, entry).map_err(|x| (tag, x))?;
             let args = upload(ctx, cases).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
             ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
-            let outs = (e.call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the quality entry failed: {x}"))))?;
-            ctx.sync().map_err(|x| (tag, Error::new(format!("the quality entry failed: {x}"))))?;
+            let outs = (e.call)(ctx, &args).map_err(|x| (tag, entry_failure("the quality entry failed", x)))?;
+            ctx.sync().map_err(|x| (tag, entry_failure("the quality entry failed", x)))?;
             if outs.len() != n_cases {
                 return Err((tag, Error::new(format!("the quality entry returned {} values for {n_cases} cases", outs.len()))));
             }
@@ -472,8 +510,10 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after the inputs: {x}"))))?;
             for _ in 0..=runs {
                 let m0 = ctx.timed_passes();
-                let outs = (e.call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
-                ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
+                ctx.set_run_bound(Some(TIMED_RUN_BOUND));
+                let outs = (e.call)(ctx, &args).map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
+                ctx.sync().map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
+                ctx.set_run_bound(None);
                 drop(outs);
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after a run: {x}"))))?;
                 let m1 = ctx.timed_passes();
@@ -520,8 +560,10 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
                 k += 1;
                 let w0 = Instant::now();
                 let m0 = ctx.timed_passes();
-                let outs = (sides[side].call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
-                ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
+                ctx.set_run_bound(Some(TIMED_RUN_BOUND));
+                let outs = (sides[side].call)(ctx, &args).map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
+                ctx.sync().map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
+                ctx.set_run_bound(None);
                 drop(outs);
                 ctx.sync().map_err(|x| (tag, Error::new(format!("the sync after a run: {x}"))))?;
                 let m1 = ctx.timed_passes();
@@ -544,8 +586,8 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             let timing = timing.ok_or((tag, Error::new("an output command with no timing input")))?;
             let e = find(m, entry).map_err(|x| (tag, x))?;
             let args = upload(ctx, timing).map_err(|x| (tag, Error::new(format!("an input did not upload: {x}"))))?;
-            let outs = (e.call)(ctx, &args).map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
-            ctx.sync().map_err(|x| (tag, Error::new(format!("the timed entry failed: {x}"))))?;
+            let outs = (e.call)(ctx, &args).map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
+            ctx.sync().map_err(|x| (tag, entry_failure("the timed entry failed", x)))?;
             let mut payload = Vec::new();
             outs.first()
                 .ok_or((tag, Error::new("the timed entry returned no value")))?
@@ -663,7 +705,15 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         }
     }
     let mut index = 0i64;
+    // The entries whose timed run reached its bound ([`TIMED_RUN_BOUND`]): their later `t` and `p` commands fail at
+    // once with the same text, never run again (each would spend the bound, and leave the GPU busy behind it).
+    let mut too_slow: HashSet<String> = HashSet::new();
     for line in commands.lines().filter(|l| !l.trim().is_empty()) {
+        if let Some((tag, why)) = known_too_slow(line, &too_slow) {
+            r.record(tag, index, false, 0, 0, why.as_bytes());
+            index += 1;
+            continue;
+        }
         let c = match ctx.take() {
             Some(c) => c,
             None => match s.ctx(timed) {
@@ -700,6 +750,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
         c.set_deadline(Some(t0 + s.wait));
         let got = catch_unwind(AssertUnwindSafe(|| command(&c, &m, line, RunState { cases: &cases, timing: timing.as_deref(), n_cases: inputs.n_cases, n_in: inputs.n_in, resident: resident.as_ref(), sample_rows: sample_rows.as_deref().map(Vec::as_slice) })));
         c.set_deadline(None);
+        c.set_run_bound(None);
         let ns = t0.elapsed().as_nanos();
         let over = t0.elapsed() >= s.wait;
         let got = match got {
@@ -714,6 +765,11 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
                 ctx = Some(c);
             }
             Ok(Err((tag, e))) => {
+                if e.message().contains(crate::ctx::RUN_BOUND_MARK) {
+                    if let Some(entry) = timed_entry(line) {
+                        too_slow.insert(entry.to_string());
+                    }
+                }
                 r.record(tag, index, false, 0, pns, e.message().as_bytes());
                 // A new context for the next command, as a new driver process; a device that failed is made again too,
                 // and the resident sample with it.
@@ -868,6 +924,34 @@ mod tests {
         assert_eq!(&q[nl + 1..], &p[p.iter().position(|b| *b == b'\n').expect("a header line") + 1..]);
         let g = kmeans_payload(3, false, 0.0, 10.0, 10.0, Some((0, false)), Err("iteration 3: a centroid is infinite or NaN"));
         assert!(g.starts_with(b"3 0 0 0.0 10 10 0 0\n"));
+    }
+
+    /// A SLOW LEGAL PROGRAM IS TOO SLOW, NOT A FAULT (the G3 GPU check, 2026-11-04): a timed run's failure at its
+    /// bound keeps the bound's text and stays a device failure (so the busy device is made again; before, the text
+    /// was kept and the kind lost), and the entry's later `t` and `p` commands fail at once with the same text; its
+    /// quality command, another entry's, and an `o` or `k` command still run. No device.
+    #[test]
+    fn a_timed_run_at_its_bound_is_too_slow_and_the_entrys_later_timed_commands_are_not_run() {
+        let at_bound = crate::ctx::FutharkCtx::run_bound_failure(TIMED_RUN_BOUND);
+        assert!(at_bound.is_device_failure() && at_bound.message().contains(crate::ctx::RUN_BOUND_MARK), "{at_bound}");
+        let e = entry_failure("the timed entry failed", at_bound);
+        assert!(e.is_device_failure(), "a failure at the bound is still the device's");
+        assert!(e.message().starts_with("the timed entry failed: ") && e.message().contains(crate::ctx::RUN_BOUND_MARK), "{e}");
+        assert!(!entry_failure("the timed entry failed", Error::new("an assertion")).is_device_failure());
+        let mut too_slow = HashSet::new();
+        assert_eq!(timed_entry("p t3 yard 1000000000 3 1"), Some("t3"));
+        assert_eq!(timed_entry("t t3 5"), Some("t3"));
+        assert_eq!((timed_entry("q q3"), timed_entry("o t3"), timed_entry("k t3 0 0 10 100 0.0001")), (None, None, None));
+        assert_eq!(known_too_slow("p t3 yard 1000000000 3 1", &too_slow), None, "nothing is too slow before a run reaches its bound");
+        too_slow.insert("t3".to_string());
+        for (line, tag) in [("p t3 yard 1000000000 3 0", "p"), ("t t3 5", "t")] {
+            let (t, why) = known_too_slow(line, &too_slow).expect("not run again");
+            assert_eq!(t, tag);
+            assert!(why.starts_with("the timed entry failed: ") && why.contains(crate::ctx::RUN_BOUND_MARK), "{why}");
+        }
+        for line in ["p t4 yard 1000000000 3 1", "q t3", "o t3", "k t3 0 0 10 100 0.0001"] {
+            assert_eq!(known_too_slow(line, &too_slow), None, "{line} still runs");
+        }
     }
 
     /// THE SAMPLE'S ROWS ARE PARSED ONCE A SESSION (the advisor's round-3 review, N3): the dbpedia sample's size
