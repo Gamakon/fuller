@@ -920,6 +920,101 @@ now calls `champion_test_case` too: one implementation. Every k-means compile an
 call is free. The runner before and after (k-means P, C, single, 3 evaluations): ledger identical except the `*_ms`, fitness and speed columns (wall-clock). Tests: the 13 evaluator tests pass, default and `wgsl`; clippy clean default, `wgsl`, `gpu,wgsl`. GPU script `f3b_kmeans_generation.sh` (runner k-means R on rust, then the replay test
 `on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_the_seam`): written, not run.
 
+### 5b. The Futhark evaluator moves to phylu (Andrew, 2026-11-04; draft, for Andrew's reading)
+
+**The ruling.** fuller holds symbolic programs: the kingdom definition (symbols, arities, the type system, the
+kingdom views, the Futhark kingdom among them), the tree, encoding a tree as a Karva gene (each type's head and tail,
+the layout), decoding a gene to its typed tree, writing a tree as Futhark source, and symbolic rewriting (the e-graph,
+share-equivalence, snapping, folding). phylu holds evolution: the geneframe, the experiment's configuration, the
+runners with their stream and checkpoints, the variation and selection operators, virtual ALPS, the population, and
+**every fitness evaluation**: the named HFF schemes, the Futhark compile and run, the wgpu kernels, the batch
+evaluation on data. phylu sends genes to fuller to be simplified, folded and snapped. Andrew: "we went from GENES to
+GPU programs directly, on device"; regression and regex already score on the device in phylu (`score.wgsl`,
+`hff.wgsl`, `regex_score.wgsl`). 5a put the Futhark evaluator in fuller; this section moves it to phylu. Nothing
+evolved changes: the remaining work is the same, only its home moves.
+
+**What moves to phylu, file by file** (into `phylu/src/futhark_eval/`, each file's tests and committed ledgers with it):
+
+| fuller today | why it is evaluation |
+|---|---|
+| `src/futhark_evaluator.rs`, `src/futhark_evaluator/` (tests, the three ledgers) | scores a generation |
+| `src/futhark_batch.rs`, `src/futhark_batch/` | compiles and runs a generation: the module, halving, compile limit, node budget |
+| `src/futhark_rust.rs`, `futhark-rust-rt/`, `futhark-rust-backend/` (the compiler fork and its patches) | the in-process wgpu runtime and the compiler that feeds it |
+| `src/futhark_wgpu_host.rs`, `futhark-wgpu-shim/` | the other GPU host |
+| `src/futhark_gpu.rs` | the measured GPU cost of a compiled program |
+| `src/futhark_sig/kmeans_converged.rs` and `kmeans_converged/` (`ultradim.rs`, tests) | a whole k-means run to UltraDim's stopping rule, measured |
+| the measuring half of `src/futhark_sig.rs`: the timing inputs and work caps, `compile_c`, `compile_c_server`, `run_exe`, `write_binary`/`read_binary`/`compare`, the cases (`Case`, `load_cases`, the fingerprints), the problem's data and default scheme | data and measurement, not the kingdom |
+| `src/futhark_rings.rs`, `src/futhark_operators.rs`, `examples/futhark_pool.rs` | the start population and variation of genes |
+| `src/futhark_search.rs` (deprecated: `Scorer`, `fitness_of` and the loop), `examples/futhark_evolve.rs`, `examples/futhark_a7_evolve.rs`, `examples/futhark_pixel_evolve.rs` | runners and what they score with; moved unchanged so the regression against them runs on one build, deleted in X1 |
+| the pixel family's calls into the GPU host (`src/futhark_pixel.rs`) | its run half; the family's tables stay |
+
+**What stays in fuller:** `futhark_table.rs`, `futhark.rs`, `futhark_view.rs`, `kingdoms/futhark/` (tables, views,
+the generator and the sniffer), the kingdom half of `futhark_sig.rs` (instances, signatures, the reference programs
+as text, `program*` rendering, `build`, `sexp`, `random_gene`, the e-graph bridge `variants`, `FoldEgraph`),
+`typed_gep.rs`, `kingdom_contract.rs`, `futhark_reader.rs`, `futhark_saturation.rs`, `saturated_fold.rs`, `snap*.rs`,
+`futhark_cost.rs` (the static cost: a function of the program text, generated with the tables), `futhark_exec.rs`
+(one program compiled and run: fuller's own tests check its rendering and every e-graph rule against the compiler
+with it), and the two interpreters (`futhark_interpreter.rs`, `futhark_sig::Interp`): they define what a program of
+the kingdom computes and check the e-graph's rules; phylu's evaluator calls them, they compute no fitness.
+
+**What stays for now and moves later (a second move, M2, needs Andrew's OK):** `fitness.rs`, `runner.rs`,
+`telemetry.rs`, `run_file.rs` and `futhark_sig`'s quality parts (`QualityPart`, `quality_inputs*`). By the diagram
+they are phylu's, but fuller's other runners (`wgsl_gram_evolve`, `futhark_sig_quality_study`) still use them, and
+`fitness.rs` reads the quality parts and the runner's two-level HFF. While they stay, phylu imports them as it does
+today. The dependency stays one way: phylu depends on fuller, fuller never on phylu; every moved file's imports of
+fuller become `fuller::` paths, and nothing left in fuller imports a moved file (checked by fuller's build after the
+move, and its full suite).
+
+**The boundary between the engine and the evaluator (P2a's hook).** Once both live in phylu there is no library
+boundary to cross, but the hook stays: it is how the engine takes ANY kingdom scored on the host (the mock fitness of
+`p2a_mock.sh`, 6 GPU tests, and P3's 9 drive the engine through it), and removing it would remove tested behaviour.
+What goes: `FreshRequest`, `FreshPurpose` and `FreshIndividual` are defined in phylu's `external.rs` (the
+`pub use fuller::futhark_evaluator::...` line is deleted); `FutharkEvaluator`'s `pub judge` and `pub gen` go at X1 as
+planned; 5a.2's "one seam fuller exposes" is read as "the evaluator's interface inside phylu". Not in this plan, noted
+for later: with the evaluator beside the device, it could read the walk stage's expressed nodes instead of the whole
+read-back (2.65 GB a k-means call, 5a.1); its own A/B, after R1.
+
+**The remaining tasks, re-cut** (sizes in an agent's working days; the GPU scripts are the lead's hours):
+
+```
+F3b GPU check (in fuller, running) ─> M1a ─> M1b ─> M1g ─┬─> F4 ─┐
+                                                         ├─> F5 ─┤
+                                                         ├─> F6 ─┼─> F8
+                                                         └─> F7 ─┤
+G1 (independent of the move) ────────────────────────────────────┼─> P4 ─> G2 ─> G3 ─> R0 ─> R1 ─> R2 ─> R2b ─> R3 ─> R4 ─> RC ─> X1
+                                                                 └─> P5 (after P4)        └─> AB2, P3b (after R1)
+```
+
+| task | repo | size | what | proof |
+|---|---|---|---|---|
+| M1a | fuller | 1 | split `futhark_sig.rs` into its kingdom half and its measuring half (`futhark_sig/measure.rs`), behaviour unchanged | fuller's full suite; the evaluator's 13 tests unchanged |
+| M1b | both | 3 | the move of the table above: `git mv` into phylu, imports rewritten, the hook's types defined in phylu, fuller's `Cargo.toml` examples and `lib.rs` entries removed, the build scripts' paths (`CARGO_MANIFEST_DIR` of the runtime and the shim) fixed; the tests move with the code, none is edited but for paths | both repos' full suites, default and GPU features; the CPU plumbing tests (histogram R and k-means P ledgers) pass in phylu bit for bit |
+| M1g | lead | hours | `f3a_rust_generation.sh` and `f3b_kmeans_generation.sh` rerun from phylu, then `p2a_mock.sh` | the same tests pass with the same counts as in fuller: the proof the move changed nothing |
+| F4 to F8 | phylu | 1, 2, 2, 1, 1 | as in 5a.3's table, in `phylu/src/futhark_eval/`; F5's `futhark_start.rs` and F8's `futhark_measure.rs` are phylu files | as in 5a.3 |
+| P4, P5 | phylu | 3, 1 | as in 5a.3; `futhark_fit` calls the evaluator directly through the hook | as in 5a.3 |
+| G1-G3, R0-R4, AB2, P3b, RC | lead / phylu | as 5a | unchanged; the deprecated runner's arms run from phylu's moved `futhark_evolve` | as in 5a.4 |
+| X1 | both | 1 | deletes, now in phylu: `futhark_evolve`, `futhark_a7_evolve`, `futhark_search`, `shape_typed`, `shape_fit`; fuller's docs and inventories follow (5a.5) | both suites; the runner-standard tests |
+
+**Sentences of fuller's `CLAUDE.md` that contradict the ruling (needs Andrew's OK; not edited):**
+1. Top section: "fuller is the library: kingdoms ..., the typed GEP core, evaluators (compilers, GPU runtimes), fitness
+   schemes, the e-graph": evaluators and fitness schemes are phylu's.
+2. Top section: "expose it here as library code (as `futhark_search::Scorer` is for phylu's `evolve::shape_typed`)":
+   the Scorer moves to phylu; the example of a fuller boundary is wrong.
+3. Top section: "`examples/futhark_evolve.rs` and the loop in `src/futhark_search.rs` ... DEPRECATED": they will be in
+   phylu until X1.
+4. Architecture: `src/futhark_gpu.rs` ("the measured GPU cost ... the cost that decides") and `src/futhark_search.rs`
+   ("The SEAM for a GPU-resident population is here too: `Scorer` ... phylu calls all of it"): both move.
+5. Architecture: `src/geneframe.rs`, "the nucleotable data model, owned here", and `src/population_dag.rs`: the
+   diagram puts the geneframe and population management in phylu; the master symbol table inside `geneframe.rs` is
+   kingdom definition. Not moved by this plan: a split for Andrew to decide.
+6. Architecture: `src/wgsl/` lists "interpreter, oracle, mutation": mutation is a variation operator (phylu's).
+7. "Every evolution runner meets one standard": "Every evolution loop, in fuller or phylu, writes ... through
+   `fuller::telemetry`": no loop is in fuller; telemetry is phylu's by the diagram (M2).
+8. "Fitness is a named scheme": "`fuller::fitness::SCHEMES` (`src/fitness.rs`) holds every fitness function": true
+   until M2, then `phylu`.
+
+### 5a.3 (continued): the task table and the GPU scripts
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
