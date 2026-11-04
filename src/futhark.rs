@@ -293,6 +293,20 @@ mod tests {
         [("m".to_string(), 3usize), ("n".to_string(), 2), ("p".to_string(), 4)].into_iter().collect()
     }
 
+    /// The table's fingerprint is the same for the same tables and changes with any loaded row.
+    #[test]
+    fn the_table_s_fingerprint_is_stable_and_changes_with_a_row() {
+        let k = kingdom();
+        assert_eq!(k.fingerprint(), kingdom().fingerprint(), "the same tables, the same fingerprint");
+        assert_eq!(k.fingerprint().len(), 16);
+        let mut changed = k.clone();
+        changed.rows[0].spelling.push(' ');
+        assert_ne!(changed.fingerprint(), k.fingerprint(), "a changed spelling");
+        let mut fewer = k.clone();
+        fewer.rows.pop();
+        assert_ne!(fewer.fingerprint(), k.fingerprint(), "a row fewer");
+    }
+
     #[test]
     fn the_shape_kingdom_passes_the_contract_check() {
         let k = kingdom();

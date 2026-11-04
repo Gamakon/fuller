@@ -118,6 +118,19 @@ fn data_lines(text: &str) -> impl Iterator<Item = Vec<&str>> {
 }
 
 impl FutharkKingdom {
+    /// THE TABLE'S FINGERPRINT: FNV-1a (64 bits) over the kingdom's name, its family and every dual and row as loaded
+    /// (their `Debug` text, in table order). A program's text is rebuilt against the table, so a state saved under
+    /// one table is read only under the same one (phylu's evaluator state); any change to a loaded row changes it.
+    pub fn fingerprint(&self) -> String {
+        let text = format!("{}\0{:?}\0{:?}\0{:?}", self.kingdom, self.family, self.duals, self.rows);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in text.bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{h:016x}")
+    }
+
     /// Load a kingdom from its two tables.
     pub fn from_tables(family: FutharkFamily, kingdom: &str, types_tsv: &str, functions_tsv: &str) -> Result<FutharkKingdom, String> {
         let mut duals = Vec::new();

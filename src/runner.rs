@@ -140,6 +140,14 @@ impl TimingSlots {
             r => Err(format!("our software has a bug: a program scored with {} of {} timing slots filled", r.map_or(0, Vec::len), self.slots)),
         }
     }
+
+    /// Every program's timed pairs, full or part way filled, sorted by text: what a checkpoint saves (phylu's
+    /// evaluator state), exactly as held, an infinite ratio (an untimed pair) included.
+    pub fn entries(&self) -> Vec<(&str, &[f64])> {
+        let mut v: Vec<(&str, &[f64])> = self.by_text.iter().map(|(t, r)| (t.as_str(), r.as_slice())).collect();
+        v.sort_by(|a, b| a.0.cmp(b.0));
+        v
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -689,6 +697,24 @@ mod tests {
         assert_eq!(s.full("p").unwrap(), &r[..]);
         assert!(s.add("p", &[1.0]).is_err(), "a full program takes no more pairs");
         assert_eq!(s.missing("q"), 11, "slots are kept by text");
+    }
+
+    /// The entries are every program's pairs as held, sorted by text, a part way filled program and an infinite ratio
+    /// included; adding them back to new slots gives the same slots.
+    #[test]
+    fn timing_slots_entries_are_every_program_s_pairs_as_held_sorted_by_text() {
+        let mut s = TimingSlots::new(4);
+        s.add("b", &[1.0, f64::INFINITY]).unwrap();
+        s.add("a", &[0.5, 0.6, 0.7, 0.8]).unwrap();
+        let e = s.entries();
+        assert_eq!(e.iter().map(|(t, _)| *t).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(e[1].1.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), [1.0f64.to_bits(), f64::INFINITY.to_bits()]);
+        let mut back = TimingSlots::new(4);
+        for (t, r) in &e {
+            back.add(t, r).unwrap();
+        }
+        assert_eq!(back, s);
+        assert!(TimingSlots::new(4).entries().is_empty());
     }
 
     /// "Beat" needs both the median below the least A/A median and 9 of 11 pairs faster; a median below the floor with
