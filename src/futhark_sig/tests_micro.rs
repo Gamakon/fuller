@@ -232,33 +232,87 @@ const G3_SLOW_MUTANTS: [&str; 5] = [
     "(hist.add.n (scan.add (loop1.n vs s_a_n)) (loop1.k (hist.add.k (hist.min.k zeros (loop.k zeros (hist.min.n (loop.n zeros vs) (loop.n (hist.add.k s_a_k s_a_k) zeros)))) zeros) (loop.k (hist.add.n zeros zeros) vs)))",
 ];
 
-/// A LOOP'S ARRAY STATE COSTS ITS CELLS EVERY TRIP (the work estimate's rule of 2026-11-04): `(loop.k zeros s_a_k)`
-/// on k = 3 is the loop (1), its start (1), its body's variable a trip (3) and its `[k]` state a trip (3 x 3); a
-/// scalar state costs nothing more; and the five slow mutants of the G3 GPU check are each over 1e11 at histogram's
-/// timing input, where the published program is 7.9e7.
+/// A LOOP'S ARRAY STATE COSTS ITS CELLS EVERY TRIP when the body copies it (the work estimate's rule of 2026-11-04,
+/// refined by the F3a replay the same day): `(loop.k (scan.add zeros) zeros)` on k = 3 is the loop (1), its start (the
+/// scan, 1 + 3, and its `zeros`, 1), its body's `zeros` a trip (3) and its `[k]` state copied a trip (3 x 3). No state
+/// is charged for a loop Futhark removes (its body its own state, or its start: `(loop.k zeros zeros)`), nor for a body
+/// that writes a fresh array charged its cells already (`(scan.add s_a_k)`), nor for a scalar state. The five slow
+/// mutants of the G3 GPU check are each over 1e11 at histogram's timing input, where the published program is 7.9e7.
 #[test]
 fn a_loops_array_state_costs_its_cells_every_trip() {
     let hist = load(&HISTOGRAM).unwrap();
     let sig = signature(&HISTOGRAM).unwrap();
     let interp = Interp::new(&hist, &sig).unwrap();
     let small: BTreeMap<String, usize> = [("k".to_string(), 3), ("n".to_string(), 5)].into_iter().collect();
-    let w = |text: &str, sizes: &BTreeMap<String, usize>| interp.work(&build(&hist, text).unwrap(), sizes).unwrap();
-    assert_eq!(w("(loop.k zeros s_a_k)", &small), 1 + 1 + 3 + 3 * 3);
-    assert_eq!(w("(loop1.k zeros s_a_k)", &small), 1 + 1 + 2 + 2 * 3, "a loop from 1 makes k - 1 trips");
+    let parts = |text: &str, sizes: &BTreeMap<String, usize>| interp.work_parts(&build(&hist, text).unwrap(), sizes).unwrap();
+    let w = |text: &str, sizes: &BTreeMap<String, usize>| parts(text, sizes).total();
+    assert_eq!(parts("(loop.k (scan.add zeros) zeros)", &small), Work { nodes: 1 + (1 + 3 + 1) + 3, state: 3 * 3 });
+    assert_eq!(parts("(loop1.k (scan.add zeros) zeros)", &small), Work { nodes: 1 + (1 + 3 + 1) + 2, state: 2 * 3 }, "a loop from 1 makes k - 1 trips");
+    // A loop Futhark's simplifier removes (its loop-invariant merge variable): the body is the loop's own state, or
+    // the body is its start and reads none of the loop's variables.
+    assert_eq!(parts("(loop.k zeros s_a_k)", &small), Work { nodes: 1 + 1 + 3, state: 0 }, "the body is the state");
+    assert_eq!(parts("(loop.k zeros zeros)", &small), Work { nodes: 1 + 1 + 3, state: 0 }, "the body is the start");
+    assert_eq!(parts("(loop.k (scan.add zeros) (scan.add zeros))", &small).state, 0, "the body is the start, an expression");
+    // A body that writes a fresh array (a scan: 1 + its 3 cells, and its variable, a trip) writes the state in place.
+    assert_eq!(parts("(loop.k zeros (scan.add s_a_k))", &small), Work { nodes: 1 + 1 + 3 * (1 + 3 + 1), state: 0 });
     // A scalar state: `(tab (loop.n 0 s_i32))` is the tabulate (1), and k times the loop (1), its start (1) and n
     // trips of its body (5): no state cells.
-    assert_eq!(w("(tab (loop.n 0 s_i32))", &small), 1 + 3 * (1 + 1 + 5));
+    assert_eq!(parts("(tab (loop.n 0 s_i32))", &small), Work { nodes: 1 + 3 * (1 + 1 + 5), state: 0 });
     let timing: BTreeMap<String, usize> = [("k".to_string(), 100), ("n".to_string(), 15 << 20)].into_iter().collect();
     let published = w("(hist.add.n (tab (mod.k (get.n is i_n))) vs)", &timing);
     assert_eq!(published, 78_643_303, "the published program's work at the timing input, as the G3 run printed it");
-    for c in load_cases(&HISTOGRAM_PROBLEM).unwrap() {
-        let sz = sig.sizes(&c.inputs).unwrap();
-        let most = G3_SLOW_MUTANTS.iter().map(|t| w(t, &sz)).max().unwrap();
-        eprintln!("case {} {:?}: the most work of the five {most}", c.name, sz);
-    }
     for text in G3_SLOW_MUTANTS {
         let got = w(text, &timing);
         assert!(got > 100_000_000_000, "{got} for {text}");
         eprintln!("G3 slow mutant: {got:.3e} node executions ({:.0} x the published program's): {text}", got as f64 / published as f64);
+    }
+}
+
+/// THE F3a REPLAY'S HISTOGRAM PROGRAM (generation 1 of the deprecated runner's GPU run of 2026-11-04 21:08Z, frozen at
+/// fuller 2e1a3b72): the runner compiled it and scored it on every case (its runs 9.0 s in all). Its loops copy
+/// `[n]` states n x n times on the larger cases (1.1e9 cells at n = 1000), which the per-submit cap must not read: its
+/// node executions are under the cap on every case, so it is scored as before. And `(loop.n is is)`, scored worst at
+/// 1.0e9 by the G3 smoke run of 21:28Z, is a loop Futhark removes: no state traffic.
+const F3A_REPLAY_HISTOGRAM: &str = "(hist.max.n vs (loop.n (map2.min (map2.add (loop.n vs vs) (map2.min zeros (hist.max.n zeros is))) (hist.add.k (hist.max.n (hist.min.k zeros zeros) (map2.max (hist.add.k zeros (hist.max.n (loop1.k is is) (map2.max (hist.min.n (map2.max (scan.max (map2.max (map2.min (map2.sub (loop.n is (scan.max (hist.add.n s_a_n (map2.min (map2.sub (scan.max (hist.min.n s_a_n (hist.min.k zeros zeros))) zeros) zeros)))) (hist.min.n (loop.k zeros (scan.add vs)) (scan.min (loop.n (scan.add (loop.k vs (hist.min.n (loop1.n s_a_n zeros) s_a_n))) (loop1.k vs is))))) (hist.add.k zeros zeros)) (loop.n vs (replicate (minimum.n (map2.min (map2.sub (hist.max.n vs is) (loop.n (hist.min.k zeros (hist.min.n vs (hist.max.k zeros (hist.min.k (scan.add zeros) (map2.add zeros zeros))))) is)) is)))))) (hist.max.n vs vs)) (hist.min.n is (replicate n))) zeros))) zeros)) (loop.k zeros zeros))) (hist.add.k (scan.min (scan.add zeros)) zeros)))";
+
+#[test]
+fn a_program_the_runner_scored_is_under_the_per_submit_cap_on_every_case() {
+    let hist = load(&HISTOGRAM).unwrap();
+    let sig = signature(&HISTOGRAM).unwrap();
+    let interp = Interp::new(&hist, &sig).unwrap();
+    let tree = build(&hist, F3A_REPLAY_HISTOGRAM).unwrap();
+    let removed = build(&hist, "(hist.add.n (tab (mod.k (get.n (loop.n is is) i_n))) vs)").unwrap();
+    let mut most = Work::default();
+    for c in load_cases(&HISTOGRAM_PROBLEM).unwrap() {
+        let sz = sig.sizes(&c.inputs).unwrap();
+        let w = interp.work_parts(&tree, &sz).unwrap();
+        assert!(w.nodes <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, "{}: {w:?}", c.name);
+        most = Work { nodes: most.nodes.max(w.nodes), state: most.state.max(w.state) };
+        let r = interp.work_parts(&removed, &sz).unwrap();
+        assert_eq!(r.state, 0, "{}: the removed loop copies nothing", c.name);
+        assert!(r.nodes <= CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT, "{}: {r:?}", c.name);
+    }
+    assert!(most.state > 1_000_000_000 && most.nodes < 25_000_000, "the most on a case: {most:?}");
+}
+
+/// THE F3b REPLAY'S K-MEANS PROGRAM (generation 0 of the deprecated runner's GPU run of 2026-11-04 21:13Z, frozen at
+/// fuller 2e1a3b72, which compiled it and whose run of it failed, worst on every input): its inner loop over d copies
+/// the `[d]` row `centres[last]` into its state every trip, k x d x d times. With that traffic it is over k-means's
+/// work cap (10 x the seed's work) on every fitness case, so phylu's evaluator does not run it; its node executions
+/// alone are under the seed's. The sizes are phylu's `KMEANS_CASES` (d = 1536, the sample's).
+#[test]
+fn the_f3b_kmeans_program_copies_a_row_k_d_d_times_over_ten_times_the_seed_s_work() {
+    let km = load(&KMEANS).unwrap();
+    let sig = signature(&KMEANS).unwrap();
+    let interp = Interp::new(&km, &sig).unwrap();
+    let tree = build(&km, "(tabrows (loop1.d zeros (loop1.d (scan.max (loop1.k (map2.sub (hist.max.k zeros zeros) (loop1.d zeros (row.k.d centres (next zero)))) (row.n.d points last))) (row.k.d centres last))))").unwrap();
+    let seed = build(&km, KMEANS_PROBLEM.reference().unwrap()).unwrap();
+    for (n, k) in [(1000, 16), (1000, 50), (500, 8), (200, 4), (1000, 32), (500, 16)] {
+        let sz: BTreeMap<String, usize> = [("n".to_string(), n), ("k".to_string(), k), ("d".to_string(), 1536)].into_iter().collect();
+        let (w, s) = (interp.work_parts(&tree, &sz).unwrap(), interp.work_parts(&seed, &sz).unwrap());
+        assert_eq!(s.state, 0, "n {n} k {k}: the seed's loops carry scalars");
+        let d = 1536u128;
+        assert!(w.state >= k as u128 * (d - 1) * (d - 1) * d, "n {n} k {k}: {w:?}");
+        assert!(w.total() > 10 * s.total() && w.nodes < s.nodes, "n {n} k {k}: {w:?}, the seed {s:?}");
     }
 }

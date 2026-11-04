@@ -110,11 +110,12 @@ fn the_reference_gene_is_exact_on_every_case_interpreted_and_compiled() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let got = read_binary(&out.stdout).unwrap();
     assert_eq!(got, cases.iter().map(|c| c.answer().unwrap().clone()).collect::<Vec<_>>(), "the batched reference");
-    // The work of the reference on 256 x 256: 13 functions and 7 terminals, the loop body run 255 times, and the
-    // loop's `[cols]` state written each of its 255 trips (the rule of 2026-11-04: 255 x 256 more).
+    // The work of the reference on 256 x 256: 13 functions and 7 terminals, the loop body run 255 times; its body is a
+    // tabulate, which writes the loop's `[cols]` state in place, so no state traffic (the rule of 2026-11-04).
     let sizes: BTreeMap<String, usize> = [("rows".to_string(), 256), ("cols".to_string(), 256)].into_iter().collect();
-    let w = interp.work(&tree, &sizes).unwrap();
-    assert!(w > 255 * 256 * 11 && w < 255 * 256 * 21, "the reference's work on 256x256 is {w}");
+    let w = interp.work_parts(&tree, &sizes).unwrap();
+    assert_eq!(w.state, 0, "the reference's state traffic");
+    assert!(w.nodes > 255 * 256 * 10 && w.nodes < 255 * 256 * 20, "the reference's work on 256x256 is {w:?}");
 }
 
 /// Legality, measured: random genes express, Futhark compiles every one, and the compiled program equals the

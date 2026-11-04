@@ -1208,6 +1208,26 @@ impl Num {
     }
 }
 
+/// A program's work on given sizes ([`Interp::work_parts`]): its node executions, and its loops' state traffic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Work {
+    /// Node executions, the cells reductions and traversals read or write included: the measure
+    /// [`CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`] is calibrated in (node evaluations) and bounds on a stored case, as it
+    /// did every case before 2026-11-04.
+    pub nodes: u128,
+    /// The cells of the loops' array states copied a trip: part of a run's time, which the timing bound reads at the
+    /// timing input, never the per-submit cap (the F3a replay of 2026-11-04: a histogram program the runner scored
+    /// on every case, 9 s for its runs, is 1.1e9 with them on a case of n = 1000 and under the cap without them).
+    pub state: u128,
+}
+
+impl Work {
+    /// Both parts: a run's work, the timing bound's measure.
+    pub fn total(&self) -> u128 {
+        self.nodes + self.state
+    }
+}
+
 /// The interpreter of one instance: each row's meaning, parsed once. It OWNS the kingdom and the signature it reads
 /// (shared handles), so it lives as long as its holder, never as long as a caller's borrow.
 pub struct Interp {
@@ -1780,17 +1800,27 @@ impl Interp {
         })
     }
 
-    /// The node executions of a tree on given sizes ([`TIMING_WORK_CAP`] bounds them at the timing input's sizes):
-    /// every node once, times the trips of the binders it is inside
-    /// (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost their array's length,
-    /// a histogram of rows and a division of rows their `[K][D]` cells. A pair row costs one, as a scalar's does.
-    /// A LOOP whose state holds arrays also costs their cells on every trip (the state written each trip; a tuple's
-    /// arrays summed, a scalar nothing more): the G3 GPU check of 2026-11-04 found histogram mutants
-    /// `(loop1.k X (loop.k (hist.add.n vs zeros) zeros))`, whose `[n]` state is rewritten k x k times, counted at 1
-    /// a trip (3.2e9, under the 5.9e10 bound) and timed for minutes; with the state's cells they are 1.6e11.
+    /// The node executions of a tree on given sizes, the loops' state traffic included ([`Work::total`] of
+    /// [`Interp::work_parts`]): the timing bound's measure at the timing input's sizes.
     pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
+        self.work_parts(tree, sizes).map(|w| w.total())
+    }
+
+    /// The work of a tree on given sizes, in two parts. [`Work::nodes`]: every node once, times the trips of the
+    /// binders it is inside (a binder's body is its last argument); a reduction, a `map2` and a `replicate` also cost
+    /// their array's length, a histogram of rows and a division of rows their `[K][D]` cells. A pair row costs one, as
+    /// a scalar's does. [`Work::state`]: a LOOP whose state holds arrays costs their cells on every trip, the state
+    /// written each trip (a tuple's arrays summed, a scalar nothing): the G3 GPU check of 2026-11-04 found histogram
+    /// mutants `(loop1.k X (loop.k (hist.add.n vs zeros) zeros))`, whose `[n]` state is rewritten k x k times, counted
+    /// at 1 a trip (3.2e9, under the 5.9e10 bound) and timed for minutes; with the state's cells they are 1.6e11.
+    /// Two loops write no state (the rule of the F3a replay, 2026-11-04): one Futhark's simplifier removes, its body
+    /// the loop's own state or its start (`(loop.n vs vs)`: Futhark's loop-invariant merge variables), and a
+    /// component whose body is an operation that writes a fresh array and is charged its cells already (a `map2`, a
+    /// scan, a histogram, a tabulate, a `replicate`, the matrix operations), which writes the state in place. A body
+    /// that is a variable, an input, `zeros`, a row, a selection or another loop is copied into the state each trip.
+    pub fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
-        fn walk(me: &Interp, t: &Tree, mult: u128, n: &[u128]) -> Result<u128, String> {
+        fn walk(me: &Interp, t: &Tree, mult: u128, n: &[u128], w: &mut Work) -> Result<(), String> {
             let op = me.ops[t.symbol as usize];
             // The cells of a node's matrix class (`mat.X.Y`: the product of its roles' sizes).
             let cells = |node: &Tree| -> Result<u128, String> {
@@ -1813,9 +1843,9 @@ impl Interp {
                 }
                 _ => (1, 1),
             };
-            let mut sum = mult * own;
-            if let Op::Loop { dim, from1, .. } = op {
-                sum += mult * n[dim].saturating_sub(u128::from(from1)) * state_cells(me, t, n)?;
+            w.nodes += mult * own;
+            if let Op::Loop { dim, index, states, arity, from1 } = op {
+                w.state += mult * n[dim].saturating_sub(u128::from(from1)) * state_cells(me, t, &states[..arity], index, n)?;
             }
             // The array reduced, or the rows histogrammed (the second argument) or divided, costs its class's cells.
             let costed = match op {
@@ -1833,28 +1863,61 @@ impl Interp {
                 for d in class.dims() {
                     cells *= n[me.sig.dims.iter().position(|x| x == d).ok_or("a reduction over an unknown dimension")?];
                 }
-                sum += mult * cells;
+                w.nodes += mult * cells;
             }
             let last = t.kids.len().saturating_sub(1);
             for (i, kid) in t.kids.iter().enumerate() {
                 let binder = matches!(op, Op::Tab(..) | Op::TabRows(..) | Op::Loop { .. }) && i == last;
-                sum += walk(me, kid, if binder { mult * body_mult } else { mult }, n)?;
+                walk(me, kid, if binder { mult * body_mult } else { mult }, n, w)?;
             }
-            Ok(sum)
+            Ok(())
         }
-        // The cells of a loop's state: its arrays' (a tuple's summed), 0 for a scalar or an index.
-        fn state_cells(me: &Interp, t: &Tree, n: &[u128]) -> Result<u128, String> {
+        // Whether a subtree reads one of the slots (a loop's state or index).
+        fn reads(me: &Interp, t: &Tree, slots: &[usize]) -> bool {
+            matches!(me.ops[t.symbol as usize], Op::Var(s) if slots.contains(&s)) || t.kids.iter().any(|k| reads(me, k, slots))
+        }
+        // Whether two subtrees are one Futhark expression: their rows' spellings (a row of one spelling may be several
+        // rows, one a context), their constants and their children.
+        fn same(me: &Interp, a: &Tree, b: &Tree) -> bool {
+            me.k.rows[a.symbol as usize].spelling == me.k.rows[b.symbol as usize].spelling && a.const_index == b.const_index && a.kids.len() == b.kids.len() && a.kids.iter().zip(&b.kids).all(|(x, y)| same(me, x, y))
+        }
+        // An operation that writes a fresh array and is charged its cells already: it writes a loop's state in place.
+        fn writes_fresh(op: Op) -> bool {
+            matches!(op, Op::Map2(_) | Op::Scan(_) | Op::Hist(..) | Op::HistRows(..) | Op::Replicate(..) | Op::Tab(..) | Op::TabRows(..) | Op::RowDiv | Op::Transpose | Op::Matmul | Op::MapRows | Op::Map2Rows)
+        }
+        // The cells a loop's state is written a trip: its arrays' (a tuple's summed, component by component when the
+        // body is a tuple row), 0 for a scalar or an index, for a body Futhark removes the loop of, and for a component
+        // an operation writes fresh.
+        fn state_cells(me: &Interp, t: &Tree, own: &[usize], index: usize, n: &[u128]) -> Result<u128, String> {
+            let (start, body) = match &t.kids[..] {
+                [start, body] => (start, body),
+                _ => return Err("our software has a bug: a loop without a start and a body".into()),
+            };
+            let mut bound = own.to_vec();
+            bound.push(index);
+            let own_state = own.len() == 1 && matches!(me.ops[body.symbol as usize], Op::Var(s) if s == own[0]);
+            if own_state || (same(me, body, start) && !reads(me, body, &bound)) {
+                return Ok(0);
+            }
             let dual = &me.k.dual(me.k.rows[t.symbol as usize].output).ok_or("a row with no dual")?.dual;
-            fn cells(c: &Class, me: &Interp, n: &[u128]) -> Result<u128, String> {
+            fn cells(c: &Class, body: Option<&Tree>, me: &Interp, n: &[u128]) -> Result<u128, String> {
+                if body.is_some_and(|b| writes_fresh(me.ops[b.symbol as usize])) {
+                    return Ok(0);
+                }
                 match c {
-                    Class::Tuple(parts) => parts.iter().map(|p| cells(p, me, n)).sum(),
+                    Class::Tuple(parts) => {
+                        let kids = body.filter(|b| matches!(me.ops[b.symbol as usize], Op::Tuple) && b.kids.len() == parts.len());
+                        parts.iter().enumerate().map(|(i, p)| cells(p, kids.map(|b| &b.kids[i]), me, n)).sum()
+                    }
                     Class::Array { dims, .. } => dims.iter().map(|d| me.sig.dims.iter().position(|x| x == d).map(|i| n[i]).ok_or_else(|| format!("a loop's state over an unknown dimension {d}"))).product(),
                     _ => Ok(0),
                 }
             }
-            cells(&Class::parse(dual.split(':').next().unwrap_or(""), &me.sig.elements, None)?, me, n)
+            cells(&Class::parse(dual.split(':').next().unwrap_or(""), &me.sig.elements, None)?, Some(body), me, n)
         }
-        walk(self, tree, 1, &n)
+        let mut w = Work::default();
+        walk(self, tree, 1, &n, &mut w)?;
+        Ok(w)
     }
 
     /// The bound on any tree of a layout: its most nodes, each run at most `max(D) ** depth` times and each costing at
