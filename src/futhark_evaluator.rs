@@ -1519,6 +1519,8 @@ pub struct FutharkEvaluator {
     /// The task alternatives of the pool that fit the layout ([`ring_canvas`]), in the pool's order.
     alternatives: Vec<Tree>,
     out: PathBuf,
+    /// The controls ran ([`FutharkEvaluator::controls`]): they run once a run.
+    controls_ran: bool,
     /// The fitness machinery. Public for the deprecated runner (`examples/futhark_evolve.rs`), which drives it
     /// directly until X1; the engine's seam is the evaluator's methods.
     pub judge: Judge,
@@ -1687,7 +1689,7 @@ impl FutharkEvaluator {
             resident_hits: 0,
             messages,
         };
-        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, judge, gen })
+        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, judge, gen })
     }
 
     pub fn problem(&self) -> &Problem {
@@ -1824,7 +1826,13 @@ impl FutharkEvaluator {
     /// kept in the judge; on the resident-sample path every case checked as a row range of the sample), else the
     /// compiled reference program is exact on every case; in P the in-run A/A enters the timing slots; for the
     /// k-means scheme in a run, the reference program judged as a candidate against itself (a budgeted evaluation).
+    /// ONCE A RUN (the F2 code review, note 2): a second call would add the in-run A/A to the timing slots again and
+    /// judge the k-means A/A again as a budgeted evaluation, so it is an error that says so.
     pub fn controls(&mut self, req: &ControlRequest) -> Result<Controls, String> {
+        if self.controls_ran {
+            return Err("our software has a bug: the controls were asked for a second time; they run once a run (a second call would add the in-run A/A to the timing slots again and judge the k-means A/A again)".into());
+        }
+        self.controls_ran = true;
         self.control_interpreted()?;
         let mut c = Controls::default();
         let converged = self.judge.scheme.is_converged();

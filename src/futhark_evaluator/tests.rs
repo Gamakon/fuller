@@ -77,6 +77,9 @@ fn histogram_on_the_c_backend_passes_its_controls_and_scores_the_reference_progr
     let c = ev.controls(&ControlRequest { regime: Some(Regime::R), aa_rounds: 0 }).unwrap();
     // The c backend times nothing: no A/A set, no note.
     assert!(c.noise.is_empty() && c.aa.is_none() && c.inrun_aa.is_empty() && c.notes.is_empty(), "the c backend has no A/A sets");
+    // The controls run once a run: a second call is an error that says so, and changes nothing.
+    let again = ev.controls(&ControlRequest { regime: Some(Regime::R), aa_rounds: 0 }).expect_err("a second call of the controls");
+    assert!(again.contains("run once a run"), "{again}");
     // The library prints nothing: with no sink set, its messages are held for the caller, in order, each stamped.
     let held = ev.take_messages();
     for want in ["timing bound:", "control: the reference gene is exact on all", "control: the compiled reference gene is exact"] {
