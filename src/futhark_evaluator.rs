@@ -1612,6 +1612,8 @@ pub struct GenerationScores {
     pub evaluations_new: u64,
     pub evaluations_total: u64,
     pub cost: GenerationCost,
+    /// Rows over the size bound in `rows` ([`FutharkEvaluator::size_bound`]): scored worst, not compiled.
+    pub oversized: usize,
 }
 
 /// A batch finished inside a call ([`FutharkEvaluator::evaluate_generation_with`]): its number in the call (from 1),
@@ -1639,11 +1641,32 @@ pub fn ledger_columns(last: &(&'static str, usize, Stages), e: &Eval) -> Vec<Str
     cols
 }
 
+/// THE SIZE BOUND'S FACTOR (the P1 code review): an expressed tree of more than this many times the reference
+/// program's node count is scored worst and never compiled (`FutharkEvaluator::size_bound`). The per-type heads let a
+/// tree far exceed N functions, and nothing else bounds a program before its compile (the work guard bounds run time,
+/// the compile limit rises with the median). BASIS, measured 2026-11-04 on the CPU (`Tree::level_order` node counts;
+/// mutants: the reference program written onto a random gene, then `Genetics::mutate` of 1-2 and of 1-4 expressed
+/// cells; random genes: `Genetics::random_gene`):
+///
+/// | problem | reference | mutants 1-2: median / p99 / max | mutants 1-4: max | random genes: max | of |
+/// |---|---|---|---|---|---|
+/// | histogram | 7 | 9 / 70 / 307 | 216 | 204 | 2,000 each |
+/// | pathfinder | 24 | 24 / 54 / 114 | 141 | 152 | 2,000 each |
+/// | k-means | 256 | 256 / 299 / 299 | 392 | 125 | 30 each |
+///
+/// The largest ratio to the reference is histogram's mutant, 307 / 7 = 44; 64 keeps every measured mutant and random
+/// gene with a margin of 1.45. It excludes the rows phylu's engine draws uniformly cell by cell (P1: histogram a mean
+/// of 2,421 nodes, 346 x its reference; k-means 1.5 million, 5,900 x, programs up to 65 MB).
+pub const SIZE_BOUND_FACTOR: usize = 64;
+
 /// A distinct gene of a call, expressed and rendered once.
 struct Rendered {
     tree: Tree,
     text: String,
     source: String,
+    /// Over the size bound ([`FutharkEvaluator::size_bound`]): never rendered to Futhark, never compiled; scored
+    /// worst. Its `source` is then the key `oversized <hash of the s-expression>` and its `text` names its size.
+    oversized: bool,
 }
 
 /// THE FUTHARK EVALUATOR (plan 5a.2): one owned object a run holds for its whole life. It holds the problem, the
@@ -1659,6 +1682,10 @@ pub struct FutharkEvaluator {
     out: PathBuf,
     /// The controls ran ([`FutharkEvaluator::controls`]): they run once a run.
     controls_ran: bool,
+    /// THE SIZE BOUND ([`SIZE_BOUND_FACTOR`] x the reference program's node count) and the oversized programs scored
+    /// so far, by the hash of their s-expression (each a budgeted evaluation once).
+    size_bound: usize,
+    oversized_seen: HashSet<String>,
     /// THE FITNESS STAGE of [`FutharkEvaluator::evaluate_generation`]: stage 1 (quality alone) from the start, stage 2
     /// from the start in regime P (set by the controls), and from the call in which the best row is exact on every
     /// case on; a stage never goes back.
@@ -1731,6 +1758,7 @@ impl FutharkEvaluator {
             crate::typed_gep::fits(&contract, &layout, t).map_err(|e| format!("the {what} ({} functions) does not fit the layout of program size N = {program_size}: {e}", function_count(&k, t)))?;
         }
         let const_len = Arc::new(k.const_len());
+        let size_bound = reference.level_order().len() * SIZE_BOUND_FACTOR;
         // The messages of the construction, held until the caller sets its sink or takes them.
         let mut messages = Messages::default();
         let (canvas, alternatives) = match &cfg.rings {
@@ -1834,7 +1862,7 @@ impl FutharkEvaluator {
             failed_compiles: 0,
             unfinished_compiles: 0,
         };
-        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, stage: FitnessStage::Quality, judge, gen })
+        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, size_bound, oversized_seen: HashSet::new(), stage: FitnessStage::Quality, judge, gen })
     }
 
     pub fn problem(&self) -> &Problem {
@@ -2084,9 +2112,14 @@ impl FutharkEvaluator {
                 Some(i) => *i,
                 None => {
                     let tree = self.gen.tree(g).map_err(|e| format!("our software has a bug: row {r} of generation {generation}: {e}"))?;
-                    let source = program(&self.gen.k, &self.judge.sig, &tree)?;
+                    let nodes = tree.level_order().len();
                     let text = sexp(&self.gen.k, &tree);
-                    distinct.push(Rendered { tree, text, source });
+                    let rendered = if nodes > self.size_bound {
+                        Rendered { source: format!("oversized {}", text_hash_bytes(text.as_bytes())), text: format!("(oversized: {nodes} nodes, over the size bound {})", self.size_bound), tree, oversized: true }
+                    } else {
+                        Rendered { source: program(&self.gen.k, &self.judge.sig, &tree)?, text, tree, oversized: false }
+                    };
+                    distinct.push(rendered);
                     index.insert(g, distinct.len() - 1);
                     distinct.len() - 1
                 }
@@ -2127,12 +2160,17 @@ impl FutharkEvaluator {
             resident_hits: self.judge.resident_hits - rh0,
             seconds: t0.elapsed().as_secs_f64(),
         };
-        Ok(GenerationScores { rows, stage: self.stage, stage_changed, stopped, evaluations_new: self.judge.evaluations - e0, evaluations_total: self.judge.evaluations, cost })
+        let oversized = rows.iter().filter(|r| r.ledger.first().is_some_and(|e| e == "oversized")).count();
+        if oversized > 0 {
+            self.judge.messages.say(&format!("generation {generation}: {oversized} of {} rows over the size bound ({} nodes, {SIZE_BOUND_FACTOR} x the reference program's {}): scored worst, not compiled", rows.len(), self.size_bound, self.size_bound / SIZE_BOUND_FACTOR));
+        }
+        Ok(GenerationScores { rows, stage: self.stage, stage_changed, stopped, evaluations_new: self.judge.evaluations - e0, evaluations_total: self.judge.evaluations, cost, oversized })
     }
 
     /// Whether a program needs a batch in `stage`: its quality not known, or in stage 2 an empty timing slot.
-    fn needs_batch(&self, source: &str, stage: FitnessStage) -> bool {
-        !self.judge.quality_cache.contains_key(source) || (stage.measures_speed() && self.judge.slots.missing(source) > 0)
+    fn needs_batch(&self, r: &Rendered, stage: FitnessStage) -> bool {
+        let source = r.source.as_str();
+        !r.oversized && (!self.judge.quality_cache.contains_key(source) || (stage.measures_speed() && self.judge.slots.missing(source) > 0))
     }
 
     /// Every row scored in `stage`, in row order; the run file checked before every batch. Returns the rows and
@@ -2140,12 +2178,12 @@ impl FutharkEvaluator {
     fn score_rows(&mut self, distinct: &[Rendered], row_of: &[usize], stage: FitnessStage, batches: &mut usize, after_batch: &mut dyn FnMut(&BatchDone)) -> Result<(Vec<RowScore>, bool), String> {
         let run_file = self.out.join(crate::run_file::RUN_FILE);
         let batched = self.judge.mode.batched();
-        if batched && row_of.iter().any(|i| self.needs_batch(&distinct[*i].source, stage)) {
+        if batched && row_of.iter().any(|i| self.needs_batch(&distinct[*i], stage)) {
             if !run_file.exists() {
                 return Ok((Vec::new(), true));
             }
             let compiles = self.judge.modules + self.judge.failed_compiles;
-            let items: Vec<(&Tree, &str)> = row_of.iter().map(|i| (&distinct[*i].tree, distinct[*i].source.as_str())).collect();
+            let items: Vec<(&Tree, &str)> = row_of.iter().filter(|i| !distinct[**i].oversized).map(|i| (&distinct[*i].tree, distinct[*i].source.as_str())).collect();
             self.judge.prefetch(&items, stage)?;
             if self.judge.modules + self.judge.failed_compiles > compiles {
                 *batches += 1;
@@ -2155,12 +2193,12 @@ impl FutharkEvaluator {
         let mut rows = Vec::with_capacity(row_of.len());
         for i in row_of {
             let r = &distinct[*i];
-            let own_batch = !batched && self.needs_batch(&r.source, stage);
+            let own_batch = !batched && self.needs_batch(r, stage);
             if own_batch && !run_file.exists() {
                 return Ok((rows, true));
             }
             let evaluations = self.judge.evaluations;
-            let e = self.judge.evaluate(&r.tree, &r.source, stage)?;
+            let e = if r.oversized { self.oversized_eval(&r.source, stage)? } else { self.judge.evaluate(&r.tree, &r.source, stage)? };
             rows.push(self.row_score(r, &e, stage, self.judge.evaluations > evaluations)?);
             if own_batch {
                 *batches += 1;
@@ -2168,6 +2206,29 @@ impl FutharkEvaluator {
             }
         }
         Ok((rows, false))
+    }
+
+    /// THE SIZE GUARD's score (the P1 code review): a program over the size bound is scored worst on every input,
+    /// as a program that does not run is (`Quality::worst`; in stage 2 every speed input 1, as an untimed program's),
+    /// without rendering or compiling it. A text not scored before is a budgeted evaluation, once.
+    fn oversized_eval(&mut self, key: &str, stage: FitnessStage) -> Result<Eval, String> {
+        self.judge.scored += 1;
+        if self.oversized_seen.insert(key.to_string()) {
+            self.judge.evaluations += 1;
+        } else {
+            self.judge.hits += 1;
+        }
+        self.judge.last = ("oversized", 0, Stages::default());
+        let quality = Quality::worst(&self.judge.cases, self.judge.parts);
+        let speed = if stage.measures_speed() { vec![1.0; self.judge.slots.slots()] } else { Vec::new() };
+        let t = self.judge.scheme.staged_weighted(stage, &quality.inputs, &speed, self.judge.quality_weight)?;
+        Ok(Eval { fitness: t.fitness, theta_q: t.quality, theta_s: t.speed, quality, speed, ratio: if stage.measures_speed() { f64::INFINITY } else { f64::NAN } })
+    }
+
+    /// The size bound: an expressed tree of more nodes is scored worst and never compiled
+    /// ([`SIZE_BOUND_FACTOR`] times the reference program's node count).
+    pub fn size_bound(&self) -> usize {
+        self.size_bound
     }
 
     /// A scored row: the HFF input vector the scheme's angle is taken over, the angle's percentile, the ledger's

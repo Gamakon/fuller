@@ -365,3 +365,46 @@ fn a_run_file_removed_between_two_batches_returns_the_first_batch_s_rows_and_sto
     assert!(!hits.stopped && hits.rows.len() == 2 && hits.evaluations_new == 0, "cache hits need no batch");
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// A gene drawn uniformly cell by cell (each cell a random member of its own alphabet), as phylu's engine draws a row:
+/// its expressed tree is far larger than `Genetics::random_gene`'s.
+fn uniform_gene(ev: &FutharkEvaluator, rng: &mut GeneRng) -> Vec<u32> {
+    let g = &ev.gen;
+    let mut gene = g.random_gene(rng).unwrap();
+    for pos in 0..gene.len() {
+        let alphabet = g.layout.alphabet(&g.contract, pos, &g.const_len);
+        if !alphabet.is_empty() {
+            let v = alphabet[rng.below(alphabet.len())];
+            g.layout.mutate(&g.contract, &mut gene, pos, v, &g.const_len).unwrap();
+        }
+    }
+    gene
+}
+
+/// THE SIZE GUARD (the P1 code review): histogram's bound is 64 x the reference program's 7 nodes; a gene drawn cell
+/// by cell expresses far over it, is scored worst on every input (angle pi/2 in stage 1) without being rendered or
+/// compiled, is charged once (a repeat is free) and is counted in the call's `oversized`; the ordinary row beside it
+/// is the runner's, compiled alone in the call's one module.
+#[test]
+fn a_program_over_the_size_bound_is_scored_worst_and_never_compiled() {
+    let ledger = runner_ledger();
+    let (mut ev, out) = evaluator_with_run_file("seam_size", EvalMode::Batch);
+    assert_eq!((ev.reference().level_order().len(), ev.size_bound()), (7, 7 * SIZE_BOUND_FACTOR));
+    let mut rng = GeneRng::new(3);
+    let big = (0..20).map(|_| uniform_gene(&ev, &mut rng)).find(|g| ev.gen.tree(g).unwrap().level_order().len() > ev.size_bound()).expect("a cell-by-cell gene over the bound in 20 draws");
+    let nodes = ev.gen.tree(&big).unwrap().level_order().len();
+    let genes = vec![big.clone(), generation_zero(&ev, &ledger)[0].clone(), big];
+    let s = ev.evaluate_generation(&refs(&genes), 0).unwrap();
+    assert_eq!(s.oversized, 2, "two rows over the bound");
+    assert_eq!((s.cost.modules, s.evaluations_new), (1, 2), "one module for the ordinary row; the oversized program charged once");
+    for r in [&s.rows[0], &s.rows[2]] {
+        assert_eq!(r.ledger[0], "oversized");
+        assert!(r.quality.iter().all(|x| *x == 1.0) && r.exact == [0, 0, 0] && !r.perfect, "worst on every input");
+        assert_eq!(r.fitness, std::f64::consts::FRAC_PI_2, "the worst stage-1 angle");
+        assert!(r.text.contains(&format!("{nodes} nodes")) && r.source.starts_with("oversized "), "never rendered to Futhark: {}", r.text);
+    }
+    assert!(s.rows[0].new_evaluation && !s.rows[2].new_evaluation, "a repeat is free");
+    assert_eq!(s.rows[1].fitness.to_bits(), ledger[0].fitness.to_bits(), "the ordinary row is the runner's");
+    assert!(ev.take_messages().iter().any(|l| l.contains("2 of 3 rows over the size bound")));
+    let _ = std::fs::remove_dir_all(&out);
+}

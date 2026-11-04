@@ -850,7 +850,17 @@ first batch returns that batch's rows and `stopped`. `Judge::evaluate` now refus
 when a timing slot is empty. The GPU script `f3a_rust_generation.sh` is not written (it needs a driver over the seam:
 phylu's P4 or `futhark_measure`). fuller: 783 tests pass (default, the 8 evaluator tests included) and 1,243 with
 `wgsl`; clippy clean with default, `wgsl` and `gpu,wgsl`. Commits `2948db62` and `c4d4d90d` carried a clippy
-`type_complexity` warning (the sink's type), fixed in this commit by the `Sink` alias.
+`type_complexity` warning (the sink's type), fixed in this commit by the `Sink` alias. F3a's code is `1a7ba021`.
+
+F3a's size guard (the P1 code review, `f18d50c6`): in `evaluate_generation` an expressed tree of more than
+`SIZE_BOUND_FACTOR` = 64 times the reference program's node count is scored worst on every input (as a program that
+does not run), never rendered or compiled, charged once, and counted in `GenerationScores::oversized`. Basis, measured
+on the CPU: the reference programs have 7 (histogram), 24 (pathfinder) and 256 (k-means) nodes; their mutants of 1-4
+expressed cells reach at most 307, 141 and 392, fuller's random genes 204, 152 and 125; the largest ratio is 44
+(histogram), so 64 keeps them all. It excludes phylu's rows drawn cell by cell (P1: histogram a mean of 2,421 nodes, k-means
+1.5 million): **in regime R on phylu most histogram start rows will be scored worst** unless the engine's start draw
+is made like `Genetics::random_gene` (a matter for P2a/P4). Test: a cell-by-cell histogram gene over 448 nodes,
+twice beside one of the runner's genes: 2 oversized rows at pi/2, one module, 2 evaluations. fuller: 784 tests pass (default), the 9 evaluator tests with `wgsl`; clippy clean default, `wgsl`, `gpu,wgsl`.
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
