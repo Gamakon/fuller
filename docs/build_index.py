@@ -11,8 +11,8 @@ that check, so a hand-edited index fails `cargo test` and a stale one fails
 too. The same discipline as `kingdoms/futhark/gen_tables.py`, and for
 the same reason: the index is a lie the moment it stops matching the tree.
 
-    python3 docs/build_index.py           # write docs/index.html
-    python3 docs/build_index.py --check   # compare, and fail if they differ
+    python3 docs/build_index.py --write   # write docs/index.html
+    python3 docs/build_index.py           # compare (the default), and fail if they differ
 
 It indexes two trees: this repository's `docs/`, and the sibling `phylu`
 checkout's `docs/` (linked by a relative path, so it needs the two checkouts
@@ -296,17 +296,21 @@ document.addEventListener('keydown',e=>{ if(e.key==='/'&&document.activeElement!
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--check", action="store_true", help="compare with the committed page instead of writing it")
+    ap.add_argument("--check", action="store_true", help="compare with the committed page (the default)")
+    ap.add_argument("--write", action="store_true", help="write the page instead of comparing")
     args = ap.parse_args()
+    if args.check and args.write:
+        print("build_index: --check and --write are exclusive", file=sys.stderr)
+        return 2
     page = build()
-    if args.check:
+    if not args.write:
         if not OUT.exists():
             print(f"build_index: {OUT} does not exist", file=sys.stderr)
             return 1
         want = OUT.read_text(encoding="utf-8")
         if want != page:
             print(f"build_index: {OUT} differs from what the generator writes", file=sys.stderr)
-            print("build_index: run `python3 docs/build_index.py` to write it", file=sys.stderr)
+            print("build_index: run `python3 docs/build_index.py --write` to write it", file=sys.stderr)
             return 1
         print(f"build_index: {OUT} MATCHES the generator")
         return 0
