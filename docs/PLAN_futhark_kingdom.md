@@ -1294,3 +1294,40 @@ naming the commit that last ran them. `docs/CHECKLIST_futhark_problem.md`'s cell
 | 6. `KMEANS_FITNESS.md` 454 against the measured limits | corrected in `docs/KMEANS_FITNESS.md` ("Known limits"); 5a.6 question 1 |
 | 7. "seed" and "step" | 5a's prose says "reference program", "random seed" and "iteration"; code identifiers (`pair_steps`) stay |
 | 8. the run file between batches; the read-back timed; `progress_every = 1`; the point mutation in expressed cells per regime (`expressed_edits` 2 in P, 4 in R, the old runner's `m_of`) and the operator rates (`futhark_typed::operator_rates`), stated on the card; `f32` fitness; the run total and the call's new evaluations | 5a.1 rows, 5a.2 (`stopped`, `fitness`'s comment, `evaluations_new`/`evaluations_total`), F3a, P2a, P3, P4, G1, G3 |
+
+## 6. Next steps after this plan (Andrew, 2026-11-04)
+
+When step 5 is complete (the regression runs R0 to R4, RC, AB2 and P3b run and read, X1 done, both repositories' full
+suites passing, merged into main), the work continues in this order.
+
+### 6.1 Next step 1: fix the faults not yet fixed
+
+Each fault gets a fix and a test, as every fault does; a compiler fault gets its note for the compiler team in
+`docs/issues` first.
+
+| fault | where it is recorded | evidence |
+|---|---|---|
+| the rust-wgpu fork's internal error "Buffer lifted_const_reg_rep_tr_subhistos_mem used at multiple types" on k-means modules (an i32 and an f32 histogram share one lifted constant buffer) | `docs/issues/2026-11-04_futhark_rust_wgpu_buffer_multiple_types.md` with its `.fut` | the F3b GPU check, 2026-11-04 10:21Z: 77 halvings in the deprecated runner's k-means generation 0, the same programs through phylu |
+| k-means programs built from histograms of zeros give a different (garbage) output on every GPU run; their quality inputs match | the F3b check's "not compared" lines; phylu `7ccb16b0` compares their fingerprint only when the output is not garbage | the F3b GPU checks of 2026-11-04 13:29Z and 16:23Z (`histrows.add.k zeros centres` and others); likely the same fork fault as above |
+| Futhark 0.28.1 `futhark c --library`: "Type error after pass 'Fuse SOACs' ... Name inpacc_... bound twice" on random histogram rows | `/private/tmp/claude-501/fbench/plan5a/size_bound/ice/histogram_225_275_k04.fut` and its log (to be moved into `docs/issues`) | 11 of 15 failing histogram and pathfinder rows of 225 to 1,100 nodes; 1 to 4 per 25 to 28 rows |
+| the rust-wgpu fork: "Migration graph sink could be reached" on one 24 x 1,000-node histogram module whose rows each compile alone on the C backend | the F3a review-fix agent's report, 2026-11-04 | `/private/tmp/claude-501/fbench/plan5a/size_bound/` |
+| `wgsl::safe_reader::tests::a_tile_loop_unrolled_in_full_renders_straight_line_and_reads_back` overflows its stack in debug builds (passes with `RUST_MIN_STACK=16777216`) | the F3a review-fix agent's report | `/private/tmp/claude-501/fbench/plan5a/size_bound/test_wgsl.log` line 1122; present at HEAD before 5a |
+| a `futhark rust-wgpu --fuse=100` compile of `tests/corpus/futhark_compile_failures/setmem_loop__45e18ea3f5e5.fut` left running for over 15 hours with no parent (the compile limit did not reach it) | this plan | process 76740, started about 2026-11-03 17:20Z |
+
+### 6.2 Next step 2: plan the merge into one phylu repository with two crates
+
+Write the plan (then its reviews, then the DAG of agents, as every plan) for moving fuller and phylu into ONE
+repository named phylu, a Cargo workspace of TWO crates, following Andrew's architecture diagram of 2026-11-04:
+
+- **the symbolic crate** (today's fuller): kingdoms and their views, the AST, gene encoding and decoding, program
+  rendering, and symbolic rewriting (the e-graph, snap, fold);
+- **the evolution crate** (today's phylu): the gene frame, the engine (islands, virtual ALPS, the pump), variation and
+  selection, the population, fitness measurement (HFF schemes, GPU scoring, `program_eval` for external compilers and
+  programs), the runners, telemetry, checkpoints and `evowatch`.
+
+The plan must cover: what moves where file by file (including what the diagram puts in phylu that is still in fuller:
+`fitness`, `telemetry`, `run_file`, `geneframe`, `population_dag`, the WGSL mutation); both histories kept (`git
+subtree`); the dependency direction (the evolution crate depends on the symbolic crate, never the reverse); the Python
+extension (`fuller` is imported by hff: keep the module name or change hff's import); the helper crates
+(`futhark-rust-rt`, the shim); the docs index, both CLAUDE.md files rewritten once, the memory paths, the papers'
+repository references; and the order: open branches merged to main first.
