@@ -1051,6 +1051,23 @@ and its own angle) where the review sketched a bare vector; the GPU tests' P2a m
 stage change, the fresh hook and the state the general layer leaves to a kingdom), and the hash mock as a
 `ProgramTool` is a host test.
 
+**F5 DONE (phylu `24af1068`, 2026-11-04).** `FutharkEvaluator::fresh` in `phylu/src/futhark_eval/evaluator/start.rs`
+(`set_fresh` takes the regime, the start and the random seed; `fresh_cost` the seconds and the start's evaluations).
+The start reproduces the deprecated runner's generation 0 (regime P's reference program or planted slowdown with its
+e-graph variants and fold forms; the task alternatives; the pool's program and its mutants; canvas or random genes).
+The refill gives the best's unscored e-graph variants (at most 4, only when the best changed), then in P its mutants
+(1 to 2 cells, or the ring walk); R leaves the rest to the engine's draw; C has none. The fold forms come on the fold
+beat's own request, not in the refill. **One fold request a pair** carries all its winners (`FreshRequest::winners`,
+the best's row in `FreshRow`); each form names its winner (`forms_by_winner`). The `fold_top_k` bound of 4 stays,
+because a fold's cost grows with its programs. Found: histogram's P generation 0, the runner's too, is the reference
+program alone (no e-graph variant, no fold form); pathfinder's is 24. Histogram's 577 alternatives all give the
+published output, so the alternatives start with 24 rows fails, as the runner's did. Tests (CPU, `--release`,
+`-D warnings`): `futhark_eval::evaluator::start` 7, `evolve::external` 10, `evolve::futhark_typed` 12, the bound test 1.
+Clippy clean (default, `gpu`, `gpu,wgsl`), and the GPU test binary builds. `p2a_mock.sh`'s
+`the_external_hook_runs_ten_generations_on_two_pairs` now expects 2 fold requests a beat (one a pair), each with 4
+forms. Not run: the GPU tests. Left for P4: the start individuals enter through `External.seed` (no origin), and the
+alternatives' evaluations are charged in `evaluations_total` only. The P start's memory is measured by the run's script.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
