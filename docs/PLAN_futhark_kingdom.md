@@ -802,6 +802,22 @@ cannot run on the C path, because its stage 2 times on the GPU. fuller: 778 test
 features and with `gpu,wgsl`. phylu (`d2264705`, no change): release build, 250 tests pass, clippy clean with default
 features and with `gpu`.
 
+F2 DONE (`1e5a0f4c`, `e32b39f1`): `src/futhark_evaluator.rs` (feature `wgsl`, for `wgsl::work_guard`'s per-submit
+cap) holds the `Judge` with its types and k-means paths, `Genetics`, `ring_canvas`, `gate_passed` and
+`hff_dimensions`, moved unchanged except `Genetics::marry` (takes (tree, gene) pairs) and `walk_event` (the child's id
+and tree): the library holds no population type. `FutharkEvaluator::new(&EvaluatorConfig)` loads and checks
+everything (the runner's flag checks moved into it); `controls(&ControlRequest) -> Controls` runs the controls in the
+runner's order; `input_names()`; accessors for the kingdom, signature, contract, layout, `const_len`, reference
+program, alternatives; `judge` and `gen` are public for the deprecated runner only. `FreshRequest`, `FreshPurpose`,
+`FreshIndividual` defined (`fresh` is F5). `futhark_evolve` runs through it. Before/after (946af1b1's binary against
+this one, `--backend c --eval single`, random seed 1): histogram R with `--gate`, 30 evaluations: `ledger.tsv`
+identical on 33 rows and 12 columns (the 11 `*_ms` excluded), the stream's objectives and card identical; k-means
+`--regime P --evaluations 3 --pop 4`: the same 3 programs, quality inputs and behaviours bit for bit; the seconds
+speed inputs are wall-clock ratios and differ between any two runs, the before binary against itself included
+(fitness 0.722756 and 0.722735), so the F2 row's "speed inputs bit for bit" cannot hold for k-means. fuller: 778
+tests pass (default), the 3 new evaluator tests pass with `wgsl`, clippy clean with default, `wgsl` and `gpu,wgsl`.
+phylu (`d2264705`, no change): 250 tests pass, clippy clean with default features and with `gpu`.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
