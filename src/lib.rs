@@ -98,6 +98,9 @@ pub mod snap;
 pub mod snap_karva;
 #[cfg(feature = "wgsl")]
 pub mod wgsl;
+/// The Futhark evaluator (plan step 5a): it reads the per-submit work cap of `wgsl::work_guard`.
+#[cfg(feature = "wgsl")]
+pub mod futhark_evaluator;
 
 #[cfg(feature = "python")]
 mod python;
