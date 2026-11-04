@@ -1068,6 +1068,38 @@ Clippy clean (default, `gpu`, `gpu,wgsl`), and the GPU test binary builds. `p2a_
 forms. Not run: the GPU tests. Left for P4: the start individuals enter through `External.seed` (no origin), and the
 alternatives' evaluations are charged in `evaluations_total` only. The P start's memory is measured by the run's script.
 
+**F4 DONE (phylu `ffc4bd98`, 2026-11-04).** `FutharkEvaluator::report(generation, row, genome)` in
+`phylu/src/futhark_eval/evaluator/report.rs` reads the evaluator's caches only. It scores nothing and counts nothing,
+and a best that was never scored is a bug of our software. `FutharkEvaluator::extras` has the signature of P2b's
+`ExternalExtras`, so P4 boxes it. The report holds the scheme's angle and the angle over the whole vector, with that
+vector's d and its percentile (`fitness::hff_percentile`), for every scheme. Where the scheme's angle is TrueNorth over
+the vector the two angles are the same number; for the retired two-level schemes the second is TrueNorth over the
+vector. Each group's angle and percentile sit beside them. It also holds the best's inputs case by case beside the
+reference program's (when the run scored the reference program), the speed pairs, the exact counts of each split and
+the test cases' measures. The answer-scored problems now measure their test cases inside the quality program
+(`Quality::test_raw`, `test_inputs`), never in `inputs`. For k-means the measures are the champion's last runs on the
+test cases (`ChampionMeasure`). Departures from 5a.2: `report` takes the best's genome, not `GenerationScores`,
+because the engine's hook gives a genome; `Quality` keeps its all-zero flag (`zero`), so a restored program needs no
+outputs. Reduce has no test set, so the check holds there trivially; the test asserts that at least two problems have one. Tests (CPU, c backend,
+`--release`, `-D warnings`), 3 new: the percentile for every answer-scored scheme in both stages; the test set never
+in `inputs` on every problem (k-means by its names; its scored report in the k-means seam test); the extras hook.
+`futhark_eval::evaluator` passes 29 of 29. GPU: the report is checked on every call of the two replay tests in
+`f3a_rust_generation.sh` and `f3b_kmeans_generation.sh` (built, not run). On the GPU no new expectation: the same
+counts, and every assertion holds.
+
+**F7 DONE (phylu `4ecc9d89`, 2026-11-04).** `FutharkEvaluator::state` and `restore`, in
+`phylu/src/futhark_eval/evaluator/state.rs`, fill P2b's `ExternalState` slot. The state holds every program scored
+(its quality by text, k-means's speed group, the oversized keys), the timing slots, the stage, the counts, the k-means
+champion with its last test-case measures, and the pump refill's memory (`refilled`/`set_refilled`, added in phylu
+`e1289ae2`: the F5 code review's finding 7). The refill's mutant draw is keyed by seed, generation and pair, and its
+"scored before" filter reads the restored cache, so nothing else needs saving. Every `f64` is stored as the hex of its
+bits, because an untimed slot is infinite and JSON has no infinity. A scored program's outputs are not saved: k-means's
+centroids are about a megabyte a program. **The resume is `new`, then `controls`, then `restore`.** A restore before
+the controls, or a state of another format or configuration, is an error that changes nothing. Tests: histogram's
+state survives its JSON text; after `restore`, a recorded stage-2 generation (with one infinite slot) scores with no
+new evaluation and no module, and with the same angles, inputs, ledger columns and report bit for bit. The same holds
+for k-means at the end of its seam test: no test case runs again. GPU: none.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
