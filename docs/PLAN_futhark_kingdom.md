@@ -1115,6 +1115,43 @@ block's keys and verdict from given numbers, and the chart. `futhark_eval::evalu
 (default, `gpu`, `gpu,wgsl`); the GPU test binary builds. GPU, not run: `f6_controls.sh` runs `controls` and the final
 report on `--eval rust` for histogram, pathfinder, kmeans and a7, with 3 re-times to bound the GPU time.
 
+**P4 DONE (phylu `ec141644`, 2026-11-04; GPU not run).** `examples/futhark_fit.rs` over `phylu/src/evolve/futhark_run.rs`.
+The flags are a `futhark_evolve` run's (problem, regime P or R, start, pool and ring sources, gate, fitness, quality
+weight and cliff, timing pairs, runs, k-means step, eval, backend, evaluations, minutes, random seed, program size,
+pump and fold beats, fold winners) plus the island shape (`--island-pairs`, `--intake`, `--champion`: one pair of 16 + 8),
+marriage 0.3 (subtree, offspring unmutated, as the old runner), tournament 3, elites 2; regime C is P5. The engine
+checkpoints every generation and reports every generation (`progress_every` 1). `OUT/run_card.json` (the stream's
+first note) records every flag, the island shape, the refill cap of 13 a pump, `expressed_edits` (2 in P, 4 in R), the
+operator rates (`futhark_typed::operator_rates`), the marriage, and where generation 0 lands: pathfinder P's 24
+start programs fill the intake (0..16) and the champion island (16..24). The start goes in through `External.seed`.
+The runner keeps each start individual's origin for its ledger, but the genealogy names it `init`. The engine now takes
+an `ExternalStream` from the hook: the stream's kingdom (`futhark_sig`), its fitness scheme (`start_with` the quality
+weight and cliff), its notes, and the progress table's columns from the evaluator's report. The progress table no longer
+prints SR's header (the P2b review's item 4). The `run_start`'s objectives are now the evaluator's column names.
+`ExternalState::save` returns a `Result`. A null state is no longer saved silently. The runner writes `ledger.tsv`
+(one line for each scored individual, with the evaluator's columns), `hall_of_fame/` (program text), `series.tsv`,
+`per_generation.tsv`, `test_case.tsv` (k-means), and at the end `report.tsv`, `best.fut` (`final_report`, with
+`series` None) and the chart (the runner's, the F6 review's item 6). At the stage change the runner's hall of fame
+starts again and stage 1's goes to `hall_of_fame_stage1/` (the F6 review's item 2). The resume runs `new`,
+`controls`, `set_fresh`, then the hook's restore. That restore puts back the evaluator's state and the runner's own
+state, and with it the ORIGINAL controls (`FutharkEvaluator::replace_controls`). The resumed process's controls are
+labelled a re-check in a stream note and in `aa_gate_recheck.tsv`, and `aa_gate.tsv` is the original again (the
+F4/F7 review's item 5). The ledger and the series are cut back to the checkpoint's generation. Found and fixed:
+`evaluate_generation`'s stage change returned the stage-2 rows with the stage-1 pass's `new_evaluation` flags lost, so
+the engine's charge (`new_rows` as long as `evaluations_new`) would have failed at the first stage change. The flags
+are now carried over. Registered in phylu `tests/runner_standard.rs`. Tests (CPU, `--release`, `-D warnings`):
+`evolve::futhark_run` 7 of 7. These cover every flag in the card, the errors, the default fitness (k-means
+`futhark-kmeans-better`), the card's statements, the cut-back, and the progress table. They also include the hooks
+on histogram R on the c backend: the charge, the ledger, the stage change with stage-2 entries only in the hall of
+fame, `series.tsv` and `per_generation.tsv` once a generation, and the hall of fame's values. That test ends with a
+resume into a second evaluator that scores the same generation with nothing new and the same fitness bit for bit.
+Also: the `gpu` host test of the engine configuration (1), `runner_standard` 2 of 2, the evaluator's stage-change
+tests 2 of 2, and `evolve::external` and `evolve::program_eval` 14 of 14. Clippy is clean on default, `gpu` and
+`gpu,wgsl`. The GPU test binary and the example build. Written, not run:
+`/private/tmp/claude-501/fbench/plan5a/g2_futhark_fit.sh`. It runs the three engine-driven tests (histogram and
+pathfinder R on the c backend end to end, and a resume against the uninterrupted run), then pathfinder P and
+histogram R (the frozen gate) on `--eval rust --backend gpu`, 3 generations each.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
