@@ -1152,6 +1152,26 @@ tests 2 of 2, and `evolve::external` and `evolve::program_eval` 14 of 14. Clippy
 pathfinder R on the c backend end to end, and a resume against the uninterrupted run), then pathfinder P and
 histogram R (the frozen gate) on `--eval rust --backend gpu`, 3 generations each.
 
+**P5 DONE (phylu `34ff7d9e`, 2026-11-04; GPU not run).** `futhark_fit --regime C`, in
+`phylu/src/evolve/futhark_run/random_search.rs`, runs without the engine, since random search has no selection.
+Each generation is `pop` fresh individuals from `FutharkEvaluator::fresh`. The population is the evolution runs'
+(island pairs x (intake + champion), 24 by default). Generation 0 is the start, as in regime R (`drawn` by default;
+`--start random`, the engine's draw, is an error in C). Every later generation uses the new `FreshPurpose::Random`:
+the deprecated runner's draw, `(seed ^ REGIME_C_TAG) * golden ^ generation`. Each generation is scored by the P/R
+runner's own hooks (`FutharkRun::score` and `extras`, so `evaluate_generation` too), with the same outputs: the
+stream through `RunTelemetry` (kingdom `futhark_sig`, a snapshot and the hall of fame every generation), `ledger.tsv`,
+`hall_of_fame/`, `series.tsv`, `per_generation.tsv`, `stages.tsv`, the run card, and at the end `report.tsv`, `best.fut`
+and the chart. The final report is of the hall of fame's rank 1 (the best ever), whose gene is kept beside the hall of
+fame. The run honours `killme.trigger`, the minutes, evaluations and generations guards, and `--stop-at-exact`. A
+checkpoint is written after every generation (`OUT/checkpoint_c.json`), and `--resume` continues it; a generation the
+run file stopped part way writes none. A C run needs `--gate`, as R does. Tests (CPU, `--release`, `-D warnings`):
+`evolve::futhark_run` 12 of 12, 3 of them new: C's arguments; the hall of fame holds the best ever, not the last
+generation's best; and a short c-backend histogram run end to end (every output, a resume equal to the uninterrupted
+run, report keys equal to regime P's). Also the draw test (`a_random_search_generation_is_the_runner_s_draw`) and
+`runner_standard` 2 of 2 (C's markers added). Clippy is clean on default, `gpu` and `gpu,wgsl`; the GPU test binary
+and the example build. RC needs a GPU script after R4. It is not written: it is the R4 script's runner step with
+`--regime C`.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
