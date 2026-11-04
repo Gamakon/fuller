@@ -77,6 +77,13 @@ fn histogram_on_the_c_backend_passes_its_controls_and_scores_the_reference_progr
     let c = ev.controls(&ControlRequest { regime: Some(Regime::R), aa_rounds: 0 }).unwrap();
     // The c backend times nothing: no A/A set, no note.
     assert!(c.noise.is_empty() && c.aa.is_none() && c.inrun_aa.is_empty() && c.notes.is_empty(), "the c backend has no A/A sets");
+    // The library prints nothing: with no sink set, its messages are held for the caller, in order, each stamped.
+    let held = ev.take_messages();
+    for want in ["timing bound:", "control: the reference gene is exact on all", "control: the compiled reference gene is exact"] {
+        assert!(held.iter().any(|l| l.contains(want)), "{want}: {held:?}");
+    }
+    assert!(held.iter().position(|l| l.contains("timing bound:")) < held.iter().position(|l| l.contains("control: the reference gene is exact on all")), "in order: {held:?}");
+    assert!(ev.take_messages().is_empty(), "taken once");
     let (reference, source) = (ev.reference().clone(), ev.reference_source().to_string());
     ev.judge.prefetch(&[(&reference, source.as_str())], FitnessStage::Quality).unwrap();
     let e = ev.judge.evaluate(&reference, &source, FitnessStage::Quality).unwrap();
@@ -91,6 +98,24 @@ fn histogram_on_the_c_backend_passes_its_controls_and_scores_the_reference_progr
     assert_eq!((ev.judge.evaluations, ev.judge.hits, ev.judge.scored), (1, 1, 2), "a program scored before is a cache hit and costs nothing");
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// A sink set after messages were held receives the held lines first, in order, then every later one; nothing is
+/// held once it is set.
+#[test]
+fn a_sink_receives_the_held_messages_first_then_every_later_one() {
+    let mut m = Messages::default();
+    m.say("one");
+    m.say("two");
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let s2 = std::rc::Rc::clone(&seen);
+    m.set_sink(Box::new(move |l| s2.borrow_mut().push(l.to_string())));
+    m.say("three");
+    assert!(m.take().is_empty(), "nothing is held once a sink is set");
+    let got: Vec<String> = seen.borrow().iter().map(|l| l.split_once(' ').expect("the UTC time, then the message").1.to_string()).collect();
+    assert_eq!(got, ["one", "two", "three"]);
+    assert!(seen.borrow().iter().all(|l| l.len() > 9 && l.as_bytes()[8] == b'Z'), "each line starts with HH:MM:SSZ: {:?}", seen.borrow());
+}
+
 
 #[test]
 fn the_genetics_express_the_reference_program_and_marry_two_programs_into_legal_offspring() {

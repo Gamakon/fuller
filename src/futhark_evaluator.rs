@@ -49,6 +49,40 @@ pub fn utc() -> String {
     format!("{:02}:{:02}:{:02}Z", s / 3600, (s / 60) % 60, s % 60)
 }
 
+/// WHERE THE EVALUATOR'S MESSAGES GO (the F2 code review, note 3): the library never prints. Each message is one line,
+/// its UTC time first; it goes to the caller's sink when one is set (`FutharkEvaluator::set_messages`: the engine's
+/// log, the deprecated runner's console), else it is held until the caller takes it
+/// (`FutharkEvaluator::take_messages`) or sets a sink, which first receives every held line in order.
+#[derive(Default)]
+pub struct Messages {
+    sink: Option<Box<dyn FnMut(&str)>>,
+    held: Vec<String>,
+}
+
+impl Messages {
+    /// One message, stamped with the UTC time.
+    pub fn say(&mut self, msg: &str) {
+        let line = format!("{} {msg}", utc());
+        match &mut self.sink {
+            Some(f) => f(&line),
+            None => self.held.push(line),
+        }
+    }
+
+    /// The caller's sink from now on; the held lines go to it first, in order.
+    pub fn set_sink(&mut self, mut sink: Box<dyn FnMut(&str)>) {
+        for l in self.held.drain(..) {
+            sink(&l);
+        }
+        self.sink = Some(sink);
+    }
+
+    /// The held lines, in order (none when a sink is set: they went to it).
+    pub fn take(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.held)
+    }
+}
+
 /// FNV-1a of bytes, 16 hex digits.
 pub fn text_hash_bytes(s: &[u8]) -> String {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -392,6 +426,8 @@ pub struct Judge {
     /// The resident sample's upload seconds this generation (0 once resident) and the runs that found it resident.
     pub upload_seconds: f64,
     pub resident_hits: u64,
+    /// The messages of the judge and the evaluator ([`Messages`]): the caller's, never printed here.
+    pub messages: Messages,
 }
 
 /// HOW A COMPILED K-MEANS PROGRAM IS STEPPED: on the GPU one process of the shim's executable an iteration (the
@@ -614,7 +650,7 @@ impl Judge {
                 self.batched_t.insert(key, (pair_ratios(&outs[at..], missing, fresh), mine.timing));
             }
         }
-        println!("# {} batch: {n} programs, {} compile(s) ({} failed, {} not finished within the limit), {} process(es), {} halving(s), {:.1} s", utc(), c.compiles, c.failed_compiles, c.unfinished_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64());
+        self.messages.say(&format!("batch: {n} programs, {} compile(s) ({} failed, {} not finished within the limit), {} process(es), {} halving(s), {:.1} s", c.compiles, c.failed_compiles, c.unfinished_compiles, c.processes, c.splits.len(), t0.elapsed().as_secs_f64()));
         Ok(())
     }
 
@@ -672,7 +708,7 @@ impl Judge {
             mine.pipelines += c.member_timing_pipeline_seconds[i];
             self.batched_k.insert(key, (r, mine));
         }
-        println!("# {} k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed, {} not finished within the limit, {} compiled with the fusion bound), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", utc(), c.compiles, c.failed_compiles, c.unfinished_compiles, c.bounded_fusion_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64());
+        self.messages.say(&format!("k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed, {} not finished within the limit, {} compiled with the fusion bound), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", c.compiles, c.failed_compiles, c.unfinished_compiles, c.bounded_fusion_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64()));
         Ok(())
     }
 
@@ -969,7 +1005,7 @@ impl Judge {
             work = work.max(w);
             if w > caps[slot] {
                 self.over_cap_unrun += 1;
-                println!("# {} over the work cap on {}: {w} node executions, the cap {} ({WORK_CAP_TIMES_SEED} x the seed's); not run, the worst score", utc(), self.cases[*i].name, caps[slot]);
+                self.messages.say(&format!("over the work cap on {}: {w} node executions, the cap {} ({WORK_CAP_TIMES_SEED} x the seed's); not run, the worst score", self.cases[*i].name, caps[slot]));
                 self.last = ("hit", 0, Stages::default());
                 return Ok(worst(work, "over the work cap"));
             }
@@ -1280,7 +1316,7 @@ pub fn replace(t: &Tree, path: &[u32], with: &Tree) -> Tree {
 /// `OUT/rings.tsv` (what went in, every fill and gap). Returns the rings and the TASK ALTERNATIVES (`DIR/alternatives.tsv`,
 /// Sonnet's programs for the benchmark's own task, Andrew's clarification of 2026-10-29): the population's material,
 /// never the rings', in order, those of the root type that fit the layout.
-pub fn ring_canvas(k: &FutharkKingdom, contract: &KingdomContract, layout: &GeneLayout, dir: &Path, pname: &str, sources: &[Source], out: &Path) -> Result<(Rings, Vec<Tree>), String> {
+pub fn ring_canvas(k: &FutharkKingdom, contract: &KingdomContract, layout: &GeneLayout, dir: &Path, pname: &str, sources: &[Source], out: &Path, messages: &mut Messages) -> Result<(Rings, Vec<Tree>), String> {
     let mut entries = Vec::new();
     for f in ["bench.tsv", "llm.tsv"] {
         if dir.join(f).is_file() {
@@ -1329,7 +1365,7 @@ pub fn ring_canvas(k: &FutharkKingdom, contract: &KingdomContract, layout: &Gene
         tsv.push_str(&format!("fill\t{} {} from {} ({} symbols)\n", f.dual, f.ring.name(), f.from, f.len));
     }
     std::fs::write(out.join("rings.tsv"), &tsv).map_err(|e| e.to_string())?;
-    println!("# {} ring canvas: {used} pool programs ({by_source:?}), {left_out} left out ({excluded}), {by_class} rings filled from their class, {by_slot} from their slot family (class gaps); {} task alternatives fit the layout, {unfit} too big", utc(), alternatives.len());
+    messages.say(&format!("ring canvas: {used} pool programs ({by_source:?}), {left_out} left out ({excluded}), {by_class} rings filled from their class, {by_slot} from their slot family (class gaps); {} task alternatives fit the layout, {unfit} too big", alternatives.len()));
     Ok((full, alternatives))
 }
 
@@ -1551,9 +1587,11 @@ impl FutharkEvaluator {
             crate::typed_gep::fits(&contract, &layout, t).map_err(|e| format!("the {what} ({} functions) does not fit the layout of program size N = {program_size}: {e}", function_count(&k, t)))?;
         }
         let const_len = Arc::new(k.const_len());
+        // The messages of the construction, held until the caller sets its sink or takes them.
+        let mut messages = Messages::default();
         let (canvas, alternatives) = match &cfg.rings {
             Some(rc) => {
-                let (r, progs) = ring_canvas(&k, &contract, &layout, &rc.pool, &cfg.problem, &rc.sources, &out)?;
+                let (r, progs) = ring_canvas(&k, &contract, &layout, &rc.pool, &cfg.problem, &rc.sources, &out, &mut messages)?;
                 // Without the canvas (a measurement on random padding) the pool gives the parents, not the rings.
                 (if rc.canvas { Some(Arc::new(r)) } else { None }, progs)
             }
@@ -1565,13 +1603,13 @@ impl FutharkEvaluator {
         let sizes: Vec<BTreeMap<String, usize>> = cases.iter().map(|c| sig.sizes(&c.inputs)).collect::<Result<_, _>>()?;
         if let Some(g) = &cfg.gate {
             gate_passed(g, &cfg.problem, program_size, &cases_fingerprint(&cases), scheme.quality_parts()?)?;
-            println!("# {} the gate: the slope check in {} passed for these cases and quality inputs", utc(), g.display());
+            messages.say(&format!("the gate: the slope check in {} passed for these cases and quality inputs", g.display()));
         }
         let all_stdin: Vec<u8> = cases.iter().flat_map(|c| c.stdin.clone()).collect();
         let timing = TimingInput::of(&p, &sig, &cases, &out.join("timing_build"), !scheme.is_converged())?;
         let reference_work = interp.work(&reference, &timing.sizes)?;
         let timing_cap = crate::futhark_sig::timing_work_cap(reference_work);
-        println!("# {} timing bound: {timing_cap} node executions at the timing input (the published program's work {reference_work}, the constant {TIMING_WORK_CAP})", utc());
+        messages.say(&format!("timing bound: {timing_cap} node executions at the timing input (the published program's work {reference_work}, the constant {TIMING_WORK_CAP})"));
         // The shim is built once, here (under the cargo lock); no candidate's link runs cargo or takes the lock. The
         // rust path has no shim and no C: its runtime is built once instead, into the run's own directory.
         let with_shim = backend == Backend::Gpu && mode != EvalMode::Rust;
@@ -1647,6 +1685,7 @@ impl FutharkEvaluator {
             batched_k: HashMap::new(),
             upload_seconds: 0.0,
             resident_hits: 0,
+            messages,
         };
         Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, judge, gen })
     }
@@ -1726,6 +1765,16 @@ impl FutharkEvaluator {
     /// times, then every case's speed inputs once; for the gated k-means scheme quality then speed; for the retired
     /// five-input scheme its five a case; for the answer-scored schemes the quality inputs a fitness case, then the
     /// speed pairs (stage 2).
+    /// The caller's sink for the evaluator's messages ([`Messages`]); the lines held so far go to it first.
+    pub fn set_messages(&mut self, sink: Box<dyn FnMut(&str)>) {
+        self.judge.messages.set_sink(sink);
+    }
+
+    /// The messages held so far (none once a sink is set), in order.
+    pub fn take_messages(&mut self) -> Vec<String> {
+        self.judge.messages.take()
+    }
+
     pub fn input_names(&self) -> Vec<String> {
         let (scheme, cases, quality_weight) = (self.judge.scheme, &self.judge.cases, self.judge.quality_weight);
         let fit = || cases.iter().filter(|c| c.split.in_fitness());
@@ -1751,12 +1800,12 @@ impl FutharkEvaluator {
     /// THE INTERPRETED CONTROL: the reference gene is exact on every case under the host interpreter, so the kingdom
     /// expresses the published program. The k-means scheme's reference program is checked compiled instead
     /// ([`FutharkEvaluator::controls`]): the host interpreter is not run on cases of that size.
-    pub fn control_interpreted(&self) -> Result<(), String> {
+    pub fn control_interpreted(&mut self) -> Result<(), String> {
         if self.judge.scheme.is_converged() {
             // The host interpreter is not run on the dbpedia cases (about 4e7 node executions a second: one step of
             // 1,000 x 1,536 x 16 is a minute); its agreement with the compiled program is the kingdom's tests' on the
             // small case (`tests_kmeans_seed`).
-            println!("# {} control: the seed's run is checked compiled (the host interpreter is not run on cases of this size)", utc());
+            self.judge.messages.say("control: the seed's run is checked compiled (the host interpreter is not run on cases of this size)");
             return Ok(());
         }
         for c in &self.judge.cases {
@@ -1764,7 +1813,7 @@ impl FutharkEvaluator {
                 return Err(format!("our software has a bug: the reference gene is not exact on {}", c.name));
             }
         }
-        println!("# {} control: the reference gene is exact on all {} cases (host interpreter)", utc(), self.judge.cases.len());
+        self.judge.messages.say(&format!("control: the reference gene is exact on all {} cases (host interpreter)", self.judge.cases.len()));
         Ok(())
     }
 
@@ -1790,7 +1839,7 @@ impl FutharkEvaluator {
             c.noise = a.noise.clone();
             let noise = &c.noise;
             let msg = format!("A/A noise floor{}, the published program against itself, 11 interleaved pairs of at least {PAIR_SIDE_SECONDS} s a side on {}: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in one batch process)" } else { " (in one timing process)" }, self.judge.timing.label(), median(noise), noise.iter().cloned().fold(f64::INFINITY, f64::min), noise.iter().cloned().fold(0.0, f64::max));
-            println!("# {} {msg}", utc());
+            self.judge.messages.say(&msg);
             c.notes.push(msg);
             c.aa = Some(a);
         }
@@ -1800,7 +1849,7 @@ impl FutharkEvaluator {
             if read_binary(&got)? != read_binary(want)? {
                 return Err("our software has a bug: the yardstick on the GPU does not give futhark c's output on the timing input".into());
             }
-            println!("# {} control: the yardstick on the GPU gives futhark c's output on {} (GPU)", utc(), self.judge.timing.label());
+            self.judge.messages.say(&format!("control: the yardstick on the GPU gives futhark c's output on {} (GPU)", self.judge.timing.label()));
         }
         if converged {
             self.control_converged()?;
@@ -1811,7 +1860,7 @@ impl FutharkEvaluator {
             if !ref_q.perfect() {
                 return Err(format!("our software has a bug: the compiled reference is not exact ({:?})", ref_q.raw));
             }
-            println!("# {} control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", utc(), ref_q.work);
+            self.judge.messages.say(&format!("control: the compiled reference gene is exact on every case ({backend:?}); work {} node executions at most", ref_q.work));
         }
         // The in-run A/A (P): the published program, compiled as a candidate, through the timing slots. The converged
         // scheme has no timing slots: its A/A is the reference program judged as a candidate against itself (below).
@@ -1821,7 +1870,7 @@ impl FutharkEvaluator {
             c.inrun_aa = self.judge.slots.full(self.problem.yardstick)?.to_vec();
             let inrun = &c.inrun_aa;
             let msg = format!("in-run A/A{}, the published program as a candidate through the timing slots, {pairs} pairs: ratio median {:.4}, min {:.4}, max {:.4}", if mode.batched() { " (in the batch process)" } else { " (in the timing process)" }, median(inrun), inrun.iter().cloned().fold(f64::INFINITY, f64::min), inrun.iter().cloned().fold(0.0, f64::max));
-            println!("# {} {msg}", utc());
+            self.judge.messages.say(&msg);
             c.notes.push(msg);
         }
         // THE K-MEANS SCHEME'S A/A, on both backends (the round-2 review's N3): the reference program judged as a
@@ -1836,7 +1885,7 @@ impl FutharkEvaluator {
             let fmt = |v: &[f64]| v.iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>().join(", ");
             let worst = |v: &[f64]| v.iter().map(|x| (x - 0.5).abs()).fold(0.0, f64::max);
             let msg = format!("in-run A/A (k-means): the seed as a candidate against itself through {pairs} interleaved pair(s) on every fitness case, {:.1} s: fitness {:.4}; quality inputs [{}], worst distance from 1/2 {:.2e}{}; speed inputs [{}], worst distance from 1/2 {:.4} (the noise floor of a speed claim)", t_aa.elapsed().as_secs_f64(), e.fitness, fmt(&e.quality.inputs), worst(&e.quality.inputs), if worst(&e.quality.inputs) > 0.0 { " (A QUALITY INPUT OFF 1/2: the program's reduction is not deterministic on this backend)" } else { "" }, fmt(&e.speed), worst(&e.speed));
-            println!("# {} {msg}", utc());
+            self.judge.messages.say(&msg);
             c.notes.push(msg);
             c.kmeans_aa_quality = e.quality.inputs.clone();
             c.kmeans_aa_speed = e.speed.clone();
@@ -1872,7 +1921,7 @@ impl FutharkEvaluator {
             let source = self.reference_source.clone();
             let (runs, c) = self.judge.kmeans_batch(&[Program::Text(&source)], &fit, 1)?;
             let runs = runs.into_iter().next().ok_or("our software has a bug: the seed's control batch of no member")??;
-            println!("# {} control: the seed's module compiled in {:.1} s, the sample uploaded in {:.3} s ({} MB), the seed's {} runs in {:.1} s", utc(), c.compile.futhark + c.compile.cc, c.upload_seconds, sample.data.len() * 4 / 1_000_000, 2 * fit.len(), c.run.total);
+            self.judge.messages.say(&format!("control: the seed's module compiled in {:.1} s, the sample uploaded in {:.3} s ({} MB), the seed's {} runs in {:.1} s", c.compile.futhark + c.compile.cc, c.upload_seconds, sample.data.len() * 4 / 1_000_000, 2 * fit.len(), c.run.total));
             (None, runs.into_iter().map(|(_, seed)| seed).collect::<Vec<_>>(), Some(cuts))
         } else {
             let (mut seed_stepper, _) = self.judge.compile_converged(&self.reference_source, &self.out.join("seed_build"))?;
@@ -1890,10 +1939,10 @@ impl FutharkEvaluator {
                 return Err(format!("our software has a bug: the compiled seed's run does not converge on {} ({backend:?}, {mode:?}): {} iterations, finished {}: {}", c.name, r.iterations, r.finished, r.failure));
             }
             let seed_work = self.judge.interp.work(&self.reference, &self.judge.sizes[*i])?;
-            println!("# {} control: the compiled seed on {}: {} iterations to the stopping point, the program's own {:.3} s ({:.3} s wall), cosine inertia {:.5}, mean log10 p {:.2} ({:.2} over every point, {} at their centroid); work {seed_work}, the cap {}", utc(), c.name, r.iterations, r.seconds, r.wall_seconds, r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, converged_work_cap(seed_work));
+            self.judge.messages.say(&format!("control: the compiled seed on {}: {} iterations to the stopping point, the program's own {:.3} s ({:.3} s wall), cosine inertia {:.5}, mean log10 p {:.2} ({:.2} over every point, {} at their centroid); work {seed_work}, the cap {}", c.name, r.iterations, r.seconds, r.wall_seconds, r.inertia, r.mean_log10_p, r.mean_log10_p_all, r.coincident, converged_work_cap(seed_work)));
             work_caps.push(converged_work_cap(seed_work));
         }
-        println!("# {} control: the seed's {} runs took {:.1} s ({})", utc(), seed_runs.len(), t_control.elapsed().as_secs_f64(), match (backend, step_process, mode) { (_, _, EvalMode::Rust) => "the resident sample on the device, the in-process host", (Backend::C, false, _) => "one Futhark server, the points loaded once a case", (Backend::C, true, _) => "one process of the futhark c executable an iteration (--kmeans-step process)", (Backend::Gpu, _, _) => "one process of the shim's executable an iteration" });
+        self.judge.messages.say(&format!("control: the seed's {} runs took {:.1} s ({})", seed_runs.len(), t_control.elapsed().as_secs_f64(), match (backend, step_process, mode) { (_, _, EvalMode::Rust) => "the resident sample on the device, the in-process host", (Backend::C, false, _) => "one Futhark server, the points loaded once a case", (Backend::C, true, _) => "one process of the futhark c executable an iteration (--kmeans-step process)", (Backend::Gpu, _, _) => "one process of the shim's executable an iteration" }));
         self.judge.converged = Some(ConvergedJudge { seed: seed_stepper, seed_runs, work_caps, pairs, points_dir, cuts });
         Ok(())
     }

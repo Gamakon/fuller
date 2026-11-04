@@ -951,7 +951,7 @@ fn real_main() -> Result<(), String> {
     let program_size_given: Option<usize> = arg(&args, "--program-size").map(|v| v.parse::<usize>().map_err(|_| format!("--program-size: {v} is not a number"))).transpose()?;
     // THE EVALUATOR (`fuller::futhark_evaluator`, plan step 5a): the kingdom, the cases, the gate, the timing input,
     // the shim and the hosts, the judge and the genetics; the configuration checked.
-    let ev = FutharkEvaluator::new(&EvaluatorConfig {
+    let mut ev = FutharkEvaluator::new(&EvaluatorConfig {
         problem: pname.clone(),
         fitness: arg(&args, "--fitness"),
         quality_weight: quality_weight_given,
@@ -967,6 +967,9 @@ fn real_main() -> Result<(), String> {
         rings,
         ring_walk,
     })?;
+    // The library prints nothing: its messages (the construction's, held until now, then every later one) go to
+    // this runner's console as before.
+    ev.set_messages(Box::new(|line| println!("# {line}")));
     let (quality_weight, quality_cliff, program_size) = (ev.quality_weight(), ev.quality_cliff(), ev.program_size());
     if scheme.is_flat() {
         println!("# {} quality weight m = {quality_weight}: every quality input is entered {quality_weight} times in the one vector the HFF reads, the speed inputs once", utc());
