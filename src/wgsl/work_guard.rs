@@ -17,11 +17,9 @@
 //! harness splits a dispatch into submits of whole workgroups ([`Fuel::workgroups_per_submit`]) so each submit's bound
 //! is at most the cap.
 
-/// Node executions one submit may be bounded by, on this machine (Apple M3 Max, the laptop that also drives the
-/// display). Basis: the evaluator throughput measured earlier, about 17 G node evaluations per second (phylu tsr
-/// speed report), times 0.1 s (a submit stays well under the second the display can wait), divided by a safety
-/// factor of 10 for a kernel slower than the evaluator: 17e9 * 0.1 / 10 = 1.7e8.
-pub const CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT: u128 = 170_000_000;
+/// Node executions one submit may be bounded by, on this machine: defined beside the Futhark kingdom's other work
+/// limits (`futhark_sig`, no feature gate), so the Futhark evaluator reads it without the WGSL kingdom's naga.
+pub use crate::futhark_sig::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
 
 /// A7's bound of ONE WORKGROUP at the k-means timing input: UltraDim's `update_centroids` read into the true kingdom
 /// (`problems/kmeans_update_segmented/gather.wgsl`, its `mean` entry), 256 invocations at n = 8,192

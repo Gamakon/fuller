@@ -499,6 +499,14 @@ pub const PROBLEM_NAMES: [&str; 6] = ["reduce", "scan", "histogram", "pathfinder
 /// driver and of the in-process host stays the hard stop.
 pub const TIMING_WORK_CAP: u128 = 59_000_000_000;
 
+/// Node executions one submit may be bounded by, on this machine (Apple M3 Max, the laptop that also drives the
+/// display). Basis: the evaluator throughput measured earlier, about 17 G node evaluations per second (phylu tsr
+/// speed report), times 0.1 s (a submit stays well under the second the display can wait), divided by a safety
+/// factor of 10 for a kernel slower than the evaluator: 17e9 * 0.1 / 10 = 1.7e8. It bounds a Futhark candidate's work
+/// on a stored case (`futhark_evaluator`) and every WGSL submit (`wgsl::work_guard`, which re-exports it); it lives
+/// here, ungated, so the Futhark evaluator needs no `wgsl` feature.
+pub const CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT: u128 = 170_000_000;
+
 /// THE PROBLEM'S TIMING BOUND: [`TIMING_WORK_CAP`], or four times the published program's own work at the timing
 /// input when that is larger. The constant was set on histogram (its published program is 2.5e9 of the 5.9e10); k-means's
 /// published program is 2.1e11 at its timing input (n 8192, d 256, k 1024), so under the constant alone the runner would

@@ -17,8 +17,9 @@
 //!   pump's refill, a fold beat's forms) and of what is returned; `FutharkEvaluator::fresh` is task F5.
 //!
 //! The per-generation seam (`evaluate_generation`, F3a and F3b), the report of a generation (F4), the state (F7) and
-//! the final report (F6) are the next tasks. The module needs the `wgsl` feature for the per-submit work cap
-//! (`wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`), which bounds every candidate's work on a case.
+//! the final report (F6) are the next tasks. Every candidate's work on a case is bounded by the per-submit work cap
+//! (`futhark_sig::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`, which `wgsl::work_guard` re-exports); the module needs no
+//! feature.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
@@ -40,7 +41,7 @@ use crate::runner::{interleaved_runs, median, FitnessStage, TimingSlots};
 use crate::telemetry::{EventKind, Mutation};
 use crate::typed_gep::{express, write_back, GeneLayout, Tree};
 use crate::futhark_operators::crossover_once;
-use crate::wgsl::work_guard::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+use crate::futhark_sig::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
 
 /// UTC wall time `HH:MM:SSZ`.
 pub fn utc() -> String {
