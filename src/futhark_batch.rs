@@ -167,6 +167,9 @@ pub enum Outcome {
     Kmeans(Vec<KmeansSide>),
     /// The step failed: the compiler's, the driver's or the process's own message.
     Failed(String),
+    /// The step never ran: the run file went before its batch (or its half of a halved batch) was compiled
+    /// ([`Host::run_until`]). Not a score: the program is scored by a later call.
+    NotRun,
 }
 
 /// A side's time from its runs (the warm-up first), as [`Outcome::fastest_ns`] takes a timing's.
@@ -244,6 +247,65 @@ fn compile_limit(floor: Duration, seconds: &[f64]) -> Duration {
     }
 }
 
+/// THE MODULE'S NODE BUDGET (the F3a code review, finding 2): a batch is cut, before it is compiled, into modules of
+/// at most this many expressed nodes, counted over every entry a module holds (a member's quality entry, its timed
+/// entry and its k-means range entry each carry its program once). A member over the budget alone is a module of its
+/// own. A module's Futhark stage grows faster than its nodes: measured 2026-11-04 on the CPU, one compile at a time,
+/// `futhark rust-wgpu +RTS -N1 -RTS` (the fork, the rust path) / `futhark c --library` (0.28.1), seconds:
+///
+/// | rows x nodes a row | histogram | pathfinder | a7 |
+/// |---|---|---|---|
+/// | 8 x 250 (2,000) | 5.3 / 1.2 | 6.9 / 1.3 | |
+/// | 4 x 500 (2,000) | 8.5 / 1.3 | 5.4 / 1.6 | |
+/// | 2 x 1,000 (2,000) | 7.3 / 1.7 | 4.0 / 1.5 | 7.8 / 5.5 |
+/// | 16 x 250 (4,000) | 16.1 / 2.5 | 16.0 / 2.3 | |
+/// | 4 x 1,000 (4,000) | 16.7 / 3.3 | 10.0 / 2.5 | 39.6 / 12.1 |
+/// | 24 x 250 (6,000) | 36.7 / 4.3 | 23.4 / 3.3 | |
+/// | 24 x 1,000 (24,000) | a compiler error at 28.6 / 19.9 | 103.1 / 15.7 | over 125 / 90.8 |
+///
+/// 2,048 keeps a module's Futhark stage under 9 s, under a third of the compile limit's floor of 30 s
+/// ([`COMPILE_LIMIT_FLOOR`]), where 4,096 reached 40 s (a7). The deprecated runner's generations are far under it
+/// (histogram, random seed 1: 24 rows of 278 nodes in all). Kingdoms differ: 24 mutants of k-means's reference
+/// program, 6,452 nodes, compile in 2.5 s, so the evaluator raises the budget with the reference program
+/// (`futhark_evaluator::module_budget_for`).
+pub const MODULE_NODE_BUDGET: usize = 2_048;
+
+/// The members `all` (indices into `weights`) in consecutive chunks, in order: a chunk ends before a member whose
+/// weight would take its total over `budget`, or at `max_count` members; a member alone over the budget is a chunk.
+pub fn chunks_within(all: &[usize], weights: &[usize], max_count: usize, budget: usize) -> Vec<Vec<usize>> {
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    let mut total = 0usize;
+    for &i in all {
+        let w = weights[i];
+        if !cur.is_empty() && (cur.len() >= max_count.max(1) || total.saturating_add(w) > budget) {
+            out.push(std::mem::take(&mut cur));
+            total = 0;
+        }
+        cur.push(i);
+        total = total.saturating_add(w);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// A tree's node count.
+fn nodes_of(t: &Tree) -> usize {
+    1 + t.kids.iter().map(nodes_of).sum::<usize>()
+}
+
+/// A member's weight in a module's node budget: its program's nodes times the entries it adds (one for a program
+/// given as text: the published program's copies are not counted against the budget).
+fn member_nodes(m: &Member) -> usize {
+    let entries = usize::from(m.steps.contains(&Step::Quality)) + usize::from(m.steps.iter().any(Step::times_own)) + usize::from(m.steps.iter().any(Step::kmeans));
+    match m.program {
+        Program::Tree(t) => nodes_of(t) * entries.max(1),
+        Program::Text(_) => 1,
+    }
+}
+
 /// A compile's error says its stage was killed at the limit ([`DID_NOT_FINISH`], `output_with_timeout`'s words on
 /// every path).
 fn did_not_finish(e: &str) -> bool {
@@ -280,6 +342,9 @@ pub struct Cost {
     pub member_timing_pipeline_seconds: Vec<f64>,
     /// Why each halving happened (a batch that did not compile or whose device set-up failed), with its size.
     pub splits: Vec<String>,
+    /// The run file went before a compile ([`Host::run_until`]): the members of that batch and of every batch after
+    /// it are [`Outcome::NotRun`].
+    pub stopped: bool,
 }
 
 /// A batch's results: every member's outcomes, aligned with its steps, and the cost.
@@ -320,6 +385,10 @@ pub struct Host {
     /// The rust path's compiler (`futhark_rust::compiler()` unless [`Host::with_compiler`] names another: a test's
     /// mock).
     compiler: PathBuf,
+    /// The c backend's compiler, `futhark` on the path unless [`Host::with_c_compiler`] names another (a test's mock).
+    c_compiler: PathBuf,
+    /// The module's node budget ([`MODULE_NODE_BUDGET`] unless [`Host::with_node_budget`] sets another).
+    node_budget: usize,
     /// Each compile stage's seconds so far and the floor of its limit ([`compile_limit`]).
     clock: std::cell::RefCell<CompileClock>,
     /// Where the source of a batch whose compile did not finish is saved (`<dir>/bugs` unless
@@ -781,6 +850,8 @@ impl Host {
             max_batch: std::cell::Cell::new(usize::MAX),
             session: std::cell::RefCell::new(None),
             compiler: crate::futhark_rust::compiler(),
+            c_compiler: PathBuf::from("futhark"),
+            node_budget: MODULE_NODE_BUDGET,
             clock: std::cell::RefCell::new(CompileClock { floor: COMPILE_LIMIT_FLOOR, futhark_seconds: Vec::new() }),
             bugs_dir: dir.join("bugs"),
         })
@@ -789,6 +860,18 @@ impl Host {
     /// The rust path's compiler, in place of `futhark_rust::compiler()` (a test's mock compiler).
     pub fn with_compiler(mut self, compiler: &Path) -> Host {
         self.compiler = compiler.to_path_buf();
+        self
+    }
+
+    /// The module's node budget, in place of [`MODULE_NODE_BUDGET`] (a test's).
+    pub fn with_node_budget(mut self, budget: usize) -> Host {
+        self.node_budget = budget;
+        self
+    }
+
+    /// The c backend's compiler, in place of `futhark` (a test's mock compiler).
+    pub fn with_c_compiler(mut self, compiler: &Path) -> Host {
+        self.c_compiler = compiler.to_path_buf();
         self
     }
 
@@ -1086,7 +1169,7 @@ impl Host {
         let (futhark_limit, cc_limit) = self.compile_limits(idx.len())?;
         let built = match &self.backend {
             Backend::Gpu { shim } => compile_library_prebuilt(&source, &driver, &dir, shim, futhark_limit),
-            Backend::C => compile_c_library(&source, &driver, &dir, futhark_limit, cc_limit),
+            Backend::C => compile_c_library(&self.c_compiler, &source, &driver, &dir, futhark_limit, cc_limit),
             // The crate's name is unique in the process (a process-wide count, not this host's `n`: two hosts of one
             // process both build a b0): the host keeps every module it loads.
             Backend::Rust { rt } => {
@@ -1227,18 +1310,29 @@ impl Host {
     /// Run every step of `members`, each a batch of the members not seen before; see the module's header for the
     /// halving. Every step gets an outcome.
     pub fn run(&self, members: &[Member]) -> Result<BatchResult, String> {
+        self.run_until(members, None)
+    }
+
+    /// [`Host::run`], with THE RUN FILE checked before every compile (the first, each half of a halving, each chunk):
+    /// when `stop` names a file that is gone, no further compile starts, `cost.stopped` is set, and every step not
+    /// run is [`Outcome::NotRun`]. A halving of a stuck batch compiles up to `2n - 1` times; a removed run file stops
+    /// it within one compile (the F3a code review, finding 4).
+    pub fn run_until(&self, members: &[Member], stop: Option<&Path>) -> Result<BatchResult, String> {
         #[cfg(test)]
         let _turn = (!matches!(self.backend, Backend::C)).then(|| crate::gpu_test_lock::futhark_gpu_turn("futhark_batch::Host::run"));
         let mut outcomes: Vec<Vec<Option<Outcome>>> = members.iter().map(|m| vec![None; m.steps.len()]).collect();
         let n = members.len();
         let mut cost = Cost { member_quality_seconds: vec![0.0; n], member_timing_seconds: vec![0.0; n], member_quality_pipeline_seconds: vec![0.0; n], member_timing_pipeline_seconds: vec![0.0; n], ..Cost::default() };
         let all: Vec<usize> = (0..members.len()).filter(|i| !members[*i].steps.is_empty()).collect();
-        for chunk in all.chunks(self.max_batch.get().max(1)) {
-            self.group(members, chunk, &mut outcomes, &mut cost)?;
+        // THE MODULES: the members cut by the node budget and by the most programs a batch starts with.
+        let weights: Vec<usize> = members.iter().map(member_nodes).collect();
+        for chunk in chunks_within(&all, &weights, self.max_batch.get(), self.node_budget) {
+            self.group(members, &chunk, &mut outcomes, &mut cost, stop)?;
         }
+        let stopped = cost.stopped;
         let outcomes = outcomes
             .into_iter()
-            .map(|v| v.into_iter().map(|o| o.ok_or_else(|| "our software has a bug: a batch step with no outcome".to_string())).collect::<Result<Vec<_>, _>>())
+            .map(|v| v.into_iter().map(|o| o.or(if stopped { Some(Outcome::NotRun) } else { None }).ok_or_else(|| "our software has a bug: a batch step with no outcome".to_string())).collect::<Result<Vec<_>, _>>())
             .collect::<Result<Vec<_>, _>>()?;
         Ok(BatchResult { outcomes, cost })
     }
@@ -1249,14 +1343,18 @@ impl Host {
         }
     }
 
-    fn group(&self, members: &[Member], idx: &[usize], outcomes: &mut [Vec<Option<Outcome>>], cost: &mut Cost) -> Result<(), String> {
+    fn group(&self, members: &[Member], idx: &[usize], outcomes: &mut [Vec<Option<Outcome>>], cost: &mut Cost, stop: Option<&Path>) -> Result<(), String> {
+        if cost.stopped || stop.is_some_and(|p| !p.exists()) {
+            cost.stopped = true;
+            return Ok(());
+        }
         let t = std::time::Instant::now();
         let (exe, cmds, stages) = match self.compile(members, idx, cost) {
             Ok(c) => c,
             Err(e) => {
                 cost.failed_compile_seconds += t.elapsed().as_secs_f64();
                 cost.failed_compiles += 1;
-                return self.split(members, idx, &e, outcomes, cost);
+                return self.split(members, idx, &e, outcomes, cost, stop);
             }
         };
         cost.compile.add(&stages);
@@ -1273,7 +1371,7 @@ impl Host {
             };
             if top > WGPU_MAX_BINDING_INDEX {
                 self.max_batch.set(self.max_batch.get().min((idx.len() / 2).max(1)));
-                return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost);
+                return self.split(members, idx, &format!("the batch's kernels use binding index {top}, over wgpu's limit of {WGPU_MAX_BINDING_INDEX} (Futhark's webgpu code numbers bindings across the whole program)"), outcomes, cost, stop);
             }
         }
         let timestamps = cmds.iter().any(|c| c.line.starts_with("t ") || c.line.starts_with("p ") || c.line.starts_with("k "));
@@ -1291,7 +1389,7 @@ impl Host {
                     return Err(format!("our software has a bug: a batch's device set-up failed after it had run commands: {why}"));
                 }
                 let rest: Vec<usize> = idx.to_vec();
-                return self.split(members, &rest, &why, outcomes, cost);
+                return self.split(members, &rest, &why, outcomes, cost, stop);
             }
             first = false;
             let mut done = 0;
@@ -1381,15 +1479,15 @@ impl Host {
     }
 
     /// The members `idx` did not build or start: halve them, or name the one at fault.
-    fn split(&self, members: &[Member], idx: &[usize], why: &str, outcomes: &mut [Vec<Option<Outcome>>], cost: &mut Cost) -> Result<(), String> {
+    fn split(&self, members: &[Member], idx: &[usize], why: &str, outcomes: &mut [Vec<Option<Outcome>>], cost: &mut Cost, stop: Option<&Path>) -> Result<(), String> {
         if idx.len() == 1 {
             self.fail_member(members, idx[0], why, outcomes);
             return Ok(());
         }
         cost.splits.push(format!("a batch of {} programs was halved: {why}", idx.len()));
         let (a, b) = idx.split_at(idx.len() / 2);
-        self.group(members, a, outcomes, cost)?;
-        self.group(members, b, outcomes, cost)
+        self.group(members, a, outcomes, cost, stop)?;
+        self.group(members, b, outcomes, cost, stop)
     }
 }
 
@@ -1425,13 +1523,13 @@ fn max_binding_index(c: &str) -> u64 {
 
 /// The c backend's library build: `futhark c --library` (the released compiler) within `futhark_limit`, then `cc` of
 /// its C and the driver within `cc_limit`.
-fn compile_c_library(source: &str, driver: DriverOf, dir: &Path, futhark_limit: Duration, cc_limit: Duration) -> Result<(PathBuf, CompileStages), String> {
+fn compile_c_library(compiler: &Path, source: &str, driver: DriverOf, dir: &Path, futhark_limit: Duration, cc_limit: Duration) -> Result<(PathBuf, CompileStages), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let fut = dir.join("prog.fut");
     std::fs::write(&fut, source).map_err(|e| format!("write {}: {e}", fut.display()))?;
     let mut stages = CompileStages::default();
     let t = std::time::Instant::now();
-    let out = crate::futhark_exec::output_with_timeout(Command::new("futhark").arg("c").arg("--library").arg(&fut).arg("-o").arg(dir.join("prog")), futhark_limit, None)?;
+    let out = crate::futhark_exec::output_with_timeout(Command::new(compiler).arg("c").arg("--library").arg(&fut).arg("-o").arg(dir.join("prog")), futhark_limit, None)?;
     stages.futhark = t.elapsed().as_secs_f64();
     if !out.status.success() {
         return Err(format!("futhark c --library failed:\n{}", String::from_utf8_lossy(&out.stderr)));

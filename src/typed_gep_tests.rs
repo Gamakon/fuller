@@ -354,6 +354,36 @@ fn expression_is_deterministic() {
     assert_ne!(a[0], a[1], "the fingerprints are not constant");
 }
 
+/// THE WALK WITHOUT THE TREE (`walk_expressed`, the F3a code review's size guard): on random genes of SR and regex at
+/// every program size, the walk visits exactly `express`'s nodes in its order (symbol and constant word), and with a
+/// limit below the node count it stops after `limit + 1` nodes.
+#[test]
+fn the_walk_without_the_tree_counts_and_visits_the_expressed_nodes() {
+    for rel in [sr_relations(), regex_relations()] {
+        let k = rel.check().expect("check");
+        let consts = const_lens(&k);
+        let mut rng = Rng(0x5122);
+        let mut cut = 0;
+        for g in 0..4_000 {
+            let layout = GeneLayout::from_program_size(&k, k.roots()[0], SIZES[g % SIZES.len()]).expect("layout");
+            let gene = random_gene(&k, &layout, &mut rng);
+            let e = express(&k, &layout, &gene, &consts).expect("expresses");
+            let want: Vec<(SymbolId, Option<u32>)> = e.nodes.iter().map(|n| (n.symbol, n.const_index)).collect();
+            let mut seen = Vec::new();
+            let n = crate::typed_gep::walk_expressed(&k, &layout, &gene, &consts, usize::MAX - 1, &mut |s, c| seen.push((s, c))).expect("walks");
+            assert_eq!((n, &seen), (want.len(), &want), "the walk is the expression's");
+            if want.len() > 2 {
+                let limit = want.len() / 2;
+                let mut few = Vec::new();
+                let m = crate::typed_gep::walk_expressed(&k, &layout, &gene, &consts, limit, &mut |s, c| few.push((s, c))).expect("walks");
+                assert_eq!((m, few.as_slice()), (limit + 1, &want[..limit + 1]), "stopped after limit + 1 nodes");
+                cut += 1;
+            }
+        }
+        assert!(cut > 100, "the limit was exercised: {cut} genes");
+    }
+}
+
 use crate::kingdom_contract::relations_from_rows;
 use crate::typed_gep::{fits, required_heads, write_back, LayoutDefect, Tree};
 

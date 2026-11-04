@@ -816,6 +816,46 @@ pub fn express(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_len
     Ok(Expressed { nodes, reach })
 }
 
+/// THE EXPRESSED NODES WALKED WITHOUT BUILDING THEM: [`express`]'s FIFO walk over the same cells, in the same order,
+/// with the same defects, that keeps only each slot's type. It calls `visit` with each node's symbol and, for a
+/// constant, its Dc word (the two words that decide the node), and stops once it has walked `limit + 1` nodes. Returns
+/// the nodes walked: the expressed tree's node count when that is at most `limit`, else `limit + 1`. A size guard
+/// counts with it before any tree or text is built (`FutharkEvaluator`'s size bound, the F3a code review), and keys
+/// an oversized gene by a hash of every node's words (`limit` = `usize::MAX - 1`).
+pub fn walk_expressed(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_len: &BTreeMap<Ty, u32>, limit: usize, visit: &mut dyn FnMut(SymbolId, Option<u32>)) -> Result<usize, LayoutDefect> {
+    validate(k, layout, gene, const_len)?;
+    let mut k_t: BTreeMap<Ty, usize> = BTreeMap::new();
+    let mut q_t: BTreeMap<Ty, usize> = BTreeMap::new();
+    let mut queue = VecDeque::from([layout.root]);
+    let mut walked = 0usize;
+    while let Some(ty) = queue.pop_front() {
+        if walked > limit {
+            break;
+        }
+        let frame = layout.frame(ty).ok_or(LayoutDefect::NoFrame { ty })?;
+        let cursor = k_t.entry(ty).or_insert(0);
+        let frame_k = *cursor;
+        *cursor += 1;
+        let pos = frame.row_pos(frame_k).ok_or(LayoutDefect::TailRanOut { ty, cursor: frame_k })?;
+        let symbol = gene[pos];
+        let const_word = if k.is_constant(symbol) {
+            let q = *q_t.entry(ty).or_default();
+            let dc_off = frame.dc_off.ok_or(LayoutDefect::DcRanOut { ty, q })?;
+            if q >= frame.dc_len {
+                return Err(LayoutDefect::DcRanOut { ty, q });
+            }
+            q_t.insert(ty, q + 1);
+            Some(gene[dc_off + q])
+        } else {
+            None
+        };
+        walked += 1;
+        visit(symbol, const_word);
+        queue.extend(k.signature(symbol).iter().copied());
+    }
+    Ok(walked)
+}
+
 // ---------------------------------------------------------------------------
 // The per-type write-back (design section 5)
 // ---------------------------------------------------------------------------

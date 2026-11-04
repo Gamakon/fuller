@@ -153,13 +153,24 @@ struct LedgerRow {
 }
 
 fn runner_ledger() -> Vec<LedgerRow> {
-    let mut lines = include_str!("histogram_r_seed1_ledger.tsv").lines().filter(|l| !l.starts_with('#'));
-    let header: Vec<&str> = lines.next().expect("a header").split('\t').collect();
+    let text = include_str!("histogram_r_seed1_ledger.tsv");
+    let header: Vec<&str> = text.lines().find(|l| !l.starts_with('#')).expect("a header").split('\t').collect();
     assert_eq!(header, ["generation", "id", "parents", "operator", "fitness", "text", "eval", "batch_size", "quality_inputs", "speed_inputs", "behaviour", "all_zero"]);
+    ledger_rows(text)
+}
+
+/// The rows of a runner's ledger, its columns found by the header's names (the runner's own `ledger.tsv` carries
+/// the 11 `*_ms` columns as well; the committed one does not).
+fn ledger_rows(text: &str) -> Vec<LedgerRow> {
+    let mut lines = text.lines().filter(|l| !l.starts_with('#'));
+    let header: Vec<&str> = lines.next().expect("a header").split('\t').collect();
+    let at = |name: &str| header.iter().position(|h| *h == name).unwrap_or_else(|| panic!("the ledger has no column {name}: {header:?}"));
+    let cols: Vec<usize> = ["eval", "batch_size", "quality_inputs", "speed_inputs", "behaviour", "all_zero"].iter().map(|c| at(c)).collect();
+    let (generation, operator, fitness, program) = (at("generation"), at("operator"), at("fitness"), at("text"));
     lines
         .map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            LedgerRow { generation: f[0].parse().unwrap(), operator: f[3].into(), fitness: f[4].parse().unwrap(), text: f[5].into(), cols: f[6..].iter().map(|s| s.to_string()).collect() }
+            LedgerRow { generation: f[generation].parse().unwrap(), operator: f[operator].into(), fitness: f[fitness].parse().unwrap(), text: f[program].into(), cols: cols.iter().map(|i| f[*i].to_string()).collect() }
         })
         .collect()
 }
@@ -275,6 +286,18 @@ fn a_generation_is_one_module_and_a_cached_generation_is_free() {
     let again = ev.evaluate_generation(&refs(&genes), 1).unwrap();
     assert_eq!((again.cost.modules, again.evaluations_new, again.evaluations_total), (0, 0, 24), "a cached generation compiles nothing and costs nothing");
     assert!(again.rows.iter().zip(&s.rows).all(|(a, b)| a.fitness.to_bits() == b.fitness.to_bits() && !a.new_evaluation));
+    // The runner's generation 1 (its 8 programs, written onto genes) in one module: its angles, inputs and behaviours
+    // bit for bit, new exactly where the runner compiled, and its evaluation count (30).
+    let mut rng = GeneRng::new(99);
+    let gen1: Vec<&LedgerRow> = ledger.iter().filter(|r| r.generation == 1).collect();
+    let genes1: Vec<Vec<u32>> = gen1.iter().map(|r| gene_of(&ev, &r.text, &mut rng)).collect();
+    let s1 = ev.evaluate_generation(&refs(&genes1), 1).unwrap();
+    assert_eq!((s1.cost.modules, s1.evaluations_new, s1.evaluations_total), (1, 6, 30), "one module for the 6 new programs; the runner's series: 30");
+    for (r, want) in s1.rows.iter().zip(&gen1) {
+        assert_eq!(r.fitness.to_bits(), want.fitness.to_bits(), "the runner's angle ({}): {}", want.operator, r.text);
+        assert_eq!(seam_cols(r)[2..], want.cols[2..], "the runner's inputs and behaviour: {}", r.text);
+        assert_eq!(r.new_evaluation, want.cols[0] != "hit", "new exactly where the runner compiled");
+    }
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -337,6 +360,77 @@ fn the_stage_change_scores_every_row_again_in_stage_two_within_the_call() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// THE RUN FILE GONE AT THE STAGE CHANGE (the F3a code review, finding 8): the stage-change call of the test above,
+/// with one program's timing slots left empty, so stage 2 needs a second batch. The run file is removed after the
+/// first batch: the call returns the stage-1 rows (each its quality vector and its stage-1 angle), `stopped`, no
+/// stage change, and the next call is still in stage 1.
+#[test]
+fn a_run_file_gone_before_the_stage_two_batch_returns_the_stage_one_rows_and_stays_in_stage_one() {
+    let ledger = runner_ledger();
+    let (mut ev, out) = evaluator_with_run_file("seam_stage_stop", EvalMode::Batch);
+    let random = generation_zero(&ev, &ledger);
+    let mut rng = GeneRng::new(5);
+    let reference = write_back(&ev.gen.contract, &ev.gen.layout, &ev.gen.random_gene(&mut rng).unwrap(), ev.reference()).unwrap();
+    let mut genes = vec![random[0].clone(), reference];
+    genes.extend(random[1..5].iter().cloned());
+    // Every program's timing slots filled but the last's.
+    for g in &genes[..genes.len() - 1] {
+        let src = program(&ev.gen.k, &ev.judge.sig, &ev.gen.tree(g).unwrap()).unwrap();
+        if ev.judge.slots.missing(&src) > 0 {
+            ev.judge.slots.add(&src, &vec![1.0; ev.pairs()]).unwrap();
+        }
+    }
+    let run_file = out.join(crate::run_file::RUN_FILE);
+    let mut seen = Vec::new();
+    let s = ev
+        .evaluate_generation_with(&refs(&genes), 0, &mut |b| {
+            seen.push(*b);
+            std::fs::remove_file(&run_file).unwrap();
+        })
+        .unwrap();
+    assert_eq!(seen, [BatchDone { batch: 1, stage: FitnessStage::Quality, rows_scored: 0 }], "the stage-1 batch ran; the stage-2 batch did not start");
+    assert!(s.stopped && !s.stage_changed && s.stage == FitnessStage::Quality && ev.stage() == FitnessStage::Quality);
+    assert_eq!(s.rows.len(), genes.len(), "every stage-1 row");
+    for (i, r) in s.rows.iter().enumerate() {
+        assert_stage_one_vector(r);
+        assert!(r.speed.is_empty(), "no speed input in stage 1");
+        assert_eq!(r.perfect, i == 1, "the reference program is the exact row");
+    }
+    assert_eq!((s.evaluations_new, s.cost.modules), (6, 1));
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// THE RUN FILE INSIDE A HALVING (the F3a code review, finding 4; `--eval batch`): a first call scores one program
+/// with the real compiler; then the host's compiler is a mock that removes the run file and fails. The second call's
+/// batch fails to compile and is halved, but no half is compiled: the call returns the cached row before the first
+/// row not run, `stopped`, no new evaluation, and none of the programs not run is cached.
+#[test]
+fn a_run_file_removed_inside_a_halving_returns_the_rows_before_it_and_stopped() {
+    let ledger = runner_ledger();
+    let (mut ev, out) = evaluator_with_run_file("seam_halving_stop", EvalMode::Batch);
+    let g = generation_zero(&ev, &ledger);
+    let first = ev.evaluate_generation(&refs(&g[..1]), 0).unwrap();
+    assert_eq!((first.cost.modules, first.evaluations_new), (1, 1));
+    let (log, run_file, mock) = (out.join("mock_calls.log"), out.join(crate::run_file::RUN_FILE), out.join("mock_futhark.sh"));
+    std::fs::write(&mock, format!("#!/bin/sh\necho \"$@\" >> {}\nrm -f {}\nexit 1\n", log.display(), run_file.display())).unwrap();
+    std::fs::set_permissions(&mock, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let host = Host::new(&ev.judge.k, &ev.judge.sig, ev.judge.cases.len(), crate::futhark_batch::Backend::C, &out.join("mock_build"), Inputs { cases_stdin: &ev.judge.all_stdin, timing_stdin: None, yardstick: Some(ev.problem().yardstick) }).unwrap().with_c_compiler(&mock).with_bugs_dir(&out.join("bugs"));
+    ev.judge.host = Some(host);
+    let genes = vec![g[0].clone(), g[1].clone(), g[2].clone(), g[0].clone()];
+    let s = ev.evaluate_generation(&refs(&genes), 1).unwrap();
+    assert!(s.stopped && !s.stage_changed && s.stage == FitnessStage::Quality);
+    assert_eq!(s.rows.len(), 1, "the cached row before the first row not run");
+    assert_eq!(s.rows[0].fitness.to_bits(), first.rows[0].fitness.to_bits());
+    assert_eq!((s.evaluations_new, s.cost.modules, s.cost.failed_compiles, s.cost.halvings), (0, 0, 1, 1), "one failed compile, its halving started, no half compiled");
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1, "the compiler ran once");
+    for t in &genes[1..3] {
+        let src = program(&ev.gen.k, &ev.judge.sig, &ev.gen.tree(t).unwrap()).unwrap();
+        assert!(!ev.judge.quality_cache.contains_key(&src) && !ev.judge.batched_q.contains_key(&src), "a program not run is not cached");
+    }
+    assert!(ev.take_messages().iter().any(|l| l.contains("the run file went: 2 programs not run")));
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// THE RUN FILE BETWEEN BATCHES (`--eval single`: a batch a new program): the run file removed after the first batch
 /// returns the first batch's row and a repeat of it (a cache hit needs no batch), and `stopped`; a call whose first
 /// row needs a batch with the run file gone returns no row; a call of cache hits alone scores them.
@@ -381,18 +475,44 @@ fn uniform_gene(ev: &FutharkEvaluator, rng: &mut GeneRng) -> Vec<u32> {
     gene
 }
 
-/// THE SIZE GUARD (the P1 code review): histogram's bound is 64 x the reference program's 7 nodes; a gene drawn cell
-/// by cell expresses far over it, is scored worst on every input (angle pi/2 in stage 1) without being rendered or
-/// compiled, is charged once (a repeat is free) and is counted in the call's `oversized`; the ordinary row beside it
-/// is the runner's, compiled alone in the call's one module.
+/// THE SIZE BOUND'S RULE (the F3a code review): one absolute bound for every problem, or a multiple of the reference
+/// program when that is larger; every problem's reference program is admitted, with room for its mutants.
+#[test]
+fn the_size_bound_is_absolute_and_admits_every_reference_program() {
+    assert_eq!((size_bound_for(7), size_bound_for(256), size_bound_for(SIZE_BOUND_NODES / SIZE_BOUND_REFERENCE_FACTOR)), (SIZE_BOUND_NODES, SIZE_BOUND_NODES, SIZE_BOUND_NODES));
+    assert_eq!(size_bound_for(SIZE_BOUND_NODES), SIZE_BOUND_REFERENCE_FACTOR * SIZE_BOUND_NODES, "a reference program at the bound gets the multiple");
+    assert_eq!(size_bound_for(5_000), 20_000);
+    for name in crate::futhark_sig::PROBLEM_NAMES {
+        let p = problem(name).unwrap();
+        let k = load(&p.instance).unwrap();
+        let n = build(&k, p.reference().unwrap()).unwrap().level_order().len();
+        // The largest mutant measured is 1.53 x its reference (k-means): twice the reference is admitted.
+        assert!(2 * n <= size_bound_for(n), "{name}: the reference program's {n} nodes and its mutants are admitted");
+        // A module holds 24 mutants of the reference program at 1.33 x its nodes.
+        assert!(module_budget_for(n) >= 32 * n, "{name}: the module budget");
+    }
+    // THE MODULE BUDGET'S RULE: the batch host's budget, or 32 x the reference program (k-means's 256 nodes: 8,192).
+    assert_eq!((module_budget_for(7), module_budget_for(24), module_budget_for(256)), (crate::futhark_batch::MODULE_NODE_BUDGET, crate::futhark_batch::MODULE_NODE_BUDGET, 8_192));
+}
+
+/// THE SIZE GUARD (the P1 code review): histogram's bound is the absolute one; for the mechanism the test lowers it to
+/// 448 nodes, so a gene drawn cell by cell expresses over it. Such a gene is scored worst on every input (angle pi/2
+/// in stage 1), its tree, text and program never built (the guard counts first, then keys it by its expressed
+/// nodes' words), charged once (a repeat is free) and counted in the call's `oversized`; the ordinary row beside it is
+/// the runner's, compiled alone in the call's one module.
 #[test]
 fn a_program_over_the_size_bound_is_scored_worst_and_never_compiled() {
     let ledger = runner_ledger();
     let (mut ev, out) = evaluator_with_run_file("seam_size", EvalMode::Batch);
-    assert_eq!((ev.reference().level_order().len(), ev.size_bound()), (7, 7 * SIZE_BOUND_FACTOR));
+    assert_eq!((ev.reference().level_order().len(), ev.size_bound(), ev.module_budget()), (7, SIZE_BOUND_NODES, crate::futhark_batch::MODULE_NODE_BUDGET));
+    ev.size_bound = 448;
     let mut rng = GeneRng::new(3);
     let big = (0..20).map(|_| uniform_gene(&ev, &mut rng)).find(|g| ev.gen.tree(g).unwrap().level_order().len() > ev.size_bound()).expect("a cell-by-cell gene over the bound in 20 draws");
-    let nodes = ev.gen.tree(&big).unwrap().level_order().len();
+    let tree = ev.gen.tree(&big).unwrap();
+    let nodes = tree.level_order().len();
+    assert_eq!(ev.gen.expressed_nodes(&big, 448).unwrap(), 449, "the count stops at the bound + 1");
+    let (all, key) = ev.gen.expressed_key(&big).unwrap();
+    assert_eq!(all, nodes, "the key's walk counts every node");
     let genes = vec![big.clone(), generation_zero(&ev, &ledger)[0].clone(), big];
     let s = ev.evaluate_generation(&refs(&genes), 0).unwrap();
     assert_eq!(s.oversized, 2, "two rows over the bound");
@@ -401,10 +521,62 @@ fn a_program_over_the_size_bound_is_scored_worst_and_never_compiled() {
         assert_eq!(r.ledger[0], "oversized");
         assert!(r.quality.iter().all(|x| *x == 1.0) && r.exact == [0, 0, 0] && !r.perfect, "worst on every input");
         assert_eq!(r.fitness, std::f64::consts::FRAC_PI_2, "the worst stage-1 angle");
-        assert!(r.text.contains(&format!("{nodes} nodes")) && r.source.starts_with("oversized "), "never rendered to Futhark: {}", r.text);
+        assert_eq!((r.text.clone(), r.source.clone()), (format!("(oversized: {nodes} nodes, over the size bound 448)"), format!("oversized {key:016x}")), "never printed or rendered to Futhark");
     }
     assert!(s.rows[0].new_evaluation && !s.rows[2].new_evaluation, "a repeat is free");
     assert_eq!(s.rows[1].fitness.to_bits(), ledger[0].fitness.to_bits(), "the ordinary row is the runner's");
-    assert!(ev.take_messages().iter().any(|l| l.contains("2 of 3 rows over the size bound")));
+    assert!(ev.take_messages().iter().any(|l| l.contains("2 of 3 rows over the size bound (448 nodes)")));
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// THE RUST PATH THROUGH THE SEAM, ON THE GPU (task F3a's GPU script `f3a_rust_generation.sh`; the F3a code review,
+/// finding 5). A REPLAY, not evolution: fixed gene sets, no loop, no selection. The deprecated runner's first three
+/// generations of histogram, regime R, random seed 1 (the ledger named by `F3A_RUNNER_LEDGER`: the runner's own
+/// `--backend gpu --eval rust` run, written by the script; without it, the committed c-backend ledger's two
+/// generations) are scored through `evaluate_generation` on `--eval rust`: generation 0 rebuilt from
+/// `GeneRng::new(1)` and checked against the ledger's texts, every later generation's programs written onto genes.
+/// Each call compiles ONE module; every row's quality inputs, behaviour and all-zero flag equal the runner's, bit for
+/// bit, and so does its angle while the stage is quality alone (speed inputs are wall-clock and are not compared); a
+/// row is a new evaluation exactly where the runner compiled.
+#[cfg(feature = "gpu")]
+#[test]
+fn on_the_gpu_the_rust_path_replays_the_runner_s_generations_through_the_seam() {
+    let (ledger, source) = match std::env::var("F3A_RUNNER_LEDGER") {
+        Ok(p) => (ledger_rows(&std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("F3A_RUNNER_LEDGER {p}: {e}"))), p),
+        Err(_) => (runner_ledger(), "the committed c-backend ledger (histogram_r_seed1_ledger.tsv)".to_string()),
+    };
+    eprintln!("replaying {source}");
+    assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed (the timing input's output)");
+    let out = scratch("seam_rust_gpu");
+    let mut c = config("histogram", out.clone());
+    c.backend = Backend::Gpu;
+    c.eval = EvalMode::Rust;
+    let mut ev = FutharkEvaluator::new(&c).unwrap();
+    crate::run_file::RunFile::create(&out.join(crate::run_file::RUN_FILE)).unwrap();
+    let generations: Vec<u32> = {
+        let mut g: Vec<u32> = ledger.iter().map(|r| r.generation).collect();
+        g.dedup();
+        g.into_iter().take(3).collect()
+    };
+    assert!(generations.len() >= 2 && generations[0] == 0, "at least generations 0 and 1: {generations:?}");
+    let mut rng = GeneRng::new(99);
+    for g in &generations {
+        let want: Vec<&LedgerRow> = ledger.iter().filter(|r| r.generation == *g).collect();
+        let genes: Vec<Vec<u32>> = if *g == 0 { generation_zero(&ev, &ledger).into_iter().take(want.len()).collect() } else { want.iter().map(|r| gene_of(&ev, &r.text, &mut rng)).collect() };
+        let s = ev.evaluate_generation(&refs(&genes), *g).unwrap();
+        eprintln!("generation {g}: {} rows, {} new, {} module(s), {} halving(s), compile {:.1} s, call {:.1} s, stage {:?}", s.rows.len(), s.evaluations_new, s.cost.modules, s.cost.halvings, s.cost.compile_seconds, s.cost.seconds, s.stage);
+        assert!(!s.stopped && s.rows.len() == want.len());
+        assert_eq!((s.cost.modules, s.cost.failed_compiles, s.cost.unfinished_compiles), (u64::from(s.evaluations_new > 0), 0, 0), "generation {g}: one module a call");
+        let stage_one = s.stage == FitnessStage::Quality && !s.stage_changed;
+        for (r, w) in s.rows.iter().zip(&want) {
+            assert_eq!(r.text, w.text, "generation {g}: the runner's program");
+            let got = seam_cols(r);
+            assert_eq!((&got[2], &got[4], &got[5]), (&w.cols[2], &w.cols[4], &w.cols[5]), "generation {g}: the runner's quality inputs, behaviour and all-zero flag: {}", r.text);
+            if stage_one {
+                assert_eq!(r.fitness.to_bits(), w.fitness.to_bits(), "generation {g}: the runner's angle: {}", r.text);
+            }
+            assert_eq!(r.new_evaluation, w.cols[0] != "hit", "generation {g}: new exactly where the runner compiled: {}", r.text);
+        }
+    }
     let _ = std::fs::remove_dir_all(&out);
 }

@@ -243,7 +243,7 @@ fn a_compile_that_does_not_finish_is_killed_at_the_limit_and_the_batch_is_split(
     let t = std::time::Instant::now();
     let mut outcomes: Vec<Vec<Option<Outcome>>> = members.iter().map(|m| vec![None; m.steps.len()]).collect();
     let mut cost = Cost::default();
-    host.group(&members, &[0, 1, 2], &mut outcomes, &mut cost).unwrap();
+    host.group(&members, &[0, 1, 2], &mut outcomes, &mut cost, None).unwrap();
     let took = t.elapsed();
     for (i, o) in outcomes.iter().enumerate() {
         match &o[0] {
@@ -263,6 +263,86 @@ fn a_compile_that_does_not_finish_is_killed_at_the_limit_and_the_batch_is_split(
     assert_eq!((calls.lines().count(), bounded), (8, 3), "{calls}");
     // Five compiles of 2 s, three bounded retries of 2 s: 16 s of limits, and nothing waited for the sleep.
     assert!(took >= Duration::from_secs(16) && took < Duration::from_secs(40), "took {took:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// THE RUN FILE INSIDE A HALVING (the F3a code review, finding 4): a mock c-backend compiler that removes the run file
+/// and fails. The whole batch's compile fails and the batch is halved, but no half is compiled: the run file is gone,
+/// so the call returns at once with `stopped` and every step [`Outcome::NotRun`]; the mock ran once. Without the run
+/// file argument the same batch is halved down to single programs (5 compiles of 3 members).
+#[test]
+fn a_run_file_removed_inside_a_halving_stops_it_before_the_next_compile() {
+    let p = problem("reduce").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("stop_in_halving");
+    std::fs::create_dir_all(&base).unwrap();
+    let (log, run_file, mock) = (base.join("mock_calls.log"), base.join("killme.trigger"), base.join("mock_futhark.sh"));
+    std::fs::write(&mock, format!("#!/bin/sh\necho \"$@\" >> {}\nrm -f {}\nexit 1\n", log.display(), run_file.display())).unwrap();
+    std::fs::set_permissions(&mock, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let host = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: None, yardstick: None }).unwrap().with_c_compiler(&mock).with_bugs_dir(&base.join("bugs"));
+    let texts = ["entry main [n] (xs: [n]i32) : i32 = xs[0]\n", "entry main [n] (xs: [n]i32) : i32 = xs[1]\n", "entry main [n] (xs: [n]i32) : i32 = xs[2]\n"];
+    let members: Vec<Member> = texts.iter().map(|t| Member { program: Program::Text(t), steps: vec![Step::Output] }).collect();
+    std::fs::write(&run_file, "").unwrap();
+    let got = host.run_until(&members, Some(&run_file)).unwrap();
+    assert!(got.cost.stopped, "stopped");
+    assert_eq!((got.cost.compiles, got.cost.failed_compiles, got.cost.splits.len()), (0, 1, 1), "one failed compile, its halving started, no half compiled");
+    assert!(got.outcomes.iter().all(|o| o == &[Outcome::NotRun]), "{:?}", got.outcomes);
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1, "the compiler ran once");
+    // The run file is gone before the call: nothing is compiled.
+    let none = host.run_until(&members, Some(&run_file)).unwrap();
+    assert!(none.cost.stopped && none.cost.failed_compiles == 0 && none.outcomes.iter().all(|o| o == &[Outcome::NotRun]));
+    // No run file to check: the halving runs to single programs, each a failure of its own.
+    let all = host.run(&members).unwrap();
+    assert!(!all.cost.stopped);
+    assert_eq!(all.cost.failed_compiles, 5, "the whole, [0], [1, 2], [1], [2]");
+    assert!(all.outcomes.iter().all(|o| matches!(o[0], Outcome::Failed(_))));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// THE MODULE'S NODE BUDGET, the cut: consecutive chunks in order, a chunk ending before the member that would take it
+/// over the budget or at the most members a batch starts with; a member over the budget alone.
+#[test]
+fn a_batch_is_cut_into_modules_within_the_node_budget() {
+    let w = [3, 4, 2, 9, 1, 1, 1];
+    let all: Vec<usize> = (0..w.len()).collect();
+    assert_eq!(chunks_within(&all, &w, usize::MAX, 7), vec![vec![0, 1], vec![2], vec![3], vec![4, 5, 6]]);
+    assert_eq!(chunks_within(&all, &w, 2, 100), vec![vec![0, 1], vec![2, 3], vec![4, 5], vec![6]]);
+    assert_eq!(chunks_within(&all, &w, usize::MAX, 100), vec![all.clone()]);
+    assert_eq!(chunks_within(&[1, 4], &w, usize::MAX, 4), vec![vec![1], vec![4]], "only the members given, in order");
+    assert!(chunks_within(&[], &w, 0, 0).is_empty());
+}
+
+/// The node budget on the c backend: 4 random programs with a budget of two of them compile as 2 modules, each
+/// program's outputs exactly as its own quality program's; with the default budget, one module.
+#[test]
+fn a_batch_over_the_node_budget_compiles_as_several_modules_with_the_same_outputs() {
+    assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
+    let p = problem("histogram").unwrap();
+    let k = load(&p.instance).unwrap();
+    let sig = signature(&p.instance).unwrap();
+    let cases = load_cases(&p).unwrap();
+    let base = scratch("node_budget");
+    let ts = trees(&k, 4, 0xBA7C_0006);
+    let n: Vec<usize> = ts.iter().map(nodes_of).collect();
+    let budget = (n[0] + n[1]).max(n[2] + n[3]);
+    let host = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("batch"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: None, yardstick: None }).unwrap().with_node_budget(budget);
+    let members: Vec<Member> = ts.iter().map(|t| Member { program: Program::Tree(t), steps: vec![Step::Quality] }).collect();
+    let weights: Vec<usize> = members.iter().map(member_nodes).collect();
+    assert_eq!(weights, n, "a quality entry carries its program once");
+    let want_chunks = chunks_within(&[0, 1, 2, 3], &weights, usize::MAX, budget).len();
+    assert!(want_chunks >= 2, "the budget cuts the batch: {n:?}, budget {budget}");
+    let got = host.run(&members).unwrap();
+    assert_eq!((got.cost.compiles, got.cost.failed_compiles), (want_chunks, 0), "one compile a module");
+    for (i, t) in ts.iter().enumerate() {
+        assert_eq!(got.outcomes[i][0], Outcome::Quality(per_candidate(&k, &sig, t, &cases, &base.join(format!("single{i}")))), "program {i}");
+    }
+    let whole = Host::new(&k, &sig, cases.len(), Backend::C, &base.join("batch_whole"), Inputs { cases_stdin: &stdin_of(&cases), timing_stdin: None, yardstick: None }).unwrap().run(&members).unwrap();
+    assert_eq!(whole.cost.compiles, 1, "the default budget holds the 4 programs ({n:?}) in one module");
+    assert_eq!(whole.outcomes, got.outcomes, "the same outputs either way");
+    let timed = Member { program: Program::Tree(&ts[0]), steps: vec![Step::Quality, Step::Time { yardstick: false, runs: 2 }, Step::Pair { yard_first: false, itself: false }] };
+    assert_eq!(member_nodes(&timed), 2 * n[0], "a quality and a timed entry carry the program twice");
     let _ = std::fs::remove_dir_all(&base);
 }
 
