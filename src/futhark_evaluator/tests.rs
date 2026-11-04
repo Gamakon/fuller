@@ -739,7 +739,11 @@ fn on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_t
         let tested = u64::from(s.test_case.is_some());
         eprintln!("generation {g}: {} rows, {} new, {} module(s) ({} the test case's), {} halving(s), {} upload(s), {} resident hit(s), compile {:.1} s, call {:.1} s", s.rows.len(), s.evaluations_new, s.cost.modules, tested, s.cost.halvings, s.cost.uploads, s.cost.resident_hits, s.cost.compile_seconds, s.cost.seconds);
         assert!(!s.stopped && s.rows.len() == want.len());
-        assert_eq!((s.cost.failed_compiles, s.cost.unfinished_compiles, s.cost.uploads), (0, 0, 0), "generation {g}: every compile succeeds, nothing uploaded");
+        // A module the compiler fails on is halved, as the runner's own batch is: on the GPU run of 2026-11-04 10:21Z the
+        // runner's generation 0 hit the rust-wgpu fork's "Buffer lifted_const_reg_rep_tr_subhistos_mem used at
+        // multiple types" internal error and halved too (docs/issues/2026-11-04_futhark_rust_wgpu_buffer_multiple_types.md).
+        // So failed compiles are allowed; none runs out of time, nothing is uploaded, and the rows below equal the runner's.
+        assert_eq!((s.cost.unfinished_compiles, s.cost.uploads), (0, 0), "generation {g}: no compile runs out of time, nothing uploaded");
         assert_eq!(s.cost.resident_hits > 0, s.cost.modules > 0, "generation {g}: every module's run finds the sample resident");
         // The champion: the least angle so far, strictly better replaces it; its test case runs exactly when it changed.
         let best = (0..s.rows.len()).min_by(|a, b| s.rows[*a].fitness.total_cmp(&s.rows[*b].fitness).then(a.cmp(b))).unwrap();
