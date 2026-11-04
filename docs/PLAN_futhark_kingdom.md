@@ -1028,6 +1028,29 @@ G1 (independent of the move) ─────────────────
 8. "Fitness is a named scheme": "`fuller::fitness::SCHEMES` (`src/fitness.rs`) holds every fitness function": true
    until M2, then `phylu`.
 
+**Status 2026-11-04 (M1 and M1c done; M1g's GPU scripts written, not run).** fuller: the plan with the review
+applied `2e1a3b72` (tagged `pre-5b`); the F3b check fix `7ccb16b0` (the output fingerprint compared only where the
+k-means output is not garbage: inertia and percentile at 1 on every case); the move `6ecbda2d`. phylu: the move
+`11a643a7` (`src/futhark_eval/`, `FreshRequest`/`FreshPurpose`/`FreshIndividual` in `evolve::external`, `shape_typed`
+and `shape_fit` deleted); M1c `c307fd92` (`evolve::program_eval`: `ProgramTool`, `ProgramEvaluator`, `CommandTool`;
+`futhark_eval::tool::FutharkTool`; the compile limit and the failing-source writer extracted from the batch host).
+Frozen: `futhark_evolve`, `futhark_a7_evolve`, `futhark_pixel_evolve` (fuller `2e1a3b72`) and `shape_fit` (phylu
+`e6a7ad2b`) in `~/.local/share/fuller/pre-5b/` with a README, and histogram's gate under its `inputs/`. Tests (CPU,
+`--release`, `-D warnings`): fuller's remaining futhark modules 135 of 135, `gpu_test_lock` 3, `docs_index` 3,
+`runner_standard` 1; phylu `futhark_eval` 100 of 100 at M1, then `evolve::program_eval` 4, `futhark_eval::batch` 21,
+`futhark_eval::evaluator` 15 (the Futhark tool gives the runner's generation-0 angles bit for bit), `evolve::external`
+9, `runner_standard` 1; clippy `--all-targets` clean (fuller default, `wgsl`, `gpu,wgsl`; phylu default, `gpu`,
+`gpu,wgsl`); phylu's GPU test binary builds. Not done: the full suites (run once before the merge). The GPU scripts
+(`/private/tmp/claude-501/fbench/plan5a/`) build phylu: `f3a_rust_generation.sh` and `f3b_kmeans_generation.sh` run
+the frozen `futhark_evolve` then phylu's `futhark_eval::evaluator::tests::on_the_gpu_*` replay; `p2a_mock.sh` runs
+phylu's `futhark_typed::tests::the_external_*`; each writes a new OUT (`*_5b`). Deviations, noted: the timing
+inputs' shapes (`PATHFINDER_TIMING_ROWS`, `A7_TIMING_N`, `KMEANS_TIMING_N/D/K`) stay in fuller (the problems' data
+read them); `examples/futhark_problem_cases.rs` stays (it calls only `compile_c`, `run_exe` and the writer);
+`experiments/virtual_blocks/bench.rs` moved too (it calls the rust runtime); a tool returns a `ToolScore` (its vector
+and its own angle) where the review sketched a bare vector; the GPU tests' P2a mock keeps its closure (it drives the
+stage change, the fresh hook and the state the general layer leaves to a kingdom), and the hash mock as a
+`ProgramTool` is a host test.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
