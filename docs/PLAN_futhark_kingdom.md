@@ -818,6 +818,14 @@ speed inputs are wall-clock ratios and differ between any two runs, the before b
 tests pass (default), the 3 new evaluator tests pass with `wgsl`, clippy clean with default, `wgsl` and `gpu,wgsl`.
 phylu (`d2264705`, no change): 250 tests pass, clippy clean with default features and with `gpu`.
 
+P1 DONE (phylu `c3862062`): `evolve::futhark_typed` (shape, sampling, `check_layout`, carrier layout; the walk-only
+paged device parts behind `gpu`), moved out of `shape_typed`; `Engine::new_with_table` takes `kingdom = "futhark"`
+with `Given::Futhark` and `Data::placeholder`; `EXTERNAL_KINGDOM` is gone, `combinations_for` keys on `KingdomKind`.
+Host tests: 24 rows drawn by `init_row` express, walk to the expression's node count and render, for histogram
+(mean 2,421 nodes; every program passes `futhark check`) and k-means (evaluator 83 s, parts 123 s, rows 232 s; mean
+1.5 million nodes, programs up to 65 MB, so no `futhark check`: 101 s for a 5.8 MB one). phylu: 252 tests pass,
+clippy clean default and `gpu`; `the_engine_builds_on_the_futhark_kingdom` (GPU) is built, not run: for G1.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
