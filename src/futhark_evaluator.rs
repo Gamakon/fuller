@@ -13,15 +13,15 @@
 //! * [`FutharkEvaluator`]: the owned object a run holds for its whole life ([`FutharkEvaluator::new`] from an
 //!   [`EvaluatorConfig`]), with the controls at the start ([`FutharkEvaluator::controls`]) and the names of the HFF
 //!   input vector's columns ([`FutharkEvaluator::input_names`]);
-//! * THE SEAM, [`FutharkEvaluator::evaluate_generation`] (task F3a, the answer-scored problems): a call's rows scored
-//!   in one compiled module, each row's HFF input vector and the scheme's angle ([`RowScore`]), the stage change
-//!   inside the call, the call's new evaluations and cost ([`GenerationScores`], [`GenerationCost`]), the run file
-//!   checked before every batch; its messages go to the caller ([`Messages`]);
+//! * THE SEAM, [`FutharkEvaluator::evaluate_generation`] (task F3a, the answer-scored problems; task F3b, k-means): a
+//!   call's rows scored in one compiled module, each row's HFF input vector and the scheme's angle ([`RowScore`]), the
+//!   stage change inside the call, the call's new evaluations and cost ([`GenerationScores`], [`GenerationCost`]), the
+//!   run file checked before every batch; for k-means the resident sample and the champion's test case
+//!   ([`ChampionTest`]); its messages go to the caller ([`Messages`]);
 //! * [`FreshRequest`] and [`FreshIndividual`]: the types of the engine's request for new individuals (the start, a
 //!   pump's refill, a fold beat's forms) and of what is returned; `FutharkEvaluator::fresh` is task F5.
 //!
-//! The seam for k-means (F3b), the report of a generation (F4), the state (F7) and the final report (F6) are the next
-//! tasks. Every candidate's work on a case is bounded by the per-submit work cap
+//! The report of a generation (F4), the state (F7) and the final report (F6) are the next tasks. Every candidate's work on a case is bounded by the per-submit work cap
 //! (`futhark_sig::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`, which `wgsl::work_guard` re-exports); the module needs no
 //! feature.
 
@@ -430,8 +430,10 @@ pub struct Judge {
     /// The resident-sample path: the runs of the programs batched this generation, by text, with each one's share of
     /// the batch's stages (`Judge::prefetch`), taken when the program is scored.
     pub batched_k: HashMap<String, (BatchedKmeans, Stages)>,
-    /// The resident sample's upload seconds this generation (0 once resident) and the runs that found it resident.
+    /// The resident sample's upload seconds (0 once resident), its uploads, and the runs that found it resident:
+    /// every resident-sample batch's ([`Judge::kmeans_batch`]: the control's, each generation's, the test case's).
     pub upload_seconds: f64,
+    pub uploads: u64,
     pub resident_hits: u64,
     /// The messages of the judge and the evaluator ([`Messages`]): the caller's, never printed here.
     pub messages: Messages,
@@ -495,6 +497,7 @@ pub type BatchedKmeans = Result<Vec<(ConvergedRun, ConvergedRun)>, String>;
 
 /// THE CHAMPION ON A TEST CASE (the round-2 review's N2): the candidate's and the seed's runs of one interleaving on
 /// a case that is never a fitness input, with the candidate's four inputs against that seed run.
+#[derive(Debug, Clone)]
 pub struct TestCaseRun {
     pub case: String,
     pub candidate: ConvergedRun,
@@ -578,15 +581,15 @@ impl Judge {
 
     /// [`Judge::prefetch`] with THE RUN FILE checked before every compile, a halving's included
     /// (`Host::run_until`): when `stop` names a file that is gone, no further compile starts, and the programs not
-    /// run are returned by text (none of them cached: a later call scores them). The k-means path (F3b) does not
-    /// check it.
+    /// run are returned by text (none of them cached: a later call scores them); the resident-sample path
+    /// ([`Judge::prefetch_kmeans`]) the same.
     pub fn prefetch_until(&mut self, items: &[(&Tree, &str)], stage: FitnessStage, stop: Option<&Path>) -> Result<HashSet<String>, String> {
         let mut not_run = HashSet::new();
         if !self.mode.batched() {
             return Ok(not_run);
         }
         if self.converged.is_some() {
-            return self.prefetch_kmeans(items).map(|_| not_run);
+            return self.prefetch_kmeans_until(items, stop);
         }
         let t0 = Instant::now();
         let mut seen: HashSet<&str> = HashSet::new();
@@ -686,9 +689,16 @@ impl Judge {
     /// before and under the work cap on every fitness case, in ONE module with the seed's entry, run against the
     /// resident sample on every fitness case `pairs` times interleaved with the seed; the runs kept by text and taken
     /// when the program is scored (`evaluate_converged`). The batch's stages are shared out as the quality batch's
-    /// are; the upload (once a session) and the resident hits are counted for the generation's report.
+    /// are; the modules, the upload (once a session) and the resident hits are counted by [`Judge::kmeans_batch`].
     pub fn prefetch_kmeans(&mut self, items: &[(&Tree, &str)]) -> Result<(), String> {
+        self.prefetch_kmeans_until(items, None).map(|_| ())
+    }
+
+    /// [`Judge::prefetch_kmeans`] with THE RUN FILE checked before every compile (`Host::run_until`): the programs
+    /// not run are returned by text, none of them cached.
+    pub fn prefetch_kmeans_until(&mut self, items: &[(&Tree, &str)], stop: Option<&Path>) -> Result<HashSet<String>, String> {
         let t0 = Instant::now();
+        let mut not_run = HashSet::new();
         let (caps, pairs) = self.converged.as_ref().map(|cj| (cj.work_caps.clone(), cj.pairs)).ok_or("our software has a bug: a k-means batch with no converged judge")?;
         let fit: Vec<usize> = (0..self.cases.len()).filter(|i| self.cases[*i].split.in_fitness()).collect();
         let mut seen: HashSet<&str> = HashSet::new();
@@ -706,9 +716,9 @@ impl Judge {
             keys.push(source.to_string());
         }
         if programs.is_empty() {
-            return Ok(());
+            return Ok(not_run);
         }
-        let (runs, c) = self.kmeans_batch(&programs, &fit, pairs)?;
+        let (runs, c) = self.kmeans_batch(&programs, &fit, pairs, stop)?;
         let n = programs.len();
         let mut shared = Stages::compiled(&c.compile);
         shared.render = c.render;
@@ -721,23 +731,19 @@ impl Judge {
         let mut whole = shared;
         whole.timing = own;
         self.gen_stages.add(&whole);
-        self.upload_seconds += c.upload_seconds;
-        self.resident_hits += c.resident_hits as u64;
-        self.batch_splits += c.splits.len() as u64;
-        for why in &c.splits {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
-                let _ = writeln!(f, "==== {} our software has a bug: a batch had to be halved (no candidate is charged; the halves were scored)\n{why}", utc());
-            }
-        }
         let share = shared.scaled(1.0 / n as f64);
         for (i, (key, r)) in keys.into_iter().zip(runs).enumerate() {
+            let Some(r) = r else {
+                not_run.insert(key);
+                continue;
+            };
             let mut mine = share;
             mine.timing = c.member_timing_seconds[i] - c.member_timing_pipeline_seconds[i];
             mine.pipelines += c.member_timing_pipeline_seconds[i];
             self.batched_k.insert(key, (r, mine));
         }
-        self.messages.say(&format!("k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed, {} not finished within the limit, {} compiled with the fusion bound), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all", c.compiles, c.failed_compiles, c.unfinished_compiles, c.bounded_fusion_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64()));
-        Ok(())
+        self.messages.say(&format!("k-means batch (the resident sample): {n} programs in one module, {} compile(s) ({} failed, {} not finished within the limit, {} compiled with the fusion bound), {} run(s), {} halving(s); compile {:.1} s, upload {:.3} s ({} upload(s), {} resident), run {:.1} s; {:.1} s in all{}", c.compiles, c.failed_compiles, c.unfinished_compiles, c.bounded_fusion_compiles, c.processes, c.splits.len(), c.compile.futhark + c.compile.cc, c.upload_seconds, c.uploads, c.resident_hits, c.run.total, t0.elapsed().as_secs_f64(), if c.stopped { format!("; the run file went: {} programs not run", not_run.len()) } else { String::new() }));
+        Ok(not_run)
     }
 
     /// BATCH MODE: the A/A sets in one process: the published program against itself (a discarded pair, then 11),
@@ -892,8 +898,18 @@ impl Judge {
     }
 
     /// The k-means scheme's compiled candidate: on the c backend a server (`futhark c --server`, started here and
-    /// kept for the candidate's cases), on the GPU the shim's executable, with the compile's stages.
-    pub fn compile_converged(&self, source: &str, dir: &Path) -> Result<(Stepper, Stages), String> {
+    /// kept for the candidate's cases), on the GPU the shim's executable, with the compile's stages. A module
+    /// compiled (or a compile that failed) is counted.
+    pub fn compile_converged(&mut self, source: &str, dir: &Path) -> Result<(Stepper, Stages), String> {
+        let r = self.compile_converged_uncounted(source, dir);
+        match &r {
+            Ok(_) => self.modules += 1,
+            Err(_) => self.failed_compiles += 1,
+        }
+        r
+    }
+
+    fn compile_converged_uncounted(&self, source: &str, dir: &Path) -> Result<(Stepper, Stages), String> {
         match self.backend {
             Backend::Gpu => compile_program_prebuilt_staged(source, dir, &self.shim).map(|(e, c)| (Stepper::Exe(e, StepTimer::Gpu), Stages::compiled(&c))),
             Backend::C if self.step_process => {
@@ -937,17 +953,36 @@ impl Judge {
     /// THE RESIDENT-SAMPLE BATCH (`--eval rust`): every program of `members` with a k-means step on each case of
     /// `case_idx` (`pairs` interleaved pairs against the seed's entry), one module, one run of the in-process host on
     /// the resident sample; each program's (candidate, seed) runs a case, in `case_idx` order, read from the `k`
-    /// records (`run_of_k_payload`, the medians of the pairs as `converge_interleaved` takes them), or its failure. A
-    /// seed side that failed or did not converge is our bug.
-    pub fn kmeans_batch(&mut self, members: &[Program], case_idx: &[usize], pairs: usize) -> Result<(Vec<BatchedKmeans>, crate::futhark_batch::Cost), String> {
+    /// records (`run_of_k_payload`, the medians of the pairs as `converge_interleaved` takes them), or its failure; None
+    /// for a program not run because THE RUN FILE (`stop`) went before its compile (`Host::run_until`). A seed side
+    /// that failed or did not converge is our bug. The batch's modules, failed and unfinished compiles, halvings
+    /// (logged in `bugs.log`), the sample's upload and the resident hits are counted in the judge's totals.
+    pub fn kmeans_batch(&mut self, members: &[Program], case_idx: &[usize], pairs: usize, stop: Option<&Path>) -> Result<(Vec<Option<BatchedKmeans>>, crate::futhark_batch::Cost), String> {
         let cuts = self.converged.as_ref().and_then(|cj| cj.cuts.clone()).ok_or("our software has a bug: a resident-sample batch with no cuts")?;
         let host = self.host.as_ref().ok_or("our software has a bug: the resident-sample path with no in-process host")?;
         let further = self.scheme.uses_cliff();
         let steps: Vec<Step> = case_idx.iter().map(|i| Step::Kmeans { case: *i, start: cuts[*i].0, n: cuts[*i].1, pairs, further }).collect();
         let ms: Vec<Member> = members.iter().map(|p| Member { program: *p, steps: steps.clone() }).collect();
-        let r = host.run(&ms)?;
+        let r = host.run_until(&ms, stop)?;
+        let c = &r.cost;
+        self.modules += c.compiles as u64;
+        self.failed_compiles += c.failed_compiles as u64;
+        self.unfinished_compiles += c.unfinished_compiles as u64;
+        self.upload_seconds += c.upload_seconds;
+        self.uploads += c.uploads as u64;
+        self.resident_hits += c.resident_hits as u64;
+        self.batch_splits += c.splits.len() as u64;
+        for why in &c.splits {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
+                let _ = writeln!(f, "==== {} our software has a bug: a batch had to be halved (no candidate is charged; the halves were scored)\n{why}", utc());
+            }
+        }
         let mut out = Vec::with_capacity(members.len());
         for outs in &r.outcomes {
+            if outs.contains(&Outcome::NotRun) {
+                out.push(None);
+                continue;
+            }
             let mut runs = Vec::with_capacity(case_idx.len());
             let mut failed: Option<String> = None;
             for (o, i) in outs.iter().zip(case_idx) {
@@ -984,7 +1019,7 @@ impl Judge {
                 }
                 runs.push((cand, seed));
             }
-            out.push(match failed { Some(e) => Err(e), None => Ok(runs) });
+            out.push(Some(match failed { Some(e) => Err(e), None => Ok(runs) }));
         }
         Ok((out, r.cost))
     }
@@ -992,21 +1027,28 @@ impl Judge {
     /// THE CHAMPION ON THE TEST CASES (the round-2 review's N2): the program compiled again (its build directory
     /// is every candidate's) and run interleaved with the seed on every case that is not a fitness input, with its
     /// four inputs against that seed run; on the resident-sample path its own module and run. Reported, never a
-    /// fitness input.
+    /// fitness input. Its module (or compile) is counted, and its stages enter the generation's.
     pub fn converged_on_test(&mut self, tree: &Tree, source: &str) -> Result<Vec<TestCaseRun>, String> {
         let test: Vec<usize> = (0..self.cases.len()).filter(|i| !self.cases[*i].split.in_fitness()).collect();
         let mut out = Vec::new();
         if self.mode == EvalMode::Rust {
             let pairs = self.converged.as_ref().map_or(1, |cj| cj.pairs);
-            let (runs, _) = self.kmeans_batch(&[Program::Tree(tree)], &test, pairs)?;
-            let runs = runs.into_iter().next().ok_or("our software has a bug: a test batch of no member")??;
+            let (runs, c) = self.kmeans_batch(&[Program::Tree(tree)], &test, pairs, None)?;
+            let mut st = Stages::compiled(&c.compile);
+            st.add(&Stages::ran(&c.run));
+            st.render = c.render;
+            st.futhark += c.failed_compile_seconds;
+            self.gen_stages.add(&st);
+            let runs = runs.into_iter().next().flatten().ok_or("our software has a bug: a test batch of no member")??;
             for ((cand, seed), i) in runs.into_iter().zip(&test) {
                 let inp = self.case_inputs(&cand, &seed)?;
                 out.push(TestCaseRun { case: self.cases[*i].name.clone(), candidate: cand, seed, quality: inp.quality, speed: inp.speed });
             }
             return Ok(out);
         }
-        let (mut candidate, _) = self.compile_converged(source, &self.work_dir.join("test_case"))?;
+        let t = Instant::now();
+        let dir = self.work_dir.join("test_case");
+        let (mut candidate, mut st) = self.compile_converged(source, &dir)?;
         let further = self.scheme.uses_cliff();
         let mut pairs = Vec::with_capacity(test.len());
         {
@@ -1015,6 +1057,8 @@ impl Judge {
                 pairs.push(Judge::converged_pair(cj, &mut candidate, &self.cases[*i], further)?);
             }
         }
+        st.runs = t.elapsed().as_secs_f64() - st.total();
+        self.gen_stages.add(&st);
         for ((cand, seed), i) in pairs.into_iter().zip(&test) {
             let inp = self.case_inputs(&cand, &seed)?;
             out.push(TestCaseRun { case: self.cases[*i].name.clone(), candidate: cand, seed, quality: inp.quality, speed: inp.speed });
@@ -1590,9 +1634,12 @@ pub struct GenerationCost {
     /// The speed timing of stage 2 (s).
     pub timing_seconds: f64,
     pub upload_seconds: f64,
+    /// The resident sample's uploads (k-means on `--eval rust`: one a session, at the controls; 0 in every call after).
+    pub uploads: u64,
     /// Modules compiled: one a call on `--eval batch` and `--eval rust` (two when the stage changes and stage 2 times
     /// programs, more when the call's programs pass the module's node budget, [`module_budget_for`], or a batch is
-    /// halved), one a new program on `--eval single`.
+    /// halved), one a new program on `--eval single`; for k-means one more when the champion's text changed (its test
+    /// case, [`GenerationScores::test_case`]).
     pub modules: u64,
     pub failed_compiles: u64,
     pub unfinished_compiles: u64,
@@ -1656,6 +1703,19 @@ pub struct GenerationScores {
     pub cost: GenerationCost,
     /// Rows over the size bound in `rows` ([`FutharkEvaluator::size_bound`]): scored worst, not compiled.
     pub oversized: usize,
+    /// K-MEANS: the champion on the test cases (never a fitness input), when the champion's text changed in this call
+    /// ([`FutharkEvaluator::champion_test_case`]); its module is counted in `cost`.
+    pub test_case: Option<ChampionTest>,
+}
+
+/// THE CHAMPION ON THE TEST CASES (k-means, the round-2 review's N2): the program, its angle, and its runs against the
+/// reference program on every test case.
+#[derive(Debug, Clone)]
+pub struct ChampionTest {
+    pub text: String,
+    pub source: String,
+    pub fitness: f64,
+    pub runs: Vec<TestCaseRun>,
 }
 
 /// A batch finished inside a call ([`FutharkEvaluator::evaluate_generation_with`]): its number in the call (from 1),
@@ -1755,6 +1815,11 @@ pub struct FutharkEvaluator {
     /// from the start in regime P (set by the controls), and from the call in which the best row is exact on every
     /// case on; a stage never goes back.
     stage: FitnessStage,
+    /// K-MEANS: the champion of [`FutharkEvaluator::evaluate_generation`]'s calls (the least angle scored, the first on
+    /// a tie, strictly better replaces it: the deprecated runner's `offer_champion`), as (angle, tree, text, source).
+    champion: Option<(f64, Tree, String, String)>,
+    /// The source the test cases last ran ([`FutharkEvaluator::champion_test_case`]).
+    last_tested: Option<String>,
     /// The fitness machinery. Public for the deprecated runner (`examples/futhark_evolve.rs`), which drives it
     /// directly until X1; the engine's seam is the evaluator's methods.
     pub judge: Judge,
@@ -1922,13 +1987,14 @@ impl FutharkEvaluator {
             step_process: cfg.kmeans_step_process,
             batched_k: HashMap::new(),
             upload_seconds: 0.0,
+            uploads: 0,
             resident_hits: 0,
             messages,
             modules: 0,
             failed_compiles: 0,
             unfinished_compiles: 0,
         };
-        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, size_bound, module_budget, oversized_seen: HashSet::new(), stage: FitnessStage::Quality, judge, gen })
+        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, size_bound, module_budget, oversized_seen: HashSet::new(), stage: FitnessStage::Quality, champion: None, last_tested: None, judge, gen })
     }
 
     pub fn problem(&self) -> &Problem {
@@ -2152,7 +2218,8 @@ impl FutharkEvaluator {
     }
 
     /// [`FutharkEvaluator::evaluate_generation`], with `after_batch` called after every batch (the caller's progress
-    /// line). The answer-scored problems (reduce, scan, histogram, pathfinder, a7); k-means is task F3b.
+    /// line). Every problem: the answer-scored ones (reduce, scan, histogram, pathfinder, a7, task F3a) and k-means
+    /// (task F3b).
     ///
     /// Each distinct gene is expressed from its head cells and rendered once (a gene that does not express is a bug
     /// of our software and an error). Every program not scored before, and in stage 2 every program with an empty
@@ -2164,12 +2231,18 @@ impl FutharkEvaluator {
     /// is scored again in stage 2 within the call (a second module when its programs are timed), and the rows
     /// returned are the stage-2 scores; a run file gone before that second batch returns the stage-1 rows, the stage
     /// unchanged.
+    ///
+    /// K-MEANS (the k-means scheme, `docs/KMEANS_FITNESS.md`): one stage, and no row is exact. On `--eval rust` the
+    /// call's new programs are one module run against the resident sample (`Judge::prefetch_kmeans`, the sample
+    /// uploaded once a session, at the controls; every later run a resident hit), each scored by
+    /// `Judge::evaluate_converged`; on `--eval single` each new program its own compile. A row's vector is the
+    /// scheme's (`futhark-kmeans-better`: the quality group `quality_weight` times and the speed group once). Then THE
+    /// CHAMPION (the least angle of every call so far, the first on a tie; strictly better replaces it) is run on the
+    /// test cases when its text changed ([`FutharkEvaluator::champion_test_case`]): its own module, counted in the
+    /// call's cost, its runs in [`GenerationScores::test_case`]; the run file gone before it skips it, with `stopped`.
     pub fn evaluate_generation_with(&mut self, genes: &[&[u32]], generation: u32, after_batch: &mut dyn FnMut(&BatchDone)) -> Result<GenerationScores, String> {
-        if self.judge.scheme.is_converged() {
-            return Err(format!("evaluate_generation for the k-means scheme {} is task F3b (plan 5a.3: the resident sample's prefetch_kmeans and evaluate_converged, the champion's test case), not built yet", self.judge.scheme.name));
-        }
         let t0 = Instant::now();
-        let before = (self.judge.evaluations, self.judge.gen_stages, self.judge.modules, self.judge.failed_compiles, self.judge.unfinished_compiles, self.judge.batch_splits, self.judge.upload_seconds, self.judge.resident_hits);
+        let before = (self.judge.evaluations, self.judge.gen_stages, self.judge.modules, self.judge.failed_compiles, self.judge.unfinished_compiles, self.judge.batch_splits, self.judge.upload_seconds, self.judge.resident_hits, self.judge.uploads);
         let mut index: HashMap<&[u32], usize> = HashMap::new();
         let mut distinct: Vec<Rendered> = Vec::new();
         let mut row_of: Vec<usize> = Vec::with_capacity(genes.len());
@@ -2213,7 +2286,28 @@ impl FutharkEvaluator {
                 }
             }
         }
-        let (e0, st0, m0, f0, u0, h0, up0, rh0) = before;
+        let mut test_case = None;
+        if !stopped && self.judge.scheme.is_converged() {
+            let best = (0..rows.len()).filter(|i| !distinct[row_of[*i]].oversized()).min_by(|a, b| rows[*a].fitness.total_cmp(&rows[*b].fitness).then(a.cmp(b)));
+            if let Some(b) = best {
+                if self.champion.as_ref().is_none_or(|c| rows[b].fitness < c.0) {
+                    let r = &distinct[row_of[b]];
+                    let tree = r.tree.clone().ok_or("our software has a bug: an oversized champion")?;
+                    self.champion = Some((rows[b].fitness, tree, r.text.clone(), r.source.clone()));
+                }
+            }
+            if let Some((fitness, tree, text, source)) = self.champion.clone() {
+                if self.last_tested.as_deref() != Some(source.as_str()) && self.judge.cases.iter().any(|c| !c.split.in_fitness()) {
+                    if self.out.join(crate::run_file::RUN_FILE).exists() {
+                        let runs = self.champion_test_case(&tree, &source)?.ok_or("our software has a bug: the champion's test case did not run")?;
+                        test_case = Some(ChampionTest { text, source, fitness, runs });
+                    } else {
+                        stopped = true;
+                    }
+                }
+            }
+        }
+        let (e0, st0, m0, f0, u0, h0, up0, rh0, ul0) = before;
         let (a, b) = (self.judge.gen_stages.values(), st0.values());
         let stages = Stages::of(std::array::from_fn(|i| a[i] - b[i]));
         let cost = GenerationCost {
@@ -2222,6 +2316,7 @@ impl FutharkEvaluator {
             run_seconds: stages.start + stages.device + stages.pipelines + stages.runs,
             timing_seconds: stages.timing,
             upload_seconds: self.judge.upload_seconds - up0,
+            uploads: self.judge.uploads - ul0,
             modules: self.judge.modules - m0,
             failed_compiles: self.judge.failed_compiles - f0,
             unfinished_compiles: self.judge.unfinished_compiles - u0,
@@ -2233,13 +2328,28 @@ impl FutharkEvaluator {
         if oversized > 0 {
             self.judge.messages.say(&format!("generation {generation}: {oversized} of {} rows over the size bound ({} nodes): scored worst, not compiled", rows.len(), self.size_bound));
         }
-        Ok(GenerationScores { rows, stage: self.stage, stage_changed, stopped, evaluations_new: self.judge.evaluations - e0, evaluations_total: self.judge.evaluations, cost, oversized })
+        Ok(GenerationScores { rows, stage: self.stage, stage_changed, stopped, evaluations_new: self.judge.evaluations - e0, evaluations_total: self.judge.evaluations, cost, oversized, test_case })
+    }
+
+    /// THE CHAMPION ON THE TEST CASES (k-means; moved from the deprecated runner, which calls it with its own
+    /// champion): when `source` is not the program the test cases last ran and the problem has test cases, the
+    /// program run on every test case interleaved with the reference program (`Judge::converged_on_test`: its own
+    /// module, counted in the judge's totals), and the source kept; else None.
+    pub fn champion_test_case(&mut self, tree: &Tree, source: &str) -> Result<Option<Vec<TestCaseRun>>, String> {
+        if self.last_tested.as_deref() == Some(source) || !self.judge.cases.iter().any(|c| !c.split.in_fitness()) {
+            return Ok(None);
+        }
+        let runs = self.judge.converged_on_test(tree, source)?;
+        self.last_tested = Some(source.to_string());
+        Ok(Some(runs))
     }
 
     /// Whether a program needs a batch in `stage`: its quality not known, or in stage 2 an empty timing slot.
+    /// The k-means scheme has no timing slots: its speed group is measured with its quality group.
     fn needs_batch(&self, r: &Rendered, stage: FitnessStage) -> bool {
         let source = r.source.as_str();
-        !r.oversized() && (!self.judge.quality_cache.contains_key(source) || (stage.measures_speed() && self.judge.slots.missing(source) > 0))
+        let timed = stage.measures_speed() && !self.judge.scheme.is_converged() && self.judge.slots.missing(source) > 0;
+        !r.oversized() && (!self.judge.quality_cache.contains_key(source) || timed)
     }
 
     /// Every row scored in `stage`, in row order; the run file checked before every batch. Returns the rows and
@@ -2296,6 +2406,15 @@ impl FutharkEvaluator {
             self.judge.hits += 1;
         }
         self.judge.last = ("oversized", 0, Stages::default());
+        if self.judge.scheme.is_converged() {
+            // The k-means scheme's worst: every input of every fitness case 1, as a program over the work cap.
+            let fit = self.judge.cases.iter().filter(|c| c.split.in_fitness()).count();
+            let (qw, sw) = self.judge.converged_widths();
+            let quality = Quality { raw: vec![[1.0; 3]; fit], inputs: vec![1.0; qw * fit], exact_train: 0, exact_held: 0, exact_test: 0, work: 0, outputs: Vec::new(), behaviour: "oversized".into() };
+            let speed = vec![1.0; sw * fit];
+            let t = self.judge.scheme.converged_fitness(&quality.inputs, &speed, self.judge.quality_weight)?;
+            return Ok(Eval { fitness: t.fitness, theta_q: t.quality, theta_s: t.speed, quality, speed, ratio: f64::NAN });
+        }
         let quality = Quality::worst(&self.judge.cases, self.judge.parts);
         let speed = if stage.measures_speed() { vec![1.0; self.judge.slots.slots()] } else { Vec::new() };
         let t = self.judge.scheme.staged_weighted(stage, &quality.inputs, &speed, self.judge.quality_weight)?;
@@ -2318,7 +2437,15 @@ impl FutharkEvaluator {
     /// columns from the judge's last evaluation.
     fn row_score(&self, r: &Rendered, e: &Eval, stage: FitnessStage, new_evaluation: bool) -> Result<RowScore, String> {
         let q = &e.quality;
+        let scheme = self.judge.scheme;
         let (inputs, one_vector) = match stage {
+            // The k-means schemes (one stage): the flat schemes' one vector, the gated scheme's two groups once each
+            // (a two-level angle), the five-input scheme's quality group.
+            _ if scheme.is_converged() => match scheme.definition {
+                Definition::FutharkConvergedQqs | Definition::FutharkKmeansBetter => (crate::fitness::flat_vector(&q.inputs, &e.speed, self.judge.quality_weight), true),
+                Definition::FutharkConvergedGated => (crate::fitness::flat_vector(&q.inputs, &e.speed, 1), false),
+                _ => (q.inputs.clone(), true),
+            },
             FitnessStage::Quality => (q.inputs.clone(), true),
             FitnessStage::QualityAndSpeed => match self.judge.scheme.stage_two()? {
                 crate::fitness::StageTwo::Flat => (crate::fitness::flat_vector(&q.inputs, &e.speed, self.judge.quality_weight), true),
@@ -2379,8 +2506,8 @@ impl FutharkEvaluator {
             }
             self.judge.converged = Some(ConvergedJudge { seed: None, seed_runs: Vec::new(), work_caps: Vec::new(), pairs, points_dir: points_dir.clone(), cuts: Some(cuts.clone()) });
             let source = self.reference_source.clone();
-            let (runs, c) = self.judge.kmeans_batch(&[Program::Text(&source)], &fit, 1)?;
-            let runs = runs.into_iter().next().ok_or("our software has a bug: the seed's control batch of no member")??;
+            let (runs, c) = self.judge.kmeans_batch(&[Program::Text(&source)], &fit, 1, None)?;
+            let runs = runs.into_iter().next().flatten().ok_or("our software has a bug: the seed's control batch of no member")??;
             self.judge.messages.say(&format!("control: the seed's module compiled in {:.1} s, the sample uploaded in {:.3} s ({} MB), the seed's {} runs in {:.1} s", c.compile.futhark + c.compile.cc, c.upload_seconds, sample.data.len() * 4 / 1_000_000, 2 * fit.len(), c.run.total));
             (None, runs.into_iter().map(|(_, seed)| seed).collect::<Vec<_>>(), Some(cuts))
         } else {

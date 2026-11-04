@@ -1280,7 +1280,6 @@ fn real_main() -> Result<(), String> {
     // seed, in every generation its text changes; `OUT/test_case.tsv` keeps the learning curve, `last_test` the
     // latest for the report. Never a fitness input.
     let mut test_tsv = if resume { std::fs::read_to_string(out.join("test_case.tsv")).unwrap_or_default() } else { String::new() };
-    let mut last_tested: Option<String> = None;
     let mut last_test: Vec<TestCaseRun> = Vec::new();
     loop {
         if run.tel.stop_requested() {
@@ -1507,10 +1506,11 @@ fn real_main() -> Result<(), String> {
                 Some((_, p, d)) => println!("# {} gen {generation} best HFF {:.5} (HFF percentile F {p:.4e} at d = {d}) against the seed (quality: cosine inertia, percentile, convergence, each the cliff of x; speed: seconds, iterations): {}", utc(), be.fitness, per_case.join("; ")),
                 None => println!("# {} gen {generation} best HFF {:.5} against the seed (cosine inertia, percentile; seconds, iterations): {}", utc(), be.fitness, per_case.join("; ")),
             }
+            // The library runs it when the champion's text changed (`FutharkEvaluator::champion_test_case`, plan 5a
+            // task F3b: the seam's own test case is the same code).
             let champion = run.champion.clone().unwrap_or_else(|| best.clone());
-            if last_tested.as_deref() != Some(champion.source.as_str()) && run.ev.judge.cases.iter().any(|c| !c.split.in_fitness()) {
-                let t_test = Instant::now();
-                let rows = run.ev.judge.converged_on_test(&champion.tree, &champion.source)?;
+            let t_test = Instant::now();
+            if let Some(rows) = run.ev.champion_test_case(&champion.tree, &champion.source)? {
                 for r in &rows {
                     println!("# {} gen {generation} champion (id {}, HFF {:.5}) on the test case {} ({:.1} s)", utc(), champion.id, champion.fit(), r.line(), t_test.elapsed().as_secs_f64());
                     if test_tsv.is_empty() {
@@ -1523,7 +1523,6 @@ fn real_main() -> Result<(), String> {
                     ));
                 }
                 std::fs::write(out.join("test_case.tsv"), &test_tsv).map_err(|e| e.to_string())?;
-                last_tested = Some(champion.source.clone());
                 last_test = rows;
             }
         }

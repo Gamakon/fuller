@@ -584,3 +584,182 @@ fn on_the_gpu_the_rust_path_replays_the_runner_s_generations_through_the_seam() 
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---- THE SEAM FOR K-MEANS (task F3b): `evaluate_generation` against the deprecated runner's k-means ledger ----
+
+/// The deprecated runner's k-means ledger (`kmeans_p_seed1_ledger.tsv`, F2's k-means plumbing run) and its champion's
+/// test-case rows (`kmeans_p_seed1_test_case.tsv`: the case, the quality inputs at 6 decimals, the champion's text).
+fn kmeans_runner_ledger() -> (Vec<LedgerRow>, Vec<[String; 3]>) {
+    let tests = include_str!("kmeans_p_seed1_test_case.tsv").lines().filter(|l| !l.starts_with('#')).skip(1).map(|l| {
+        let f: Vec<&str> = l.split('\t').collect();
+        [f[0].to_string(), f[1].to_string(), f[2].to_string()]
+    });
+    (ledger_rows(include_str!("kmeans_p_seed1_ledger.tsv")), tests.collect())
+}
+
+/// Genes expressing ledger texts, each written onto one random gene (a k-means gene is 27.5 million words).
+fn genes_of(ev: &FutharkEvaluator, texts: &[&str]) -> Vec<Vec<u32>> {
+    let base = ev.gen.random_gene(&mut GeneRng::new(1)).unwrap();
+    texts
+        .iter()
+        .map(|text| {
+            let g = write_back(&ev.gen.contract, &ev.gen.layout, &base, &build(&ev.gen.k, text).unwrap()).unwrap();
+            assert_eq!(sexp(&ev.gen.k, &ev.gen.tree(&g).unwrap()), *text);
+            g
+        })
+        .collect()
+}
+
+/// A k-means row's vector is `futhark-kmeans-better`'s: the quality group `quality_weight` times and the speed group
+/// once, its angle the scheme's of the two groups, with its percentile at that d.
+fn assert_kmeans_vector(ev: &FutharkEvaluator, r: &RowScore) {
+    let qw = ev.quality_weight();
+    assert_eq!(r.inputs, crate::fitness::flat_vector(&r.quality, &r.speed, qw));
+    assert_eq!((r.quality.len(), r.speed.len(), r.d), (18, 12, 18 * qw + 12), "6 fitness cases: 3 quality and 2 speed inputs each");
+    let want = ev.scheme().converged_fitness(&r.quality, &r.speed, qw).unwrap();
+    assert_eq!(r.fitness.to_bits(), want.fitness.to_bits(), "the scheme's angle");
+    assert_eq!(r.percentile, Some(crate::fitness::hff_percentile(r.fitness, r.d).unwrap()));
+}
+
+/// K-MEANS THROUGH THE SEAM (`--eval single` on the c backend, the ledger's own path; regime P, as the runner's run).
+/// The runner's three programs (the reference program, then its two e-graph variants) give the runner's quality
+/// inputs and behaviours bit for bit (the speed inputs are wall-clock seconds, never equal between two runs) and its
+/// evaluation count (3: the controls' A/A, then the two variants). The first call holds the reference program twice:
+/// both rows are cache hits of the A/A, and the champion (the reference program) is run on the test case, the call's
+/// one module (the reference program against itself: every quality input exactly 1/2). The second call's two new
+/// programs are a module each, and the champion's test case runs again exactly when a row is strictly better; a third
+/// call of the same rows is free. The runner's champion on the test case then gives the runner's quality inputs.
+#[test]
+fn kmeans_through_the_seam_gives_the_runner_s_inputs_and_tests_the_champion_when_its_text_changes() {
+    assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed for this test");
+    let (ledger, test_rows) = kmeans_runner_ledger();
+    assert_eq!(ledger.iter().map(|r| r.operator.as_str()).collect::<Vec<_>>(), ["published", "egraph_exact", "egraph_exact"]);
+    let out = scratch("seam_kmeans");
+    let mut c = config("kmeans", out.clone());
+    c.pairs = 2;
+    let mut ev = FutharkEvaluator::new(&c).unwrap();
+    crate::run_file::RunFile::create(&out.join(crate::run_file::RUN_FILE)).unwrap();
+    ev.controls(&ControlRequest { regime: Some(Regime::P), aa_rounds: 0 }).unwrap();
+    assert_eq!(ev.judge.evaluations, 1, "the A/A: the reference program judged as a candidate");
+    let texts: Vec<&str> = ledger.iter().map(|r| r.text.as_str()).collect();
+    let genes = genes_of(&ev, &texts);
+    let modules = ev.judge.modules;
+
+    let s = ev.evaluate_generation(&refs(&[genes[0].clone(), genes[0].clone()]), 0).unwrap();
+    assert!(!s.stopped && !s.stage_changed && s.stage == FitnessStage::QualityAndSpeed);
+    for r in &s.rows {
+        assert_eq!(r.text, ledger[0].text);
+        let c = seam_cols(r);
+        assert_eq!((&c[0], &c[1], &c[2], &c[4], &c[5]), (&ledger[0].cols[0], &ledger[0].cols[1], &ledger[0].cols[2], &ledger[0].cols[4], &ledger[0].cols[5]), "the runner's path, quality inputs and behaviour");
+        assert!(!r.new_evaluation && r.ledger[0] == "hit", "the A/A scored the reference program");
+        assert_kmeans_vector(&ev, r);
+    }
+    assert_eq!((s.evaluations_new, s.evaluations_total), (0, 1));
+    let t = s.test_case.as_ref().expect("the first champion is run on the test case");
+    assert_eq!((t.text.as_str(), t.fitness.to_bits()), (ledger[0].text.as_str(), s.rows[0].fitness.to_bits()), "the champion is the first of the least angles");
+    assert_eq!(t.runs.len(), test_rows.len(), "every test case");
+    assert!(t.runs.iter().all(|r| r.quality.iter().all(|x| *x == 0.5)), "the reference program against itself on the test case");
+    assert_eq!((s.cost.modules, s.cost.failed_compiles), (1, 0), "the test case's own module, counted");
+    assert_eq!(ev.judge.modules - modules, 1);
+
+    let genes2 = vec![genes[1].clone(), genes[2].clone(), genes[0].clone()];
+    let s2 = ev.evaluate_generation(&refs(&genes2), 1).unwrap();
+    for (r, want) in s2.rows.iter().zip([&ledger[1], &ledger[2], &ledger[0]]) {
+        assert_eq!(r.text, want.text);
+        let c = seam_cols(r);
+        assert_eq!((&c[0], &c[1], &c[2], &c[4], &c[5]), (&want.cols[0], &want.cols[1], &want.cols[2], &want.cols[4], &want.cols[5]), "the runner's path, quality inputs and behaviour: {}", want.operator);
+        assert_eq!(r.new_evaluation, want.cols[0] != "hit");
+        assert_kmeans_vector(&ev, r);
+    }
+    assert_eq!((s2.evaluations_new, s2.evaluations_total), (2, 3), "the runner's count: 3 evaluations");
+    let best = (0..3).min_by(|a, b| s2.rows[*a].fitness.total_cmp(&s2.rows[*b].fitness).then(a.cmp(b))).unwrap();
+    let changed = s2.rows[best].fitness < t.fitness;
+    assert_eq!(s2.test_case.as_ref().map(|t| t.source.clone()), changed.then(|| s2.rows[best].source.clone()), "the test case runs exactly when the champion changed");
+    assert_eq!(s2.cost.modules, 2 + u64::from(changed), "one module a new program on --eval single, and the test case's when it ran");
+
+    let s3 = ev.evaluate_generation(&refs(&genes2), 2).unwrap();
+    assert_eq!((s3.evaluations_new, s3.cost.modules), (0, 0), "a cached call compiles nothing and costs nothing");
+    assert!(s3.test_case.is_none(), "the champion did not change");
+    assert!(s3.rows.iter().zip(&s2.rows).all(|(a, b)| a.fitness.to_bits() == b.fitness.to_bits() && !a.new_evaluation));
+    // The runner's champion on the test case (the second call's run when that was its champion, else run here).
+    let champion = &test_rows[0][2];
+    let at = texts.iter().position(|t| t == champion).expect("the runner's champion is one of its programs");
+    let runs = match &s2.test_case {
+        Some(t) if t.text == *champion => t.runs.clone(),
+        _ => {
+            let tree = ev.gen.tree(&genes[at]).unwrap();
+            let source = program(&ev.gen.k, &ev.judge.sig, &tree).unwrap();
+            ev.champion_test_case(&tree, &source).unwrap().expect("a text not tested before")
+        }
+    };
+    let got: Vec<[String; 3]> = runs.iter().map(|r| [r.case.clone(), r.quality.iter().map(|x| format!("{x:.6}")).collect::<Vec<_>>().join(","), champion.clone()]).collect();
+    assert_eq!(got, test_rows, "the runner's champion on the test case: its quality inputs");
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// K-MEANS ON THE RUST PATH THROUGH THE SEAM, ON THE GPU (task F3b's GPU script `f3b_kmeans_generation.sh`). A
+/// REPLAY, not evolution: the deprecated runner's first three generations (the ledger named by `F3B_RUNNER_LEDGER`:
+/// the runner's own `--backend gpu --eval rust` run of k-means, written by the script; without it, the committed
+/// c-backend ledger's one generation), each generation's programs written onto genes and scored through
+/// `evaluate_generation` on `--eval rust`. The sample is uploaded once, at the controls; every call after uploads
+/// nothing and its runs are resident hits. Each call's new programs are ONE module (more only when the module is
+/// halved, as the runner's own batch is; no compile fails or runs out of time), and one more module exactly when the
+/// champion's text changed (its test case). Every row's path, quality inputs, behaviour and all-zero flag equal the
+/// runner's, bit for bit (the speed inputs are wall-clock and are not compared).
+#[cfg(feature = "gpu")]
+#[test]
+fn on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_the_seam() {
+    let (ledger, source) = match std::env::var("F3B_RUNNER_LEDGER") {
+        Ok(p) => (ledger_rows(&std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("F3B_RUNNER_LEDGER {p}: {e}"))), p),
+        Err(_) => (kmeans_runner_ledger().0, "the committed c-backend ledger (kmeans_p_seed1_ledger.tsv)".to_string()),
+    };
+    eprintln!("replaying {source}");
+    assert!(have("futhark") && have("cc"), "futhark 0.28.1 and cc are needed");
+    let out = scratch("seam_kmeans_rust_gpu");
+    let mut c = config("kmeans", out.clone());
+    c.backend = Backend::Gpu;
+    c.eval = EvalMode::Rust;
+    c.pairs = 2;
+    let mut ev = FutharkEvaluator::new(&c).unwrap();
+    crate::run_file::RunFile::create(&out.join(crate::run_file::RUN_FILE)).unwrap();
+    let regime = if ledger.iter().any(|r| r.operator == "published") { Regime::P } else { Regime::R };
+    ev.controls(&ControlRequest { regime: Some(regime), aa_rounds: 0 }).unwrap();
+    assert_eq!(ev.judge.uploads, 1, "the sample uploaded once, at the controls");
+    let generations: Vec<u32> = {
+        let mut g: Vec<u32> = ledger.iter().map(|r| r.generation).collect();
+        g.dedup();
+        g.into_iter().take(3).collect()
+    };
+    assert!(!generations.is_empty() && generations[0] == 0, "{generations:?}");
+    let mut champion: Option<f64> = None;
+    for g in &generations {
+        let want: Vec<&LedgerRow> = ledger.iter().filter(|r| r.generation == *g).collect();
+        let genes = genes_of(&ev, &want.iter().map(|r| r.text.as_str()).collect::<Vec<_>>());
+        let s = ev.evaluate_generation(&refs(&genes), *g).unwrap();
+        let tested = u64::from(s.test_case.is_some());
+        eprintln!("generation {g}: {} rows, {} new, {} module(s) ({} the test case's), {} halving(s), {} upload(s), {} resident hit(s), compile {:.1} s, call {:.1} s", s.rows.len(), s.evaluations_new, s.cost.modules, tested, s.cost.halvings, s.cost.uploads, s.cost.resident_hits, s.cost.compile_seconds, s.cost.seconds);
+        assert!(!s.stopped && s.rows.len() == want.len());
+        assert_eq!((s.cost.failed_compiles, s.cost.unfinished_compiles, s.cost.uploads), (0, 0, 0), "generation {g}: every compile succeeds, nothing uploaded");
+        assert_eq!(s.cost.resident_hits > 0, s.cost.modules > 0, "generation {g}: every module's run finds the sample resident");
+        // The champion: the least angle so far, strictly better replaces it; its test case runs exactly when it changed.
+        let best = (0..s.rows.len()).min_by(|a, b| s.rows[*a].fitness.total_cmp(&s.rows[*b].fitness).then(a.cmp(b))).unwrap();
+        let changed = champion.is_none_or(|c| s.rows[best].fitness < c);
+        if changed {
+            champion = Some(s.rows[best].fitness);
+        }
+        assert_eq!(s.test_case.as_ref().map(|t| t.source.clone()), changed.then(|| s.rows[best].source.clone()), "generation {g}: the test case exactly when the champion changed");
+        let compiled = s.rows.iter().any(|r| r.new_evaluation && r.ledger[0] == "rust");
+        if s.cost.halvings == 0 {
+            assert_eq!(s.cost.modules - tested, u64::from(compiled), "generation {g}: one module for the call's new programs");
+        } else {
+            assert!(compiled && s.cost.modules - tested > 1, "generation {g}: a halved module");
+        }
+        for (r, w) in s.rows.iter().zip(&want) {
+            assert_eq!(r.text, w.text, "generation {g}: the runner's program");
+            let got = seam_cols(r);
+            assert_eq!((&got[0], &got[1], &got[2], &got[4], &got[5]), (&w.cols[0], &w.cols[1], &w.cols[2], &w.cols[4], &w.cols[5]), "generation {g}: the runner's path, quality inputs, behaviour and all-zero flag: {}", r.text);
+            assert_kmeans_vector(&ev, r);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
