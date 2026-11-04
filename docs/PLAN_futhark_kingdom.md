@@ -826,6 +826,32 @@ Host tests: 24 rows drawn by `init_row` express, walk to the expression's node c
 1.5 million nodes, programs up to 65 MB, so no `futhark check`: 101 s for a 5.8 MB one). phylu: 252 tests pass,
 clippy clean default and `gpu`; `the_engine_builds_on_the_futhark_kingdom` (GPU) is built, not run: for G1.
 
+The F2 code review's corrections (`7db07042`): `4e730a21` the per-submit work cap moves to `futhark_sig` (re-exported
+by `wgsl::work_guard`) and `futhark_evaluator` needs no feature; `2948db62` the library prints nothing, its messages go
+to the caller's sink or are held for it (`Messages`, `set_messages`, `take_messages`), `futhark_evolve` prints them as
+before (histogram R `--gate`, C, single, 30 evaluations: `ledger.tsv` identical to F2's on 33 x 12, the console
+identical but for wall-clock times); `c4d4d90d` `controls` runs once a run, a second call is an error.
+
+F3a DONE: `FutharkEvaluator::evaluate_generation(&mut self, genes: &[&[u32]], generation: u32) ->
+Result<GenerationScores, String>` (and `evaluate_generation_with`, a callback after every batch). Each distinct gene
+expressed and rendered once; one compiled module a call on batch and rust; the run file checked before every batch
+(`stopped`); the stage change inside the call, every row scored again in stage 2; per row `RowScore` (the HFF input
+vector, the scheme's angle, its percentile and d, the ledger's columns); `evaluations_new`, `evaluations_total`,
+`GenerationCost`. Departures from 5a.2: no `expressed` field (a gene that does not express is an error of the call);
+`percentile` is an `Option` (None for a retired two-level scheme, whose angle is not over one vector); `source` beside
+`text`; regime P's stage 2 from the start is set by `controls`. k-means returns an error naming F3b. Tests on the C
+backend against F2's runner ledger (histogram R, random seed 1, committed as
+`src/futhark_evaluator/histogram_r_seed1_ledger.tsv`): the runner's generation 0 (the same 24 genes, from
+`GeneRng::new(1)`) and its generation 1 (8 programs) give its angles, quality inputs, behaviours and ledger columns
+bit for bit, and its counts (24, then 30); repeats free; batch: one module for 24 programs, a repeated call 0 modules
+and 0 evaluations; the stage change (reference plus 5 random genes, the timing slots filled before the call since the
+c backend has no GPU timing) scores every row once in each stage, 6 programs charged; the run file removed after the
+first batch returns that batch's rows and `stopped`. `Judge::evaluate` now refuses the c backend in stage 2 only
+when a timing slot is empty. The GPU script `f3a_rust_generation.sh` is not written (it needs a driver over the seam:
+phylu's P4 or `futhark_measure`). fuller: 783 tests pass (default, the 8 evaluator tests included) and 1,243 with
+`wgsl`; clippy clean with default, `wgsl` and `gpu,wgsl`. Commits `2948db62` and `c4d4d90d` carried a clippy
+`type_complexity` warning (the sink's type), fixed in this commit by the `Sink` alias.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |

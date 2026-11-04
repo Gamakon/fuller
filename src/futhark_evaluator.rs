@@ -13,11 +13,15 @@
 //! * [`FutharkEvaluator`]: the owned object a run holds for its whole life ([`FutharkEvaluator::new`] from an
 //!   [`EvaluatorConfig`]), with the controls at the start ([`FutharkEvaluator::controls`]) and the names of the HFF
 //!   input vector's columns ([`FutharkEvaluator::input_names`]);
+//! * THE SEAM, [`FutharkEvaluator::evaluate_generation`] (task F3a, the answer-scored problems): a call's rows scored
+//!   in one compiled module, each row's HFF input vector and the scheme's angle ([`RowScore`]), the stage change
+//!   inside the call, the call's new evaluations and cost ([`GenerationScores`], [`GenerationCost`]), the run file
+//!   checked before every batch; its messages go to the caller ([`Messages`]);
 //! * [`FreshRequest`] and [`FreshIndividual`]: the types of the engine's request for new individuals (the start, a
 //!   pump's refill, a fold beat's forms) and of what is returned; `FutharkEvaluator::fresh` is task F5.
 //!
-//! The per-generation seam (`evaluate_generation`, F3a and F3b), the report of a generation (F4), the state (F7) and
-//! the final report (F6) are the next tasks. Every candidate's work on a case is bounded by the per-submit work cap
+//! The seam for k-means (F3b), the report of a generation (F4), the state (F7) and the final report (F6) are the next
+//! tasks. Every candidate's work on a case is bounded by the per-submit work cap
 //! (`futhark_sig::CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT`, which `wgsl::work_guard` re-exports); the module needs no
 //! feature.
 
@@ -53,9 +57,12 @@ pub fn utc() -> String {
 /// its UTC time first; it goes to the caller's sink when one is set (`FutharkEvaluator::set_messages`: the engine's
 /// log, the deprecated runner's console), else it is held until the caller takes it
 /// (`FutharkEvaluator::take_messages`) or sets a sink, which first receives every held line in order.
+/// The caller's sink for the evaluator's messages: one call a line.
+pub type Sink = Box<dyn FnMut(&str)>;
+
 #[derive(Default)]
 pub struct Messages {
-    sink: Option<Box<dyn FnMut(&str)>>,
+    sink: Option<Sink>,
     held: Vec<String>,
 }
 
@@ -70,7 +77,7 @@ impl Messages {
     }
 
     /// The caller's sink from now on; the held lines go to it first, in order.
-    pub fn set_sink(&mut self, mut sink: Box<dyn FnMut(&str)>) {
+    pub fn set_sink(&mut self, mut sink: Sink) {
         for l in self.held.drain(..) {
             sink(&l);
         }
@@ -428,6 +435,11 @@ pub struct Judge {
     pub resident_hits: u64,
     /// The messages of the judge and the evaluator ([`Messages`]): the caller's, never printed here.
     pub messages: Messages,
+    /// Modules compiled (a batch's compiles, or one a program on `--eval single`), compiles that failed, and compiles
+    /// the compiler did not finish within the host's limit: the run's totals, for each call's [`GenerationCost`].
+    pub modules: u64,
+    pub failed_compiles: u64,
+    pub unfinished_compiles: u64,
 }
 
 /// HOW A COMPILED K-MEANS PROGRAM IS STEPPED: on the GPU one process of the shim's executable an iteration (the
@@ -620,6 +632,9 @@ impl Judge {
         whole.runs = (c.run.runs - whole.timing).max(0.0);
         self.gen_stages.add(&whole);
         self.batch_splits += c.splits.len() as u64;
+        self.modules += c.compiles as u64;
+        self.failed_compiles += c.failed_compiles as u64;
+        self.unfinished_compiles += c.unfinished_compiles as u64;
         for why in &c.splits {
             // Not a candidate's bug (every program of the halves was scored): our software's limit on a batch, named.
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.bug_log) {
@@ -771,8 +786,11 @@ impl Judge {
 
     /// `--eval single`: one candidate's `missing` timed pairs (`fresh`: its first process-equivalent discarded) in its
     /// own build and process, with the build's stages.
-    pub fn time_single(&self, tree: &Tree, missing: usize, fresh: bool) -> Result<(Vec<f64>, Stages), String> {
+    pub fn time_single(&mut self, tree: &Tree, missing: usize, fresh: bool) -> Result<(Vec<f64>, Stages), String> {
         let r = self.timing_host()?.run(&[Member { program: Program::Tree(tree), steps: pair_steps(missing, fresh, self.runs) }])?;
+        self.modules += r.cost.compiles as u64;
+        self.failed_compiles += r.cost.failed_compiles as u64;
+        self.unfinished_compiles += r.cost.unfinished_compiles as u64;
         let st = Stages::compiled(&r.cost.compile);
         Ok((pair_ratios(&r.outcomes[0], missing, fresh)?, st))
     }
@@ -807,12 +825,20 @@ impl Judge {
             EvalMode::Single => {
                 let dir = self.work_dir.join("quality");
                 let mut st = Stages { render, ..Stages::default() };
-                let r = self.compile_staged(&batch, &dir).and_then(|(exe, cs)| {
-                    st.add(&cs);
-                    let (o, rs) = self.run_all(&exe)?;
-                    st.add(&rs);
-                    Ok(o)
-                });
+                let r = match self.compile_staged(&batch, &dir) {
+                    Ok((exe, cs)) => {
+                        self.modules += 1;
+                        st.add(&cs);
+                        self.run_all(&exe).map(|(o, rs)| {
+                            st.add(&rs);
+                            o
+                        })
+                    }
+                    Err(e) => {
+                        self.failed_compiles += 1;
+                        Err(e)
+                    }
+                };
                 self.gen_stages.add(&st);
                 self.last = ("single", 1, st);
                 r
@@ -1112,10 +1138,12 @@ impl Judge {
         let mut speed = Vec::new();
         let mut ratio = f64::NAN;
         if stage.measures_speed() {
-            if self.backend == Backend::C {
+            let missing = self.slots.missing(source);
+            // The c backend has no GPU timing: a program with an empty timing slot cannot be scored in stage 2 on it.
+            // One whose slots are all filled (the in-run A/A, a restored state) needs no timing.
+            if missing > 0 && self.backend == Backend::C {
                 return Err("stage 2 times on the GPU: the c backend cannot enter it (run with --backend gpu)".into());
             }
-            let missing = self.slots.missing(source);
             let timing_work = self.interp.work(tree, &self.timing.sizes)?;
             if missing > 0 && timing_work > self.timing_cap {
                 // Over the per-submit cap at the timing size: never dispatched (the work guard), no speed credit.
@@ -1508,6 +1536,116 @@ pub struct FreshIndividual {
     pub new_text: bool,
 }
 
+/// What one [`FutharkEvaluator::evaluate_generation`] call cost (plan 5a.2): its wall time by stage (the batches' and
+/// the single evaluations', [`Stages`], in seconds) and their sums, the modules compiled, the compiles that failed or
+/// did not finish within the host's limit, the batches halved, the resident sample's upload and resident hits.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GenerationCost {
+    pub stages: Stages,
+    /// The Futhark compiler, the WGSL port, `cc`, the surface check and the link (s).
+    pub compile_seconds: f64,
+    /// The processes' start, device set-up, pipeline creation and the runs on the stored cases (s).
+    pub run_seconds: f64,
+    /// The speed timing of stage 2 (s).
+    pub timing_seconds: f64,
+    pub upload_seconds: f64,
+    /// Modules compiled: one a call on `--eval batch` and `--eval rust` (two when the stage changes and stage 2 times
+    /// programs, more when a batch is halved), one a new program on `--eval single`.
+    pub modules: u64,
+    pub failed_compiles: u64,
+    pub unfinished_compiles: u64,
+    pub halvings: u64,
+    pub resident_hits: u64,
+    /// The call's wall time (s).
+    pub seconds: f64,
+}
+
+/// ONE ROW's score (plan 5a.2): its program, its HFF input vector, the scheme's angle of it and the measures behind it.
+#[derive(Debug, Clone)]
+pub struct RowScore {
+    /// The program as the ledger writes it (the kingdom's s-expression), rendered once a distinct gene.
+    pub text: String,
+    /// Its Futhark source (the declared signature): the key of every cache.
+    pub source: String,
+    /// THE HFF INPUT VECTOR as the scheme builds it: in stage 1 the quality group; in stage 2 of a flat scheme the
+    /// quality group `quality_weight` times and the speed group once (`fitness::flat_vector`); in stage 2 of a
+    /// retired two-level scheme (gated, ungated) the two groups once each, whose angle is not taken over one vector.
+    pub inputs: Vec<f64>,
+    /// The scheme's angle (`fuller::fitness`): THE number the engine's selection reads.
+    pub fitness: f64,
+    pub theta_quality: f64,
+    pub theta_speed: f64,
+    /// F(fitness) at d = `inputs.len()` (`fitness::hff_percentile`) when the angle is TrueNorth over `inputs` (stage 1,
+    /// and stage 2 of a flat scheme); None for a two-level angle.
+    pub percentile: Option<f64>,
+    pub d: usize,
+    /// The quality inputs in case order and the speed inputs (stage 2: one a timing slot, `r/(1+r)`).
+    pub quality: Vec<f64>,
+    pub speed: Vec<f64>,
+    /// The median ratio candidate / yardstick of the timing slots (stage 2; NaN in stage 1).
+    pub ratio: f64,
+    /// Exact cases: training, held-out, test (the test cases are never a fitness input).
+    pub exact: [usize; 3],
+    /// Exact on every fitness case (training and held-out).
+    pub perfect: bool,
+    pub behaviour: String,
+    pub all_zero: bool,
+    /// This row's program was not scored before: a budgeted evaluation (one a distinct new text, its first row).
+    pub new_evaluation: bool,
+    /// The deprecated runner's ledger columns after the text ([`LEDGER_STAGE_COLUMNS`], [`ledger_columns`]).
+    pub ledger: Vec<String>,
+}
+
+/// One call's scores (plan 5a.2).
+#[derive(Debug, Clone)]
+pub struct GenerationScores {
+    /// One a row handed over, in row order; when `stopped`, the rows scored before the run file went.
+    pub rows: Vec<RowScore>,
+    /// The stage the rows were scored in.
+    pub stage: FitnessStage,
+    /// The best row became exact on every case: every row was scored again in stage 2 within this call.
+    pub stage_changed: bool,
+    /// The run file (`OUT/killme.trigger`) was gone before a batch: the engine ends the run as `killed`.
+    pub stopped: bool,
+    /// This call's new evaluations (what the engine charges to the budget: programs not scored before, by text; a
+    /// repeat, an elite or a program scored by an earlier call is free) and the run's total after it.
+    pub evaluations_new: u64,
+    pub evaluations_total: u64,
+    pub cost: GenerationCost,
+}
+
+/// A batch finished inside a call ([`FutharkEvaluator::evaluate_generation_with`]): its number in the call (from 1),
+/// the stage it scored for, and the rows scored so far in that stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchDone {
+    pub batch: usize,
+    pub stage: FitnessStage,
+    pub rows_scored: usize,
+}
+
+/// THE LEDGER COLUMNS of a scored row after its text, as the deprecated runner writes them ([`LEDGER_STAGE_COLUMNS`]):
+/// the evaluation path, its batch's size, each stage's milliseconds (one decimal), the quality and speed inputs each
+/// exactly (Rust's shortest round-trip form, comma-separated, `-` for none), the behaviour, and whether every output
+/// is all zeros.
+pub fn ledger_columns(last: &(&'static str, usize, Stages), e: &Eval) -> Vec<String> {
+    let (path, batch, st) = last;
+    let mut cols = vec![path.to_string(), batch.to_string()];
+    cols.extend(st.values().iter().map(|v| format!("{:.1}", v * 1e3)));
+    let exact = |v: &[f64]| if v.is_empty() { "-".to_string() } else { v.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>().join(",") };
+    cols.push(exact(&e.quality.inputs));
+    cols.push(exact(&e.speed));
+    cols.push(e.quality.behaviour.clone());
+    cols.push(u8::from(e.quality.all_zero()).to_string());
+    cols
+}
+
+/// A distinct gene of a call, expressed and rendered once.
+struct Rendered {
+    tree: Tree,
+    text: String,
+    source: String,
+}
+
 /// THE FUTHARK EVALUATOR (plan 5a.2): one owned object a run holds for its whole life. It holds the problem, the
 /// reference program, the [`Judge`] and the [`Genetics`], each owning what it reads (F1); nothing in it borrows.
 pub struct FutharkEvaluator {
@@ -1521,6 +1659,10 @@ pub struct FutharkEvaluator {
     out: PathBuf,
     /// The controls ran ([`FutharkEvaluator::controls`]): they run once a run.
     controls_ran: bool,
+    /// THE FITNESS STAGE of [`FutharkEvaluator::evaluate_generation`]: stage 1 (quality alone) from the start, stage 2
+    /// from the start in regime P (set by the controls), and from the call in which the best row is exact on every
+    /// case on; a stage never goes back.
+    stage: FitnessStage,
     /// The fitness machinery. Public for the deprecated runner (`examples/futhark_evolve.rs`), which drives it
     /// directly until X1; the engine's seam is the evaluator's methods.
     pub judge: Judge,
@@ -1688,8 +1830,11 @@ impl FutharkEvaluator {
             upload_seconds: 0.0,
             resident_hits: 0,
             messages,
+            modules: 0,
+            failed_compiles: 0,
+            unfinished_compiles: 0,
         };
-        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, judge, gen })
+        Ok(FutharkEvaluator { problem: p, program_size, reference, planted, reference_source, alternatives, out, controls_ran: false, stage: FitnessStage::Quality, judge, gen })
     }
 
     pub fn problem(&self) -> &Problem {
@@ -1768,7 +1913,7 @@ impl FutharkEvaluator {
     /// five-input scheme its five a case; for the answer-scored schemes the quality inputs a fitness case, then the
     /// speed pairs (stage 2).
     /// The caller's sink for the evaluator's messages ([`Messages`]); the lines held so far go to it first.
-    pub fn set_messages(&mut self, sink: Box<dyn FnMut(&str)>) {
+    pub fn set_messages(&mut self, sink: Sink) {
         self.judge.messages.set_sink(sink);
     }
 
@@ -1833,6 +1978,10 @@ impl FutharkEvaluator {
             return Err("our software has a bug: the controls were asked for a second time; they run once a run (a second call would add the in-run A/A to the timing slots again and judge the k-means A/A again)".into());
         }
         self.controls_ran = true;
+        // Regime P starts from the published program, exact: it is scored on quality and speed from the start.
+        if req.regime == Some(Regime::P) {
+            self.stage = FitnessStage::QualityAndSpeed;
+        }
         self.control_interpreted()?;
         let mut c = Controls::default();
         let converged = self.judge.scheme.is_converged();
@@ -1899,6 +2048,165 @@ impl FutharkEvaluator {
             c.kmeans_aa_speed = e.speed.clone();
         }
         Ok(c)
+    }
+
+    /// THE SEAM (plan 5a.2, task F3a): every row the engine hands over, in row order, scored, with no output of its
+    /// own ([`FutharkEvaluator::evaluate_generation_with`] reports each batch). A call is a call: the engine calls it
+    /// after variation and again after a pump or fold beat, and nothing here assumes one call a generation.
+    pub fn evaluate_generation(&mut self, genes: &[&[u32]], generation: u32) -> Result<GenerationScores, String> {
+        self.evaluate_generation_with(genes, generation, &mut |_| {})
+    }
+
+    /// [`FutharkEvaluator::evaluate_generation`], with `after_batch` called after every batch (the caller's progress
+    /// line). The answer-scored problems (reduce, scan, histogram, pathfinder, a7); k-means is task F3b.
+    ///
+    /// Each distinct gene is expressed from its head cells and rendered once (a gene that does not express is a bug
+    /// of our software and an error). Every program not scored before, and in stage 2 every program with an empty
+    /// timing slot, is evaluated in ONE compiled module a call on `--eval batch` and `--eval rust` (`Judge::prefetch`),
+    /// or its own compile on `--eval single`; a program scored before, in this call or an earlier one, is a cache hit
+    /// and costs no evaluation. THE RUN FILE (`OUT/killme.trigger`) is checked before every batch: when it is gone the
+    /// call returns the rows scored so far with `stopped`. THE STAGE: when the best row of stage 1 (the least angle,
+    /// the first on a tie, as the deprecated runner sorts) is exact on every case, the stage becomes 2 and every row
+    /// is scored again in stage 2 within the call (a second module when its programs are timed), and the rows
+    /// returned are the stage-2 scores; a run file gone before that second batch returns the stage-1 rows, the stage
+    /// unchanged.
+    pub fn evaluate_generation_with(&mut self, genes: &[&[u32]], generation: u32, after_batch: &mut dyn FnMut(&BatchDone)) -> Result<GenerationScores, String> {
+        if self.judge.scheme.is_converged() {
+            return Err(format!("evaluate_generation for the k-means scheme {} is task F3b (plan 5a.3: the resident sample's prefetch_kmeans and evaluate_converged, the champion's test case), not built yet", self.judge.scheme.name));
+        }
+        let t0 = Instant::now();
+        let before = (self.judge.evaluations, self.judge.gen_stages, self.judge.modules, self.judge.failed_compiles, self.judge.unfinished_compiles, self.judge.batch_splits, self.judge.upload_seconds, self.judge.resident_hits);
+        let mut index: HashMap<&[u32], usize> = HashMap::new();
+        let mut distinct: Vec<Rendered> = Vec::new();
+        let mut row_of: Vec<usize> = Vec::with_capacity(genes.len());
+        for (r, g) in genes.iter().enumerate() {
+            let i = match index.get(g) {
+                Some(i) => *i,
+                None => {
+                    let tree = self.gen.tree(g).map_err(|e| format!("our software has a bug: row {r} of generation {generation}: {e}"))?;
+                    let source = program(&self.gen.k, &self.judge.sig, &tree)?;
+                    let text = sexp(&self.gen.k, &tree);
+                    distinct.push(Rendered { tree, text, source });
+                    index.insert(g, distinct.len() - 1);
+                    distinct.len() - 1
+                }
+            };
+            row_of.push(i);
+        }
+        let mut batches = 0usize;
+        let (mut rows, mut stopped) = self.score_rows(&distinct, &row_of, self.stage, &mut batches, after_batch)?;
+        let mut stage_changed = false;
+        if !stopped {
+            let best = (0..rows.len()).min_by(|a, b| rows[*a].fitness.total_cmp(&rows[*b].fitness).then(a.cmp(b)));
+            let next = self.stage.next(best.is_some_and(|b| rows[b].perfect));
+            if next != self.stage {
+                self.judge.messages.say(&format!("stage 1 -> 2 at generation {generation}, evaluation {}: the best is exact on every case (training and held-out); every row is scored again in stage 2 within this call", self.judge.evaluations));
+                let (again, s2) = self.score_rows(&distinct, &row_of, next, &mut batches, after_batch)?;
+                if s2 {
+                    stopped = true;
+                } else {
+                    self.stage = next;
+                    rows = again;
+                    stage_changed = true;
+                }
+            }
+        }
+        let (e0, st0, m0, f0, u0, h0, up0, rh0) = before;
+        let (a, b) = (self.judge.gen_stages.values(), st0.values());
+        let stages = Stages::of(std::array::from_fn(|i| a[i] - b[i]));
+        let cost = GenerationCost {
+            stages,
+            compile_seconds: stages.futhark + stages.port + stages.cc + stages.check + stages.link,
+            run_seconds: stages.start + stages.device + stages.pipelines + stages.runs,
+            timing_seconds: stages.timing,
+            upload_seconds: self.judge.upload_seconds - up0,
+            modules: self.judge.modules - m0,
+            failed_compiles: self.judge.failed_compiles - f0,
+            unfinished_compiles: self.judge.unfinished_compiles - u0,
+            halvings: self.judge.batch_splits - h0,
+            resident_hits: self.judge.resident_hits - rh0,
+            seconds: t0.elapsed().as_secs_f64(),
+        };
+        Ok(GenerationScores { rows, stage: self.stage, stage_changed, stopped, evaluations_new: self.judge.evaluations - e0, evaluations_total: self.judge.evaluations, cost })
+    }
+
+    /// Whether a program needs a batch in `stage`: its quality not known, or in stage 2 an empty timing slot.
+    fn needs_batch(&self, source: &str, stage: FitnessStage) -> bool {
+        !self.judge.quality_cache.contains_key(source) || (stage.measures_speed() && self.judge.slots.missing(source) > 0)
+    }
+
+    /// Every row scored in `stage`, in row order; the run file checked before every batch. Returns the rows and
+    /// whether the run file was gone (the rows then those scored before it went).
+    fn score_rows(&mut self, distinct: &[Rendered], row_of: &[usize], stage: FitnessStage, batches: &mut usize, after_batch: &mut dyn FnMut(&BatchDone)) -> Result<(Vec<RowScore>, bool), String> {
+        let run_file = self.out.join(crate::run_file::RUN_FILE);
+        let batched = self.judge.mode.batched();
+        if batched && row_of.iter().any(|i| self.needs_batch(&distinct[*i].source, stage)) {
+            if !run_file.exists() {
+                return Ok((Vec::new(), true));
+            }
+            let compiles = self.judge.modules + self.judge.failed_compiles;
+            let items: Vec<(&Tree, &str)> = row_of.iter().map(|i| (&distinct[*i].tree, distinct[*i].source.as_str())).collect();
+            self.judge.prefetch(&items, stage)?;
+            if self.judge.modules + self.judge.failed_compiles > compiles {
+                *batches += 1;
+                after_batch(&BatchDone { batch: *batches, stage, rows_scored: 0 });
+            }
+        }
+        let mut rows = Vec::with_capacity(row_of.len());
+        for i in row_of {
+            let r = &distinct[*i];
+            let own_batch = !batched && self.needs_batch(&r.source, stage);
+            if own_batch && !run_file.exists() {
+                return Ok((rows, true));
+            }
+            let evaluations = self.judge.evaluations;
+            let e = self.judge.evaluate(&r.tree, &r.source, stage)?;
+            rows.push(self.row_score(r, &e, stage, self.judge.evaluations > evaluations)?);
+            if own_batch {
+                *batches += 1;
+                after_batch(&BatchDone { batch: *batches, stage, rows_scored: rows.len() });
+            }
+        }
+        Ok((rows, false))
+    }
+
+    /// A scored row: the HFF input vector the scheme's angle is taken over, the angle's percentile, the ledger's
+    /// columns from the judge's last evaluation.
+    fn row_score(&self, r: &Rendered, e: &Eval, stage: FitnessStage, new_evaluation: bool) -> Result<RowScore, String> {
+        let q = &e.quality;
+        let (inputs, one_vector) = match stage {
+            FitnessStage::Quality => (q.inputs.clone(), true),
+            FitnessStage::QualityAndSpeed => match self.judge.scheme.stage_two()? {
+                crate::fitness::StageTwo::Flat => (crate::fitness::flat_vector(&q.inputs, &e.speed, self.judge.quality_weight), true),
+                crate::fitness::StageTwo::Ungated | crate::fitness::StageTwo::Gated => (crate::fitness::flat_vector(&q.inputs, &e.speed, 1), false),
+            },
+        };
+        let d = inputs.len();
+        let percentile = if one_vector { Some(crate::fitness::hff_percentile(e.fitness, d)?) } else { None };
+        Ok(RowScore {
+            text: r.text.clone(),
+            source: r.source.clone(),
+            inputs,
+            fitness: e.fitness,
+            theta_quality: e.theta_q,
+            theta_speed: e.theta_s,
+            percentile,
+            d,
+            quality: q.inputs.clone(),
+            speed: e.speed.clone(),
+            ratio: e.ratio,
+            exact: [q.exact_train, q.exact_held, q.exact_test],
+            perfect: q.perfect(),
+            behaviour: q.behaviour.clone(),
+            all_zero: q.all_zero(),
+            new_evaluation,
+            ledger: ledger_columns(&self.judge.last, e),
+        })
+    }
+
+    /// The fitness stage of the next call.
+    pub fn stage(&self) -> FitnessStage {
+        self.stage
     }
 
     /// THE K-MEANS SCHEME's yardstick: the reference program compiled once (the run's own directory), run to the
