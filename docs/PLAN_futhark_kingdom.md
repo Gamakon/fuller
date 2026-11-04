@@ -906,6 +906,20 @@ stay until X1. Found on the way: Futhark 0.28.1 internal errors (a type error af
 histogram and pathfinder rows of 225 to 1,100 nodes, 1 to 4 rows in 25 to 28; one kept at
 `/private/tmp/claude-501/fbench/plan5a/size_bound/ice/histogram_225_275_k04.fut`.
 
+F3b DONE (`3bd313cf`): `evaluate_generation` scores k-means. On `--eval rust` a call's new programs are one module on the
+resident sample (`prefetch_kmeans`, now with the run file, `Host::run_until`), each scored by `evaluate_converged`;
+`--eval single` compiles each. A row's vector is the scheme's (`futhark-kmeans-better`: quality 3 times, speed once,
+d = 66). The evaluator keeps the champion (least angle, strictly better replaces it); when its text changes,
+`champion_test_case` runs `converged_on_test`, its own module, counted, in `GenerationScores::test_case`. The runner
+now calls `champion_test_case` too: one implementation. Every k-means compile and resident batch is counted
+(`kmeans_batch`: modules, halvings, uploads, resident hits; `GenerationCost::uploads` new). Runner side effect: its
+`upload_s` extras now include the controls' upload and the test case's runs (telemetry only). Ledger committed:
+`src/futhark_evaluator/kmeans_p_seed1_ledger.tsv` and `..._test_case.tsv` (F2's k-means plumbing run, C backend, at
+1192b022). CPU test (C, single, 484 s debug): the runner's 3 programs give its quality inputs, behaviours and count
+(3) bit for bit, its champion's test-case inputs too; the test case runs exactly when the champion changes; a cached
+call is free. The runner before and after (k-means P, C, single, 3 evaluations): ledger identical except the `*_ms`, fitness and speed columns (wall-clock). Tests: the 13 evaluator tests pass, default and `wgsl`; clippy clean default, `wgsl`, `gpu,wgsl`. GPU script `f3b_kmeans_generation.sh` (runner k-means R on rust, then the replay test
+`on_the_gpu_kmeans_on_the_rust_path_replays_the_runner_s_generations_through_the_seam`): written, not run.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
