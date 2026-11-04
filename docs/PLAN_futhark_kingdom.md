@@ -1100,6 +1100,21 @@ state survives its JSON text; after `restore`, a recorded stage-2 generation (wi
 new evaluation and no module, and with the same angles, inputs, ledger columns and report bit for bit. The same holds
 for k-means at the end of its seam test: no test case runs again. GPU: none.
 
+**F6 DONE (phylu `24a08cd3`, 2026-11-04).** `FutharkEvaluator::final_report(champion, run)` in
+`phylu/src/futhark_eval/evaluator/final_report.rs`. The controls keep what they measured and write `aa_gate.tsv`
+when they timed the A/A sets. The in-run A/A was already in the controls (F2): for the answer-scored problems the
+published program goes through the timing slots, and for k-means the reference program is judged against itself
+through `prefetch` + `evaluate`. The report takes the champion's score from the caches. On the GPU an exact champion
+is re-timed by 11 pairs and the published program by `aa_retimes` re-times, which give the verdict. The report writes
+`report.tsv` with the deprecated runner's keys in its order, `best.fut`, and the chart when the run gives its
+`series.tsv`. What only the engine knows comes in a `RunSummary`: the regime, the start, the random seed, why the run
+stopped, its seconds, the budget, the first exact program and the hall of fame's rank 1. `Judge::staged_eval` now
+uses `report::speed_inputs`. Tests (CPU, `--release`, `-D warnings`), 2 new: the controls pass on the c backend for
+all six problems, and each report, with the reference program as the champion, has the runner's keys; the GPU
+block's keys and verdict from given numbers, and the chart. `futhark_eval::evaluator` passes 33 of 33. Clippy clean
+(default, `gpu`, `gpu,wgsl`); the GPU test binary builds. GPU, not run: `f6_controls.sh` runs `controls` and the final
+report on `--eval rust` for histogram, pathfinder, kmeans and a7, with 3 re-times to bound the GPU time.
+
 ### 5a.3 (continued): the task table and the GPU scripts
 
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
