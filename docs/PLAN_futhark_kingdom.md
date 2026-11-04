@@ -792,6 +792,16 @@ G1 runs before P2a's k-means GPU test (the paged store's first gigabytes).
 **The lead's order (the critical path):** F1, F2, F3a, P1, P2a, G1, P2b, F3b, P3, F4 to F7, P4, G2, G3, R0, R1. F5 and
 F8, P5 fill the gaps beside it.
 
+**Status (2026-11-04).** F1 DONE (`82f6dd3e`): `futhark_sig::load` and `signature` return `Arc` handles; `Interp`,
+`futhark_batch::Host` and the runner's `Judge`, `Genetics` and `Run` hold `Arc`s, no lifetime, no `Box::leak`. New
+test `a_host_and_an_interpreter_built_from_dropped_handles_run_a_c_batch`. Test edits are type annotations only.
+`futhark_evolve --problem histogram --regime R --gate DIR --backend c --eval single --evaluations 30 --seed 1`
+before and after: `ledger.tsv` identical on 33 rows and 12 columns; the 11 `*_ms` columns (wall-clock stage times)
+are excluded. Regime R needs the gate, so the histogram slope check ran first on the C path (pass, 1,254 s). Regime P
+cannot run on the C path, because its stage 2 times on the GPU. fuller: 778 tests pass, clippy clean with default
+features and with `gpu,wgsl`. phylu (`d2264705`, no change): release build, 250 tests pass, clippy clean with default
+features and with `gpu`.
+
 | task | repo | size | what | files | tests (no GPU) | GPU script (the lead) | depends |
 |---|---|---|---|---|---|---|---|
 | F1 | fuller | 1 day | Everything the evaluator holds OWNS what it reads, by `Arc`: `Host<'a>` (`futhark_batch`), `Interp<'a>` (futhark_evolve.rs 462, held by the judge) and `Genetics<'a>` (1283-1287) borrow the kingdom, the signature, the contract, the layout and the constants' lengths today; `futhark_sig::load` and `signature` return shared handles. Never `Box::leak` | `src/futhark_batch.rs`, `src/futhark_sig.rs`, `src/futhark_interpreter.rs`, callers | every `futhark_batch`, `futhark_sig` and interpreter test unchanged; a host and an interpreter built from handles whose originals were dropped run a C batch | none | none |
