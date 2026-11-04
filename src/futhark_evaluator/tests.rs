@@ -535,7 +535,7 @@ fn a_program_over_the_size_bound_is_scored_worst_and_never_compiled() {
 /// `--backend gpu --eval rust` run, written by the script; without it, the committed c-backend ledger's two
 /// generations) are scored through `evaluate_generation` on `--eval rust`: generation 0 rebuilt from
 /// `GeneRng::new(1)` and checked against the ledger's texts, every later generation's programs written onto genes.
-/// Each call compiles ONE module; every row's quality inputs, behaviour and all-zero flag equal the runner's, bit for
+/// Every compile succeeds (a module the device cannot hold is halved, as the runner's is); every row's quality inputs, behaviour and all-zero flag equal the runner's, bit for
 /// bit, and so does its angle while the stage is quality alone (speed inputs are wall-clock and are not compared); a
 /// row is a new evaluation exactly where the runner compiled.
 #[cfg(feature = "gpu")]
@@ -566,7 +566,11 @@ fn on_the_gpu_the_rust_path_replays_the_runner_s_generations_through_the_seam() 
         let s = ev.evaluate_generation(&refs(&genes), *g).unwrap();
         eprintln!("generation {g}: {} rows, {} new, {} module(s), {} halving(s), compile {:.1} s, call {:.1} s, stage {:?}", s.rows.len(), s.evaluations_new, s.cost.modules, s.cost.halvings, s.cost.compile_seconds, s.cost.seconds, s.stage);
         assert!(!s.stopped && s.rows.len() == want.len());
-        assert_eq!((s.cost.modules, s.cost.failed_compiles, s.cost.unfinished_compiles), (u64::from(s.evaluations_new > 0), 0, 0), "generation {g}: one module a call");
+        // A module the device cannot hold is halved, as the runner's own batch is (its generation 1 on histogram, seed 1,
+        // compiled 3 modules with 1 halving and no failure, GPU run of 2026-11-04 08:25Z): no compile fails or runs out
+        // of time, and a call with new rows compiles at least one module.
+        assert_eq!((s.cost.failed_compiles, s.cost.unfinished_compiles), (0, 0), "generation {g}: every compile succeeds");
+        assert_eq!(s.cost.modules > 0, s.evaluations_new > 0, "generation {g}: a module exactly when a row is new");
         let stage_one = s.stage == FitnessStage::Quality && !s.stage_changed;
         for (r, w) in s.rows.iter().zip(&want) {
             assert_eq!(r.text, w.text, "generation {g}: the runner's program");
