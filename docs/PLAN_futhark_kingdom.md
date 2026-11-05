@@ -1450,6 +1450,19 @@ variable), a folded gene that does not express its form is a bug on every path, 
 was keeps its words, and a part with no e-class is a bug. The timing of master 5's k-means variants was never recorded
 with its conditions, so no figure is given.
 
+**F3 status (2026-11-05): done.** `src/futhark_sig/interp6.rs`: master 6's interpreter, read from G3's decoding
+(variables by binder, sizes and bounds from the properties, every adapter the renderer renders applied, a substitution
+its substitute), with Futhark's checks (indices in range, `map2` lengths, every value's shape against its properties);
+`Interp::new6` beside `Interp::new`, the same `eval`, `work`, `work_parts`, `static_cost` (phylu's callers build
+unchanged). `work_parts` reads sizes from properties and charges every adapter in `Work::nodes` (a `fit` its target
+cells, `clampix` 2), which phylu's `submit_work_of` reads. `kingdoms/futhark/master/6/costs.tsv` (generated, witness
+C1-C6, README 10): per-row formulas over argument properties, the adapters charged; `futhark_cost::program_cost6`.
+Measured: the 15 references' values and work equal master 5's on every stored case (k-means on its two smallest), A7's
+static cost equal; 1,000 random genes a view run on the interpreter with no error (k-means genes over the per-submit
+cap on the case, 41 and 46 of 1,000, on it cropped); 100 a view on `c` equal the interpreter bit for bit, 1,499 of
+1,500 runs, the other (`kmeans_i32`) equal but for Futhark's `0 / x` fold (its simplifier folds a known zero divided by
+anything to 0, where IEEE gives NaN, depending on fusion; counted apart); an adapter costs more than its clean form.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
