@@ -88,6 +88,9 @@ pub enum Reference<'a> {
     Env(&'a str),
     /// `each`, or a comprehension's index.
     Index(&'a str),
+    /// A size name: offered to a substitution's callback (a template reads `p0` as a repair parameter this way), and
+    /// never listed by `references`, since a size name is ground.
+    Size(&'a str),
 }
 
 impl fmt::Display for Reference<'_> {
@@ -96,7 +99,7 @@ impl fmt::Display for Reference<'_> {
             Reference::Input { position, property } => write!(f, "in{position}.{property}"),
             Reference::Output(p) => write!(f, "out.{p}"),
             Reference::Env(a) => write!(f, "env.{a}"),
-            Reference::Index(i) => write!(f, "{i}"),
+            Reference::Index(i) | Reference::Size(i) => write!(f, "{i}"),
         }
     }
 }
@@ -441,6 +444,7 @@ impl PropertyExpr {
             P::Output(p) => Some(Reference::Output(p)),
             P::Env(a) => Some(Reference::Env(a)),
             P::Index(i) if !shadow.contains(i) => Some(Reference::Index(i)),
+            P::Size(n) => Some(Reference::Size(n)),
             _ => None,
         };
         if let Some(r) = reference {

@@ -583,5 +583,7 @@ impl Decoder {
     }
 }
 
+pub mod template;
+
 #[cfg(test)]
 mod tests;
