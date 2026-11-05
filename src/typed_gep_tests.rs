@@ -235,14 +235,12 @@ fn closure_regex() {
     closure_n(&regex_relations(), "regex", &SIZES, GENES);
 }
 
-/// The two WGSL kingdoms in full, every dual a symbol and the roots as the
-/// kingdoms declare them (both pass the kingdom check). Widths are tens of
-/// thousands of words, so fewer genes and smaller program sizes.
-#[cfg(feature = "wgsl")]
+/// The WGSL kingdom's rows, both variants (Gram and image), every row a symbol and the root `kernel`.
 #[test]
-fn closure_wgsl_and_safewgsl() {
-    closure_n(&crate::kingdom_contract::wgsl_relations(), "WGSL", &SIZES[..2], 3_000);
-    closure_n(&crate::kingdom_contract::safewgsl_relations(), "safewgsl", &SIZES[..2], 2_000);
+fn closure_wgsl_rows() {
+    for v in [crate::wgsl_rows::VARIANT, crate::wgsl_rows::IMAGE] {
+        closure_n(&crate::kingdom_contract::wgsl_rows_relations(v).expect("the rows"), v, &SIZES[..2], 3_000);
+    }
 }
 
 /// The bound, measured. For SR it is attained exactly (a head of binary
@@ -255,8 +253,8 @@ fn tail_bound_measured_maximum() {
     println!("SR: {}/{} tails read to exactly t_T", sr.attained, sr.frames);
     let re = adversarial(&regex_relations(), "regex", &SIZES);
     println!("regex: {}/{} tails read to exactly t_T, largest ratio {:.2}", re.attained, re.frames, re.largest_ratio);
-    #[cfg(feature = "wgsl")]
-    for (rel, label) in [(crate::kingdom_contract::wgsl_relations(), "WGSL"), (crate::kingdom_contract::safewgsl_relations(), "safewgsl")] {
+    for label in [crate::wgsl_rows::VARIANT, crate::wgsl_rows::IMAGE] {
+        let rel = crate::kingdom_contract::wgsl_rows_relations(label).expect("the rows");
         let w = adversarial(&rel, label, &SIZES[..2]);
         println!("{label}: {}/{} tails read to exactly t_T, largest ratio {:.2}", w.attained, w.frames, w.largest_ratio);
         assert!(w.largest_ratio <= 1.0);

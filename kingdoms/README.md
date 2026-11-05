@@ -45,8 +45,7 @@ so every gene expresses a legal program.
 | `symbolic-regression/` | **live** | the general float-typed op set; byte-identical on the typed core (481 of 1,000 seed-runs on 100 laws, old and new) |
 | `tsr/` | **built** | **TSR — Typed Symbolic Regression.** The same op set with the distance between functions TYPED, so illegal depth is unrepresentable rather than penalised. Tables in `gen_tables.py`, arms in `single/`, `depth/`, `order/`, `order_depth/`; the pre-registered experiments are not yet run |
 | regex (tables in code) | **live** | regular expressions, four types (Pattern, CharClass, Char, Integer). UK postcodes: a perfect training rule in 32 of 32 typed runs, held-out recall 100 %, no foreign codes accepted (phylu `docs/reports/2026-10-20_regex_typed_gep.md`) |
-| `wgsl_true/` | **live** | **WGSL GPU kernels, the true multi-typed kingdom.** Every legality rule is carried by a type (ownership, uniform control, bounded loops, ranges). Instances: the Gram test, the cuneus shaders, the UltraDim ingest module. See `wgsl_true/README.md` |
-| `wgsl/`, `safewgsl/` | legacy | the earlier WGSL kingdoms (dual/class tables, a reader with refusals); kept while their tests are ported, then retired |
+| `wgsl_true/` | **live** | **WGSL GPU kernels on the gene frame's rows** (the kingdom `wgsl` of `master/`, variants `wgsl.gram` and `wgsl.image`): legality by Flow and Guard rows (ownership, uniform control, the work bound, ranges, widths). `gen_rows.py` writes the rows; the Gram reference programs are in `gram/`. See `wgsl_true/README.md` |
 | `sql/` | proposed | SQL statements — the original nucleotable motivation: reverse-engineering running systems |
 | `brainfuck/` | proposed | a minimal language, chosen because it is small enough to be a clean test of the harness itself |
 

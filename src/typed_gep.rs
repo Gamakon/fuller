@@ -1583,13 +1583,6 @@ mod tests {
         // Every TSR variant has the same Argument rows (they differ by their guards), so one fingerprint.
         let tsr = crate::tsr_kingdom::rows::TsrRows::load(crate::tsr_kingdom::TsrVariant::Depth, 3).expect("TSR rows load");
         kingdoms.push(("tsr rows".into(), crate::kingdom_contract::relations_from_tables(&tsr.tables, vec![tsr.entry.output])));
-        #[cfg(feature = "wgsl")]
-        {
-            kingdoms.push(("wgsl".into(), crate::kingdom_contract::wgsl_relations()));
-            kingdoms.push(("safewgsl".into(), crate::kingdom_contract::safewgsl_relations()));
-            let t = crate::wgsl::true_kingdom::TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir()).expect("true WGSL table");
-            kingdoms.push(("true wgsl".into(), t.relations()));
-        }
         let golden: BTreeMap<&str, u64> = BTreeMap::from([
             ("sr", 0x5fea_40a2_cad6_8e36),
             // The regex rows (plan 7.7 K2): `regex` IS the typed regex without the literal Pattern, and the counted
@@ -1602,9 +1595,8 @@ mod tests {
             ("tsr rows", 0x113c_6c94_4793_5d13),
             // The pixel family's three instances (added by the G2 code review's finding 7) left this list with their
             // dual tables (plan 7.7 K4): on the rows they have a variable terminal, `var@f32`.
-            ("wgsl", 0xaca5_c7c1_66fa_1914),
-            ("safewgsl", 0x0513_9731_15ba_6f78),
-            ("true wgsl", 0x4119_d902_a24d_25aa),
+            // The old WGSL kingdoms (wgsl, safewgsl, the 305-type true WGSL) left with their tables (plan 7.7 K5); the
+            // WGSL rows have a variable terminal, `var@T`.
         ]);
         let mut wrong = Vec::new();
         for (name, r) in &kingdoms {

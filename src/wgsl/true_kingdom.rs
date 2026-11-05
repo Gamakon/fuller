@@ -1,26 +1,20 @@
-//! The true multi-typed WGSL kingdom: the generated symbol table of
-//! `kingdoms/wgsl_true` (`gen_tables.py`, from `nucleotable/docs/
-//! MultiTypedGEP_s9_WGSL_draft.md`) loaded through the kingdom contract of
-//! `MultiTypedGEP.md` section 1, a typed initialiser over its layout, and the
-//! renderer: a pure substitution of argument texts into each row's spelling.
+//! The WGSL kingdom as the runners and the optimisers read it: [`TrueKingdom::from_rows`] lays the rows of
+//! `crate::wgsl_rows` (the gene frame's fixed schema, `kingdoms/master/`) out as `TrueRow`s, symbol `s` of the contract
+//! row `s`, each data type a [`WgslDual`], each Dc pool a `C_T`. Rendering, the relations and the work bound read the
+//! rows ([`TrueKingdom::render`], [`TrueKingdom::relations`], [`TrueKingdom::tree_work_bound`]).
 //!
-//! The table is data read at run time (`TrueKingdom::load`), not `include_str!`,
-//! so a regenerated table needs no rebuild. A row is `(name, kind, output type,
-//! ordered argument types, spelling)`; a constant row is the placeholder `?_T`
-//! of its output type and `constants.tsv` is that type's append-only `C_T`.
-//!
-//! Spelling templates: `{N}` the text of argument N, `{N:F}` field F of that
-//! text split on whitespace (a literal such as the grid shape `16 16`), `{v}`
-//! the value text a constant reads from its `C_T`. Every other brace is WGSL.
-//! The renderer does nothing else: no mask, no clamp, no fallback, no rewrite.
+//! The parts the 305-type table carried (fuel strata read from type names, loop rows, solo phases, a counting-sort
+//! scaffold, a prologue) are empty for the rows; the methods that read them return what an empty table gives. A
+//! random typed gene ([`random_gene`]) and the substitution of argument texts into a spelling ([`substitute`]) are
+//! here too: spelling templates `{N}` the text of argument N, `{N:F}` field F of that text split on whitespace,
+//! `{v}` the value text a constant reads from its `C_T`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::geneframe::{PropertyExpr, Role, Ty};
 use crate::kingdom_contract::{relations_from_rows, relations_from_tables, KingdomContract, KingdomRelations};
 use crate::typed_gep::{GeneLayout, Tree};
-use crate::wgsl::loader::{parse_duals, WgslDual};
 use crate::wgsl::work_guard::Fuel;
 
 pub mod egraph;
@@ -28,10 +22,23 @@ pub mod egraph;
 /// The kingdom's name in its relations.
 pub const TRUE_WGSL: &str = "TRUE_WGSL";
 
-/// The directory of the generated table.
-pub fn default_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("kingdoms/wgsl_true")
+/// A data type of the kingdom: `Ty::Wgsl(index)`, its name (`dual`; `slot` the same for the rows).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WgslDual {
+    pub index: u16,
+    pub dual: String,
+    pub slot: String,
 }
+
+impl WgslDual {
+    pub fn ty(&self) -> Ty {
+        Ty::Wgsl(self.index)
+    }
+}
+
+/// The plain workgroup pool's words of the old tables' `pool.py` (`wg_pool: array<u32, P + 4>`), for a table whose
+/// prologue declares no pool.
+pub const P_WORDS: u64 = 6080;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
@@ -104,71 +111,6 @@ pub struct LoopRow {
     pub own_work: bool,
 }
 
-/// The fuel stratum `k` of a type or row name ending in `_f<k>`.
-fn stratum(name: &str) -> Option<u32> {
-    let at = name.rfind("_f")?;
-    name[at + 2..].parse().ok()
-}
-
-/// The argument of a solo phase row (`wg.solo_*`) that one invocation of the workgroup runs, read from its spelling:
-/// the placeholder in `if (lidx == 0u) { {i} }`, or in `let su = {j}; if (lidx == su) { {i} }` with argument `j` of
-/// type `u32.uniform` (the same value in every invocation, so one invocation matches). `None` for any other row; a
-/// solo row spelled in neither form is a bug of the table.
-fn solo_body(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<usize>, String> {
-    if !row.name.starts_with("wg.solo_") {
-        return Ok(None);
-    }
-    let bug = |what: &str| format!("our software has a bug: the solo row {} {what}: {}", row.name, row.spelling);
-    let placeholder = |text: &str| -> Option<usize> { text.strip_prefix('{')?.split_once('}')?.0.parse().ok() };
-    let body = if let Some((_, rest)) = row.spelling.split_once("if (lidx == 0u) { ") {
-        placeholder(rest).ok_or_else(|| bug("has no body placeholder after if (lidx == 0u)"))?
-    } else if let Some((before, rest)) = row.spelling.split_once("if (lidx == su) { ") {
-        let (_, at) = before.rsplit_once("let su = ").ok_or_else(|| bug("compares lidx to su without binding su"))?;
-        let u = placeholder(at).ok_or_else(|| bug("binds su to no argument"))?;
-        if row.args.get(u).map(|t| type_name(*t)).as_deref() != Some("u32.uniform") {
-            return Err(bug("binds su to an argument that is not u32.uniform"));
-        }
-        placeholder(rest).ok_or_else(|| bug("has no body placeholder after if (lidx == su)"))?
-    } else {
-        return Err(bug("spells neither if (lidx == 0u) nor if (lidx == su)"));
-    };
-    if body >= row.args.len() {
-        return Err(bug("names a body past its arguments"));
-    }
-    Ok(Some(body))
-}
-
-/// The [`LoopRow`] of a row, or `None` when its spelling has no loop.
-fn loop_row(row: &TrueRow, type_name: &dyn Fn(Ty) -> String) -> Result<Option<LoopRow>, String> {
-    let at = [row.spelling.find("loop {"), row.spelling.find("for (")].into_iter().flatten().min();
-    let Some(at) = at else { return Ok(None) };
-    // a counting-sort scaffold's knob (countsort.py, section 10): a reference kernel's own entries, whose loops are its
-    // own bounded loops (256 points of a block, nb blocks, k clusters by the contract), not the gene's; the gene's fuel
-    // does not reach them, and their work is the reference's
-    if row.name.starts_with("cs.") && row.args.is_empty() && type_name(row.out).starts_with("kernel.") {
-        return Ok(None);
-    }
-    let inside: Vec<bool> = (0..row.args.len())
-        .map(|i| {
-            let (plain, field) = (format!("{{{i}}}"), format!("{{{i}:"));
-            let first = [row.spelling.find(&plain), row.spelling.find(&field)].into_iter().flatten().min();
-            first.is_some_and(|p| p > at)
-        })
-        .collect();
-    let out_k = stratum(&type_name(row.out)).ok_or_else(|| format!("our software has a bug: loop row {} outputs {}, which has no fuel stratum", row.name, type_name(row.out)))?;
-    let body_k = row.args.iter().zip(&inside).filter(|(_, ins)| **ins).filter_map(|(t, _)| stratum(&type_name(*t))).max();
-    let in_k = match body_k {
-        Some(k) => k,
-        None => stratum(&row.name).ok_or_else(|| format!("our software has a bug: loop row {} has no body and no _f<k> in its name", row.name))?,
-    };
-    let class = out_k.checked_sub(in_k).ok_or_else(|| format!("our software has a bug: loop row {} lowers the stratum ({in_k} to {out_k})", row.name))?;
-    let shift = 6 * class;
-    let cap = if shift >= 127 { u128::MAX } else { 1u128 << shift };
-    let literal_arg = row.args.iter().position(|t| type_name(*t) == "u32.lit64").filter(|i| !inside[*i]);
-    let own_work = !inside.iter().any(|b| *b);
-    Ok(Some(LoopRow { inside, cap, literal_arg, own_work }))
-}
-
 /// `H`: the sum of the head lengths `h_T` over the types `root` reaches, at program size `n`.
 pub fn head_total_of(contract: &KingdomContract, root: Ty, n: usize) -> Result<u64, String> {
     let heads = contract.heads_from_program_size(root, n)?;
@@ -176,112 +118,7 @@ pub fn head_total_of(contract: &KingdomContract, root: Ty, n: usize) -> Result<u
     Ok(b.types.iter().map(|t| t.h as u64).sum())
 }
 
-fn unescape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut it = s.chars();
-    while let Some(c) = it.next() {
-        if c == '\\' {
-            match it.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('\\') => out.push('\\'),
-                Some(o) => {
-                    out.push('\\');
-                    out.push(o);
-                }
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn read(dir: &Path, file: &str) -> Result<String, String> {
-    std::fs::read_to_string(dir.join(file)).map_err(|e| format!("our software has a bug: {}: {e}", dir.join(file).display()))
-}
-
 impl TrueKingdom {
-    pub fn load(dir: &Path) -> Result<TrueKingdom, String> {
-        let types = parse_duals(&read(dir, "types.tsv")?)?;
-        let by_name: BTreeMap<&str, Ty> = types.iter().map(|d| (d.dual.as_str(), d.ty())).collect();
-        let ty_of = |n: &str, what: &str| by_name.get(n).copied().ok_or_else(|| format!("our software has a bug: {what}: type {n} is not in types.tsv"));
-        let text = read(dir, "functions.tsv")?;
-        let mut lines = text.lines();
-        let header: Vec<&str> = lines.next().ok_or("empty functions.tsv")?.split('\t').collect();
-        let want = ["ref", "name", "kind", "out", "args", "spelling", "note", "declares"];
-        if header != want {
-            return Err(format!("functions.tsv header is {header:?}, want {want:?}"));
-        }
-        let mut rows = Vec::new();
-        for (n, line) in lines.enumerate() {
-            let f: Vec<&str> = line.split('\t').collect();
-            if f.len() != 8 {
-                return Err(format!("functions.tsv line {}: {} fields, want 8", n + 2, f.len()));
-            }
-            let kind = match f[2] {
-                "function" => RowKind::Function,
-                "terminal" => RowKind::Terminal,
-                "constant" => RowKind::Constant,
-                o => return Err(format!("functions.tsv line {}: kind {o:?}", n + 2)),
-            };
-            let args = if f[4].is_empty() { Vec::new() } else { f[4].split(';').map(|a| ty_of(a, f[1])).collect::<Result<Vec<_>, _>>()? };
-            let declares = if f[7].is_empty() { Vec::new() } else { unescape(f[7]).lines().map(str::to_string).collect() };
-            rows.push(TrueRow { name: f[1].to_string(), kind, out: ty_of(f[3], f[1])?, args, spelling: unescape(f[5]), note: unescape(f[6]), declares });
-        }
-        let text = read(dir, "constants.tsv")?;
-        let mut constants: BTreeMap<Ty, Vec<String>> = BTreeMap::new();
-        for (n, line) in text.lines().skip(1).enumerate() {
-            let f: Vec<&str> = line.split('\t').collect();
-            if f.len() != 3 {
-                return Err(format!("constants.tsv line {}: {} fields, want 3", n + 2, f.len()));
-            }
-            let idx: usize = f[1].parse().map_err(|e| format!("constants.tsv line {}: {e}", n + 2))?;
-            let v = constants.entry(ty_of(f[0], "constants.tsv")?).or_default();
-            if idx != v.len() {
-                return Err(format!("our software has a bug: constants.tsv line {}: index {idx} is not the next of {}", n + 2, f[0]));
-            }
-            v.push(unescape(f[2]));
-        }
-        let names: Vec<String> = types.iter().map(|d| d.dual.clone()).collect();
-        let type_name = |t: Ty| match t {
-            Ty::Wgsl(i) => names.get(i as usize).cloned().unwrap_or_default(),
-            o => format!("{o:?}"),
-        };
-        let loops = rows.iter().map(|r| loop_row(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
-        let solo = rows.iter().map(|r| solo_body(r, &type_name)).collect::<Result<Vec<_>, _>>()?;
-        let meta = read(dir, "interface.tsv")?;
-        let get = |key: &str| meta.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, v)| v.to_string()).ok_or_else(|| format!("interface.tsv has no {key}"));
-        let gene_roots = match get("gene_roots") {
-            Ok(v) => v.split(';').map(|t| ty_of(t, "interface.tsv gene_roots")).collect::<Result<Vec<_>, _>>()?,
-            Err(_) => Vec::new(),
-        };
-        let linker = get("linker").ok();
-        if let Some(l) = &linker {
-            let row = rows.iter().find(|r| &r.name == l).ok_or_else(|| format!("our software has a bug: interface.tsv names the linker {l}, which is not a row"))?;
-            if row.args != gene_roots {
-                return Err(format!("our software has a bug: the linker {l} takes {:?}, the gene roots are {gene_roots:?}", row.args));
-            }
-        }
-        Ok(TrueKingdom {
-            gene_roots,
-            linker,
-            dir: dir.to_path_buf(),
-            root: ty_of(&get("root")?, "interface.tsv root")?,
-            fuel_budget: get("fuel_budget")?.parse().map_err(|e| format!("interface.tsv fuel_budget: {e}"))?,
-            types,
-            rows,
-            constants,
-            prologue: read(dir, "prologue.wgsl")?,
-            declarations: read(dir, "declarations.wgsl")?,
-            loops,
-            solo,
-            scaffold: read_scaffold(dir)?,
-            rows_kingdom: None,
-        })
-    }
-
     /// THE KINGDOM FROM ITS ROWS (plan 7.7 task K3): every consumer of a `TrueKingdom` (the typed device's draws, the
     /// runner, the share pass, the optimisers) reads the alphabet as `TrueRow`s, so the rows kingdom's alphabet is laid
     /// out as one: symbol `s` of the contract is row `s` (a Dc constant a `Constant` row, a `var.T` terminal and a
@@ -295,7 +132,7 @@ impl TrueKingdom {
             .data_types
             .iter()
             .enumerate()
-            .map(|(i, d)| WgslDual { index: i as u16, reference: format!("T{:04}", i + 1), dual: d.name.clone(), slot: d.name.clone(), form: String::new(), lanes: 1, literal: None })
+            .map(|(i, d)| WgslDual { index: i as u16, dual: d.name.clone(), slot: d.name.clone() })
             .collect();
         let n = rows.contract.n_symbols();
         let mut table_rows = Vec::with_capacity(n);
@@ -466,10 +303,10 @@ impl TrueKingdom {
     }
 
     /// The plain workgroup pool's words (`pool.py` P_WORDS, an interface's `pool_words`): its prologue declares
-    /// `wg_pool: array<u32, P + 4>` (four guard words); [`crate::wgsl::true_reader::P_WORDS`] for a table with no pool.
+    /// `wg_pool: array<u32, P + 4>` (four guard words); [`P_WORDS`] for a table with no pool.
     pub fn pool_words(&self) -> u64 {
         let decl = self.prologue.lines().find_map(|l| l.trim().strip_prefix("var<workgroup> wg_pool: array<u32, ").and_then(|r| r.strip_suffix(">;")).and_then(|n| n.trim().parse::<u64>().ok()));
-        decl.map_or(crate::wgsl::true_reader::P_WORDS, |n| n.saturating_sub(4))
+        decl.map_or(P_WORDS, |n| n.saturating_sub(4))
     }
 
     /// A constant node's value, when its `C_T` text is an unsigned integer.
@@ -745,24 +582,6 @@ impl TrueKingdom {
 /// A scaffold variant (section 10): its name and its pieces (piece -> text).
 pub type Variant<'k> = (&'k str, &'k BTreeMap<String, String>);
 
-/// `scaffold.tsv` (countsort.py): one row per (variant, piece), the text escaped as `functions.tsv` escapes it.
-fn read_scaffold(dir: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
-    let p = dir.join("scaffold.tsv");
-    let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    if !p.exists() {
-        return Ok(out);
-    }
-    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-    for line in text.lines().skip(1) {
-        let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 3 {
-            return Err(format!("{}: a row of {} fields: {line:.60}", p.display(), f.len()));
-        }
-        out.entry(f[0].to_string()).or_default().insert(f[1].to_string(), unescape(f[2]));
-    }
-    Ok(out)
-}
-
 /// `{N}`, `{N:F}` and `{v}` of a spelling; every other brace is copied.
 pub fn substitute(spelling: &str, kids: &[String], value: Option<&str>) -> Result<String, String> {
     let b = spelling.as_bytes();
@@ -916,10 +735,6 @@ pub fn random_gene_weighted(k: &KingdomContract, layout: &GeneLayout, const_len:
 mod tests {
     use super::*;
 
-    fn kingdom() -> TrueKingdom {
-        TrueKingdom::load(&default_dir()).unwrap_or_else(|e| panic!("{e}"))
-    }
-
     #[test]
     fn substitution_copies_wgsl_braces_and_fills_arguments() {
         let kids = vec!["16 16".to_string(), "x".to_string()];
@@ -929,209 +744,19 @@ mod tests {
         assert!(substitute("{v}", &[], None).is_err());
     }
 
-    /// The kingdom check of rev 4 section 1 passes on the generated table: one output per symbol, ordered signatures,
-    /// a terminal for every demanded type; the bound table at N = 8 is printed.
+    /// The bridge from the rows: one `TrueRow` per contract symbol, the rows' relations pass the kingdom check, and a
+    /// random gene renders through the decoder with a work bound.
     #[test]
-    fn the_generated_table_passes_the_kingdom_check_and_prints_its_bound_table() {
-        let k = kingdom();
-        let r = k.relations();
-        let c = r.check().unwrap_or_else(|d| panic!("{} defects, first: {:?}", d.len(), &d[..d.len().min(5)]));
-        assert_eq!(c.roots(), &[k.root]);
-        eprintln!("{}", crate::kingdom_contract::report(&r, 8));
-        eprintln!("{}", k.bound_table(&c, 8).unwrap());
-        let heads = c.heads_from_program_size(k.root, 8).unwrap();
-        let b = c.bounds(k.root, &heads).unwrap();
-        assert!(b.width() > 0);
-    }
-
-    /// A small table by hand: one type R, a binary function and a terminal; `h = 1 + (N - 1) * 2`, so at N = 4,
-    /// H = 7; with a second type T (R -> T -> R, a unary each) the sum is over both heads.
-    #[test]
-    fn the_head_total_is_the_sum_of_the_heads_of_a_small_table() {
-        let (r, t) = (Ty::Wgsl(0), Ty::Wgsl(1));
-        let one = relations_from_rows("one", vec![r], &[("add".into(), vec![r, r], r), ("x".into(), vec![], r)], &[]).check().expect("one type");
-        assert_eq!(head_total_of(&one, r, 4).expect("H"), 7);
-        let two = relations_from_rows("two", vec![r], &[("f".into(), vec![t], r), ("g".into(), vec![r], t), ("x".into(), vec![], r), ("y".into(), vec![], t)], &[]).check().expect("two types");
-        let heads = two.heads_from_program_size(r, 4).expect("heads");
-        assert_eq!(head_total_of(&two, r, 4).expect("H"), heads.values().sum::<usize>() as u64);
-        assert!(head_total_of(&two, r, 4).expect("H") > 4, "more than N");
-    }
-
-    /// The crash configuration: K = 2 (2026-10-21 17:33), the Gram dispatch (the 128 x 64 rung, a 16 x 16
-    /// workgroup) is over the cap, and so is even the unit-test dispatch (one workgroup); K = 0 at the unit-test
-    /// dispatch is under it. The tables here are the K = 0 tables (a lower H than the K = 2 ones).
-    #[test]
-    fn the_crash_configuration_k2_with_the_gram_dispatch_is_refused_and_the_unit_test_at_k0_runs() {
-        use crate::wgsl::gram::{band_layout, submit_invocations, RUNGS};
-        use crate::wgsl::render::Grid;
-        use crate::wgsl::work_guard::work_bound;
-        let k = kingdom();
-        assert!(k.fuel_budget <= 1, "interface.tsv is at fuel_budget 0 or 1 for the compiler and validity test");
-        let c = k.relations().check().expect("check");
-        let h = k.head_total(&c, 8).expect("H");
-        let grid = Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false };
-        let (d, m) = RUNGS[0];
-        let bands = band_layout(d, m, 1 << 30);
-        let rung = submit_invocations(grid, d, bands.band_rows.min(d), bands.item_bands);
-        assert_eq!(rung, 64 * 256, "8 x 8 workgroups of 256");
-        let crash = Fuel::Kingdom { h, k: 2 };
-        let e = crash.check("the Gram rung", rung).expect_err("K = 2 at the Gram dispatch");
-        eprintln!("H = {h}: K = 2 at the 128 x 64 rung: {}; K = 0 unit test: {}; {e}", work_bound(h, 2, rung), work_bound(h, 0, 256));
-        assert!(k.fuel(&c, 8).expect("fuel").check("the unit test", 256).is_ok(), "the table's K at the unit-test dispatch");
-        let at_rung = k.fuel(&c, 8).expect("fuel").check("the Gram rung", rung);
-        assert_eq!(at_rung.is_ok(), k.fuel_budget == 0, "K = 0 is under the cap even at the rung, K = 1 is not: {at_rung:?}");
-    }
-
-    /// The image instance at K = 2: a literal loop of 5 trips holding a literal loop of 7 trips holding one register
-    /// store. Each node counts once per trip of every loop enclosing it: the bounds and the loop nodes themselves are
-    /// outside their own loops; the inner body (4 nodes) runs 35 times, the outer body (3 nodes) 5 times.
-    #[test]
-    fn a_tree_with_nested_literal_loops_is_bounded_by_the_product_of_their_trips() {
-        let k = TrueKingdom::load(&default_dir().join("img").join("volumepassage")).expect("the image table");
-        assert_eq!(k.fuel_budget, 2);
-        let set = node(&k, "reg.set_f_L2_f0", None, vec![node(&k, "reg.rf0", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])]);
-        let inner = node(&k, "loop.tile_L1_f0", None, vec![node(&k, "literal.lit64", Some("7"), vec![]), node(&k, "block.one_L2_f0", None, vec![set])]);
-        let outer = node(&k, "loop.tile_L0_f1", None, vec![node(&k, "literal.lit64", Some("5"), vec![]), node(&k, "block.one_L1_f1", None, vec![inner])]);
-        let grid = node(&k, "grid.of", None, vec![node(&k, "literal.shape", Some("8 8"), vec![]), node(&k, "literal.blk_col", Some("1"), vec![]), node(&k, "literal.blk_row", Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
-        let entry = node(&k, "kernel.entry_safe", None, vec![grid, node(&k, "block.one_L0_f2", None, vec![outer]), node(&k, "own.block_O0_f2", None, vec![])]);
-        assert_typed(&k, &entry);
-        // outside: entry, grid (5), block.one_L0_f2, the outer loop and its bound, the epilogue = 10; outer body: block,
-        // inner loop, its bound = 3, x 5; inner body: block, set, register, value = 4, x 35
-        assert_eq!(k.tree_work_bound(&entry).expect("bound"), 10 + 3 * 5 + 4 * 35);
-        // the same loops with a bound that is not a literal (the domain's terminal) take the type's cap, 64 trips each
-        let outer_own = node(&k, "loop.tile_L0_f1", None, vec![node(&k, "own.u32_lit64", None, vec![]), node(&k, "block.one_L1_f1", None, vec![node(&k, "loop.tile_L1_f0", None, vec![node(&k, "own.u32_lit64", None, vec![]), node(&k, "block.one_L2_f0", None, vec![node(&k, "reg.set_f_L2_f0", None, vec![node(&k, "reg.rf0", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])])])])])]);
-        let entry_own = node(&k, "kernel.entry_safe", None, vec![entry.kids[0].clone(), node(&k, "block.one_L0_f2", None, vec![outer_own]), node(&k, "own.block_O0_f2", None, vec![])]);
-        assert_typed(&k, &entry_own);
-        assert_eq!(k.tree_work_bound(&entry_own).expect("bound"), 10 + 3 * 64 + 4 * 64 * 64);
-        // a workgroup reduction of class 2: its array is spelled inside its loop, so the array's node counts 4,096
-        // times (the reduction's trips), its element count once
-        let red = k.rows.iter().position(|r| r.name == "wg.reduce_add_f_11_L0_f0").expect("a reduction row");
-        assert_eq!(k.loops[red].as_ref().map(|l| (l.cap, l.inside.clone(), l.own_work)), Some((4096, vec![true, false], false)));
-        let tile = k.rows.iter().position(|r| r.name == "loop.tile_strided_L0_f0").expect("a strided row");
-        assert_eq!(k.loops[tile].as_ref().map(|l| (l.inside.clone(), l.literal_arg)), Some((vec![false, false, true], Some(0))), "the stride is bound by a let before the loop");
-        let c = k.relations().check().expect("check");
-        let h = k.head_total(&c, 8).expect("H");
-        assert!(k.tree_work_bound(&entry_own).expect("bound") <= u128::from(h) << 12, "never more than H * 2^(6K)");
-    }
-
-    /// Declarations are row data: a tree with no register, array, counter or loop row declares no variable; adding a
-    /// store of `rf3` declares `rf3` alone; a literal loop declares its bound and counter, and the encoded volumepassage
-    /// declares exactly the variables its text names, each once.
-    #[test]
-    fn a_tree_declares_only_the_variables_its_rows_name() {
-        let k = TrueKingdom::load(&default_dir().join("img").join("volumepassage")).expect("the image table");
-        let kf = k.fuel_budget;
-        let grid = || node(&k, "own.grid_grid", None, vec![]);
-        let vars = |src: &str| src.lines().filter(|l| l.starts_with("var ")).map(str::to_string).collect::<Vec<_>>();
-        let bare = node(&k, "kernel.entry_safe", None, vec![grid(), node(&k, &format!("own.block_L0_f{kf}"), None, vec![]), node(&k, &format!("own.block_O0_f{kf}"), None, vec![])]);
-        assert_typed(&k, &bare);
-        let src = k.render(&bare).expect("render");
-        assert_eq!(vars(&src), Vec::<String>::new(), "a tree with no register row declares nothing:\n{src}");
-        let set = node(&k, &format!("reg.set_f_L0_f{kf}"), None, vec![node(&k, "reg.rf3", None, vec![]), node(&k, "literal.real", Some("1.0"), vec![])]);
-        let one = node(&k, "kernel.entry_safe", None, vec![grid(), node(&k, &format!("block.one_L0_f{kf}"), None, vec![set]), node(&k, &format!("own.block_O0_f{kf}"), None, vec![])]);
-        assert_typed(&k, &one);
-        assert_eq!(vars(&k.render(&one).expect("render")), vec!["var rf3: f32 = 0.0;".to_string()]);
-        let tree = crate::wgsl::cuneus_originals::volumepassage(&k).unwrap_or_else(|g| panic!("table gaps: {g:?}"));
-        let src = k.render(&tree).expect("render");
-        let declared = vars(&src);
-        let mut names: Vec<String> = declared.iter().map(|l| l["var ".len()..l.find(':').expect("a typed var")].to_string()).collect();
-        let n = names.len();
-        names.sort();
-        names.dedup();
-        assert_eq!(names.len(), n, "each declared once: {declared:?}");
-        let body: String = src.lines().filter(|l| !l.starts_with("var ")).collect::<Vec<_>>().join("\n");
-        for name in &names {
-            assert!(body.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|w| w == name), "{name} is declared and never named");
-        }
-        assert!(names.contains(&"n1".to_string()) && names.contains(&"k1".to_string()) && !names.contains(&"rf63".to_string()), "{names:?}");
-    }
-
-    /// Every child's row outputs the type its parent's signature asks for at that slot.
-    fn assert_typed(k: &TrueKingdom, t: &Tree) {
-        let row = &k.rows[t.symbol as usize];
-        assert_eq!(row.args.len(), t.kids.len(), "{}", row.name);
-        for (i, kid) in t.kids.iter().enumerate() {
-            let kr = &k.rows[kid.symbol as usize];
-            assert_eq!(kr.out, row.args[i], "{} argument {i} is {} of {}, the signature asks for {}", row.name, kr.name, k.type_name(kr.out), k.type_name(row.args[i]));
-            assert_typed(k, kid);
-        }
-    }
-
-    /// A tree by row names; a constant placeholder names its `C_T` text.
-    /// A solo phase's body counts once a workgroup, and the body is the argument its spelling puts inside the
-    /// `if (lidx == ..)`: argument 0 of `wg.solo_*`, argument 1 of `wg.solo_at_*`, whose argument 0 is the uniform value
-    /// every invocation evaluates. At 256 invocations, `wg.solo_at_L0_f0(params.x, a body of 4 nodes, {})` is the row,
-    /// the uniform and the rest 256 times each and the body once: 772 (the body counted 256 times and the uniform once,
-    /// as when every `wg.solo_` row's argument 0 was taken for its body, gives 1,537).
-    #[test]
-    fn a_solo_at_rows_body_is_its_second_argument_and_counts_once_a_workgroup() {
-        let k = TrueKingdom::load(&default_dir().join("mod").join("kmeans_update_segmented")).expect("the segmented table");
-        let mut seen = (0, 0);
-        for (r, b) in k.rows.iter().zip(&k.solo) {
-            match (r.name.starts_with("wg.solo_at_"), r.name.starts_with("wg.solo_")) {
-                (true, _) => (assert_eq!(*b, Some(1), "{}", r.name), seen.0 += 1).1,
-                (false, true) => (assert_eq!(*b, Some(0), "{}", r.name), seen.1 += 1).1,
-                _ => assert_eq!(*b, None, "{}", r.name),
-            }
-        }
-        assert!(seen.0 > 0 && seen.1 > 0, "the table has both solo forms: {seen:?}");
-        let body = node(&k, "block.one_S0_f0", None, vec![node(&k, "stmt.block_S0_f0", None, vec![node(&k, "block.one_S0_f0", None, vec![node(&k, "own.stmt_S0_f0", None, vec![])])])]);
-        let at = node(&k, "wg.solo_at_L0_f0", None, vec![node(&k, "uniform.x", None, vec![]), body.clone(), node(&k, "own.block_L0_f0", None, vec![])]);
-        let none = BTreeMap::new();
-        assert_eq!(k.tree_work_bound_workgroup_in(&at, &none, 256).expect("bound"), 256 + 256 + 4 + 256);
-        let solo = node(&k, "wg.solo_L0_f0", None, vec![body, node(&k, "own.block_L0_f0", None, vec![])]);
-        assert_eq!(k.tree_work_bound_workgroup_in(&solo, &none, 256).expect("bound"), 256 + 4 + 256);
-        assert_eq!(k.tree_work_bound_workgroup_in(&at, &none, 1).expect("bound"), k.tree_work_bound_in(&at, &none).expect("bound"));
-    }
-
-    fn node(k: &TrueKingdom, name: &str, value: Option<&str>, kids: Vec<Tree>) -> Tree {
-        let i = k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}"));
-        let const_index = value.map(|v| k.constants[&k.rows[i].out].iter().position(|t| t == v).unwrap_or_else(|| panic!("{name}: no constant {v}")) as u32);
-        Tree { symbol: i as u32, const_index, kids }
-    }
-
-    /// `grid.of_rows_x` binds the output's rows to thread x: the ownership rows take the row axis the grid binds, so
-    /// a kernel storing 1.0 to its own cell covers every cell of the output, for both grids and every workgroup shape of
-    /// the table under test (its `C_T` of `grid.shape`), the non-square ones included.
-    #[cfg(feature = "gpu")]
-    #[test]
-    fn both_grids_cover_every_cell_of_the_output_on_the_device() {
-        use crate::wgsl::gram::{phi, Gram};
-        use crate::wgsl::oracle::device::Device;
-        let k = kingdom();
-        let shape_ty = k.rows.iter().find(|r| r.name == "literal.shape").expect("the shape placeholder").out;
-        let shapes = k.constants.get(&shape_ty).expect("C_T of grid.shape").clone();
-        let square = |s: &str| s.split_whitespace().collect::<Vec<_>>().windows(2).all(|w| w[0] == w[1]);
-        assert!(shapes.iter().filter(|s| !square(s)).count() >= 2, "the table has non-square shapes, so a swapped axis would miss cells: {shapes:?}");
-        let dev = Device::new().expect("device");
-        let (d, m) = (32usize, 4usize);
-        // four row bands of 8 rows: the output is not square per dispatch, so a swapped axis misses cells
-        let band_limit = (d * 4 * 8) as u64;
-        let mut cases = Vec::new();
-        for shape in &shapes {
-            cases.push(("grid.of", shape.as_str(), "literal.blk_col", "literal.blk_row"));
-            cases.push(("grid.of_rows_x", shape.as_str(), "literal.blk_row", "literal.blk_col"));
-        }
-        let kf = k.fuel_budget;
-        for (grid, shape, first, second) in cases {
-            let g = node(&k, grid, None, vec![node(&k, "literal.shape", Some(shape), vec![]), node(&k, first, Some("1"), vec![]), node(&k, second, Some("1"), vec![]), node(&k, "own.u32_ktile", None, vec![])]);
-            let store = node(
-                &k,
-                &format!("store.h_O0_f{kf}"),
-                None,
-                vec![
-                    node(&k, "safe.rowbase_as_row_h", None, vec![node(&k, "own.u32_rowbase_h", None, vec![])]),
-                    node(&k, "safe.colbase_as_col_h", None, vec![node(&k, "own.u32_colbase_h", None, vec![])]),
-                    node(&k, "literal.real", Some("1.0"), vec![]),
-                ],
-            );
-            let entry = node(&k, "kernel.entry_safe", None, vec![g, node(&k, &format!("own.block_L0_f{kf}"), None, vec![]), node(&k, &format!("block.one_O0_f{kf}"), None, vec![store])]);
-            assert_typed(&k, &entry);
-            let src = k.render(&entry).expect("render");
-            let gram = Gram::compile(&dev, &src, k.tree_fuel(&entry).expect("the tree's bound")).unwrap_or_else(|e| panic!("{grid} {shape}: {e}"));
-            let built = gram.build(&phi(d, m, 3), d, m, band_limit).expect("run");
-            let missed = built.h.iter().filter(|v| **v != 1.0).count();
-            assert_eq!(missed, 0, "{grid} {shape}: {missed} of {} cells not written", d * d);
+    fn the_rows_kingdom_lays_out_one_row_per_symbol_and_renders() {
+        for v in [crate::wgsl_rows::VARIANT, crate::wgsl_rows::IMAGE] {
+            let k = TrueKingdom::from_rows(crate::wgsl_rows::WgslRows::load_variant(v).expect("the rows")).expect("the bridge");
+            let c = k.relations().check().unwrap_or_else(|d| panic!("{v}: {} defects", d.len()));
+            assert_eq!(k.rows.len(), c.n_symbols(), "{v}");
+            let layout = GeneLayout::from_program_size(&c, k.root, 8).expect("layout");
+            let gene = random_gene(&c, &layout, &k.const_lens(), &mut Rng(7), Share::Half, true);
+            let tree = crate::typed_gep::express(&c, &layout, &gene, &k.const_lens()).expect("expresses").tree();
+            assert!(k.render(&tree).expect("renders").contains("fn main("), "{v}");
+            assert!(k.tree_work_bound(&tree).expect("the work bound") >= 1, "{v}");
         }
     }
 }

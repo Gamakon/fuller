@@ -1540,34 +1540,6 @@ mod tests {
         assert!(!SubmitPlan { rects: vec![(0, 0, 8, 8), (8, 0, 4, 8)] }.launches(&a), "a smaller rectangle does not hold the candidate's");
     }
 
-    /// THE TIMING SIZE IS ONE SUBMIT FOR THE ENCODED ORIGINAL. volumepassage read into the true kingdom (its own work bound,
-    /// `Fuel::Tree`, the encoded original's workgroup): at a picture of 256 x 256 the timing size is 64 x 64, the largest
-    /// power-of-two square the guard allows in one submit (128 x 128 needs more than one); at 64 the pass is one submit;
-    /// a proven kernel is one submit at the size itself.
-    #[test]
-    fn the_timing_size_is_single_submit_for_the_encoded_original() {
-        use crate::wgsl::cuneus_originals::{image_dir, volumepassage};
-        use crate::wgsl::true_kingdom::TrueKingdom;
-        use crate::wgsl::work_guard::{Fuel, CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT};
-        let kingdom = TrueKingdom::load(&image_dir("volumepassage")).expect("the volumepassage table");
-        let tree = volumepassage(&kingdom).expect("the original reads exactly");
-        let src = kingdom.render(&tree).expect("render");
-        let module = crate::wgsl::naga_shape::parse_unscanned(&src).expect("naga");
-        let ep = module.entry_points.iter().find(|e| e.name == "main").expect("main");
-        let wg = (ep.workgroup_size[0], ep.workgroup_size[1]);
-        let fuel = kingdom.tree_fuel(&tree).expect("fuel");
-        let cap = CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
-        let s = single_submit_size(&fuel, wg, 256, cap).expect("size").expect("a single-submit size");
-        assert_eq!(s, 64, "volumepassage: 64 x 64 (bound {:?} an invocation, workgroup {wg:?})", fuel.per_invocation());
-        let per = fuel.workgroups_per_submit(u64::from(wg.0 * wg.1), cap).expect("split");
-        assert_eq!(tiles(s.div_ceil(wg.0), s.div_ceil(wg.1), per).len(), 1, "one submit at the timing size");
-        assert!(tiles(128u32.div_ceil(wg.0), 128u32.div_ceil(wg.1), per).len() > 1, "128 x 128 is more than one submit");
-        assert_eq!(single_submit_size(&fuel, wg, 64, cap).expect("size"), Some(64));
-        assert_eq!(single_submit_size(&fuel, wg, 100, cap).expect("size"), Some(64), "a power of two at most the size");
-        assert_eq!(single_submit_size(&Fuel::Proven("a test"), (8, 8), 256, cap).expect("size"), Some(256));
-        assert_eq!(single_submit_size(&Fuel::Tree { per_invocation: cap + 1 }, (1, 1), 256, cap).expect("size"), None, "not even one invocation fits");
-    }
-
     /// A PAIR'S TIMESTAMPS COME FROM ONE COMMAND BUFFER: every submit's command buffer holds the reference's warm-ups
     /// first, then exactly one timed candidate dispatch and one timed reference dispatch of that same submit, in the
     /// order asked; every pass (warm-ups included) has its own begin and end query, the queries of all submits are

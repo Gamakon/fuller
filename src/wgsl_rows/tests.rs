@@ -73,10 +73,10 @@ fn two_hundred_random_genes_pass_naga_n_of_n() {
 fn naga_n_of_n(kernels: &[(Vec<u32>, Tree, WgslProgram)]) {
     let mut failures = Vec::new();
     for (i, (_, _, p)) in kernels.iter().enumerate() {
-        let module = match naga::front::wgsl::parse_str(&p.text) {
+        let module = match crate::wgsl::naga_shape::parse(&p.text) {
             Ok(m) => m,
             Err(e) => {
-                failures.push(format!("gene {i}: parse: {}\n{}", e.emit_to_string(&p.text), p.text));
+                failures.push(format!("gene {i}: parse: {e}\n{}", p.text));
                 continue;
             }
         };
@@ -278,7 +278,7 @@ fn the_share_pass_binds_repeated_values_and_the_kernel_still_validates() {
     assert!(after.text.contains("let u1: u32 = ((lin * 4u) + cfg_d);"), "{}", after.text);
     assert!(after.text.contains("h[min(u1, arrayLength(&h) - 1u)] = rf1;"), "{}", after.text);
     assert!(after.text.contains("rf0 = f32((u1 + lidx));"), "the use under the loop counter names the let: {}", after.text);
-    let module = naga::front::wgsl::parse_str(&after.text).unwrap_or_else(|e| panic!("{}\n{}", e.emit_to_string(&after.text), after.text));
+    let module = crate::wgsl::naga_shape::parse(&after.text).unwrap_or_else(|e| panic!("{e}\n{}", after.text));
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).expect("validates");
     // random kernels: every shared kernel validates and renders no more nodes than before. Random genes seldom repeat
     // a pure value of two nodes or more (measured 2026-11-05: none of these 200, most are loads and register reads),
@@ -290,7 +290,7 @@ fn the_share_pass_binds_repeated_values_and_the_kernel_still_validates() {
         let sh = k.share(&tree).unwrap_or_else(|e| panic!("gene {i}: {e}"));
         let p = k.program(&sh.tree).unwrap_or_else(|e| panic!("gene {i}: {e}"));
         assert!(p.nodes <= k.program(&tree).expect("renders").nodes + sh.lets);
-        let module = naga::front::wgsl::parse_str(&p.text).unwrap_or_else(|e| panic!("gene {i}: {}\n{}", e.emit_to_string(&p.text), p.text));
+        let module = crate::wgsl::naga_shape::parse(&p.text).unwrap_or_else(|e| panic!("gene {i}: {e}\n{}", p.text));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).unwrap_or_else(|e| panic!("gene {i}: {}\n{}", e.emit_to_string(&p.text), p.text));
     }
 }

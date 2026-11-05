@@ -609,38 +609,10 @@ pub fn regex_relations() -> KingdomRelations {
     crate::regex_typed::typed_regex_relations(false)
 }
 
-/// The WGSL kingdoms' rows with their ordered inputs, every dual a possible
-/// root. A `literal.*` terminal is the constant placeholder of its dual.
-#[cfg(feature = "wgsl")]
-fn wgsl_family_relations(k: &crate::wgsl::loader::WgslKingdom, kingdom: &str, roots: Option<&[&str]>) -> KingdomRelations {
-    let rows: Vec<(String, Vec<Ty>, Ty)> = {
-        let mut per_name: BTreeMap<&str, usize> = BTreeMap::new();
-        for r in &k.rows {
-            *per_name.entry(r.name.as_str()).or_default() += 1;
-        }
-        k.rows.iter().map(|r| (r.semantic_id(&k.duals, per_name[r.name.as_str()]), r.inputs.clone(), r.output)).collect()
-    };
-    let roots: Vec<Ty> = match roots {
-        Some(names) => k.duals.iter().filter(|d| names.contains(&d.dual.as_str())).map(crate::wgsl::loader::WgslDual::ty).collect(),
-        None => k.duals.iter().map(crate::wgsl::loader::WgslDual::ty).collect(),
-    };
-    let constants: Vec<&str> = rows.iter().filter(|(n, ins, _)| ins.is_empty() && (n.starts_with("literal.") || n.starts_with("const."))).map(|(n, _, _)| n.as_str()).collect();
-    relations_from_rows(kingdom, roots, &rows, &constants)
-}
-
-/// The older WGSL kingdom (`kingdoms/wgsl`, 83 duals): a program's root is `kernel.kernel`.
-#[cfg(feature = "wgsl")]
-pub fn wgsl_relations() -> KingdomRelations {
-    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WGSL, Some(&["kernel.kernel"]))
-}
-
-/// The live kingdom the v24 runs and the reader use (`kingdoms/safewgsl`). A
-/// program's root is `kernel.safe`, or `kernel.module` for several entry
-/// points; the other genes of a chromosome are homeotic definitions, referenced
-/// through a terminal of their own dual.
-#[cfg(feature = "wgsl")]
-pub fn safewgsl_relations() -> KingdomRelations {
-    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load_safe(), crate::wgsl::loader::SAFEWGSL, Some(&["kernel.safe", "kernel.module"]))
+/// The WGSL kingdom's relations from its rows (`kingdoms/master/`, a variant of `wgsl`: `wgsl.gram`, `wgsl.image`).
+pub fn wgsl_rows_relations(variant: &str) -> Result<KingdomRelations, String> {
+    let r = crate::wgsl_rows::WgslRows::load_variant(variant)?;
+    Ok(relations_from_tables(&r.tables, vec![r.entry.output]))
 }
 
 /// The TSR kingdom of `variant` over `n_inputs` columns (`kingdoms/tsr`, plan F3): every row with its
@@ -920,37 +892,24 @@ mod tests {
         assert!(!c.constant_capable(Ty::Pattern));
     }
 
-    /// The older WGSL kingdom (`kingdoms/wgsl`) passes the check, rooted at `kernel.kernel`: every demanded
-    /// dual has a terminal (`docs/PLAN_wgsl_terminals.md`).
-    #[cfg(feature = "wgsl")]
+    /// The WGSL kingdom's rows pass the check in both variants, each rooted at its one `kernel`.
     #[test]
-    fn wgsl_passes_the_kingdom_check() {
-        let c = wgsl_relations().check().unwrap_or_else(|d| panic!("{} defects, first: {:?}", d.len(), d.first()));
-        assert_eq!(c.roots().len(), 1);
+    fn the_wgsl_rows_pass_the_kingdom_check() {
+        for v in [crate::wgsl_rows::VARIANT, crate::wgsl_rows::IMAGE] {
+            let c = wgsl_rows_relations(v).expect("the rows").check().unwrap_or_else(|d| panic!("{v}: {} defects, first: {:?}", d.len(), d.first()));
+            assert_eq!(c.roots().len(), 1, "{v}");
+        }
     }
 
-    /// The live kingdom (`kingdoms/safewgsl`) passes the check: every demanded
-    /// dual has a terminal (`docs/PLAN_wgsl_terminals.md`).
-    #[cfg(feature = "wgsl")]
-    #[test]
-    fn safewgsl_passes_the_kingdom_check() {
-        let c = safewgsl_relations().check().unwrap_or_else(|d| panic!("{} defects, first: {:?}", d.len(), d.first()));
-        assert_eq!(c.roots().len(), 2);
-    }
-
-    /// Prints the bound tables the design asks for (SR, regex, both WGSL
-    /// kingdoms) at program sizes 8, 17 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
+    /// Prints the bound tables the design asks for (SR, regex, the WGSL
+    /// rows' two variants) at program sizes 8, 17 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
     #[test]
     fn the_kingdom_reports_print() {
         for n in [8usize, 17, 28, 32] {
-            let out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
-            #[cfg(feature = "wgsl")]
-            let out = {
-                let mut out = out;
-                out.push(report(&wgsl_relations(), n));
-                out.push(report(&safewgsl_relations(), n));
-                out
-            };
+            let mut out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
+            for v in [crate::wgsl_rows::VARIANT, crate::wgsl_rows::IMAGE] {
+                out.push(report(&wgsl_rows_relations(v).expect("the rows"), n));
+            }
             for o in out {
                 println!("{o}");
             }

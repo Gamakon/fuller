@@ -242,7 +242,5 @@ mod tests {
         assert!(e.contains("other: workgroup memory 36864 bytes exceeds the device's 32768"), "{e}");
         let unused = format!("var<workgroup> z: array<f32, 8192>;\n{}", mem(8192));
         t.validate(&module(&unused), &unused).unwrap();
-        let Err(e) = crate::wgsl::reader::read(&square) else { panic!("the reader admitted 64 x 32 invocations") };
-        assert!(e.contains("invocations"), "{e}");
     }
 }

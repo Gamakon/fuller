@@ -217,10 +217,6 @@ mod tests {
             let (g, s) = (b.find("self.fuel.check(").unwrap_or_else(|| panic!("{marker}: no guard")), b.find("queue.submit(").expect("a submit"));
             assert!(g < s, "{marker}: the guard comes after the submit");
         }
-        let harness = include_str!("harness.rs");
-        let b = body(harness, "fn exec<'p>(&self, k: &DeviceKernel, live: &mut [Live<'p>]");
-        let (g, s) = (b.find("self.fuel.check(").expect("harness exec: no guard"), b.find("pass.dispatch_workgroups(").expect("a dispatch"));
-        assert!(g < s, "harness exec: the guard comes after the dispatch is encoded");
         // The image harness (ST9): the guard is checked, with the dispatch's invocation count, before anything is encoded.
         let image = include_str!("image.rs");
         let b = body(image, "pub fn passes(&self, warmup: usize, repeats: usize)");
@@ -230,9 +226,6 @@ mod tests {
         let tile_loop = &b[b.find("for (c, tile) in self.tiles.iter().enumerate()").expect("the tile loop")..];
         let (g, s) = (tile_loop.find("self.fuel.check_under(").expect("no guard in the tile loop"), tile_loop.find("queue.submit(").expect("a submit"));
         assert!(g < s, "image run: a tile is submitted before its guard");
-        let example = include_str!("../../examples/wgsl_true_loop.rs");
-        assert!(example.contains("Gram::compile(dev, src, self.fuel.clone())") && example.contains("fuel.check(\"stage (c) at the unit-test dispatch\"") && example.contains("self.fuel.check(\"stage (c)\""), "wgsl_true_loop stage (c)");
-        assert!(example.find("fuel.check(\"stage (c) at the unit-test dispatch\"") < example.find("Device::new()"), "the guard comes before the device is opened");
     }
 
     #[test]
