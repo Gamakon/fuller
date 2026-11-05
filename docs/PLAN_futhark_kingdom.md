@@ -1407,6 +1407,21 @@ Claude sessions' memory is keyed by directory: copied, not moved, so nothing is 
 **Review.** Codex reviews this section (Fable is unavailable); its findings and their disposition are recorded under
 it; Andrew agrees; then the DAG of agents runs it.
 
+#### 6.2.2 Codex's review (2026-11-05 23:30Z) and the disposition of each finding
+
+| # | finding (Codex) | disposition |
+|---|---|---|
+| 1 | `filter-repo --to-subdirectory-filter fuller` gives `fuller/`, not `crates/fuller/`; nothing moves phylu into `crates/phylu` | **Accepted.** Filter straight to `crates/fuller`; one explicit commit `git mv`s phylu's crate files into `crates/phylu` before the merge. |
+| 2 | `hff` from `crates/<x>/Cargo.toml` is `../../hff`, not `../../../hff` | **Rejected, checked:** hff is a sibling of the repository (`gamakon/hff`), and `crates/<x>/` is two levels inside the repository, so it is `../../../hff`. The build check of stage C settles it. |
+| 3 | `futhark-rust-rt` and `futhark-wgpu-shim` declare their own `[workspace]`; "two crates" vs five members | **Accepted.** They stay independent: listed in the root `exclude`, their own locks kept, built with `--manifest-path` as today. The workspace has exactly the two crates plus `vendor/egglog`. The promise of one lock and one target applies to the workspace only. |
+| 4 | compile-time cross-repository paths: `phylu/src/futhark_eval/kmeans_converged/tests.rs:612` (`#[path]` to the k-means harness), `phylu/src/futhark_eval/measure/tests_kmeans_seed.rs:54` (`include_str!` of `seed.fut`) | **Accepted.** An explicit inventory of every `#[path]`, `include_str!`, `include_bytes!` and `../fuller` use, each rewritten by hand and checked by the build; the harness becomes a dependency where it can. |
+| 5 | layout-bound code: `phylu/build.rs:44`, `phylu/examples/wgsl_true_image_fit.rs:475` (`FULLER_DIR`), `fuller/docs/build_index.py:37,177`, `fuller/src/docs_index.rs:19-27` | **Accepted.** In the inventory; the docs index generator is rewritten for the one docs tree and its index regenerated in stage C. |
+| 6 | `CARGO_MANIFEST_DIR` assumes crate-local assets (kingdoms, tests, problems, docs) | **Accepted as a constraint:** each crate keeps its own assets inside its crate directory; tests run as `cargo test -p fuller` and `-p phylu` from a directory that is not the root. |
+| 7 | filter-repo rewrites every fuller hash: run cards, papers and tags name the old hashes | **Accepted.** Before filtering, the original fuller repository is pushed complete (all refs and tags) and kept archived read-only, so every old hash still resolves; filter-repo's `commit-map` is committed as `docs/fuller/COMMIT_MAP.tsv` (old hash, new hash). |
+| 8 | one lock and feature unification: `--all-features` turns on the PyO3 `python` feature; `vendor-egglog/Cargo.toml:188-193` profile settings are ignored outside the root | **Accepted.** No `--all-features`; an explicit feature matrix (each crate default, gpu, wgsl, gpu+wgsl, python via maturin, the helper crates on their own); the profile settings move to the root `Cargo.toml`; dependency versions are not centralised for neatness, the merged lock is checked against both old locks. |
+| 9 | Python: test `maturin develop` from `crates/fuller`, and hff's `pyproject.toml:31-33` asks PyPI for `fuller>=0.1` | **Accepted.** Both checked in stage C; hff's optional dependency is pointed at the local path. |
+| 10 | stage B needs clean trees: fuller has untracked `src/futhark_reader/kinds.rs`, phylu has modified and untracked files | **Accepted.** Stage B starts with a clean-tree audit of both repositories, each leftover committed or removed with a reason; the archive tags are checked to cover every unmerged branch before any branch is deleted. `kinds.rs` is Andrew's decision. |
+
 ## 7. Data types, properties and scope: the implementation plan (Andrew, 2026-11-05)
 
 The specification is `docs/DESIGN_futhark_types_and_properties.md` (agreed, commit `f66891be`), cited below as "the
