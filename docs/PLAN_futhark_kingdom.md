@@ -1709,6 +1709,14 @@ the four row kinds (fuller), a rows module loads it through `geneframe::schema` 
 phylu's typed device decodes on the rows (`typed_resolve`, `typed_layout`). No compatibility path: the old row forms
 and tables are deleted, programs worth keeping are kept as text.
 
+**K0 first (Andrew, 2026-11-05 ~20:45Z): one data warehouse of kingdoms.** Every kingdom lives in ONE set of tables
+under `kingdoms/master/`: `kingdoms.tsv` lists the kingdoms and their variants, and every row-kind table (data types,
+properties, arguments, flows, guards, entries) carries a `kingdom` column; loading a kingdom selects it and filters the
+rest (Futhark adds its problem view as a second filter). One writer helper; each generator replaces only its own
+kingdom's rows. **Export and import:** one kingdom, a variant or all of them, to a self-contained JSON file and back,
+to exchange and back up kingdoms; import checks rows as the loader does; export-all then import into empty tables is
+byte-identical (a fast test). Futhark and TSR move in first; K1 to K3 write into the warehouse, never per-kingdom files.
+
 | task | kingdom | rows (design section) | owner of the code | smoke test |
 |---|---|---|---|---|
 | K1 | symbolic regression | `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> subst.in0` (design 8.1); `T1`/`T2` deleted | fuller rows + phylu decoder | 1,000 random genes decode to legal expressions equal to the host twin; one 60 s phylu run on 2 laws, best fitness improves |
