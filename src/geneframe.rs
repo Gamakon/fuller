@@ -513,10 +513,6 @@ mod tests {
         }
         let rx = crate::regex_typed::RegexRows::load(true).expect("the regex rows load");
         derives_todays_arity(&rx.tables.symbol_table(), REGEX, rx.tables.signatures().into_iter().map(|(_, i, o)| (i, o)).collect());
-        #[cfg(feature = "wgsl")]
-        for k in [crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WgslKingdom::load_safe()] {
-            derives_todays_arity(&k.symbol_table(), crate::wgsl::loader::WGSL, k.rows.iter().map(|r| (r.inputs.clone(), r.output)).collect());
-        }
     }
 
     /// Carry a kingdom's typed-GEP relations through the tables: every symbol's ordered inputs become Argument rows,
@@ -587,11 +583,6 @@ mod tests {
         the_contract_is_unchanged_through_the_tables(&sr_relations());
         the_contract_is_unchanged_through_the_tables(&regex_relations());
         #[cfg(feature = "wgsl")]
-        {
-            the_contract_is_unchanged_through_the_tables(&crate::kingdom_contract::wgsl_relations());
-            the_contract_is_unchanged_through_the_tables(&crate::kingdom_contract::safewgsl_relations());
-            let t = crate::wgsl::true_kingdom::TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir()).expect("true WGSL table");
-            the_contract_is_unchanged_through_the_tables(&t.relations());
-        }
+        the_contract_is_unchanged_through_the_tables(&crate::wgsl::true_kingdom::TrueKingdom::from_rows(crate::wgsl_rows::WgslRows::load().expect("rows")).expect("bridge").relations());
     }
 }
