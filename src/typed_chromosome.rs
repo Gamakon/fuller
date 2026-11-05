@@ -79,7 +79,7 @@ pub enum ChromosomeDefect {
     AdfNodeType { id: AdfId, seq: usize, want: Ty, got: Ty },
     /// A function node `seq` with `got` of its `want` arguments present.
     AdfArity { id: AdfId, seq: usize, want: usize, got: usize },
-    /// A `?_T` node with no `C_T` index.
+    /// A node that takes a word (a `?_T`'s `C_T` index, a `var.T`'s `Dv_T` word) with none.
     AdfConstIndex { id: AdfId, seq: usize },
     /// A genic terminal in a body.
     AdfGenicTerminal { id: AdfId, seq: usize, symbol: SymbolId },
@@ -119,7 +119,7 @@ impl fmt::Display for ChromosomeDefect {
             ChromosomeDefect::AdfNodeParent { id, seq } => write!(f, "ADF {id} node {seq} has a parent that is not an earlier node or an argument index its parent does not take"),
             ChromosomeDefect::AdfNodeType { id, seq, want, got } => write!(f, "ADF {id} node {seq} fills a slot of type {want:?} and outputs {got:?}"),
             ChromosomeDefect::AdfArity { id, seq, want, got } => write!(f, "ADF {id} node {seq} has {got} of its {want} arguments"),
-            ChromosomeDefect::AdfConstIndex { id, seq } => write!(f, "ADF {id} node {seq} is a constant placeholder with no C_T index"),
+            ChromosomeDefect::AdfConstIndex { id, seq } => write!(f, "ADF {id} node {seq} takes a word (a constant placeholder's C_T index or a variable terminal's Dv word) and has none"),
             ChromosomeDefect::AdfGenicTerminal { id, seq, symbol } => write!(f, "ADF {id} node {seq} is genic terminal {symbol}; an ADF is one tree for the population"),
             ChromosomeDefect::AdfRefNotLower { id, seq, target, level, target_level } => {
                 write!(f, "ADF {id} (level {level}) node {seq} references ADF {target} at level {target_level}, which is not strictly lower")
@@ -236,7 +236,8 @@ pub struct AdfNode {
     pub symbol: SymbolId,
     pub parent_seq: Option<usize>,
     pub arg_index: Option<u32>,
-    /// The `C_T` index of a `?_T` node.
+    /// The word of a node that takes one ([`KingdomContract::takes_word`]): a `?_T` node's `C_T` index, or a `var.T`
+    /// node's `Dv_T` word (the name is the relation's column, kept from before the Dv lane).
     pub dc_index: Option<u32>,
 }
 
@@ -309,7 +310,7 @@ impl Adf {
                     return Err(ChromosomeDefect::AdfRefNotLower { id, seq, target: adf_id, level: self.level, target_level });
                 }
             }
-            if k.is_constant(n.symbol) && n.dc_index.is_none() {
+            if k.takes_word(n.symbol) && n.dc_index.is_none() {
                 return Err(ChromosomeDefect::AdfConstIndex { id, seq });
             }
             if seq == 0 {
@@ -1016,6 +1017,25 @@ mod tests {
         assert_eq!(AdfSet::new(&e, vec![empty, b2.clone()]).expect_err("empty"), ChromosomeDefect::AdfRoot { id: 1 });
         let no_index = Adf::from_tree(&e, 1, 0, &leaf(Q));
         assert_eq!(AdfSet::new(&e, vec![no_index, b2]).expect_err("constant"), ChromosomeDefect::AdfConstIndex { id: 1, seq: 0 });
+    }
+
+    /// A `var.T` in an ADF body with no Dv word is caught where the body is checked, as a `?_T` with no `C_T` index
+    /// is, not later at `write_back` (G2 code review finding 5).
+    #[test]
+    fn a_variable_terminal_in_an_adf_body_needs_its_word() {
+        let relations = relations_from_rows(
+            "h var",
+            vec![Ty::S],
+            &[("pair".to_string(), vec![Ty::S, Ty::I], Ty::S), ("s".to_string(), vec![], Ty::S), ("i".to_string(), vec![], Ty::I), ("var.I".to_string(), vec![], Ty::I)],
+            &[],
+        );
+        let k = relations.with_variables(&["var.I"]).expect("a terminal").check().expect("valid");
+        let (s, var_i): (SymbolId, SymbolId) = (1, 3);
+        let e = Epoch::new(&k, &[Ty::S], &[AdfDecl { id: 1, root: Ty::S, level: 0 }]).expect("epoch");
+        let without = Adf::from_tree(&e, 1, 0, &node(PAIR, vec![leaf(s), leaf(var_i)]));
+        assert_eq!(AdfSet::new(&e, vec![without]).expect_err("no word"), ChromosomeDefect::AdfConstIndex { id: 1, seq: 2 });
+        let with = Adf::from_tree(&e, 1, 0, &node(PAIR, vec![leaf(s), Tree { symbol: var_i, const_index: Some(7), kids: vec![] }]));
+        AdfSet::new(&e, vec![with]).expect("a var.T with its word");
     }
 
     #[test]

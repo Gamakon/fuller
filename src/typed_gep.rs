@@ -13,13 +13,13 @@
 //! code), so a one-type gene is exactly the physical Karva head, tail and Dc, and
 //! a kingdom with no `var.T` lays out exactly as before the Dv lane existed.
 //!
-//! `Dv_T` is a LANE PARALLEL to `head_T` and `tail_T`: word `r` of `Dv_T` belongs
+//! `Dv_T` is a lane beside `head_T` and `tail_T`: word `r` of `Dv_T` belongs
 //! to frame row `r` (the cell [`Frame::row_pos`] gives), whatever symbol that
 //! cell holds, and is read only when the cell expresses as `var.T`. It is never
 //! consumed in order as `Dc_T` is, so a `var.T` takes no `Dc_T` word and the Dc
 //! lengths are unchanged. Every operator that moves a head or tail cell moves its
 //! Dv word with it; an operator applied to a Dv span alone is a defect, since it
-//! would part a word from its cell (the adversarial review's M2). An index word
+//! would part a word from its cell. An index word
 //! is any `u32` below [`DV_WORDS`]; the decoder (G3) reads it modulo the
 //! variables in scope, so no draw or edit needs the environment.
 //!
@@ -50,6 +50,13 @@ pub enum Domain {
 
 /// An index word of `Dv_T` is any value below this (design 4, plan 7.1).
 pub const DV_WORDS: u32 = 1 << 16;
+
+/// The words [`GeneLayout::alphabet`] lists for a `Dv_T` cell, `0 .. DV_NEIGHBOURS`: the one-edit neighbours of an
+/// index word. The decoder reads a word modulo the `c` variables in scope, so words `0 .. c` name every variable once
+/// and these 64 reach every variable of any scope of up to 64, whatever the word held before; listing all
+/// [`DV_WORDS`] would give 65,535 neighbours of which at most `c` are different programs. A random draw or a point
+/// edit of a Dv word takes any word below [`DV_WORDS`] uniformly ([`GeneLayout::in_alphabet`] is the legal set).
+pub const DV_NEIGHBOURS: u32 = 64;
 
 impl Domain {
     pub fn name(self) -> &'static str {
@@ -281,8 +288,10 @@ impl GeneLayout {
 
     /// The values a mutation may write at `pos`: any symbol outputting `T` in
     /// `head_T`, a terminal outputting `T` in `tail_T`, an index below `C_T` in
-    /// `Dc_T`, any word below [`DV_WORDS`] in `Dv_T`. Enumerated before the draw,
-    /// so a drawn child is valid.
+    /// `Dc_T`. Enumerated before the draw, so a drawn child is valid. For a
+    /// `Dv_T` cell it lists the words below [`DV_NEIGHBOURS`] only, the bounded
+    /// neighbours of an index word; every word below [`DV_WORDS`] is legal there
+    /// ([`GeneLayout::in_alphabet`]), and a draw takes any of them.
     pub fn alphabet(&self, k: &KingdomContract, pos: usize, const_len: &BTreeMap<Ty, u32>) -> Vec<u32> {
         let key = self.key(pos);
         let t = key.domain_type;
@@ -290,11 +299,12 @@ impl GeneLayout {
             Domain::Head => (0..k.n_symbols() as SymbolId).filter(|s| k.output(*s) == t).collect(),
             Domain::Tail => k.terminals_of(t).to_vec(),
             Domain::Dc => (0..const_len.get(&t).copied().unwrap_or(0)).collect(),
-            Domain::Dv => (0..DV_WORDS).collect(),
+            Domain::Dv => (0..DV_NEIGHBOURS).collect(),
         }
     }
 
-    /// Whether `value` is in the alphabet of the cell at `pos` ([`GeneLayout::alphabet`] without enumerating it).
+    /// Whether `value` is in the alphabet of the cell at `pos` ([`GeneLayout::alphabet`] without enumerating it); for a
+    /// `Dv_T` cell, whether it is a legal index word (below [`DV_WORDS`], a superset of the listed neighbours).
     pub fn in_alphabet(&self, k: &KingdomContract, pos: usize, value: u32, const_len: &BTreeMap<Ty, u32>) -> bool {
         let key = self.key(pos);
         let t = key.domain_type;
@@ -355,6 +365,15 @@ impl GeneLayout {
         Ok(())
     }
 
+    /// A row operator applied to the Dv table moves words without their cells: a defect whatever the words hold, so
+    /// it is reported before any column is looked at (rows `[lo, hi)` of the first Dv column name the range).
+    fn not_dv(&self, domain: Domain, lo: usize, hi: usize) -> Result<(), LayoutDefect> {
+        match self.columns(Domain::Dv).first() {
+            Some(c) if domain == Domain::Dv => Err(LayoutDefect::LaneMovedAlone { lo: c.off + lo, hi: c.off + hi }),
+            _ => Ok(()),
+        }
+    }
+
     /// Whether reversing `[lo, hi)` (with its Dv words) would change the gene.
     fn reversal_changes(&self, gene: &[u32], s: &Span, lo: usize, hi: usize) -> bool {
         let differs = |cells: &[u32]| cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b);
@@ -403,6 +422,7 @@ impl GeneLayout {
     /// `[lo, hi)` it has. Returns the columns that changed.
     pub fn invert_rows(&self, gene: &mut [u32], domain: Domain, lo: usize, hi: usize) -> Result<usize, LayoutDefect> {
         let rows = self.domain_rows(domain);
+        self.not_dv(domain, lo, hi)?;
         if lo >= hi || hi > rows {
             return Err(LayoutDefect::RowsOutsideTable { domain: Some(domain), lo, hi, rows });
         }
@@ -507,6 +527,9 @@ impl GeneLayout {
     pub fn invert_rel(&self, gene: &mut [u32], domain: Domain, lo: u64, hi: u64) -> Result<usize, LayoutDefect> {
         if lo >= hi || hi > FRAC_ONE {
             return Err(LayoutDefect::FractionOutsideUnit { lo, hi });
+        }
+        if let Some(c) = self.columns(Domain::Dv).first().filter(|_| domain == Domain::Dv) {
+            return Err(LayoutDefect::LaneMovedAlone { lo: c.off + frac_row(lo, c.len), hi: c.off + frac_row(hi, c.len) });
         }
         let mut changed = 0;
         for c in self.columns(domain) {
@@ -1486,7 +1509,8 @@ mod tests {
 
     /// A fingerprint of a kingdom's layouts (every root at N = 1, 8, 32: width and every frame's offsets and lengths)
     /// and of 200 random genes a root at N = 8 expressed (every node's symbol, word and position). The golden values
-    /// below were taken on the code before the Dv lane existed (fuller e526a62f).
+    /// below were taken on the code before the Dv lane existed (fuller e526a62f). Together the two tests below cover
+    /// 22 kingdoms: 19 in a default build, the three WGSL ones with `--features wgsl`.
     fn layout_and_words_fingerprint(r: &crate::kingdom_contract::KingdomRelations, const_len: &BTreeMap<Ty, u32>) -> u64 {
         let k = r.check().unwrap_or_else(|d| panic!("{}: {:?}", r.kingdom, d.first()));
         let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -1561,8 +1585,11 @@ mod tests {
         }
         kingdoms.push(("futhark".into(), crate::futhark_table::FutharkKingdom::load().expect("Futhark kingdom").relations()));
         kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
-        for inst in [crate::futhark_sig::REDUCE, crate::futhark_sig::SCAN, crate::futhark_sig::HISTOGRAM, crate::futhark_sig::PATHFINDER] {
+        for inst in [crate::futhark_sig::REDUCE, crate::futhark_sig::SCAN, crate::futhark_sig::HISTOGRAM, crate::futhark_sig::PATHFINDER, crate::futhark_sig::A7] {
             kingdoms.push((format!("futhark view {}", inst.name), crate::futhark_sig::load(&inst).expect("view loads").relations()));
+        }
+        for inst in [crate::futhark_pixel::VOLUMEPASSAGE, crate::futhark_pixel::CUNEUS, crate::futhark_pixel::IMAGE] {
+            kingdoms.push((format!("futhark pixel {}", inst.name), crate::futhark_pixel::load(&inst).expect("pixel view loads").relations()));
         }
         #[cfg(feature = "wgsl")]
         {
@@ -1586,6 +1613,13 @@ mod tests {
             ("futhark view scan", 0xd334_75fe_624f_a773),
             ("futhark view histogram", 0x3d88_a218_edc9_6378),
             ("futhark view pathfinder", 0x143c_67e8_b7d1_73ea),
+            // Added by the G2 code review's finding 7, each taken at e526a62f (the code before the Dv lane) by a
+            // copy of this fingerprint run there; the 14 above reproduced in that run. A7's view is the matrix
+            // kingdom's table, so it fingerprints as "futhark".
+            ("futhark view a7", 0x6c96_d430_8287_1fa2),
+            ("futhark pixel volumepassage", 0xe842_9cbb_b21a_e29f),
+            ("futhark pixel cuneus", 0x1172_991c_3c36_edd0),
+            ("futhark pixel image", 0x0ed5_4ee4_76aa_24d4),
             ("wgsl", 0xaca5_c7c1_66fa_1914),
             ("safewgsl", 0x0513_9731_15ba_6f78),
             ("true wgsl", 0x4119_d902_a24d_25aa),
@@ -1600,6 +1634,20 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "layouts or expressed words changed: {wrong:?}");
+    }
+
+    /// The k-means view (14,359 types) as the test above, in a test of its own because it is slow (about 95 s in a
+    /// release build): not ignored, timed, its seconds printed, as the repository runs its other k-means checks.
+    /// Golden taken at e526a62f, as the five added above.
+    #[test]
+    fn the_kmeans_view_lays_out_and_expresses_word_for_word_as_before_the_dv_lane() {
+        let t = std::time::Instant::now();
+        let r = crate::futhark_sig::load(&crate::futhark_sig::KMEANS).expect("view loads").relations();
+        let k = r.check().expect("checks");
+        assert!(k.types().iter().all(|t| !k.variable_capable(*t)), "k-means: no variable terminal");
+        let got = layout_and_words_fingerprint(&r, &consts_of(&r));
+        eprintln!("the k-means view's fingerprint: {:.1} s", t.elapsed().as_secs_f64());
+        assert_eq!(got, 0x9aaf_6e28_47c5_32ea, "the k-means view's layouts or expressed words changed: 0x{got:016x}");
     }
 
     // -- the variable terminal `var.T` and its Dv lane (plan 7 task G2) ------------------------------------------
@@ -1913,5 +1961,41 @@ mod tests {
         let mut h = g.clone();
         assert!(matches!(l.swap_range(&l, &mut g, &mut h, dv.off, dv.off + 1), Err(LayoutDefect::LaneMovedAlone { .. })));
         assert!(LayoutDefect::LaneMovedAlone { lo: 1, hi: 2 }.to_string().starts_with("our software has a bug: "));
+    }
+
+    /// A Dv cell lists `DV_NEIGHBOURS` words, not all `DV_WORDS`: the bounded one-edit neighbours of an index word,
+    /// every one legal; a word past them is still legal (G2 code review finding 4).
+    #[test]
+    fn a_dv_cell_lists_a_bounded_set_of_neighbour_words() {
+        let k = toy();
+        let l = GeneLayout::from_program_size(&k, Ty::S, 6).expect("layout");
+        for s in l.columns(Domain::Dv) {
+            for p in s.off..s.off + s.len {
+                let a = l.alphabet(&k, p, &toy_consts());
+                assert_eq!(a, (0..DV_NEIGHBOURS).collect::<Vec<_>>(), "Dv cell {p}");
+                assert!(a.iter().all(|w| l.in_alphabet(&k, p, *w, &toy_consts())));
+                assert!(l.in_alphabet(&k, p, DV_NEIGHBOURS, &toy_consts()) && l.in_alphabet(&k, p, DV_WORDS - 1, &toy_consts()));
+            }
+        }
+    }
+
+    /// A row inversion of the Dv table alone is `LaneMovedAlone` whatever the words hold: a range that reads the same
+    /// both ways, and a range of one row, are the defect too, never `Ok(0)` (G2 code review finding 6).
+    #[test]
+    fn a_row_inversion_of_the_dv_table_is_always_a_defect() {
+        let k = toy();
+        let l = GeneLayout::from_program_size(&k, Ty::S, 6).expect("layout");
+        let mut g = toy_gene(&k, &l, 5, 0);
+        for s in l.columns(Domain::Dv) {
+            g[s.off..s.off + s.len].fill(7);
+        }
+        let before = g.clone();
+        assert!(matches!(l.invert_rows(&mut g, Domain::Dv, 0, 2), Err(LayoutDefect::LaneMovedAlone { .. })), "a palindrome");
+        assert!(matches!(l.invert_rows(&mut g, Domain::Dv, 0, 1), Err(LayoutDefect::LaneMovedAlone { .. })), "one row");
+        assert!(matches!(l.invert_rel(&mut g, Domain::Dv, 0, FRAC_ONE / 2), Err(LayoutDefect::LaneMovedAlone { .. })), "relative, a palindrome");
+        assert!(matches!(l.invert_rel(&mut g, Domain::Dv, 0, 1), Err(LayoutDefect::LaneMovedAlone { .. })), "relative, no row");
+        assert_eq!(g, before);
+        // The other tables are unchanged by the check.
+        assert!(l.invert_rows(&mut g, Domain::Head, 0, 2).is_ok() && l.invert_rel(&mut g, Domain::Tail, 0, FRAC_ONE).is_ok());
     }
 }

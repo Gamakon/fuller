@@ -363,7 +363,13 @@ pub fn random_gene(a: &Alphabet, kingdom: &WgslKingdom, layout: &GeneLayout, sta
             Domain::Head => (k.functions_of(s.ty), k.terminals_of(s.ty).to_vec()),
             Domain::Tail => (&[], k.terminals_of(s.ty).to_vec()),
             Domain::Dc => (&[], (0..pools.get(&s.ty).map_or(0, Vec::len) as u32).collect()),
-            Domain::Dv => (&[], (0..typed_gep::DV_WORDS).collect()),
+            Domain::Dv => {
+                // Any index word below DV_WORDS, uniform: the draw the enumerated list made, without listing 65,536.
+                for w in &mut gene[s.off..s.off + s.len] {
+                    *w = (next_draw(state) % u64::from(typed_gep::DV_WORDS)) as u32;
+                }
+                continue;
+            }
         };
         if terminals.is_empty() && functions.is_empty() {
             return Err(gap("layout", format!("no symbol for the {:?} cells of {:?}", s.domain, s.ty)));
