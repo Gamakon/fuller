@@ -1354,7 +1354,7 @@ types falls from the cross product of data types, sizes and scopes to the data t
 and a gene from 27.6 million words to about 31,000 (design 7.1). Arity, the frames and Ferreira's sizing are
 unchanged; properties, requirements and bindings are read only after Karva has expressed the tree.
 
-**Status.** Design agreed; this plan; no code.
+**Status.** advisor review applied (aae172d8). Design agreed; this plan; no code.
 
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
@@ -1367,7 +1367,7 @@ view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kme
 | data model | fuller `src/geneframe.rs` | the six tables; a property expression (a size name, a literal, `?`, a sum kept symbolic, a property of an input); `Arity` derived from Argument rows; a kingdom with no property rows is today's |
 | contract | fuller `src/kingdom_contract.rs` | relations built from Argument rows (in and out); a `var.T` terminal of arity 0 per data type that has variables, flagged as constants are; the bounds give `T` an index-word array `Dv_T` of length `h_T + t_T`, one word a cell |
 | gene | fuller `src/typed_gep.rs` | `Domain::Dv`, `Frame::dv_off`/`dv_len`; `express` records the index word of each expressed `var.T` (beside `const_index`); `alphabet`, `mutate`, `write_back`, `spans`, `columns` and the row operators cover Dv |
-| decoder | fuller, new `src/typed_decode.rs` | passes 2 to 4 of the design, generic: the environment top-down (the root's from the entry's parameters, a child's from its parent's plus the Binding rows of its argument); `var.T` as the (w mod c)-th variable of `T`, `T`'s constant when c = 0; properties bottom-up; every Requirement checked, its failures listed per node |
+| decoder | fuller, new `src/typed_environment.rs` (not `typed_decode`: phylu has `src/evolve/typed_decode.rs`, and the merge of 6.2 would put two in sibling crates) | passes 2 to 4 of the design, generic: the environment top-down (the root's from the entry's parameters, a child's from its parent's plus the Binding rows of its argument); `var.T` as the (w mod c)-th variable of `T`, `T`'s constant when c = 0; properties bottom-up; every Requirement checked, its failures listed per node |
 | Futhark tables | fuller `kingdoms/futhark/master/*`, `sniff.py`, `view.py`, `gen_tables.py`, `src/futhark_view.rs`, `src/futhark_table.rs` | master 6: data types and property types replace `types.tsv`'s classes; each row's arguments, rules, requirements and bindings replace its `scope` quantifiers; `frames.tsv` becomes Binding rows; a view is the data types and rows the signature reaches |
 | render | fuller `src/futhark_table.rs`, `src/futhark.rs` | pass 5: the plain spelling, or the adapter of design section 5; the prelude holds `fit` and `clampix` |
 | interpreter, cost | fuller `src/futhark_sig.rs`, `src/futhark_cost.rs` | variables by the environment, not by the duals' contexts (`binder_slot`, `Ctx::of_dual`, line 1312 on); the adapters interpreted; the cost polynomial reads properties |
@@ -1380,46 +1380,60 @@ run on the host. An index word is any `u32` below 2^16: the decoder reads it mod
 or an edit needs no knowledge of the environment.
 
 **Two choices the design leaves to the plan, taken here (the lead writes them into master 6's README in F0):**
-1. **The depth cap.** Master 5's `shallow` rows (loops, reductions) stop at the view's `depth` to bound the work. It
-   becomes a requirement on the environment (pass 2 knows how many binders lie above), and a failing node renders as
-   its data type's constant, the substitution kind of adapter the design names for SR (section 8).
+1. **The work bound.** Master 5's `shallow` condition bounds the trips a program runs (witnesses M5, S6), not the
+   number of types. Futhark itself has no depth limit, and the head length bounds the nodes but not their nesting. So
+   the bound stays, as a property and a requirement: the environment (pass 2) carries `trips`, the binders above the
+   node (a `let` adds none), and every heavy row of S6's list requires `trips < depth`. A failing node renders as its
+   data type's constant, the substitution adapter of design section 8. Witness M5 is carried into master 6 against the
+   new columns. This is an application of the design's property and requirement model, written here in the plan, as
+   the design itself treats SR's depth (design section 8); the design document is not changed. Andrew agrees to this
+   in F0, since it is the one rule the design text does not state.
 2. **The `let` at the top.** A `let` anywhere is legal Futhark, so the `top` condition is dropped; `let` is a row
    whose argument 1 binds its value (a Binding row).
 
 Every data type has a constant (`0`, `0f32`, the zero tuple, the constant row function, and for an array a one-element
 array of zero whose length property is 1, to which `fit` applies). `{0.len}`-style placeholders let a spelling read a
 property (`next`: `i64.min ({0.bound} - 1) ({0} + 1)`). The design's first options stand: `fit` pads with the
-element's zero and truncates, `clampix` clamps, `map2` takes the shorter length; `?` is in the rule language from the
-start, though no master 6 row produces it; SR keeps `T1`/`T2` until 7.7.
+element's zero and truncates, `clampix` clamps, `map2` takes the shorter length; SR keeps `T1`/`T2` until 7.7.
+
+A size is an `i64` argument (design 3.1, `tabulate`: out.len = in0). Its value property is the size's name when the
+argument is a size variable of the environment (`n`, `k`, `d` from the entry's `[n]`), and `?` otherwise. A `?`
+size renders as `i64.max 1 (...)`, so every length is at least 1 and `clampix` stays in range. F0 lists, row by row,
+which master 5 spellings read `{D}` and how each reads its size in master 6. `?` is therefore produced from the
+start, by every computed size.
 
 ### 7.2 Tasks
 
 Each task is one agent, commits only its own paths, and ends with `RUSTFLAGS="-D warnings" cargo test` and clippy
-clean in its repository. Sizes are agent days, judged from the code each touches (line counts at `f66891be` and phylu
+clean in its own repository **and** `cargo test --no-run` in phylu (phylu builds against fuller by path). Master 6
+rows and views land beside master 5's; the master 5 path stays loadable until task D1. Sizes are agent days, judged from the code each touches (line counts at `f66891be` and phylu
 `95bf4317`).
 
 | task | repo | size | what | files | CPU tests | after |
 |---|---|---|---|---|---|---|
 | **G1** | fuller | 1 | the six tables and property expressions; Arity derived from Argument; the table check (positions dense, one output, rules and requirements name properties that exist, bindings name arguments that exist), each defect "our software has a bug: ..." | `src/geneframe.rs` (906 lines) | the SR, typed-depth and regex tables derive exactly today's Arity, row for row; a table with no property rows checks as today | none |
 | **G2** | fuller | 2 | the contract and the gene: `var.T`, `Dv_T`, the bounds, `express`, `walk_expressed`, `alphabet`, `mutate`, `write_back`, the row operators over Dv | `src/kingdom_contract.rs` (822), `src/typed_gep.rs` (1,331) | every existing `typed_gep` and contract test unchanged, and a kingdom with no `var.T` has today's width word for word; a tree with variables writes back and expresses to itself; an edit of a Dv cell changes no symbol | G1 |
-| **G3** | fuller | 2 | the decoder's passes 2 to 4, kingdom-free | new `src/typed_decode.rs` | the design's section 6 histogram as a test: the reference holds every requirement, the `tabulate` size changed to `k` fails exactly two; the same gene decodes twice to the same annotations; a kingdom with no property rows has no failures | G2 |
+| **G3** | fuller | 2 | the decoder's passes 2 to 4, kingdom-free; the environment's order is one public function, the only one F2, F3 and F4 use | new `src/typed_environment.rs` | the design's section 6 histogram as a test: the reference holds every requirement, the `tabulate` size changed to `k` fails exactly two; the same gene decodes twice to the same annotations, and the environment is the same across two processes (no HashMap order; `BTreeMap`); a kingdom with no property rows has no failures | G2 |
 | **F0** | lead | 0.5 | the master 6 format: columns, the property placeholders in spellings, the two choices above; five rows converted by hand as the example | `kingdoms/futhark/master/README` | none | G1 |
-| **F1** | fuller | 3 | master 6 (86 rows, the `C`, `D:dims`, `rank1`, `rows`, `pairs`, `vars` quantifiers gone); `frames.tsv` to Binding rows; `futhark_view.rs` (1,595) and `view.py` compute data types, not contexts; `sniff.py` writes the root environment with its properties; `gen_tables.py` (2,635) witnesses rewritten (every data type has a constant; every requirement has an adapter; every rule names existing properties) and the views re-pinned; `from_tables` reads the new columns | the files named | `view.py` and `futhark_view.rs` byte for byte; the type counts of 7.3 item 4 measured; the `i32` + `f32` k-means view loads | F0, G2 |
-| **F2** | fuller | 2 | pass 5: plain spelling or adapter; the prelude; binder names reproduce today's `var_name` (`i_n`, `s3_f32`, `s_a_n`) from data type, properties and ordinal, so reference texts are unchanged; a prelude holds only the adapters its program uses, so a program with no failing requirement renders exactly as today; the ADF rendering | `src/futhark_table.rs` (515), `src/futhark.rs` | every reference program renders its published text byte for byte; each row of the design's section 5 table as a fixture `futhark check` accepts; 1,000 random genes a problem pass `futhark check`, N of N | F1, G3 |
-| **F3** | fuller | 2 | the interpreter's variable slots from the environment; `fit` and `clampix` interpreted; the cost model on properties, `costs.tsv` regenerated | `src/futhark_sig.rs` (2,729), `src/futhark_cost.rs` (520) | the first 8 random genes a problem compile and equal the interpreter bit for bit; every reference program's value and static cost as today | F2 |
-| **F4** | fuller | 1.5 | the reader emits `var.T` and its index | `src/futhark_reader.rs` (1,565) | `read(render(t)) = t` for every reference program; the pool's 842 programs read back with the same values on every stored case | F2 |
-| **F5** | fuller | 2 | the generated e-graph a sort a data type, the variable constructor, the bridge; the fold on closed subtrees | `gen_tables.py`'s e-graph part, `kingdoms/futhark/egraph.*`, `src/futhark_saturation.rs` (656), `src/saturated_fold.rs` | every extracted candidate writes back and renders its own text; the k-means reference's variants are today's texts; the extracted variable is in scope where written (a failure is a bug) | F1, G3 |
-| **P1** | phylu | 1.5 | the layout's Dv words and `CELL_DV`; the init draw of index words; `futhark_typed.rs` hands over the new contract | `typed_layout.rs` (745), `typed_init.rs`/`.wgsl`, `futhark_typed.rs` (1,499) | the host twin's draw expresses through G2's `express` on 1,000 genes a problem; the layout of a kingdom without `var.T` is today's word for word | G2 |
-| **P2** | phylu | 2 | the walk reports the index words it reads; the point mutation of index words; `LeafTable::build_point` and the same-signature classes take `var.T`; crossover, inversion and transposition over Dv spans | `walk.wgsl` (234), `typed_vary.rs` (2,237), `typed_vary.wgsl` (1,155) | the host twins: an edited index word changes only that word; row operators stay inside Dv spans | P1 |
-| **P3** | phylu | 1 | the start population: the reference program through the reader and `write_back`; its variants through F5 | `src/futhark_eval/evaluator/start.rs` (672), `fresh` | the start populations' reference and variant texts are today's (P regime, every problem) | F4, F5, P2 |
-| **L1** | lead | 1 | both repositories' full suites, clippy clean, the code review of each commit; the measured gene size (7.3 item 4); then the GPU checks (end of 7.2) | none | as named | P3, F3 |
+| **F1a** | fuller | 2 | master 6 rows and Binding rows; `sniff.py` writes the root environment with its properties; `view.py`; `gen_tables.py`'s witnesses (every data type has a constant; every requirement has an adapter; every rule names existing properties; M5 against the new columns) | `kingdoms/futhark/master/*`, `sniff.py`, `view.py`, `gen_tables.py` (table part) | `gen_tables.py --check` | F0 |
+| **F1b** | fuller | 1 | `futhark_view.rs` computes data types; `from_tables` reads the new columns | `src/futhark_view.rs`, `src/futhark_table.rs` (loader) | `view.py` and `futhark_view.rs` byte for byte; the `i32` + `f32` k-means view loads; the pixel family's tests unchanged | F1a, G2 |
+| **F2** | fuller | 2 | pass 5: plain spelling or adapter; the prelude; binder names reproduce today's `var_name` (`i_n`, `s3_f32`, `s_a_n`) from data type, properties and ordinal, so reference texts are unchanged; a prelude holds only the adapters its program uses, so a program with no failing requirement renders exactly as today; the ADF rendering | `src/futhark_table.rs` (515), `src/futhark.rs` | every reference program renders its published text byte for byte; each row of the design's section 5 table as a fixture `futhark check` accepts; 1,000 random genes a problem pass `futhark check`, N of N; nested binders of the same data type and properties render distinct names, and the interpreter and the `c` backend agree on them; the rendered text is the same across two processes | F1b, G3 |
+| **F3** | fuller | 2 | the interpreter's variable slots from the environment; `fit` and `clampix` interpreted; the cost model on properties, `costs.tsv` regenerated | `src/futhark_sig.rs` (2,729), `src/futhark_cost.rs` (520); `costs.tsv` through `gen_tables.py` only after F5 has committed (F3 after F5 for `gen_tables.py`) | all 1,000 genes a problem also run on the interpreter on one stored case with no run-time error (the interpreter checks bounds and sizes as Futhark does), and 100 of them compile on the `c` backend and run, N of N, equal to the interpreter bit for bit; every reference program's value and static cost as today | F2 |
+| **F4** | fuller | 1.5 | first, the lead asks Andrew about the untracked `src/futhark_reader/kinds.rs` (447 lines, owner unknown, not referenced by `futhark_reader.rs`); F4 does not touch it; then the reader emits `var.T` and its index | `src/futhark_reader.rs` (1,565) | `read(render(t)) = t` for every reference program; the pool's 842 programs read back with the same values on every stored case | F2 |
+| **F5** | fuller | 2 | the generated e-graph a sort a data type, the variable constructor, the bridge; the fold on closed subtrees | `gen_tables.py`'s e-graph part, `kingdoms/futhark/egraph.*`, `src/futhark_saturation.rs` (656), `src/saturated_fold.rs` | every extracted candidate writes back and renders its own text; the k-means reference's variants are today's texts; the extracted variable is in scope where written (a failure is a bug) | F1b, G3 |
+| **P1** | phylu | 1.5 | the layout's Dv words and `CELL_DV`; the init draw of index words; `futhark_typed.rs` (test kingdom of G2; the `futhark_typed.rs` handover moves to P3); the frame-table readers at the new stride (`walk.wgsl`, `typed_init.wgsl`, `typed_vary.wgsl`, `typed_decode.wgsl`; host twins `typed_walk.rs`, `typed_decode.rs`, `typed_write_back.rs`) | `typed_layout.rs` (745), `typed_init.rs`/`.wgsl`, the readers named | the host twin's draw expresses through G2's `express` on 1,000 genes of G2's test kingdom; the layout of a kingdom without `var.T` is today's word for word | G2 |
+| **P2** | phylu | 2 | the walk reports the index words it reads; the point mutation of index words; `LeafTable::build_point` and the same-signature classes take `var.T`; crossover, inversion and transposition over Dv spans | `walk.wgsl` (234), `typed_vary.rs` (2,237), `typed_vary.wgsl` (1,155), `src/futhark_eval/rings.rs` (a Dv ring), `src/futhark_eval/operators.rs` (Dv spans), their tests (`rings/tests.rs`, `measure/tests_kmeans_seed.rs`) | the host twins: an edited index word changes only that word; row operators stay inside Dv spans; the ring walk edits index words | P1 |
+| **P3** | phylu | 1 | the start population: the reference program through the reader and `write_back`; its variants through F5; `futhark_typed.rs` hands over the new contract | `src/futhark_eval/evaluator/start.rs` (672), `fresh`, `futhark_typed.rs` (1,499) | the start populations' reference and variant texts are today's (P regime, every problem) | F4, F5, P2 |
+| **L1** | lead | 1 | both repositories' full suites, clippy clean, the code review of each commit; the measured gene size (7.3 item 4); then the GPU checks (end of 7.2) | none | as named; the gated GPU tests of symbolic regression, regex and WGSL, since the frame table's stride changed | P3, F3 |
+| **D1** | fuller + phylu | 0.5 | the deletions of 7.4; `Ty::MAX_FUTHARK_DUALS` and the test that the `i32` + `f32` view does not load turned into the test that it loads | the files of 7.4 | the pixel family's and the deprecated 1-D kingdom's tests unchanged; both full suites | L1 |
 
-About 21.5 agent days; the critical path G1, G2, G3, F2, F4, P3, L1 is about 10.5.
+About 22 agent days; the critical path G1, G2, G3, F2, F4, P3, L1, D1 is about 11 (F1a and F1b finish by day 4.5).
+Same-file overlaps kept apart: F3 after F5 for `gen_tables.py`; F1b and F2 both edit `futhark_table.rs`, in sequence.
 
 ```
-G1 ─> G2 ─> G3 ───┬─> F2 ─> F3 ──────────────┐
-G1 ─> F0 ─┐       │   F2 ─> F4 ─┐            │
-G2 ───────┴─> F1 ─┴─> F5 ───────┼─> P3 ──────┴─> L1 ─> GPU checks ─> R0 ─> 7.7 (only if Futhark works)
+G1 ─> G2 ─> G3 ───┬─> F2 ─> F3 (after F5) ────┐
+G1 ─> F0 ─> F1a ─┐│   F2 ─> F4 ─┐            │
+G2 ──────────────┴┴─> F1b ─> F5 ┼─> P3 ──────┴─> L1 ─> D1 ─> GPU checks ─> R0 ─> 7.7 (only if Futhark works)
 G2 ─> P1 ─> P2 ─────────────────┘
 ```
 
@@ -1431,7 +1445,10 @@ runs it and reads it.
 
 1. **Every random gene is legal.** For each Futhark problem (reduce, scan, histogram, pathfinder, a7, k-means `f32`,
    k-means `i32` + `f32`): 1,000 random genes express without a defect and every rendered program is accepted by
-   `futhark check`, N of N (F2), and the first 8 compile and equal the interpreter (F3). An adapter's failure is our
+   `futhark check`, N of N (F2). All 1,000 genes a problem also run on F3's interpreter on one stored case with no
+   run-time error (the interpreter checks bounds and sizes as Futhark does), and 100 of them compile on the `c` backend
+   and run, N of N, equal to the interpreter bit for bit (F3). The share of nodes with an adapter is a counter printed
+   here. An adapter's failure is our
    bug.
 2. **Reference programs are unchanged.** Every reference program (the four benchmarks', A7's reference, winner and
    planted slowdown, k-means's reference, planted slowdown and textbook form) renders to its published text byte for
@@ -1470,17 +1487,25 @@ it does). The pixel family and the deprecated 1-D kingdom keep their own types u
 ### 7.5 Risks
 
 1. **An index word can name another variable after an edit above it** (a binder added or removed shifts the
-   environment). The program stays legal. The share of point edits that change text outside the edited node is
-   measured on 20,000 edits a problem and reported, not gated.
+   environment). The program stays legal.
 2. **Binder names.** If today's names cannot be reproduced from data type and properties, the reference texts change
    and proof 2 fails; F2 finds this on its first day and the lead decides before F3.
-3. **The e-graph across scopes.** One sort a data type makes a variable in two scopes one e-node. Sound only while
-   every rule's right side reads no variable its left side does not (a `gen_tables.py` witness) and the bridge checks
-   scope on write-back.
+3. **The e-graph across scopes.** One sort a data type makes a variable in two scopes one e-node. Sound only under
+   a `gen_tables.py` witness: no rule's right side places a pattern variable under a binder other than the one it was
+   under on the left (a rule never changes a subtree's environment), and the bridge checks scope on write-back.
 4. **Adapters cost run time** where requirements fail; a gene whose properties all hold costs nothing extra. The share
-   of nodes with an adapter in a random population is reported with proof 1.
+   of nodes with an adapter is a counter printed by proof 1; no separate study.
 5. **Old genes.** Checkpoints and ledgers of master 5 genes do not load; a checkpoint is converted through its texts
    and the reader, an old result is reproduced at its own commit.
+
+### 7.5a Decisions for Andrew
+
+1. **The work bound** (7.1 choice 1): `trips < depth` on the heavy rows is a plan-level rule the design text does not
+   state; the design is unchanged, and Andrew confirms it in F0.
+2. **The computed-size adapter** (7.1): a `?` size renders as `i64.max 1 (...)`. Design section 5 lists `fit` and
+   `clampix` only; the plan applies this as an adapter without changing the design. Andrew confirms it in F0, or it
+   goes into the design.
+3. **`src/futhark_reader/kinds.rs`**, untracked, owner unknown: keep, commit or delete is Andrew's; F4 does not touch it.
 
 ### 7.6 Kept from the earlier draft
 
