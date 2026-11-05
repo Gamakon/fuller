@@ -1735,15 +1735,21 @@ stays Andrew's decision, with Fable's facts.
 ## 8. Typed Symbolic Regression (TSR) on the new data model (Andrew, 2026-11-05)
 
 TSR is Typed Symbolic Regression, Andrew's name (`kingdoms/tsr/README.md`). This section is the TSR plan that 7.7
-promised; it uses only G1 to G3, which are built, and touches no Futhark file.
+promised; it uses only G1 to G3, which are built, and touches no Futhark file in fuller (in phylu it shares the decoder
+with section 7, 8.8).
 
 **Objective.** TSR's two measured limits on the 133 SRBench laws, stream order at most 3 and at most 2 transcendentals
 on a path, become **properties** of one data type `F`, with **requirements** on them, instead of 34 types.
 **Approach.** The gene is the one-type SR gene; the decoder derives each node's depth and order bottom-up and, where a
-requirement fails, renders the node as its own first input. **What is unique.** The order limit, which lost as a
-decode-time rule (84.69 % against 85.61 %, `docs/PLAN_tsr_typed_gep.md` 1.2) and cost a gene 208 times wider as
-types, is a property rule of four lines and costs no gene width. **Status.** Planned; nothing built; advisor review applied (18584ffd, `docs/reviews/2026-11-05_section8_tsr_advisor_review.md`). **Why.** Andrew:
-"It finds laws, or it doesn't." The deciding run (8.7) counts laws found per problem, old TSR against new.
+requirement fails, renders the node as its own first input. Device and host decode with the same rule, so every path
+of the engine sees the same substituted tree. **What is unique.** The order limit, which lost as a decode-time rule
+(84.69 % against 85.61 %, `docs/PLAN_tsr_typed_gep.md` 1.2) and cost a gene 208 times wider as types, is a property
+rule of four lines and costs no gene width. An illegal shape stays representable in the gene and becomes
+**inexpressible** in the program, as GEP's tail already is. **Status.** Planned; nothing built; advisor review applied
+(18584ffd, `docs/reviews/2026-11-05_section8_tsr_advisor_review.md`); Fable (930028ce) and adversarial (5276d2a5)
+reviews applied (`docs/reviews/2026-11-05_section8_tsr_fable_review.md`,
+`docs/reviews/2026-11-05_section8_tsr_adversarial_review.md`). **Why.** Andrew: "It finds laws, or it doesn't." The
+deciding run (8.7) counts laws found per law and seed, old TSR against new.
 
 ### 8.1 Stream order, as the code defines it
 
@@ -1763,9 +1769,9 @@ order at most 2.
 
 | table | TSR rows |
 |---|---|
-| DataType | `F` only; its constant (a fitted constant `?`) has depth 0, order 1, family none, arm 1, ties 1; each input column, an entry parameter of `F`, has depth 0, order 1, fam 0, arm 1, ties 1 |
+| DataType | `F` only; its constant (a fitted constant `?`) has depth 0, order 1, family none, arm 1, ties 1; each input column, an entry parameter of `F`, has depth 0, order 1, fam 0, arm 1, ties 1 (the device stores a leaf's ties as 0, `typed_decode.wgsl:727`; a leaf's ties is never read, so test 3 does not compare that word on leaves) |
 | PropertyType on `F` | `depth`, `order`, `fam` (0 none, 1 sum, 2 product), `arm`, `ties`; kind `range` |
-| Argument | the 18 operators of `SymbolTable::wide()`, `F` in and out: today's single arity, derived (G1) |
+| Argument | the 18 operators of phylu's `SymbolTable::wide()` (`engine.rs:193`), `F` in and out: today's single arity, derived (G1) |
 | PropertyRule | arithmetic: `depth = max(in0.depth, in1.depth)`; raising unary (sin cos tan tanh psqrt plog pexp abs pasin pacos): `depth = in0.depth + 1`; level-keeping unary (neg pow2 pow3 pinv): `depth = in0.depth`; every unary: `order = in0.order`, `fam = 0`, `arm = in0.order`, `ties = 1`; add, sub, mul, pdiv: `fam = 1` (sums) or `2` (products), and one expression each for `arm`, `ties` and `order`, a new `PropertyExpr::Strahler { family, part }` over both inputs' four properties (`geneframe.rs:988`: one expression per property) |
 | Requirement | raising unary: `in0.depth <= 1 -> subst` (no `T3`); binary: `out.order <= 3 -> subst`; windows variant: the seven windowed unaries `in0.order <= 2 -> subst`. Each requirement group is a switch (depth, order ceiling, windows), so `props` writes all five of today's variants: single (none), depth, order, order_depth, order_depth_windows |
 | Binding | none. Inputs stay one terminal per data column, as in `single`, so the gene is `single`'s word for word |
@@ -1777,18 +1783,35 @@ subject in a kingdom with no heavy adapter (today `subst` is allowed only on `en
 
 **When a requirement fails: the node renders as its first input (`subst`), never as a constant.** Reasons: (1) the
 input has already passed every requirement below it, so the result is legal by induction, and a substituted node takes
-its input's properties (`typed_environment.rs`, `Substituted`), so its parent sees a legal profile; (2) it keeps
-expressed material the search built, where a constant erases the subtree (TSR_HARD1500 (arm C, types, no substitution) ends 16 of 26
-laws on a plain fallback, 7 of them with `(0*0)`, phylu `logs/TSR_HARD1500/sweep.log`; a constant substitute would push further that
-way); (3) for a transcendental it is the small-argument identity (`sin x ≈ x`, `tanh x ≈ x`). Every TSR function has
-an `F` input, so `subst.const` never arises. Depth is checked bottom-up, not by the top-down `env.trips` counter
-(which would give the same predicate), because the device's derivation is already bottom-up (8.3).
+its input's properties and family (`typed_environment.rs`, `Substituted`), so its parent sees a legal profile (the
+detail that bites: a sum whose child was a product and is now a leaf flattens differently); (2) it keeps expressed
+material the search built, where a constant erases the subtree (TSR_HARD1500 (arm C, types, no substitution) ends 16 of
+26 laws on a plain fallback, 7 of them with `(0*0)`, phylu `logs/TSR_HARD1500/sweep.log`; a constant substitute would
+push further that way); (3) for a transcendental it is the small-argument identity (`sin x ≈ x`, `tanh x ≈ x`). Every
+TSR function has an `F` input, so `subst.const` never arises. Depth is checked bottom-up, not by the top-down
+`env.trips` counter (which would give the same predicate), because the device's derivation is already bottom-up (8.3).
 
-The first input is always kept, so `a − b` and `a / b` become `a`; the expressed programs at initialisation shift
-towards smaller, left-heavy trees. The columns of 8.7 measure it. This is the change under test against old TSR (arm
-A): the order ceiling removes order-4 programs arm A accepts, and a depth-failing gene, unscored in arm A, is scored.
+**What the first input does to `sub` and `pdiv`.** A failing `a − b` or `a / b` becomes `a`: the operator is removed,
+not weakened, and the expressed programs at initialisation shift towards smaller, left-heavy trees. For a sum or
+product that fails on ties (two arms at order 3), dropping either tying arm restores legality; the first input is the
+cheapest rule, not the only one. The columns of 8.7 measure the bias; if depth-only wins and the full arm loses, the
+first thing to try is a substitution that drops the **later** tying arm and keeps the node. A dropped arm stays in the
+gene as silent material: several genes, one program (neutral, bounded by the fixed head, not bloat).
 
-### 8.3 Where requirements are checked: on the device, in the decoder
+This is the change under test against old TSR (arm A): the order ceiling removes order-4 programs arm A accepts, and a
+depth-failing gene, unscored in arm A, is scored.
+
+**The wrappers obey the same depth rule in every arm.** `LogAbs` and `SqrtAbs` are raising wrappers that the typer
+puts over a candidate body (`cand.wgsl:66`); today it refuses them over a depth-2 body only when `Config::typed_depth`
+is on (`EVOLVE_TYPED_DEPTH`). Setting `EVOLVE_TYPED_DEPTH=2` in the new arms would fail a gene in the device's type
+ladder (`typed_decode.wgsl:762`) before any substitution runs; leaving it unset would let a new arm wrap a depth-2 body
+in a log (depth 3, more candidates than arm A). **Decision: the rule moves into the properties.** In the `props` arms
+the typer reads the wrapper check from the props table (a wrapper is a raising unary at the root, so the body must
+have `depth <= 1`), and `EVOLVE_TYPED_DEPTH` is unset; in arm A `EVOLVE_TYPED_DEPTH=2` applies the same predicate.
+The three arms therefore allow exactly the same wrapped candidates over the same body depth; test 2 checks it, and each
+arm's full environment is written in `tsr_arms.json`.
+
+### 8.3 Where requirements are checked: on the device, in the decoder, and the host's one twin
 
 Today the type does the work at variation time (arm C: 34 duals, `typed_init`/`typed_vary` draw only legal rows), or
 the decoder rejects (arm A: `EVOLVE_TYPED_DEPTH=2`, `gene_ok = 0`, the gene "rides along unscored").
@@ -1800,8 +1823,27 @@ the decoder rejects (arm A: `EVOLVE_TYPED_DEPTH=2`, `gene_ok = 0`, the gene "rid
 | old type columns as a derived cache | arm C's layout: 20,980 words a gene, 62,940 an individual, 503.5 MB a population copy, 633 ms a generation (`PLAN_tsr_typed_gep.md` 3 and finding (e)) | rejected: it is the cost this model removes |
 
 The device reads per-op rule codes (`max`, `max+1`, `copy`, `strahler.sum`, `strahler.product`) and the requirement
-limits compiled from the TSR `KingdomTables` at load; a rule outside those codes is "our software has a bug". The host
-twin (`typed_decode.rs`) and fuller's `typed_environment.rs` decoder must give the same node array.
+limits compiled from the TSR `KingdomTables` at load; a rule outside those codes is "our software has a bug".
+
+**The host decodes the raw gene today, and that must end before any run.** For a single-layout kingdom phylu's
+`decode_host` (`engine.rs:7232-7237`) calls the flat `decode_gene`; only a `TsrTyped` kingdom goes through
+`codec.gpu_nodes`, `TsrTyped::new` refuses the single layout (`tsr_typed.rs:47-49`), and `typed_decode.rs`'s
+`decode_reference` is used only by tests (`tsr_typed.rs:745`). So every host path would read a tree the device never
+scored:
+
+| host path | where | what goes wrong under substitution |
+|---|---|---|
+| the stop bar's f64 confirm | `confirm_over`, `engine.rs:6291-6294` (`nodes_of_gene`, then `t_depth(n) <= c`) | scores the raw tree: the bar passes or fails on a tree that was never selected |
+| the reported model, hall of fame, finisher input | `math_of`, `engine.rs:9154` (`model_plain`) | prints a tree the device never scored |
+| beam | via `confirm_over` | as the confirm |
+| snap | `engine.rs:6398`, `6588-6598` (`node_to_gene_position`) | node index to gene position assumes one node a position: grafts land in silent material |
+| fold, typed snap | `engine.rs:7066`, `7388` | the device's nodes are paired with the raw `codec.nodes` tree, so positions disagree |
+
+**The host gets ONE decoder for the new TSR**: the host twin of the device's substituting decoder (`decode_reference`
+in `typed_decode.rs`, extended with the substitution, the `fam` word and each node's gene position), and `decode_host`,
+`nodes_of_gene`, `confirm_over`, `math_of`, `node_to_gene_position`, the beam, snap, fold and typed snap all call it
+for `props`. No host path decodes a `props` gene any other way. Task TP2 builds it; test 7 (8.6) is its gate. Fuller's
+`typed_environment.rs` decoder must give the same tree and the same substitution positions.
 
 ### 8.4 Gene size, before and after (N = 17, `PLAN_tsr_typed_gep.md` section 3)
 
@@ -1820,103 +1862,199 @@ C, which is not run.
 - **fuller** `src/geneframe.rs` (8.2's three additions); `src/typed_environment.rs` (the output subject; `subst` on
   property requirements); `kingdoms/tsr/gen_tables.py` (variant `props`, writing `kingdoms/tsr/props/` in master 6's
   column style: rows, rules, requirements) and `check_types.py` (its witness); `src/tsr_kingdom.rs` (`TsrVariant::Props`
-  loads `KingdomTables`); `src/kingdom_contract.rs` (the run card's gene width is equal in both arms).
+  loads `KingdomTables`); `src/kingdom_contract.rs` (the run card's gene width is equal in both arms);
+  `kingdoms/tsr/README.md` ("unrepresentable" becomes "inexpressible": the gene can hold an illegal shape, the program
+  cannot).
 - **phylu** `src/evolve/typed_decode.wgsl` and `typed_decode.rs` (substitution instead of `gene_failed`, rule codes
-  from the tables, `fam` word); `src/evolve/tsr_typed.rs` (the `props` variant on the single layout);
+  from the tables, `fam` word; `decode_reference` becomes the host's one decoder, with gene positions);
+  `src/evolve/engine.rs` (`decode_host`, `nodes_of_gene`, `confirm_over`, `math_of`, `node_to_gene_position`, the beam,
+  snap, fold and typed snap all through that decoder for `props`); `cand.wgsl` and the typer (the wrapper's depth check
+  from the props table, 8.2); `src/evolve/tsr_typed.rs` (the `props` variant on the single layout);
   `typed_write_back.rs` (a host rewrite is offered only if it decodes with no substitution, replacing `relevel`);
-  `engine.rs`, `card.rs` (`EVOLVE_SR_KINGDOM=props`, the run card names the requirements); `experiments/tsr_arms.json`
-  (arm `P`); `experiments/tsr_decide20.txt` and `scripts/tsr_decide.sh` (8.7).
+  `card.rs`, `examples/evolve_fit.rs` (`EVOLVE_SR_KINGDOM=props`, the feature beats, the run card names the
+  requirements); `experiments/tsr_arms.json` (arms `P` and depth-only, each arm's full environment);
+  `scripts/law_runner.py` (the bar as a parameter, five places, 8.7); `scripts/sr_old_new.py` (passes the bar, rotates
+  arm order per law, pairs any two arms, `--aggregate` refuses arms with different bars); `experiments/tsr_decide20.txt`
+  and `scripts/tsr_decide.sh` (8.7).
 
 ### 8.6 Tests
 
 1. **The same programs as today's typed variants.** Over check_types.py's exhaustive trees (up to 9 nodes) and its
-   300,000 random trees: a tree decodes with **no** substitution exactly when it has a typing in the matching typed variant, for all
-   five variants (single: never substituted). Python witness and Rust decoder both.
+   300,000 random trees: a tree decodes with **no** substitution exactly when it has a typing in the matching typed
+   variant, for all five variants (single: never substituted). Python witness and Rust decoder both.
 2. **Nothing illegal.** 100,000 random genes a variant: every decoded tree has `stream_order` ≤ 3 and `t_depth` ≤ 2
-   by the engine's own oracles (`order.rs:193`, `engine.rs:2354`), and the windows hold.
-3. **The GPU walk equals the host decoder.** 20,000 random genes a variant: node array, length, depth and hash word for
-   word against `typed_decode.rs`; `typed_decode.rs` against fuller's decoder on the tree and the substitution positions
-   (a gated GPU test, run by the lead).
-4. **Nothing changes where nothing fails.** A gene that passes arm A's decode check gives today's node array.
-5. **Every fuller feature the TSR runs use**, each with a test that its output decodes with no substitution or is not
-   offered: fold (device fold and `saturated_fold`), constant snap and typed snap, denoise and simplify (`denoise_k`),
-   the e-graph forms and physics candidates (`forms`, `physics` in the `chain` column), and share-equivalence (a
-   shared definition carries its properties, so a reference cannot hide depth or order). Task P2 owns all five.
+   by the engine's own oracles (`order.rs:193`, `engine.rs:2354`), and the windows hold; the same for every wrapped
+   candidate (`LogAbs`, `SqrtAbs` over the body), in all three arms of 8.7.
+3. **The GPU walk equals the host decoder.** 20,000 genes a variant **drawn until each has at least one
+   substitution** (random genes at head 34 may substitute rarely, and the test would then re-check the old path):
+   node array, length, depth and hash word for word against `typed_decode.rs` (leaf ties excepted, 8.2);
+   `typed_decode.rs` against fuller's decoder on the tree and the substitution positions (a gated GPU test, run by the
+   lead).
+4. **Nothing changes where nothing fails.** A gene that passes arm A's decode check gives today's node array; the old
+   arm's decode is unchanged byte for byte against today's binary (not 2026-10-20's), GPU and host.
+5. **Every fuller feature the TSR runs schedule**, each with a test that its output decodes with no substitution or is
+   not offered: fold (device fold and `saturated_fold`), constant snap and typed snap, denoise and simplify
+   (`denoise_k`), the e-graph forms and physics candidates (`forms`, `physics` in the `chain` column). Share-equivalence
+   has no test here: it is zero inside a fit by design (not in the live loop; the population Fold that would charge it
+   is not built), so it cannot see a substituted tree. Task TP3 owns this item.
 6. Determinism: the same gene decodes the same in two processes.
+7. **Every host path sees the device's tree.** On the 20,000 forced-substitution genes of test 3, through the engine's
+   own functions: `decode_host` and `nodes_of_gene` equal the device's array word for word; `confirm_over` on the best
+   row re-scores within f32 of the device's fitness; `math_of` parses back to the device's array; every graft position
+   from `node_to_gene_position` (snap, fold, typed snap, beam) is an expressed position.
+
+**The gate.** Tests 3, 4 and 7 are a gate, not a task: L1 runs them, and R1 does not start until all three are green.
+A silent disagreement between device and host would not crash; it would score one program and report another, and
+the run would still produce a table.
 
 ### 8.7 The benchmark, and the run that decides
 
-**The result to beat.** The last measured TSR law rate on development seeds is phylu `logs/SR_OLD_NEW` (2026-10-20,
-phylu `093aae96`, fuller `1e0c4667`; report `docs/reports/2026-10-20_sr_typed_gep.md`): TSR as run today, one type with
-the depth-2 decode check, seeds 7001 to 7010, 1,000,000 counted evaluations a seed, early stop at log10 p ≤ −19 and
-1 − R² ≤ 1e-6 (the value `scripts/law_runner.py` pins), the arm named "new": **380 of 400 seed-runs on the first 40
-laws** (run1) and **101 of 600 on the next 60** (run2); 33 laws not run (run3 stopped at law 28 of 33, no table).
+**History, not the comparison.** The last measured TSR law rate on development seeds is phylu `logs/SR_OLD_NEW`
+(2026-10-20, phylu `093aae96`, fuller `1e0c4667`; report `docs/reports/2026-10-20_sr_typed_gep.md`): TSR as run
+today, one type with the depth-2 decode check, seeds 7001 to 7010, 1,000,000 counted evaluations a seed, early stop at
+log10 p ≤ −19 and 1 − R² ≤ 1e-6, the arm named "new": **380 of 400 seed-runs on the first 40 laws** (run1) and
+**101 of 600 on the next 60** (run2); 33 laws not run (run3 stopped at law 28 of 33, no table). In all 2,560 seed-runs
+of that log (1,270 of them the "new" arm) the evaluations by source are `main` only, plus `typed_snap` in 241: fold,
+constant snap, share, beam and the finisher fired in none, because `fold_every` and `snap_every` were 20 and 1,000,000
+evaluations is 11 generations. (The 632 "fold:" notes in those streams are the end-of-run tidy of the reported model,
+`engine.rs:8290`, not the fold operator.) Every recorded TSR rate, and the order rule's earlier loss, is therefore the
+typed table plus plain GEP, selection, the pump and the islands. The deciding run re-runs the old arm with the features
+scheduled; the recorded counts are quoted only as history.
 
-**Problem set (20), from those tables.** The 10 hardest TSR has solved (fewest seeds of 10 passing, run2):
-feynman_I_10_7, feynman_I_34_1, feynman_II_13_23, feynman_III_15_12, strogatz_barmag2 (1 of 10 each);
+**Problem set (20), chosen on seeds 7001 to 7010.** The 10 hardest TSR has solved (fewest seeds of 10 passing, run2's
+new arm): feynman_I_10_7, feynman_I_34_1, feynman_II_13_23, feynman_III_15_12, strogatz_barmag2 (1 of 10 each);
 feynman_I_26_2, feynman_II_10_9, feynman_II_6_15b, feynman_III_17_37, strogatz_glider1 (2 of 10 each): 15 of 100.
-Ten it has not solved (0 of 10 in both arms, run2): feynman_I_15_10, feynman_II_13_34, feynman_I_12_11,
-feynman_I_6_2, feynman_I_6_2b, feynman_II_11_27, feynman_II_11_28, feynman_I_8_14, feynman_test_9, feynman_I_30_3.
-Chosen in this order from the laws at 0 of 10 in both arms of run2 and run3 (run3's table rebuilt with
-`sr_old_new.py --aggregate`): the lost laws I_15_10, II_13_34 (Lorentz) and I_12_11; the Gaussians I_6_2 and I_6_2b;
-then by position in `order133.txt`. Three of the ten are among the six laws the order rule lost as a decode check (two
-Lorentz, and I_12_11, which is neither); none of the first draft's ten was Gaussian. An eleventh law outside the
-totals: feynman_I_6_2a (6 of 10 in run1), the sixth lost law, which tests whether the order limit still loses the
-Gaussian.
+**The rule for the ten it has not solved:** laws at 0 of 10 in both arms of run2 and of run3 (run3's table rebuilt
+with `sr_old_new.py --aggregate`); first the lost laws I_15_10, II_13_34 (Lorentz) and I_12_11; then the Gaussians
+I_6_2 and I_6_2b; then by position in `experiments/order133.txt`. Applied: feynman_I_15_10, feynman_II_13_34,
+feynman_I_12_11, feynman_I_6_2, feynman_I_6_2b, strogatz_lv2 (position 51), feynman_II_21_32 (53), feynman_I_8_14 (56),
+feynman_II_11_28 (58), feynman_II_11_27 (62). (feynman_test_9 and feynman_I_30_3, at 81 and 82, are not in it;
+feynman_III_4_32 and feynman_II_35_21 are rightly out.)
+
+**The full list of 20, in this order:**
+
+| # | law | set |
+|---:|---|---|
+| 1 | feynman_I_10_7 | hardest solved (1/10) |
+| 2 | feynman_I_34_1 | hardest solved (1/10) |
+| 3 | feynman_II_13_23 | hardest solved (1/10) |
+| 4 | feynman_III_15_12 | hardest solved (1/10) |
+| 5 | strogatz_barmag2 | hardest solved (1/10) |
+| 6 | feynman_I_26_2 | hardest solved (2/10) |
+| 7 | feynman_II_10_9 | hardest solved (2/10) |
+| 8 | feynman_II_6_15b | hardest solved (2/10) |
+| 9 | feynman_III_17_37 | hardest solved (2/10) |
+| 10 | strogatz_glider1 | hardest solved (2/10) |
+| 11 | feynman_I_15_10 | unsolved, lost law |
+| 12 | feynman_II_13_34 | unsolved, lost law |
+| 13 | feynman_I_12_11 | unsolved, lost law |
+| 14 | feynman_I_6_2 | unsolved, Gaussian |
+| 15 | feynman_I_6_2b | unsolved, Gaussian |
+| 16 | strogatz_lv2 | unsolved, order133 position 51 |
+| 17 | feynman_II_21_32 | unsolved, order133 position 53 |
+| 18 | feynman_I_8_14 | unsolved, order133 position 56 |
+| 19 | feynman_II_11_28 | unsolved, order133 position 58 |
+| 20 | feynman_II_11_27 | unsolved, order133 position 62 |
+
+Five of the six laws the order rule lost as a decode check (`PLAN_tsr_typed_gep.md` line 60: II_13_23, I_10_7,
+II_13_34, I_15_10, I_12_11, I_6_2a) are in the 20. An eleventh law outside the totals: feynman_I_6_2a (6 of 10 in
+run1), the sixth lost law, which tests whether the order limit still loses the Gaussian.
+
+**The seeds that decide are not the seeds that chose.** The laws were chosen by arm A's luck on 7001 to 7010; deciding
+on those seeds would replay its lucky seeds on the hardest ten and its unlucky ones on the unsolved ten. The decision
+runs on **seeds 7011 to 7020**. If either deciding pair (below) has fewer than 10 discordant law-seed pairs, the same
+20 laws run again on **7021 to 7030**, and the decision is taken on the pooled 20 seeds.
 
 **Andrew's requirements for the run.** (1) Initiated in phylu: `scripts/tsr_decide.sh` calls `sr_old_new.py` over
 `law_runner.py` and phylu's engine, never a fuller loop. (2) Watched with `../phylu/target/release/evowatch OUT`
-(each fit writes `OUT/stream.jsonl` through `fuller::telemetry`), with `tail -f OUT/sweep.log`. (3) Every fuller
-feature of 8.6 item 5 on the new model, by task P2, before launch, **and firing in the run**: at 1,000,000
-evaluations a seed runs 11 generations (`logs/SR_OLD_NEW`, 1,270 of 1,270 seed-runs), where **fold, constant snap,
-share, beam and the finisher fired in 0 of 1,270 seed-runs** (typed snap, every 10, in 131), because `fold_every` and
-`snap_every` were 20. Both arms set fold, constant snap and typed snap every 3 generations and keep the tower and the
-finisher on (P3 adds any switch the engine lacks); the table adds, per arm, the evaluations by source from
-`result.json` (fold, snap, typed_snap, share, beam, post_search), and a source at 0 in either arm is our software has a
-bug. (4) The 20 problems above. (5) Budget: 1,000,000
-evaluations a seed, DEV_SEEDS 7001 to 7010, three arms: old TSR (`EVOLVE_TYPED_DEPTH=2`, single: a depth failure is not
-expressed); new TSR, depth only (`props` with the order requirement off: a depth failure is substituted); new TSR
-(`props`, order and depth), the new arms first on each law. Old against depth-only measures substitution; depth-only
-against full measures the order limit. Recorded wall time is 20 to 25 s a law
-and arm for 10 seeds, so 20 × 3 × 22 s ≈ **22 minutes** (measured on the engine of 2026-10-20, not today's; features firing every 3
-generations add time); the script's kill guard is 50 minutes. All arms run at the law bar of 1e-10 (Andrew,
-2026-10-08): `law_runner.py` today pins `STOP_ONE_MINUS_R2 = "1e-6"` (line 62) and refuses any other value
-(`FIXED_BAR`), so P3 makes the bar a parameter, 1e-10 the default for this test (its gate note and self-test with it),
-for every later law run. Each seed records the first counted evaluation at which log10 p ≤ −19 and 1 − R² ≤ 1e-6
-held, so the count at 1e-6 is reported beside the decision count (PROD1 saw an exact fit sit at 1.7e-10, above the
-bar's f32 floor). The hardest ten were chosen at 1e-6; a law at 0 in all arms at 1e-10 is reported, not replaced.
+(each fit writes `OUT/stream.jsonl` through `fuller::telemetry`; `tsr_decide.sh` sets `PHYLU_STREAM=OUT/stream.jsonl`,
+since `law_runner` otherwise writes one stream per seed folder and `evowatch OUT` finds none), with
+`tail -f OUT/sweep.log`. (3) The features, the same in every arm:
 
-R1 starts with one law (feynman_I_10_7), all arms, 10 seeds, on today's binary; the projected total must be under 45
-minutes or R1 stops and says why. `tsr_decide.sh` sets `PHYLU_STREAM=OUT/stream.jsonl` (law_runner otherwise writes
-one stream per seed folder and `evowatch OUT` finds none).
+| feature | in the deciding run |
+|---|---|
+| fold, constant snap, typed snap | every 3 generations (`EVOLVE_FOLD_EVERY`, `EVOLVE_SNAP_EVERY` and the typed-snap cadence = 3; TP4 adds any switch the engine lacks) |
+| the e-graph forms, denoise | every 3 generations if the engine has them as beats; TP4 lists each one it finds without a beat as not scheduled, and adds none |
+| share-equivalence | zero by design: not in the live loop, the population Fold that would charge it is not built |
+| beam | has no switch; it runs as the engine runs it, the same in all arms. Its evaluations count against the cap, so the table records the main generations each arm reached |
+| finisher (`post_search`, `ks_one.py`) | **off in all arms**: a kitchen-sink run per seed is about 780 s a law, hours over the run. Run once afterwards on each arm's best model per law, outside the timed test; reported, it decides nothing |
+| tower | as in the baseline: off (`tower: false` in the recorded `card.json`; turning it on would be a new fitness scheme) |
 
-| law | set | found / 10 at 1e-10 (1e-6), old / depth-only / new | median evaluations, per arm | evaluations by source (fold, snap, typed_snap, share, beam, post_search), per arm | genes with a substitution; nodes dropped per substituted gene; children whose program equals a parent's (engine `gene_hash`) and how many cost a counted evaluation; per arm |
-|---|---|---|---|---|---|
+**Each scheduled feature's counter moves in every arm** (evaluations by source in `result.json`: fold, snap,
+typed_snap); R1 first proves on the calibration law that the counters move when the cadence is 3, before a zero is
+called our software has a bug. (4) The 20 laws above, plus I_6_2a. (5) Budget: 1,000,000 counted evaluations a seed,
+seeds 7011 to 7020, three arms: **old TSR** (`EVOLVE_TYPED_DEPTH=2`, single: a depth failure is not expressed);
+**new TSR, depth only** (`props` with the order requirement off: a depth failure is substituted); **new TSR**
+(`props`, order and depth). Old against depth-only measures substitution; depth-only against full measures the order
+limit. The arm order rotates per law (`sr_old_new.py` today runs arms in file order, `347-349`).
 
-One row a problem, totals for each set. The run decides on paired counts, not raw pass totals (about 15 passes an arm
-is within noise). Paired by law and seed: n10 = seed-runs only new passes, n01 = only old passes, with the exact
-two-sided McNemar p. New TSR is kept if n10 ≥ n01 on the 20 and no law of the hardest ten loses more than 2 of 10;
-any law of the unsolved ten is reported first. The same pairs for old against depth-only and depth-only against new
-put the result on substitution or on the order limit. Arm C (34 types) as a third column is outside the hour and is not run.
+**The bar: 1e-10 with log10 p ≤ −19, a parameter of `law_runner`.** All arms run at the law bar of 1e-10 (Andrew,
+2026-10-08). `law_runner.py` pins `STOP_ONE_MINUS_R2 = "1e-6"` and uses it in five places: line 62 with 67-80
+(`FIT_ENV`, built once at import), 196 (the gate note), 219-220 (the card check), 353 (refuses any other bar from the
+environment) and 427 (the result's `stop`). TP4 replaces the constant with one `--bar` / `PHYLU_BAR`, read once and
+used in all five, default 1e-6 for every other caller (`scripts/runpod/sweep_ab1.sh`, `wgsl_override_sweep.sh`, the
+PROD1 scripts) so none changes silently; `sr_old_new.py` passes it through (lines 15, 102-104), and `--aggregate`
+refuses to put arms with different `stop.gate_one_minus_r2` in one table. There is no separate 1e-6 count in the
+engine: 945 of 970 recorded passes (and 15 of 15 new-arm passes on the hardest ten) were already at 1e-10 when they
+stopped. The report keeps a 1e-6 column, computed from each seed's final train and validation 1 − R² in `result.json`.
+A law at 0 in all arms at 1e-10 is reported, not replaced.
+
+**Time.** Measured from `result.json` of `logs/SR_OLD_NEW` (the engine of 2026-10-20, no features firing): about 1
+million evaluations a second, 1.1 s of engine time and about 2 s of wall a seed, 20 s a law and arm, so 21 laws × 3
+arms ≈ 22 minutes. With the scheduled features: typed snap at about 250 ms a beat (`PLAN_tsr_typed_gep.md` finding
+(e)), 3 beats a seed, adds about 8 minutes; fold's saturation, constant snap and the forms are unmeasured, allowed
+0.5 s a seed (about 5 minutes); the beam takes evaluations from the cap, not wall. **Expected: about 35 minutes** for
+seeds 7011 to 7020; the extension to 7021 to 7030, if needed, is a second run of the same length. It must stay well
+under an hour (Andrew). R1 first runs the calibration law (feynman_I_10_7), all arms, 10 seeds, with every switch the
+deciding run uses, and projects the total; if the projection is over 45 minutes, **seeds are cut before features**
+(fewer seeds per law, the extension then restoring the count), and R1 says so. The script's kill guard is 50 minutes.
+
+| law | set | found / 10 at 1e-10, old / depth-only / new | at 1e-6 (from final 1 − R²), per arm | median evaluations, per arm | main generations reached, per arm | evaluations by source (fold, snap, typed_snap, beam), per arm | genes with a substitution; nodes dropped per substituted gene; children whose program equals a parent's (engine `gene_hash`) and how many cost a counted evaluation; per arm |
+|---|---|---|---|---|---|---|---|
+
+One row a law, totals for each set; the finisher's afterward result is a last column, outside the decision.
+
+**The decision: paired counts by law and seed (exact two-sided McNemar).** For each pair of arms, n10 = law-seed pairs
+only the second arm passes, n01 = only the first passes. Two pairs decide: **substitution** (old against depth-only)
+and **the order limit** (depth-only against new). `sr_old_new.py`'s `paired()` compares with one reference today
+(`200`, `241-244`), so TP4 makes it take any two arms.
+
+- **Substitution** is adopted if n10 ≥ n01 for depth-only on the 20 and no law of the hardest ten loses more than 2 of
+  10: a tie adopts it, because it costs nothing and scores genes that today ride along unscored.
+- **The order limit** is adopted only on a win (full arm n10 > n01 against depth-only, McNemar p < 0.05) with no law of
+  the hardest ten losing more than 2 of 10. On a tie or anything short of that it stays a switch, off: its prior is a
+  measured loss (84.69 % against 85.61 %) and it adds a bias, so a tie means it bought nothing.
+- **Power, stated before the run.** With 10 discordant pairs, p < 0.05 needs 9 to 1 (8 to 2 gives p = 0.11); with 20,
+  15 to 5. The run can show "the order limit loses several laws" or "substitution finds laws old TSR did not"; it
+  cannot show a one- or two-law difference. Anything short of p < 0.05 is written "no measurable difference", never a
+  win, and the write-up states the discordant count reached. Fewer than 10 in either pair triggers seeds 7021 to 7030.
+- Any law of the unsolved ten found by any arm is reported first. 1,000,000 evaluations is 11 generations (fewer with
+  the beam): the result is about Andrew's protocol, not about the order limit over 100 generations.
+
+Arm C (34 types) as a fourth column is outside the hour and is not run.
 
 ### 8.8 Tasks
+
+Section 7's phylu tasks are P1 to P3 on the same decoder (`typed_decode.*`, `engine.rs`), so this section's phylu
+tasks are TP1 to TP4. TP1 starts only when no section 7 phylu task has uncommitted work in `typed_decode.*`,
+`typed_write_back.rs` or `engine.rs`.
 
 | task | repo | size (days) | what | after |
 |---|---|---:|---|---|
 | T1 | fuller | 1 | `Max`, `PropertyExpr::Strahler`, `Subject::Output`, `subst` on property requirements, their table checks; master 6's tests unchanged; no edit to a file with uncommitted Futhark work | G3 |
 | T2 | fuller | 1.5 | `gen_tables.py` variant `props`, `check_types.py` witness (8.6 item 1), `typed_environment.rs` output subject; master 6's tests unchanged; no edit to a file with uncommitted Futhark work | T1 |
-| T3 | fuller | 0.5 | `tsr_kingdom.rs` loader, the run card's gene width equal in both arms | T2 |
-| P1 | phylu | 3 | device and host decoders: rule codes, substitution, `fam`, renumbering; tests 2, 3, 4, 6; the old arm's decode unchanged byte for byte on 20,000 random genes, GPU and host | T3 |
-| P2 | phylu | 1.5 | host rewrites through the decoder: fold, snap, typed snap, denoise, e-graph forms, share; test 5 | T3, P1 (host decoder half) |
-| P3 | phylu | 0.5 | phylu arms build, card, arms `P` and depth-only, problem list, `tsr_decide.sh`, the bar as a parameter (1e-10 default, 1e-6 recorded), features every 3 generations, `PHYLU_STREAM` for evowatch | P1, P2 |
-| L1 | lead | 0.5 | both full suites, clippy, code review of each commit, the GPU test 3 | P3 |
-| R1 | lead | 0.1 | the calibration law, then the deciding run of 8.7, about 22 minutes, its table and write-up | L1 |
+| T3 | fuller | 0.5 | `tsr_kingdom.rs` loader, the run card's gene width equal in both arms; README "inexpressible" | T2 |
+| TP1 | phylu | 3 | device decoder: rule codes, substitution, `fam`, renumbering; `typed_decode.rs`'s `decode_reference` as its host twin with gene positions; the wrapper depth check from the props table (8.2); tests 2, 3, 4, 6; the old arm's decode unchanged byte for byte against today's binary on 20,000 random genes, GPU and host | T3 |
+| TP2 | phylu | 1.5 | **the host's ONE decoder**: `decode_host`, `nodes_of_gene`, `confirm_over`, `math_of`, `node_to_gene_position`, the beam, snap, fold and typed snap all through `decode_reference` for `props`; test 7 | TP1 |
+| TP3 | phylu | 1.5 | host rewrites offered only if they decode with no substitution: fold, constant snap, typed snap, denoise, e-graph forms, physics; `typed_write_back.rs`; test 5 | TP2 |
+| TP4 | phylu | 1 | arms build, card, arms `P` and depth-only with each arm's full environment, the 20 laws, seeds 7011 to 7020 (7021 to 7030 on the extension), `tsr_decide.sh` with `PHYLU_STREAM`, the bar in five places and through `sr_old_new.py`, arm rotation, `paired()` on any two arms, the feature beats at 3, finisher off | TP3 |
+| L1 | lead | 0.5 | both full suites, clippy, code review of each commit; **the gate: tests 3 (forced substitution), 4 and 7 green on the GPU**, else R1 does not start | TP4 |
+| R1 | lead | 0.1 | the calibration law (counters move, projection under 45 minutes, else cut seeds), then the deciding run of 8.7, about 35 minutes; the finisher on each arm's best afterwards; table and write-up | L1 |
 
-About 8.6 agent days; the critical path T1, T2, T3, P1, P3, L1, R1 is about 7.1. P2 runs beside P1's device half
-(different files). Every task: both repos' full suites and clippy green before the commit; phylu builds one at a time
-(P1 and P2 never build together).
+About 10.6 agent days (about 10); the critical path is the whole chain, T1, T2, T3, TP1, TP2, TP3, TP4, L1, R1,
+because TP1 to TP4 share `typed_decode.*` and `engine.rs` and phylu builds one at a time. Every task: both repos' full
+suites and clippy green before the commit.
 
 ```
-G3 ─> T1 ─> T2 ─> T3 ─┬─> P1 ─┬─> P3 ─> L1 ─> R1
-                      └─> P2 ─┘
+G3 ─> T1 ─> T2 ─> T3 ─> TP1 ─> TP2 ─> TP3 ─> TP4 ─> L1 (gate: tests 3, 4, 7) ─> R1
 ```
