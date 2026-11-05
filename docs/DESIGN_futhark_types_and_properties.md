@@ -17,6 +17,8 @@ from the training cases, once, offline; every property value records its source 
 requirement its strength (must or advise), so a measured value can never make a program legal. The schema had not yet
 frozen, so these go in now (section 3.7 lists what was taken, what was not, and when). Sections 3, 4, 5, 8 and 9
 carry the change.
+**Revised 2026-11-05: conversions are configuration** (section 3.8, Andrew): a conversion is an ordinary typed row
+with a failure adapter, placed by typed GEP where a function needs it; section 8 gives SQL, Spark and NLP rows.
 
 ## 1. Context
 
@@ -506,6 +508,28 @@ not taken:
 | **later** | the sniffer measuring the training cases (a profiler of the entry inputs in the style of the flat enhanced format); alternative entry forms, kept only if an A/B run shows they help; shape masks for string kingdoms |
 | **never** | a measured value removing a legality adapter |
 
+### 3.8 Conversions are configuration
+
+Andrew Morgan's principle (2026-11-05). Data is transformed as it moves: it is extracted, transformed and loaded.
+Symbolic genetic programming usually handles this badly, in one of two ways. Either each function is written to read
+many types and convert them inside itself, which gives hundreds of expanded variants and hides the conversions; or
+every terminal is enriched with every form it could take, a large overhead that is mostly never used.
+
+This design does neither. **A conversion is an ordinary typed function row** that a kingdom configures in the fixed
+schema, with the tables it already has:
+
+| table | rows (examples) |
+|---|---|
+| Symbol, Argument | `parse_int(String) -> i32`; `std_date(String) -> Date` |
+| Spelling | the conversion's template, as for any symbol |
+| PropertyRule | what the output's properties are, from the input's: a string of length 10 with a date mask gives a date with a known format |
+| Requirement, Repair, Adapter | when the conversion can fail, a `must` requirement with an adapter: a string that does not parse gives the target type's constant |
+
+So every gene stays legal and all behaviour is deterministic. Typed GEP then places a conversion subtree wherever a
+function needs the target type and the data arrives as another. The conversion is visible in the program, it is
+costed like any other node, and it is present only where evolution uses it. The precomputed alternative forms of the
+inputs (3.3, Transform) stay the exception, offered only when a kingdom declares them. No new table is needed.
+
 ## 4. The decoder
 
 The gene is unchanged: Karva, the head and tail of each data type, and a Dc-style array of index words beside each
@@ -774,6 +798,10 @@ form, charged by the cost as a sort, for the later A/B.
 conjugate. **Fixed:** the Spelling table with forms, and `head` on Argument so a form asked of a phrase reaches its
 head word. Re-check: expressible, provided the lexicon lists each lemma's forms (section 8.16).
 
+**Conversion (3.8).** `num(Tok) -> Num`: Spelling `{0}` read as a number (`"three"` or `"3"` gives 3); rule
+`number = 'sg'`; requirement `in0.numeral = true` **must** `-> subst.const` (a token that is not a numeral gives the
+type's constant, 0).
+
 **Strength:** agreement is the language's legality (a sentence that does not agree is not grammatical English):
 `must`. **Later:** shape masks of the training text as measure rules.
 
@@ -797,6 +825,12 @@ measured false on the training rows may feed the cost or choose a template, neve
 `NOT NULL` is the only source that removes one. A standardised date column is the flat enhanced format's own example of
 an alternative form, and a string column's shape masks a later measure rule.
 
+**Conversion (3.8).** `to_date(Col) -> Col`: Spelling `CAST({0} AS DATE)`; rule `dtype = 'date'`; requirement
+`in0.dtype in list('text','date')` **must** `-> null_date[node]`; Requirement on a text input `known(in0.date_mask)`
+**must** `-> try_date[node]`, template `TRY_CAST({0} AS DATE)` (an unparseable text gives `NULL`, the type's constant).
+`to_int(Col) -> Col`: `CAST({0} AS INTEGER)`, rule `dtype = 'int'`, the same failure adapter with `TRY_CAST({0} AS
+INTEGER)`.
+
 ### 8.8 Spark (Dagnetic)
 
 | table | rows |
@@ -813,6 +847,11 @@ an alternative form, and a string column's shape masks a later measure rule.
 requirement is a preference: Spark shuffles for the join anyway, so it becomes `advise`, with no `repart` repair; the
 cost charges the shuffle and evolution may write `repartition` itself. The window's sort stays `must`: without it
 `lag`'s result depends on the row order Spark happens to keep.
+
+**Conversion (3.8).** `cast(Df, Name, Name) -> Df`: Spelling `{0}.withColumn("{=in1.value}", col("{=in1.value}").cast("{=in2.value}"))`;
+rule `types = for(i < len(in0.cols) : if(at(in0.cols, i, ?) = in1.value, in2.value, at(in0.types, i, ?)))`;
+requirement `in1.value in in0.cols` **must** `-> subst.in0`. Spark's cast gives `null` on a value that does not
+parse, so the failure is defined; a non-nullable target adds `-> fill[node]`, template `{0}.na.fill({=const}, ["{=in1.value}"])`.
 
 ### 8.9 Lua and LuaJIT
 
