@@ -796,151 +796,151 @@ futhark.scan	loop1@a.i32	in2	down	env.trips	env.trips + 1
 futhark.scan	nextin@i64	out	up	bound	in0.value
 futhark.scan	fit@a.i32	out	up	len	in0.value
 futhark.scan	clampix@i64	out	up	bound	in0.value
-tsr.depth	add	out	up	depth	max(in0.depth, in1.depth)
-tsr.depth	add	out	up	fam	1
-tsr.depth	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
-tsr.depth	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
-tsr.depth	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
-tsr.depth	sub	out	up	depth	max(in0.depth, in1.depth)
-tsr.depth	sub	out	up	fam	1
-tsr.depth	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
-tsr.depth	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
-tsr.depth	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
-tsr.depth	mul	out	up	depth	max(in0.depth, in1.depth)
-tsr.depth	mul	out	up	fam	2
-tsr.depth	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
-tsr.depth	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
-tsr.depth	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
-tsr.depth	pdiv	out	up	depth	max(in0.depth, in1.depth)
-tsr.depth	pdiv	out	up	fam	2
-tsr.depth	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
-tsr.depth	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
-tsr.depth	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
-tsr.depth	sin	out	up	depth	in0.depth + 1
-tsr.depth	sin	out	up	order	in0.order
-tsr.depth	sin	out	up	fam	0
-tsr.depth	sin	out	up	arm	in0.order
-tsr.depth	sin	out	up	ties	1
-tsr.depth	cos	out	up	depth	in0.depth + 1
-tsr.depth	cos	out	up	order	in0.order
-tsr.depth	cos	out	up	fam	0
-tsr.depth	cos	out	up	arm	in0.order
-tsr.depth	cos	out	up	ties	1
-tsr.depth	tanh	out	up	depth	in0.depth + 1
-tsr.depth	tanh	out	up	order	in0.order
-tsr.depth	tanh	out	up	fam	0
-tsr.depth	tanh	out	up	arm	in0.order
-tsr.depth	tanh	out	up	ties	1
-tsr.depth	psqrt	out	up	depth	in0.depth + 1
-tsr.depth	psqrt	out	up	order	in0.order
-tsr.depth	psqrt	out	up	fam	0
-tsr.depth	psqrt	out	up	arm	in0.order
-tsr.depth	psqrt	out	up	ties	1
-tsr.depth	plog	out	up	depth	in0.depth + 1
-tsr.depth	plog	out	up	order	in0.order
-tsr.depth	plog	out	up	fam	0
-tsr.depth	plog	out	up	arm	in0.order
-tsr.depth	plog	out	up	ties	1
-tsr.depth	pexp	out	up	depth	in0.depth + 1
-tsr.depth	pexp	out	up	order	in0.order
-tsr.depth	pexp	out	up	fam	0
-tsr.depth	pexp	out	up	arm	in0.order
-tsr.depth	pexp	out	up	ties	1
-tsr.depth	neg	out	up	depth	in0.depth
-tsr.depth	neg	out	up	order	in0.order
-tsr.depth	neg	out	up	fam	0
-tsr.depth	neg	out	up	arm	in0.order
-tsr.depth	neg	out	up	ties	1
-tsr.depth	abs	out	up	depth	in0.depth + 1
-tsr.depth	abs	out	up	order	in0.order
-tsr.depth	abs	out	up	fam	0
-tsr.depth	abs	out	up	arm	in0.order
-tsr.depth	abs	out	up	ties	1
-tsr.depth	pow2	out	up	depth	in0.depth
-tsr.depth	pow2	out	up	order	in0.order
-tsr.depth	pow2	out	up	fam	0
-tsr.depth	pow2	out	up	arm	in0.order
-tsr.depth	pow2	out	up	ties	1
-tsr.depth	pow3	out	up	depth	in0.depth
-tsr.depth	pow3	out	up	order	in0.order
-tsr.depth	pow3	out	up	fam	0
-tsr.depth	pow3	out	up	arm	in0.order
-tsr.depth	pow3	out	up	ties	1
-tsr.depth	pinv	out	up	depth	in0.depth
-tsr.depth	pinv	out	up	order	in0.order
-tsr.depth	pinv	out	up	fam	0
-tsr.depth	pinv	out	up	arm	in0.order
-tsr.depth	pinv	out	up	ties	1
-tsr.depth	tan	out	up	depth	in0.depth + 1
-tsr.depth	tan	out	up	order	in0.order
-tsr.depth	tan	out	up	fam	0
-tsr.depth	tan	out	up	arm	in0.order
-tsr.depth	tan	out	up	ties	1
-tsr.depth	pasin	out	up	depth	in0.depth + 1
-tsr.depth	pasin	out	up	order	in0.order
-tsr.depth	pasin	out	up	fam	0
-tsr.depth	pasin	out	up	arm	in0.order
-tsr.depth	pasin	out	up	ties	1
-tsr.depth	pacos	out	up	depth	in0.depth + 1
-tsr.depth	pacos	out	up	order	in0.order
-tsr.depth	pacos	out	up	fam	0
-tsr.depth	pacos	out	up	arm	in0.order
-tsr.depth	pacos	out	up	ties	1
-tsr.depth	x0	out	up	depth	0
-tsr.depth	x0	out	up	order	1
-tsr.depth	x0	out	up	fam	0
-tsr.depth	x0	out	up	arm	1
-tsr.depth	x0	out	up	ties	1
-tsr.depth	x1	out	up	depth	0
-tsr.depth	x1	out	up	order	1
-tsr.depth	x1	out	up	fam	0
-tsr.depth	x1	out	up	arm	1
-tsr.depth	x1	out	up	ties	1
-tsr.depth	x2	out	up	depth	0
-tsr.depth	x2	out	up	order	1
-tsr.depth	x2	out	up	fam	0
-tsr.depth	x2	out	up	arm	1
-tsr.depth	x2	out	up	ties	1
-tsr.depth	x3	out	up	depth	0
-tsr.depth	x3	out	up	order	1
-tsr.depth	x3	out	up	fam	0
-tsr.depth	x3	out	up	arm	1
-tsr.depth	x3	out	up	ties	1
-tsr.depth	x4	out	up	depth	0
-tsr.depth	x4	out	up	order	1
-tsr.depth	x4	out	up	fam	0
-tsr.depth	x4	out	up	arm	1
-tsr.depth	x4	out	up	ties	1
-tsr.depth	x5	out	up	depth	0
-tsr.depth	x5	out	up	order	1
-tsr.depth	x5	out	up	fam	0
-tsr.depth	x5	out	up	arm	1
-tsr.depth	x5	out	up	ties	1
-tsr.depth	x6	out	up	depth	0
-tsr.depth	x6	out	up	order	1
-tsr.depth	x6	out	up	fam	0
-tsr.depth	x6	out	up	arm	1
-tsr.depth	x6	out	up	ties	1
-tsr.depth	x7	out	up	depth	0
-tsr.depth	x7	out	up	order	1
-tsr.depth	x7	out	up	fam	0
-tsr.depth	x7	out	up	arm	1
-tsr.depth	x7	out	up	ties	1
-tsr.depth	x8	out	up	depth	0
-tsr.depth	x8	out	up	order	1
-tsr.depth	x8	out	up	fam	0
-tsr.depth	x8	out	up	arm	1
-tsr.depth	x8	out	up	ties	1
-tsr.depth	x9	out	up	depth	0
-tsr.depth	x9	out	up	order	1
-tsr.depth	x9	out	up	fam	0
-tsr.depth	x9	out	up	arm	1
-tsr.depth	x9	out	up	ties	1
-tsr.depth	?	out	up	depth	0
-tsr.depth	?	out	up	order	1
-tsr.depth	?	out	up	fam	0
-tsr.depth	?	out	up	arm	1
-tsr.depth	?	out	up	ties	1
+sr	add	out	up	depth	max(in0.depth, in1.depth)
+sr	add	out	up	fam	1
+sr	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+sr	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+sr	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+sr	sub	out	up	depth	max(in0.depth, in1.depth)
+sr	sub	out	up	fam	1
+sr	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+sr	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+sr	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+sr	mul	out	up	depth	max(in0.depth, in1.depth)
+sr	mul	out	up	fam	2
+sr	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+sr	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+sr	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+sr	pdiv	out	up	depth	max(in0.depth, in1.depth)
+sr	pdiv	out	up	fam	2
+sr	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+sr	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+sr	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+sr	sin	out	up	depth	in0.depth + 1
+sr	sin	out	up	order	in0.order
+sr	sin	out	up	fam	0
+sr	sin	out	up	arm	in0.order
+sr	sin	out	up	ties	1
+sr	cos	out	up	depth	in0.depth + 1
+sr	cos	out	up	order	in0.order
+sr	cos	out	up	fam	0
+sr	cos	out	up	arm	in0.order
+sr	cos	out	up	ties	1
+sr	tanh	out	up	depth	in0.depth + 1
+sr	tanh	out	up	order	in0.order
+sr	tanh	out	up	fam	0
+sr	tanh	out	up	arm	in0.order
+sr	tanh	out	up	ties	1
+sr	psqrt	out	up	depth	in0.depth + 1
+sr	psqrt	out	up	order	in0.order
+sr	psqrt	out	up	fam	0
+sr	psqrt	out	up	arm	in0.order
+sr	psqrt	out	up	ties	1
+sr	plog	out	up	depth	in0.depth + 1
+sr	plog	out	up	order	in0.order
+sr	plog	out	up	fam	0
+sr	plog	out	up	arm	in0.order
+sr	plog	out	up	ties	1
+sr	pexp	out	up	depth	in0.depth + 1
+sr	pexp	out	up	order	in0.order
+sr	pexp	out	up	fam	0
+sr	pexp	out	up	arm	in0.order
+sr	pexp	out	up	ties	1
+sr	neg	out	up	depth	in0.depth
+sr	neg	out	up	order	in0.order
+sr	neg	out	up	fam	0
+sr	neg	out	up	arm	in0.order
+sr	neg	out	up	ties	1
+sr	abs	out	up	depth	in0.depth + 1
+sr	abs	out	up	order	in0.order
+sr	abs	out	up	fam	0
+sr	abs	out	up	arm	in0.order
+sr	abs	out	up	ties	1
+sr	pow2	out	up	depth	in0.depth
+sr	pow2	out	up	order	in0.order
+sr	pow2	out	up	fam	0
+sr	pow2	out	up	arm	in0.order
+sr	pow2	out	up	ties	1
+sr	pow3	out	up	depth	in0.depth
+sr	pow3	out	up	order	in0.order
+sr	pow3	out	up	fam	0
+sr	pow3	out	up	arm	in0.order
+sr	pow3	out	up	ties	1
+sr	pinv	out	up	depth	in0.depth
+sr	pinv	out	up	order	in0.order
+sr	pinv	out	up	fam	0
+sr	pinv	out	up	arm	in0.order
+sr	pinv	out	up	ties	1
+sr	tan	out	up	depth	in0.depth + 1
+sr	tan	out	up	order	in0.order
+sr	tan	out	up	fam	0
+sr	tan	out	up	arm	in0.order
+sr	tan	out	up	ties	1
+sr	pasin	out	up	depth	in0.depth + 1
+sr	pasin	out	up	order	in0.order
+sr	pasin	out	up	fam	0
+sr	pasin	out	up	arm	in0.order
+sr	pasin	out	up	ties	1
+sr	pacos	out	up	depth	in0.depth + 1
+sr	pacos	out	up	order	in0.order
+sr	pacos	out	up	fam	0
+sr	pacos	out	up	arm	in0.order
+sr	pacos	out	up	ties	1
+sr	x0	out	up	depth	0
+sr	x0	out	up	order	1
+sr	x0	out	up	fam	0
+sr	x0	out	up	arm	1
+sr	x0	out	up	ties	1
+sr	x1	out	up	depth	0
+sr	x1	out	up	order	1
+sr	x1	out	up	fam	0
+sr	x1	out	up	arm	1
+sr	x1	out	up	ties	1
+sr	x2	out	up	depth	0
+sr	x2	out	up	order	1
+sr	x2	out	up	fam	0
+sr	x2	out	up	arm	1
+sr	x2	out	up	ties	1
+sr	x3	out	up	depth	0
+sr	x3	out	up	order	1
+sr	x3	out	up	fam	0
+sr	x3	out	up	arm	1
+sr	x3	out	up	ties	1
+sr	x4	out	up	depth	0
+sr	x4	out	up	order	1
+sr	x4	out	up	fam	0
+sr	x4	out	up	arm	1
+sr	x4	out	up	ties	1
+sr	x5	out	up	depth	0
+sr	x5	out	up	order	1
+sr	x5	out	up	fam	0
+sr	x5	out	up	arm	1
+sr	x5	out	up	ties	1
+sr	x6	out	up	depth	0
+sr	x6	out	up	order	1
+sr	x6	out	up	fam	0
+sr	x6	out	up	arm	1
+sr	x6	out	up	ties	1
+sr	x7	out	up	depth	0
+sr	x7	out	up	order	1
+sr	x7	out	up	fam	0
+sr	x7	out	up	arm	1
+sr	x7	out	up	ties	1
+sr	x8	out	up	depth	0
+sr	x8	out	up	order	1
+sr	x8	out	up	fam	0
+sr	x8	out	up	arm	1
+sr	x8	out	up	ties	1
+sr	x9	out	up	depth	0
+sr	x9	out	up	order	1
+sr	x9	out	up	fam	0
+sr	x9	out	up	arm	1
+sr	x9	out	up	ties	1
+sr	?	out	up	depth	0
+sr	?	out	up	order	1
+sr	?	out	up	fam	0
+sr	?	out	up	arm	1
+sr	?	out	up	ties	1
 tsr.order	add	out	up	depth	max(in0.depth, in1.depth)
 tsr.order	add	out	up	fam	1
 tsr.order	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))

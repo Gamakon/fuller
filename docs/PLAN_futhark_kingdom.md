@@ -1727,8 +1727,8 @@ and the columns are in design 3.3. Loader: `geneframe::master::select(K)` / `vie
 `view.py` and `master6.rs` compute, the generators' `--check`, the TSR equality tests, the Rust rendering of the named
 text equal to the Python's for all 12 variants. Deleted: `sig/<problem>/m6/tables.tsv`, `kingdoms/tsr/<variant>/tables.tsv`.
 
-**K1 built (2026-11-05):** the symbolic regression kingdom is the `depth` variant of the TSR rows (`tsr.depth` in
-`kingdoms/master/`: `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> {in0}` on the ten raising unaries),
+**K1 built (2026-11-05):** the symbolic regression kingdom is the kingdom `sr` of `kingdoms/master/` (no variants;
+the rows of TSR's `depth` variant, written by `kingdoms/tsr/gen_tables.py`, so TSR's arm E loads it too: `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> {in0}` on the ten raising unaries),
 chosen in phylu by `EVOLVE_SR_PROPS=depth` (the law runner's default; `none` is the one-type kingdom with no guard).
 Deleted, both repositories: the depth ladder of types (`Ty::T1`, `Ty::T2`, `typed_depth_table`, `EVOLVE_TYPED_DEPTH`,
 `Config::typed_depth`, the ladder in `typed_decode.wgsl` and its host twin) and the dual TSR row forms (`types.tsv`,

@@ -8,8 +8,8 @@ futhark.pathfinder	futhark	the Futhark kingdom's view of the problem pathfinder 
 futhark.reduce	futhark	the Futhark kingdom's view of the problem reduce (tests/corpus/futhark_problems/reduce/yardstick.fut)	i32	
 futhark.scan	futhark	the Futhark kingdom's view of the problem scan (tests/corpus/futhark_problems/scan/yardstick.fut)	[]i32	
 regex		the regex kingdom: POSIX ERE over Pattern, CharClass, Char and I; one guard, the counted range's bounds in order	Pattern	
+sr		symbolic regression: one data type F whose transcendental depth is a property; the ten raising unaries guarded by in0.depth <= 1 (must, repaired by {in0}); TSR's depth variant (arm E)	F	
 tsr		Typed Symbolic Regression: one data type F carrying depth and Horton-Strahler stream order; each variant's guards are its limits		
-tsr.depth	tsr	TSR variant depth	F	
 tsr.order	tsr	TSR variant order	F	
 tsr.order_depth	tsr	TSR variant order_depth	F	
 tsr.order_depth_windows	tsr	TSR variant order_depth_windows	F	

@@ -584,34 +584,34 @@ regex	regex_lit		{0}
 regex	regex_cc_range		{0}-{1}
 regex	regex_cc_union		{0}{1}
 regex	regex_cc_negate		^{0}
-tsr.depth	add		({0} + {1})
-tsr.depth	sub		({0} - {1})
-tsr.depth	mul		({0} * {1})
-tsr.depth	pdiv		pdiv({0}, {1})
-tsr.depth	sin		sin({0})
-tsr.depth	cos		cos({0})
-tsr.depth	tanh		tanh({0})
-tsr.depth	psqrt		psqrt({0})
-tsr.depth	plog		plog({0})
-tsr.depth	pexp		pexp({0})
-tsr.depth	neg		neg({0})
-tsr.depth	abs		abs({0})
-tsr.depth	pow2		pow2({0})
-tsr.depth	pow3		pow3({0})
-tsr.depth	pinv		pinv({0})
-tsr.depth	tan		tan({0})
-tsr.depth	pasin		pasin({0})
-tsr.depth	pacos		pacos({0})
-tsr.depth	x0		x0
-tsr.depth	x1		x1
-tsr.depth	x2		x2
-tsr.depth	x3		x3
-tsr.depth	x4		x4
-tsr.depth	x5		x5
-tsr.depth	x6		x6
-tsr.depth	x7		x7
-tsr.depth	x8		x8
-tsr.depth	x9		x9
+sr	add		({0} + {1})
+sr	sub		({0} - {1})
+sr	mul		({0} * {1})
+sr	pdiv		pdiv({0}, {1})
+sr	sin		sin({0})
+sr	cos		cos({0})
+sr	tanh		tanh({0})
+sr	psqrt		psqrt({0})
+sr	plog		plog({0})
+sr	pexp		pexp({0})
+sr	neg		neg({0})
+sr	abs		abs({0})
+sr	pow2		pow2({0})
+sr	pow3		pow3({0})
+sr	pinv		pinv({0})
+sr	tan		tan({0})
+sr	pasin		pasin({0})
+sr	pacos		pacos({0})
+sr	x0		x0
+sr	x1		x1
+sr	x2		x2
+sr	x3		x3
+sr	x4		x4
+sr	x5		x5
+sr	x6		x6
+sr	x7		x7
+sr	x8		x8
+sr	x9		x9
 tsr.order	add		({0} + {1})
 tsr.order	sub		({0} - {1})
 tsr.order	mul		({0} * {1})

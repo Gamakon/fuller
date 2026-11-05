@@ -1,7 +1,8 @@
 //! THE TSR KINGDOM AS ROWS of the gene frame's fixed schema (design `docs/DESIGN_futhark_types_and_properties.md`
 //! 3.3 and 8.3; plan `docs/PLAN_futhark_kingdom.md` section 8). TSR is Typed Symbolic Regression.
 //!
-//! Each variant's rows are the kingdom `tsr.<variant>` of the master tables (`kingdoms/master/`), written by
+//! Each variant's rows are the kingdom `tsr.<variant>` of the master tables (`kingdoms/master/`; the depth variant is
+//! the symbolic regression kingdom `sr`, [`TsrVariant::master_kingdom`]), written by
 //! `kingdoms/tsr/gen_tables.py` through `write_rows.py` (never by hand; its `--check` is a test): the four kinds of row
 //! and nothing else:
 //!
@@ -35,9 +36,13 @@ pub const MAX_INPUTS: usize = 10;
 pub const HEAD: usize = 34;
 
 impl TsrVariant {
-    /// The variant's kingdom in the master tables (`kingdoms/master/`): `tsr.<variant>`.
+    /// The variant's kingdom in the master tables (`kingdoms/master/`): `tsr.<variant>`, except the depth variant,
+    /// which is the symbolic regression kingdom `sr` (plan 7.7 K1).
     pub fn master_kingdom(self) -> String {
-        format!("tsr.{}", self.dir())
+        match self {
+            TsrVariant::Depth => "sr".to_string(),
+            v => format!("tsr.{}", v.dir()),
+        }
     }
 
     /// The variant's four kinds of row, selected from the master tables, as the named text form.

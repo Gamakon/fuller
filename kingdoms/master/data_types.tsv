@@ -57,7 +57,7 @@ regex	Pattern	scalar				?_Pat	-
 regex	CharClass	scalar						
 regex	Char	scalar				?_Char	-	
 regex	I	scalar			value	?_I	value=?	
-tsr.depth	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+sr	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
 tsr.order	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
 tsr.order_depth	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
 tsr.order_depth_windows	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	

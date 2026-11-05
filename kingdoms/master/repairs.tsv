@@ -635,16 +635,16 @@ futhark.scan	fit@a.i32	0	node	true	true	{in.own}
 futhark.scan	fit@a.i32	0	node	true	true	{const}
 futhark.scan	entry	0	root	true	true	{call fit@a.i32({=n}, {self})}
 regex	regex_rep_range	0	node	true	true	(?:{0}){{{=in2.value},{=in1.value}}}
-tsr.depth	sin	0	node	true	true	{in0}
-tsr.depth	cos	0	node	true	true	{in0}
-tsr.depth	tanh	0	node	true	true	{in0}
-tsr.depth	psqrt	0	node	true	true	{in0}
-tsr.depth	plog	0	node	true	true	{in0}
-tsr.depth	pexp	0	node	true	true	{in0}
-tsr.depth	abs	0	node	true	true	{in0}
-tsr.depth	tan	0	node	true	true	{in0}
-tsr.depth	pasin	0	node	true	true	{in0}
-tsr.depth	pacos	0	node	true	true	{in0}
+sr	sin	0	node	true	true	{in0}
+sr	cos	0	node	true	true	{in0}
+sr	tanh	0	node	true	true	{in0}
+sr	psqrt	0	node	true	true	{in0}
+sr	plog	0	node	true	true	{in0}
+sr	pexp	0	node	true	true	{in0}
+sr	abs	0	node	true	true	{in0}
+sr	tan	0	node	true	true	{in0}
+sr	pasin	0	node	true	true	{in0}
+sr	pacos	0	node	true	true	{in0}
 tsr.order	add	0	node	true	true	{in0}
 tsr.order	sub	0	node	true	true	{in0}
 tsr.order	mul	0	node	true	true	{in0}

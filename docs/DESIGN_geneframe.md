@@ -160,7 +160,7 @@ that we select to filter the rest of the data"):
 
 | file | columns | entity |
 |---|---|---|
-| `kingdoms.tsv` | name, parent, description, root, notes | the list of kingdoms and their variants (`tsr.depth` under `tsr`, `futhark.kmeans` under `futhark`): the master table |
+| `kingdoms.tsv` | name, parent, description, root, notes | the list of kingdoms and their variants (`tsr.order` under `tsr`, `futhark.kmeans` under `futhark`; `sr`, `regex` and `wgsl` without variants): the master table |
 | `data_types.tsv` | kingdom, name, kind, members, result, properties, constant, constant_properties, size_names | DataType, with its carried properties, constant and size names as columns |
 | `symbols.tsv` | kingdom, name, alias, role, adapter, prelude | Symbol |
 | `spellings.tsv` | kingdom, symbol, form, template | Symbol's spellings (one a row: a template holds `;` and `=`) |
@@ -175,7 +175,7 @@ Every table but the catalogue carries a `kingdom` column; selecting a kingdom fi
 share is written once per kingdom (a variant holds every row it needs): the simpler rule, and the one under which a
 kingdom's symbol ids are the order of its own rows. Within a kingdom the rows keep the order its generator wrote them
 in; across kingdoms the blocks are sorted by kingdom name. **The loader** (`src/geneframe/master.rs`):
-`geneframe::master::select("tsr.depth")` (or `view("futhark", "kmeans")`: the problem view is a variant, the second
+`geneframe::master::select("sr")` (or `view("futhark", "kmeans")`: the problem view is a variant, the second
 filter) filters every table, renders the rows in the named text form and hands that text to
 `KingdomTables::parse_named`, so the schema, the check and the decoder are untouched by where the rows are stored.
 **The writer** (`kingdoms/master/write_rows.py`): a generator produces the named text form as before and calls

@@ -55,7 +55,7 @@ futhark.scan	main	xs	[]i32	len=n	-	-	-	-
 futhark.scan	main	zeros_n	[]i32	len=n	-	-	-	-
 futhark.scan	main	n	size	value=n	-	-	-	-
 regex	regex	out	Pattern	-	-	-	-	-
-tsr.depth	tsr	out	F	-	-	-	-	-
+sr	tsr	out	F	-	-	-	-	-
 tsr.order	tsr	out	F	-	-	-	-	-
 tsr.order_depth	tsr	out	F	-	-	-	-	-
 tsr.order_depth_windows	tsr	out	F	-	-	-	-	-

@@ -15,31 +15,41 @@ search is free to build `tanh(exp(cos(log(x))))`. Nothing in the representation
 says that is a worse shape than `m*v**2/2` — only the fitness does, after the
 fact, by which point the head space is already spent.
 
-TSR types the **distance** between functions. A transcendental's output is not
-the same type as a plain float, so it cannot be fed back into another
-transcendental without limit. The depth a term sits at becomes part of its
-type, and a term too deep has no signature at all.
+TSR limits the **distance** between functions. The depth a term sits at (how
+many transcendentals are stacked on a path below it) and its Horton-Strahler
+stream order are **properties** of the one data type `F`, derived bottom-up by
+the gene frame's Flow rows, and a `must` Guard row says where a shape is too
+deep or too wide. Where a guard fails, the decoder renders the node as its
+first input: `sin(sin(sin x))` becomes `sin(sin x)`.
 
-Illegal shapes stop being penalised and become **unrepresentable**.
+Illegal shapes stop being penalised and become **inexpressible**: they stay
+representable in the gene (GEP's silent material) and never reach the program.
 
-## The types
+## The rows (the kingdom `tsr.<variant>` in `kingdoms/master/`, the depth variant as `sr`, written by `gen_tables.py`)
 
-| type | meaning |
+| kind of row | what TSR puts there |
 |---|---|
-| `F` | a plain float: a variable, a constant, or arithmetic over plain floats |
-| `T1` | the output of one transcendental over plain floats |
-| `T2` | the output of a transcendental over something already `T1` |
+| DataType | `F`, carrying `depth`, `order`, `fam`, `arm`, `ties`; its constant `?` is a leaf (depth 0, order 1) |
+| Argument | the 18 operators of phylu's `SymbolTable::wide` (`F` in and out), the input terminals `x0..x9`, the constant `?` |
+| Flow (up) | `add`: `depth := max(in0.depth, in1.depth)`; a raising unary (`sin cos tan tanh psqrt plog pexp abs pasin pacos`): `depth := in0.depth + 1`; a level-keeping unary (`neg pow2 pow3 pinv`): `depth := in0.depth`; stream order over flattened sum and product chains through `fam`, `arm`, `ties` |
+| Guard (`must`, repair `{in0}`) | `depth`: `in0.depth <= 1` on the ten raising unaries; `order`: `out.order <= 3` on the four binaries; `windows`: `in0.order <= 2` on `sin cos tan tanh pow2 pow3 pinv` |
+| Entry | `tsr`, output `F` |
 
-There is no `T3`. **That absence is the depth rule** — not a check, not a
-penalty, an arity signature that does not exist.
+Every variant has the same Argument and Flow rows; only the Guard rows differ:
 
-- **Arithmetic ABSORBS**: `+ − × ÷` yield the highest depth among their inputs,
-  so depth propagates rather than resetting. `tanh(x + exp(y))` is `T2`.
-- **Transcendentals RAISE**, and have no row accepting `T2`.
+| variant | guards | arm |
+|---|---|---|
+| `single` | none | A |
+| `depth` | the depth guard: **the symbolic regression kingdom** `sr` (plan 7.7, K1; `master::select("sr")`) | E |
+| `order` | the order ceiling | B |
+| `order_depth` | both | C |
+| `order_depth_windows` | both and the windows | F |
 
-Full design: `docs/SPEC_typed_transcendental_depth.md`.
+The gene is one type, 104 words at head 34 (tail 35, Dc 35), no Dv lane: the
+inputs are terminals, not variables. A law of n columns keeps the first n input
+terminals (`TsrRows::load`).
 
-## Why two, and not one or three
+## Why depth two, and not one or three
 
 Measured across all 133 SRBench ground-truth models (128 parse):
 
@@ -51,152 +61,35 @@ Measured across all 133 SRBench ground-truth models (128 parse):
 | depth 2 | 3 |
 | depth 3 or more | **0** |
 
-A ceiling at `T1` would exclude three real laws. A ceiling at `T3` would admit
-shapes no law uses. **`T2` is where the data puts it.**
+A limit at depth 1 would exclude three real laws. A limit at 3 would admit
+shapes no law uses. **Two is where the data puts it.** The three depth-2 laws
+get there *through arithmetic*, never by direct nesting — which is why
+arithmetic takes the greatest input depth rather than resetting it.
 
-The three depth-2 laws get there *through arithmetic*, never by direct nesting
-— which is why arithmetic must absorb rather than reset.
+## What was deleted (2026-11-05, plan 7.7 task K1)
 
-## Validation, before any engine work
+The first build carried the depth limit as **types**: a ladder `F`, `T1`, `T2`
+(`geneframe::Ty`, `typed_depth_table`, `EVOLVE_TYPED_DEPTH=2` in phylu), and
+the TSR arms as **duals** `shape.level` (`types.tsv`, `functions.tsv`, a `ROOT`
+twin of every function row, up to 34 types and 20,980 words a gene). Both are
+gone: the depth rule is the `depth` Guard row, the order rule the `order` Guard
+row, and a gene is 104 words whichever limits are on. Programs worth keeping
+were kept as text (phylu's champion pool); no old gene is read. The history of
+the typed build is in `docs/SPEC_typed_transcendental_depth.md` and
+`docs/PLAN_tsr_typed_gep.md`.
 
-| check | result |
-|---|---|
-| all 128 parseable true laws type cleanly | **128 OK, 0 rejected** |
-| our 8 reported models: do the bloated ones type? | **7 of 8 ILLEGAL** (213–412 chars) |
-| the one legal exception | 60 chars, depth 1 — the run that scored test R² 1.000000 |
-| share of a live population's sub-expressions that would be illegal | **23%** (400 real fold events) |
+## Where it runs
 
-The 23% is biased toward the fold operator's targets; a uniform gene dump would
-give a truer figure.
+phylu decodes the same rows on the device (`typed_decode.wgsl`, the rule words
+of `tsr_props.rs` compiled by `TsrRows::device_rules`) and on the host
+(`tsr_props::program`, the one host decoder). `EVOLVE_SR_PROPS=<variant>`
+chooses the variant; the law runner's default is `depth`.
 
-## Relationship to the `symbolic-regression` kingdom
+## Tests
 
-`symbolic-regression/` is the untyped float op set the engine has always run —
-the control. TSR is the same op set with the typing. They are two phylogenetic
-spaces over one engine, which is the harness claim in `../README.md`: change
-the symbol table, not the search.
-
-That makes the A/B clean. Same engine, same selection, same pump, same islands,
-same HFF; only the table differs.
-
-## How it is built
-
-`Config::typed_depth: Option<u32>`, **default `None`** — `None` is the
-`symbolic-regression` kingdom, `Some(2)` is this one. `EVOLVE_TYPED_DEPTH`
-names it and the run card carries it, so an A/B's two arms differ by one line
-of the card diff. `Some(0)` is refused at `Engine::new` rather than read as
-"off": a ceiling of zero is a search with no transcendental in it, which is a
-different thing.
-
-The symbol table is `geneframe::typed_depth_table()` — its own kingdom, so the
-untyped rows are literally untouched. `symbols.md` states it row by row.
-
-**The engine spends a depth budget top-down rather than matching output types
-slot by slot**, which is the same predicate: both compute the largest
-transcendental count on a root-to-leaf path, which is what `engine::t_depth`
-already measured bottom-up. One `u32` per symbol (`depth_cost`) and one extra
-draw list (`sample_flat`) is the whole cost, as the spec estimated.
-
-Typed: `init` and point mutation, on the GPU and in the CPU reference, checked
-against each other bit for bit. Not typed, on purpose: the span-moving
-operators, which are left to the decode — see `symbols.md`.
-
-Two things in the spec did not survive being built, and both are corrected in
-`docs/SPEC_typed_transcendental_depth.md`: there is **no existing arity walk**
-for the sampler to read a demanded type out of (`decode_gene` runs on the host,
-long after the kernel has filled the row), and a typed refusal is **not** what
-the engine reports as `oversized` (that is a gene that decoded and was too
-big).
-
-**Shared definitions under the population design** (2026-10-09,
-`docs/PLAN_population_dag.md`, not built). When a population's repeated
-subtrees become homeotic chromosomes, population-wide definitions with a
-stable row id, a root type, memoised row values and a referrer count, the
-root type in this kingdom is the definition's depth rung, `F`, `T1` or `T2`.
-A reference to a homeotic row is type-checked like a terminal of that rung,
-so Fold cannot hide depth: `exp` applied to a reference to a `T2` definition
-has no signature, exactly as it has none when the subtree is written out, and
-the depth rule holds across the href. A definition's level in the level
-schedule (one more than its deepest referenced definition) is an execution
-order, not a transcendental depth; the two are separate numbers.
-
-## Status
-
-**Built, tested and measured.** Full results and their caveats in
-`measurements/`; every fit's own findings are in its run card's `notes`.
-
-There is **no control arm**, on Andrew's instruction — "We don't need an A test
-… Just do TSR." The budget went on breadth instead: eight datasets over two
-development seeds, at the settings that recovered 75 of 133.
-
-The headline, in one line each:
-
-* **On `strogatz_bacres1` TSR fails exactly as untyped does.** No recovery,
-  same settings. A null on the outcome.
-* **`feynman_I_15_10` is the one real result, on one seed.** At seed 7014 and a
-  matched 180 s budget, TSR recovers `m₀v/sqrt(1−v²/c²)` exactly while the
-  untyped engine reports `tan(tan(log(1/cos(x_1/x_2))))` — a **depth-4 tower**,
-  the very shape TSR forbids. One seed, so not yet a kept result.
-* **`feynman_I_26_2` is NOT evidence for typing.** TSR recovers it, but so does
-  the untyped engine at the same budget. What it does establish is that the T2
-  rung is **necessary** — a ceiling at T1 would lose a law the engine can find.
-* **The T2 rung is reached in every fit** — but untyped populations reach it
-  too, so that is not a difference between the kingdoms.
-* **The pace cost is not established.** The machine was shared and a third
-  bacres1 run came out *faster* than untyped; no timing claim survives that.
-
-The one thing the spec did not foresee: at `n_genes = 3` with `gene_subsets`
-on, a refused gene does **not** kill its row. It rides along unscored, so
-typing accumulates dead weight rather than removing shapes from the population.
-
-## Generated tables for the typed-GEP kingdom (plan F1, 2026-10-20)
-
-`gen_tables.py` writes one folder per variant of `docs/PLAN_tsr_typed_gep.md`
-(`single`, `order`, `depth`, `order_depth`, `order_depth_windows`: arms A, B,
-E, C, F), each with `types.tsv`, `functions.tsv`, `TYPES.md`, `symbols.md`.
-`check_types.py` is the check of plan 2.6 and tests 3, 8, 9 and the section 3
-widths; both run with plain `python3 -I`.
-
-| variant | duals | function rows | with root twins | width N=8 / 17 / 32 |
-|---|---|---|---|---|
-| single | 1 | 18 | 18 | 47 / 101 / 191 |
-| order | 12 | 574 | 1,148 | 1,622 / 3,656 / 7,046 |
-| depth | 4 | 68 | 136 | 252 / 558 / 1,068 |
-| order_depth | 34 | 4,132 | 8,264 | 9,244 / 20,980 / 40,540 |
-| order_depth_windows | 34 | 4,047 | 8,094 | 9,244 / 20,980 / 40,540 |
-
-Choices where the plan was open:
-
-- `single` has no ROOT dual (the root is F, plan 2.9), so it has no twin rows.
-- Terminals are rows `var` and `const` per dual, ROOT included. `var` stands for
-  one terminal per input column; the loader expands it. Symbol counts at n
-  inputs are duals x (n + 1) terminals (170 for order_depth at n = 4).
-- Rows are in `wide()` order: add sub mul pdiv, then the 14 unaries; within an
-  operator, argument duals in type order; the root twins follow the function
-  rows. Refs are `T<nnn>` (types) and `F<nnnnn>` (rows) in that order.
-- Windows (`hi`) need an order ceiling: they bound the argument's order.
-- Every constructor `math_to_nodes` reads that is not in `wide()` is an `absent`
-  row (Div Sqrt Log Exp Inv Asin Acos Pow Select3); `Pow(x,2)` and `Pow(x,3)`
-  are `canon` rows. The check reads `gpu_eval.rs`, and phylu's `engine.rs` and
-  `order.rs` when they are present, and compares the sets.
-- The 9-node exhaustive run enumerates every tree and updates the engine's
-  recurrence node by node (cross-validated against the literal node-array ports
-  of `stream_order` and `t_depth` on 20,000 random trees); the runs up to 6
-  nodes and the random runs use the literal ports on the whole tree.
-
-## The same variants as rows of the gene frame's fixed schema (plan section 8, 2026-11-05)
-
-Each variant folder also holds `tables.tsv`, written by `gen_tables.py` (its `--check` is a fuller test) in the four
-kinds of row of `docs/DESIGN_futhark_types_and_properties.md` 3.3, read by `src/tsr_kingdom/rows.rs`:
-
-| rows | TSR |
-|---|---|
-| DataType | `F` only, carrying `depth`, `order`, `fam` (0 none, 1 sum, 2 product), `arm`, `ties` |
-| Argument | the 18 operators of `wide()`, then the input terminals `x0..x9` (a law keeps the first n), then `?`: `wide(n)`'s ids |
-| Flow (up) | depth: the greatest input depth, plus 1 for a raising unary; order: Horton-Strahler over flattened sum and product chains, through `fam`, `arm`, `ties` and `out.p` |
-| Guard (`must`, repair `{in0}`) | order and its variants: `out.order <= 3` on add, sub, mul, pdiv; depth: `in0.depth <= 1` on the ten raising unaries; windows: `in0.order <= 2` on sin cos tan tanh pow2 pow3 pinv; single: none |
-
-A variant differs from another only by its Guard rows; the gene is `single`'s word for word (one type, 104 words at
-head 34). An illegal shape stays representable in the gene and becomes **inexpressible** in the program: the decoder
-renders a failing node as its first input. The tests show the Flow rows give phylu's `stream_order` and `t_depth`
-exactly, and that each variant decodes with no substitution exactly the trees its typed tables type.
+`src/tsr_kingdom/rows/tests.rs`: the Flow rows give phylu's `stream_order` and
+`t_depth` on 46,279 exhaustive and 100,000 random trees; 10,000 random genes a
+variant decode to legal programs and nothing illegal; the K1 smoke test (1,000
+genes on `depth`: legal, and the host decode equals the device rules' decode);
+`gen_tables.py --check` (the master rows of every variant equal a fresh
+generation) is a test.
