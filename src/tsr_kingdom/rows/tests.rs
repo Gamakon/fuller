@@ -531,6 +531,158 @@ fn a_substituted_node_renders_and_reads_as_its_first_input() {
     assert_eq!(k.decode(&tree).unwrap(), dec);
 }
 
+// ---- the decoder's surface for phylu (plan 8.8, task T3) ----------------------------------------------------------
+
+/// The device's rules, compiled from the rows: the 18 operators and the leaves in the closed forms, and each variant's
+/// limits exactly its guards.
+#[test]
+fn the_device_rules_are_the_rows_flows_and_guards() {
+    for variant in TsrVariant::ALL {
+        let k = TsrRows::load(variant, N_INPUTS).unwrap();
+        let rules = k.device_rules().unwrap();
+        assert_eq!(rules.len(), k.contract.n_symbols());
+        let (ceiling, depth, windows) = limits(variant);
+        for (s, r) in rules.iter().enumerate() {
+            let op = ctor(&k, s as SymbolId);
+            match op {
+                "Var" | "Num" => assert_eq!(*r, DeviceRule { depth: DepthRule::Zero, order: OrderRule::Leaf, in0_depth_max: None, in0_order_max: None, out_order_max: None }),
+                _ if BINARY.contains(&op) => {
+                    let family = if op == "Add" || op == "Sub" { 1 } else { 2 };
+                    assert_eq!((r.depth, r.order), (DepthRule::Max, OrderRule::Strahler { family }), "{op}");
+                    assert_eq!((r.in0_depth_max, r.in0_order_max, r.out_order_max), (None, None, ceiling), "{op}");
+                }
+                _ => {
+                    let raising = RAISERS.contains(&op);
+                    assert_eq!((r.depth, r.order), (if raising { DepthRule::PlusOne } else { DepthRule::Copy }, OrderRule::Unary), "{op}");
+                    assert_eq!(r.in0_depth_max, depth.filter(|_| raising).map(|d| d - 1), "{op}");
+                    assert_eq!(r.in0_order_max, (windows && WINDOWED.contains(&op)).then_some(2), "{op}");
+                    assert_eq!(r.out_order_max, None, "{op}");
+                }
+            }
+        }
+    }
+}
+
+/// A row outside the device's closed forms is our software's bug, named, never approximated.
+#[test]
+fn a_row_outside_the_device_forms_is_a_bug() {
+    let k = TsrRows::load(TsrVariant::OrderDepth, N_INPUTS).unwrap();
+    let sin = i64::from(named(&k, "sin"));
+    let edit = |f: &dyn Fn(&mut KingdomTables)| {
+        let mut t = (*k.tables).clone();
+        f(&mut t);
+        TsrRows { tables: Arc::new(t), ..k.clone() }.device_rules().expect_err("outside the forms")
+    };
+    let e = edit(&|t| {
+        let f = t.flows.iter_mut().find(|f| f.owner == Owner::Symbol(sin) && f.name == FlowName::Property("depth".into())).unwrap();
+        f.formula = PropertyExpr::parse("in0.depth + 2").unwrap();
+    });
+    assert!(e.starts_with("our software has a bug: TSR order_depth, symbol") && e.contains("depth flow"), "{e}");
+    let e = edit(&|t| t.guards.iter_mut().find(|g| g.owner == Owner::Symbol(sin)).unwrap().condition = crate::geneframe::Condition::parse("in0.depth < 2").unwrap());
+    assert!(e.starts_with("our software has a bug: ") && e.contains("guard 0"), "{e}");
+    let e = edit(&|t| t.guards.iter_mut().find(|g| g.owner == Owner::Symbol(sin)).unwrap().repairs[0].template = "{const}".into());
+    assert!(e.contains("{in0}"), "{e}");
+}
+
+/// THE HOST TWIN OF THE DEVICE'S DECODER, as phylu writes it, in fuller's terms: the expressed nodes bottom-up through
+/// [`DeviceRule::derive`] and [`DeviceRule::fails`], a failing node taking its first input's profile and program, then
+/// the program renumbered in level order. Returns (symbol, Dc word, gene position, arity, profile) a program node, and
+/// the substituted gene positions.
+type TwinNode = (SymbolId, Option<u32>, usize, usize, Profile);
+fn twin(rules: &[DeviceRule], e: &crate::typed_gep::Expressed, arity: &dyn Fn(SymbolId) -> usize) -> (Vec<TwinNode>, Vec<usize>) {
+    let n = e.nodes.len();
+    let mut first = vec![0usize; n];
+    let mut next = 1;
+    for (i, node) in e.nodes.iter().enumerate() {
+        first[i] = next;
+        next += arity(node.symbol);
+    }
+    let (mut prof, mut subst) = (vec![Profile::LEAF; n], vec![false; n]);
+    for i in (0..n).rev() {
+        let s = e.nodes[i].symbol;
+        let a = arity(s);
+        if a == 0 {
+            continue;
+        }
+        let kids: Vec<Profile> = (0..a).map(|j| prof[first[i] + j]).collect();
+        let r = &rules[s as usize];
+        let p = r.derive(&kids);
+        subst[i] = r.fails(kids[0].depth, kids[0].order, p.order);
+        prof[i] = if subst[i] { prof[first[i]] } else { p };
+    }
+    // The program, top down: a substituted node is passed through to its first input (a substitution inside a dropped
+    // input is silent material, not part of the program, and not listed).
+    let mut substituted = Vec::new();
+    let mut resolve = |mut i: usize| {
+        while subst[i] {
+            substituted.push(e.nodes[i].pos);
+            i = first[i];
+        }
+        i
+    };
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([resolve(0)]);
+    while let Some(i) = queue.pop_front() {
+        let a = arity(e.nodes[i].symbol);
+        out.push((e.nodes[i].symbol, e.nodes[i].const_index, e.nodes[i].pos, a, prof[i]));
+        for j in 0..a {
+            queue.push_back(resolve(first[i] + j));
+        }
+    }
+    substituted.sort_unstable();
+    (out, substituted)
+}
+
+/// THE DECODER'S SURFACE: on 10,000 random genes a variant, [`TsrRows::decode_gene`]'s program is [`program`] of the
+/// decoding, every node's gene position is the expressed node it was read from, a substituted position is an expressed
+/// node the program drops, the counts add up, and the device's rules (the host twin above) give the same program, the
+/// same properties at every node and the same substituted positions.
+#[test]
+fn decode_gene_is_the_program_and_the_device_rules_give_it() {
+    for variant in TsrVariant::ALL {
+        let d = variant.dir();
+        let k = TsrRows::load(variant, N_INPUTS).unwrap();
+        let rules = k.device_rules().unwrap();
+        let layout = k.layout(HEAD).unwrap();
+        let consts = BTreeMap::from([(Ty::F, 5u32)]);
+        let mut rng = Rng(9011 + variant as u64);
+        let (mut with_subst, mut total_subst) = (0usize, 0usize);
+        for _ in 0..GENES {
+            let gene = random_gene(&k.contract, &layout, &consts, &mut rng);
+            let got = k.decode_gene(&layout, &gene, &consts).unwrap();
+            let e = express(&k.contract, &layout, &gene, &consts).unwrap();
+            assert_eq!(got.expressed, e.tree());
+            let dec = k.decode(&got.expressed).unwrap();
+            assert_eq!(got.tree(), program(&dec), "{d}");
+            assert_eq!(got.dropped, dropped(&got.expressed, &dec), "{d}");
+            assert_eq!(got.substituted.len(), dec.failures().len(), "{d}: one substituted position a substitution");
+            let expressed_pos: Vec<usize> = e.nodes.iter().map(|n| n.pos).collect();
+            for n in &got.nodes {
+                let w = e.nodes.iter().find(|w| w.pos == n.pos).expect("a program node is an expressed node");
+                assert_eq!((w.symbol, w.const_index), (n.symbol, n.const_index), "{d}");
+            }
+            for p in &got.substituted {
+                assert!(expressed_pos.contains(p) && got.nodes.iter().all(|n| n.pos != *p), "{d}: a substituted position is expressed and dropped");
+            }
+            let (tw, ts) = twin(&rules, &e, &|s| k.contract.signature(s).len());
+            let mine: Vec<TwinNode> = got.nodes.iter().map(|n| (n.symbol, n.const_index, n.pos, n.arity, Profile { depth: n.depth, order: n.order, fam: n.fam, arm: n.arm, ties: n.ties })).collect();
+            assert_eq!(tw, mine, "{d}: the device's rules give the rows' program and properties");
+            assert_eq!(ts, got.substituted, "{d}");
+            if !got.substituted.is_empty() {
+                with_subst += 1;
+                total_subst += got.substituted.len();
+            }
+        }
+        if variant == TsrVariant::Single {
+            assert_eq!(with_subst, 0);
+        } else {
+            // (random genes at head 34 rarely exceed order 3: 29 of 10,000 under `order`)
+            assert!(with_subst > 10, "{d}: {with_subst} genes with a substitution");
+        }
+        eprintln!("{d}: {with_subst} of {GENES} genes substituted, {total_subst} substitutions");
+    }
+}
+
 /// The committed tables are what `gen_tables.py` writes (its `--check`). A missing `python3` is a failure, not a skip.
 #[test]
 fn the_committed_tables_are_what_the_generator_writes() {
