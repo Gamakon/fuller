@@ -23,6 +23,10 @@
 //!    expression no row reads is a gap of the kingdom, recorded with the construct it lacks.
 //!
 //! The round trip, every rendered program reads back to its own tree, is the test (`tests`).
+//!
+//! MASTER 6 ([`Reader6`], plan `docs/PLAN_futhark_kingdom.md` section 7 task F4) reads a master 6 view's program into
+//! its tree with nothing normalised: a name is the view's `var@T` with the index word G3's environment gives it, a
+//! float literal is read by its value, a `let` is the `let` row, an adapter is read as the plain row (`tests6`).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -73,8 +77,38 @@ pub enum E {
     If(Box<E>, Box<E>, Box<E>),
     Lam(Vec<String>, Box<E>),
     Let(String, Box<E>, Box<E>),
-    /// `loop state = init for var in lo ..< hi do body` (`for var < hi` has `lo` 0).
-    Loop { state: String, init: Box<E>, var: String, lo: Box<E>, hi: Box<E>, body: Box<E> },
+    /// `loop state = init for var in lo ..< hi do body` (`for var < hi` has `lo` 0); a tuple state
+    /// `loop ((a, b): t) = ..` names each component (master 6 only: master 5's parser names one).
+    Loop { state: Vec<String>, init: Box<E>, var: String, lo: Box<E>, hi: Box<E>, body: Box<E> },
+    /// A float literal (master 6 only), in one spelling: its value as Rust prints an `f64`, then its suffix
+    /// (`0f32` and `0.0f32` are `0.0f32`; `1.0` is `1.0`).
+    Float(String),
+    /// An integer literal with its type's suffix (master 6 only: `0i32`, `-1i64`; master 5 reads the value alone,
+    /// [`E::Int`], as does an unsuffixed literal).
+    Lit(String),
+    /// A tuple `(a, b)` (master 6 only).
+    Tuple(Vec<E>),
+    /// An expression in parentheses (master 6 only): pass 5 puts every operand but a size in parentheses, so a pair of
+    /// literals `((0f32), (0f32))` and the pair's zero `(0f32, 0f32)` are two texts, read as two trees.
+    Paren(Box<E>),
+    /// A tuple's component `e.0` (master 6 only).
+    Proj(Box<E>, usize),
+    /// An array literal `[a, b]` (master 6 only: a data type's constant, `[0f32]`).
+    Array(Vec<E>),
+    /// A master 6 spelling's placeholder `{k.p}`: property `p` of operand `k` as Futhark text (patterns only).
+    Prop(usize, String),
+}
+
+/// A float literal's one spelling ([`E::Float`]): its value as Rust prints an `f64`, then its suffix; `None` for a text
+/// that is no float literal.
+fn float_literal(text: &str) -> Option<String> {
+    let t: String = text.chars().filter(|c| *c != '_').collect();
+    let (num, suffix) = match t.len().checked_sub(3).map(|i| t.split_at(i)) {
+        Some((n, s)) if ["f16", "f32", "f64"].contains(&s) => (n.to_string(), s.to_string()),
+        _ => (t.clone(), String::new()),
+    };
+    let v: f64 = num.parse().ok()?;
+    Some(format!("{v:?}{suffix}"))
 }
 
 fn b(e: E) -> Box<E> {
@@ -110,20 +144,29 @@ impl E {
             E::Lam(..) => "lambda".into(),
             E::Let(..) => "let".into(),
             E::Loop { .. } => "loop".into(),
+            E::Float(v) => format!("float literal {v}"),
+            E::Lit(v) => format!("literal {v}"),
+            E::Paren(e) => e.head(),
+            E::Tuple(_) => "tuple".into(),
+            E::Proj(..) => "tuple component".into(),
+            E::Array(_) => "array literal".into(),
+            E::Prop(i, p) => format!("placeholder {{{i}.{p}}}"),
         }
     }
 
     fn mentions(&self, x: &str) -> bool {
         match self {
             E::Var(y) => y == x,
-            E::Int(_) | E::Hole(_) => false,
+            E::Int(_) | E::Hole(_) | E::Float(_) | E::Lit(_) | E::Prop(..) => false,
             E::App(f, a) => f.mentions(x) || a.iter().any(|e| e.mentions(x)),
+            E::Tuple(a) | E::Array(a) => a.iter().any(|e| e.mentions(x)),
+            E::Proj(e, _) | E::Paren(e) => e.mentions(x),
             E::Bin(_, l, r) | E::Index(l, r) => l.mentions(x) || r.mentions(x),
             E::Neg(e) => e.mentions(x),
             E::If(c, t, e) => c.mentions(x) || t.mentions(x) || e.mentions(x),
             E::Lam(ps, body) => !ps.iter().any(|p| p == x) && body.mentions(x),
             E::Let(y, e, body) => e.mentions(x) || (y != x && body.mentions(x)),
-            E::Loop { state, init, var, lo, hi, body } => init.mentions(x) || lo.mentions(x) || hi.mentions(x) || (state != x && var != x && body.mentions(x)),
+            E::Loop { state, init, var, lo, hi, body } => init.mentions(x) || lo.mentions(x) || hi.mentions(x) || (!state.iter().any(|s| s == x) && var != x && body.mentions(x)),
         }
     }
 
@@ -132,8 +175,12 @@ impl E {
         let r = |e: &E| e.rename(from, to);
         match self {
             E::Var(y) if y == from => var(to),
-            E::Int(_) | E::Hole(_) | E::Var(_) => self.clone(),
+            E::Int(_) | E::Hole(_) | E::Var(_) | E::Float(_) | E::Lit(_) | E::Prop(..) => self.clone(),
             E::App(f, a) => E::App(b(r(f)), a.iter().map(r).collect()),
+            E::Tuple(a) => E::Tuple(a.iter().map(r).collect()),
+            E::Array(a) => E::Array(a.iter().map(r).collect()),
+            E::Proj(e, i) => E::Proj(b(r(e)), *i),
+            E::Paren(e) => E::Paren(b(r(e))),
             E::Bin(op, l, rr) => E::Bin(op.clone(), b(r(l)), b(r(rr))),
             E::Index(l, rr) => E::Index(b(r(l)), b(r(rr))),
             E::Neg(e) => E::Neg(b(r(e))),
@@ -152,7 +199,7 @@ impl E {
                 var: v.clone(),
                 lo: b(r(lo)),
                 hi: b(r(hi)),
-                body: if state == from || v == from { body.clone() } else { b(r(body)) },
+                body: if state.iter().any(|s| s == from) || v == from { body.clone() } else { b(r(body)) },
             },
         }
     }
@@ -168,7 +215,7 @@ impl E {
 
 /// `loop s = init for t < D - 1 do let i = t + 1 in body` is the loop from 1 (`for i in 1..<D`): the spelling of the
 /// kingdom's `loop1` rows and the form a person writes are one form.
-fn canonical_loop(state: String, init: E, v: String, lo: E, hi: E, body: E) -> E {
+fn canonical_loop(state: Vec<String>, init: E, v: String, lo: E, hi: E, body: E) -> E {
     if lo == E::Int(0) {
         if let (E::Bin(minus, d, one), E::Let(i, step, rest)) = (&hi, &body) {
             if minus == "-" && **one == E::Int(1) && **step == E::Bin("+".into(), b(E::Var(v.clone())), b(E::Int(1))) && !rest.mentions(&v) {
@@ -188,6 +235,8 @@ enum K {
     Ident,
     Sym,
     Hole(usize),
+    /// A master 6 spelling's placeholder of a property or a type of an operand: `{0.bound}`, `{1.type}`.
+    Place(usize, String),
     Str,
 }
 
@@ -210,13 +259,38 @@ const SYMS: [&str; 41] = [
 
 fn is_operand(t: &Tok) -> bool {
     match t.k {
-        K::Int(_) | K::Float | K::Hole(_) | K::Str => true,
+        K::Int(_) | K::Float | K::Hole(_) | K::Place(..) | K::Str => true,
         K::Ident => !KEYWORDS.contains(&t.text.as_str()),
         K::Sym => t.text == ")" || t.text == "]",
     }
 }
 
-fn lex(src: &str, holes: bool) -> Result<Vec<Tok>, Gap> {
+/// The end of a master 6 binder placeholder `{k.vj}` starting at `i` (the j-th variable argument k binds), if one does.
+fn binder_place(c: &[char], i: usize) -> Option<usize> {
+    let mut j = i;
+    if c.get(j) != Some(&'{') {
+        return None;
+    }
+    j += 1;
+    let d0 = j;
+    while c.get(j).is_some_and(char::is_ascii_digit) {
+        j += 1;
+    }
+    if j == d0 || c.get(j) != Some(&'.') || c.get(j + 1) != Some(&'v') {
+        return None;
+    }
+    j += 2;
+    let d1 = j;
+    while c.get(j).is_some_and(char::is_ascii_digit) {
+        j += 1;
+    }
+    (j > d1 && c.get(j) == Some(&'}')).then_some(j + 1)
+}
+
+/// Lex a text: `holes` reads `{k}` as a pattern's hole; `rich` is master 6's spelling and program syntax (a binder
+/// placeholder `{k.vj}` is a name, glued to the name before it: `t{2.v1}`; `{k.p}` is a placeholder of a property or
+/// type).
+fn lex(src: &str, holes: bool, rich: bool) -> Result<Vec<Tok>, Gap> {
     let c: Vec<char> = src.chars().collect();
     let mut out: Vec<Tok> = Vec::new();
     let mut i = 0;
@@ -342,6 +416,11 @@ fn lex(src: &str, holes: bool) -> Result<Vec<Tok>, Gap> {
                     i += 1;
                 }
             }
+            if holes && rich {
+                if let Some(end) = binder_place(&c, i) {
+                    i = end;
+                }
+            }
             out.push(Tok { k: K::Ident, text: c[start..i].iter().collect(), tight, line_start: first });
             tight = true;
             continue;
@@ -355,6 +434,31 @@ fn lex(src: &str, holes: bool) -> Result<Vec<Tok>, Gap> {
             out.push(Tok { k: K::Str, text: c[start..i.min(c.len())].iter().collect(), tight, line_start: first });
             tight = true;
             continue;
+        }
+        if holes && rich && ch == '{' {
+            if let Some(end) = binder_place(&c, i) {
+                out.push(Tok { k: K::Ident, text: c[i..end].iter().collect(), tight, line_start: first });
+                i = end;
+                tight = true;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < c.len() && c[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 && c.get(j) == Some(&'.') {
+                let mut e = j + 1;
+                while e < c.len() && (c[e].is_alphanumeric() || c[e] == '_') {
+                    e += 1;
+                }
+                if e > j + 1 && c.get(e) == Some(&'}') {
+                    let n: usize = c[i + 1..j].iter().collect::<String>().parse().map_err(|_| Gap::parse("placeholder", "a placeholder number".into()))?;
+                    out.push(Tok { k: K::Place(n, c[j + 1..e].iter().collect()), text: c[i..=e].iter().collect(), tight, line_start: first });
+                    i = e + 1;
+                    tight = true;
+                    continue;
+                }
+            }
         }
         if holes && ch == '{' {
             let mut j = i + 1;
@@ -409,6 +513,9 @@ struct Parser<'t> {
     t: &'t [Tok],
     p: usize,
     fresh: usize,
+    /// Master 6's syntax: float literals, tuples and their components, array literals, a tuple loop state, a size
+    /// binding `let [m] (x: t) = ..`, and a spelling's placeholders.
+    rich: bool,
 }
 
 const BINOPS: [(&str, u8); 23] = [
@@ -498,6 +605,14 @@ impl<'t> Parser<'t> {
     /// A type: `*`, `[d]`... then an element; a tuple, record or function type is a gap only where it matters, so it
     /// is returned with the element `tuple` or `function`.
     fn ftype(&mut self) -> Result<FType, Gap> {
+        if self.rich {
+            if let Some(Tok { k: K::Place(_, f), .. }) = self.peek() {
+                if f == "type" {
+                    self.p += 1;
+                    return Ok(FType { dims: Vec::new(), elem: "placeholder".into() });
+                }
+            }
+        }
         self.eat("*");
         let mut dims = Vec::new();
         while self.is("[") {
@@ -625,6 +740,12 @@ impl<'t> Parser<'t> {
 
     fn let_expr(&mut self) -> Result<E, Gap> {
         self.expect("let")?;
+        // `let [m] (x: [m]t) = ..`: a size binding (master 6's adapters); the size's name is only a type's.
+        if self.rich && self.is("[") {
+            self.p += 1;
+            self.ident()?;
+            self.expect("]")?;
+        }
         if self.is("(") && self.peek_at(2).is_some_and(|t| t.text == ",") {
             return Err(Gap::parse("tuple pattern", "let (a, b) = ...".into()));
         }
@@ -660,8 +781,26 @@ impl<'t> Parser<'t> {
         if self.is("(") && self.peek_at(2).is_some_and(|t| t.text == ",") {
             return Err(Gap::parse("tuple pattern", "loop (a, b) = ...".into()));
         }
-        let (state, _) = self.binder()?;
-        let init = if self.eat("=") { self.expr()? } else { E::Var(state.clone()) };
+        let state = if self.rich && self.is("(") && self.peek_at(1).is_some_and(|t| t.text == "(") {
+            self.p += 2;
+            let mut names = vec![self.ident()?];
+            while self.eat(",") {
+                names.push(self.ident()?);
+            }
+            self.expect(")")?;
+            if self.eat(":") {
+                self.ftype()?;
+            }
+            self.expect(")")?;
+            names
+        } else {
+            vec![self.binder()?.0]
+        };
+        let init = match (self.eat("="), state.as_slice()) {
+            (true, _) => self.expr()?,
+            (false, [one]) => E::Var(one.clone()),
+            (false, _) => return Err(Gap::parse("tuple loop state with no initial value", String::new())),
+        };
         if self.is("while") {
             return Err(Gap::parse("while loop", String::new()));
         }
@@ -728,7 +867,7 @@ impl<'t> Parser<'t> {
     fn starts_atom(&self) -> bool {
         match self.peek() {
             Some(t) => match &t.k {
-                K::Int(_) | K::Hole(_) | K::Float => true,
+                K::Int(_) | K::Hole(_) | K::Float | K::Place(..) => true,
                 K::Ident => !KEYWORDS.contains(&t.text.as_str()),
                 K::Sym => t.text == "(" || (t.text == "[" && !t.tight),
                 K::Str => false,
@@ -762,6 +901,15 @@ impl<'t> Parser<'t> {
             }
             self.expect("]")?;
         }
+        while self.rich && self.peek().is_some_and(|t| t.text == "." && t.tight) {
+            match self.peek_at(1).map(|t| t.k.clone()) {
+                Some(K::Int(i)) if i >= 0 => {
+                    self.p += 2;
+                    e = E::Proj(b(e), i as usize);
+                }
+                _ => return Err(Gap::parse("field access", String::new())),
+            }
+        }
         if self.peek().is_some_and(|t| t.text == "." && t.tight) {
             return Err(Gap::parse("field access", String::new()));
         }
@@ -773,17 +921,39 @@ impl<'t> Parser<'t> {
         match t.k {
             K::Int(v) => {
                 self.p += 1;
-                Ok(E::Int(v))
+                let suffix = t.text.rfind(['i', 'u']).map(|at| &t.text[at..]).filter(|x| x.len() > 1 && x[1..].bytes().all(|c| c.is_ascii_digit())).unwrap_or("");
+                Ok(if self.rich && !suffix.is_empty() { E::Lit(format!("{v}{suffix}")) } else { E::Int(v) })
             }
             K::Hole(i) => {
                 self.p += 1;
                 Ok(E::Hole(i))
             }
+            K::Float if self.rich => {
+                self.p += 1;
+                float_literal(&t.text).map(E::Float).ok_or_else(|| Gap::parse("literal", t.text.clone()))
+            }
             K::Float => Err(Gap::parse("float literal", t.text)),
+            K::Place(i, ref f) if self.rich && f != "type" => {
+                self.p += 1;
+                Ok(E::Prop(i, f.clone()))
+            }
+            K::Place(..) => Err(Gap::parse("placeholder", t.text)),
             K::Str => Err(Gap::parse("string", t.text)),
             K::Ident => {
                 let n = self.ident()?;
                 Ok(E::Var(n))
+            }
+            K::Sym if t.text == "[" && self.rich => {
+                self.p += 1;
+                let mut items = Vec::new();
+                if !self.is("]") {
+                    items.push(self.expr()?);
+                    while self.eat(",") {
+                        items.push(self.expr()?);
+                    }
+                }
+                self.expect("]")?;
+                Ok(E::Array(items))
             }
             K::Sym if t.text == "[" => Err(Gap::parse("array literal", String::new())),
             K::Sym if t.text == "(" => {
@@ -807,12 +977,21 @@ impl<'t> Parser<'t> {
                     }
                 }
                 let e = self.expr()?;
+                if self.rich && self.is(",") {
+                    let mut items = vec![e];
+                    while self.eat(",") {
+                        items.push(self.expr()?);
+                    }
+                    self.expect(")")?;
+                    return Ok(E::Tuple(items));
+                }
                 if self.is(",") {
                     return Err(Gap::parse("tuple", String::new()));
                 }
                 if self.eat(":") {
                     self.ftype()?;
                 }
+                let e = if self.rich { E::Paren(b(e)) } else { e };
                 // `(e op)`.
                 if let Some(op) = self.peek().filter(|t| t.k == K::Sym && binop(&t.text).is_some()).map(|t| t.text.clone()) {
                     if self.peek_at(1).is_some_and(|t| t.text == ")") {
@@ -882,8 +1061,25 @@ fn combine(op: &str, l: E, r: E, fresh: &mut usize) -> E {
 
 /// Parse an expression (a row's spelling, with holes).
 pub fn parse_pattern(text: &str) -> Result<E, Gap> {
-    let toks = lex(text, true)?;
-    let mut p = Parser { t: &toks, p: 0, fresh: 0 };
+    parse_expression(text, true, false)
+}
+
+/// The first fresh name's number of a parse: a master 6 program's names a section or `_` introduces start far past a
+/// spelling's, so a pattern's `\%s1 %s2 -> ..` never meets a program's `\%s2 %s3 -> ..` (the matcher renames one
+/// binder at a time, and a program binder named as another pattern binder would read as a capture). Master 5's
+/// normaliser renames every binder apart, so its parses keep 0.
+fn program_fresh(holes: bool, rich: bool) -> usize {
+    if rich && !holes {
+        1_000_000
+    } else {
+        0
+    }
+}
+
+/// Parse an expression: `holes` reads a spelling's holes, `rich` master 6's syntax.
+fn parse_expression(text: &str, holes: bool, rich: bool) -> Result<E, Gap> {
+    let toks = lex(text, holes, rich)?;
+    let mut p = Parser { t: &toks, p: 0, fresh: program_fresh(holes, rich), rich };
     let e = p.expr()?;
     if p.p != toks.len() {
         return Err(p.unexpected("text after the expression"));
@@ -894,7 +1090,12 @@ pub fn parse_pattern(text: &str) -> Result<E, Gap> {
 /// Parse a Futhark source file into its top-level `def`s and `entry`s (other items, `import`, `type`, `module`,
 /// `open`, are skipped; an item that does not parse is a `Def` whose body is the gap).
 pub fn parse_file(src: &str) -> Result<Vec<Def>, Gap> {
-    let toks = lex(src, false)?;
+    parse_file_with(src, false)
+}
+
+/// [`parse_file`], in master 6's syntax when `rich`.
+fn parse_file_with(src: &str, rich: bool) -> Result<Vec<Def>, Gap> {
+    let toks = lex(src, false, rich)?;
     let starts: Vec<usize> = (0..toks.len()).filter(|&i| toks[i].line_start && toks[i].k == K::Ident && ["def", "entry", "let", "type", "module", "import", "open", "local", "include"].contains(&toks[i].text.as_str())).collect();
     let mut out = Vec::new();
     for (j, &s) in starts.iter().enumerate() {
@@ -907,7 +1108,7 @@ pub fn parse_file(src: &str) -> Result<Vec<Def>, Gap> {
             continue;
         }
         let name = toks.get(s + 1).map(|t| t.text.clone()).unwrap_or_default();
-        let mut p = Parser { t: &toks[s..end], p: 0, fresh: 0 };
+        let mut p = Parser { t: &toks[s..end], p: 0, fresh: program_fresh(false, rich), rich };
         match p.def() {
             Ok(d) => out.push(d),
             Err(g) => out.push(Def { name, entry: toks[s].text == "entry", size_params: vec![], params: vec![], ret: None, body: Err(g) }),
@@ -968,7 +1169,11 @@ impl Norm<'_> {
             return Err(Gap::parse("program too large to inline", format!("over {NORM_STEPS} normalisation steps")));
         }
         Ok(match e {
-            E::Int(_) | E::Hole(_) => e.clone(),
+            E::Int(_) | E::Hole(_) | E::Float(_) | E::Lit(_) | E::Prop(..) => e.clone(),
+            E::Tuple(a) => E::Tuple(a.iter().map(|x| self.ev(x, env)).collect::<Result<_, _>>()?),
+            E::Array(a) => E::Array(a.iter().map(|x| self.ev(x, env)).collect::<Result<_, _>>()?),
+            E::Proj(x, i) => E::Proj(b(self.ev(x, env)?), *i),
+            E::Paren(x) => self.ev(x, env)?,
             E::Var(x) => env.get(x).cloned().unwrap_or_else(|| e.clone()),
             E::Neg(x) => E::Neg(b(self.ev(x, env)?)),
             E::Bin(op, l, r) => {
@@ -1009,9 +1214,14 @@ impl Norm<'_> {
             E::Loop { state, init, var: v, lo, hi, body } => {
                 let init = self.ev(init, env)?;
                 let (lo, hi) = (self.ev(lo, env)?, self.ev(hi, env)?);
-                let (s2, v2) = (self.fresh(), self.fresh());
                 let mut env2 = env.clone();
-                env2.insert(state.clone(), E::Var(s2.clone()));
+                let mut s2 = Vec::with_capacity(state.len());
+                for x in state {
+                    let f = self.fresh();
+                    env2.insert(x.clone(), E::Var(f.clone()));
+                    s2.push(f);
+                }
+                let v2 = self.fresh();
                 env2.insert(v.clone(), E::Var(v2.clone()));
                 let body = self.ev(body, &env2)?;
                 E::Loop { state: s2, init: b(init), var: v2, lo: b(lo), hi: b(hi), body: b(body) }
@@ -1103,6 +1313,9 @@ fn strip_opaque(e: E) -> E {
         E::Lam(ps, body) => E::Lam(ps, b(s(&body))),
         E::Let(x, v, body) => E::Let(x, b(s(&v)), b(s(&body))),
         E::Loop { state, init, var: v, lo, hi, body } => E::Loop { state, init: b(s(&init)), var: v, lo: b(s(&lo)), hi: b(s(&hi)), body: b(s(&body)) },
+        E::Tuple(a) => E::Tuple(a.iter().map(s).collect()),
+        E::Array(a) => E::Array(a.iter().map(s).collect()),
+        E::Proj(x, i) => E::Proj(b(s(&x)), i),
         other => other,
     }
 }
@@ -1545,7 +1758,13 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
         // reads (the body reads an outer variable through a same-class inner binder). No row can say that, so the
         // match fails and the reader reports the gap.
         (E::Lam(ps, _), E::Lam(qs, ebody)) if ps.len() == qs.len() && ps.iter().zip(qs).any(|(p, q)| p != q && ebody.mentions(p)) => {}
-        (E::Loop { state, var: v, .. }, E::Loop { state: s2, var: v2, body: b2, .. }) if (state != s2 && b2.mentions(state)) || (v != v2 && b2.mentions(v)) => {}
+        (E::Loop { state, var: v, .. }, E::Loop { state: s2, var: v2, body: b2, .. }) if state.len() != s2.len() || state.iter().zip(s2).any(|(p, q)| p != q && b2.mentions(p)) || (v != v2 && b2.mentions(v)) => {}
+        (E::Let(x, _, _), E::Let(y, _, ebody)) if x != y && ebody.mentions(x) => {}
+        (E::Let(x, v, body), E::Let(y, w, ebody)) => then(vec![(*v.clone(), *w.clone()), (*body.clone(), ebody.rename(y, x))], holes, k),
+        (E::Float(a), E::Float(c)) | (E::Lit(a), E::Lit(c)) if a == c => then(vec![], holes, k),
+        (E::Proj(a, i), E::Proj(c, j)) if i == j => then(vec![(*a.clone(), *c.clone())], holes, k),
+        (E::Paren(a), E::Paren(c)) => then(vec![(*a.clone(), *c.clone())], holes, k),
+        (E::Tuple(a), E::Tuple(c)) | (E::Array(a), E::Array(c)) if a.len() == c.len() => then(a.iter().cloned().zip(c.iter().cloned()).collect(), holes, k),
         (E::Lam(ps, body), E::Lam(qs, ebody)) if ps.len() == qs.len() => {
             let mut eb = *ebody.clone();
             for (p, q) in ps.iter().zip(qs) {
@@ -1554,12 +1773,679 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
             then(vec![(*body.clone(), eb)], holes, k);
         }
         (E::Loop { state, init, var: v, lo, hi, body }, E::Loop { state: s2, init: i2, var: v2, lo: l2, hi: h2, body: b2 }) => {
-            let eb = b2.rename(s2, state).rename(v2, v);
+            let eb = state.iter().zip(s2).fold(*b2.clone(), |e, (p, q)| e.rename(q, p)).rename(v2, v);
             then(vec![(*init.clone(), *i2.clone()), (*lo.clone(), *l2.clone()), (*hi.clone(), *h2.clone()), (*body.clone(), eb)], holes, k);
         }
         _ => {}
     }
 }
 
+// ---- master 6: the reader (plan section 7, task F4) -----------------------------------------------------------------
+//
+// Futhark text to a tree of a master 6 view (`kingdoms/futhark/sig/<problem>/m6/`), the inverse of pass 5
+// ([`Kingdom6::program6`]). A slot of data type `T` is read, in this order, as: a name in scope of data type `T` (the
+// view's `var@T`, its index word set below); a literal of `T`'s pool (`const@T`, its Dc index); the first row of `T`
+// whose spelling, parsed as a pattern, matches (each `{k}` operand read at its argument's data type, each `{k.vj}` a
+// variable that argument binds, each `{k.p}` checked against operand k's property once the tree is decoded); and, where
+// no variable of `T` is in scope, `T`'s constant as `var@T` (what such a cell renders). Nothing is normalised: a `let`
+// is the `let` row, a float literal is read by its value, a tuple and its components are rows.
+//
+// THE INDEX WORDS are never computed here: the tree is decoded (G3, `typed_environment`) and each variable leaf's word
+// is the one [`crate::typed_environment::Environment::index_of`] gives for its binder in the leaf's environment (the
+// least word: a gene's word is read modulo the variables in scope, so the tree read is the CANONICAL tree), and the
+// tree is decoded again to check every leaf names its variable.
+//
+// ADAPTERS are read as the plain row (the lead's question, decided here): `fit l z (e)` and `map (fit l z) (e)` as
+// `e`, `clampix l (e)` as `e`, and the adapters' `let ad_* = ..` bound names as their values. An adapter is not a row of
+// the gene: pass 5 renders it where a requirement fails, so the tree read decodes with the same failing requirement and
+// renders the same adapter again (`render(read(x)) = x`, tested on random genes of every view). A substituted node (the
+// work bound) renders as its substitute and is read as it; a substitution by the constant where a variable of its data
+// type is in scope is read as the first row the decode substitutes there.
+//
+// THE UNSPELLED OPERAND (master 6 README 9: `tabrows` never spells its `cols` size, so the text does not hold its
+// index word): where the body is fitted (`fit d 0f32 (body)`, its `fit.body` failed), `cols` is the fit's length; where
+// it is not, the requirement `in2.len = in1.value` held, so `cols` is the FIRST size in scope (the least index word)
+// whose value is the body's length.
+//
+// Parentheses are kept ([`E::Paren`]): pass 5 puts every operand but a size in them, so they tell a pair of literals
+// `((0f32), (0f32))` from the pair's zero `(0f32, 0f32)`.
+
+use crate::futhark_table::{Header6, Kind6, Kingdom6};
+use crate::geneframe::{KingdomTables, PropertyExpr};
+use crate::kingdom_contract::{KingdomContract, SymbolId};
+use crate::typed_environment::{Binder, Choice, Decoder, Decoding, Entry, Node, Substitution};
+
+impl E {
+    /// This expression with `f` applied to each of its direct sub-expressions (binders kept).
+    fn map_kids(&self, f: &mut dyn FnMut(&E) -> E) -> E {
+        let mut all = |xs: &[E]| -> Vec<E> {
+            let mut out = Vec::with_capacity(xs.len());
+            for x in xs {
+                out.push(f(x));
+            }
+            out
+        };
+        match self {
+            E::Int(_) | E::Var(_) | E::Hole(_) | E::Float(_) | E::Lit(_) | E::Prop(..) => self.clone(),
+            E::App(g, a) => {
+                let mut v = all(std::slice::from_ref(g.as_ref()));
+                v.extend(all(a));
+                let g = v.remove(0);
+                E::App(b(g), v)
+            }
+            E::Bin(op, l, r) => {
+                let mut v = all(&[*l.clone(), *r.clone()]);
+                let r = v.pop().unwrap_or(E::Int(0));
+                let l = v.pop().unwrap_or(E::Int(0));
+                E::Bin(op.clone(), b(l), b(r))
+            }
+            E::Neg(x) => E::Neg(b(all(std::slice::from_ref(x.as_ref())).remove(0))),
+            E::Index(a, i) => {
+                let mut v = all(&[*a.clone(), *i.clone()]);
+                let i = v.pop().unwrap_or(E::Int(0));
+                let a = v.pop().unwrap_or(E::Int(0));
+                E::Index(b(a), b(i))
+            }
+            E::If(c, t, e) => {
+                let mut v = all(&[*c.clone(), *t.clone(), *e.clone()]);
+                let e = v.pop().unwrap_or(E::Int(0));
+                let t = v.pop().unwrap_or(E::Int(0));
+                let c = v.pop().unwrap_or(E::Int(0));
+                E::If(b(c), b(t), b(e))
+            }
+            E::Lam(ps, body) => E::Lam(ps.clone(), b(all(std::slice::from_ref(body.as_ref())).remove(0))),
+            E::Let(x, v, body) => {
+                let mut w = all(&[*v.clone(), *body.clone()]);
+                let body = w.pop().unwrap_or(E::Int(0));
+                let v = w.pop().unwrap_or(E::Int(0));
+                E::Let(x.clone(), b(v), b(body))
+            }
+            E::Loop { state, init, var: v, lo, hi, body } => {
+                let mut w = all(&[*init.clone(), *lo.clone(), *hi.clone(), *body.clone()]);
+                let body = w.pop().unwrap_or(E::Int(0));
+                let hi = w.pop().unwrap_or(E::Int(0));
+                let lo = w.pop().unwrap_or(E::Int(0));
+                let init = w.pop().unwrap_or(E::Int(0));
+                E::Loop { state: state.clone(), init: b(init), var: v.clone(), lo: b(lo), hi: b(hi), body: b(body) }
+            }
+            E::Tuple(a) => E::Tuple(all(a)),
+            E::Array(a) => E::Array(all(a)),
+            E::Proj(x, i) => E::Proj(b(all(std::slice::from_ref(x.as_ref())).remove(0)), *i),
+            E::Paren(x) => E::Paren(b(all(std::slice::from_ref(x.as_ref())).remove(0))),
+        }
+    }
+
+    /// The free name `x` replaced by `v` (a binder of `x` shadows it; the names of a rendered program are distinct in
+    /// every scope, so nothing in `v` is captured).
+    fn subst(&self, x: &str, v: &E) -> E {
+        match self {
+            E::Var(y) if y == x => v.clone(),
+            E::Lam(ps, _) if ps.iter().any(|p| p == x) => self.clone(),
+            E::Let(y, r, body) if y == x => E::Let(y.clone(), b(r.subst(x, v)), body.clone()),
+            E::Loop { state, init, var: w, lo, hi, body } if w == x || state.iter().any(|s| s == x) => {
+                E::Loop { state: state.clone(), init: b(init.subst(x, v)), var: w.clone(), lo: b(lo.subst(x, v)), hi: b(hi.subst(x, v)), body: body.clone() }
+            }
+            _ => self.map_kids(&mut |k| k.subst(x, v)),
+        }
+    }
+
+    /// Each placeholder `{k.p}` replaced by a hole past the `n` operands, its (k, p) appended to `props`.
+    fn props_to_holes(&self, n: usize, props: &mut Vec<(usize, String)>) -> E {
+        match self {
+            E::Prop(k, p) => {
+                let i = props.iter().position(|q| q.0 == *k && q.1 == *p).unwrap_or_else(|| {
+                    props.push((*k, p.clone()));
+                    props.len() - 1
+                });
+                E::Hole(n + i)
+            }
+            _ => self.map_kids(&mut |e| e.props_to_holes(n, props)),
+        }
+    }
+}
+
+/// The mark a `fit` leaves where [`strip_adapters`] takes it away: `%fit l e`, the length `l` it fitted `e` to (an
+/// operand's text no row spells, `tabrows`' `cols`, is read from it).
+const FIT_MARK: &str = "%fit";
+/// The mark of `map (fit l z)`, a fit of the inner dimension.
+const FIT_COLS_MARK: &str = "%fitcols";
+
+/// THE ADAPTERS READ AS THE PLAIN ROW: `fit l z (e)` and `map (fit l z) (e)` are `e` marked with the length
+/// ([`FIT_MARK`]; the reader reads the operand under the mark), `clampix l (e)` is `e`, and an adapter's `let ad_* = v`
+/// (or the size binding `let [ad_m] (ad_s: ..) = v`) is its body with the name's value in place.
+fn strip_adapters(e: &E) -> E {
+    let is = |f: &E, name: &str| matches!(f, E::Var(x) if x == name);
+    match e {
+        E::App(f, a) if is(f, "fit") && a.len() == 3 => app(FIT_MARK, vec![a[0].clone(), strip_adapters(&a[2])]),
+        E::App(f, a) if is(f, "clampix") && a.len() == 2 => strip_adapters(&a[1]),
+        E::App(f, a) if is(f, "map") && a.len() == 2 && matches!(unmark(&a[0]).0, E::App(g, ga) if is(g, "fit") && ga.len() == 2) => match unmark(&a[0]).0 {
+            E::App(_, ga) => app(FIT_COLS_MARK, vec![ga[0].clone(), strip_adapters(&a[1])]),
+            _ => strip_adapters(&a[1]),
+        },
+        E::Let(x, v, body) if x.starts_with("ad_") => strip_adapters(&body.subst(x, v)),
+        _ => e.map_kids(&mut strip_adapters),
+    }
+}
+
+/// An expression without the parentheses and [`FIT_MARK`]s around it, and the length of the outermost fit.
+fn unmark(e: &E) -> (&E, Option<&E>) {
+    let mut e = e;
+    let mut length = None;
+    loop {
+        if let E::Paren(x) = e {
+            e = x;
+            continue;
+        }
+        let E::App(f, a) = e else { break };
+        let E::Var(mark) = f.as_ref() else { break };
+        if (mark != FIT_MARK && mark != FIT_COLS_MARK) || a.len() != 2 {
+            break;
+        }
+        if mark == FIT_MARK {
+            length.get_or_insert(&a[0]);
+        }
+        e = &a[1];
+    }
+    (e, length)
+}
+
+/// An expression without its parentheses.
+fn unparen(e: &E) -> E {
+    match e {
+        E::Paren(x) => unparen(x),
+        _ => e.map_kids(&mut unparen),
+    }
+}
+
+/// A property as the expression pass 5 spells it (`futhark_table`'s size text): a size name, a literal, a `min` as
+/// nested `i64.min`, a sum with `+`; `None` for `?` or an input's property.
+fn property_expr(p: &PropertyExpr) -> Option<E> {
+    match p {
+        PropertyExpr::Size(n) => Some(var(n)),
+        PropertyExpr::Literal(v) => Some(E::Int(*v)),
+        PropertyExpr::Min(args) => {
+            let es: Vec<E> = args.iter().map(property_expr).collect::<Option<_>>()?;
+            let (last, rest) = es.split_last()?;
+            Some(rest.iter().rev().fold(last.clone(), |acc, a| app("i64.min", vec![a.clone(), acc])))
+        }
+        PropertyExpr::Sum(terms) => {
+            let es: Vec<E> = terms.iter().map(property_expr).collect::<Option<_>>()?;
+            let (first, rest) = es.split_first()?;
+            Some(rest.iter().fold(first.clone(), |acc, t| E::Bin("+".into(), b(acc), b(t.clone()))))
+        }
+        PropertyExpr::Unknown | PropertyExpr::Input { .. } => None,
+    }
+}
+
+/// One row's spelling as a pattern: its operands' data types, the variables each argument binds (Binding row order),
+/// and the property each hole past the operands reads.
+#[derive(Debug, Clone)]
+struct Pattern6 {
+    symbol: SymbolId,
+    pattern: E,
+    inputs: Vec<Ty>,
+    binds: BTreeMap<u32, Vec<Ty>>,
+    props: Vec<(usize, String)>,
+}
+
+/// Where a name read in a program is bound: a root variable, or the `ordinal`-th variable the argument at path `at`
+/// binds.
+#[derive(Debug, Clone)]
+enum Origin6 {
+    Root(String),
+    Bound { at: Vec<u32>, ordinal: usize },
+}
+
+/// A name in scope while reading: the program's name, its data type and where it is bound.
+#[derive(Debug, Clone)]
+struct Named6 {
+    name: String,
+    ty: Ty,
+    origin: Origin6,
+}
+
+/// An operand no row spells (`tabrows`' `cols`), read from the requirement that ties it to a spelled operand: the
+/// node's path, the operand, and the requirement's other side (operand `j`'s property `pj`) against the operand's
+/// property `pi`.
+#[derive(Debug, Clone)]
+struct Unspelled6 {
+    node: Vec<u32>,
+    operand: usize,
+    j: usize,
+    pj: String,
+    pi: String,
+}
+
+/// What a read records for the decode that follows it: each variable leaf's path and origin, each property placeholder
+/// (node path, operand, property, the expression read), each leaf read as its data type's constant, each node read as
+/// a work-bound substitution by its constant, and each unspelled operand.
+#[derive(Debug, Default)]
+struct Read6 {
+    leaves: Vec<(Vec<u32>, Origin6)>,
+    props: Vec<(Vec<u32>, usize, String, E)>,
+    constants: Vec<Vec<u32>>,
+    substituted: Vec<Vec<u32>>,
+    unspelled: Vec<Unspelled6>,
+    /// The gap of the deepest expression no row read: what a failed read reports (the first gap is often a row whose
+    /// pattern matches everything of its head, `map2 {0} {1} {2}`, failing at its first operand).
+    deepest: Option<(usize, Gap)>,
+}
+
+type Mark6 = [usize; 5];
+
+impl Read6 {
+    fn mark(&self) -> Mark6 {
+        [self.leaves.len(), self.props.len(), self.constants.len(), self.substituted.len(), self.unspelled.len()]
+    }
+    fn undo(&mut self, m: Mark6) {
+        self.leaves.truncate(m[0]);
+        self.props.truncate(m[1]);
+        self.constants.truncate(m[2]);
+        self.substituted.truncate(m[3]);
+        self.unspelled.truncate(m[4]);
+    }
+}
+
+/// THE READER OF A MASTER 6 VIEW: its rows' spellings as patterns, its constants and literal pools, its tables and
+/// contract (for the decode that sets the index words).
+pub struct Reader6<'a> {
+    pub k: &'a Kingdom6,
+    pub header: Header6,
+    tables: KingdomTables,
+    contract: KingdomContract,
+    entry: Entry,
+    rows: BTreeMap<Ty, Vec<Pattern6>>,
+    consts: BTreeMap<Ty, SymbolId>,
+    vars: BTreeMap<Ty, SymbolId>,
+    constants: BTreeMap<Ty, E>,
+    steps: std::cell::Cell<usize>,
+    fresh: std::cell::Cell<usize>,
+}
+
+fn bug6(k: &Kingdom6, what: String) -> String {
+    format!("our software has a bug: {}: {what}", k.kingdom)
+}
+
+impl<'a> Reader6<'a> {
+    /// The reader of kingdom `k`, whose entry declares `header`'s sizes as `i32` parameters. A spelling or a constant
+    /// that does not parse is a bug of the master.
+    pub fn new(k: &'a Kingdom6, header: Header6) -> Result<Reader6<'a>, String> {
+        let (tables, contract) = (k.tables()?, k.contract()?);
+        let mut rows: BTreeMap<Ty, Vec<Pattern6>> = BTreeMap::new();
+        let (mut consts, mut vars) = (BTreeMap::new(), BTreeMap::new());
+        for (i, s) in k.symbols.iter().enumerate() {
+            let symbol = i as SymbolId;
+            match s.kind {
+                Kind6::Var => {
+                    vars.insert(s.output, symbol);
+                }
+                Kind6::Const => {
+                    consts.insert(s.output, symbol);
+                }
+                Kind6::Terminal | Kind6::Function => {
+                    let parsed = parse_expression(&s.spelling, true, true).map_err(|g| bug6(k, format!("the spelling of {} does not parse as a pattern: {g}", s.name)))?;
+                    let mut props = Vec::new();
+                    let pattern = parsed.props_to_holes(s.inputs.len(), &mut props);
+                    let mut binds: BTreeMap<u32, Vec<Ty>> = BTreeMap::new();
+                    for bd in &s.binds {
+                        binds.entry(bd.position).or_default().push(bd.data_type);
+                    }
+                    rows.entry(s.output).or_default().push(Pattern6 { symbol, pattern, inputs: s.inputs.clone(), binds, props });
+                }
+            }
+        }
+        // A row of no input reads first: a text its spelling is (`(0f32, 0f32, 0f32)`, the triple's zero) is that leaf,
+        // not a function of leaves that spells the same.
+        for ps in rows.values_mut() {
+            ps.sort_by_key(|p| !p.inputs.is_empty());
+        }
+        let mut constants = BTreeMap::new();
+        for (i, d) in k.data_types.iter().enumerate() {
+            if !d.constant.is_empty() {
+                let e = parse_expression(&d.constant, false, true).map_err(|g| bug6(k, format!("the constant {:?} of {} does not parse: {g}", d.constant, d.name)))?;
+                constants.insert(Ty::Futhark(i as u16), e);
+            }
+        }
+        let entry = Entry::of_kingdom6(k);
+        Ok(Reader6 { k, header, tables, contract, entry, rows, consts, vars, constants, steps: std::cell::Cell::new(0), fresh: std::cell::Cell::new(0) })
+    }
+
+    fn type_name(&self, ty: Ty) -> String {
+        self.k.data_type(ty).map_or_else(|| format!("{ty:?}"), |d| d.name.clone())
+    }
+
+    /// The root environment's names, in its order.
+    fn root_scope(&self) -> Vec<Named6> {
+        self.k.variables.iter().map(|v| Named6 { name: v.name.clone(), ty: v.data_type, origin: Origin6::Root(v.name.clone()) }).collect()
+    }
+
+    /// A WHOLE PROGRAM of this view (its entry `main`, or its only entry): the size inputs' `i64` rebinding and the
+    /// zero arrays' bindings, which the entry declares (pass 5's header), are the root environment, and the body is
+    /// read at the root's data type. The entry's array parameters are the view's inputs by position.
+    pub fn read_program(&self, src: &str) -> Result<Tree, Gap> {
+        let defs = parse_file_with(src, true)?;
+        let entries: Vec<&Def> = defs.iter().filter(|d| d.entry).collect();
+        let entry = entries.iter().find(|d| d.name == "main").copied().or(if entries.len() == 1 { Some(entries[0]) } else { None }).ok_or_else(|| Gap::parse("no entry point", format!("{} entries, none named main", entries.len())))?;
+        let mut body = entry.body.clone()?;
+        let inputs: Vec<&str> = self.k.variables.iter().filter(|v| v.kind == "input").map(|v| v.name.as_str()).collect();
+        let arrays: Vec<&Param> = entry.params.iter().filter(|p| !self.header.size_inputs.contains(&p.name)).collect();
+        if arrays.len() != inputs.len() {
+            return Err(Gap::parse("entry signature", format!("{} array parameters, the view has {} inputs", arrays.len(), inputs.len())));
+        }
+        for (p, name) in arrays.iter().zip(&inputs) {
+            if p.name != *name {
+                body = body.rename(&p.name, name);
+            }
+        }
+        // The header: `let k = i64.i32 k` for each size input, then the zero arrays.
+        loop {
+            match body {
+                E::Let(x, rhs, rest) if (self.header.size_inputs.contains(&x) && *rhs == app("i64.i32", vec![var(&x)])) || self.k.variables.iter().any(|v| v.kind == "zeros" && v.name == x && matches!(rhs.as_ref(), E::App(f, a) if **f == var("replicate") && a.len() == 2)) => body = *rest,
+                other => {
+                    body = other;
+                    break;
+                }
+            }
+        }
+        // A call of one of the program's own functions: the reader reads the entry alone (no row is a helper, and a
+        // `let` is the `let` row, so nothing is inlined), so the gap names the helper and why its body is no row.
+        self.read_body(&body, self.entry.clone()).map_err(|g| match defs.iter().find(|d| !d.entry && d.name == g.construct) {
+            Some(d) => Gap {
+                construct: format!("call of the program's function {}", d.name),
+                dual: g.dual,
+                detail: match &d.body {
+                    Ok(_) => "the reader reads the entry alone and inlines no function".into(),
+                    Err(h) => format!("the reader reads the entry alone and inlines no function; its body has {h}"),
+                },
+            },
+            None => g,
+        })
+    }
+
+    /// An EXPRESSION of data type `ty` in the root environment (the entry's names in scope): what a program's body is
+    /// when it is not of the root's data type (a pool's `i32` constant).
+    pub fn read_expression(&self, src: &str, ty: Ty) -> Result<Tree, Gap> {
+        let e = parse_expression(src, false, true)?;
+        let entry = Entry { output: ty, variables: self.entry.variables.clone(), requirements: Vec::new() };
+        self.read_body(&e, entry)
+    }
+
+    /// The tree a decoding renders as, in the reader's canonical form: a substituted node as its substitute input,
+    /// every variable's index word the least that names it. A constant substitution or a variable read as its data
+    /// type's constant has no one tree the reader gives (a terminal of the same spelling reads first), so it is an error.
+    pub fn canonical(&self, tree: &Tree) -> Result<Tree, String> {
+        fn go(n: &Node) -> Result<Tree, String> {
+            if let Some(s) = n.substituted {
+                return match s.by {
+                    Substitution::Input(p) => go(&n.kids[p as usize]),
+                    Substitution::Constant => Err("a node substituted by its constant".into()),
+                };
+            }
+            let const_index = match n.choice {
+                Some(Choice::Variable(binder)) => Some(n.environment.index_of(n.data_type, binder).ok_or("a variable out of scope")?),
+                Some(Choice::Constant) => return Err("a variable read as its data type's constant".into()),
+                Some(Choice::Dc(i)) => Some(i),
+                Some(Choice::Free(_)) | None => None,
+            };
+            Ok(Tree { symbol: n.symbol, const_index, kids: n.kids.iter().map(go).collect::<Result<_, _>>()? })
+        }
+        go(&self.decode(&self.entry, tree)?.root)
+    }
+
+    fn decode(&self, entry: &Entry, tree: &Tree) -> Result<Decoding, String> {
+        Decoder::new(&self.tables, &self.contract).map_err(|d| d.join("\n"))?.decode(entry, tree)
+    }
+
+    /// Read `e` at the entry's data type, then decode: every variable leaf's index word from G3's environment, every
+    /// property placeholder checked against the decoded property.
+    fn read_body(&self, e: &E, entry: Entry) -> Result<Tree, Gap> {
+        let e = strip_adapters(e);
+        self.steps.set(0);
+        let mut rec = Read6::default();
+        let mut scope = self.root_scope();
+        let mut tree = match self.read6(&e, entry.output, &mut Vec::new(), &mut scope, &mut rec) {
+            Ok(t) => t,
+            Err(g) => return Err(rec.deepest.map_or(g, |d| d.1)),
+        };
+        let bug = |what: String| Gap { construct: "decode".into(), dual: self.type_name(entry.output), detail: bug6(self.k, what) };
+        let d = self.decode(&entry, &tree).map_err(&bug)?;
+        let mut wanted = Vec::with_capacity(rec.leaves.len());
+        for (path, origin) in &rec.leaves {
+            let leaf = d.node(path).ok_or_else(|| bug(format!("no node at {path:?}")))?;
+            let binder: Binder = match origin {
+                Origin6::Root(name) => d.root.environment.variables.iter().find(|v| v.name.as_deref() == Some(name.as_str())).map(|v| v.binder).ok_or_else(|| bug(format!("{name} is no root variable")))?,
+                Origin6::Bound { at, ordinal } => {
+                    let env = &d.node(at).ok_or_else(|| bug(format!("no node at {at:?}")))?.environment;
+                    env.variables.iter().filter(|v| v.binder.depth == env.depth).nth(*ordinal).map(|v| v.binder).ok_or_else(|| bug(format!("the argument at {at:?} binds no variable {ordinal}")))?
+                }
+            };
+            let word = leaf.environment.index_of(leaf.data_type, binder).ok_or_else(|| bug(format!("the variable at {path:?} ({binder:?}) is not in scope")))?;
+            tree_at(&mut tree, path).ok_or_else(|| bug(format!("no node at {path:?}")))?.const_index = Some(word);
+            wanted.push((path.clone(), Choice::Variable(binder)));
+        }
+        // THE UNSPELLED OPERAND'S RULE (master 6 README 9: `tabrows` never spells its `cols` size): where the text fits
+        // the tied operand (`fit d 0f32 (body)`), the operand is the fit's length, read as any operand; where it does
+        // not, the requirement held, so the operand is the FIRST variable in scope (the least index word) whose
+        // property equals the tied operand's. Deepest first, each on a decode with every word set so far.
+        let mut unspelled = rec.unspelled.clone();
+        unspelled.sort_by_key(|u| std::cmp::Reverse(u.node.len()));
+        for u in &unspelled {
+            let d = self.decode(&entry, &tree).map_err(&bug)?;
+            let node = d.node(&u.node).ok_or_else(|| bug(format!("no node at {:?}", u.node)))?;
+            let want = node.kids.get(u.j).and_then(|n| n.properties.get(&u.pj)).ok_or_else(|| bug(format!("operand {} of the node at {:?} has no {}", u.j, u.node, u.pj)))?;
+            let kid = node.kids.get(u.operand).ok_or_else(|| bug(format!("the node at {:?} has no operand {}", u.node, u.operand)))?;
+            let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().find(|v| v.properties.get(&u.pi) == Some(want)).ok_or_else(|| Gap {
+                construct: "unspelled operand".into(),
+                dual: self.type_name(kid.data_type),
+                detail: format!("{} at {:?}: no variable in scope has {} = {want}, the {} of its operand {}", self.k.symbols[node.symbol as usize].name, u.node, u.pi, u.pj, u.j),
+            })?;
+            let mut path = u.node.clone();
+            path.push(u.operand as u32);
+            let word = kid.environment.index_of(kid.data_type, v.binder).ok_or_else(|| bug(format!("the variable at {path:?} is not in scope")))?;
+            tree_at(&mut tree, &path).ok_or_else(|| bug(format!("no node at {path:?}")))?.const_index = Some(word);
+            wanted.push((path, Choice::Variable(v.binder)));
+        }
+        // A CONSTANT WITH A VARIABLE OF ITS DATA TYPE IN SCOPE is a node the work bound substitutes by its constant: the
+        // first candidate ([`Reader6::constant_substitutes`]) the decode substitutes there.
+        for path in &rec.substituted {
+            let ty = self.decode(&entry, &tree).map_err(&bug)?.node(path).map(|n| n.data_type).ok_or_else(|| bug(format!("no node at {path:?}")))?;
+            let mut found = false;
+            for candidate in self.constant_substitutes(ty) {
+                *tree_at(&mut tree, path).ok_or_else(|| bug(format!("no node at {path:?}")))? = candidate;
+                let d = self.decode(&entry, &tree).map_err(&bug)?;
+                if d.node(path).and_then(|n| n.substituted).map(|s| s.by) == Some(Substitution::Constant) {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(Gap { construct: "constant".into(), dual: self.type_name(ty), detail: format!("the text has the constant at {path:?} where a variable of its data type is in scope, and no node the work bound substitutes by its constant can stand there") });
+            }
+        }
+        wanted.extend(rec.constants.iter().map(|p| (p.clone(), Choice::Constant)));
+        let again = self.decode(&entry, &tree).map_err(&bug)?;
+        for (path, choice) in wanted {
+            let got = again.node(&path).and_then(|n| n.choice);
+            if got != Some(choice) {
+                return Err(bug(format!("the leaf at {path:?} reads as {got:?}, not {choice:?}")));
+            }
+        }
+        for (path, k, p, read) in &rec.props {
+            let node = again.node(path).ok_or_else(|| bug(format!("no node at {path:?}")))?;
+            let value = node.kids.get(*k).and_then(|kid| kid.properties.get(p));
+            if value.and_then(property_expr).as_ref() != Some(&unparen(read)) {
+                return Err(Gap { construct: format!("{{{k}.{p}}}"), dual: self.type_name(node.data_type), detail: format!("{} reads {p} = {value:?} of its operand {k}, the text has {read:?}", self.k.symbols[node.symbol as usize].name) });
+            }
+        }
+        Ok(tree)
+    }
+
+    /// Read an expression at data type `ty`, at `path`, with `scope` in scope.
+    fn read6(&self, e: &E, ty: Ty, path: &mut Vec<u32>, scope: &mut Vec<Named6>, rec: &mut Read6) -> Result<Tree, Gap> {
+        let (e, _) = unmark(e);
+        self.steps.set(self.steps.get() + 1);
+        if self.steps.get() > READ_STEPS {
+            return Err(Gap { construct: "reading budget".into(), dual: self.type_name(ty), detail: format!("over {READ_STEPS} matches") });
+        }
+        if let E::Var(x) = e {
+            if let (Some(v), Some(&sym)) = (scope.iter().rev().find(|v| &v.name == x), self.vars.get(&ty)) {
+                if v.ty == ty {
+                    rec.leaves.push((path.clone(), v.origin.clone()));
+                    return Ok(Tree { symbol: sym, const_index: Some(0), kids: Vec::new() });
+                }
+            }
+        }
+        if let (Some(&sym), Some(d)) = (self.consts.get(&ty), self.k.data_type(ty)) {
+            let integer = d.name.starts_with('i') || d.name.starts_with('u');
+            let at = |l: &String| match e {
+                E::Int(v) => integer && l.parse::<i64>() == Ok(*v),
+                E::Lit(t) => integer && l.parse::<i64>().is_ok_and(|v| format!("{v}{}", d.name) == *t),
+                E::Float(f) => !integer && float_literal(&format!("{l}{}", d.name)).as_ref() == Some(f),
+                _ => false,
+            };
+            if let Some(i) = d.literals.iter().position(at) {
+                return Ok(Tree { symbol: sym, const_index: Some(i as u32), kids: Vec::new() });
+            }
+        }
+        let mut first: Option<Gap> = None;
+        for p in self.rows.get(&ty).into_iter().flatten() {
+            for holes in pmatch_all(&p.pattern, e, p.inputs.len() + p.props.len()) {
+                let mark = rec.mark();
+                match self.read_row(p, &holes, path, scope, rec) {
+                    Ok(t) => return Ok(t),
+                    Err(g) => {
+                        rec.undo(mark);
+                        first.get_or_insert(g);
+                    }
+                }
+            }
+        }
+        if self.constants.get(&ty) == Some(e) {
+            // No variable of the data type in scope: a `var@T` renders its constant.
+            if let Some(&sym) = self.vars.get(&ty).filter(|_| !scope.iter().any(|v| v.ty == ty)) {
+                rec.constants.push(path.clone());
+                return Ok(Tree { symbol: sym, const_index: Some(0), kids: Vec::new() });
+            }
+            // Else only a heavy node the work bound substitutes by its constant renders it, chosen once the tree is
+            // decoded ([`Reader6::read_body`]).
+            if let Some(t) = self.constant_substitutes(ty).into_iter().next() {
+                rec.substituted.push(path.clone());
+                return Ok(t);
+            }
+        }
+        let g = first.unwrap_or_else(|| Gap { construct: e.head(), dual: self.type_name(ty), detail: "no row of this data type reads it".into() });
+        if rec.deepest.as_ref().is_none_or(|d| d.0 < path.len()) {
+            rec.deepest = Some((path.len(), g.clone()));
+        }
+        Err(g)
+    }
+
+    /// One row's match: each operand read at its argument's data type, the variables an argument binds in scope while
+    /// it is read, the property placeholders recorded.
+    fn read_row(&self, p: &Pattern6, holes: &[Option<E>], path: &mut Vec<u32>, scope: &mut Vec<Named6>, rec: &mut Read6) -> Result<Tree, Gap> {
+        let name = &self.k.symbols[p.symbol as usize].name;
+        let unbound = || Gap { construct: "spelling".into(), dual: self.type_name(p.inputs.first().copied().unwrap_or(Ty::Futhark(0))), detail: format!("{name}: a hole the spelling does not bind") };
+        let mut kids = Vec::with_capacity(p.inputs.len());
+        for (i, ty) in p.inputs.iter().enumerate() {
+            let mut h = match holes.get(i).cloned().flatten() {
+                Some(h) => h,
+                None => {
+                    let (j, pj, pi) = self.tie(p.symbol, i).ok_or_else(unbound)?;
+                    match holes.get(j).and_then(Option::as_ref).and_then(|hj| unmark(hj).1) {
+                        Some(length) => length.clone(),
+                        None => {
+                            let sym = *self.vars.get(ty).ok_or_else(unbound)?;
+                            rec.unspelled.push(Unspelled6 { node: path.clone(), operand: i, j, pj, pi });
+                            kids.push(Tree { symbol: sym, const_index: Some(0), kids: Vec::new() });
+                            continue;
+                        }
+                    }
+                }
+            };
+            let outer = scope.len();
+            let mut at = path.clone();
+            at.push(i as u32);
+            for (j, bty) in p.binds.get(&(i as u32)).into_iter().flatten().enumerate() {
+                self.fresh.set(self.fresh.get() + 1);
+                let fresh = format!("%b{}", self.fresh.get());
+                h = h.rename(&format!("{{{i}.v{j}}}"), &fresh);
+                scope.push(Named6 { name: fresh, ty: *bty, origin: Origin6::Bound { at: at.clone(), ordinal: j } });
+            }
+            path.push(i as u32);
+            let r = self.read6(&h, *ty, path, scope, rec);
+            path.pop();
+            scope.truncate(outer);
+            kids.push(r?);
+        }
+        for (j, (k, prop)) in p.props.iter().enumerate() {
+            let h = holes.get(p.inputs.len() + j).cloned().flatten().ok_or_else(unbound)?;
+            rec.props.push((path.clone(), *k, prop.clone(), h));
+        }
+        Ok(Tree { symbol: p.symbol, const_index: None, kids })
+    }
+}
+
+impl Reader6<'_> {
+    /// The requirement of `symbol` that ties its operand `i` to another: (the other operand, its property, operand
+    /// `i`'s property).
+    fn tie(&self, symbol: SymbolId, i: usize) -> Option<(usize, String, String)> {
+        use crate::geneframe::Subject;
+        self.k.symbols[symbol as usize].requires.iter().find_map(|q| match (&q.subject, &q.against) {
+            (Subject::Input { position: j, property: pj }, PropertyExpr::Input { position, property }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone())),
+            (Subject::Input { position, property }, PropertyExpr::Input { position: j, property: pj }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone())),
+            _ => None,
+        })
+    }
+
+    /// The first leaf of data type `ty`: its `var` (word 0), its literal 0, or a row of no input.
+    fn leaf(&self, ty: Ty) -> Option<Tree> {
+        if let Some(&s) = self.vars.get(&ty) {
+            return Some(Tree { symbol: s, const_index: Some(0), kids: Vec::new() });
+        }
+        if let Some(&s) = self.consts.get(&ty) {
+            return Some(Tree { symbol: s, const_index: Some(0), kids: Vec::new() });
+        }
+        self.k.symbols.iter().position(|s| s.output == ty && s.inputs.is_empty() && matches!(s.kind, Kind6::Terminal | Kind6::Function)).map(|s| Tree { symbol: s as SymbolId, const_index: None, kids: Vec::new() })
+    }
+
+    /// THE CANDIDATES FOR A SUBSTITUTED CONSTANT, in order: each row of data type `ty` the work bound substitutes by its
+    /// constant (`subst.const`, or `subst` with no input of its own data type), in symbol order, its inputs leaves
+    /// (never rendered), each `var` leaf's word running over 0 to 3, the first input's fastest. A node is substituted
+    /// where `env.trips >= depth`, or one trip short of it when a requirement whose heavy adapter runs in its body fails
+    /// (`tabrows`' `fit.body`), which the leaves' words decide: so the words vary.
+    fn constant_substitutes(&self, ty: Ty) -> Vec<Tree> {
+        use crate::geneframe::{Subject, Substitute};
+        const WORDS: u32 = 4;
+        let mut out = Vec::new();
+        for (i, s) in self.k.symbols.iter().enumerate() {
+            let Some(how) = s.requires.iter().find(|q| q.subject == Subject::Trips).and_then(|q| Substitute::of_adapter(&q.adapter)) else { continue };
+            let by_constant = matches!(how, Substitute::Constant) || !s.inputs.contains(&s.output);
+            if s.output != ty || !by_constant {
+                continue;
+            }
+            let Some(kids) = s.inputs.iter().map(|t| self.leaf(*t)).collect::<Option<Vec<Tree>>>() else { continue };
+            let vars: Vec<usize> = (0..kids.len()).filter(|k| self.vars.values().any(|v| *v == kids[*k].symbol)).collect();
+            for n in 0..WORDS.pow(vars.len() as u32) {
+                let mut t = Tree { symbol: i as SymbolId, const_index: None, kids: kids.clone() };
+                for (place, k) in vars.iter().enumerate() {
+                    t.kids[*k].const_index = Some(n / WORDS.pow(place as u32) % WORDS);
+                }
+                out.push(t);
+            }
+        }
+        out
+    }
+}
+
+/// The node of a tree at `path`.
+fn tree_at<'t>(t: &'t mut Tree, path: &[u32]) -> Option<&'t mut Tree> {
+    match path.split_first() {
+        None => Some(t),
+        Some((i, rest)) => tree_at(t.kids.get_mut(*i as usize)?, rest),
+    }
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests6;
