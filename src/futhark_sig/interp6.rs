@@ -24,7 +24,8 @@ use super::{Array, Bin, Elem, Num, Signature, Val, View, Work};
 use crate::futhark_cost::{adapters6, program_cost6, rendered6, requirements6, size6, trips6, CostTable6, Score};
 use crate::futhark_interpreter::{Row2Fn, RowFn};
 use crate::futhark_table::{Kind6, Kingdom6};
-use crate::geneframe::{AdapterSite, DataKind, PropertyExpr, Requirement, Subject, Ty};
+use crate::futhark_table::{Requirement6, Site6, Subject6};
+use crate::geneframe::{DataKind, PropertyExpr, Ty};
 use crate::typed_environment::{Binder, Choice, Decoder, Decoding, Entry, Node, Outcome, Substitution};
 use crate::typed_gep::Tree;
 
@@ -107,7 +108,7 @@ pub(super) struct Interp6 {
     entry: Entry,
     ops: Vec<Op6>,
     literals: Vec<Vec<Num>>,
-    reqs: Vec<Requirement>,
+    reqs: Vec<Requirement6>,
     roots: Vec<Source6>,
     costs: CostTable6,
     shapes: Vec<Shape6>,
@@ -335,7 +336,7 @@ impl Interp6 {
         let mut v = run.at(&d.root)?;
         for o in d.root_outcomes.iter().filter(|o| !o.holds) {
             let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
-            v = fit(&self.k, &v, &q.property, self.size(&o.against, &sizes)?)?;
+            v = fit(&self.k, &v, &q.property, self.size(o.against(), &sizes)?)?;
         }
         let want: Vec<usize> = self.k.root.properties.iter().map(|(_, e)| self.size(e, &sizes).map(|x| x as usize)).collect::<Result<_, _>>()?;
         match v {
@@ -449,20 +450,20 @@ impl Interp6 {
     /// cells (a product times its inner length); a size leaf nothing. [`Work::state`]: master 5's loop state traffic.
     pub(super) fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
         let d = self.decode(tree)?;
-        let reqs: Vec<&Requirement> = self.reqs.iter().collect();
+        let reqs: Vec<&Requirement6> = self.reqs.iter().collect();
         let mut w = Work::default();
         self.walk(&d.root, 1, sizes, &reqs, &mut w)?;
         let mut root = rendered6(&d.root).properties.clone();
         for o in d.root_outcomes.iter().filter(|o| !o.holds) {
             let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
             let source = Some((self.k.root.data_type, root.clone()));
-            root.insert(q.property.clone(), o.against.clone());
-            w.nodes += self.costs.charge(&self.k, &crate::futhark_cost::Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((self.k.root.data_type, root.clone())), source }, sizes)?;
+            root.insert(q.property.clone(), o.against().clone());
+            w.nodes += self.costs.charge(&self.k, &crate::futhark_cost::Charge6 { adapter: o.adapter_name().to_string(), operand: None, fitted: Some((self.k.root.data_type, root.clone())), source }, sizes)?;
         }
         Ok(w)
     }
 
-    fn walk(&self, n: &Node, mult: u128, sizes: &BTreeMap<String, usize>, reqs: &[&Requirement], w: &mut Work) -> Result<(), String> {
+    fn walk(&self, n: &Node, mult: u128, sizes: &BTreeMap<String, usize>, reqs: &[&Requirement6], w: &mut Work) -> Result<(), String> {
         let n = rendered6(n);
         if n.substituted.is_some() {
             w.nodes += mult;
@@ -527,7 +528,7 @@ impl Interp6 {
         if own_state || (same(body, start) && !reads(body, depth)) {
             return Ok(0);
         }
-        let fitted = n.outcomes.iter().any(|o| !o.holds && o.adapter == "fit.state");
+        let fitted = n.outcomes.iter().any(|o| !o.holds && o.adapter_name() == "fit.state");
         let fresh = |b: &Node| -> bool {
             let b = rendered6(b);
             b.substituted.is_none()
@@ -673,10 +674,10 @@ impl Run<'_> {
     /// operands in the renderer's order (the others first, `clampix` last).
     fn adapt(&self, n: &Node, body: bool, ops: &mut [Val]) -> Result<(), String> {
         let k = &self.me.k;
-        let at_body = |name: &str| k.adapters.iter().find(|a| a.name == name).map(|a| a.runs_at == AdapterSite::Body);
-        let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.adapter != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter == "clampix")).collect();
+        let at_body = |name: &str| k.adapters.iter().find(|a| a.name == name).map(|a| a.runs_at == Site6::Body);
+        let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() == "clampix")).collect();
         for o in failing {
-            if at_body(&o.adapter).ok_or_else(|| self.bug(format!("the adapter {} is not in the master", o.adapter)))? == body {
+            if at_body(o.adapter_name()).ok_or_else(|| self.bug(format!("the adapter {} is not in the master", o.adapter_name())))? == body {
                 self.adapt_one(o, ops)?;
             }
         }
@@ -686,7 +687,7 @@ impl Run<'_> {
     fn adapt_one(&self, o: &Outcome, ops: &mut [Val]) -> Result<(), String> {
         let k = &self.me.k;
         let q = self.me.reqs.get(o.requirement).ok_or_else(|| self.bug(format!("the outcome names requirement {}", o.requirement)))?;
-        let Subject::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound fails at an unsubstituted node ({})", o.adapter))) };
+        let Subject6::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound fails at an unsubstituted node ({})", o.adapter_name()))) };
         let (s, ps) = (*position as usize, property.as_str());
         let against = match &q.against {
             PropertyExpr::Input { position, property } => Some((*position as usize, property.as_str())),
@@ -696,7 +697,7 @@ impl Run<'_> {
             return Err(self.bug(format!("the requirement {} reads an input past the node's {}", q.subject, ops.len())));
         }
         let known = |e: &PropertyExpr| size6(e, self.sizes);
-        match o.adapter.as_str() {
+        match o.adapter_name() {
             "clampix" => {
                 let (a, pa) = against.ok_or_else(|| self.bug("clampix's requirement names no array".into()))?;
                 let len = extent(k, &ops[a], pa)?;
@@ -704,10 +705,10 @@ impl Run<'_> {
                 ops[s] = Val::I(i.min(len - 1).max(0));
             }
             "fit" | "fit.body" | "fit.state" => {
-                let target = match (known(&o.against)?, against) {
+                let target = match (known(o.against())?, against) {
                     (Some(t), _) => t,
                     (None, Some((j, pj))) => extent(k, &ops[j], pj)?,
-                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no value", o.adapter, o.against))),
+                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no value", o.adapter_name(), o.against()))),
                 };
                 ops[s] = fit(k, &ops[s], ps, target)?;
             }
@@ -725,7 +726,7 @@ impl Run<'_> {
                 let subject = extent(k, &ops[s], ps)?;
                 let other = match against {
                     Some((a, pa)) => extent(k, &ops[a], pa)?,
-                    None => known(&o.against)?.ok_or_else(|| self.bug(format!("fit.inner fits to {}, which has no value", o.against)))?,
+                    None => known(o.against())?.ok_or_else(|| self.bug(format!("fit.inner fits to {}, which has no value", o.against())))?,
                 };
                 let cols: Vec<usize> = (0..sides.len()).filter(|i| sides[*i].1 == "cols").collect();
                 let t = match cols.as_slice() {
@@ -776,7 +777,7 @@ impl Run<'_> {
         let binder = matches!(op, Op6::Tab(_) | Op6::TabRows | Op6::Loop { .. } | Op6::Let | Op6::Sel | Op6::PSel);
         if binder {
             // A binder's node adapters would run before its body: none of master 6's rows has one.
-            if n.outcomes.iter().any(|o| !o.holds && self.me.k.adapters.iter().any(|a| a.name == o.adapter && a.runs_at != AdapterSite::Body)) {
+            if n.outcomes.iter().any(|o| !o.holds && self.me.k.adapters.iter().any(|a| a.name == o.adapter_name() && a.runs_at != Site6::Body)) {
                 return Err(self.bug(format!("the binder {} renders a node adapter", self.me.k.symbols[n.symbol as usize].name)));
             }
         }

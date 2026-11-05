@@ -285,6 +285,17 @@ impl KingdomContract {
         self.constant[s as usize]
     }
     /// The variable terminal `var.T` (arity 0): its word is in `Dv_T` at its own cell's row, never in `Dc_T`.
+    /// The symbol's role (design 3.3.3, Symbol.role).
+    pub fn role(&self, s: SymbolId) -> crate::geneframe::Role {
+        if self.is_constant(s) {
+            crate::geneframe::Role::Constant
+        } else if self.is_variable(s) {
+            crate::geneframe::Role::Variable
+        } else {
+            crate::geneframe::Role::Function
+        }
+    }
+
     pub fn is_variable(&self, s: SymbolId) -> bool {
         self.variable[s as usize]
     }
@@ -525,6 +536,43 @@ pub fn relations_from_rows(kingdom: &str, roots: Vec<Ty>, rows: &[(String, Vec<T
         }
         if ins.is_empty() && constants.contains(&name.as_str()) {
             r.constants.insert(id);
+        }
+    }
+    r
+}
+
+/// The relations of a kingdom's tables (design 3.3.3): every symbol's ordered signature from its Argument rows, in
+/// symbol order (the contract's symbol `i` is the tables' `i`-th symbol), its role from Symbol.role: `constant` the
+/// placeholder `?_T`, `variable` the terminal `var.T`.
+pub fn relations_from_tables(t: &crate::geneframe::KingdomTables, roots: Vec<Ty>) -> KingdomRelations {
+    let mut r = KingdomRelations {
+        kingdom: t.kingdom.clone(),
+        roots,
+        names: Vec::new(),
+        constants: BTreeSet::new(),
+        variables: BTreeSet::new(),
+        symbol_outputs: Vec::new(),
+        argument_signature: Vec::new(),
+        tail_free_roots: false,
+    };
+    let sigs: BTreeMap<i64, (Vec<Ty>, Ty)> = t.signatures().into_iter().map(|(s, i, o)| (s, (i, o))).collect();
+    for s in &t.symbols {
+        let id = r.names.len() as SymbolId;
+        r.names.push(s.symbol_name.clone());
+        if let Some((ins, out)) = sigs.get(&s.symbol) {
+            r.symbol_outputs.push((id, *out));
+            for (i, ty) in ins.iter().enumerate() {
+                r.argument_signature.push((id, i as u32, *ty));
+            }
+        }
+        match s.role {
+            crate::geneframe::Role::Constant => {
+                r.constants.insert(id);
+            }
+            crate::geneframe::Role::Variable => {
+                r.variables.insert(id);
+            }
+            crate::geneframe::Role::Function => {}
         }
     }
     r

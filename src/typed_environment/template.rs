@@ -278,6 +278,11 @@ impl Scope<'_> {
         self.render_in(t, fresh, &mut BTreeMap::new(), &BTreeMap::new())
     }
 
+    /// Render `t` with the indices `indices` bound (a variable's spelling reads `each` and `depth` this way).
+    pub fn render_with(&self, t: &Template, fresh: &mut Fresh, indices: &BTreeMap<String, i64>) -> Result<String, String> {
+        self.render_in(t, fresh, &mut BTreeMap::new(), indices)
+    }
+
     fn render_in(&self, t: &Template, fresh: &mut Fresh, mine: &mut BTreeMap<String, String>, indices: &BTreeMap<String, i64>) -> Result<String, String> {
         let mut s = String::new();
         for piece in t {

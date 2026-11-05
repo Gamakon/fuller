@@ -57,7 +57,8 @@
 use std::collections::BTreeMap;
 
 use crate::futhark_table::{FutharkKind, FutharkKingdom, Kind6, Kingdom6};
-use crate::geneframe::{AdapterSite, DataKind, PropertyExpr, Requirement, Subject, Ty};
+use crate::futhark_table::{Requirement6, Site6, Subject6};
+use crate::geneframe::{DataKind, PropertyExpr, Ty};
 use crate::typed_environment::{Decoding, Node as Node6, Outcome, Substituted, Substitution};
 use crate::typed_gep::Tree;
 
@@ -534,7 +535,6 @@ pub fn size6(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<Option
     Ok(match e {
         PropertyExpr::Size(n) => Some(*sizes.get(n).ok_or_else(|| format!("our software has a bug: the size {n} has no value"))? as i64),
         PropertyExpr::Literal(v) => Some(*v),
-        PropertyExpr::Unknown | PropertyExpr::Input { .. } => None,
         PropertyExpr::Min(args) => {
             let mut least: Option<i64> = None;
             for a in args {
@@ -555,6 +555,7 @@ pub fn size6(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<Option
             }
             Some(total)
         }
+        _ => None,
     })
 }
 
@@ -586,6 +587,7 @@ fn known6(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<u128, Str
                 let v = size6(e, sizes)?.ok_or_else(|| format!("our software has a bug: the size {e} has no value"))?;
                 u128::try_from(v).map_err(|_| format!("our software has a bug: the size {e} is {v}"))?
             }
+            _ => return Err(format!("our software has a bug: the size {e} is no sum or minimum of sizes, which a cost reads")),
         })
     }
     at(e, sizes)
@@ -624,7 +626,7 @@ pub struct Charge6 {
 
 /// The tables' requirement rows of a master 6 kingdom, in the order G3's outcomes index them (each symbol's
 /// `requires`, symbol order).
-pub fn requirements6(k: &Kingdom6) -> Vec<&Requirement> {
+pub fn requirements6(k: &Kingdom6) -> Vec<&Requirement6> {
     k.symbols.iter().flat_map(|s| s.requires.iter()).collect()
 }
 
@@ -633,7 +635,7 @@ fn spelled6(e: &PropertyExpr) -> bool {
     match e {
         PropertyExpr::Size(_) | PropertyExpr::Literal(_) => true,
         PropertyExpr::Min(xs) | PropertyExpr::Sum(xs) => xs.iter().all(spelled6),
-        PropertyExpr::Unknown | PropertyExpr::Input { .. } => false,
+        _ => false,
     }
 }
 
@@ -642,18 +644,18 @@ fn spelled6(e: &PropertyExpr) -> bool {
 /// other adapters first and `clampix` last; each operand's properties (`ops`, the arguments' in order) as the adapters
 /// leave them; and the adapters with what each fits. A `fit` to a length with no spelling leaves `?`. A failing
 /// work bound is a bug (the node is substituted, and its adapters do not render).
-pub fn adapters6(k: &Kingdom6, reqs: &[&Requirement], n: &Node6, body: bool, ops: &mut [BTreeMap<String, PropertyExpr>]) -> Result<Vec<Charge6>, String> {
+pub fn adapters6(k: &Kingdom6, reqs: &[&Requirement6], n: &Node6, body: bool, ops: &mut [BTreeMap<String, PropertyExpr>]) -> Result<Vec<Charge6>, String> {
     let bug = |what: String| format!("our software has a bug: {}: {what}", k.kingdom);
-    let at_body = |name: &str| k.adapters.iter().find(|a| a.name == name).map(|a| a.runs_at == AdapterSite::Body);
-    let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.adapter != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter == "clampix")).collect();
+    let at_body = |name: &str| k.adapters.iter().find(|a| a.name == name).map(|a| a.runs_at == Site6::Body);
+    let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() == "clampix")).collect();
     let tys: Vec<Ty> = n.kids.iter().map(|c| c.data_type).collect();
     let mut out = Vec::new();
     for o in failing {
-        if at_body(&o.adapter).ok_or_else(|| bug(format!("the adapter {} is not in the master", o.adapter)))? != body {
+        if at_body(o.adapter_name()).ok_or_else(|| bug(format!("the adapter {} is not in the master", o.adapter_name())))? != body {
             continue;
         }
         let q = *reqs.get(o.requirement).ok_or_else(|| bug(format!("the outcome names requirement {}", o.requirement)))?;
-        let Subject::Input { position, property } = &q.subject else { return Err(bug(format!("the work bound fails at an unsubstituted node ({})", o.adapter))) };
+        let Subject6::Input { position, property } = &q.subject else { return Err(bug(format!("the work bound fails at an unsubstituted node ({})", o.adapter_name()))) };
         let (s, ps) = (*position as usize, property.as_str());
         let against = match &q.against {
             PropertyExpr::Input { position, property } => Some((*position as usize, property.as_str())),
@@ -665,17 +667,17 @@ pub fn adapters6(k: &Kingdom6, reqs: &[&Requirement], n: &Node6, body: bool, ops
         let mut fit = |x: usize, p: &str, to: PropertyExpr, ops: &mut [BTreeMap<String, PropertyExpr>]| {
             let source = Some((tys[x], ops[x].clone()));
             ops[x].insert(p.to_string(), to);
-            out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(x), fitted: Some((tys[x], ops[x].clone())), source });
+            out.push(Charge6 { adapter: o.adapter_name().to_string(), operand: Some(x), fitted: Some((tys[x], ops[x].clone())), source });
         };
-        match o.adapter.as_str() {
-            "clampix" => out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(s), fitted: None, source: None }),
+        match o.adapter_name() {
+            "clampix" => out.push(Charge6 { adapter: o.adapter_name().to_string(), operand: Some(s), fitted: None, source: None }),
             "fit" | "fit.body" | "fit.state" => {
-                let to = if spelled6(&o.against) { o.against.clone() } else { PropertyExpr::Unknown };
+                let to = if spelled6(o.against()) { o.against().clone() } else { PropertyExpr::Unknown };
                 fit(s, ps, to, ops);
             }
             "fit.pair" => {
                 let (j, pj) = against.ok_or_else(|| bug("fit.pair's requirement names no second input".to_string()))?;
-                let t = PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]);
+                let t = PropertyExpr::min(vec![o.subject().clone(), o.against().clone()]);
                 if spelled6(&t) {
                     for (x, px) in [(j, pj), (s, ps)] {
                         if ops[x].get(px) != Some(&t) {
@@ -688,15 +690,15 @@ pub fn adapters6(k: &Kingdom6, reqs: &[&Requirement], n: &Node6, body: bool, ops
                 }
             }
             "fit.inner" => {
-                let mut sides = vec![(s, ps, o.subject.clone())];
+                let mut sides = vec![(s, ps, o.subject().clone())];
                 if let Some((a, pa)) = against {
-                    sides.push((a, pa, o.against.clone()));
+                    sides.push((a, pa, o.against().clone()));
                 }
                 let cols: Vec<usize> = (0..sides.len()).filter(|i| sides[*i].1 == "cols").collect();
                 let t = match cols.as_slice() {
-                    [_, _] => PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]),
-                    [0] => o.against.clone(),
-                    [1] => o.subject.clone(),
+                    [_, _] => PropertyExpr::min(vec![o.subject().clone(), o.against().clone()]),
+                    [0] => o.against().clone(),
+                    [1] => o.subject().clone(),
                     _ => return Err(bug(format!("fit.inner's requirement {} names no inner dimension", q.subject))),
                 };
                 for i in cols {
@@ -738,7 +740,7 @@ pub fn program_cost6(k: &Kingdom6, table: &CostTable6, decoding: &Decoding, size
     struct Walk<'a> {
         k: &'a Kingdom6,
         table: &'a CostTable6,
-        reqs: Vec<&'a Requirement>,
+        reqs: Vec<&'a Requirement6>,
         sizes: &'a BTreeMap<String, usize>,
         traffic: u128,
         alloc: u128,
@@ -810,8 +812,8 @@ pub fn program_cost6(k: &Kingdom6, table: &CostTable6, decoding: &Decoding, size
     for o in decoding.root_outcomes.iter().filter(|o| !o.holds) {
         let q = k.root.requires.get(o.requirement).ok_or_else(|| format!("our software has a bug: the entry has no requirement {}", o.requirement))?;
         let source = Some((k.root.data_type, root.clone()));
-        root.insert(q.property.clone(), o.against.clone());
-        w.traffic += table.charge(k, &Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())), source }, sizes)?;
+        root.insert(q.property.clone(), o.against().clone());
+        w.traffic += table.charge(k, &Charge6 { adapter: o.adapter_name().to_string(), operand: None, fitted: Some((k.root.data_type, root.clone())), source }, sizes)?;
     }
     let u = |x: u128| u64::try_from(x).map_err(|_| "futhark_cost: a master 6 cost overflows u64".to_string());
     Ok(Score { traffic: u(w.traffic)?, alloc: u(w.alloc)?, depth: u(w.depth)? })

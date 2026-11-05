@@ -247,9 +247,10 @@ fn run(exe: &Path, entry: &str, stdin: &[u8]) -> crate::futhark_sig::Array {
 }
 
 /// A SHARED PART USED UNDER TWO DIFFERENT ENVIRONMENTS EVALUATES BIT FOR BIT AS THE UNSHARED PROGRAM. In k-means, the
-/// part `tab[c] k (get zeros_k c)` stands under `tabrows[i]` in one individual (the `i64`s in scope `i`, `c`: `c` is
-/// the 2nd of 2) and under a `let` of a `[]f32` in the other (`c` the 1st of 1): one resolved variable, two index
-/// words. The fold shares the part as an ADF whose `c` takes the one word that names it at both (1), every folded gene
+/// part `tab[c] k (get zeros_k c)` stands under `tabrows[i]` in one individual (the `i64`s in scope, innermost first,
+/// `c`, `i`: `c` is the 1st of 2) and under a `let` of a `[]f32` in the other (`c` the 1st of 1): one resolved
+/// variable, and, counted from the innermost binder (design 3.6), one index word at both (0, where counted from the
+/// outermost it was 1 of 2 and 0 of 1). The fold shares the part as an ADF whose `c` takes that word, every folded gene
 /// expresses a tree that resolves to its form, and each individual's ADF program (the part a `def`), its folded tree
 /// and its unshared tree give the same output bit for bit on k-means' stored cases (`c` backend).
 #[test]
@@ -263,7 +264,7 @@ fn a_shared_part_under_two_environments_evaluates_as_the_unshared_program() {
     }
     let (pa, pb) = (vec![0, 2], vec![1, 1]);
     let word = |t: &Tree, p: &[u32]| e.variables(t).unwrap().into_iter().find(|(q, _)| q.as_slice() == p).map(|(_, s)| s).unwrap();
-    assert_eq!((word(&a, &[0, 2, 1, 1]), word(&b, &[1, 1, 1, 1])), (VariableSite { place: 1, count: 2 }, VariableSite { place: 0, count: 1 }), "the part's `c` has two index words");
+    assert_eq!((word(&a, &[0, 2, 1, 1]), word(&b, &[1, 1, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 0, count: 1 }), "the part's `c` is the innermost at both");
     let (layout, consts, pad) = frame(&e);
     let trees = vec![a.clone(), b.clone()];
     let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
@@ -272,7 +273,7 @@ fn a_shared_part_under_two_environments_evaluates_as_the_unshared_program() {
     assert!(!fold.used.is_empty(), "the part is not shared");
     let bodies = fold.adfs.expanded(&fold.epoch);
     let body = bodies.values().find(|b| e.kingdom.symbols[b.symbol as usize].name == "tab@a.f32").expect("the part is an ADF");
-    assert_eq!(body.kids[1].kids[1].const_index, Some(1), "the part's `c` takes the word that names it in both environments");
+    assert_eq!(body.kids[1].kids[1].const_index, Some(0), "the part's `c` takes the word that names it in both environments");
     let cl = crate::typed_chromosome::ChromosomeLayout { normal: crate::typed_gep::Layout::new(0, vec![layout.clone()]), mains: Vec::new() };
     let mut sources = String::new();
     for (i, (t, g)) in trees.iter().zip(&fold.genes).enumerate() {
@@ -347,8 +348,9 @@ fn site(e: &Egraph6, t: &Tree, path: &[u32]) -> VariableSite {
 
 /// A PART WHOSE VARIABLE NO ONE WORD NAMES EVERYWHERE IS INLINED. The part `get zeros_k x`, with `x` the variable
 /// bound at binding depth 2, stands in one individual under a `let` (depth 1), a `tabrows` (depth 2: `x`) and a `tab`
-/// (depth 3), so the `i64`s in scope are `x` and the `tab`'s: `x` is place 0 of 2. In the other it stands under a
-/// `tabrows` (depth 1) and a `tab` (depth 2: `x`): place 1 of 2. One e-class, but no word is 0 and 1 modulo 2, so the
+/// (depth 3), so the `i64`s in scope, innermost first, are the `tab`'s and `x`: `x` is place 1 of 2. In the other it
+/// stands under a `tabrows` (depth 1) and a `tab` (depth 2: `x`): place 0 of 2. One e-class, but no word is 1 and 0
+/// modulo 2, so the
 /// part is no ADF: it is inlined, and each individual's program is its own, bit for bit on the `c` backend.
 #[test]
 fn a_part_whose_variable_no_word_names_everywhere_is_inlined() {
@@ -358,7 +360,7 @@ fn a_part_whose_variable_no_word_names_everywhere_is_inlined() {
     for t in [&a, &b] {
         assert!(e.saturable(t).unwrap(), "{:?}", e.decode(t).unwrap().failures());
     }
-    assert_eq!((site(&e, &a, &[1, 2, 1, 0, 1]), site(&e, &b, &[0, 2, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 1, count: 2 }));
+    assert_eq!((site(&e, &a, &[1, 2, 1, 0, 1]), site(&e, &b, &[0, 2, 1, 1])), (VariableSite { place: 1, count: 2 }, VariableSite { place: 0, count: 2 }));
     let (layout, consts, pad) = frame(&e);
     let trees = vec![a, b];
     let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
@@ -374,8 +376,8 @@ fn a_part_whose_variable_no_word_names_everywhere_is_inlined() {
 }
 
 /// A REFIT NEVER PUTS A PART WHERE ITS WORD NAMES ANOTHER VARIABLE. Two individuals share `get zeros_k x` (`x` bound at
-/// depth 2, place 1 of 2: common word 1). A third holds the same part inside `fst (pair X part)`, under a `let`, a
-/// `tabrows` binding `x` and a `tab`: `x` is place 0 of 2 there, and word 1 names the `tab`'s variable. Its extracted
+/// depth 2, the innermost: place 0 of 2, common word 0). A third holds the same part inside `fst (pair X part)`, under a
+/// `let`, a `tabrows` binding `x` and a `tab`: `x` is place 1 of 2 there, and word 0 names the `tab`'s variable. Its extracted
 /// form is `X` in place of `fst (pair ..)`, which does not fit its layout (the `f32` head holds 6, and `X`'s three
 /// leaves move the `abs` argument to row 6), so it is refitted from its own tree, where the part's occurrence was
 /// never counted for the common word. The refit may not take the reference there: the individual keeps its program
@@ -389,7 +391,7 @@ fn a_refit_never_puts_a_part_where_its_word_names_another_variable() {
     for t in [&a, &b, &d] {
         assert!(e.saturable(t).unwrap(), "{:?}", e.decode(t).unwrap().failures());
     }
-    assert_eq!((site(&e, &a, &[0, 2, 1, 0, 1]), site(&e, &d, &[1, 2, 1, 0, 0, 1, 1])), (VariableSite { place: 1, count: 2 }, VariableSite { place: 0, count: 2 }));
+    assert_eq!((site(&e, &a, &[0, 2, 1, 0, 1]), site(&e, &d, &[1, 2, 1, 0, 0, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 1, count: 2 }));
     // The problem's layout with the `f32` head cut to 6: the third individual fits, its extracted form does not.
     let f32_ty = e.contract.output(e.kingdom.symbols.iter().position(|s| s.name == "neg@f32").unwrap() as SymbolId);
     let root = e.kingdom.root.data_type;

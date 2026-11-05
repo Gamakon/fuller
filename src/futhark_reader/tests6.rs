@@ -104,8 +104,10 @@ fn random_genes_read_back_to_their_canonical_trees_and_render_the_same_text() {
         eprintln!("{name}: 200 random genes read back and render the same text; {with_adapters} with an adapter; {compared} equal to their canonical tree, the rest render a constant");
         report.push((*name, with_adapters, compared));
     }
-    // The genes are drawn from fixed seeds: the counts of this run, as floors.
-    let floors = [("reduce", 0, 103), ("scan", 2, 165), ("histogram", 166, 143), ("pathfinder", 145, 144), ("a7", 189, 200), ("kmeans", 180, 150), ("kmeans_i32", 183, 156)];
+    // The genes are drawn from fixed seeds: the counts of this run, as floors. (Histogram's 166 genes with an adapter
+    // became 164 when `var.T`'s words came to count from the innermost binder, design 3.6: the same words name other
+    // variables.)
+    let floors = [("reduce", 0, 103), ("scan", 2, 165), ("histogram", 164, 143), ("pathfinder", 145, 144), ("a7", 189, 200), ("kmeans", 180, 150), ("kmeans_i32", 183, 156)];
     for ((name, adapters, compared), (fname, fa, fc)) in report.iter().zip(floors) {
         assert!(*name == fname && *adapters >= fa && *compared >= fc, "{name}: {adapters} with an adapter (floor {fa}), {compared} compared (floor {fc}): {report:?}");
     }
@@ -114,7 +116,7 @@ fn random_genes_read_back_to_their_canonical_trees_and_render_the_same_text() {
 /// The tree read by [`Reader6::read_expression`] rendered as pass 5 renders it: a whole program whose entry returns
 /// its data type.
 fn render_expression(k: &Kingdom6, renderer: &crate::futhark_table::Renderer6, tree: &Tree, ty: Ty) -> String {
-    let entry = crate::typed_environment::Entry { output: ty, variables: renderer.entry.variables.clone(), requirements: Vec::new() };
+    let entry = crate::typed_environment::Entry { output: ty, guards: Vec::new(), ..renderer.entry.clone() };
     let decoding = crate::typed_environment::Decoder::new(&renderer.tables, &renderer.contract).unwrap().decode(&entry, tree).unwrap();
     k.program6(&renderer.header, &decoding).unwrap().text
 }

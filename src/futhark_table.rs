@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::geneframe::{Adapter, AdapterSite, Argument, Binding, DataKind, DataType, Direction, KingdomTables, PropertyExpr, PropertyKind, PropertyRule, PropertyType, Relation, Requirement, Subject, SymbolRow, TripArgument, Ty};
+use crate::geneframe::{Argument, Condition, Constant, DataKind, DataType, Direction, Entry, EntryParameter, Flow, FlowName, Guard, KingdomTables, Owner, PropertyExpr, PropertyKind, Relation, Repair, Role, Site, Strength, SymbolRow, Ty};
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::kingdom_contract::{relations_from_rows, KingdomRelations};
 use crate::typed_chromosome::{AdfId, AdfSet, Epoch, RefKind};
@@ -517,6 +517,138 @@ impl GeneRng {
 // and the contract with its variable terminals (G2). Master 5's loader above is unchanged and stays loadable until
 // task D1.
 
+
+// ---- master 6's own row forms (its `symbols.tsv`, `adapters.tsv`, `environment.tsv`) --------------------------------
+//
+// A master 6 view still writes its requirements as `subject relation against -> adapter`, its trip argument as a
+// column and its adapters with a site (node, body, root). These are that text's rows, as the view writes them; the
+// renderer, the interpreter, the cost and the reader read them by name. [`Kingdom6::tables`] CONVERTS them into the gene
+// frame's four kinds of row (Argument, Flow, Guard, Entry; design 3.3), which the decoder reads: a requirement becomes a
+// `must` Guard with its repairs inline, the trip argument a down flow `env.trips := env.trips + 1`, the work bound a
+// Guard of order 0 whose repairs are the substitutes `{in.own}`, `{const}`, and a heavy adapter's repair carries the
+// guard `env.trips < depth` read in its site's environment (the body's, one trip deeper), followed by the work bound's
+// substitutes. The next task rewrites master 6's rows in the four kinds directly.
+
+/// What a master 6 requirement constrains: a property of one input (`in1.len`), or the trip count `env.trips`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Subject6 {
+    Input { position: u32, property: String },
+    Trips,
+}
+
+impl std::fmt::Display for Subject6 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Subject6::Input { position, property } => write!(f, "in{position}.{property}"),
+            Subject6::Trips => write!(f, "env.trips"),
+        }
+    }
+}
+
+impl Subject6 {
+    /// Parse `in1.len` or `env.trips`.
+    pub fn parse(text: &str) -> Result<Subject6, String> {
+        if text == "env.trips" {
+            return Ok(Subject6::Trips);
+        }
+        match PropertyExpr::parse(text) {
+            Ok(PropertyExpr::Input { position, property }) => Ok(Subject6::Input { position, property }),
+            _ => Err(format!("our software has a bug: the requirement subject {text:?} is neither in<k>.<property> nor env.trips")),
+        }
+    }
+
+    /// The subject as a formula of the gene frame.
+    pub fn formula(&self) -> PropertyExpr {
+        match self {
+            Subject6::Input { position, property } => PropertyExpr::Input { position: *position, property: property.clone() },
+            Subject6::Trips => PropertyExpr::Env("trips".to_string()),
+        }
+    }
+}
+
+/// One master 6 requirement: `subject relation against -> adapter`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Requirement6 {
+    pub symbol: i64,
+    pub subject: Subject6,
+    pub relation: Relation,
+    pub against: PropertyExpr,
+    pub adapter: String,
+}
+
+/// Where a master 6 adapter's work runs: at its node, at its body (the trip argument), or at the entry's root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Site6 {
+    Node,
+    Body,
+    Root,
+}
+
+impl Site6 {
+    pub fn name(self) -> &'static str {
+        match self {
+            Site6::Node => "node",
+            Site6::Body => "body",
+            Site6::Root => "root",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Site6> {
+        [Site6::Node, Site6::Body, Site6::Root].into_iter().find(|a| a.name() == s)
+    }
+}
+
+/// One row of master 6's `adapters.tsv`: its name, whether it is heavy, and where its work runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adapter6 {
+    pub name: String,
+    pub heavy: bool,
+    pub runs_at: Site6,
+}
+
+/// Master 6's two substitution adapters, named by a work bound `env.trips < depth`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Substitute6 {
+    /// `subst`: the node's first input of its own data type, else its data type's constant.
+    OwnInput,
+    /// `subst.const`: the node's data type's constant, whatever its inputs (`hist.*`, `histrows.*`).
+    Constant,
+}
+
+impl Substitute6 {
+    pub const ALL: [Substitute6; 2] = [Substitute6::OwnInput, Substitute6::Constant];
+
+    /// The adapter's name in `adapters.tsv` and in a `requires` column.
+    pub fn adapter(self) -> &'static str {
+        match self {
+            Substitute6::OwnInput => "subst",
+            Substitute6::Constant => "subst.const",
+        }
+    }
+
+    /// The substitution adapter named `name`, `None` for any other adapter.
+    pub fn of_adapter(name: &str) -> Option<Substitute6> {
+        Substitute6::ALL.into_iter().find(|s| s.adapter() == name)
+    }
+
+    /// Its repairs in the gene frame's form: the substitutes in order (design 8.0's `subst.own`, `subst.const`).
+    pub fn repairs(self) -> Vec<Repair> {
+        match self {
+            Substitute6::OwnInput => vec![Repair::new(Site::Node, "{in.own}", ""), Repair::new(Site::Node, "{const}", "")],
+            Substitute6::Constant => vec![Repair::new(Site::Node, "{const}", "")],
+        }
+    }
+}
+
+/// One master 6 binding: argument `position` makes a variable of `data_type` with `properties` visible to its subtree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding6 {
+    pub symbol: i64,
+    pub position: u32,
+    pub data_type: Ty,
+    pub properties: Vec<(String, PropertyExpr)>,
+}
+
 /// One data type of a master 6 view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataType6 {
@@ -557,8 +689,8 @@ pub struct Symbol6 {
     pub output: Ty,
     pub rules: Vec<(String, PropertyExpr)>,
     /// Its requirements, each with its relation and adapter, in the `requires` order (the order adapters render in).
-    pub requires: Vec<Requirement>,
-    pub binds: Vec<Binding>,
+    pub requires: Vec<Requirement6>,
+    pub binds: Vec<Binding6>,
     /// The argument whose subtree runs once a trip.
     pub trip: Option<u32>,
     pub spelling: String,
@@ -598,7 +730,7 @@ pub struct Kingdom6 {
     /// Data type `i` is `Ty::Futhark(i)`.
     pub data_types: Vec<DataType6>,
     pub symbols: Vec<Symbol6>,
-    pub adapters: Vec<Adapter>,
+    pub adapters: Vec<Adapter6>,
     pub root: Root6,
     /// The root environment's variables, in the specification's order (G3's environment reads this).
     pub variables: Vec<RootVariable6>,
@@ -720,7 +852,7 @@ impl Kingdom6 {
                 .filter(|q| !q.is_empty())
                 .map(|q| {
                     let (subject, relation, against, adapter) = requirement6(kingdom, q)?;
-                    Ok(Requirement { symbol, subject: Subject::parse(&subject)?, relation, against, adapter })
+                    Ok(Requirement6 { symbol, subject: Subject6::parse(&subject)?, relation, against, adapter })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             let binds = f[8]
@@ -730,7 +862,7 @@ impl Kingdom6 {
                 .map(|b| {
                     let (pos, rest) = b.split_once(':').ok_or_else(|| bug6(kingdom, format!("the binding {b:?}")))?;
                     let (dt, props) = rest.split_once(' ').unwrap_or((rest, ""));
-                    Ok(Binding { symbol, position: pos.parse().map_err(|_| bug6(kingdom, format!("the binding {b:?}")))?, data_type: ty_of(dt)?, properties: assignments(kingdom, props, "&")? })
+                    Ok(Binding6 { symbol, position: pos.parse().map_err(|_| bug6(kingdom, format!("the binding {b:?}")))?, data_type: ty_of(dt)?, properties: assignments(kingdom, props, "&")? })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             symbols.push(Symbol6 {
@@ -749,13 +881,13 @@ impl Kingdom6 {
         let adapters = rows6(kingdom, "adapters.tsv", adapters_tsv, &ADAPTER6_COLUMNS)?
             .into_iter()
             .map(|f| {
-                let runs_at = AdapterSite::from_name(f[2]).ok_or_else(|| bug6(kingdom, format!("the adapter {} runs at {:?}", f[0], f[2])))?;
+                let runs_at = Site6::from_name(f[2]).ok_or_else(|| bug6(kingdom, format!("the adapter {} runs at {:?}", f[0], f[2])))?;
                 let heavy = match f[3] {
                     "yes" => true,
                     "no" => false,
                     other => return Err(bug6(kingdom, format!("the adapter {} is heavy {other:?}", f[0]))),
                 };
-                Ok(Adapter { name: f[0].to_string(), heavy, runs_at })
+                Ok(Adapter6 { name: f[0].to_string(), heavy, runs_at })
             })
             .collect::<Result<Vec<_>, String>>()?;
         let env = rows6(kingdom, "environment.tsv", environment_tsv, &crate::futhark_view::master6::VIEW6_ENV_COLUMNS)?;
@@ -811,47 +943,139 @@ impl Kingdom6 {
         }
     }
 
-    /// THE GENE FRAME'S TABLES: one data type a row with its constant's properties (none for `size`) and its
-    /// property types; one symbol a row with its Argument rows, property rules, requirements (relation and adapter),
-    /// bindings and trip argument; the adapters. The tables are checked ([`KingdomTables::check`]).
+    /// THE GENE FRAME'S TABLES, converted from master 6's rows into the four kinds (design 3.3): each data type with
+    /// its carried properties, its constant and (the `size` data type, else the first that carries a size) the size
+    /// names of the entry with their lower bound 1 (every dimension is at least 1, the entries' contracts); each symbol with its role, its spelling and its
+    /// Argument rows; its rules as up flows; its bindings as down `var.T` flows and its trip argument as the down flow
+    /// `env.trips := env.trips + 1`; its requirements as `must` Guards, IN ITS `requires` ORDER (the decoder's outcomes
+    /// index them as the renderer's do), the work bound at order 0 and the others after it. A requirement's repairs: its
+    /// adapter at its site (the node, or the trip argument for a body adapter), guarded by `env.trips < depth` when the
+    /// adapter is heavy and the view has a work bound, then the symbol's work-bound substitutes; the work bound's own
+    /// repairs are its substitutes. The tables are checked ([`KingdomTables::check`]).
     pub fn tables(&self) -> Result<KingdomTables, String> {
-        let mut t = KingdomTables { kingdom: self.kingdom.clone(), adapters: self.adapters.clone(), ..KingdomTables::default() };
+        let bug = |what: String| bug6(&self.kingdom, what);
+        let mut t = KingdomTables { kingdom: self.kingdom.clone(), ..KingdomTables::default() };
+        // The size names: every one the entry's variables and result read, each at least 1. They go on the `size` data
+        // type, or, in a view with none (a7), on the first data type that carries a size.
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for (_, e) in self.variables.iter().flat_map(|v| v.properties.iter()).chain(self.root.properties.iter()) {
+            names.extend(e.size_names());
+        }
+        for q in &self.root.requires {
+            names.extend(q.against.size_names());
+        }
+        let sizes: Vec<(String, i64)> = names.into_iter().map(|n| (n, 1)).collect();
+        let holder = self.data_types.iter().position(|d| d.name == "size").or_else(|| self.data_types.iter().position(|d| d.properties.iter().any(|(_, k)| *k == PropertyKind::Size)));
+        let work: BTreeSet<i64> = self.symbols.iter().flat_map(|s| s.requires.iter()).filter_map(|q| match (&q.subject, &q.against) {
+            (Subject6::Trips, PropertyExpr::Literal(d)) => Some(*d),
+            _ => None,
+        }).collect();
+        let depth = match work.len() {
+            0 => None,
+            1 => work.first().copied(),
+            _ => return Err(bug(format!("the work bounds have several depths {work:?}, and a heavy adapter's guard reads one"))),
+        };
         for (i, d) in self.data_types.iter().enumerate() {
             let id = Ty::Futhark(i as u16);
-            let constant = if d.constant.is_empty() { None } else { Some(d.constant_props.clone()) };
-            t.data_types.push(DataType { id, name: d.name.clone(), kind: d.kind.clone(), constant });
             for (name, kind) in &d.properties {
-                t.property_types.push(PropertyType { id: t.property_types.len() as u32, data_type: id, name: name.clone(), kind: *kind });
+                match crate::geneframe::property(name) {
+                    Some(p) if p.kind == *kind => {}
+                    _ => return Err(bug(format!("the data type {} carries {name} of the kind {}, which the property catalogue does not define so", d.name, kind.name()))),
+                }
             }
+            let constant = if d.constant.is_empty() { None } else { Some(Constant { spelling: d.constant.clone(), properties: d.constant_props.clone() }) };
+            let size_names = if holder == Some(i) { sizes.clone() } else { Vec::new() };
+            t.data_types.push(DataType { id, name: d.name.clone(), kind: d.kind.clone(), properties: d.properties.iter().map(|(n, _)| n.clone()).collect(), constant, size_names });
         }
+        let adapter = |name: &str| self.adapters.iter().find(|a| a.name == name);
         for (i, s) in self.symbols.iter().enumerate() {
             let symbol = i as i64;
-            t.symbols.push(SymbolRow { symbol, symbol_name: s.name.clone(), alias: s.reference.clone(), semantic_id: s.name.clone(), spelling: s.spelling.clone() });
+            let role = match s.kind {
+                Kind6::Const => Role::Constant,
+                Kind6::Var => Role::Variable,
+                Kind6::Function | Kind6::Terminal => Role::Function,
+            };
+            let spellings = if s.spelling.is_empty() { Vec::new() } else { vec![(String::new(), legacy_spelling(&s.spelling))] };
+            t.symbols.push(SymbolRow { alias: s.reference.clone(), semantic_id: s.name.clone(), role, spellings, ..SymbolRow::named(symbol, &s.name) });
             for (k, ty) in s.inputs.iter().enumerate() {
-                t.arguments.push(Argument { symbol, position: k as u32, direction: Direction::In, data_type: *ty });
+                t.arguments.push(Argument { symbol, position: k as u32, direction: Direction::In, data_type: *ty, head: false });
             }
-            t.arguments.push(Argument { symbol, position: 0, direction: Direction::Out, data_type: s.output });
+            t.arguments.push(Argument { symbol, position: 0, direction: Direction::Out, data_type: s.output, head: false });
             for (property, expr) in &s.rules {
-                t.property_rules.push(PropertyRule { symbol, property: property.clone(), expr: expr.clone() });
+                t.flows.push(Flow::up(symbol, property, expr.clone()));
             }
-            t.requirements.extend(s.requires.iter().cloned());
-            t.bindings.extend(s.binds.iter().cloned());
+            let mut groups: BTreeMap<(u32, Ty), u32> = BTreeMap::new();
+            for b in &s.binds {
+                let group = groups.entry((b.position, b.data_type)).or_insert(0);
+                let g = *group;
+                *group += 1;
+                t.flows.push(Flow::down(symbol, b.position, FlowName::Var { ty: b.data_type, group: g }, PropertyExpr::Literal(1)));
+                for (p, e) in &b.properties {
+                    t.flows.push(Flow::down(symbol, b.position, FlowName::VarProperty { ty: b.data_type, group: g, property: p.clone() }, e.clone()));
+                }
+            }
             if let Some(position) = s.trip {
-                t.trip_arguments.push(TripArgument { symbol, position });
+                let trips = PropertyExpr::sum(vec![PropertyExpr::Env("trips".to_string()), PropertyExpr::Literal(1)]);
+                t.flows.push(Flow::down(symbol, position, FlowName::Env("trips".to_string()), trips));
+            }
+            let subst = s.requires.iter().find(|q| q.subject == Subject6::Trips).map(|q| Substitute6::of_adapter(&q.adapter).ok_or_else(|| bug(format!("{}'s work bound names {}, which is not a substitution adapter", s.name, q.adapter)))).transpose()?;
+            let mut order = 1u32;
+            for q in &s.requires {
+                let condition = Condition::Compare { relation: q.relation, left: q.subject.formula(), right: q.against.clone() };
+                let (order_of, repairs) = if q.subject == Subject6::Trips {
+                    (0, subst.map(Substitute6::repairs).unwrap_or_default())
+                } else {
+                    let a = adapter(&q.adapter).ok_or_else(|| bug(format!("{}'s requirement names the adapter {}, which is not in adapters.tsv", s.name, q.adapter)))?;
+                    let site = match a.runs_at {
+                        Site6::Node => Site::Node,
+                        Site6::Body => Site::In(s.trip.ok_or_else(|| bug(format!("{}'s requirement names the body adapter {}, and it has no trip argument", s.name, q.adapter)))?),
+                        Site6::Root => return Err(bug(format!("{}'s requirement names the root adapter {}", s.name, q.adapter))),
+                    };
+                    let template = match site {
+                        Site::In(k) => format!("{{{k}}}"),
+                        _ => "{self}".to_string(),
+                    };
+                    let mut repair = Repair::new(site, &template, &q.adapter);
+                    let mut repairs = Vec::new();
+                    match (a.heavy, depth, subst) {
+                        (true, Some(d), Some(sub)) => {
+                            repair.guard = Condition::Compare { relation: Relation::Lt, left: PropertyExpr::Env("trips".to_string()), right: PropertyExpr::Literal(d) };
+                            repairs.push(repair);
+                            repairs.extend(sub.repairs());
+                        }
+                        (true, Some(_), None) => return Err(bug(format!("{}'s requirement names the heavy adapter {}, and the symbol has no work bound, so the adapter's work escapes it", s.name, q.adapter))),
+                        _ => repairs.push(repair),
+                    }
+                    order += 1;
+                    (order - 1, repairs)
+                };
+                t.guards.push(Guard { owner: Owner::Symbol(symbol), order: order_of, condition, strength: Strength::Must, repairs });
             }
         }
         t.check().map_err(|d| d.join("\n"))?;
         Ok(t)
     }
 
+    /// THE ENTRY, converted from `environment.tsv` (design 3.3.3): each root variable a parameter with its declared
+    /// properties, in the view's order; each requirement on the result a `must` Guard of `entry` repaired at the root by
+    /// `fit.root`.
+    pub fn entry(&self) -> Entry {
+        let mut e = Entry::new(&self.kingdom, self.root.data_type);
+        for v in &self.variables {
+            let props: Vec<(&str, PropertyExpr)> = v.properties.iter().map(|(p, x)| (p.as_str(), x.clone())).collect();
+            e.parameters.push(EntryParameter::declared(&v.name, v.data_type, &props));
+        }
+        for (i, q) in self.root.requires.iter().enumerate() {
+            let condition = Condition::Compare { relation: q.relation, left: PropertyExpr::Output(q.property.clone()), right: q.against.clone() };
+            e.guards.push(Guard { owner: Owner::Entry, order: i as u32, condition, strength: Strength::Must, repairs: vec![Repair::new(Site::Root, "{self}", &q.adapter)] });
+        }
+        e
+    }
+
     /// The kingdom's relations (G2): every symbol's signature from the gene frame's Argument rows, the root, the
     /// `const` rows as the constant placeholders and the `var` rows as the variable terminals.
     pub fn relations(&self) -> Result<KingdomRelations, String> {
-        let t = self.tables()?;
-        let rows: Vec<(String, Vec<Ty>, Ty)> = t.signatures().into_iter().map(|(s, ins, out)| (self.symbols[s as usize].name.clone(), ins, out)).collect();
-        let constants: Vec<&str> = self.symbols.iter().filter(|s| s.kind == Kind6::Const).map(|s| s.name.as_str()).collect();
-        let variables: Vec<&str> = self.symbols.iter().filter(|s| s.kind == Kind6::Var).map(|s| s.name.as_str()).collect();
-        relations_from_rows(&self.kingdom, vec![self.root.data_type], &rows, &constants).with_variables(&variables)
+        Ok(crate::kingdom_contract::relations_from_tables(&self.tables()?, vec![self.root.data_type]))
     }
 
     /// The checked contract: what a gene of this kingdom is laid out by. The entry (the root, its requirements and its
@@ -860,7 +1084,7 @@ impl Kingdom6 {
     pub fn contract(&self) -> Result<KingdomContract, String> {
         let contract = self.relations()?.check().map_err(|d| d.join("\n"))?;
         let decoder = crate::typed_environment::Decoder::new(&self.tables()?, &contract).map_err(|d| d.join("\n"))?;
-        decoder.check_entry(&crate::typed_environment::Entry::of_kingdom6(self)).map_err(|d| d.join("\n"))?;
+        decoder.check_entry(&self.entry()).map_err(|d| d.join("\n"))?;
         Ok(contract)
     }
 }
@@ -960,7 +1184,7 @@ fn futhark_size(e: &PropertyExpr) -> Option<String> {
             Some(rest.iter().rev().fold(last.clone(), |acc, a| format!("i64.min {a} {}", atom(&acc))))
         }
         PropertyExpr::Sum(terms) => Some(terms.iter().map(|t| futhark_size(t).map(|x| atom(&x))).collect::<Option<Vec<_>>>()?.join(" + ")),
-        PropertyExpr::Unknown | PropertyExpr::Input { .. } => None,
+        _ => None,
     }
 }
 
@@ -982,7 +1206,7 @@ fn class_part(e: &PropertyExpr) -> String {
         PropertyExpr::Literal(v) => v.to_string(),
         PropertyExpr::Min(args) => format!("min_{}", args.iter().map(class_part).collect::<Vec<_>>().join("_")),
         PropertyExpr::Sum(terms) => format!("sum_{}", terms.iter().map(class_part).collect::<Vec<_>>().join("_")),
-        PropertyExpr::Unknown | PropertyExpr::Input { .. } => "q".to_string(),
+        _ => "q".to_string(),
     }
 }
 
@@ -991,7 +1215,7 @@ struct Render6<'a> {
     k: &'a Kingdom6,
     decoding: &'a crate::typed_environment::Decoding,
     /// The tables' requirement rows, in the order G3's outcomes index them (each symbol's `requires`, symbol order).
-    reqs: Vec<&'a Requirement>,
+    reqs: Vec<&'a Requirement6>,
     /// The view has several elements: an array's class names its element (`a.f32.n`), as master 5's does.
     multi: bool,
     /// The subtrees rendered as ADFs, by path; the index is the ADF's number.
@@ -1156,7 +1380,7 @@ impl<'a> Render6<'a> {
     /// `suffix` (`ad_a` + `1`).
     fn adapt(&mut self, o: &crate::typed_environment::Outcome, suffix: &str, ops: &mut [Operand6], lets: &mut Vec<String>, used: &mut BTreeSet<String>) -> Result<(), String> {
         let q = *self.reqs.get(o.requirement).ok_or_else(|| self.bug(format!("the outcome names requirement {}, which the tables do not have", o.requirement)))?;
-        let Subject::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound's adapter {} renders as an adapter, not a substitution", o.adapter))) };
+        let Subject6::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound's adapter {} renders as an adapter, not a substitution", o.adapter_name()))) };
         let (s, ps) = (*position as usize, property.clone());
         if s >= ops.len() {
             return Err(self.bug(format!("the requirement reads input {s} of a node of {} inputs", ops.len())));
@@ -1164,7 +1388,7 @@ impl<'a> Render6<'a> {
         let against = self.side(&q.against);
         let known = |e: &PropertyExpr| futhark_size(e).map(|t| (e.clone(), t));
         let (ad_a, ad_b, ad_l, ad_m, ad_s) = (format!("ad_a{suffix}"), format!("ad_b{suffix}"), format!("ad_l{suffix}"), format!("ad_m{suffix}"), format!("ad_s{suffix}"));
-        match o.adapter.as_str() {
+        match o.adapter_name() {
             "clampix" => {
                 let (a, pa) = against.ok_or_else(|| self.bug("clampix's requirement names no input's length".to_string()))?;
                 if a >= ops.len() {
@@ -1184,16 +1408,16 @@ impl<'a> Render6<'a> {
                 self.uses.insert("clampix");
             }
             "fit" | "fit.body" | "fit.state" => {
-                let target = match (known(&o.against), against) {
+                let target = match (known(o.against()), against) {
                     (Some(t), _) => t,
                     (None, Some((j, pj))) => {
-                        let arr = if o.adapter == "fit.state" { &ad_s } else { &ad_a };
+                        let arr = if o.adapter_name() == "fit.state" { &ad_s } else { &ad_a };
                         let mut op = ops[j].clone();
                         self.bind(&mut op, arr, Some((&ad_m, &pj)), lets, used)?;
                         ops[j] = op;
                         (PropertyExpr::Unknown, self.dim(&ops[j], &pj)?)
                     }
-                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no spelling", o.adapter, o.against))),
+                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no spelling", o.adapter_name(), o.against()))),
                 };
                 let mut op = ops[s].clone();
                 self.fit_to(&mut op, &ps, target)?;
@@ -1204,7 +1428,7 @@ impl<'a> Render6<'a> {
                 if j >= ops.len() {
                     return Err(self.bug(format!("the requirement reads input {j} of a node of {} inputs", ops.len())));
                 }
-                let target = PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]);
+                let target = PropertyExpr::min(vec![o.subject().clone(), o.against().clone()]);
                 match known(&target) {
                     Some(t) => {
                         for (x, px) in [(j, pj.as_str()), (s, ps.as_str())] {
@@ -1233,15 +1457,15 @@ impl<'a> Render6<'a> {
                 }
             }
             "fit.inner" => {
-                let mut sides = vec![(s, ps.clone(), o.subject.clone())];
+                let mut sides = vec![(s, ps.clone(), o.subject().clone())];
                 if let Some((a, pa)) = against.clone() {
-                    sides.push((a, pa, o.against.clone()));
+                    sides.push((a, pa, o.against().clone()));
                 }
                 let cols: Vec<usize> = (0..sides.len()).filter(|i| sides[*i].1 == "cols").collect();
                 let target = match cols.as_slice() {
-                    [_, _] => PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]),
-                    [0] => o.against.clone(),
-                    [1] => o.subject.clone(),
+                    [_, _] => PropertyExpr::min(vec![o.subject().clone(), o.against().clone()]),
+                    [0] => o.against().clone(),
+                    [1] => o.subject().clone(),
                     _ => return Err(self.bug(format!("fit.inner's requirement {} {} {} names no inner dimension", q.subject, q.relation.symbol(), q.against))),
                 };
                 let t = known(&target).ok_or_else(|| self.bug(format!("fit.inner fits to {target}, which has no spelling")))?;
@@ -1332,7 +1556,7 @@ impl<'a> Render6<'a> {
         // the node's other adapters and reads its bound from the operand as they left it, so a `fit` of the indexed
         // array is never followed by a clamp to its old length.
         let (mut lets, mut used, mut binding) = (Vec::new(), BTreeSet::new(), 0usize);
-        let failing = n.outcomes.iter().filter(|o| !o.holds && o.adapter != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter == "clampix"));
+        let failing = n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() == "clampix"));
         for o in failing {
             let before = lets.len();
             let suffix = if binding == 0 { String::new() } else { binding.to_string() };
@@ -1340,7 +1564,7 @@ impl<'a> Render6<'a> {
             if lets.len() > before {
                 binding += 1;
             }
-            self.adapters.push((path.clone(), o.adapter.clone()));
+            self.adapters.push((path.clone(), o.adapter_name().to_string()));
         }
         if sym.spelling.starts_with("matmul ") {
             self.uses.insert("matmul");
@@ -1403,8 +1627,8 @@ impl<'a> Render6<'a> {
         while let Some(m) = stack.pop() {
             m.properties.values().for_each(|e| names(e, &mut sizes));
             m.outcomes.iter().for_each(|o| {
-                names(&o.subject, &mut sizes);
-                names(&o.against, &mut sizes);
+                names(o.subject(), &mut sizes);
+                names(o.against(), &mut sizes);
             });
             stack.extend(m.kids.iter());
         }
@@ -1464,7 +1688,7 @@ impl Kingdom6 {
     /// computes.
     pub fn program6_with_adfs(&self, header: &Header6, decoding: &crate::typed_environment::Decoding, adfs: &[Vec<u32>]) -> Result<Program6, String> {
         let multi = self.data_types.iter().filter_map(|d| if let DataKind::Array { element } = d.kind { Some(element) } else { None }).filter(|e| self.data_type(*e).is_some_and(|d| d.kind == DataKind::Scalar)).collect::<BTreeSet<_>>().len() > 1;
-        let reqs: Vec<&Requirement> = self.symbols.iter().flat_map(|s| s.requires.iter()).collect();
+        let reqs: Vec<&Requirement6> = self.symbols.iter().flat_map(|s| s.requires.iter()).collect();
         let mut r = Render6 { k: self, decoding, reqs, multi, adfs, uses: BTreeSet::new(), adapters: Vec::new(), substitutions: Vec::new(), nodes: 0 };
         if let Some(p) = adfs.iter().find(|p| p.is_empty()) {
             return Err(r.bug(format!("the root ({p:?}) cannot be an ADF of its own program")));
@@ -1482,13 +1706,13 @@ impl Kingdom6 {
         }
         let mut root = r.render(&decoding.root, &mut Vec::new(), None)?;
         for o in decoding.root_outcomes.iter().filter(|o| !o.holds) {
-            if o.adapter != "fit.root" {
-                return Err(r.bug(format!("the entry's requirement names the adapter {}, not fit.root", o.adapter)));
+            if o.adapter_name() != "fit.root" {
+                return Err(r.bug(format!("the entry's requirement names the adapter {}, not fit.root", o.adapter_name())));
             }
             let q = self.root.requires.get(o.requirement).ok_or_else(|| r.bug(format!("the entry has no requirement {}", o.requirement)))?;
-            let target = futhark_size(&o.against).ok_or_else(|| r.bug(format!("the entry's requirement fits to {}, which has no spelling", o.against)))?;
-            r.fit_to(&mut root, &q.property, (o.against.clone(), target))?;
-            r.adapters.push((Vec::new(), o.adapter.clone()));
+            let target = futhark_size(o.against()).ok_or_else(|| r.bug(format!("the entry's requirement fits to {}, which has no spelling", o.against())))?;
+            r.fit_to(&mut root, &q.property, (o.against().clone(), target))?;
+            r.adapters.push((Vec::new(), o.adapter_name().to_string()));
         }
         let mut text = String::new();
         if r.uses.contains("matmul") {
@@ -1602,3 +1826,35 @@ pub fn symbol_id(k: &FutharkKingdom, name: &str) -> Option<SymbolId> {
 
 #[cfg(test)]
 mod tests6;
+
+/// A master 6 spelling as a template of the engine: its own placeholders (`{1.v0}`, `{1.type}`, `{2.v1}`) are the
+/// Futhark renderer's and stay its own until the conversion of master 6's rows; here every brace that is not a plain
+/// operand `{k}` is written literally, so the text parses and the table check reads it.
+fn legacy_spelling(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find(['{', '}']) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let operand = tail.strip_prefix('{').and_then(|t| t.split_once('}')).filter(|(k, _)| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()));
+        match operand {
+            Some((k, after)) => {
+                out.push_str(&format!("{{{k}}}"));
+                rest = after;
+            }
+            None => {
+                out.push_str(if tail.starts_with('{') { "{{" } else { "}}" });
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+impl Entry {
+    /// The entry of a loaded master 6 kingdom ([`Kingdom6::entry`]).
+    pub fn of_kingdom6(k: &Kingdom6) -> Entry {
+        k.entry()
+    }
+}

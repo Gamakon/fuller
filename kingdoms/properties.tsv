@@ -1,0 +1,20 @@
+name	kind	element	values	root	meaning
+len	size				the length of an array
+rows	size				the outer length of a matrix
+cols	size				the inner length of a matrix, every row's
+bound	bound				the exclusive upper bound of an index: it is valid for every array of length at least bound
+value	size				a size value itself, a size name of the environment
+trips	size			0	the number of trip binders (loops, tabulates) around a node, which a work bound limits
+depth	range				the transcendental depth: the most transcendental functions nested on a path
+order	range				the Horton-Strahler stream order of an expression tree
+fam	range				the family of a node's operation: 0 none, 1 sum, 2 product
+arm	range				the greatest stream order among the arms of a family chain
+ties	range				how many arms of a family chain reach its greatest stream order
+width	range				the number of components of a vector
+space	tag		function,private,workgroup,storage,uniform		the address space of a pointer
+access	tag		read,read_write		the access mode of a pointer
+uniform	flag			true	the value, or the control flow, is the same in every invocation of a workgroup
+number	tag		sg,pl		grammatical number
+person	tag		1,2,3		grammatical person
+sorted	flag				the array is sorted ascending
+shape	list	size			the length of each axis of an n-dimensional array, outermost first (host only)

@@ -1988,7 +1988,7 @@ fn property_expr(p: &PropertyExpr) -> Option<E> {
             let (first, rest) = es.split_first()?;
             Some(rest.iter().fold(first.clone(), |acc, t| E::Bin("+".into(), b(acc), b(t.clone()))))
         }
-        PropertyExpr::Unknown | PropertyExpr::Input { .. } => None,
+        _ => None,
     }
 }
 
@@ -2221,7 +2221,7 @@ impl<'a> Reader6<'a> {
     /// when it is not of the root's data type (a pool's `i32` constant).
     pub fn read_expression(&self, src: &str, ty: Ty) -> Result<Tree, Gap> {
         let e = parse_expression(src, false, true)?;
-        let entry = Entry { output: ty, variables: self.entry.variables.clone(), requirements: Vec::new() };
+        let entry = Entry { output: ty, guards: Vec::new(), ..self.entry.clone() };
         self.read_body(&e, entry)
     }
 
@@ -2256,11 +2256,11 @@ impl<'a> Reader6<'a> {
                 continue;
             }
             let Some((j, pj, pi, adapter)) = self.tie(n.symbol, i) else { continue };
-            if n.outcomes.iter().any(|o| !o.holds && o.adapter == adapter) {
+            if n.outcomes.iter().any(|o| !o.holds && o.adapter_name() == adapter) {
                 continue;
             }
             let want = n.kids.get(j).and_then(|k| k.properties.get(&pj)).ok_or_else(|| NotCanonical::Bug(format!("operand {j} of {} has no {pj}", self.k.symbols[n.symbol as usize].name)))?;
-            let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().find(|v| v.properties.get(&pi) == Some(want)).ok_or_else(|| NotCanonical::Bug(format!("no variable in scope has {pi} = {want}, though the requirement held")))?;
+            let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().rev().find(|v| v.properties.get(&pi) == Some(want)).ok_or_else(|| NotCanonical::Bug(format!("no variable in scope has {pi} = {want}, though the requirement held")))?;
             kids[i].const_index = Some(kid.environment.index_of(kid.data_type, v.binder).ok_or_else(|| NotCanonical::Bug(format!("{:?} is not in scope", v.binder)))?);
         }
         Ok(self.read_first(n, &kids).unwrap_or(Tree { symbol: n.symbol, const_index, kids }))
@@ -2378,7 +2378,7 @@ impl<'a> Reader6<'a> {
             let node = d.node(&u.node).ok_or_else(|| bug(format!("no node at {:?}", u.node)))?;
             let want = node.kids.get(u.j).and_then(|n| n.properties.get(&u.pj)).ok_or_else(|| bug(format!("operand {} of the node at {:?} has no {}", u.j, u.node, u.pj)))?;
             let kid = node.kids.get(u.operand).ok_or_else(|| bug(format!("the node at {:?} has no operand {}", u.node, u.operand)))?;
-            let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().find(|v| v.properties.get(&u.pi) == Some(want)).ok_or_else(|| Gap {
+            let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().rev().find(|v| v.properties.get(&u.pi) == Some(want)).ok_or_else(|| Gap {
                 construct: "unspelled operand".into(),
                 dual: self.type_name(kid.data_type),
                 detail: format!("{} at {:?}: no variable in scope has {} = {want}, the {} of its operand {}", self.k.symbols[node.symbol as usize].name, u.node, u.pi, u.pj, u.j),
@@ -2539,10 +2539,10 @@ impl Reader6<'_> {
     /// The requirement of `symbol` that ties its operand `i` to another: (the other operand, its property, operand
     /// `i`'s property, the requirement's adapter).
     fn tie(&self, symbol: SymbolId, i: usize) -> Option<(usize, String, String, String)> {
-        use crate::geneframe::Subject;
+        use crate::futhark_table::Subject6;
         self.k.symbols[symbol as usize].requires.iter().find_map(|q| match (&q.subject, &q.against) {
-            (Subject::Input { position: j, property: pj }, PropertyExpr::Input { position, property }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone(), q.adapter.clone())),
-            (Subject::Input { position, property }, PropertyExpr::Input { position: j, property: pj }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone(), q.adapter.clone())),
+            (Subject6::Input { position: j, property: pj }, PropertyExpr::Input { position, property }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone(), q.adapter.clone())),
+            (Subject6::Input { position, property }, PropertyExpr::Input { position: j, property: pj }) if *position as usize == i => Some((*j as usize, pj.clone(), property.clone(), q.adapter.clone())),
             _ => None,
         })
     }
@@ -2564,12 +2564,12 @@ impl Reader6<'_> {
     /// where `env.trips >= depth`, or one trip short of it when a requirement whose heavy adapter runs in its body fails
     /// (`tabrows`' `fit.body`), which the leaves' words decide: so the words vary.
     fn constant_substitutes(&self, ty: Ty) -> Vec<Tree> {
-        use crate::geneframe::{Subject, Substitute};
+        use crate::futhark_table::{Subject6, Substitute6};
         const WORDS: u32 = 4;
         let mut out = Vec::new();
         for (i, s) in self.k.symbols.iter().enumerate() {
-            let Some(how) = s.requires.iter().find(|q| q.subject == Subject::Trips).and_then(|q| Substitute::of_adapter(&q.adapter)) else { continue };
-            let by_constant = matches!(how, Substitute::Constant) || !s.inputs.contains(&s.output);
+            let Some(how) = s.requires.iter().find(|q| q.subject == Subject6::Trips).and_then(|q| Substitute6::of_adapter(&q.adapter)) else { continue };
+            let by_constant = matches!(how, Substitute6::Constant) || !s.inputs.contains(&s.output);
             if s.output != ty || !by_constant {
                 continue;
             }

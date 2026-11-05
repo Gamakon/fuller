@@ -502,6 +502,20 @@ impl PropertyExpr {
         matches!(self, PropertyExpr::Size(_)) || self.parts().into_iter().any(PropertyExpr::has_size_name)
     }
 
+    /// Every size name the formula reads, sorted.
+    pub fn size_names(&self) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        self.collect_sizes(&mut out);
+        out
+    }
+
+    fn collect_sizes(&self, out: &mut std::collections::BTreeSet<String>) {
+        if let PropertyExpr::Size(n) = self {
+            out.insert(n.clone());
+        }
+        self.parts().into_iter().for_each(|x| x.collect_sizes(out));
+    }
+
     /// True when the formula reads no reference (no `in<k>.p`, `out.p`, `env.a` or free index): its value depends on
     /// the size names alone.
     pub fn is_ground(&self) -> bool {
@@ -825,6 +839,13 @@ impl Condition {
             Condition::Not(c) => c.collect_refs(shadow, out),
             _ => self.formulas().into_iter().for_each(|f| f.collect_refs(shadow, out)),
         }
+    }
+
+    /// Every size name the condition reads, sorted.
+    pub fn size_names(&self) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        self.formulas().into_iter().for_each(|f| f.collect_sizes(&mut out));
+        out
     }
 
     /// True when the condition reads no reference.

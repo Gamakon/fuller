@@ -3,7 +3,8 @@
 
 use super::*;
 use crate::futhark_table::Kind6;
-use crate::geneframe::{Relation, Subject};
+use crate::futhark_table::Subject6;
+use crate::geneframe::{Owner, Relation, Strength};
 use crate::geneframe::Ty;
 use crate::typed_gep::GeneLayout;
 
@@ -109,21 +110,29 @@ fn the_kmeans_view_loads_its_rules_requirements_bindings_and_environment() {
     let by = |name: &str| k.symbols.iter().position(|s| s.name == name).unwrap_or_else(|| panic!("{name}"));
     let get = &k.symbols[by("get@f32")];
     assert_eq!(get.requires.len(), 1);
-    assert_eq!((&get.requires[0].subject, get.requires[0].relation, get.requires[0].adapter.as_str()), (&Subject::Input { position: 1, property: "bound".into() }, Relation::Le, "clampix"));
+    assert_eq!((&get.requires[0].subject, get.requires[0].relation, get.requires[0].adapter.as_str()), (&Subject6::Input { position: 1, property: "bound".into() }, Relation::Le, "clampix"));
     let sum = &k.symbols[by("sum@f32")];
-    assert_eq!((&sum.requires[0].subject, sum.requires[0].relation, sum.requires[0].against.to_string()), (&Subject::Trips, Relation::Lt, "3".to_string()));
+    assert_eq!((&sum.requires[0].subject, sum.requires[0].relation, sum.requires[0].against.to_string()), (&Subject6::Trips, Relation::Lt, "3".to_string()));
     let add = by("map2.add@a.f32");
     assert_eq!(k.symbols[add].rules[0].1.to_string(), "min(in0.len, in1.len)");
-    let in_tables: Vec<String> = tables.requirements.iter().filter(|q| q.symbol == add as i64).map(|q| format!("{} {} {} -> {}", q.subject, q.relation.symbol(), q.against, q.adapter)).collect();
-    assert_eq!(in_tables, ["in1.len = in0.len -> fit.pair", "env.trips < 3 -> subst"]);
-    assert_eq!(tables.requirements.len(), k.symbols.iter().map(|s| s.requires.len()).sum::<usize>());
-    assert!(tables.trip_arguments.iter().any(|t| t.symbol == by("tab@a.f32") as i64 && t.position == 1));
-    assert_eq!(tables.adapters.len(), 9);
+    // As Guard rows (design 3.3): the requirement in its row order, the work bound at order 0; the heavy fit.pair
+    // guarded by the work bound's depth, then the work bound's substitutes.
+    let guards: Vec<String> = tables
+        .guards
+        .iter()
+        .filter(|g| g.owner == Owner::Symbol(add as i64))
+        .map(|g| format!("{} {} {}: {}", g.order, g.strength.name(), g.condition, g.repairs.iter().map(|r| format!("[{}] {} {} if {}", r.site, r.template, r.calls, r.guard)).collect::<Vec<_>>().join("; ")))
+        .collect();
+    assert_eq!(guards, ["1 must in1.len = in0.len: [node] {self} fit.pair if env.trips < 3; [node] {in.own}  if true; [node] {const}  if true", "0 must env.trips < 3: [node] {in.own}  if true; [node] {const}  if true"]);
+    assert_eq!(tables.guards.len(), k.symbols.iter().map(|s| s.requires.len()).sum::<usize>());
+    assert!(tables.guards.iter().all(|g| g.strength == Strength::Must));
+    assert!(tables.flows.iter().any(|f| f.owner == Owner::Symbol(by("tab@a.f32") as i64) && f.at == crate::geneframe::Place::In(1) && f.name == crate::geneframe::FlowName::Env("trips".into()) && f.formula == crate::geneframe::PropertyExpr::parse("env.trips + 1").unwrap()));
+    assert_eq!(k.adapters.len(), 9);
     let lp = &k.symbols[by("loop@a.f32")];
     assert_eq!((lp.trip, lp.binds.len()), (Some(2), 2));
     assert_eq!(k.data_type(lp.binds[0].data_type).unwrap().name, "[]f32");
     assert_eq!(lp.binds[0].properties[0].1.to_string(), "in1.len");
-    assert_eq!(tables.bindings.iter().filter(|b| b.symbol == by("loop@a.f32") as i64).count(), 2);
+    assert_eq!(tables.flows.iter().filter(|f| f.owner == Owner::Symbol(by("loop@a.f32") as i64) && matches!(f.name, crate::geneframe::FlowName::Var { .. })).count(), 2);
     let names: Vec<&str> = k.variables.iter().map(|v| v.name.as_str()).collect();
     assert_eq!(names, ["points", "centres", "zeros_n", "zeros_d", "zeros_k", "n", "d", "k"]);
     assert_eq!(k.data_type(k.root.data_type).unwrap().name, "[][]f32");

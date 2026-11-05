@@ -216,7 +216,7 @@ fn adapter_charges(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: 
     let table = CostTable6::load(k).unwrap();
     let reqs = requirements6(k);
     type Found = Vec<(Charge6, u128, u128)>;
-    fn go(k: &Kingdom6, table: &CostTable6, reqs: &[&crate::geneframe::Requirement], n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>, out: &mut Found) {
+    fn go(k: &Kingdom6, table: &CostTable6, reqs: &[&crate::futhark_table::Requirement6], n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>, out: &mut Found) {
         let n = rendered6(n);
         if n.substituted.is_some() {
             return;
@@ -239,8 +239,8 @@ fn adapter_charges(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: 
     let mut root = rendered6(&d.root).properties.clone();
     for o in d.root_outcomes.iter().filter(|o| !o.holds) {
         let source = Some((k.root.data_type, root.clone()));
-        root.insert(k.root.requires[o.requirement].property.clone(), o.against.clone());
-        let c = Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())), source };
+        root.insert(k.root.requires[o.requirement].property.clone(), o.against().clone());
+        let c = Charge6 { adapter: o.adapter_name().to_string(), operand: None, fitted: Some((k.root.data_type, root.clone())), source };
         let own = table.charge(k, &c, sizes).unwrap();
         out.push((c, own, 1));
     }
