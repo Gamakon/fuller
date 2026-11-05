@@ -11,6 +11,10 @@ tables. The loader reads the TSVs; the Markdown is rendered from the same rows.
     python3 -I gen_tables.py                     # all five variants into ./<variant>/
     python3 -I gen_tables.py --variant order_depth
     python3 -I gen_tables.py --ceiling 3 --depth on --windows hi --out DIR
+    python3 -I gen_tables.py --check             # the committed files equal a fresh generation
+
+Each variant folder holds the typed tables (types.tsv, functions.tsv and their Markdown) and the same variant as rows
+of the gene frame's fixed schema (tables.tsv: one data type F, its properties by Flow rows, each limit a Guard row).
 
 Variants (names are the EVOLVE_SR_KINGDOM values of plan section 5):
     single               one dual F, no limits (classical GEP, arm A)
@@ -221,6 +225,85 @@ def bounds(rows, duals, n):
     return {"h": h, "P": p, "t": tl, "d": dc, "L": leaves, "width": width, "root": root}
 
 
+# ------------------------------------------------- the four kinds of row ----
+# The same variant as rows of the gene frame's fixed schema (docs/DESIGN_futhark_types_and_properties.md 3.3 and
+# 8.3; docs/PLAN_futhark_kingdom.md section 8): ONE data type F carrying depth, order, fam, arm and ties; the
+# properties derived by up Flow rows; each limit a `must` Guard row whose repair renders the node as its first input
+# ({in0}). The gene is the single variant's word for word (one type, no Dv lane: the inputs are terminals, not
+# variables), and a variant differs from another only by its Guard rows. Read by `KingdomTables::parse_named`
+# (fuller `src/tsr_kingdom/rows.rs`), which keeps the first n of the MAX_INPUTS input terminals for a law of n columns.
+MAX_INPUTS = 10
+PROPERTIES = ["depth", "order", "fam", "arm", "ties"]
+# A leaf (an input column or the constant ?): no transcendental, Strahler order 1, no family, one arm of order 1.
+LEAF_FLOWS = [("depth", "0"), ("order", "1"), ("fam", "0"), ("arm", "1"), ("ties", "1")]
+FAMILY_CODE = {"A": 1, "M": 2}
+SPELL_BINARY = {"add": "({0} + {1})", "sub": "({0} - {1})", "mul": "({0} * {1})", "pdiv": "pdiv({0}, {1})"}
+SUBSTITUTE = "{in0}"
+
+
+def binary_flows(fam):
+    """The up flows of a sum (fam 1) or a product (fam 2): Strahler order over the flattened chain (8.1)."""
+    f = FAMILY_CODE[fam]
+    b = [f"if(in{k}.fam = {f}, in{k}.arm, in{k}.order)" for k in (0, 1)]
+    t = [f"if(in{k}.fam = {f}, in{k}.ties, 1)" for k in (0, 1)]
+    return [
+        ("depth", "max(in0.depth, in1.depth)"),
+        ("fam", str(f)),
+        ("arm", f"max({b[0]}, {b[1]})"),
+        ("ties", f"if({b[0]} = out.arm, {t[0]}, 0) + if({b[1]} = out.arm, {t[1]}, 0)"),
+        ("order", "if(2 <= out.ties, out.arm + 1, out.arm)"),
+    ]
+
+
+def unary_flows(raises):
+    return [
+        ("depth", "in0.depth + 1" if raises else "in0.depth"),
+        ("order", "in0.order"),
+        ("fam", "0"),
+        ("arm", "in0.order"),
+        ("ties", "1"),
+    ]
+
+
+def four_rows(ceiling, depth, hi):
+    """The variant as the named text form of the four kinds of row. `ceiling` is the order limit (None: no order
+    guard), `depth` the transcendental depth limit of 2, `hi` the argument windows (order at most 2)."""
+    if hi and ceiling is None:
+        raise SystemExit("windows hi needs an order ceiling: the windows bound the argument's order")
+    out = ["data_type\tF\tscalar"]
+    out += [f"carries\tF\t{p}" for p in PROPERTIES]
+    out.append("constant\tF\t?\t" + ";".join(f"{p}={v}" for p, v in LEAF_FLOWS))
+    symbols = []  # (name, alias, role, spelling, inputs, flows, guards)
+    for inst, ctor, fam in BINARY:
+        guards = [f"out.order <= {ceiling}"] if ceiling else []
+        symbols.append((inst, ctor, "function", SPELL_BINARY[inst], 2, binary_flows(fam), guards))
+    for inst, ctor, raises, windowed in UNARY:
+        guards = []
+        if depth and raises:
+            guards.append("in0.depth <= 1")
+        if hi and windowed:
+            guards.append("in0.order <= 2")
+        symbols.append((inst, ctor, "function", inst + "({0})", 1, unary_flows(raises), guards))
+    for k in range(MAX_INPUTS):
+        symbols.append((f"x{k}", "Var", "function", f"x{k}", 0, LEAF_FLOWS, []))
+    symbols.append(("?", "Num", "constant", "", 0, LEAF_FLOWS, []))
+    for name, alias, role, spelling, _n, _f, _g in symbols:
+        out.append(f"symbol\t{name}\t{alias}\t{role}\t-\t-")
+        if spelling:
+            out.append(f"spelling\t{name}\t\t{spelling}")
+    for name, _a, _r, _s, n, _f, _g in symbols:
+        out += [f"argument\t{name}\t{i}\tin\tF\t-" for i in range(n)]
+        out.append(f"argument\t{name}\t0\tout\tF\t-")
+    for name, _a, _r, _s, _n, flows, _g in symbols:
+        out += [f"flow\t{name}\tout\tup\t{p}\t{e}" for p, e in flows]
+    for name, _a, _r, _s, _n, _f, guards in symbols:
+        for order, condition in enumerate(guards):
+            out.append(f"guard\t{name}\t{order}\tmust\t{condition}")
+            out.append(f"repair\t{name}\t{order}\tnode\ttrue\ttrue\t{SUBSTITUTE}")
+    out.append("entry\ttsr\tF")
+    return "\n".join(out) + "\n"
+
+
 # --------------------------------------------------------------- writers ----
 def meaning(d, ceiling, depth):
     if d.root:
@@ -289,6 +372,8 @@ def write_variant(name, ceiling, depth, hi, outdir, program_size, n_inputs):
 
     write_types_md(name, ceiling, depth, hi, outdir, duals, rows, program_size, n_inputs)
     write_symbols_md(name, ceiling, depth, hi, outdir, duals, rows, n_inputs)
+    with open(os.path.join(outdir, "tables.tsv"), "w") as f:
+        f.write(four_rows(ceiling, depth, hi))
     n_fn = sum(1 for r in rows if r[2] == "function")
     return {"name": name, "duals": len(duals), "rows": len(rows), "function_rows": n_fn,
             "width": bounds(rows, duals, program_size)["width"]}
@@ -425,6 +510,30 @@ def write_symbols_md(name, ceiling, depth, hi, outdir, duals, rows, n_inputs):
         f.write("\n".join(md))
 
 
+FILES = ("types.tsv", "functions.tsv", "TYPES.md", "symbols.md", "tables.tsv")
+
+
+def check(program_size, n_inputs):
+    """0 when every committed file of every variant is byte for byte what the generator writes, else 1."""
+    import tempfile
+    bad = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for nm, (ceiling, depth, hi) in VARIANTS.items():
+            out = os.path.join(tmp, nm)
+            write_variant(nm, ceiling, depth, hi, out, program_size, n_inputs)
+            for f in FILES:
+                with open(os.path.join(out, f)) as fresh:
+                    want = fresh.read()
+                path = os.path.join(HERE, nm, f)
+                got = open(path).read() if os.path.exists(path) else None
+                if got != want:
+                    bad.append(os.path.relpath(path, HERE))
+    for b in bad:
+        print(f"differs from a fresh generation: {b}")
+    print(f"check: {len(VARIANTS)} variants, {len(VARIANTS) * len(FILES)} files, {len(bad)} differ")
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--variant", default="all", help="a named variant or `all`")
@@ -434,7 +543,10 @@ def main():
     ap.add_argument("--program-size", type=int, default=17, help="N for the headline sizing (default 17)")
     ap.add_argument("--inputs", type=int, default=4, help="input columns for the terminal counts (default 4)")
     ap.add_argument("--out", help="output directory (default ./<variant>/ beside this script)")
+    ap.add_argument("--check", action="store_true", help="compare the committed files with a fresh generation")
     a = ap.parse_args()
+    if a.check:
+        sys.exit(check(a.program_size, a.inputs))
     custom = a.ceiling is not None or a.depth is not None or a.windows is not None
     todo = []
     if custom:

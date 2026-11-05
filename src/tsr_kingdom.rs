@@ -12,6 +12,9 @@
 
 use crate::geneframe::{Arity, Symbol, SymbolTable, Ty};
 
+/// The same variants as rows of the gene frame's fixed schema (one data type, properties and guards).
+pub mod rows;
+
 /// The kingdom's name in the symbol table.
 pub const TSR: &str = "TSR";
 

@@ -183,3 +183,20 @@ Choices where the plan was open:
   recurrence node by node (cross-validated against the literal node-array ports
   of `stream_order` and `t_depth` on 20,000 random trees); the runs up to 6
   nodes and the random runs use the literal ports on the whole tree.
+
+## The same variants as rows of the gene frame's fixed schema (plan section 8, 2026-11-05)
+
+Each variant folder also holds `tables.tsv`, written by `gen_tables.py` (its `--check` is a fuller test) in the four
+kinds of row of `docs/DESIGN_futhark_types_and_properties.md` 3.3, read by `src/tsr_kingdom/rows.rs`:
+
+| rows | TSR |
+|---|---|
+| DataType | `F` only, carrying `depth`, `order`, `fam` (0 none, 1 sum, 2 product), `arm`, `ties` |
+| Argument | the 18 operators of `wide()`, then the input terminals `x0..x9` (a law keeps the first n), then `?`: `wide(n)`'s ids |
+| Flow (up) | depth: the greatest input depth, plus 1 for a raising unary; order: Horton-Strahler over flattened sum and product chains, through `fam`, `arm`, `ties` and `out.p` |
+| Guard (`must`, repair `{in0}`) | order and its variants: `out.order <= 3` on add, sub, mul, pdiv; depth: `in0.depth <= 1` on the ten raising unaries; windows: `in0.order <= 2` on sin cos tan tanh pow2 pow3 pinv; single: none |
+
+A variant differs from another only by its Guard rows; the gene is `single`'s word for word (one type, 104 words at
+head 34). An illegal shape stays representable in the gene and becomes **inexpressible** in the program: the decoder
+renders a failing node as its first input. The tests show the Flow rows give phylu's `stream_order` and `t_depth`
+exactly, and that each variant decodes with no substitution exactly the trees its typed tables type.

@@ -665,7 +665,7 @@ def main():
             subprocess.run([sys.executable, "-I", os.path.join(HERE, "gen_tables.py"), "--variant", name,
                             "--out", out], check=True, stdout=subprocess.DEVNULL)
             same = all(open(os.path.join(out, f)).read() == open(os.path.join(HERE, name, f)).read()
-                       for f in ("types.tsv", "functions.tsv", "TYPES.md", "symbols.md"))
+                       for f in ("types.tsv", "functions.tsv", "TYPES.md", "symbols.md", "tables.tsv"))
             rep.expect(same, f"{name}: committed tables equal a fresh generation")
 
         # ---- types against the rules (plan 2.6 / test #3)
