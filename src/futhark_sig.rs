@@ -3009,12 +3009,14 @@ fn parse6_at(tokens: &[&str], pos: &mut usize) -> Result<Sexp6, String> {
     Ok(Sexp6 { head, labels, kids })
 }
 
-/// What the first pass of [`build6`] records: each binder's bound argument's path with its variables' names, and each
-/// variable leaf's path with its name.
+/// What the first pass of [`build6`] records: each binder's bound argument's path with its variables' names, each
+/// variable leaf's path with its name, and the path of each `var@T` leaf written by its own symbol name (the leaf that
+/// reads `T`'s constant, nothing of `T` being in scope).
 #[derive(Default)]
 struct Names6 {
     binders: Vec<(Vec<u32>, Vec<String>)>,
     leaves: Vec<(Vec<u32>, String)>,
+    constants: Vec<Vec<u32>>,
 }
 
 fn build6_at(k: &crate::futhark_table::Kingdom6, e: &Sexp6, ty: Ty, path: Vec<u32>, names: &mut Names6) -> Result<Tree, String> {
@@ -3051,6 +3053,12 @@ fn build6_at(k: &crate::futhark_table::Kingdom6, e: &Sexp6, ty: Ty, path: Vec<u3
     }
     if let Some(s) = by_name {
         let row = &k.symbols[s];
+        // A variable terminal by its own name (`var@i64`): the leaf that reads its data type's constant, which the
+        // second pass checks (nothing of the type is in scope there).
+        if row.kind == Kind6::Var && row.output == ty {
+            names.constants.push(path);
+            return Ok(Tree { symbol: s as SymbolId, const_index: Some(0), kids: Vec::new() });
+        }
         // A leaf symbol takes no input: a terminal, or a function value of no argument (`add@fn.arr2_f32_...`).
         if !matches!(row.kind, Kind6::Terminal | Kind6::Function) || !row.inputs.is_empty() || row.output != ty {
             return Err(bad(format!("the leaf {} is not a terminal of {}", e.head, ty_name(ty))));
@@ -3075,8 +3083,11 @@ fn tree_at_mut<'a>(t: &'a mut Tree, path: &[u32]) -> Option<&'a mut Tree> {
 
 /// THE MASTER 6 BUILDER: the tree of a master 6 s-expression (the syntax above [`Reference6`]) in kingdom `k`, every
 /// variable leaf a `var.T` whose index word names, in the leaf's environment as G3's decoder builds it, the variable
-/// the leaf names: the innermost binder above that names it, else the root variable of that name. A name in scope
-/// nowhere, of another data type, or a malformed text is an error. Every word is checked by decoding the tree again.
+/// the leaf names: the innermost binder above that names it, else the root variable of that name. A leaf named by the
+/// variable terminal's own symbol name (`var@i64`) is that terminal reading its data type's constant, as the decoder
+/// reads a `var.T` with nothing of `T` in scope ([`sexp6`] writes it so); where a variable of `T` is in scope it is an
+/// error, since the leaf would read that variable. A name in scope nowhere, of another data type, or a malformed text
+/// is an error. Every word is checked by decoding the tree again.
 pub fn build6(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<Tree, String> {
     build6_named(k, text).map(|(tree, _)| tree)
 }
@@ -3115,6 +3126,14 @@ fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree,
         wanted.push((path.clone(), variable.binder));
     }
     let again = decoder.decode(&entry, &tree)?;
+    for path in &names.constants {
+        let node = again.node(path).ok_or_else(|| bad(format!("no node at {path:?}")))?;
+        let got = node.choice;
+        if got != Some(Choice::Constant) {
+            let name = k.symbols.get(node.symbol as usize).map_or("?", |s| s.name.as_str());
+            return Err(bad(format!("{name} at {path:?} names its data type's constant, but a variable of the type is in scope there and the leaf reads {got:?}")));
+        }
+    }
     for (path, binder) in wanted {
         let got = again.node(&path).and_then(|n| n.choice);
         if got != Some(Choice::Variable(binder)) {
@@ -3122,6 +3141,61 @@ fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree,
         }
     }
     Ok((tree, names.leaves))
+}
+
+/// THE MASTER 6 TEXT FORM of a tree, the s-expression [`build6`] reads (the gene's text in ledgers, halls of fame and
+/// checkpoints): a symbol by name, a constant by its pool literal, a root variable by name, a bound variable
+/// `v<depth>_<ordinal>` named at its binder (`(tab@a.i32[v1_0] n ..)`), and a `var.T` with nothing of `T` in scope,
+/// which reads `T`'s constant, by its own symbol name (`var@i64`). `build6(k, &sexp6(k, t)?)` decodes as `t` does.
+pub fn sexp6(k: &crate::futhark_table::Kingdom6, tree: &Tree) -> Result<String, String> {
+    let (tables, contract) = (k.tables()?, k.contract()?);
+    let decoder = crate::typed_environment::Decoder::new(&tables, &contract).map_err(|d| d.join("\n"))?;
+    let decoding = decoder.decode(&crate::typed_environment::Entry::of_kingdom6(k), tree)?;
+    let mut s = String::new();
+    sexp6_at(k, &decoding.root, &mut s)?;
+    Ok(s)
+}
+
+fn sexp6_at(k: &crate::futhark_table::Kingdom6, n: &crate::typed_environment::Node, s: &mut String) -> Result<(), String> {
+    use crate::futhark_table::Kind6;
+    use crate::typed_environment::Choice;
+    let bad = |what: String| format!("our software has a bug: {}'s master 6 text form: {what}", k.kingdom);
+    let sym = k.symbols.get(n.symbol as usize).ok_or_else(|| bad(format!("no symbol {}", n.symbol)))?;
+    match (sym.kind, n.choice) {
+        (Kind6::Const, Some(Choice::Dc(i))) => {
+            let lit = k.data_type(sym.output).and_then(|d| d.literals.get(i as usize)).ok_or_else(|| bad(format!("{} has no literal {i}", sym.name)))?;
+            s.push_str(lit);
+        }
+        (Kind6::Var, Some(Choice::Variable(b))) => {
+            let v = n.environment.variables.iter().find(|v| v.binder == b).ok_or_else(|| bad(format!("the variable {b:?} is not in scope")))?;
+            match &v.name {
+                Some(name) if b.depth == 0 => s.push_str(name),
+                _ => s.push_str(&format!("v{}_{}", b.depth, b.ordinal)),
+            }
+        }
+        (Kind6::Var, Some(Choice::Constant)) => s.push_str(&sym.name),
+        (_, choice) if n.kids.is_empty() => {
+            if choice.is_some() {
+                return Err(bad(format!("the leaf {} reads {choice:?}", sym.name)));
+            }
+            s.push_str(&sym.name);
+        }
+        _ => {
+            s.push('(');
+            s.push_str(&sym.name);
+            if let Some(pos) = sym.binds.first().map(|b| b.position) {
+                let depth = n.kids.get(pos as usize).map(|kid| kid.environment.depth).ok_or_else(|| bad(format!("{} binds at its argument {pos}, which it has not", sym.name)))?;
+                let labels: Vec<String> = (0..sym.binds.len()).map(|o| format!("v{depth}_{o}")).collect();
+                s.push_str(&format!("[{}]", labels.join(",")));
+            }
+            for kid in &n.kids {
+                s.push(' ');
+                sexp6_at(k, kid, s)?;
+            }
+            s.push(')');
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -528,3 +528,35 @@ fn a_question_mark_length_is_charged_at_the_largest_size_in_scope() {
         eprintln!("{name}: node executions {} (at the largest size, no adapter {}), traffic {} ({})", w.nodes, wk.nodes, c.traffic, ck.traffic);
     }
 }
+
+/// THE TEXT FORM BUILDS BACK (phylu P3, d73ca669): 1,000 random genes of every master 6 view print in the text form
+/// ([`sexp6`], the ledger's, the hall of fame's and the checkpoint's) to a text that [`build6`] reads back to a tree
+/// that renders the same Futhark text, the genes with a `var.T` reading `T`'s constant (`var@i64`) among them.
+#[test]
+fn a_thousand_random_genes_a_view_print_to_a_text_that_builds_back_to_the_same_program() {
+    let n = 1000;
+    for (v, view6) in VIEWS6.iter().enumerate() {
+        let k = kingdom6(view6).unwrap_or_else(|e| panic!("{view6}: {e}"));
+        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
+        let mut constants = 0usize;
+        for (g, tree) in random_trees(&k, view6, n, 0x7e47_0000 + v as u64).iter().enumerate() {
+            let text = sexp6(&k, tree).unwrap_or_else(|e| panic!("{view6} gene {g}: {e}"));
+            constants += usize::from(text.split([' ', '(', ')']).any(|w| w.starts_with("var@")));
+            let back = build6(&k, &text).unwrap_or_else(|e| panic!("{view6} gene {g}: {text}: {e}"));
+            assert_eq!(renderer.program(&back).unwrap().text, renderer.program(tree).unwrap().text, "{view6} gene {g}: {text}");
+            assert_eq!(sexp6(&k, &back).unwrap(), text, "{view6} gene {g}");
+        }
+        eprintln!("{view6}: {n} of {n} built back to the same program, {constants} with a var@T reading its constant");
+    }
+}
+
+/// A `var@T` leaf where a variable of `T` is in scope is not built: the decoder would read that variable, not `T`'s
+/// constant.
+#[test]
+fn a_var_constant_leaf_where_a_variable_of_its_type_is_in_scope_is_not_built() {
+    let k = kingdom6("histogram").unwrap();
+    let good = "(hist.add@a.i32 k (tab@a.i32[i] n (mod@i32 k (get@i32 is i))) vs)";
+    build6(&k, good).unwrap();
+    let e = build6(&k, &good.replace("is i)", "is var@i64)")).unwrap_err();
+    assert!(e.contains("var@i64") && e.contains("in scope"), "{e}");
+}
