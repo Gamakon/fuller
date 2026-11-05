@@ -44,12 +44,9 @@ fn nine_data_types_and_the_root_is_the_kernel() {
 }
 
 /// The 200 random kernels of the Gram variant, with each one's program.
+#[cfg(feature = "wgsl")]
 fn kernels() -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
-    kernels_n(GENES)
-}
-
-fn kernels_n(n: usize) -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
-    kernels_of(kingdom(), n)
+    kernels_of(kingdom(), GENES)
 }
 
 fn kernels_of(k: WgslRows, n: usize) -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
