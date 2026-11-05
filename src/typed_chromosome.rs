@@ -567,13 +567,14 @@ fn refs_of(epoch: &Epoch, e: &Expressed, source: Source) -> Vec<RefUse> {
     e.nodes.iter().filter_map(|n| epoch.reference(n.symbol).map(|kind| RefUse { source, symbol: n.symbol, step: n.step, kind })).collect()
 }
 
-/// The cells of `gene` that hold a genic terminal, by position: only head and
-/// tail cells hold symbols.
+/// The cells of `gene` that hold a genic terminal, by position. Only the head and
+/// tail cells hold symbols: a constant cell holds a pool index and a variable
+/// cell an index word, and either may equal a genic terminal's id by chance.
 fn genic_cells(epoch: &Epoch, layout: &GeneLayout, gene: &[u32]) -> Vec<(usize, u64)> {
     layout
         .spans()
         .iter()
-        .filter(|s| !matches!(s.domain, Domain::Dc | Domain::Dv))
+        .filter(|s| matches!(s.domain, Domain::Head | Domain::Tail))
         .flat_map(|s| (s.off..s.off + s.len).filter_map(|p| gene.get(p).and_then(|w| epoch.is_genic(*w)).map(|g| (p, g))))
         .collect()
 }
@@ -1038,8 +1039,9 @@ mod tests {
         AdfSet::new(&e, vec![with]).expect("a var.T with its word");
     }
 
-    /// A `var.T`'s Dv word is an index word, never a symbol: a normal gene whose Dv word equals a genic terminal's
-    /// symbol id expresses (plan 7 task F5 found the check reading Dv words as symbols).
+    /// A `var.T`'s word (the index word in its variable cell) is never a symbol: a normal gene whose variable cell
+    /// holds a genic terminal's symbol id expresses (the saturated fold of master 6 found the check reading those
+    /// words as symbols).
     #[test]
     fn a_dv_word_is_never_read_as_a_genic_terminal() {
         let relations = relations_from_rows(
@@ -1097,7 +1099,12 @@ mod tests {
         for s in l.spans() {
             let alpha: Vec<u32> = (0..k.n_symbols() as SymbolId).filter(|x| k.output(*x) == s.ty && allow(*x) && (s.domain != Domain::Tail || k.is_terminal(*x))).collect();
             for cell in &mut w[s.off..s.off + s.len] {
-                *cell = if s.domain == Domain::Dc { rng.below(4) as u32 } else { alpha[rng.below(alpha.len())] };
+                *cell = match s.domain {
+                    Domain::Dc => rng.below(4) as u32,
+                    // An index word: any word below DV_WORDS, so a variable cell often holds a genic terminal's id.
+                    Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
+                    Domain::Head | Domain::Tail => alpha[rng.below(alpha.len())],
+                };
             }
         }
         w
