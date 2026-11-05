@@ -128,6 +128,12 @@ impl Target {
     }
 }
 
+/// A WGSL text parsed by naga and validated for the installed target, as the device would.
+pub fn validate_text(text: &str) -> Result<(), String> {
+    let module = crate::wgsl::naga_shape::parse(text)?;
+    Target::current().validate(&module, text).map(|_| ())
+}
+
 /// THE METAL SOURCE wgpu 30 hands Apple's compiler for entry point `entry` of `module` on this machine (wgpu-hal 30,
 /// `metal::Device::load_shader`): the pipeline-overridable constants `constants` (by name) applied by naga's
 /// `process_overrides`, MSL 4.0 (wgpu-hal's language version on macOS 26), bounds checks `Restrict` on indices, buffers
