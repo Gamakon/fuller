@@ -1,0 +1,2 @@
+-- migration_graph_sink, minimal: two operands of a loop body reach its parameter, which is on a cycle; the reduce-device-syncs pass shared one reachable-bindings cache between them (patch 0016). Fails in stock Futhark 0.28.1's GPU pipeline too.
+entry main (k: i64) (acc: [k]i32) (vs: []i32) : [k]i32 = loop acc for _i < k do let c = loop s = (loop _t = 0 for _l < k do 2) for _j < k do i32.min acc[0] s in replicate k (if c < 0 then i32.maximum vs else 0)

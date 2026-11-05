@@ -1,0 +1,80 @@
+From fb53cf175df14ac0d9b976dc80dfa0a2ef59d4d4 Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Thu, 5 Nov 2026 02:55:12 +0000
+Subject: [PATCH 16/16] fix(reduce-device-syncs): each loop operand is searched
+ with its own cache
+
+graphLoop connects every operand of a loop body to the loop's bindings
+it can reach, and searched them all with one ReachableBindingsCache
+(the one deviceBindings left). MG.reduce resolves a cyclic reference to
+mempty and caches what it computed under that assumption, so the cached
+result of a vertex on a cycle (a loop parameter and its update) holds
+only for the search that computed it. A second operand reaching that
+vertex found none of the bindings beyond it, and had its entry edges
+exhausted with no edge to the loop's result: a sink was then reachable
+from a routed source ("Migration graph sink could be reached from
+source after it had been attempted routed"), and two related failures
+("Cannot migrate a host-only operation to device", a use of an unknown
+variable after the pass). Present in Futhark 0.28.1 and on master. Test:
+tests/migration/loop-operand-cycle.fut
+---
+ .../Optimise/ReduceDeviceSyncs/MigrationTable.hs  | 12 ++++++++++--
+ tests/migration/loop-operand-cycle.fut            | 15 +++++++++++++++
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+ create mode 100644 tests/migration/loop-operand-cycle.fut
+
+diff --git a/src/Futhark/Optimise/ReduceDeviceSyncs/MigrationTable.hs b/src/Futhark/Optimise/ReduceDeviceSyncs/MigrationTable.hs
+index eee971950..cabc68040 100644
+--- a/src/Futhark/Optimise/ReduceDeviceSyncs/MigrationTable.hs
++++ b/src/Futhark/Optimise/ReduceDeviceSyncs/MigrationTable.hs
+@@ -723,7 +723,7 @@ graphLoop (b : bs) params lform body = do
+   -- corresponding variables bound by the statement must be treated as
+   -- sources.
+   g' <- getGraph
+-  let (dbs, rbc) = foldl' (deviceBindings g') (IS.empty, MG.none) srcs
++  let (dbs, _) = foldl' (deviceBindings g') (IS.empty, MG.none) srcs
+   modifySources $ second (IS.toList dbs <>)
+ 
+   -- Connect operands to sinks if they can reach a sink within the loop.
+@@ -731,8 +731,16 @@ graphLoop (b : bs) params lform body = do
+   -- reach and exhaust their normal entry edges into the loop.
+   -- This means a read can be delayed through a loop but not into it if
+   -- that would increase the number of reads done by any given iteration.
++  --
++  -- Each operand is searched with a cache of its own. 'MG.reduce' resolves a
++  -- cyclic reference to 'mempty' and caches the results computed under that
++  -- assumption, so a cached result of a vertex on a cycle (a loop parameter and
++  -- its update) is complete only for the search that computed it. Another
++  -- operand that reached such a vertex through the shared cache found none of
++  -- the bindings beyond it, and had its entry edges exhausted without an edge
++  -- to them: a sink was then reachable from a routed source.
+   let ops = IS.filter (`MG.member` g) (bodyOperands stats)
+-  foldM_ connectOperand rbc (IS.elems ops)
++  mapM_ (connectOperand MG.none) (IS.elems ops)
+ 
+   -- It might be beneficial to move the whole loop to device, to avoid
+   -- reading the (initial) loop condition value. This must be balanced
+diff --git a/tests/migration/loop-operand-cycle.fut b/tests/migration/loop-operand-cycle.fut
+new file mode 100644
+index 000000000..35066e4b3
+--- /dev/null
++++ b/tests/migration/loop-operand-cycle.fut
+@@ -0,0 +1,15 @@
++-- Two operands of a loop body reach the loop parameter, which is on a
++-- cycle (the parameter and its update): the merge argument (a graphed
++-- scalar, the result of a loop) and a value read from device memory.
++-- The reachable-bindings cache was shared between the operands, so the
++-- second found no binding beyond the cycle and its entry edges were
++-- exhausted without an edge to the loop's result ("Migration graph sink
++-- could be reached from source after it had been attempted routed").
++-- ==
++-- input { 1i64 [-1] [1,7,3] } output { [7] }
++-- input { 3i64 [5,1,2] [1,7,3] } output { [0,0,0] }
++
++entry main (k: i64) (acc: [k]i32) (vs: []i32) : [k]i32 =
++  loop acc for _i < k do
++    let c = loop s = (loop _t = 0 for _l < k do 2) for _j < k do i32.min acc[0] s
++    in replicate k (if c < 0 then i32.maximum vs else 0)
+-- 
+2.50.1 (Apple Git-155)
+
