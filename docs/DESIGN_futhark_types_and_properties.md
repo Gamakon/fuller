@@ -1,6 +1,6 @@
 # Technical design: data types, properties and scope in the gene frame
 
-**Status:** 2026-11-05: per-column crossover described; section 5 matches the built fit; section 10 decided. First proposed 2026-11-05. Andrew's design; this document writes it
+**Status:** 2026-11-05: section 11 added (the champion pool and ORF padding, the neuro-symbolic layer: designed, not built); per-column crossover described; section 5 matches the built fit; section 10 decided. First proposed 2026-11-05. Andrew's design; this document writes it
 down. **Revised 2026-11-05:** section 3 is now ONE FIXED schema that every kingdom fills with rows (Andrew: the tables
 are fixed, a kingdom is configured only by rows); it removes the five Futhark-only parts of the first version (the
 formula operators, the trip count subject, no output subject, the hard-coded substitutions, the adapter sites) and a
@@ -1316,3 +1316,199 @@ adapter-heavy programs. The guard is the cost, which charges every adapter, plac
    rows of section 5 and 8.5 (the `let ad_l` and `let [ad_m]` forms) are kept as design for a later version.
 3. Whether SR's transcendental depth moves to a property now, or stays as `T1`/`T2` until the Futhark kingdom is done.
    **Decided 2026-11-05 (Andrew): DEFERRED.** SR keeps `T1`/`T2` for now (8.1).
+
+## 11. The champion pool and ORF padding (the neuro-symbolic layer)
+
+Andrew Morgan's architecture has a part around the gene frame that is not built: **LLM gene editing**. It has four
+parts around one centre, "overlay genes on the ORF": (1) an LLM drafts populations; (2) an LLM edits programs (LLM
+mutation); (3) symbolic gene padding: select a random ORF sequence, read the program into a tree, write it as Karva,
+overlay the Karva on the ORF; (4) a pool built from gene champions, keyed by the run hierarchy (experiment, island,
+population, generation, individual, chromosome, gene with its types, head and tail, age and genealogy). His note:
+"Champions are collected to reuse their genes in Open Reading Frames". This section designs it. Nothing here is built.
+
+**What exists (checked 2026-11-05).**
+
+| piece | where |
+|---|---|
+| writing a tree onto an existing gene, keeping every cell the walk does not read | fuller `src/typed_gep.rs:1111` (`write_back`), over `place` (`:1043`) |
+| program text to tree | Futhark: fuller `src/futhark_reader.rs` (`Reader6::read_tree`, `Reader6::canonical` at `:1676`); TSR: `src/tsr_kingdom/rows.rs` (`TsrRows::decode_gene`, the other way); WGSL: `src/wgsl/reader.rs`, `src/wgsl/canonical.rs` |
+| a run's hall of fame, as program text | phylu `src/evolve/futhark_run.rs` (`HALL_OF_FAME = 5`, `hall_of_fame/`, `hof.tsv`) |
+| identity, age and founder of every individual | phylu `src/evolve/genealogy.rs` (`Origin`: `Init`, `Vary`, ...) |
+| VIRTUAL ALPS cohorts, islands, the pump and its refill | phylu `src/evolve/card.rs`, `src/evolve/engine.rs`, `src/evolve/futhark_run.rs` (the refill's cap a pump, the fresh hook at `:674`) |
+| LLM program pools (reply, program, read or gap) | fuller `kingdoms/futhark/sig/{histogram,pathfinder}/pool/llm.tsv`, `llm_programs.tsv`, `alternatives*.tsv` |
+| the 25-LLM protocol (k-means; 25 implementations become genes) | fuller `docs/PLAN_futhark_kingdom.md` (EvoStar thesis) |
+| shared definitions across a population | fuller `docs/PLAN_population_dag.md`, `docs/Geneframe_Homeotic_Genes_design.md` |
+
+**What is not built:** no champion is kept beyond its run's hall of fame, and no gene's material is reused. The cells
+of a new gene that the walk does not read come from a random GEP draw (`typed_init.wgsl` on the device, a random gene
+as `previous` on the host).
+
+### 11.1 What an ORF is in the gene frame
+
+A gene is one column per data type T (3.5): `head_T`, `tail_T`, then the `Dc_T` constant words and the `Dv_T` index
+words. Karva expression reads column T from row 0 in level order and stops after `j_T` rows, where `j_T` is the number
+of nodes of type T in the expressed tree.
+
+- **The ORF of column T** is its expressed region: rows `0 .. j_T` of `head_T` + `tail_T`, with the Dv word of each
+  of those rows and the Dc words its `?_T` cells read. It is a level-order slice of the expressed tree's T nodes.
+- **The ORF of a gene** is the set of its columns' ORFs. It differs from gene to gene and is computed from the gene
+  alone (the same walk as `place`).
+- **The non-coding region** of column T is rows `j_T .. h_T + t_T` and the Dc and Dv words no expressed cell reads.
+  It is genetic material: a point mutation that turns an expressed terminal into a function makes Karva read further
+  rows, and what lies there becomes expressed. Today that is random material. The design makes it champion material.
+
+### 11.2 The pool entry
+
+The durable form of a champion is its **program text**, because the tables change (Andrew's ruling: what is kept
+across design changes is text, read back by the reader; no gene is migrated). The gene words are a cache valid for one
+table version only.
+
+| field | meaning |
+|---|---|
+| `key` | the canonical program: the reader's canonical tree printed as text (`Reader6::canonical` for Futhark); the deduplication key |
+| `program` | the program text as rendered (Futhark, WGSL, TSR formula): the durable form |
+| `kingdom`, `view` | e.g. `futhark_sig` / `histogram`, `tsr` / its variant and inputs |
+| `origin` | `evolved`, `llm_draft`, `llm_edit`, `reference`, `bench`, `alternative` |
+| `fitness` | the HFF at capture, with its scheme name (`fuller::fitness::SCHEMES`) and its components (quality, speed) |
+| `data` | a hash of the training cases the fitness was measured on; fitness is compared only within one scheme and one data hash |
+| `experiment`, `run`, `seed`, `commits` | where it came from: the run directory, the random seed, fuller and phylu commits |
+| `island`, `generation`, `individual` | its place in the run (the hierarchy of Andrew's diagram) |
+| `age`, `founder`, `founder_origin`, `parents` | from phylu's genealogy at capture: ALPS age, the head of its line and that line's origin |
+| `captured` | UTC time of capture |
+| `table_version` | a hash of the view's tables and the program size N the cached gene is for |
+| `gene` | the cached gene words (cache only; rebuilt from `program` when `table_version` differs) |
+| `orf` | the cached `j_T` per column (cache only) |
+| `drawn`, `exposed` | how often its material was used as padding, and how often that padding later became expressed in a selected individual (the measurement of 11.7) |
+
+### 11.3 How the pool is built
+
+- **Sources, at the end of every run and at every pump:** the run's hall of fame; each island's champion; the
+  references (`origin = reference`); the LLM and bench pools already on disk, read once (`llm`, `bench`,
+  `alternative`). Only programs the reader reads are entered; a program it cannot read is logged with the reader's gap
+  reason, as the pools log it today.
+- **Across runs and experiments:** one pool per (kingdom, view), a text file `champions.tsv` in phylu's pool
+  directory, appended to by every run on that view. The gene cache is a separate file named by its table version and
+  may be deleted at any time.
+- **Deduplication:** by `key`. A program found again keeps one row: the best fitness within the same scheme and data,
+  all its origins listed, the earliest capture kept.
+- **Limits:** at most 256 entries per view; at most a quarter from any one run; the best 16 of each origin are always
+  kept (so LLM drafts and references are not crowded out by one long run). Past the cap, the entry with the worst
+  fitness within its scheme and data is removed first.
+- **When the table changes:** every entry whose `table_version` differs is read again from `program` into a tree and
+  placed on a gene of the new layout. An evolved champion that no longer reads is "our software has a bug: the table
+  lost the row that program needs", reported, its text kept.
+
+### 11.4 How padding works
+
+Padding replaces the random draw of the non-coding region with champion ORF material. It happens wherever the host
+builds a gene from a tree: an LLM program written onto a gene, a reference or pool program in the start population, a
+refill from the evaluator, a write-back after fold, snap, cleanse or marriage.
+
+1. **Choose a donor:** an entry drawn uniformly from the pool (not by fitness; 11.8), with a cached gene for the
+   current table version.
+2. **Select a random ORF sequence, per column:** for each data type T the new gene has, draw a start row `s` inside
+   the donor's ORF of T; the sequence is the donor's ORF rows from `s` on, taken separately for the head and for the
+   tail (head rows from the donor's head ORF, tail rows from its tail ORF). A column the donor does not have, or does
+   not express, keeps the random draw.
+3. **Build the base:** a random gene (as today) whose rows past the new program's own `j_T` are overwritten by the
+   sequence: head rows in the head, tail rows in the tail, each with its Dv word; Dc words past those the new program
+   uses are filled with the donor's Dc words in the order its ORF read them. A sequence shorter than the space left
+   ends there and the random draw fills the rest.
+4. **Read the program into a tree** (the reader), **write it as Karva** and **overlay it on the base**:
+   `write_back(k, layout, base, tree)`. The program's own rows are written; the champion material stays behind them.
+
+**Legality is unaffected.** A head row receives a cell of the same column's head (any symbol of T's alphabet is legal
+there), a tail row a cell of the same column's tail (terminals only), so the GEP head rule and the lengths `h_T`,
+`t_T` hold, and the expressed program is exactly the tree written. When a mutation later exposes the material, Karva
+expresses a legal tree by construction, as it does for any gene; the material is then the champion's.
+
+**Index and constant words carry over.** A Dv word moves with its cell. Because `var.T` counts from the innermost
+binder (3.6), a donor variable that names a binder inside the material it came with keeps its meaning once expressed
+under the same binders; one that names an outer variable names whatever sits at that distance at the landing site, or
+falls back (`w mod c`, else T's constant). A Dc word is an index into the same constant pool `C_T`, so it carries the
+donor's constant exactly while the table version is the same.
+
+**What it carries, honestly.** A level-order slice of a donor's ORF is not a subtree of the donor: when exposed it
+expresses the donor's symbols in their local level-order neighbourhood (as GEP's transposition moves IS elements), not
+a whole donor subtree. Whole subtrees move by marriage (3.6); marriage with a pool entry as the second parent is the
+complement of padding, and needs no new operator.
+
+### 11.5 Where the LLM plugs in
+
+The LLM is a **function the runner calls**: program text in, program text out. It is never an agent, never holds a
+conversation, and never decides anything in the loop.
+
+- **Drafting a population (generation 0):** `draft(view, n)`: the prompt is built from the view's rows (its entry
+  signature, the symbols' spellings, the problem statement), as the pool prompts are today. Each reply is read; each
+  read program becomes a padded gene (11.4) with `Origin::LlmDraft`. The start population is the references, then the
+  pool's champions, then the drafts, then random genes, in shares stated on the run card (the 25-LLM protocol is 25
+  drafts).
+- **LLM mutation (at pump beats):** `edit(program, components, n)`: the parent's rendered program and its fitness
+  components in, edited programs out; each is read and written back onto the parent's own gene (keeping the parent's
+  non-coding region) with `Origin::LlmEdit`. A reply the reader cannot read is counted and logged with the gap reason.
+- **Batching and cost:** calls only at pump beats, one batched call an island (up to 8 parents), never between
+  individuals; a budget of calls and tokens per run on the run card, the run stopping its LLM calls (not the run) when
+  it is spent.
+- **Caching and replay:** every call is recorded as text (`llm_calls.tsv`: model, prompt hash, temperature, seed,
+  reply, read status), the format of today's `llm.tsv`. A rerun with the same configuration replays from the file and
+  makes no call, so a run is reproducible.
+- **Telemetry:** padding, a pool draw, a draft and an edit each emit a mutation event in `stream.jsonl` (the runner
+  standard), with the donor's or reply's id.
+
+### 11.6 Data flow
+
+```mermaid
+flowchart LR
+    RUN[phylu run: islands, generations] -->|hall of fame, island champions| POOL[(champion pool: program text)]
+    REF[references, bench, LLM pools] --> POOL
+    LLMD[LLM draft: text out] --> READ
+    LLME[LLM edit: text in, text out] --> READ
+    POOL -->|program text| READ[reader: text to tree]
+    POOL -->|donor ORF: cached gene, per table version| PAD[padded base: random gene, non-coding rows from donor ORF]
+    READ --> WB[write_back: overlay Karva on the base]
+    PAD --> WB
+    WB -->|legal gene| RUN
+    RUN -->|parents' programs| LLME
+```
+
+### 11.7 The measurement (A/B)
+
+Two arms, identical but for padding: **A, champion padding** and **B, random padding** (today). Champion padding runs
+first; the random arm runs after on the same seeds, and is cancelled if A shows nothing.
+
+| kingdom | problems | budget | measured |
+|---|---|---|---|
+| TSR (Typed Symbolic Regression) | the 20 laws of plan 8.8 R1, DEV_SEEDS | at most 20 minutes a law | laws found (log10 p at most -19 and 1 - R² at most 1e-10); evaluations to the law |
+| Futhark | histogram, pathfinder, then k-means | the same evaluations an arm | best HFF over generations, reported as percentiles; evaluations to the first correct faster program |
+
+Also measured in both arms: the share of selected individuals whose expressed tree contains exposed padding (the
+`exposed` count), the number of distinct canonical programs per generation (diversity), and the founder age and
+origin of each winner. **No leakage:** the pool used for a problem holds no champion of that problem (leave one problem
+out); a second, labelled within-problem arm (pool from other seeds of the same problem) is reported separately. The
+LLM arms (drafts, edits) are a later A/B on the same protocol, once padding is measured.
+
+### 11.8 Risks
+
+| risk | guard |
+|---|---|
+| loss of diversity: many genes carry the same champion material | donors drawn uniformly, not by fitness; at most a quarter of the pool from one run; diversity measured per generation; a padding share on the card (the share of new genes padded) |
+| bias toward old champions (in ALPS terms, old material entering a young cohort) | a padded gene's age is that of its expressed program (a refill stays 0); the donor's id is in its genealogy edge, so founder age of the winners is measured, not assumed |
+| stale genes after a table change | the gene is a cache keyed by `table_version`, rebuilt from text; the text is the only durable form |
+| fitness not comparable across runs | stored with its scheme and data hash; compared only within them, and used only to evict |
+| cost and latency of LLM calls | calls only at pump beats, batched, budgeted, cached and replayed |
+| leakage of the answer | leave-one-problem-out pools for every reported result |
+
+### 11.9 Tasks
+
+| task | repository | size | what | after |
+|---|---|---|---|---|
+| F1 | fuller | 0.5 day | `orf(k, layout, gene)`: per column `j_T`, the expressed rows and the Dc and Dv words they read (`typed_gep.rs`, beside `place`) | |
+| F2 | fuller | 1 day | `pad(k, layout, base, donor, rng)`: 11.4 steps 2 and 3; tests: 1,000 of 1,000 padded genes legal, the overlaid tree expresses unchanged, deterministic per seed, exposure by one mutation expresses donor cells | F1 |
+| F3 | fuller | 0.5 day | the canonical key per kingdom (Futhark `Reader6::canonical`; TSR and WGSL equivalents) and `rebuild(view, texts)`: text to tree to gene for a table version | |
+| F4 | fuller | 1.5 days | LLM functions as library: prompt from the view's rows, `draft` and `edit`, the call record and replay (`llm_calls.tsv`) | F3 |
+| P1 | phylu | 1.5 days | the pool: `src/evolve/champion_pool.rs`, harvest at pumps and run end, dedup, limits, cache by table version | F3 |
+| P2 | phylu | 1.5 days | runner hooks: `--padding random|champion` and the padding share on the card; padding at every host write site; `Origin` gains `Pool`, `LlmDraft`, `LlmEdit`; mutation events | F2, P1 |
+| R1 | phylu | run | the A/B of 11.7 on TSR, then Futhark | P2 |
+| P3 | phylu | 1.5 days | LLM drafts at generation 0 and edits at pump beats, with budget flags | F4, P2 |
+| R2 | phylu | run | the LLM A/B | P3, R1 |
+| P4 | phylu | 2 days | device padding: the device's refill draw reads a buffer of pool ORF runs instead of the random number generator (only if R1 shows a gain) | R1 |
