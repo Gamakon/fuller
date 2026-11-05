@@ -28,7 +28,7 @@
 //! its tree with nothing normalised: a name is the view's `var@T` with the index word G3's environment gives it, a
 //! float literal is read by its value, a `let` is the `let` row, an adapter is read as the plain row (`tests6`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::futhark_table::{FutharkKind, FutharkKingdom};
 use crate::futhark_sig::Signature;
@@ -1336,6 +1336,8 @@ pub struct Reader<'a> {
 
 /// The most pattern matches one read may try (a guard: reading a program always ends).
 const READ_STEPS: usize = 5_000_000;
+/// The most rows [`Reader6::read_tree`] rejects at their nodes before a text is a gap.
+const READ_REJECTED: usize = 64;
 
 impl<'a> Reader<'a> {
     pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Reader<'a>, String> {
@@ -2066,9 +2068,14 @@ struct Read6 {
     /// The gap of the deepest expression no row read: what a failed read reports (the first gap is often a row whose
     /// pattern matches everything of its head, `map2 {0} {1} {2}`, failing at its first operand).
     deepest: Option<(usize, Gap)>,
+    /// The rows not to try at a node (path, symbol): each one read there before, whose property placeholder the
+    /// decode then contradicted ([`Reader6::read_tree`]).
+    rejected: BTreeSet<(Vec<u32>, SymbolId)>,
 }
 
 type Mark6 = [usize; 6];
+/// A row read at a node (path, symbol) whose property placeholder the decode contradicted, with its gap.
+type Rejected6 = ((Vec<u32>, SymbolId), Gap);
 
 /// The adapters a text has: each the path of the operand it adapts, its mark and its length, outermost first.
 type Adapters6 = Vec<(Vec<u32>, String, E)>;
@@ -2256,7 +2263,39 @@ impl<'a> Reader6<'a> {
             let v = crate::typed_environment::in_scope(&kid.environment, kid.data_type).into_iter().find(|v| v.properties.get(&pi) == Some(want)).ok_or_else(|| NotCanonical::Bug(format!("no variable in scope has {pi} = {want}, though the requirement held")))?;
             kids[i].const_index = Some(kid.environment.index_of(kid.data_type, v.binder).ok_or_else(|| NotCanonical::Bug(format!("{:?} is not in scope", v.binder)))?);
         }
-        Ok(Tree { symbol: n.symbol, const_index, kids })
+        Ok(self.read_first(n, &kids).unwrap_or(Tree { symbol: n.symbol, const_index, kids }))
+    }
+
+    /// THE ROW READ FIRST where two rows spell one text: a row tried before the node's own whose spelling is the
+    /// node's with a property placeholder where the node spells a size operand (`next`'s `{0.bound}` against
+    /// `nextin`'s size), when the decoded property is that size. The reader reads that row ([`Reader6::read_tree`]).
+    fn read_first(&self, n: &Node, kids: &[Tree]) -> Option<Tree> {
+        let rows = self.rows.get(&n.data_type)?;
+        let own = rows.iter().find(|p| p.symbol == n.symbol)?;
+        for r in rows.iter().take_while(|p| p.symbol != n.symbol).filter(|p| !p.props.is_empty()) {
+            'matches: for holes in pmatch_all(&r.pattern, &own.pattern, r.inputs.len() + r.props.len()) {
+                let operand = |h: Option<&Option<E>>| match h {
+                    Some(Some(E::Hole(i))) if *i < own.inputs.len() => Some(*i),
+                    _ => None,
+                };
+                let mut at = Vec::with_capacity(r.inputs.len());
+                for (i, ty) in r.inputs.iter().enumerate() {
+                    match operand(holes.get(i)) {
+                        Some(si) if own.inputs[si] == *ty => at.push(si),
+                        _ => continue 'matches,
+                    }
+                }
+                for (j, (k, prop)) in r.props.iter().enumerate() {
+                    let Some(sj) = operand(holes.get(r.inputs.len() + j)) else { continue 'matches };
+                    let have = n.kids.get(at[*k]).and_then(|kid| kid.properties.get(prop));
+                    if have.is_none() || have != n.kids.get(sj).and_then(|kid| kid.properties.get("value")) {
+                        continue 'matches;
+                    }
+                }
+                return Some(Tree { symbol: r.symbol, const_index: None, kids: at.iter().map(|&si| kids[si].clone()).collect() });
+            }
+        }
+        None
     }
 
     fn decode(&self, entry: &Entry, tree: &Tree) -> Result<Decoding, String> {
@@ -2283,12 +2322,32 @@ impl<'a> Reader6<'a> {
 
     /// Read `e` at the entry's data type and set its index words (no check of its adapters): the tree and the
     /// adapters the text has.
+    ///
+    /// A PROPERTY PLACEHOLDER is checked only on the decoded tree, so a row whose spelling holds one (`next`'s
+    /// `{0.bound}`) can read a text another row spells too (`nextin`'s size operand) and fail there: the read is then
+    /// made again with that row rejected at that node, until the placeholders hold or no row is left.
     fn read_tree(&self, e: &E, entry: &Entry) -> Result<(Tree, Adapters6), Gap> {
         let e = strip_adapters(e);
+        let mut rejected = BTreeSet::new();
+        loop {
+            match self.read_tree_once(&e, entry, &rejected)? {
+                Ok(read) => return Ok(read),
+                Err((at, gap)) => {
+                    if !rejected.insert(at) || rejected.len() > READ_REJECTED {
+                        return Err(gap);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One read of [`Reader6::read_tree`] with the rows `rejected` not tried at their nodes: the tree, or the node and
+    /// row whose property placeholder failed, with its gap.
+    fn read_tree_once(&self, e: &E, entry: &Entry, rejected: &BTreeSet<(Vec<u32>, SymbolId)>) -> Result<Result<(Tree, Adapters6), Rejected6>, Gap> {
         self.steps.set(0);
-        let mut rec = Read6::default();
+        let mut rec = Read6 { rejected: rejected.clone(), ..Read6::default() };
         let mut scope = self.root_scope();
-        let mut tree = match self.read6(&e, entry.output, &mut Vec::new(), &mut scope, &mut rec) {
+        let mut tree = match self.read6(e, entry.output, &mut Vec::new(), &mut scope, &mut rec) {
             Ok(t) => t,
             Err(g) => return Err(rec.deepest.map_or(g, |d| d.1)),
         };
@@ -2359,10 +2418,11 @@ impl<'a> Reader6<'a> {
             let node = again.node(path).ok_or_else(|| bug(format!("no node at {path:?}")))?;
             let value = node.kids.get(*k).and_then(|kid| kid.properties.get(p));
             if value.and_then(property_expr).as_ref() != Some(&unparen(read)) {
-                return Err(Gap { construct: format!("{{{k}.{p}}}"), dual: self.type_name(node.data_type), detail: format!("{} reads {p} = {value:?} of its operand {k}, the text has {read:?}", self.k.symbols[node.symbol as usize].name) });
+                let gap = Gap { construct: format!("{{{k}.{p}}}"), dual: self.type_name(node.data_type), detail: format!("{} reads {p} = {value:?} of its operand {k}, the text has {read:?}", self.k.symbols[node.symbol as usize].name) };
+                return Ok(Err(((path.clone(), node.symbol), gap)));
             }
         }
-        Ok((tree, rec.adapters))
+        Ok(Ok((tree, rec.adapters)))
     }
 
     /// Read an expression at data type `ty`, at `path`, with `scope` in scope.
@@ -2395,6 +2455,9 @@ impl<'a> Reader6<'a> {
         }
         let mut first: Option<Gap> = None;
         for p in self.rows.get(&ty).into_iter().flatten() {
+            if rec.rejected.contains(&(path.clone(), p.symbol)) {
+                continue;
+            }
             for holes in pmatch_all(&p.pattern, e, p.inputs.len() + p.props.len()) {
                 let mark = rec.mark();
                 match self.read_row(p, &holes, path, scope, rec) {

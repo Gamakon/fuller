@@ -84,7 +84,7 @@ fn every_master6_view_loads_its_tables_and_contract_and_lays_out() {
 /// Dv lane for its constant, M0088). The sizes are pinned, so a change to the master or the view is seen.
 #[test]
 fn the_kmeans_views_load_and_their_genes_are_the_measured_size() {
-    for (problem, types, symbols, want) in [("kmeans", 9, 83, (3_057, 12_995, 4_202, 12_230, 32_484)), ("kmeans_i32", 22, 227, (8_023, 54_634, 19_482, 40_308, 122_447))] {
+    for (problem, types, symbols, want) in [("kmeans", 9, 84, (3_057, 12_995, 4_202, 12_230, 32_484)), ("kmeans_i32", 22, 228, (8_023, 54_634, 19_482, 40_308, 122_447))] {
         let k = committed(problem).unwrap().kingdom(problem).unwrap();
         let contract = k.contract().unwrap();
         let layout = GeneLayout::from_program_size(&contract, k.root.data_type, 192).unwrap();

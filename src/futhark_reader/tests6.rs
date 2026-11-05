@@ -105,7 +105,7 @@ fn random_genes_read_back_to_their_canonical_trees_and_render_the_same_text() {
         report.push((*name, with_adapters, compared));
     }
     // The genes are drawn from fixed seeds: the counts of this run, as floors.
-    let floors = [("reduce", 0, 104), ("scan", 2, 165), ("histogram", 166, 143), ("pathfinder", 143, 147), ("a7", 189, 200), ("kmeans", 180, 150), ("kmeans_i32", 183, 156)];
+    let floors = [("reduce", 0, 103), ("scan", 2, 165), ("histogram", 166, 143), ("pathfinder", 145, 144), ("a7", 189, 200), ("kmeans", 180, 150), ("kmeans_i32", 183, 156)];
     for ((name, adapters, compared), (fname, fa, fc)) in report.iter().zip(floors) {
         assert!(*name == fname && *adapters >= fa && *compared >= fc, "{name}: {adapters} with an adapter (floor {fa}), {compared} compared (floor {fc}): {report:?}");
     }
@@ -193,12 +193,10 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
             all_gaps.extend(gaps);
         }
     }
-    assert_eq!(report, [("histogram", "bench", 10, 10), ("histogram", "llm", 48, 48), ("histogram", "alternatives", 577, 577), ("pathfinder", "bench", 9, 9), ("pathfinder", "llm", 45, 43), ("pathfinder", "alternatives", 153, 153)]);
-    // THE TWO NOT READ ARE NO MASTER 6 PROGRAM: each indexes `walls[i64.min (rows - 1) ((0i64) + 1)]`, master 5's `next`
-    // of the literal index 0, whose class gave it the bound `rows`. Master 6 gives the literal `0i64` the bound 1 (plan
-    // 7.1 "Literal indices"), so its `next` renders `i64.min (1 - 1) ((0i64) + 1)` (row 0, not row 1), and no tree of the
-    // view renders this text: the property placeholder `{0.bound}` is checked and fails.
-    assert_eq!(all_gaps, ["pathfinder llm 12: {0.bound}", "pathfinder llm 26: {0.bound}"]);
+    assert_eq!(report, [("histogram", "bench", 10, 10), ("histogram", "llm", 48, 48), ("histogram", "alternatives", 577, 577), ("pathfinder", "bench", 9, 9), ("pathfinder", "llm", 45, 45), ("pathfinder", "alternatives", 153, 153)]);
+    // Pathfinder's llm 12 and 26 index `walls[i64.min (rows - 1) ((0i64) + 1)]`: master 6's `nextin` (M0089, the next
+    // index into an array of a chosen size) reads them; `next` of the literal `0i64` (bound 1) could not.
+    assert!(all_gaps.is_empty(), "{all_gaps:#?}");
 }
 
 /// THE K-MEANS POOL'S PROGRAMS (`kingdoms/futhark/sig/kmeans/pool/*.fut`, what `pool.fut_read_by_reader` counts):

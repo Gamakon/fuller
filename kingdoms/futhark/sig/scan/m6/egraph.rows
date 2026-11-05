@@ -44,3 +44,4 @@ var@size	Xvar__size	Ssize	binder
 var@size	Kvar__size	Ssize	constant
 var@a.i32	Xvar__a_i32	Sa_i32	binder
 var@a.i32	Kvar__a_i32	Sa_i32	constant
+nextin@i64	Xnextin__i64	Si64	node

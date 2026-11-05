@@ -258,3 +258,4 @@
 (constructor Xvar__m_f32 (i64 i64) Sm_f32)
 (constructor Kvar__m_f32 () Sm_f32)
 (constructor Xzero__m_i32 () Sm_i32)
+(constructor Xnextin__i64 (Ssize Si64) Si64)

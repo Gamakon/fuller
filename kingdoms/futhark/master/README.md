@@ -326,6 +326,19 @@ name zero@i64   out i64   rules bound=1   spelling 0i64
 Inside `row` (M0036: `args [][]{E};i64`, `rules len=in0.cols`, `requires in1.bound <= in0.rows -> clampix`), k-means's
 `(centres)[(0i64)]` checks `1 <= k`, which holds. It renders unchanged, with no `clampix` (H2).
 
+**nextin**, the next index into an array of a chosen size (M0089, added in master 6)
+
+```
+ref M0089  since 1  family core  kind function  elems i32,f32
+name nextin@i64   out i64   args size;i64   rules bound=in0.value
+spelling i64.min ({0} - 1) ({1} + 1)
+```
+
+`next` (M0019) clamps at its operand's own bound, so `next` of `zero` (bound 1) is always index 0. Pathfinder's pool
+programs llm 12 and 26 index `walls[i64.min (rows - 1) ((0i64) + 1)]`: the size `rows` is chosen, the index is clamped
+at `rows - 1`, and the result's bound is `rows`, so `get`/`row` over an array of `rows` need no `clampix`. Its version
+is 1, so every view that holds `next` holds it.
+
 **tab**, a binder with a Binding row (M0024; frame `T`)
 
 ```

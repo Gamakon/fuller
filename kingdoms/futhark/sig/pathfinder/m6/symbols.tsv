@@ -42,3 +42,4 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 40	M0087	var@size	var	size						{v}
 41	M0087	var@a.i32	var	[]i32						{v}
 42	M0087	var@m.i32	var	[][]i32						{v}
+43	M0089	nextin@i64	function	i64	size;i64	bound=in0.value				i64.min ({0} - 1) ({1} + 1)

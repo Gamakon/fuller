@@ -2557,6 +2557,7 @@ BINDERS6 = {
 INDEX6 = {
     ("prev", "i64", "bound=in0.bound", SIG_IX_PREV),
     ("next", "i64", "bound=in0.bound", "i64.min ({0.bound} - 1) ({0} + 1)"),
+    ("nextin", "size;i64", "bound=in0.value", "i64.min ({0} - 1) ({1} + 1)"),
     ("clamp", "size;{E}", "bound=in0.value", "i64.max 0 (i64.min ({0} - 1) (i64.{E} {1}))"),
     ("clamp", "size;{E}", "bound=in0.value", SIG_IX_CLAMP_F32.replace("{0}", "{1}").replace("{D}", "{0}")),
     ("zero", "", "bound=1", "0i64"),

@@ -226,3 +226,4 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 224	M0087	var@a.i32	var	[]i32						{v}
 225	M0087	var@m.f32	var	[][]f32						{v}
 226	M0088	zero@m.i32	terminal	[][]i32		rows=1; cols=1				[[0i32]]
+227	M0089	nextin@i64	function	i64	size;i64	bound=in0.value				i64.min ({0} - 1) ({1} + 1)

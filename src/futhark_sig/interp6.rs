@@ -49,6 +49,8 @@ enum Op6 {
     Clamp,
     ZeroIndex,
     Last,
+    /// `nextin`: the next index, clamped at a chosen size - 1.
+    NextIn,
     Tab(Elem),
     Replicate(Elem),
     Map2(Bin),
@@ -162,6 +164,7 @@ fn op6(k: &Kingdom6, s: &crate::futhark_table::Symbol6) -> Result<Op6, String> {
         "M0020" | "M0056" => Op6::Clamp,
         "M0021" => Op6::ZeroIndex,
         "M0022" => Op6::Last,
+        "M0089" => Op6::NextIn,
         "M0024" => Op6::Tab(out()?),
         "M0025" => Op6::Replicate(out()?),
         "M0026" => Op6::Map2(Bin::Add),
@@ -935,6 +938,7 @@ impl Run<'_> {
             }
             Op6::ZeroIndex => Val::I(0),
             Op6::Last => Val::I(ix(0)? - 1),
+            Op6::NextIn => Val::I((ix(1)? + 1).min(ix(0)? - 1)),
             Op6::Replicate(elem) => {
                 let (m, x) = (ix(0)?, s(1)?.word());
                 Val::A(View::of(vec![x; m as usize], vec![m as usize], elem))
