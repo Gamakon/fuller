@@ -34,7 +34,7 @@ pub mod master;
 
 
 /// The value types a symbol's slots can carry: the keys of [`Arity`]'s many-hot maps and of every kingdom's typed
-/// layout. A kingdom's own types are a table-defined family ([`Ty::Wgsl`], [`Ty::Futhark1d`], [`Ty::Futhark`]): a new
+/// layout. A kingdom's own types are a table-defined family ([`Ty::Wgsl`], [`Ty::Futhark`]): a new
 /// type is a table row, not a variant.
 ///
 /// Symbolic regression has ONE data type, `F`; a tree's transcendental depth is a PROPERTY of it (the kingdom `sr` of
@@ -66,16 +66,9 @@ pub enum Ty {
     /// family, so a new dual is a table row, not a variant; its device code
     /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]).
     Wgsl(u16),
-    /// A dual of the deprecated 1-D Futhark kingdom: the index of its row in
-    /// `kingdoms/futhark_1d/types.tsv` (ref `T001` → 0). Its device code is
-    /// [`Ty::FUTHARK_1D_CODE_BASE`] + the index.
-    Futhark1d(u16),
-    /// A type of the Futhark kingdom: a data type of a view or of the pixel family (its index in the kingdom's
-    /// table). Its device code is [`Ty::FUTHARK_CODE_BASE`] + the index.
-    ///
-    /// A SEPARATE family from [`Ty::Futhark1d`], not another range of the same
-    /// one: a type code must not mean one thing in one kingdom and another in the other, and `homologous()`
-    /// compares roots -- so the families are kept apart.
+    /// A type of the Futhark kingdom: a data type of a problem's view or of the pixel family (its index in the
+    /// kingdom's table, in the master tables `kingdoms/master/`). Its device code is [`Ty::FUTHARK_CODE_BASE`] + the
+    /// index.
     Futhark(u16),
 }
 
@@ -90,16 +83,8 @@ impl Ty {
     pub fn code(self) -> u32 {
         match self {
             Ty::Wgsl(i) => {
-                assert!(usize::from(i) < Ty::MAX_WGSL_DUALS, "our software has a bug: Wgsl({i}) is past its {} codes and would read back as Futhark1d", Ty::MAX_WGSL_DUALS);
+                assert!(usize::from(i) < Ty::MAX_WGSL_DUALS, "our software has a bug: Wgsl({i}) is past its {} codes and would read back as no type", Ty::MAX_WGSL_DUALS);
                 Ty::TABLE_CODE_BASE + u32::from(i)
-            }
-            Ty::Futhark1d(i) => {
-                assert!(
-                    usize::from(i) < Ty::MAX_FUTHARK_1D_DUALS,
-                    "our software has a bug: Futhark1d({i}) is past its {} codes and would read back as itself",
-                    Ty::MAX_FUTHARK_1D_DUALS
-                );
-                Ty::FUTHARK_1D_CODE_BASE + u32::from(i)
             }
             Ty::Futhark(i) => {
                 assert!(
@@ -129,15 +114,12 @@ impl Ty {
     /// stay unassigned so that no device code of the families after them moved; `from_code` reads them as `None`.
     pub const RETIRED_TSR_CODES: u32 = u16::MAX as u32 + 1;
 
-    /// The first code of the 1-D Futhark family: after the WGSL family (4,096 duals) and the retired TSR range.
-    pub const FUTHARK_1D_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES;
+    /// The 65,536 codes after the retired TSR range were the deleted 1-D Futhark kingdom's (`Ty::Futhark1d`, plan
+    /// 7.7 K5). They stay unassigned so that the Futhark family's codes did not move; `from_code` reads them as `None`.
+    pub const RETIRED_FUTHARK_1D_CODES: u32 = u16::MAX as u32 + 1;
 
-    /// The most duals the 1-D Futhark kingdom may number: its index is a `u16`.
-    pub const MAX_FUTHARK_1D_DUALS: usize = u16::MAX as usize + 1;
-
-    /// The first code of the Futhark kingdom's family; the 1-D Futhark
-    /// family owns `FUTHARK_1D_CODE_BASE..FUTHARK_CODE_BASE`.
-    pub const FUTHARK_CODE_BASE: u32 = Ty::FUTHARK_1D_CODE_BASE + Ty::MAX_FUTHARK_1D_DUALS as u32;
+    /// The first code of the Futhark kingdom's family: after the WGSL family and the two retired ranges.
+    pub const FUTHARK_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES + Ty::RETIRED_FUTHARK_1D_CODES;
 
     /// The most duals a Futhark kingdom may number: its index is
     /// a `u16`.
@@ -153,18 +135,14 @@ impl Ty {
     }
 
     /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
-    /// offset from [`Ty::TABLE_CODE_BASE`], a 1-D Futhark dual by offset from
-    /// [`Ty::FUTHARK_1D_CODE_BASE`], a Futhark dual by offset from
-    /// [`Ty::FUTHARK_CODE_BASE`].
+    /// offset from [`Ty::TABLE_CODE_BASE`], a Futhark type by offset from [`Ty::FUTHARK_CODE_BASE`]; a code in a
+    /// retired range is `None`.
     pub fn from_code(code: u32) -> Option<Ty> {
         if code >= Ty::FUTHARK_CODE_BASE {
             return u16::try_from(code - Ty::FUTHARK_CODE_BASE).ok().map(Ty::Futhark);
         }
-        if code >= Ty::FUTHARK_1D_CODE_BASE {
-            return u16::try_from(code - Ty::FUTHARK_1D_CODE_BASE).ok().map(Ty::Futhark1d);
-        }
         if code >= Ty::TABLE_CODE_BASE {
-            // A code in the retired TSR range is no type.
+            // A code in a retired range (TSR, 1-D Futhark) is no type.
             return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().filter(|i| usize::from(*i) < Ty::MAX_WGSL_DUALS).map(Ty::Wgsl);
         }
         Ty::BASE.iter().find(|(_, c)| *c == code).map(|(t, _)| *t)
@@ -485,37 +463,22 @@ mod tests {
         assert_eq!(Ty::from_code(300), Some(Ty::Wgsl(44)));
         assert!(Ty::Wgsl(0) > Ty::Pattern, "ordered after every base variant");
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
-        // The table-defined ranges round-trip in full and do not overlap.
-        // The retired TSR range (4352..69888) is no type, so the Futhark families' codes did not move.
-        assert_eq!(Ty::FUTHARK_1D_CODE_BASE, 69888);
+        // The table-defined ranges round-trip in full and do not overlap. The retired TSR range (4352..69888) and the
+        // retired 1-D Futhark range (69888..135424) are no type, so the Futhark family's codes did not move.
         for i in 0..Ty::MAX_WGSL_DUALS as u16 {
             assert_eq!(Ty::from_code(Ty::Wgsl(i).code()), Some(Ty::Wgsl(i)));
         }
         assert_eq!(Ty::from_code(4351), Some(Ty::Wgsl(4095)));
-        assert_eq!((Ty::from_code(4352), Ty::from_code(69887)), (None, None));
-        // The 1-D Futhark family sits after the WGSL family, and the two do
-        // not overlap.
-        for i in 0..=u16::MAX {
-            assert_eq!(Ty::from_code(Ty::Futhark1d(i).code()), Some(Ty::Futhark1d(i)));
+        assert_eq!(Ty::FUTHARK_CODE_BASE, 135_424);
+        for retired in [4352, 69_887, 69_888, 135_423] {
+            assert_eq!(Ty::from_code(retired), None, "code {retired} is retired");
         }
-        assert_eq!(Ty::from_code(Ty::FUTHARK_1D_CODE_BASE), Some(Ty::Futhark1d(0)));
-        assert!(Ty::Futhark1d(0) > Ty::Wgsl(u16::MAX), "ordered after the WGSL family");
-        // The Futhark family sits after the 1-D one, so the two
-        // kingdoms' duals cannot be confused for one another.
-        assert_eq!(Ty::FUTHARK_CODE_BASE, Ty::FUTHARK_1D_CODE_BASE + 65536);
         for i in 0..=u16::MAX {
             assert_eq!(Ty::from_code(Ty::Futhark(i).code()), Some(Ty::Futhark(i)));
         }
         assert_eq!(Ty::from_code(Ty::FUTHARK_CODE_BASE), Some(Ty::Futhark(0)));
         assert_eq!(Ty::from_code(Ty::FUTHARK_CODE_BASE + 65536), None);
-        assert!(
-            Ty::Futhark(0) > Ty::Futhark1d(u16::MAX),
-            "the Futhark family is ordered after the 1-D Futhark family"
-        );
-        assert!(
-            Ty::Futhark1d(u16::MAX) < Ty::Futhark(0),
-            "the two Futhark families do not overlap"
-        );
+        assert!(Ty::Futhark(0) > Ty::Wgsl(u16::MAX), "the Futhark family is ordered after the WGSL family");
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
         assert_eq!(Ty::F.code(), 2);
     }
@@ -525,7 +488,7 @@ mod tests {
         assert!(Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS, Ty::MAX_WGSL_DUALS).is_ok());
         let e = Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS + 1, Ty::MAX_WGSL_DUALS).unwrap_err();
         assert_eq!(e, "our software has a bug: kingdom k has 4097 duals, more than its 4096 codes");
-        assert_eq!(Ty::FUTHARK_1D_CODE_BASE - Ty::TABLE_CODE_BASE, Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES);
+        assert_eq!(Ty::FUTHARK_CODE_BASE - Ty::TABLE_CODE_BASE, Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES + Ty::RETIRED_FUTHARK_1D_CODES);
     }
 
     #[test]
