@@ -1,0 +1,23 @@
+id	name	kind	members	tag	constant	constant_props	properties
+0	f32	scalar		f32	0f32		
+1	i32	scalar		i32	0i32		
+2	i64	scalar		i64	0i64	bound=1	bound:bound
+3	size	scalar		size			value:size
+4	[]f32	array	f32	a.f32	[0f32]	len=1	len:size
+5	[]i32	array	i32	a.i32	[0i32]	len=1	len:size
+6	[][]f32	array	[]f32	m.f32	[[0f32]]	rows=1 & cols=1	rows:size;cols:size
+7	[][]i32	array	[]i32	m.i32	[[0i32]]	rows=1 & cols=1	rows:size;cols:size
+8	(f32, f32)	tuple	f32;f32	f32.f32	(0f32, 0f32)		
+9	(f32, i32)	tuple	f32;i32	f32.i32	(0f32, 0i32)		
+10	(i32, f32)	tuple	i32;f32	i32.f32	(0i32, 0f32)		
+11	(i32, i32)	tuple	i32;i32	i32.i32	(0i32, 0i32)		
+12	(f32, f32, f32)	tuple	f32;f32;f32	f32.f32.f32	(0f32, 0f32, 0f32)		
+13	(f32, f32, i32)	tuple	f32;f32;i32	f32.f32.i32	(0f32, 0f32, 0i32)		
+14	(f32, i32, f32)	tuple	f32;i32;f32	f32.i32.f32	(0f32, 0i32, 0f32)		
+15	(f32, i32, i32)	tuple	f32;i32;i32	f32.i32.i32	(0f32, 0i32, 0i32)		
+16	(i32, f32, f32)	tuple	i32;f32;f32	i32.f32.f32	(0i32, 0f32, 0f32)		
+17	(i32, f32, i32)	tuple	i32;f32;i32	i32.f32.i32	(0i32, 0f32, 0i32)		
+18	(i32, i32, f32)	tuple	i32;i32;f32	i32.i32.f32	(0i32, 0i32, 0f32)		
+19	(i32, i32, i32)	tuple	i32;i32;i32	i32.i32.i32	(0i32, 0i32, 0i32)		
+20	[]f32 -> []f32	function	[]f32 -> []f32	fn.arr_f32_arr_f32	\xs -> map (\_ -> 0.0) xs		
+21	[]f32 -> []f32 -> []f32	function	[]f32;[]f32 -> []f32	fn.arr2_f32_arr_f32_arr_f32	\xs _ys -> map (\_ -> 0.0) xs		

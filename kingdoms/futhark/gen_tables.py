@@ -2456,6 +2456,9 @@ SIG6_PROBLEMS = {
     "a7": ("tests/corpus/futhark_problems/a7/yardstick.fut", "main", None, 1, (), (), ("matrix",)),
     "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main", 2, 2, (), (), ()),
     "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 5, (), ("[]f32",), ()),
+    # The faithful k-means view (plan 7, F1b): the assignments an `i32` array beside the `f32` points, its kernel
+    # boundary `[]i32`; at master 5 it was 237,325 types and did not load.
+    "kmeans_i32": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 5, ("i32",), ("[]i32",), ()),
     "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main", 2, 2, (), (), ()),
     "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2, (), (), ()),
     "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main", 2, 2, (), (), ()),
@@ -2946,6 +2949,11 @@ def witness_view6(dir_path, name, spec, mst=None):
     if env[1:] != want_env:
         bad.append(f"V6 {name}: the environment is {env[1:]}, the model {want_env}")
     have_vars = {e["data_type"] for e in env[1:]} | binders
+    # A data type the root or a symbol demands that no other symbol of no arguments gives has a var row too (its
+    # constant when no variable is in scope), so every demanded data type has a leaf.
+    demanded6 = {root_dt} | {a for s in syms for a in s["args"].split(";") if a}
+    other_leaves6 = {s["out"] for s in syms if not s["args"] and s["kind"] != "var"}
+    have_vars |= demanded6 - other_leaves6
     if var_rows != have_vars:
         bad.append(f"V6 {name}: the var rows are of {sorted(var_rows)}, the data types with a variable are {sorted(have_vars)}")
     sizes = [n for k, n, _, _ in spec["env"] if k == "size"]

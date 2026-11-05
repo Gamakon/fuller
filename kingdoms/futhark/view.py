@@ -218,7 +218,8 @@ def class_tag(cls, elements):
 #    rule, requirement or binding property that names a property its data type does not carry is dropped;
 # 3. kept when REACHABLE both ways, as master 5's view keeps its rows (forward from the leaves, backward from the
 #    root), with `var@{T}` for every data type that has a variable: a root variable, or a binding of a kept row (the
-#    two are iterated until they settle);
+#    two are iterated until they settle); and for every data type the root or a kept row demands that no kept row
+#    of no arguments gives (its constant when no variable is in scope);
 # 4. written: `datatypes.tsv`, `symbols.tsv` and `environment.tsv` (columns below).
 
 MASTER6 = os.path.join(MASTER, "6")
@@ -501,6 +502,17 @@ class View6:
                 break
         return [r for r, u in zip(rows, usable) if u and r["out"] in keep]
 
+    def _leafless(self, rows):
+        """The data types the root and `rows` demand that no row of no arguments in `rows` gives. Each must have a
+        constant (every data type but `size` has one; a view whose `size` is leafless names no size, a bug)."""
+        leaves = {r["out"] for r in rows if not r["args"]}
+        demanded = {self.root} | {a for r in rows for a in r["args"]}
+        out = {t for t in demanded if t not in leaves}
+        for t in sorted(out):
+            if not self.by_name[t]["constant"]:
+                raise ValueError(f"our software has a bug: the data type {t} is demanded, has no leaf and no constant")
+        return out
+
     def _compute(self):
         root_types = {dt for _, dt, _ in self.root_vars}
         var_types = root_types | {dt for r in self._rows(set()) for _, dt, _ in r["binds"]}
@@ -513,6 +525,15 @@ class View6:
             var_types = settled
         else:
             raise ValueError("our software has a bug: the data types with a variable do not settle")
+        # A data type the root or a kept row demands that no kept row of no arguments gives (the `i32` + `f32` k-means
+        # view's `[][]i32`: built by `tabrows`, with no variable) takes its var row too, which with no variable in scope
+        # renders the data type's constant: Karva's tail needs a leaf of every data type it can demand (the contract's
+        # check), and the design's `var.T` is T's constant when c = 0. A var row has no argument, so the reachable rows
+        # are otherwise unchanged.
+        leafless = self._leafless(rows)
+        if leafless:
+            var_types = var_types | leafless
+            rows = self._reachable(self._rows(var_types))
         used = {self.root}
         for r in rows:
             used.add(r["out"])

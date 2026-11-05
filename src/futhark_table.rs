@@ -15,8 +15,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::geneframe::Ty;
-use crate::kingdom_contract::SymbolId;
+use crate::geneframe::{Adapter, AdapterSite, Argument, Binding, DataKind, DataType, Direction, KingdomTables, PropertyExpr, PropertyKind, PropertyRule, PropertyType, Relation, Requirement, Subject, SymbolRow, TripArgument, Ty};
+use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::kingdom_contract::{relations_from_rows, KingdomRelations};
 use crate::typed_chromosome::{AdfId, AdfSet, Epoch, RefKind};
 use crate::typed_gep::Tree;
@@ -506,6 +506,316 @@ impl GeneRng {
         } else {
             (self.next_u64() % n as u64) as usize
         }
+    }
+}
+
+// ---- master 6: data types, properties, requirements, bindings (plan section 7, task F1b) ---------------------------
+//
+// A master 6 view (`kingdoms/futhark/sig/<problem>/m6/`, written by `view.py` and by `futhark_view::master6`) is
+// three tables: `datatypes.tsv`, `symbols.tsv` and `environment.tsv`, over the master's `adapters.tsv`.
+// [`Kingdom6::from_tables`] reads them, and the kingdom gives the gene frame's tables ([`KingdomTables`], G1 and G3)
+// and the contract with its variable terminals (G2). Master 5's loader above is unchanged and stays loadable until
+// task D1.
+
+/// One data type of a master 6 view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataType6 {
+    /// As Futhark spells it without sizes: `[]f32`, `(f32, f32)`, `[]f32 -> []f32`.
+    pub name: String,
+    pub kind: DataKind,
+    /// The data type inside symbol names: `a.f32`.
+    pub tag: String,
+    /// What a `var` cell renders with no variable in scope; empty for `size`, which has none.
+    pub constant: String,
+    pub constant_props: Vec<(String, PropertyExpr)>,
+    /// The properties its values carry, in order.
+    pub properties: Vec<(String, PropertyKind)>,
+    /// A scalar element's literal pool (the view's `literals` line), for its `const` row.
+    pub literals: Vec<String>,
+}
+
+/// What a master 6 symbol is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind6 {
+    Function,
+    /// A Dc literal of its data type's pool.
+    Const,
+    /// A leaf with a fixed meaning.
+    Terminal,
+    /// `var@T`: its Dv word chooses a variable of `T` in scope.
+    Var,
+}
+
+/// One symbol of a master 6 view: its symbol id is its index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symbol6 {
+    /// The master row it instantiates.
+    pub reference: String,
+    pub name: String,
+    pub kind: Kind6,
+    pub inputs: Vec<Ty>,
+    pub output: Ty,
+    pub rules: Vec<(String, PropertyExpr)>,
+    /// Its requirements, each with its relation and adapter, in the `requires` order (the order adapters render in).
+    pub requires: Vec<Requirement>,
+    pub binds: Vec<Binding>,
+    /// The argument whose subtree runs once a trip.
+    pub trip: Option<u32>,
+    pub spelling: String,
+}
+
+/// A requirement of the entry's result (`out.rows = k -> fit.root`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootRequirement6 {
+    pub property: String,
+    pub relation: Relation,
+    pub against: PropertyExpr,
+    pub adapter: String,
+}
+
+/// The entry: its name, its result's data type and properties, and the requirements on its result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Root6 {
+    pub name: String,
+    pub data_type: Ty,
+    pub properties: Vec<(String, PropertyExpr)>,
+    pub requires: Vec<RootRequirement6>,
+}
+
+/// A variable of the root environment: an input, a zero array or a size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootVariable6 {
+    pub kind: String,
+    pub name: String,
+    pub data_type: Ty,
+    pub properties: Vec<(String, PropertyExpr)>,
+}
+
+/// A loaded master 6 kingdom.
+#[derive(Debug, Clone)]
+pub struct Kingdom6 {
+    pub kingdom: String,
+    /// Data type `i` is `Ty::Futhark(i)`.
+    pub data_types: Vec<DataType6>,
+    pub symbols: Vec<Symbol6>,
+    pub adapters: Vec<Adapter>,
+    pub root: Root6,
+    /// The root environment's variables, in the specification's order (G3's environment reads this).
+    pub variables: Vec<RootVariable6>,
+}
+
+fn bug6(kingdom: &str, what: String) -> String {
+    format!("our software has a bug: {kingdom}: {what}")
+}
+
+/// `p=expr` items separated by `sep`.
+fn assignments(kingdom: &str, text: &str, sep: &str) -> Result<Vec<(String, PropertyExpr)>, String> {
+    text.split(sep)
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(|item| {
+            let (p, e) = item.split_once('=').ok_or_else(|| bug6(kingdom, format!("the property {item:?} is not <property>=<expr>")))?;
+            Ok((p.trim().to_string(), PropertyExpr::parse(e.trim())?))
+        })
+        .collect()
+}
+
+/// A requirement's text as (subject, relation, against, adapter).
+fn requirement6(kingdom: &str, text: &str) -> Result<(String, Relation, PropertyExpr, String), String> {
+    let (subject, relation, expr, adapter) = crate::futhark_view::master6::parse_requirement(text)?;
+    let relation = Relation::from_symbol(&relation).ok_or_else(|| bug6(kingdom, format!("the relation of {text:?}")))?;
+    Ok((subject, relation, PropertyExpr::parse(&expr)?, adapter))
+}
+
+/// The table's rows (its header skipped), each with exactly `n` fields.
+fn rows6<'a>(kingdom: &str, file: &str, text: &'a str, n: usize) -> Result<Vec<Vec<&'a str>>, String> {
+    data_lines(text)
+        .map(|f| if f.len() == n { Ok(f) } else { Err(bug6(kingdom, format!("{file} row {f:?} has {} columns, wants {n}", f.len()))) })
+        .collect()
+}
+
+impl Kingdom6 {
+    /// Load a master 6 kingdom from its three tables, the master's adapters and its elements' literal pools.
+    pub fn from_tables(kingdom: &str, datatypes_tsv: &str, symbols_tsv: &str, environment_tsv: &str, adapters_tsv: &str, literals: &BTreeMap<String, Vec<String>>) -> Result<Kingdom6, String> {
+        let dts = rows6(kingdom, "datatypes.tsv", datatypes_tsv, 8)?;
+        Ty::check_dual_count(kingdom, dts.len(), Ty::MAX_FUTHARK_DUALS)?;
+        let names: Vec<&str> = dts.iter().map(|f| f[1]).collect();
+        let index_of = |name: &str| -> Result<usize, String> { names.iter().position(|n| *n == name).ok_or_else(|| bug6(kingdom, format!("no data type {name}"))) };
+        let ty_of = |name: &str| -> Result<Ty, String> { index_of(name).map(|i| Ty::Futhark(i as u16)) };
+        let tys = |text: &str| -> Result<Vec<Ty>, String> { text.split(';').filter(|a| !a.is_empty()).map(ty_of).collect() };
+        let mut data_types = Vec::new();
+        for (i, f) in dts.iter().enumerate() {
+            if f[0] != i.to_string() {
+                return Err(bug6(kingdom, format!("datatypes.tsv row {i} has the id {}", f[0])));
+            }
+            let kind = match f[2] {
+                "scalar" => DataKind::Scalar,
+                "array" => DataKind::Array { element: ty_of(f[3])? },
+                "tuple" => DataKind::Tuple { components: tys(f[3])? },
+                "function" => {
+                    let (params, result) = f[3].split_once(" -> ").ok_or_else(|| bug6(kingdom, format!("the function type {} has the members {:?}", f[1], f[3])))?;
+                    DataKind::Function { parameters: tys(params)?, result: ty_of(result)? }
+                }
+                other => return Err(bug6(kingdom, format!("the data type {} is of the kind {other}", f[1]))),
+            };
+            let properties = f[7]
+                .split(';')
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    let (n, k) = p.split_once(':').ok_or_else(|| bug6(kingdom, format!("the property {p:?} of {} is not <name>:<kind>", f[1])))?;
+                    Ok((n.to_string(), PropertyKind::from_name(k).ok_or_else(|| bug6(kingdom, format!("the property kind {k}")))?))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let literals = if kind == DataKind::Scalar { literals.get(f[1]).cloned().unwrap_or_default() } else { Vec::new() };
+            data_types.push(DataType6 { name: f[1].to_string(), kind, tag: f[4].to_string(), constant: f[5].to_string(), constant_props: assignments(kingdom, f[6], "&")?, properties, literals });
+        }
+        let mut symbols = Vec::new();
+        for (i, f) in rows6(kingdom, "symbols.tsv", symbols_tsv, 11)?.into_iter().enumerate() {
+            if f[0] != i.to_string() {
+                return Err(bug6(kingdom, format!("symbols.tsv row {i} has the id {}", f[0])));
+            }
+            let symbol = i as i64;
+            let kind = match f[3] {
+                "function" => Kind6::Function,
+                "const" => Kind6::Const,
+                "terminal" => Kind6::Terminal,
+                "var" => Kind6::Var,
+                other => return Err(bug6(kingdom, format!("the symbol {} is of the kind {other}", f[2]))),
+            };
+            if kind == Kind6::Const && data_types[index_of(f[4])?].literals.is_empty() {
+                return Err(bug6(kingdom, format!("the constant {} has no literal pool", f[2])));
+            }
+            let requires = f[7]
+                .split(';')
+                .map(str::trim)
+                .filter(|q| !q.is_empty())
+                .map(|q| {
+                    let (subject, relation, against, adapter) = requirement6(kingdom, q)?;
+                    Ok(Requirement { symbol, subject: Subject::parse(&subject)?, relation, against, adapter })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let binds = f[8]
+                .split(';')
+                .map(str::trim)
+                .filter(|b| !b.is_empty())
+                .map(|b| {
+                    let (pos, rest) = b.split_once(':').ok_or_else(|| bug6(kingdom, format!("the binding {b:?}")))?;
+                    let (dt, props) = rest.split_once(' ').unwrap_or((rest, ""));
+                    Ok(Binding { symbol, position: pos.parse().map_err(|_| bug6(kingdom, format!("the binding {b:?}")))?, data_type: ty_of(dt)?, properties: assignments(kingdom, props, "&")? })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            symbols.push(Symbol6 {
+                reference: f[1].to_string(),
+                name: f[2].to_string(),
+                kind,
+                inputs: tys(f[5])?,
+                output: ty_of(f[4])?,
+                rules: assignments(kingdom, f[6], ";")?,
+                requires,
+                binds,
+                trip: if f[9].is_empty() { None } else { Some(f[9].parse().map_err(|_| bug6(kingdom, format!("the trip {:?} of {}", f[9], f[2])))?) },
+                spelling: f[10].to_string(),
+            });
+        }
+        let adapters = rows6(kingdom, "adapters.tsv", adapters_tsv, 5)?
+            .into_iter()
+            .map(|f| {
+                let runs_at = AdapterSite::from_name(f[2]).ok_or_else(|| bug6(kingdom, format!("the adapter {} runs at {:?}", f[0], f[2])))?;
+                let heavy = match f[3] {
+                    "yes" => true,
+                    "no" => false,
+                    other => return Err(bug6(kingdom, format!("the adapter {} is heavy {other:?}", f[0]))),
+                };
+                Ok(Adapter { name: f[0].to_string(), heavy, runs_at })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let env = rows6(kingdom, "environment.tsv", environment_tsv, 5)?;
+        let (first, rest) = env.split_first().ok_or_else(|| bug6(kingdom, "environment.tsv has no root".to_string()))?;
+        if first[0] != "root" {
+            return Err(bug6(kingdom, format!("environment.tsv's first row is {first:?}, not the root")));
+        }
+        let root_requires = first[4]
+            .split(';')
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(|q| {
+                let (subject, relation, against, adapter) = requirement6(kingdom, q)?;
+                let property = subject.strip_prefix("out.").ok_or_else(|| bug6(kingdom, format!("the root's requirement {q:?} is not on out.<property>")))?;
+                Ok(RootRequirement6 { property: property.to_string(), relation, against, adapter })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let root = Root6 { name: first[1].to_string(), data_type: ty_of(first[2])?, properties: assignments(kingdom, first[3], "&")?, requires: root_requires };
+        let variables = rest
+            .iter()
+            .map(|f| {
+                if !["input", "zeros", "size"].contains(&f[0]) || !f[4].is_empty() {
+                    return Err(bug6(kingdom, format!("environment.tsv row {f:?} is not a root variable")));
+                }
+                Ok(RootVariable6 { kind: f[0].to_string(), name: f[1].to_string(), data_type: ty_of(f[2])?, properties: assignments(kingdom, f[3], "&")? })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Kingdom6 { kingdom: kingdom.to_string(), data_types, symbols, adapters, root, variables })
+    }
+
+    /// The type of a data type by name.
+    pub fn ty(&self, name: &str) -> Option<Ty> {
+        self.data_types.iter().position(|d| d.name == name).map(|i| Ty::Futhark(i as u16))
+    }
+
+    /// The data type of a type.
+    pub fn data_type(&self, ty: Ty) -> Option<&DataType6> {
+        match ty {
+            Ty::Futhark(i) => self.data_types.get(usize::from(i)),
+            _ => None,
+        }
+    }
+
+    /// THE GENE FRAME'S TABLES: one data type a row with its constant's properties (none for `size`) and its
+    /// property types; one symbol a row with its Argument rows, property rules, requirements (relation and adapter),
+    /// bindings and trip argument; the adapters. The tables are checked ([`KingdomTables::check`]).
+    pub fn tables(&self) -> Result<KingdomTables, String> {
+        let mut t = KingdomTables { kingdom: self.kingdom.clone(), adapters: self.adapters.clone(), ..KingdomTables::default() };
+        for (i, d) in self.data_types.iter().enumerate() {
+            let id = Ty::Futhark(i as u16);
+            let constant = if d.constant.is_empty() { None } else { Some(d.constant_props.clone()) };
+            t.data_types.push(DataType { id, name: d.name.clone(), kind: d.kind.clone(), constant });
+            for (name, kind) in &d.properties {
+                t.property_types.push(PropertyType { id: t.property_types.len() as u32, data_type: id, name: name.clone(), kind: *kind });
+            }
+        }
+        for (i, s) in self.symbols.iter().enumerate() {
+            let symbol = i as i64;
+            t.symbols.push(SymbolRow { symbol, symbol_name: s.name.clone(), alias: s.reference.clone(), semantic_id: s.name.clone(), spelling: s.spelling.clone() });
+            for (k, ty) in s.inputs.iter().enumerate() {
+                t.arguments.push(Argument { symbol, position: k as u32, direction: Direction::In, data_type: *ty });
+            }
+            t.arguments.push(Argument { symbol, position: 0, direction: Direction::Out, data_type: s.output });
+            for (property, expr) in &s.rules {
+                t.property_rules.push(PropertyRule { symbol, property: property.clone(), expr: expr.clone() });
+            }
+            t.requirements.extend(s.requires.iter().cloned());
+            t.bindings.extend(s.binds.iter().cloned());
+            if let Some(position) = s.trip {
+                t.trip_arguments.push(TripArgument { symbol, position });
+            }
+        }
+        t.check().map_err(|d| d.join("\n"))?;
+        Ok(t)
+    }
+
+    /// The kingdom's relations (G2): every symbol's signature from the gene frame's Argument rows, the root, the
+    /// `const` rows as the constant placeholders and the `var` rows as the variable terminals.
+    pub fn relations(&self) -> Result<KingdomRelations, String> {
+        let t = self.tables()?;
+        let rows: Vec<(String, Vec<Ty>, Ty)> = t.signatures().into_iter().map(|(s, ins, out)| (self.symbols[s as usize].name.clone(), ins, out)).collect();
+        let constants: Vec<&str> = self.symbols.iter().filter(|s| s.kind == Kind6::Const).map(|s| s.name.as_str()).collect();
+        let variables: Vec<&str> = self.symbols.iter().filter(|s| s.kind == Kind6::Var).map(|s| s.name.as_str()).collect();
+        relations_from_rows(&self.kingdom, vec![self.root.data_type], &rows, &constants).with_variables(&variables)
+    }
+
+    /// The checked contract: what a gene of this kingdom is laid out by.
+    pub fn contract(&self) -> Result<KingdomContract, String> {
+        self.relations()?.check().map_err(|d| d.join("\n"))
     }
 }
 

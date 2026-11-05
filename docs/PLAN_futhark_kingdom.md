@@ -1402,6 +1402,16 @@ bound, decided once); `in_scope` is the one order (the entry's parameters, then 
 `to_text` checking first, every check branch tested, a typed-depth golden. By the rule, a substituted `hist.*` renders
 its first input of its own data type (in1 in the `i32` view), not the constant README 5.3's list names: the lead decides.
 
+**F1b status (2026-11-05): done.** `src/futhark_view/master6.rs` (`Master6`, `ViewSpec6`, `View6`) computes every
+master 6 view's three tables byte for byte as `view.py` does (7 of 7 committed views); `futhark_table.rs`'s
+`Kingdom6::from_tables` reads them (with the master's adapters and the elements' pools) into the gene frame's tables,
+checked (requirements with relation and adapter, bindings, trip arguments, constants), and the contract with a `var.T`
+per `var` row. Every view lays out. At N = 192: k-means `f32`, 9 data types, head 3,057, tail 12,995, Dc 4,202, Dv
+12,230, 32,484 words (design 7.1: about 31,000); the `i32` + `f32` view (`sig/kmeans_i32/m6/`, sniffed with `--elements
+i32 --lets []i32`), 22 data types, 227 symbols, 123,020 words. A demanded data type with no leaf (`[][]i32`, built only
+by `tabrows`) now takes its `var` row, its constant when no variable is in scope (`view.py`, witness V6, README 9).
+Master 5 unchanged.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.

@@ -1,0 +1,13 @@
+kind	name	data_type	properties	requires
+root	main	[][]f32	rows=k & cols=d	out.rows = k -> fit.root; out.cols = d -> fit.root
+input	points	[][]f32	rows=n & cols=d	
+input	centres	[][]f32	rows=k & cols=d	
+zeros	zeros_f32_n	[]f32	len=n	
+zeros	zeros_f32_d	[]f32	len=d	
+zeros	zeros_f32_k	[]f32	len=k	
+zeros	zeros_i32_n	[]i32	len=n	
+zeros	zeros_i32_d	[]i32	len=d	
+zeros	zeros_i32_k	[]i32	len=k	
+size	n	size	value=n	
+size	d	size	value=d	
+size	k	size	value=k	

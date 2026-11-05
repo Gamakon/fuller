@@ -1591,5 +1591,7 @@ pub fn cached(spec_text: &'static str) -> Result<&'static View, String> {
     Ok(v)
 }
 
+pub mod master6;
+
 #[cfg(test)]
 mod tests;

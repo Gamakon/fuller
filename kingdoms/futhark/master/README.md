@@ -463,6 +463,12 @@ A literal of `{E}`'s pool (`pools.tsv`), drawn from Dc as in master 5. It has no
   writes the root environment as `input`, `zeros` and `size` lines in that order, and may have `families` (A7: the
   matrix family alone, with no `depth` line).
 - **The `var` row is admitted in every view**, whatever its `families`.
+- **A data type with no leaf takes its `var` row too** (task F1b). A data type that the root or a kept row demands,
+  and that no kept row of no arguments gives, has its `var` row even with no variable: in the `i32` + `f32` k-means
+  view (`sig/kmeans_i32/m6/`) `[][]i32` is built only by `tabrows`. With no variable in scope the cell renders the
+  data type's constant (`[[0i32]]`), as the design's `var.T` does when c = 0, so the contract's check finds a leaf for
+  every demanded data type. A var row has no argument, so the reachable rows are otherwise unchanged. Witness V6 holds
+  this rule.
 - **The matrix family's traversals are heavy** (`map_rows`, `map2_rows`, `matmul`): in a signature view they sit under
   the core binders (k-means admits the matrix family), so they carry the work bound; `transpose` and `row` do not.
 - **`let`'s name is `let.{S.tag}@{Y.tag}`**, so a view of two `lets` data types has unique names.
