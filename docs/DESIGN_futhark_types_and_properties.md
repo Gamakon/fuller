@@ -162,8 +162,23 @@ legal, a different program, scored by its fitness.
 | k-means, f32 | `f32`, `[]f32`, `[][]f32`, `i64`, `(f32, f32)`, `(f32, f32, f32)`, function types: about 8 | 14,359 |
 | k-means, i32 + f32 | the above plus `i32`, `[]i32`, mixed tuples: about 14 | 237,325 (cannot load) |
 
-The k-means gene at program size 192 falls from 27.6 million words to roughly 30,000. Both to be confirmed by the
-first build.
+### 7.1 The size of an individual
+
+An individual is one Karva gene, sized by Ferreira's equations for a program of at most N functions: master head
+h = 1 + (N − 1)·n_max, master tail t = h·(n_max − 1) + 1. Each data type is a column of that gene: a position holds one
+symbol per type, and expression reads the column of the type demanded there. A column's length follows from how many
+inputs of its type the symbols take (`kingdom_contract.rs`, `heads_from_program_size` and `bounds`), so it varies by
+type; for k-means today the measured average is about 1,920 positions a column (27,563,026 words over 14,359 columns,
+`docs/kmeans_seed.md`).
+
+| k-means, N = 192 | type columns | positions a column (average) | symbols | index words (`var.T`) | words | bytes |
+|---|---:|---:|---:|---:|---:|---:|
+| today | 14,359 | ≈ 1,920 | 27,563,026 | 0 | 27.6 million | 110 MB |
+| this design | ≈ 8 | ≈ 1,920 | ≈ 15,400 | ≈ 15,400 | ≈ 31,000 | ≈ 124 KB |
+
+The positions a column stay about the same, because the program size and the arities do not change; the number of
+columns falls from the cross-product of data types, sizes and scopes to the data types. Exact figures come from the
+first build of the new table.
 
 ## 8. Is it good for many kingdoms?
 
