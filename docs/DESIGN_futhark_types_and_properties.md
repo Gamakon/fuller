@@ -134,6 +134,16 @@ def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)
 `z` is the element type's zero. Every array dimension is at least 1, as the entry points' contracts state, so
 `clampix` is in range.
 
+**Sizes are chosen, not computed (lead decision 2026-11-05, from the reviews).** A function that takes a size
+(`tabulate`, `replicate`, `hist`'s length, a loop's trip count) takes it from the data type `size`, rendered as
+Futhark's `i64`, whose only terminals are the size names in scope (the entry's `n`, `k`, `d`, and the sizes a binder
+introduces), chosen by the index word of `var.size` as any variable is chosen (section 4, pass 3), plus the kingdom's
+size literals if it has any. No function returns a `size`. So every length and bound stays a size name, a literal or
+a symbolic expression of them, the work a program does is known from the case's sizes before it runs, and no adapter
+for a computed size is needed. This applies section 3.1 (`tabulate`: out.len = in0, a size) and the model of a size as
+a data type whose values are the names in scope; it does not change the model. `size` is one more data type in each
+view's count of section 7.
+
 ## 6. A worked example: histogram
 
 Entry: `main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [k]i32`. Data types: `i32`, `[]i32`, `i64`. Today: 162 types.
