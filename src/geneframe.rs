@@ -1,31 +1,10 @@
-//! The nucleotable data model, adopted into fuller and owned here.
+//! THE GENE FRAME'S DATA MODEL: the value types ([`Ty`]), the four kinds of row every kingdom is written in (data
+//! types and properties, arguments, flows, guards and entries: [`KingdomTables`], `schema`), the formula language of
+//! flows and guards (`formula`) and the master tables every kingdom lives in (`master`, `kingdoms/master/`;
+//! `docs/DESIGN_geneframe.md` 3.3).
 //!
-//! Subsumed from `/Users/andrewmorgan/Dev/minkymorgan/nucleotable` (schema +
-//! kingdom defs in `nucleotable/`). The design: one MASTER symbol table whose
-//! rows carry a kingdom + a TYPED, many-hot arity signature; a "kingdom" is a
-//! query over that table returning a stable pset; karva chromosomes are rows
-//! (the `geneframe` layout). This replaces the flat hand-built `master_pset`.
-//!
-//! Implemented in pure Rust (no DuckDB dependency): the data model is the
-//! valuable part; DuckDB/Parquet/Arrow are the store/exchange layer and can be
-//! added later as an optional feature when SQL-evolution / exchange is needed.
-//!
-//! Types (the many-hot arity columns, base set — extensible per kingdom):
-//! S(tring) I(nteger) F(loat) B(oolean) A(rray) L(ist).
-//!
-//! Two row kinds (design 2026-10-09, `docs/PLAN_population_dag.md` §1, not
-//! yet built here): the population table holds ordinary chromosomes and
-//! homeotic chromosomes. A homeotic chromosome is one population-wide shared
-//! definition: a gene tree with a stable row id assigned when it is interned,
-//! a root type (its dual, so a reference is type-checked by the typed
-//! projection like a terminal), memoised row values and a referrer count.
-//! Ordinary genes reference it by href, and an href names the stable id,
-//! never a position in the homeotic tail. Fold is a variation operator that
-//! adds homeotic rows, rewrites ordinary rows to reference them and re-sorts
-//! the homeotic tail by use; execution follows a separate level schedule (a
-//! definition after everything it references). The memoised top of the
-//! homeotic tail is the expressed frame. The symbol table above is unchanged
-//! by this: it types both row kinds.
+//! Also here, from before the rows: the symbolic regression op set as a typed many-hot [`SymbolTable`]
+//! ([`master_table`], the `Symbolic Regression` and `Law` kingdoms the linter and phylu's alphabets read).
 
 use std::collections::BTreeMap;
 
