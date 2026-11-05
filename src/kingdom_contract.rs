@@ -646,14 +646,6 @@ pub fn safewgsl_relations() -> KingdomRelations {
 /// The TSR kingdom of `variant` over `n_inputs` columns (`kingdoms/tsr`, plan F3): every row with its
 /// ordered input duals, the constant placeholder `?@<dual>` at each dual, and the one ROOT dual (the only
 /// dual of the single kingdom) as the program's root.
-pub fn tsr_relations(variant: crate::tsr_kingdom::TsrVariant, n_inputs: usize) -> Result<KingdomRelations, String> {
-    let k = crate::tsr_kingdom::TsrKingdom::load(variant, n_inputs)?;
-    let root = k.root().ok_or_else(|| format!("our software has a bug: {} has no root dual", variant.dir()))?;
-    let rows: Vec<(String, Vec<Ty>, Ty)> = k.rows.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
-    let constants: Vec<&str> = k.rows.iter().filter(|r| r.kind == crate::tsr_kingdom::TsrKind::Const).map(|r| r.name.as_str()).collect();
-    Ok(relations_from_rows(&format!("{}/{}", crate::tsr_kingdom::TSR, variant.dir()), vec![root], &rows, &constants))
-}
-
 /// What a kingdom check reports, for the log: counts, `n_max`, and for each
 /// root the bound table at program size `n` (heads from the design's
 /// `h_T = [T = R] + (N - 1) * a_T`): `L`, the gene width and the widest types.
@@ -947,18 +939,18 @@ mod tests {
     }
 
     /// Prints the bound tables the design asks for (SR, regex, both WGSL
-    /// kingdoms, TSR single, order and order_depth) at program sizes 8, 17 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
+    /// kingdoms) at program sizes 8, 17 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
     #[test]
     fn the_kingdom_reports_print() {
         for n in [8usize, 17, 28, 32] {
-            let mut out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
-            for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::OrderDepth] {
-                out.push(report(&tsr_relations(v, 8).expect("TSR tables load"), n));
-            }
+            let out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
             #[cfg(feature = "wgsl")]
-            out.push(report(&wgsl_relations(), n));
-            #[cfg(feature = "wgsl")]
-            out.push(report(&safewgsl_relations(), n));
+            let out = {
+                let mut out = out;
+                out.push(report(&wgsl_relations(), n));
+                out.push(report(&safewgsl_relations(), n));
+                out
+            };
             for o in out {
                 println!("{o}");
             }

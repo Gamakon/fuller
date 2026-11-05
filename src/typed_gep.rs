@@ -1576,13 +1576,13 @@ mod tests {
 
     #[test]
     fn every_existing_kingdom_lays_out_and_expresses_word_for_word_as_before_the_dv_lane() {
-        use crate::kingdom_contract::{regex_relations, sr_relations, tsr_relations};
+        use crate::kingdom_contract::{regex_relations, sr_relations};
         let mut kingdoms: Vec<(String, crate::kingdom_contract::KingdomRelations)> = vec![("sr".into(), sr_relations()), ("regex".into(), regex_relations())];
         kingdoms.push(("typed regex".into(), crate::regex_typed::typed_regex_relations(false)));
         kingdoms.push(("typed regex, pattern literal".into(), crate::regex_typed::typed_regex_relations(true)));
-        for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::Depth, crate::tsr_kingdom::TsrVariant::OrderDepth] {
-            kingdoms.push((format!("tsr {}", v.dir()), tsr_relations(v, 3).expect("TSR tables load")));
-        }
+        // Every TSR variant has the same Argument rows (they differ by their guards), so one fingerprint.
+        let tsr = crate::tsr_kingdom::rows::TsrRows::load(crate::tsr_kingdom::TsrVariant::Depth, 3).expect("TSR rows load");
+        kingdoms.push(("tsr rows".into(), crate::kingdom_contract::relations_from_tables(&tsr.tables, vec![tsr.entry.output])));
         kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
         for inst in [crate::futhark_pixel::VOLUMEPASSAGE, crate::futhark_pixel::CUNEUS, crate::futhark_pixel::IMAGE] {
             kingdoms.push((format!("futhark pixel {}", inst.name), crate::futhark_pixel::load(&inst).expect("pixel view loads").relations()));
@@ -1601,10 +1601,9 @@ mod tests {
             ("regex", 0x2011_ba00_1666_3a1b),
             ("typed regex", 0x2011_ba00_1666_3a1b),
             ("typed regex, pattern literal", 0xf374_0431_675f_5a8c),
-            ("tsr single", 0x6be9_289b_4aa6_c90b),
-            ("tsr order", 0x63b6_0c17_542c_37b9),
-            ("tsr depth", 0x8890_feef_ab56_ab14),
-            ("tsr order_depth", 0x5872_1638_c12a_7f88),
+            // The one-type TSR rows (plan 7.7 K1; the dual tables and their four fingerprints were deleted with the
+            // depth ladder), taken by a run of this fingerprint on the rows.
+            ("tsr rows", 0x113c_6c94_4793_5d13),
             ("futhark 1-D", 0x4d21_23d5_b0e4_8a3c),
             // Added by the G2 code review's finding 7, each taken at e526a62f (the code before the Dv lane) by a
             // copy of this fingerprint run there.

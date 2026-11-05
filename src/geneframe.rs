@@ -42,25 +42,19 @@ pub mod master;
 /// added — and because every match on `Ty` is non-exhaustive (a `_` arm), that
 /// addition stays backward-compatible.
 ///
-/// Ordering: the base + depth-ladder types come FIRST and never move, so
-/// [`Ty::depth`], [`Ty::LADDER`] and [`Ty::at_depth`] — the SR depth typing —
-/// are unaffected by anything below `T2`.
+/// Ordering: the base types come FIRST and never move. Symbolic regression has ONE data type, `F`; a tree's
+/// transcendental depth is a PROPERTY of it (`kingdoms/tsr/depth/tables.tsv`, the `depth` up flows and the
+/// `in0.depth <= 1` guard on a raising unary), not a type. The old depth ladder `T1`/`T2` was deleted with the move
+/// to the four kinds of row (plan 7.7, task K1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Ty {
     // ---- Base types (Symbolic Regression / SQL / REGEX kingdoms) ----
     S, // String
     I, // Integer
-    F, // Float — also transcendental DEPTH 0
+    F, // Float
     B, // Boolean
     A, // Array
     L, // List
-    /// TRANSCENDENTAL DEPTH 1: the output of one transcendental applied to
-    /// plain floats. See [`typed_depth_table`].
-    T1,
-    /// TRANSCENDENTAL DEPTH 2: a transcendental applied to something already
-    /// `T1`. **There is no `T3`, and that absence is the depth rule** — not a
-    /// check and not a penalty, an arity signature that does not exist.
-    T2,
 
     // ---- NLP-English input types (NLP kingdom) — spaCy entity/phrase labels ----
     Person,
@@ -93,8 +87,7 @@ pub enum Ty {
     Addr, // botji address string
 
     // ---- REGEX kingdom types ----
-    // Appended last so the base + depth-ladder types keep their positions and
-    // `Ty::depth`/`LADDER`/`at_depth` are unaffected (the ordering rule above).
+    // Appended last so the base types keep their positions (the ordering rule above).
     // Integer repeat counts reuse `Ty::I`; they are not needed until counted
     // repetition is added (Phase 1 omits it).
     Char,      // one literal byte
@@ -107,11 +100,6 @@ pub enum Ty {
     /// family, so a new dual is a table row, not a variant; its device code
     /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]). Appended last.
     Wgsl(u16),
-    /// A dual `shape.level` (or the root dual `ROOT`) of the TSR kingdom: the
-    /// index of its row in `kingdoms/tsr/<variant>/types.tsv` (ref `T001` →
-    /// 0). Its device code is [`Ty::TSR_CODE_BASE`] + the index. Appended
-    /// after [`Ty::Wgsl`].
-    Tsr(u16),
     /// A dual of the deprecated 1-D Futhark kingdom: the index of its row in
     /// `kingdoms/futhark_1d/types.tsv` (ref `T001` → 0). Its device code is
     /// [`Ty::FUTHARK_1D_CODE_BASE`] + the index. Appended last.
@@ -131,31 +119,9 @@ pub enum Ty {
 }
 
 impl Ty {
-    /// The transcendental depth this type stands for, `None` for the types that
-    /// are not part of the depth ladder.
-    pub fn depth(self) -> Option<u32> {
-        match self {
-            Ty::F => Some(0),
-            Ty::T1 => Some(1),
-            Ty::T2 => Some(2),
-            _ => None,
-        }
-    }
-
-    /// The depth ladder in order: `F` (0), `T1` (1), `T2` (2). The ladder's
-    /// LENGTH is the ceiling — a `T3` would be a fourth entry here, and there
-    /// is none.
-    pub const LADDER: [Ty; 3] = [Ty::F, Ty::T1, Ty::T2];
-
-    /// The rung at `depth`, or `None` when the ladder has no such rung — which
-    /// is what makes a third level unrepresentable.
-    pub fn at_depth(depth: u32) -> Option<Ty> {
-        Ty::LADDER.get(depth as usize).copied()
-    }
-
     /// Every variant, in declaration order. [`Ty::code`] is the position here.
-    pub const ALL: [Ty; 35] = [
-        Ty::S, Ty::I, Ty::F, Ty::B, Ty::A, Ty::L, Ty::T1, Ty::T2,
+    pub const ALL: [Ty; 33] = [
+        Ty::S, Ty::I, Ty::F, Ty::B, Ty::A, Ty::L,
         Ty::Person, Ty::Org, Ty::Gpe, Ty::Loc, Ty::Norp, Ty::Fac, Ty::Event, Ty::Product,
         Ty::Date, Ty::Time, Ty::Money, Ty::Quantity, Ty::Cardinal, Ty::Percent, Ty::Np, Ty::Ap,
         Ty::Clause, Ty::Verb,
@@ -167,15 +133,13 @@ impl Ty {
     /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
     /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables). A base variant's code is its declaration index from 0
     /// (what `ty as u32` was before the payload variant made the cast
-    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row,
-    /// a TSR dual's [`Ty::TSR_CODE_BASE`] + its row.
+    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row.
     pub fn code(self) -> u32 {
         match self {
             Ty::Wgsl(i) => {
-                assert!(usize::from(i) < Ty::MAX_WGSL_DUALS, "our software has a bug: Wgsl({i}) is past its {} codes and would read back as Tsr", Ty::MAX_WGSL_DUALS);
+                assert!(usize::from(i) < Ty::MAX_WGSL_DUALS, "our software has a bug: Wgsl({i}) is past its {} codes and would read back as Futhark1d", Ty::MAX_WGSL_DUALS);
                 Ty::TABLE_CODE_BASE + u32::from(i)
             }
-            Ty::Tsr(i) => Ty::TSR_CODE_BASE + u32::from(i),
             Ty::Futhark1d(i) => {
                 assert!(
                     usize::from(i) < Ty::MAX_FUTHARK_1D_DUALS,
@@ -204,20 +168,16 @@ impl Ty {
     /// below it.
     pub const TABLE_CODE_BASE: u32 = 256;
 
-    /// The first code of the TSR family; the WGSL family owns
-    /// `TABLE_CODE_BASE..TSR_CODE_BASE` (4,096 duals).
-    pub const TSR_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + Ty::MAX_WGSL_DUALS as u32;
-
     /// The most duals a WGSL kingdom may number: its code range
-    /// `TABLE_CODE_BASE..TSR_CODE_BASE`.
+    /// `TABLE_CODE_BASE..TABLE_CODE_BASE + MAX_WGSL_DUALS`.
     pub const MAX_WGSL_DUALS: usize = 4096;
 
-    /// The most duals a TSR kingdom may number: its index is a `u16`.
-    pub const MAX_TSR_DUALS: usize = u16::MAX as usize + 1;
+    /// The 65,536 codes after the WGSL family were the deleted TSR dual family's (`Ty::Tsr`, plan 7.7 K1). They
+    /// stay unassigned so that no device code of the families after them moved; `from_code` reads them as `None`.
+    pub const RETIRED_TSR_CODES: u32 = u16::MAX as u32 + 1;
 
-    /// The first code of the 1-D Futhark family; the TSR family
-    /// owns `TABLE_CODE_BASE..FUTHARK_1D_CODE_BASE`.
-    pub const FUTHARK_1D_CODE_BASE: u32 = Ty::TSR_CODE_BASE + Ty::MAX_TSR_DUALS as u32;
+    /// The first code of the 1-D Futhark family: after the WGSL family (4,096 duals) and the retired TSR range.
+    pub const FUTHARK_1D_CODE_BASE: u32 = Ty::TABLE_CODE_BASE + Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES;
 
     /// The most duals the 1-D Futhark kingdom may number: its index is a `u16`.
     pub const MAX_FUTHARK_1D_DUALS: usize = u16::MAX as usize + 1;
@@ -240,8 +200,7 @@ impl Ty {
     }
 
     /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
-    /// offset from [`Ty::TABLE_CODE_BASE`], a TSR dual by offset from
-    /// [`Ty::TSR_CODE_BASE`], a 1-D Futhark dual by offset from
+    /// offset from [`Ty::TABLE_CODE_BASE`], a 1-D Futhark dual by offset from
     /// [`Ty::FUTHARK_1D_CODE_BASE`], a Futhark dual by offset from
     /// [`Ty::FUTHARK_CODE_BASE`].
     pub fn from_code(code: u32) -> Option<Ty> {
@@ -251,11 +210,9 @@ impl Ty {
         if code >= Ty::FUTHARK_1D_CODE_BASE {
             return u16::try_from(code - Ty::FUTHARK_1D_CODE_BASE).ok().map(Ty::Futhark1d);
         }
-        if code >= Ty::TSR_CODE_BASE {
-            return u16::try_from(code - Ty::TSR_CODE_BASE).ok().map(Ty::Tsr);
-        }
         if code >= Ty::TABLE_CODE_BASE {
-            return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().map(Ty::Wgsl);
+            // A code in the retired TSR range is no type.
+            return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().filter(|i| usize::from(*i) < Ty::MAX_WGSL_DUALS).map(Ty::Wgsl);
         }
         Ty::ALL.get(code as usize).copied()
     }
@@ -436,99 +393,18 @@ pub fn master_table() -> SymbolTable {
 /// kingdom's semantic ids.
 pub const LAW: &str = "Law";
 
-/// The kingdom name [`typed_depth_table`] files its rows under.
-pub const TYPED_SR: &str = "Symbolic Regression (typed depth)";
-
 /// The REGEX kingdom — the regex AST operators, typed over `Pattern`, `CharClass`, `Char` and `I` (repeat counts).
 /// Its rows are the kingdom `regex` of `kingdoms/master/`, read by [`crate::regex_typed::RegexRows`]; see
 /// `docs/DESIGN_geneframe.md` 8.2 and `docs/PLAN_regex_kingdom_build.md`.
 pub const REGEX: &str = "Regex";
 
-/// The semantic ids that RAISE transcendental depth. Lockstep with
-/// `evolve::engine::t_depth`'s own list — the table and the engine's measured
-/// depth must be the same predicate or the sampler and the checker disagree.
-/// `pow` is absorbing here: `SymbolTable::wide` carries no raw `Pow`, and
-/// `pow2`/`pow3` are whole powers, which `t_depth` does not count.
+/// The semantic ids that RAISE transcendental depth: the same list as the `depth := in0.depth + 1` Flow rows of
+/// `kingdoms/tsr/depth/tables.tsv` within the `wide()` alphabet, and phylu's `t_depth`. `pow` is absorbing here:
+/// `SymbolTable::wide` carries no raw `Pow`, and `pow2`/`pow3` are whole powers, which `t_depth` does not count.
 pub const DEPTH_RAISING: &[&str] = &[
     "sin", "cos", "tan", "log", "exp", "sqrt", "abs", "tanh", "asin", "acos", "protected_sqrt",
     "protected_log", "protected_exp", "protected_asin", "protected_acos",
 ];
-
-/// THE TYPED-DEPTH KINGDOM — the same 26 `Math` ops, but with the typed,
-/// many-hot arity signatures that make a tower of transcendentals
-/// **unrepresentable** rather than merely penalised.
-///
-/// Three rules, and between them they are exactly `t_depth <= 2`:
-///
-/// * **Terminals** are `out {F}` — a variable or a constant is depth 0.
-/// * **Arithmetic is ABSORBING**: it accepts any mix and yields the highest
-///   depth it saw, so depth propagates through `+ - * /`. This is what makes
-///   `exp(-(theta/sqrt(2))**2)` correctly depth 2 rather than depth 1, and the
-///   three depth-2 SRBench laws reach depth 2 through arithmetic, not by
-///   direct nesting.
-/// * **Transcendentals are DEPTH-RAISING** and have **no row accepting `T2`**.
-///   That missing row is the ceiling.
-///
-/// The measurement behind it: over all 133 SRBench true models there are ZERO
-/// directly nested transcendental pairs; 78 laws sit at depth 0, 47 at 1, 3 at
-/// 2, and none at 3 or beyond.
-pub fn typed_depth_table() -> SymbolTable {
-    let mut t = SymbolTable::new();
-    for (row, ins, out) in typed_depth_signatures() {
-        let mut arity = Arity::default();
-        for ty in ins {
-            *arity.inputs.entry(ty).or_insert(0) += 1;
-        }
-        arity.outputs.insert(out, 1);
-        t.push(Symbol {
-            kingdom: TYPED_SR.to_string(),
-            symbol: row.symbol,
-            symbol_name: row.symbol_name,
-            alias: row.alias,
-            semantic_id: row.semantic_id,
-            arity,
-        });
-    }
-    t
-}
-
-/// The typed-depth kingdom's rows with their argument types IN ORDER, `(symbol, ordered inputs, output)`: what
-/// [`typed_depth_table`] counts into its many-hot [`Arity`], and what its [`KingdomTables`] are built from.
-pub fn typed_depth_signatures() -> Vec<(SymbolRow, Vec<Ty>, Ty)> {
-    let mut t = Vec::new();
-    let mut symbol = 1i64;
-    for s in master_table().kingdom("Symbolic Regression") {
-        let n = s.arity.total_in();
-        let raising = DEPTH_RAISING.contains(&s.semantic_id.as_str());
-        // Every combination of input depths this op accepts, as a signature.
-        // A nullary terminal has one row, `out {F}`.
-        let rows: Vec<(Vec<u32>, u32)> = match n {
-            0 => vec![(Vec::new(), 0)],
-            1 if raising => {
-                // DEPTH-RAISING, and it stops at two: no row takes T2.
-                (0..=1).map(|d| (vec![d], d + 1)).collect()
-            }
-            1 => (0..=2).map(|d| (vec![d], d)).collect(),
-            _ => {
-                // ABSORBING: any mix in, the highest depth seen out.
-                let mut v = Vec::new();
-                for a in 0..=2 {
-                    for b in a..=2 {
-                        v.push((vec![a, b], a.max(b)));
-                    }
-                }
-                v
-            }
-        };
-        for (ins, out) in rows {
-            let ins: Vec<Ty> = ins.into_iter().map(|d| Ty::at_depth(d).expect("a ladder rung")).collect();
-            let row = SymbolRow { alias: s.alias.clone(), ..SymbolRow::named(symbol, &s.semantic_id) };
-            t.push((row, ins, Ty::at_depth(out).expect("a ladder rung")));
-            symbol += 1;
-        }
-    }
-    t
-}
 
 // ---------------------------------------------------------------------------
 // The gene frame's configuration tables and formula language
@@ -634,101 +510,6 @@ mod tests {
         assert_eq!(t.max_arity(LAW), 2);
     }
 
-    /// The typed kingdom is a SEPARATE query, so the untyped SR rows are
-    /// literally untouched — which is what the spec claims and what `Ty`'s own
-    /// docstring promises about extension.
-    #[test]
-    fn the_typed_kingdom_leaves_the_untyped_rows_alone() {
-        let plain = master_table();
-        let typed = typed_depth_table();
-        assert_eq!(plain.kingdom(TYPED_SR).len(), 0, "typed rows must not be in the plain table");
-        assert_eq!(typed.kingdom("Symbolic Regression").len(), 0);
-        // Same op set, several signatures apiece.
-        let mut plain_sems: Vec<&str> =
-            plain.kingdom("Symbolic Regression").iter().map(|s| s.semantic_id.as_str()).collect();
-        let mut typed_sems: Vec<&str> =
-            typed.kingdom(TYPED_SR).iter().map(|s| s.semantic_id.as_str()).collect();
-        plain_sems.sort_unstable();
-        plain_sems.dedup();
-        typed_sems.sort_unstable();
-        typed_sems.dedup();
-        assert_eq!(plain_sems, typed_sems, "the typed kingdom must cover exactly the same ops");
-    }
-
-    /// The ceiling, stated as the absence the spec says it is: NO transcendental
-    /// row accepts a `T2` input, so a third level has no signature to be built
-    /// from.
-    #[test]
-    fn no_transcendental_row_accepts_t2() {
-        for s in typed_depth_table().kingdom(TYPED_SR) {
-            if DEPTH_RAISING.contains(&s.semantic_id.as_str()) {
-                assert_eq!(
-                    s.arity.inputs.get(&Ty::T2),
-                    None,
-                    "{} has a row accepting T2 — the ceiling is gone",
-                    s.semantic_id
-                );
-                assert!(s.arity.outputs.contains_key(&Ty::T1) || s.arity.outputs.contains_key(&Ty::T2));
-            }
-        }
-        // And nothing anywhere outputs a rung above T2, because there is none.
-        assert_eq!(Ty::at_depth(3), None, "a T3 rung would be the ceiling removed");
-    }
-
-    /// Arithmetic ABSORBS: it yields the highest depth among its inputs. This is
-    /// what carries depth through `+ - * /` so the three depth-2 SRBench laws,
-    /// which reach depth 2 THROUGH arithmetic, are typed as depth 2.
-    #[test]
-    fn arithmetic_absorbs_the_highest_depth_it_saw() {
-        let t = typed_depth_table();
-        let add: Vec<&Symbol> =
-            t.kingdom(TYPED_SR).into_iter().filter(|s| s.semantic_id == "add").collect();
-        assert_eq!(add.len(), 6, "add wants the six binary depth mixes");
-        for s in add {
-            let highest = Ty::LADDER
-                .iter()
-                .rev()
-                .find(|ty| s.arity.inputs.contains_key(ty))
-                .copied()
-                .expect("a binary row has inputs");
-            assert_eq!(
-                s.arity.outputs.get(&highest),
-                Some(&1),
-                "add {:?} must yield its highest input depth",
-                s.arity.inputs
-            );
-        }
-        // Unary arithmetic is depth-PRESERVING, at all three rungs.
-        let neg: Vec<&Symbol> =
-            t.kingdom(TYPED_SR).into_iter().filter(|s| s.semantic_id == "neg").collect();
-        assert_eq!(neg.len(), 3);
-        for s in neg {
-            let (i, _) = s.arity.inputs.iter().next().expect("one input");
-            assert_eq!(s.arity.outputs.get(i), Some(&1), "neg must preserve depth");
-        }
-    }
-
-    /// A transcendental RAISES by one and has exactly two rows — F and T1 in,
-    /// T1 and T2 out. Two rows, not three, is the whole design.
-    #[test]
-    fn a_transcendental_raises_by_one_and_has_exactly_two_rows() {
-        let t = typed_depth_table();
-        for sem in DEPTH_RAISING {
-            let rows: Vec<&Symbol> =
-                t.kingdom(TYPED_SR).into_iter().filter(|s| &s.semantic_id.as_str() == sem).collect();
-            assert_eq!(rows.len(), 2, "{sem} wants exactly the F and T1 rows");
-            for s in rows {
-                let (i, _) = s.arity.inputs.iter().next().expect("one input");
-                let (o, _) = s.arity.outputs.iter().next().expect("one output");
-                assert_eq!(
-                    o.depth(),
-                    i.depth().map(|d| d + 1),
-                    "{sem} must raise depth by one"
-                );
-            }
-        }
-    }
-
     // ---- Ty::code(), the one spelling of a type on the device ----
 
     #[test]
@@ -741,7 +522,7 @@ mod tests {
             assert_eq!(Ty::from_code(i as u32), Some(*t));
         }
         assert_eq!(Ty::ALL.last(), Some(&Ty::Pattern), "ALL ends at the last base variant");
-        assert_eq!(Ty::ALL.len(), 35);
+        assert_eq!(Ty::ALL.len(), 33);
         // The table-defined family sits past every base code.
         assert_eq!(Ty::Wgsl(0).code(), 256);
         assert_eq!(Ty::Wgsl(70).code(), 326);
@@ -752,25 +533,21 @@ mod tests {
         assert_eq!(codes.len(), Ty::ALL.len(), "codes are unique");
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
         assert_eq!(Ty::from_code(Ty::ALL.len() as u32), None);
-        // Both table-defined ranges round-trip in full and do not overlap.
-        assert_eq!(Ty::TSR_CODE_BASE, 4352);
-        for i in 0..(Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE) as u16 {
+        // The table-defined ranges round-trip in full and do not overlap.
+        // The retired TSR range (4352..69888) is no type, so the Futhark families' codes did not move.
+        assert_eq!(Ty::FUTHARK_1D_CODE_BASE, 69888);
+        for i in 0..Ty::MAX_WGSL_DUALS as u16 {
             assert_eq!(Ty::from_code(Ty::Wgsl(i).code()), Some(Ty::Wgsl(i)));
         }
-        for i in 0..=u16::MAX {
-            assert_eq!(Ty::from_code(Ty::Tsr(i).code()), Some(Ty::Tsr(i)));
-        }
-        assert_eq!(Ty::Tsr(0).code(), 4352);
         assert_eq!(Ty::from_code(4351), Some(Ty::Wgsl(4095)));
-        assert_eq!(Ty::from_code(4352), Some(Ty::Tsr(0)));
-        // The 1-D Futhark family sits after the TSR family, and the two do
+        assert_eq!((Ty::from_code(4352), Ty::from_code(69887)), (None, None));
+        // The 1-D Futhark family sits after the WGSL family, and the two do
         // not overlap.
-        assert_eq!(Ty::FUTHARK_1D_CODE_BASE, Ty::TSR_CODE_BASE + 65536);
         for i in 0..=u16::MAX {
             assert_eq!(Ty::from_code(Ty::Futhark1d(i).code()), Some(Ty::Futhark1d(i)));
         }
         assert_eq!(Ty::from_code(Ty::FUTHARK_1D_CODE_BASE), Some(Ty::Futhark1d(0)));
-        assert!(Ty::Futhark1d(0) > Ty::Tsr(u16::MAX), "ordered after the TSR family");
+        assert!(Ty::Futhark1d(0) > Ty::Wgsl(u16::MAX), "ordered after the WGSL family");
         // The Futhark family sits after the 1-D one, so the two
         // kingdoms' duals cannot be confused for one another.
         assert_eq!(Ty::FUTHARK_CODE_BASE, Ty::FUTHARK_1D_CODE_BASE + 65536);
@@ -788,8 +565,7 @@ mod tests {
             "the two Futhark families do not overlap"
         );
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
-        // The depth ladder is unmoved by the numbering.
-        assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
+        assert_eq!(Ty::F.code(), 2);
     }
 
     #[test]
@@ -797,7 +573,7 @@ mod tests {
         assert!(Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS, Ty::MAX_WGSL_DUALS).is_ok());
         let e = Ty::check_dual_count("k", Ty::MAX_WGSL_DUALS + 1, Ty::MAX_WGSL_DUALS).unwrap_err();
         assert_eq!(e, "our software has a bug: kingdom k has 4097 duals, more than its 4096 codes");
-        assert_eq!(Ty::TSR_CODE_BASE - Ty::TABLE_CODE_BASE, Ty::MAX_WGSL_DUALS as u32);
+        assert_eq!(Ty::FUTHARK_1D_CODE_BASE - Ty::TABLE_CODE_BASE, Ty::MAX_WGSL_DUALS as u32 + Ty::RETIRED_TSR_CODES);
     }
 
     #[test]
@@ -841,12 +617,8 @@ mod tests {
             let ordered = master.kingdom(k).iter().map(|s| (vec![Ty::F; s.arity.total_in() as usize], Ty::F)).collect();
             derives_todays_arity(&master, k, ordered);
         }
-        derives_todays_arity(&typed_depth_table(), TYPED_SR, typed_depth_signatures().into_iter().map(|(_, i, o)| (i, o)).collect());
-        use crate::tsr_kingdom::{TsrKingdom, TsrVariant, TSR};
-        for v in [TsrVariant::Single, TsrVariant::Order, TsrVariant::Depth, TsrVariant::OrderDepth] {
-            let k = TsrKingdom::load(v, 3).expect("TSR tables load");
-            derives_todays_arity(&k.symbol_table(), TSR, k.rows.iter().map(|r| (r.inputs.clone(), r.output)).collect());
-        }
+        let rx = crate::regex_typed::RegexRows::load(true).expect("the regex rows load");
+        derives_todays_arity(&rx.tables.symbol_table(), REGEX, rx.tables.signatures().into_iter().map(|(_, i, o)| (i, o)).collect());
         #[cfg(feature = "wgsl")]
         for k in [crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WgslKingdom::load_safe()] {
             derives_todays_arity(&k.symbol_table(), crate::wgsl::loader::WGSL, k.rows.iter().map(|r| (r.inputs.clone(), r.output)).collect());
@@ -917,12 +689,9 @@ mod tests {
 
     #[test]
     fn every_kingdoms_contract_is_unchanged_through_the_tables() {
-        use crate::kingdom_contract::{regex_relations, sr_relations, tsr_relations};
+        use crate::kingdom_contract::{regex_relations, sr_relations};
         the_contract_is_unchanged_through_the_tables(&sr_relations());
         the_contract_is_unchanged_through_the_tables(&regex_relations());
-        for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::Depth, crate::tsr_kingdom::TsrVariant::OrderDepth] {
-            the_contract_is_unchanged_through_the_tables(&tsr_relations(v, 3).expect("TSR tables load"));
-        }
         #[cfg(feature = "wgsl")]
         {
             the_contract_is_unchanged_through_the_tables(&crate::kingdom_contract::wgsl_relations());
@@ -932,41 +701,5 @@ mod tests {
         }
         // The deprecated 1-D Futhark kingdom.
         the_contract_is_unchanged_through_the_tables(&crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations());
-    }
-
-    /// Finding 5 of the G1 review: the typed-depth kingdom's table as literals, not recounted from the signatures that
-    /// build it. 26 operations (no terminal: the SR kingdom's leaves come from elsewhere): 6 binary absorbing ones of
-    /// 6 rows, 15 raising unary ones of 2 rows (none takes `T2`), 5 absorbing unary ones of 3 rows: 81 rows.
-    #[test]
-    fn the_typed_depth_table_as_literals() {
-        let t = typed_depth_table();
-        let rows = t.kingdom(TYPED_SR);
-        assert_eq!(rows.len(), 81);
-        let arity = |ins: &[(Ty, u32)], out: Ty| Arity { inputs: ins.iter().copied().collect(), outputs: BTreeMap::from([(out, 1)]) };
-        let (f, t1, t2) = (Ty::F, Ty::T1, Ty::T2);
-        for (symbol, name, want) in [
-            (1, "add", arity(&[(f, 2)], f)),
-            (2, "add", arity(&[(f, 1), (t1, 1)], t1)),
-            (3, "add", arity(&[(f, 1), (t2, 1)], t2)),
-            (5, "add", arity(&[(t1, 1), (t2, 1)], t2)),
-            (6, "add", arity(&[(t2, 2)], t2)),
-            (25, "neg", arity(&[(f, 1)], f)),
-            (26, "neg", arity(&[(t1, 1)], t1)),
-            (27, "neg", arity(&[(t2, 1)], t2)),
-            (28, "sin", arity(&[(f, 1)], t1)),
-            (29, "sin", arity(&[(t1, 1)], t2)),
-            (44, "pow2", arity(&[(f, 1)], f)),
-            (46, "pow2", arity(&[(t2, 1)], t2)),
-            (50, "pow", arity(&[(f, 2)], f)),
-            (68, "protected_div", arity(&[(f, 2)], f)),
-            (80, "protected_acos", arity(&[(f, 1)], t1)),
-            (81, "protected_acos", arity(&[(t1, 1)], t2)),
-        ] {
-            let s = rows.iter().find(|s| s.symbol == symbol).unwrap_or_else(|| panic!("symbol {symbol}"));
-            assert_eq!((s.semantic_id.as_str(), &s.arity), (name, &want), "symbol {symbol}");
-        }
-        let raising_rows = rows.iter().filter(|s| DEPTH_RAISING.contains(&s.semantic_id.as_str())).count();
-        assert_eq!(raising_rows, 30);
-        assert!(rows.iter().filter(|s| DEPTH_RAISING.contains(&s.semantic_id.as_str())).all(|s| !s.arity.inputs.contains_key(&t2)), "no raising row takes T2");
     }
 }

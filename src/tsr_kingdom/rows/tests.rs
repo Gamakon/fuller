@@ -1,13 +1,11 @@
-//! Tests of the TSR kingdom as rows: the Flow rows give phylu's stream order and today's depth; each variant expresses
-//! exactly the programs today's typed tables make legal; nothing illegal is expressed; the layout is the single
-//! kingdom's; the tables are the generator's.
+//! Tests of the symbolic regression kingdoms as rows: the Flow rows give phylu's stream order and today's depth; each
+//! variant expresses exactly the programs within its limits (the golden's), nothing illegal; the host decode is the
+//! device rules' (the K1 smoke test); the layout is the single kingdom's; the tables are the generator's.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use super::*;
 use crate::geneframe::PropertyExpr;
-use crate::kingdom_contract::tsr_relations;
-use crate::tsr_kingdom::{TsrKind, TsrKingdom};
 use crate::typed_environment::Failure;
 use crate::typed_gep::{express, Domain};
 
@@ -286,70 +284,6 @@ fn the_flows_give_phylus_stream_order_and_todays_depth() {
 
 // ---- today's typed tables ----------------------------------------------------------------------------------------
 
-/// Today's typed tables of a variant (`types.tsv`, `functions.tsv`), as a bottom-up typer: a subtree's value is the
-/// set of duals it can be given (a bitmask; a leaf fits every dual but ROOT), and a whole tree is legal when a row (a
-/// root twin, or in `single` the one dual) takes it at the root.
-struct Typed {
-    rows: HashMap<String, Vec<(Vec<u32>, u32)>>,
-    twins: HashMap<String, Vec<Vec<u32>>>,
-    leaf: u64,
-    root: u32,
-    single: bool,
-    memo: HashMap<(String, Vec<u64>), u64>,
-}
-
-impl Typed {
-    fn new(variant: TsrVariant) -> Typed {
-        let old = TsrKingdom::load(variant, N_INPUTS).unwrap();
-        assert!(old.duals.len() <= 64);
-        let ix = |ty: Ty| match ty {
-            Ty::Tsr(i) => u32::from(i),
-            other => panic!("{other:?}"),
-        };
-        let root = ix(old.root().unwrap());
-        let mut rows: HashMap<String, Vec<(Vec<u32>, u32)>> = HashMap::new();
-        let mut twins: HashMap<String, Vec<Vec<u32>>> = HashMap::new();
-        for r in &old.rows {
-            let ins: Vec<u32> = r.inputs.iter().map(|t| ix(*t)).collect();
-            match r.kind {
-                TsrKind::Function => rows.entry(r.semantic_id.clone()).or_default().push((ins, ix(r.output))),
-                TsrKind::RootTwin => twins.entry(r.semantic_id.clone()).or_default().push(ins),
-                TsrKind::Var(_) | TsrKind::Const => {}
-            }
-        }
-        let single = variant == TsrVariant::Single;
-        let leaf = (0..old.duals.len() as u32).filter(|i| single || *i != root).fold(0u64, |m, i| m | (1 << i));
-        Typed { rows, twins, leaf, root, single, memo: HashMap::new() }
-    }
-
-    fn set(&mut self, k: &TsrRows, t: &Tree) -> u64 {
-        if t.kids.is_empty() {
-            return self.leaf;
-        }
-        let kids: Vec<u64> = t.kids.iter().map(|c| self.set(k, c)).collect();
-        let name = k.contract.name(t.symbol).to_string();
-        if let Some(v) = self.memo.get(&(name.clone(), kids.clone())) {
-            return *v;
-        }
-        let fits = |ins: &[u32]| ins.iter().zip(&kids).all(|(a, s)| s & (1 << a) != 0);
-        let v = self.rows.get(&name).into_iter().flatten().filter(|(ins, _)| fits(ins)).fold(0u64, |m, (_, out)| m | (1 << out));
-        self.memo.insert((name, kids), v);
-        v
-    }
-
-    fn legal(&mut self, k: &TsrRows, t: &Tree) -> bool {
-        if t.kids.is_empty() {
-            return true;
-        }
-        if self.single {
-            return self.set(k, t) & (1 << self.root) != 0;
-        }
-        let kids: Vec<u64> = t.kids.iter().map(|c| self.set(k, c)).collect();
-        let name = k.contract.name(t.symbol);
-        self.twins.get(name).into_iter().flatten().any(|ins| ins.iter().zip(&kids).all(|(a, s)| s & (1 << a) != 0))
-    }
-}
-
 /// A gene valid by layout: each head cell any symbol of its type, each tail cell a terminal, each Dc word below its
 /// pool's length.
 fn random_gene(c: &KingdomContract, layout: &GeneLayout, consts: &BTreeMap<Ty, u32>, rng: &mut Rng) -> Vec<u32> {
@@ -393,21 +327,16 @@ fn golden_legal(k: &TsrRows, t: &Tree) -> bool {
 }
 
 const GENES: usize = 10_000;
-const TYPED_GENES: usize = 2_000;
 
-/// EVERY VARIANT'S LEGAL PROGRAMS ARE TODAY'S TYPED TABLES' (plan 8.6 tests 1 and 2), both ways, on random genes:
-///
-/// - on 10,000 random 104-word genes a variant (head 34, 4 inputs): an expressed tree decodes with NO substitution
-///   exactly when today's typed tables give it a typing, and exactly when the golden says it is within the limits;
-///   and the program it expresses (substitutions applied) has a typing and is within the limits: NOTHING ILLEGAL;
-/// - on 2,000 random genes of today's typed variant (program size 17): every expressed tree decodes with no
-///   substitution.
+/// EVERY VARIANT EXPRESSES EXACTLY THE PROGRAMS WITHIN ITS LIMITS, AND NOTHING ILLEGAL (plan 8.6 tests 1 and 2), on
+/// 10,000 random 104-word genes a variant (head 34, 4 inputs): an expressed tree decodes with NO substitution exactly
+/// when the golden says it is within the limits; the program it expresses (substitutions applied) is within the limits
+/// and decodes again clean.
 #[test]
-fn every_variant_expresses_exactly_todays_legal_programs_and_nothing_illegal() {
+fn every_variant_expresses_exactly_the_legal_programs_and_nothing_illegal() {
     for variant in TsrVariant::ALL {
         let d = variant.dir();
         let k = TsrRows::load(variant, N_INPUTS).unwrap();
-        let mut typed = Typed::new(variant);
         let layout = k.layout(HEAD).unwrap();
         let consts = BTreeMap::from([(Ty::F, 1u32)]);
         let mut rng = Rng(7011 + variant as u64);
@@ -419,10 +348,9 @@ fn every_variant_expresses_exactly_todays_legal_programs_and_nothing_illegal() {
             let failures = dec.failures();
             assert!(failures.iter().all(|f| matches!(f, Failure::Substituted { by: Substitution::Input(0), .. })), "{d}: every repair is {{in0}}: {failures:?}");
             let no_sub = failures.is_empty();
-            assert_eq!(no_sub, typed.legal(&k, &tree), "{d}: substitution-free exactly when today's tables type it: {tree:?}");
             assert_eq!(no_sub, golden_legal(&k, &tree), "{d}: substitution-free exactly when within the golden's limits: {tree:?}");
             let p = program(&dec);
-            assert!(typed.legal(&k, &p) && golden_legal(&k, &p), "{d}: the expressed program is illegal: {p:?}");
+            assert!(golden_legal(&k, &p), "{d}: the expressed program is illegal: {p:?}");
             assert!(k.decode(&p).unwrap().failures().is_empty(), "{d}: the program decodes again with no substitution");
             if no_sub {
                 clean += 1;
@@ -438,24 +366,39 @@ fn every_variant_expresses_exactly_todays_legal_programs_and_nothing_illegal() {
             assert!(clean > 0 && substituted > 0, "{d}: both legal and illegal trees drawn ({clean} clean, {substituted} substituted)");
         }
         eprintln!("{d}: {GENES} genes, {clean} clean, {substituted} substituted, {nodes_dropped} nodes dropped");
-
-        // The other way: genes of today's typed variant.
-        let old = tsr_relations(variant, N_INPUTS).unwrap().check().unwrap();
-        let root = old.roots()[0];
-        let old_layout = GeneLayout::from_program_size(&old, root, 17).unwrap();
-        let old_consts: BTreeMap<Ty, u32> = old.types().iter().filter(|t| old.constant_capable(**t)).map(|t| (*t, 1)).collect();
-        fn to_rows(old: &KingdomContract, k: &TsrRows, t: &Tree) -> Tree {
-            let name = old.name(t.symbol);
-            let base = name.split_once('@').map_or(name, |(a, _)| a);
-            Tree { symbol: named(k, base), const_index: t.const_index, kids: t.kids.iter().map(|c| to_rows(old, k, c)).collect() }
-        }
-        for _ in 0..TYPED_GENES {
-            let gene = random_gene(&old, &old_layout, &old_consts, &mut rng);
-            let tree = to_rows(&old, &k, &express(&old, &old_layout, &gene, &old_consts).unwrap().tree());
-            assert!(k.decode(&tree).unwrap().failures().is_empty(), "{d}: a typed gene's tree needs a substitution: {tree:?}");
-            assert!(golden_legal(&k, &tree), "{d}: a typed gene's tree is outside the golden's limits");
-        }
     }
+}
+
+/// THE K1 SMOKE TEST (plan 7.7): the symbolic regression kingdom is the `depth` variant. 1,000 random genes decode on
+/// the rows into legal expressions (no path with more than two transcendentals, every repair `{in0}`, the program
+/// decodes again clean), and the host decode ([`TsrRows::decode_gene`]) equals the device-rule decode (the host twin
+/// of phylu's `typed_decode.wgsl`, [`twin`]) node for node: symbol, constant, gene position, arity, every property,
+/// and the substituted positions.
+#[test]
+fn k1_symbolic_regression_smoke_1000_genes_decode_legal_and_equal_to_the_device_rules() {
+    let k = TsrRows::load(TsrVariant::Depth, N_INPUTS).unwrap();
+    let rules = k.device_rules().unwrap();
+    let layout = k.layout(HEAD).unwrap();
+    let consts = BTreeMap::from([(Ty::F, 5u32)]);
+    let mut rng = Rng(20_261_105);
+    let (mut substituted, mut deepest) = (0usize, 0u32);
+    for _ in 0..1_000 {
+        let gene = random_gene(&k.contract, &layout, &consts, &mut rng);
+        let got = k.decode_gene(&layout, &gene, &consts).unwrap();
+        let (nodes, _) = flatten(&k, &got.tree());
+        let depth = t_depth(&nodes);
+        assert!(depth <= 2, "a program with {depth} transcendentals on a path");
+        deepest = deepest.max(depth);
+        assert!(k.decode(&got.tree()).unwrap().failures().is_empty(), "the program decodes again clean");
+        let e = express(&k.contract, &layout, &gene, &consts).unwrap();
+        let (tw, ts) = twin(&rules, &e, &|s| k.contract.signature(s).len());
+        let host: Vec<TwinNode> = got.nodes.iter().map(|n| (n.symbol, n.const_index, n.pos, n.arity, Profile { depth: n.depth, order: n.order, fam: n.fam, arm: n.arm, ties: n.ties })).collect();
+        assert_eq!(tw, host, "the host decode is the device rules' decode");
+        assert_eq!(ts, got.substituted);
+        substituted += usize::from(!got.substituted.is_empty());
+    }
+    assert!(substituted > 0 && deepest == 2, "{substituted} genes substituted, deepest program {deepest}");
+    eprintln!("K1 smoke: 1000 of 1000 genes legal (depth <= 2, deepest {deepest}), host = device rules on every gene, {substituted} genes substituted");
 }
 
 // ---- the rows, the layout, the generator -------------------------------------------------------------------------
@@ -491,7 +434,7 @@ fn each_variant_is_the_same_rows_but_its_guards() {
 }
 
 /// The layout is the single kingdom's: one frame `F`, at head 34 a tail of 35, a Dc of 35 and no Dv lane: 104 words
-/// a gene; and at program size 17 the width of today's typed `single` variant (101).
+/// a gene; and at program size 17 the width of the old one-type `single` tables (101).
 #[test]
 fn the_gene_is_one_type_and_104_words_at_todays_head() {
     for variant in TsrVariant::ALL {
@@ -502,8 +445,6 @@ fn the_gene_is_one_type_and_104_words_at_todays_head() {
         assert_eq!((f.ty, f.head_len, f.tail_len, f.dc_len, f.dv_off), (Ty::F, 34, 35, 35, None));
         assert_eq!(l.width, 104);
         let at17 = GeneLayout::from_program_size(&k.contract, Ty::F, 17).unwrap();
-        let old = tsr_relations(TsrVariant::Single, N_INPUTS).unwrap().check().unwrap();
-        assert_eq!(at17.width, GeneLayout::from_program_size(&old, old.roots()[0], 17).unwrap().width);
         assert_eq!(at17.width, 101);
     }
 }
