@@ -1,13 +1,12 @@
-//! The table-defined Futhark kingdoms' shared machinery: the rows, the loader
-//! that reads a kingdom's `types.tsv` and `functions.tsv`, the renderer from an
-//! expressed tree to Futhark source, the ADF rendering, and the gene RNG.
+//! The Futhark kingdoms' tables: the Futhark kingdom's views of four kinds of row ([`Kingdom6`], `kingdom6`), and the
+//! machinery of the kingdoms whose types are duals of a `types.tsv` (the rows, the loader that reads a kingdom's
+//! `types.tsv` and `functions.tsv`, the renderer from an expressed tree to Futhark source, the ADF rendering), and the
+//! gene RNG.
 //!
-//! Every Futhark kingdom is loaded through [`FutharkKingdom::from_tables`]: the
-//! Futhark kingdom ([`crate::futhark`], `kingdoms/futhark/`) with its signature
-//! and pixel families ([`crate::futhark_sig`], [`crate::futhark_pixel`]), and
-//! the deprecated 1-D Futhark kingdom ([`crate::futhark_1d_kingdom`],
-//! `kingdoms/futhark_1d/`). The [`FutharkFamily`] of a kingdom decides which
-//! [`Ty`] family its duals belong to, so the kingdoms' duals cannot collide.
+//! The dual kingdoms are loaded through [`FutharkKingdom::from_tables`]: the Futhark kingdom's pixel family
+//! ([`crate::futhark_pixel`], `kingdoms/futhark/pixel/`) and the deprecated 1-D Futhark kingdom
+//! ([`crate::futhark_1d_kingdom`], `kingdoms/futhark_1d/`). The [`FutharkFamily`] of a kingdom decides which [`Ty`]
+//! family its duals belong to, so the kingdoms' duals cannot collide.
 //!
 //! The genetic representation is the Karva gene. The Futhark *source* is a
 //! rendering of the expressed tree -- regenerated on every evaluation, never
@@ -28,7 +27,7 @@ use crate::typed_gep::Tree;
 pub enum FutharkFamily {
     /// The 1-D Futhark kingdom: [`Ty::Futhark1d`].
     Plain,
-    /// The Futhark kingdom: [`Ty::Futhark`].
+    /// The Futhark kingdom's pixel family: [`Ty::Futhark`].
     Shape,
 }
 
@@ -509,7 +508,7 @@ impl GeneRng {
     }
 }
 
-// ---- master 6: a kingdom of four kinds of row (`kingdom6`) ---------------------------------------------------------
+// ---- the Futhark kingdom's views: a kingdom of four kinds of row (`kingdom6`) ----------------------------------------
 
 mod kingdom6;
 pub use kingdom6::{Kingdom6, Program6};

@@ -1,8 +1,0 @@
-# kind	name	element	dims
-# the A7 matrix kingdom: three dimension roles, rooted at the [n][p] product (hand-written: A7 has no entry source until step 4)
-shape	matrix		
-master	1		
-element	f32		
-roles	n,m,p		
-root	n,p		
-families	matrix		

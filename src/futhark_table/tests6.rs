@@ -487,7 +487,7 @@ fn nested_binders_render_distinct_names_and_the_interpreter_and_c_agree() {
     assert!(p.adapter_free(), "{:?}", p.adapters);
     assert!(p.text.contains("(\\i_n -> ") && p.text.contains("(\\i2_n -> "), "{}", p.text);
     let tree = build6(&k, m6).unwrap();
-    let interp = crate::futhark_sig::Interp::new6(&std::sync::Arc::new(k.clone()), &crate::futhark_sig::signature(&problem("reduce").unwrap().instance).unwrap()).unwrap();
+    let interp = crate::futhark_sig::Interp::new6(&std::sync::Arc::new(k.clone()), &crate::futhark_sig::signature(problem("reduce").unwrap().name).unwrap()).unwrap();
     let dir = scratch("nested_binders");
     let exe = crate::futhark_sig::compile_c(&p.text, &dir).unwrap();
     let cases = crate::futhark_sig::load_cases(&problem("reduce").unwrap()).unwrap();

@@ -22,7 +22,7 @@ fn problem_of(view6: &str) -> Problem {
 /// A view's kingdom and its master 6 interpreter.
 fn interp6(view6: &str) -> (Arc<Kingdom6>, Interp) {
     let k = Arc::new(kingdom6(view6).unwrap_or_else(|e| panic!("{view6}: {e}")));
-    let sig = signature(&problem_of(view6).instance).unwrap();
+    let sig = signature(problem_of(view6).name).unwrap();
     let i = Interp::new6(&k, &sig).unwrap_or_else(|e| panic!("{view6}: {e}"));
     (k, i)
 }
@@ -91,7 +91,7 @@ fn run_cases_and_distinct(k: &Kingdom6, view6: &str) -> (Vec<Case>, Case) {
 /// small length (7, 5, 3, 2 in the signature's order, none above its own), each input its leading rows and columns, a
 /// size input its cropped value. The case's own values, at sizes the interpreter runs every gene at in seconds.
 fn cropped(view6: &str, case: &Case) -> (Vec<Array>, Vec<u8>) {
-    let sig = signature(&problem_of(view6).instance).unwrap();
+    let sig = signature(problem_of(view6).name).unwrap();
     let full = sig.sizes(&case.inputs).unwrap();
     let small: BTreeMap<&String, usize> = sig.dims.iter().zip([7usize, 5, 3, 2, 11, 13]).map(|(d, s)| (d, s.min(full[d]))).collect();
     let inputs: Vec<Array> = sig
@@ -151,7 +151,7 @@ fn every_reference_has_its_stored_value_work_and_static_cost() {
     for r in &REFERENCES6 {
         let key = r.key();
         let p = problem(r.problem).unwrap();
-        let sig = signature(&p.instance).unwrap();
+        let sig = signature(p.name).unwrap();
         let (k6, i6) = interp6(r.problem);
         let t6 = build6(&k6, &(r.master6)()).unwrap_or_else(|e| panic!("{key}: {e}"));
         let mut cases = load_cases(&p).unwrap();
@@ -168,7 +168,7 @@ fn every_reference_has_its_stored_value_work_and_static_cost() {
             let sizes = sig.sizes(&c.inputs).unwrap();
             let w = i6.work_parts(&t6, &sizes).unwrap();
             assert_eq!((w.nodes.to_string(), w.state.to_string()), (want[1].to_string(), want[2].to_string()), "{key} on {}: the work differs", c.name);
-            let s6 = i6.static_cost(&t6, &sizes).unwrap().expect("master 6 costs every view");
+            let s6 = i6.static_cost(&t6, &sizes).unwrap();
             if want[3] != "-" {
                 assert_eq!([s6.traffic.to_string(), s6.alloc.to_string(), s6.depth.to_string()], [want[3], want[4], want[5]], "{key} on {}: the static cost differs", c.name);
                 costed += 1;
@@ -194,10 +194,10 @@ fn a_thousand_random_genes_a_view_run_on_the_interpreter_and_have_a_work_bound()
         let started = Instant::now();
         let (k, i6) = interp6(view6);
         let case = run_cases_and_distinct(&k, view6).1;
-        let case_sizes_of = signature(&problem_of(view6).instance).unwrap().sizes(&case.inputs).unwrap();
+        let case_sizes_of = signature(problem_of(view6).name).unwrap().sizes(&case.inputs).unwrap();
         let small = cropped(view6, &case);
         let mut cropped_runs = 0usize;
-        let all: Vec<BTreeMap<String, usize>> = load_cases(&problem_of(view6)).unwrap().iter().map(|c| signature(&problem_of(view6).instance).unwrap().sizes(&c.inputs).unwrap()).collect();
+        let all: Vec<BTreeMap<String, usize>> = load_cases(&problem_of(view6)).unwrap().iter().map(|c| signature(problem_of(view6).name).unwrap().sizes(&c.inputs).unwrap()).collect();
         let (mut adapted, mut most, mut charged) = (0usize, 0u128, 0u128);
         for (g, tree) in random_trees(&k, view6, n, 0x5eed_0000 + v as u64).iter().enumerate() {
             let program = k.program(tree).unwrap();
@@ -321,10 +321,7 @@ fn agreement(got: &Array, want: &Array, folded: impl FnOnce() -> Result<Array, S
 
 /// The interpreter's value of a tree with Futhark's zero-dividend fold.
 fn eval_folded(i: &Interp, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
-    match &i.0 {
-        Masters::Six(m) => m.eval_zero_dividends_folded(tree, inputs),
-        Masters::Five(_) => Err("the zero-dividend fold is master 6's".into()),
-    }
+    i.0.eval_zero_dividends_folded(tree, inputs)
 }
 
 /// PROOF 1, THE `c` BACKEND AGAINST THE INTERPRETER (plan 7.3 item 1): 100 random genes of every master 6 view
@@ -353,7 +350,7 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
                 let g = base + i;
                 adapted += usize::from(text.contains("def fit") || text.contains("def clampix") || text.contains("def fitrows"));
                 for case in &cases {
-                    let over = i6.work_parts(&trees[g], &signature(&problem_of(view6).instance).unwrap().sizes(&case.inputs).unwrap()).unwrap().nodes > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
+                    let over = i6.work_parts(&trees[g], &signature(problem_of(view6).name).unwrap().sizes(&case.inputs).unwrap()).unwrap().nodes > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
                     let small;
                     let (inputs, stdin) = if over {
                         small = cropped(view6, case);
@@ -408,7 +405,7 @@ fn a_gene_with_an_adapter_costs_more_than_the_same_gene_without() {
         let (pa, pb) = (k.program(&a).unwrap(), k.program(&b).unwrap());
         assert!(pa.adapters.iter().any(|(_, x, _)| x == adapter) && pb.adapter_free(), "{with}: {:?}; {without}: {:?}", pa.adapters, pb.adapters);
         let sizes: BTreeMap<String, usize> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| (l.name.clone(), 4)).collect();
-        let (ca, cb) = (i6.static_cost(&a, &sizes).unwrap().unwrap(), i6.static_cost(&b, &sizes).unwrap().unwrap());
+        let (ca, cb) = (i6.static_cost(&a, &sizes).unwrap(), i6.static_cost(&b, &sizes).unwrap());
         let (wa, wb) = (i6.work_parts(&a, &sizes).unwrap(), i6.work_parts(&b, &sizes).unwrap());
         assert!(ca.traffic > cb.traffic && wa.nodes > wb.nodes, "{adapter}: with {ca:?} {wa:?}, without {cb:?} {wb:?}");
         eprintln!("{view6} {adapter}: traffic {} against {}, node executions {} against {}", ca.traffic, cb.traffic, wa.nodes, wb.nodes);
@@ -466,7 +463,7 @@ fn an_adapters_own_charge_covers_its_full_traffic_at_every_size() {
     eprintln!("adapters charged their full traffic: fits to a shorter length {shorter}, an equal {equal}, a longer {longer}; other adapters {other}");
     let (k, i6) = interp6("kmeans");
     let sizes: BTreeMap<String, usize> = [("n", 1000), ("k", 10), ("d", 3)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
-    let cost = |t: &str| i6.static_cost(&build6(&k, t).unwrap(), &sizes).unwrap().unwrap().traffic;
+    let cost = |t: &str| i6.static_cost(&build6(&k, t).unwrap(), &sizes).unwrap().traffic;
     let (fitted, clean) = (cost(genes[0].1), cost("(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_n) centres)"));
     assert!(fitted < clean, "a shortening fit costs {fitted}, its clean form {clean}");
     eprintln!("a shortening fit's program costs {fitted} against its clean form's {clean} (n = 1000, k = 10): the downstream saving is real");

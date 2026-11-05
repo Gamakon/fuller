@@ -156,7 +156,7 @@ fn the_quality_cliff_and_the_hff_percentile_are_as_specified() {
 /// (one product where A7 adds two) is wrong under the bound, and so is one cell off by more than the bound.
 #[test]
 fn the_a7_f32_bound_accepts_the_gpus_published_output_and_rejects_a_wrong_program() {
-    use crate::futhark_sig::{build, compare, load, load_cases, problem, signature, Interp};
+    use crate::futhark_sig::{build6, compare, kingdom6, load_cases, problem, signature, Interp};
     let a7 = problem("a7").unwrap();
     let s = scheme_for_problem_on(&a7, None, true).unwrap();
     assert_eq!((s.name, s.fault, s.is_flat(), s.default_quality_weight()), (A7_F32_BOUND, None, true, ANSWER_QUALITY_WEIGHT));
@@ -207,9 +207,9 @@ fn the_a7_f32_bound_accepts_the_gpus_published_output_and_rejects_a_wrong_progra
         assert_eq!(r[0], 1.0 / want.len() as f64, "{}: one cell over the bound", c.name);
     }
     // A wrong program: the one product, where A7 adds two.
-    let k = load(&a7.instance).unwrap();
-    let interp = Interp::new(&k, &signature(&a7.instance).unwrap()).unwrap();
-    let wrong = build(&k, "(matmul@mat.n.mxmat.m.p mat.n.m.input mat.m.p.input)").unwrap();
+    let k = std::sync::Arc::new(kingdom6(a7.name).unwrap());
+    let interp = Interp::new6(&k, &signature(a7.name).unwrap()).unwrap();
+    let wrong = build6(&k, "(matmul@m.f32 m_n_m m_m_p)").unwrap();
     for c in &fit {
         let want = c.answer().unwrap();
         let got = interp.eval(&wrong, &c.inputs).unwrap();

@@ -1298,6 +1298,8 @@ adapter-heavy programs. The guard is the cost, which charges every adapter, plac
     templates calling them, formula spellings are rows; renderer, interpreter, cost and reader read only those rows.
     `fit` pads with the element's zero and takes no pad argument (`fit(size, []E)`), so a view whose element has no
     leaf (A7) can still place and call it; section 5 now describes this.
+  - **Deleted 2026-11-05 (plan task D1):** master 5 (the shape-class table, its views, loader, renderer, reader,
+    interpreter, cost and e-graph); every Futhark view is master 6's.
 - **phylu (evolution):**
   - The typed layout: fewer types, and the index words as a Dc-style array beside each type's region.
   - The point mutation edits an index word as it edits a constant.

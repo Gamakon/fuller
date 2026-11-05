@@ -1583,11 +1583,7 @@ mod tests {
         for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::Depth, crate::tsr_kingdom::TsrVariant::OrderDepth] {
             kingdoms.push((format!("tsr {}", v.dir()), tsr_relations(v, 3).expect("TSR tables load")));
         }
-        kingdoms.push(("futhark".into(), crate::futhark_table::FutharkKingdom::load().expect("Futhark kingdom").relations()));
         kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
-        for inst in [crate::futhark_sig::REDUCE, crate::futhark_sig::SCAN, crate::futhark_sig::HISTOGRAM, crate::futhark_sig::PATHFINDER, crate::futhark_sig::A7] {
-            kingdoms.push((format!("futhark view {}", inst.name), crate::futhark_sig::load(&inst).expect("view loads").relations()));
-        }
         for inst in [crate::futhark_pixel::VOLUMEPASSAGE, crate::futhark_pixel::CUNEUS, crate::futhark_pixel::IMAGE] {
             kingdoms.push((format!("futhark pixel {}", inst.name), crate::futhark_pixel::load(&inst).expect("pixel view loads").relations()));
         }
@@ -1607,16 +1603,9 @@ mod tests {
             ("tsr order", 0x63b6_0c17_542c_37b9),
             ("tsr depth", 0x8890_feef_ab56_ab14),
             ("tsr order_depth", 0x5872_1638_c12a_7f88),
-            ("futhark", 0x6c96_d430_8287_1fa2),
             ("futhark 1-D", 0x4d21_23d5_b0e4_8a3c),
-            ("futhark view reduce", 0xfd25_3707_45fa_2ed3),
-            ("futhark view scan", 0xd334_75fe_624f_a773),
-            ("futhark view histogram", 0x3d88_a218_edc9_6378),
-            ("futhark view pathfinder", 0x143c_67e8_b7d1_73ea),
             // Added by the G2 code review's finding 7, each taken at e526a62f (the code before the Dv lane) by a
-            // copy of this fingerprint run there; the 14 above reproduced in that run. A7's view is the matrix
-            // kingdom's table, so it fingerprints as "futhark".
-            ("futhark view a7", 0x6c96_d430_8287_1fa2),
+            // copy of this fingerprint run there.
             ("futhark pixel volumepassage", 0xe842_9cbb_b21a_e29f),
             ("futhark pixel cuneus", 0x1172_991c_3c36_edd0),
             ("futhark pixel image", 0x0ed5_4ee4_76aa_24d4),
@@ -1634,20 +1623,6 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "layouts or expressed words changed: {wrong:?}");
-    }
-
-    /// The k-means view (14,359 types) as the test above, in a test of its own because it is slow (about 95 s in a
-    /// release build): not ignored, timed, its seconds printed, as the repository runs its other k-means checks.
-    /// Golden taken at e526a62f, as the five added above.
-    #[test]
-    fn the_kmeans_view_lays_out_and_expresses_word_for_word_as_before_the_dv_lane() {
-        let t = std::time::Instant::now();
-        let r = crate::futhark_sig::load(&crate::futhark_sig::KMEANS).expect("view loads").relations();
-        let k = r.check().expect("checks");
-        assert!(k.types().iter().all(|t| !k.variable_capable(*t)), "k-means: no variable terminal");
-        let got = layout_and_words_fingerprint(&r, &consts_of(&r));
-        eprintln!("the k-means view's fingerprint: {:.1} s", t.elapsed().as_secs_f64());
-        assert_eq!(got, 0x9aaf_6e28_47c5_32ea, "the k-means view's layouts or expressed words changed: 0x{got:016x}");
     }
 
     // -- the variable terminal `var.T` and its Dv lane (plan 7 task G2) ------------------------------------------

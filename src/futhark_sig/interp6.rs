@@ -5,7 +5,7 @@
 //! its operand and pads with zeros, `clampix` clamps an index into its array): evolution may place them as nodes, and
 //! a repair's template calls them, which this interpreter EXECUTES as the renderer renders it
 //! ([`crate::typed_environment::Decoder::exec`]). Nothing here is matched on an adapter's name.
-//! The arithmetic is master 5's ([`super::Num`]): Futhark's, bit for bit.
+//! The arithmetic is [`super::Num`]'s: Futhark's, bit for bit.
 //!
 //! THE INTERPRETER CHECKS WHAT FUTHARK CHECKS: an index in its array's range, the two arrays of a `map2` (a histogram,
 //! a division of rows, a product's inner sizes) of one length, every row of a `tabulate` of rows of one length, and
@@ -13,18 +13,17 @@
 //! renderer and an interpreter that disagree on a length are found as a run-time error, never as a silently
 //! different value. Every such error is "our software has a bug".
 //!
-//! THE WORK ([`Interp6::work_parts`]) is master 5's measure (`Interp::work_parts`) with every size read from the
-//! properties, and every adapter charged by its row's traffic wherever it is, placed or called by a repair
+//! THE WORK ([`Interp6::work_parts`]) is the measure of the shape-class kingdom of before master 6, with every size
+//! read from the properties, and every adapter charged by its row's traffic wherever it is, placed or called by a repair
 //! (`futhark_cost::calls6`): a `fit` the cells it writes and reads, `clampix` its two compares, counted in
 //! [`Work::nodes`], the measure phylu's per-submit cap reads (`submit_work_of`). A size leaf costs nothing (it is a
-//! name, as master 5's row names hold their sizes), so a reference program's work is master 5's.
+//! name, as the shape-class kingdom's row names held their sizes), so a reference program's work is what it was there.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{Array, Bin, Elem, Num, Signature, Val, View, Work};
+use super::{Array, Bin, Elem, Num, Row2Fn, RowFn, Signature, Val, View, Work};
 use crate::futhark_cost::{calls6, program_cost6, rendered6, size6, trips6, CostTable6, Score};
-use crate::futhark_interpreter::{Row2Fn, RowFn};
 use crate::futhark_table::Kingdom6;
 use crate::geneframe::{DataKind, PropertyExpr, Role, Ty};
 use crate::kingdom_contract::SymbolId;
@@ -270,7 +269,7 @@ fn fit(k: &Kingdom6, v: &Val, p: &str, l: i64) -> Result<Val, String> {
 }
 
 impl Interp6 {
-    /// The interpreter of a master 6 kingdom whose case inputs are `sig`'s (its master 5 instance's signature).
+    /// The interpreter of a kingdom whose case inputs are `sig`'s (its problem's signature).
     pub(super) fn new(k: &Arc<Kingdom6>, sig: &Arc<Signature>) -> Result<Interp6, String> {
         let n = k.contract.n_symbols() as SymbolId;
         let ops = (0..n).map(|s| op6(k, s)).collect::<Result<Vec<_>, _>>()?;
@@ -459,12 +458,12 @@ impl Interp6 {
         self.work_parts(tree, sizes).map(|w| w.total())
     }
 
-    /// THE WORK of a tree on given sizes, in master 5's two parts, every size read from the properties (a `?` length
+    /// THE WORK of a tree on given sizes, in two parts, every size read from the properties (a `?` length
     /// at the largest size in scope) and every adapter charged in [`Work::nodes`] where it renders (a body adapter once
     /// a trip): a `fit` the cells it reads and writes, `clampix` 2. [`Work::nodes`]: every node once, times the trips of the binders it is inside; a reduction, a
     /// `map2`, a scan, a histogram and a division of rows also cost the cells of the array they read (as adapted), a
     /// `replicate` and a histogram their result's length, a histogram of rows and the matrix operations their result's
-    /// cells (a product times its inner length); a size leaf nothing. [`Work::state`]: master 5's loop state traffic.
+    /// cells (a product times its inner length); a size leaf nothing. [`Work::state`]: the loops' state traffic.
     pub(super) fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
         let d = self.decode(tree)?;
         let mut w = Work::default();
@@ -523,7 +522,7 @@ impl Interp6 {
         Ok(())
     }
 
-    /// The cells a loop's state is written a trip (master 5's rule): 0 when the body is the loop's own state, or the
+    /// The cells a loop's state is written a trip (the shape-class kingdom's rule): 0 when the body is the loop's own state, or the
     /// start reading none of the loop's variables (Futhark removes the loop); else its arrays' cells, a component
     /// that an operation writing a fresh array computes (or a fitted body) excepted.
     fn state_cells(&self, n: &Node, arity: usize, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
@@ -998,7 +997,7 @@ impl Run<'_> {
                 Val::A(View::of(out, vec![cols, rows], m.elem))
             }
             Op6::Matmul => {
-                // The helper's arithmetic: `acc + a * b` in f32 from 0.0, in order (master 5's, measured bit-identical).
+                // The helper's arithmetic: `acc + a * b` in f32 from 0.0, in order (measured bit-identical through `futhark c`).
                 let (x, y) = (a(0)?, a(1)?);
                 let ([nn, mm], [m2, p]) = (&x.dims[..], &y.dims[..]) else { return Err(self.bug(format!("a matmul of {:?} and {:?}", x.dims, y.dims))) };
                 if mm != m2 || x.elem != Elem::F32 || y.elem != Elem::F32 {

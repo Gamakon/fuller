@@ -1,9 +1,0 @@
-family	kind	since	code	scope	binds
-core	T	1	T-{D}	D:dims	ix.{D}
-core	L	1	L-{D}-{S}	D:dims;S:states	{S},ix.{D}
-core	F	1	F-{D}-{S}	D:dims;S:states	{S},ix.{D}
-core	L2	4	L-{D}-{S}	D:dims;S:tuples	{S.a},{S.b},ix.{D}
-core	F2	4	F-{D}-{S}	D:dims;S:tuples	{S.a},{S.b},ix.{D}
-core	L3	5	L-{D}-{S}	D:dims;S:tuples3	{S.a},{S.b},{S.c},ix.{D}
-core	F3	5	F-{D}-{S}	D:dims;S:tuples3	{S.a},{S.b},{S.c},ix.{D}
-core	B	5	B-{S}	S:lets	{S}

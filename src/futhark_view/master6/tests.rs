@@ -25,6 +25,22 @@ fn every_master6_view_is_what_view_py_writes_byte_for_byte() {
     }
 }
 
+/// THE GENERATOR'S OWN CHECK: the committed artefacts are what the engine loads (the tables are `include_str!`'d) and
+/// the generator says what they should be, so the suite runs `gen_tables.py --check` (the master's witnesses and cost
+/// table, every view and its e-graph, the pixel family): a hand edit to a committed table is a failure of the test
+/// suite. A missing `python3` is a FAILURE, not a skip: the check is part of the contract.
+#[test]
+fn the_committed_artefacts_are_what_the_generator_produces() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = std::process::Command::new("python3")
+        .arg(root.join("kingdoms/futhark/gen_tables.py"))
+        .arg("--check")
+        .current_dir(root)
+        .output()
+        .expect("python3 runs the generator's check");
+    assert!(out.status.success(), "the generator's check failed:\n{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+}
+
 /// `COMMITTED6` IS `gen_tables.py`'s LIST: its problems are exactly `SIG6_PROBLEMS`'s keys, in order, and exactly the
 /// directories `kingdoms/futhark/sig/*/m6/`, so no view `view.py` writes goes uncomputed here.
 #[test]

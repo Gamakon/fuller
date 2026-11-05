@@ -115,8 +115,9 @@ pub enum Ty {
     /// `kingdoms/futhark_1d/types.tsv` (ref `T001` → 0). Its device code is
     /// [`Ty::FUTHARK_1D_CODE_BASE`] + the index. Appended last.
     Futhark1d(u16),
-    /// A dual of the Futhark kingdom: the index of its row in
-    /// `kingdoms/futhark/types.tsv` (ref `T001` → 0). Its device code
+    /// A type of the Futhark kingdom: a data type of a view (its index in the view's table,
+    /// `kingdoms/futhark/sig/<problem>/m6/tables.tsv`), or a dual of the pixel family (its row in
+    /// `kingdoms/futhark/pixel/<shader>/types.tsv`, ref `T001` → 0). Its device code
     /// is [`Ty::FUTHARK_CODE_BASE`] + the index.
     ///
     /// A SEPARATE family from [`Ty::Futhark1d`], not another range of the same
@@ -1055,23 +1056,8 @@ mod tests {
             let t = crate::wgsl::true_kingdom::TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir()).expect("true WGSL table");
             the_contract_is_unchanged_through_the_tables(&t.relations());
         }
-        // The Futhark kingdoms on master 5: the matrix kingdom, the deprecated 1-D one, and every signature view.
-        the_contract_is_unchanged_through_the_tables(&crate::futhark_table::FutharkKingdom::load().expect("Futhark kingdom").relations());
+        // The deprecated 1-D Futhark kingdom.
         the_contract_is_unchanged_through_the_tables(&crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations());
-        use crate::futhark_sig::{HISTOGRAM, PATHFINDER, REDUCE, SCAN};
-        for inst in [REDUCE, SCAN, HISTOGRAM, PATHFINDER] {
-            the_contract_is_unchanged_through_the_tables(&crate::futhark_sig::load(&inst).expect("view loads").relations());
-        }
-    }
-
-    /// The k-means view (14,359 types on master 5), the largest kingdom we have, on its own so it runs beside the rest.
-    #[test]
-    fn the_kmeans_contract_is_unchanged_through_the_tables() {
-        let t0 = std::time::Instant::now();
-        let r = crate::futhark_sig::load(&crate::futhark_sig::KMEANS).expect("view loads").relations();
-        eprintln!("kmeans view: {} symbols, loaded in {:.1} s", r.names.len(), t0.elapsed().as_secs_f64());
-        the_contract_is_unchanged_through_the_tables(&r);
-        eprintln!("kmeans through the tables: {:.1} s", t0.elapsed().as_secs_f64());
     }
 
     /// Finding 5 of the G1 review: the typed-depth kingdom's table as literals, not recounted from the signatures that

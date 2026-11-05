@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""THE SNIFFER: a Futhark problem's source to its view specification.
+"""THE SNIFFER: a Futhark problem's source to its view specification (master/README.md section 8).
 
 The problem is a Futhark program and its entry point. The Futhark compiler
 types it: `futhark dev -t` prints the type-checked program with every size
@@ -13,34 +13,24 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
 * the result type is the output; its dimensions must all be dimensions of an
   input (a size the inputs do not fix would be unknown);
 * the element types are those of the parameters and the result (i32, f32),
-  in order of first appearance; a view of several elements writes an array
-  class with its element (`a.f32.n`, docs/PLAN_futhark_kingdom.md D7), a view
-  of one keeps the names of before (`a.n`). `--elements E,..` adds elements
-  the signature does not name, for values a program keeps inside (k-means's
-  assignments are i32 indices beside its f32 points); `--lets C,..` names the
-  array classes a `let` at the top of a program may bind, each once (master
-  version 5, the KERNEL BOUNDARY: one of UltraDim's kernels writes a buffer
-  the next one reads; k-means's assignments are `a.i32.n`);
-* no FAMILY is chosen here: a view admits every family of the master and
-  keeps the types reachable both ways, forward from the leaves and backward
-  from the root (`src/futhark_view.rs`; docs/PLAN_futhark_kingdom.md, 3e), so what the
-  problem's source happens to use limits nothing;
-* the literal pool is the master's for the element; the depth is the
-  master's default (2) unless `--depth N` says otherwise (k-means needs 3: a
-  reduction over `d` inside a loop over `k` inside a tabulate over `n`); the
-  master version is the current one unless `--master N` PINS the view to an
-  older one (the four i32 benchmarks are pinned to version 2, so the rows
-  added since do not change their tables; moving a pin is a decision, with
-  its regression re-measured).
+  in order of first appearance; `--elements E,..` adds elements the signature
+  does not name, for values a program keeps inside (k-means's assignments are
+  i32 indices beside its f32 points); `--lets T,..` names the array data types
+  a `let` at the top of a program may bind (the KERNEL BOUNDARY: one of
+  UltraDim's kernels writes a buffer the next one reads);
+* the literal pool is the master's for the element; the depth is 2 unless
+  `--depth N` says otherwise (k-means needs 3: a reduction over `d` inside a
+  loop over `k` inside a tabulate over `n`) or `--depth none` asks for no work
+  bound (A7); the master version is the current one unless `--master N` PINS
+  the view to an older one (moving a pin is a decision, with its regression
+  re-measured); `--families F,..` admits only those families (A7's matrix
+  family).
 
-It writes the specification `view.tsv` (the WHERE clause of the view, see
-`src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
+It writes the specification `view.tsv`: the root environment in its order
+(inputs, zero arrays, sizes), `lets` as data types. `--format 6` is the one
+format, the master's version of the format.
 
-Master 6 (`--format 6`, `sniff6`, master/README.md section 8) writes the specification of a master 6 view: the
-root environment in its order (inputs, zero arrays, sizes), `lets` as data types, `--families` to admit only those
-(A7's matrix view), `--depth none` for a view with no work bound.
-
-    python3 kingdoms/futhark/sniff.py <source.fut> [--format 6] [--entry main] [--depth N|none] [--master N] [--elements E,..] [--lets CLASS,..] [--families F,..] [--out view.tsv]
+    python3 kingdoms/futhark/sniff.py <source.fut> [--format 6] [--entry main] [--depth N|none] [--master N] [--elements E,..] [--lets TYPE,..] [--families F,..] [--out view.tsv]
 """
 
 import os
@@ -180,45 +170,6 @@ def read_signature(path, entry, elements, pools):
     return elems, typed, size_inputs, out_elem, out_dims, dims_seen, dim
 
 
-def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=()):
-    """The view specification of a problem, as text; `master` pins the view to a master version (the current one
-    when None); `elements` are added to the ones the signature names; `lets` are the kernel boundaries' classes."""
-    check_compiler()
-    if master is None:
-        master = view.master()["version"]
-    elif not 1 <= master <= view.master()["version"]:
-        raise ValueError(f"the master version {master} is not one of 1 .. {view.master()['version']}")
-    elems, typed, size_inputs, out_elem, out_dims, _, dim = read_signature(path, entry, elements, view.master()["pools"])
-    lines = ["# kind\tname\telement\tdims",
-             f"# written by kingdoms/futhark/sniff.py from {os.path.relpath(os.path.abspath(path), REPO)}, entry {entry}",
-             f"master\t{master}\t\t",
-             f"element\t{','.join(elems)}\t\t"]
-    dims_seen = []
-    for n, dims, e in typed:
-        if n in size_inputs:
-            lines.append(f"size\t{n}\ti32\t")
-            dims_seen.append(n)
-            continue
-        names = [dim(d)[0] for d in dims]
-        lines.append(f"input\t{n}\t{e}\t{','.join(names)}")
-        dims_seen += [d for d in names if d not in dims_seen]
-    lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
-    lines.append(f"depth\t{depth}\t\t")
-    if lets:
-        for c in lets:
-            parsed = view.parse_class(c, elems)
-            if parsed[0] != "arr":
-                raise ValueError(f"--lets names {c!r}, which is not an array class")
-            if view.class_text(parsed, elems) != c:
-                raise ValueError(f"--lets names {c!r}, which is not written as this view writes it ({view.class_text(parsed, elems)})")
-        lines.append(f"lets\t{','.join(lets)}\t\t")
-    # One element's pool a line; a view of one element leaves the element column empty (the specifications of before).
-    for e in elems:
-        lines.append(f"literals\t{','.join(view.master()['pools'][e])}\t{e if len(elems) > 1 else ''}\t")
-    lines.append(f"dims\t{','.join(dims_seen)}\t\t")
-    return "\n".join(lines) + "\n"
-
-
 # Names the adapters of master 6 reserve (master/README.md 5.5): an entry parameter may not take one.
 RESERVED_FUNCTIONS = ("fit", "clampix")
 RESERVED_PREFIX = "ad_"
@@ -227,8 +178,8 @@ RESERVED_PREFIX = "ad_"
 def sniff6(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=(), families=()):
     """The MASTER 6 view specification of a problem, as text (master/README.md section 8; plan section 7, F1a).
 
-    The lines, in order: `format 6`; `master`, the row-version pin (the master 6 rows keep master 5's versions, so a
-    pin means what it meant); `element`; `families` when the view admits only those (A7's matrix family); the ROOT
+    The lines, in order: `format 6`; `master`, the row-version pin (the rows keep the versions they were added at, so
+    a pin means what it meant); `element`; `families` when the view admits only those (A7's matrix family); the ROOT
     ENVIRONMENT in its order, which is the input of the decoder's one environment function: the `input` lines in
     signature order (a size input is a size, not an input), then a `zeros` line for each element and each size (the
     zero array `zeros_<size>`, `zeros_<element>_<size>` in a view of several elements, bound once by the entry), then
@@ -292,13 +243,13 @@ def main(argv):
     master = int(args[args.index("--master") + 1]) if "--master" in args else None
     elements = [e for e in args[args.index("--elements") + 1].split(",") if e] if "--elements" in args else []
     lets = [c for c in args[args.index("--lets") + 1].split(",") if c] if "--lets" in args else []
-    if "--format" in args and args[args.index("--format") + 1] == "6":
-        families = [f for f in args[args.index("--families") + 1].split(",") if f] if "--families" in args else []
-        if "--depth" in args and args[args.index("--depth") + 1] == "none":
-            depth = None
-        text = sniff6(args[0], entry, depth, master, elements, lets, families)
-    else:
-        text = sniff(args[0], entry, depth, master, elements, lets)
+    if "--format" in args and args[args.index("--format") + 1] != "6":
+        print(f"--format {args[args.index('--format') + 1]}: the one format is 6")
+        return 2
+    families = [f for f in args[args.index("--families") + 1].split(",") if f] if "--families" in args else []
+    if depth_text == "none":
+        depth = None
+    text = sniff6(args[0], entry, depth, master, elements, lets, families)
     if "--out" in args:
         with open(args[args.index("--out") + 1], "w") as f:
             f.write(text)

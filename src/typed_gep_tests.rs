@@ -1338,17 +1338,16 @@ mod rows {
         }
     }
 
-    /// Several thousand genes of the pathfinder view (832 types at N = 13) and histogram: the kingdoms the row
-    /// operators were made for, with hundreds of ragged columns.
+    /// Several thousand genes of the pathfinder and histogram views: the kingdoms the row operators were made for,
+    /// with ragged columns and a Dv lane.
     #[test]
     fn row_operators_keep_futhark_genes_legal() {
         use crate::futhark_table::GeneRng;
         for (name, n, genes) in [("pathfinder", 13, 60), ("histogram", 4, 300)] {
-            let prob = crate::futhark_sig::problem(name).expect("problem");
-            let fk = crate::futhark_sig::load(&prob.instance).expect("kingdom");
-            let k = fk.relations().check().expect("contract");
+            let fk = crate::futhark_sig::kingdom6(name).expect("kingdom");
+            let k = fk.contract.as_ref().clone();
             let consts = fk.const_len();
-            let layout = GeneLayout::from_program_size(&k, fk.roots()[0], n).expect("layout");
+            let layout = GeneLayout::from_program_size(&k, fk.entry.output, n).expect("layout");
             let mut rng = GeneRng::new(0x5eed);
             for g in 0..genes {
                 let a = crate::futhark_sig::random_gene(&k, &layout, &consts, &mut rng).expect("gene");

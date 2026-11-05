@@ -1,37 +1,21 @@
-//! THE READER of the signature kingdom (`crate::futhark_sig`): Futhark source text to an expressed tree of a
-//! benchmark's kingdom, the inverse of how the kingdom renders a tree ([`crate::futhark_table::FutharkKingdom::render`]
-//! inside [`crate::futhark_sig::program`]). Plan: `docs/PLAN_futhark_fitness_fixes.md` section H.
+//! THE READER of the Futhark kingdom: Futhark source text to the tree of a problem's view, the inverse of how the view
+//! renders a tree ([`crate::futhark_table::Kingdom6::program`], pass 5). Plan: `docs/PLAN_futhark_kingdom.md` section 7
+//! task F4.
 //!
-//! Three steps.
+//! Two steps.
 //!
 //! 1. **Parse** a subset of Futhark into a small syntax tree ([`E`]): `def`/`entry`, `let`, `if`, `loop ... for`,
-//!    lambdas, operator sections, application, indexing, `|>`, `>->`. A construct outside the subset is a [`Gap`]
-//!    that names it (a tuple, a float, `with`, `while`, ...), never skipped.
-//! 2. **Normalise**: every `let` and every helper `def` is inlined, lambdas applied to arguments are reduced, binders
-//!    are renamed apart, the entry's parameters are renamed to the signature's (by position), a size input `k: i32`
-//!    is `i64.i32 k` = the size `k` and, as a value, the kingdom's `i32.i64 k`, and a few exact identities are applied
-//!    (`i32.i32 x = x`, `copy x = x`, `opaque x = x`, `i32.i64 (i64.i32 x) = x`, `length xs` = its dimension,
-//!    `(i64.i32 e) % k = i64.i32 (e % i32.i64 k)`).
-//!    `let z = replicate D 0` is the kingdom's `zeros_D`.
-//! 3. **Read**, typed: a slot of type `T` is filled by the first row of `T` whose SPELLING, parsed as a pattern with
-//!    holes, matches the expression (binders matched up to renaming), each hole read at the row's argument type; a
-//!    literal in a constant slot is the pool's entry. When no row matches, a few exact rewrites are tried: `map` and
-//!    `map2` as `tabulate`, `reduce (+) 0` as `i32.sum` (and the `min`/`max` pairs), `reduce_by_index` of a
-//!    `replicate` of the neutral element as `hist`, the indices of a `hist` brought to `map i64.i32`, `if x >= 0` as
-//!    `if x < 0` with the branches swapped, an element of a computed array as the computation at that index
-//!    (`(map f xs)[i] = f xs[i]`), and the arguments of `+`, `*`, `min` and `max` swapped. Nothing else: an
-//!    expression no row reads is a gap of the kingdom, recorded with the construct it lacks.
+//!    lambdas, operator sections, application, indexing, tuples, array and float literals, `|>`, `>->`. A construct
+//!    outside the subset is a [`Gap`] that names it, never skipped.
+//! 2. **Read** ([`Reader6`]), with nothing normalised: a name is the view's `var@T` with the index word G3's environment
+//!    gives it, a literal is the pool's entry (a float by its value), a `let` is the `let` row, a function is the first
+//!    row of the slot's data type whose spelling, parsed as a pattern with holes, matches, and an adapter is read as the
+//!    plain row (section "master 6: the reader" below).
 //!
-//! The round trip, every rendered program reads back to its own tree, is the test (`tests`).
-//!
-//! MASTER 6 ([`Reader6`], plan `docs/PLAN_futhark_kingdom.md` section 7 task F4) reads a master 6 view's program into
-//! its tree with nothing normalised: a name is the view's `var@T` with the index word G3's environment gives it, a
-//! float literal is read by its value, a `let` is the `let` row, an adapter is read as the plain row (`tests6`).
+//! The round trip, every rendered program reads back to its own tree and renders the same text, is the test (`tests6`).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::futhark_table::{FutharkKind, FutharkKingdom};
-use crate::futhark_sig::Signature;
 use crate::geneframe::Ty;
 use crate::typed_gep::Tree;
 
@@ -63,7 +47,7 @@ impl std::fmt::Display for Gap {
 
 // ---- the syntax tree --------------------------------------------------------------------------------------------
 
-/// The parsed and normalised expression.
+/// The parsed expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum E {
     Int(i64),
@@ -78,22 +62,21 @@ pub enum E {
     Lam(Vec<String>, Box<E>),
     Let(String, Box<E>, Box<E>),
     /// `loop state = init for var in lo ..< hi do body` (`for var < hi` has `lo` 0); a tuple state
-    /// `loop ((a, b): t) = ..` names each component (master 6 only: master 5's parser names one).
+    /// `loop ((a, b): t) = ..` names each component.
     Loop { state: Vec<String>, init: Box<E>, var: String, lo: Box<E>, hi: Box<E>, body: Box<E> },
-    /// A float literal (master 6 only), in one spelling: its value as Rust prints an `f64`, then its suffix
+    /// A float literal, in one spelling: its value as Rust prints an `f64`, then its suffix
     /// (`0f32` and `0.0f32` are `0.0f32`; `1.0` is `1.0`).
     Float(String),
-    /// An integer literal with its type's suffix (master 6 only: `0i32`, `-1i64`; master 5 reads the value alone,
-    /// [`E::Int`], as does an unsuffixed literal).
+    /// An integer literal with its type's suffix (`0i32`, `-1i64`; an unsuffixed literal is [`E::Int`]).
     Lit(String),
-    /// A tuple `(a, b)` (master 6 only).
+    /// A tuple `(a, b)`.
     Tuple(Vec<E>),
-    /// An expression in parentheses (master 6 only): pass 5 puts every operand but a size in parentheses, so a pair of
+    /// An expression in parentheses: pass 5 puts every operand but a size in parentheses, so a pair of
     /// literals `((0f32), (0f32))` and the pair's zero `(0f32, 0f32)` are two texts, read as two trees.
     Paren(Box<E>),
-    /// A tuple's component `e.0` (master 6 only).
+    /// A tuple's component `e.0`.
     Proj(Box<E>, usize),
-    /// An array literal `[a, b]` (master 6 only: a data type's constant, `[0f32]`).
+    /// An array literal `[a, b]` (a data type's constant, `[0f32]`).
     Array(Vec<E>),
     /// A master 6 spelling's placeholder `{k.p}`: property `p` of operand `k` as Futhark text (patterns only).
     Prop(usize, String),
@@ -170,7 +153,8 @@ impl E {
         }
     }
 
-    /// Rename the free `from` to `to` (the names of a normalised expression are unique, so nothing is captured).
+    /// Rename the free `from` to `to` (the matcher renames a binder only where the body does not read the new name, so
+    /// nothing is captured).
     fn rename(&self, from: &str, to: &str) -> E {
         let r = |e: &E| e.rename(from, to);
         match self {
@@ -287,10 +271,9 @@ fn binder_place(c: &[char], i: usize) -> Option<usize> {
     (j > d1 && c.get(j) == Some(&'}')).then_some(j + 1)
 }
 
-/// Lex a text: `holes` reads `{k}` as a pattern's hole; `rich` is master 6's spelling and program syntax (a binder
-/// placeholder `{k.vj}` is a name, glued to the name before it: `t{2.v1}`; `{k.p}` is a placeholder of a property or
-/// type).
-fn lex(src: &str, holes: bool, rich: bool) -> Result<Vec<Tok>, Gap> {
+/// Lex a text: `holes` reads a spelling's placeholders: `{k}` is a pattern's hole, a binder placeholder `{k.vj}` is a
+/// name, glued to the name before it (`t{2.v1}`), and `{k.p}` is a placeholder of a property or type.
+fn lex(src: &str, holes: bool) -> Result<Vec<Tok>, Gap> {
     let c: Vec<char> = src.chars().collect();
     let mut out: Vec<Tok> = Vec::new();
     let mut i = 0;
@@ -416,7 +399,7 @@ fn lex(src: &str, holes: bool, rich: bool) -> Result<Vec<Tok>, Gap> {
                     i += 1;
                 }
             }
-            if holes && rich {
+            if holes {
                 if let Some(end) = binder_place(&c, i) {
                     i = end;
                 }
@@ -435,7 +418,7 @@ fn lex(src: &str, holes: bool, rich: bool) -> Result<Vec<Tok>, Gap> {
             tight = true;
             continue;
         }
-        if holes && rich && ch == '{' {
+        if holes && ch == '{' {
             if let Some(end) = binder_place(&c, i) {
                 out.push(Tok { k: K::Ident, text: c[i..end].iter().collect(), tight, line_start: first });
                 i = end;
@@ -513,9 +496,6 @@ struct Parser<'t> {
     t: &'t [Tok],
     p: usize,
     fresh: usize,
-    /// Master 6's syntax: float literals, tuples and their components, array literals, a tuple loop state, a size
-    /// binding `let [m] (x: t) = ..`, and a spelling's placeholders.
-    rich: bool,
 }
 
 const BINOPS: [(&str, u8); 23] = [
@@ -605,12 +585,10 @@ impl<'t> Parser<'t> {
     /// A type: `*`, `[d]`... then an element; a tuple, record or function type is a gap only where it matters, so it
     /// is returned with the element `tuple` or `function`.
     fn ftype(&mut self) -> Result<FType, Gap> {
-        if self.rich {
-            if let Some(Tok { k: K::Place(_, f), .. }) = self.peek() {
-                if f == "type" {
-                    self.p += 1;
-                    return Ok(FType { dims: Vec::new(), elem: "placeholder".into() });
-                }
+        if let Some(Tok { k: K::Place(_, f), .. }) = self.peek() {
+            if f == "type" {
+                self.p += 1;
+                return Ok(FType { dims: Vec::new(), elem: "placeholder".into() });
             }
         }
         self.eat("*");
@@ -741,7 +719,7 @@ impl<'t> Parser<'t> {
     fn let_expr(&mut self) -> Result<E, Gap> {
         self.expect("let")?;
         // `let [m] (x: [m]t) = ..`: a size binding (master 6's adapters); the size's name is only a type's.
-        if self.rich && self.is("[") {
+        if self.is("[") {
             self.p += 1;
             self.ident()?;
             self.expect("]")?;
@@ -781,7 +759,7 @@ impl<'t> Parser<'t> {
         if self.is("(") && self.peek_at(2).is_some_and(|t| t.text == ",") {
             return Err(Gap::parse("tuple pattern", "loop (a, b) = ...".into()));
         }
-        let state = if self.rich && self.is("(") && self.peek_at(1).is_some_and(|t| t.text == "(") {
+        let state = if self.is("(") && self.peek_at(1).is_some_and(|t| t.text == "(") {
             self.p += 2;
             let mut names = vec![self.ident()?];
             while self.eat(",") {
@@ -901,7 +879,7 @@ impl<'t> Parser<'t> {
             }
             self.expect("]")?;
         }
-        while self.rich && self.peek().is_some_and(|t| t.text == "." && t.tight) {
+        while self.peek().is_some_and(|t| t.text == "." && t.tight) {
             match self.peek_at(1).map(|t| t.k.clone()) {
                 Some(K::Int(i)) if i >= 0 => {
                     self.p += 2;
@@ -922,18 +900,17 @@ impl<'t> Parser<'t> {
             K::Int(v) => {
                 self.p += 1;
                 let suffix = t.text.rfind(['i', 'u']).map(|at| &t.text[at..]).filter(|x| x.len() > 1 && x[1..].bytes().all(|c| c.is_ascii_digit())).unwrap_or("");
-                Ok(if self.rich && !suffix.is_empty() { E::Lit(format!("{v}{suffix}")) } else { E::Int(v) })
+                Ok(if !suffix.is_empty() { E::Lit(format!("{v}{suffix}")) } else { E::Int(v) })
             }
             K::Hole(i) => {
                 self.p += 1;
                 Ok(E::Hole(i))
             }
-            K::Float if self.rich => {
+            K::Float => {
                 self.p += 1;
                 float_literal(&t.text).map(E::Float).ok_or_else(|| Gap::parse("literal", t.text.clone()))
             }
-            K::Float => Err(Gap::parse("float literal", t.text)),
-            K::Place(i, ref f) if self.rich && f != "type" => {
+            K::Place(i, ref f) if f != "type" => {
                 self.p += 1;
                 Ok(E::Prop(i, f.clone()))
             }
@@ -943,7 +920,7 @@ impl<'t> Parser<'t> {
                 let n = self.ident()?;
                 Ok(E::Var(n))
             }
-            K::Sym if t.text == "[" && self.rich => {
+            K::Sym if t.text == "[" => {
                 self.p += 1;
                 let mut items = Vec::new();
                 if !self.is("]") {
@@ -955,7 +932,6 @@ impl<'t> Parser<'t> {
                 self.expect("]")?;
                 Ok(E::Array(items))
             }
-            K::Sym if t.text == "[" => Err(Gap::parse("array literal", String::new())),
             K::Sym if t.text == "(" => {
                 self.p += 1;
                 if self.is(")") {
@@ -977,7 +953,7 @@ impl<'t> Parser<'t> {
                     }
                 }
                 let e = self.expr()?;
-                if self.rich && self.is(",") {
+                if self.is(",") {
                     let mut items = vec![e];
                     while self.eat(",") {
                         items.push(self.expr()?);
@@ -985,13 +961,10 @@ impl<'t> Parser<'t> {
                     self.expect(")")?;
                     return Ok(E::Tuple(items));
                 }
-                if self.is(",") {
-                    return Err(Gap::parse("tuple", String::new()));
-                }
                 if self.eat(":") {
                     self.ftype()?;
                 }
-                let e = if self.rich { E::Paren(b(e)) } else { e };
+                let e = E::Paren(b(e));
                 // `(e op)`.
                 if let Some(op) = self.peek().filter(|t| t.k == K::Sym && binop(&t.text).is_some()).map(|t| t.text.clone()) {
                     if self.peek_at(1).is_some_and(|t| t.text == ")") {
@@ -1059,27 +1032,21 @@ fn combine(op: &str, l: E, r: E, fresh: &mut usize) -> E {
     }
 }
 
-/// Parse an expression (a row's spelling, with holes).
-pub fn parse_pattern(text: &str) -> Result<E, Gap> {
-    parse_expression(text, true, false)
-}
-
-/// The first fresh name's number of a parse: a master 6 program's names a section or `_` introduces start far past a
+/// The first fresh name's number of a parse: a program's names a section or `_` introduces start far past a
 /// spelling's, so a pattern's `\%s1 %s2 -> ..` never meets a program's `\%s2 %s3 -> ..` (the matcher renames one
-/// binder at a time, and a program binder named as another pattern binder would read as a capture). Master 5's
-/// normaliser renames every binder apart, so its parses keep 0.
-fn program_fresh(holes: bool, rich: bool) -> usize {
-    if rich && !holes {
-        1_000_000
-    } else {
+/// binder at a time, and a program binder named as another pattern binder would read as a capture).
+fn program_fresh(holes: bool) -> usize {
+    if holes {
         0
+    } else {
+        1_000_000
     }
 }
 
-/// Parse an expression: `holes` reads a spelling's holes, `rich` master 6's syntax.
-fn parse_expression(text: &str, holes: bool, rich: bool) -> Result<E, Gap> {
-    let toks = lex(text, holes, rich)?;
-    let mut p = Parser { t: &toks, p: 0, fresh: program_fresh(holes, rich), rich };
+/// Parse an expression: `holes` reads a spelling's placeholders.
+fn parse_expression(text: &str, holes: bool) -> Result<E, Gap> {
+    let toks = lex(text, holes)?;
+    let mut p = Parser { t: &toks, p: 0, fresh: program_fresh(holes) };
     let e = p.expr()?;
     if p.p != toks.len() {
         return Err(p.unexpected("text after the expression"));
@@ -1089,13 +1056,8 @@ fn parse_expression(text: &str, holes: bool, rich: bool) -> Result<E, Gap> {
 
 /// Parse a Futhark source file into its top-level `def`s and `entry`s (other items, `import`, `type`, `module`,
 /// `open`, are skipped; an item that does not parse is a `Def` whose body is the gap).
-pub fn parse_file(src: &str) -> Result<Vec<Def>, Gap> {
-    parse_file_with(src, false)
-}
-
-/// [`parse_file`], in master 6's syntax when `rich`.
-fn parse_file_with(src: &str, rich: bool) -> Result<Vec<Def>, Gap> {
-    let toks = lex(src, false, rich)?;
+fn parse_file(src: &str) -> Result<Vec<Def>, Gap> {
+    let toks = lex(src, false)?;
     let starts: Vec<usize> = (0..toks.len()).filter(|&i| toks[i].line_start && toks[i].k == K::Ident && ["def", "entry", "let", "type", "module", "import", "open", "local", "include"].contains(&toks[i].text.as_str())).collect();
     let mut out = Vec::new();
     for (j, &s) in starts.iter().enumerate() {
@@ -1108,7 +1070,7 @@ fn parse_file_with(src: &str, rich: bool) -> Result<Vec<Def>, Gap> {
             continue;
         }
         let name = toks.get(s + 1).map(|t| t.text.clone()).unwrap_or_default();
-        let mut p = Parser { t: &toks[s..end], p: 0, fresh: program_fresh(false, rich), rich };
+        let mut p = Parser { t: &toks[s..end], p: 0, fresh: program_fresh(false) };
         match p.def() {
             Ok(d) => out.push(d),
             Err(g) => out.push(Def { name, entry: toks[s].text == "entry", size_params: vec![], params: vec![], ret: None, body: Err(g) }),
@@ -1117,570 +1079,10 @@ fn parse_file_with(src: &str, rich: bool) -> Result<Vec<Def>, Gap> {
     Ok(out)
 }
 
-// ---- the normaliser ---------------------------------------------------------------------------------------------
-
-struct Norm<'a> {
-    dims: &'a [String],
-    /// The dimensions of the inputs, by canonical name (for `length`).
-    input_dims: &'a BTreeMap<String, Vec<String>>,
-    fresh: usize,
-    steps: usize,
-    /// `replicate D 0` anywhere is the kingdom's `zeros_D` ([`Reader::for_pool`]).
-    zeros_everywhere: bool,
-}
-
-const NORM_STEPS: usize = 2_000_000;
-
-impl Norm<'_> {
-    fn fresh(&mut self) -> String {
-        self.fresh += 1;
-        format!("%v{}", self.fresh)
-    }
-
-    fn is_dim(&self, e: &E) -> Option<String> {
-        match e {
-            E::Var(d) if self.dims.contains(d) => Some(d.clone()),
-            _ => None,
-        }
-    }
-
-    fn dim_of(&self, e: &E) -> Option<String> {
-        match e {
-            E::Var(x) => self.input_dims.get(x).and_then(|d| d.first().cloned()).or_else(|| x.strip_prefix("zeros_").filter(|d| self.dims.iter().any(|x| x == d)).map(str::to_string)),
-            E::Index(a, _) => match a.as_ref() {
-                E::Var(x) => self.input_dims.get(x).and_then(|d| d.get(1).cloned()),
-                _ => None,
-            },
-            E::App(f, args) => match (f.as_ref(), args.as_slice()) {
-                (E::Var(f), [d, _]) if f == "replicate" || f == "tabulate" => self.is_dim(d),
-                (E::Var(f), [d]) if f == "iota" => self.is_dim(d),
-                (E::Var(f), [_, xs]) if f == "map" => self.dim_of(xs),
-                (E::Var(f), [_, xs, _]) if f == "map2" || f == "scan" => self.dim_of(xs),
-                (E::Var(f), [_, _, d, _, _]) if f == "hist" => self.is_dim(d),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn ev(&mut self, e: &E, env: &HashMap<String, E>) -> Result<E, Gap> {
-        self.steps += 1;
-        if self.steps > NORM_STEPS {
-            return Err(Gap::parse("program too large to inline", format!("over {NORM_STEPS} normalisation steps")));
-        }
-        Ok(match e {
-            E::Int(_) | E::Hole(_) | E::Float(_) | E::Lit(_) | E::Prop(..) => e.clone(),
-            E::Tuple(a) => E::Tuple(a.iter().map(|x| self.ev(x, env)).collect::<Result<_, _>>()?),
-            E::Array(a) => E::Array(a.iter().map(|x| self.ev(x, env)).collect::<Result<_, _>>()?),
-            E::Proj(x, i) => E::Proj(b(self.ev(x, env)?), *i),
-            E::Paren(x) => self.ev(x, env)?,
-            E::Var(x) => env.get(x).cloned().unwrap_or_else(|| e.clone()),
-            E::Neg(x) => E::Neg(b(self.ev(x, env)?)),
-            E::Bin(op, l, r) => {
-                let (l, r) = (self.ev(l, env)?, self.ev(r, env)?);
-                // `(i64.i32 e) % D` is `i64.i32 (e % i32.i64 D)` for a size D (sizes are positive i32).
-                if op == "%" {
-                    if let (E::App(f, a), Some(d)) = (&l, self.is_dim(&r)) {
-                        if **f == var("i64.i32") && a.len() == 1 {
-                            return Ok(app("i64.i32", vec![E::Bin("%".into(), b(a[0].clone()), b(app("i32.i64", vec![var(&d)])))]));
-                        }
-                    }
-                }
-                E::Bin(op.clone(), b(l), b(r))
-            }
-            E::Index(a, i) => E::Index(b(self.ev(a, env)?), b(self.ev(i, env)?)),
-            E::If(c, t, f) => E::If(b(self.ev(c, env)?), b(self.ev(t, env)?), b(self.ev(f, env)?)),
-            E::Lam(ps, body) => {
-                let mut env2 = env.clone();
-                let mut fresh = Vec::with_capacity(ps.len());
-                for p in ps {
-                    let f = self.fresh();
-                    env2.insert(p.clone(), E::Var(f.clone()));
-                    fresh.push(f);
-                }
-                E::Lam(fresh, b(self.ev(body, &env2)?))
-            }
-            E::Let(x, rhs, body) => {
-                let v = self.ev(rhs, env)?;
-                // `let z = replicate D 0` is the kingdom's `zeros_D`.
-                let v = match &v {
-                    E::App(f, a) if **f == var("replicate") && a.len() == 2 && a[1] == E::Int(0) && self.is_dim(&a[0]).is_some() => var(&format!("zeros_{}", self.is_dim(&a[0]).unwrap_or_default())),
-                    _ => v,
-                };
-                let mut env2 = env.clone();
-                env2.insert(x.clone(), v);
-                self.ev(body, &env2)?
-            }
-            E::Loop { state, init, var: v, lo, hi, body } => {
-                let init = self.ev(init, env)?;
-                let (lo, hi) = (self.ev(lo, env)?, self.ev(hi, env)?);
-                let mut env2 = env.clone();
-                let mut s2 = Vec::with_capacity(state.len());
-                for x in state {
-                    let f = self.fresh();
-                    env2.insert(x.clone(), E::Var(f.clone()));
-                    s2.push(f);
-                }
-                let v2 = self.fresh();
-                env2.insert(v.clone(), E::Var(v2.clone()));
-                let body = self.ev(body, &env2)?;
-                E::Loop { state: s2, init: b(init), var: v2, lo: b(lo), hi: b(hi), body: b(body) }
-            }
-            E::App(f, args) => {
-                let f = self.ev(f, env)?;
-                let args = args.iter().map(|a| self.ev(a, env)).collect::<Result<Vec<_>, _>>()?;
-                self.apply(f, args)?
-            }
-        })
-    }
-
-    /// Apply a normalised function to normalised arguments: a lambda is reduced, an application is extended, and the
-    /// exact identities of the module's header are applied.
-    fn apply(&mut self, f: E, mut args: Vec<E>) -> Result<E, Gap> {
-        if args.is_empty() {
-            return Ok(f);
-        }
-        match f {
-            E::Lam(ps, body) => {
-                let n = ps.len().min(args.len());
-                let mut env = HashMap::new();
-                for (p, a) in ps.iter().zip(args.drain(..n)) {
-                    env.insert(p.clone(), a);
-                }
-                let rest: Vec<String> = ps[n..].to_vec();
-                let body = self.ev(&body, &env)?;
-                let r = if rest.is_empty() { body } else { self.ev(&E::Lam(rest, b(body)), &HashMap::new())? };
-                self.apply(r, args)
-            }
-            E::App(g, mut a0) => {
-                a0.extend(args);
-                self.apply(*g, a0)
-            }
-            E::Var(name) => {
-                let one = args.len() == 1;
-                match name.as_str() {
-                    "i32.i32" | "i64.i64" | "copy" if one => return Ok(args.remove(0)),
-                    // A size input `k: i32` as a size: `i64.i32 k` is the size `k`.
-                    "i64.i32" if one => {
-                        if let E::Var(x) = &args[0] {
-                            if let Some(d) = x.strip_suffix(SIZE_I32).filter(|d| self.dims.iter().any(|x| x == d)) {
-                                return Ok(var(d));
-                            }
-                        }
-                    }
-                    "opaque" if one => return Ok(args.remove(0)),
-                    "replicate" if self.zeros_everywhere && args.len() == 2 && args[1] == E::Int(0) && self.is_dim(&args[0]).is_some() => {
-                        return Ok(var(&format!("zeros_{}", self.is_dim(&args[0]).unwrap_or_default())));
-                    }
-                    "i32.i64" if one => {
-                        if let E::App(g, a) = &args[0] {
-                            if **g == var("i64.i32") && a.len() == 1 {
-                                return Ok(a[0].clone());
-                            }
-                        }
-                    }
-                    "length" if one => {
-                        if let Some(d) = self.dim_of(&args[0]) {
-                            return Ok(var(&d));
-                        }
-                    }
-                    "map" if args.len() == 2 && (args[0] == var("i32.i32") || args[0].eta() == Some("i32.i32")) => return Ok(args.remove(1)),
-                    _ => {}
-                }
-                Ok(E::App(b(E::Var(name)), args))
-            }
-            other => Ok(E::App(b(other), args)),
-        }
-    }
-}
-
-/// A function of a file and what reading it gave: its type and tree, or the gap.
-pub type FunctionRead = (String, Result<(Ty, Tree), Gap>);
-
-/// The suffix of a size input's `i32` parameter (`k: i32` is `k%i32`; `i64.i32 k` is the size `k`).
-const SIZE_I32: &str = "%i32";
-
-/// `opaque x` is `x` (Futhark's optimisation barrier, an identity): stripped from patterns and programs alike.
-fn strip_opaque(e: E) -> E {
-    let s = |e: &E| strip_opaque(e.clone());
-    match e {
-        E::App(f, mut a) if *f == var("opaque") && a.len() == 1 => strip_opaque(a.remove(0)),
-        E::App(f, a) => E::App(b(s(&f)), a.iter().map(s).collect()),
-        E::Bin(op, l, r) => E::Bin(op, b(s(&l)), b(s(&r))),
-        E::Index(l, r) => E::Index(b(s(&l)), b(s(&r))),
-        E::Neg(x) => E::Neg(b(s(&x))),
-        E::If(c, t, f) => E::If(b(s(&c)), b(s(&t)), b(s(&f))),
-        E::Lam(ps, body) => E::Lam(ps, b(s(&body))),
-        E::Let(x, v, body) => E::Let(x, b(s(&v)), b(s(&body))),
-        E::Loop { state, init, var: v, lo, hi, body } => E::Loop { state, init: b(s(&init)), var: v, lo: b(s(&lo)), hi: b(s(&hi)), body: b(s(&body)) },
-        E::Tuple(a) => E::Tuple(a.iter().map(s).collect()),
-        E::Array(a) => E::Array(a.iter().map(s).collect()),
-        E::Proj(x, i) => E::Proj(b(s(&x)), i),
-        other => other,
-    }
-}
-
-// ---- the reader -------------------------------------------------------------------------------------------------
-
-/// The reader of one instance: every row's spelling as a pattern, by output type.
-pub struct Reader<'a> {
-    pub k: &'a FutharkKingdom,
-    pub sig: &'a Signature,
-    by_ty: BTreeMap<Ty, Vec<(u32, E)>>,
-    consts: BTreeMap<Ty, u32>,
-    input_dims: BTreeMap<String, Vec<String>>,
-    steps: std::cell::Cell<usize>,
-    /// Read every `replicate D 0` as the kingdom's `zeros_D` (the same value): set by [`Reader::for_pool`].
-    zeros_everywhere: bool,
-}
-
 /// The most pattern matches one read may try (a guard: reading a program always ends).
 const READ_STEPS: usize = 5_000_000;
 /// The most rows [`Reader6::read_tree`] rejects at their nodes before a text is a gap.
 const READ_REJECTED: usize = 64;
-
-impl<'a> Reader<'a> {
-    pub fn new(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Reader<'a>, String> {
-        let mut by_ty: BTreeMap<Ty, Vec<(u32, E)>> = BTreeMap::new();
-        let mut consts = BTreeMap::new();
-        for (i, r) in k.rows.iter().enumerate() {
-            if r.kind == FutharkKind::Const {
-                consts.insert(r.output, i as u32);
-                continue;
-            }
-            let p = strip_opaque(parse_pattern(&r.spelling).map_err(|g| format!("our software has a bug: the spelling of {} does not parse as a pattern: {g}", r.name))?);
-            by_ty.entry(r.output).or_default().push((i as u32, p));
-        }
-        let input_dims = sig.inputs.iter().filter(|p| !sig.size_inputs.contains(&p.name)).map(|p| (p.name.clone(), p.dims.clone())).collect();
-        Ok(Reader { k, sig, by_ty, consts, input_dims, steps: std::cell::Cell::new(0), zeros_everywhere: false })
-    }
-
-    /// The reader of the pool's programs (`examples/futhark_pool.rs`): as [`Reader::new`], and every `replicate D 0`
-    /// is read as the kingdom's `zeros_D`, the same array, so the rings hold the zero arrays programs build (the zero
-    /// array is the only terminal of a computed array's type: measured 2026-10-28, without this no topic program put
-    /// a terminal in the `a.k` rings of histogram). The round trip uses [`Reader::new`], which keeps an inline
-    /// `replicate D 0` as `replicate`.
-    pub fn for_pool(k: &'a FutharkKingdom, sig: &'a Signature) -> Result<Reader<'a>, String> {
-        Ok(Reader { zeros_everywhere: true, ..Reader::new(k, sig)? })
-    }
-
-    fn norm(&self) -> Norm<'_> {
-        Norm { dims: &self.sig.dims, input_dims: &self.input_dims, fresh: 0, steps: 0, zeros_everywhere: self.zeros_everywhere }
-    }
-
-    /// A whole program with the declared signature (its entry `main`, or its only entry), read at the root type.
-    pub fn read_program(&self, src: &str) -> Result<Tree, Gap> {
-        let defs = parse_file(src)?;
-        let entries: Vec<&Def> = defs.iter().filter(|d| d.entry).collect();
-        let entry = entries.iter().find(|d| d.name == "main").copied().or(if entries.len() == 1 { Some(entries[0]) } else { None }).ok_or_else(|| Gap::parse("no entry point", format!("{} entries, none named main", entries.len())))?;
-        let mut norm = self.norm();
-        let mut env = self.helpers(&defs, entry, &mut norm)?;
-        if entry.params.len() != self.sig.inputs.len() {
-            return Err(Gap::parse("entry signature", format!("{} parameters, the signature has {}", entry.params.len(), self.sig.inputs.len())));
-        }
-        let mut dim_map: HashMap<String, String> = HashMap::new();
-        for (p, s) in entry.params.iter().zip(&self.sig.inputs) {
-            env.insert(p.name.clone(), self.canonical_input(s));
-            if let Some(t) = &p.ty {
-                for (d, sd) in t.dims.iter().zip(&s.dims) {
-                    if let Some(d) = d {
-                        dim_map.insert(d.clone(), sd.clone());
-                    }
-                }
-            }
-        }
-        for sp in &entry.size_params {
-            let d = dim_map.get(sp).ok_or_else(|| Gap::parse("entry signature", format!("the size parameter {sp} is no dimension of the signature")))?;
-            env.insert(sp.clone(), var(d));
-        }
-        let body = entry.body.clone()?;
-        let e = norm.ev(&body, &env)?;
-        let root = *self.k.roots().first().ok_or_else(|| Gap::parse("no root", String::new()))?;
-        self.steps.set(0);
-        self.read(&e, root)
-    }
-
-    /// A size input `k: i32` is the name `k%i32` (its `i64.i32` is the size `k`); an array input is its own name.
-    fn canonical_input(&self, s: &crate::futhark_sig::Param) -> E {
-        if self.sig.size_inputs.contains(&s.name) {
-            var(&format!("{}{SIZE_I32}", s.name))
-        } else {
-            var(&s.name)
-        }
-    }
-
-    /// The helper definitions before `upto`, normalised, as the environment of a body.
-    fn helpers(&self, defs: &[Def], upto: &Def, norm: &mut Norm<'_>) -> Result<HashMap<String, E>, Gap> {
-        let mut env: HashMap<String, E> = HashMap::new();
-        for d in defs {
-            if std::ptr::eq(d, upto) {
-                break;
-            }
-            let Ok(body) = &d.body else { continue };
-            // A size parameter of a helper is bound by its arguments' shapes: kept free (a gap if it is used).
-            let ps: Vec<String> = d.params.iter().map(|p| p.name.clone()).collect();
-            let lam = if ps.is_empty() { body.clone() } else { E::Lam(ps, b(body.clone())) };
-            match norm.ev(&lam, &env) {
-                Ok(v) => {
-                    env.insert(d.name.clone(), v);
-                }
-                Err(_) => continue,
-            }
-        }
-        Ok(env)
-    }
-
-    /// Every function of a source file read in this kingdom (`docs/PLAN_futhark_fitness_fixes.md` §H, the published
-    /// benchmarks as a source of the rings): each `def`/`entry`, its parameters bound to the kingdom's inputs of the
-    /// same type (an `i32` array of rank r to the next unused input of rank r, a scalar to the next unused size input
-    /// or dimension), its body read at the type of its result in the top context. In file order.
-    pub fn read_functions(&self, src: &str) -> Vec<FunctionRead> {
-        let defs = match parse_file(src) {
-            Ok(d) => d,
-            Err(g) => return vec![("(file)".into(), Err(g))],
-        };
-        let mut out = Vec::new();
-        for d in &defs {
-            let mut norm = self.norm();
-            let r = self.helpers(&defs, d, &mut norm).and_then(|env| self.read_function(d, env, &mut norm));
-            out.push((d.name.clone(), r));
-        }
-        out
-    }
-
-    fn read_function(&self, d: &Def, mut env: HashMap<String, E>, norm: &mut Norm<'_>) -> Result<(Ty, Tree), Gap> {
-        let body = d.body.clone()?;
-        let arrays: Vec<&crate::futhark_sig::Param> = self.sig.inputs.iter().filter(|p| !self.sig.size_inputs.contains(&p.name)).collect();
-        let mut used_arrays: Vec<&str> = Vec::new();
-        let mut scalars: Vec<E> = self.sig.size_inputs.iter().map(|s| var(&format!("{s}{SIZE_I32}"))).collect();
-        scalars.extend(self.sig.dims.iter().filter(|x| !self.sig.size_inputs.contains(x)).map(|x| app("i32.i64", vec![var(x)])));
-        let mut sizes: Vec<String> = self.sig.dims.clone();
-        let mut dim_map: HashMap<String, String> = HashMap::new();
-        for p in &d.params {
-            let Some(t) = &p.ty else { return Err(Gap::parse("untyped parameter", p.name.clone())) };
-            match (t.elem.as_str(), t.dims.len()) {
-                ("i32", 0) => {
-                    if scalars.is_empty() {
-                        return Err(Gap::parse("parameter i32 (no scalar terminal left)", p.name.clone()));
-                    }
-                    let s = scalars.remove(0);
-                    env.insert(p.name.clone(), norm.ev(&s, &HashMap::new())?);
-                }
-                ("i64", 0) => {
-                    if sizes.is_empty() {
-                        return Err(Gap::parse("parameter i64 (no dimension left)", p.name.clone()));
-                    }
-                    env.insert(p.name.clone(), var(&sizes.remove(0)));
-                }
-                ("i32", r) => {
-                    let Some(a) = arrays.iter().find(|a| a.dims.len() == r && !used_arrays.contains(&a.name.as_str())) else {
-                        return Err(Gap::parse(&format!("parameter {}i32 (no input of rank {r} left)", "[]".repeat(r)), p.name.clone()));
-                    };
-                    used_arrays.push(&a.name);
-                    for (dd, sd) in t.dims.iter().zip(&a.dims) {
-                        if let Some(dd) = dd {
-                            if dim_map.insert(dd.clone(), sd.clone()).is_some_and(|old| &old != sd) {
-                                return Err(Gap::parse("parameter shapes", format!("the dimension {dd} is two dimensions of the signature")));
-                            }
-                        }
-                    }
-                    env.insert(p.name.clone(), var(&a.name));
-                }
-                (elem, r) => return Err(Gap::parse(&format!("parameter of type {}{elem}", "[]".repeat(r)), p.name.clone())),
-            }
-        }
-        for sp in &d.size_params {
-            match dim_map.get(sp) {
-                Some(x) => {
-                    env.insert(sp.clone(), var(x));
-                }
-                None => return Err(Gap::parse("size parameter no input binds", sp.clone())),
-            }
-        }
-        let e = norm.ev(&body, &env)?;
-        // An untyped result: every class of the kingdom's top context is tried.
-        let ret = d.ret.clone().unwrap_or(FType { dims: vec![], elem: "untyped".into() });
-        let classes: Vec<String> = match (ret.elem.as_str(), ret.dims.len()) {
-            ("untyped", _) => std::iter::once("i32".to_string()).chain(self.sig.dims.iter().map(|x| format!("a.{x}"))).collect(),
-            ("i32", 0) => vec!["i32".into()],
-            ("i32", 1) => match &ret.dims[0] {
-                Some(dd) if dim_map.contains_key(dd) => vec![format!("a.{}", dim_map[dd])],
-                Some(dd) if self.sig.dims.contains(dd) => vec![format!("a.{dd}")],
-                _ => self.sig.dims.iter().map(|x| format!("a.{x}")).collect(),
-            },
-            (elem, r) => return Err(Gap::parse(&format!("result of type {}{elem}", "[]".repeat(r)), d.name.clone())),
-        };
-        let mut first = None;
-        for c in classes {
-            let Some(ty) = self.k.ty(&format!("{c}:c")) else { continue };
-            self.steps.set(0);
-            match self.read(&e, ty) {
-                Ok(t) => return Ok((ty, t)),
-                Err(g) => {
-                    first.get_or_insert(g);
-                }
-            }
-        }
-        Err(first.unwrap_or_else(|| Gap::parse("result class", "no class of the kingdom".into())))
-    }
-
-    /// Read a normalised expression at a type.
-    pub fn read(&self, e: &E, ty: Ty) -> Result<Tree, Gap> {
-        self.steps.set(self.steps.get() + 1);
-        let dual = self.k.dual(ty).ok_or_else(|| Gap::parse("type", "a type outside the kingdom".into()))?;
-        if self.steps.get() > READ_STEPS {
-            return Err(Gap { construct: "reading budget".into(), dual: dual.dual.clone(), detail: format!("over {READ_STEPS} matches") });
-        }
-        // A literal in a constant slot.
-        if let (E::Int(v), Some(&sym)) = (e, self.consts.get(&ty)) {
-            if let Some(i) = dual.literals.iter().position(|l| l.trim_end_matches(dual.slot.as_str()).parse::<i64>() == Ok(*v)) {
-                return Ok(Tree { symbol: sym, const_index: Some(i as u32), kids: vec![] });
-            }
-        }
-        let mut first: Option<Gap> = None;
-        if let Some(rows) = self.by_ty.get(&ty) {
-            for (sym, pat) in rows {
-                let n = self.k.rows[*sym as usize].inputs.len();
-                for holes in pmatch_all(pat, e, n) {
-                    let inputs = &self.k.rows[*sym as usize].inputs;
-                    let mut kids = Vec::with_capacity(n);
-                    let mut failed = None;
-                    for (h, t) in holes.iter().zip(inputs) {
-                        let Some(h) = h else {
-                            failed = Some(Gap { construct: "spelling".into(), dual: dual.dual.clone(), detail: "a hole the spelling does not bind".into() });
-                            break;
-                        };
-                        match self.read(h, *t) {
-                            Ok(t) => kids.push(t),
-                            Err(g) => {
-                                failed = Some(g);
-                                break;
-                            }
-                        }
-                    }
-                    match failed {
-                        None => return Ok(Tree { symbol: *sym, const_index: None, kids }),
-                        Some(g) => {
-                            first.get_or_insert(g);
-                        }
-                    }
-                }
-            }
-        }
-        let mut norm = self.norm();
-        norm.fresh = 1_000_000 + self.steps.get();
-        for alt in self.rewrites(e, dual, &mut norm) {
-            match self.read(&alt, ty) {
-                Ok(t) => return Ok(t),
-                Err(g) => {
-                    first.get_or_insert(g);
-                }
-            }
-        }
-        Err(first.unwrap_or_else(|| Gap { construct: e.head(), dual: dual.dual.clone(), detail: "no row of this type reads it".into() }))
-    }
-
-    /// The exact rewrites tried when no row reads an expression.
-    fn rewrites(&self, e: &E, dual: &crate::futhark_table::FutharkDual, norm: &mut Norm<'_>) -> Vec<E> {
-        let mut out = Vec::new();
-        let class = dual.dual.split(':').next().unwrap_or("");
-        let arr_dim = class.strip_prefix("a.").filter(|d| !d.contains('.')).map(str::to_string);
-        let is_add = |f: &E| matches!(f, E::Lam(ps, body) if ps.len() == 2 && **body == E::Bin("+".into(), b(var(&ps[0])), b(var(&ps[1]))));
-        let named = |f: &E, n: &str| f == &var(n) || f.eta() == Some(n);
-        // A size input as an `i32` value is the kingdom's `i32.i64 k`.
-        if let E::Var(x) = e {
-            if let Some(d) = x.strip_suffix(SIZE_I32) {
-                out.push(app("i32.i64", vec![var(d)]));
-            }
-        }
-        // An element of a computed array is the computation at that index (exact: the index is in range for the
-        // array, which has the length of the arrays it is computed from): `(map f xs)[i] = f xs[i]`,
-        // `(map2 f xs ys)[i] = f xs[i] ys[i]`, `(tabulate d g)[i] = g i`, `(replicate d x)[i] = x`.
-        if let E::Index(a, i) = e {
-            if let E::App(h, ha) = a.as_ref() {
-                if let E::Var(hn) = h.as_ref() {
-                    let at = |x: &E| match x {
-                        E::App(g, ga) if (**g == var("iota") || **g == var("indices")) && ga.len() == 1 => *i.clone(),
-                        _ => E::Index(b(x.clone()), i.clone()),
-                    };
-                    let r = match (hn.as_str(), ha.as_slice()) {
-                        ("map" | "map2" | "map3", [g, arrays @ ..]) if !arrays.is_empty() => norm.apply(g.clone(), arrays.iter().map(at).collect()).ok(),
-                        ("tabulate", [_, g]) => norm.apply(g.clone(), vec![*i.clone()]).ok(),
-                        ("replicate", [_, x]) => Some(x.clone()),
-                        _ => None,
-                    };
-                    out.extend(r);
-                }
-            }
-        }
-        let E::App(f, args) = e else {
-            if let E::If(c, t, f) = e {
-                if let E::Bin(op, l, r) = c.as_ref() {
-                    let lt0 = |x: &E| E::Bin("<".into(), b(x.clone()), b(E::Int(0)));
-                    match (op.as_str(), l.as_ref(), r.as_ref()) {
-                        (">=", x, E::Int(0)) => out.push(E::If(b(lt0(x)), f.clone(), t.clone())),
-                        (">", E::Int(0), x) => out.push(E::If(b(lt0(x)), t.clone(), f.clone())),
-                        ("<=", E::Int(0), x) => out.push(E::If(b(lt0(x)), f.clone(), t.clone())),
-                        _ => {}
-                    }
-                }
-            }
-            return out;
-        };
-        let E::Var(fname) = f.as_ref() else { return out };
-        match (fname.as_str(), args.as_slice()) {
-            ("map", [g, _]) | ("map2", [g, _, _]) | ("map3", [g, _, _, _]) => {
-                if let Some(d) = &arr_dim {
-                    let j = norm.fresh();
-                    let arrays = &args[1..];
-                    let elems: Vec<E> = arrays
-                        .iter()
-                        .map(|a| match a {
-                            E::App(h, x) if (**h == var("iota") || **h == var("indices")) && x.len() == 1 => var(&j),
-                            _ => E::Index(b(a.clone()), b(var(&j))),
-                        })
-                        .collect();
-                    if let Ok(body) = norm.apply(g.clone(), elems) {
-                        out.push(app("tabulate", vec![var(d), E::Lam(vec![j], b(body))]));
-                    }
-                }
-            }
-            ("reduce_by_index", [E::App(r, ra), op, ne, is, vs]) => {
-                if **r == var("replicate") && ra.len() == 2 && &ra[1] == ne {
-                    out.push(app("hist", vec![op.clone(), ne.clone(), ra[0].clone(), is.clone(), vs.clone()]));
-                }
-            }
-            ("hist", [op, ne, d, E::App(m, ma), vs]) => {
-                if **m == var("map") && ma.len() == 2 && !named(&ma[0], "i64.i32") {
-                    let v = norm.fresh();
-                    if let Ok(E::App(h, ha)) = norm.apply(ma[0].clone(), vec![var(&v)]) {
-                        if *h == var("i64.i32") && ha.len() == 1 {
-                            let inner = app("map", vec![E::Lam(vec![v], b(ha[0].clone())), ma[1].clone()]);
-                            out.push(app("hist", vec![op.clone(), ne.clone(), d.clone(), app("map", vec![var("i64.i32"), inner]), vs.clone()]));
-                        }
-                    }
-                }
-            }
-            ("reduce", [op, ne, xs]) => {
-                if is_add(op) && *ne == E::Int(0) {
-                    out.push(app("i32.sum", vec![xs.clone()]));
-                } else if named(op, "i32.min") && *ne == var("i32.highest") {
-                    out.push(app("i32.minimum", vec![xs.clone()]));
-                } else if named(op, "i32.max") && *ne == var("i32.lowest") {
-                    out.push(app("i32.maximum", vec![xs.clone()]));
-                }
-            }
-            ("i64.min", [x, E::App(g, ga)]) => {
-                // `min (D-1) (max 0 x)` is `max 0 (min (D-1) x)` for D >= 1: the clamp's other order.
-                if **g == var("i64.max") && ga.len() == 2 && ga[0] == E::Int(0) {
-                    out.push(app("i64.max", vec![E::Int(0), app("i64.min", vec![x.clone(), ga[1].clone()])]));
-                }
-            }
-            _ => {}
-        }
-        out
-    }
-}
 
 /// Whether a pattern node may be matched with its two arguments swapped (an exact commutative operator) and is worth
 /// it (one argument is not a bare hole, or the two holes differ in type: a pattern of two holes reads both orders
@@ -1732,8 +1134,6 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
             }
         }
         (E::Int(a), E::Int(c)) if a == c => then(vec![], holes, k),
-        // The kingdom's `i32.i64 k` against a size input's own `i32` parameter.
-        (E::App(f, a), E::Var(x)) if **f == var("i32.i64") && a.len() == 1 && matches!(&a[0], E::Var(d) if x.strip_suffix(SIZE_I32) == Some(d.as_str())) => then(vec![], holes, k),
         (E::Var(a), E::Var(c)) if a == c => then(vec![], holes, k),
         // A name against a lambda that only applies it, and the other way round.
         (E::Var(a), E::Lam(..)) if e.eta() == Some(a.as_str()) => then(vec![], holes, k),
@@ -1755,10 +1155,8 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
                 then(vec![(*f.clone(), *g.clone()), (x, c[1].clone()), (y, c[0].clone())], holes, k);
             }
         }
-        // A binder's variable is named by its class (`futhark_view::var_name`), so the pattern's name may be one an
-        // outer binder already gave: renaming the source's binder to it would capture an outer variable the body
-        // reads (the body reads an outer variable through a same-class inner binder). No row can say that, so the
-        // match fails and the reader reports the gap.
+        // The pattern's binder name may be one the source's body already reads: renaming the source's binder to it
+        // would capture that outer variable. No row can say that, so the match fails and the reader reports the gap.
         (E::Lam(ps, _), E::Lam(qs, ebody)) if ps.len() == qs.len() && ps.iter().zip(qs).any(|(p, q)| p != q && ebody.mentions(p)) => {}
         (E::Loop { state, var: v, .. }, E::Loop { state: s2, var: v2, body: b2, .. }) if state.len() != s2.len() || state.iter().zip(s2).any(|(p, q)| p != q && b2.mentions(p)) || (v != v2 && b2.mentions(v)) => {}
         (E::Let(x, _, _), E::Let(y, _, ebody)) if x != y && ebody.mentions(x) => {}
@@ -1782,7 +1180,7 @@ fn pm_seq(pairs: &[(E, E)], holes: &mut Vec<Option<E>>, k: &mut dyn FnMut(&[Opti
     }
 }
 
-// ---- master 6: the reader (plan section 7, task F4) -----------------------------------------------------------------
+// ---- the reader (plan section 7, task F4) --------------------------------------------------------------------------
 //
 // Futhark text to a tree of a master 6 view (`kingdoms/futhark/sig/<problem>/m6/`), the inverse of pass 5
 // ([`Kingdom6::program6`]). A slot of data type `T` is read, in this order, as: a name in scope of data type `T` (the
@@ -2169,7 +1567,7 @@ impl<'a> Reader6<'a> {
                 }
                 Role::Function | Role::Formula => {
                     let spelling = pattern6(k, symbol, row.spelling("").unwrap_or_default());
-                    let parsed = parse_expression(&spelling, true, true).map_err(|g| bug6(k, format!("the spelling of {} does not parse as a pattern: {g}", row.symbol_name)))?;
+                    let parsed = parse_expression(&spelling, true).map_err(|g| bug6(k, format!("the spelling of {} does not parse as a pattern: {g}", row.symbol_name)))?;
                     let mut props = Vec::new();
                     let pattern = parsed.props_to_holes(inputs.len(), &mut props);
                     let mut binds: BTreeMap<u32, Vec<Ty>> = BTreeMap::new();
@@ -2191,7 +1589,7 @@ impl<'a> Reader6<'a> {
         let mut constants = BTreeMap::new();
         for d in &k.tables.data_types {
             if let Some(c) = &d.constant {
-                let e = parse_expression(&c.spelling, false, true).map_err(|g| bug6(k, format!("the constant {:?} of {} does not parse: {g}", c.spelling, d.name)))?;
+                let e = parse_expression(&c.spelling, false).map_err(|g| bug6(k, format!("the constant {:?} of {} does not parse: {g}", c.spelling, d.name)))?;
                 constants.insert(d.id, e);
             }
         }
@@ -2235,7 +1633,7 @@ impl<'a> Reader6<'a> {
     /// A program's definitions and its entry's body: the entry's array parameters renamed to the view's inputs, the
     /// header's bindings (each size input's `i64` rebinding, the zero arrays) taken away.
     fn program_body(&self, src: &str) -> Result<(Vec<Def>, E), Gap> {
-        let defs = parse_file_with(src, true)?;
+        let defs = parse_file(src)?;
         let entries: Vec<&Def> = defs.iter().filter(|d| d.entry).collect();
         let entry = entries.iter().find(|d| d.name == "main").copied().or(if entries.len() == 1 { Some(entries[0]) } else { None }).ok_or_else(|| Gap::parse("no entry point", format!("{} entries, none named main", entries.len())))?;
         let mut body = entry.body.clone()?;
@@ -2266,7 +1664,7 @@ impl<'a> Reader6<'a> {
     /// An EXPRESSION of data type `ty` in the root environment (the entry's names in scope): what a program's body is
     /// when it is not of the root's data type (a pool's `i32` constant).
     pub fn read_expression(&self, src: &str, ty: Ty) -> Result<Tree, Gap> {
-        let e = parse_expression(src, false, true)?;
+        let e = parse_expression(src, false)?;
         let entry = Entry { output: ty, guards: Vec::new(), ..self.entry.clone() };
         self.read_body(&e, entry)
     }
@@ -2741,7 +2139,5 @@ fn tree_at<'t>(t: &'t mut Tree, path: &[u32]) -> Option<&'t mut Tree> {
     }
 }
 
-#[cfg(test)]
-mod tests;
 #[cfg(test)]
 mod tests6;

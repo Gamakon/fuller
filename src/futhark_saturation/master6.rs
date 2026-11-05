@@ -329,7 +329,7 @@ impl Egraph6 {
         Ok(egraph)
     }
 
-    /// THE E-GRAPH VARIANTS of a tree, as master 5's `futhark_sig::variants`: `iters` iterations of the view's ruleset
+    /// THE E-GRAPH VARIANTS of a tree: `iters` iterations of the view's ruleset
     /// (bounded), the ranked members of the root's class (HFF extraction, `members` a class), up to `n` distinct
     /// programs other than the tree itself, smallest first and then by their rendered text. Every variant is placed
     /// where it stands and has no failing requirement. A tree with a failing requirement is not saturated.

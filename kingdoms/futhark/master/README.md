@@ -11,9 +11,9 @@ rendered program carries an **adapter**.
 size and scope columns are dropped, and four columns are added: `rules`, `requires`, `binds`, `trip`.
 
 **Status (2026-11-05).** Plan section 7, task F0: this document is the format. Task F1a wrote the files, under
-`kingdoms/futhark/master/6/`, beside master 5, which stays as it is and loadable until task D1; the views are under
-`kingdoms/futhark/sig/<problem>/m6/` (section 9). At D1, master 5's files are deleted and `6/`'s files move up into
-`master/`.
+`kingdoms/futhark/master/6/`; the views are under `kingdoms/futhark/sig/<problem>/m6/` (section 9). Task D1 deleted
+master 5 (its files, views, loader, renderer, reader, interpreter, cost and e-graph); master 6's files stay in `6/`.
+The "replaces" column below names master 5's files as they were.
 
 **Why.** Folding sizes and scope into the type made the k-means view 14,359 types and a gene of 27.6 million words,
 and kept the `i32` + `f32` view from loading at all (plan section 7, "Why").

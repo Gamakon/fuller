@@ -7,7 +7,9 @@
 //!   cargo run --release --example futhark_sig_quality_study -- --problem pathfinder --n 1000
 
 use fuller::futhark_table::GeneRng;
-use fuller::futhark_sig::{build, compare, load, load_cases, problem, quality_inputs, random_gene, signature, Array, Interp};
+use std::sync::Arc;
+
+use fuller::futhark_sig::{build6, compare, kingdom6, load_cases, problem, quality_inputs, random_gene, sexp6, signature, Array, Interp};
 use fuller::runner::{log_scaled, staged_hff, FitnessStage};
 use fuller::typed_gep::{express, GeneLayout};
 
@@ -36,13 +38,13 @@ fn real_main() -> Result<(), String> {
     let pname = get("--problem").unwrap_or_else(|| "pathfinder".into());
     let n: usize = get("--n").map_or(Ok(1000), |v| v.parse().map_err(|_| "--n".to_string()))?;
     let p = problem(&pname)?;
-    let k = load(&p.instance)?;
-    let sig = signature(&p.instance)?;
-    let interp = Interp::new(&k, &sig)?;
-    let contract = k.relations().check().map_err(|d| format!("{:?}", &d[..d.len().min(3)]))?;
-    let reference = build(&k, p.reference()?)?;
-    let n_funcs = reference.level_order().iter().filter(|(t, _)| !k.rows[t.symbol as usize].inputs.is_empty()).count();
-    let layout = GeneLayout::from_program_size(&contract, k.roots()[0], n_funcs.max(8)).map_err(|e| e.to_string())?;
+    let k = Arc::new(kingdom6(p.name)?);
+    let sig = signature(p.name)?;
+    let interp = Interp::new6(&k, &sig)?;
+    let contract = k.contract.as_ref().clone();
+    let reference = build6(&k, p.reference()?)?;
+    let n_funcs = reference.level_order().iter().filter(|(t, _)| !t.kids.is_empty()).count();
+    let layout = GeneLayout::from_program_size(&contract, k.entry.output, n_funcs.max(8)).map_err(|e| e.to_string())?;
     let const_len = k.const_len();
     let cases = load_cases(&p)?;
     let score = |outs: &[Array]| -> (f64, f64) {
@@ -73,7 +75,7 @@ fn real_main() -> Result<(), String> {
         let outs = cases.iter().map(|c| interp.eval(&tree, &c.inputs)).collect::<Result<Vec<_>, _>>()?;
         let (a, b) = score(&outs);
         if b < best.0 {
-            best = (b, fuller::futhark_sig::sexp(&k, &tree));
+            best = (b, sexp6(&k, &tree)?);
         }
         cur.push(a);
         pro.push(b);

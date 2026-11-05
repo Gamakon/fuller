@@ -1,74 +1,10 @@
-//! The reference programs as master 6 trees (plan section 7, task F2a): each expresses, writes back to itself, and
-//! decodes (G3) with no failing requirement and no work-bound substitution; its expected text, its master 5 rendering,
-//! is stored for task F2.
+//! The reference programs as trees of their views (plan section 7, task F2a): each expresses, writes back to itself,
+//! and decodes (G3) with no failing requirement and no work-bound substitution, and every variable is the one its
+//! stored text (`tests/fixtures/futhark_m6_references.txt`) names.
 
 use super::*;
 use crate::typed_environment::Choice;
 use crate::typed_gep::{express, write_back};
-
-/// The fixture as master 5 renders it now, in [`REFERENCES6`]'s order.
-fn renderings() -> String {
-    REFERENCES6.iter().map(|r| format!("{}{}", references6_separator(&r.key()), master5_rendering(r).unwrap_or_else(|e| panic!("{}: {e}", r.key())))).collect()
-}
-
-/// Whether a run asks to rewrite the fixture: `FULLER_WRITE_REFERENCES6` unset is no, exactly `1` is yes, and any
-/// other value is an error (a mistyped request is never read as either).
-fn write_requested(value: Option<&str>) -> Result<bool, String> {
-    match value {
-        None => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!("FULLER_WRITE_REFERENCES6 is {other:?}: it must be exactly \"1\" (rewrite the fixture) or unset")),
-    }
-}
-
-/// The fixture check: with `write`, `want` is written to `path` and the result is an error that says so (a rewrite is
-/// never a pass: the binary under test holds the old text, compiled in); otherwise `stored` must equal `want`.
-fn check_or_write(path: &std::path::Path, stored: &str, want: &str, write: bool) -> Result<(), String> {
-    if write {
-        std::fs::write(path, want).map_err(|e| format!("{}: {e}", path.display()))?;
-        return Err(format!("wrote {} ({} bytes, {} references); run again without FULLER_WRITE_REFERENCES6 to check it", path.display(), want.len(), REFERENCES6.len()));
-    }
-    if stored != want {
-        return Err(format!("{} is not master 5's rendering (FULLER_WRITE_REFERENCES6=1 rewrites it, and that run fails)", path.display()));
-    }
-    Ok(())
-}
-
-/// THE EXPECTED TEXTS ARE MASTER 5'S: the stored fixture is, byte for byte, what master 5's renderer writes for every
-/// reference program today, and [`expected_text6`] gives each one back. `FULLER_WRITE_REFERENCES6=1` rewrites it, and
-/// that run fails.
-#[test]
-fn the_stored_texts_are_master_5_renderings_byte_for_byte() {
-    let want = renderings();
-    let write = write_requested(std::env::var("FULLER_WRITE_REFERENCES6").ok().as_deref()).unwrap_or_else(|e| panic!("{e}"));
-    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/futhark_m6_references.txt"));
-    check_or_write(path, REFERENCES6_MASTER5_TEXTS, &want, write).unwrap_or_else(|e| panic!("{e}"));
-    for r in &REFERENCES6 {
-        let text = expected_text6(&r.key()).unwrap_or_else(|| panic!("{}: no stored text", r.key()));
-        assert_eq!(text, master5_rendering(r).unwrap(), "{}", r.key());
-        assert!(text.starts_with("entry main ") || text.starts_with("def matmul "), "{}", r.key());
-    }
-    assert_eq!(expected_text6("nothing.reference"), None);
-}
-
-/// A rewrite of the fixture never passes, and the request must be exactly `1`.
-#[test]
-fn a_fixture_rewrite_fails_and_its_request_is_exactly_1() {
-    assert_eq!(write_requested(None), Ok(false));
-    assert_eq!(write_requested(Some("1")), Ok(true));
-    for bad in ["", "0", "true", "yes", " 1", "1 "] {
-        assert!(write_requested(Some(bad)).is_err(), "{bad:?}");
-    }
-    let dir = std::env::temp_dir().join(format!("fuller_references6_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("fixture.txt");
-    let e = check_or_write(&path, "old", "new", true).unwrap_err();
-    assert!(e.starts_with("wrote ") && e.contains("run again"), "{e}");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
-    assert!(check_or_write(&path, "old", "new", false).is_err());
-    assert_eq!(check_or_write(&path, "same", "same", false), Ok(()));
-    std::fs::remove_dir_all(&dir).unwrap();
-}
 
 /// EVERY REFERENCE IS A MASTER 6 TREE: it builds in its view, writes back into a gene of the problem's program size
 /// and expresses to itself (the gene written back again is the gene), and decodes with no failing requirement, no
@@ -109,11 +45,11 @@ fn every_reference_expresses_writes_back_and_decodes_with_no_failure() {
     }
 }
 
-/// The trees name the variables the master 5 programs name: the histogram's is design section 6's reference (G3's
+/// The trees name the variables the stored texts name: the histogram's is design section 6's reference (G3's
 /// test: the tabulate's size `n`, the bins' `k`, `is[i]` with `i` the tabulate's index), pathfinder's inner `get`
 /// reads the loop's state at the tabulate's index, and k-means's `assign` is the `let`'s variable.
 #[test]
-fn the_trees_name_the_variables_master_5_names() {
+fn the_trees_name_the_variables_the_stored_texts_name() {
     let k = kingdom6("histogram").unwrap();
     let tree = build6(&k, HISTOGRAM_REFERENCE6).unwrap();
     let d = k.decode(&tree).unwrap();
@@ -149,9 +85,9 @@ fn the_trees_name_the_variables_master_5_names() {
     assert_eq!(k.name(tree.symbol), "let.a.f32@m.f32");
 }
 
-/// What master 5's program names each bound variable of a reference, as `<binder symbol> v<N>`: the binder row's
-/// `{k.vN}` in its spelling (master 5's `s_f32` is a loop state's `v0`, `s2_f32` its `v1`, `i_k` the counter). A
-/// name not listed is a root variable of that name.
+/// What a reference's stored text names each bound variable, as `<binder symbol> v<N>`: the binder row's `{k.vN}` in
+/// its spelling (a loop state's first component is its `v0`, its second its `v1`, the counter after them). A name not
+/// listed is a root variable of that name.
 fn bound_names(key: &str) -> &'static [(&'static str, &'static str)] {
     const KMEANS: &[(&str, &str)] = &[
         ("assign", "let.a.f32@m.f32 v0"),
@@ -207,13 +143,13 @@ fn variable_mismatches(key: &str, problem: &str, text: &str) -> Vec<String> {
     out
 }
 
-/// EVERY VARIABLE OF EVERY REFERENCE IS THE ONE MASTER 5 NAMES: each variable leaf decodes to the binder and the
+/// EVERY VARIABLE OF EVERY REFERENCE IS THE ONE ITS STORED TEXT NAMES: each variable leaf decodes to the binder and the
 /// ordinal [`bound_names`] gives for its name, or to the root variable of its name, so two variables of one data
 /// type with their names swapped in a binder fail here (shown on k-means's `[bi,best,c]`); and every binder row's
 /// spelling names its bound variables `{k.v0}` .. `{k.v<n-1>}`, one for each of its bindings, so an ordinal is the
 /// spelling's.
 #[test]
-fn every_variable_of_every_reference_is_the_one_master_5_names() {
+fn every_variable_of_every_reference_is_the_one_its_stored_text_names() {
     for r in &REFERENCES6 {
         let key = r.key();
         assert_eq!(variable_mismatches(&key, r.problem, &(r.master6)()), Vec::<String>::new(), "{key}");
@@ -233,34 +169,6 @@ fn every_variable_of_every_reference_is_the_one_master_5_names() {
     assert_ne!(swapped, kmeans_reference6());
     let found = variable_mismatches("kmeans.reference", "kmeans", &swapped);
     assert!(found.iter().any(|m| m.starts_with("best at ")) && found.iter().any(|m| m.starts_with("bi at ")), "{found:?}");
-}
-
-/// THE MASTER 5 DRAWS ARE UNCHANGED by d499f633's `random_gene` change (a Dc or Dv word is no longer read as a symbol
-/// to split by kind, which panicked on a Dv word at or above the number of symbols): eight genes of each master 5
-/// problem but k-means, at its program size from one seed, hash (FNV-1a over the words) to what the code before
-/// d499f633 drew, measured on a `git archive` copy of 594a4936.
-#[test]
-fn random_gene_draws_the_master_5_genes_it_drew_before_d499f633() {
-    let mut out = Vec::new();
-    for name in ["reduce", "scan", "histogram", "pathfinder", "a7"] {
-        let p = problem(name).unwrap();
-        let k = load(&p.instance).unwrap();
-        let contract = k.relations().check().unwrap();
-        let layout = GeneLayout::from_program_size(&contract, k.roots()[0], p.program_size).unwrap();
-        let const_len = k.const_len();
-        let mut rng = GeneRng::new(0x60_1DE6);
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for _ in 0..8 {
-            for w in random_gene(&contract, &layout, &const_len, &mut rng).unwrap() {
-                h = (h ^ u64::from(w)).wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
-        out.push((name, layout.width, h));
-    }
-    assert_eq!(
-        out,
-        [("reduce", 10025, 1041675751412024729), ("scan", 10021, 11103297550919678028), ("histogram", 47999, 6993417665150567413), ("pathfinder", 57487, 224478049938280798), ("a7", 4846, 8447035347256795500)]
-    );
 }
 
 /// A text that names a variable in scope nowhere, of another data type, a binder that binds nothing, or an unknown

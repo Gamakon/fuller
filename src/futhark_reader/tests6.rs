@@ -141,7 +141,7 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
     for pname in ["histogram", "pathfinder"] {
         let p = problem(pname).unwrap();
         let k = std::sync::Arc::new(view(pname));
-        let interp = Interp::new6(&k, &signature(&p.instance).unwrap()).unwrap();
+        let interp = Interp::new6(&k, &signature(p.name).unwrap()).unwrap();
         let cases = load_cases(&p).unwrap();
         let reader = Reader6::new(&k).unwrap();
         for file in ["bench", "llm", "alternatives"] {
@@ -170,7 +170,7 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
                     let entry = crate::typed_environment::Entry { output: ty, guards: Vec::new(), ..k.entry.clone() };
                     let d = k.decoder.decode(&entry, &t6).unwrap();
                     let body = k.decoder.render(&entry, &d, &|s, w| k.literals(s).get(w as usize).cloned().ok_or_else(|| format!("no literal {w}"))).unwrap().body;
-                    assert_eq!(unparen(&parse_expression(&body, false, true).unwrap()), unparen(&parse_expression(&text, false, true).unwrap()), "{pname} {file} {seq}: renders another expression\n{body}");
+                    assert_eq!(unparen(&parse_expression(&body, false).unwrap()), unparen(&parse_expression(&text, false).unwrap()), "{pname} {file} {seq}: renders another expression\n{body}");
                 }
                 same += 1;
             }
@@ -234,13 +234,13 @@ fn unmarked(e: &E) -> E {
 /// fit leaving the length it fitted to as its mark.
 #[test]
 fn adapters_are_read_as_the_plain_row() {
-    let e = parse_expression("let ad_a = (xs) let ad_b = (ys) let ad_l = i64.min (length ad_a) (length ad_b) in map2 (+) (fit ad_l 0f32 ad_a) (map (fit d 0f32) (fit ad_l 0f32 ad_b))", false, true).unwrap();
+    let e = parse_expression("let ad_a = (xs) let ad_b = (ys) let ad_l = i64.min (length ad_a) (length ad_b) in map2 (+) (fit ad_l 0f32 ad_a) (map (fit d 0f32) (fit ad_l 0f32 ad_b))", false).unwrap();
     let stripped = strip_adapters(&e, &BTreeSet::new());
-    assert_eq!(unparen(&unmarked(&stripped)), parse_expression("map2 (+) xs ys", false, true).unwrap());
+    assert_eq!(unparen(&unmarked(&stripped)), parse_expression("map2 (+) xs ys", false).unwrap());
     let E::App(_, args) = &stripped else { panic!("{stripped:?}") };
-    assert_eq!(unmark(&args[1]).1.map(unparen), Some(unparen(&parse_expression("i64.min (length xs) (length ys)", false, true).unwrap())));
-    let e = parse_expression("let [ad_m] (ad_s: [ad_m]f32) = (xs) in (ad_s)[(clampix ad_m (i))]", false, true).unwrap();
-    assert_eq!(unparen(&unmarked(&strip_adapters(&e, &BTreeSet::new()))), parse_expression("xs[i]", false, true).unwrap());
+    assert_eq!(unmark(&args[1]).1.map(unparen), Some(unparen(&parse_expression("i64.min (length xs) (length ys)", false).unwrap())));
+    let e = parse_expression("let [ad_m] (ad_s: [ad_m]f32) = (xs) in (ad_s)[(clampix ad_m (i))]", false).unwrap();
+    assert_eq!(unparen(&unmarked(&strip_adapters(&e, &BTreeSet::new()))), parse_expression("xs[i]", false).unwrap());
 }
 
 /// AN ADAPTER THE GENE DOES NOT RENDER IS NOT READ (F4 review finding 1): a text with a `fit` or a `clampix` where the

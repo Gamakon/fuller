@@ -31,7 +31,7 @@ use crate::futhark_table::{FutharkFamily, FutharkKingdom};
 use crate::kingdom_contract::KingdomRelations;
 
 /// The 1-D Futhark kingdom's name in the symbol table. It is a SEPARATE
-/// kingdom from the Futhark kingdom ([`crate::futhark::FUTHARK`]): the two
+/// kingdom from the Futhark kingdom (`Futhark` and its views): the two
 /// live in separate [`crate::geneframe::Ty`] families so their dual codes
 /// cannot collide.
 pub const FUTHARK_1D: &str = "Futhark 1-D";

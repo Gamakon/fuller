@@ -1,4 +1,0 @@
-family	scope	dual	slot	form	meaning
-matrix	P:pairs	mat.{P}	mat	{P.a}.{P.b}	a 2-D array whose dims are the interface's {P.a} and {P.b}
-matrix		fn.arr_f32_arr_f32	fn	arr_f32_arr_f32	a row function, []f32 -> []f32
-matrix		fn.arr2_f32_arr_f32_arr_f32	fn	arr2_f32_arr_f32_arr_f32	a binary row function, []f32 -> []f32 -> []f32

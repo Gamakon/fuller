@@ -1,4 +1,4 @@
-//! ADFs in the two Futhark kingdoms: the population fold by saturated
+//! ADFs in the deprecated 1-D Futhark kingdom: the population fold by saturated
 //! share-equivalence ([`crate::saturated_fold`]), the per-type write-back, the
 //! unfold the interpreters and e-graphs evaluate, and the `def adf_*` rendering
 //! checked against Futhark 0.28.1.
@@ -8,15 +8,11 @@
 
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::futhark_1d_egraph::FoldEgraph as PlainFold;
 use crate::futhark_1d_interp::Value;
 use crate::futhark_table::{FutharkKingdom, GeneRng};
-use crate::futhark::program_folded;
-use crate::futhark_saturation::{Bridge, FoldEgraph as ShapeFold};
-use crate::futhark::suite;
-use crate::futhark_interpreter::{format_matrix, identical, parse_matrix, MValue, Mat};
 use crate::geneframe::Ty;
 use crate::kingdom_contract::KingdomContract;
 use crate::population_fold::AdfTable;
@@ -73,10 +69,6 @@ fn same_value(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn same_matrix(a: &Mat, b: &Mat) -> bool {
-    a.rows == b.rows && a.cols == b.cols && a.data.iter().zip(&b.data).all(|(x, y)| identical(*x, *y))
-}
-
 /// The 1-D Futhark kingdom's three roots, each with its layout at program size 3.
 /// The 1-D Futhark kingdom, its contract, its `C_T` lengths, and a layout per root.
 type Plain = (FutharkKingdom, KingdomContract, BTreeMap<Ty, u32>, Vec<(Ty, GeneLayout)>);
@@ -91,15 +83,6 @@ fn plain() -> Plain {
     });
     let layouts = layouts.collect();
     (k, c, cl, layouts)
-}
-
-fn shapes() -> (FutharkKingdom, Bridge, KingdomContract, BTreeMap<Ty, u32>, Ty, GeneLayout) {
-    let k = FutharkKingdom::load().expect("the Futhark tables load");
-    let c = k.relations().check().expect("the contract");
-    let cl = k.const_len();
-    let root = k.ty("mat.n.p").expect("root");
-    let layout = GeneLayout::from_program_size(&c, root, 3).expect("layout");
-    (k, Bridge::load(), c, cl, root, layout)
 }
 
 /// One population: random genes, their trees, the fold.
@@ -150,41 +133,12 @@ fn plain_fold_write_back_unfold_keeps_every_value_on_100000_genes() {
     assert!(adfs > 0 && refs > 0, "the fold made no ADF: the test exercised nothing");
 }
 
-/// The same on 100,000 random genes of the Futhark kingdom.
-#[test]
-fn shape_fold_write_back_unfold_keeps_every_value_on_100000_genes() {
-    let started = Instant::now();
-    let (k, bridge, c, cl, _, layout) = shapes();
-    let eg = ShapeFold { kingdom: &k, bridge: &bridge };
-    let sizes: BTreeMap<String, usize> = [("m", 3usize), ("n", 2), ("p", 4)].iter().map(|(r, s)| (r.to_string(), *s)).collect();
-    let inputs = suite(&k, &sizes, 1).remove(0);
-    let mut rng = GeneRng::new(0xADF0_0002);
-    let mut table = AdfTable::default();
-    let (mut adfs, mut rewritten, mut reformed, mut refs, mut structural, mut compared) = (0, 0, 0, 0, 0, 0);
-    for p in 0..GENES / POPULATION {
-        let (trees, f) = fold_population(&mut table, &eg, &c, &layout, &cl, POPULATION, &mut rng);
-        for (i, (t, folded)) in trees.iter().zip(&f.folded).enumerate() {
-            let MValue::Mat(want) = k.eval_matrices(t, &inputs).unwrap_or_else(|e| panic!("population {p}, {i}: {e}")) else { panic!("not a matrix") };
-            let MValue::Mat(got) = k.eval_matrices_folded(&f.epoch, &f.adfs, folded, &inputs).unwrap_or_else(|e| panic!("population {p}, {i}: {e}")) else { panic!("not a matrix") };
-            assert!(same_matrix(&want, &got), "population {p}, individual {i}: the folded value differs");
-            compared += 1;
-        }
-        adfs += f.used.len();
-        structural += f.structural.adfs;
-        rewritten += f.rewritten;
-        reformed += f.reformed;
-        refs += f.references;
-    }
-    eprintln!("shapes: {compared} genes, {adfs} ADFs (structural hashing: {structural}), {rewritten} genes rewritten, {reformed} reformed by the e-graph, {refs} references, {:.1} s", started.elapsed().as_secs_f64());
-    assert_eq!(compared, GENES);
-    assert!(adfs > 0 && refs > 0, "the fold made no ADF: the test exercised nothing");
-}
-
 /// A second fold of the same population reuses every id; a new population only appends.
 #[test]
 fn adf_ids_are_stable_across_folds() {
-    let (k, bridge, c, cl, _, layout) = shapes();
-    let eg = ShapeFold { kingdom: &k, bridge: &bridge };
+    let (k, c, cl, layouts) = plain();
+    let layout = layouts[0].1.clone();
+    let eg = PlainFold { kingdom: &k };
     let mut rng = GeneRng::new(0xADF0_0003);
     let mut table = AdfTable::default();
     let genes: Vec<Vec<u32>> = (0..200).map(|_| random_gene(&c, &layout, &cl, &mut rng)).collect();
@@ -199,31 +153,6 @@ fn adf_ids_are_stable_across_folds() {
     let t2: Vec<Tree> = g2.iter().map(|g| express(&c, &layout, g, &cl).expect("express").tree()).collect();
     fold_saturated(&mut table, &eg, &c, &layout, &cl, &g2, &t2, &Budget::default()).expect("new population");
     assert!(table.next >= before && table.index.values().all(|id| *id < table.next), "ids only append");
-}
-
-/// The e-graph proves `transpose (transpose A) = A`, so a gene spelling the double transpose and a gene spelling
-/// `A` share one part that structural hashing cannot see.
-#[test]
-fn the_saturated_fold_shares_what_structural_hashing_cannot() {
-    let (k, bridge, c, cl, root, _) = shapes();
-    let layout = GeneLayout::from_program_size(&c, root, 8).expect("layout");
-    let eg = ShapeFold { kingdom: &k, bridge: &bridge };
-    let row = |name: &str, kids: Vec<Tree>| Tree { symbol: k.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("{name}")) as u32, const_index: None, kids };
-    let a = || row("mat.n.m.input", vec![]);
-    let b = || row("mat.m.p.input", vec![]);
-    let product = |x: Tree| row("matmul@mat.n.mxmat.m.p", vec![x, b()]);
-    let tt = row("transpose@mat.m.n", vec![row("transpose@mat.n.m", vec![a()])]);
-    let add = |x: Tree, y: Tree| row("map2_rows@mat.n.p", vec![row("fn.arr2_f32_arr_f32_arr_f32.add", vec![]), x, y]);
-    let trees = [add(product(a()), product(a())), add(product(tt.clone()), product(tt))];
-    let mut rng = GeneRng::new(5);
-    let genes: Vec<Vec<u32>> = trees.iter().map(|t| crate::typed_gep::write_back(&c, &layout, &random_gene(&c, &layout, &cl, &mut rng), t).expect("fits")).collect();
-    let f = fold_saturated(&mut AdfTable::default(), &eg, &c, &layout, &cl, &genes, &trees, &Budget::default()).expect("fold");
-    assert_fold(&f, &layout, &cl);
-    eprintln!("structural {} ADFs, saturated {} ADFs, {} reformed", f.structural.adfs, f.used.len(), f.reformed);
-    assert_eq!(f.structural.adfs, 0, "the two genes share no tree, and within a gene a repeat in one individual is not an ADF");
-    assert_eq!(f.forms[0], f.forms[1], "the e-graph extracts one form for both genes");
-    assert_eq!(f.reformed, 1, "the double transpose is rewritten away");
-    assert!(!f.used.is_empty(), "the shared product is an ADF");
 }
 
 fn have(p: &str) -> bool {
@@ -285,45 +214,6 @@ fn count_refs(epoch: &Epoch, t: &Tree) -> usize {
     usize::from(matches!(epoch.reference(t.symbol), Some(RefKind::Adf { .. }))) + t.kids.iter().map(|k| count_refs(epoch, k)).sum::<usize>()
 }
 
-/// The same for the Futhark kingdom, through Futhark's textual format.
-#[test]
-fn shape_programs_with_adfs_compile_and_agree_bit_for_bit() {
-    assert!(have("futhark") && have("cc"), "this test needs futhark 0.28.1 and a C compiler");
-    let started = Instant::now();
-    let (k, bridge, c, cl, root, layout) = shapes();
-    let eg = ShapeFold { kingdom: &k, bridge: &bridge };
-    let sizes: BTreeMap<String, usize> = [("m", 3usize), ("n", 2), ("p", 4)].iter().map(|(r, s)| (r.to_string(), *s)).collect();
-    let inputs = suite(&k, &sizes, 1).remove(0);
-    let mut text = String::new();
-    for d in k.duals.iter().filter(|d| d.slot == "mat") {
-        text.push_str(&format_matrix(&inputs[&k.ty(&d.dual).expect("dual")]));
-    }
-    let dir = std::env::temp_dir().join("futhark_adf_shapes").join(format!("t{}", std::process::id()));
-    let mut rng = GeneRng::new(0xADF0_0005);
-    let mut table = AdfTable::default();
-    let mut checked = 0usize;
-    let mut shown = false;
-    while checked < COMPILED {
-        let (trees, f) = fold_population(&mut table, &eg, &c, &layout, &cl, 300, &mut rng);
-        for (t, folded) in trees.iter().zip(&f.folded) {
-            if checked >= COMPILED || count_refs(&f.epoch, folded) == 0 {
-                continue;
-            }
-            let source = program_folded(&k, root, &f.epoch, &f.adfs, folded, &sizes).expect("renders");
-            if !shown {
-                eprintln!("{source}");
-                shown = true;
-            }
-            let out = crate::futhark_exec::run_text_program(&source, &text, &dir, Duration::from_secs(120)).unwrap_or_else(|e| panic!("{e}\n{source}"));
-            let got = parse_matrix(&out).unwrap_or_else(|e| panic!("{e}\n{out}"));
-            let MValue::Mat(want) = k.eval_matrices(t, &inputs).expect("the interpreter") else { panic!("not a matrix") };
-            assert!(same_matrix(&got, &want), "futhark and the interpreter differ\n{source}\nfuthark {got:?}\ninterpreter {want:?}");
-            checked += 1;
-        }
-    }
-    eprintln!("shapes: {checked} folded programs compiled and agreed bit for bit, {:.1} s", started.elapsed().as_secs_f64());
-}
-
 /// The comparison of the two folds on the same populations: the shared parts each finds, the DAG the population
 /// needs (distinct nodes, and the functions among them: the cost both minimise), and what became of every part
 /// structural hashing shares. Saturation only adds equivalences and the joint extraction minimises the DAG's
@@ -356,6 +246,4 @@ fn the_saturated_dag_is_never_larger_than_the_structural_one() {
     let (k, c, cl, layouts) = plain();
     let layouts: Vec<GeneLayout> = layouts.into_iter().map(|(_, l)| l).collect();
     compare("1-D", &PlainFold { kingdom: &k }, &c, &layouts, &cl, 0xADF0_0006);
-    let (k, bridge, c, cl, _, layout) = shapes();
-    compare("shapes", &ShapeFold { kingdom: &k, bridge: &bridge }, &c, &[layout], &cl, 0xADF0_0007);
 }
