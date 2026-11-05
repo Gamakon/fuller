@@ -8,8 +8,8 @@
 //! * commands, one a line: `q ENTRY` (the quality entry on every stored case), `t ENTRY RUNS` (`RUNS + 1` runs on the
 //!   timing input, the first a warm-up, each run's GPU nanoseconds), `o ENTRY` (once on the timing input, the
 //!   output), `k ENTRY CASE START N CAP TOL [FURTHER] [bound_ms=MS]` (THE K-MEANS LOOP on a row range of the resident
-//!   sample, [`kmeans_loop`], with FURTHER the entry run on from its final centroids, and MS the bound on the whole
-//!   run, [`k_options`]);
+//!   sample, [`kmeans_loop`], with FURTHER the entry run on from its final centroids, and MS the bound on the
+//!   entry's own loop, [`k_options`]);
 //!   entries are named, not numbered;
 //! * records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then the payload; TAG is `start`, `ctx`,
 //!   `u` (the resident sample's upload, once a session: its nanoseconds, 0 when it was resident already), `q`, `t`,
@@ -290,8 +290,9 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, further: Opti
     let start_inertia = crate::kmeans_harness::euclidean_inertia(points, &centroids, &crate::kmeans_harness::assign(points, d, &centroids), d);
     let centres_v = Value::from_host(ctx, starts_h)?;
     ctx.sync()?;
-    // The run's bound from here (the starting centres uploaded): the loop and the further entry, the harness's host
-    // work between steps included, pipeline creation not (`FutharkCtx::set_run_bound`).
+    // The run's bound from here (the starting centres uploaded): the entry's own loop, the harness's host work between
+    // steps included, pipeline creation not (`FutharkCtx::set_run_bound`); the further entry (the reference's) runs
+    // under the command's bound alone ([`kmeans_run`]).
     ctx.set_run_bound(case.bound);
     let ended = kmeans_run(ctx, e, case, further, KmeansStart { k, centroids, centres_v, start_inertia });
     ctx.set_run_bound(None);
@@ -311,6 +312,7 @@ fn kmeans_run(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, further: Optio
     let KmeansStart { k, centroids, centres_v, start_inertia } = start;
     let (d, starts_h) = (case.d, case.starts_h);
     let run = lloyd(ctx, e, case, k, centroids, centres_v)?;
+    ctx.set_run_bound(None);
     let finished = run.failure.is_empty();
     let final_inertia = if run.current.is_finite() { run.current } else { start_inertia };
     // THE FURTHER ITERATIONS (fuller's `futhark-kmeans-better`): the further entry (the seed's) run on from this run's
@@ -444,13 +446,14 @@ struct KmeansCase<'a> {
     n: usize,
     cap: u32,
     tol: f32,
-    /// THE BOUND ON THE WHOLE RUN (the loop and the further entry), `bound_ms=MS` ([`k_options`]): a run that takes
-    /// longer is stopped at its next submission or wait, as a timed run at [`TIMED_RUN_BOUND`] is.
+    /// THE BOUND ON THE ENTRY'S OWN LOOP (not the further entry: the reference's), `bound_ms=MS` ([`k_options`]): a
+    /// loop that takes longer is stopped at its next submission or wait, as a timed run at [`TIMED_RUN_BOUND`] is, and
+    /// the command fails with the bound's text ([`crate::ctx::RUN_BOUND_MARK`]).
     bound: Option<Duration>,
 }
 
 /// THE OPTIONAL WORDS OF A `k` COMMAND after its tolerance, in any order: the further entry's name and
-/// `bound_ms=MS`, the bound on the whole run in milliseconds (phylu's `kmeans_converged::kmeans_run_bound`, from the
+/// `bound_ms=MS`, the bound on the entry's own loop in milliseconds (phylu's `kmeans_converged::kmeans_run_bound`, from the
 /// reference program's run on the case). At most one of each; a bound of 0 or not a number is refused.
 fn k_options<'w>(words: &[&'w str]) -> Result<(Option<&'w str>, Option<Duration>), String> {
     let (mut further, mut bound) = (None, None);
@@ -979,7 +982,7 @@ mod tests {
 
     /// A K-MEANS RUN'S BOUND (phylu's P4 replay of 2026-11-05 11:25Z: four k-means candidates held the device to the
     /// command's 120 s bound, each forcing a device made again): `bound_ms=MS` after the tolerance, before or after
-    /// the further entry, is the bound on the whole run; none, the command's bound alone. A bound of 0, not a number, or
+    /// the further entry, is the bound on the entry's own loop; none, the command's bound alone. A bound of 0, not a number, or
     /// given twice, and a second further entry, are refused. No device.
     #[test]
     fn a_k_command_reads_its_further_entry_and_its_run_bound_in_any_order() {
