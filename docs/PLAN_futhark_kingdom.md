@@ -1468,7 +1468,8 @@ anything to 0, where IEEE gives NaN, depending on fusion; counted apart); an ada
 `KingdomTables::parse_named`); the adapters `fit`, `fitrows`, `fitcols`, `clampix` are alphabet symbols with preludes, and
 the repairs are templates in `master/6/repairs.tsv` that call them (`{call ..}`); Futhark's spelling of a size formula is
 the formula rows (`=min` as `i64.min {0} {1}`). Renderer, interpreter, cost and reader read only those rows through the
-decoder (`steps`, `exec`, `calls`); the legacy row forms and the code matched on adapter names are deleted.
+decoder (`steps`, `exec`, `calls`); the legacy row forms and the code matched on adapter names are deleted. Master 5 itself (its table, views, loader, renderer, reader, interpreter, e-graph and phylu's `Master::Five`) is
+not yet deleted; the comparisons with it already read stored program text (`tests/fixtures/futhark_m6_*`, `futhark_pool_texts/`).
 
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
