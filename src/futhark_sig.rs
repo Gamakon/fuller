@@ -2923,7 +2923,14 @@ fn parse6_at(tokens: &[&str], pos: &mut usize) -> Result<Sexp6, String> {
     let (head, labels) = match h.split_once('[') {
         Some((name, rest)) => {
             let names = rest.strip_suffix(']').ok_or_else(|| bad(&format!("has the binder {h} with no closing ']'")))?;
-            (name.to_string(), names.split(',').map(str::to_string).collect())
+            let labels: Vec<String> = names.split(',').map(str::to_string).collect();
+            if labels.iter().any(String::is_empty) {
+                return Err(bad(&format!("has the binder {h} with an empty variable name")));
+            }
+            if let Some(l) = labels.iter().enumerate().find_map(|(i, l)| labels[..i].contains(l).then_some(l)) {
+                return Err(bad(&format!("has the binder {h}, which names {l} twice")));
+            }
+            (name.to_string(), labels)
         }
         None => (h.to_string(), Vec::new()),
     };
@@ -3007,6 +3014,14 @@ fn tree_at_mut<'a>(t: &'a mut Tree, path: &[u32]) -> Option<&'a mut Tree> {
 /// the leaf names: the innermost binder above that names it, else the root variable of that name. A name in scope
 /// nowhere, of another data type, or a malformed text is an error. Every word is checked by decoding the tree again.
 pub fn build6(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<Tree, String> {
+    build6_named(k, text).map(|(tree, _)| tree)
+}
+
+/// Each variable leaf's path and the name a master 6 text gives it, in the text's order.
+type NamedLeaves6 = Vec<(Vec<u32>, String)>;
+
+/// [`build6`], with its variable leaves' names.
+fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree, NamedLeaves6), String> {
     use crate::typed_environment::{Binder, Choice, Decoder};
     let bad = |what: String| format!("our software has a bug: {}'s master 6 tree: {what}", k.kingdom);
     let mut names = Names6::default();
@@ -3042,7 +3057,7 @@ pub fn build6(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<Tree, St
             return Err(bad(format!("the variable at {path:?} reads as {got:?}, not {binder:?}")));
         }
     }
-    Ok(tree)
+    Ok((tree, names.leaves))
 }
 
 #[cfg(test)]
