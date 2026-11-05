@@ -7,8 +7,9 @@
 //!
 //! * commands, one a line: `q ENTRY` (the quality entry on every stored case), `t ENTRY RUNS` (`RUNS + 1` runs on the
 //!   timing input, the first a warm-up, each run's GPU nanoseconds), `o ENTRY` (once on the timing input, the
-//!   output), `k ENTRY CASE START N CAP TOL [FURTHER]` (THE K-MEANS LOOP on a row range of the resident sample,
-//!   [`kmeans_loop`], with FURTHER the entry run on from its final centroids);
+//!   output), `k ENTRY CASE START N CAP TOL [FURTHER] [bound_ms=MS]` (THE K-MEANS LOOP on a row range of the resident
+//!   sample, [`kmeans_loop`], with FURTHER the entry run on from its final centroids, and MS the bound on the whole
+//!   run, [`k_options`]);
 //!   entries are named, not numbered;
 //! * records `TAG INDEX STATUS NANOSECONDS PIPELINE_NANOSECONDS BYTES\n` then the payload; TAG is `start`, `ctx`,
 //!   `u` (the resident sample's upload, once a session: its nanoseconds, 0 when it was resident already), `q`, `t`,
@@ -289,6 +290,26 @@ fn kmeans_loop(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, further: Opti
     let start_inertia = crate::kmeans_harness::euclidean_inertia(points, &centroids, &crate::kmeans_harness::assign(points, d, &centroids), d);
     let centres_v = Value::from_host(ctx, starts_h)?;
     ctx.sync()?;
+    // The run's bound from here (the starting centres uploaded): the loop and the further entry, the harness's host
+    // work between steps included, pipeline creation not (`FutharkCtx::set_run_bound`).
+    ctx.set_run_bound(case.bound);
+    let ended = kmeans_run(ctx, e, case, further, KmeansStart { k, centroids, centres_v, start_inertia });
+    ctx.set_run_bound(None);
+    ended
+}
+
+/// Where a k-means run starts: k, the starting centres on the host and on the device, and their Euclidean inertia.
+struct KmeansStart {
+    k: usize,
+    centroids: Vec<Vec<f32>>,
+    centres_v: Value,
+    start_inertia: f32,
+}
+
+/// [`kmeans_loop`] after its bound is set: the loop, the further entry, the payload.
+fn kmeans_run(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, further: Option<&EntryDesc>, start: KmeansStart) -> Result<Vec<u8>, Error> {
+    let KmeansStart { k, centroids, centres_v, start_inertia } = start;
+    let (d, starts_h) = (case.d, case.starts_h);
     let run = lloyd(ctx, e, case, k, centroids, centres_v)?;
     let finished = run.failure.is_empty();
     let final_inertia = if run.current.is_finite() { run.current } else { start_inertia };
@@ -354,6 +375,9 @@ fn lloyd(ctx: &FutharkCtx, e: &EntryDesc, case: &KmeansCase, k: usize, mut centr
         let m0 = ctx.timed_passes();
         let outs = match (e.call)(ctx, &args).and_then(|o| ctx.sync().map(|()| o)) {
             Ok(o) => o,
+            // A device failure (the run's bound among them: the device is still busy) is the command's, so the host
+            // makes the device again; any other is the run's failure.
+            Err(x) if x.is_device_failure() => return Err(entry_failure(&format!("the k-means run, iteration {iterations}"), x)),
             Err(x) => {
                 failure = format!("iteration {iterations}: the step failed: {x}");
                 break;
@@ -420,6 +444,32 @@ struct KmeansCase<'a> {
     n: usize,
     cap: u32,
     tol: f32,
+    /// THE BOUND ON THE WHOLE RUN (the loop and the further entry), `bound_ms=MS` ([`k_options`]): a run that takes
+    /// longer is stopped at its next submission or wait, as a timed run at [`TIMED_RUN_BOUND`] is.
+    bound: Option<Duration>,
+}
+
+/// THE OPTIONAL WORDS OF A `k` COMMAND after its tolerance, in any order: the further entry's name and
+/// `bound_ms=MS`, the bound on the whole run in milliseconds (phylu's `kmeans_converged::kmeans_run_bound`, from the
+/// reference program's run on the case). At most one of each; a bound of 0 or not a number is refused.
+fn k_options<'w>(words: &[&'w str]) -> Result<(Option<&'w str>, Option<Duration>), String> {
+    let (mut further, mut bound) = (None, None);
+    for w in words {
+        match w.strip_prefix("bound_ms=") {
+            Some(ms) => {
+                let ms: u64 = ms.parse().map_err(|_| format!("a bound that is not a number of milliseconds: {w:?}"))?;
+                if ms == 0 || bound.replace(Duration::from_millis(ms)).is_some() {
+                    return Err(format!("a bound of 0 or a second bound: {w:?}"));
+                }
+            }
+            None => {
+                if further.replace(*w).is_some() {
+                    return Err(format!("a second further entry: {w:?}"));
+                }
+            }
+        }
+    }
+    Ok((further, bound))
 }
 
 /// What every command of a run reads: the cases' values, the timing input's, their counts, the resident sample the
@@ -450,7 +500,7 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
     let RunState { cases, timing, n_cases, n_in, resident, sample_rows } = st;
     let w: Vec<&str> = line.split_whitespace().collect();
     match w.as_slice() {
-        ["k", entry, case, start, n, cap, tol, further @ ..] if further.len() <= 1 => {
+        ["k", entry, case, start, n, cap, tol, rest @ ..] if rest.len() <= 2 => {
             let tag = "k";
             let bad = |what: &str| (tag, Error::new(format!("a k-means command with a bad {what}: {line:?}")));
             let case: usize = case.parse().map_err(|_| bad("case"))?;
@@ -462,7 +512,8 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
                 return Err(bad("cap or tolerance"));
             }
             let e = find(m, entry).map_err(|x| (tag, x))?;
-            let further = further.first().map(|f| find(m, f)).transpose().map_err(|x| (tag, x))?;
+            let (further, bound) = k_options(rest).map_err(|w| (tag, Error::new(format!("a k-means command with {w}: {line:?}"))))?;
+            let further = further.map(|f| find(m, f)).transpose().map_err(|x| (tag, x))?;
             let sample_h = timing.and_then(|t| t.first()).ok_or((tag, Error::new("a k-means command with no sample (the timing input)")))?;
             if n_in == 0 || case >= n_cases {
                 return Err(bad("case index"));
@@ -479,7 +530,7 @@ fn command(ctx: &FutharkCtx, m: &ModuleExport, line: &str, st: RunState) -> Resu
             }
             // The case's rows: a slice of the session's parsed sample, nothing converted or copied.
             let points = &rows[start * d..(start + n) * d];
-            kmeans_loop(ctx, e, &KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol }, further).map(|p| (tag, p)).map_err(|x| (tag, x))
+            kmeans_loop(ctx, e, &KmeansCase { points, d, sample_v, starts_h, start, n, cap, tol, bound }, further).map(|p| (tag, p)).map_err(|x| (tag, x))
         }
         ["q", entry] => {
             let tag = "q";
@@ -924,6 +975,22 @@ mod tests {
         assert_eq!(&q[nl + 1..], &p[p.iter().position(|b| *b == b'\n').expect("a header line") + 1..]);
         let g = kmeans_payload(3, false, 0.0, 10.0, 10.0, Some((0, false)), Err("iteration 3: a centroid is infinite or NaN"));
         assert!(g.starts_with(b"3 0 0 0.0 10 10 0 0\n"));
+    }
+
+    /// A K-MEANS RUN'S BOUND (phylu's P4 replay of 2026-11-05 11:25Z: four k-means candidates held the device to the
+    /// command's 120 s bound, each forcing a device made again): `bound_ms=MS` after the tolerance, before or after
+    /// the further entry, is the bound on the whole run; none, the command's bound alone. A bound of 0, not a number, or
+    /// given twice, and a second further entry, are refused. No device.
+    #[test]
+    fn a_k_command_reads_its_further_entry_and_its_run_bound_in_any_order() {
+        assert_eq!(k_options(&[]), Ok((None, None)));
+        assert_eq!(k_options(&["ky"]), Ok((Some("ky"), None)));
+        assert_eq!(k_options(&["bound_ms=2500"]), Ok((None, Some(Duration::from_millis(2500)))));
+        assert_eq!(k_options(&["ky", "bound_ms=2500"]), Ok((Some("ky"), Some(Duration::from_millis(2500)))));
+        assert_eq!(k_options(&["bound_ms=2500", "ky"]), Ok((Some("ky"), Some(Duration::from_millis(2500)))));
+        for bad in [&["bound_ms=0"][..], &["bound_ms=x"], &["bound_ms=1", "bound_ms=2"], &["ky", "kz"]] {
+            assert!(k_options(bad).is_err(), "{bad:?}");
+        }
     }
 
     /// A SLOW LEGAL PROGRAM IS TOO SLOW, NOT A FAULT (the G3 GPU check, 2026-11-04): a timed run's failure at its
