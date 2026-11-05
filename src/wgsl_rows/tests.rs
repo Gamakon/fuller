@@ -299,17 +299,22 @@ fn the_share_pass_binds_repeated_values_and_the_kernel_still_validates() {
 #[cfg(feature = "wgsl")]
 #[test]
 fn snap_runs_on_the_kingdom_built_from_the_rows() {
-    use crate::wgsl::true_opt::Optimisers;
+    use crate::wgsl::snap::Snap;
     let mut k = crate::wgsl::true_kingdom::TrueKingdom::from_rows(kingdom()).expect("the bridge");
     let f32_ty = k.rows.iter().find(|r| r.name == "?@f32").expect("the f32 constant").out;
     k.constants.get_mut(&f32_ty).expect("C_f32").push("3.1416".to_string());
-    let o = Optimisers::new(&k).expect("the optimisers read the rows kingdom");
+    let o = Snap::new(&k);
     let lit = k.rows.iter().position(|r| r.name == "?@f32").expect("the f32 constant") as u32;
     let near = Tree { symbol: lit, const_index: Some(k.constants[&f32_ty].len() as u32 - 1), kids: Vec::new() };
     let (out, counts) = o.snap(&mut k, &near, 1e-3);
     let out = out.expect("snapped");
-    assert_eq!(counts.snapped, 1);
+    assert_eq!((counts.snapped, counts.appended), (1, 1), "pi is not in C_f32, so it is appended");
     assert_eq!(k.constants[&f32_ty][out.const_index.expect("a word") as usize].parse::<f64>().map(|v| v as f32), Ok(std::f32::consts::PI));
+    // a library value (2.0, in the pool) is left alone, and a second snap of the same literal finds pi in C_f32
+    let two = Tree { symbol: lit, const_index: k.constants[&f32_ty].iter().position(|t| t == "2.0").map(|i| i as u32), kids: Vec::new() };
+    assert!(o.snap(&mut k, &two, 1e-3).0.is_none(), "2.0 is a library value");
+    let (again, counts) = Snap::new(&k).snap(&mut k, &near, 1e-3);
+    assert_eq!((again, counts.appended), (Some(out), 0));
 }
 
 /// THE IMAGE INTERFACE (variant `wgsl.image`): eight data types (no buffer), the uniforms and the texture's size are

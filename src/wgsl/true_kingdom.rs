@@ -17,7 +17,6 @@ use crate::kingdom_contract::{relations_from_rows, relations_from_tables, Kingdo
 use crate::typed_gep::{GeneLayout, Tree};
 use crate::wgsl::work_guard::Fuel;
 
-pub mod egraph;
 
 /// The kingdom's name in its relations.
 pub const TRUE_WGSL: &str = "TRUE_WGSL";

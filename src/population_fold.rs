@@ -1,8 +1,7 @@
 //! Population-wide shared definitions (ADFs) by structural hashing, for any
 //! kingdom of the shared typed core (`nucleotable/docs/MultiTypedGEP.md` rev 4
-//! section 6). Moved here from `wgsl/true_share.rs` unchanged, so the WGSL kingdom
-//! and the Futhark kingdoms fold through one mechanism; `true_share` re-exports
-//! it.
+//! section 6), the Futhark kingdoms' fold (it came from the old WGSL kingdom's
+//! share pass, deleted in plan 7.7 K5).
 //!
 //! The population's expressed trees are hash-consed into one DAG; a node with at
 //! least two DAG edges into it, occurring in at least two individuals and holding
