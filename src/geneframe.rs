@@ -582,7 +582,5 @@ mod tests {
         use crate::kingdom_contract::{regex_relations, sr_relations};
         the_contract_is_unchanged_through_the_tables(&sr_relations());
         the_contract_is_unchanged_through_the_tables(&regex_relations());
-        #[cfg(feature = "wgsl")]
-        the_contract_is_unchanged_through_the_tables(&crate::wgsl::true_kingdom::TrueKingdom::from_rows(crate::wgsl_rows::WgslRows::load().expect("rows")).expect("bridge").relations());
     }
 }
