@@ -19,6 +19,10 @@ frozen, so these go in now (section 3.7 lists what was taken, what was not, and 
 carry the change.
 **Revised 2026-11-05: conversions are configuration** (section 3.8, Andrew): a conversion is an ordinary typed row
 with a failure adapter, placed by typed GEP where a function needs it; section 8 gives SQL, Spark and NLP rows.
+**Revised 2026-11-05: three model levels and the derived run-time model** (Andrew: the design will work but was
+described badly). Section 3 now gives the conceptual model (3.1), the logical model (3.2), the physical configuration
+model a kingdom fills (3.3 and 3.4, the tables and diagram of before), and the small run-time model the loader derives
+from it once (3.5, a second diagram), with the gene manipulation explained on that model (3.6).
 
 ## 1. Context
 
@@ -50,11 +54,84 @@ Ty = S | I | F | B | A | L | T1 | T2 | (NLP labels) | ... | Futhark(u16) | ...
   node).
 - Karva's head and tail are laid out per type; the GPU draws, varies and selects symbols by type.
 
-## 3. The data model proposed: one fixed schema, filled by rows
+## 3. The data model proposed: three levels, and the model used at run time
 
 Andrew's principle (2026-11-05): "The GeneFrame is an abstracted data model. Once we have the core design and tables,
 these are to be FIXED and almost NEVER change. What changes is how we fill the tables with a kingdom." A kingdom is
-configured only by rows. This section is that schema; section 8 tests it against eleven kingdoms.
+configured only by rows; section 8 tests the tables against eleven kingdoms.
+
+The model is described at three levels, from the ideas down to the stored tables, and then a fourth model that the
+loader derives from the tables. The physical tables are complicated, because one fixed set must hold every kingdom; on
+load they are summarised into the small run-time model, and that is the model that explains how genes are made, varied
+and expressed.
+
+| level | what it holds | who reads it | section |
+|---|---|---|---|
+| conceptual | the ideas: kingdom, symbols, terminals as objects, data types, properties, requirements, environment | a reader | 3.1 |
+| logical | the entities a kingdom configures and how they relate, without storage detail | a kingdom's author, the view generators | 3.2 |
+| physical | the configuration tables, their columns and types: the TSV files a kingdom fills, loaded into `KingdomTables` | the loader and its table check | 3.3, 3.4 |
+| run-time (derived) | computed once at load: per data type its alphabet, arities and frame lengths; per symbol its compiled rules | the GPU (type columns, alphabets, arities) and the host decoder (compiled rules) | 3.5, 3.6 |
+
+### 3.1 Conceptual model
+
+- A **kingdom** is a language that evolution writes programs in: Futhark, WGSL, SQL, symbolic regression. It is
+  configured by rows, never by code.
+- A kingdom has **symbols**: **functions**, which take arguments, and **terminals**, which take none. A gene is a
+  string of symbols; expressed, it is a tree, and the tree renders as a program.
+- Every argument and every result has a **data type** (`f32`, `[]f32`, `[][]f32`, `i64`, a function type). The data
+  types are the gene's types, and nothing else is: a node holds only a symbol whose result has the data type its
+  parent's argument asks for. They are few (about 8 for k-means).
+- A **terminal is an object**: its value, its **properties** (facts about the value that are not its data type: an
+  array's length, an index's bound, a tree's depth) and, optionally, **alternative forms** of it (a sorted copy). A
+  property is **declared** (from the program's signature, true for every input) or **measured** (on the training cases,
+  before the run, true only for the cases seen).
+- **Rules carry properties up the tree.** Each function says how its result's properties follow from its arguments'
+  (`map2`: the length is the shorter input's).
+- **Requirements** are conditions on properties. A **must** requirement keeps every program legal: where it does not
+  hold, an **adapter** (one of our own small functions, such as `fit` or `clampix`) is written around the node, or the
+  node is replaced, so that the condition holds at run time. An **advise** requirement is a preference: nothing is
+  repaired; the failure is reported and the cost may charge it.
+- The **environment** is what is in scope at a node: the variables (the entry's inputs and those a binder such as
+  `tabulate` introduces) and attributes such as the loop depth `trips`. Environments flow down the tree. The variable
+  terminal `var.T` picks one variable of data type T from its environment.
+- **Conversions are ordinary functions** (`parse_int: String -> i32`) with a requirement and an adapter for the case
+  that fails; typed GEP places them where a function needs them (3.8).
+
+```
+kingdom
+ ├── data types ──carry──> properties (one catalogue shared by every kingdom)
+ ├── symbols
+ │    ├── functions: arguments and result, each of a data type
+ │    │              rules (properties up), requirements (must | advise) with adapters,
+ │    │              bindings and environment rules (scope down)
+ │    └── terminals: objects = value + properties (declared | measured) + alternative forms
+ └── entry: the program's inputs (the root environment) and the requirements on its result
+```
+
+### 3.2 Logical model
+
+The entities a kingdom configures, grouped by the idea they record. Columns and their types are in 3.3.
+
+| idea (3.1) | entities | relationships |
+|---|---|---|
+| symbols | Symbol, Spelling | a symbol is written by one spelling per form (a default, `const`, an inflection) |
+| data types and arity | DataType, Argument | a symbol has ordered arguments, in and out, each of one data type; the count of in-arguments per data type is its arity |
+| terminals as objects | Symbol (role `constant` or `variable`), ConstantProperty, EntryParameter, EntryProperty, Transform | a data type's constant has properties; an entry parameter has properties, each with its source; a transform makes an alternative form of a parameter |
+| properties | Property, DataTypeProperty | one catalogue for every kingdom; a data type carries some of its properties |
+| rules | PropertyRule | a symbol derives each property of its result from its arguments' (and its other result properties) |
+| requirements and adapters | Requirement, Repair, Adapter, AdapterTemplate, EntryRequirement | a requirement (must or advise) has an ordered list of repairs; a repair names an adapter and a site; an adapter renders by ordered templates |
+| environment | Binding, EnvironmentAttribute, EnvironmentRule, Entry, EntryEnvironment, SizeName | an argument's subtree sees its parent's environment plus the variables its symbol binds there, with attributes set by environment rules; the entry gives the root environment and the size names with their lower bounds |
+| conversions | Symbol, Argument, PropertyRule, Requirement, Adapter | no entity of their own |
+
+One relationship decides what the gene may hold where: **Argument**. Everything else decides what a legal program
+needs, and is read only by the host decoder (3.5).
+
+### 3.3 Physical model: the configuration tables
+
+The physical model is what a kingdom fills: the TSV files of its master table and its views (for Futhark,
+`kingdoms/futhark/master/` and each problem's `view.tsv`), loaded into `KingdomTables` (`src/geneframe.rs`) and
+checked by the table check before any run. Nothing in it is read during evolution as it stands: the loader summarises
+it into the run-time model (3.5).
 
 The first version of these tables (`src/geneframe.rs`, `KingdomTables`; decoded by `src/typed_environment.rs`) was built for the Futhark kingdom first, and five things in it are
 Futhark's, not the frame's:
@@ -69,7 +146,7 @@ Futhark's, not the frame's:
 A sixth turned up while writing the rows: `at_least_one` assumes every size name is at least 1, the Futhark entry
 points' contract, written into the comparison.
 
-### 3.1 The decisions
+#### 3.3.1 The decisions
 
 - **One condition language, no "subject".** A requirement is a condition (a Boolean formula). `in1.len = in0.len`,
   `env.trips < depth`, `out.order <= 3`, `in1.value in in0.cols` are all conditions. Leaks 2 and 3 disappear: any
@@ -109,7 +186,7 @@ The next six decisions come from the flat enhanced format (status line; section 
   seed a choice. It never makes a `must` requirement hold and never removes a legality adapter.
 - **Every requirement has a strength:** `must` (enforced: its repair runs, so every gene stays legal) or `advise`
   (a preference: no repair; a failure is reported and may be charged by the cost). Every legality rule is `must`, and
-  the tests enforce it (3.3). A search-space limit may be either; section 8 states each kingdom's choice.
+  the tests enforce it (3.3.3). A search-space limit may be either; section 8 states each kingdom's choice.
 - **Alternative forms are extra variables.** A transformation rule on an entry parameter makes a corrected or derived
   form (a standardised date, a sorted copy, a normalised vector) that sits beside the raw value as one more variable
   of the root environment, chosen by `var.T`'s index word like any other. Evolution takes it or leaves it. Arity and
@@ -117,7 +194,9 @@ The next six decisions come from the flat enhanced format (status line; section 
   **Adapters are corrected forms made on read:** `fit xs` is to `xs` what a standardised date is to the raw date, made
   where a requirement needs it rather than up front.
 
-### 3.2 Diagram
+#### 3.3.2 Diagram: the physical configuration model
+
+Every table a kingdom fills. The run-time model the loader derives from it is the second diagram, in 3.5.
 
 ```mermaid
 erDiagram
@@ -279,10 +358,10 @@ erDiagram
     }
 ```
 
-### 3.3 The tables, one per entity
+#### 3.3.3 The tables, one per entity
 
 Columns marked **new** are not in today's code; **(test)** marks those the kingdom test of section 8 added to the
-first draft; **(on read)** marks those the flat enhanced format added (3.1, the last six decisions).
+first draft; **(on read)** marks those the flat enhanced format added (3.3.1, the last six decisions).
 
 **Symbol.** A function or terminal. Its arity is derived from its Argument rows, as today (section 3.5).
 
@@ -398,6 +477,9 @@ program uses the form.
 
 ### 3.4 The formula language (closed list)
 
+The language of the physical model's formula and condition columns. The loader parses and normalises every formula
+once (3.5); nothing is parsed during a run.
+
 A **formula** gives a value; a **condition** gives true, false or undecided. Every formula has one spelling (normal
 form), as today's sums and mins have, so symbolic equality is equality of spellings.
 
@@ -458,40 +540,138 @@ template's `when` and the cost read measured values as they are.
 range with range and integer literals; tag with tag and tag literals by `=`; flag with flag by `=`; a list with a list
 of the same element kind by `=`; `x in L` when `x`'s kind is `L`'s element kind.
 
-### 3.5 Gene expression programming: arity stays explicit and fixed
+### 3.5 The derived run-time model
 
-GEP sizes every open reading frame from the symbols' arities, before any gene is expressed. This model keeps that:
+The loader computes this model once, when the kingdom loads, from the physical tables of 3.3. It is small: a few
+numbers and lists per data type, and a compiled bundle of rules per symbol. Nothing in it changes during a run, and it
+is the only thing the gene manipulation of 3.6 reads.
 
-1. **Every symbol's arity is fixed by its Argument rows.** The typed arity Karva needs (the count of inputs of each
-   data type) is the count of those rows, derived once when the table loads. It is the same many-hot arity as today.
-2. **The frames are sized by the same formulas:** each data type's head and tail from the most inputs of that type any
-   symbol takes, `t = h·(n_max − 1) + 1` per type. Fewer types give fewer and smaller frames.
-3. **Properties, rules, requirements and bindings never change arity.** They are read after Karva has expressed the
-   tree.
-4. **Adapters are not in the gene.** They are written into the rendered program text and take no cell.
-5. **`var.T` is a terminal of arity 0.** Its index word is in a Dc-style array of fixed length beside its data type's
-   region, one word a cell, as GEP-RNC keeps its constants.
-6. **Alternative forms add variables, not symbols.** A form is one more variable of its data type in the root
-   environment; `var.T` reaches it through its index word (w mod c, with c one larger). The alphabet, the arities, the
-   frames and the gene's length are unchanged.
+```mermaid
+erDiagram
+    GENE_LAYOUT ||--|{ TYPE_COLUMN : "has one per data type"
+    TYPE_COLUMN ||--|{ ALPHABET_ENTRY : "draws from"
+    RUN_SYMBOL ||--|| ALPHABET_ENTRY : "is listed in its result's column"
+    RUN_SYMBOL ||--o{ TYPED_ARITY : "takes, per data type"
+    TYPE_COLUMN ||--o{ TYPED_ARITY : "is counted in"
+    TYPE_COLUMN ||--|| FRAME_ENTRY : "is placed on the device by"
+    TYPE_COLUMN ||--o| CONSTANT_POOL : "holds constants from"
+    RUN_SYMBOL ||--|| COMPILED_RULES : "is decoded on the host with"
+    ROOT_ENVIRONMENT ||--|{ TYPE_COLUMN : "offers variables of"
 
-The model forbids a symbol whose number of arguments depends on a property: arity must be known before expression.
+    GENE_LAYOUT {
+        int root_type "the entry's result data type"
+        int N "program size: at most N functions"
+        int n_max "the most arguments any symbol takes"
+        int h "master head, 1 + (N - 1) n_max"
+        int t "master tail, h (n_max - 1) + 1"
+        int width "words a gene: every head, then every tail, every Dc, every Dv"
+    }
+    TYPE_COLUMN {
+        int dense_type PK "the data type; Ty code"
+        int h_T "head length"
+        int t_T "tail length"
+        int Dc_T "constant words; 0 without a constant"
+        int Dv_T "index words, h_T + t_T; 0 without var.T"
+    }
+    ALPHABET_ENTRY {
+        int data_type FK
+        int symbol FK
+        enum place "function: head only; terminal: head and tail"
+    }
+    RUN_SYMBOL {
+        int id PK
+        int out_type FK "the column it lives in"
+        list signature "data type of each argument, in order"
+        enum reads "nothing, a Dc word (?_T), a Dv word (var.T)"
+    }
+    TYPED_ARITY {
+        int symbol FK
+        int data_type FK
+        int count "its arguments of that data type"
+    }
+    FRAME_ENTRY {
+        list words "12 a type a gene: ty_code, head_off, head_len, tail_off, tail_len, dc_off, dc_len, pool_id, const_len, flags, dv_off, dv_len"
+    }
+    CONSTANT_POOL {
+        int data_type FK
+        list values "C_T, the constants a Dc word picks from"
+    }
+    ROOT_ENVIRONMENT {
+        list variables "per data type: the entry's parameters and alternative forms, with properties and sources"
+        list attributes "trips, uniform, ...: root values"
+        list size_names "with their lower bounds"
+    }
+    COMPILED_RULES {
+        int symbol FK
+        list properties "normal-form formulas, in decode order"
+        list requirements "condition, strength, ordered repairs with guards and sites"
+        list bindings "variables bound per argument"
+        list environment_rules "attributes set per argument"
+        list templates "spellings and adapter templates, parsed"
+        bytes bytecode "later: for TSR decoding on the device"
+    }
+```
 
-### 3.6 What derives from what
+**How each part is computed from the physical tables.**
 
-- **Arity** (the count per data type that Karva's head and tail need) is derived from the Argument rows. The gene
-  layout and the GPU's typed variation are unchanged: they read Argument and DataType only.
-- **Ty codes** stay data types. `Ty::Futhark(u16)` indexes the DataType table: about 8 rows for k-means.
-- **Properties, rules, requirements, repairs, bindings and environment rules** are read only by the decoder, on the host.
-- **A kingdom's properties** derive from its view's data types through DataTypeProperty; it declares none itself.
-- **Measured values** are rows written offline before a run; neither the decoder nor the device measures anything.
-- A kingdom whose data types carry no DataTypeProperty rows works exactly as today.
+| run-time part | from | how |
+|---|---|---|
+| type columns | DataType, Argument | one column per data type a gene rooted at the entry's result can reach. For k-means about 8 columns, where today there are 14,359 |
+| alphabet of T | Symbol, Argument (direction out), Spelling | the functions whose result is T; T's constant `?_T` if T has a `const` spelling; `var.T` if T can be a variable. Functions go in the head only, terminals in head and tail |
+| typed arity | Argument (direction in) | for each symbol, the count of its arguments of each data type: `a_{T,U}` is the most arguments of type T one symbol producing U takes, `a_T` the largest `a_{T,U}`, `n_U` the most arguments of any symbol producing U |
+| lengths | typed arity, program size N | `h_T = [T = root] + (N − 1)·a_T`. The tail is the exact bound: with `P_T = [T = root] + Σ_U h_U·a_{T,U}` (the slots of type T the heads can open) and `L = 1 + Σ_U h_U·(n_U − 1)` (the most leaves a tree can have), `t_T = min(P_T, L + h_T) − h_T`, `Dc_T = min(P_T, L)`, `Dv_T = h_T + t_T`. With one data type these are Ferreira's `h = 1 + (N − 1)·n_max` and `t = h·(n_max − 1) + 1`; each data type is a column of that master gene (`kingdom_contract.rs`, `heads_from_program_size` and `bounds`) |
+| frame table | the lengths | for the GPU, 12 words per data type per gene (phylu `typed_layout.rs`, `FRAME_WORDS`): its Ty code, the offset and length of its head, tail, Dc and Dv, its constant pool and flags (has a constant, has a frame, has `var.T`); and per gene its root, offset, width and first frame |
+| walk tables | Argument | for the GPU, per symbol: its result's column, its argument columns in order, its arity, and which word it reads (none, Dc, Dv) |
+| constant pool | Spelling `const`, the kingdom's constants | `C_T`, the values a Dc word indexes |
+| root environment | Entry, EntryParameter, EntryProperty, EntryEnvironment, SizeName | the variables of each data type with their properties and sources, the attributes' root values, the size names with their lower bounds |
+| compiled rules | PropertyRule, Requirement, Repair, Adapter, AdapterTemplate, Binding, EnvironmentRule, Spelling | every formula parsed into its normal form (3.4), ordered without cycles, every template parsed; the table check runs here, and a malformed row is "our software has a bug" before any run |
+
+**Who reads what.** The GPU sees only the type columns, their alphabets, the arities, the frame table and the walk
+tables. It draws, varies and selects symbols by data type; it never resolves a variable and never evaluates a property.
+A Dv word is to it an opaque number below `DV_WORDS` (65,536). The host decoder reads the compiled rules and the root
+environment (section 4). Properties, rules, requirements, repairs, bindings and environment rules live only there.
+
+**What the run-time model guarantees.**
+
+1. **Arity is fixed by the Argument rows,** derived once at load: the same many-hot arity as today. Properties, rules,
+   requirements and bindings never change it; they are read after Karva has expressed the tree. The model forbids a
+   symbol whose number of arguments depends on a property.
+2. **Fewer data types give fewer and smaller columns.** The positions a column stay about the same (7.1); the number of
+   columns falls to the number of data types.
+3. **Adapters are not in the gene.** They are written into the rendered program and take no cell.
+4. **`var.T` is a terminal of arity 0.** Its index word is in the Dv lane beside its data type's column, one word a
+   head or tail cell, as GEP-RNC keeps its constants in Dc.
+5. **Alternative forms add variables, not symbols.** A form is one more variable in the root environment; `var.T`
+   reaches it through its index word (w mod c, with c one larger). The alphabets, arities, lengths and frame table do
+   not change.
+6. **A kingdom's properties** come from its data types through DataTypeProperty; **measured values** are rows written
+   offline before a run, so neither the decoder nor the device measures anything. A kingdom whose data types carry no
+   properties works exactly as today.
+
+### 3.6 Gene manipulation on the run-time model
+
+Every operator works on the run-time model alone: a type column, its alphabet, its lengths. That is why every child is
+legal without any check: a column fixes the data type of what it holds, the GEP head rule and the lengths `h_T`, `t_T`
+make every tree close, and the requirements are met after expression by adapters, so no operator needs to know a
+property.
+
+| step | what it does | where |
+|---|---|---|
+| **initialisation** | in each type column, each head cell is drawn from the column's whole alphabet and each tail cell from its terminals only (the GEP head rule, per column); each Dc word from `C_T`; each Dv word uniformly below 65,536 | GPU |
+| **point mutation** | a head cell is redrawn from its column's alphabet, a tail cell from its terminals; a Dc word from `C_T`; an index word redrawn, which may name another variable in scope | GPU |
+| **transposition, inversion, one-point, two-point and gene recombination** | cells are moved or exchanged within one type column (two parents at the same gene, column and positions); every head or tail cell carries its Dv word with it, and no operator moves a Dv word alone. Lengths and alphabets are kept | GPU |
+| **marriage** (typed subtree crossover) | on the two parents' expressed and resolved trees, two subtrees of the same data type are swapped; each tree is written back into its gene column by column, and the `var.T` index words are re-encoded for the scope where the subtree lands | host |
+| **expression** | Karva, breadth-first: a slot of type T reads T's head, then T's tail, taking as many children of each data type as the symbol's signature asks | GPU and host |
+| **decoding** | on the host, with the compiled rules: the environment top-down, the variables (`w mod c`), the properties bottom-up, the requirements and their repairs, the rendered program (section 4) | host |
+
+Selection reads only the fitness. So the dynamics of evolution (what is drawn, moved and kept) happen entirely on the
+run-time model's columns; the properties decide only how an expressed tree renders as a legal program.
 
 ### 3.7 Data quality on read: what is taken from the flat enhanced format, what is not, and when
 
 The flat enhanced format keeps each data item as an object: the raw value (never changed), shape masks (HU, LU),
 and Rules holding measured properties and corrected forms (`std_date`). Consumers take a corrected form or leave it;
-the quality work is done on read. Section 3.1's last six decisions are what this design takes from it. Deliberately
+the quality work is done on read. Section 3.3.1's last six decisions are what this design takes from it. Deliberately
 not taken:
 
 | not taken | why |
@@ -528,12 +708,13 @@ schema, with the tables it already has:
 So every gene stays legal and all behaviour is deterministic. Typed GEP then places a conversion subtree wherever a
 function needs the target type and the data arrives as another. The conversion is visible in the program, it is
 costed like any other node, and it is present only where evolution uses it. The precomputed alternative forms of the
-inputs (3.3, Transform) stay the exception, offered only when a kingdom declares them. No new table is needed.
+inputs (3.3.3, Transform) stay the exception, offered only when a kingdom declares them. No new table is needed.
 
 ## 4. The decoder
 
-The gene is unchanged: Karva, the head and tail of each data type, and a Dc-style array of index words beside each
-type's region.
+The gene is unchanged: Karva, the head and tail of each data type, and a Dv lane of index words beside each
+type's column. The decoder works on the run-time model of 3.5: pass 1 reads the type columns and the arities, passes 2
+to 5 the root environment and the compiled rules.
 
 **Before any run, once, offline (not a pass):** the view generator writes the entry tables: each parameter's declared
 properties from the signature, its alternative forms (Transform rows), and, later, the sniffer's measured properties
@@ -551,7 +732,7 @@ deterministic in the gene and these rows alone:
    it becomes T's constant.
 4. **Properties, bottom-up, and requirements:** each node's properties from its children by its PropertyRule rows,
    as symbolic expressions (`n`, `k`, `d`, a literal, or `?` when only known at run time), each carrying its source
-   (3.3); each Requirement is a condition evaluated three-valued (section 3.4.4), a `must` one with measured values
+   (3.3.3); each Requirement is a condition evaluated three-valued (section 3.4.4), a `must` one with measured values
    read as `?`. A `must` requirement that does not hold takes the first adapter of its Repair rows whose guard holds
    in the environment of its site; an `advise` requirement that does not hold is recorded on the node for the report
    and the cost, and nothing is repaired. A `replace` adapter (`subst.own`, `subst.const`,
@@ -567,7 +748,7 @@ sources, raw or an alternative form (pass 2 and 3), and every function carries i
 read measured values from rows; they never look at data.
 
 The GPU never runs passes 2 to 5. Every gene is legal whatever its index words and properties, so the device draws,
-varies and selects symbols by data type, as now.
+varies and selects symbols by data type, as now (3.5, 3.6).
 
 ## 5. Futhark: the adapters
 
@@ -619,7 +800,7 @@ Futhark's `i64`, whose only terminals are the size names in scope (the entry's `
 introduces), chosen by the index word of `var.size` as any variable is chosen (section 4, pass 3), plus the kingdom's
 size literals if it has any. No function returns a `size`. So every length and bound stays a size name, a literal or
 a symbolic expression of them, the work a program does is known from the case's sizes before it runs, and no adapter
-for a computed size is needed. This applies section 3.3 (`tabulate`: out.len = in0, a size) and the model of a size as
+for a computed size is needed. This applies section 3.3.3 (`tabulate`: out.len = in0, a size) and the model of a size as
 a data type whose values are the names in scope; it does not change the model. `size` is one more data type in each
 view's count of section 7.
 
@@ -675,7 +856,7 @@ Each kingdom's characteristic rules written as rows in the schema of section 3: 
 (Typed Symbolic Regression), WGSL, Futhark, NLP, SQL, Spark (Dagnetic), Lua, Python with numpy, Brainfuck. A rule that
 would not fit is a schema gap; each gap was closed by a general addition (8.13) and the kingdom re-checked. **Result:
 eleven of eleven are expressible as rows; seven needed an addition on the first pass; none needs kingdom code in the
-decoder.** Each kingdom also states the strength of its requirements (`must` or `advise`, 3.3) and, where it has one,
+decoder.** Each kingdom also states the strength of its requirements (`must` or `advise`, 3.3.3) and, where it has one,
 what a measured property or an alternative form would give it.
 
 ### 8.0 How the test was run
@@ -1028,8 +1209,8 @@ inside a condition, and its widened substitution becomes `replace` rows.
 ## 9. What changes, by repository
 
 - **fuller (symbolic; a crate after the merge of plan 6.2):**
-  - `src/geneframe.rs`: the tables of 3.3 and the formula language of 3.4, with Arity derived from Argument (the
-    migration list is 8.15). Now, before the schema freezes: the Property catalogue and DataTypeProperty edge tables,
+  - `src/geneframe.rs`: the tables of 3.3.3 and the formula language of 3.4, with Arity derived from Argument (the
+    migration list is 8.15), and the loader that derives the run-time model of 3.5. Now, before the schema freezes: the Property catalogue and DataTypeProperty edge tables,
     the `source` column, the `strength` column.
   - Later (3.7): the sniffer (`sniff.py` or a sibling) measuring the training cases into EntryProperty rows; Transform
     rows for alternative forms, after an A/B run; shape masks for string kingdoms.
