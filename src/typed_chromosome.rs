@@ -573,7 +573,7 @@ fn genic_cells(epoch: &Epoch, layout: &GeneLayout, gene: &[u32]) -> Vec<(usize, 
     layout
         .spans()
         .iter()
-        .filter(|s| s.domain != Domain::Dc)
+        .filter(|s| !matches!(s.domain, Domain::Dc | Domain::Dv))
         .flat_map(|s| (s.off..s.off + s.len).filter_map(|p| gene.get(p).and_then(|w| epoch.is_genic(*w)).map(|g| (p, g))))
         .collect()
 }
@@ -1036,6 +1036,28 @@ mod tests {
         assert_eq!(AdfSet::new(&e, vec![without]).expect_err("no word"), ChromosomeDefect::AdfConstIndex { id: 1, seq: 2 });
         let with = Adf::from_tree(&e, 1, 0, &node(PAIR, vec![leaf(s), Tree { symbol: var_i, const_index: Some(7), kids: vec![] }]));
         AdfSet::new(&e, vec![with]).expect("a var.T with its word");
+    }
+
+    /// A `var.T`'s Dv word is an index word, never a symbol: a normal gene whose Dv word equals a genic terminal's
+    /// symbol id expresses (plan 7 task F5 found the check reading Dv words as symbols).
+    #[test]
+    fn a_dv_word_is_never_read_as_a_genic_terminal() {
+        let relations = relations_from_rows(
+            "h var",
+            vec![Ty::S],
+            &[("pair".to_string(), vec![Ty::S, Ty::I], Ty::S), ("s".to_string(), vec![], Ty::S), ("i".to_string(), vec![], Ty::I), ("var.I".to_string(), vec![], Ty::I)],
+            &[],
+        );
+        let k = relations.with_variables(&["var.I"]).expect("a terminal").check().expect("valid");
+        let (s, var_i): (SymbolId, SymbolId) = (1, 3);
+        let lone = ChromosomeLayout { normal: Layout::new(9, vec![GeneLayout::from_program_size(&k, Ty::S, 2).expect("layout")]), mains: vec![] };
+        let e = Epoch::new(&k, &lone.gene_roots(), &[AdfDecl { id: 1, root: Ty::S, level: 0 }]).expect("epoch");
+        let a1 = e.adf_terminal(1).expect("A1");
+        let set = AdfSet::new(&e, vec![Adf::from_tree(&e, 1, 0, &leaf(s))]).expect("set");
+        let tree = node(PAIR, vec![leaf(a1), Tree { symbol: var_i, const_index: Some(a1), kids: vec![] }]);
+        let c = Chromosome { chromosome_id: 0, genes: vec![gene_for(e.kingdom(), lone.normal.gene(0).expect("g"), &tree)], mains: vec![] };
+        let p = express_chromosome(&e, &set, &lone, &c, &BTreeMap::new()).expect("a Dv word naming a genic terminal's id expresses");
+        assert_eq!(p.inlined(&e, &set), vec![(0, node(PAIR, vec![leaf(s), Tree { symbol: var_i, const_index: Some(a1), kids: vec![] }]))]);
     }
 
     #[test]
