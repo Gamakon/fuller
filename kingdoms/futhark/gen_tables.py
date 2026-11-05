@@ -24,6 +24,13 @@ import sys
 import view as master_view  # noqa: E402
 import sniff  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "master"))
+import write_rows  # noqa: E402  (kingdoms/master/write_rows.py: the one writer of every kingdom's rows)
+
+# The parent kingdom's row in `kingdoms/master/kingdoms.tsv`; each problem's view is a variant `futhark.<problem>`.
+FUTHARK_DESCRIPTION = ("the Futhark kingdom: shape-polymorphic GPU kernels; each problem is a variant, its rows computed by "
+                       "view.py from the master templates (kingdoms/futhark/master/6) and its sniffed view.tsv")
+
 PLACEHOLDER_RE = re.compile(r"\{(\d+)\}")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -802,7 +809,7 @@ SIG6_PROBLEMS = {
     "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2, (), (), ()),
     "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main", 2, 2, (), (), ()),
 }
-SIG6_FILES = ("tables.tsv",)
+SIG6_FILES = ("view.tsv", "egraph.datatype", "egraph.rules", "egraph.rows", "egraph.sorts")  # the rows are in kingdoms/master/
 # The operations whose rows are heavy (a work bound `env.trips < depth` substitutes them): the binders, the reductions,
 # the scans and histograms, the matrix family's and the fitting adapters.
 HEAVY6_OPS = {"tab", "tabrows", "replicate", "sum", "minimum", "maximum", "map2", "scan", "hist", "histrows", "rowdiv",
@@ -968,26 +975,42 @@ def witness_master6(mst=None):
     return bad
 
 
-def read_tables6(path):
-    """A view's `tables.tsv`, by kind of line: each a list of its fields."""
+def read_tables6(text):
+    """A view's rows in the named text form, by kind of line: each a list of its fields."""
     out = {}
-    with open(path) as f:
-        for line in f.read().splitlines():
-            if line:
-                fs = line.split("\t")
-                out.setdefault(fs[0], []).append(fs[1:])
+    for line in text.splitlines():
+        if line:
+            fs = line.split("\t")
+            out.setdefault(fs[0], []).append(fs[1:])
     return out
 
 
-def witness_view6(dir_path, name, spec, mst=None):
-    """Check one master 6 view from its WRITTEN text (the four kinds of row), apart from the generator: every data type
+def master_kingdom6(name):
+    """The kingdom a problem's view is in the master tables (`kingdoms/master/`): `futhark.<problem>`."""
+    return f"futhark.{name}"
+
+
+def committed_rows6(name):
+    """A problem's view as the master tables hold it (apart from the generator): the named text of `futhark.<problem>`."""
+    return write_rows.named_of_rows(write_rows.select(write_rows.read_master(), master_kingdom6(name)))
+
+
+def kingdom_row6(name, rows):
+    """The view's row of `kingdoms.tsv`: name, parent, description, root (the entry's result), notes."""
+    src = SIG6_PROBLEMS[name][0]
+    return (master_kingdom6(name), "futhark", f"the Futhark kingdom's view of the problem {name} ({src})", write_rows.root_of(rows), "")
+
+
+def witness_view6(tables, name, spec, mst=None):
+    """Check one master 6 view from its WRITTEN rows (the four kinds of row, as the master tables hold them), apart from
+    the generator: every data type
     and symbol a line names is declared before; every symbol but a formula row has one output; every up flow sets a
     property its result carries and reads only properties its arguments carry; every variable's data type is declared
     and its properties carried; every guard reads only carried properties, and every must guard's last repair always
     applies (guard and when `true`); every repair's call names an adapter symbol of the view; the entry's parameters
     are the specification's, and every size it names is a size name at least 1."""
     bad = []
-    t = read_tables6(os.path.join(dir_path, "tables.tsv"))
+    t = read_tables6(tables)
     types = [d[0] for d in t.get("data_type", [])]
     carries = {}
     for dt, p in t.get("carries", []):
@@ -1193,8 +1216,9 @@ def egraph6_texts(view, spec, mst):
             "egraph.rows": "\n".join(rows) + "\n", "egraph.sorts": "\n".join(sorts) + "\n"}
 
 
-def witness_egraph6(dir_path, name, mst=None):
-    """The written e-graph of a master 6 view, read back apart from the generator: every symbol has its constructor
+def witness_egraph6(dir_path, tables, name, mst=None):
+    """The written e-graph of a master 6 view (its files under `dir_path`, its rows `tables` as the master tables hold
+    them), read back apart from the generator: every symbol has its constructor
     (a `var` row two), no constructor or sort is used twice, every data type has its sort, every constructor of a rule
     is declared, every rule's operator rows have their sorts' arities, and NO RULE NAMES A BINDER (a row with a
     binding), so no rule moves a subtree under another binder (plan 7.5 risk 3) and a variable keeps its environment."""
@@ -1204,7 +1228,7 @@ def witness_egraph6(dir_path, name, mst=None):
     def read(fname):
         with open(os.path.join(dir_path, fname)) as f:
             return f.read()
-    t = read_tables6(os.path.join(dir_path, "tables.tsv"))
+    t = read_tables6(tables)
     dts = [{"name": d[0]} for d in t.get("data_type", [])]
     ins = {}
     for s_, _, way, dt, _ in t.get("argument", []):
@@ -1565,6 +1589,11 @@ def master6_main(mode):
     print(f"master 6: {len(mst['rows'])} row templates ({sum(1 for r in mst['rows'] if r['kind'] == 'adapter')} adapters), "
           f"{len(mst['datatypes'])} data type templates, {len(mst['repairs'])} repairs in {len({r['list'] for r in mst['repairs']})} lists, "
           f"version {mst['version']}; master 6 witness tests PASS")
+    if mode == "--write":
+        write_rows.write_parent("futhark", FUTHARK_DESCRIPTION)
+    elif [k for k in write_rows.read_master()[write_rows.KINGDOMS_FILE] if k[0] == "futhark"] != [["futhark", "", FUTHARK_DESCRIPTION, "", ""]]:
+        print("THE MASTER TABLES' row for the kingdom futhark is not the generator's; run with --write to regenerate")
+        return 1
     for name in sorted(SIG6_PROBLEMS):
         out_dir = sig6_dir(name)
         try:
@@ -1572,13 +1601,17 @@ def master6_main(mode):
         except ValueError as e:
             print(f"THE MASTER 6 VIEW {name} FAILED: {e}")
             return 1
+        # The view's rows go into the master tables (`kingdoms/master/`, the kingdom `futhark.<problem>`), its
+        # specification and e-graph beside the problem under `sig/<problem>/m6/`.
+        tables = wanted.pop("tables.tsv")
+        rows = write_rows.rows_of_named(tables)
         if mode == "--write":
             staged = os.path.join(out_dir, ".staged")
             os.makedirs(staged, exist_ok=True)
             for fname, text in wanted.items():
                 with open(os.path.join(staged, fname), "w") as f:
                     f.write(text)
-            bad = witness_view6(staged, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(staged, name, mst)
+            bad = witness_view6(tables, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(staged, tables, name, mst)
             if bad:
                 print(f"THE MASTER 6 VIEW {name} FAILED (the committed files are untouched):")
                 for b in bad[:40]:
@@ -1590,6 +1623,7 @@ def master6_main(mode):
             for fname in wanted:
                 os.replace(os.path.join(staged, fname), os.path.join(out_dir, fname))
             os.rmdir(staged)
+            write_rows.write_kingdom(master_kingdom6(name), rows, kingdom_row6(name, rows))
         else:
             for fname, text in wanted.items():
                 path = os.path.join(out_dir, fname)
@@ -1602,14 +1636,16 @@ def master6_main(mode):
                 if got != text.encode("utf-8"):
                     bad.append(f"the committed sig/{name}/m6/{fname} is not what the sniffer and view.py produce "
                                f"({first_difference(got, text.encode('utf-8'))}); run with --write to regenerate")
+            bad += write_rows.check_kingdom(master_kingdom6(name), rows, kingdom_row6(name, rows))
             if not bad:
-                bad = witness_view6(out_dir, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(out_dir, name, mst)
+                committed = committed_rows6(name)
+                bad = witness_view6(committed, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(out_dir, committed, name, mst)
             if bad:
                 print(f"THE MASTER 6 VIEW {name} FAILED:")
                 for b in bad[:40]:
                     print("  " + b)
                 return 1
-        t6 = read_tables6(os.path.join(out_dir, "tables.tsv"))
+        t6 = read_tables6(tables)
         kinds = {}
         for s_ in t6.get("symbol", []):
             kind = "adapter" if s_[3] == "adapter" else s_[2]
@@ -1618,6 +1654,12 @@ def master6_main(mode):
               f"{len(t6.get('symbol', []))} symbols ({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}), "
               f"{len(t6.get('flow', []))} flows, {len(t6.get('guard', []))} guards; "
               f"{'committed view MATCHES the sniffer and view.py, ' if mode == '--check' else 'written, '}witness tests PASS")
+    bad = write_rows.selftest()
+    if bad:
+        print("THE MASTER TABLES' SELF-TEST FAILED:")
+        for b in bad:
+            print("  " + b)
+        return 1
     return 0
 
 

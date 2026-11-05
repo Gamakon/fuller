@@ -12,15 +12,17 @@ fn first_difference(a: &str, b: &str) -> String {
     }
 }
 
-/// THE BYTE-FOR-BYTE TEST: every committed master 6 view (the file `gen_tables.py --check` compares with what
-/// `sniff.py --format 6` and `view.py` write) is what this module computes from the same specification.
+/// THE BYTE-FOR-BYTE TEST: every committed master 6 view (the rows of `futhark.<problem>` in the master tables, which
+/// `gen_tables.py --check` compares with what `sniff.py --format 6` and `view.py` write) is what this module computes
+/// from the same specification.
 #[test]
 fn every_master6_view_is_what_view_py_writes_byte_for_byte() {
     let master = Master6::committed().unwrap();
-    for (problem, spec, tables) in COMMITTED6 {
+    for (problem, spec) in COMMITTED6 {
         let v = View6::load(&master, spec).unwrap_or_else(|e| panic!("{problem}: {e}"));
+        let tables = committed_rows(problem).unwrap();
         for (file, got) in v.artefacts() {
-            assert!(got == tables, "{problem}/m6/{file} differs from view.py's: {}", first_difference(got, tables));
+            assert!(got == tables, "{problem}'s {file} differs from the master tables' rows of {}: {}", master_kingdom(problem), first_difference(got, &tables));
         }
     }
 }

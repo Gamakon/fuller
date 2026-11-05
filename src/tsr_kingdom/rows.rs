@@ -1,8 +1,9 @@
 //! THE TSR KINGDOM AS ROWS of the gene frame's fixed schema (design `docs/DESIGN_futhark_types_and_properties.md`
 //! 3.3 and 8.3; plan `docs/PLAN_futhark_kingdom.md` section 8). TSR is Typed Symbolic Regression.
 //!
-//! Each variant's `kingdoms/tsr/<variant>/tables.tsv`, written by `kingdoms/tsr/gen_tables.py` (never by hand; its
-//! `--check` is a test), holds the four kinds of row and nothing else:
+//! Each variant's rows are the kingdom `tsr.<variant>` of the master tables (`kingdoms/master/`), written by
+//! `kingdoms/tsr/gen_tables.py` through `write_rows.py` (never by hand; its `--check` is a test): the four kinds of row
+//! and nothing else:
 //!
 //! - ONE data type `F`, carrying `depth`, `order`, `fam`, `arm` and `ties`;
 //! - Argument rows: the 18 operators of `SymbolTable::wide()`, `F` in and out, then the input terminals `x0..x9` and
@@ -34,15 +35,14 @@ pub const MAX_INPUTS: usize = 10;
 pub const HEAD: usize = 34;
 
 impl TsrVariant {
-    /// The variant's four kinds of row (`kingdoms/tsr/<variant>/tables.tsv`).
-    pub fn rows_tsv(self) -> &'static str {
-        match self {
-            TsrVariant::Single => include_str!("../../kingdoms/tsr/single/tables.tsv"),
-            TsrVariant::Order => include_str!("../../kingdoms/tsr/order/tables.tsv"),
-            TsrVariant::Depth => include_str!("../../kingdoms/tsr/depth/tables.tsv"),
-            TsrVariant::OrderDepth => include_str!("../../kingdoms/tsr/order_depth/tables.tsv"),
-            TsrVariant::OrderDepthWindows => include_str!("../../kingdoms/tsr/order_depth_windows/tables.tsv"),
-        }
+    /// The variant's kingdom in the master tables (`kingdoms/master/`): `tsr.<variant>`.
+    pub fn master_kingdom(self) -> String {
+        format!("tsr.{}", self.dir())
+    }
+
+    /// The variant's four kinds of row, selected from the master tables, as the named text form.
+    pub fn rows_tsv(self) -> Result<String, String> {
+        crate::geneframe::master::select(&self.master_kingdom())?.named_text()
     }
 }
 
@@ -85,7 +85,8 @@ impl TsrRows {
         if !(1..=MAX_INPUTS).contains(&n_inputs) {
             return Err(bug(format!("TSR {}: a law of {n_inputs} input columns; the rows hold 1 to {MAX_INPUTS}", variant.dir())));
         }
-        let kept: Vec<&str> = variant.rows_tsv().lines().filter(|l| l.split('\t').nth(1).and_then(input_column).is_none_or(|k| k < n_inputs)).collect();
+        let text = variant.rows_tsv()?;
+        let kept: Vec<&str> = text.lines().filter(|l| l.split('\t').nth(1).and_then(input_column).is_none_or(|k| k < n_inputs)).collect();
         let kingdom = format!("{}/{}", super::TSR, variant.dir());
         let ty = |i: usize| if i == 0 { Ok(Ty::F) } else { Err(bug(format!("{kingdom}: data type {i}; TSR has one, F"))) };
         let (tables, entry) = KingdomTables::parse_named(&kingdom, &kept.join("\n"), &ty)?;

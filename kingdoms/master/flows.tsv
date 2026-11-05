@@ -1,0 +1,1602 @@
+kingdom	symbol	position	direction	name	formula
+futhark.a7	map_rows@m.f32	out	up	rows	in1.rows
+futhark.a7	map_rows@m.f32	out	up	cols	in1.cols
+futhark.a7	map2_rows@m.f32	out	up	rows	min(in1.rows, in2.rows)
+futhark.a7	map2_rows@m.f32	out	up	cols	min(in1.cols, in2.cols)
+futhark.a7	transpose@m.f32	out	up	rows	in0.cols
+futhark.a7	transpose@m.f32	out	up	cols	in0.rows
+futhark.a7	matmul@m.f32	out	up	rows	in0.rows
+futhark.a7	matmul@m.f32	out	up	cols	in1.cols
+futhark.a7	fitrows@m.f32	out	up	rows	in0.value
+futhark.a7	fitrows@m.f32	out	up	cols	in1.cols
+futhark.a7	fitcols@m.f32	out	up	rows	in1.rows
+futhark.a7	fitcols@m.f32	out	up	cols	in0.value
+futhark.histogram	prev@i64	out	up	bound	in0.bound
+futhark.histogram	next@i64	out	up	bound	in0.bound
+futhark.histogram	clamp@i64	out	up	bound	in0.value
+futhark.histogram	zero@i64	out	up	bound	1
+futhark.histogram	last@i64	out	up	bound	in0.value
+futhark.histogram	tab@a.i32	out	up	len	in0.value
+futhark.histogram	tab@a.i32	in1	down	var.i64	1
+futhark.histogram	tab@a.i32	in1	down	var.i64.bound	in0.value
+futhark.histogram	tab@a.i32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.histogram	tab@a.i32	in1	down	env.trips	env.trips + 1
+futhark.histogram	replicate@a.i32	out	up	len	in0.value
+futhark.histogram	map2.add@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.histogram	map2.sub@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.histogram	map2.min@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.histogram	map2.max@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.histogram	scan.add@a.i32	out	up	len	in0.len
+futhark.histogram	scan.min@a.i32	out	up	len	in0.len
+futhark.histogram	scan.max@a.i32	out	up	len	in0.len
+futhark.histogram	hist.add@a.i32	out	up	len	in0.value
+futhark.histogram	hist.min@a.i32	out	up	len	in0.value
+futhark.histogram	hist.max@a.i32	out	up	len	in0.value
+futhark.histogram	loop@i32	in2	down	var.i32	1
+futhark.histogram	loop@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.histogram	loop@i32	in2	down	var.i64	1
+futhark.histogram	loop@i32	in2	down	var.i64.bound	in0.value
+futhark.histogram	loop@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.histogram	loop@i32	in2	down	env.trips	env.trips + 1
+futhark.histogram	loop@a.i32	out	up	len	in1.len
+futhark.histogram	loop@a.i32	in2	down	var.[]i32	1
+futhark.histogram	loop@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.histogram	loop@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.histogram	loop@a.i32	in2	down	var.i64	1
+futhark.histogram	loop@a.i32	in2	down	var.i64.bound	in0.value
+futhark.histogram	loop@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.histogram	loop@a.i32	in2	down	env.trips	env.trips + 1
+futhark.histogram	loop1@i32	in2	down	var.i32	1
+futhark.histogram	loop1@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.histogram	loop1@i32	in2	down	var.i64	1
+futhark.histogram	loop1@i32	in2	down	var.i64.bound	in0.value
+futhark.histogram	loop1@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.histogram	loop1@i32	in2	down	env.trips	env.trips + 1
+futhark.histogram	loop1@a.i32	out	up	len	in1.len
+futhark.histogram	loop1@a.i32	in2	down	var.[]i32	1
+futhark.histogram	loop1@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.histogram	loop1@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.histogram	loop1@a.i32	in2	down	var.i64	1
+futhark.histogram	loop1@a.i32	in2	down	var.i64.bound	in0.value
+futhark.histogram	loop1@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.histogram	loop1@a.i32	in2	down	env.trips	env.trips + 1
+futhark.histogram	nextin@i64	out	up	bound	in0.value
+futhark.histogram	fit@a.i32	out	up	len	in0.value
+futhark.histogram	clampix@i64	out	up	bound	in0.value
+futhark.kmeans	prev@i64	out	up	bound	in0.bound
+futhark.kmeans	next@i64	out	up	bound	in0.bound
+futhark.kmeans	zero@i64	out	up	bound	1
+futhark.kmeans	last@i64	out	up	bound	in0.value
+futhark.kmeans	tab@a.f32	out	up	len	in0.value
+futhark.kmeans	tab@a.f32	in1	down	var.i64	1
+futhark.kmeans	tab@a.f32	in1	down	var.i64.bound	in0.value
+futhark.kmeans	tab@a.f32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	tab@a.f32	in1	down	env.trips	env.trips + 1
+futhark.kmeans	replicate@a.f32	out	up	len	in0.value
+futhark.kmeans	map2.add@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans	map2.sub@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans	map2.min@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans	map2.max@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans	scan.add@a.f32	out	up	len	in0.len
+futhark.kmeans	scan.min@a.f32	out	up	len	in0.len
+futhark.kmeans	scan.max@a.f32	out	up	len	in0.len
+futhark.kmeans	row@a.f32	out	up	len	in0.cols
+futhark.kmeans	loop@f32	in2	down	var.f32	1
+futhark.kmeans	loop@f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop@f32	in2	down	var.i64	1
+futhark.kmeans	loop@f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop@f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop@a.f32	out	up	len	in1.len
+futhark.kmeans	loop@a.f32	in2	down	var.[]f32	1
+futhark.kmeans	loop@a.f32	in2	down	var.[]f32.len	in1.len
+futhark.kmeans	loop@a.f32	in2	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	loop@a.f32	in2	down	var.i64	1
+futhark.kmeans	loop@a.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop@a.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop1@f32	in2	down	var.f32	1
+futhark.kmeans	loop1@f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop1@f32	in2	down	var.i64	1
+futhark.kmeans	loop1@f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop1@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop1@f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop1@a.f32	out	up	len	in1.len
+futhark.kmeans	loop1@a.f32	in2	down	var.[]f32	1
+futhark.kmeans	loop1@a.f32	in2	down	var.[]f32.len	in1.len
+futhark.kmeans	loop1@a.f32	in2	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	loop1@a.f32	in2	down	var.i64	1
+futhark.kmeans	loop1@a.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop1@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop1@a.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	map_rows@m.f32	out	up	rows	in1.rows
+futhark.kmeans	map_rows@m.f32	out	up	cols	in1.cols
+futhark.kmeans	map2_rows@m.f32	out	up	rows	min(in1.rows, in2.rows)
+futhark.kmeans	map2_rows@m.f32	out	up	cols	min(in1.cols, in2.cols)
+futhark.kmeans	transpose@m.f32	out	up	rows	in0.cols
+futhark.kmeans	transpose@m.f32	out	up	cols	in0.rows
+futhark.kmeans	matmul@m.f32	out	up	rows	in0.rows
+futhark.kmeans	matmul@m.f32	out	up	cols	in1.cols
+futhark.kmeans	clamp@i64	out	up	bound	in0.value
+futhark.kmeans	hist.add@a.f32	out	up	len	in0.value
+futhark.kmeans	hist.min@a.f32	out	up	len	in0.value
+futhark.kmeans	hist.max@a.f32	out	up	len	in0.value
+futhark.kmeans	map2.mul@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans	tabrows@m.f32	out	up	rows	in0.value
+futhark.kmeans	tabrows@m.f32	out	up	cols	in1.value
+futhark.kmeans	tabrows@m.f32	in2	down	var.i64	1
+futhark.kmeans	tabrows@m.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	tabrows@m.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	tabrows@m.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	histrows.add@m.f32	out	up	rows	in0.value
+futhark.kmeans	histrows.add@m.f32	out	up	cols	in1.value
+futhark.kmeans	rowdiv@m.f32	out	up	rows	min(in0.rows, in1.len)
+futhark.kmeans	rowdiv@m.f32	out	up	cols	in0.cols
+futhark.kmeans	loop@f32.f32	in2	down	var.f32	1
+futhark.kmeans	loop@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop@f32.f32	in2	down	var.f32/1	1
+futhark.kmeans	loop@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans	loop@f32.f32	in2	down	var.i64	1
+futhark.kmeans	loop@f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop@f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop1@f32.f32	in2	down	var.f32	1
+futhark.kmeans	loop1@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop1@f32.f32	in2	down	var.f32/1	1
+futhark.kmeans	loop1@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans	loop1@f32.f32	in2	down	var.i64	1
+futhark.kmeans	loop1@f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop1@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop1@f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32	1
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32/2	1
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.i64	1
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop@f32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32	1
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32/2	1
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.i64	1
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans	loop1@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans	loop1@f32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans	let.a.f32@f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@i64	out	up	bound	in1.bound
+futhark.kmeans	let.a.f32@i64	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@i64	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@i64	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@a.f32	out	up	len	in1.len
+futhark.kmeans	let.a.f32@a.f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@a.f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@a.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@m.f32	out	up	rows	in1.rows
+futhark.kmeans	let.a.f32@m.f32	out	up	cols	in1.cols
+futhark.kmeans	let.a.f32@m.f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@m.f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@m.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@f32.f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@f32.f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@f32.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@f32.f32.f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@f32.f32.f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@f32.f32.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32	1
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32.len	in0.len
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+futhark.kmeans	nextin@i64	out	up	bound	in0.value
+futhark.kmeans	fit@a.f32	out	up	len	in0.value
+futhark.kmeans	fitrows@m.f32	out	up	rows	in0.value
+futhark.kmeans	fitrows@m.f32	out	up	cols	in1.cols
+futhark.kmeans	fitcols@m.f32	out	up	rows	in1.rows
+futhark.kmeans	fitcols@m.f32	out	up	cols	in0.value
+futhark.kmeans	clampix@i64	out	up	bound	in0.value
+futhark.kmeans_i32	prev@i64	out	up	bound	in0.bound
+futhark.kmeans_i32	next@i64	out	up	bound	in0.bound
+futhark.kmeans_i32	clamp.i32@i64	out	up	bound	in0.value
+futhark.kmeans_i32	zero@i64	out	up	bound	1
+futhark.kmeans_i32	last@i64	out	up	bound	in0.value
+futhark.kmeans_i32	tab@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	tab@a.f32	in1	down	var.i64	1
+futhark.kmeans_i32	tab@a.f32	in1	down	var.i64.bound	in0.value
+futhark.kmeans_i32	tab@a.f32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	tab@a.f32	in1	down	env.trips	env.trips + 1
+futhark.kmeans_i32	tab@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	tab@a.i32	in1	down	var.i64	1
+futhark.kmeans_i32	tab@a.i32	in1	down	var.i64.bound	in0.value
+futhark.kmeans_i32	tab@a.i32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	tab@a.i32	in1	down	env.trips	env.trips + 1
+futhark.kmeans_i32	replicate@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	replicate@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	map2.add@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.add@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.sub@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.sub@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.min@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.min@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.max@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.max@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	scan.add@a.f32	out	up	len	in0.len
+futhark.kmeans_i32	scan.add@a.i32	out	up	len	in0.len
+futhark.kmeans_i32	scan.min@a.f32	out	up	len	in0.len
+futhark.kmeans_i32	scan.min@a.i32	out	up	len	in0.len
+futhark.kmeans_i32	scan.max@a.f32	out	up	len	in0.len
+futhark.kmeans_i32	scan.max@a.i32	out	up	len	in0.len
+futhark.kmeans_i32	hist.add@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	hist.min@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	hist.max@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	row@a.f32	out	up	len	in0.cols
+futhark.kmeans_i32	row@a.i32	out	up	len	in0.cols
+futhark.kmeans_i32	loop@f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@a.f32	out	up	len	in1.len
+futhark.kmeans_i32	loop@a.f32	in2	down	var.[]f32	1
+futhark.kmeans_i32	loop@a.f32	in2	down	var.[]f32.len	in1.len
+futhark.kmeans_i32	loop@a.f32	in2	down	var.[]f32.spell	s{nth}_a_f32_{=out.len@name}
+futhark.kmeans_i32	loop@a.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@a.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@a.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@a.i32	out	up	len	in1.len
+futhark.kmeans_i32	loop@a.i32	in2	down	var.[]i32	1
+futhark.kmeans_i32	loop@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.kmeans_i32	loop@a.i32	in2	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	loop@a.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@a.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@a.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@a.f32	out	up	len	in1.len
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.[]f32	1
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.[]f32.len	in1.len
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.[]f32.spell	s{nth}_a_f32_{=out.len@name}
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@a.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@a.i32	out	up	len	in1.len
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.[]i32	1
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@a.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	map_rows@m.f32	out	up	rows	in1.rows
+futhark.kmeans_i32	map_rows@m.f32	out	up	cols	in1.cols
+futhark.kmeans_i32	map2_rows@m.f32	out	up	rows	min(in1.rows, in2.rows)
+futhark.kmeans_i32	map2_rows@m.f32	out	up	cols	min(in1.cols, in2.cols)
+futhark.kmeans_i32	transpose@m.f32	out	up	rows	in0.cols
+futhark.kmeans_i32	transpose@m.f32	out	up	cols	in0.rows
+futhark.kmeans_i32	matmul@m.f32	out	up	rows	in0.rows
+futhark.kmeans_i32	matmul@m.f32	out	up	cols	in1.cols
+futhark.kmeans_i32	clamp.f32@i64	out	up	bound	in0.value
+futhark.kmeans_i32	hist.add@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	hist.min@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	hist.max@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	map2.mul@a.f32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	map2.mul@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.kmeans_i32	tabrows@m.f32	out	up	rows	in0.value
+futhark.kmeans_i32	tabrows@m.f32	out	up	cols	in1.value
+futhark.kmeans_i32	tabrows@m.f32	in2	down	var.i64	1
+futhark.kmeans_i32	tabrows@m.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	tabrows@m.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	tabrows@m.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	tabrows@m.i32	out	up	rows	in0.value
+futhark.kmeans_i32	tabrows@m.i32	out	up	cols	in1.value
+futhark.kmeans_i32	tabrows@m.i32	in2	down	var.i64	1
+futhark.kmeans_i32	tabrows@m.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	tabrows@m.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	tabrows@m.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	histrows.add@m.i32	out	up	rows	in0.value
+futhark.kmeans_i32	histrows.add@m.i32	out	up	cols	in1.value
+futhark.kmeans_i32	histrows.add@m.f32	out	up	rows	in0.value
+futhark.kmeans_i32	histrows.add@m.f32	out	up	cols	in1.value
+futhark.kmeans_i32	rowdiv@m.f32	out	up	rows	min(in0.rows, in1.len)
+futhark.kmeans_i32	rowdiv@m.f32	out	up	cols	in0.cols
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32/2	1
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@f32.i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32/2	1
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i32/2.spell	s{nth}_i32
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop@i32.i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32/2	1
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@f32.i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.f32/1	1
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.f32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.f32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.f32	1
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.f32.spell	s{nth}_f32
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.i32.f32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32	1
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32/1	1
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32/1.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32/2	1
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i32/2.spell	s{nth}_i32
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i64	1
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i64.bound	in0.value
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.kmeans_i32	loop1@i32.i32.i32	in2	down	env.trips	env.trips + 1
+futhark.kmeans_i32	let.a.i32@f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i64	out	up	bound	in1.bound
+futhark.kmeans_i32	let.a.i32@i64	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i64	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i64	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@a.f32	out	up	len	in1.len
+futhark.kmeans_i32	let.a.i32@a.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@a.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@a.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@a.i32	out	up	len	in1.len
+futhark.kmeans_i32	let.a.i32@a.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@a.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@a.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@m.f32	out	up	rows	in1.rows
+futhark.kmeans_i32	let.a.i32@m.f32	out	up	cols	in1.cols
+futhark.kmeans_i32	let.a.i32@m.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@m.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@m.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@m.i32	out	up	rows	in1.rows
+futhark.kmeans_i32	let.a.i32@m.i32	out	up	cols	in1.cols
+futhark.kmeans_i32	let.a.i32@m.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@m.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@m.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]i32	1
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]i32.len	in0.len
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]i32.spell	s{nth}_a_i32_{=out.len@name}
+futhark.kmeans_i32	zero@m.i32	out	up	rows	1
+futhark.kmeans_i32	zero@m.i32	out	up	cols	1
+futhark.kmeans_i32	nextin@i64	out	up	bound	in0.value
+futhark.kmeans_i32	fit@a.f32	out	up	len	in0.value
+futhark.kmeans_i32	fit@a.i32	out	up	len	in0.value
+futhark.kmeans_i32	fitrows@m.f32	out	up	rows	in0.value
+futhark.kmeans_i32	fitrows@m.f32	out	up	cols	in1.cols
+futhark.kmeans_i32	fitrows@m.i32	out	up	rows	in0.value
+futhark.kmeans_i32	fitrows@m.i32	out	up	cols	in1.cols
+futhark.kmeans_i32	fitcols@m.f32	out	up	rows	in1.rows
+futhark.kmeans_i32	fitcols@m.f32	out	up	cols	in0.value
+futhark.kmeans_i32	fitcols@m.i32	out	up	rows	in1.rows
+futhark.kmeans_i32	fitcols@m.i32	out	up	cols	in0.value
+futhark.kmeans_i32	clampix@i64	out	up	bound	in0.value
+futhark.pathfinder	prev@i64	out	up	bound	in0.bound
+futhark.pathfinder	next@i64	out	up	bound	in0.bound
+futhark.pathfinder	clamp@i64	out	up	bound	in0.value
+futhark.pathfinder	zero@i64	out	up	bound	1
+futhark.pathfinder	last@i64	out	up	bound	in0.value
+futhark.pathfinder	tab@a.i32	out	up	len	in0.value
+futhark.pathfinder	tab@a.i32	in1	down	var.i64	1
+futhark.pathfinder	tab@a.i32	in1	down	var.i64.bound	in0.value
+futhark.pathfinder	tab@a.i32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.pathfinder	tab@a.i32	in1	down	env.trips	env.trips + 1
+futhark.pathfinder	replicate@a.i32	out	up	len	in0.value
+futhark.pathfinder	map2.add@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.pathfinder	map2.sub@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.pathfinder	map2.min@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.pathfinder	map2.max@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.pathfinder	scan.add@a.i32	out	up	len	in0.len
+futhark.pathfinder	scan.min@a.i32	out	up	len	in0.len
+futhark.pathfinder	scan.max@a.i32	out	up	len	in0.len
+futhark.pathfinder	hist.add@a.i32	out	up	len	in0.value
+futhark.pathfinder	hist.min@a.i32	out	up	len	in0.value
+futhark.pathfinder	hist.max@a.i32	out	up	len	in0.value
+futhark.pathfinder	row@a.i32	out	up	len	in0.cols
+futhark.pathfinder	loop@i32	in2	down	var.i32	1
+futhark.pathfinder	loop@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.pathfinder	loop@i32	in2	down	var.i64	1
+futhark.pathfinder	loop@i32	in2	down	var.i64.bound	in0.value
+futhark.pathfinder	loop@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.pathfinder	loop@i32	in2	down	env.trips	env.trips + 1
+futhark.pathfinder	loop@a.i32	out	up	len	in1.len
+futhark.pathfinder	loop@a.i32	in2	down	var.[]i32	1
+futhark.pathfinder	loop@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.pathfinder	loop@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.pathfinder	loop@a.i32	in2	down	var.i64	1
+futhark.pathfinder	loop@a.i32	in2	down	var.i64.bound	in0.value
+futhark.pathfinder	loop@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.pathfinder	loop@a.i32	in2	down	env.trips	env.trips + 1
+futhark.pathfinder	loop1@i32	in2	down	var.i32	1
+futhark.pathfinder	loop1@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.pathfinder	loop1@i32	in2	down	var.i64	1
+futhark.pathfinder	loop1@i32	in2	down	var.i64.bound	in0.value
+futhark.pathfinder	loop1@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.pathfinder	loop1@i32	in2	down	env.trips	env.trips + 1
+futhark.pathfinder	loop1@a.i32	out	up	len	in1.len
+futhark.pathfinder	loop1@a.i32	in2	down	var.[]i32	1
+futhark.pathfinder	loop1@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.pathfinder	loop1@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.pathfinder	loop1@a.i32	in2	down	var.i64	1
+futhark.pathfinder	loop1@a.i32	in2	down	var.i64.bound	in0.value
+futhark.pathfinder	loop1@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.pathfinder	loop1@a.i32	in2	down	env.trips	env.trips + 1
+futhark.pathfinder	nextin@i64	out	up	bound	in0.value
+futhark.pathfinder	fit@a.i32	out	up	len	in0.value
+futhark.pathfinder	fitrows@m.i32	out	up	rows	in0.value
+futhark.pathfinder	fitrows@m.i32	out	up	cols	in1.cols
+futhark.pathfinder	fitcols@m.i32	out	up	rows	in1.rows
+futhark.pathfinder	fitcols@m.i32	out	up	cols	in0.value
+futhark.pathfinder	clampix@i64	out	up	bound	in0.value
+futhark.reduce	prev@i64	out	up	bound	in0.bound
+futhark.reduce	next@i64	out	up	bound	in0.bound
+futhark.reduce	clamp@i64	out	up	bound	in0.value
+futhark.reduce	zero@i64	out	up	bound	1
+futhark.reduce	last@i64	out	up	bound	in0.value
+futhark.reduce	tab@a.i32	out	up	len	in0.value
+futhark.reduce	tab@a.i32	in1	down	var.i64	1
+futhark.reduce	tab@a.i32	in1	down	var.i64.bound	in0.value
+futhark.reduce	tab@a.i32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.reduce	tab@a.i32	in1	down	env.trips	env.trips + 1
+futhark.reduce	replicate@a.i32	out	up	len	in0.value
+futhark.reduce	map2.add@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.reduce	map2.sub@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.reduce	map2.min@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.reduce	map2.max@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.reduce	scan.add@a.i32	out	up	len	in0.len
+futhark.reduce	scan.min@a.i32	out	up	len	in0.len
+futhark.reduce	scan.max@a.i32	out	up	len	in0.len
+futhark.reduce	hist.add@a.i32	out	up	len	in0.value
+futhark.reduce	hist.min@a.i32	out	up	len	in0.value
+futhark.reduce	hist.max@a.i32	out	up	len	in0.value
+futhark.reduce	loop@i32	in2	down	var.i32	1
+futhark.reduce	loop@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.reduce	loop@i32	in2	down	var.i64	1
+futhark.reduce	loop@i32	in2	down	var.i64.bound	in0.value
+futhark.reduce	loop@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.reduce	loop@i32	in2	down	env.trips	env.trips + 1
+futhark.reduce	loop@a.i32	out	up	len	in1.len
+futhark.reduce	loop@a.i32	in2	down	var.[]i32	1
+futhark.reduce	loop@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.reduce	loop@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.reduce	loop@a.i32	in2	down	var.i64	1
+futhark.reduce	loop@a.i32	in2	down	var.i64.bound	in0.value
+futhark.reduce	loop@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.reduce	loop@a.i32	in2	down	env.trips	env.trips + 1
+futhark.reduce	loop1@i32	in2	down	var.i32	1
+futhark.reduce	loop1@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.reduce	loop1@i32	in2	down	var.i64	1
+futhark.reduce	loop1@i32	in2	down	var.i64.bound	in0.value
+futhark.reduce	loop1@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.reduce	loop1@i32	in2	down	env.trips	env.trips + 1
+futhark.reduce	loop1@a.i32	out	up	len	in1.len
+futhark.reduce	loop1@a.i32	in2	down	var.[]i32	1
+futhark.reduce	loop1@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.reduce	loop1@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.reduce	loop1@a.i32	in2	down	var.i64	1
+futhark.reduce	loop1@a.i32	in2	down	var.i64.bound	in0.value
+futhark.reduce	loop1@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.reduce	loop1@a.i32	in2	down	env.trips	env.trips + 1
+futhark.reduce	nextin@i64	out	up	bound	in0.value
+futhark.reduce	fit@a.i32	out	up	len	in0.value
+futhark.reduce	clampix@i64	out	up	bound	in0.value
+futhark.scan	prev@i64	out	up	bound	in0.bound
+futhark.scan	next@i64	out	up	bound	in0.bound
+futhark.scan	clamp@i64	out	up	bound	in0.value
+futhark.scan	zero@i64	out	up	bound	1
+futhark.scan	last@i64	out	up	bound	in0.value
+futhark.scan	tab@a.i32	out	up	len	in0.value
+futhark.scan	tab@a.i32	in1	down	var.i64	1
+futhark.scan	tab@a.i32	in1	down	var.i64.bound	in0.value
+futhark.scan	tab@a.i32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.scan	tab@a.i32	in1	down	env.trips	env.trips + 1
+futhark.scan	replicate@a.i32	out	up	len	in0.value
+futhark.scan	map2.add@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.scan	map2.sub@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.scan	map2.min@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.scan	map2.max@a.i32	out	up	len	min(in0.len, in1.len)
+futhark.scan	scan.add@a.i32	out	up	len	in0.len
+futhark.scan	scan.min@a.i32	out	up	len	in0.len
+futhark.scan	scan.max@a.i32	out	up	len	in0.len
+futhark.scan	hist.add@a.i32	out	up	len	in0.value
+futhark.scan	hist.min@a.i32	out	up	len	in0.value
+futhark.scan	hist.max@a.i32	out	up	len	in0.value
+futhark.scan	loop@i32	in2	down	var.i32	1
+futhark.scan	loop@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.scan	loop@i32	in2	down	var.i64	1
+futhark.scan	loop@i32	in2	down	var.i64.bound	in0.value
+futhark.scan	loop@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.scan	loop@i32	in2	down	env.trips	env.trips + 1
+futhark.scan	loop@a.i32	out	up	len	in1.len
+futhark.scan	loop@a.i32	in2	down	var.[]i32	1
+futhark.scan	loop@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.scan	loop@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.scan	loop@a.i32	in2	down	var.i64	1
+futhark.scan	loop@a.i32	in2	down	var.i64.bound	in0.value
+futhark.scan	loop@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.scan	loop@a.i32	in2	down	env.trips	env.trips + 1
+futhark.scan	loop1@i32	in2	down	var.i32	1
+futhark.scan	loop1@i32	in2	down	var.i32.spell	s{nth}_i32
+futhark.scan	loop1@i32	in2	down	var.i64	1
+futhark.scan	loop1@i32	in2	down	var.i64.bound	in0.value
+futhark.scan	loop1@i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.scan	loop1@i32	in2	down	env.trips	env.trips + 1
+futhark.scan	loop1@a.i32	out	up	len	in1.len
+futhark.scan	loop1@a.i32	in2	down	var.[]i32	1
+futhark.scan	loop1@a.i32	in2	down	var.[]i32.len	in1.len
+futhark.scan	loop1@a.i32	in2	down	var.[]i32.spell	s{nth}_a_{=out.len@name}
+futhark.scan	loop1@a.i32	in2	down	var.i64	1
+futhark.scan	loop1@a.i32	in2	down	var.i64.bound	in0.value
+futhark.scan	loop1@a.i32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+futhark.scan	loop1@a.i32	in2	down	env.trips	env.trips + 1
+futhark.scan	nextin@i64	out	up	bound	in0.value
+futhark.scan	fit@a.i32	out	up	len	in0.value
+futhark.scan	clampix@i64	out	up	bound	in0.value
+tsr.depth	add	out	up	depth	max(in0.depth, in1.depth)
+tsr.depth	add	out	up	fam	1
+tsr.depth	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.depth	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.depth	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.depth	sub	out	up	depth	max(in0.depth, in1.depth)
+tsr.depth	sub	out	up	fam	1
+tsr.depth	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.depth	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.depth	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.depth	mul	out	up	depth	max(in0.depth, in1.depth)
+tsr.depth	mul	out	up	fam	2
+tsr.depth	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.depth	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.depth	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.depth	pdiv	out	up	depth	max(in0.depth, in1.depth)
+tsr.depth	pdiv	out	up	fam	2
+tsr.depth	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.depth	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.depth	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.depth	sin	out	up	depth	in0.depth + 1
+tsr.depth	sin	out	up	order	in0.order
+tsr.depth	sin	out	up	fam	0
+tsr.depth	sin	out	up	arm	in0.order
+tsr.depth	sin	out	up	ties	1
+tsr.depth	cos	out	up	depth	in0.depth + 1
+tsr.depth	cos	out	up	order	in0.order
+tsr.depth	cos	out	up	fam	0
+tsr.depth	cos	out	up	arm	in0.order
+tsr.depth	cos	out	up	ties	1
+tsr.depth	tanh	out	up	depth	in0.depth + 1
+tsr.depth	tanh	out	up	order	in0.order
+tsr.depth	tanh	out	up	fam	0
+tsr.depth	tanh	out	up	arm	in0.order
+tsr.depth	tanh	out	up	ties	1
+tsr.depth	psqrt	out	up	depth	in0.depth + 1
+tsr.depth	psqrt	out	up	order	in0.order
+tsr.depth	psqrt	out	up	fam	0
+tsr.depth	psqrt	out	up	arm	in0.order
+tsr.depth	psqrt	out	up	ties	1
+tsr.depth	plog	out	up	depth	in0.depth + 1
+tsr.depth	plog	out	up	order	in0.order
+tsr.depth	plog	out	up	fam	0
+tsr.depth	plog	out	up	arm	in0.order
+tsr.depth	plog	out	up	ties	1
+tsr.depth	pexp	out	up	depth	in0.depth + 1
+tsr.depth	pexp	out	up	order	in0.order
+tsr.depth	pexp	out	up	fam	0
+tsr.depth	pexp	out	up	arm	in0.order
+tsr.depth	pexp	out	up	ties	1
+tsr.depth	neg	out	up	depth	in0.depth
+tsr.depth	neg	out	up	order	in0.order
+tsr.depth	neg	out	up	fam	0
+tsr.depth	neg	out	up	arm	in0.order
+tsr.depth	neg	out	up	ties	1
+tsr.depth	abs	out	up	depth	in0.depth + 1
+tsr.depth	abs	out	up	order	in0.order
+tsr.depth	abs	out	up	fam	0
+tsr.depth	abs	out	up	arm	in0.order
+tsr.depth	abs	out	up	ties	1
+tsr.depth	pow2	out	up	depth	in0.depth
+tsr.depth	pow2	out	up	order	in0.order
+tsr.depth	pow2	out	up	fam	0
+tsr.depth	pow2	out	up	arm	in0.order
+tsr.depth	pow2	out	up	ties	1
+tsr.depth	pow3	out	up	depth	in0.depth
+tsr.depth	pow3	out	up	order	in0.order
+tsr.depth	pow3	out	up	fam	0
+tsr.depth	pow3	out	up	arm	in0.order
+tsr.depth	pow3	out	up	ties	1
+tsr.depth	pinv	out	up	depth	in0.depth
+tsr.depth	pinv	out	up	order	in0.order
+tsr.depth	pinv	out	up	fam	0
+tsr.depth	pinv	out	up	arm	in0.order
+tsr.depth	pinv	out	up	ties	1
+tsr.depth	tan	out	up	depth	in0.depth + 1
+tsr.depth	tan	out	up	order	in0.order
+tsr.depth	tan	out	up	fam	0
+tsr.depth	tan	out	up	arm	in0.order
+tsr.depth	tan	out	up	ties	1
+tsr.depth	pasin	out	up	depth	in0.depth + 1
+tsr.depth	pasin	out	up	order	in0.order
+tsr.depth	pasin	out	up	fam	0
+tsr.depth	pasin	out	up	arm	in0.order
+tsr.depth	pasin	out	up	ties	1
+tsr.depth	pacos	out	up	depth	in0.depth + 1
+tsr.depth	pacos	out	up	order	in0.order
+tsr.depth	pacos	out	up	fam	0
+tsr.depth	pacos	out	up	arm	in0.order
+tsr.depth	pacos	out	up	ties	1
+tsr.depth	x0	out	up	depth	0
+tsr.depth	x0	out	up	order	1
+tsr.depth	x0	out	up	fam	0
+tsr.depth	x0	out	up	arm	1
+tsr.depth	x0	out	up	ties	1
+tsr.depth	x1	out	up	depth	0
+tsr.depth	x1	out	up	order	1
+tsr.depth	x1	out	up	fam	0
+tsr.depth	x1	out	up	arm	1
+tsr.depth	x1	out	up	ties	1
+tsr.depth	x2	out	up	depth	0
+tsr.depth	x2	out	up	order	1
+tsr.depth	x2	out	up	fam	0
+tsr.depth	x2	out	up	arm	1
+tsr.depth	x2	out	up	ties	1
+tsr.depth	x3	out	up	depth	0
+tsr.depth	x3	out	up	order	1
+tsr.depth	x3	out	up	fam	0
+tsr.depth	x3	out	up	arm	1
+tsr.depth	x3	out	up	ties	1
+tsr.depth	x4	out	up	depth	0
+tsr.depth	x4	out	up	order	1
+tsr.depth	x4	out	up	fam	0
+tsr.depth	x4	out	up	arm	1
+tsr.depth	x4	out	up	ties	1
+tsr.depth	x5	out	up	depth	0
+tsr.depth	x5	out	up	order	1
+tsr.depth	x5	out	up	fam	0
+tsr.depth	x5	out	up	arm	1
+tsr.depth	x5	out	up	ties	1
+tsr.depth	x6	out	up	depth	0
+tsr.depth	x6	out	up	order	1
+tsr.depth	x6	out	up	fam	0
+tsr.depth	x6	out	up	arm	1
+tsr.depth	x6	out	up	ties	1
+tsr.depth	x7	out	up	depth	0
+tsr.depth	x7	out	up	order	1
+tsr.depth	x7	out	up	fam	0
+tsr.depth	x7	out	up	arm	1
+tsr.depth	x7	out	up	ties	1
+tsr.depth	x8	out	up	depth	0
+tsr.depth	x8	out	up	order	1
+tsr.depth	x8	out	up	fam	0
+tsr.depth	x8	out	up	arm	1
+tsr.depth	x8	out	up	ties	1
+tsr.depth	x9	out	up	depth	0
+tsr.depth	x9	out	up	order	1
+tsr.depth	x9	out	up	fam	0
+tsr.depth	x9	out	up	arm	1
+tsr.depth	x9	out	up	ties	1
+tsr.depth	?	out	up	depth	0
+tsr.depth	?	out	up	order	1
+tsr.depth	?	out	up	fam	0
+tsr.depth	?	out	up	arm	1
+tsr.depth	?	out	up	ties	1
+tsr.order	add	out	up	depth	max(in0.depth, in1.depth)
+tsr.order	add	out	up	fam	1
+tsr.order	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order	sub	out	up	depth	max(in0.depth, in1.depth)
+tsr.order	sub	out	up	fam	1
+tsr.order	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order	mul	out	up	depth	max(in0.depth, in1.depth)
+tsr.order	mul	out	up	fam	2
+tsr.order	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order	pdiv	out	up	depth	max(in0.depth, in1.depth)
+tsr.order	pdiv	out	up	fam	2
+tsr.order	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order	sin	out	up	depth	in0.depth + 1
+tsr.order	sin	out	up	order	in0.order
+tsr.order	sin	out	up	fam	0
+tsr.order	sin	out	up	arm	in0.order
+tsr.order	sin	out	up	ties	1
+tsr.order	cos	out	up	depth	in0.depth + 1
+tsr.order	cos	out	up	order	in0.order
+tsr.order	cos	out	up	fam	0
+tsr.order	cos	out	up	arm	in0.order
+tsr.order	cos	out	up	ties	1
+tsr.order	tanh	out	up	depth	in0.depth + 1
+tsr.order	tanh	out	up	order	in0.order
+tsr.order	tanh	out	up	fam	0
+tsr.order	tanh	out	up	arm	in0.order
+tsr.order	tanh	out	up	ties	1
+tsr.order	psqrt	out	up	depth	in0.depth + 1
+tsr.order	psqrt	out	up	order	in0.order
+tsr.order	psqrt	out	up	fam	0
+tsr.order	psqrt	out	up	arm	in0.order
+tsr.order	psqrt	out	up	ties	1
+tsr.order	plog	out	up	depth	in0.depth + 1
+tsr.order	plog	out	up	order	in0.order
+tsr.order	plog	out	up	fam	0
+tsr.order	plog	out	up	arm	in0.order
+tsr.order	plog	out	up	ties	1
+tsr.order	pexp	out	up	depth	in0.depth + 1
+tsr.order	pexp	out	up	order	in0.order
+tsr.order	pexp	out	up	fam	0
+tsr.order	pexp	out	up	arm	in0.order
+tsr.order	pexp	out	up	ties	1
+tsr.order	neg	out	up	depth	in0.depth
+tsr.order	neg	out	up	order	in0.order
+tsr.order	neg	out	up	fam	0
+tsr.order	neg	out	up	arm	in0.order
+tsr.order	neg	out	up	ties	1
+tsr.order	abs	out	up	depth	in0.depth + 1
+tsr.order	abs	out	up	order	in0.order
+tsr.order	abs	out	up	fam	0
+tsr.order	abs	out	up	arm	in0.order
+tsr.order	abs	out	up	ties	1
+tsr.order	pow2	out	up	depth	in0.depth
+tsr.order	pow2	out	up	order	in0.order
+tsr.order	pow2	out	up	fam	0
+tsr.order	pow2	out	up	arm	in0.order
+tsr.order	pow2	out	up	ties	1
+tsr.order	pow3	out	up	depth	in0.depth
+tsr.order	pow3	out	up	order	in0.order
+tsr.order	pow3	out	up	fam	0
+tsr.order	pow3	out	up	arm	in0.order
+tsr.order	pow3	out	up	ties	1
+tsr.order	pinv	out	up	depth	in0.depth
+tsr.order	pinv	out	up	order	in0.order
+tsr.order	pinv	out	up	fam	0
+tsr.order	pinv	out	up	arm	in0.order
+tsr.order	pinv	out	up	ties	1
+tsr.order	tan	out	up	depth	in0.depth + 1
+tsr.order	tan	out	up	order	in0.order
+tsr.order	tan	out	up	fam	0
+tsr.order	tan	out	up	arm	in0.order
+tsr.order	tan	out	up	ties	1
+tsr.order	pasin	out	up	depth	in0.depth + 1
+tsr.order	pasin	out	up	order	in0.order
+tsr.order	pasin	out	up	fam	0
+tsr.order	pasin	out	up	arm	in0.order
+tsr.order	pasin	out	up	ties	1
+tsr.order	pacos	out	up	depth	in0.depth + 1
+tsr.order	pacos	out	up	order	in0.order
+tsr.order	pacos	out	up	fam	0
+tsr.order	pacos	out	up	arm	in0.order
+tsr.order	pacos	out	up	ties	1
+tsr.order	x0	out	up	depth	0
+tsr.order	x0	out	up	order	1
+tsr.order	x0	out	up	fam	0
+tsr.order	x0	out	up	arm	1
+tsr.order	x0	out	up	ties	1
+tsr.order	x1	out	up	depth	0
+tsr.order	x1	out	up	order	1
+tsr.order	x1	out	up	fam	0
+tsr.order	x1	out	up	arm	1
+tsr.order	x1	out	up	ties	1
+tsr.order	x2	out	up	depth	0
+tsr.order	x2	out	up	order	1
+tsr.order	x2	out	up	fam	0
+tsr.order	x2	out	up	arm	1
+tsr.order	x2	out	up	ties	1
+tsr.order	x3	out	up	depth	0
+tsr.order	x3	out	up	order	1
+tsr.order	x3	out	up	fam	0
+tsr.order	x3	out	up	arm	1
+tsr.order	x3	out	up	ties	1
+tsr.order	x4	out	up	depth	0
+tsr.order	x4	out	up	order	1
+tsr.order	x4	out	up	fam	0
+tsr.order	x4	out	up	arm	1
+tsr.order	x4	out	up	ties	1
+tsr.order	x5	out	up	depth	0
+tsr.order	x5	out	up	order	1
+tsr.order	x5	out	up	fam	0
+tsr.order	x5	out	up	arm	1
+tsr.order	x5	out	up	ties	1
+tsr.order	x6	out	up	depth	0
+tsr.order	x6	out	up	order	1
+tsr.order	x6	out	up	fam	0
+tsr.order	x6	out	up	arm	1
+tsr.order	x6	out	up	ties	1
+tsr.order	x7	out	up	depth	0
+tsr.order	x7	out	up	order	1
+tsr.order	x7	out	up	fam	0
+tsr.order	x7	out	up	arm	1
+tsr.order	x7	out	up	ties	1
+tsr.order	x8	out	up	depth	0
+tsr.order	x8	out	up	order	1
+tsr.order	x8	out	up	fam	0
+tsr.order	x8	out	up	arm	1
+tsr.order	x8	out	up	ties	1
+tsr.order	x9	out	up	depth	0
+tsr.order	x9	out	up	order	1
+tsr.order	x9	out	up	fam	0
+tsr.order	x9	out	up	arm	1
+tsr.order	x9	out	up	ties	1
+tsr.order	?	out	up	depth	0
+tsr.order	?	out	up	order	1
+tsr.order	?	out	up	fam	0
+tsr.order	?	out	up	arm	1
+tsr.order	?	out	up	ties	1
+tsr.order_depth	add	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth	add	out	up	fam	1
+tsr.order_depth	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order_depth	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order_depth	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth	sub	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth	sub	out	up	fam	1
+tsr.order_depth	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order_depth	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order_depth	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth	mul	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth	mul	out	up	fam	2
+tsr.order_depth	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order_depth	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order_depth	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth	pdiv	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth	pdiv	out	up	fam	2
+tsr.order_depth	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order_depth	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order_depth	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth	sin	out	up	depth	in0.depth + 1
+tsr.order_depth	sin	out	up	order	in0.order
+tsr.order_depth	sin	out	up	fam	0
+tsr.order_depth	sin	out	up	arm	in0.order
+tsr.order_depth	sin	out	up	ties	1
+tsr.order_depth	cos	out	up	depth	in0.depth + 1
+tsr.order_depth	cos	out	up	order	in0.order
+tsr.order_depth	cos	out	up	fam	0
+tsr.order_depth	cos	out	up	arm	in0.order
+tsr.order_depth	cos	out	up	ties	1
+tsr.order_depth	tanh	out	up	depth	in0.depth + 1
+tsr.order_depth	tanh	out	up	order	in0.order
+tsr.order_depth	tanh	out	up	fam	0
+tsr.order_depth	tanh	out	up	arm	in0.order
+tsr.order_depth	tanh	out	up	ties	1
+tsr.order_depth	psqrt	out	up	depth	in0.depth + 1
+tsr.order_depth	psqrt	out	up	order	in0.order
+tsr.order_depth	psqrt	out	up	fam	0
+tsr.order_depth	psqrt	out	up	arm	in0.order
+tsr.order_depth	psqrt	out	up	ties	1
+tsr.order_depth	plog	out	up	depth	in0.depth + 1
+tsr.order_depth	plog	out	up	order	in0.order
+tsr.order_depth	plog	out	up	fam	0
+tsr.order_depth	plog	out	up	arm	in0.order
+tsr.order_depth	plog	out	up	ties	1
+tsr.order_depth	pexp	out	up	depth	in0.depth + 1
+tsr.order_depth	pexp	out	up	order	in0.order
+tsr.order_depth	pexp	out	up	fam	0
+tsr.order_depth	pexp	out	up	arm	in0.order
+tsr.order_depth	pexp	out	up	ties	1
+tsr.order_depth	neg	out	up	depth	in0.depth
+tsr.order_depth	neg	out	up	order	in0.order
+tsr.order_depth	neg	out	up	fam	0
+tsr.order_depth	neg	out	up	arm	in0.order
+tsr.order_depth	neg	out	up	ties	1
+tsr.order_depth	abs	out	up	depth	in0.depth + 1
+tsr.order_depth	abs	out	up	order	in0.order
+tsr.order_depth	abs	out	up	fam	0
+tsr.order_depth	abs	out	up	arm	in0.order
+tsr.order_depth	abs	out	up	ties	1
+tsr.order_depth	pow2	out	up	depth	in0.depth
+tsr.order_depth	pow2	out	up	order	in0.order
+tsr.order_depth	pow2	out	up	fam	0
+tsr.order_depth	pow2	out	up	arm	in0.order
+tsr.order_depth	pow2	out	up	ties	1
+tsr.order_depth	pow3	out	up	depth	in0.depth
+tsr.order_depth	pow3	out	up	order	in0.order
+tsr.order_depth	pow3	out	up	fam	0
+tsr.order_depth	pow3	out	up	arm	in0.order
+tsr.order_depth	pow3	out	up	ties	1
+tsr.order_depth	pinv	out	up	depth	in0.depth
+tsr.order_depth	pinv	out	up	order	in0.order
+tsr.order_depth	pinv	out	up	fam	0
+tsr.order_depth	pinv	out	up	arm	in0.order
+tsr.order_depth	pinv	out	up	ties	1
+tsr.order_depth	tan	out	up	depth	in0.depth + 1
+tsr.order_depth	tan	out	up	order	in0.order
+tsr.order_depth	tan	out	up	fam	0
+tsr.order_depth	tan	out	up	arm	in0.order
+tsr.order_depth	tan	out	up	ties	1
+tsr.order_depth	pasin	out	up	depth	in0.depth + 1
+tsr.order_depth	pasin	out	up	order	in0.order
+tsr.order_depth	pasin	out	up	fam	0
+tsr.order_depth	pasin	out	up	arm	in0.order
+tsr.order_depth	pasin	out	up	ties	1
+tsr.order_depth	pacos	out	up	depth	in0.depth + 1
+tsr.order_depth	pacos	out	up	order	in0.order
+tsr.order_depth	pacos	out	up	fam	0
+tsr.order_depth	pacos	out	up	arm	in0.order
+tsr.order_depth	pacos	out	up	ties	1
+tsr.order_depth	x0	out	up	depth	0
+tsr.order_depth	x0	out	up	order	1
+tsr.order_depth	x0	out	up	fam	0
+tsr.order_depth	x0	out	up	arm	1
+tsr.order_depth	x0	out	up	ties	1
+tsr.order_depth	x1	out	up	depth	0
+tsr.order_depth	x1	out	up	order	1
+tsr.order_depth	x1	out	up	fam	0
+tsr.order_depth	x1	out	up	arm	1
+tsr.order_depth	x1	out	up	ties	1
+tsr.order_depth	x2	out	up	depth	0
+tsr.order_depth	x2	out	up	order	1
+tsr.order_depth	x2	out	up	fam	0
+tsr.order_depth	x2	out	up	arm	1
+tsr.order_depth	x2	out	up	ties	1
+tsr.order_depth	x3	out	up	depth	0
+tsr.order_depth	x3	out	up	order	1
+tsr.order_depth	x3	out	up	fam	0
+tsr.order_depth	x3	out	up	arm	1
+tsr.order_depth	x3	out	up	ties	1
+tsr.order_depth	x4	out	up	depth	0
+tsr.order_depth	x4	out	up	order	1
+tsr.order_depth	x4	out	up	fam	0
+tsr.order_depth	x4	out	up	arm	1
+tsr.order_depth	x4	out	up	ties	1
+tsr.order_depth	x5	out	up	depth	0
+tsr.order_depth	x5	out	up	order	1
+tsr.order_depth	x5	out	up	fam	0
+tsr.order_depth	x5	out	up	arm	1
+tsr.order_depth	x5	out	up	ties	1
+tsr.order_depth	x6	out	up	depth	0
+tsr.order_depth	x6	out	up	order	1
+tsr.order_depth	x6	out	up	fam	0
+tsr.order_depth	x6	out	up	arm	1
+tsr.order_depth	x6	out	up	ties	1
+tsr.order_depth	x7	out	up	depth	0
+tsr.order_depth	x7	out	up	order	1
+tsr.order_depth	x7	out	up	fam	0
+tsr.order_depth	x7	out	up	arm	1
+tsr.order_depth	x7	out	up	ties	1
+tsr.order_depth	x8	out	up	depth	0
+tsr.order_depth	x8	out	up	order	1
+tsr.order_depth	x8	out	up	fam	0
+tsr.order_depth	x8	out	up	arm	1
+tsr.order_depth	x8	out	up	ties	1
+tsr.order_depth	x9	out	up	depth	0
+tsr.order_depth	x9	out	up	order	1
+tsr.order_depth	x9	out	up	fam	0
+tsr.order_depth	x9	out	up	arm	1
+tsr.order_depth	x9	out	up	ties	1
+tsr.order_depth	?	out	up	depth	0
+tsr.order_depth	?	out	up	order	1
+tsr.order_depth	?	out	up	fam	0
+tsr.order_depth	?	out	up	arm	1
+tsr.order_depth	?	out	up	ties	1
+tsr.order_depth_windows	add	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth_windows	add	out	up	fam	1
+tsr.order_depth_windows	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order_depth_windows	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order_depth_windows	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth_windows	sub	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth_windows	sub	out	up	fam	1
+tsr.order_depth_windows	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.order_depth_windows	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.order_depth_windows	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth_windows	mul	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth_windows	mul	out	up	fam	2
+tsr.order_depth_windows	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order_depth_windows	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order_depth_windows	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth_windows	pdiv	out	up	depth	max(in0.depth, in1.depth)
+tsr.order_depth_windows	pdiv	out	up	fam	2
+tsr.order_depth_windows	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.order_depth_windows	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.order_depth_windows	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.order_depth_windows	sin	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	sin	out	up	order	in0.order
+tsr.order_depth_windows	sin	out	up	fam	0
+tsr.order_depth_windows	sin	out	up	arm	in0.order
+tsr.order_depth_windows	sin	out	up	ties	1
+tsr.order_depth_windows	cos	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	cos	out	up	order	in0.order
+tsr.order_depth_windows	cos	out	up	fam	0
+tsr.order_depth_windows	cos	out	up	arm	in0.order
+tsr.order_depth_windows	cos	out	up	ties	1
+tsr.order_depth_windows	tanh	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	tanh	out	up	order	in0.order
+tsr.order_depth_windows	tanh	out	up	fam	0
+tsr.order_depth_windows	tanh	out	up	arm	in0.order
+tsr.order_depth_windows	tanh	out	up	ties	1
+tsr.order_depth_windows	psqrt	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	psqrt	out	up	order	in0.order
+tsr.order_depth_windows	psqrt	out	up	fam	0
+tsr.order_depth_windows	psqrt	out	up	arm	in0.order
+tsr.order_depth_windows	psqrt	out	up	ties	1
+tsr.order_depth_windows	plog	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	plog	out	up	order	in0.order
+tsr.order_depth_windows	plog	out	up	fam	0
+tsr.order_depth_windows	plog	out	up	arm	in0.order
+tsr.order_depth_windows	plog	out	up	ties	1
+tsr.order_depth_windows	pexp	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	pexp	out	up	order	in0.order
+tsr.order_depth_windows	pexp	out	up	fam	0
+tsr.order_depth_windows	pexp	out	up	arm	in0.order
+tsr.order_depth_windows	pexp	out	up	ties	1
+tsr.order_depth_windows	neg	out	up	depth	in0.depth
+tsr.order_depth_windows	neg	out	up	order	in0.order
+tsr.order_depth_windows	neg	out	up	fam	0
+tsr.order_depth_windows	neg	out	up	arm	in0.order
+tsr.order_depth_windows	neg	out	up	ties	1
+tsr.order_depth_windows	abs	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	abs	out	up	order	in0.order
+tsr.order_depth_windows	abs	out	up	fam	0
+tsr.order_depth_windows	abs	out	up	arm	in0.order
+tsr.order_depth_windows	abs	out	up	ties	1
+tsr.order_depth_windows	pow2	out	up	depth	in0.depth
+tsr.order_depth_windows	pow2	out	up	order	in0.order
+tsr.order_depth_windows	pow2	out	up	fam	0
+tsr.order_depth_windows	pow2	out	up	arm	in0.order
+tsr.order_depth_windows	pow2	out	up	ties	1
+tsr.order_depth_windows	pow3	out	up	depth	in0.depth
+tsr.order_depth_windows	pow3	out	up	order	in0.order
+tsr.order_depth_windows	pow3	out	up	fam	0
+tsr.order_depth_windows	pow3	out	up	arm	in0.order
+tsr.order_depth_windows	pow3	out	up	ties	1
+tsr.order_depth_windows	pinv	out	up	depth	in0.depth
+tsr.order_depth_windows	pinv	out	up	order	in0.order
+tsr.order_depth_windows	pinv	out	up	fam	0
+tsr.order_depth_windows	pinv	out	up	arm	in0.order
+tsr.order_depth_windows	pinv	out	up	ties	1
+tsr.order_depth_windows	tan	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	tan	out	up	order	in0.order
+tsr.order_depth_windows	tan	out	up	fam	0
+tsr.order_depth_windows	tan	out	up	arm	in0.order
+tsr.order_depth_windows	tan	out	up	ties	1
+tsr.order_depth_windows	pasin	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	pasin	out	up	order	in0.order
+tsr.order_depth_windows	pasin	out	up	fam	0
+tsr.order_depth_windows	pasin	out	up	arm	in0.order
+tsr.order_depth_windows	pasin	out	up	ties	1
+tsr.order_depth_windows	pacos	out	up	depth	in0.depth + 1
+tsr.order_depth_windows	pacos	out	up	order	in0.order
+tsr.order_depth_windows	pacos	out	up	fam	0
+tsr.order_depth_windows	pacos	out	up	arm	in0.order
+tsr.order_depth_windows	pacos	out	up	ties	1
+tsr.order_depth_windows	x0	out	up	depth	0
+tsr.order_depth_windows	x0	out	up	order	1
+tsr.order_depth_windows	x0	out	up	fam	0
+tsr.order_depth_windows	x0	out	up	arm	1
+tsr.order_depth_windows	x0	out	up	ties	1
+tsr.order_depth_windows	x1	out	up	depth	0
+tsr.order_depth_windows	x1	out	up	order	1
+tsr.order_depth_windows	x1	out	up	fam	0
+tsr.order_depth_windows	x1	out	up	arm	1
+tsr.order_depth_windows	x1	out	up	ties	1
+tsr.order_depth_windows	x2	out	up	depth	0
+tsr.order_depth_windows	x2	out	up	order	1
+tsr.order_depth_windows	x2	out	up	fam	0
+tsr.order_depth_windows	x2	out	up	arm	1
+tsr.order_depth_windows	x2	out	up	ties	1
+tsr.order_depth_windows	x3	out	up	depth	0
+tsr.order_depth_windows	x3	out	up	order	1
+tsr.order_depth_windows	x3	out	up	fam	0
+tsr.order_depth_windows	x3	out	up	arm	1
+tsr.order_depth_windows	x3	out	up	ties	1
+tsr.order_depth_windows	x4	out	up	depth	0
+tsr.order_depth_windows	x4	out	up	order	1
+tsr.order_depth_windows	x4	out	up	fam	0
+tsr.order_depth_windows	x4	out	up	arm	1
+tsr.order_depth_windows	x4	out	up	ties	1
+tsr.order_depth_windows	x5	out	up	depth	0
+tsr.order_depth_windows	x5	out	up	order	1
+tsr.order_depth_windows	x5	out	up	fam	0
+tsr.order_depth_windows	x5	out	up	arm	1
+tsr.order_depth_windows	x5	out	up	ties	1
+tsr.order_depth_windows	x6	out	up	depth	0
+tsr.order_depth_windows	x6	out	up	order	1
+tsr.order_depth_windows	x6	out	up	fam	0
+tsr.order_depth_windows	x6	out	up	arm	1
+tsr.order_depth_windows	x6	out	up	ties	1
+tsr.order_depth_windows	x7	out	up	depth	0
+tsr.order_depth_windows	x7	out	up	order	1
+tsr.order_depth_windows	x7	out	up	fam	0
+tsr.order_depth_windows	x7	out	up	arm	1
+tsr.order_depth_windows	x7	out	up	ties	1
+tsr.order_depth_windows	x8	out	up	depth	0
+tsr.order_depth_windows	x8	out	up	order	1
+tsr.order_depth_windows	x8	out	up	fam	0
+tsr.order_depth_windows	x8	out	up	arm	1
+tsr.order_depth_windows	x8	out	up	ties	1
+tsr.order_depth_windows	x9	out	up	depth	0
+tsr.order_depth_windows	x9	out	up	order	1
+tsr.order_depth_windows	x9	out	up	fam	0
+tsr.order_depth_windows	x9	out	up	arm	1
+tsr.order_depth_windows	x9	out	up	ties	1
+tsr.order_depth_windows	?	out	up	depth	0
+tsr.order_depth_windows	?	out	up	order	1
+tsr.order_depth_windows	?	out	up	fam	0
+tsr.order_depth_windows	?	out	up	arm	1
+tsr.order_depth_windows	?	out	up	ties	1
+tsr.single	add	out	up	depth	max(in0.depth, in1.depth)
+tsr.single	add	out	up	fam	1
+tsr.single	add	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.single	add	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.single	add	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.single	sub	out	up	depth	max(in0.depth, in1.depth)
+tsr.single	sub	out	up	fam	1
+tsr.single	sub	out	up	arm	max(if(in0.fam = 1, in0.arm, in0.order), if(in1.fam = 1, in1.arm, in1.order))
+tsr.single	sub	out	up	ties	if(if(in0.fam = 1, in0.arm, in0.order) = out.arm, if(in0.fam = 1, in0.ties, 1), 0) + if(if(in1.fam = 1, in1.arm, in1.order) = out.arm, if(in1.fam = 1, in1.ties, 1), 0)
+tsr.single	sub	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.single	mul	out	up	depth	max(in0.depth, in1.depth)
+tsr.single	mul	out	up	fam	2
+tsr.single	mul	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.single	mul	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.single	mul	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.single	pdiv	out	up	depth	max(in0.depth, in1.depth)
+tsr.single	pdiv	out	up	fam	2
+tsr.single	pdiv	out	up	arm	max(if(in0.fam = 2, in0.arm, in0.order), if(in1.fam = 2, in1.arm, in1.order))
+tsr.single	pdiv	out	up	ties	if(if(in0.fam = 2, in0.arm, in0.order) = out.arm, if(in0.fam = 2, in0.ties, 1), 0) + if(if(in1.fam = 2, in1.arm, in1.order) = out.arm, if(in1.fam = 2, in1.ties, 1), 0)
+tsr.single	pdiv	out	up	order	if(2 <= out.ties, out.arm + 1, out.arm)
+tsr.single	sin	out	up	depth	in0.depth + 1
+tsr.single	sin	out	up	order	in0.order
+tsr.single	sin	out	up	fam	0
+tsr.single	sin	out	up	arm	in0.order
+tsr.single	sin	out	up	ties	1
+tsr.single	cos	out	up	depth	in0.depth + 1
+tsr.single	cos	out	up	order	in0.order
+tsr.single	cos	out	up	fam	0
+tsr.single	cos	out	up	arm	in0.order
+tsr.single	cos	out	up	ties	1
+tsr.single	tanh	out	up	depth	in0.depth + 1
+tsr.single	tanh	out	up	order	in0.order
+tsr.single	tanh	out	up	fam	0
+tsr.single	tanh	out	up	arm	in0.order
+tsr.single	tanh	out	up	ties	1
+tsr.single	psqrt	out	up	depth	in0.depth + 1
+tsr.single	psqrt	out	up	order	in0.order
+tsr.single	psqrt	out	up	fam	0
+tsr.single	psqrt	out	up	arm	in0.order
+tsr.single	psqrt	out	up	ties	1
+tsr.single	plog	out	up	depth	in0.depth + 1
+tsr.single	plog	out	up	order	in0.order
+tsr.single	plog	out	up	fam	0
+tsr.single	plog	out	up	arm	in0.order
+tsr.single	plog	out	up	ties	1
+tsr.single	pexp	out	up	depth	in0.depth + 1
+tsr.single	pexp	out	up	order	in0.order
+tsr.single	pexp	out	up	fam	0
+tsr.single	pexp	out	up	arm	in0.order
+tsr.single	pexp	out	up	ties	1
+tsr.single	neg	out	up	depth	in0.depth
+tsr.single	neg	out	up	order	in0.order
+tsr.single	neg	out	up	fam	0
+tsr.single	neg	out	up	arm	in0.order
+tsr.single	neg	out	up	ties	1
+tsr.single	abs	out	up	depth	in0.depth + 1
+tsr.single	abs	out	up	order	in0.order
+tsr.single	abs	out	up	fam	0
+tsr.single	abs	out	up	arm	in0.order
+tsr.single	abs	out	up	ties	1
+tsr.single	pow2	out	up	depth	in0.depth
+tsr.single	pow2	out	up	order	in0.order
+tsr.single	pow2	out	up	fam	0
+tsr.single	pow2	out	up	arm	in0.order
+tsr.single	pow2	out	up	ties	1
+tsr.single	pow3	out	up	depth	in0.depth
+tsr.single	pow3	out	up	order	in0.order
+tsr.single	pow3	out	up	fam	0
+tsr.single	pow3	out	up	arm	in0.order
+tsr.single	pow3	out	up	ties	1
+tsr.single	pinv	out	up	depth	in0.depth
+tsr.single	pinv	out	up	order	in0.order
+tsr.single	pinv	out	up	fam	0
+tsr.single	pinv	out	up	arm	in0.order
+tsr.single	pinv	out	up	ties	1
+tsr.single	tan	out	up	depth	in0.depth + 1
+tsr.single	tan	out	up	order	in0.order
+tsr.single	tan	out	up	fam	0
+tsr.single	tan	out	up	arm	in0.order
+tsr.single	tan	out	up	ties	1
+tsr.single	pasin	out	up	depth	in0.depth + 1
+tsr.single	pasin	out	up	order	in0.order
+tsr.single	pasin	out	up	fam	0
+tsr.single	pasin	out	up	arm	in0.order
+tsr.single	pasin	out	up	ties	1
+tsr.single	pacos	out	up	depth	in0.depth + 1
+tsr.single	pacos	out	up	order	in0.order
+tsr.single	pacos	out	up	fam	0
+tsr.single	pacos	out	up	arm	in0.order
+tsr.single	pacos	out	up	ties	1
+tsr.single	x0	out	up	depth	0
+tsr.single	x0	out	up	order	1
+tsr.single	x0	out	up	fam	0
+tsr.single	x0	out	up	arm	1
+tsr.single	x0	out	up	ties	1
+tsr.single	x1	out	up	depth	0
+tsr.single	x1	out	up	order	1
+tsr.single	x1	out	up	fam	0
+tsr.single	x1	out	up	arm	1
+tsr.single	x1	out	up	ties	1
+tsr.single	x2	out	up	depth	0
+tsr.single	x2	out	up	order	1
+tsr.single	x2	out	up	fam	0
+tsr.single	x2	out	up	arm	1
+tsr.single	x2	out	up	ties	1
+tsr.single	x3	out	up	depth	0
+tsr.single	x3	out	up	order	1
+tsr.single	x3	out	up	fam	0
+tsr.single	x3	out	up	arm	1
+tsr.single	x3	out	up	ties	1
+tsr.single	x4	out	up	depth	0
+tsr.single	x4	out	up	order	1
+tsr.single	x4	out	up	fam	0
+tsr.single	x4	out	up	arm	1
+tsr.single	x4	out	up	ties	1
+tsr.single	x5	out	up	depth	0
+tsr.single	x5	out	up	order	1
+tsr.single	x5	out	up	fam	0
+tsr.single	x5	out	up	arm	1
+tsr.single	x5	out	up	ties	1
+tsr.single	x6	out	up	depth	0
+tsr.single	x6	out	up	order	1
+tsr.single	x6	out	up	fam	0
+tsr.single	x6	out	up	arm	1
+tsr.single	x6	out	up	ties	1
+tsr.single	x7	out	up	depth	0
+tsr.single	x7	out	up	order	1
+tsr.single	x7	out	up	fam	0
+tsr.single	x7	out	up	arm	1
+tsr.single	x7	out	up	ties	1
+tsr.single	x8	out	up	depth	0
+tsr.single	x8	out	up	order	1
+tsr.single	x8	out	up	fam	0
+tsr.single	x8	out	up	arm	1
+tsr.single	x8	out	up	ties	1
+tsr.single	x9	out	up	depth	0
+tsr.single	x9	out	up	order	1
+tsr.single	x9	out	up	fam	0
+tsr.single	x9	out	up	arm	1
+tsr.single	x9	out	up	ties	1
+tsr.single	?	out	up	depth	0
+tsr.single	?	out	up	order	1
+tsr.single	?	out	up	fam	0
+tsr.single	?	out	up	arm	1
+tsr.single	?	out	up	ties	1
+wgsl.gram	let_u	in1	down	var.u32	1
+wgsl.gram	let_u	in1	down	var.u32.bound	in0.bound
+wgsl.gram	let_u	in1	down	var.u32.uniform	in0.uniform
+wgsl.gram	let_u	in1	down	var.u32.owned	in0.owned
+wgsl.gram	let_u	in1	down	var.u32.local_owned	in0.local_owned
+wgsl.gram	let_u	in1	down	var.u32.spell	u{depth}{nth}
+wgsl.gram	let_f	in1	down	var.f32	1
+wgsl.gram	let_f	in1	down	var.f32.uniform	in0.uniform
+wgsl.gram	let_f	in1	down	var.f32.spell	f{depth}{nth}
+wgsl.gram	let_v	in1	down	var.vecf	1
+wgsl.gram	let_v	in1	down	var.vecf.width	in0.width
+wgsl.gram	let_v	in1	down	var.vecf.uniform	in0.uniform
+wgsl.gram	let_v	in1	down	var.vecf.spell	v{depth}{nth}
+wgsl.gram	if_	in1	down	env.uniform	env.uniform and in0.uniform
+wgsl.gram	if_	in2	down	env.uniform	env.uniform and in0.uniform
+wgsl.gram	loop	in1	down	var.u32	1
+wgsl.gram	loop	in1	down	var.u32.bound	in0.value
+wgsl.gram	loop	in1	down	var.u32.uniform	true
+wgsl.gram	loop	in1	down	var.u32.owned	false
+wgsl.gram	loop	in1	down	var.u32.local_owned	false
+wgsl.gram	loop	in1	down	var.u32.spell	i{depth}{nth}
+wgsl.gram	loop	in1	down	env.work	env.work * in0.value
+wgsl.gram	add_u	out	up	bound	in0.bound + in1.bound
+wgsl.gram	add_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	add_u	out	up	owned	(in0.owned and in1.uniform) or (in1.owned and in0.uniform)
+wgsl.gram	add_u	out	up	local_owned	(in0.local_owned and in1.uniform) or (in1.local_owned and in0.uniform)
+wgsl.gram	mul_uc	out	up	bound	in0.bound * in1.value
+wgsl.gram	mul_uc	out	up	uniform	in0.uniform
+wgsl.gram	mul_uc	out	up	owned	in0.owned
+wgsl.gram	mul_uc	out	up	local_owned	in0.local_owned
+wgsl.gram	mod_uc	out	up	bound	in1.value
+wgsl.gram	mod_uc	out	up	uniform	in0.uniform
+wgsl.gram	mod_uc	out	up	owned	false
+wgsl.gram	mod_uc	out	up	local_owned	false
+wgsl.gram	min_u	out	up	bound	min(in0.bound, in1.bound)
+wgsl.gram	min_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	min_u	out	up	owned	false
+wgsl.gram	min_u	out	up	local_owned	false
+wgsl.gram	?@u32	out	up	uniform	true
+wgsl.gram	?@u32	out	up	owned	false
+wgsl.gram	?@u32	out	up	local_owned	false
+wgsl.gram	add_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	sub_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	mul_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	max_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	fma_f	out	up	uniform	in0.uniform and in1.uniform and in2.uniform
+wgsl.gram	sqrt_f	out	up	uniform	in0.uniform
+wgsl.gram	exp_f	out	up	uniform	in0.uniform
+wgsl.gram	f32_u	out	up	uniform	in0.uniform
+wgsl.gram	load	out	up	uniform	false
+wgsl.gram	wg_load	out	up	uniform	false
+wgsl.gram	dot	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	rf0	out	up	uniform	false
+wgsl.gram	rf1	out	up	uniform	false
+wgsl.gram	rf2	out	up	uniform	false
+wgsl.gram	rf3	out	up	uniform	false
+wgsl.gram	?@f32	out	up	uniform	true
+wgsl.gram	lt_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	lt_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	and_b	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	not_b	out	up	uniform	in0.uniform
+wgsl.gram	?@bool	out	up	uniform	true
+wgsl.gram	v2	out	up	width	2
+wgsl.gram	v2	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	v4	out	up	width	4
+wgsl.gram	v4	out	up	uniform	in0.uniform and in1.uniform and in2.uniform and in3.uniform
+wgsl.gram	vadd	out	up	width	in0.width
+wgsl.gram	vadd	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	vscale	out	up	width	in0.width
+wgsl.gram	vscale	out	up	uniform	in0.uniform and in1.uniform
+wgsl.gram	c1	out	up	value	1
+wgsl.gram	c2	out	up	value	2
+wgsl.gram	c4	out	up	value	4
+wgsl.gram	c8	out	up	value	8
+wgsl.gram	c16	out	up	value	16
+wgsl.gram	c32	out	up	value	32
+wgsl.gram	c64	out	up	value	64
+wgsl.gram	c128	out	up	value	128
+wgsl.gram	c256	out	up	value	256

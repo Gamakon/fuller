@@ -14,6 +14,9 @@ width	range				the number of components of a vector
 space	tag		function,private,workgroup,storage,uniform		the address space of a pointer
 access	tag		read,read_write		the access mode of a pointer
 uniform	flag			true	the value, or the control flow, is the same in every invocation of a workgroup
+owned	flag				the value is distinct in every invocation of a dispatch (injective in the invocation id), so a store through it is written by one invocation
+local_owned	flag				the value is distinct in every invocation of a workgroup (injective in the local invocation index), so a store into workgroup memory through it is one invocation's
+work	size			1	the product of the trip counts of the loops around a node, which a work bound limits
 number	tag		sg,pl		grammatical number
 person	tag		1,2,3		grammatical person
 sorted	flag				the array is sorted ascending

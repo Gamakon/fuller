@@ -188,8 +188,9 @@ pub struct Property {
     pub meaning: String,
 }
 
-/// The catalogue's text: `kingdoms/properties.tsv`.
-pub const CATALOGUE_TSV: &str = include_str!("../../kingdoms/properties.tsv");
+/// The catalogue's text: `kingdoms/master/properties.tsv` (the one table of the master set with no `kingdom` column:
+/// the catalogue is shared by every kingdom, design 3.3.1).
+pub const CATALOGUE_TSV: &str = include_str!("../../kingdoms/master/properties.tsv");
 
 /// Read a catalogue from its text (a header, then one property a line: name, kind, element, values, root, meaning).
 pub fn parse_catalogue(text: &str) -> Result<Vec<Property>, String> {
@@ -223,7 +224,7 @@ pub fn parse_catalogue(text: &str) -> Result<Vec<Property>, String> {
     Ok(out)
 }
 
-/// THE PROPERTY CATALOGUE, one for every kingdom, read once from `kingdoms/properties.tsv` (its test reads it too, so a
+/// THE PROPERTY CATALOGUE, one for every kingdom, read once from `kingdoms/master/properties.tsv` (its test reads it too, so a
 /// malformed catalogue fails `cargo test`). A malformed catalogue is our software's bug and stops the process: an empty
 /// one would read every property as undefined (code review 2026-11-05, finding 14).
 pub fn catalogue() -> &'static [Property] {

@@ -2,8 +2,9 @@
 //! direction of "any Futhark program: inputs and outputs are any typed values". A problem's kingdom is a VIEW over
 //! the master Futhark table (`kingdoms/futhark/master/6/`, [`crate::futhark_view::master6`]): its specification
 //! (`kingdoms/futhark/sig/<problem>/m6/view.tsv`) is written by `kingdoms/futhark/sniff.py` from the problem's Futhark
-//! source, and its table (`tables.tsv`) by `kingdoms/futhark/view.py`, both committed and checked byte for byte
-//! (`docs/PLAN_futhark_kingdom.md` section 7).
+//! source, and its rows (the kingdom `futhark.<problem>` of the master tables, `kingdoms/master/`) by
+//! `kingdoms/futhark/view.py` through `write_rows.py`, both committed and checked byte for byte
+//! (`docs/PLAN_futhark_kingdom.md` section 7 and 7.7 K0).
 //!
 //! A gene's types are data types (`i32`, `[]i32`, `[][]f32`, `i64`, `size`, tuples, function types); an array's length
 //! and an index's bound are properties, scope is the environment the decoder builds, and where a requirement fails the
@@ -286,7 +287,7 @@ pub struct Signature {
 
 /// The signature of a problem's committed view ([`signature_of`]); a shared handle, as the kingdom's.
 pub fn signature(problem: &str) -> Result<Arc<Signature>, String> {
-    let (_, spec, _) = crate::futhark_view::master6::COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| format!("no Futhark problem {problem} ({})", PROBLEM_NAMES.join(", ")))?;
+    let (_, spec) = crate::futhark_view::master6::COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| format!("no Futhark problem {problem} ({})", PROBLEM_NAMES.join(", ")))?;
     signature_of(&ViewSpec6::parse(spec)?).map(Arc::new).map_err(|e| format!("{problem}: {e}"))
 }
 

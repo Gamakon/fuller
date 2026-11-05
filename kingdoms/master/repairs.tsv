@@ -1,0 +1,703 @@
+kingdom	symbol	order	site	when	guard	template
+futhark.a7	map2_rows@m.f32	1	node	known(in2.rows) and known(in1.rows)	true	{self(1 := {if in1.rows = min(in2.rows, in1.rows) : {1} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {1})}}, 2 := {if in2.rows = min(in2.rows, in1.rows) : {2} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {2})}})}
+futhark.a7	map2_rows@m.f32	1	node	true	true	{in.own}
+futhark.a7	map2_rows@m.f32	1	node	true	true	{const}
+futhark.a7	map2_rows@m.f32	2	node	known(in2.cols) and known(in1.cols)	true	{self(1 := {if in1.cols = min(in2.cols, in1.cols) : {1} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {1})}}, 2 := {if in2.cols = min(in2.cols, in1.cols) : {2} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {2})}})}
+futhark.a7	map2_rows@m.f32	2	node	true	true	{in.own}
+futhark.a7	map2_rows@m.f32	2	node	true	true	{const}
+futhark.a7	matmul@m.f32	1	in0	known(in1.rows)	true	{call fitcols@m.f32({=in1.rows}, {0})}
+futhark.a7	matmul@m.f32	1	node	true	true	{in.own}
+futhark.a7	matmul@m.f32	1	node	true	true	{const}
+futhark.a7	entry	0	root	true	true	{call fitrows@m.f32({=n}, {self})}
+futhark.a7	entry	1	root	true	true	{call fitcols@m.f32({=p}, {self})}
+futhark.histogram	get@i32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.histogram	get@i32	1	node	true	true	{in.own}
+futhark.histogram	get@i32	1	node	true	true	{const}
+futhark.histogram	sum@i32	0	node	true	true	{in.own}
+futhark.histogram	sum@i32	0	node	true	true	{const}
+futhark.histogram	minimum@i32	0	node	true	true	{in.own}
+futhark.histogram	minimum@i32	0	node	true	true	{const}
+futhark.histogram	maximum@i32	0	node	true	true	{in.own}
+futhark.histogram	maximum@i32	0	node	true	true	{const}
+futhark.histogram	tab@a.i32	0	node	true	true	{in.own}
+futhark.histogram	tab@a.i32	0	node	true	true	{const}
+futhark.histogram	replicate@a.i32	0	node	true	true	{in.own}
+futhark.histogram	replicate@a.i32	0	node	true	true	{const}
+futhark.histogram	map2.add@a.i32	0	node	true	true	{in.own}
+futhark.histogram	map2.add@a.i32	0	node	true	true	{const}
+futhark.histogram	map2.add@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.histogram	map2.add@a.i32	1	node	true	true	{in.own}
+futhark.histogram	map2.add@a.i32	1	node	true	true	{const}
+futhark.histogram	map2.sub@a.i32	0	node	true	true	{in.own}
+futhark.histogram	map2.sub@a.i32	0	node	true	true	{const}
+futhark.histogram	map2.sub@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.histogram	map2.sub@a.i32	1	node	true	true	{in.own}
+futhark.histogram	map2.sub@a.i32	1	node	true	true	{const}
+futhark.histogram	map2.min@a.i32	0	node	true	true	{in.own}
+futhark.histogram	map2.min@a.i32	0	node	true	true	{const}
+futhark.histogram	map2.min@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.histogram	map2.min@a.i32	1	node	true	true	{in.own}
+futhark.histogram	map2.min@a.i32	1	node	true	true	{const}
+futhark.histogram	map2.max@a.i32	0	node	true	true	{in.own}
+futhark.histogram	map2.max@a.i32	0	node	true	true	{const}
+futhark.histogram	map2.max@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.histogram	map2.max@a.i32	1	node	true	true	{in.own}
+futhark.histogram	map2.max@a.i32	1	node	true	true	{const}
+futhark.histogram	scan.add@a.i32	0	node	true	true	{in.own}
+futhark.histogram	scan.add@a.i32	0	node	true	true	{const}
+futhark.histogram	scan.min@a.i32	0	node	true	true	{in.own}
+futhark.histogram	scan.min@a.i32	0	node	true	true	{const}
+futhark.histogram	scan.max@a.i32	0	node	true	true	{in.own}
+futhark.histogram	scan.max@a.i32	0	node	true	true	{const}
+futhark.histogram	hist.add@a.i32	0	node	true	true	{const}
+futhark.histogram	hist.add@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.histogram	hist.add@a.i32	1	node	true	true	{const}
+futhark.histogram	hist.min@a.i32	0	node	true	true	{const}
+futhark.histogram	hist.min@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.histogram	hist.min@a.i32	1	node	true	true	{const}
+futhark.histogram	hist.max@a.i32	0	node	true	true	{const}
+futhark.histogram	hist.max@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.histogram	hist.max@a.i32	1	node	true	true	{const}
+futhark.histogram	loop@i32	0	node	true	true	{in.own}
+futhark.histogram	loop@i32	0	node	true	true	{const}
+futhark.histogram	loop@a.i32	0	node	true	true	{in.own}
+futhark.histogram	loop@a.i32	0	node	true	true	{const}
+futhark.histogram	loop@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.histogram	loop@a.i32	1	node	true	true	{in.own}
+futhark.histogram	loop@a.i32	1	node	true	true	{const}
+futhark.histogram	loop1@i32	0	node	true	true	{in.own}
+futhark.histogram	loop1@i32	0	node	true	true	{const}
+futhark.histogram	loop1@a.i32	0	node	true	true	{in.own}
+futhark.histogram	loop1@a.i32	0	node	true	true	{const}
+futhark.histogram	loop1@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.histogram	loop1@a.i32	1	node	true	true	{in.own}
+futhark.histogram	loop1@a.i32	1	node	true	true	{const}
+futhark.histogram	fit@a.i32	0	node	true	true	{in.own}
+futhark.histogram	fit@a.i32	0	node	true	true	{const}
+futhark.histogram	entry	0	root	true	true	{call fit@a.i32({=k}, {self})}
+futhark.kmeans	get@f32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.kmeans	get@f32	1	node	true	true	{in.own}
+futhark.kmeans	get@f32	1	node	true	true	{const}
+futhark.kmeans	sum@f32	0	node	true	true	{in.own}
+futhark.kmeans	sum@f32	0	node	true	true	{const}
+futhark.kmeans	minimum@f32	0	node	true	true	{in.own}
+futhark.kmeans	minimum@f32	0	node	true	true	{const}
+futhark.kmeans	maximum@f32	0	node	true	true	{in.own}
+futhark.kmeans	maximum@f32	0	node	true	true	{const}
+futhark.kmeans	tab@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	tab@a.f32	0	node	true	true	{const}
+futhark.kmeans	replicate@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	replicate@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.add@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2.add@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.add@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans	map2.add@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2.add@a.f32	1	node	true	true	{const}
+futhark.kmeans	map2.sub@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2.sub@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.sub@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans	map2.sub@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2.sub@a.f32	1	node	true	true	{const}
+futhark.kmeans	map2.min@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2.min@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.min@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans	map2.min@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2.min@a.f32	1	node	true	true	{const}
+futhark.kmeans	map2.max@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2.max@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.max@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans	map2.max@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2.max@a.f32	1	node	true	true	{const}
+futhark.kmeans	scan.add@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	scan.add@a.f32	0	node	true	true	{const}
+futhark.kmeans	scan.min@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	scan.min@a.f32	0	node	true	true	{const}
+futhark.kmeans	scan.max@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	scan.max@a.f32	0	node	true	true	{const}
+futhark.kmeans	row@a.f32	1	in1	known(in0.rows)	true	{call clampix@i64({=in0.rows}, {1})}
+futhark.kmeans	row@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	row@a.f32	1	node	true	true	{const}
+futhark.kmeans	loop@f32	0	node	true	true	{in.own}
+futhark.kmeans	loop@f32	0	node	true	true	{const}
+futhark.kmeans	loop@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop@a.f32	0	node	true	true	{const}
+futhark.kmeans	loop@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+futhark.kmeans	loop@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	loop@a.f32	1	node	true	true	{const}
+futhark.kmeans	loop1@f32	0	node	true	true	{in.own}
+futhark.kmeans	loop1@f32	0	node	true	true	{const}
+futhark.kmeans	loop1@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop1@a.f32	0	node	true	true	{const}
+futhark.kmeans	loop1@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+futhark.kmeans	loop1@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	loop1@a.f32	1	node	true	true	{const}
+futhark.kmeans	map_rows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	map_rows@m.f32	0	node	true	true	{const}
+futhark.kmeans	map2_rows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2_rows@m.f32	0	node	true	true	{const}
+futhark.kmeans	map2_rows@m.f32	1	node	known(in2.rows) and known(in1.rows)	env.trips < 3	{self(1 := {if in1.rows = min(in2.rows, in1.rows) : {1} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {1})}}, 2 := {if in2.rows = min(in2.rows, in1.rows) : {2} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {2})}})}
+futhark.kmeans	map2_rows@m.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2_rows@m.f32	1	node	true	true	{const}
+futhark.kmeans	map2_rows@m.f32	2	node	known(in2.cols) and known(in1.cols)	env.trips < 3	{self(1 := {if in1.cols = min(in2.cols, in1.cols) : {1} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {1})}}, 2 := {if in2.cols = min(in2.cols, in1.cols) : {2} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {2})}})}
+futhark.kmeans	map2_rows@m.f32	2	node	true	true	{in.own}
+futhark.kmeans	map2_rows@m.f32	2	node	true	true	{const}
+futhark.kmeans	matmul@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	matmul@m.f32	0	node	true	true	{const}
+futhark.kmeans	matmul@m.f32	1	in0	known(in1.rows)	env.trips < 3	{call fitcols@m.f32({=in1.rows}, {0})}
+futhark.kmeans	matmul@m.f32	1	node	true	true	{in.own}
+futhark.kmeans	matmul@m.f32	1	node	true	true	{const}
+futhark.kmeans	hist.add@a.f32	0	node	true	true	{const}
+futhark.kmeans	hist.add@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans	hist.add@a.f32	1	node	true	true	{const}
+futhark.kmeans	hist.min@a.f32	0	node	true	true	{const}
+futhark.kmeans	hist.min@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans	hist.min@a.f32	1	node	true	true	{const}
+futhark.kmeans	hist.max@a.f32	0	node	true	true	{const}
+futhark.kmeans	hist.max@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans	hist.max@a.f32	1	node	true	true	{const}
+futhark.kmeans	map2.mul@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	map2.mul@a.f32	0	node	true	true	{const}
+futhark.kmeans	map2.mul@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans	map2.mul@a.f32	1	node	true	true	{in.own}
+futhark.kmeans	map2.mul@a.f32	1	node	true	true	{const}
+futhark.kmeans	tabrows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	tabrows@m.f32	0	node	true	true	{const}
+futhark.kmeans	tabrows@m.f32	1	in2	known(in1.value)	env.trips < 3	{call fit@a.f32({=in1.value}, {2})}
+futhark.kmeans	tabrows@m.f32	1	node	true	true	{in.own}
+futhark.kmeans	tabrows@m.f32	1	node	true	true	{const}
+futhark.kmeans	histrows.add@m.f32	0	node	true	true	{const}
+futhark.kmeans	histrows.add@m.f32	1	node	known(in3.rows) and known(in2.len)	env.trips < 3	{self(2 := {if in2.len = min(in3.rows, in2.len) : {2} else {call fit@a.f32({=min(in3.rows, in2.len)}, {2})}}, 3 := {if in3.rows = min(in3.rows, in2.len) : {3} else {call fitrows@m.f32({=min(in3.rows, in2.len)}, {3})}})}
+futhark.kmeans	histrows.add@m.f32	1	node	true	true	{const}
+futhark.kmeans	histrows.add@m.f32	2	in3	known(in1.value)	env.trips < 3	{call fitcols@m.f32({=in1.value}, {3})}
+futhark.kmeans	histrows.add@m.f32	2	node	true	true	{const}
+futhark.kmeans	rowdiv@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	rowdiv@m.f32	0	node	true	true	{const}
+futhark.kmeans	rowdiv@m.f32	1	node	known(in1.len) and known(in0.rows)	env.trips < 3	{self(0 := {if in0.rows = min(in1.len, in0.rows) : {0} else {call fitrows@m.f32({=min(in1.len, in0.rows)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.rows) : {1} else {call fit@a.f32({=min(in1.len, in0.rows)}, {1})}})}
+futhark.kmeans	rowdiv@m.f32	1	node	true	true	{in.own}
+futhark.kmeans	rowdiv@m.f32	1	node	true	true	{const}
+futhark.kmeans	loop@f32.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop@f32.f32	0	node	true	true	{const}
+futhark.kmeans	loop1@f32.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop1@f32.f32	0	node	true	true	{const}
+futhark.kmeans	loop@f32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop@f32.f32.f32	0	node	true	true	{const}
+futhark.kmeans	loop1@f32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans	loop1@f32.f32.f32	0	node	true	true	{const}
+futhark.kmeans	fit@a.f32	0	node	true	true	{in.own}
+futhark.kmeans	fit@a.f32	0	node	true	true	{const}
+futhark.kmeans	fitrows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	fitrows@m.f32	0	node	true	true	{const}
+futhark.kmeans	fitcols@m.f32	0	node	true	true	{in.own}
+futhark.kmeans	fitcols@m.f32	0	node	true	true	{const}
+futhark.kmeans	entry	0	root	true	true	{call fitrows@m.f32({=k}, {self})}
+futhark.kmeans	entry	1	root	true	true	{call fitcols@m.f32({=d}, {self})}
+futhark.kmeans_i32	get@f32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.kmeans_i32	get@f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	get@f32	1	node	true	true	{const}
+futhark.kmeans_i32	get@i32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.kmeans_i32	get@i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	get@i32	1	node	true	true	{const}
+futhark.kmeans_i32	sum@f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	sum@f32	0	node	true	true	{const}
+futhark.kmeans_i32	sum@i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	sum@i32	0	node	true	true	{const}
+futhark.kmeans_i32	minimum@f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	minimum@f32	0	node	true	true	{const}
+futhark.kmeans_i32	minimum@i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	minimum@i32	0	node	true	true	{const}
+futhark.kmeans_i32	maximum@f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	maximum@f32	0	node	true	true	{const}
+futhark.kmeans_i32	maximum@i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	maximum@i32	0	node	true	true	{const}
+futhark.kmeans_i32	tab@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	tab@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	tab@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	tab@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	replicate@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	replicate@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	replicate@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	replicate@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.add@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.add@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.add@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.add@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.add@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.add@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.add@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.add@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.add@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.add@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.sub@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.sub@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.sub@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.sub@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.sub@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.sub@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.sub@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.sub@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.sub@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.sub@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.min@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.min@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.min@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.min@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.min@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.min@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.min@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.min@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.min@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.min@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.max@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.max@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.max@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.max@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.max@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.max@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.max@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.max@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.max@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.max@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	scan.add@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.add@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	scan.add@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.add@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	scan.min@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.min@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	scan.min@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.min@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	scan.max@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.max@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	scan.max@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	scan.max@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.add@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.add@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.add@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	hist.min@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.min@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.min@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	hist.max@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.max@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.max@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	row@a.f32	1	in1	known(in0.rows)	true	{call clampix@i64({=in0.rows}, {1})}
+futhark.kmeans_i32	row@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	row@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	row@a.i32	1	in1	known(in0.rows)	true	{call clampix@i64({=in0.rows}, {1})}
+futhark.kmeans_i32	row@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	row@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	loop@f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+futhark.kmeans_i32	loop@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	loop@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	loop@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@a.i32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.i32({=in1.len}, {2})}
+futhark.kmeans_i32	loop@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	loop@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+futhark.kmeans_i32	loop1@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	loop1@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@a.i32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.i32({=in1.len}, {2})}
+futhark.kmeans_i32	loop1@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	map_rows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map_rows@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2_rows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2_rows@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2_rows@m.f32	1	node	known(in2.rows) and known(in1.rows)	env.trips < 3	{self(1 := {if in1.rows = min(in2.rows, in1.rows) : {1} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {1})}}, 2 := {if in2.rows = min(in2.rows, in1.rows) : {2} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {2})}})}
+futhark.kmeans_i32	map2_rows@m.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2_rows@m.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2_rows@m.f32	2	node	known(in2.cols) and known(in1.cols)	env.trips < 3	{self(1 := {if in1.cols = min(in2.cols, in1.cols) : {1} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {1})}}, 2 := {if in2.cols = min(in2.cols, in1.cols) : {2} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {2})}})}
+futhark.kmeans_i32	map2_rows@m.f32	2	node	true	true	{in.own}
+futhark.kmeans_i32	map2_rows@m.f32	2	node	true	true	{const}
+futhark.kmeans_i32	matmul@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	matmul@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	matmul@m.f32	1	in0	known(in1.rows)	env.trips < 3	{call fitcols@m.f32({=in1.rows}, {0})}
+futhark.kmeans_i32	matmul@m.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	matmul@m.f32	1	node	true	true	{const}
+futhark.kmeans_i32	hist.add@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.add@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.add@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	hist.min@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.min@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.min@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	hist.max@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	hist.max@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+futhark.kmeans_i32	hist.max@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.mul@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.mul@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.mul@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.mul@a.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.mul@a.f32	1	node	true	true	{const}
+futhark.kmeans_i32	map2.mul@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	map2.mul@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	map2.mul@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.kmeans_i32	map2.mul@a.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	map2.mul@a.i32	1	node	true	true	{const}
+futhark.kmeans_i32	tabrows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	tabrows@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	tabrows@m.f32	1	in2	known(in1.value)	env.trips < 3	{call fit@a.f32({=in1.value}, {2})}
+futhark.kmeans_i32	tabrows@m.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	tabrows@m.f32	1	node	true	true	{const}
+futhark.kmeans_i32	tabrows@m.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	tabrows@m.i32	0	node	true	true	{const}
+futhark.kmeans_i32	tabrows@m.i32	1	in2	known(in1.value)	env.trips < 3	{call fit@a.i32({=in1.value}, {2})}
+futhark.kmeans_i32	tabrows@m.i32	1	node	true	true	{in.own}
+futhark.kmeans_i32	tabrows@m.i32	1	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.i32	0	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.i32	1	node	known(in3.rows) and known(in2.len)	env.trips < 3	{self(2 := {if in2.len = min(in3.rows, in2.len) : {2} else {call fit@a.i32({=min(in3.rows, in2.len)}, {2})}}, 3 := {if in3.rows = min(in3.rows, in2.len) : {3} else {call fitrows@m.i32({=min(in3.rows, in2.len)}, {3})}})}
+futhark.kmeans_i32	histrows.add@m.i32	1	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.i32	2	in3	known(in1.value)	env.trips < 3	{call fitcols@m.i32({=in1.value}, {3})}
+futhark.kmeans_i32	histrows.add@m.i32	2	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.f32	1	node	known(in3.rows) and known(in2.len)	env.trips < 3	{self(2 := {if in2.len = min(in3.rows, in2.len) : {2} else {call fit@a.f32({=min(in3.rows, in2.len)}, {2})}}, 3 := {if in3.rows = min(in3.rows, in2.len) : {3} else {call fitrows@m.f32({=min(in3.rows, in2.len)}, {3})}})}
+futhark.kmeans_i32	histrows.add@m.f32	1	node	true	true	{const}
+futhark.kmeans_i32	histrows.add@m.f32	2	in3	known(in1.value)	env.trips < 3	{call fitcols@m.f32({=in1.value}, {3})}
+futhark.kmeans_i32	histrows.add@m.f32	2	node	true	true	{const}
+futhark.kmeans_i32	rowdiv@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	rowdiv@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	rowdiv@m.f32	1	node	known(in1.len) and known(in0.rows)	env.trips < 3	{self(0 := {if in0.rows = min(in1.len, in0.rows) : {0} else {call fitrows@m.f32({=min(in1.len, in0.rows)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.rows) : {1} else {call fit@a.f32({=min(in1.len, in0.rows)}, {1})}})}
+futhark.kmeans_i32	rowdiv@m.f32	1	node	true	true	{in.own}
+futhark.kmeans_i32	rowdiv@m.f32	1	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@f32.i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@f32.i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop@i32.i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop@i32.i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@f32.i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@f32.i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.f32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.f32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.f32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.f32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.i32.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.i32.f32	0	node	true	true	{const}
+futhark.kmeans_i32	loop1@i32.i32.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	loop1@i32.i32.i32	0	node	true	true	{const}
+futhark.kmeans_i32	fit@a.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fit@a.f32	0	node	true	true	{const}
+futhark.kmeans_i32	fit@a.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fit@a.i32	0	node	true	true	{const}
+futhark.kmeans_i32	fitrows@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fitrows@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	fitrows@m.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fitrows@m.i32	0	node	true	true	{const}
+futhark.kmeans_i32	fitcols@m.f32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fitcols@m.f32	0	node	true	true	{const}
+futhark.kmeans_i32	fitcols@m.i32	0	node	true	true	{in.own}
+futhark.kmeans_i32	fitcols@m.i32	0	node	true	true	{const}
+futhark.kmeans_i32	entry	0	root	true	true	{call fitrows@m.f32({=k}, {self})}
+futhark.kmeans_i32	entry	1	root	true	true	{call fitcols@m.f32({=d}, {self})}
+futhark.pathfinder	get@i32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.pathfinder	get@i32	1	node	true	true	{in.own}
+futhark.pathfinder	get@i32	1	node	true	true	{const}
+futhark.pathfinder	sum@i32	0	node	true	true	{in.own}
+futhark.pathfinder	sum@i32	0	node	true	true	{const}
+futhark.pathfinder	minimum@i32	0	node	true	true	{in.own}
+futhark.pathfinder	minimum@i32	0	node	true	true	{const}
+futhark.pathfinder	maximum@i32	0	node	true	true	{in.own}
+futhark.pathfinder	maximum@i32	0	node	true	true	{const}
+futhark.pathfinder	tab@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	tab@a.i32	0	node	true	true	{const}
+futhark.pathfinder	replicate@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	replicate@a.i32	0	node	true	true	{const}
+futhark.pathfinder	map2.add@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	map2.add@a.i32	0	node	true	true	{const}
+futhark.pathfinder	map2.add@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.pathfinder	map2.add@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	map2.add@a.i32	1	node	true	true	{const}
+futhark.pathfinder	map2.sub@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	map2.sub@a.i32	0	node	true	true	{const}
+futhark.pathfinder	map2.sub@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.pathfinder	map2.sub@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	map2.sub@a.i32	1	node	true	true	{const}
+futhark.pathfinder	map2.min@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	map2.min@a.i32	0	node	true	true	{const}
+futhark.pathfinder	map2.min@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.pathfinder	map2.min@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	map2.min@a.i32	1	node	true	true	{const}
+futhark.pathfinder	map2.max@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	map2.max@a.i32	0	node	true	true	{const}
+futhark.pathfinder	map2.max@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.pathfinder	map2.max@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	map2.max@a.i32	1	node	true	true	{const}
+futhark.pathfinder	scan.add@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	scan.add@a.i32	0	node	true	true	{const}
+futhark.pathfinder	scan.min@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	scan.min@a.i32	0	node	true	true	{const}
+futhark.pathfinder	scan.max@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	scan.max@a.i32	0	node	true	true	{const}
+futhark.pathfinder	hist.add@a.i32	0	node	true	true	{const}
+futhark.pathfinder	hist.add@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.pathfinder	hist.add@a.i32	1	node	true	true	{const}
+futhark.pathfinder	hist.min@a.i32	0	node	true	true	{const}
+futhark.pathfinder	hist.min@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.pathfinder	hist.min@a.i32	1	node	true	true	{const}
+futhark.pathfinder	hist.max@a.i32	0	node	true	true	{const}
+futhark.pathfinder	hist.max@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.pathfinder	hist.max@a.i32	1	node	true	true	{const}
+futhark.pathfinder	row@a.i32	1	in1	known(in0.rows)	true	{call clampix@i64({=in0.rows}, {1})}
+futhark.pathfinder	row@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	row@a.i32	1	node	true	true	{const}
+futhark.pathfinder	loop@i32	0	node	true	true	{in.own}
+futhark.pathfinder	loop@i32	0	node	true	true	{const}
+futhark.pathfinder	loop@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	loop@a.i32	0	node	true	true	{const}
+futhark.pathfinder	loop@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.pathfinder	loop@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	loop@a.i32	1	node	true	true	{const}
+futhark.pathfinder	loop1@i32	0	node	true	true	{in.own}
+futhark.pathfinder	loop1@i32	0	node	true	true	{const}
+futhark.pathfinder	loop1@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	loop1@a.i32	0	node	true	true	{const}
+futhark.pathfinder	loop1@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.pathfinder	loop1@a.i32	1	node	true	true	{in.own}
+futhark.pathfinder	loop1@a.i32	1	node	true	true	{const}
+futhark.pathfinder	fit@a.i32	0	node	true	true	{in.own}
+futhark.pathfinder	fit@a.i32	0	node	true	true	{const}
+futhark.pathfinder	fitrows@m.i32	0	node	true	true	{in.own}
+futhark.pathfinder	fitrows@m.i32	0	node	true	true	{const}
+futhark.pathfinder	fitcols@m.i32	0	node	true	true	{in.own}
+futhark.pathfinder	fitcols@m.i32	0	node	true	true	{const}
+futhark.pathfinder	entry	0	root	true	true	{call fit@a.i32({=cols}, {self})}
+futhark.reduce	get@i32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.reduce	get@i32	1	node	true	true	{in.own}
+futhark.reduce	get@i32	1	node	true	true	{const}
+futhark.reduce	sum@i32	0	node	true	true	{in.own}
+futhark.reduce	sum@i32	0	node	true	true	{const}
+futhark.reduce	minimum@i32	0	node	true	true	{in.own}
+futhark.reduce	minimum@i32	0	node	true	true	{const}
+futhark.reduce	maximum@i32	0	node	true	true	{in.own}
+futhark.reduce	maximum@i32	0	node	true	true	{const}
+futhark.reduce	tab@a.i32	0	node	true	true	{in.own}
+futhark.reduce	tab@a.i32	0	node	true	true	{const}
+futhark.reduce	replicate@a.i32	0	node	true	true	{in.own}
+futhark.reduce	replicate@a.i32	0	node	true	true	{const}
+futhark.reduce	map2.add@a.i32	0	node	true	true	{in.own}
+futhark.reduce	map2.add@a.i32	0	node	true	true	{const}
+futhark.reduce	map2.add@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.reduce	map2.add@a.i32	1	node	true	true	{in.own}
+futhark.reduce	map2.add@a.i32	1	node	true	true	{const}
+futhark.reduce	map2.sub@a.i32	0	node	true	true	{in.own}
+futhark.reduce	map2.sub@a.i32	0	node	true	true	{const}
+futhark.reduce	map2.sub@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.reduce	map2.sub@a.i32	1	node	true	true	{in.own}
+futhark.reduce	map2.sub@a.i32	1	node	true	true	{const}
+futhark.reduce	map2.min@a.i32	0	node	true	true	{in.own}
+futhark.reduce	map2.min@a.i32	0	node	true	true	{const}
+futhark.reduce	map2.min@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.reduce	map2.min@a.i32	1	node	true	true	{in.own}
+futhark.reduce	map2.min@a.i32	1	node	true	true	{const}
+futhark.reduce	map2.max@a.i32	0	node	true	true	{in.own}
+futhark.reduce	map2.max@a.i32	0	node	true	true	{const}
+futhark.reduce	map2.max@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.reduce	map2.max@a.i32	1	node	true	true	{in.own}
+futhark.reduce	map2.max@a.i32	1	node	true	true	{const}
+futhark.reduce	scan.add@a.i32	0	node	true	true	{in.own}
+futhark.reduce	scan.add@a.i32	0	node	true	true	{const}
+futhark.reduce	scan.min@a.i32	0	node	true	true	{in.own}
+futhark.reduce	scan.min@a.i32	0	node	true	true	{const}
+futhark.reduce	scan.max@a.i32	0	node	true	true	{in.own}
+futhark.reduce	scan.max@a.i32	0	node	true	true	{const}
+futhark.reduce	hist.add@a.i32	0	node	true	true	{const}
+futhark.reduce	hist.add@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.reduce	hist.add@a.i32	1	node	true	true	{const}
+futhark.reduce	hist.min@a.i32	0	node	true	true	{const}
+futhark.reduce	hist.min@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.reduce	hist.min@a.i32	1	node	true	true	{const}
+futhark.reduce	hist.max@a.i32	0	node	true	true	{const}
+futhark.reduce	hist.max@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.reduce	hist.max@a.i32	1	node	true	true	{const}
+futhark.reduce	loop@i32	0	node	true	true	{in.own}
+futhark.reduce	loop@i32	0	node	true	true	{const}
+futhark.reduce	loop@a.i32	0	node	true	true	{in.own}
+futhark.reduce	loop@a.i32	0	node	true	true	{const}
+futhark.reduce	loop@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.reduce	loop@a.i32	1	node	true	true	{in.own}
+futhark.reduce	loop@a.i32	1	node	true	true	{const}
+futhark.reduce	loop1@i32	0	node	true	true	{in.own}
+futhark.reduce	loop1@i32	0	node	true	true	{const}
+futhark.reduce	loop1@a.i32	0	node	true	true	{in.own}
+futhark.reduce	loop1@a.i32	0	node	true	true	{const}
+futhark.reduce	loop1@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.reduce	loop1@a.i32	1	node	true	true	{in.own}
+futhark.reduce	loop1@a.i32	1	node	true	true	{const}
+futhark.reduce	fit@a.i32	0	node	true	true	{in.own}
+futhark.reduce	fit@a.i32	0	node	true	true	{const}
+futhark.scan	get@i32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+futhark.scan	get@i32	1	node	true	true	{in.own}
+futhark.scan	get@i32	1	node	true	true	{const}
+futhark.scan	sum@i32	0	node	true	true	{in.own}
+futhark.scan	sum@i32	0	node	true	true	{const}
+futhark.scan	minimum@i32	0	node	true	true	{in.own}
+futhark.scan	minimum@i32	0	node	true	true	{const}
+futhark.scan	maximum@i32	0	node	true	true	{in.own}
+futhark.scan	maximum@i32	0	node	true	true	{const}
+futhark.scan	tab@a.i32	0	node	true	true	{in.own}
+futhark.scan	tab@a.i32	0	node	true	true	{const}
+futhark.scan	replicate@a.i32	0	node	true	true	{in.own}
+futhark.scan	replicate@a.i32	0	node	true	true	{const}
+futhark.scan	map2.add@a.i32	0	node	true	true	{in.own}
+futhark.scan	map2.add@a.i32	0	node	true	true	{const}
+futhark.scan	map2.add@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.scan	map2.add@a.i32	1	node	true	true	{in.own}
+futhark.scan	map2.add@a.i32	1	node	true	true	{const}
+futhark.scan	map2.sub@a.i32	0	node	true	true	{in.own}
+futhark.scan	map2.sub@a.i32	0	node	true	true	{const}
+futhark.scan	map2.sub@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.scan	map2.sub@a.i32	1	node	true	true	{in.own}
+futhark.scan	map2.sub@a.i32	1	node	true	true	{const}
+futhark.scan	map2.min@a.i32	0	node	true	true	{in.own}
+futhark.scan	map2.min@a.i32	0	node	true	true	{const}
+futhark.scan	map2.min@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.scan	map2.min@a.i32	1	node	true	true	{in.own}
+futhark.scan	map2.min@a.i32	1	node	true	true	{const}
+futhark.scan	map2.max@a.i32	0	node	true	true	{in.own}
+futhark.scan	map2.max@a.i32	0	node	true	true	{const}
+futhark.scan	map2.max@a.i32	1	node	known(in1.len) and known(in0.len)	env.trips < 2	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.i32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.i32({=min(in1.len, in0.len)}, {1})}})}
+futhark.scan	map2.max@a.i32	1	node	true	true	{in.own}
+futhark.scan	map2.max@a.i32	1	node	true	true	{const}
+futhark.scan	scan.add@a.i32	0	node	true	true	{in.own}
+futhark.scan	scan.add@a.i32	0	node	true	true	{const}
+futhark.scan	scan.min@a.i32	0	node	true	true	{in.own}
+futhark.scan	scan.min@a.i32	0	node	true	true	{const}
+futhark.scan	scan.max@a.i32	0	node	true	true	{in.own}
+futhark.scan	scan.max@a.i32	0	node	true	true	{const}
+futhark.scan	hist.add@a.i32	0	node	true	true	{const}
+futhark.scan	hist.add@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.scan	hist.add@a.i32	1	node	true	true	{const}
+futhark.scan	hist.min@a.i32	0	node	true	true	{const}
+futhark.scan	hist.min@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.scan	hist.min@a.i32	1	node	true	true	{const}
+futhark.scan	hist.max@a.i32	0	node	true	true	{const}
+futhark.scan	hist.max@a.i32	1	node	known(in2.len) and known(in1.len)	env.trips < 2	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.i32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.i32({=min(in2.len, in1.len)}, {2})}})}
+futhark.scan	hist.max@a.i32	1	node	true	true	{const}
+futhark.scan	loop@i32	0	node	true	true	{in.own}
+futhark.scan	loop@i32	0	node	true	true	{const}
+futhark.scan	loop@a.i32	0	node	true	true	{in.own}
+futhark.scan	loop@a.i32	0	node	true	true	{const}
+futhark.scan	loop@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.scan	loop@a.i32	1	node	true	true	{in.own}
+futhark.scan	loop@a.i32	1	node	true	true	{const}
+futhark.scan	loop1@i32	0	node	true	true	{in.own}
+futhark.scan	loop1@i32	0	node	true	true	{const}
+futhark.scan	loop1@a.i32	0	node	true	true	{in.own}
+futhark.scan	loop1@a.i32	0	node	true	true	{const}
+futhark.scan	loop1@a.i32	1	in2	known(in1.len)	env.trips < 2	{call fit@a.i32({=in1.len}, {2})}
+futhark.scan	loop1@a.i32	1	node	true	true	{in.own}
+futhark.scan	loop1@a.i32	1	node	true	true	{const}
+futhark.scan	fit@a.i32	0	node	true	true	{in.own}
+futhark.scan	fit@a.i32	0	node	true	true	{const}
+futhark.scan	entry	0	root	true	true	{call fit@a.i32({=n}, {self})}
+regex	regex_rep_range	0	node	true	true	(?:{0}){{{=in2.value},{=in1.value}}}
+tsr.depth	sin	0	node	true	true	{in0}
+tsr.depth	cos	0	node	true	true	{in0}
+tsr.depth	tanh	0	node	true	true	{in0}
+tsr.depth	psqrt	0	node	true	true	{in0}
+tsr.depth	plog	0	node	true	true	{in0}
+tsr.depth	pexp	0	node	true	true	{in0}
+tsr.depth	abs	0	node	true	true	{in0}
+tsr.depth	tan	0	node	true	true	{in0}
+tsr.depth	pasin	0	node	true	true	{in0}
+tsr.depth	pacos	0	node	true	true	{in0}
+tsr.order	add	0	node	true	true	{in0}
+tsr.order	sub	0	node	true	true	{in0}
+tsr.order	mul	0	node	true	true	{in0}
+tsr.order	pdiv	0	node	true	true	{in0}
+tsr.order_depth	add	0	node	true	true	{in0}
+tsr.order_depth	sub	0	node	true	true	{in0}
+tsr.order_depth	mul	0	node	true	true	{in0}
+tsr.order_depth	pdiv	0	node	true	true	{in0}
+tsr.order_depth	sin	0	node	true	true	{in0}
+tsr.order_depth	cos	0	node	true	true	{in0}
+tsr.order_depth	tanh	0	node	true	true	{in0}
+tsr.order_depth	psqrt	0	node	true	true	{in0}
+tsr.order_depth	plog	0	node	true	true	{in0}
+tsr.order_depth	pexp	0	node	true	true	{in0}
+tsr.order_depth	abs	0	node	true	true	{in0}
+tsr.order_depth	tan	0	node	true	true	{in0}
+tsr.order_depth	pasin	0	node	true	true	{in0}
+tsr.order_depth	pacos	0	node	true	true	{in0}
+tsr.order_depth_windows	add	0	node	true	true	{in0}
+tsr.order_depth_windows	sub	0	node	true	true	{in0}
+tsr.order_depth_windows	mul	0	node	true	true	{in0}
+tsr.order_depth_windows	pdiv	0	node	true	true	{in0}
+tsr.order_depth_windows	sin	0	node	true	true	{in0}
+tsr.order_depth_windows	sin	1	node	true	true	{in0}
+tsr.order_depth_windows	cos	0	node	true	true	{in0}
+tsr.order_depth_windows	cos	1	node	true	true	{in0}
+tsr.order_depth_windows	tanh	0	node	true	true	{in0}
+tsr.order_depth_windows	tanh	1	node	true	true	{in0}
+tsr.order_depth_windows	psqrt	0	node	true	true	{in0}
+tsr.order_depth_windows	plog	0	node	true	true	{in0}
+tsr.order_depth_windows	pexp	0	node	true	true	{in0}
+tsr.order_depth_windows	abs	0	node	true	true	{in0}
+tsr.order_depth_windows	pow2	0	node	true	true	{in0}
+tsr.order_depth_windows	pow3	0	node	true	true	{in0}
+tsr.order_depth_windows	pinv	0	node	true	true	{in0}
+tsr.order_depth_windows	tan	0	node	true	true	{in0}
+tsr.order_depth_windows	tan	1	node	true	true	{in0}
+tsr.order_depth_windows	pasin	0	node	true	true	{in0}
+tsr.order_depth_windows	pacos	0	node	true	true	{in0}
+wgsl.gram	store	0	node	true	true	{const}
+wgsl.gram	store	1	node	true	true	{const}
+wgsl.gram	store	2	in1	true	true	min({1}, arrayLength(&{0}) - 1u)
+wgsl.gram	store	2	node	true	true	{const}
+wgsl.gram	loop	0	node	true	true	{const}
+wgsl.gram	barrier	0	node	true	true	{const}
+wgsl.gram	wg_store	0	node	true	true	{const}
+wgsl.gram	wg_store	1	in0	true	true	min({0}, 63u)
+wgsl.gram	wg_store	1	node	true	true	{const}
+wgsl.gram	load	0	in1	true	true	min({1}, arrayLength(&{0}) - 1u)
+wgsl.gram	load	0	node	true	true	{const}
+wgsl.gram	wg_load	0	in0	true	true	min({0}, 63u)
+wgsl.gram	wg_load	0	node	true	true	{const}
+wgsl.gram	dot	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) else ({1}).{=at(list('x', 'xy', 'xyz', 'xyzw'), in0.width - 1, 'x')}}
+wgsl.gram	dot	0	node	true	true	{const}
+wgsl.gram	vadd	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) else ({1}).{=at(list('x', 'xy', 'xyz', 'xyzw'), in0.width - 1, 'x')}}
+wgsl.gram	vadd	0	node	true	true	{in.own}

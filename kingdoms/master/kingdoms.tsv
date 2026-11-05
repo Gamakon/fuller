@@ -1,0 +1,18 @@
+name	parent	description	root	notes
+futhark		the Futhark kingdom: shape-polymorphic GPU kernels; each problem is a variant, its rows computed by view.py from the master templates (kingdoms/futhark/master/6) and its sniffed view.tsv		
+futhark.a7	futhark	the Futhark kingdom's view of the problem a7 (tests/corpus/futhark_problems/a7/yardstick.fut)	[][]f32	
+futhark.histogram	futhark	the Futhark kingdom's view of the problem histogram (tests/corpus/futhark_problems/histogram/yardstick.fut)	[]i32	
+futhark.kmeans	futhark	the Futhark kingdom's view of the problem kmeans (tests/corpus/futhark_problems/kmeans/yardstick.fut)	[][]f32	
+futhark.kmeans_i32	futhark	the Futhark kingdom's view of the problem kmeans_i32 (tests/corpus/futhark_problems/kmeans/yardstick.fut)	[][]f32	
+futhark.pathfinder	futhark	the Futhark kingdom's view of the problem pathfinder (tests/corpus/futhark_problems/pathfinder/yardstick.fut)	[]i32	
+futhark.reduce	futhark	the Futhark kingdom's view of the problem reduce (tests/corpus/futhark_problems/reduce/yardstick.fut)	i32	
+futhark.scan	futhark	the Futhark kingdom's view of the problem scan (tests/corpus/futhark_problems/scan/yardstick.fut)	[]i32	
+regex		the regex kingdom: POSIX ERE over Pattern, CharClass, Char and I; one guard, the counted range's bounds in order	Pattern	
+tsr		Typed Symbolic Regression: one data type F carrying depth and Horton-Strahler stream order; each variant's guards are its limits		
+tsr.depth	tsr	TSR variant depth	F	
+tsr.order	tsr	TSR variant order	F	
+tsr.order_depth	tsr	TSR variant order_depth	F	
+tsr.order_depth_windows	tsr	TSR variant order_depth_windows	F	
+tsr.single	tsr	TSR variant single	F	
+wgsl		the true-GEP WGSL kingdom on the four-row schema: nine data types, legality by Flow and Guard rows (owned, uniform, bound, width, work), scope by var.T		
+wgsl.gram	wgsl	the WGSL kingdom's Gram problem: phi in, h out, cfg { d, m, r_rows, r_off }	kernel	

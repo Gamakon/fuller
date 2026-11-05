@@ -1,0 +1,73 @@
+kingdom	name	kind	members	result	properties	constant	constant_properties	size_names
+futhark.a7	f32	scalar				0f32	-	
+futhark.a7	size	scalar			value			m:1;n:1;p:1
+futhark.a7	[]f32	array	f32		len	[0f32]	len=1	
+futhark.a7	[][]f32	array	[]f32		rows;cols	[[0f32]]	rows=1;cols=1	
+futhark.a7	[]f32 -> []f32	function	[]f32	[]f32		\xs -> map (\_ -> 0.0) xs	-	
+futhark.a7	[]f32 -> []f32 -> []f32	function	[]f32;[]f32	[]f32		\xs _ys -> map (\_ -> 0.0) xs	-	
+futhark.histogram	i32	scalar				0i32	-	
+futhark.histogram	i64	scalar			bound	0i64	bound=1	
+futhark.histogram	size	scalar			value			k:1;n:1
+futhark.histogram	[]i32	array	i32		len	[0i32]	len=1	
+futhark.kmeans	f32	scalar				0f32	-	
+futhark.kmeans	i64	scalar			bound	0i64	bound=1	
+futhark.kmeans	size	scalar			value			d:1;k:1;n:1
+futhark.kmeans	[]f32	array	f32		len	[0f32]	len=1	
+futhark.kmeans	[][]f32	array	[]f32		rows;cols	[[0f32]]	rows=1;cols=1	
+futhark.kmeans	(f32, f32)	tuple	f32;f32			(0f32, 0f32)	-	
+futhark.kmeans	(f32, f32, f32)	tuple	f32;f32;f32			(0f32, 0f32, 0f32)	-	
+futhark.kmeans	[]f32 -> []f32	function	[]f32	[]f32		\xs -> map (\_ -> 0.0) xs	-	
+futhark.kmeans	[]f32 -> []f32 -> []f32	function	[]f32;[]f32	[]f32		\xs _ys -> map (\_ -> 0.0) xs	-	
+futhark.kmeans_i32	f32	scalar				0f32	-	
+futhark.kmeans_i32	i32	scalar				0i32	-	
+futhark.kmeans_i32	i64	scalar			bound	0i64	bound=1	
+futhark.kmeans_i32	size	scalar			value			d:1;k:1;n:1
+futhark.kmeans_i32	[]f32	array	f32		len	[0f32]	len=1	
+futhark.kmeans_i32	[]i32	array	i32		len	[0i32]	len=1	
+futhark.kmeans_i32	[][]f32	array	[]f32		rows;cols	[[0f32]]	rows=1;cols=1	
+futhark.kmeans_i32	[][]i32	array	[]i32		rows;cols	[[0i32]]	rows=1;cols=1	
+futhark.kmeans_i32	(f32, f32)	tuple	f32;f32			(0f32, 0f32)	-	
+futhark.kmeans_i32	(f32, i32)	tuple	f32;i32			(0f32, 0i32)	-	
+futhark.kmeans_i32	(i32, f32)	tuple	i32;f32			(0i32, 0f32)	-	
+futhark.kmeans_i32	(i32, i32)	tuple	i32;i32			(0i32, 0i32)	-	
+futhark.kmeans_i32	(f32, f32, f32)	tuple	f32;f32;f32			(0f32, 0f32, 0f32)	-	
+futhark.kmeans_i32	(f32, f32, i32)	tuple	f32;f32;i32			(0f32, 0f32, 0i32)	-	
+futhark.kmeans_i32	(f32, i32, f32)	tuple	f32;i32;f32			(0f32, 0i32, 0f32)	-	
+futhark.kmeans_i32	(f32, i32, i32)	tuple	f32;i32;i32			(0f32, 0i32, 0i32)	-	
+futhark.kmeans_i32	(i32, f32, f32)	tuple	i32;f32;f32			(0i32, 0f32, 0f32)	-	
+futhark.kmeans_i32	(i32, f32, i32)	tuple	i32;f32;i32			(0i32, 0f32, 0i32)	-	
+futhark.kmeans_i32	(i32, i32, f32)	tuple	i32;i32;f32			(0i32, 0i32, 0f32)	-	
+futhark.kmeans_i32	(i32, i32, i32)	tuple	i32;i32;i32			(0i32, 0i32, 0i32)	-	
+futhark.kmeans_i32	[]f32 -> []f32	function	[]f32	[]f32		\xs -> map (\_ -> 0.0) xs	-	
+futhark.kmeans_i32	[]f32 -> []f32 -> []f32	function	[]f32;[]f32	[]f32		\xs _ys -> map (\_ -> 0.0) xs	-	
+futhark.pathfinder	i32	scalar				0i32	-	
+futhark.pathfinder	i64	scalar			bound	0i64	bound=1	
+futhark.pathfinder	size	scalar			value			cols:1;rows:1
+futhark.pathfinder	[]i32	array	i32		len	[0i32]	len=1	
+futhark.pathfinder	[][]i32	array	[]i32		rows;cols	[[0i32]]	rows=1;cols=1	
+futhark.reduce	i32	scalar				0i32	-	
+futhark.reduce	i64	scalar			bound	0i64	bound=1	
+futhark.reduce	size	scalar			value			n:1
+futhark.reduce	[]i32	array	i32		len	[0i32]	len=1	
+futhark.scan	i32	scalar				0i32	-	
+futhark.scan	i64	scalar			bound	0i64	bound=1	
+futhark.scan	size	scalar			value			n:1
+futhark.scan	[]i32	array	i32		len	[0i32]	len=1	
+regex	Pattern	scalar				?_Pat	-	
+regex	CharClass	scalar						
+regex	Char	scalar				?_Char	-	
+regex	I	scalar			value	?_I	value=?	
+tsr.depth	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+tsr.order	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+tsr.order_depth	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+tsr.order_depth_windows	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+tsr.single	F	scalar			depth;order;fam;arm;ties	?	depth=0;order=1;fam=0;arm=1;ties=1	
+wgsl.gram	kernel	scalar						
+wgsl.gram	stmt	scalar				{}	-	
+wgsl.gram	u32	scalar			bound;uniform;owned;local_owned	0u	uniform=true;owned=false;local_owned=false	
+wgsl.gram	f32	scalar			uniform	0.0	uniform=true	
+wgsl.gram	bool	scalar			uniform	false	uniform=true	
+wgsl.gram	vecf	scalar			width;uniform	vec4<f32>(0.0)	width=4;uniform=true	
+wgsl.gram	count	scalar			value			
+wgsl.gram	grid	scalar						
+wgsl.gram	buf	scalar			len;access			

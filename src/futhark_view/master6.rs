@@ -1019,24 +1019,35 @@ impl View6 {
 
 macro_rules! m6 {
     ($p:literal) => {
-        ($p, include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/view.tsv")), include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/tables.tsv")))
+        ($p, include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/view.tsv")))
     };
 }
 
-/// Every committed master 6 view: (problem, the specification, and the table `view.py` wrote), under
-/// `kingdoms/futhark/sig/<problem>/m6/`.
-pub const COMMITTED6: [(&str, &str, &str); 7] = [m6!("a7"), m6!("histogram"), m6!("kmeans"), m6!("kmeans_i32"), m6!("pathfinder"), m6!("reduce"), m6!("scan")];
+/// Every committed master 6 view: (problem, the specification `sniff.py` wrote under `kingdoms/futhark/sig/<problem>/m6/`).
+/// Its rows are the kingdom `futhark.<problem>` of the master tables (`kingdoms/master/`, written by `view.py` through
+/// `write_rows.py`; [`committed_rows`]).
+pub const COMMITTED6: [(&str, &str); 7] = [m6!("a7"), m6!("histogram"), m6!("kmeans"), m6!("kmeans_i32"), m6!("pathfinder"), m6!("reduce"), m6!("scan")];
+
+/// The kingdom a problem's view is in the master tables: `futhark.<problem>`.
+pub fn master_kingdom(problem: &str) -> String {
+    format!("futhark.{problem}")
+}
+
+/// The committed rows of a problem's view, selected from the master tables, as the named text form.
+pub fn committed_rows(problem: &str) -> Result<String, String> {
+    crate::geneframe::master::view("futhark", problem)?.named_text()
+}
 
 /// The committed view of a problem, computed over the committed master 6.
 pub fn committed(problem: &str) -> Result<View6, String> {
-    let (_, spec, _) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
+    let (_, spec) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
     View6::load(&Master6::committed()?, spec)
 }
 
-/// The committed kingdom of a problem, loaded from its committed table (`tables.tsv`).
+/// The committed kingdom of a problem, loaded from its rows in the master tables.
 pub fn committed_kingdom(problem: &str) -> Result<Kingdom6, String> {
-    let (_, spec, tables) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
-    Kingdom6::load(problem, tables, &ViewSpec6::parse(spec)?)
+    let (_, spec) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
+    Kingdom6::load(problem, &committed_rows(problem)?, &ViewSpec6::parse(spec)?)
 }
 
 #[cfg(test)]

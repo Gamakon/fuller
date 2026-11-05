@@ -154,10 +154,38 @@ and what it costs: the host decoder reads the flows and the `must` guards, the c
 
 ### 3.3 Physical model: the configuration tables
 
-The physical model is what a kingdom fills: the TSV files of its master table and its views (for Futhark,
-`kingdoms/futhark/master/` and each problem's `view.tsv`), loaded into `KingdomTables` (`src/geneframe.rs`) and
-checked by the table check before any run. Nothing in it is read during evolution as it stands: the loader summarises
-it into the run-time model (3.5).
+The physical model is what a kingdom fills, and **every kingdom fills the ONE set of tables** under `kingdoms/master/`
+(K0, Andrew 2026-11-05: "all kingdoms exist in a single set of tables, with a master table having a list of kingdoms
+that we select to filter the rest of the data"):
+
+| file | columns | entity |
+|---|---|---|
+| `kingdoms.tsv` | name, parent, description, root, notes | the list of kingdoms and their variants (`tsr.depth` under `tsr`, `futhark.kmeans` under `futhark`): the master table |
+| `data_types.tsv` | kingdom, name, kind, members, result, properties, constant, constant_properties, size_names | DataType, with its carried properties, constant and size names as columns |
+| `symbols.tsv` | kingdom, name, alias, role, adapter, prelude | Symbol |
+| `spellings.tsv` | kingdom, symbol, form, template | Symbol's spellings (one a row: a template holds `;` and `=`) |
+| `arguments.tsv` | kingdom, symbol, position, direction, data_type, head | Argument |
+| `flows.tsv` | kingdom, symbol, position, direction, name, formula | Flow (`symbol` may be `entry`) |
+| `guards.tsv` | kingdom, symbol, order, strength, condition | Guard (`symbol` may be `entry`) |
+| `repairs.tsv` | kingdom, symbol, order, site, when, guard, template | a Guard's repairs, in order |
+| `entries.tsv` | kingdom, problem, parameter, data_type, properties, form_of, transform, transform_properties, transform_cost | Entry; the row `parameter = out` is the result |
+| `properties.tsv` | name, kind, element, values, root, meaning | the Property catalogue, shared by every kingdom (3.3.1), so no kingdom column |
+
+Every table but the catalogue carries a `kingdom` column; selecting a kingdom filters every table. A row two kingdoms
+share is written once per kingdom (a variant holds every row it needs): the simpler rule, and the one under which a
+kingdom's symbol ids are the order of its own rows. Within a kingdom the rows keep the order its generator wrote them
+in; across kingdoms the blocks are sorted by kingdom name. **The loader** (`src/geneframe/master.rs`):
+`geneframe::master::select("tsr.depth")` (or `view("futhark", "kmeans")`: the problem view is a variant, the second
+filter) filters every table, renders the rows in the named text form and hands that text to
+`KingdomTables::parse_named`, so the schema, the check and the decoder are untouched by where the rows are stored.
+**The writer** (`kingdoms/master/write_rows.py`): a generator produces the named text form as before and calls
+`write_kingdom` (replace its own kingdom's rows, keep every other kingdom's, re-sort the blocks) or `check_kingdom`;
+`named_of_rows` is the inverse, tested byte for byte against the Rust rendering for every kingdom. Export and import
+(one kingdom, a parent with its variants, or all) go through a self-contained JSON file; export-all then import into
+empty tables is byte-identical (`write_rows.py --selftest`, a cargo test). The old per-kingdom files
+(`kingdoms/futhark/sig/<problem>/m6/tables.tsv`, `kingdoms/tsr/<variant>/tables.tsv`, `kingdoms/properties.tsv`) are
+deleted, no compatibility path. The tables are loaded into `KingdomTables` and checked by the table check before any
+run. Nothing in it is read during evolution as it stands: the loader summarises it into the run-time model (3.5).
 
 The first version of these tables (`src/geneframe.rs`, `KingdomTables`; decoded by `src/typed_environment.rs`) was built for the Futhark kingdom first, and five things in it are
 Futhark's, not the frame's:

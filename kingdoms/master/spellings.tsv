@@ -1,0 +1,799 @@
+kingdom	symbol	form	template
+futhark.a7	map_rows@m.f32		map ({0}) ({1})
+futhark.a7	map2_rows@m.f32		map2 ({0}) ({1}) ({2})
+futhark.a7	transpose@m.f32		transpose ({0})
+futhark.a7	matmul@m.f32		matmul ({0}) ({1})
+futhark.a7	id@fn.arr_f32_arr_f32		\xs -> xs
+futhark.a7	add1@fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
+futhark.a7	scale2@fn.arr_f32_arr_f32		\xs -> map (*2.0) xs
+futhark.a7	id@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs
+futhark.a7	add1@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs
+futhark.a7	add@fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys
+futhark.a7	const@fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs
+futhark.a7	const@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs
+futhark.a7	fitrows@m.f32		fitrows {0} 0f32 ({1})
+futhark.a7	fitcols@m.f32		map (fit {0} 0f32) ({1})
+futhark.a7	=min		i64.min {0} {1}
+futhark.a7	=min	name	min_{0}_{1}
+futhark.a7	=max		i64.max {0} {1}
+futhark.a7	=max	name	max_{0}_{1}
+futhark.a7	=+		{0} + {1}
+futhark.a7	=+	name	sum_{0}_{1}
+futhark.a7	=*		{0} * {1}
+futhark.a7	=*	name	prod_{0}_{1}
+futhark.a7	=group		({0})
+futhark.a7	=group	name	{0}
+futhark.a7	=negative	name	m{0}
+futhark.histogram	add@i32		({0}) + ({1})
+futhark.histogram	sub@i32		({0}) - ({1})
+futhark.histogram	mul@i32		({0}) * ({1})
+futhark.histogram	min@i32		i32.min ({0}) ({1})
+futhark.histogram	max@i32		i32.max ({0}) ({1})
+futhark.histogram	neg@i32		-({0})
+futhark.histogram	abs@i32		i32.abs ({0})
+futhark.histogram	sel@i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.histogram	get@i32		({0})[({1})]
+futhark.histogram	sum@i32		i32.sum ({0})
+futhark.histogram	minimum@i32		i32.minimum ({0})
+futhark.histogram	maximum@i32		i32.maximum ({0})
+futhark.histogram	ival@i32		i32.i64 ({0})
+futhark.histogram	sval@i32		i32.i64 {0}
+futhark.histogram	mod@i32		({1}) % i32.i64 {0}
+futhark.histogram	const@i32	pool	0i32,1i32,2i32,-1i32,10i32
+futhark.histogram	prev@i64		i64.max 0 (({0}) - 1)
+futhark.histogram	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.histogram	clamp@i64		i64.max 0 (i64.min ({0} - 1) (i64.i32 ({1})))
+futhark.histogram	zero@i64		0i64
+futhark.histogram	last@i64		{0} - 1
+futhark.histogram	tab@a.i32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.histogram	replicate@a.i32		replicate {0} ({1})
+futhark.histogram	map2.add@a.i32		map2 (+) ({0}) ({1})
+futhark.histogram	map2.sub@a.i32		map2 (-) ({0}) ({1})
+futhark.histogram	map2.min@a.i32		map2 i32.min ({0}) ({1})
+futhark.histogram	map2.max@a.i32		map2 i32.max ({0}) ({1})
+futhark.histogram	scan.add@a.i32		scan (+) 0i32 (opaque ({0}))
+futhark.histogram	scan.min@a.i32		scan i32.min i32.highest (opaque ({0}))
+futhark.histogram	scan.max@a.i32		scan i32.max i32.lowest (opaque ({0}))
+futhark.histogram	hist.add@a.i32		hist (+) 0i32 {0} (map i64.i32 ({1})) ({2})
+futhark.histogram	hist.min@a.i32		hist i32.min i32.highest {0} (map i64.i32 ({1})) ({2})
+futhark.histogram	hist.max@a.i32		hist i32.max i32.lowest {0} (map i64.i32 ({1})) ({2})
+futhark.histogram	loop@i32		loop ({2.v0}: i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.histogram	loop@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.histogram	loop1@i32		loop ({2.v0}: i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.histogram	loop1@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.histogram	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.histogram	fit@a.i32		fit {0} 0i32 ({1})
+futhark.histogram	clampix@i64		clampix {0} ({1})
+futhark.histogram	=min		i64.min {0} {1}
+futhark.histogram	=min	name	min_{0}_{1}
+futhark.histogram	=max		i64.max {0} {1}
+futhark.histogram	=max	name	max_{0}_{1}
+futhark.histogram	=+		{0} + {1}
+futhark.histogram	=+	name	sum_{0}_{1}
+futhark.histogram	=*		{0} * {1}
+futhark.histogram	=*	name	prod_{0}_{1}
+futhark.histogram	=group		({0})
+futhark.histogram	=group	name	{0}
+futhark.histogram	=negative	name	m{0}
+futhark.kmeans	add@f32		({0}) + ({1})
+futhark.kmeans	sub@f32		({0}) - ({1})
+futhark.kmeans	mul@f32		({0}) * ({1})
+futhark.kmeans	min@f32		f32.min ({0}) ({1})
+futhark.kmeans	max@f32		f32.max ({0}) ({1})
+futhark.kmeans	neg@f32		-({0})
+futhark.kmeans	abs@f32		f32.abs ({0})
+futhark.kmeans	sel@f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans	get@f32		({0})[({1})]
+futhark.kmeans	sum@f32		f32.sum ({0})
+futhark.kmeans	minimum@f32		f32.minimum ({0})
+futhark.kmeans	maximum@f32		f32.maximum ({0})
+futhark.kmeans	ival@f32		f32.i64 ({0})
+futhark.kmeans	sval@f32		f32.i64 {0}
+futhark.kmeans	const@f32	pool	0f32,1f32,2f32,-1f32,0.5f32,10f32
+futhark.kmeans	prev@i64		i64.max 0 (({0}) - 1)
+futhark.kmeans	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.kmeans	zero@i64		0i64
+futhark.kmeans	last@i64		{0} - 1
+futhark.kmeans	tab@a.f32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.kmeans	replicate@a.f32		replicate {0} ({1})
+futhark.kmeans	map2.add@a.f32		map2 (+) ({0}) ({1})
+futhark.kmeans	map2.sub@a.f32		map2 (-) ({0}) ({1})
+futhark.kmeans	map2.min@a.f32		map2 f32.min ({0}) ({1})
+futhark.kmeans	map2.max@a.f32		map2 f32.max ({0}) ({1})
+futhark.kmeans	scan.add@a.f32		scan (+) 0f32 (opaque ({0}))
+futhark.kmeans	scan.min@a.f32		scan f32.min f32.highest (opaque ({0}))
+futhark.kmeans	scan.max@a.f32		scan f32.max f32.lowest (opaque ({0}))
+futhark.kmeans	row@a.f32		({0})[({1})]
+futhark.kmeans	loop@f32		loop ({2.v0}: f32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans	loop@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans	loop1@f32		loop ({2.v0}: f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans	loop1@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans	map_rows@m.f32		map ({0}) ({1})
+futhark.kmeans	map2_rows@m.f32		map2 ({0}) ({1}) ({2})
+futhark.kmeans	transpose@m.f32		transpose ({0})
+futhark.kmeans	matmul@m.f32		matmul ({0}) ({1})
+futhark.kmeans	id@fn.arr_f32_arr_f32		\xs -> xs
+futhark.kmeans	add1@fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
+futhark.kmeans	scale2@fn.arr_f32_arr_f32		\xs -> map (*2.0) xs
+futhark.kmeans	id@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs
+futhark.kmeans	add1@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs
+futhark.kmeans	add@fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys
+futhark.kmeans	const@fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs
+futhark.kmeans	const@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs
+futhark.kmeans	clamp@i64		let x = ({1}) in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
+futhark.kmeans	hist.add@a.f32		hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans	hist.min@a.f32		hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans	hist.max@a.f32		hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans	div@f32		({0}) / ({1})
+futhark.kmeans	sqrt@f32		f32.sqrt ({0})
+futhark.kmeans	map2.mul@a.f32		map2 (*) ({0}) ({1})
+futhark.kmeans	tabrows@m.f32		tabulate {0} (\{2.v0} -> ({2}))
+futhark.kmeans	histrows.add@m.f32		hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({2})) ({3})
+futhark.kmeans	rowdiv@m.f32		map2 (\r s -> map (/ s) r) ({0}) ({1})
+futhark.kmeans	pair@f32.f32		(({0}), ({1}))
+futhark.kmeans	fst.f32.f32@f32		({0}).0
+futhark.kmeans	snd.f32.f32@f32		({0}).1
+futhark.kmeans	zero@f32.f32		(0f32, 0f32)
+futhark.kmeans	psel@f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans	loop@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for {2.v2} < {0} do ({2})
+futhark.kmeans	loop1@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+futhark.kmeans	triple@f32.f32.f32		(({0}), ({1}), ({2}))
+futhark.kmeans	fst.f32.f32.f32@f32		({0}).0
+futhark.kmeans	snd.f32.f32.f32@f32		({0}).1
+futhark.kmeans	thd.f32.f32.f32@f32		({0}).2
+futhark.kmeans	zero@f32.f32.f32		(0f32, 0f32, 0f32)
+futhark.kmeans	psel@f32.f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans	loop@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans	loop1@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans	let.a.f32@f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@i64		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@a.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@m.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@f32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@f32.f32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.kmeans	fit@a.f32		fit {0} 0f32 ({1})
+futhark.kmeans	fitrows@m.f32		fitrows {0} 0f32 ({1})
+futhark.kmeans	fitcols@m.f32		map (fit {0} 0f32) ({1})
+futhark.kmeans	clampix@i64		clampix {0} ({1})
+futhark.kmeans	=min		i64.min {0} {1}
+futhark.kmeans	=min	name	min_{0}_{1}
+futhark.kmeans	=max		i64.max {0} {1}
+futhark.kmeans	=max	name	max_{0}_{1}
+futhark.kmeans	=+		{0} + {1}
+futhark.kmeans	=+	name	sum_{0}_{1}
+futhark.kmeans	=*		{0} * {1}
+futhark.kmeans	=*	name	prod_{0}_{1}
+futhark.kmeans	=group		({0})
+futhark.kmeans	=group	name	{0}
+futhark.kmeans	=negative	name	m{0}
+futhark.kmeans_i32	add@f32		({0}) + ({1})
+futhark.kmeans_i32	add@i32		({0}) + ({1})
+futhark.kmeans_i32	sub@f32		({0}) - ({1})
+futhark.kmeans_i32	sub@i32		({0}) - ({1})
+futhark.kmeans_i32	mul@f32		({0}) * ({1})
+futhark.kmeans_i32	mul@i32		({0}) * ({1})
+futhark.kmeans_i32	min@f32		f32.min ({0}) ({1})
+futhark.kmeans_i32	min@i32		i32.min ({0}) ({1})
+futhark.kmeans_i32	max@f32		f32.max ({0}) ({1})
+futhark.kmeans_i32	max@i32		i32.max ({0}) ({1})
+futhark.kmeans_i32	neg@f32		-({0})
+futhark.kmeans_i32	neg@i32		-({0})
+futhark.kmeans_i32	abs@f32		f32.abs ({0})
+futhark.kmeans_i32	abs@i32		i32.abs ({0})
+futhark.kmeans_i32	sel@f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	sel@i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	get@f32		({0})[({1})]
+futhark.kmeans_i32	get@i32		({0})[({1})]
+futhark.kmeans_i32	sum@f32		f32.sum ({0})
+futhark.kmeans_i32	sum@i32		i32.sum ({0})
+futhark.kmeans_i32	minimum@f32		f32.minimum ({0})
+futhark.kmeans_i32	minimum@i32		i32.minimum ({0})
+futhark.kmeans_i32	maximum@f32		f32.maximum ({0})
+futhark.kmeans_i32	maximum@i32		i32.maximum ({0})
+futhark.kmeans_i32	ival@f32		f32.i64 ({0})
+futhark.kmeans_i32	ival@i32		i32.i64 ({0})
+futhark.kmeans_i32	sval@f32		f32.i64 {0}
+futhark.kmeans_i32	sval@i32		i32.i64 {0}
+futhark.kmeans_i32	mod@i32		({1}) % i32.i64 {0}
+futhark.kmeans_i32	const@f32	pool	0f32,1f32,2f32,-1f32,0.5f32,10f32
+futhark.kmeans_i32	const@i32	pool	0i32,1i32,2i32,-1i32,10i32
+futhark.kmeans_i32	prev@i64		i64.max 0 (({0}) - 1)
+futhark.kmeans_i32	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.kmeans_i32	clamp.i32@i64		i64.max 0 (i64.min ({0} - 1) (i64.i32 ({1})))
+futhark.kmeans_i32	zero@i64		0i64
+futhark.kmeans_i32	last@i64		{0} - 1
+futhark.kmeans_i32	tab@a.f32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.kmeans_i32	tab@a.i32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.kmeans_i32	replicate@a.f32		replicate {0} ({1})
+futhark.kmeans_i32	replicate@a.i32		replicate {0} ({1})
+futhark.kmeans_i32	map2.add@a.f32		map2 (+) ({0}) ({1})
+futhark.kmeans_i32	map2.add@a.i32		map2 (+) ({0}) ({1})
+futhark.kmeans_i32	map2.sub@a.f32		map2 (-) ({0}) ({1})
+futhark.kmeans_i32	map2.sub@a.i32		map2 (-) ({0}) ({1})
+futhark.kmeans_i32	map2.min@a.f32		map2 f32.min ({0}) ({1})
+futhark.kmeans_i32	map2.min@a.i32		map2 i32.min ({0}) ({1})
+futhark.kmeans_i32	map2.max@a.f32		map2 f32.max ({0}) ({1})
+futhark.kmeans_i32	map2.max@a.i32		map2 i32.max ({0}) ({1})
+futhark.kmeans_i32	scan.add@a.f32		scan (+) 0f32 (opaque ({0}))
+futhark.kmeans_i32	scan.add@a.i32		scan (+) 0i32 (opaque ({0}))
+futhark.kmeans_i32	scan.min@a.f32		scan f32.min f32.highest (opaque ({0}))
+futhark.kmeans_i32	scan.min@a.i32		scan i32.min i32.highest (opaque ({0}))
+futhark.kmeans_i32	scan.max@a.f32		scan f32.max f32.lowest (opaque ({0}))
+futhark.kmeans_i32	scan.max@a.i32		scan i32.max i32.lowest (opaque ({0}))
+futhark.kmeans_i32	hist.add@a.i32		hist (+) 0i32 {0} (map i64.i32 ({1})) ({2})
+futhark.kmeans_i32	hist.min@a.i32		hist i32.min i32.highest {0} (map i64.i32 ({1})) ({2})
+futhark.kmeans_i32	hist.max@a.i32		hist i32.max i32.lowest {0} (map i64.i32 ({1})) ({2})
+futhark.kmeans_i32	row@a.f32		({0})[({1})]
+futhark.kmeans_i32	row@a.i32		({0})[({1})]
+futhark.kmeans_i32	loop@f32		loop ({2.v0}: f32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans_i32	loop@i32		loop ({2.v0}: i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans_i32	loop@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans_i32	loop@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.kmeans_i32	loop1@f32		loop ({2.v0}: f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32		loop ({2.v0}: i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans_i32	loop1@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans_i32	loop1@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.kmeans_i32	map_rows@m.f32		map ({0}) ({1})
+futhark.kmeans_i32	map2_rows@m.f32		map2 ({0}) ({1}) ({2})
+futhark.kmeans_i32	transpose@m.f32		transpose ({0})
+futhark.kmeans_i32	matmul@m.f32		matmul ({0}) ({1})
+futhark.kmeans_i32	id@fn.arr_f32_arr_f32		\xs -> xs
+futhark.kmeans_i32	add1@fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
+futhark.kmeans_i32	scale2@fn.arr_f32_arr_f32		\xs -> map (*2.0) xs
+futhark.kmeans_i32	id@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs
+futhark.kmeans_i32	add1@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs
+futhark.kmeans_i32	add@fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys
+futhark.kmeans_i32	const@fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs
+futhark.kmeans_i32	const@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs
+futhark.kmeans_i32	clamp.f32@i64		let x = ({1}) in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
+futhark.kmeans_i32	hist.add@a.f32		hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans_i32	hist.min@a.f32		hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans_i32	hist.max@a.f32		hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+futhark.kmeans_i32	div@f32		({0}) / ({1})
+futhark.kmeans_i32	sqrt@f32		f32.sqrt ({0})
+futhark.kmeans_i32	map2.mul@a.f32		map2 (*) ({0}) ({1})
+futhark.kmeans_i32	map2.mul@a.i32		map2 (*) ({0}) ({1})
+futhark.kmeans_i32	tabrows@m.f32		tabulate {0} (\{2.v0} -> ({2}))
+futhark.kmeans_i32	tabrows@m.i32		tabulate {0} (\{2.v0} -> ({2}))
+futhark.kmeans_i32	histrows.add@m.i32		hist (map2 (+)) (replicate {1} 0i32) {0} (map i64.i32 ({2})) ({3})
+futhark.kmeans_i32	histrows.add@m.f32		hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({2})) ({3})
+futhark.kmeans_i32	rowdiv@m.f32		map2 (\r s -> map (/ s) r) ({0}) ({1})
+futhark.kmeans_i32	pair@f32.f32		(({0}), ({1}))
+futhark.kmeans_i32	pair@f32.i32		(({0}), ({1}))
+futhark.kmeans_i32	pair@i32.f32		(({0}), ({1}))
+futhark.kmeans_i32	pair@i32.i32		(({0}), ({1}))
+futhark.kmeans_i32	fst.f32.f32@f32		({0}).0
+futhark.kmeans_i32	fst.f32.i32@f32		({0}).0
+futhark.kmeans_i32	fst.i32.f32@i32		({0}).0
+futhark.kmeans_i32	fst.i32.i32@i32		({0}).0
+futhark.kmeans_i32	snd.f32.f32@f32		({0}).1
+futhark.kmeans_i32	snd.f32.i32@i32		({0}).1
+futhark.kmeans_i32	snd.i32.f32@f32		({0}).1
+futhark.kmeans_i32	snd.i32.i32@i32		({0}).1
+futhark.kmeans_i32	zero@f32.f32		(0f32, 0f32)
+futhark.kmeans_i32	zero@f32.i32		(0f32, 0i32)
+futhark.kmeans_i32	zero@i32.f32		(0i32, 0f32)
+futhark.kmeans_i32	zero@i32.i32		(0i32, 0i32)
+futhark.kmeans_i32	psel.f32@f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@f32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	loop@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for {2.v2} < {0} do ({2})
+futhark.kmeans_i32	loop@f32.i32		loop (({2.v0}, {2.v1}): (f32, i32)) = ({1}) for {2.v2} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.f32		loop (({2.v0}, {2.v1}): (i32, f32)) = ({1}) for {2.v2} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.i32		loop (({2.v0}, {2.v1}): (i32, i32)) = ({1}) for {2.v2} < {0} do ({2})
+futhark.kmeans_i32	loop1@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+futhark.kmeans_i32	loop1@f32.i32		loop (({2.v0}, {2.v1}): (f32, i32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.f32		loop (({2.v0}, {2.v1}): (i32, f32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.i32		loop (({2.v0}, {2.v1}): (i32, i32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+futhark.kmeans_i32	cvt.i32@f32		f32.i32 ({0})
+futhark.kmeans_i32	cvt.f32@i32		let x = ({0}) in if f32.isnan x then 0i32 else i32.f32 (f32.max (-2147483648f32) (f32.min 2147483520f32 x))
+futhark.kmeans_i32	triple@f32.f32.f32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@f32.f32.i32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@f32.i32.f32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@f32.i32.i32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@i32.f32.f32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@i32.f32.i32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@i32.i32.f32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	triple@i32.i32.i32		(({0}), ({1}), ({2}))
+futhark.kmeans_i32	fst.f32.f32.f32@f32		({0}).0
+futhark.kmeans_i32	fst.f32.f32.i32@f32		({0}).0
+futhark.kmeans_i32	fst.f32.i32.f32@f32		({0}).0
+futhark.kmeans_i32	fst.f32.i32.i32@f32		({0}).0
+futhark.kmeans_i32	fst.i32.f32.f32@i32		({0}).0
+futhark.kmeans_i32	fst.i32.f32.i32@i32		({0}).0
+futhark.kmeans_i32	fst.i32.i32.f32@i32		({0}).0
+futhark.kmeans_i32	fst.i32.i32.i32@i32		({0}).0
+futhark.kmeans_i32	snd.f32.f32.f32@f32		({0}).1
+futhark.kmeans_i32	snd.f32.f32.i32@f32		({0}).1
+futhark.kmeans_i32	snd.f32.i32.f32@i32		({0}).1
+futhark.kmeans_i32	snd.f32.i32.i32@i32		({0}).1
+futhark.kmeans_i32	snd.i32.f32.f32@f32		({0}).1
+futhark.kmeans_i32	snd.i32.f32.i32@f32		({0}).1
+futhark.kmeans_i32	snd.i32.i32.f32@i32		({0}).1
+futhark.kmeans_i32	snd.i32.i32.i32@i32		({0}).1
+futhark.kmeans_i32	thd.f32.f32.f32@f32		({0}).2
+futhark.kmeans_i32	thd.f32.f32.i32@i32		({0}).2
+futhark.kmeans_i32	thd.f32.i32.f32@f32		({0}).2
+futhark.kmeans_i32	thd.f32.i32.i32@i32		({0}).2
+futhark.kmeans_i32	thd.i32.f32.f32@f32		({0}).2
+futhark.kmeans_i32	thd.i32.f32.i32@i32		({0}).2
+futhark.kmeans_i32	thd.i32.i32.f32@f32		({0}).2
+futhark.kmeans_i32	thd.i32.i32.i32@i32		({0}).2
+futhark.kmeans_i32	zero@f32.f32.f32		(0f32, 0f32, 0f32)
+futhark.kmeans_i32	zero@f32.f32.i32		(0f32, 0f32, 0i32)
+futhark.kmeans_i32	zero@f32.i32.f32		(0f32, 0i32, 0f32)
+futhark.kmeans_i32	zero@f32.i32.i32		(0f32, 0i32, 0i32)
+futhark.kmeans_i32	zero@i32.f32.f32		(0i32, 0f32, 0f32)
+futhark.kmeans_i32	zero@i32.f32.i32		(0i32, 0f32, 0i32)
+futhark.kmeans_i32	zero@i32.i32.f32		(0i32, 0i32, 0f32)
+futhark.kmeans_i32	zero@i32.i32.i32		(0i32, 0i32, 0i32)
+futhark.kmeans_i32	psel.f32@f32.f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@f32.f32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@f32.i32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@f32.i32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.f32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.i32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.f32@i32.i32.i32		if ({0}) < 0f32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.f32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.f32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.i32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@f32.i32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.f32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.f32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.i32.f32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	psel.i32@i32.i32.i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.kmeans_i32	loop@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@f32.f32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, i32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@f32.i32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, i32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@f32.i32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, i32, i32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, f32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.f32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, f32, i32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.i32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, i32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop@i32.i32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, i32, i32)) = ({1}) for {2.v3} < {0} do ({2})
+futhark.kmeans_i32	loop1@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@f32.f32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, i32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@f32.i32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, i32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@f32.i32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, i32, i32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, f32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.f32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, f32, i32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.i32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, i32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	loop1@i32.i32.i32		loop (({2.v0}, {2.v1}, {2.v2}): (i32, i32, i32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+futhark.kmeans_i32	let.a.i32@f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i64		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@a.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@a.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@m.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@m.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.f32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.f32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.i32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@f32.i32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.f32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.f32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.i32.f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@i32.i32.i32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+futhark.kmeans_i32	zero@m.i32		[[0i32]]
+futhark.kmeans_i32	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.kmeans_i32	fit@a.f32		fit {0} 0f32 ({1})
+futhark.kmeans_i32	fit@a.i32		fit {0} 0i32 ({1})
+futhark.kmeans_i32	fitrows@m.f32		fitrows {0} 0f32 ({1})
+futhark.kmeans_i32	fitrows@m.i32		fitrows {0} 0i32 ({1})
+futhark.kmeans_i32	fitcols@m.f32		map (fit {0} 0f32) ({1})
+futhark.kmeans_i32	fitcols@m.i32		map (fit {0} 0i32) ({1})
+futhark.kmeans_i32	clampix@i64		clampix {0} ({1})
+futhark.kmeans_i32	=min		i64.min {0} {1}
+futhark.kmeans_i32	=min	name	min_{0}_{1}
+futhark.kmeans_i32	=max		i64.max {0} {1}
+futhark.kmeans_i32	=max	name	max_{0}_{1}
+futhark.kmeans_i32	=+		{0} + {1}
+futhark.kmeans_i32	=+	name	sum_{0}_{1}
+futhark.kmeans_i32	=*		{0} * {1}
+futhark.kmeans_i32	=*	name	prod_{0}_{1}
+futhark.kmeans_i32	=group		({0})
+futhark.kmeans_i32	=group	name	{0}
+futhark.kmeans_i32	=negative	name	m{0}
+futhark.pathfinder	add@i32		({0}) + ({1})
+futhark.pathfinder	sub@i32		({0}) - ({1})
+futhark.pathfinder	mul@i32		({0}) * ({1})
+futhark.pathfinder	min@i32		i32.min ({0}) ({1})
+futhark.pathfinder	max@i32		i32.max ({0}) ({1})
+futhark.pathfinder	neg@i32		-({0})
+futhark.pathfinder	abs@i32		i32.abs ({0})
+futhark.pathfinder	sel@i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.pathfinder	get@i32		({0})[({1})]
+futhark.pathfinder	sum@i32		i32.sum ({0})
+futhark.pathfinder	minimum@i32		i32.minimum ({0})
+futhark.pathfinder	maximum@i32		i32.maximum ({0})
+futhark.pathfinder	ival@i32		i32.i64 ({0})
+futhark.pathfinder	sval@i32		i32.i64 {0}
+futhark.pathfinder	mod@i32		({1}) % i32.i64 {0}
+futhark.pathfinder	const@i32	pool	0i32,1i32,2i32,-1i32,10i32
+futhark.pathfinder	prev@i64		i64.max 0 (({0}) - 1)
+futhark.pathfinder	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.pathfinder	clamp@i64		i64.max 0 (i64.min ({0} - 1) (i64.i32 ({1})))
+futhark.pathfinder	zero@i64		0i64
+futhark.pathfinder	last@i64		{0} - 1
+futhark.pathfinder	tab@a.i32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.pathfinder	replicate@a.i32		replicate {0} ({1})
+futhark.pathfinder	map2.add@a.i32		map2 (+) ({0}) ({1})
+futhark.pathfinder	map2.sub@a.i32		map2 (-) ({0}) ({1})
+futhark.pathfinder	map2.min@a.i32		map2 i32.min ({0}) ({1})
+futhark.pathfinder	map2.max@a.i32		map2 i32.max ({0}) ({1})
+futhark.pathfinder	scan.add@a.i32		scan (+) 0i32 (opaque ({0}))
+futhark.pathfinder	scan.min@a.i32		scan i32.min i32.highest (opaque ({0}))
+futhark.pathfinder	scan.max@a.i32		scan i32.max i32.lowest (opaque ({0}))
+futhark.pathfinder	hist.add@a.i32		hist (+) 0i32 {0} (map i64.i32 ({1})) ({2})
+futhark.pathfinder	hist.min@a.i32		hist i32.min i32.highest {0} (map i64.i32 ({1})) ({2})
+futhark.pathfinder	hist.max@a.i32		hist i32.max i32.lowest {0} (map i64.i32 ({1})) ({2})
+futhark.pathfinder	row@a.i32		({0})[({1})]
+futhark.pathfinder	loop@i32		loop ({2.v0}: i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.pathfinder	loop@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.pathfinder	loop1@i32		loop ({2.v0}: i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.pathfinder	loop1@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.pathfinder	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.pathfinder	fit@a.i32		fit {0} 0i32 ({1})
+futhark.pathfinder	fitrows@m.i32		fitrows {0} 0i32 ({1})
+futhark.pathfinder	fitcols@m.i32		map (fit {0} 0i32) ({1})
+futhark.pathfinder	clampix@i64		clampix {0} ({1})
+futhark.pathfinder	=min		i64.min {0} {1}
+futhark.pathfinder	=min	name	min_{0}_{1}
+futhark.pathfinder	=max		i64.max {0} {1}
+futhark.pathfinder	=max	name	max_{0}_{1}
+futhark.pathfinder	=+		{0} + {1}
+futhark.pathfinder	=+	name	sum_{0}_{1}
+futhark.pathfinder	=*		{0} * {1}
+futhark.pathfinder	=*	name	prod_{0}_{1}
+futhark.pathfinder	=group		({0})
+futhark.pathfinder	=group	name	{0}
+futhark.pathfinder	=negative	name	m{0}
+futhark.reduce	add@i32		({0}) + ({1})
+futhark.reduce	sub@i32		({0}) - ({1})
+futhark.reduce	mul@i32		({0}) * ({1})
+futhark.reduce	min@i32		i32.min ({0}) ({1})
+futhark.reduce	max@i32		i32.max ({0}) ({1})
+futhark.reduce	neg@i32		-({0})
+futhark.reduce	abs@i32		i32.abs ({0})
+futhark.reduce	sel@i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.reduce	get@i32		({0})[({1})]
+futhark.reduce	sum@i32		i32.sum ({0})
+futhark.reduce	minimum@i32		i32.minimum ({0})
+futhark.reduce	maximum@i32		i32.maximum ({0})
+futhark.reduce	ival@i32		i32.i64 ({0})
+futhark.reduce	sval@i32		i32.i64 {0}
+futhark.reduce	mod@i32		({1}) % i32.i64 {0}
+futhark.reduce	const@i32	pool	0i32,1i32,2i32,-1i32,10i32
+futhark.reduce	prev@i64		i64.max 0 (({0}) - 1)
+futhark.reduce	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.reduce	clamp@i64		i64.max 0 (i64.min ({0} - 1) (i64.i32 ({1})))
+futhark.reduce	zero@i64		0i64
+futhark.reduce	last@i64		{0} - 1
+futhark.reduce	tab@a.i32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.reduce	replicate@a.i32		replicate {0} ({1})
+futhark.reduce	map2.add@a.i32		map2 (+) ({0}) ({1})
+futhark.reduce	map2.sub@a.i32		map2 (-) ({0}) ({1})
+futhark.reduce	map2.min@a.i32		map2 i32.min ({0}) ({1})
+futhark.reduce	map2.max@a.i32		map2 i32.max ({0}) ({1})
+futhark.reduce	scan.add@a.i32		scan (+) 0i32 (opaque ({0}))
+futhark.reduce	scan.min@a.i32		scan i32.min i32.highest (opaque ({0}))
+futhark.reduce	scan.max@a.i32		scan i32.max i32.lowest (opaque ({0}))
+futhark.reduce	hist.add@a.i32		hist (+) 0i32 {0} (map i64.i32 ({1})) ({2})
+futhark.reduce	hist.min@a.i32		hist i32.min i32.highest {0} (map i64.i32 ({1})) ({2})
+futhark.reduce	hist.max@a.i32		hist i32.max i32.lowest {0} (map i64.i32 ({1})) ({2})
+futhark.reduce	loop@i32		loop ({2.v0}: i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.reduce	loop@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.reduce	loop1@i32		loop ({2.v0}: i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.reduce	loop1@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.reduce	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.reduce	fit@a.i32		fit {0} 0i32 ({1})
+futhark.reduce	clampix@i64		clampix {0} ({1})
+futhark.reduce	=min		i64.min {0} {1}
+futhark.reduce	=min	name	min_{0}_{1}
+futhark.reduce	=max		i64.max {0} {1}
+futhark.reduce	=max	name	max_{0}_{1}
+futhark.reduce	=+		{0} + {1}
+futhark.reduce	=+	name	sum_{0}_{1}
+futhark.reduce	=*		{0} * {1}
+futhark.reduce	=*	name	prod_{0}_{1}
+futhark.reduce	=group		({0})
+futhark.reduce	=group	name	{0}
+futhark.reduce	=negative	name	m{0}
+futhark.scan	add@i32		({0}) + ({1})
+futhark.scan	sub@i32		({0}) - ({1})
+futhark.scan	mul@i32		({0}) * ({1})
+futhark.scan	min@i32		i32.min ({0}) ({1})
+futhark.scan	max@i32		i32.max ({0}) ({1})
+futhark.scan	neg@i32		-({0})
+futhark.scan	abs@i32		i32.abs ({0})
+futhark.scan	sel@i32		if ({0}) < 0i32 then ({1}) else ({2})
+futhark.scan	get@i32		({0})[({1})]
+futhark.scan	sum@i32		i32.sum ({0})
+futhark.scan	minimum@i32		i32.minimum ({0})
+futhark.scan	maximum@i32		i32.maximum ({0})
+futhark.scan	ival@i32		i32.i64 ({0})
+futhark.scan	sval@i32		i32.i64 {0}
+futhark.scan	mod@i32		({1}) % i32.i64 {0}
+futhark.scan	const@i32	pool	0i32,1i32,2i32,-1i32,10i32
+futhark.scan	prev@i64		i64.max 0 (({0}) - 1)
+futhark.scan	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+futhark.scan	clamp@i64		i64.max 0 (i64.min ({0} - 1) (i64.i32 ({1})))
+futhark.scan	zero@i64		0i64
+futhark.scan	last@i64		{0} - 1
+futhark.scan	tab@a.i32		tabulate {0} (\{1.v0} -> ({1}))
+futhark.scan	replicate@a.i32		replicate {0} ({1})
+futhark.scan	map2.add@a.i32		map2 (+) ({0}) ({1})
+futhark.scan	map2.sub@a.i32		map2 (-) ({0}) ({1})
+futhark.scan	map2.min@a.i32		map2 i32.min ({0}) ({1})
+futhark.scan	map2.max@a.i32		map2 i32.max ({0}) ({1})
+futhark.scan	scan.add@a.i32		scan (+) 0i32 (opaque ({0}))
+futhark.scan	scan.min@a.i32		scan i32.min i32.highest (opaque ({0}))
+futhark.scan	scan.max@a.i32		scan i32.max i32.lowest (opaque ({0}))
+futhark.scan	hist.add@a.i32		hist (+) 0i32 {0} (map i64.i32 ({1})) ({2})
+futhark.scan	hist.min@a.i32		hist i32.min i32.highest {0} (map i64.i32 ({1})) ({2})
+futhark.scan	hist.max@a.i32		hist i32.max i32.lowest {0} (map i64.i32 ({1})) ({2})
+futhark.scan	loop@i32		loop ({2.v0}: i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.scan	loop@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for {2.v1} < {0} do ({2})
+futhark.scan	loop1@i32		loop ({2.v0}: i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.scan	loop1@a.i32		loop ({2.v0}: [{=in1.len}]i32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+futhark.scan	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+futhark.scan	fit@a.i32		fit {0} 0i32 ({1})
+futhark.scan	clampix@i64		clampix {0} ({1})
+futhark.scan	=min		i64.min {0} {1}
+futhark.scan	=min	name	min_{0}_{1}
+futhark.scan	=max		i64.max {0} {1}
+futhark.scan	=max	name	max_{0}_{1}
+futhark.scan	=+		{0} + {1}
+futhark.scan	=+	name	sum_{0}_{1}
+futhark.scan	=*		{0} * {1}
+futhark.scan	=*	name	prod_{0}_{1}
+futhark.scan	=group		({0})
+futhark.scan	=group	name	{0}
+futhark.scan	=negative	name	m{0}
+regex	regex_dot		.
+regex	regex_anchor_start		^
+regex	regex_anchor_end		$
+regex	regex_empty		
+regex	regex_cc_digit		\d
+regex	regex_cc_word		\w
+regex	regex_cc_space		\s
+regex	regex_star		(?:{0})*
+regex	regex_plus		(?:{0})+
+regex	regex_opt		(?:{0})?
+regex	regex_concat		{0}{1}
+regex	regex_alt		(?:{0}|{1})
+regex	regex_rep_n		(?:{0}){{{=in1.value}}}
+regex	regex_rep_upto		(?:{0}){{0,{=in1.value}}}
+regex	regex_rep_range		(?:{0}){{{=in1.value},{=in2.value}}}
+regex	regex_class_of		[{0}]
+regex	regex_lit		{0}
+regex	regex_cc_range		{0}-{1}
+regex	regex_cc_union		{0}{1}
+regex	regex_cc_negate		^{0}
+tsr.depth	add		({0} + {1})
+tsr.depth	sub		({0} - {1})
+tsr.depth	mul		({0} * {1})
+tsr.depth	pdiv		pdiv({0}, {1})
+tsr.depth	sin		sin({0})
+tsr.depth	cos		cos({0})
+tsr.depth	tanh		tanh({0})
+tsr.depth	psqrt		psqrt({0})
+tsr.depth	plog		plog({0})
+tsr.depth	pexp		pexp({0})
+tsr.depth	neg		neg({0})
+tsr.depth	abs		abs({0})
+tsr.depth	pow2		pow2({0})
+tsr.depth	pow3		pow3({0})
+tsr.depth	pinv		pinv({0})
+tsr.depth	tan		tan({0})
+tsr.depth	pasin		pasin({0})
+tsr.depth	pacos		pacos({0})
+tsr.depth	x0		x0
+tsr.depth	x1		x1
+tsr.depth	x2		x2
+tsr.depth	x3		x3
+tsr.depth	x4		x4
+tsr.depth	x5		x5
+tsr.depth	x6		x6
+tsr.depth	x7		x7
+tsr.depth	x8		x8
+tsr.depth	x9		x9
+tsr.order	add		({0} + {1})
+tsr.order	sub		({0} - {1})
+tsr.order	mul		({0} * {1})
+tsr.order	pdiv		pdiv({0}, {1})
+tsr.order	sin		sin({0})
+tsr.order	cos		cos({0})
+tsr.order	tanh		tanh({0})
+tsr.order	psqrt		psqrt({0})
+tsr.order	plog		plog({0})
+tsr.order	pexp		pexp({0})
+tsr.order	neg		neg({0})
+tsr.order	abs		abs({0})
+tsr.order	pow2		pow2({0})
+tsr.order	pow3		pow3({0})
+tsr.order	pinv		pinv({0})
+tsr.order	tan		tan({0})
+tsr.order	pasin		pasin({0})
+tsr.order	pacos		pacos({0})
+tsr.order	x0		x0
+tsr.order	x1		x1
+tsr.order	x2		x2
+tsr.order	x3		x3
+tsr.order	x4		x4
+tsr.order	x5		x5
+tsr.order	x6		x6
+tsr.order	x7		x7
+tsr.order	x8		x8
+tsr.order	x9		x9
+tsr.order_depth	add		({0} + {1})
+tsr.order_depth	sub		({0} - {1})
+tsr.order_depth	mul		({0} * {1})
+tsr.order_depth	pdiv		pdiv({0}, {1})
+tsr.order_depth	sin		sin({0})
+tsr.order_depth	cos		cos({0})
+tsr.order_depth	tanh		tanh({0})
+tsr.order_depth	psqrt		psqrt({0})
+tsr.order_depth	plog		plog({0})
+tsr.order_depth	pexp		pexp({0})
+tsr.order_depth	neg		neg({0})
+tsr.order_depth	abs		abs({0})
+tsr.order_depth	pow2		pow2({0})
+tsr.order_depth	pow3		pow3({0})
+tsr.order_depth	pinv		pinv({0})
+tsr.order_depth	tan		tan({0})
+tsr.order_depth	pasin		pasin({0})
+tsr.order_depth	pacos		pacos({0})
+tsr.order_depth	x0		x0
+tsr.order_depth	x1		x1
+tsr.order_depth	x2		x2
+tsr.order_depth	x3		x3
+tsr.order_depth	x4		x4
+tsr.order_depth	x5		x5
+tsr.order_depth	x6		x6
+tsr.order_depth	x7		x7
+tsr.order_depth	x8		x8
+tsr.order_depth	x9		x9
+tsr.order_depth_windows	add		({0} + {1})
+tsr.order_depth_windows	sub		({0} - {1})
+tsr.order_depth_windows	mul		({0} * {1})
+tsr.order_depth_windows	pdiv		pdiv({0}, {1})
+tsr.order_depth_windows	sin		sin({0})
+tsr.order_depth_windows	cos		cos({0})
+tsr.order_depth_windows	tanh		tanh({0})
+tsr.order_depth_windows	psqrt		psqrt({0})
+tsr.order_depth_windows	plog		plog({0})
+tsr.order_depth_windows	pexp		pexp({0})
+tsr.order_depth_windows	neg		neg({0})
+tsr.order_depth_windows	abs		abs({0})
+tsr.order_depth_windows	pow2		pow2({0})
+tsr.order_depth_windows	pow3		pow3({0})
+tsr.order_depth_windows	pinv		pinv({0})
+tsr.order_depth_windows	tan		tan({0})
+tsr.order_depth_windows	pasin		pasin({0})
+tsr.order_depth_windows	pacos		pacos({0})
+tsr.order_depth_windows	x0		x0
+tsr.order_depth_windows	x1		x1
+tsr.order_depth_windows	x2		x2
+tsr.order_depth_windows	x3		x3
+tsr.order_depth_windows	x4		x4
+tsr.order_depth_windows	x5		x5
+tsr.order_depth_windows	x6		x6
+tsr.order_depth_windows	x7		x7
+tsr.order_depth_windows	x8		x8
+tsr.order_depth_windows	x9		x9
+tsr.single	add		({0} + {1})
+tsr.single	sub		({0} - {1})
+tsr.single	mul		({0} * {1})
+tsr.single	pdiv		pdiv({0}, {1})
+tsr.single	sin		sin({0})
+tsr.single	cos		cos({0})
+tsr.single	tanh		tanh({0})
+tsr.single	psqrt		psqrt({0})
+tsr.single	plog		plog({0})
+tsr.single	pexp		pexp({0})
+tsr.single	neg		neg({0})
+tsr.single	abs		abs({0})
+tsr.single	pow2		pow2({0})
+tsr.single	pow3		pow3({0})
+tsr.single	pinv		pinv({0})
+tsr.single	tan		tan({0})
+tsr.single	pasin		pasin({0})
+tsr.single	pacos		pacos({0})
+tsr.single	x0		x0
+tsr.single	x1		x1
+tsr.single	x2		x2
+tsr.single	x3		x3
+tsr.single	x4		x4
+tsr.single	x5		x5
+tsr.single	x6		x6
+tsr.single	x7		x7
+tsr.single	x8		x8
+tsr.single	x9		x9
+wgsl.gram	main		{0} @compute @workgroup_size(WG_X, WG_Y, 1) fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{ let gid_x: u32 = gid.x; let gid_y: u32 = gid.y; let lid_x: u32 = lid.x; let lid_y: u32 = lid.y; let wid_x: u32 = wid.x; let wid_y: u32 = wid.y; let lin: u32 = gid.y * (nwg.x * WG_X) + gid.x; let cfg_d: u32 = cfg.d; let cfg_m: u32 = cfg.m; let cfg_r_rows: u32 = cfg.r_rows; let cfg_r_off: u32 = cfg.r_off; var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0; {1} if (gid.x < cfg.d && gid.y < cfg.r_rows) {{ h[gid.y * cfg.d + gid.x] = rf0; }} }}
+wgsl.gram	empty		const WG_X: u32 = 8u; const WG_Y: u32 = 8u; @compute @workgroup_size(WG_X, WG_Y, 1) fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{ let gid_x: u32 = gid.x; let gid_y: u32 = gid.y; let lid_x: u32 = lid.x; let lid_y: u32 = lid.y; let wid_x: u32 = wid.x; let wid_y: u32 = wid.y; let lin: u32 = gid.y * (nwg.x * WG_X) + gid.x; let cfg_d: u32 = cfg.d; let cfg_m: u32 = cfg.m; let cfg_r_rows: u32 = cfg.r_rows; let cfg_r_off: u32 = cfg.r_off; var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0;  if (gid.x < cfg.d && gid.y < cfg.r_rows) {{ h[gid.y * cfg.d + gid.x] = rf0; }} }}
+wgsl.gram	g8x8		const WG_X: u32 = 8u; const WG_Y: u32 = 8u;
+wgsl.gram	g16x16		const WG_X: u32 = 16u; const WG_Y: u32 = 16u;
+wgsl.gram	g32x2		const WG_X: u32 = 32u; const WG_Y: u32 = 2u;
+wgsl.gram	g64x1		const WG_X: u32 = 64u; const WG_Y: u32 = 1u;
+wgsl.gram	seq		{0} {1}
+wgsl.gram	let_u		{{ let {1.v0}: u32 = {0}; {1} }}
+wgsl.gram	let_f		{{ let {1.v0}: f32 = {0}; {1} }}
+wgsl.gram	let_v		{{ let {1.v0}: vec{=in0.width}<f32> = {0}; {1} }}
+wgsl.gram	set_rf0		rf0 = {0};
+wgsl.gram	set_rf1		rf1 = {0};
+wgsl.gram	set_rf2		rf2 = {0};
+wgsl.gram	set_rf3		rf3 = {0};
+wgsl.gram	store		{0}[{1}] = {2};
+wgsl.gram	if_		if ({0}) {{ {1} }} else {{ {2} }}
+wgsl.gram	loop		for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}
+wgsl.gram	barrier		workgroupBarrier();
+wgsl.gram	wg_store		wg_f[{0}] = {1};
+wgsl.gram	add_u		({0} + {1})
+wgsl.gram	mul_uc		({0} * {1}u)
+wgsl.gram	mod_uc		({0} % {1}u)
+wgsl.gram	min_u		min({0}, {1})
+wgsl.gram	?@u32		{v}
+wgsl.gram	?@u32	pool	0u,1u,2u,3u,4u,8u,16u,32u
+wgsl.gram	add_f		({0} + {1})
+wgsl.gram	sub_f		({0} - {1})
+wgsl.gram	mul_f		({0} * {1})
+wgsl.gram	max_f		max({0}, {1})
+wgsl.gram	fma_f		fma({0}, {1}, {2})
+wgsl.gram	sqrt_f		sqrt({0})
+wgsl.gram	exp_f		exp({0})
+wgsl.gram	f32_u		f32({0})
+wgsl.gram	load		{0}[{1}]
+wgsl.gram	wg_load		wg_f[{0}]
+wgsl.gram	dot		dot({0}, {1})
+wgsl.gram	rf0		rf0
+wgsl.gram	rf1		rf1
+wgsl.gram	rf2		rf2
+wgsl.gram	rf3		rf3
+wgsl.gram	?@f32		{v}
+wgsl.gram	?@f32	pool	0.0,1.0,0.5,2.0,-1.0,0.001
+wgsl.gram	lt_u		({0} < {1})
+wgsl.gram	lt_f		({0} < {1})
+wgsl.gram	and_b		({0} && {1})
+wgsl.gram	not_b		(!{0})
+wgsl.gram	?@bool		{v}
+wgsl.gram	?@bool	pool	true,false
+wgsl.gram	v2		vec2<f32>({0}, {1})
+wgsl.gram	v4		vec4<f32>({0}, {1}, {2}, {3})
+wgsl.gram	vadd		({0} + {1})
+wgsl.gram	vscale		({0} * {1})
+wgsl.gram	c1		1
+wgsl.gram	c2		2
+wgsl.gram	c4		4
+wgsl.gram	c8		8
+wgsl.gram	c16		16
+wgsl.gram	c32		32
+wgsl.gram	c64		64
+wgsl.gram	c128		128
+wgsl.gram	c256		256
+wgsl.gram	=min		min({0}, {1})
+wgsl.gram	=min	name	{0}_{1}
+wgsl.gram	=max		max({0}, {1})
+wgsl.gram	=max	name	{0}_{1}
+wgsl.gram	=+		{0} + {1}
+wgsl.gram	=+	name	{0}_{1}
+wgsl.gram	=*		{0} * {1}
+wgsl.gram	=*	name	{0}_{1}
+wgsl.gram	=group		({0})
+wgsl.gram	=group	name	{0}
+wgsl.gram	=negative		-{0}
+wgsl.gram	=negative	name	{0}

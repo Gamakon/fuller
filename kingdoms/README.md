@@ -52,13 +52,22 @@ so every gene expresses a legal program.
 
 ## What each folder holds
 
+Since 2026-11-05 (K0, `docs/PLAN_futhark_kingdom.md` 7.7) **every kingdom's rows live in ONE set of tables**,
+`master/`: `kingdoms.tsv` lists the kingdoms and their variants, and every entity table (data types, symbols,
+spellings, arguments, flows, guards, repairs, entries) carries a `kingdom` column; `properties.tsv` is the one
+property catalogue every kingdom shares. A kingdom's folder keeps its generator and its sources (Futhark's master
+templates and sniffed views, for instance), and the generator writes only its own kingdom's rows through
+`master/write_rows.py`; `src/geneframe/master.rs` selects a kingdom and loads it. Columns: `docs/DESIGN_geneframe.md` 3.3.
+
 ```
+master/
+  kingdoms.tsv     the list of kingdoms and variants: select one to filter the rest
+  *.tsv            one table per entity of the gene frame's fixed schema, with a kingdom column
+  write_rows.py    the one writer: replace a kingdom's rows, keep the rest; check; export/import JSON
 <kingdom>/
   README.md        what this kingdom is for, and its typing rules
-  gen_tables.py    the generator: the design written as code
-  types.tsv        the types
-  functions.tsv    the symbol table: output type, ordered argument types, spelling
-  symbols.md       (older kingdoms) the human-readable symbol table
+  gen_tables.py    the generator: the design written as code, writing into master/
+  (older kingdoms) types.tsv, functions.tsv, symbols.md: the pre-K0 tables, deleted as each kingdom moves
 ```
 
 The table is the design; the Rust is its loader. A kingdom check (rev 4 §1)

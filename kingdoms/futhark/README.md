@@ -18,7 +18,7 @@ section 7. (The earlier shape-class kingdom, master 5, whose types were classes 
 |---|---|
 | `master/6/` | the master: data types, properties, rows (Argument, Flow, Guard columns), repairs, formulas, preludes, e-graph rules, literal pools, the generated static cost table; format in `master/README.md` |
 | `sig/<problem>/m6/view.tsv` | a problem's specification, written by `sniff.py` from the problem's Futhark source |
-| `sig/<problem>/m6/tables.tsv` | the view's table of four kinds of row (Argument, Flow, Guard, Entry), written by `view.py` |
+| `../master/*.tsv`, kingdom `futhark.<problem>` | the view's four kinds of row (Argument, Flow, Guard, Entry), written by `view.py` through `../master/write_rows.py` into the one set of tables every kingdom lives in (K0) |
 | `sig/<problem>/m6/egraph.*` | the view's e-graph: one sort a data type, one constructor a symbol, the rules |
 | `sig/<problem>/pool/` | the language-model and benchmark pool of the problem (program text, `*.fut`, and the pool tables) |
 | `sig/kahan/kahan.fut` | UltraDim's k-means constructs one by one (Kahan mean, argmin, cell update, kernel boundary), program text |

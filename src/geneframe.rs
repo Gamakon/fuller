@@ -30,6 +30,7 @@
 use std::collections::BTreeMap;
 
 pub mod formula;
+pub mod master;
 
 
 /// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of

@@ -1,0 +1,1820 @@
+kingdom	symbol	position	direction	data_type	head
+futhark.a7	map_rows@m.f32	0	in	[]f32 -> []f32	-
+futhark.a7	map_rows@m.f32	1	in	[][]f32	-
+futhark.a7	map_rows@m.f32	0	out	[][]f32	-
+futhark.a7	map2_rows@m.f32	0	in	[]f32 -> []f32 -> []f32	-
+futhark.a7	map2_rows@m.f32	1	in	[][]f32	-
+futhark.a7	map2_rows@m.f32	2	in	[][]f32	-
+futhark.a7	map2_rows@m.f32	0	out	[][]f32	-
+futhark.a7	transpose@m.f32	0	in	[][]f32	-
+futhark.a7	transpose@m.f32	0	out	[][]f32	-
+futhark.a7	matmul@m.f32	0	in	[][]f32	-
+futhark.a7	matmul@m.f32	1	in	[][]f32	-
+futhark.a7	matmul@m.f32	0	out	[][]f32	-
+futhark.a7	id@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.a7	add1@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.a7	scale2@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.a7	id@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.a7	add1@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.a7	add@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.a7	const@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.a7	const@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.a7	var@size	0	out	size	-
+futhark.a7	var@m.f32	0	out	[][]f32	-
+futhark.a7	fitrows@m.f32	0	in	size	-
+futhark.a7	fitrows@m.f32	1	in	[][]f32	-
+futhark.a7	fitrows@m.f32	0	out	[][]f32	-
+futhark.a7	fitcols@m.f32	0	in	size	-
+futhark.a7	fitcols@m.f32	1	in	[][]f32	-
+futhark.a7	fitcols@m.f32	0	out	[][]f32	-
+futhark.histogram	add@i32	0	in	i32	-
+futhark.histogram	add@i32	1	in	i32	-
+futhark.histogram	add@i32	0	out	i32	-
+futhark.histogram	sub@i32	0	in	i32	-
+futhark.histogram	sub@i32	1	in	i32	-
+futhark.histogram	sub@i32	0	out	i32	-
+futhark.histogram	mul@i32	0	in	i32	-
+futhark.histogram	mul@i32	1	in	i32	-
+futhark.histogram	mul@i32	0	out	i32	-
+futhark.histogram	min@i32	0	in	i32	-
+futhark.histogram	min@i32	1	in	i32	-
+futhark.histogram	min@i32	0	out	i32	-
+futhark.histogram	max@i32	0	in	i32	-
+futhark.histogram	max@i32	1	in	i32	-
+futhark.histogram	max@i32	0	out	i32	-
+futhark.histogram	neg@i32	0	in	i32	-
+futhark.histogram	neg@i32	0	out	i32	-
+futhark.histogram	abs@i32	0	in	i32	-
+futhark.histogram	abs@i32	0	out	i32	-
+futhark.histogram	sel@i32	0	in	i32	-
+futhark.histogram	sel@i32	1	in	i32	-
+futhark.histogram	sel@i32	2	in	i32	-
+futhark.histogram	sel@i32	0	out	i32	-
+futhark.histogram	get@i32	0	in	[]i32	-
+futhark.histogram	get@i32	1	in	i64	-
+futhark.histogram	get@i32	0	out	i32	-
+futhark.histogram	sum@i32	0	in	[]i32	-
+futhark.histogram	sum@i32	0	out	i32	-
+futhark.histogram	minimum@i32	0	in	[]i32	-
+futhark.histogram	minimum@i32	0	out	i32	-
+futhark.histogram	maximum@i32	0	in	[]i32	-
+futhark.histogram	maximum@i32	0	out	i32	-
+futhark.histogram	ival@i32	0	in	i64	-
+futhark.histogram	ival@i32	0	out	i32	-
+futhark.histogram	sval@i32	0	in	size	-
+futhark.histogram	sval@i32	0	out	i32	-
+futhark.histogram	mod@i32	0	in	size	-
+futhark.histogram	mod@i32	1	in	i32	-
+futhark.histogram	mod@i32	0	out	i32	-
+futhark.histogram	const@i32	0	out	i32	-
+futhark.histogram	prev@i64	0	in	i64	-
+futhark.histogram	prev@i64	0	out	i64	-
+futhark.histogram	next@i64	0	in	i64	-
+futhark.histogram	next@i64	0	out	i64	-
+futhark.histogram	clamp@i64	0	in	size	-
+futhark.histogram	clamp@i64	1	in	i32	-
+futhark.histogram	clamp@i64	0	out	i64	-
+futhark.histogram	zero@i64	0	out	i64	-
+futhark.histogram	last@i64	0	in	size	-
+futhark.histogram	last@i64	0	out	i64	-
+futhark.histogram	tab@a.i32	0	in	size	-
+futhark.histogram	tab@a.i32	1	in	i32	-
+futhark.histogram	tab@a.i32	0	out	[]i32	-
+futhark.histogram	replicate@a.i32	0	in	size	-
+futhark.histogram	replicate@a.i32	1	in	i32	-
+futhark.histogram	replicate@a.i32	0	out	[]i32	-
+futhark.histogram	map2.add@a.i32	0	in	[]i32	-
+futhark.histogram	map2.add@a.i32	1	in	[]i32	-
+futhark.histogram	map2.add@a.i32	0	out	[]i32	-
+futhark.histogram	map2.sub@a.i32	0	in	[]i32	-
+futhark.histogram	map2.sub@a.i32	1	in	[]i32	-
+futhark.histogram	map2.sub@a.i32	0	out	[]i32	-
+futhark.histogram	map2.min@a.i32	0	in	[]i32	-
+futhark.histogram	map2.min@a.i32	1	in	[]i32	-
+futhark.histogram	map2.min@a.i32	0	out	[]i32	-
+futhark.histogram	map2.max@a.i32	0	in	[]i32	-
+futhark.histogram	map2.max@a.i32	1	in	[]i32	-
+futhark.histogram	map2.max@a.i32	0	out	[]i32	-
+futhark.histogram	scan.add@a.i32	0	in	[]i32	-
+futhark.histogram	scan.add@a.i32	0	out	[]i32	-
+futhark.histogram	scan.min@a.i32	0	in	[]i32	-
+futhark.histogram	scan.min@a.i32	0	out	[]i32	-
+futhark.histogram	scan.max@a.i32	0	in	[]i32	-
+futhark.histogram	scan.max@a.i32	0	out	[]i32	-
+futhark.histogram	hist.add@a.i32	0	in	size	-
+futhark.histogram	hist.add@a.i32	1	in	[]i32	-
+futhark.histogram	hist.add@a.i32	2	in	[]i32	-
+futhark.histogram	hist.add@a.i32	0	out	[]i32	-
+futhark.histogram	hist.min@a.i32	0	in	size	-
+futhark.histogram	hist.min@a.i32	1	in	[]i32	-
+futhark.histogram	hist.min@a.i32	2	in	[]i32	-
+futhark.histogram	hist.min@a.i32	0	out	[]i32	-
+futhark.histogram	hist.max@a.i32	0	in	size	-
+futhark.histogram	hist.max@a.i32	1	in	[]i32	-
+futhark.histogram	hist.max@a.i32	2	in	[]i32	-
+futhark.histogram	hist.max@a.i32	0	out	[]i32	-
+futhark.histogram	loop@i32	0	in	size	-
+futhark.histogram	loop@i32	1	in	i32	-
+futhark.histogram	loop@i32	2	in	i32	-
+futhark.histogram	loop@i32	0	out	i32	-
+futhark.histogram	loop@a.i32	0	in	size	-
+futhark.histogram	loop@a.i32	1	in	[]i32	-
+futhark.histogram	loop@a.i32	2	in	[]i32	-
+futhark.histogram	loop@a.i32	0	out	[]i32	-
+futhark.histogram	loop1@i32	0	in	size	-
+futhark.histogram	loop1@i32	1	in	i32	-
+futhark.histogram	loop1@i32	2	in	i32	-
+futhark.histogram	loop1@i32	0	out	i32	-
+futhark.histogram	loop1@a.i32	0	in	size	-
+futhark.histogram	loop1@a.i32	1	in	[]i32	-
+futhark.histogram	loop1@a.i32	2	in	[]i32	-
+futhark.histogram	loop1@a.i32	0	out	[]i32	-
+futhark.histogram	var@i32	0	out	i32	-
+futhark.histogram	var@i64	0	out	i64	-
+futhark.histogram	var@size	0	out	size	-
+futhark.histogram	var@a.i32	0	out	[]i32	-
+futhark.histogram	nextin@i64	0	in	size	-
+futhark.histogram	nextin@i64	1	in	i64	-
+futhark.histogram	nextin@i64	0	out	i64	-
+futhark.histogram	fit@a.i32	0	in	size	-
+futhark.histogram	fit@a.i32	1	in	[]i32	-
+futhark.histogram	fit@a.i32	0	out	[]i32	-
+futhark.histogram	clampix@i64	0	in	size	-
+futhark.histogram	clampix@i64	1	in	i64	-
+futhark.histogram	clampix@i64	0	out	i64	-
+futhark.kmeans	add@f32	0	in	f32	-
+futhark.kmeans	add@f32	1	in	f32	-
+futhark.kmeans	add@f32	0	out	f32	-
+futhark.kmeans	sub@f32	0	in	f32	-
+futhark.kmeans	sub@f32	1	in	f32	-
+futhark.kmeans	sub@f32	0	out	f32	-
+futhark.kmeans	mul@f32	0	in	f32	-
+futhark.kmeans	mul@f32	1	in	f32	-
+futhark.kmeans	mul@f32	0	out	f32	-
+futhark.kmeans	min@f32	0	in	f32	-
+futhark.kmeans	min@f32	1	in	f32	-
+futhark.kmeans	min@f32	0	out	f32	-
+futhark.kmeans	max@f32	0	in	f32	-
+futhark.kmeans	max@f32	1	in	f32	-
+futhark.kmeans	max@f32	0	out	f32	-
+futhark.kmeans	neg@f32	0	in	f32	-
+futhark.kmeans	neg@f32	0	out	f32	-
+futhark.kmeans	abs@f32	0	in	f32	-
+futhark.kmeans	abs@f32	0	out	f32	-
+futhark.kmeans	sel@f32	0	in	f32	-
+futhark.kmeans	sel@f32	1	in	f32	-
+futhark.kmeans	sel@f32	2	in	f32	-
+futhark.kmeans	sel@f32	0	out	f32	-
+futhark.kmeans	get@f32	0	in	[]f32	-
+futhark.kmeans	get@f32	1	in	i64	-
+futhark.kmeans	get@f32	0	out	f32	-
+futhark.kmeans	sum@f32	0	in	[]f32	-
+futhark.kmeans	sum@f32	0	out	f32	-
+futhark.kmeans	minimum@f32	0	in	[]f32	-
+futhark.kmeans	minimum@f32	0	out	f32	-
+futhark.kmeans	maximum@f32	0	in	[]f32	-
+futhark.kmeans	maximum@f32	0	out	f32	-
+futhark.kmeans	ival@f32	0	in	i64	-
+futhark.kmeans	ival@f32	0	out	f32	-
+futhark.kmeans	sval@f32	0	in	size	-
+futhark.kmeans	sval@f32	0	out	f32	-
+futhark.kmeans	const@f32	0	out	f32	-
+futhark.kmeans	prev@i64	0	in	i64	-
+futhark.kmeans	prev@i64	0	out	i64	-
+futhark.kmeans	next@i64	0	in	i64	-
+futhark.kmeans	next@i64	0	out	i64	-
+futhark.kmeans	zero@i64	0	out	i64	-
+futhark.kmeans	last@i64	0	in	size	-
+futhark.kmeans	last@i64	0	out	i64	-
+futhark.kmeans	tab@a.f32	0	in	size	-
+futhark.kmeans	tab@a.f32	1	in	f32	-
+futhark.kmeans	tab@a.f32	0	out	[]f32	-
+futhark.kmeans	replicate@a.f32	0	in	size	-
+futhark.kmeans	replicate@a.f32	1	in	f32	-
+futhark.kmeans	replicate@a.f32	0	out	[]f32	-
+futhark.kmeans	map2.add@a.f32	0	in	[]f32	-
+futhark.kmeans	map2.add@a.f32	1	in	[]f32	-
+futhark.kmeans	map2.add@a.f32	0	out	[]f32	-
+futhark.kmeans	map2.sub@a.f32	0	in	[]f32	-
+futhark.kmeans	map2.sub@a.f32	1	in	[]f32	-
+futhark.kmeans	map2.sub@a.f32	0	out	[]f32	-
+futhark.kmeans	map2.min@a.f32	0	in	[]f32	-
+futhark.kmeans	map2.min@a.f32	1	in	[]f32	-
+futhark.kmeans	map2.min@a.f32	0	out	[]f32	-
+futhark.kmeans	map2.max@a.f32	0	in	[]f32	-
+futhark.kmeans	map2.max@a.f32	1	in	[]f32	-
+futhark.kmeans	map2.max@a.f32	0	out	[]f32	-
+futhark.kmeans	scan.add@a.f32	0	in	[]f32	-
+futhark.kmeans	scan.add@a.f32	0	out	[]f32	-
+futhark.kmeans	scan.min@a.f32	0	in	[]f32	-
+futhark.kmeans	scan.min@a.f32	0	out	[]f32	-
+futhark.kmeans	scan.max@a.f32	0	in	[]f32	-
+futhark.kmeans	scan.max@a.f32	0	out	[]f32	-
+futhark.kmeans	row@a.f32	0	in	[][]f32	-
+futhark.kmeans	row@a.f32	1	in	i64	-
+futhark.kmeans	row@a.f32	0	out	[]f32	-
+futhark.kmeans	loop@f32	0	in	size	-
+futhark.kmeans	loop@f32	1	in	f32	-
+futhark.kmeans	loop@f32	2	in	f32	-
+futhark.kmeans	loop@f32	0	out	f32	-
+futhark.kmeans	loop@a.f32	0	in	size	-
+futhark.kmeans	loop@a.f32	1	in	[]f32	-
+futhark.kmeans	loop@a.f32	2	in	[]f32	-
+futhark.kmeans	loop@a.f32	0	out	[]f32	-
+futhark.kmeans	loop1@f32	0	in	size	-
+futhark.kmeans	loop1@f32	1	in	f32	-
+futhark.kmeans	loop1@f32	2	in	f32	-
+futhark.kmeans	loop1@f32	0	out	f32	-
+futhark.kmeans	loop1@a.f32	0	in	size	-
+futhark.kmeans	loop1@a.f32	1	in	[]f32	-
+futhark.kmeans	loop1@a.f32	2	in	[]f32	-
+futhark.kmeans	loop1@a.f32	0	out	[]f32	-
+futhark.kmeans	map_rows@m.f32	0	in	[]f32 -> []f32	-
+futhark.kmeans	map_rows@m.f32	1	in	[][]f32	-
+futhark.kmeans	map_rows@m.f32	0	out	[][]f32	-
+futhark.kmeans	map2_rows@m.f32	0	in	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	map2_rows@m.f32	1	in	[][]f32	-
+futhark.kmeans	map2_rows@m.f32	2	in	[][]f32	-
+futhark.kmeans	map2_rows@m.f32	0	out	[][]f32	-
+futhark.kmeans	transpose@m.f32	0	in	[][]f32	-
+futhark.kmeans	transpose@m.f32	0	out	[][]f32	-
+futhark.kmeans	matmul@m.f32	0	in	[][]f32	-
+futhark.kmeans	matmul@m.f32	1	in	[][]f32	-
+futhark.kmeans	matmul@m.f32	0	out	[][]f32	-
+futhark.kmeans	id@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans	add1@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans	scale2@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans	id@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	add1@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	add@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	const@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans	const@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	clamp@i64	0	in	size	-
+futhark.kmeans	clamp@i64	1	in	f32	-
+futhark.kmeans	clamp@i64	0	out	i64	-
+futhark.kmeans	hist.add@a.f32	0	in	size	-
+futhark.kmeans	hist.add@a.f32	1	in	[]f32	-
+futhark.kmeans	hist.add@a.f32	2	in	[]f32	-
+futhark.kmeans	hist.add@a.f32	0	out	[]f32	-
+futhark.kmeans	hist.min@a.f32	0	in	size	-
+futhark.kmeans	hist.min@a.f32	1	in	[]f32	-
+futhark.kmeans	hist.min@a.f32	2	in	[]f32	-
+futhark.kmeans	hist.min@a.f32	0	out	[]f32	-
+futhark.kmeans	hist.max@a.f32	0	in	size	-
+futhark.kmeans	hist.max@a.f32	1	in	[]f32	-
+futhark.kmeans	hist.max@a.f32	2	in	[]f32	-
+futhark.kmeans	hist.max@a.f32	0	out	[]f32	-
+futhark.kmeans	div@f32	0	in	f32	-
+futhark.kmeans	div@f32	1	in	f32	-
+futhark.kmeans	div@f32	0	out	f32	-
+futhark.kmeans	sqrt@f32	0	in	f32	-
+futhark.kmeans	sqrt@f32	0	out	f32	-
+futhark.kmeans	map2.mul@a.f32	0	in	[]f32	-
+futhark.kmeans	map2.mul@a.f32	1	in	[]f32	-
+futhark.kmeans	map2.mul@a.f32	0	out	[]f32	-
+futhark.kmeans	tabrows@m.f32	0	in	size	-
+futhark.kmeans	tabrows@m.f32	1	in	size	-
+futhark.kmeans	tabrows@m.f32	2	in	[]f32	-
+futhark.kmeans	tabrows@m.f32	0	out	[][]f32	-
+futhark.kmeans	histrows.add@m.f32	0	in	size	-
+futhark.kmeans	histrows.add@m.f32	1	in	size	-
+futhark.kmeans	histrows.add@m.f32	2	in	[]f32	-
+futhark.kmeans	histrows.add@m.f32	3	in	[][]f32	-
+futhark.kmeans	histrows.add@m.f32	0	out	[][]f32	-
+futhark.kmeans	rowdiv@m.f32	0	in	[][]f32	-
+futhark.kmeans	rowdiv@m.f32	1	in	[]f32	-
+futhark.kmeans	rowdiv@m.f32	0	out	[][]f32	-
+futhark.kmeans	pair@f32.f32	0	in	f32	-
+futhark.kmeans	pair@f32.f32	1	in	f32	-
+futhark.kmeans	pair@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	fst.f32.f32@f32	0	in	(f32, f32)	-
+futhark.kmeans	fst.f32.f32@f32	0	out	f32	-
+futhark.kmeans	snd.f32.f32@f32	0	in	(f32, f32)	-
+futhark.kmeans	snd.f32.f32@f32	0	out	f32	-
+futhark.kmeans	zero@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	psel@f32.f32	0	in	f32	-
+futhark.kmeans	psel@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans	psel@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans	psel@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	loop@f32.f32	0	in	size	-
+futhark.kmeans	loop@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans	loop@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans	loop@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	loop1@f32.f32	0	in	size	-
+futhark.kmeans	loop1@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans	loop1@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans	loop1@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	triple@f32.f32.f32	0	in	f32	-
+futhark.kmeans	triple@f32.f32.f32	1	in	f32	-
+futhark.kmeans	triple@f32.f32.f32	2	in	f32	-
+futhark.kmeans	triple@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	fst.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans	fst.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans	snd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans	snd.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans	thd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans	thd.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans	zero@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	psel@f32.f32.f32	0	in	f32	-
+futhark.kmeans	psel@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans	psel@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans	psel@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	loop@f32.f32.f32	0	in	size	-
+futhark.kmeans	loop@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans	loop@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans	loop@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	loop1@f32.f32.f32	0	in	size	-
+futhark.kmeans	loop1@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans	loop1@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans	loop1@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	let.a.f32@f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@f32	1	in	f32	-
+futhark.kmeans	let.a.f32@f32	0	out	f32	-
+futhark.kmeans	let.a.f32@i64	0	in	[]f32	-
+futhark.kmeans	let.a.f32@i64	1	in	i64	-
+futhark.kmeans	let.a.f32@i64	0	out	i64	-
+futhark.kmeans	let.a.f32@a.f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@a.f32	1	in	[]f32	-
+futhark.kmeans	let.a.f32@a.f32	0	out	[]f32	-
+futhark.kmeans	let.a.f32@m.f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@m.f32	1	in	[][]f32	-
+futhark.kmeans	let.a.f32@m.f32	0	out	[][]f32	-
+futhark.kmeans	let.a.f32@f32.f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans	let.a.f32@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans	let.a.f32@f32.f32.f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans	let.a.f32@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	1	in	[]f32 -> []f32	-
+futhark.kmeans	let.a.f32@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	0	in	[]f32	-
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	1	in	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans	var@f32	0	out	f32	-
+futhark.kmeans	var@i64	0	out	i64	-
+futhark.kmeans	var@size	0	out	size	-
+futhark.kmeans	var@a.f32	0	out	[]f32	-
+futhark.kmeans	var@m.f32	0	out	[][]f32	-
+futhark.kmeans	nextin@i64	0	in	size	-
+futhark.kmeans	nextin@i64	1	in	i64	-
+futhark.kmeans	nextin@i64	0	out	i64	-
+futhark.kmeans	fit@a.f32	0	in	size	-
+futhark.kmeans	fit@a.f32	1	in	[]f32	-
+futhark.kmeans	fit@a.f32	0	out	[]f32	-
+futhark.kmeans	fitrows@m.f32	0	in	size	-
+futhark.kmeans	fitrows@m.f32	1	in	[][]f32	-
+futhark.kmeans	fitrows@m.f32	0	out	[][]f32	-
+futhark.kmeans	fitcols@m.f32	0	in	size	-
+futhark.kmeans	fitcols@m.f32	1	in	[][]f32	-
+futhark.kmeans	fitcols@m.f32	0	out	[][]f32	-
+futhark.kmeans	clampix@i64	0	in	size	-
+futhark.kmeans	clampix@i64	1	in	i64	-
+futhark.kmeans	clampix@i64	0	out	i64	-
+futhark.kmeans_i32	add@f32	0	in	f32	-
+futhark.kmeans_i32	add@f32	1	in	f32	-
+futhark.kmeans_i32	add@f32	0	out	f32	-
+futhark.kmeans_i32	add@i32	0	in	i32	-
+futhark.kmeans_i32	add@i32	1	in	i32	-
+futhark.kmeans_i32	add@i32	0	out	i32	-
+futhark.kmeans_i32	sub@f32	0	in	f32	-
+futhark.kmeans_i32	sub@f32	1	in	f32	-
+futhark.kmeans_i32	sub@f32	0	out	f32	-
+futhark.kmeans_i32	sub@i32	0	in	i32	-
+futhark.kmeans_i32	sub@i32	1	in	i32	-
+futhark.kmeans_i32	sub@i32	0	out	i32	-
+futhark.kmeans_i32	mul@f32	0	in	f32	-
+futhark.kmeans_i32	mul@f32	1	in	f32	-
+futhark.kmeans_i32	mul@f32	0	out	f32	-
+futhark.kmeans_i32	mul@i32	0	in	i32	-
+futhark.kmeans_i32	mul@i32	1	in	i32	-
+futhark.kmeans_i32	mul@i32	0	out	i32	-
+futhark.kmeans_i32	min@f32	0	in	f32	-
+futhark.kmeans_i32	min@f32	1	in	f32	-
+futhark.kmeans_i32	min@f32	0	out	f32	-
+futhark.kmeans_i32	min@i32	0	in	i32	-
+futhark.kmeans_i32	min@i32	1	in	i32	-
+futhark.kmeans_i32	min@i32	0	out	i32	-
+futhark.kmeans_i32	max@f32	0	in	f32	-
+futhark.kmeans_i32	max@f32	1	in	f32	-
+futhark.kmeans_i32	max@f32	0	out	f32	-
+futhark.kmeans_i32	max@i32	0	in	i32	-
+futhark.kmeans_i32	max@i32	1	in	i32	-
+futhark.kmeans_i32	max@i32	0	out	i32	-
+futhark.kmeans_i32	neg@f32	0	in	f32	-
+futhark.kmeans_i32	neg@f32	0	out	f32	-
+futhark.kmeans_i32	neg@i32	0	in	i32	-
+futhark.kmeans_i32	neg@i32	0	out	i32	-
+futhark.kmeans_i32	abs@f32	0	in	f32	-
+futhark.kmeans_i32	abs@f32	0	out	f32	-
+futhark.kmeans_i32	abs@i32	0	in	i32	-
+futhark.kmeans_i32	abs@i32	0	out	i32	-
+futhark.kmeans_i32	sel@f32	0	in	f32	-
+futhark.kmeans_i32	sel@f32	1	in	f32	-
+futhark.kmeans_i32	sel@f32	2	in	f32	-
+futhark.kmeans_i32	sel@f32	0	out	f32	-
+futhark.kmeans_i32	sel@i32	0	in	i32	-
+futhark.kmeans_i32	sel@i32	1	in	i32	-
+futhark.kmeans_i32	sel@i32	2	in	i32	-
+futhark.kmeans_i32	sel@i32	0	out	i32	-
+futhark.kmeans_i32	get@f32	0	in	[]f32	-
+futhark.kmeans_i32	get@f32	1	in	i64	-
+futhark.kmeans_i32	get@f32	0	out	f32	-
+futhark.kmeans_i32	get@i32	0	in	[]i32	-
+futhark.kmeans_i32	get@i32	1	in	i64	-
+futhark.kmeans_i32	get@i32	0	out	i32	-
+futhark.kmeans_i32	sum@f32	0	in	[]f32	-
+futhark.kmeans_i32	sum@f32	0	out	f32	-
+futhark.kmeans_i32	sum@i32	0	in	[]i32	-
+futhark.kmeans_i32	sum@i32	0	out	i32	-
+futhark.kmeans_i32	minimum@f32	0	in	[]f32	-
+futhark.kmeans_i32	minimum@f32	0	out	f32	-
+futhark.kmeans_i32	minimum@i32	0	in	[]i32	-
+futhark.kmeans_i32	minimum@i32	0	out	i32	-
+futhark.kmeans_i32	maximum@f32	0	in	[]f32	-
+futhark.kmeans_i32	maximum@f32	0	out	f32	-
+futhark.kmeans_i32	maximum@i32	0	in	[]i32	-
+futhark.kmeans_i32	maximum@i32	0	out	i32	-
+futhark.kmeans_i32	ival@f32	0	in	i64	-
+futhark.kmeans_i32	ival@f32	0	out	f32	-
+futhark.kmeans_i32	ival@i32	0	in	i64	-
+futhark.kmeans_i32	ival@i32	0	out	i32	-
+futhark.kmeans_i32	sval@f32	0	in	size	-
+futhark.kmeans_i32	sval@f32	0	out	f32	-
+futhark.kmeans_i32	sval@i32	0	in	size	-
+futhark.kmeans_i32	sval@i32	0	out	i32	-
+futhark.kmeans_i32	mod@i32	0	in	size	-
+futhark.kmeans_i32	mod@i32	1	in	i32	-
+futhark.kmeans_i32	mod@i32	0	out	i32	-
+futhark.kmeans_i32	const@f32	0	out	f32	-
+futhark.kmeans_i32	const@i32	0	out	i32	-
+futhark.kmeans_i32	prev@i64	0	in	i64	-
+futhark.kmeans_i32	prev@i64	0	out	i64	-
+futhark.kmeans_i32	next@i64	0	in	i64	-
+futhark.kmeans_i32	next@i64	0	out	i64	-
+futhark.kmeans_i32	clamp.i32@i64	0	in	size	-
+futhark.kmeans_i32	clamp.i32@i64	1	in	i32	-
+futhark.kmeans_i32	clamp.i32@i64	0	out	i64	-
+futhark.kmeans_i32	zero@i64	0	out	i64	-
+futhark.kmeans_i32	last@i64	0	in	size	-
+futhark.kmeans_i32	last@i64	0	out	i64	-
+futhark.kmeans_i32	tab@a.f32	0	in	size	-
+futhark.kmeans_i32	tab@a.f32	1	in	f32	-
+futhark.kmeans_i32	tab@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	tab@a.i32	0	in	size	-
+futhark.kmeans_i32	tab@a.i32	1	in	i32	-
+futhark.kmeans_i32	tab@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	replicate@a.f32	0	in	size	-
+futhark.kmeans_i32	replicate@a.f32	1	in	f32	-
+futhark.kmeans_i32	replicate@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	replicate@a.i32	0	in	size	-
+futhark.kmeans_i32	replicate@a.i32	1	in	i32	-
+futhark.kmeans_i32	replicate@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	map2.add@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	map2.add@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	map2.add@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	map2.add@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	map2.add@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	map2.add@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	map2.sub@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	map2.sub@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	map2.sub@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	map2.sub@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	map2.sub@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	map2.sub@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	map2.min@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	map2.min@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	map2.min@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	map2.min@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	map2.min@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	map2.min@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	map2.max@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	map2.max@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	map2.max@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	map2.max@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	map2.max@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	map2.max@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	scan.add@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	scan.add@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	scan.add@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	scan.add@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	scan.min@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	scan.min@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	scan.min@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	scan.min@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	scan.max@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	scan.max@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	scan.max@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	scan.max@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	hist.add@a.i32	0	in	size	-
+futhark.kmeans_i32	hist.add@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	hist.add@a.i32	2	in	[]i32	-
+futhark.kmeans_i32	hist.add@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	hist.min@a.i32	0	in	size	-
+futhark.kmeans_i32	hist.min@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	hist.min@a.i32	2	in	[]i32	-
+futhark.kmeans_i32	hist.min@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	hist.max@a.i32	0	in	size	-
+futhark.kmeans_i32	hist.max@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	hist.max@a.i32	2	in	[]i32	-
+futhark.kmeans_i32	hist.max@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	row@a.f32	0	in	[][]f32	-
+futhark.kmeans_i32	row@a.f32	1	in	i64	-
+futhark.kmeans_i32	row@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	row@a.i32	0	in	[][]i32	-
+futhark.kmeans_i32	row@a.i32	1	in	i64	-
+futhark.kmeans_i32	row@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	loop@f32	0	in	size	-
+futhark.kmeans_i32	loop@f32	1	in	f32	-
+futhark.kmeans_i32	loop@f32	2	in	f32	-
+futhark.kmeans_i32	loop@f32	0	out	f32	-
+futhark.kmeans_i32	loop@i32	0	in	size	-
+futhark.kmeans_i32	loop@i32	1	in	i32	-
+futhark.kmeans_i32	loop@i32	2	in	i32	-
+futhark.kmeans_i32	loop@i32	0	out	i32	-
+futhark.kmeans_i32	loop@a.f32	0	in	size	-
+futhark.kmeans_i32	loop@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	loop@a.f32	2	in	[]f32	-
+futhark.kmeans_i32	loop@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	loop@a.i32	0	in	size	-
+futhark.kmeans_i32	loop@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	loop@a.i32	2	in	[]i32	-
+futhark.kmeans_i32	loop@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	loop1@f32	0	in	size	-
+futhark.kmeans_i32	loop1@f32	1	in	f32	-
+futhark.kmeans_i32	loop1@f32	2	in	f32	-
+futhark.kmeans_i32	loop1@f32	0	out	f32	-
+futhark.kmeans_i32	loop1@i32	0	in	size	-
+futhark.kmeans_i32	loop1@i32	1	in	i32	-
+futhark.kmeans_i32	loop1@i32	2	in	i32	-
+futhark.kmeans_i32	loop1@i32	0	out	i32	-
+futhark.kmeans_i32	loop1@a.f32	0	in	size	-
+futhark.kmeans_i32	loop1@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	loop1@a.f32	2	in	[]f32	-
+futhark.kmeans_i32	loop1@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	loop1@a.i32	0	in	size	-
+futhark.kmeans_i32	loop1@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	loop1@a.i32	2	in	[]i32	-
+futhark.kmeans_i32	loop1@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	map_rows@m.f32	0	in	[]f32 -> []f32	-
+futhark.kmeans_i32	map_rows@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	map_rows@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	map2_rows@m.f32	0	in	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	map2_rows@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	map2_rows@m.f32	2	in	[][]f32	-
+futhark.kmeans_i32	map2_rows@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	transpose@m.f32	0	in	[][]f32	-
+futhark.kmeans_i32	transpose@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	matmul@m.f32	0	in	[][]f32	-
+futhark.kmeans_i32	matmul@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	matmul@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	id@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans_i32	add1@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans_i32	scale2@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans_i32	id@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	add1@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	add@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	const@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans_i32	const@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	clamp.f32@i64	0	in	size	-
+futhark.kmeans_i32	clamp.f32@i64	1	in	f32	-
+futhark.kmeans_i32	clamp.f32@i64	0	out	i64	-
+futhark.kmeans_i32	hist.add@a.f32	0	in	size	-
+futhark.kmeans_i32	hist.add@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	hist.add@a.f32	2	in	[]f32	-
+futhark.kmeans_i32	hist.add@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	hist.min@a.f32	0	in	size	-
+futhark.kmeans_i32	hist.min@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	hist.min@a.f32	2	in	[]f32	-
+futhark.kmeans_i32	hist.min@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	hist.max@a.f32	0	in	size	-
+futhark.kmeans_i32	hist.max@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	hist.max@a.f32	2	in	[]f32	-
+futhark.kmeans_i32	hist.max@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	div@f32	0	in	f32	-
+futhark.kmeans_i32	div@f32	1	in	f32	-
+futhark.kmeans_i32	div@f32	0	out	f32	-
+futhark.kmeans_i32	sqrt@f32	0	in	f32	-
+futhark.kmeans_i32	sqrt@f32	0	out	f32	-
+futhark.kmeans_i32	map2.mul@a.f32	0	in	[]f32	-
+futhark.kmeans_i32	map2.mul@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	map2.mul@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	map2.mul@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	map2.mul@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	map2.mul@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	tabrows@m.f32	0	in	size	-
+futhark.kmeans_i32	tabrows@m.f32	1	in	size	-
+futhark.kmeans_i32	tabrows@m.f32	2	in	[]f32	-
+futhark.kmeans_i32	tabrows@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	tabrows@m.i32	0	in	size	-
+futhark.kmeans_i32	tabrows@m.i32	1	in	size	-
+futhark.kmeans_i32	tabrows@m.i32	2	in	[]i32	-
+futhark.kmeans_i32	tabrows@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	histrows.add@m.i32	0	in	size	-
+futhark.kmeans_i32	histrows.add@m.i32	1	in	size	-
+futhark.kmeans_i32	histrows.add@m.i32	2	in	[]i32	-
+futhark.kmeans_i32	histrows.add@m.i32	3	in	[][]i32	-
+futhark.kmeans_i32	histrows.add@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	histrows.add@m.f32	0	in	size	-
+futhark.kmeans_i32	histrows.add@m.f32	1	in	size	-
+futhark.kmeans_i32	histrows.add@m.f32	2	in	[]f32	-
+futhark.kmeans_i32	histrows.add@m.f32	3	in	[][]f32	-
+futhark.kmeans_i32	histrows.add@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	rowdiv@m.f32	0	in	[][]f32	-
+futhark.kmeans_i32	rowdiv@m.f32	1	in	[]f32	-
+futhark.kmeans_i32	rowdiv@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	pair@f32.f32	0	in	f32	-
+futhark.kmeans_i32	pair@f32.f32	1	in	f32	-
+futhark.kmeans_i32	pair@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	pair@f32.i32	0	in	f32	-
+futhark.kmeans_i32	pair@f32.i32	1	in	i32	-
+futhark.kmeans_i32	pair@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	pair@i32.f32	0	in	i32	-
+futhark.kmeans_i32	pair@i32.f32	1	in	f32	-
+futhark.kmeans_i32	pair@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	pair@i32.i32	0	in	i32	-
+futhark.kmeans_i32	pair@i32.i32	1	in	i32	-
+futhark.kmeans_i32	pair@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	fst.f32.f32@f32	0	in	(f32, f32)	-
+futhark.kmeans_i32	fst.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.f32.i32@f32	0	in	(f32, i32)	-
+futhark.kmeans_i32	fst.f32.i32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.i32.f32@i32	0	in	(i32, f32)	-
+futhark.kmeans_i32	fst.i32.f32@i32	0	out	i32	-
+futhark.kmeans_i32	fst.i32.i32@i32	0	in	(i32, i32)	-
+futhark.kmeans_i32	fst.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.f32.f32@f32	0	in	(f32, f32)	-
+futhark.kmeans_i32	snd.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.f32.i32@i32	0	in	(f32, i32)	-
+futhark.kmeans_i32	snd.f32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.i32.f32@f32	0	in	(i32, f32)	-
+futhark.kmeans_i32	snd.i32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.i32.i32@i32	0	in	(i32, i32)	-
+futhark.kmeans_i32	snd.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	zero@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	zero@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	zero@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	zero@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.i32	1	in	(f32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.i32	2	in	(f32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.f32	1	in	(i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.f32	2	in	(i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.i32	1	in	(i32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.i32	2	in	(i32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.i32	1	in	(f32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.i32	2	in	(f32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.f32	1	in	(i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.f32	2	in	(i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.i32	1	in	(i32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.i32	2	in	(i32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	loop@f32.f32	0	in	size	-
+futhark.kmeans_i32	loop@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans_i32	loop@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans_i32	loop@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	loop@f32.i32	0	in	size	-
+futhark.kmeans_i32	loop@f32.i32	1	in	(f32, i32)	-
+futhark.kmeans_i32	loop@f32.i32	2	in	(f32, i32)	-
+futhark.kmeans_i32	loop@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	loop@i32.f32	0	in	size	-
+futhark.kmeans_i32	loop@i32.f32	1	in	(i32, f32)	-
+futhark.kmeans_i32	loop@i32.f32	2	in	(i32, f32)	-
+futhark.kmeans_i32	loop@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	loop@i32.i32	0	in	size	-
+futhark.kmeans_i32	loop@i32.i32	1	in	(i32, i32)	-
+futhark.kmeans_i32	loop@i32.i32	2	in	(i32, i32)	-
+futhark.kmeans_i32	loop@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	loop1@f32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans_i32	loop1@f32.f32	2	in	(f32, f32)	-
+futhark.kmeans_i32	loop1@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	loop1@f32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.i32	1	in	(f32, i32)	-
+futhark.kmeans_i32	loop1@f32.i32	2	in	(f32, i32)	-
+futhark.kmeans_i32	loop1@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	loop1@i32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.f32	1	in	(i32, f32)	-
+futhark.kmeans_i32	loop1@i32.f32	2	in	(i32, f32)	-
+futhark.kmeans_i32	loop1@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	loop1@i32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.i32	1	in	(i32, i32)	-
+futhark.kmeans_i32	loop1@i32.i32	2	in	(i32, i32)	-
+futhark.kmeans_i32	loop1@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	cvt.i32@f32	0	in	i32	-
+futhark.kmeans_i32	cvt.i32@f32	0	out	f32	-
+futhark.kmeans_i32	cvt.f32@i32	0	in	f32	-
+futhark.kmeans_i32	cvt.f32@i32	0	out	i32	-
+futhark.kmeans_i32	triple@f32.f32.f32	0	in	f32	-
+futhark.kmeans_i32	triple@f32.f32.f32	1	in	f32	-
+futhark.kmeans_i32	triple@f32.f32.f32	2	in	f32	-
+futhark.kmeans_i32	triple@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	triple@f32.f32.i32	0	in	f32	-
+futhark.kmeans_i32	triple@f32.f32.i32	1	in	f32	-
+futhark.kmeans_i32	triple@f32.f32.i32	2	in	i32	-
+futhark.kmeans_i32	triple@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	triple@f32.i32.f32	0	in	f32	-
+futhark.kmeans_i32	triple@f32.i32.f32	1	in	i32	-
+futhark.kmeans_i32	triple@f32.i32.f32	2	in	f32	-
+futhark.kmeans_i32	triple@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	triple@f32.i32.i32	0	in	f32	-
+futhark.kmeans_i32	triple@f32.i32.i32	1	in	i32	-
+futhark.kmeans_i32	triple@f32.i32.i32	2	in	i32	-
+futhark.kmeans_i32	triple@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	triple@i32.f32.f32	0	in	i32	-
+futhark.kmeans_i32	triple@i32.f32.f32	1	in	f32	-
+futhark.kmeans_i32	triple@i32.f32.f32	2	in	f32	-
+futhark.kmeans_i32	triple@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	triple@i32.f32.i32	0	in	i32	-
+futhark.kmeans_i32	triple@i32.f32.i32	1	in	f32	-
+futhark.kmeans_i32	triple@i32.f32.i32	2	in	i32	-
+futhark.kmeans_i32	triple@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	triple@i32.i32.f32	0	in	i32	-
+futhark.kmeans_i32	triple@i32.i32.f32	1	in	i32	-
+futhark.kmeans_i32	triple@i32.i32.f32	2	in	f32	-
+futhark.kmeans_i32	triple@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	triple@i32.i32.i32	0	in	i32	-
+futhark.kmeans_i32	triple@i32.i32.i32	1	in	i32	-
+futhark.kmeans_i32	triple@i32.i32.i32	2	in	i32	-
+futhark.kmeans_i32	triple@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	fst.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans_i32	fst.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.f32.f32.i32@f32	0	in	(f32, f32, i32)	-
+futhark.kmeans_i32	fst.f32.f32.i32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.f32.i32.f32@f32	0	in	(f32, i32, f32)	-
+futhark.kmeans_i32	fst.f32.i32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.f32.i32.i32@f32	0	in	(f32, i32, i32)	-
+futhark.kmeans_i32	fst.f32.i32.i32@f32	0	out	f32	-
+futhark.kmeans_i32	fst.i32.f32.f32@i32	0	in	(i32, f32, f32)	-
+futhark.kmeans_i32	fst.i32.f32.f32@i32	0	out	i32	-
+futhark.kmeans_i32	fst.i32.f32.i32@i32	0	in	(i32, f32, i32)	-
+futhark.kmeans_i32	fst.i32.f32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	fst.i32.i32.f32@i32	0	in	(i32, i32, f32)	-
+futhark.kmeans_i32	fst.i32.i32.f32@i32	0	out	i32	-
+futhark.kmeans_i32	fst.i32.i32.i32@i32	0	in	(i32, i32, i32)	-
+futhark.kmeans_i32	fst.i32.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans_i32	snd.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.f32.f32.i32@f32	0	in	(f32, f32, i32)	-
+futhark.kmeans_i32	snd.f32.f32.i32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.f32.i32.f32@i32	0	in	(f32, i32, f32)	-
+futhark.kmeans_i32	snd.f32.i32.f32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.f32.i32.i32@i32	0	in	(f32, i32, i32)	-
+futhark.kmeans_i32	snd.f32.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.i32.f32.f32@f32	0	in	(i32, f32, f32)	-
+futhark.kmeans_i32	snd.i32.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.i32.f32.i32@f32	0	in	(i32, f32, i32)	-
+futhark.kmeans_i32	snd.i32.f32.i32@f32	0	out	f32	-
+futhark.kmeans_i32	snd.i32.i32.f32@i32	0	in	(i32, i32, f32)	-
+futhark.kmeans_i32	snd.i32.i32.f32@i32	0	out	i32	-
+futhark.kmeans_i32	snd.i32.i32.i32@i32	0	in	(i32, i32, i32)	-
+futhark.kmeans_i32	snd.i32.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	thd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+futhark.kmeans_i32	thd.f32.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	thd.f32.f32.i32@i32	0	in	(f32, f32, i32)	-
+futhark.kmeans_i32	thd.f32.f32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	thd.f32.i32.f32@f32	0	in	(f32, i32, f32)	-
+futhark.kmeans_i32	thd.f32.i32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	thd.f32.i32.i32@i32	0	in	(f32, i32, i32)	-
+futhark.kmeans_i32	thd.f32.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	thd.i32.f32.f32@f32	0	in	(i32, f32, f32)	-
+futhark.kmeans_i32	thd.i32.f32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	thd.i32.f32.i32@i32	0	in	(i32, f32, i32)	-
+futhark.kmeans_i32	thd.i32.f32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	thd.i32.i32.f32@f32	0	in	(i32, i32, f32)	-
+futhark.kmeans_i32	thd.i32.i32.f32@f32	0	out	f32	-
+futhark.kmeans_i32	thd.i32.i32.i32@i32	0	in	(i32, i32, i32)	-
+futhark.kmeans_i32	thd.i32.i32.i32@i32	0	out	i32	-
+futhark.kmeans_i32	zero@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	zero@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	zero@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	zero@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	zero@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	zero@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	zero@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	zero@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.f32.i32	1	in	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.i32	2	in	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.i32.f32	1	in	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.f32	2	in	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@f32.i32.i32	1	in	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.i32	2	in	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.f32.f32	1	in	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.f32	2	in	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.f32.i32	1	in	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.i32	2	in	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.f32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.i32.f32	1	in	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.f32	2	in	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.i32	0	in	f32	-
+futhark.kmeans_i32	psel.f32@i32.i32.i32	1	in	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.i32	2	in	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.f32@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.f32.i32	1	in	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.i32	2	in	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.i32.f32	1	in	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.f32	2	in	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@f32.i32.i32	1	in	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.i32	2	in	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.f32.f32	1	in	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.f32	2	in	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.f32.i32	1	in	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.i32	2	in	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.f32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.i32.f32	1	in	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.f32	2	in	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.i32	0	in	i32	-
+futhark.kmeans_i32	psel.i32@i32.i32.i32	1	in	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.i32	2	in	(i32, i32, i32)	-
+futhark.kmeans_i32	psel.i32@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	loop@f32.f32.f32	0	in	size	-
+futhark.kmeans_i32	loop@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans_i32	loop@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans_i32	loop@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	loop@f32.f32.i32	0	in	size	-
+futhark.kmeans_i32	loop@f32.f32.i32	1	in	(f32, f32, i32)	-
+futhark.kmeans_i32	loop@f32.f32.i32	2	in	(f32, f32, i32)	-
+futhark.kmeans_i32	loop@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	loop@f32.i32.f32	0	in	size	-
+futhark.kmeans_i32	loop@f32.i32.f32	1	in	(f32, i32, f32)	-
+futhark.kmeans_i32	loop@f32.i32.f32	2	in	(f32, i32, f32)	-
+futhark.kmeans_i32	loop@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	loop@f32.i32.i32	0	in	size	-
+futhark.kmeans_i32	loop@f32.i32.i32	1	in	(f32, i32, i32)	-
+futhark.kmeans_i32	loop@f32.i32.i32	2	in	(f32, i32, i32)	-
+futhark.kmeans_i32	loop@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	loop@i32.f32.f32	0	in	size	-
+futhark.kmeans_i32	loop@i32.f32.f32	1	in	(i32, f32, f32)	-
+futhark.kmeans_i32	loop@i32.f32.f32	2	in	(i32, f32, f32)	-
+futhark.kmeans_i32	loop@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	loop@i32.f32.i32	0	in	size	-
+futhark.kmeans_i32	loop@i32.f32.i32	1	in	(i32, f32, i32)	-
+futhark.kmeans_i32	loop@i32.f32.i32	2	in	(i32, f32, i32)	-
+futhark.kmeans_i32	loop@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	loop@i32.i32.f32	0	in	size	-
+futhark.kmeans_i32	loop@i32.i32.f32	1	in	(i32, i32, f32)	-
+futhark.kmeans_i32	loop@i32.i32.f32	2	in	(i32, i32, f32)	-
+futhark.kmeans_i32	loop@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	loop@i32.i32.i32	0	in	size	-
+futhark.kmeans_i32	loop@i32.i32.i32	1	in	(i32, i32, i32)	-
+futhark.kmeans_i32	loop@i32.i32.i32	2	in	(i32, i32, i32)	-
+futhark.kmeans_i32	loop@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	loop1@f32.f32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans_i32	loop1@f32.f32.f32	2	in	(f32, f32, f32)	-
+futhark.kmeans_i32	loop1@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	loop1@f32.f32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.f32.i32	1	in	(f32, f32, i32)	-
+futhark.kmeans_i32	loop1@f32.f32.i32	2	in	(f32, f32, i32)	-
+futhark.kmeans_i32	loop1@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	loop1@f32.i32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.i32.f32	1	in	(f32, i32, f32)	-
+futhark.kmeans_i32	loop1@f32.i32.f32	2	in	(f32, i32, f32)	-
+futhark.kmeans_i32	loop1@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	loop1@f32.i32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@f32.i32.i32	1	in	(f32, i32, i32)	-
+futhark.kmeans_i32	loop1@f32.i32.i32	2	in	(f32, i32, i32)	-
+futhark.kmeans_i32	loop1@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	loop1@i32.f32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.f32.f32	1	in	(i32, f32, f32)	-
+futhark.kmeans_i32	loop1@i32.f32.f32	2	in	(i32, f32, f32)	-
+futhark.kmeans_i32	loop1@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	loop1@i32.f32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.f32.i32	1	in	(i32, f32, i32)	-
+futhark.kmeans_i32	loop1@i32.f32.i32	2	in	(i32, f32, i32)	-
+futhark.kmeans_i32	loop1@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	loop1@i32.i32.f32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.i32.f32	1	in	(i32, i32, f32)	-
+futhark.kmeans_i32	loop1@i32.i32.f32	2	in	(i32, i32, f32)	-
+futhark.kmeans_i32	loop1@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	loop1@i32.i32.i32	0	in	size	-
+futhark.kmeans_i32	loop1@i32.i32.i32	1	in	(i32, i32, i32)	-
+futhark.kmeans_i32	loop1@i32.i32.i32	2	in	(i32, i32, i32)	-
+futhark.kmeans_i32	loop1@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32	1	in	f32	-
+futhark.kmeans_i32	let.a.i32@f32	0	out	f32	-
+futhark.kmeans_i32	let.a.i32@i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32	1	in	i32	-
+futhark.kmeans_i32	let.a.i32@i32	0	out	i32	-
+futhark.kmeans_i32	let.a.i32@i64	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i64	1	in	i64	-
+futhark.kmeans_i32	let.a.i32@i64	0	out	i64	-
+futhark.kmeans_i32	let.a.i32@a.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	let.a.i32@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	let.a.i32@a.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	let.a.i32@m.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	let.a.i32@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	let.a.i32@m.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@m.i32	1	in	[][]i32	-
+futhark.kmeans_i32	let.a.i32@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	let.a.i32@f32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.f32	1	in	(f32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.f32	0	out	(f32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.i32	1	in	(f32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32	0	out	(f32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.f32	1	in	(i32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32	0	out	(i32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.i32	1	in	(i32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32	0	out	(i32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	1	in	(f32, f32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.f32.f32	0	out	(f32, f32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	1	in	(f32, f32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32.f32.i32	0	out	(f32, f32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	1	in	(f32, i32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32.f32	0	out	(f32, i32, f32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	1	in	(f32, i32, i32)	-
+futhark.kmeans_i32	let.a.i32@f32.i32.i32	0	out	(f32, i32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	1	in	(i32, f32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32.f32	0	out	(i32, f32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	1	in	(i32, f32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.f32.i32	0	out	(i32, f32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	1	in	(i32, i32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32.f32	0	out	(i32, i32, f32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	1	in	(i32, i32, i32)	-
+futhark.kmeans_i32	let.a.i32@i32.i32.i32	0	out	(i32, i32, i32)	-
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	1	in	[]f32 -> []f32	-
+futhark.kmeans_i32	let.a.i32@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	0	in	[]i32	-
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	1	in	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	let.a.i32@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+futhark.kmeans_i32	var@f32	0	out	f32	-
+futhark.kmeans_i32	var@i32	0	out	i32	-
+futhark.kmeans_i32	var@i64	0	out	i64	-
+futhark.kmeans_i32	var@size	0	out	size	-
+futhark.kmeans_i32	var@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	var@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	var@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	zero@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	nextin@i64	0	in	size	-
+futhark.kmeans_i32	nextin@i64	1	in	i64	-
+futhark.kmeans_i32	nextin@i64	0	out	i64	-
+futhark.kmeans_i32	fit@a.f32	0	in	size	-
+futhark.kmeans_i32	fit@a.f32	1	in	[]f32	-
+futhark.kmeans_i32	fit@a.f32	0	out	[]f32	-
+futhark.kmeans_i32	fit@a.i32	0	in	size	-
+futhark.kmeans_i32	fit@a.i32	1	in	[]i32	-
+futhark.kmeans_i32	fit@a.i32	0	out	[]i32	-
+futhark.kmeans_i32	fitrows@m.f32	0	in	size	-
+futhark.kmeans_i32	fitrows@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	fitrows@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	fitrows@m.i32	0	in	size	-
+futhark.kmeans_i32	fitrows@m.i32	1	in	[][]i32	-
+futhark.kmeans_i32	fitrows@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	fitcols@m.f32	0	in	size	-
+futhark.kmeans_i32	fitcols@m.f32	1	in	[][]f32	-
+futhark.kmeans_i32	fitcols@m.f32	0	out	[][]f32	-
+futhark.kmeans_i32	fitcols@m.i32	0	in	size	-
+futhark.kmeans_i32	fitcols@m.i32	1	in	[][]i32	-
+futhark.kmeans_i32	fitcols@m.i32	0	out	[][]i32	-
+futhark.kmeans_i32	clampix@i64	0	in	size	-
+futhark.kmeans_i32	clampix@i64	1	in	i64	-
+futhark.kmeans_i32	clampix@i64	0	out	i64	-
+futhark.pathfinder	add@i32	0	in	i32	-
+futhark.pathfinder	add@i32	1	in	i32	-
+futhark.pathfinder	add@i32	0	out	i32	-
+futhark.pathfinder	sub@i32	0	in	i32	-
+futhark.pathfinder	sub@i32	1	in	i32	-
+futhark.pathfinder	sub@i32	0	out	i32	-
+futhark.pathfinder	mul@i32	0	in	i32	-
+futhark.pathfinder	mul@i32	1	in	i32	-
+futhark.pathfinder	mul@i32	0	out	i32	-
+futhark.pathfinder	min@i32	0	in	i32	-
+futhark.pathfinder	min@i32	1	in	i32	-
+futhark.pathfinder	min@i32	0	out	i32	-
+futhark.pathfinder	max@i32	0	in	i32	-
+futhark.pathfinder	max@i32	1	in	i32	-
+futhark.pathfinder	max@i32	0	out	i32	-
+futhark.pathfinder	neg@i32	0	in	i32	-
+futhark.pathfinder	neg@i32	0	out	i32	-
+futhark.pathfinder	abs@i32	0	in	i32	-
+futhark.pathfinder	abs@i32	0	out	i32	-
+futhark.pathfinder	sel@i32	0	in	i32	-
+futhark.pathfinder	sel@i32	1	in	i32	-
+futhark.pathfinder	sel@i32	2	in	i32	-
+futhark.pathfinder	sel@i32	0	out	i32	-
+futhark.pathfinder	get@i32	0	in	[]i32	-
+futhark.pathfinder	get@i32	1	in	i64	-
+futhark.pathfinder	get@i32	0	out	i32	-
+futhark.pathfinder	sum@i32	0	in	[]i32	-
+futhark.pathfinder	sum@i32	0	out	i32	-
+futhark.pathfinder	minimum@i32	0	in	[]i32	-
+futhark.pathfinder	minimum@i32	0	out	i32	-
+futhark.pathfinder	maximum@i32	0	in	[]i32	-
+futhark.pathfinder	maximum@i32	0	out	i32	-
+futhark.pathfinder	ival@i32	0	in	i64	-
+futhark.pathfinder	ival@i32	0	out	i32	-
+futhark.pathfinder	sval@i32	0	in	size	-
+futhark.pathfinder	sval@i32	0	out	i32	-
+futhark.pathfinder	mod@i32	0	in	size	-
+futhark.pathfinder	mod@i32	1	in	i32	-
+futhark.pathfinder	mod@i32	0	out	i32	-
+futhark.pathfinder	const@i32	0	out	i32	-
+futhark.pathfinder	prev@i64	0	in	i64	-
+futhark.pathfinder	prev@i64	0	out	i64	-
+futhark.pathfinder	next@i64	0	in	i64	-
+futhark.pathfinder	next@i64	0	out	i64	-
+futhark.pathfinder	clamp@i64	0	in	size	-
+futhark.pathfinder	clamp@i64	1	in	i32	-
+futhark.pathfinder	clamp@i64	0	out	i64	-
+futhark.pathfinder	zero@i64	0	out	i64	-
+futhark.pathfinder	last@i64	0	in	size	-
+futhark.pathfinder	last@i64	0	out	i64	-
+futhark.pathfinder	tab@a.i32	0	in	size	-
+futhark.pathfinder	tab@a.i32	1	in	i32	-
+futhark.pathfinder	tab@a.i32	0	out	[]i32	-
+futhark.pathfinder	replicate@a.i32	0	in	size	-
+futhark.pathfinder	replicate@a.i32	1	in	i32	-
+futhark.pathfinder	replicate@a.i32	0	out	[]i32	-
+futhark.pathfinder	map2.add@a.i32	0	in	[]i32	-
+futhark.pathfinder	map2.add@a.i32	1	in	[]i32	-
+futhark.pathfinder	map2.add@a.i32	0	out	[]i32	-
+futhark.pathfinder	map2.sub@a.i32	0	in	[]i32	-
+futhark.pathfinder	map2.sub@a.i32	1	in	[]i32	-
+futhark.pathfinder	map2.sub@a.i32	0	out	[]i32	-
+futhark.pathfinder	map2.min@a.i32	0	in	[]i32	-
+futhark.pathfinder	map2.min@a.i32	1	in	[]i32	-
+futhark.pathfinder	map2.min@a.i32	0	out	[]i32	-
+futhark.pathfinder	map2.max@a.i32	0	in	[]i32	-
+futhark.pathfinder	map2.max@a.i32	1	in	[]i32	-
+futhark.pathfinder	map2.max@a.i32	0	out	[]i32	-
+futhark.pathfinder	scan.add@a.i32	0	in	[]i32	-
+futhark.pathfinder	scan.add@a.i32	0	out	[]i32	-
+futhark.pathfinder	scan.min@a.i32	0	in	[]i32	-
+futhark.pathfinder	scan.min@a.i32	0	out	[]i32	-
+futhark.pathfinder	scan.max@a.i32	0	in	[]i32	-
+futhark.pathfinder	scan.max@a.i32	0	out	[]i32	-
+futhark.pathfinder	hist.add@a.i32	0	in	size	-
+futhark.pathfinder	hist.add@a.i32	1	in	[]i32	-
+futhark.pathfinder	hist.add@a.i32	2	in	[]i32	-
+futhark.pathfinder	hist.add@a.i32	0	out	[]i32	-
+futhark.pathfinder	hist.min@a.i32	0	in	size	-
+futhark.pathfinder	hist.min@a.i32	1	in	[]i32	-
+futhark.pathfinder	hist.min@a.i32	2	in	[]i32	-
+futhark.pathfinder	hist.min@a.i32	0	out	[]i32	-
+futhark.pathfinder	hist.max@a.i32	0	in	size	-
+futhark.pathfinder	hist.max@a.i32	1	in	[]i32	-
+futhark.pathfinder	hist.max@a.i32	2	in	[]i32	-
+futhark.pathfinder	hist.max@a.i32	0	out	[]i32	-
+futhark.pathfinder	row@a.i32	0	in	[][]i32	-
+futhark.pathfinder	row@a.i32	1	in	i64	-
+futhark.pathfinder	row@a.i32	0	out	[]i32	-
+futhark.pathfinder	loop@i32	0	in	size	-
+futhark.pathfinder	loop@i32	1	in	i32	-
+futhark.pathfinder	loop@i32	2	in	i32	-
+futhark.pathfinder	loop@i32	0	out	i32	-
+futhark.pathfinder	loop@a.i32	0	in	size	-
+futhark.pathfinder	loop@a.i32	1	in	[]i32	-
+futhark.pathfinder	loop@a.i32	2	in	[]i32	-
+futhark.pathfinder	loop@a.i32	0	out	[]i32	-
+futhark.pathfinder	loop1@i32	0	in	size	-
+futhark.pathfinder	loop1@i32	1	in	i32	-
+futhark.pathfinder	loop1@i32	2	in	i32	-
+futhark.pathfinder	loop1@i32	0	out	i32	-
+futhark.pathfinder	loop1@a.i32	0	in	size	-
+futhark.pathfinder	loop1@a.i32	1	in	[]i32	-
+futhark.pathfinder	loop1@a.i32	2	in	[]i32	-
+futhark.pathfinder	loop1@a.i32	0	out	[]i32	-
+futhark.pathfinder	var@i32	0	out	i32	-
+futhark.pathfinder	var@i64	0	out	i64	-
+futhark.pathfinder	var@size	0	out	size	-
+futhark.pathfinder	var@a.i32	0	out	[]i32	-
+futhark.pathfinder	var@m.i32	0	out	[][]i32	-
+futhark.pathfinder	nextin@i64	0	in	size	-
+futhark.pathfinder	nextin@i64	1	in	i64	-
+futhark.pathfinder	nextin@i64	0	out	i64	-
+futhark.pathfinder	fit@a.i32	0	in	size	-
+futhark.pathfinder	fit@a.i32	1	in	[]i32	-
+futhark.pathfinder	fit@a.i32	0	out	[]i32	-
+futhark.pathfinder	fitrows@m.i32	0	in	size	-
+futhark.pathfinder	fitrows@m.i32	1	in	[][]i32	-
+futhark.pathfinder	fitrows@m.i32	0	out	[][]i32	-
+futhark.pathfinder	fitcols@m.i32	0	in	size	-
+futhark.pathfinder	fitcols@m.i32	1	in	[][]i32	-
+futhark.pathfinder	fitcols@m.i32	0	out	[][]i32	-
+futhark.pathfinder	clampix@i64	0	in	size	-
+futhark.pathfinder	clampix@i64	1	in	i64	-
+futhark.pathfinder	clampix@i64	0	out	i64	-
+futhark.reduce	add@i32	0	in	i32	-
+futhark.reduce	add@i32	1	in	i32	-
+futhark.reduce	add@i32	0	out	i32	-
+futhark.reduce	sub@i32	0	in	i32	-
+futhark.reduce	sub@i32	1	in	i32	-
+futhark.reduce	sub@i32	0	out	i32	-
+futhark.reduce	mul@i32	0	in	i32	-
+futhark.reduce	mul@i32	1	in	i32	-
+futhark.reduce	mul@i32	0	out	i32	-
+futhark.reduce	min@i32	0	in	i32	-
+futhark.reduce	min@i32	1	in	i32	-
+futhark.reduce	min@i32	0	out	i32	-
+futhark.reduce	max@i32	0	in	i32	-
+futhark.reduce	max@i32	1	in	i32	-
+futhark.reduce	max@i32	0	out	i32	-
+futhark.reduce	neg@i32	0	in	i32	-
+futhark.reduce	neg@i32	0	out	i32	-
+futhark.reduce	abs@i32	0	in	i32	-
+futhark.reduce	abs@i32	0	out	i32	-
+futhark.reduce	sel@i32	0	in	i32	-
+futhark.reduce	sel@i32	1	in	i32	-
+futhark.reduce	sel@i32	2	in	i32	-
+futhark.reduce	sel@i32	0	out	i32	-
+futhark.reduce	get@i32	0	in	[]i32	-
+futhark.reduce	get@i32	1	in	i64	-
+futhark.reduce	get@i32	0	out	i32	-
+futhark.reduce	sum@i32	0	in	[]i32	-
+futhark.reduce	sum@i32	0	out	i32	-
+futhark.reduce	minimum@i32	0	in	[]i32	-
+futhark.reduce	minimum@i32	0	out	i32	-
+futhark.reduce	maximum@i32	0	in	[]i32	-
+futhark.reduce	maximum@i32	0	out	i32	-
+futhark.reduce	ival@i32	0	in	i64	-
+futhark.reduce	ival@i32	0	out	i32	-
+futhark.reduce	sval@i32	0	in	size	-
+futhark.reduce	sval@i32	0	out	i32	-
+futhark.reduce	mod@i32	0	in	size	-
+futhark.reduce	mod@i32	1	in	i32	-
+futhark.reduce	mod@i32	0	out	i32	-
+futhark.reduce	const@i32	0	out	i32	-
+futhark.reduce	prev@i64	0	in	i64	-
+futhark.reduce	prev@i64	0	out	i64	-
+futhark.reduce	next@i64	0	in	i64	-
+futhark.reduce	next@i64	0	out	i64	-
+futhark.reduce	clamp@i64	0	in	size	-
+futhark.reduce	clamp@i64	1	in	i32	-
+futhark.reduce	clamp@i64	0	out	i64	-
+futhark.reduce	zero@i64	0	out	i64	-
+futhark.reduce	last@i64	0	in	size	-
+futhark.reduce	last@i64	0	out	i64	-
+futhark.reduce	tab@a.i32	0	in	size	-
+futhark.reduce	tab@a.i32	1	in	i32	-
+futhark.reduce	tab@a.i32	0	out	[]i32	-
+futhark.reduce	replicate@a.i32	0	in	size	-
+futhark.reduce	replicate@a.i32	1	in	i32	-
+futhark.reduce	replicate@a.i32	0	out	[]i32	-
+futhark.reduce	map2.add@a.i32	0	in	[]i32	-
+futhark.reduce	map2.add@a.i32	1	in	[]i32	-
+futhark.reduce	map2.add@a.i32	0	out	[]i32	-
+futhark.reduce	map2.sub@a.i32	0	in	[]i32	-
+futhark.reduce	map2.sub@a.i32	1	in	[]i32	-
+futhark.reduce	map2.sub@a.i32	0	out	[]i32	-
+futhark.reduce	map2.min@a.i32	0	in	[]i32	-
+futhark.reduce	map2.min@a.i32	1	in	[]i32	-
+futhark.reduce	map2.min@a.i32	0	out	[]i32	-
+futhark.reduce	map2.max@a.i32	0	in	[]i32	-
+futhark.reduce	map2.max@a.i32	1	in	[]i32	-
+futhark.reduce	map2.max@a.i32	0	out	[]i32	-
+futhark.reduce	scan.add@a.i32	0	in	[]i32	-
+futhark.reduce	scan.add@a.i32	0	out	[]i32	-
+futhark.reduce	scan.min@a.i32	0	in	[]i32	-
+futhark.reduce	scan.min@a.i32	0	out	[]i32	-
+futhark.reduce	scan.max@a.i32	0	in	[]i32	-
+futhark.reduce	scan.max@a.i32	0	out	[]i32	-
+futhark.reduce	hist.add@a.i32	0	in	size	-
+futhark.reduce	hist.add@a.i32	1	in	[]i32	-
+futhark.reduce	hist.add@a.i32	2	in	[]i32	-
+futhark.reduce	hist.add@a.i32	0	out	[]i32	-
+futhark.reduce	hist.min@a.i32	0	in	size	-
+futhark.reduce	hist.min@a.i32	1	in	[]i32	-
+futhark.reduce	hist.min@a.i32	2	in	[]i32	-
+futhark.reduce	hist.min@a.i32	0	out	[]i32	-
+futhark.reduce	hist.max@a.i32	0	in	size	-
+futhark.reduce	hist.max@a.i32	1	in	[]i32	-
+futhark.reduce	hist.max@a.i32	2	in	[]i32	-
+futhark.reduce	hist.max@a.i32	0	out	[]i32	-
+futhark.reduce	loop@i32	0	in	size	-
+futhark.reduce	loop@i32	1	in	i32	-
+futhark.reduce	loop@i32	2	in	i32	-
+futhark.reduce	loop@i32	0	out	i32	-
+futhark.reduce	loop@a.i32	0	in	size	-
+futhark.reduce	loop@a.i32	1	in	[]i32	-
+futhark.reduce	loop@a.i32	2	in	[]i32	-
+futhark.reduce	loop@a.i32	0	out	[]i32	-
+futhark.reduce	loop1@i32	0	in	size	-
+futhark.reduce	loop1@i32	1	in	i32	-
+futhark.reduce	loop1@i32	2	in	i32	-
+futhark.reduce	loop1@i32	0	out	i32	-
+futhark.reduce	loop1@a.i32	0	in	size	-
+futhark.reduce	loop1@a.i32	1	in	[]i32	-
+futhark.reduce	loop1@a.i32	2	in	[]i32	-
+futhark.reduce	loop1@a.i32	0	out	[]i32	-
+futhark.reduce	var@i32	0	out	i32	-
+futhark.reduce	var@i64	0	out	i64	-
+futhark.reduce	var@size	0	out	size	-
+futhark.reduce	var@a.i32	0	out	[]i32	-
+futhark.reduce	nextin@i64	0	in	size	-
+futhark.reduce	nextin@i64	1	in	i64	-
+futhark.reduce	nextin@i64	0	out	i64	-
+futhark.reduce	fit@a.i32	0	in	size	-
+futhark.reduce	fit@a.i32	1	in	[]i32	-
+futhark.reduce	fit@a.i32	0	out	[]i32	-
+futhark.reduce	clampix@i64	0	in	size	-
+futhark.reduce	clampix@i64	1	in	i64	-
+futhark.reduce	clampix@i64	0	out	i64	-
+futhark.scan	add@i32	0	in	i32	-
+futhark.scan	add@i32	1	in	i32	-
+futhark.scan	add@i32	0	out	i32	-
+futhark.scan	sub@i32	0	in	i32	-
+futhark.scan	sub@i32	1	in	i32	-
+futhark.scan	sub@i32	0	out	i32	-
+futhark.scan	mul@i32	0	in	i32	-
+futhark.scan	mul@i32	1	in	i32	-
+futhark.scan	mul@i32	0	out	i32	-
+futhark.scan	min@i32	0	in	i32	-
+futhark.scan	min@i32	1	in	i32	-
+futhark.scan	min@i32	0	out	i32	-
+futhark.scan	max@i32	0	in	i32	-
+futhark.scan	max@i32	1	in	i32	-
+futhark.scan	max@i32	0	out	i32	-
+futhark.scan	neg@i32	0	in	i32	-
+futhark.scan	neg@i32	0	out	i32	-
+futhark.scan	abs@i32	0	in	i32	-
+futhark.scan	abs@i32	0	out	i32	-
+futhark.scan	sel@i32	0	in	i32	-
+futhark.scan	sel@i32	1	in	i32	-
+futhark.scan	sel@i32	2	in	i32	-
+futhark.scan	sel@i32	0	out	i32	-
+futhark.scan	get@i32	0	in	[]i32	-
+futhark.scan	get@i32	1	in	i64	-
+futhark.scan	get@i32	0	out	i32	-
+futhark.scan	sum@i32	0	in	[]i32	-
+futhark.scan	sum@i32	0	out	i32	-
+futhark.scan	minimum@i32	0	in	[]i32	-
+futhark.scan	minimum@i32	0	out	i32	-
+futhark.scan	maximum@i32	0	in	[]i32	-
+futhark.scan	maximum@i32	0	out	i32	-
+futhark.scan	ival@i32	0	in	i64	-
+futhark.scan	ival@i32	0	out	i32	-
+futhark.scan	sval@i32	0	in	size	-
+futhark.scan	sval@i32	0	out	i32	-
+futhark.scan	mod@i32	0	in	size	-
+futhark.scan	mod@i32	1	in	i32	-
+futhark.scan	mod@i32	0	out	i32	-
+futhark.scan	const@i32	0	out	i32	-
+futhark.scan	prev@i64	0	in	i64	-
+futhark.scan	prev@i64	0	out	i64	-
+futhark.scan	next@i64	0	in	i64	-
+futhark.scan	next@i64	0	out	i64	-
+futhark.scan	clamp@i64	0	in	size	-
+futhark.scan	clamp@i64	1	in	i32	-
+futhark.scan	clamp@i64	0	out	i64	-
+futhark.scan	zero@i64	0	out	i64	-
+futhark.scan	last@i64	0	in	size	-
+futhark.scan	last@i64	0	out	i64	-
+futhark.scan	tab@a.i32	0	in	size	-
+futhark.scan	tab@a.i32	1	in	i32	-
+futhark.scan	tab@a.i32	0	out	[]i32	-
+futhark.scan	replicate@a.i32	0	in	size	-
+futhark.scan	replicate@a.i32	1	in	i32	-
+futhark.scan	replicate@a.i32	0	out	[]i32	-
+futhark.scan	map2.add@a.i32	0	in	[]i32	-
+futhark.scan	map2.add@a.i32	1	in	[]i32	-
+futhark.scan	map2.add@a.i32	0	out	[]i32	-
+futhark.scan	map2.sub@a.i32	0	in	[]i32	-
+futhark.scan	map2.sub@a.i32	1	in	[]i32	-
+futhark.scan	map2.sub@a.i32	0	out	[]i32	-
+futhark.scan	map2.min@a.i32	0	in	[]i32	-
+futhark.scan	map2.min@a.i32	1	in	[]i32	-
+futhark.scan	map2.min@a.i32	0	out	[]i32	-
+futhark.scan	map2.max@a.i32	0	in	[]i32	-
+futhark.scan	map2.max@a.i32	1	in	[]i32	-
+futhark.scan	map2.max@a.i32	0	out	[]i32	-
+futhark.scan	scan.add@a.i32	0	in	[]i32	-
+futhark.scan	scan.add@a.i32	0	out	[]i32	-
+futhark.scan	scan.min@a.i32	0	in	[]i32	-
+futhark.scan	scan.min@a.i32	0	out	[]i32	-
+futhark.scan	scan.max@a.i32	0	in	[]i32	-
+futhark.scan	scan.max@a.i32	0	out	[]i32	-
+futhark.scan	hist.add@a.i32	0	in	size	-
+futhark.scan	hist.add@a.i32	1	in	[]i32	-
+futhark.scan	hist.add@a.i32	2	in	[]i32	-
+futhark.scan	hist.add@a.i32	0	out	[]i32	-
+futhark.scan	hist.min@a.i32	0	in	size	-
+futhark.scan	hist.min@a.i32	1	in	[]i32	-
+futhark.scan	hist.min@a.i32	2	in	[]i32	-
+futhark.scan	hist.min@a.i32	0	out	[]i32	-
+futhark.scan	hist.max@a.i32	0	in	size	-
+futhark.scan	hist.max@a.i32	1	in	[]i32	-
+futhark.scan	hist.max@a.i32	2	in	[]i32	-
+futhark.scan	hist.max@a.i32	0	out	[]i32	-
+futhark.scan	loop@i32	0	in	size	-
+futhark.scan	loop@i32	1	in	i32	-
+futhark.scan	loop@i32	2	in	i32	-
+futhark.scan	loop@i32	0	out	i32	-
+futhark.scan	loop@a.i32	0	in	size	-
+futhark.scan	loop@a.i32	1	in	[]i32	-
+futhark.scan	loop@a.i32	2	in	[]i32	-
+futhark.scan	loop@a.i32	0	out	[]i32	-
+futhark.scan	loop1@i32	0	in	size	-
+futhark.scan	loop1@i32	1	in	i32	-
+futhark.scan	loop1@i32	2	in	i32	-
+futhark.scan	loop1@i32	0	out	i32	-
+futhark.scan	loop1@a.i32	0	in	size	-
+futhark.scan	loop1@a.i32	1	in	[]i32	-
+futhark.scan	loop1@a.i32	2	in	[]i32	-
+futhark.scan	loop1@a.i32	0	out	[]i32	-
+futhark.scan	var@i32	0	out	i32	-
+futhark.scan	var@i64	0	out	i64	-
+futhark.scan	var@size	0	out	size	-
+futhark.scan	var@a.i32	0	out	[]i32	-
+futhark.scan	nextin@i64	0	in	size	-
+futhark.scan	nextin@i64	1	in	i64	-
+futhark.scan	nextin@i64	0	out	i64	-
+futhark.scan	fit@a.i32	0	in	size	-
+futhark.scan	fit@a.i32	1	in	[]i32	-
+futhark.scan	fit@a.i32	0	out	[]i32	-
+futhark.scan	clampix@i64	0	in	size	-
+futhark.scan	clampix@i64	1	in	i64	-
+futhark.scan	clampix@i64	0	out	i64	-
+regex	regex_dot	0	out	Pattern	-
+regex	regex_anchor_start	0	out	Pattern	-
+regex	regex_anchor_end	0	out	Pattern	-
+regex	regex_empty	0	out	Pattern	-
+regex	regex_cc_digit	0	out	CharClass	-
+regex	regex_cc_word	0	out	CharClass	-
+regex	regex_cc_space	0	out	CharClass	-
+regex	regex_star	0	in	Pattern	-
+regex	regex_star	0	out	Pattern	-
+regex	regex_plus	0	in	Pattern	-
+regex	regex_plus	0	out	Pattern	-
+regex	regex_opt	0	in	Pattern	-
+regex	regex_opt	0	out	Pattern	-
+regex	regex_concat	0	in	Pattern	-
+regex	regex_concat	1	in	Pattern	-
+regex	regex_concat	0	out	Pattern	-
+regex	regex_alt	0	in	Pattern	-
+regex	regex_alt	1	in	Pattern	-
+regex	regex_alt	0	out	Pattern	-
+regex	regex_rep_n	0	in	CharClass	-
+regex	regex_rep_n	1	in	I	-
+regex	regex_rep_n	0	out	Pattern	-
+regex	regex_rep_upto	0	in	CharClass	-
+regex	regex_rep_upto	1	in	I	-
+regex	regex_rep_upto	0	out	Pattern	-
+regex	regex_rep_range	0	in	CharClass	-
+regex	regex_rep_range	1	in	I	-
+regex	regex_rep_range	2	in	I	-
+regex	regex_rep_range	0	out	Pattern	-
+regex	regex_class_of	0	in	CharClass	-
+regex	regex_class_of	0	out	Pattern	-
+regex	regex_lit	0	in	Char	-
+regex	regex_lit	0	out	Pattern	-
+regex	regex_cc_range	0	in	Char	-
+regex	regex_cc_range	1	in	Char	-
+regex	regex_cc_range	0	out	CharClass	-
+regex	regex_cc_union	0	in	CharClass	-
+regex	regex_cc_union	1	in	CharClass	-
+regex	regex_cc_union	0	out	CharClass	-
+regex	regex_cc_negate	0	in	CharClass	-
+regex	regex_cc_negate	0	out	CharClass	-
+regex	?_Char	0	out	Char	-
+regex	?_I	0	out	I	-
+regex	?_Pat	0	out	Pattern	-
+tsr.depth	add	0	in	F	-
+tsr.depth	add	1	in	F	-
+tsr.depth	add	0	out	F	-
+tsr.depth	sub	0	in	F	-
+tsr.depth	sub	1	in	F	-
+tsr.depth	sub	0	out	F	-
+tsr.depth	mul	0	in	F	-
+tsr.depth	mul	1	in	F	-
+tsr.depth	mul	0	out	F	-
+tsr.depth	pdiv	0	in	F	-
+tsr.depth	pdiv	1	in	F	-
+tsr.depth	pdiv	0	out	F	-
+tsr.depth	sin	0	in	F	-
+tsr.depth	sin	0	out	F	-
+tsr.depth	cos	0	in	F	-
+tsr.depth	cos	0	out	F	-
+tsr.depth	tanh	0	in	F	-
+tsr.depth	tanh	0	out	F	-
+tsr.depth	psqrt	0	in	F	-
+tsr.depth	psqrt	0	out	F	-
+tsr.depth	plog	0	in	F	-
+tsr.depth	plog	0	out	F	-
+tsr.depth	pexp	0	in	F	-
+tsr.depth	pexp	0	out	F	-
+tsr.depth	neg	0	in	F	-
+tsr.depth	neg	0	out	F	-
+tsr.depth	abs	0	in	F	-
+tsr.depth	abs	0	out	F	-
+tsr.depth	pow2	0	in	F	-
+tsr.depth	pow2	0	out	F	-
+tsr.depth	pow3	0	in	F	-
+tsr.depth	pow3	0	out	F	-
+tsr.depth	pinv	0	in	F	-
+tsr.depth	pinv	0	out	F	-
+tsr.depth	tan	0	in	F	-
+tsr.depth	tan	0	out	F	-
+tsr.depth	pasin	0	in	F	-
+tsr.depth	pasin	0	out	F	-
+tsr.depth	pacos	0	in	F	-
+tsr.depth	pacos	0	out	F	-
+tsr.depth	x0	0	out	F	-
+tsr.depth	x1	0	out	F	-
+tsr.depth	x2	0	out	F	-
+tsr.depth	x3	0	out	F	-
+tsr.depth	x4	0	out	F	-
+tsr.depth	x5	0	out	F	-
+tsr.depth	x6	0	out	F	-
+tsr.depth	x7	0	out	F	-
+tsr.depth	x8	0	out	F	-
+tsr.depth	x9	0	out	F	-
+tsr.depth	?	0	out	F	-
+tsr.order	add	0	in	F	-
+tsr.order	add	1	in	F	-
+tsr.order	add	0	out	F	-
+tsr.order	sub	0	in	F	-
+tsr.order	sub	1	in	F	-
+tsr.order	sub	0	out	F	-
+tsr.order	mul	0	in	F	-
+tsr.order	mul	1	in	F	-
+tsr.order	mul	0	out	F	-
+tsr.order	pdiv	0	in	F	-
+tsr.order	pdiv	1	in	F	-
+tsr.order	pdiv	0	out	F	-
+tsr.order	sin	0	in	F	-
+tsr.order	sin	0	out	F	-
+tsr.order	cos	0	in	F	-
+tsr.order	cos	0	out	F	-
+tsr.order	tanh	0	in	F	-
+tsr.order	tanh	0	out	F	-
+tsr.order	psqrt	0	in	F	-
+tsr.order	psqrt	0	out	F	-
+tsr.order	plog	0	in	F	-
+tsr.order	plog	0	out	F	-
+tsr.order	pexp	0	in	F	-
+tsr.order	pexp	0	out	F	-
+tsr.order	neg	0	in	F	-
+tsr.order	neg	0	out	F	-
+tsr.order	abs	0	in	F	-
+tsr.order	abs	0	out	F	-
+tsr.order	pow2	0	in	F	-
+tsr.order	pow2	0	out	F	-
+tsr.order	pow3	0	in	F	-
+tsr.order	pow3	0	out	F	-
+tsr.order	pinv	0	in	F	-
+tsr.order	pinv	0	out	F	-
+tsr.order	tan	0	in	F	-
+tsr.order	tan	0	out	F	-
+tsr.order	pasin	0	in	F	-
+tsr.order	pasin	0	out	F	-
+tsr.order	pacos	0	in	F	-
+tsr.order	pacos	0	out	F	-
+tsr.order	x0	0	out	F	-
+tsr.order	x1	0	out	F	-
+tsr.order	x2	0	out	F	-
+tsr.order	x3	0	out	F	-
+tsr.order	x4	0	out	F	-
+tsr.order	x5	0	out	F	-
+tsr.order	x6	0	out	F	-
+tsr.order	x7	0	out	F	-
+tsr.order	x8	0	out	F	-
+tsr.order	x9	0	out	F	-
+tsr.order	?	0	out	F	-
+tsr.order_depth	add	0	in	F	-
+tsr.order_depth	add	1	in	F	-
+tsr.order_depth	add	0	out	F	-
+tsr.order_depth	sub	0	in	F	-
+tsr.order_depth	sub	1	in	F	-
+tsr.order_depth	sub	0	out	F	-
+tsr.order_depth	mul	0	in	F	-
+tsr.order_depth	mul	1	in	F	-
+tsr.order_depth	mul	0	out	F	-
+tsr.order_depth	pdiv	0	in	F	-
+tsr.order_depth	pdiv	1	in	F	-
+tsr.order_depth	pdiv	0	out	F	-
+tsr.order_depth	sin	0	in	F	-
+tsr.order_depth	sin	0	out	F	-
+tsr.order_depth	cos	0	in	F	-
+tsr.order_depth	cos	0	out	F	-
+tsr.order_depth	tanh	0	in	F	-
+tsr.order_depth	tanh	0	out	F	-
+tsr.order_depth	psqrt	0	in	F	-
+tsr.order_depth	psqrt	0	out	F	-
+tsr.order_depth	plog	0	in	F	-
+tsr.order_depth	plog	0	out	F	-
+tsr.order_depth	pexp	0	in	F	-
+tsr.order_depth	pexp	0	out	F	-
+tsr.order_depth	neg	0	in	F	-
+tsr.order_depth	neg	0	out	F	-
+tsr.order_depth	abs	0	in	F	-
+tsr.order_depth	abs	0	out	F	-
+tsr.order_depth	pow2	0	in	F	-
+tsr.order_depth	pow2	0	out	F	-
+tsr.order_depth	pow3	0	in	F	-
+tsr.order_depth	pow3	0	out	F	-
+tsr.order_depth	pinv	0	in	F	-
+tsr.order_depth	pinv	0	out	F	-
+tsr.order_depth	tan	0	in	F	-
+tsr.order_depth	tan	0	out	F	-
+tsr.order_depth	pasin	0	in	F	-
+tsr.order_depth	pasin	0	out	F	-
+tsr.order_depth	pacos	0	in	F	-
+tsr.order_depth	pacos	0	out	F	-
+tsr.order_depth	x0	0	out	F	-
+tsr.order_depth	x1	0	out	F	-
+tsr.order_depth	x2	0	out	F	-
+tsr.order_depth	x3	0	out	F	-
+tsr.order_depth	x4	0	out	F	-
+tsr.order_depth	x5	0	out	F	-
+tsr.order_depth	x6	0	out	F	-
+tsr.order_depth	x7	0	out	F	-
+tsr.order_depth	x8	0	out	F	-
+tsr.order_depth	x9	0	out	F	-
+tsr.order_depth	?	0	out	F	-
+tsr.order_depth_windows	add	0	in	F	-
+tsr.order_depth_windows	add	1	in	F	-
+tsr.order_depth_windows	add	0	out	F	-
+tsr.order_depth_windows	sub	0	in	F	-
+tsr.order_depth_windows	sub	1	in	F	-
+tsr.order_depth_windows	sub	0	out	F	-
+tsr.order_depth_windows	mul	0	in	F	-
+tsr.order_depth_windows	mul	1	in	F	-
+tsr.order_depth_windows	mul	0	out	F	-
+tsr.order_depth_windows	pdiv	0	in	F	-
+tsr.order_depth_windows	pdiv	1	in	F	-
+tsr.order_depth_windows	pdiv	0	out	F	-
+tsr.order_depth_windows	sin	0	in	F	-
+tsr.order_depth_windows	sin	0	out	F	-
+tsr.order_depth_windows	cos	0	in	F	-
+tsr.order_depth_windows	cos	0	out	F	-
+tsr.order_depth_windows	tanh	0	in	F	-
+tsr.order_depth_windows	tanh	0	out	F	-
+tsr.order_depth_windows	psqrt	0	in	F	-
+tsr.order_depth_windows	psqrt	0	out	F	-
+tsr.order_depth_windows	plog	0	in	F	-
+tsr.order_depth_windows	plog	0	out	F	-
+tsr.order_depth_windows	pexp	0	in	F	-
+tsr.order_depth_windows	pexp	0	out	F	-
+tsr.order_depth_windows	neg	0	in	F	-
+tsr.order_depth_windows	neg	0	out	F	-
+tsr.order_depth_windows	abs	0	in	F	-
+tsr.order_depth_windows	abs	0	out	F	-
+tsr.order_depth_windows	pow2	0	in	F	-
+tsr.order_depth_windows	pow2	0	out	F	-
+tsr.order_depth_windows	pow3	0	in	F	-
+tsr.order_depth_windows	pow3	0	out	F	-
+tsr.order_depth_windows	pinv	0	in	F	-
+tsr.order_depth_windows	pinv	0	out	F	-
+tsr.order_depth_windows	tan	0	in	F	-
+tsr.order_depth_windows	tan	0	out	F	-
+tsr.order_depth_windows	pasin	0	in	F	-
+tsr.order_depth_windows	pasin	0	out	F	-
+tsr.order_depth_windows	pacos	0	in	F	-
+tsr.order_depth_windows	pacos	0	out	F	-
+tsr.order_depth_windows	x0	0	out	F	-
+tsr.order_depth_windows	x1	0	out	F	-
+tsr.order_depth_windows	x2	0	out	F	-
+tsr.order_depth_windows	x3	0	out	F	-
+tsr.order_depth_windows	x4	0	out	F	-
+tsr.order_depth_windows	x5	0	out	F	-
+tsr.order_depth_windows	x6	0	out	F	-
+tsr.order_depth_windows	x7	0	out	F	-
+tsr.order_depth_windows	x8	0	out	F	-
+tsr.order_depth_windows	x9	0	out	F	-
+tsr.order_depth_windows	?	0	out	F	-
+tsr.single	add	0	in	F	-
+tsr.single	add	1	in	F	-
+tsr.single	add	0	out	F	-
+tsr.single	sub	0	in	F	-
+tsr.single	sub	1	in	F	-
+tsr.single	sub	0	out	F	-
+tsr.single	mul	0	in	F	-
+tsr.single	mul	1	in	F	-
+tsr.single	mul	0	out	F	-
+tsr.single	pdiv	0	in	F	-
+tsr.single	pdiv	1	in	F	-
+tsr.single	pdiv	0	out	F	-
+tsr.single	sin	0	in	F	-
+tsr.single	sin	0	out	F	-
+tsr.single	cos	0	in	F	-
+tsr.single	cos	0	out	F	-
+tsr.single	tanh	0	in	F	-
+tsr.single	tanh	0	out	F	-
+tsr.single	psqrt	0	in	F	-
+tsr.single	psqrt	0	out	F	-
+tsr.single	plog	0	in	F	-
+tsr.single	plog	0	out	F	-
+tsr.single	pexp	0	in	F	-
+tsr.single	pexp	0	out	F	-
+tsr.single	neg	0	in	F	-
+tsr.single	neg	0	out	F	-
+tsr.single	abs	0	in	F	-
+tsr.single	abs	0	out	F	-
+tsr.single	pow2	0	in	F	-
+tsr.single	pow2	0	out	F	-
+tsr.single	pow3	0	in	F	-
+tsr.single	pow3	0	out	F	-
+tsr.single	pinv	0	in	F	-
+tsr.single	pinv	0	out	F	-
+tsr.single	tan	0	in	F	-
+tsr.single	tan	0	out	F	-
+tsr.single	pasin	0	in	F	-
+tsr.single	pasin	0	out	F	-
+tsr.single	pacos	0	in	F	-
+tsr.single	pacos	0	out	F	-
+tsr.single	x0	0	out	F	-
+tsr.single	x1	0	out	F	-
+tsr.single	x2	0	out	F	-
+tsr.single	x3	0	out	F	-
+tsr.single	x4	0	out	F	-
+tsr.single	x5	0	out	F	-
+tsr.single	x6	0	out	F	-
+tsr.single	x7	0	out	F	-
+tsr.single	x8	0	out	F	-
+tsr.single	x9	0	out	F	-
+tsr.single	?	0	out	F	-
+wgsl.gram	main	0	in	grid	-
+wgsl.gram	main	1	in	stmt	-
+wgsl.gram	main	0	out	kernel	-
+wgsl.gram	empty	0	out	kernel	-
+wgsl.gram	g8x8	0	out	grid	-
+wgsl.gram	g16x16	0	out	grid	-
+wgsl.gram	g32x2	0	out	grid	-
+wgsl.gram	g64x1	0	out	grid	-
+wgsl.gram	seq	0	in	stmt	-
+wgsl.gram	seq	1	in	stmt	-
+wgsl.gram	seq	0	out	stmt	-
+wgsl.gram	let_u	0	in	u32	-
+wgsl.gram	let_u	1	in	stmt	-
+wgsl.gram	let_u	0	out	stmt	-
+wgsl.gram	let_f	0	in	f32	-
+wgsl.gram	let_f	1	in	stmt	-
+wgsl.gram	let_f	0	out	stmt	-
+wgsl.gram	let_v	0	in	vecf	-
+wgsl.gram	let_v	1	in	stmt	-
+wgsl.gram	let_v	0	out	stmt	-
+wgsl.gram	set_rf0	0	in	f32	-
+wgsl.gram	set_rf0	0	out	stmt	-
+wgsl.gram	set_rf1	0	in	f32	-
+wgsl.gram	set_rf1	0	out	stmt	-
+wgsl.gram	set_rf2	0	in	f32	-
+wgsl.gram	set_rf2	0	out	stmt	-
+wgsl.gram	set_rf3	0	in	f32	-
+wgsl.gram	set_rf3	0	out	stmt	-
+wgsl.gram	store	0	in	buf	-
+wgsl.gram	store	1	in	u32	-
+wgsl.gram	store	2	in	f32	-
+wgsl.gram	store	0	out	stmt	-
+wgsl.gram	if_	0	in	bool	-
+wgsl.gram	if_	1	in	stmt	-
+wgsl.gram	if_	2	in	stmt	-
+wgsl.gram	if_	0	out	stmt	-
+wgsl.gram	loop	0	in	count	-
+wgsl.gram	loop	1	in	stmt	-
+wgsl.gram	loop	0	out	stmt	-
+wgsl.gram	barrier	0	out	stmt	-
+wgsl.gram	wg_store	0	in	u32	-
+wgsl.gram	wg_store	1	in	f32	-
+wgsl.gram	wg_store	0	out	stmt	-
+wgsl.gram	add_u	0	in	u32	-
+wgsl.gram	add_u	1	in	u32	-
+wgsl.gram	add_u	0	out	u32	-
+wgsl.gram	mul_uc	0	in	u32	-
+wgsl.gram	mul_uc	1	in	count	-
+wgsl.gram	mul_uc	0	out	u32	-
+wgsl.gram	mod_uc	0	in	u32	-
+wgsl.gram	mod_uc	1	in	count	-
+wgsl.gram	mod_uc	0	out	u32	-
+wgsl.gram	min_u	0	in	u32	-
+wgsl.gram	min_u	1	in	u32	-
+wgsl.gram	min_u	0	out	u32	-
+wgsl.gram	?@u32	0	out	u32	-
+wgsl.gram	var@u32	0	out	u32	-
+wgsl.gram	add_f	0	in	f32	-
+wgsl.gram	add_f	1	in	f32	-
+wgsl.gram	add_f	0	out	f32	-
+wgsl.gram	sub_f	0	in	f32	-
+wgsl.gram	sub_f	1	in	f32	-
+wgsl.gram	sub_f	0	out	f32	-
+wgsl.gram	mul_f	0	in	f32	-
+wgsl.gram	mul_f	1	in	f32	-
+wgsl.gram	mul_f	0	out	f32	-
+wgsl.gram	max_f	0	in	f32	-
+wgsl.gram	max_f	1	in	f32	-
+wgsl.gram	max_f	0	out	f32	-
+wgsl.gram	fma_f	0	in	f32	-
+wgsl.gram	fma_f	1	in	f32	-
+wgsl.gram	fma_f	2	in	f32	-
+wgsl.gram	fma_f	0	out	f32	-
+wgsl.gram	sqrt_f	0	in	f32	-
+wgsl.gram	sqrt_f	0	out	f32	-
+wgsl.gram	exp_f	0	in	f32	-
+wgsl.gram	exp_f	0	out	f32	-
+wgsl.gram	f32_u	0	in	u32	-
+wgsl.gram	f32_u	0	out	f32	-
+wgsl.gram	load	0	in	buf	-
+wgsl.gram	load	1	in	u32	-
+wgsl.gram	load	0	out	f32	-
+wgsl.gram	wg_load	0	in	u32	-
+wgsl.gram	wg_load	0	out	f32	-
+wgsl.gram	dot	0	in	vecf	-
+wgsl.gram	dot	1	in	vecf	-
+wgsl.gram	dot	0	out	f32	-
+wgsl.gram	rf0	0	out	f32	-
+wgsl.gram	rf1	0	out	f32	-
+wgsl.gram	rf2	0	out	f32	-
+wgsl.gram	rf3	0	out	f32	-
+wgsl.gram	?@f32	0	out	f32	-
+wgsl.gram	var@f32	0	out	f32	-
+wgsl.gram	lt_u	0	in	u32	-
+wgsl.gram	lt_u	1	in	u32	-
+wgsl.gram	lt_u	0	out	bool	-
+wgsl.gram	lt_f	0	in	f32	-
+wgsl.gram	lt_f	1	in	f32	-
+wgsl.gram	lt_f	0	out	bool	-
+wgsl.gram	and_b	0	in	bool	-
+wgsl.gram	and_b	1	in	bool	-
+wgsl.gram	and_b	0	out	bool	-
+wgsl.gram	not_b	0	in	bool	-
+wgsl.gram	not_b	0	out	bool	-
+wgsl.gram	?@bool	0	out	bool	-
+wgsl.gram	v2	0	in	f32	-
+wgsl.gram	v2	1	in	f32	-
+wgsl.gram	v2	0	out	vecf	-
+wgsl.gram	v4	0	in	f32	-
+wgsl.gram	v4	1	in	f32	-
+wgsl.gram	v4	2	in	f32	-
+wgsl.gram	v4	3	in	f32	-
+wgsl.gram	v4	0	out	vecf	-
+wgsl.gram	vadd	0	in	vecf	-
+wgsl.gram	vadd	1	in	vecf	-
+wgsl.gram	vadd	0	out	vecf	-
+wgsl.gram	vscale	0	in	vecf	-
+wgsl.gram	vscale	1	in	f32	-
+wgsl.gram	vscale	0	out	vecf	-
+wgsl.gram	var@vecf	0	out	vecf	-
+wgsl.gram	c1	0	out	count	-
+wgsl.gram	c2	0	out	count	-
+wgsl.gram	c4	0	out	count	-
+wgsl.gram	c8	0	out	count	-
+wgsl.gram	c16	0	out	count	-
+wgsl.gram	c32	0	out	count	-
+wgsl.gram	c64	0	out	count	-
+wgsl.gram	c128	0	out	count	-
+wgsl.gram	c256	0	out	count	-
+wgsl.gram	var@buf	0	out	buf	-
