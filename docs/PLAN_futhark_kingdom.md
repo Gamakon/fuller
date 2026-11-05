@@ -1703,6 +1703,23 @@ and the workgroup size as properties, `let`/`var`/loop variables and the invocat
 here: each gets its own plan when its turn comes. Also later (Andrew's note of 2026-11-05, recorded): tables over a
 general set of Futhark types and functions, the declaration naming only the root type and the leaf inputs.
 
+**Now (Andrew, 2026-11-05 ~20:30Z): migrate every live kingdom to the four row kinds and smoke test each.** Futhark
+(sig and pixel) and TSR are done. The pattern to copy is TSR's port: a generator writes `kingdoms/<k>/tables.tsv` in
+the four row kinds (fuller), a rows module loads it through `geneframe::schema` and `typed_environment` (fuller), and
+phylu's typed device decodes on the rows (`typed_resolve`, `typed_layout`). No compatibility path: the old row forms
+and tables are deleted, programs worth keeping are kept as text.
+
+| task | kingdom | rows (design section) | owner of the code | smoke test |
+|---|---|---|---|---|
+| K1 | symbolic regression | `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> subst.in0` (design 8.1); `T1`/`T2` deleted | fuller rows + phylu decoder | 1,000 random genes decode to legal expressions equal to the host twin; one 60 s phylu run on 2 laws, best fitness improves |
+| K2 | regex | today's POSIX types, no property rows; the counted-repetition guard (design 8.2) | fuller rows + phylu `regex_typed` | 1,000 random genes compile as POSIX N of N; one 60 s phylu run on 1 regex problem, best fitness improves |
+| K3 | WGSL (`wgsl_true`) | width, space, access, len, bound, uniform properties; `let` bindings by `var.T`; the loop work bound (design 8.4) | fuller rows + phylu `true_wgsl_fit` | 200 random genes pass naga validation N of N and run under the work bound; one 60 s phylu run, best fitness improves |
+| K4 | Futhark pixel family | check it loads through the rows (no port expected) | fuller | 100 random genes pass `futhark check` |
+| K5 | deprecated: `futhark_1d`, the old `wgsl`, `safewgsl` | deleted, not migrated (their reference programs kept as text) | fuller | the suites pass without them |
+
+Smoke tests are fast (each CPU check under a minute; each GPU run 60 s, one at a time under the GPU lock, watched with
+`evowatch`). They show the kingdom decodes legal programs and learns; they are not studies.
+
 ### 7.8 The reviews' findings and where each went
 
 The lead's decisions (2026-11-05): (1) sizes are chosen from a `size` data type, not computed; (2) every consumer that
