@@ -230,6 +230,10 @@ pub enum Op {
     /// `Select3(c, a, b)`: `a` if `c > 0`, else `b` (NaN `c` selects `b`).
     /// Children at `arg0`, `arg0 + 1`, `arg0 + 2`.
     Select3 = 48,
+    /// `{lo,hi}`: lo to hi copies of a class — in(CharClass, Integer, Integer), the regex kingdom's one guarded
+    /// symbol (the kingdom `regex` of `kingdoms/master/`: `lo <= hi`, repaired by exchanging the bounds). Appended last so no
+    /// opcode value moves.
+    RegexRepRange = 49,
 }
 
 /// The engine-level leaf ids, THE SAME IN EVERY KINGDOM'S FUNCTION TABLE: the
@@ -336,7 +340,7 @@ impl Op {
             | Op::RegexRepUpto
             | Op::RegexCcRange
             | Op::RegexCcUnion => 2,
-            Op::Select3 => 3,
+            Op::Select3 | Op::RegexRepRange => 3,
         }
     }
 
@@ -347,7 +351,7 @@ impl Op {
     }
 
     /// The last opcode value; opcodes are contiguous `0..=LAST`.
-    pub const LAST: u32 = Op::Select3 as u32;
+    pub const LAST: u32 = Op::RegexRepRange as u32;
 
     /// The `Op` for an opcode value, or `None` if it is not a known opcode. The
     /// inverse of `op as u32`; a decoded `GpuNode.op` goes back to its name this
@@ -367,7 +371,7 @@ impl Op {
             38 => Op::RegexPlus, 39 => Op::RegexOpt, 40 => Op::RegexRepN, 41 => Op::RegexRepUpto,
             42 => Op::RegexClassOf, 43 => Op::RegexCcRange, 44 => Op::RegexCcUnion,
             45 => Op::RegexCcNegate, 46 => Op::RegexEmpty, 47 => Op::GeneRef,
-            48 => Op::Select3,
+            48 => Op::Select3, 49 => Op::RegexRepRange,
             _ => return None,
         };
         Some(o)

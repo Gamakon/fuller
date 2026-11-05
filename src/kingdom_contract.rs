@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::geneframe::{regex_rows, Symbol, SymbolTable, Ty, REGEX};
+use crate::geneframe::{Symbol, SymbolTable, Ty};
 
 /// A symbol's dense index into a kingdom's `names`.
 pub type SymbolId = u32;
@@ -603,14 +603,10 @@ pub fn sr_relations() -> KingdomRelations {
     relations_from_rows("Symbolic Regression", vec![Ty::F], &rows, &["?"])
 }
 
-/// The regex kingdom: the ordered rows of [`regex_rows`], plus the constant
-/// placeholders `?_Char` and `?_I` that the `Char` and `I` slots of
-/// `lit`, `a-z`, `{n}` and `{0,k}` need terminals for.
+/// The regex kingdom without the literal-Pattern terminal, from its rows (the kingdom `regex` of `kingdoms/master/`): the
+/// multi-typed fixture of the core's tests. [`crate::regex_typed::typed_regex_relations`] takes the switch.
 pub fn regex_relations() -> KingdomRelations {
-    let mut rows: Vec<(String, Vec<Ty>, Ty)> = regex_rows().iter().map(|(sem, _, ins, out)| (sem.to_string(), ins.to_vec(), *out)).collect();
-    rows.push(("?_Char".to_string(), Vec::new(), Ty::Char));
-    rows.push(("?_I".to_string(), Vec::new(), Ty::I));
-    relations_from_rows(REGEX, vec![Ty::Pattern], &rows, &["?_Char", "?_I"])
+    crate::regex_typed::typed_regex_relations(false)
 }
 
 /// The WGSL kingdoms' rows with their ordered inputs, every dual a possible
@@ -915,16 +911,19 @@ mod tests {
         assert!(c.constant_capable(Ty::F));
     }
 
+    /// The rows keep each argument's position (`regex_rep_range` takes a class, then its two bounds), which a
+    /// many-hot arity loses.
     #[test]
     fn regex_keeps_the_argument_order_the_table_loses() {
         let c = regex_relations().check().expect("regex passes");
-        let rep_n = (0..c.n_symbols() as SymbolId).find(|s| c.name(*s) == "regex_rep_n").expect("regex_rep_n");
-        assert_eq!(c.signature(rep_n), [Ty::Pattern, Ty::I]);
+        let sym = |name: &str| (0..c.n_symbols() as SymbolId).find(|s| c.name(*s) == name).unwrap_or_else(|| panic!("{name}"));
+        assert_eq!(c.signature(sym("regex_rep_n")), [Ty::CharClass, Ty::I]);
+        assert_eq!(c.signature(sym("regex_rep_range")), [Ty::CharClass, Ty::I, Ty::I]);
         assert_eq!(c.a_t(Ty::Pattern), 2);
         assert_eq!(c.a_t(Ty::CharClass), 2);
         assert_eq!(c.a_t(Ty::Char), 2);
-        assert_eq!(c.a_t(Ty::I), 1);
-        assert_eq!(c.n_max(), 2);
+        assert_eq!(c.a_t(Ty::I), 2);
+        assert_eq!(c.n_max(), 3);
         assert!(c.constant_capable(Ty::Char) && c.constant_capable(Ty::I));
         assert!(!c.constant_capable(Ty::Pattern));
     }

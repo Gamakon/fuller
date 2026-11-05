@@ -223,6 +223,7 @@ impl Tree {
                 | Op::RegexOpt
                 | Op::RegexRepN
                 | Op::RegexRepUpto
+                | Op::RegexRepRange
                 | Op::RegexClassOf
                 | Op::RegexCcRange
                 | Op::RegexCcUnion

@@ -1596,9 +1596,11 @@ mod tests {
         }
         let golden: BTreeMap<&str, u64> = BTreeMap::from([
             ("sr", 0x5fea_40a2_cad6_8e36),
-            ("regex", 0x7fa3_1d59_5356_0275),
-            ("typed regex", 0x41d5_f0a6_e494_878a),
-            ("typed regex, pattern literal", 0x9839_d2a6_1760_f1a1),
+            // The regex rows (plan 7.7 K2): `regex` IS the typed regex without the literal Pattern, and the counted
+            // range `regex_rep_range` is one more Pattern function; taken by a run of this fingerprint on the rows.
+            ("regex", 0x2011_ba00_1666_3a1b),
+            ("typed regex", 0x2011_ba00_1666_3a1b),
+            ("typed regex, pattern literal", 0xf374_0431_675f_5a8c),
             ("tsr single", 0x6be9_289b_4aa6_c90b),
             ("tsr order", 0x63b6_0c17_542c_37b9),
             ("tsr depth", 0x8890_feef_ab56_ab14),

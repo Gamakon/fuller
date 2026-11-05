@@ -8,26 +8,28 @@ fn python(args: &[&str]) -> std::process::Output {
     std::process::Command::new("python3").arg("-I").arg(root.join("kingdoms/master/write_rows.py")).args(args).current_dir(root).output().expect("python3 runs write_rows.py")
 }
 
-/// Every kingdom of `kingdoms.tsv` selects; a parent has no rows, a variant has one result row and at least one data
-/// type and symbol; every variant's named text parses as a kingdom table (with a family-free type numbering).
+/// Every kingdom of `kingdoms.tsv` selects. A kingdom with variants is a parent and has no rows of its own; every other
+/// kingdom (a variant, or a kingdom without variants: regex, sr, wgsl may hold rows directly, lead's ruling
+/// 2026-11-05) has a result row, at least one data type and symbol, a root naming the entry's result, and its named
+/// text parses as a kingdom table (with a family-free type numbering).
 #[test]
-fn every_kingdom_selects_and_every_variant_parses() {
+fn every_kingdom_selects_and_every_kingdom_with_rows_parses() {
     let m = Master::committed();
     assert!(m.kingdom("futhark").is_some() && m.kingdom("tsr").is_some());
-    let mut variants = 0;
+    let mut with_rows = 0;
     for k in &m.kingdoms {
         let s = m.select(&k.name).unwrap();
-        if k.parent.is_empty() {
+        if !m.variants(&k.name).is_empty() {
             assert!(s.is_empty(), "{}: a parent has no rows of its own", k.name);
-            assert!(!m.variants(&k.name).is_empty(), "{}: a parent has variants", k.name);
+            assert!(k.parent.is_empty(), "{}: a parent is not itself a variant", k.name);
             continue;
         }
-        variants += 1;
-        assert!(!s.rows("data_types.tsv").is_empty() && !s.rows("symbols.tsv").is_empty(), "{}", k.name);
+        with_rows += 1;
+        assert!(!s.rows("data_types.tsv").is_empty() && !s.rows("symbols.tsv").is_empty(), "{}: a kingdom without variants holds its rows", k.name);
         let (tables, entry) = s.load(&|i| Ok(Ty::Futhark(i as u16))).unwrap_or_else(|e| panic!("{}: {e}", k.name));
         assert_eq!(tables.data_type(entry.output).map(|d| d.name.as_str()), Some(k.root.as_str()), "{}: its root is the entry's result", k.name);
     }
-    assert_eq!(variants, 12, "7 Futhark views and 5 TSR variants");
+    assert!(with_rows >= 12, "7 Futhark views and 5 TSR variants at least, got {with_rows}");
     assert!(select("no_such_kingdom").is_err());
     assert_eq!(view("tsr", "order_depth").unwrap().kingdom.name, "tsr.order_depth");
 }
@@ -36,7 +38,8 @@ fn every_kingdom_selects_and_every_variant_parses() {
 /// prints, so a generator's rows (written through the helper) load as the generator meant them.
 #[test]
 fn the_named_text_is_byte_for_byte_the_python_helpers() {
-    for k in Master::committed().kingdoms.iter().filter(|k| !k.parent.is_empty()) {
+    let m = Master::committed();
+    for k in m.kingdoms.iter().filter(|k| m.variants(&k.name).is_empty()) {
         let out = python(&["--named", &k.name]);
         assert!(out.status.success(), "{}: {}", k.name, String::from_utf8_lossy(&out.stderr));
         let want = String::from_utf8(out.stdout).unwrap();
