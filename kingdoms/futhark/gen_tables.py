@@ -2340,6 +2340,29 @@ RULE_SEMANTICS = {
         "map2.mul": lambda a, b: [_f32(x * y) for x, y in zip(a, b)],
     },
 }
+
+
+def _matmul_f32(a, b):
+    """`matmul` of the prelude (`src/futhark.rs`, MATMUL_HELPER): each cell the f32 sum, in order, of the products."""
+    out = []
+    for row in a:
+        cells = []
+        for j in range(len(b[0])):
+            acc = 0.0
+            for k, x in enumerate(row):
+                acc = _f32(acc + _f32(x * b[k][j]))
+            cells.append(acc)
+        out.append(cells)
+    return out
+
+
+# The matrix family's rows (master 6's `mat` rules, A7's e-graph): the row functions are values, so a function row of
+# no argument evaluates to the function it spells.
+RULE_SEMANTICS["f32"].update({
+    "map_rows": lambda f, m: [f(r) for r in m], "map2_rows": lambda f, a, b: [f(x, y) for x, y in zip(a, b)],
+    "transpose": lambda m: [list(c) for c in zip(*m)], "matmul": _matmul_f32,
+    "id@fn.arr_f32_arr_f32": lambda: (lambda xs: xs), "id@fn.arr2_f32_arr_f32_arr_f32": lambda: (lambda xs, _ys: xs),
+})
 # The tuple rows' meanings (any element): a pair or a triple is built, and its parts are its components.
 for _sem in RULE_SEMANTICS.values():
     _sem.update({"pair": lambda a, b: (a, b), "triple": lambda a, b, c: (a, b, c), "fst": lambda t: t[0], "snd": lambda t: t[1], "thd": lambda t: t[2]})
@@ -2396,8 +2419,8 @@ def witness_rules(mst):
             bad.append(f"M9 the rule {r['rule']!r} is admitted for {r['elems']}: the witness knows {sorted(RULE_SEMANTICS)}")
             continue
         m = re.fullmatch(r"\(rewrite (.+) :ruleset futhark_sig\)", r["rule"])
-        if not m or r["on"] not in ("elem", "arr", "tuple", "tuple3"):
-            bad.append(f"M9 the rule {r['rule']!r} is not a rewrite of the futhark_sig ruleset on elem, arr, tuple or tuple3")
+        if not m or r["on"] not in ("elem", "arr", "mat", "tuple", "tuple3"):
+            bad.append(f"M9 the rule {r['rule']!r} is not a rewrite of the futhark_sig ruleset on elem, arr, mat, tuple or tuple3")
             continue
         body = m.group(1)
         depth, cut = 0, None
@@ -2424,6 +2447,10 @@ def witness_rules(mst):
                         env = {"a": ed[trial // len(ed)], "b": ed[trial % len(ed)], "d": ed[(trial * 7) % len(ed)]}
                     else:
                         env = {v: draw(trial) for v in "abd"}
+                elif r["on"] == "mat":
+                    # A matrix rule's operands: `a` and `d` of one shape, `b` the shape `a` multiplies (3 x 4, 4 x 2).
+                    env = {v: [[draw(rnd.randrange(300)) for _ in range(cols)] for _ in range(rows)]
+                           for v, rows, cols in (("a", 3, 4), ("d", 3, 4), ("b", 4, 2))}
                 else:
                     env = {v: [draw(rnd.randrange(300)) for _ in range(5)] for v in "abd"}
                 try:
@@ -3021,12 +3048,187 @@ def sig6_dir(name):
 
 
 def sig6_texts(name):
-    """A master 6 problem's specification (the sniffer's) and its view's tables (`view.py`), by file name."""
+    """A master 6 problem's specification (the sniffer's), its view's tables (`view.py`) and its e-graph (below), by
+    file name."""
     src, entry, depth, master, elements, lets, families = SIG6_PROBLEMS[name]
     spec_text = sniff.sniff6(os.path.join(REPO, src), entry, depth, master, elements, lets, families)
     out = {"view.tsv": spec_text}
-    out.update(master_view.View6(master_view.read_spec6(spec_text)).texts())
+    spec = master_view.read_spec6(spec_text)
+    out.update(master_view.View6(spec).texts())
+    out.update(egraph6_texts(out, spec, master_view.master6()))
     return out
+
+
+# --------------------------------------------------------------------------
+# MASTER 6's E-GRAPH (plan section 7, task F5): every view's, A7's included, written from the view's own tables and
+# `master/6/rules.tsv`, beside them under `sig/<problem>/m6/` (`egraph.datatype`, `egraph.rules`, `egraph.rows`,
+# `egraph.sorts`). `src/futhark_view/egraph6.rs` computes the same four texts byte for byte.
+#
+# * ONE SORT A DATA TYPE: `S<tag>` (the sort IS the data type).
+# * ONE CONSTRUCTOR A SYMBOL, `X<name>`, its arguments' sorts in order; a `const` row takes its pool index (`i64`); a
+#   `var` row takes its variable's RESOLVED identity, the binding depth and the ordinal (`i64 i64`), never its index
+#   word (plan 7.5 risk 3), and has a second constructor `K<name>` of no argument for the reading with no variable of
+#   its data type in scope (its constant).
+# * THE RULES: each rule of `rules.tsv` at every data type it is on (`elem`: the view's element scalars; `arr`: their
+#   rank-1 arrays; `mat`: their rank-2 arrays; `tuple`/`tuple3`: the pairs and triples of elements), for the elements it
+#   is exact for, where the view has the row it `needs` and every row it names. A placeholder `{op}` names `op@<tag>`;
+#   on a tuple, `{fst}`, `{snd}`, `{thd}` name the projection `fst.<tag>@<component's tag>`; `{op@tag}` names that
+#   symbol exactly (a row function of another data type).
+# * `egraph.rows`: each symbol's constructors with their sort and what the constructor reads (`node`, `dc`, `binder`,
+#   `constant`); `egraph.sorts`: each data type's sort.
+# --------------------------------------------------------------------------
+
+EGRAPH6_RULESET = "futhark_sig"
+
+
+def egraph6_name(text):
+    """A symbol name or tag as an egglog identifier: letters and digits kept, `@` as `__`, anything else `_`."""
+    return "".join(c if c.isalnum() else ("__" if c == "@" else "_") for c in text)
+
+
+def egraph6_rule_symbols(rule, dt, by_name):
+    """The rule template's `{op}` placeholders at the data type `dt` (a datatypes.tsv row), as symbol names, in order."""
+    out = []
+    for op in re.findall(r"\{([a-z][^{}]*)\}", rule):
+        if "@" in op:
+            out.append(op)
+        elif dt["kind"] == "tuple" and op in ("fst", "snd", "thd"):
+            comp = dt["members"].split(";")[("fst", "snd", "thd").index(op)]
+            out.append(f"{op}.{dt['tag']}@{by_name[comp]['tag']}" if comp in by_name else f"{op}.{dt['tag']}@?")
+        else:
+            out.append(f"{op}@{dt['tag']}")
+    return out
+
+
+def egraph6_texts(view_texts, spec, mst):
+    """The four e-graph texts of a master 6 view, from its written tables (`view_texts`), its specification and the
+    master's rules."""
+    def table(fname):
+        lines = [l.split("\t") for l in view_texts[fname].splitlines() if l]
+        head = lines[0]
+        return [dict(zip(head, f)) for f in lines[1:]]
+    dts, syms = table("datatypes.tsv"), table("symbols.tsv")
+    by_name = {t["name"]: t for t in dts}
+    names = {s["name"] for s in syms}
+    elements = spec["elements"]
+
+    def sort(dt_name):
+        return "S" + egraph6_name(by_name[dt_name]["tag"])
+
+    data = ["; A master 6 view's e-graph datatype, generated by gen_tables.py.",
+            "; One sort per data type: the sort IS the data type.", ""]
+    data += [f"(sort {sort(t['name'])})" for t in dts]
+    data.append("")
+    rows = ["# symbol\tconstructor\tsort\treads"]
+    for s in syms:
+        args = [a for a in s["args"].split(";") if a]
+        x, out = "X" + egraph6_name(s["name"]), sort(s["out"])
+        if s["kind"] == "const":
+            data.append(f"(constructor {x} (i64) {out})")
+            rows.append(f"{s['name']}\t{x}\t{out}\tdc")
+        elif s["kind"] == "var":
+            k = "K" + egraph6_name(s["name"])
+            data.append(f"(constructor {x} (i64 i64) {out})")
+            data.append(f"(constructor {k} () {out})")
+            rows.append(f"{s['name']}\t{x}\t{out}\tbinder")
+            rows.append(f"{s['name']}\t{k}\t{out}\tconstant")
+        else:
+            data.append(f"(constructor {x} ({' '.join(sort(a) for a in args)}) {out})")
+            rows.append(f"{s['name']}\t{x}\t{out}\tnode")
+    rules = ["; A master 6 view's e-graph ruleset, generated by gen_tables.py from master/6/rules.tsv.",
+             f"(ruleset {EGRAPH6_RULESET})", ""]
+    for on in ("elem", "arr", "mat", "tuple", "tuple3"):
+        for t in dts:
+            members = [m for m in t["members"].split(";") if m]
+            if on == "elem" and t["kind"] == "scalar" and t["name"] in elements:
+                exact = [t["name"]]
+            elif on == "arr" and t["kind"] == "array" and members[0] in elements:
+                exact = members
+            elif (on == "mat" and t["kind"] == "array" and by_name[members[0]]["kind"] == "array"
+                  and by_name[members[0]]["members"] in elements):
+                exact = [by_name[members[0]]["members"]]
+            elif on in ("tuple", "tuple3") and t["kind"] == "tuple" and len(members) == (2 if on == "tuple" else 3):
+                exact = members
+            else:
+                continue
+            mine = []
+            for r in mst["rules"]:
+                if r["on"] != on or not all(r["elems"] == "*" or e in r["elems"].split(",") for e in exact):
+                    continue
+                if r["needs"] and f"{r['needs']}@{t['tag']}" not in names:
+                    continue
+                named = egraph6_rule_symbols(r["rule"], t, by_name)
+                if any(n not in names for n in named):
+                    continue
+                text = r["rule"]
+                for n in named:
+                    text = re.sub(r"\{[a-z][^{}]*\}", "X" + egraph6_name(n), text, count=1)
+                mine.append(text)
+            if mine:
+                rules.append(f"; {t['name']}")
+                rules += mine
+                rules.append("")
+    sorts = ["# data type\tsort"] + [f"{t['name']}\t{sort(t['name'])}" for t in dts]
+    return {"egraph.datatype": "\n".join(data) + "\n", "egraph.rules": "\n".join(rules) + "\n",
+            "egraph.rows": "\n".join(rows) + "\n", "egraph.sorts": "\n".join(sorts) + "\n"}
+
+
+def witness_egraph6(dir_path, name, mst=None):
+    """The written e-graph of a master 6 view, read back apart from the generator: every symbol has its constructor
+    (a `var` row two), no constructor or sort is used twice, every data type has its sort, every constructor of a rule
+    is declared, every rule's operator rows have their sorts' arities, and NO RULE NAMES A BINDER (a row with a
+    binding), so no rule moves a subtree under another binder (plan 7.5 risk 3) and a variable keeps its environment."""
+    mst = mst or master_view.master6()
+    bad = []
+
+    def read(fname):
+        with open(os.path.join(dir_path, fname)) as f:
+            return f.read()
+    syms = master_view.read_tsv(os.path.join(dir_path, "symbols.tsv"), master_view.VIEW6_SYMBOL_COLUMNS)
+    dts = master_view.read_tsv(os.path.join(dir_path, "datatypes.tsv"), master_view.VIEW6_DATATYPE_COLUMNS)
+    data, rules = read("egraph.datatype"), read("egraph.rules")
+    declared = {}
+    for m in re.finditer(r"^\(constructor (\S+) \(([^)]*)\) (\S+)\)$", data, re.M):
+        if m.group(1) in declared:
+            bad.append(f"E1 {name}: the constructor {m.group(1)} is declared twice")
+        declared[m.group(1)] = (m.group(2).split(), m.group(3))
+    sorts = re.findall(r"^\(sort (\S+)\)$", data, re.M)
+    if len(set(sorts)) != len(sorts) or len(sorts) != len(dts):
+        bad.append(f"E2 {name}: {len(sorts)} sorts ({len(set(sorts))} distinct) for {len(dts)} data types")
+    sort_lines = [l.split("\t") for l in read("egraph.sorts").splitlines()[1:] if l]
+    if [l[0] for l in sort_lines] != [t["name"] for t in dts] or [l[1] for l in sort_lines] != sorts:
+        bad.append(f"E2 {name}: egraph.sorts does not give each data type, in order, its declared sort")
+    sort_of = {l[0]: l[1] for l in sort_lines}
+    row_lines = [l.split("\t") for l in read("egraph.rows").splitlines()[1:] if l]
+    of_symbol = {}
+    for sym, ctor, srt, reads in row_lines:
+        of_symbol.setdefault(sym, []).append(reads)
+        if ctor not in declared or declared[ctor][1] != srt:
+            bad.append(f"E3 {name}: {sym}'s constructor {ctor} of {srt} is not declared so")
+    if len({l[1] for l in row_lines}) != len(row_lines):
+        bad.append(f"E3 {name}: a constructor stands for two symbols")
+    binders = set()
+    for s in syms:
+        want = {"const": ["dc"], "var": ["binder", "constant"]}.get(s["kind"], ["node"])
+        if of_symbol.get(s["name"]) != want:
+            bad.append(f"E4 {name}: the symbol {s['name']} has the constructors {of_symbol.get(s['name'])}, wants {want}")
+        args = [a for a in s["args"].split(";") if a]
+        ctor = "X" + egraph6_name(s["name"])
+        if s["kind"] not in ("const", "var") and ctor in declared and declared[ctor][0] != [sort_of.get(a) for a in args]:
+            bad.append(f"E5 {name}: {ctor} takes {declared[ctor][0]}, {s['name']} takes {args}")
+        if s["binds"]:
+            binders.add(ctor)
+    for line in rules.splitlines():
+        if not line.startswith("(rewrite "):
+            continue
+        if not line.endswith(f":ruleset {EGRAPH6_RULESET})"):
+            bad.append(f"E6 {name}: the rule {line!r} is not in the ruleset {EGRAPH6_RULESET}")
+        for op in re.findall(r"\((\w+)", line)[1:]:
+            if op not in declared:
+                bad.append(f"E6 {name}: the rule {line!r} names {op}, which is not declared")
+            if op in binders:
+                bad.append(f"E7 {name}: the rule {line!r} names the binder {op}: a rule may not move a subtree under another binder")
+    return bad
 
 
 def master6_main(mode):
@@ -3054,7 +3256,7 @@ def master6_main(mode):
             for fname, text in wanted.items():
                 with open(os.path.join(staged, fname), "w") as f:
                     f.write(text)
-            bad = witness_view6(staged, name, master_view.read_spec6(wanted["view.tsv"]), mst)
+            bad = witness_view6(staged, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(staged, name, mst)
             if bad:
                 print(f"THE MASTER 6 VIEW {name} FAILED (the committed files are untouched):")
                 for b in bad[:40]:
@@ -3079,7 +3281,7 @@ def master6_main(mode):
                     bad.append(f"the committed sig/{name}/m6/{fname} is not what the sniffer and view.py produce "
                                f"({first_difference(got, text.encode('utf-8'))}); run with --write to regenerate")
             if not bad:
-                bad = witness_view6(out_dir, name, master_view.read_spec6(wanted["view.tsv"]), mst)
+                bad = witness_view6(out_dir, name, master_view.read_spec6(wanted["view.tsv"]), mst) + witness_egraph6(out_dir, name, mst)
             if bad:
                 print(f"THE MASTER 6 VIEW {name} FAILED:")
                 for b in bad[:40]:

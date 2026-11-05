@@ -1593,5 +1593,8 @@ pub fn cached(spec_text: &'static str) -> Result<&'static View, String> {
 
 pub mod master6;
 
+/// Master 6's e-graph: one sort a data type, the variable constructor on the resolved variable (plan 7, task F5).
+pub mod egraph6;
+
 #[cfg(test)]
 mod tests;

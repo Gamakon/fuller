@@ -1,0 +1,5 @@
+# data type	sort
+i32	Si32
+i64	Si64
+size	Ssize
+[]i32	Sa_i32

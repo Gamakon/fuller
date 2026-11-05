@@ -46,6 +46,10 @@ use crate::saturated_fold::EgraphKingdom;
 use crate::typed_chromosome::{AdfSet, Epoch};
 use crate::typed_gep::Tree;
 
+/// Master 6's e-graph, for A7 and every view: one sort a data type, the variable constructor on the resolved variable
+/// (plan 7, task F5). This module above is master 5's A7 e-graph, loadable until task D1.
+pub mod master6;
+
 /// The generated datatype: one sort per class, one constructor per row.
 pub const SHAPE_DATATYPE: &str = include_str!("../kingdoms/futhark/egraph.datatype");
 

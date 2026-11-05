@@ -1,0 +1,23 @@
+# data type	sort
+f32	Sf32
+i32	Si32
+i64	Si64
+size	Ssize
+[]f32	Sa_f32
+[]i32	Sa_i32
+[][]f32	Sm_f32
+[][]i32	Sm_i32
+(f32, f32)	Sf32_f32
+(f32, i32)	Sf32_i32
+(i32, f32)	Si32_f32
+(i32, i32)	Si32_i32
+(f32, f32, f32)	Sf32_f32_f32
+(f32, f32, i32)	Sf32_f32_i32
+(f32, i32, f32)	Sf32_i32_f32
+(f32, i32, i32)	Sf32_i32_i32
+(i32, f32, f32)	Si32_f32_f32
+(i32, f32, i32)	Si32_f32_i32
+(i32, i32, f32)	Si32_i32_f32
+(i32, i32, i32)	Si32_i32_i32
+[]f32 -> []f32	Sfn_arr_f32_arr_f32
+[]f32 -> []f32 -> []f32	Sfn_arr2_f32_arr_f32_arr_f32

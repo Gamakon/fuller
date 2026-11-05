@@ -1,0 +1,15 @@
+# symbol	constructor	sort	reads
+map_rows@m.f32	Xmap_rows__m_f32	Sm_f32	node
+map2_rows@m.f32	Xmap2_rows__m_f32	Sm_f32	node
+transpose@m.f32	Xtranspose__m_f32	Sm_f32	node
+matmul@m.f32	Xmatmul__m_f32	Sm_f32	node
+id@fn.arr_f32_arr_f32	Xid__fn_arr_f32_arr_f32	Sfn_arr_f32_arr_f32	node
+add1@fn.arr_f32_arr_f32	Xadd1__fn_arr_f32_arr_f32	Sfn_arr_f32_arr_f32	node
+scale2@fn.arr_f32_arr_f32	Xscale2__fn_arr_f32_arr_f32	Sfn_arr_f32_arr_f32	node
+id@fn.arr2_f32_arr_f32_arr_f32	Xid__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
+add1@fn.arr2_f32_arr_f32_arr_f32	Xadd1__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
+add@fn.arr2_f32_arr_f32_arr_f32	Xadd__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
+const@fn.arr_f32_arr_f32	Xconst__fn_arr_f32_arr_f32	Sfn_arr_f32_arr_f32	node
+const@fn.arr2_f32_arr_f32_arr_f32	Xconst__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
+var@m.f32	Xvar__m_f32	Sm_f32	binder
+var@m.f32	Kvar__m_f32	Sm_f32	constant
