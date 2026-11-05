@@ -3361,7 +3361,15 @@ for _refs, _cost in [
 ]:
     for _ref in _refs:
         COST6_BY_REF[_ref] = _cost
-COST6_FORMULA_RE = re.compile(r"^(?:0|(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)(?:\*(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells))*(?:\+(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)(?:\*(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells))*)*)$")
+COST6_FACTOR = r"(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)"
+COST6_FORMULA_RE = re.compile(rf"^(?:0|{COST6_FACTOR}(?:\*{COST6_FACTOR})*(?:\+{COST6_FACTOR}(?:\*{COST6_FACTOR})*)*)$")
+
+
+def cost6_properties(template, mst):
+    """The properties a value of the master data type `template` (a row's `out` or one of its `args`) carries: its
+    data type's in `master/6/properties.tsv` (an array of a concrete element, `[]f32`, is `[]{E}`'s), and `cells`."""
+    t = re.sub(r"^((?:\[\])+)(?:f32|i32)$", r"\1{E}", template)
+    return {p["name"] for p in mst["properties"] if p["data_type"] == t} | {"cells"}
 
 
 def witness_costs6(path, mst):
@@ -3369,7 +3377,8 @@ def witness_costs6(path, mst):
     master row, in order, with the row's own ref and name; each row's cost as restated (a leaf costs nothing; an
     elementwise scalar operation, every row not restated, reads each non-size argument's cells, writes its result's,
     allocates nothing and absorbs); every formula well formed and naming only arguments the row has and properties
-    their data types carry; one adapter line an adapter, every `fit` charged the cells it fits and `clampix` 2."""
+    the data type of that argument (or of the result) carries; one adapter line an adapter, every `fit` charged the
+    cells it fits and `clampix` 2."""
     bad = []
     with open(path) as f:
         lines = [l.rstrip("\n").split("\t") for l in f if l.strip()]
@@ -3388,7 +3397,6 @@ def witness_costs6(path, mst):
     if [(c["ref"], c["name"]) for c in rows] != [(r["ref"], r["name"]) for r in mst["rows"]]:
         bad.append("C2 the cost rows are not the master's rows, one a row, in order")
         return bad
-    props = {"len", "rows", "cols", "bound", "value", "cells"}
     for c, r in zip(rows, mst["rows"]):
         args = master_view.items(r["args"])
         got = (c["reads"], c["write"], c["alloc"], c["depth"], c["absorb"])
@@ -3410,8 +3418,13 @@ def witness_costs6(path, mst):
                 bad.append(f"C4 {r['name']}'s formula {f!r} is not a sum of products of integers, out.<p> and in<k>.<p>")
                 continue
             for k, p in re.findall(r"in([0-9]+)\.([a-z]+)", f):
-                if int(k) >= len(args) or p not in props:
+                if int(k) >= len(args):
                     bad.append(f"C4 {r['name']}'s formula {f!r} reads in{k}.{p}, which it does not have")
+                elif p not in cost6_properties(args[int(k)], mst):
+                    bad.append(f"C4 {r['name']}'s formula {f!r} reads in{k}.{p}, and its argument {k}'s data type {args[int(k)]} has no {p}")
+            for p in re.findall(r"out\.([a-z]+)", f):
+                if p not in cost6_properties(r["out"], mst):
+                    bad.append(f"C4 {r['name']}'s formula {f!r} reads out.{p}, and its result's data type {r['out']} has no {p}")
         if c["absorb"] not in ("0", "1"):
             bad.append(f"C4 {r['name']}'s absorb is {c['absorb']!r}")
     if [a["name"] for a in adapters] != [a["name"] for a in mst["adapters"]]:
@@ -3421,6 +3434,38 @@ def witness_costs6(path, mst):
         if a["traffic"] != want or (a["reads"], a["write"], a["alloc"], a["depth"], a["absorb"]) != ("", "0", "0", "0", "0"):
             bad.append(f"C6 the adapter {a['name']} costs {a}, restated traffic {want} and nothing else")
     return bad
+
+
+def witness_costs6_catches(mst):
+    """THE C4 WITNESS CHECKS EACH ARGUMENT'S OWN DATA TYPE (F3 review finding 6): the committed table with one
+    property read off an argument whose data type does not carry it (`sum`'s vector read by `cols`, `transpose`'s
+    matrix by `len`, `next`'s index by `value`) must be found by C4 once each (C3, the restatement, finds them too)."""
+    import tempfile
+    with open(COSTS6_PATH) as f:
+        lines = f.read().split("\n")
+    corrupt = {"M0010": ("in0.len", "in0.cols"), "M0045": ("in0.cells", "in0.len")}
+    nxt = next((r["ref"] for r in mst["rows"] if r["name"] == "next@i64"), None)
+    if nxt is not None:
+        corrupt[nxt] = ("in0.cells", "in0.value")
+    out = []
+    for l in lines:
+        f = l.split("\t")
+        if len(f) == len(COSTS6_COLUMNS) and f[0] == "row" and f[1] in corrupt:
+            old, new = corrupt[f[1]]
+            if f[3].split(";")[0] != old:
+                return [f"C4 self-check: the row {f[1]} reads {f[3]!r}, the corruption expects {old!r} first"]
+            f[3] = ";".join([new] + f[3].split(";")[1:])
+        out.append("\t".join(f))
+    with tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False) as t:
+        t.write("\n".join(out))
+    try:
+        got = witness_costs6(t.name, mst)
+    finally:
+        os.remove(t.name)
+    c4 = [g for g in got if g.startswith("C4 ")]
+    if len(c4) != len(corrupt) or not all("has no" in g for g in c4):
+        return [f"C4 self-check: {len(corrupt)} arguments read by a property their data type lacks gave C4 {c4}"]
+    return []
 
 
 def costs6_main(mode, mst):
@@ -3450,7 +3495,7 @@ def costs6_main(mode, mst):
             print(f"THE COMMITTED master/6/costs.tsv is not what the generator produces ({first_difference(got, text.encode('utf-8'))}); "
                   "run with --write to regenerate")
             return 1
-    bad = witness_costs6(COSTS6_PATH, mst)
+    bad = witness_costs6(COSTS6_PATH, mst) + witness_costs6_catches(mst)
     if bad:
         print("THE MASTER 6 COST WITNESS TESTS FAILED:")
         for b in bad:
