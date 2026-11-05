@@ -9,7 +9,8 @@ rendered program carries an ADAPTER (`docs/DESIGN_futhark_types_and_properties.m
 The master (`master/6/`) is checked by `master6_main`: its witnesses, its static cost table (`master/6/costs.tsv`,
 generated here), and each problem's view, whose specification the sniffer writes (`sniff.py --format 6`) and whose
 tables `view.py` writes (`View6`), committed under `sig/<problem>/m6/` and compared byte for byte. The pixel family
-(`pixel/<shader>/`) is generated and checked by `pixel_main`.
+(`pixel_rows.py`: one master kingdom `futhark.pixel.<shader>` a shader, its interface and e-graph under
+`pixel/<shader>/`) is generated and checked by `pixel_rows_main`.
 
 The witness tests are the reason to trust the tables: they re-read the emitted text and re-check it against models
 written apart from the expansion code, so a mis-declared row cannot pass silently.
@@ -36,14 +37,6 @@ PLACEHOLDER_RE = re.compile(r"\{(\d+)\}")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def read_tables(types_path, functions_path):
-    with open(types_path) as f:
-        types = [l.rstrip("\n").split("\t") for l in f.readlines()[1:] if l.strip()]
-    with open(functions_path) as f:
-        funcs = [l.rstrip("\n").split("\t") for l in f.readlines()[1:] if l.strip()]
-    return types, funcs
-
-
 def first_difference(got, want):
     """Where two byte strings first differ, for the report."""
     for i, (a, b) in enumerate(zip(got, want)):
@@ -56,51 +49,11 @@ def first_difference(got, want):
 
 
 # --------------------------------------------------------------------------
-# THE PIXEL FAMILY: a picture is a map over the pixels of a scalar program.
+# THE PIXEL FAMILY: a picture is a map over the pixels of a scalar program. Its rows are `pixel_rows.py` (shape types,
+# scope by var.f32, the loop bound by env.trips; plan 7.7 K4); this section reads each instance's shader (its uniform
+# interface and its float literals) and writes the instance's rows into the master tables, its interface and its
+# e-graph under pixel/<instance>/.
 # --------------------------------------------------------------------------
-#
-# A cuneus image shader is one compute invocation per pixel: it reads the
-# pixel's coordinates and a block of uniforms, runs bounded loops over scalar
-# and vector arithmetic, and stores one colour. In Futhark that is
-#
-#     map (\yi -> map (\xi -> <the pixel's program>) (iota w)) (iota h)
-#
-# and the pixel's program is a chain of `let`s and bounded `loop`s over f32
-# values, ending in a colour `[r, g, b]`. Vector maths is spelled per lane
-# (a `vec3` is three scalars), which is what Futhark's own compiler does to it.
-#
-# The family is GENERIC: nothing below names a shader. An INSTANCE declares an
-# interface -- the WGSL source whose uniform blocks become the program's
-# inputs and whose float literals join the constant pool -- and the family's
-# parameters (`PIXEL_SCOPES`, `PIXEL_ARITIES`, `PIXEL_DEPTH`, `PIXEL_COUNTS`).
-#
-# EVERY RULE IS A TYPE, so every gene expresses a legal Futhark program:
-#
-# * **Scope is a type.** `f32.s{k}` is "an f32 in a scope where `v0 .. v{k-1}`
-#   are bound". Its terminals are the variables `v0 .. v{k-1}` and the
-#   interface's inputs, and its functions take arguments of the SAME scope.
-#   A gene cannot name an unbound variable, because no row of `f32.s{k}`
-#   spells `v{k}`.
-# * **A binding moves the scope.** `let v{k} = e in rest` takes an `f32.s{k}`
-#   and a block of scope `k+1`. A loop of state arity S binds `v{k} ..
-#   v{k+S-1}` (its state) and, inside the body only, `v{k+S}` (the trip
-#   counter as an f32): its body is a block of scope `k+S+1` returning an
-#   S-tuple, and the rest a block of scope `k+S`.
-# * **A loop is bounded by its type.** The trip count is a `count`, whose
-#   terminals are a fixed list of literals, and a loop body has a nesting
-#   depth `d` in its type: a body at depth `PIXEL_DEPTH` has no loop row. So
-#   the work of a pixel is at most `max(count) ** PIXEL_DEPTH` trips of a body
-#   whose size the gene bounds, and no gene can spell a runaway kernel.
-# * **The result arity is a type.** `body{S}.d{d}.s{k}` ends in an S-tuple,
-#   the loop that owns it has state arity S; `blk.s{k}` ends in `[r, g, b]`.
-#
-# Every demanded type has a terminal: the f32 scopes their inputs, a block
-# the black pixel, a loop body the zero tuple, the root the black image.
-
-PIXEL_SCOPES = 40          # the most bound variables: scopes s0 .. s40
-PIXEL_ARITIES = (1, 3, 5)  # the loop state arities: a scalar, a vec3, five lanes
-PIXEL_DEPTH = 2            # the deepest loop nest
-PIXEL_COUNTS = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 25, 32, 40, 50, 64)
 
 # The generic part of the constant pool, before the instance's own literals.
 PIXEL_GENERIC_LITERALS = ("0.0", "1.0", "-1.0", "0.5", "2.0", "3.0", "0.25", "10.0", "0.1")
@@ -119,30 +72,6 @@ PIXEL_INSTANCES = {
 }
 
 REPO = os.path.dirname(os.path.dirname(HERE))
-
-# The scalar operators of every scope: (name, arity, spelling).
-PIXEL_OPERATORS = [
-    ("add", 2, "{0} + {1}"),
-    ("sub", 2, "{0} - {1}"),
-    ("mul", 2, "{0} * {1}"),
-    ("div", 2, "{0} / {1}"),
-    ("max", 2, "f32.max {0} {1}"),
-    ("min", 2, "f32.min {0} {1}"),
-    ("pow", 2, "{0} ** {1}"),
-    ("mod", 2, "{0} % {1}"),
-    ("neg", 1, "-{0}"),
-    ("abs", 1, "f32.abs {0}"),
-    ("sqrt", 1, "f32.sqrt {0}"),
-    ("sin", 1, "f32.sin {0}"),
-    ("cos", 1, "f32.cos {0}"),
-    ("tan", 1, "f32.tan {0}"),
-    ("tanh", 1, "f32.tanh {0}"),
-    ("exp", 1, "f32.exp {0}"),
-    ("log", 1, "f32.log {0}"),
-    ("floor", 1, "f32.floor {0}"),
-    ("trunc", 1, "f32.trunc {0}"),
-    ("sel", 3, "if {0} >= 0f32 then {1} else {2}"),
-]
 
 STRUCT_RE = re.compile(r"struct\s+(\w+)\s*\{([^}]*)\}", re.S)
 FIELD_RE = re.compile(r"(\w+)\s*:\s*([\w<>]+)")
@@ -209,401 +138,6 @@ def pixel_literals(shader_path):
         seen.add(bits)
         out.append(f"{text}f32")
     return out
-
-
-def s_dual(k):
-    return f"f32.s{k}"
-
-
-def blk_dual(k):
-    return f"blk.s{k}"
-
-
-def body_dual(s, d, k):
-    return f"body{s}.d{d}.s{k}"
-
-
-def pixel_rows(interface, image=False):
-    """Every row of the family, with its output and argument duals. The
-    duals are named, not enumerated: the types are the duals the rows
-    mention, and the witness tests re-derive every relation from the names."""
-    rows = []
-    inputs = ["px", "py", "u_width", "u_height"] + [f["spelling"] for f in interface]
-    # An image target also reads the position as a fraction of the picture: nx, ny in [0, 1).
-    fractions = [("nx", "(px / u_width)"), ("ny", "(py / u_height)")] if image else []
-    for k in range(PIXEL_SCOPES + 1):
-        e = s_dual(k)
-        for name, arity, spelling in PIXEL_OPERATORS:
-            rows.append({"name": f"{name}@{e}", "kind": "function", "out": e, "args": [e] * arity,
-                         "spelling": spelling, "note": f"{name}, in scope {k}"})
-    # The block and loop-body rows. A body type is emitted only when a loop
-    # row demands it, so the closure below starts from the root.
-    def binders(out_of, k, d, rest_of):
-        """The let and loop rows of a block (`d` = 0) or a body at depth d."""
-        out = []
-        if k + 1 <= PIXEL_SCOPES:
-            out.append({"name": f"let@{out_of(k)}", "kind": "function", "out": out_of(k),
-                        "args": [s_dual(k), rest_of(k + 1)],
-                        "spelling": f"let v{k} = {{0}} in {{1}}", "note": f"bind v{k}"})
-        # A block: a let-chain of its own that returns S values and releases
-        # its scope. It adds no loop depth and no trips, so the work bound is
-        # unchanged; its body is a body type at the SAME depth.
-        for s in PIXEL_ARITIES:
-            if k + s > PIXEL_SCOPES:
-                continue
-            state = ", ".join(f"v{k + i}" for i in range(s))
-            out.append({"name": f"block{s}@{out_of(k)}", "kind": "function", "out": out_of(k),
-                        "args": [body_dual(s, d, k), rest_of(k + s)],
-                        "spelling": f"let ({state}) = {{0}} in {{1}}",
-                        "note": f"a block of {s} values binding v{k}..v{k + s - 1}; its own bindings end with it"})
-        if d < PIXEL_DEPTH:
-            for s in PIXEL_ARITIES:
-                if k + s + 1 > PIXEL_SCOPES:
-                    continue
-                state = ", ".join(f"v{k + i}" for i in range(s))
-                inits = ", ".join(f"{{{i}}}" for i in range(s))
-                spelling = (f"let ({state}) = loop ({state}) = ({inits}) for i{k} < {{{s}}} do "
-                            f"let v{k + s} = f32.i64 i{k} in {{{s + 1}}} in {{{s + 2}}}")
-                out.append({"name": f"loop{s}@{out_of(k)}", "kind": "function", "out": out_of(k),
-                            "args": [s_dual(k)] * s + ["count", body_dual(s, d + 1, k + s + 1), rest_of(k + s)],
-                            "spelling": spelling,
-                            "note": f"a loop of state arity {s} binding v{k}..v{k + s - 1}, its counter v{k + s} in the body"})
-        return out
-
-    for k in range(PIXEL_SCOPES + 1):
-        rows += binders(blk_dual, k, 0, blk_dual)
-        rows.append({"name": f"rgb@{blk_dual(k)}", "kind": "function", "out": blk_dual(k),
-                     "args": [s_dual(k)] * 3, "spelling": "[{0}, {1}, {2}]", "note": "the pixel's colour"})
-    demanded = sorted({a for r in rows for a in r["args"] if a.startswith("body")})
-    done = set()
-    while demanded:
-        dual = demanded.pop()
-        if dual in done:
-            continue
-        done.add(dual)
-        s, d, k = parse_body(dual)
-        here = binders(lambda kk, s=s, d=d: body_dual(s, d, kk), k, d, lambda kk, s=s, d=d: body_dual(s, d, kk))
-        here.append({"name": f"tuple@{dual}", "kind": "function", "out": dual, "args": [s_dual(k)] * s,
-                     "spelling": "(" + ", ".join(f"{{{i}}}" for i in range(s)) + ")",
-                     "note": f"the {s} values a loop body or a block returns"})
-        rows += here
-        for r in here:
-            for a in r["args"]:
-                if a.startswith("body") and a not in done:
-                    demanded.append(a)
-    rows.append({"name": "image", "kind": "function", "out": "image", "args": [blk_dual(0)],
-                 "spelling": "map (\\yi -> map (\\xi -> let px = col0 + f32.i64 xi in let py = row0 + f32.i64 yi in {0}) (iota cols)) (iota rows)",
-                 "note": "the picture: the pixel program over every pixel of the tile at (col0, row0), cols x rows (the offsets are f32: the branch compiler's WGSL has no f32-to-i64 conversion in a kernel)"})
-    # The terminals.
-    for k in range(PIXEL_SCOPES + 1):
-        e = s_dual(k)
-        for v in inputs:
-            rows.append({"name": f"{v}@{e}", "kind": "terminal", "out": e, "args": [], "spelling": v,
-                         "note": "an input of the interface"})
-        for i in range(k):
-            rows.append({"name": f"v{i}@{e}", "kind": "terminal", "out": e, "args": [], "spelling": f"v{i}",
-                         "note": f"the bound variable v{i}"})
-        for name, spelling in fractions:
-            rows.append({"name": f"{name}@{e}", "kind": "terminal", "out": e, "args": [], "spelling": spelling,
-                         "note": "the pixel's position as a fraction of the picture"})
-        rows.append({"name": f"?_{e}", "kind": "const", "out": e, "args": [], "spelling": "",
-                     "note": "a literal of the constant pool"})
-        if image:
-            # An image target's block terminal is the position's colour, not black: a random program whose root
-            # block is a terminal then draws a gradient, and black is a colour the target need not hold.
-            rows.append({"name": f"coord@{blk_dual(k)}", "kind": "terminal", "out": blk_dual(k), "args": [],
-                         "spelling": "[px / u_width, py / u_height, 0.5f32]", "note": "the position's colour"})
-        else:
-            rows.append({"name": f"black@{blk_dual(k)}", "kind": "terminal", "out": blk_dual(k), "args": [],
-                         "spelling": "[0f32, 0f32, 0f32]", "note": "the black pixel"})
-    for dual in sorted(done, key=parse_body):
-        s, _, _ = parse_body(dual)
-        rows.append({"name": f"zero@{dual}", "kind": "terminal", "out": dual, "args": [],
-                     "spelling": "(" + ", ".join(["0f32"] * s) + ")", "note": "the zero state"})
-    for c in PIXEL_COUNTS:
-        rows.append({"name": f"n{c}@count", "kind": "terminal", "out": "count", "args": [],
-                     "spelling": str(c), "note": f"{c} trips"})
-    rows.append({"name": "image.black", "kind": "terminal", "out": "image", "args": [],
-                 "spelling": "map (\\_ -> map (\\_ -> [0f32, 0f32, 0f32]) (iota cols)) (iota rows)",
-                 "note": "the black picture"})
-    return rows
-
-
-def parse_body(dual):
-    """`body5.d1.s13` -> (5, 1, 13); None for any other dual."""
-    m = re.fullmatch(r"body(\d+)\.d(\d+)\.s(\d+)", dual)
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
-
-
-def pixel_types(rows, literals):
-    """The duals the rows mention: the root, the scopes, the blocks, the
-    bodies and the count."""
-    named = []
-    for r in rows:
-        for d in [r["out"]] + r["args"]:
-            if d not in named:
-                named.append(d)
-
-    def key(d):
-        if d == "image":
-            return (0, 0, 0, 0)
-        if d.startswith("f32.s"):
-            return (1, int(d[5:]), 0, 0)
-        if d.startswith("blk.s"):
-            return (2, int(d[5:]), 0, 0)
-        if d == "count":
-            return (4, 0, 0, 0)
-        s, dd, k = parse_body(d)
-        return (3, s, dd, k)
-
-    out = []
-    for d in sorted(named, key=key):
-        if d == "image":
-            out.append({"dual": d, "slot": "img", "form": "rgb", "literals": [], "root": True,
-                        "meaning": "the picture: [h][w][3]f32"})
-        elif d.startswith("f32.s"):
-            out.append({"dual": d, "slot": "f32", "form": d[4:], "literals": literals, "root": False,
-                        "meaning": f"an f32 in scope {d[5:]} (v0 .. v{int(d[5:]) - 1} bound)"})
-        elif d.startswith("blk.s"):
-            out.append({"dual": d, "slot": "blk", "form": d[4:], "literals": [], "root": False,
-                        "meaning": f"a pixel block in scope {d[5:]}, ending in the colour"})
-        elif d == "count":
-            out.append({"dual": d, "slot": "count", "form": "i64", "literals": [], "root": False,
-                        "meaning": "a loop's trip count"})
-        else:
-            s, dd, k = parse_body(d)
-            out.append({"dual": d, "slot": "body", "form": f"{s}.d{dd}.s{k}", "literals": [], "root": False,
-                        "meaning": f"a loop body at depth {dd} in scope {k}, ending in a {s}-tuple"})
-    return out
-
-
-def pixel_tables(instance):
-    """The text of every artefact of one instance."""
-    if PIXEL_INSTANCES[instance] is None:
-        interface = []
-        literals = [f"{t}f32" for t in PIXEL_GENERIC_LITERALS + PIXEL_IMAGE_LITERALS]
-        rows = pixel_rows(interface, image=True)
-    else:
-        shader = os.path.join(REPO, PIXEL_INSTANCES[instance])
-        interface = pixel_interface(shader)
-        literals = pixel_literals(shader)
-        rows = pixel_rows(interface)
-    types = pixel_types(rows, literals)
-    ttext = ["ref\tdual\tslot\tform\tliterals\troot\tmeaning"]
-    for i, t in enumerate(types, start=1):
-        ttext.append(f"T{i:04d}\t{t['dual']}\t{t['slot']}\t{t['form']}\t{','.join(t['literals'])}\t"
-                     f"{'yes' if t['root'] else 'no'}\t{t['meaning']}")
-    ftext = ["ref\tname\tkind\tout\targs\tspelling\tnote"]
-    ordered = [r for r in rows if r["kind"] == "function"] + [r for r in rows if r["kind"] != "function"]
-    for i, r in enumerate(ordered, start=1):
-        ftext.append(f"F{i:05d}\t{r['name']}\t{r['kind']}\t{r['out']}\t{';'.join(r['args'])}\t{r['spelling']}\t{r['note']}")
-    itext = ["# input\tgroup\tbinding\tword\tspelling"]
-    for f in interface:
-        itext.append(f"{f['name']}\t{f['group']}\t{f['binding']}\t{f['word']}\t{f['spelling']}")
-    out = {
-        "types.tsv": "\n".join(ttext) + "\n",
-        "functions.tsv": "\n".join(ftext) + "\n",
-        "interface.tsv": "\n".join(itext) + "\n",
-    }
-    out.update(pixel_egraph_texts(types, ordered, literals))
-    return out
-
-
-# ---- the pixel family's e-graph -------------------------------------------
-#
-# One sort per dual, one constructor per row; a constant placeholder's
-# constructor takes the literal's index in the pool (an i64). The rules are
-# the IEEE identities that hold BIT FOR BIT on every finite and infinite
-# input, instantiated per scope:
-#
-#   a + b = b + a,  a * b = b * a,  max a b = max b a,  min a b = min b a
-#   a - b = a + (-b),  -(-a) = a,  |-a| = |a|,  a * 2 = a + a,  a * 1 = a
-#   a / 2 = a * 0.5,  a / 4 = a * 0.25
-#
-# (`a + 0 = a` is NOT one: -0 + 0 is +0.) A NaN's payload may differ; a NaN
-# is a NaN either way, and the picture compares NaN by its bits as a mismatch.
-
-def pixel_sort(dual):
-    return "P" + "".join(p[:1].upper() + p[1:] for p in re.split(r"[._]", dual))
-
-
-def pixel_ctor(row):
-    op, _, dual = row["name"].partition("@")
-    if not dual:
-        if row["name"].startswith("?_"):
-            return "C" + pixel_sort(row["name"][2:])
-        return "X" + "".join(p.capitalize() for p in row["name"].split("."))
-    return "X" + "".join(p[:1].upper() + p[1:] for p in re.split(r"[._?]", op) if p) + pixel_sort(dual)
-
-
-def pixel_egraph_texts(types, rows, literals):
-    data = ["; The pixel family's e-graph datatype, generated by gen_tables.py.",
-            "; One sort per dual: the sort IS the type (scope, block, body).", ""]
-    for t in types:
-        data.append(f"(sort {pixel_sort(t['dual'])})")
-    data.append("")
-    for r in rows:
-        if r["kind"] == "const":
-            data.append(f"(constructor {pixel_ctor(r)} (i64) {pixel_sort(r['out'])})")
-        else:
-            args = " ".join(pixel_sort(a) for a in r["args"])
-            data.append(f"(constructor {pixel_ctor(r)} ({args}) {pixel_sort(r['out'])})")
-    index = {f32_bits(l[:-3]): i for i, l in enumerate(literals)}
-    rules = ["; The pixel family's e-graph ruleset, generated by gen_tables.py.", "(ruleset futhark_pixel)", ""]
-    for k in range(PIXEL_SCOPES + 1):
-        e = s_dual(k)
-        c = {op: pixel_ctor({"name": f"{op}@{e}"}) for op, _, _ in PIXEL_OPERATORS}
-        const = "C" + pixel_sort(e)
-        rules.append(f"; scope {k}")
-        for op in ("add", "mul", "max", "min"):
-            rules.append(f"(rewrite ({c[op]} a b) ({c[op]} b a) :ruleset futhark_pixel)")
-        rules.append(f"(rewrite ({c['sub']} a b) ({c['add']} a ({c['neg']} b)) :ruleset futhark_pixel)")
-        rules.append(f"(rewrite ({c['neg']} ({c['neg']} a)) a :ruleset futhark_pixel)")
-        rules.append(f"(rewrite ({c['abs']} ({c['neg']} a)) ({c['abs']} a) :ruleset futhark_pixel)")
-        for value, rule in (("2.0", "({mul} a ({const} {i})) ({add} a a)"),
-                            ("1.0", "({mul} a ({const} {i})) a")):
-            i = index.get(f32_bits(value))
-            if i is not None:
-                rules.append("(rewrite " + rule.format(mul=c["mul"], add=c["add"], const=const, i=i)
-                             + " :ruleset futhark_pixel)")
-        for d, m in (("2.0", "0.5"), ("4.0", "0.25")):
-            i, j = index.get(f32_bits(d)), index.get(f32_bits(m))
-            if i is not None and j is not None:
-                rules.append(f"(rewrite ({c['div']} a ({const} {i})) ({c['mul']} a ({const} {j})) :ruleset futhark_pixel)")
-        rules.append("")
-    rtext = ["# row name\tconstructor\tsort"] + [f"{r['name']}\t{pixel_ctor(r)}\t{pixel_sort(r['out'])}" for r in rows]
-    stext = ["# dual\tsort"] + [f"{t['dual']}\t{pixel_sort(t['dual'])}" for t in types]
-    return {
-        "egraph.datatype": "\n".join(data) + "\n",
-        "egraph.rules": "\n".join(rules) + "\n",
-        "egraph.rows": "\n".join(rtext) + "\n",
-        "egraph.sorts": "\n".join(stext) + "\n",
-    }
-
-
-# ---- the pixel family's witness tests ---------------------------------------
-#
-# Re-read from the emitted TEXT and re-checked against a model written apart
-# from the enumeration: the scope of every variable, the binding of every let
-# and loop, the loop bound, the terminals, the literal pool and the e-graph's
-# mapping.
-
-VAR_RE = re.compile(r"\bv(\d+)\b")
-SCOPE_RE = re.compile(r"^(?:f32|blk)\.s(\d+)$")
-
-
-def scope_of(dual):
-    m = SCOPE_RE.match(dual)
-    if m:
-        return int(m.group(1))
-    b = parse_body(dual)
-    return b[2] if b else None
-
-
-def witness_pixel(dir_path, instance):
-    bad = []
-    types, funcs = read_tables(os.path.join(dir_path, "types.tsv"), os.path.join(dir_path, "functions.tsv"))
-    declared = {t[1]: t for t in types}
-    roots = [t[1] for t in types if t[5] == "yes"]
-    if roots != ["image"]:
-        bad.append(f"P1 the roots are {roots}, expected [image]")
-    terminals = set()
-    for row in funcs:
-        name, kind, out, args, spelling = row[1], row[2], row[3], [a for a in row[4].split(";") if a], row[5]
-        for d in [out] + args:
-            if d not in declared:
-                bad.append(f"P2 row {name} names the undeclared dual {d}")
-        if kind != "function":
-            terminals.add(out)
-            if args:
-                bad.append(f"P2 the {kind} {name} has arguments")
-        # P3: the placeholders are exactly {0} .. {n-1}.
-        held = sorted({int(x) for x in PLACEHOLDER_RE.findall(spelling)})
-        if kind == "function" and held != list(range(len(args))):
-            bad.append(f"P3 row {name}'s spelling holds {held}, it has {len(args)} arguments")
-        k = scope_of(out)
-        # P4: a variable named in a spelling is bound: by the scope (a
-        # terminal) or by the row itself (a let or loop).
-        if kind == "terminal" and out.startswith("f32.s"):
-            for v in VAR_RE.findall(spelling):
-                if int(v) >= k:
-                    bad.append(f"P4 the terminal {name} names v{v} in scope {k}")
-        if kind == "function" and out.startswith("f32.s"):
-            if any(a != out for a in args):
-                bad.append(f"P4 the scalar row {name} takes an argument outside its scope: {args}")
-            if VAR_RE.findall(spelling):
-                bad.append(f"P4 the scalar row {name} names a variable")
-        if name.startswith("let@"):
-            if args != [f"f32.s{k}", out.rsplit(".s", 1)[0] + f".s{k + 1}"] or spelling != f"let v{k} = {{0}} in {{1}}":
-                bad.append(f"P5 the let {name} does not bind v{k} into scope {k + 1}: {args} {spelling!r}")
-        if name.startswith("loop"):
-            s = int(name[4:name.index("@")])
-            depth = 0 if out.startswith("blk") else parse_body(out)[1]
-            body = parse_body(args[s + 1]) if len(args) == s + 3 else None
-            rest = scope_of(args[s + 2]) if len(args) == s + 3 else None
-            state = ", ".join(f"v{k + i}" for i in range(s))
-            if (args[:s] != [f"f32.s{k}"] * s or args[s] != "count" or body != (s, depth + 1, k + s + 1)
-                    or rest != k + s or args[s + 2].split(".s")[0] != out.split(".s")[0]):
-                bad.append(f"P5 the loop {name} has the wrong argument duals {args}")
-            if not spelling.startswith(f"let ({state}) = loop ({state}) = (") or f"let v{k + s} = f32.i64 i{k} in" not in spelling:
-                bad.append(f"P5 the loop {name} does not bind v{k}..v{k + s - 1} and its counter v{k + s}: {spelling!r}")
-            if depth + 1 > PIXEL_DEPTH:
-                bad.append(f"P6 the loop {name} nests deeper than {PIXEL_DEPTH}")
-        if name.startswith("block"):
-            s = int(name[5:name.index("@")])
-            depth = 0 if out.startswith("blk") else parse_body(out)[1]
-            state = ", ".join(f"v{k + i}" for i in range(s))
-            if (len(args) != 2 or parse_body(args[0]) != (s, depth, k) or scope_of(args[1]) != k + s
-                    or args[1].split(".s")[0] != out.split(".s")[0] or spelling != f"let ({state}) = {{0}} in {{1}}"):
-                bad.append(f"P5 the block {name} does not bind v{k}..v{k + s - 1} from a body of its own depth: {args} {spelling!r}")
-        if name.startswith("tuple@"):
-            s = parse_body(out)[0]
-            if len(args) != s:
-                bad.append(f"P5 the tuple {name} has {len(args)} values, its loop carries {s}")
-    # P6: the work bound -- a pixel runs at most max(count) ** depth trips.
-    counts = [int(r[5]) for r in funcs if r[3] == "count"]
-    if not counts or max(counts) ** PIXEL_DEPTH > 4096:
-        bad.append(f"P6 the work bound max(count) ** depth = {max(counts or [0]) ** PIXEL_DEPTH} exceeds 4096 trips")
-    for t in types:
-        if t[1] not in terminals:
-            bad.append(f"P7 the dual {t[1]} has no terminal")
-    # P8: the constant pool parses as f32, holds each value once, and every
-    # literal past the generic ones appears in the shader's source.
-    shader = PIXEL_INSTANCES[instance]
-    src = strip_comments(open(os.path.join(REPO, shader)).read()) if shader else " ".join(PIXEL_IMAGE_LITERALS)
-    for t in types:
-        if t[2] != "f32":
-            continue
-        lits = t[4].split(",")
-        bits = [f32_bits(l[:-3]) for l in lits if l.endswith("f32")]
-        if len(bits) != len(lits) or len(set(bits)) != len(bits):
-            bad.append(f"P8 the pool of {t[1]} is not a set of f32 literals")
-        for l in lits[len(PIXEL_GENERIC_LITERALS):]:
-            if not re.search(r"(?<![\w.])" + re.escape(l[:-3]) + r"(?![\w.])", src):
-                bad.append(f"P8 the literal {l} of {t[1]} is not in the shader's source")
-    # P9: the e-graph maps every row to one constructor of its dual's sort.
-    with open(os.path.join(dir_path, "egraph.rows")) as f:
-        mapping = [l.rstrip("\n").split("\t") for l in f if l.strip() and not l.startswith("#")]
-    with open(os.path.join(dir_path, "egraph.datatype")) as f:
-        ctors = {}
-        for l in f:
-            m = re.match(r"^\(constructor\s+(\w+)\s+\(([^)]*)\)\s+(\w+)\)$", l.strip())
-            if m:
-                ctors[m.group(1)] = (m.group(2).split(), m.group(3))
-    if sorted(m[0] for m in mapping) != sorted(r[1] for r in funcs):
-        bad.append("P9 the e-graph mapping and the table name different rows")
-    if len({m[1] for m in mapping}) != len(mapping):
-        bad.append("P9 two rows share a constructor")
-    by_name = {r[1]: r for r in funcs}
-    for name, ctor, sort in mapping:
-        r = by_name.get(name)
-        if r is None or ctor not in ctors:
-            bad.append(f"P9 the row {name} or its constructor {ctor} is missing")
-            continue
-        want_args = ["i64"] if r[2] == "const" else [pixel_sort(a) for a in r[4].split(";") if a]
-        if ctors[ctor] != (want_args, pixel_sort(r[3])) or sort != pixel_sort(r[3]):
-            bad.append(f"P9 the constructor {ctor} of {name} has the sorts {ctors[ctor]}")
-    return bad
 
 
 def pixel_dir(instance):
@@ -1680,63 +1214,8 @@ def main(argv):
         print("  --check  verify the committed artefacts (the default)")
         print("  --write  regenerate them, then verify")
         return 2
-    rc = pixel_main(mode) or master6_main(mode)
+    rc = master6_main(mode)
     return rc if rc else pixel_rows_main(mode)
-
-
-def pixel_main(mode):
-    """The pixel family's instances: checked (the default) or written, the
-    same way as the matrix kingdom's artefacts -- written to a staging
-    directory, witnessed there, and only then moved into place."""
-    for instance in sorted(PIXEL_INSTANCES):
-        out_dir = pixel_dir(instance)
-        wanted = pixel_tables(instance)
-        if mode == "--write":
-            staged = os.path.join(out_dir, ".staged")
-            os.makedirs(staged, exist_ok=True)
-            for name, text in wanted.items():
-                with open(os.path.join(staged, name), "w") as f:
-                    f.write(text)
-            bad = witness_pixel(staged, instance)
-            if bad:
-                print(f"THE PIXEL WITNESS TESTS FAILED for {instance} (the committed files are untouched):")
-                for b in bad:
-                    print("  " + b)
-                for name in wanted:
-                    os.remove(os.path.join(staged, name))
-                os.rmdir(staged)
-                return 1
-            for name in wanted:
-                os.replace(os.path.join(staged, name), os.path.join(out_dir, name))
-            os.rmdir(staged)
-        else:
-            bad = []
-            for name, text in wanted.items():
-                path = os.path.join(out_dir, name)
-                try:
-                    with open(path, "rb") as f:
-                        got = f.read()
-                except OSError as e:
-                    bad.append(f"the artefact pixel/{instance}/{name} cannot be read: {e}")
-                    continue
-                if got != text.encode("utf-8"):
-                    bad.append(f"the committed pixel/{instance}/{name} is not what the generator produces "
-                               f"({first_difference(got, text.encode('utf-8'))}); run with --write to regenerate")
-            if not bad:
-                bad = witness_pixel(out_dir, instance)
-            if bad:
-                print(f"THE PIXEL INSTANCE {instance} FAILED:")
-                for b in bad:
-                    print("  " + b)
-                return 1
-        types, funcs = read_tables(os.path.join(out_dir, "types.tsv"), os.path.join(out_dir, "functions.tsv"))
-        kinds = {}
-        for r in funcs:
-            kinds[r[2]] = kinds.get(r[2], 0) + 1
-        print(f"pixel/{instance}: {len(types)} types, {len(funcs)} rows "
-              f"({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}); "
-              f"{'committed artefacts MATCH the generator, ' if mode == '--check' else 'written, '}witness tests PASS")
-    return 0
 
 
 def pixel_kingdom(instance):
@@ -1751,18 +1230,30 @@ def pixel_rows_main(mode):
     bad = []
     for instance in sorted(PIXEL_INSTANCES):
         if PIXEL_INSTANCES[instance] is None:
-            inputs, literals = [], [f"{t}f32" for t in PIXEL_GENERIC_LITERALS + PIXEL_IMAGE_LITERALS]
+            interface, literals = [], [f"{t}f32" for t in PIXEL_GENERIC_LITERALS + PIXEL_IMAGE_LITERALS]
         else:
             shader = os.path.join(REPO, PIXEL_INSTANCES[instance])
-            inputs, literals = [f["spelling"] for f in pixel_interface(shader)], pixel_literals(shader)
+            interface, literals = pixel_interface(shader), pixel_literals(shader)
+        inputs = [f["spelling"] for f in interface]
         name = pixel_kingdom(instance)
-        rows = write_rows.rows_of_named(pixel_rows.named(instance, inputs, literals, image=PIXEL_INSTANCES[instance] is None))
+        text = pixel_rows.named(instance, inputs, literals, image=PIXEL_INSTANCES[instance] is None)
+        rows = write_rows.rows_of_named(text)
         source = PIXEL_INSTANCES[instance] or "an image target: no shader"
         kingdom_row = (name, "futhark", f"the Futhark pixel family's instance {instance} ({source})", pixel_rows.IMAGE, "")
+        files = {"interface.tsv": "\n".join(["# input\tgroup\tbinding\tword\tspelling"] + [f"{f['name']}\t{f['group']}\t{f['binding']}\t{f['word']}\t{f['spelling']}" for f in interface]) + "\n"}
+        files.update(pixel_rows.egraph_texts(text, literals))
         if mode == "--write":
             write_rows.write_kingdom(name, rows, kingdom_row)
+            for f, t in files.items():
+                with open(os.path.join(pixel_dir(instance), f), "w") as out:
+                    out.write(t)
         else:
             bad += write_rows.check_kingdom(name, rows, kingdom_row)
+            for f, t in files.items():
+                path = os.path.join(pixel_dir(instance), f)
+                got = open(path, "rb").read() if os.path.exists(path) else b""
+                if got != t.encode("utf-8"):
+                    bad.append(f"the committed pixel/{instance}/{f} is not what the generator produces ({first_difference(got, t.encode('utf-8'))}); run with --write")
     for b in bad:
         print("  " + b)
     print(f"pixel rows: {len(PIXEL_INSTANCES)} instances {'DIFFER FROM' if bad else 'equal'} the master tables")

@@ -18,8 +18,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use egglog::extract::hff_extract;
+use egglog::prelude::exprs;
+use egglog::{EGraph, Term, TermDag, TermId};
+
 use crate::geneframe::{Entry, KingdomTables, Role, Ty};
 use crate::kingdom_contract::{relations_from_tables, KingdomContract, SymbolId};
+use crate::saturated_fold::EgraphKingdom;
 use crate::typed_environment::{Choice, Decoder, Decoding, Node};
 use crate::typed_gep::{express, Domain, GeneLayout, Tree};
 
@@ -483,6 +488,135 @@ impl PixelRows {
                     },
                 }
             }
+        }
+    }
+}
+
+// ---- the instance's e-graph, over the rows ---------------------------------------------------------------------------
+
+/// The symbol <-> constructor mapping of an instance's e-graph (`egraph.rows`, generated with the datatype).
+#[derive(Debug, Clone)]
+pub struct Bridge {
+    ctor_of_symbol: BTreeMap<String, String>,
+    symbol_of_ctor: BTreeMap<String, String>,
+}
+
+impl Bridge {
+    /// Read an instance's mapping; a repeated symbol or constructor is a bug.
+    pub fn load(inst: &super::Instance) -> Result<Bridge, String> {
+        let (mut ctor_of_symbol, mut symbol_of_ctor) = (BTreeMap::new(), BTreeMap::new());
+        for line in inst.egraph_rows.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() != 3 {
+                return Err(bug(format!("the e-graph mapping line {line:?} is malformed")));
+            }
+            if ctor_of_symbol.insert(f[0].to_string(), f[1].to_string()).is_some() || symbol_of_ctor.insert(f[1].to_string(), f[0].to_string()).is_some() {
+                return Err(bug(format!("the e-graph mapping line {line:?} repeats a symbol or a constructor")));
+            }
+        }
+        Ok(Bridge { ctor_of_symbol, symbol_of_ctor })
+    }
+}
+
+/// The instance's e-graph over its rows: the kingdom, its datatype and rules, and the mapping.
+pub struct PixelEgraph<'a> {
+    pub kingdom: &'a PixelRows,
+    pub inst: &'a super::Instance,
+    pub bridge: Bridge,
+}
+
+impl<'a> PixelEgraph<'a> {
+    pub fn new(kingdom: &'a PixelRows, inst: &'a super::Instance) -> Result<PixelEgraph<'a>, String> {
+        let bridge = Bridge::load(inst)?;
+        for s in 0..kingdom.contract.n_symbols() as SymbolId {
+            if !bridge.ctor_of_symbol.contains_key(kingdom.name(s)) {
+                return Err(bug(format!("{}: the symbol {} has no e-graph constructor; regenerate the e-graph", kingdom.variant, kingdom.name(s))));
+            }
+        }
+        Ok(PixelEgraph { kingdom, inst, bridge })
+    }
+
+    /// A tree as an egglog term: a constant's or a variable's constructor applied to its word (the pool index, or the
+    /// index word naming a variable in the node's environment; no rule moves a subterm between environments).
+    pub fn import(&self, tree: &Tree) -> Result<String, String> {
+        let name = self.kingdom.name(tree.symbol);
+        let ctor = self.bridge.ctor_of_symbol.get(name).ok_or_else(|| bug(format!("the symbol {name} has no constructor")))?;
+        if let Some(w) = tree.const_index {
+            return Ok(format!("({ctor} {w})"));
+        }
+        let kids = tree.kids.iter().map(|t| self.import(t)).collect::<Result<Vec<_>, _>>()?;
+        Ok(if kids.is_empty() { format!("({ctor})") } else { format!("({ctor} {})", kids.join(" ")) })
+    }
+
+    /// An egglog term as a tree of the rows; `None` when it is not one.
+    pub fn to_tree(&self, termdag: &TermDag, id: TermId) -> Option<Tree> {
+        let Term::App(op, kids) = termdag.get(id) else { return None };
+        let symbol = self.kingdom.symbol_named(self.bridge.symbol_of_ctor.get(op.as_str())?)?;
+        if self.kingdom.contract.is_terminal(symbol) && kids.len() == 1 {
+            let Term::Lit(egglog::ast::Literal::Int(i)) = termdag.get(kids[0]) else { return None };
+            return Some(Tree { symbol, const_index: Some(u32::try_from(*i).ok()?), kids: vec![] });
+        }
+        let kids = kids.iter().map(|t| self.to_tree(termdag, *t)).collect::<Option<Vec<_>>>()?;
+        Some(Tree { symbol, const_index: None, kids })
+    }
+
+    /// The e-graph variants of a tree: saturate `iters` iterations of the instance's ruleset, extract the ranked
+    /// members of the root's class (HFF extraction, `members` a class), and return up to `n` distinct trees other than
+    /// the tree itself, smallest first and then by their rendered text, so the order is deterministic.
+    pub fn variants(&self, tree: &Tree, iters: u32, members: usize, n: usize) -> Result<Vec<Tree>, String> {
+        let term = self.import(tree)?;
+        let mut egraph = EGraph::default();
+        egraph.parse_and_run_program(None, self.inst.datatype).map_err(|e| bug(format!("the datatype does not load: {e}")))?;
+        egraph.parse_and_run_program(None, self.inst.rules).map_err(|e| bug(format!("the ruleset does not load: {e}")))?;
+        egraph
+            .parse_and_run_program(None, &format!("(let __root {term})\n(run-schedule (repeat {iters} (run {})))", super::RULESET))
+            .map_err(|e| bug(format!("the term does not load: {e}")))?;
+        let (sort, value) = egraph.eval_expr(&exprs::var("__root")).map_err(|e| bug(format!("the root does not evaluate: {e}")))?;
+        let mut termdag = TermDag::default();
+        let score = |td: &TermDag, t: TermId| term_cost(td, t) as f64;
+        let ranked = hff_extract(&egraph, &mut termdag, value, sort, &score, members);
+        let mut out: Vec<(u64, String, Tree)> = Vec::new();
+        for (cost, id) in ranked {
+            let Some(t) = self.to_tree(&termdag, id) else { continue };
+            if &t == tree {
+                continue;
+            }
+            let text = self.kingdom.render(&self.kingdom.decode(&t)?)?;
+            if out.iter().any(|(_, s, _)| s == &text) {
+                continue;
+            }
+            out.push((cost as u64, text, t));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        out.truncate(n);
+        Ok(out.into_iter().map(|(_, _, t)| t).collect())
+    }
+}
+
+/// The cost of a term: its node count.
+fn term_cost(termdag: &TermDag, id: TermId) -> u64 {
+    match termdag.get(id) {
+        Term::App(_, kids) => 1 + kids.iter().map(|k| term_cost(termdag, *k)).sum::<u64>(),
+        _ => 1,
+    }
+}
+
+impl EgraphKingdom for PixelEgraph<'_> {
+    fn programs(&self) -> Vec<&str> {
+        vec![self.inst.datatype, self.inst.rules]
+    }
+    fn rulesets(&self) -> Vec<&str> {
+        vec![super::RULESET]
+    }
+    fn import(&self, tree: &Tree) -> Result<String, String> {
+        PixelEgraph::import(self, tree)
+    }
+    fn row(&self, constructor: &str, literals: &[&str]) -> Option<(SymbolId, Option<u32>)> {
+        let symbol = self.kingdom.symbol_named(self.bridge.symbol_of_ctor.get(constructor)?)?;
+        match literals {
+            [w] if self.kingdom.contract.is_terminal(symbol) => Some((symbol, Some(w.parse().ok()?))),
+            [] => Some((symbol, None)),
+            _ => None,
         }
     }
 }

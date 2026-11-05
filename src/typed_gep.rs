@@ -1584,9 +1584,6 @@ mod tests {
         let tsr = crate::tsr_kingdom::rows::TsrRows::load(crate::tsr_kingdom::TsrVariant::Depth, 3).expect("TSR rows load");
         kingdoms.push(("tsr rows".into(), crate::kingdom_contract::relations_from_tables(&tsr.tables, vec![tsr.entry.output])));
         kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
-        for inst in [crate::futhark_pixel::VOLUMEPASSAGE, crate::futhark_pixel::CUNEUS, crate::futhark_pixel::IMAGE] {
-            kingdoms.push((format!("futhark pixel {}", inst.name), crate::futhark_pixel::load(&inst).expect("pixel view loads").relations()));
-        }
         #[cfg(feature = "wgsl")]
         {
             kingdoms.push(("wgsl".into(), crate::kingdom_contract::wgsl_relations()));
@@ -1605,11 +1602,8 @@ mod tests {
             // depth ladder), taken by a run of this fingerprint on the rows.
             ("tsr rows", 0x113c_6c94_4793_5d13),
             ("futhark 1-D", 0x4d21_23d5_b0e4_8a3c),
-            // Added by the G2 code review's finding 7, each taken at e526a62f (the code before the Dv lane) by a
-            // copy of this fingerprint run there.
-            ("futhark pixel volumepassage", 0xe842_9cbb_b21a_e29f),
-            ("futhark pixel cuneus", 0x1172_991c_3c36_edd0),
-            ("futhark pixel image", 0x0ed5_4ee4_76aa_24d4),
+            // The pixel family's three instances (added by the G2 code review's finding 7) left this list with their
+            // dual tables (plan 7.7 K4): on the rows they have a variable terminal, `var@f32`.
             ("wgsl", 0xaca5_c7c1_66fa_1914),
             ("safewgsl", 0x0513_9731_15ba_6f78),
             ("true wgsl", 0x4119_d902_a24d_25aa),

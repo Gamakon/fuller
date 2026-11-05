@@ -3,9 +3,9 @@
 //! `types.tsv` and `functions.tsv`, the renderer from an expressed tree to Futhark source, the ADF rendering), and the
 //! gene RNG.
 //!
-//! The dual kingdoms are loaded through [`FutharkKingdom::from_tables`]: the Futhark kingdom's pixel family
-//! ([`crate::futhark_pixel`], `kingdoms/futhark/pixel/`) and the deprecated 1-D Futhark kingdom
-//! ([`crate::futhark_1d_kingdom`], `kingdoms/futhark_1d/`). The [`FutharkFamily`] of a kingdom decides which [`Ty`]
+//! The dual kingdoms are loaded through [`FutharkKingdom::from_tables`]: the deprecated 1-D Futhark kingdom
+//! ([`crate::futhark_1d_kingdom`], `kingdoms/futhark_1d/`); the pixel family left the dual tables for the rows of the
+//! master tables ([`crate::futhark_pixel::rows`], plan 7.7 K4). The [`FutharkFamily`] of a kingdom decides which [`Ty`]
 //! family its duals belong to, so the kingdoms' duals cannot collide.
 //!
 //! The genetic representation is the Karva gene. The Futhark *source* is a
