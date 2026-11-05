@@ -51,6 +51,7 @@ pub mod run_file;
 pub mod runner;
 pub mod geneframe;
 pub mod tsr_kingdom;
+pub mod wgsl_rows;
 pub mod futhark_table;
 pub mod futhark_view;
 pub mod futhark_1d_kingdom;

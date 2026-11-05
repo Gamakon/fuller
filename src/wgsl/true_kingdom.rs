@@ -17,8 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::geneframe::Ty;
-use crate::kingdom_contract::{relations_from_rows, KingdomContract, KingdomRelations};
+use crate::geneframe::{PropertyExpr, Role, Ty};
+use crate::kingdom_contract::{relations_from_rows, relations_from_tables, KingdomContract, KingdomRelations};
 use crate::typed_gep::{GeneLayout, Tree};
 use crate::wgsl::loader::{parse_duals, WgslDual};
 use crate::wgsl::work_guard::Fuel;
@@ -80,6 +80,10 @@ pub struct TrueKingdom {
     /// The counting-sort scaffold's variants (`kingdoms/wgsl_true/countsort.py`, docs/DESIGN_inrange_index_types.md
     /// section 10): variant name -> piece -> text, from `scaffold.tsv`; empty for a table without a scaffold.
     pub scaffold: BTreeMap<String, BTreeMap<String, String>>,
+    /// THE KINGDOM AS ROWS of the gene frame's fixed schema ([`crate::wgsl_rows`], plan 7.7 task K3), when this
+    /// kingdom was built from them ([`TrueKingdom::from_rows`]): the contract is the rows' Argument rows, and
+    /// [`TrueKingdom::render`] is the decoder's rendering (Flow and Guard rows applied), not the substitution.
+    pub rows_kingdom: Option<std::sync::Arc<crate::wgsl_rows::WgslRows>>,
 }
 
 /// How a loop row repeats its arguments, read from its own spelling and types.
@@ -274,7 +278,83 @@ impl TrueKingdom {
             loops,
             solo,
             scaffold: read_scaffold(dir)?,
+            rows_kingdom: None,
         })
+    }
+
+    /// THE KINGDOM FROM ITS ROWS (plan 7.7 task K3): every consumer of a `TrueKingdom` (the typed device's draws, the
+    /// runner, the share pass, the optimisers) reads the alphabet as `TrueRow`s, so the rows kingdom's alphabet is laid
+    /// out as one: symbol `s` of the contract is row `s` (a Dc constant a `Constant` row, a `var.T` terminal and a
+    /// function of no inputs a `Terminal`), each data type a dual named as the row names it, `C_T` each pool's
+    /// literals. Rendering, the relations and the work bound read the rows ([`TrueKingdom::render`],
+    /// [`TrueKingdom::relations`], [`TrueKingdom::tree_work_bound`]); nothing is matched on a type name, so `loops` and
+    /// `solo` are empty, and the fuel budget is the rows' `BUDGET` read as the old K = 1.
+    pub fn from_rows(rows: crate::wgsl_rows::WgslRows) -> Result<TrueKingdom, String> {
+        let types: Vec<WgslDual> = rows
+            .tables
+            .data_types
+            .iter()
+            .enumerate()
+            .map(|(i, d)| WgslDual { index: i as u16, reference: format!("T{:04}", i + 1), dual: d.name.clone(), slot: d.name.clone(), form: String::new(), lanes: 1, literal: None })
+            .collect();
+        let n = rows.contract.n_symbols();
+        let mut table_rows = Vec::with_capacity(n);
+        let mut constants: BTreeMap<Ty, Vec<String>> = BTreeMap::new();
+        for s in 0..n as crate::kingdom_contract::SymbolId {
+            let row = rows.tables.symbol(i64::from(s)).ok_or_else(|| format!("our software has a bug: {}: contract symbol {s} has no row", crate::wgsl_rows::KINGDOM))?;
+            let args = rows.contract.signature(s).to_vec();
+            let out = rows.contract.output(s);
+            let kind = match row.role {
+                Role::Constant => {
+                    constants.insert(out, rows.literals(s));
+                    RowKind::Constant
+                }
+                Role::Variable => RowKind::Terminal,
+                Role::Function if args.is_empty() => RowKind::Terminal,
+                Role::Function => RowKind::Function,
+                Role::Formula => return Err(format!("our software has a bug: {}: a formula row ({}) in the contract", crate::wgsl_rows::KINGDOM, row.symbol_name)),
+            };
+            table_rows.push(TrueRow { name: row.symbol_name.clone(), kind, out, args, spelling: row.spelling("").unwrap_or("").to_string(), note: String::new(), declares: Vec::new() });
+        }
+        if constants.len() != rows.const_len().len() {
+            return Err(format!("our software has a bug: {}: two Dc constants of one data type", crate::wgsl_rows::KINGDOM));
+        }
+        Ok(TrueKingdom {
+            dir: PathBuf::new(),
+            root: rows.root(),
+            fuel_budget: 1,
+            loops: vec![None; n],
+            solo: vec![None; n],
+            gene_roots: Vec::new(),
+            linker: None,
+            types,
+            rows: table_rows,
+            constants,
+            prologue: String::new(),
+            declarations: String::new(),
+            scaffold: BTreeMap::new(),
+            rows_kingdom: Some(std::sync::Arc::new(rows)),
+        })
+    }
+
+    /// The rows kingdom's work bound of one invocation: over the nodes the program renders (a dropped statement is not
+    /// run), the product of the trip counts of the enclosing loops (the environment's `work`), a loop node counted
+    /// once per trip of its own. Exact, since every trip count is a literal of the `count` type.
+    fn rows_work_bound(rows: &crate::wgsl_rows::WgslRows, tree: &Tree) -> Result<u128, String> {
+        let d = rows.decode(tree)?;
+        let mut total = 0u128;
+        for (_, n) in d.rendered_nodes() {
+            let work = match n.environment.attribute("work") {
+                Some(PropertyExpr::Literal(w)) if *w >= 0 => *w as u128,
+                other => return Err(format!("our software has a bug: {}: a node's env.work is {other:?}, not a literal", crate::wgsl_rows::KINGDOM)),
+            };
+            let own = match (rows.name(n.symbol) == "loop", n.kids.first().and_then(|k| k.properties.get("value"))) {
+                (true, Some(PropertyExpr::Literal(v))) if *v >= 0 => *v as u128,
+                _ => 1,
+            };
+            total = total.saturating_add(work.saturating_mul(own));
+        }
+        Ok(total)
     }
 
     /// The exact work bound of one invocation of the kernel `tree` spells, from its types: the sum over the expressed
@@ -282,6 +362,9 @@ impl TrueKingdom {
     /// argument counts its own `cap` trips. Every legal tree obeys it, whatever its uniforms; it is never more than `H * 2^(6K)`. It is a
     /// property of the expressed tree (the work guard's split of a dispatch into submits), never a verdict on the gene.
     pub fn tree_work_bound(&self, tree: &Tree) -> Result<u128, String> {
+        if let Some(rows) = &self.rows_kingdom {
+            return TrueKingdom::rows_work_bound(rows, tree);
+        }
         let mut total = 0u128;
         let mut stack: Vec<(&Tree, u128)> = vec![(tree, 1)];
         while let Some((node, mult)) = stack.pop() {
@@ -454,6 +537,9 @@ impl TrueKingdom {
 
     /// The two relations of the kingdom contract; the symbol id is the row's position.
     pub fn relations(&self) -> KingdomRelations {
+        if let Some(rows) = &self.rows_kingdom {
+            return relations_from_tables(&rows.tables, vec![self.root]);
+        }
         let rows: Vec<(String, Vec<Ty>, Ty)> = self.rows.iter().map(|r| (r.name.clone(), r.args.clone(), r.out)).collect();
         let constants: Vec<&str> = self.rows.iter().filter(|r| r.kind == RowKind::Constant).map(|r| r.name.as_str()).collect();
         let mut roots = vec![self.root];
@@ -514,6 +600,9 @@ impl TrueKingdom {
     /// row's spelling, then put the declarations of the rows the tree holds in the
     /// entry point behind the prologue. Nothing else is done to the text.
     pub fn render(&self, tree: &Tree) -> Result<String, String> {
+        if let Some(rows) = &self.rows_kingdom {
+            return Ok(rows.program(tree)?.text);
+        }
         self.resolve_scaffold(tree, format!("{}{}", self.prologue_for(tree)?, self.spell(tree)?))
     }
 
