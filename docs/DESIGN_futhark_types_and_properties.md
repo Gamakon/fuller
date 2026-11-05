@@ -125,14 +125,22 @@ def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)
 
 | requirement fails at | rendered as |
 |---|---|
-| `map2 f xs ys`, lengths differ | `let l = i64.min (length xs) (length ys) in map2 f (fit l z xs) (fit l z ys)` |
+| `map2 f xs ys`, lengths differ (both known, `k` and `n`) | `map2 f (fit (i64.min k n) z xs) (fit (i64.min k n) z ys)`, each `fit` only where the length is not already the minimum |
+| `map2 f xs ys`, a length known only at run time | `let ad_a = xs let ad_b = ys let ad_l = i64.min (length ad_a) (length ad_b) in map2 f (fit ad_l z ad_a) (fit ad_l z ad_b)` |
 | a slot requires length L, gets another | `fit L z x` |
 | `xs[i]`, i's bound is not len(xs) | `xs[clampix (length xs) i]` |
-| a loop body's result differs from the state | the body wrapped in `fit` to the state's length |
+| a loop body's result differs from the state | the body wrapped in `fit` to the state's length; a state of a length known only at run time is first bound with its size, `let [ad_m] (ad_s: [ad_m]t) = state`, and the loop declared `[ad_m]` |
 | the entry's result | `fit` on each dimension to the signature's sizes |
 
 `z` is the element type's zero. Every array dimension is at least 1, as the entry points' contracts state, so
 `clampix` is in range.
+
+**Corrected by the F2 build (2026-11-05), for Futhark's size rules.** The `map2` row first read
+`let l = i64.min (length xs) (length ys) in ..` for every pair. With two known lengths that `l` is an existential
+size, and Futhark 0.28.1 rejects a `map2` of two such results ("Sizes d12 and d25 do not match"); the minimum written
+out (`i64.min k n`) is a size Futhark compares as written. A loop state of unknown length named by
+`let m = length s` is a value, not the state's size ("Sizes ad_m and d6 do not match"); the size binding
+`let [ad_m] (ad_s: [ad_m]t)` names the size. The master's README section 5.5 holds the texts the renderer writes.
 
 **Sizes are chosen, not computed (lead decision 2026-11-05, from the reviews).** A function that takes a size
 (`tabulate`, `replicate`, `hist`'s length, a loop's trip count) takes it from the data type `size`, rendered as

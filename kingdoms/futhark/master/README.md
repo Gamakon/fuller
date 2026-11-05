@@ -215,21 +215,29 @@ adapter for each requirement. A row with two failing requirements renders both, 
 
 | name | repairs | runs at | heavy | rendering |
 |---|---|---|---|---|
-| `clampix` | `in<i>.bound <= in<a>.len` (or `.rows`) | node | no | operand i becomes `clampix {a.len} {i}` |
+| `clampix` | `in<i>.bound <= in<a>.len` (or `.rows`) | node | no | operand i becomes `clampix {a.len} {i}`, with `{a.len}` the length operand a has after the node's other adapters (a `clampix` renders after them); a `?` length is first `let [ad_m] (ad_a: [ad_m]{E}) = {a} in`, and the bound is `ad_m` |
 | `fit` | `in<k>.<p> = <expr>` at a slot | node | yes | operand k becomes `fit <expr> 0{E} {k}` |
-| `fit.pair` | `in<j>.len = in<k>.len` (`map2.*`, `hist.*`) | node | yes | `let ad_a = {k} let ad_b = {j} let ad_l = i64.min (length ad_a) (length ad_b) in <spelling with fit ad_l 0{E} ad_a and fit ad_l 0{E} ad_b as the two operands>` |
-| `fit.state` | a loop body's `len` against its state's | body | yes | the body becomes `fit {1.len} 0{E} ({2})`; a `?`-length state is first `let ad_s = {1} let ad_m = length ad_s in`, and the state is declared `[ad_m]` |
+| `fit.pair` | `in<j>.len = in<k>.len` (`map2.*`, `hist.*`) | node | yes | both lengths known: each operand whose length is not already the target becomes `fit <min> 0{E} ({k})`, `<min>` the written-out `min` of the two lengths (`i64.min k n`); a `?` length: `let ad_a = ({k}) let ad_b = ({j}) let ad_l = i64.min (length ad_a) (length ad_b) in <spelling with fit ad_l 0{E} (ad_a) and fit ad_l 0{E} (ad_b) as the two operands>` |
+| `fit.state` | a loop body's `len` against its state's | body | yes | the body becomes `fit {1.len} 0{E} ({2})`; a `?`-length state is first bound with its size, `let [ad_m] (ad_s: [ad_m]{E}) = ({1}) in`, the state is `ad_s`, declared `[ad_m]`, and the body becomes `fit ad_m 0{E} ({2})` |
 | `fit.body` | a lambda body's length against a size argument | body | yes | the body becomes `fit {k} 0{E} ({body})` |
 | `fit.inner` | an inner dimension (`matmul`, `map2_rows`, `histrows` columns) | node | yes | `map (fit l 0{E}) {k}` |
 | `fit.root` | the entry's result against the signature's sizes | root | yes | `fit` on each dimension, inner ones by `map (fit ..)` |
 | `subst` | `env.trips < depth` | node | no | section 5.3: its first input of its own data type, else its constant |
 | `subst.const` | `env.trips < depth` (`hist.*`, `histrows.*`) | node | no | section 5.3: its data type's constant |
 
+- **Corrected by the F2 build (2026-11-05), for Futhark's size rules.** The table first gave `fit.pair` as the
+  `let ad_l` form for every pair, and `fit.state`'s `?` state as `let ad_s = {1} let ad_m = length ad_s in`. Futhark
+  0.28.1 rejects both. The `ad_l` of two known lengths is an existential size, so a `map2` of two such results fails
+  with "Sizes d12 and d25 do not match"; a length fitted to its written-out spelling (`fit (i64.min k n) ..`) is a
+  size Futhark compares as written. `ad_m = length ad_s` names the length as a value, not as the state's size, so a
+  loop declared `[ad_m]` fails with "Sizes ad_m and d6 do not match"; the size binding `let [ad_m] (ad_s: [ad_m]{E})`
+  names the size itself. The renderer (`futhark_table.rs`, pass 5) writes the texts above.
 - **The prelude** (design section 5) holds `fit` and `clampix`, and only those the program uses. A program with no
   failing requirement renders exactly as master 5's.
 - **Reserved names.**
   - `fit` and `clampix` are the adapters' functions.
-  - `ad_a`, `ad_b`, `ad_l`, `ad_m` and `ad_s` are the adapters' `let`s.
+  - `ad_a`, `ad_b`, `ad_l`, `ad_m` and `ad_s` are the adapters' `let`s. A node's second adapter that binds a `?`
+    length adds the count of binding adapters before it as a suffix (`ad_a1`, `ad_l1`), so two never collide.
   - No operand's text ever names an `ad_` variable, so nested adapters reuse the same names by shadowing. The text
     grows linearly with nesting, and a subtree renders the same wherever it sits.
   - `sniff.py` reports as a bug an entry parameter named `fit` or `clampix`, or one that starts with `ad_`.
@@ -396,7 +404,8 @@ spelling hist (+) 0{E} {0} (map i64.{E} {1}) {2}
 ```
 
 Design section 6's mutation (the `tabulate` choosing `k` instead of `n`) fails `in2.len = in1.len`, since `k = n`
-does not hold. `fit.pair` fits both operands to `i64.min (length ad_a) (length ad_b)`. Because the rule reads
+does not hold. `fit.pair` fits the operand whose length is not already the target to `i64.min k n`, written out
+(both lengths are known). Because the rule reads
 `in0.value`, the output is still of length `k`. At `env.trips >= depth`, `subst.const` renders `[0i32]`, of length
 1, which the parent's slot fits to its length: the histogram with nothing counted (section 5.3).
 

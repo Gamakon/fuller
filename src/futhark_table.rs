@@ -627,17 +627,40 @@ fn requirement6(kingdom: &str, text: &str) -> Result<(String, Relation, Property
     Ok((subject, relation, PropertyExpr::parse(&expr)?, adapter))
 }
 
-/// The table's rows (its header skipped), each with exactly `n` fields.
-fn rows6<'a>(kingdom: &str, file: &str, text: &'a str, n: usize) -> Result<Vec<Vec<&'a str>>, String> {
+/// The columns of master 6's `adapters.tsv` (README section 5.5).
+pub const ADAPTER6_COLUMNS: [&str; 5] = ["name", "repairs", "runs_at", "heavy", "rendering"];
+
+/// The table's rows, each with exactly its columns' fields, after its header, which must name exactly `columns` in
+/// order (F1b review finding 5: two columns swapped would otherwise load and be misread).
+fn rows6<'a>(kingdom: &str, file: &str, text: &'a str, columns: &[&str]) -> Result<Vec<Vec<&'a str>>, String> {
+    let header: Vec<&str> = text.lines().next().unwrap_or("").split('\t').collect();
+    if header != columns {
+        return Err(bug6(kingdom, format!("{file}'s header is {header:?}, wants {columns:?}")));
+    }
+    let n = columns.len();
     data_lines(text)
         .map(|f| if f.len() == n { Ok(f) } else { Err(bug6(kingdom, format!("{file} row {f:?} has {} columns, wants {n}", f.len()))) })
         .collect()
 }
 
+/// A root environment row's properties against its data type's: each property the data type carries, set once, and
+/// none it does not carry.
+fn check_properties6(kingdom: &str, what: &str, d: &DataType6, props: &[(String, PropertyExpr)]) -> Result<(), String> {
+    let mut given: Vec<&str> = props.iter().map(|(p, _)| p.as_str()).collect();
+    let mut wants: Vec<&str> = d.properties.iter().map(|(p, _)| p.as_str()).collect();
+    given.sort_unstable();
+    wants.sort_unstable();
+    if given == wants {
+        Ok(())
+    } else {
+        Err(bug6(kingdom, format!("environment.tsv: {what} of {} sets the properties {given:?}, and {} carries {wants:?}", d.name, d.name)))
+    }
+}
+
 impl Kingdom6 {
     /// Load a master 6 kingdom from its three tables, the master's adapters and its elements' literal pools.
     pub fn from_tables(kingdom: &str, datatypes_tsv: &str, symbols_tsv: &str, environment_tsv: &str, adapters_tsv: &str, literals: &BTreeMap<String, Vec<String>>) -> Result<Kingdom6, String> {
-        let dts = rows6(kingdom, "datatypes.tsv", datatypes_tsv, 8)?;
+        let dts = rows6(kingdom, "datatypes.tsv", datatypes_tsv, &crate::futhark_view::master6::VIEW6_DATATYPE_COLUMNS)?;
         Ty::check_dual_count(kingdom, dts.len(), Ty::MAX_FUTHARK_DUALS)?;
         let names: Vec<&str> = dts.iter().map(|f| f[1]).collect();
         let index_of = |name: &str| -> Result<usize, String> { names.iter().position(|n| *n == name).ok_or_else(|| bug6(kingdom, format!("no data type {name}"))) };
@@ -666,11 +689,14 @@ impl Kingdom6 {
                     Ok((n.to_string(), PropertyKind::from_name(k).ok_or_else(|| bug6(kingdom, format!("the property kind {k}")))?))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
+            if f[5].is_empty() && !f[6].is_empty() {
+                return Err(bug6(kingdom, format!("the data type {} has no constant, and its constant has the properties {:?}", f[1], f[6])));
+            }
             let literals = if kind == DataKind::Scalar { literals.get(f[1]).cloned().unwrap_or_default() } else { Vec::new() };
             data_types.push(DataType6 { name: f[1].to_string(), kind, tag: f[4].to_string(), constant: f[5].to_string(), constant_props: assignments(kingdom, f[6], "&")?, properties, literals });
         }
         let mut symbols = Vec::new();
-        for (i, f) in rows6(kingdom, "symbols.tsv", symbols_tsv, 11)?.into_iter().enumerate() {
+        for (i, f) in rows6(kingdom, "symbols.tsv", symbols_tsv, &crate::futhark_view::master6::VIEW6_SYMBOL_COLUMNS)?.into_iter().enumerate() {
             if f[0] != i.to_string() {
                 return Err(bug6(kingdom, format!("symbols.tsv row {i} has the id {}", f[0])));
             }
@@ -682,6 +708,9 @@ impl Kingdom6 {
                 "var" => Kind6::Var,
                 other => return Err(bug6(kingdom, format!("the symbol {} is of the kind {other}", f[2]))),
             };
+            if kind != Kind6::Function && !f[5].is_empty() {
+                return Err(bug6(kingdom, format!("the {} row {} has the inputs {:?}; only a function takes inputs", f[3], f[2], f[5])));
+            }
             if kind == Kind6::Const && data_types[index_of(f[4])?].literals.is_empty() {
                 return Err(bug6(kingdom, format!("the constant {} has no literal pool", f[2])));
             }
@@ -717,7 +746,7 @@ impl Kingdom6 {
                 spelling: f[10].to_string(),
             });
         }
-        let adapters = rows6(kingdom, "adapters.tsv", adapters_tsv, 5)?
+        let adapters = rows6(kingdom, "adapters.tsv", adapters_tsv, &ADAPTER6_COLUMNS)?
             .into_iter()
             .map(|f| {
                 let runs_at = AdapterSite::from_name(f[2]).ok_or_else(|| bug6(kingdom, format!("the adapter {} runs at {:?}", f[0], f[2])))?;
@@ -729,7 +758,7 @@ impl Kingdom6 {
                 Ok(Adapter { name: f[0].to_string(), heavy, runs_at })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let env = rows6(kingdom, "environment.tsv", environment_tsv, 5)?;
+        let env = rows6(kingdom, "environment.tsv", environment_tsv, &crate::futhark_view::master6::VIEW6_ENV_COLUMNS)?;
         let (first, rest) = env.split_first().ok_or_else(|| bug6(kingdom, "environment.tsv has no root".to_string()))?;
         if first[0] != "root" {
             return Err(bug6(kingdom, format!("environment.tsv's first row is {first:?}, not the root")));
@@ -745,13 +774,25 @@ impl Kingdom6 {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let root = Root6 { name: first[1].to_string(), data_type: ty_of(first[2])?, properties: assignments(kingdom, first[3], "&")?, requires: root_requires };
+        check_properties6(kingdom, "the root", &data_types[index_of(first[2])?], &root.properties)?;
         let variables = rest
             .iter()
             .map(|f| {
                 if !["input", "zeros", "size"].contains(&f[0]) || !f[4].is_empty() {
                     return Err(bug6(kingdom, format!("environment.tsv row {f:?} is not a root variable")));
                 }
-                Ok(RootVariable6 { kind: f[0].to_string(), name: f[1].to_string(), data_type: ty_of(f[2])?, properties: assignments(kingdom, f[3], "&")? })
+                let v = RootVariable6 { kind: f[0].to_string(), name: f[1].to_string(), data_type: ty_of(f[2])?, properties: assignments(kingdom, f[3], "&")? };
+                let d = &data_types[index_of(f[2])?];
+                check_properties6(kingdom, &format!("the {} {}", v.kind, v.name), d, &v.properties)?;
+                let fits = match v.kind.as_str() {
+                    "zeros" => matches!(d.kind, DataKind::Array { .. }) && d.properties.len() == 1 && d.properties[0].0 == "len",
+                    "size" => d.name == "size" && v.properties == [("value".to_string(), PropertyExpr::Size(v.name.clone()))],
+                    _ => d.name != "size" && !matches!(d.kind, DataKind::Function { .. }),
+                };
+                if !fits {
+                    return Err(bug6(kingdom, format!("environment.tsv: the {} {} is of {} with {:?}, which a {} cannot be", v.kind, v.name, d.name, f[3], v.kind)));
+                }
+                Ok(v)
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Kingdom6 { kingdom: kingdom.to_string(), data_types, symbols, adapters, root, variables })
@@ -813,9 +854,14 @@ impl Kingdom6 {
         relations_from_rows(&self.kingdom, vec![self.root.data_type], &rows, &constants).with_variables(&variables)
     }
 
-    /// The checked contract: what a gene of this kingdom is laid out by.
+    /// The checked contract: what a gene of this kingdom is laid out by. The entry (the root, its requirements and its
+    /// variables) is checked with it ([`crate::typed_environment::Decoder::check_entry`]), so a view no tree is
+    /// decoded in is still checked at load (F1b review finding 5).
     pub fn contract(&self) -> Result<KingdomContract, String> {
-        self.relations()?.check().map_err(|d| d.join("\n"))
+        let contract = self.relations()?.check().map_err(|d| d.join("\n"))?;
+        let decoder = crate::typed_environment::Decoder::new(&self.tables()?, &contract).map_err(|d| d.join("\n"))?;
+        decoder.check_entry(&crate::typed_environment::Entry::of_kingdom6(self)).map_err(|d| d.join("\n"))?;
+        Ok(contract)
     }
 }
 
@@ -835,9 +881,11 @@ impl Kingdom6 {
 // one) is read at run time: its operand is bound by `let` under a reserved name, as the README says (`let ad_a = ..
 // let ad_b = .. let ad_l = i64.min (length ad_a) (length ad_b) in ..`), and where the length is a TYPE (a loop state's
 // declaration) by a size binding (`let [ad_m] (ad_s: [ad_m]f32) = ..`, [`Render6::bind`]); the result is then an
-// unknown size, `?` again, and every requirement on it fails, so it is adapted wherever a size must agree.
-// (The README's `ad_l` form for two KNOWN lengths gives an existential size, and Futhark rejects a `map2` of two such
-// results, "Sizes d12 and d25 do not match", measured 2026-11-05: so a known length is fitted to its spelling.)
+// unknown size, `?` again, and every requirement on it fails, so it is adapted wherever a size must agree. A node's
+// second `?` adapter binds the reserved names with a suffix (`ad_a1`), so two never collide. (The `ad_l` form for two
+// KNOWN lengths gives an existential size, and Futhark rejects a `map2` of two such results, "Sizes d12 and d25 do not
+// match", measured 2026-11-05: so a known length is fitted to its spelling; README 5.5 and the design's section 5
+// were corrected to these texts by the F2 build.)
 
 /// What the entry point declares that the root environment does not: the sizes given as an `i32` parameter (the
 /// histogram's `k`), which the program rebinds as `i64` (`let k = i64.i32 k`). Such a size is the entry's first
@@ -855,24 +903,38 @@ impl Header6 {
 }
 
 /// A rendered master 6 program: its text, the nodes it renders (the inputs a substitution drops are not rendered;
-/// an ADF's nodes once, in its definition), and every adapter it renders with its node's path (the entry's own
-/// requirements at the root's path), in render order.
+/// an ADF's nodes once, in its definition), every adapter it renders with its node's path (the entry's own
+/// requirements at the root's path), in render order, and apart from them every work-bound substitution, named
+/// `subst:<cause>` after the adapter of the requirement that decided it (`subst:subst` for the work bound itself,
+/// `subst:fit.state` where a heavy adapter would have run at `trips >= depth`), since a substituted node renders no
+/// adapter (F2 review finding 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program6 {
     pub text: String,
     pub nodes: usize,
     pub adapters: Vec<(Vec<u32>, String)>,
+    pub substitutions: Vec<(Vec<u32>, String)>,
 }
 
 impl Program6 {
-    /// No adapter and no substitution: the program renders as master 5 renders it.
+    /// No adapter rendered (a substitution may be).
     pub fn adapter_free(&self) -> bool {
         self.adapters.is_empty()
+    }
+
+    /// No substitution rendered (an adapter may be).
+    pub fn substitution_free(&self) -> bool {
+        self.substitutions.is_empty()
     }
 
     /// The number of nodes that render at least one adapter.
     pub fn adapter_nodes(&self) -> usize {
         self.adapters.iter().map(|(p, _)| p).collect::<BTreeSet<_>>().len()
+    }
+
+    /// The number of nodes substituted.
+    pub fn substituted_nodes(&self) -> usize {
+        self.substitutions.len()
     }
 }
 
@@ -936,6 +998,7 @@ struct Render6<'a> {
     adfs: &'a [Vec<u32>],
     uses: BTreeSet<&'static str>,
     adapters: Vec<(Vec<u32>, String)>,
+    substitutions: Vec<(Vec<u32>, String)>,
     nodes: usize,
 }
 
@@ -1089,8 +1152,9 @@ impl<'a> Render6<'a> {
         }
     }
 
-    /// One failing requirement's adapter on the node's operands.
-    fn adapt(&mut self, o: &crate::typed_environment::Outcome, ops: &mut [Operand6], lets: &mut Vec<String>, used: &mut BTreeSet<String>) -> Result<(), String> {
+    /// One failing requirement's adapter on the node's operands; a `let` it needs binds the reserved name with
+    /// `suffix` (`ad_a` + `1`).
+    fn adapt(&mut self, o: &crate::typed_environment::Outcome, suffix: &str, ops: &mut [Operand6], lets: &mut Vec<String>, used: &mut BTreeSet<String>) -> Result<(), String> {
         let q = *self.reqs.get(o.requirement).ok_or_else(|| self.bug(format!("the outcome names requirement {}, which the tables do not have", o.requirement)))?;
         let Subject::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound's adapter {} renders as an adapter, not a substitution", o.adapter))) };
         let (s, ps) = (*position as usize, property.clone());
@@ -1099,14 +1163,19 @@ impl<'a> Render6<'a> {
         }
         let against = self.side(&q.against);
         let known = |e: &PropertyExpr| futhark_size(e).map(|t| (e.clone(), t));
+        let (ad_a, ad_b, ad_l, ad_m, ad_s) = (format!("ad_a{suffix}"), format!("ad_b{suffix}"), format!("ad_l{suffix}"), format!("ad_m{suffix}"), format!("ad_s{suffix}"));
         match o.adapter.as_str() {
             "clampix" => {
                 let (a, pa) = against.ok_or_else(|| self.bug("clampix's requirement names no input's length".to_string()))?;
-                let len = match known(&o.against) {
-                    Some((_, t)) => t,
+                if a >= ops.len() {
+                    return Err(self.bug(format!("the requirement reads input {a} of a node of {} inputs", ops.len())));
+                }
+                // The indexed array as the node's other adapters left it, not as the decoding saw it.
+                let len = match ops[a].bound.get(&pa).cloned().or_else(|| ops[a].props.get(&pa).and_then(futhark_size)) {
+                    Some(t) => t,
                     None => {
                         let mut op = ops[a].clone();
-                        self.bind(&mut op, "ad_a", Some(("ad_m", &pa)), lets, used)?;
+                        self.bind(&mut op, &ad_a, Some((&ad_m, &pa)), lets, used)?;
                         ops[a] = op;
                         self.dim(&ops[a], &pa)?
                     }
@@ -1118,9 +1187,9 @@ impl<'a> Render6<'a> {
                 let target = match (known(&o.against), against) {
                     (Some(t), _) => t,
                     (None, Some((j, pj))) => {
-                        let (arr, len) = if o.adapter == "fit.state" { ("ad_s", "ad_m") } else { ("ad_a", "ad_m") };
+                        let arr = if o.adapter == "fit.state" { &ad_s } else { &ad_a };
                         let mut op = ops[j].clone();
-                        self.bind(&mut op, arr, Some((len, &pj)), lets, used)?;
+                        self.bind(&mut op, arr, Some((&ad_m, &pj)), lets, used)?;
                         ops[j] = op;
                         (PropertyExpr::Unknown, self.dim(&ops[j], &pj)?)
                     }
@@ -1148,16 +1217,16 @@ impl<'a> Render6<'a> {
                     }
                     None => {
                         let (mut a, mut b) = (ops[j].clone(), ops[s].clone());
-                        self.bind(&mut a, "ad_a", None, lets, used)?;
-                        self.bind(&mut b, "ad_b", None, lets, used)?;
-                        let (la, lb) = (length_of("ad_a", &pj), length_of("ad_b", &ps));
+                        self.bind(&mut a, &ad_a, None, lets, used)?;
+                        self.bind(&mut b, &ad_b, None, lets, used)?;
+                        let (la, lb) = (length_of(&ad_a, &pj), length_of(&ad_b, &ps));
                         let (Some(la), Some(lb)) = (la, lb) else { return Err(self.bug(format!("fit.pair pairs {pj} and {ps}, which no length reads"))) };
-                        if !used.insert("ad_l".to_string()) {
-                            return Err(self.bug("one node binds the reserved name ad_l twice".to_string()));
+                        if !used.insert(ad_l.clone()) {
+                            return Err(self.bug(format!("one node binds the reserved name {ad_l} twice")));
                         }
-                        lets.push(format!("let ad_l = i64.min ({la}) ({lb})"));
-                        self.fit_to(&mut a, &pj, (PropertyExpr::Unknown, "ad_l".to_string()))?;
-                        self.fit_to(&mut b, &ps, (PropertyExpr::Unknown, "ad_l".to_string()))?;
+                        lets.push(format!("let {ad_l} = i64.min ({la}) ({lb})"));
+                        self.fit_to(&mut a, &pj, (PropertyExpr::Unknown, ad_l.clone()))?;
+                        self.fit_to(&mut b, &ps, (PropertyExpr::Unknown, ad_l.clone()))?;
                         ops[j] = a;
                         ops[s] = b;
                     }
@@ -1212,8 +1281,8 @@ impl<'a> Render6<'a> {
             }
         };
         if let Some(s) = n.substituted {
-            let name = self.reqs.get(s.requirement).map(|q| q.adapter.clone()).ok_or_else(|| self.bug(format!("the substitution names requirement {}", s.requirement)))?;
-            self.adapters.push((path.clone(), name));
+            let cause = self.reqs.get(s.requirement).map(|q| q.adapter.clone()).ok_or_else(|| self.bug(format!("the substitution names requirement {}", s.requirement)))?;
+            self.substitutions.push((path.clone(), format!("subst:{cause}")));
             return match s.by {
                 Substitution::Input(p) => {
                     let kid = n.kids.get(p as usize).ok_or_else(|| self.bug(format!("the substitution renders input {p}, which the node does not have")))?;
@@ -1258,9 +1327,19 @@ impl<'a> Render6<'a> {
             path.pop();
             ops.push(r?);
         }
-        let (mut lets, mut used) = (Vec::new(), BTreeSet::new());
-        for o in n.outcomes.iter().filter(|o| !o.holds) {
-            self.adapt(o, &mut ops, &mut lets, &mut used)?;
+        // A node's `?` adapters bind their `let`s under the reserved names with the node's count of binding adapters
+        // so far as a suffix (`ad_a`, then `ad_a1`), so two never collide (F2 review finding 7). `clampix` renders after
+        // the node's other adapters and reads its bound from the operand as they left it, so a `fit` of the indexed
+        // array is never followed by a clamp to its old length.
+        let (mut lets, mut used, mut binding) = (Vec::new(), BTreeSet::new(), 0usize);
+        let failing = n.outcomes.iter().filter(|o| !o.holds && o.adapter != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter == "clampix"));
+        for o in failing {
+            let before = lets.len();
+            let suffix = if binding == 0 { String::new() } else { binding.to_string() };
+            self.adapt(o, &suffix, &mut ops, &mut lets, &mut used)?;
+            if lets.len() > before {
+                binding += 1;
+            }
             self.adapters.push((path.clone(), o.adapter.clone()));
         }
         if sym.spelling.starts_with("matmul ") {
@@ -1386,7 +1465,7 @@ impl Kingdom6 {
     pub fn program6_with_adfs(&self, header: &Header6, decoding: &crate::typed_environment::Decoding, adfs: &[Vec<u32>]) -> Result<Program6, String> {
         let multi = self.data_types.iter().filter_map(|d| if let DataKind::Array { element } = d.kind { Some(element) } else { None }).filter(|e| self.data_type(*e).is_some_and(|d| d.kind == DataKind::Scalar)).collect::<BTreeSet<_>>().len() > 1;
         let reqs: Vec<&Requirement> = self.symbols.iter().flat_map(|s| s.requires.iter()).collect();
-        let mut r = Render6 { k: self, decoding, reqs, multi, adfs, uses: BTreeSet::new(), adapters: Vec::new(), nodes: 0 };
+        let mut r = Render6 { k: self, decoding, reqs, multi, adfs, uses: BTreeSet::new(), adapters: Vec::new(), substitutions: Vec::new(), nodes: 0 };
         if let Some(p) = adfs.iter().find(|p| p.is_empty()) {
             return Err(r.bug(format!("the root ({p:?}) cannot be an ADF of its own program")));
         }
@@ -1423,7 +1502,7 @@ impl Kingdom6 {
         }
         text.push_str(&definitions);
         text.push_str(&self.entry6(header, &root.text)?);
-        Ok(Program6 { text, nodes: r.nodes, adapters: r.adapters })
+        Ok(Program6 { text, nodes: r.nodes, adapters: r.adapters, substitutions: r.substitutions })
     }
 
     /// The entry point around a rendered expression: `entry <name> [dims] (k: i32) (xs: [n]i32) : <result> =`, the size

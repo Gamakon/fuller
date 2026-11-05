@@ -23,7 +23,7 @@ fn every_reference_renders_its_master_5_text_byte_for_byte() {
         let tree = build6(&k, &(r.master6)()).unwrap_or_else(|e| panic!("{key}: {e}"));
         let p = renderer.program(&tree).unwrap_or_else(|e| panic!("{key}: {e}"));
         let want = expected_text6(&key).unwrap_or_else(|| panic!("{key}: no stored text"));
-        assert!(p.adapter_free(), "{key}: renders adapters {:?}", p.adapters);
+        assert!(p.adapter_free() && p.substitution_free(), "{key}: renders adapters {:?} and substitutions {:?}", p.adapters, p.substitutions);
         if p.text != want {
             let at = p.text.bytes().zip(want.bytes()).position(|(a, b)| a != b).unwrap_or(p.text.len().min(want.len()));
             panic!("{key}: differs at byte {at}:\n got: {}\nwant: {}", &p.text[at.saturating_sub(80)..(at + 80).min(p.text.len())], &want[at.saturating_sub(80)..(at + 80).min(want.len())]);
@@ -72,6 +72,13 @@ fn as_module(i: usize, text: &str) -> String {
     format!("module m{i} = {{\n{}}}\n\n", text.replacen("entry main ", "def main ", 1))
 }
 
+/// A program in a batch with its entry kept: its module ([`as_module`]) and the entry `e<i>` of the program's own
+/// header calling it ([`entry_calling`]), so the rules Futhark applies only to an entry point are checked for every
+/// program of the batch (F2 review finding 5).
+fn with_entry(i: usize, text: &str) -> String {
+    format!("{}{}\n", as_module(i, text), entry_calling(i, text))
+}
+
 /// `futhark check` on a file, bounded at `limit`: `Ok` when Futhark accepts it, else its error text.
 fn futhark_check(src: &str, dir: &Path, limit: Duration) -> Result<(), String> {
     std::fs::create_dir_all(dir).unwrap();
@@ -88,7 +95,7 @@ fn futhark_check(src: &str, dir: &Path, limit: Duration) -> Result<(), String> {
 /// `futhark check` on a batch of programs; on a rejection, each program alone, so the error names its program.
 fn check_programs(view6: &str, programs: &[&str], dir: &Path) -> Vec<(usize, String)> {
     let limit = Duration::from_secs(600);
-    let batch: String = programs.iter().enumerate().map(|(i, t)| as_module(i, t)).collect();
+    let batch: String = programs.iter().enumerate().map(|(i, t)| with_entry(i, t)).collect();
     match futhark_check(&batch, dir, limit) {
         Ok(()) => Vec::new(),
         Err(e) if e.contains("no answer within") => vec![(usize::MAX, format!("{view6}: the batch's futhark check ran past {limit:?}: {e}"))],
@@ -97,8 +104,9 @@ fn check_programs(view6: &str, programs: &[&str], dir: &Path) -> Vec<(usize, Str
 }
 
 /// THE EARLY GUARD (plan 7.5 risk 6) AND PROOF 1's CHECK (plan 7.3 item 1): 1,000 random genes of every master 6 view
-/// express, decode and render with no defect, and `futhark check` accepts every program, N of N. The share of genes
-/// with no adapter and of rendered nodes with one is printed per view (master 5: 100 % adapter-free).
+/// express, decode and render with no defect, and `futhark check` accepts every program with its entry point kept,
+/// N of N. Printed per view, apart: the share of genes with no adapter and of rendered nodes with one, and the share
+/// of genes with no work-bound substitution and the substituted nodes (master 5: 100 % of both).
 #[test]
 fn a_thousand_random_genes_a_view_render_programs_futhark_accepts() {
     let n = 1000;
@@ -106,12 +114,17 @@ fn a_thousand_random_genes_a_view_render_programs_futhark_accepts() {
     for (v, view6) in VIEWS6.iter().enumerate() {
         let programs = random_programs(view6, n, 0x5eed_0000 + v as u64);
         let free = programs.iter().filter(|(_, p)| p.adapter_free()).count();
+        let unsubstituted = programs.iter().filter(|(_, p)| p.substitution_free()).count();
         let nodes: usize = programs.iter().map(|(_, p)| p.nodes).sum();
         let adapted: usize = programs.iter().map(|(_, p)| p.adapter_nodes()).sum();
-        let mut by_adapter: BTreeMap<&str, usize> = BTreeMap::new();
+        let substituted: usize = programs.iter().map(|(_, p)| p.substituted_nodes()).sum();
+        let (mut by_adapter, mut by_cause): (BTreeMap<&str, usize>, BTreeMap<&str, usize>) = (BTreeMap::new(), BTreeMap::new());
         for (_, p) in &programs {
             for (_, a) in &p.adapters {
                 *by_adapter.entry(a.as_str()).or_default() += 1;
+            }
+            for (_, c) in &p.substitutions {
+                *by_cause.entry(c.as_str()).or_default() += 1;
             }
         }
         let texts: Vec<&str> = programs.iter().map(|(_, p)| p.text.as_str()).collect();
@@ -122,10 +135,12 @@ fn a_thousand_random_genes_a_view_render_programs_futhark_accepts() {
         }
         std::fs::remove_dir_all(&dir).ok();
         let line = format!(
-            "{view6}: {} of {n} accepted by futhark check; adapter-free genes {free} of {n} ({:.1} %); nodes with an adapter {adapted} of {nodes} ({:.2} %); adapters {by_adapter:?}\n",
+            "{view6}: {} of {n} accepted by futhark check; adapter-free genes {free} of {n} ({:.1} %); nodes with an adapter {adapted} of {nodes} ({:.2} %); adapters {by_adapter:?}; substitution-free genes {unsubstituted} of {n} ({:.1} %); substituted nodes {substituted} of {nodes} ({:.2} %); substitutions {by_cause:?}\n",
             n - bad.len(),
             100.0 * free as f64 / n as f64,
-            100.0 * adapted as f64 / nodes.max(1) as f64
+            100.0 * adapted as f64 / nodes.max(1) as f64,
+            100.0 * unsubstituted as f64 / n as f64,
+            100.0 * substituted as f64 / nodes.max(1) as f64
         );
         eprint!("{line}");
         report.push_str(&line);
@@ -146,6 +161,18 @@ fn the_batch_check_names_a_program_futhark_rejects() {
     assert_eq!(found.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![1], "{found:?}");
 }
 
+/// The batch check keeps each program's entry point: a program Futhark accepts as a `def` but not as an entry (a
+/// function-valued parameter) is named, so the entry's own rules are checked in the batch too.
+#[test]
+fn the_batch_check_keeps_the_entry_rules() {
+    let good = "entry main [n] (xs: [n]i32) : i32 =\n  i32.sum (xs)\n";
+    let not_an_entry = "entry main (f: i32 -> i32) : i32 =\n  f 1\n";
+    let dir = scratch("entry_rules");
+    let found = check_programs("entry_rules", &[good, not_an_entry, good], &dir);
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(found.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![1], "{found:?}");
+}
+
 /// The entry `entry e<i> .. = m<i>.main ..` that calls a batch module's program with the program's own signature.
 fn entry_calling(i: usize, text: &str) -> String {
     let start = text.find("entry main ").expect("a program has its entry");
@@ -154,19 +181,72 @@ fn entry_calling(i: usize, text: &str) -> String {
     format!("{} = m{i}.main {}\n", line.replacen("entry main ", &format!("entry e{i} "), 1), names.join(" "))
 }
 
-/// The cases a view's random programs run on: its problem's smallest stored case (by its input's bytes; often a
-/// size of 1) and its smallest training case, where the sizes differ and an adapter's `fit` or `clampix` moves data.
+/// The sizes of a case: every dimension of its array inputs and the value of each integer scalar input (the
+/// histogram's `k`).
+fn case_sizes(case: &crate::futhark_sig::Case) -> BTreeSet<i64> {
+    let mut sizes = BTreeSet::new();
+    for a in &case.inputs {
+        if a.dims.is_empty() {
+            if a.elem == crate::futhark_sig::Elem::I32 {
+                sizes.insert(i64::from(a.data[0] as i32));
+            }
+        } else {
+            sizes.extend(a.dims.iter().map(|d| *d as i64));
+        }
+    }
+    sizes
+}
+
+/// The number of size names a view's entry has (`n`, `m`, `p`): its size variables and the sizes its inputs name.
+fn roles(view6: &str) -> usize {
+    let k = view(view6).0;
+    let mut names: BTreeSet<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
+    for v in k.variables.iter().filter(|v| v.kind == "input") {
+        names.extend(v.properties.iter().filter_map(|(_, e)| if let PropertyExpr::Size(n) = e { Some(n.clone()) } else { None }));
+    }
+    names.len()
+}
+
+/// A case whose sizes are as many different values as the view has size names, each at least 2: a `fit` or `clampix`
+/// to the wrong one of two sizes moves data or reads out of bounds on it.
+fn distinct_sizes(roles: usize, case: &crate::futhark_sig::Case) -> bool {
+    let sizes = case_sizes(case);
+    sizes.len() == roles && sizes.iter().all(|s| *s >= 2)
+}
+
+/// The cases a view's random programs run on, never a test case (the test split is kept for the exactness claim, F2
+/// review finding 6), each the smallest of its kind by its input's bytes: the smallest case (often a size of 1), the
+/// smallest whose sizes are distinct and at least 2 (A7's `held_n7_m5_p3_s4`, the histogram's `k = 2`; F2 review
+/// finding 2), and the smallest training case.
 fn run_cases(view6: &str) -> Vec<crate::futhark_sig::Case> {
     let p = problem(if view6 == "kmeans_i32" { "kmeans" } else { view6 }).unwrap();
-    let mut cases = crate::futhark_sig::load_cases(&p).unwrap();
+    let mut cases: Vec<_> = crate::futhark_sig::load_cases(&p).unwrap().into_iter().filter(|c| c.split != crate::futhark_sig::Split::Test).collect();
     cases.sort_by_key(|c| (c.stdin.len(), c.name.clone()));
-    let train = cases.iter().position(|c| c.split == crate::futhark_sig::Split::Train).expect("a training case");
-    let train = cases[train].clone();
-    let mut out = vec![cases.remove(0)];
-    if train.name != out[0].name {
-        out.push(train);
+    let r = roles(view6);
+    let picks = [cases.first(), cases.iter().find(|c| distinct_sizes(r, c)), cases.iter().find(|c| c.split == crate::futhark_sig::Split::Train)];
+    let mut out: Vec<crate::futhark_sig::Case> = Vec::new();
+    for c in picks.into_iter().map(|c| c.expect("a view has a case of each kind")) {
+        if !out.iter().any(|o| o.name == c.name) {
+            out.push(c.clone());
+        }
     }
     out
+}
+
+/// THE RUN CASES ARE RECTANGULAR AND NEVER TEST CASES: A7 runs on a case of `n`, `m`, `p` all different, the histogram
+/// on one with `k > 1`, pathfinder on one of two different sizes, and no view on a test case.
+#[test]
+fn the_run_cases_have_distinct_sizes_and_no_test_case() {
+    for view6 in VIEWS6 {
+        let cases = run_cases(view6);
+        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
+        assert!(cases.iter().all(|c| c.split != crate::futhark_sig::Split::Test), "{view6} runs on a test case: {names:?}");
+        assert!(cases.iter().any(|c| distinct_sizes(roles(view6), c)), "{view6}: no case of distinct sizes in {names:?}");
+        eprintln!("{view6}: run cases {names:?}");
+    }
+    assert!(run_cases("a7").iter().any(|c| case_sizes(c).len() == 3), "a7 has no case with n, m, p all different");
+    assert!(run_cases("histogram").iter().any(|c| c.inputs.iter().any(|a| a.dims.is_empty() && a.data[0] as i32 > 1)), "histogram has no case with k > 1");
+    assert!(run_cases("pathfinder").iter().any(|c| case_sizes(c).len() == 2), "pathfinder has no rectangular case");
 }
 
 /// The dims of a case's output: its stored answer's, or (k-means, scored on its objective) the centres'.
@@ -175,6 +255,44 @@ fn output_dims(case: &crate::futhark_sig::Case) -> Vec<usize> {
         Some(a) => a.dims.clone(),
         None => case.inputs[1].dims.clone(),
     }
+}
+
+/// A row that can make a NaN from numbers that are not NaN (a division, a root, a logarithm, a power, an extreme
+/// constant whose sum overflows): a program that renders none has no NaN in its output.
+fn may_make_nan(text: &str) -> bool {
+    ["/", "sqrt", "log", "**", "exp", "highest", "lowest", "inf", ".nan"].iter().any(|s| text.contains(s))
+}
+
+/// THE LEGAL OUTPUT of a run: the entry's declared shape, and no NaN where the program renders nothing that can make
+/// one. The values are not compared with an interpreter here: master 6's interpreter is task F3 (proof 1's second
+/// half), and master 5's does not read master 6 trees.
+fn legal_output(case: &crate::futhark_sig::Case, out: &crate::futhark_sig::Array, text: &str) -> Result<(), String> {
+    let want = output_dims(case);
+    if out.dims != want {
+        return Err(format!("the output is {:?}, the entry declares {want:?}", out.dims));
+    }
+    if out.elem == crate::futhark_sig::Elem::F32 && !may_make_nan(text) {
+        if let Some(i) = out.data.iter().position(|w| f32::from_bits(*w).is_nan()) {
+            return Err(format!("element {i} of the output is NaN, and the program renders nothing that makes one"));
+        }
+    }
+    Ok(())
+}
+
+/// The legality check rejects a wrong shape and an unexpected NaN, and lets a NaN pass where a row can make one.
+#[test]
+fn the_legal_output_check_rejects_a_wrong_shape_and_an_unexpected_nan() {
+    let case = run_cases("kmeans").remove(0);
+    let dims = output_dims(&case);
+    let words = dims.iter().product::<usize>();
+    let fine = crate::futhark_sig::Array { dims: dims.clone(), elem: crate::futhark_sig::Elem::F32, data: vec![0f32.to_bits(); words] };
+    assert_eq!(legal_output(&case, &fine, "map2 (+) xs ys"), Ok(()));
+    let mut nan = fine.clone();
+    nan.data[words - 1] = f32::NAN.to_bits();
+    assert!(legal_output(&case, &nan, "map2 (+) xs ys").is_err());
+    assert_eq!(legal_output(&case, &nan, "map (\\x -> f32.sqrt x) xs"), Ok(()));
+    let short = crate::futhark_sig::Array { dims: vec![dims[0]], elem: crate::futhark_sig::Elem::F32, data: vec![0; dims[0]] };
+    assert!(legal_output(&case, &short, "xs").is_err());
 }
 
 /// What one program's run gives: its output's dims and element, or the failure.
@@ -187,9 +305,10 @@ fn run_entry(exe: &Path, entry: &str, stdin: &[u8]) -> Result<crate::futhark_sig
 }
 
 /// PROOF 1, RUN (plan 7.3 item 1, the C half): 100 random genes of every master 6 view compile with Futhark's `c`
-/// backend and run on the view's smallest stored case with no run-time error (no index out of bounds, no size
-/// mismatch), N of N, each output of the entry's declared shape. Every compile and run is bounded; one that runs past
-/// its bound fails the test with its program named.
+/// backend and run legally on the view's run cases ([`run_cases`]: up to three stored cases, none a test case, one of
+/// distinct sizes): exit 0 (no index out of bounds, no size mismatch), the entry's declared output shape, and no NaN
+/// where the program renders nothing that makes one ([`legal_output`]); values are not compared with an interpreter
+/// (F3). N of N. Every compile and run is bounded; one that runs past its bound fails the test with its program named.
 #[test]
 fn a_hundred_random_genes_a_view_compile_and_run_on_the_c_backend() {
     let (n, chunk) = (100, 25);
@@ -211,11 +330,8 @@ fn a_hundred_random_genes_a_view_compile_and_run_on_the_c_backend() {
             };
             for (i, (_, p)) in part.iter().enumerate() {
                 for case in &cases {
-                    let want = output_dims(case);
-                    match run_entry(&exe, &format!("e{}", base + i), &case.stdin) {
-                        Ok(a) if a.dims == want => {}
-                        Ok(a) => bad.push(format!("{view6} gene {} on {}: the output is {:?}, the entry declares {want:?}\n{}", base + i, case.name, a.dims, p.text)),
-                        Err(e) => bad.push(format!("{view6} gene {} on {}: {e}\n{}", base + i, case.name, p.text)),
+                    if let Err(e) = run_entry(&exe, &format!("e{}", base + i), &case.stdin).and_then(|a| legal_output(case, &a, &p.text)) {
+                        bad.push(format!("{view6} gene {} on {}: {e}\n{}", base + i, case.name, p.text));
                     }
                 }
             }
@@ -337,11 +453,70 @@ fn every_adapter_of_the_design_table_renders_a_program_futhark_accepts() {
 /// A k-means view with one more row whose length is known only at run time (`filter`: `len=?`), so `?` lengths reach
 /// the adapters. No row of the committed master gives `?`; the renderer's `let`-bound form must still be legal.
 fn kmeans_with_a_filter() -> (Kingdom6, Header6) {
+    kmeans_with(&[])
+}
+
+/// The k-means view with `filter@a.f32` and the synthetic `rows` (each a symbols.tsv row from its `ref` column on).
+fn kmeans_with(rows: &[&str]) -> (Kingdom6, Header6) {
     let v = crate::futhark_view::master6::committed("kmeans").unwrap();
     let n = v.symbols_tsv.lines().count() - 1;
-    let symbols = format!("{}{n}\tM9999\tfilter@a.f32\tfunction\t[]f32\t[]f32\tlen=?\t\t\t\tfilter (\\x -> x > 0f32) {{0}}\n", v.symbols_tsv);
+    let mut symbols = format!("{}{n}\tM9999\tfilter@a.f32\tfunction\t[]f32\t[]f32\tlen=?\t\t\t\tfilter (\\x -> x > 0f32) {{0}}\n", v.symbols_tsv);
+    for (i, row) in rows.iter().enumerate() {
+        symbols.push_str(&format!("{}\t{row}\n", n + 1 + i));
+    }
     let k = Kingdom6::from_tables("kmeans_filter", &v.datatypes_tsv, &symbols, &v.environment_tsv, crate::futhark_view::master6::ADAPTERS6, &v.spec.literals).unwrap();
     (k, Header6::of_spec(&v.spec))
+}
+
+/// Compile programs on `c` with their entries `e<i>` and run each on the k-means run cases: the outputs, per case.
+fn run_on_kmeans(what: &str, programs: &[&Program6]) -> Vec<Vec<crate::futhark_sig::Array>> {
+    let src: String = programs.iter().enumerate().map(|(i, p)| with_entry(i, &p.text)).collect();
+    let dir = scratch(what);
+    let exe = crate::futhark_sig::compile_c(&src, &dir).unwrap_or_else(|e| panic!("{what}: {e}"));
+    let out = run_cases("kmeans")
+        .iter()
+        .map(|case| {
+            (0..programs.len())
+                .map(|i| {
+                    let a = run_entry(&exe, &format!("e{i}"), &case.stdin).unwrap_or_else(|e| panic!("{what} program {i} on {}: {e}\n{}", case.name, programs[i].text));
+                    legal_output(case, &a, &programs[i].text).unwrap_or_else(|e| panic!("{what} program {i} on {}: {e}\n{}", case.name, programs[i].text));
+                    a
+                })
+                .collect()
+        })
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    out
+}
+
+/// TWO `?` ADAPTERS ON ONE NODE BIND DIFFERENT NAMES (F2 review finding 7): a node with two `fit.pair` requirements,
+/// each between two `?`-length operands, binds `ad_a`, `ad_b`, `ad_l`, then `ad_a1`, `ad_b1`, `ad_l1`; Futhark
+/// accepts the program and it runs.
+#[test]
+fn two_unknown_length_adapters_on_one_node_bind_different_names() {
+    let (k, header) = kmeans_with(&["M9998\tdot2@f32\tfunction\tf32\t[]f32;[]f32;[]f32;[]f32\t\tin1.len = in0.len -> fit.pair; in3.len = in2.len -> fit.pair; env.trips < 3 -> subst\t\t\tf32.sum (map2 (*) {0} {1}) + f32.sum (map2 (*) {2} {3})"]);
+    let text = "(let.a.f32@m.f32[w] (replicate@a.f32 n (dot2@f32 (filter@a.f32 zeros_n) (filter@a.f32 zeros_d) (filter@a.f32 zeros_k) (filter@a.f32 zeros_n))) centres)";
+    let p = render(&k, &header, text);
+    assert_eq!(p.adapters.iter().filter(|(_, a)| a == "fit.pair").count(), 2, "{:?}", p.adapters);
+    for name in ["let ad_l = ", "let ad_l1 = ", "let ad_a = ", "let ad_a1 = "] {
+        assert!(p.text.contains(name), "no {name:?} in\n{}", p.text);
+    }
+    assert_accepted("two_unknown", &[("dot2".to_string(), p.clone())]);
+    run_on_kmeans("two_unknown_run", &[&p]);
+}
+
+/// A CLAMP READS THE INDEXED ARRAY AS ITS NODE'S OTHER ADAPTERS LEFT IT (F2 review finding 7): a node that clamps an
+/// index into an array (`clampix`) and fits that array to a shorter length (`fit`) clamps to the fitted length, so
+/// the program reads in bounds (a clamp to the old length reads past the fitted array on a case where `k < n`).
+#[test]
+fn a_clamp_reads_the_length_its_array_was_fitted_to() {
+    let (k, header) = kmeans_with(&["M9997\tgetk@f32\tfunction\tf32\t[]f32;i64;size\t\tin1.bound <= in0.len -> clampix; in0.len = in2.value -> fit; env.trips < 3 -> subst\t\t\t{0}[{1}]"]);
+    let text = "(let.a.f32@m.f32[w] (replicate@a.f32 n (getk@f32 zeros_n (last@i64 d) k)) centres)";
+    let p = render(&k, &header, text);
+    let names: Vec<&str> = p.adapters.iter().map(|(_, a)| a.as_str()).collect();
+    assert_eq!(names, ["fit", "clampix"], "{}", p.text);
+    assert!(p.text.contains("clampix k "), "the clamp is not to the fitted length k:\n{}", p.text);
+    run_on_kmeans("clamp_fitted", &[&p]);
 }
 
 /// `?` LENGTHS ARE BOUND TO A NAME BEFORE FUTHARK SEES THEM (plan 7.1): a loop whose state's length is `?` declares it
@@ -494,5 +669,87 @@ fn a_program_with_adfs_computes_what_it_computes_without_them() {
             assert_eq!(a, b, "{problem6} on {}", case.name);
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// THE ADF RENDERING OF ADAPTED PROGRAMS (F2 review finding 8): random k-means genes with adapters, each with the
+/// subtree at an adapted node (and, where it has one, its parent) hoisted into an ADF, compute on the `c` backend the
+/// same output bit for bit as without ADFs.
+#[test]
+fn an_adapted_program_with_adfs_computes_what_it_computes_without_them() {
+    let (k, header) = view("kmeans");
+    let renderer = k.renderer6(header).unwrap();
+    let mut pairs: Vec<(Program6, Program6)> = Vec::new();
+    for (tree, plain) in random_programs("kmeans", 200, 0xadf0_0006) {
+        if pairs.len() == 6 {
+            break;
+        }
+        let decoding = renderer.decode(&tree).unwrap();
+        let hoistable = |path: &[u32]| -> bool {
+            !path.is_empty() && decoding.node(path).and_then(|n| k.data_type(n.data_type)).is_some_and(|d| d.name != "size" && !matches!(d.kind, DataKind::Function { .. }))
+        };
+        let Some(at) = plain.adapters.iter().map(|(p, _)| p.clone()).find(|p| hoistable(p)) else { continue };
+        let mut paths = vec![at.clone()];
+        if hoistable(&at[..at.len() - 1]) {
+            paths.push(at[..at.len() - 1].to_vec());
+        }
+        let folded = renderer.program_with_adfs(&tree, &paths).unwrap_or_else(|e| panic!("ADFs at {paths:?}: {e}\n{}", plain.text));
+        assert!(folded.text.contains("def adf_0") && !folded.adapters.is_empty(), "{}", folded.text);
+        pairs.push((plain, folded));
+    }
+    assert_eq!(pairs.len(), 6, "fewer than 6 of 200 random k-means genes have an adapter to hoist");
+    let programs: Vec<&Program6> = pairs.iter().flat_map(|(a, b)| [a, b]).collect();
+    for (c, outputs) in run_on_kmeans("adf_adapted", &programs).iter().enumerate() {
+        for (i, pair) in outputs.chunks(2).enumerate() {
+            assert_eq!(pair[0], pair[1], "pair {i} on case {c}:\n{}\n{}", pairs[i].0.text, pairs[i].1.text);
+        }
+    }
+}
+
+/// The k-means view's tables, with `edit` applied to one of them (by file name).
+fn kmeans_tables_with(file: &str, edit: impl Fn(&str) -> String) -> Result<Kingdom6, String> {
+    let v = crate::futhark_view::master6::committed("kmeans").unwrap();
+    let (mut d, mut s, mut e, mut a) = (v.datatypes_tsv.clone(), v.symbols_tsv.clone(), v.environment_tsv.clone(), crate::futhark_view::master6::ADAPTERS6.to_string());
+    match file {
+        "datatypes" => d = edit(&d),
+        "symbols" => s = edit(&s),
+        "environment" => e = edit(&e),
+        _ => a = edit(&a),
+    }
+    let k = Kingdom6::from_tables("kmeans_edited", &d, &s, &e, &a, &v.spec.literals)?;
+    k.contract()?;
+    Ok(k)
+}
+
+/// THE LOADER CHECKS WHAT IT USED TO SKIP (F1b review finding 5): every table's header, a non-function row with
+/// inputs, a constant's properties with no constant, and the root and its variables against their data types; and
+/// every view's entry, the `i32` + `f32` k-means view's among them, passes the entry check at load.
+#[test]
+fn the_loader_checks_headers_row_kinds_and_the_root() {
+    let swap_header = |t: &str| {
+        let (head, rest) = t.split_once('\n').unwrap();
+        let mut cols: Vec<&str> = head.split('\t').collect();
+        let n = cols.len();
+        cols.swap(n - 2, n - 3);
+        format!("{}\n{rest}", cols.join("\t"))
+    };
+    for file in ["datatypes", "symbols", "environment", "adapters"] {
+        let e = kmeans_tables_with(file, swap_header).err().unwrap_or_else(|| panic!("{file}.tsv with two columns swapped loads"));
+        assert!(e.contains("header"), "{file}: {e}");
+    }
+    let e = kmeans_tables_with("symbols", |t| t.replacen("\tterminal\ti64\t\t", "\tterminal\ti64\ti64\t", 1)).expect_err("a terminal with an input loads");
+    assert!(e.contains("only a function takes inputs"), "{e}");
+    let e = kmeans_tables_with("datatypes", |t| t.replacen("\tsize\t\t\t", "\tsize\t\tvalue=1\t", 1)).expect_err("a constant's properties with no constant load");
+    assert!(e.contains("has no constant"), "{e}");
+    let e = kmeans_tables_with("environment", |t| t.replacen("rows=k & cols=d\tout.rows", "rows=k\tout.rows", 1)).expect_err("a root without its cols loads");
+    assert!(e.contains("the root"), "{e}");
+    let e = kmeans_tables_with("environment", |t| t.replacen("zeros\tzeros_n\t[]f32\tlen=n", "zeros\tzeros_n\t[]f32\tlen=n & rows=n", 1)).expect_err("a zero array with a rows loads");
+    assert!(e.contains("zeros_n"), "{e}");
+    let e = kmeans_tables_with("environment", |t| t.replacen("size\tk\tsize\tvalue=k", "size\tk\tsize\tvalue=n", 1)).expect_err("a size of another value loads");
+    assert!(e.contains("size k"), "{e}");
+    let e = kmeans_tables_with("environment", |t| t.replacen("out.rows = k -> fit.root", "out.width = k -> fit.root", 1)).expect_err("a root requirement on a property it does not carry loads");
+    assert!(e.contains("does not carry"), "{e}");
+    for view6 in VIEWS6 {
+        view(view6).0.contract().unwrap_or_else(|e| panic!("{view6}: {e}"));
     }
 }
