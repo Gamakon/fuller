@@ -14,7 +14,7 @@
 //! THE WORK ([`Interp6::work_parts`]) is master 5's measure (`Interp::work_parts`) with every size read from the
 //! properties, and every adapter charged where it renders (`futhark_cost::adapters6`, the renderer's decision): a
 //! `fit` the cells it writes, `clampix` its two compares, counted in [`Work::nodes`], the measure phylu's per-submit
-//! cap reads (`submit_work_of`). A size leaf costs nothing (it is a name, as master 5's row names hold their sizes),
+//! cap reads (`submit_work_of`), a `fit` also the cells it reads of its operand. A size leaf costs nothing (it is a name, as master 5's row names hold their sizes),
 //! so a reference program's work is master 5's.
 
 use std::collections::BTreeMap;
@@ -300,6 +300,21 @@ impl Interp6 {
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
     pub(super) fn eval(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
+        self.eval_with(tree, inputs, false)
+    }
+
+    /// The value of an expressed tree with FUTHARK'S ZERO-DIVIDEND FOLD applied to every division: a division whose
+    /// dividend is a zero (`0.0` or `-0.0`) is that dividend, whatever the divisor, where IEEE gives NaN for `0 / 0`
+    /// and `0 / NaN` and `-0.0` for `0 / -3` (`docs/issues/2026-11-05_futhark_zero_division_fold.md`). A cell where this
+    /// value differs from [`Interp6::eval`]'s is one a zero dividend reached; the `c` comparison allows the fold there
+    /// and nowhere else.
+    #[cfg(test)]
+    pub(super) fn eval_zero_dividends_folded(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
+        self.eval_with(tree, inputs, true)
+    }
+
+    /// [`Interp6::eval`], with the zero-dividend fold when `fold`.
+    fn eval_with(&self, tree: &Tree, inputs: &[Array], fold: bool) -> Result<Array, String> {
         let sizes = self.sig.sizes(inputs)?;
         let d = self.decode(tree)?;
         let mut root = Vec::with_capacity(self.roots.len());
@@ -313,7 +328,7 @@ impl Interp6 {
                 Source6::Size(name) => Val::I(*sizes.get(name).ok_or_else(|| bug(&self.k, format!("the size {name} has no value")))? as i64),
             }));
         }
-        let mut run = Run { me: self, sizes: &sizes, vars: vec![root], expect: std::collections::HashMap::new() };
+        let mut run = Run { me: self, sizes: &sizes, vars: vec![root], expect: std::collections::HashMap::new(), fold };
         let mut v = run.at(&d.root)?;
         for o in d.root_outcomes.iter().filter(|o| !o.holds) {
             let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
@@ -423,9 +438,9 @@ impl Interp6 {
         self.work_parts(tree, sizes).map(|w| w.total())
     }
 
-    /// THE WORK of a tree on given sizes, in master 5's two parts, every size read from the properties and every
-    /// adapter charged in [`Work::nodes`] where it renders (a body's adapter once a trip): a `fit` the cells it writes,
-    /// `clampix` 2. [`Work::nodes`]: every node once, times the trips of the binders it is inside; a reduction, a
+    /// THE WORK of a tree on given sizes, in master 5's two parts, every size read from the properties (a `?` length
+    /// at the largest size in scope) and every adapter charged in [`Work::nodes`] where it renders (a body adapter once
+    /// a trip): a `fit` the cells it reads and writes, `clampix` 2. [`Work::nodes`]: every node once, times the trips of the binders it is inside; a reduction, a
     /// `map2`, a scan, a histogram and a division of rows also cost the cells of the array they read (as adapted), a
     /// `replicate` and a histogram their result's length, a histogram of rows and the matrix operations their result's
     /// cells (a product times its inner length); a size leaf nothing. [`Work::state`]: master 5's loop state traffic.
@@ -437,8 +452,9 @@ impl Interp6 {
         let mut root = rendered6(&d.root).properties.clone();
         for o in d.root_outcomes.iter().filter(|o| !o.holds) {
             let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
+            let source = Some((self.k.root.data_type, root.clone()));
             root.insert(q.property.clone(), o.against.clone());
-            w.nodes += self.costs.charge(&self.k, &crate::futhark_cost::Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((self.k.root.data_type, root.clone())) }, sizes)?;
+            w.nodes += self.costs.charge(&self.k, &crate::futhark_cost::Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((self.k.root.data_type, root.clone())), source }, sizes)?;
         }
         Ok(w)
     }
@@ -547,6 +563,8 @@ struct Run<'a> {
     /// Each node's expected shape at these sizes, by the node's address, computed at its first visit (a node inside a
     /// binder's body is visited once a trip).
     expect: std::collections::HashMap<usize, Expect6>,
+    /// Whether a division by a zero dividend gives the dividend ([`Interp6::eval_zero_dividends_folded`]).
+    fold: bool,
 }
 
 /// A node's expected shape at a case's sizes: an array's element and lengths (`None`: `?`), an index's bound, a size's
@@ -615,6 +633,15 @@ impl Run<'_> {
             Ok(v)
         } else {
             Err(self.bug(format!("a value of {:?} with {:?} is {v:?}: the program reads out of bounds or the sizes disagree", n.data_type, n.properties)))
+        }
+    }
+
+    /// One `f32` division: IEEE's, or with the zero-dividend fold the dividend when it is a zero.
+    fn divide(&self, x: f32, y: f32) -> f32 {
+        if self.fold && x == 0.0 {
+            x
+        } else {
+            x / y
         }
     }
 
@@ -869,7 +896,7 @@ impl Run<'_> {
             Op6::Bin(b) => Val::S(s(0)?.bin(b, s(1)?)?),
             Op6::Neg => Val::S(s(0)?.neg()),
             Op6::Abs => Val::S(s(0)?.abs()),
-            Op6::Div => Val::S(Num::F(s(0)?.f32_only("div")? / s(1)?.f32_only("div")?)),
+            Op6::Div => Val::S(Num::F(self.divide(s(0)?.f32_only("div")?, s(1)?.f32_only("div")?))),
             Op6::Sqrt => Val::S(Num::F(s(0)?.f32_only("sqrt")?.sqrt())),
             Op6::Get => {
                 let (v, i) = (a(0)?, ix(1)?);
@@ -969,7 +996,7 @@ impl Run<'_> {
                 for (r, sw) in sc.slice().iter().enumerate() {
                     let div = sc.num(*sw).f32_only("rowdiv")?;
                     for w in &m.slice()[r * d..(r + 1) * d] {
-                        out.push((m.num(*w).f32_only("rowdiv")? / div).to_bits());
+                        out.push(self.divide(m.num(*w).f32_only("rowdiv")?, div).to_bits());
                     }
                 }
                 Val::A(View::of(out, m.dims.clone(), m.elem))

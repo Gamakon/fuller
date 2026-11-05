@@ -509,13 +509,22 @@ impl CostTable6 {
         self.rows.get(reference).ok_or_else(|| format!("our software has a bug: futhark_cost: the row {reference} has no cost"))
     }
 
-    /// The traffic one rendered adapter adds, at `sizes`.
+    /// The traffic one rendered adapter adds, at `sizes`: the table's formula (a `fit` writes `fitted.cells`, the
+    /// operand at its target length) plus, for a `fit`, the cells it reads of its operand at its source length. AN
+    /// ADAPTER'S OWN CHARGE COVERS ITS FULL TRAFFIC and is always positive, whether the target is shorter, equal or
+    /// longer, so the cost never rewards an adapter for its own sake; what a shorter array saves downstream is real work
+    /// saved, and quality decides whether the program is right (master README section 10).
     pub fn charge(&self, k: &Kingdom6, c: &Charge6, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let f = self.adapters.get(&c.adapter).ok_or_else(|| format!("our software has a bug: futhark_cost: the adapter {} has no cost", c.adapter))?;
-        f.eval(&|x: &Factor6| match (x, &c.fitted) {
+        let own = f.eval(&|x: &Factor6| match (x, &c.fitted) {
             (Factor6::Fitted, Some((ty, props))) => cells6(k, *ty, props, sizes),
             _ => Err(format!("our software has a bug: futhark_cost: the adapter {}'s cost reads {x:?}", c.adapter)),
-        })
+        })?;
+        let read = match &c.source {
+            Some((ty, props)) => cells6(k, *ty, props, sizes)?,
+            None => 0,
+        };
+        own.checked_add(read).ok_or_else(|| "futhark_cost: a master 6 cost overflows u128".to_string())
     }
 }
 
@@ -549,10 +558,37 @@ pub fn size6(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<Option
     })
 }
 
-/// A property expression's value at `sizes`, `?` a bug: a cost or a work bound needs every size known.
+/// A property expression's value at `sizes` for a cost or a work bound. A `?` LENGTH IS CHARGED AT THE LARGEST SIZE
+/// IN SCOPE (the largest value in `sizes`): the renderer spells it as a length Futhark computes at run time (a
+/// `filter`'s, the minimum of two such), which the cost cannot know; inside a minimum or a sum it takes that value too.
+/// An argument's property (which a decoded node's properties never hold) is a bug.
 fn known6(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
-    let v = size6(e, sizes)?.ok_or_else(|| format!("our software has a bug: the size {e} is unknown where a cost or a work bound reads it"))?;
-    u128::try_from(v).map_err(|_| format!("our software has a bug: the size {e} is {v}"))
+    fn at(e: &PropertyExpr, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
+        Ok(match e {
+            PropertyExpr::Unknown => sizes.values().max().map(|v| *v as u128).ok_or_else(|| format!("our software has a bug: the size {e} is charged with no size in scope"))?,
+            PropertyExpr::Input { .. } => return Err(format!("our software has a bug: the size {e} names an argument where a cost or a work bound reads it")),
+            PropertyExpr::Min(args) => {
+                let mut least: Option<u128> = None;
+                for a in args {
+                    let v = at(a, sizes)?;
+                    least = Some(least.map_or(v, |l| l.min(v)));
+                }
+                least.ok_or_else(|| format!("our software has a bug: the size {e} is a minimum of nothing"))?
+            }
+            PropertyExpr::Sum(terms) => {
+                let mut total = 0u128;
+                for t in terms {
+                    total = total.checked_add(at(t, sizes)?).ok_or("a size sum overflows")?;
+                }
+                total
+            }
+            PropertyExpr::Size(_) | PropertyExpr::Literal(_) => {
+                let v = size6(e, sizes)?.ok_or_else(|| format!("our software has a bug: the size {e} has no value"))?;
+                u128::try_from(v).map_err(|_| format!("our software has a bug: the size {e} is {v}"))?
+            }
+        })
+    }
+    at(e, sizes)
 }
 
 /// The elements of a value of data type `ty` with properties `props`: an array's (the product of its data type's
@@ -582,6 +618,8 @@ pub struct Charge6 {
     /// The operand adapted (its argument position; `None` at the root).
     pub operand: Option<usize>,
     pub fitted: Option<(Ty, BTreeMap<String, PropertyExpr>)>,
+    /// For a `fit`, the operand's data type and properties before the fit (what the fit reads).
+    pub source: Option<(Ty, BTreeMap<String, PropertyExpr>)>,
 }
 
 /// The tables' requirement rows of a master 6 kingdom, in the order G3's outcomes index them (each symbol's
@@ -625,11 +663,12 @@ pub fn adapters6(k: &Kingdom6, reqs: &[&Requirement], n: &Node6, body: bool, ops
             return Err(bug(format!("the requirement {} {} {} reads an input past the node's {}", q.subject, q.relation.symbol(), q.against, ops.len())));
         }
         let mut fit = |x: usize, p: &str, to: PropertyExpr, ops: &mut [BTreeMap<String, PropertyExpr>]| {
+            let source = Some((tys[x], ops[x].clone()));
             ops[x].insert(p.to_string(), to);
-            out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(x), fitted: Some((tys[x], ops[x].clone())) });
+            out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(x), fitted: Some((tys[x], ops[x].clone())), source });
         };
         match o.adapter.as_str() {
-            "clampix" => out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(s), fitted: None }),
+            "clampix" => out.push(Charge6 { adapter: o.adapter.clone(), operand: Some(s), fitted: None, source: None }),
             "fit" | "fit.body" | "fit.state" => {
                 let to = if spelled6(&o.against) { o.against.clone() } else { PropertyExpr::Unknown };
                 fit(s, ps, to, ops);
@@ -770,8 +809,9 @@ pub fn program_cost6(k: &Kingdom6, table: &CostTable6, decoding: &Decoding, size
     let mut root = rendered6(&decoding.root).properties.clone();
     for o in decoding.root_outcomes.iter().filter(|o| !o.holds) {
         let q = k.root.requires.get(o.requirement).ok_or_else(|| format!("our software has a bug: the entry has no requirement {}", o.requirement))?;
+        let source = Some((k.root.data_type, root.clone()));
         root.insert(q.property.clone(), o.against.clone());
-        w.traffic += table.charge(k, &Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())) }, sizes)?;
+        w.traffic += table.charge(k, &Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())), source }, sizes)?;
     }
     let u = |x: u128| u64::try_from(x).map_err(|_| "futhark_cost: a master 6 cost overflows u64".to_string());
     Ok(Score { traffic: u(w.traffic)?, alloc: u(w.alloc)?, depth: u(w.depth)? })
@@ -938,5 +978,17 @@ mod tests {
             }
         }
         assert!(working > 0, "no random gene expressed a program that does any work");
+    }
+
+    /// A `?` LENGTH IS CHARGED AT THE LARGEST SIZE IN SCOPE (F3 review finding 5), inside a minimum and a sum too; a
+    /// known size is its value.
+    #[test]
+    fn a_question_mark_is_charged_at_the_largest_size() {
+        let sizes: BTreeMap<String, usize> = [("n", 1000), ("k", 10), ("d", 3)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+        assert_eq!(known6(&PropertyExpr::Unknown, &sizes), Ok(1000));
+        assert_eq!(known6(&PropertyExpr::Min(vec![PropertyExpr::Size("k".into()), PropertyExpr::Unknown]), &sizes), Ok(10));
+        assert_eq!(known6(&PropertyExpr::Sum(vec![PropertyExpr::Unknown, PropertyExpr::Literal(1)]), &sizes), Ok(1001));
+        assert_eq!(known6(&PropertyExpr::Size("d".into()), &sizes), Ok(3));
+        assert!(known6(&PropertyExpr::Unknown, &BTreeMap::new()).is_err(), "no size in scope is a bug");
     }
 }

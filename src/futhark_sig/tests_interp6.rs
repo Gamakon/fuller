@@ -4,7 +4,6 @@
 //! compile with Futhark's `c` backend and equal the interpreter, N of N; an adapter costs more than its clean form.
 
 use super::*;
-use crate::fitness::Exactness;
 use crate::futhark_table::Kingdom6;
 use crate::typed_gep::express;
 use std::collections::BTreeSet;
@@ -208,35 +207,44 @@ fn a_thousand_random_genes_a_view_run_on_the_interpreter_and_have_a_work_bound()
 /// their body's, `fit.root` once), recomputed apart from `work_parts` from the same rendering decision
 /// (`futhark_cost::adapters6`).
 fn adapters_charge(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: &BTreeMap<String, usize>) -> u128 {
-    use crate::futhark_cost::{adapters6, rendered6, requirements6, trips6, CostTable6};
+    adapter_charges(k, d, sizes).iter().map(|(_, own, by)| own * by).sum()
+}
+
+/// Every adapter a decoded tree renders at `sizes`: what it adapts, its own charge, and how many times it runs.
+fn adapter_charges(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: &BTreeMap<String, usize>) -> Vec<(crate::futhark_cost::Charge6, u128, u128)> {
+    use crate::futhark_cost::{adapters6, rendered6, requirements6, trips6, Charge6, CostTable6};
     let table = CostTable6::load(k).unwrap();
     let reqs = requirements6(k);
-    fn go(k: &Kingdom6, table: &CostTable6, reqs: &[&crate::geneframe::Requirement], n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>) -> u128 {
+    type Found = Vec<(Charge6, u128, u128)>;
+    fn go(k: &Kingdom6, table: &CostTable6, reqs: &[&crate::geneframe::Requirement], n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>, out: &mut Found) {
         let n = rendered6(n);
         if n.substituted.is_some() {
-            return 0;
+            return;
         }
         let trips = trips6(k, n, sizes).unwrap();
         let mut ops: Vec<_> = n.kids.iter().map(|c| rendered6(c).properties.clone()).collect();
-        let mut total = 0;
         for (body, by) in [(false, mult), (true, mult * trips.unwrap_or(1))] {
             for c in adapters6(k, reqs, n, body, &mut ops).unwrap() {
-                total += table.charge(k, &c, sizes).unwrap() * by;
+                let own = table.charge(k, &c, sizes).unwrap();
+                out.push((c, own, by));
             }
         }
         let trip = k.symbols[n.symbol as usize].trip;
         for (i, c) in n.kids.iter().enumerate() {
-            total += go(k, table, reqs, c, if trip == Some(i as u32) { mult * trips.unwrap_or(1) } else { mult }, sizes);
+            go(k, table, reqs, c, if trip == Some(i as u32) { mult * trips.unwrap_or(1) } else { mult }, sizes, out);
         }
-        total
     }
-    let mut total = go(k, &table, &reqs, &d.root, 1, sizes);
+    let mut out = Vec::new();
+    go(k, &table, &reqs, &d.root, 1, sizes, &mut out);
     let mut root = rendered6(&d.root).properties.clone();
     for o in d.root_outcomes.iter().filter(|o| !o.holds) {
+        let source = Some((k.root.data_type, root.clone()));
         root.insert(k.root.requires[o.requirement].property.clone(), o.against.clone());
-        total += table.charge(k, &crate::futhark_cost::Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())) }, sizes).unwrap();
+        let c = Charge6 { adapter: o.adapter.clone(), operand: None, fitted: Some((k.root.data_type, root.clone())), source };
+        let own = table.charge(k, &c, sizes).unwrap();
+        out.push((c, own, 1));
     }
-    total
+    out
 }
 
 /// A program as a module of a batch (`module m<i> = { .. }`, its entry a `def`) and the entry `e<i>` of the program's
@@ -257,27 +265,60 @@ fn run_entry(exe: &std::path::Path, entry: &str, stdin: &[u8]) -> Result<Array, 
     read_one(&out.stdout)
 }
 
-/// FUTHARK'S `0 / x` FOLD: Futhark 0.28.1's simplifier folds a division whose dividend it knows to be zero to zero
-/// (measured 2026-11-05 through `futhark c`: `0f32 / x`, `map (/ s) (replicate n 0f32)`, `(replicate n 0f32)[0] / s`
-/// and `map (/ s) (map (\_ -> 0.0) xs)` are 0 for a zero or NaN `x` or `s`), where IEEE, and the interpreter, give
-/// NaN; whether it knows depends on its fusion (`map2 (\r s -> map (/ s) r) (map (\xs -> map (\_ -> 0.0) xs) A) S`
-/// alone is NaN, under a further `map (*2.0)` 0), so the interpreter does not guess it. An output is equal but for the
-/// fold when the program divides and every cell is the interpreter's or a zero where the interpreter's is NaN.
-fn zero_fold(got: &Array, want: &Array, text: &str) -> bool {
-    (text.contains(" / ") || text.contains("(/ "))
-        && got.dims == want.dims
-        && got.elem == Elem::F32
-        && want.elem == Elem::F32
-        && got.data.iter().zip(&want.data).all(|(g, w)| same_value(Elem::F32, *g, *w) || (f32::from_bits(*w).is_nan() && f32::from_bits(*g) == 0.0))
+/// FUTHARK'S ZERO-DIVIDEND FOLD (`docs/issues/2026-11-05_futhark_zero_division_fold.md`): Futhark 0.28.1's simplifier
+/// folds a division whose dividend it sees to be a zero to that zero (measured 2026-11-05 through `futhark c`:
+/// `0f32 / x` is `0` for `x` = 0, -3, NaN and inf, and `map (/ s) (replicate n 0f32)` is zeros for `s` = 0), where
+/// IEEE, `futhark run` and the interpreter give NaN for `0 / 0` and `-0.0` for `0 / -3`. Whether it sees the zero
+/// depends on the program (a zero carried through a loop is not folded), so the interpreter does not guess it: it runs
+/// the tree twice, with IEEE's division and with every zero dividend folded
+/// ([`interp6::Interp6::eval_zero_dividends_folded`]). An output is equal but for the fold when every cell is the
+/// interpreter's, or is the folded run's at a cell where the two runs differ: a cell a zero dividend reached. Never a
+/// NaN of another origin (a `sqrt` of a negative number, `inf - inf`), never a cell no zero dividend reached.
+fn zero_fold(got: &Array, want: &Array, folded: &Array) -> bool {
+    let e = want.elem;
+    got.dims == want.dims
+        && folded.dims == want.dims
+        && got.elem == e
+        && folded.elem == e
+        && got.data.len() == want.data.len()
+        && folded.data.len() == want.data.len()
+        && got.data.iter().zip(&want.data).zip(&folded.data).all(|((g, w), f)| same_value(e, *g, *w) || (!same_value(e, *w, *f) && same_value(e, *g, *f)))
+}
+
+/// How the `c` backend's output agrees with the interpreter's.
+#[derive(Debug, PartialEq, Eq)]
+enum Agreement {
+    /// Bit for bit (two NaNs equal).
+    Exact,
+    /// Equal but for Futhark's zero-dividend fold ([`zero_fold`]).
+    Folded,
+    /// Any other difference, however small: the exact paths have no tolerance.
+    Differs,
+}
+
+/// The agreement of `got` (the `c` backend's) with `want` (the interpreter's), the folded run computed only when the
+/// two differ.
+fn agreement(got: &Array, want: &Array, folded: impl FnOnce() -> Result<Array, String>) -> Result<Agreement, String> {
+    if got == want {
+        return Ok(Agreement::Exact);
+    }
+    Ok(if zero_fold(got, want, &folded()?) { Agreement::Folded } else { Agreement::Differs })
+}
+
+/// The interpreter's value of a tree with Futhark's zero-dividend fold.
+fn eval_folded(i: &Interp, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
+    match &i.0 {
+        Masters::Six(m) => m.eval_zero_dividends_folded(tree, inputs),
+        Masters::Five(_) => Err("the zero-dividend fold is master 6's".into()),
+    }
 }
 
 /// PROOF 1, THE `c` BACKEND AGAINST THE INTERPRETER (plan 7.3 item 1): 100 random genes of every master 6 view
 /// compile with Futhark's `c` backend and run on the view's run cases ([`run_cases`]: up to three stored cases, one of
 /// distinct sizes, none a test case; a gene over the per-submit cap on a case on it [`cropped`]), and every output
-/// equals the interpreter's, N of N: BIT FOR BIT (two NaNs equal),
-/// the rule of master 5's interpreter against the `c` backend; where an `f32` output differs in its bits it must be
-/// within the A7 f32 bound (`fitness::Exactness::F32SumBound`, two products a cell), or equal but for Futhark's
-/// `0 / x` fold ([`zero_fold`]), and such outputs are counted apart.
+/// equals the interpreter's, N of N: BIT FOR BIT (two NaNs equal), with no tolerance, the rule of master 5's
+/// interpreter against the `c` backend; the one allowance is Futhark's zero-dividend fold at the cells a zero dividend
+/// reached ([`zero_fold`]), and such outputs are counted apart.
 #[test]
 fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
     let (n, chunk) = (100, 25);
@@ -289,7 +330,7 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
         let texts: Vec<String> = trees.iter().map(|t| renderer.program(t).unwrap().text).collect();
         let cases = run_cases(&k, view6);
         let dir = std::env::temp_dir().join(format!("fuller_f3_{view6}_{}", std::process::id()));
-        let (mut exact, mut bounded, mut folded, mut adapted, mut cropped_runs) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let (mut exact, mut folded, mut adapted, mut cropped_runs) = (0usize, 0usize, 0usize, 0usize);
         let mut bad: Vec<String> = Vec::new();
         for (c, part) in texts.chunks(chunk).enumerate() {
             let base = c * chunk;
@@ -315,11 +356,10 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
                             continue;
                         }
                     };
-                    match run_entry(&exe, &format!("e{g}"), stdin) {
-                        Ok(got) if got == want => exact += 1,
-                        Ok(got) if zero_fold(&got, &want, text) => folded += 1,
-                        Ok(got) if got.elem == Elem::F32 && Exactness::F32SumBound { products: 2 }.agrees(&got, &want, inputs) => bounded += 1,
-                        Ok(got) => bad.push(format!("{view6} gene {g} on {}: c gives {:?} {:?}, the interpreter {:?} {:?}\n{text}", case.name, got.dims, got.values().take(8).collect::<Vec<_>>(), want.dims, want.values().take(8).collect::<Vec<_>>())),
+                    match run_entry(&exe, &format!("e{g}"), stdin).and_then(|got| agreement(&got, &want, || eval_folded(&i6, &trees[g], inputs)).map(|a| (got, a))) {
+                        Ok((_, Agreement::Exact)) => exact += 1,
+                        Ok((_, Agreement::Folded)) => folded += 1,
+                        Ok((got, Agreement::Differs)) => bad.push(format!("{view6} gene {g} on {}: c gives {:?} {:?}, the interpreter {:?} {:?}\n{text}", case.name, got.dims, got.values().take(8).collect::<Vec<_>>(), want.dims, want.values().take(8).collect::<Vec<_>>())),
                         Err(e) => bad.push(format!("{view6} gene {g} on {}: {e}\n{text}", case.name)),
                     }
                 }
@@ -327,7 +367,7 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
         }
         std::fs::remove_dir_all(&dir).ok();
         let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-        let line = format!("{view6}: {n} compiled (c), {adapted} with adapters; on {names:?}: {exact} of {} runs equal the interpreter bit for bit, {bounded} within the A7 f32 bound, {folded} equal but for Futhark's 0 / x fold ({cropped_runs} runs over the per-submit cap on their case, on it cropped)\n", n * cases.len());
+        let line = format!("{view6}: {n} compiled (c), {adapted} with adapters; on {names:?}: {exact} of {} runs equal the interpreter bit for bit, {folded} equal but for Futhark's zero-dividend fold ({cropped_runs} runs over the per-submit cap on their case, on it cropped)\n", n * cases.len());
         eprint!("{line}");
         report.push_str(&line);
         assert!(bad.is_empty(), "{report}{}", bad.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
@@ -361,15 +401,130 @@ fn a_gene_with_an_adapter_costs_more_than_the_same_gene_without() {
     }
 }
 
-/// The fold's allowance is narrow: a zero where the interpreter has NaN, in a program that divides; never another
-/// value, never in a program with no division.
+/// AN ADAPTER'S OWN CHARGE COVERS ITS FULL TRAFFIC (F3 review finding 3): every adapter of the adapted genes above,
+/// at several size settings that make each `fit` shorter, equal and longer than its operand, is charged more than 0
+/// and at least the cells it reads of its operand plus the cells it writes, so the cost never rewards an adapter for
+/// its own sake. What a shorter array saves DOWNSTREAM is real work saved, and is pinned as a known property: at
+/// n = 1000, k = 10, `map2.add zeros_n zeros_k` (both fitted to 10) costs less than `map2.add zeros_n zeros_n`.
 #[test]
-fn the_zero_fold_allowance_takes_only_a_zero_for_a_nan_where_the_program_divides() {
-    let want = Array::f32s(vec![2], vec![f32::NAN, 1.0]);
-    let zero = Array::f32s(vec![2], vec![0.0, 1.0]);
-    let other = Array::f32s(vec![2], vec![3.0, 1.0]);
-    assert!(zero_fold(&zero, &want, "map (/ s) r"));
-    assert!(!zero_fold(&zero, &want, "map (*2.0) r"));
-    assert!(!zero_fold(&other, &want, "map (/ s) r"));
-    assert!(!zero_fold(&want, &zero, "map (/ s) r"), "a NaN where the interpreter has a number is never the fold");
+fn an_adapters_own_charge_covers_its_full_traffic_at_every_size() {
+    let genes: [(&str, &str); 5] = [
+        ("kmeans", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_k) centres)"),
+        ("kmeans", "(tabrows@m.f32[r] k d zeros_n)"),
+        ("kmeans", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 k))) centres)"),
+        ("kmeans", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_k (map2.add@a.f32 zeros_n zeros_n)) centres)"),
+        ("histogram", "(hist.add@a.i32 k zeros_n zeros_k)"),
+    ];
+    let settings: [[usize; 3]; 4] = [[1000, 10, 3], [4, 4, 4], [2, 7, 5], [5, 3, 9]];
+    let (mut shorter, mut equal, mut longer, mut other) = (0usize, 0usize, 0usize, 0usize);
+    for (view6, text) in genes {
+        let (k, _) = interp6(view6);
+        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
+        let d = renderer.decode(&build6(&k, text).unwrap()).unwrap();
+        let names: Vec<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
+        for values in settings {
+            let sizes: BTreeMap<String, usize> = names.iter().cloned().zip(values).collect();
+            let charges = adapter_charges(&k, &d, &sizes);
+            assert!(!charges.is_empty(), "{text}: no adapter renders");
+            for (c, own, _) in charges {
+                assert!(own > 0, "{text} at {sizes:?}: {} is charged nothing", c.adapter);
+                let Some(((ts, ps), (tf, pf))) = c.source.as_ref().zip(c.fitted.as_ref()) else {
+                    other += 1;
+                    continue;
+                };
+                let (read, write) = (crate::futhark_cost::cells6(&k, *ts, ps, &sizes).unwrap(), crate::futhark_cost::cells6(&k, *tf, pf, &sizes).unwrap());
+                assert!(own >= read + write, "{text} at {sizes:?}: {} is charged {own}, reads {read} and writes {write}", c.adapter);
+                match write.cmp(&read) {
+                    std::cmp::Ordering::Less => shorter += 1,
+                    std::cmp::Ordering::Equal => equal += 1,
+                    std::cmp::Ordering::Greater => longer += 1,
+                }
+            }
+        }
+    }
+    assert!(shorter > 0 && equal > 0 && longer > 0 && other > 0, "fits shorter {shorter}, equal {equal}, longer {longer}; other adapters {other}");
+    eprintln!("adapters charged their full traffic: fits to a shorter length {shorter}, an equal {equal}, a longer {longer}; other adapters {other}");
+    let (k, i6) = interp6("kmeans");
+    let sizes: BTreeMap<String, usize> = [("n", 1000), ("k", 10), ("d", 3)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    let cost = |t: &str| i6.static_cost(&build6(&k, t).unwrap(), &sizes).unwrap().unwrap().traffic;
+    let (fitted, clean) = (cost(genes[0].1), cost("(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_n) centres)"));
+    assert!(fitted < clean, "a shortening fit costs {fitted}, its clean form {clean}");
+    eprintln!("a shortening fit's program costs {fitted} against its clean form's {clean} (n = 1000, k = 10): the downstream saving is real");
+}
+
+/// THE `c` COMPARISON HAS NO TOLERANCE (F3 review finding 1): an output one unit in the last place from the
+/// interpreter's, which the A7 f32 bound would accept, differs.
+#[test]
+fn an_output_one_unit_in_the_last_place_off_differs() {
+    let want = Array::f32s(vec![2], vec![1.0, 2.0]);
+    let got = Array::f32s(vec![2], vec![1.0, f32::from_bits(2.0f32.to_bits() + 1)]);
+    assert_eq!(agreement(&got, &want, || Ok(want.clone())).unwrap(), Agreement::Differs);
+    assert_eq!(agreement(&want, &want, || Err("the folded run is not needed".into())).unwrap(), Agreement::Exact);
+}
+
+/// THE ZERO-DIVIDEND FOLD IS ALLOWED ONLY WHERE A ZERO DIVIDEND REACHED THE CELL (F3 review finding 2). Rows of
+/// `0, 1, ..` divided by `-0, -1, ..`: the interpreter gives NaN for `0 / -0` and `-0.0` for `0 / -1`, the folded run
+/// `0` for both, and Futhark's folded output is allowed (`+0.0` for `-0.0` included). A value at such a cell other
+/// than the fold's, a zero for a NaN that a `sqrt` of a negative number gave in a program that divides, and a zero
+/// where the interpreter has a number all differ.
+#[test]
+fn the_zero_fold_is_allowed_only_where_a_zero_dividend_reached_the_cell() {
+    let (k, i6) = interp6("kmeans");
+    let (n, kk, d) = (2usize, 3usize, 2usize);
+    let inputs = [Array::f32s(vec![n, d], vec![0.5; n * d]), Array::f32s(vec![kk, d], vec![0.25; kk * d])];
+    let divides = build6(&k, "(rowdiv@m.f32 (tabrows@m.f32[r] k d (tab@a.f32[j] d (ival@f32 j))) (tab@a.f32[i] k (neg@f32 (ival@f32 i))))").unwrap();
+    let want = i6.eval(&divides, &inputs).unwrap();
+    let folded = eval_folded(&i6, &divides, &inputs).unwrap();
+    let cell = |a: &Array, r: usize, c: usize| f32::from_bits(a.data[r * d + c]);
+    assert!(cell(&want, 0, 0).is_nan() && cell(&folded, 0, 0).to_bits() == 0, "0 / -0: {} and {}", cell(&want, 0, 0), cell(&folded, 0, 0));
+    assert!(cell(&want, 1, 0).to_bits() == (-0.0f32).to_bits() && cell(&folded, 1, 0).to_bits() == 0, "0 / -1: {} and {}", cell(&want, 1, 0), cell(&folded, 1, 0));
+    assert_eq!(cell(&want, 1, 1), cell(&folded, 1, 1), "1 / -1 has no zero dividend");
+    assert_eq!(agreement(&folded, &want, || eval_folded(&i6, &divides, &inputs)).unwrap(), Agreement::Folded, "Futhark's fold, +0.0 for -0.0 included");
+    let mut off = folded.clone();
+    off.data[0] = 1.0f32.to_bits();
+    assert_eq!(agreement(&off, &want, || Ok(folded.clone())).unwrap(), Agreement::Differs, "a value other than the fold's at a zero-dividend cell");
+    let mut zeroed = want.clone();
+    zeroed.data[d + 1] = 0;
+    assert_eq!(agreement(&zeroed, &want, || Ok(folded.clone())).unwrap(), Agreement::Differs, "a zero where the interpreter has a number");
+    let nan_of_sqrt = build6(&k, "(rowdiv@m.f32 (tabrows@m.f32[r] k d (tab@a.f32[j] d (sqrt@f32 (neg@f32 (ival@f32 j))))) (tab@a.f32[i] k (add@f32 (ival@f32 i) 1)))").unwrap();
+    let want = i6.eval(&nan_of_sqrt, &inputs).unwrap();
+    assert!(cell(&want, 0, 1).is_nan(), "sqrt (-1) / 1 is NaN");
+    let mut zeroed = want.clone();
+    zeroed.data[1] = 0;
+    assert_eq!(agreement(&zeroed, &want, || eval_folded(&i6, &nan_of_sqrt, &inputs)).unwrap(), Agreement::Differs, "a zero for a NaN of a sqrt, in a program that divides");
+}
+
+/// A `?` LENGTH IS CHARGED AT THE LARGEST SIZE IN SCOPE (F3 review finding 5): a view with a row of `?` length (a
+/// scan whose result's length the table leaves unknown, as a `filter`'s is) gives F2's `?` programs, a `map2` over
+/// two `?`-length operands, a loop of `?` state length and a body of `?` length; each has a work, a static cost and a
+/// value, and none is cheaper than the same program with every `?` length the largest size, known (a `?` is charged
+/// that size, plus the adapters that fit it).
+#[test]
+fn a_question_mark_length_is_charged_at_the_largest_size_in_scope() {
+    let v = crate::futhark_view::master6::committed("kmeans").unwrap();
+    let rows = v.symbols_tsv.lines().count() - 1;
+    let spelling = v.symbols_tsv.lines().find(|l| l.split('\t').nth(1) == Some("M0030")).and_then(|l| l.split('\t').nth(10)).unwrap().to_string();
+    let symbols = format!("{}{rows}\tM0030\tqscan@a.f32\tfunction\t[]f32\t[]f32\tlen=?\t\t\t\t{spelling}\n", v.symbols_tsv);
+    let k = Arc::new(Kingdom6::from_tables("kmeans_unknown", &v.datatypes_tsv, &symbols, &v.environment_tsv, crate::futhark_view::master6::ADAPTERS6, &v.spec.literals).unwrap());
+    let i6 = Interp::new6(&k, &signature(&problem_of("kmeans").instance).unwrap()).unwrap();
+    let (n, kk, d) = (5usize, 3usize, 2usize);
+    let inputs = [Array::f32s(vec![n, d], vec![0.5; n * d]), Array::f32s(vec![kk, d], vec![0.25; kk * d])];
+    let sizes: BTreeMap<String, usize> = [("n", n), ("k", kk), ("d", d)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    let programs = [
+        ("a map2 over two ? lengths", "(let.a.f32@m.f32[w] (map2.add@a.f32 (qscan@a.f32 zeros_n) (qscan@a.f32 zeros_n)) centres)", "(let.a.f32@m.f32[w] (map2.add@a.f32 (scan.add@a.f32 zeros_n) (scan.add@a.f32 zeros_n)) centres)"),
+        ("a loop of ? state length", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n (qscan@a.f32 zeros_n) (map2.add@a.f32 s s)) centres)", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n (scan.add@a.f32 zeros_n) (map2.add@a.f32 s s)) centres)"),
+        ("a body of ? length", "(tabrows@m.f32[r] k d (qscan@a.f32 zeros_n))", "(tabrows@m.f32[r] k d (scan.add@a.f32 zeros_n))"),
+    ];
+    for (name, unknown, known) in programs {
+        let t = build6(&k, unknown).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let w = i6.work_parts(&t, &sizes).unwrap_or_else(|e| panic!("{name}: the work: {e}"));
+        let c = i6.static_cost(&t, &sizes).unwrap_or_else(|e| panic!("{name}: the static cost: {e}")).unwrap();
+        i6.eval(&t, &inputs).unwrap_or_else(|e| panic!("{name}: the value: {e}"));
+        // Every `?` is a scan of zeros_n here, of the largest size n: the program with `scan.add` (its length n) reads and
+        // writes as much, but renders no adapter where the `?` one fits to its own length; so the `?` one is no cheaper.
+        let tk = build6(&k, known).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let (wk, ck) = (i6.work_parts(&tk, &sizes).unwrap(), i6.static_cost(&tk, &sizes).unwrap().unwrap());
+        assert!(w.nodes >= wk.nodes && c.traffic >= ck.traffic, "{name}: with ? {w:?} {c:?}, at the largest size {wk:?} {ck:?}");
+        eprintln!("{name}: node executions {} (at the largest size, no adapter {}), traffic {} ({})", w.nodes, wk.nodes, c.traffic, ck.traffic);
+    }
 }
