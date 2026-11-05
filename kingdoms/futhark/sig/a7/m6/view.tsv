@@ -1,0 +1,23 @@
+# kind	name	element	dims
+# written by kingdoms/futhark/sniff.py --format 6 from tests/corpus/futhark_problems/a7/yardstick.fut, entry main
+format	6		
+master	1		
+element	f32		
+families	matrix		
+input	m_n_n	f32	n,n
+input	m_n_m	f32	n,m
+input	m_n_p	f32	n,p
+input	m_m_n	f32	m,n
+input	m_m_m	f32	m,m
+input	m_m_p	f32	m,p
+input	m_p_n	f32	p,n
+input	m_p_m	f32	p,m
+input	m_p_p	f32	p,p
+output	main	f32	n,p
+zeros	zeros_n	f32	n
+zeros	zeros_m	f32	m
+zeros	zeros_p	f32	p
+size	n		
+size	m		
+size	p		
+literals	0,1,2,-1,0.5,10		

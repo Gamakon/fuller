@@ -1,0 +1,6 @@
+id	name	kind	members	tag	constant	constant_props	properties
+0	f32	scalar		f32	0f32		
+1	[]f32	array	f32	a.f32	[0f32]	len=1	len:size
+2	[][]f32	array	[]f32	m.f32	[[0f32]]	rows=1 & cols=1	rows:size;cols:size
+3	[]f32 -> []f32	function	[]f32 -> []f32	fn.arr_f32_arr_f32	\xs -> map (\_ -> 0.0) xs		
+4	[]f32 -> []f32 -> []f32	function	[]f32;[]f32 -> []f32	fn.arr2_f32_arr_f32_arr_f32	\xs _ys -> map (\_ -> 0.0) xs		

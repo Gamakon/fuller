@@ -1,0 +1,7 @@
+kind	name	data_type	properties	requires
+root	main	[]i32	len=cols	out.len = cols -> fit.root
+input	walls	[][]i32	rows=rows & cols=cols	
+zeros	zeros_rows	[]i32	len=rows	
+zeros	zeros_cols	[]i32	len=cols	
+size	rows	size	value=rows	
+size	cols	size	value=cols	

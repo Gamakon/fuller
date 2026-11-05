@@ -1,0 +1,6 @@
+data_type	name	kind	meaning
+[]{E}	len	size	the length
+[][]{E}	rows	size	the outer length
+[][]{E}	cols	size	the inner length (every row's)
+i64	bound	bound	the exclusive upper bound: the index is valid for every array of length at least bound
+size	value	size	the size itself, a size name of the environment

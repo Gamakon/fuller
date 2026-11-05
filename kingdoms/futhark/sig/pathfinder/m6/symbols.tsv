@@ -1,0 +1,44 @@
+id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
+0	M0001	add@i32	function	i32	i32;i32					{0} + {1}
+1	M0002	sub@i32	function	i32	i32;i32					{0} - {1}
+2	M0003	mul@i32	function	i32	i32;i32					{0} * {1}
+3	M0004	min@i32	function	i32	i32;i32					i32.min {0} {1}
+4	M0005	max@i32	function	i32	i32;i32					i32.max {0} {1}
+5	M0006	neg@i32	function	i32	i32					-{0}
+6	M0007	abs@i32	function	i32	i32					i32.abs {0}
+7	M0008	sel@i32	function	i32	i32;i32;i32					if {0} < 0i32 then {1} else {2}
+8	M0009	get@i32	function	i32	[]i32;i64		in1.bound <= in0.len -> clampix			{0}[{1}]
+9	M0010	sum@i32	function	i32	[]i32		env.trips < 2 -> subst			i32.sum {0}
+10	M0011	minimum@i32	function	i32	[]i32		env.trips < 2 -> subst			i32.minimum {0}
+11	M0012	maximum@i32	function	i32	[]i32		env.trips < 2 -> subst			i32.maximum {0}
+12	M0013	ival@i32	function	i32	i64					i32.i64 {0}
+13	M0014	sval@i32	function	i32	size					i32.i64 {0}
+14	M0015	mod@i32	function	i32	size;i32					{1} % i32.i64 {0}
+15	M0016	const@i32	const	i32						
+16	M0018	prev@i64	function	i64	i64	bound=in0.bound				i64.max 0 ({0} - 1)
+17	M0019	next@i64	function	i64	i64	bound=in0.bound				i64.min ({0.bound} - 1) ({0} + 1)
+18	M0020	clamp@i64	function	i64	size;i32	bound=in0.value				i64.max 0 (i64.min ({0} - 1) (i64.i32 {1}))
+19	M0021	zero@i64	terminal	i64		bound=1				0i64
+20	M0022	last@i64	function	i64	size	bound=in0.value				{0} - 1
+21	M0024	tab@a.i32	function	[]i32	size;i32	len=in0.value	env.trips < 2 -> subst	1:i64 bound=in0.value	1	tabulate {0} (\{1.v0} -> {1})
+22	M0025	replicate@a.i32	function	[]i32	size;i32	len=in0.value	env.trips < 2 -> subst			replicate {0} {1}
+23	M0026	map2.add@a.i32	function	[]i32	[]i32;[]i32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 2 -> subst			map2 (+) {0} {1}
+24	M0027	map2.sub@a.i32	function	[]i32	[]i32;[]i32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 2 -> subst			map2 (-) {0} {1}
+25	M0028	map2.min@a.i32	function	[]i32	[]i32;[]i32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 2 -> subst			map2 i32.min {0} {1}
+26	M0029	map2.max@a.i32	function	[]i32	[]i32;[]i32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 2 -> subst			map2 i32.max {0} {1}
+27	M0030	scan.add@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan (+) 0i32 (opaque {0})
+28	M0031	scan.min@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan i32.min i32.highest (opaque {0})
+29	M0032	scan.max@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan i32.max i32.lowest (opaque {0})
+30	M0033	hist.add@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist (+) 0i32 {0} (map i64.i32 {1}) {2}
+31	M0034	hist.min@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist i32.min i32.highest {0} (map i64.i32 {1}) {2}
+32	M0035	hist.max@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist i32.max i32.lowest {0} (map i64.i32 {1}) {2}
+33	M0036	row@a.i32	function	[]i32	[][]i32;i64	len=in0.cols	in1.bound <= in0.rows -> clampix			{0}[{1}]
+34	M0040	loop@i32	function	i32	size;i32;i32		env.trips < 2 -> subst	2:i32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
+35	M0040	loop@a.i32	function	[]i32	size;[]i32;[]i32	len=in1.len	in2.len = in1.len -> fit.state; env.trips < 2 -> subst	2:[]i32 len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
+36	M0041	loop1@i32	function	i32	size;i32;i32		env.trips < 2 -> subst	2:i32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}
+37	M0041	loop1@a.i32	function	[]i32	size;[]i32;[]i32	len=in1.len	in2.len = in1.len -> fit.state; env.trips < 2 -> subst	2:[]i32 len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}
+38	M0087	var@i32	var	i32						{v}
+39	M0087	var@i64	var	i64						{v}
+40	M0087	var@size	var	size						{v}
+41	M0087	var@a.i32	var	[]i32						{v}
+42	M0087	var@m.i32	var	[][]i32						{v}

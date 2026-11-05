@@ -1,0 +1,79 @@
+ref	since	family	kind	elems	over	name	out	args	rules	requires	binds	trip	spelling	note
+M0001	1	core	function	i32,f32		add@{E}	{E}	{E};{E}					{0} + {1}	add on {E}
+M0002	1	core	function	i32,f32		sub@{E}	{E}	{E};{E}					{0} - {1}	sub on {E}
+M0003	1	core	function	i32,f32		mul@{E}	{E}	{E};{E}					{0} * {1}	mul on {E}
+M0004	1	core	function	i32,f32		min@{E}	{E}	{E};{E}					{E}.min {0} {1}	min on {E}
+M0005	1	core	function	i32,f32		max@{E}	{E}	{E};{E}					{E}.max {0} {1}	max on {E}
+M0006	1	core	function	i32,f32		neg@{E}	{E}	{E}					-{0}	neg on {E}
+M0007	1	core	function	i32,f32		abs@{E}	{E}	{E}					{E}.abs {0}	abs on {E}
+M0008	1	core	function	i32,f32		sel@{E}	{E}	{E};{E};{E}					if {0} < 0{E} then {1} else {2}	sel on {E}
+M0009	1	core	function	i32,f32		get@{E}	{E}	[]{E};i64		in1.bound <= in0.len -> clampix			{0}[{1}]	an element of an array, at an index (clamped where its bound is not within the array's length)
+M0010	1	core	function	i32,f32		sum@{E}	{E}	[]{E}		env.trips < depth -> subst			{E}.sum {0}	the sum of an array
+M0011	1	core	function	i32,f32		minimum@{E}	{E}	[]{E}		env.trips < depth -> subst			{E}.minimum {0}	the minimum of an array
+M0012	1	core	function	i32,f32		maximum@{E}	{E}	[]{E}		env.trips < depth -> subst			{E}.maximum {0}	the maximum of an array
+M0013	1	core	function	i32,f32		ival@{E}	{E}	i64					{E}.i64 {0}	an index as a value
+M0014	1	core	function	i32,f32		sval@{E}	{E}	size					{E}.i64 {0}	a size as a value (the one conversion a size has)
+M0015	1	mod	function	i32		mod@{E}	{E}	size;{E}					{1} % {E}.i64 {0}	a value modulo a size, in [0, size)
+M0016	1	core	const	i32,f32		const@{E}	{E}							a literal of the constant pool
+M0018	1	core	function	i32,f32		prev@i64	i64	i64	bound=in0.bound				i64.max 0 ({0} - 1)	the previous index, clamped at 0
+M0019	1	core	function	i32,f32		next@i64	i64	i64	bound=in0.bound				i64.min ({0.bound} - 1) ({0} + 1)	the next index, clamped at its bound - 1
+M0020	1	core	function	i32		clamp{E.tag}@i64	i64	size;{E}	bound=in0.value				i64.max 0 (i64.min ({0} - 1) (i64.{E} {1}))	a value clamped into an index below a size
+M0021	1	core	terminal	i32,f32		zero@i64	i64		bound=1				0i64	the first index (valid for every array: every dimension is at least 1)
+M0022	1	core	function	i32,f32		last@i64	i64	size	bound=in0.value				{0} - 1	the last index below a size (every dimension is at least 1)
+M0024	2	core	function	i32,f32		tab@a.{E}	[]{E}	size;{E}	len=in0.value	env.trips < depth -> subst	1:i64 bound=in0.value	1	tabulate {0} (\{1.v0} -> {1})	an array of a size, each element by its body
+M0025	1	core	function	i32,f32		replicate@a.{E}	[]{E}	size;{E}	len=in0.value	env.trips < depth -> subst			replicate {0} {1}	an array of a size, of one value
+M0026	1	core	function	i32,f32		map2.add@a.{E}	[]{E}	[]{E};[]{E}	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < depth -> subst			map2 (+) {0} {1}	elementwise add of two arrays
+M0027	1	core	function	i32,f32		map2.sub@a.{E}	[]{E}	[]{E};[]{E}	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < depth -> subst			map2 (-) {0} {1}	elementwise sub of two arrays
+M0028	1	core	function	i32,f32		map2.min@a.{E}	[]{E}	[]{E};[]{E}	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < depth -> subst			map2 {E}.min {0} {1}	elementwise min of two arrays
+M0029	1	core	function	i32,f32		map2.max@a.{E}	[]{E}	[]{E};[]{E}	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < depth -> subst			map2 {E}.max {0} {1}	elementwise max of two arrays
+M0030	1	scan	function	i32,f32		scan.add@a.{E}	[]{E}	[]{E}	len=in0.len	env.trips < depth -> subst			scan (+) 0{E} (opaque {0})	the inclusive add scan of an array
+M0031	1	scan	function	i32,f32		scan.min@a.{E}	[]{E}	[]{E}	len=in0.len	env.trips < depth -> subst			scan {E}.min {E}.highest (opaque {0})	the inclusive min scan of an array
+M0032	1	scan	function	i32,f32		scan.max@a.{E}	[]{E}	[]{E}	len=in0.len	env.trips < depth -> subst			scan {E}.max {E}.lowest (opaque {0})	the inclusive max scan of an array
+M0033	1	hist	function	i32		hist.add@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist (+) 0{E} {0} (map i64.{E} {1}) {2}	the add histogram into an array of a size, of values at indices (outside [0, size) ignored)
+M0034	1	hist	function	i32		hist.min@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist {E}.min {E}.highest {0} (map i64.{E} {1}) {2}	the min histogram into an array of a size, of values at indices (outside [0, size) ignored)
+M0035	1	hist	function	i32		hist.max@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist {E}.max {E}.lowest {0} (map i64.{E} {1}) {2}	the max histogram into an array of a size, of values at indices (outside [0, size) ignored)
+M0036	1	core	function	i32,f32		row@a.{E}	[]{E}	[][]{E};i64	len=in0.cols	in1.bound <= in0.rows -> clampix			{0}[{1}]	a row of an array of rows
+M0040	2	core	function	i32,f32	S:states	loop@{S.tag}	{S}	size;{S};{S}	len=in1.len	in2.len = in1.len -> fit.state; env.trips < depth -> subst	2:{S} len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}	a loop of a size's trips carrying a state, its counter an index below the size
+M0041	2	core	function	i32,f32	S:states	loop1@{S.tag}	{S}	size;{S};{S}	len=in1.len	in2.len = in1.len -> fit.state; env.trips < depth -> subst	2:{S} len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}	a loop over 1 .. size - 1 carrying a state, its counter an index below the size
+M0043	1	matrix	function	f32		map_rows@m.f32	[][]f32	[]f32 -> []f32;[][]f32	rows=in1.rows; cols=in1.cols	env.trips < depth -> subst			map {0} {1}	map a row function over the rows
+M0044	1	matrix	function	f32		map2_rows@m.f32	[][]f32	[]f32 -> []f32 -> []f32;[][]f32;[][]f32	rows=min(in1.rows, in2.rows); cols=min(in1.cols, in2.cols)	in2.rows = in1.rows -> fit.pair; in2.cols = in1.cols -> fit.inner; env.trips < depth -> subst			map2 {0} {1} {2}	map a binary row function over the rows of two arrays of rows
+M0045	1	matrix	function	f32		transpose@m.f32	[][]f32	[][]f32	rows=in0.cols; cols=in0.rows				transpose {0}	transpose an array of rows
+M0046	1	matrix	function	f32		matmul@m.f32	[][]f32	[][]f32;[][]f32	rows=in0.rows; cols=in1.cols	in1.rows = in0.cols -> fit.inner; env.trips < depth -> subst			matmul {0} {1}	matrix multiplication; the inner lengths must agree
+M0047	1	matrix	function	f32		id@fn.arr_f32_arr_f32	[]f32 -> []f32						\xs -> xs	the identity row function
+M0048	1	matrix	function	f32		add1@fn.arr_f32_arr_f32	[]f32 -> []f32						\xs -> map (+1.0) xs	add one to every element
+M0049	1	matrix	function	f32		scale2@fn.arr_f32_arr_f32	[]f32 -> []f32						\xs -> map (*2.0) xs	double every element
+M0050	1	matrix	function	f32		id@fn.arr2_f32_arr_f32_arr_f32	[]f32 -> []f32 -> []f32						\xs _ys -> xs	the identity binary row function
+M0051	1	matrix	function	f32		add1@fn.arr2_f32_arr_f32_arr_f32	[]f32 -> []f32 -> []f32						\xs _ys -> map (+1.0) xs	add one to every element, ignoring the second row
+M0052	1	matrix	function	f32		add@fn.arr2_f32_arr_f32_arr_f32	[]f32 -> []f32 -> []f32						\xs ys -> map2 (+) xs ys	add the two rows elementwise -- a genuinely binary row function
+M0054	1	matrix	terminal	f32		const@fn.arr_f32_arr_f32	[]f32 -> []f32						\xs -> map (\_ -> 0.0) xs	the constant zero row function
+M0055	1	matrix	terminal	f32		const@fn.arr2_f32_arr_f32_arr_f32	[]f32 -> []f32 -> []f32						\xs _ys -> map (\_ -> 0.0) xs	the constant zero binary row function
+M0056	3	core	function	f32		clamp{E.tag}@i64	i64	size;{E}	bound=in0.value				let x = {1} in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))	a value clamped into an index below a size (a NaN is 0; the value is clamped before the conversion, which Futhark leaves undefined out of range)
+M0057	3	hist	function	f32		hist.add@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist (+) 0{E} {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}	the add histogram into an array of a size, of values at indices (an index is the value truncated; a NaN or one outside [0, size) ignored)
+M0058	3	hist	function	f32		hist.min@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist {E}.min {E}.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}	the min histogram into an array of a size, of values at indices (an index is the value truncated; a NaN or one outside [0, size) ignored)
+M0059	3	hist	function	f32		hist.max@a.{E}	[]{E}	size;[]{E};[]{E}	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < depth -> subst			hist {E}.max {E}.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}	the max histogram into an array of a size, of values at indices (an index is the value truncated; a NaN or one outside [0, size) ignored)
+M0060	3	core	function	f32		div@{E}	{E}	{E};{E}					{0} / {1}	div on {E} (total: IEEE division)
+M0061	3	core	function	f32		sqrt@{E}	{E}	{E}					{E}.sqrt {0}	sqrt on {E} (total: NaN below zero)
+M0062	3	core	function	i32,f32		map2.mul@a.{E}	[]{E}	[]{E};[]{E}	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < depth -> subst			map2 (*) {0} {1}	elementwise mul of two arrays
+M0063	3	core	function	i32,f32		tabrows@m.{E}	[][]{E}	size;size;[]{E}	rows=in0.value; cols=in1.value	in2.len = in1.value -> fit.body; env.trips < depth -> subst	2:i64 bound=in0.value	2	tabulate {0} (\{2.v0} -> {2})	an array of rows (a size of rows, each of a size from outside the lambda), each row by its body
+M0064	3	hist	function	i32		histrows.add@m.{E}	[][]{E}	size;size;[]{E};[][]{E}	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < depth -> subst			hist (map2 (+)) (replicate {1} 0{E}) {0} (map i64.{E} {2}) {3}	the elementwise add histogram of rows into an array of a size of rows, of rows at indices (outside [0, size) ignored)
+M0065	3	hist	function	f32		histrows.add@m.{E}	[][]{E}	size;size;[]{E};[][]{E}	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < depth -> subst			hist (map2 (+)) (replicate {1} 0{E}) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}	the elementwise add histogram of rows into an array of a size of rows, of rows at indices (an index is the value truncated; a NaN or one outside [0, size) ignored)
+M0066	3	core	function	f32		rowdiv@m.{E}	[][]{E}	[][]{E};[]{E}	rows=min(in0.rows, in1.len); cols=in0.cols	in1.len = in0.rows -> fit.pair; env.trips < depth -> subst			map2 (\r s -> map (/ s) r) {0} {1}	each row of an array of rows divided by its scalar
+M0068	4	core	function	i32,f32	S:tuples	pair@{S.tag}	{S}	{S.a};{S.b}					({0}, {1})	a pair of a {S.a} and a {S.b}
+M0069	4	core	function	i32,f32	S:tuples	fst.{S.tag}@{S.a}	{S.a}	{S}					{0}.0	the first of a {S}
+M0070	4	core	function	i32,f32	S:tuples	snd.{S.tag}@{S.b}	{S.b}	{S}					{0}.1	the second of a {S}
+M0071	4	core	terminal	i32,f32	S:tuples	zero@{S.tag}	{S}						{S.zero}	the pair of the components' zeros
+M0072	4	core	function	i32,f32	S:tuples	psel{E.tag}@{S.tag}	{S}	{E};{S};{S}					if {0} < 0{E} then {1} else {2}	the first pair when a value is negative, else the second
+M0073	4	core	function	i32,f32	S:tuples	loop@{S.tag}	{S}	size;{S};{S}		env.trips < depth -> subst	2:{S.a}; 2:{S.b}; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}): {1.type}) = {1} for {2.v2} < {0} do {2}	a loop of a size's trips carrying a pair, destructured, its counter an index below the size
+M0074	4	core	function	i32,f32	S:tuples	loop1@{S.tag}	{S}	size;{S};{S}		env.trips < depth -> subst	2:{S.a}; 2:{S.b}; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}): {1.type}) = {1} for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in {2}	a loop over 1 .. size - 1 carrying a pair, destructured, its counter an index below the size
+M0075	4	core	function	f32		cvt.i32@{E}	{E}	i32					{E}.i32 {0}	an i32 as an {E} (exact below 2^24, else rounded to nearest)
+M0076	4	core	function	i32		cvt.f32@{E}	{E}	f32					let x = {0} in if f32.isnan x then 0{E} else {E}.f32 (f32.max (-2147483648f32) (f32.min 2147483520f32 x))	an f32 as an {E}, truncated toward zero: a NaN is 0, and the value is clamped into {E}'s range first (Futhark leaves the conversion undefined there)
+M0077	5	core	function	i32,f32	S:tuples3	triple@{S.tag}	{S}	{S.a};{S.b};{S.c}					({0}, {1}, {2})	a triple of a {S.a}, a {S.b} and a {S.c}
+M0078	5	core	function	i32,f32	S:tuples3	fst.{S.tag}@{S.a}	{S.a}	{S}					{0}.0	the first of a {S}
+M0079	5	core	function	i32,f32	S:tuples3	snd.{S.tag}@{S.b}	{S.b}	{S}					{0}.1	the second of a {S}
+M0080	5	core	function	i32,f32	S:tuples3	thd.{S.tag}@{S.c}	{S.c}	{S}					{0}.2	the third of a {S}
+M0081	5	core	terminal	i32,f32	S:tuples3	zero@{S.tag}	{S}						{S.zero}	the triple of the components' zeros
+M0082	5	core	function	i32,f32	S:tuples3	psel{E.tag}@{S.tag}	{S}	{E};{S};{S}					if {0} < 0{E} then {1} else {2}	the first triple when a value is negative, else the second
+M0083	5	core	function	i32,f32	S:tuples3	loop@{S.tag}	{S}	size;{S};{S}		env.trips < depth -> subst	2:{S.a}; 2:{S.b}; 2:{S.c}; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for {2.v3} < {0} do {2}	a loop of a size's trips carrying a triple, destructured, its counter an index below the size
+M0084	5	core	function	i32,f32	S:tuples3	loop1@{S.tag}	{S}	size;{S};{S}		env.trips < depth -> subst	2:{S.a}; 2:{S.b}; 2:{S.c}; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in {2}	a loop over 1 .. size - 1 carrying a triple, destructured, its counter an index below the size
+M0085	5	core	function	*	S:lets;Y:all	let.{S.tag}@{Y.tag}	{Y}	{S};{Y}	len=in1.len; rows=in1.rows; cols=in1.cols; bound=in1.bound		1:{S} len=in0.len & rows=in0.rows & cols=in0.cols		let {1.v0} = {0} in {1}	the kernel boundary: an array computed once and named, read anywhere in the body (the next kernel); legal anywhere, with no trip
+M0087	1	core	var	*	T:vars	var@{T.tag}	{T}						{v}	a variable of {T} in scope, chosen by its index word; {T}'s constant when none is in scope (replaces M0017, M0023, M0037, M0038, M0042, M0053, M0067, M0086; the zero arrays of M0039 are root variables of the environment)

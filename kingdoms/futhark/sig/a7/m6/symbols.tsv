@@ -1,0 +1,14 @@
+id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
+0	M0043	map_rows@m.f32	function	[][]f32	[]f32 -> []f32;[][]f32	rows=in1.rows; cols=in1.cols				map {0} {1}
+1	M0044	map2_rows@m.f32	function	[][]f32	[]f32 -> []f32 -> []f32;[][]f32;[][]f32	rows=min(in1.rows, in2.rows); cols=min(in1.cols, in2.cols)	in2.rows = in1.rows -> fit.pair; in2.cols = in1.cols -> fit.inner			map2 {0} {1} {2}
+2	M0045	transpose@m.f32	function	[][]f32	[][]f32	rows=in0.cols; cols=in0.rows				transpose {0}
+3	M0046	matmul@m.f32	function	[][]f32	[][]f32;[][]f32	rows=in0.rows; cols=in1.cols	in1.rows = in0.cols -> fit.inner			matmul {0} {1}
+4	M0047	id@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> xs
+5	M0048	add1@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> map (+1.0) xs
+6	M0049	scale2@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> map (*2.0) xs
+7	M0050	id@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs _ys -> xs
+8	M0051	add1@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs _ys -> map (+1.0) xs
+9	M0052	add@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs ys -> map2 (+) xs ys
+10	M0054	const@fn.arr_f32_arr_f32	terminal	[]f32 -> []f32						\xs -> map (\_ -> 0.0) xs
+11	M0055	const@fn.arr2_f32_arr_f32_arr_f32	terminal	[]f32 -> []f32 -> []f32						\xs _ys -> map (\_ -> 0.0) xs
+12	M0087	var@m.f32	var	[][]f32						{v}

@@ -36,7 +36,11 @@ inferred (an anonymous result such as histogram's `: []i32` prints as
 It writes the specification `view.tsv` (the WHERE clause of the view, see
 `src/futhark_view.rs`), replacing the hand-written `interface.tsv`.
 
-    python3 kingdoms/futhark/sniff.py <source.fut> [--entry main] [--depth N] [--master N] [--elements E,..] [--lets CLASS,..] [--out view.tsv]
+Master 6 (`--format 6`, `sniff6`, master/README.md section 8) writes the specification of a master 6 view: the
+root environment in its order (inputs, zero arrays, sizes), `lets` as data types, `--families` to admit only those
+(A7's matrix view), `--depth none` for a view with no work bound.
+
+    python3 kingdoms/futhark/sniff.py <source.fut> [--format 6] [--entry main] [--depth N|none] [--master N] [--elements E,..] [--lets CLASS,..] [--families F,..] [--out view.tsv]
 """
 
 import os
@@ -116,14 +120,10 @@ def split_params(text):
     return sizes, params
 
 
-def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=()):
-    """The view specification of a problem, as text; `master` pins the view to a master version (the current one
-    when None); `elements` are added to the ones the signature names; `lets` are the kernel boundaries' classes."""
-    check_compiler()
-    if master is None:
-        master = view.master()["version"]
-    elif not 1 <= master <= view.master()["version"]:
-        raise ValueError(f"the master version {master} is not one of 1 .. {view.master()['version']}")
+def read_signature(path, entry, elements, pools):
+    """The entry's signature, read from the type-checked program: (elements, typed parameters, the size inputs, the
+    result's element, the result's dimensions as (name, is a size input), the dimensions in order of first
+    appearance). `pools` are the master's literal pools (an element without one is stopped)."""
     for e in elements:
         if e not in ELEMENTS:
             raise ValueError(f"--elements names {e!r}, which is not a Futhark primitive type")
@@ -164,11 +164,31 @@ def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), let
     if any(e not in ELEMENTS for e in elems):
         raise ValueError(f"the problem has the element types {elems}: not all are primitive types")
     for e in elems:
-        if e not in view.master()["pools"]:
+        if e not in pools:
             raise ValueError(f"the master has no literal pool for the element {e} (its rows have no {e} yet)")
     for d in set(sizes) | {n for n, _, _ in typed if n in size_inputs}:
         if d in ELEMENTS:
             raise ValueError(f"the dimension {d} is named as an element type: the class text would read two ways")
+    dims_seen = []
+    for n, dims, e in typed:
+        if n in size_inputs:
+            dims_seen.append(n)
+            continue
+        for d in dims:
+            if dim(d)[0] not in dims_seen:
+                dims_seen.append(dim(d)[0])
+    return elems, typed, size_inputs, out_elem, out_dims, dims_seen, dim
+
+
+def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=()):
+    """The view specification of a problem, as text; `master` pins the view to a master version (the current one
+    when None); `elements` are added to the ones the signature names; `lets` are the kernel boundaries' classes."""
+    check_compiler()
+    if master is None:
+        master = view.master()["version"]
+    elif not 1 <= master <= view.master()["version"]:
+        raise ValueError(f"the master version {master} is not one of 1 .. {view.master()['version']}")
+    elems, typed, size_inputs, out_elem, out_dims, _, dim = read_signature(path, entry, elements, view.master()["pools"])
     lines = ["# kind\tname\telement\tdims",
              f"# written by kingdoms/futhark/sniff.py from {os.path.relpath(os.path.abspath(path), REPO)}, entry {entry}",
              f"master\t{master}\t\t",
@@ -199,17 +219,86 @@ def sniff(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), let
     return "\n".join(lines) + "\n"
 
 
+# Names the adapters of master 6 reserve (master/README.md 5.5): an entry parameter may not take one.
+RESERVED_FUNCTIONS = ("fit", "clampix")
+RESERVED_PREFIX = "ad_"
+
+
+def sniff6(path, entry="main", depth=DEFAULT_DEPTH, master=None, elements=(), lets=(), families=()):
+    """The MASTER 6 view specification of a problem, as text (master/README.md section 8; plan section 7, F1a).
+
+    The lines, in order: `format 6`; `master`, the row-version pin (the master 6 rows keep master 5's versions, so a
+    pin means what it meant); `element`; `families` when the view admits only those (A7's matrix family); the ROOT
+    ENVIRONMENT in its order, which is the input of the decoder's one environment function: the `input` lines in
+    signature order (a size input is a size, not an input), then a `zeros` line for each element and each size (the
+    zero array `zeros_<size>`, `zeros_<element>_<size>` in a view of several elements, bound once by the entry), then
+    the `size` lines in order of first appearance (the element column is `i32` for a size given as an `i32` value);
+    `output`; `depth` (none: no work bound, A7); `lets`, data types; `literals`, one element's pool a line.
+    `depth` None writes no depth line."""
+    check_compiler()
+    m6 = view.master6()
+    if master is None:
+        master = m6["version"]
+    elif not 1 <= master <= m6["version"]:
+        raise ValueError(f"the master version {master} is not one of 1 .. {m6['version']}")
+    elems, typed, size_inputs, out_elem, out_dims, dims_seen, dim = read_signature(path, entry, elements, m6["pools"])
+    names = [n for n, _, _ in typed]
+    for n in names + [entry]:
+        if n in RESERVED_FUNCTIONS or n.startswith(RESERVED_PREFIX):
+            raise ValueError(f"our software has a bug: the entry {entry} names {n}, a name master 6's adapters reserve")
+    zeros = [(f"zeros_{d}" if len(elems) == 1 else f"zeros_{e}_{d}", e, d) for e in elems for d in dims_seen]
+    for z, _, _ in zeros:
+        if z in names or z in dims_seen:
+            raise ValueError(f"our software has a bug: the entry {entry} names {z}, the name of a zero array")
+    lines = ["# kind\tname\telement\tdims",
+             f"# written by kingdoms/futhark/sniff.py --format 6 from {os.path.relpath(os.path.abspath(path), REPO)}, entry {entry}",
+             "format\t6\t\t",
+             f"master\t{master}\t\t",
+             f"element\t{','.join(elems)}\t\t"]
+    for f in families:
+        if f not in {r["family"] for r in m6["rows"]}:
+            raise ValueError(f"--families names {f!r}, which is not a family of master 6")
+    if families:
+        lines.append(f"families\t{','.join(families)}\t\t")
+    for n, dims, e in typed:
+        if n not in size_inputs:
+            lines.append(f"input\t{n}\t{e}\t{','.join(dim(d)[0] for d in dims)}")
+    lines.append(f"output\t{entry}\t{out_elem}\t{','.join(n for n, _ in out_dims)}")
+    for z, e, d in zeros:
+        lines.append(f"zeros\t{z}\t{e}\t{d}")
+    for d in dims_seen:
+        lines.append(f"size\t{d}\t{'i32' if d in size_inputs else ''}\t")
+    if depth is not None:
+        lines.append(f"depth\t{depth}\t\t")
+    if lets:
+        for c in lets:
+            m = re.fullmatch(r"((?:\[\])+)([a-z][a-z0-9]*)", c)
+            if not m or m.group(2) not in elems or len(m.group(1)) > 4:
+                raise ValueError(f"--lets names {c!r}, which is not an array data type of rank 1 or 2 of the view's elements")
+        lines.append(f"lets\t{','.join(lets)}\t\t")
+    for e in elems:
+        lines.append(f"literals\t{','.join(m6['pools'][e])}\t{e if len(elems) > 1 else ''}\t")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv):
     args = argv[1:]
     if not args or args[0].startswith("-"):
         print(__doc__.strip().splitlines()[-1])
         return 2
     entry = args[args.index("--entry") + 1] if "--entry" in args else "main"
-    depth = int(args[args.index("--depth") + 1]) if "--depth" in args else DEFAULT_DEPTH
+    depth_text = args[args.index("--depth") + 1] if "--depth" in args else str(DEFAULT_DEPTH)
+    depth = DEFAULT_DEPTH if depth_text == "none" else int(depth_text)
     master = int(args[args.index("--master") + 1]) if "--master" in args else None
     elements = [e for e in args[args.index("--elements") + 1].split(",") if e] if "--elements" in args else []
     lets = [c for c in args[args.index("--lets") + 1].split(",") if c] if "--lets" in args else []
-    text = sniff(args[0], entry, depth, master, elements, lets)
+    if "--format" in args and args[args.index("--format") + 1] == "6":
+        families = [f for f in args[args.index("--families") + 1].split(",") if f] if "--families" in args else []
+        if "--depth" in args and args[args.index("--depth") + 1] == "none":
+            depth = None
+        text = sniff6(args[0], entry, depth, master, elements, lets, families)
+    else:
+        text = sniff(args[0], entry, depth, master, elements, lets)
     if "--out" in args:
         with open(args[args.index("--out") + 1], "w") as f:
             f.write(text)

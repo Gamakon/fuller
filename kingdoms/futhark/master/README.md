@@ -10,9 +10,10 @@ rendered program carries an **adapter**.
 **Approach.** Master 6 keeps master 5's shape: one wide row a template in `rows.tsv`, instantiated by the view. The
 size and scope columns are dropped, and four columns are added: `rules`, `requires`, `binds`, `trip`.
 
-**Status (2026-11-05).** Plan section 7, task F0: this document is the format. No master 6 file exists yet. F1a writes
-them, under `kingdoms/futhark/master/6/`, beside master 5, which stays as it is and loadable until task D1. At D1,
-master 5's files are deleted and `6/`'s files move up into `master/`.
+**Status (2026-11-05).** Plan section 7, task F0: this document is the format. Task F1a wrote the files, under
+`kingdoms/futhark/master/6/`, beside master 5, which stays as it is and loadable until task D1; the views are under
+`kingdoms/futhark/sig/<problem>/m6/` (section 9). At D1, master 5's files are deleted and `6/`'s files move up into
+`master/`.
 
 **Why.** Folding sizes and scope into the type made the k-means view 14,359 types and a gene of 27.6 million words,
 and kept the `i32` + `f32` view from loading at all (plan section 7, "Why").
@@ -166,8 +167,9 @@ Every heavy row carries the requirement `env.trips < depth -> subst`. The heavy 
 
 - `depth` is the view specification's `depth`. The view replaces it with its literal, so the k-means view's rows read
   `env.trips < 3`.
-- A view with no `depth` line (A7) drops the requirement. The matrix family, as in master 5, has no binder, so its
-  trips is always 0 and it carries none.
+- A view with no `depth` line (A7) drops the requirement. The matrix family has no binder, but in a signature view
+  (k-means) its traversals `map_rows`, `map2_rows` and `matmul` sit under the core binders, so they carry it too
+  (section 9).
 - **`env.trips` is a requirement subject that is not an input's property.** G3 extends `Requirement`'s subject to be
   either `in<k>.<property>` or `env.trips`. G3 also reads the `trip` column as an attribute of the binding argument.
 - The substitution adapter `subst` renders the failing node as its first input of its own data type when it has one
@@ -444,3 +446,26 @@ A literal of `{E}`'s pool (`pools.tsv`), drawn from Dc as in master 5. It has no
   - then the sizes.
 
   Its order is G3's one public function; this list is its input.
+
+## 9. What F1a added where the format was silent
+
+- **The written view** (`view.py`, `View6`; `src/futhark_view.rs` must write the same bytes, task F1b) is three files
+  under `sig/<problem>/m6/`, beside the specification `view.tsv` that `sniff.py --format 6` writes:
+  - `datatypes.tsv`: `id`, `name`, `kind`, `members`, `tag`, `constant`, `constant_props`, `properties`
+    (`len:size;...`);
+  - `symbols.tsv`: `id`, `ref`, `name`, `kind`, `out`, `args`, `rules`, `requires`, `binds`, `trip`, `spelling`, with
+    the quantifiers and `depth` substituted and the dropped items gone;
+  - `environment.tsv`: `kind`, `name`, `data_type`, `properties`, `requires`: the root (its requirements `out.<p> =
+    <size> -> fit.root`), then the root variables in order, those of a data type the view has a `var` row for.
+  `gen_tables.py --check` compares all four with what the sniffer and `view.py` write, then runs the witnesses N0-N19
+  (the master) and V1-V7 (each view, from its text).
+- **The specification** has `format 6`, keeps `master` as the row-version pin (the rows keep master 5's versions),
+  writes the root environment as `input`, `zeros` and `size` lines in that order, and may have `families` (A7: the
+  matrix family alone, with no `depth` line).
+- **The `var` row is admitted in every view**, whatever its `families`.
+- **The matrix family's traversals are heavy** (`map_rows`, `map2_rows`, `matmul`): in a signature view they sit under
+  the core binders (k-means admits the matrix family), so they carry the work bound; `transpose` and `row` do not.
+- **`let`'s name is `let.{S.tag}@{Y.tag}`**, so a view of two `lets` data types has unique names.
+- **A size operand may appear any number of times in a spelling** (it renders as a name; the f32 `clamp` and `hist`
+  read it twice), and `tabrows` does not spell its `cols` size at all (only its rule and its `fit.body` read it). Every
+  other operand appears once.

@@ -39,6 +39,12 @@ loads.
 The views (A7's and the signature problems') are computed by the one view
 implementation, in Rust (`src/futhark_view.rs`); `--views DIR` is where it
 wrote them.
+
+Master 6 (`master/6/`, plan section 7, task F1a) is checked after them by
+`master6_main`: its witnesses, and each problem's master 6 view, whose
+specification the sniffer writes (`sniff.py --format 6`) and whose tables
+`view.py` writes (`View6`), committed under `sig/<problem>/m6/` and compared
+byte for byte (`--write` regenerates them with the rest).
 """
 
 import itertools
@@ -2430,6 +2436,629 @@ def witness_rules(mst):
     return bad
 
 
+# --------------------------------------------------------------------------
+# MASTER 6 (`master/6/`, the format in `master/README.md`; plan section 7, task F1a). A type is a data type; lengths
+# and bounds are properties; scope is the environment; a failing requirement renders an adapter. Master 5 above stays
+# as it is and loadable until task D1.
+#
+# The witnesses below read `master/6/` and each view's WRITTEN text, apart from the expansion in `view.py`, and check
+# them against models restated here: every data type but `size` has a constant; every requirement names an adapter
+# that repairs its relation; every rule, requirement and binding names properties that exist; no row returns `size`;
+# the work bound (master 5's witness M5, carried into the new columns, its `top` clause rewritten); the binders and
+# their bindings; the index templates; every master 5 row converted or replaced.
+# --------------------------------------------------------------------------
+
+# THE MASTER 6 PROBLEMS: (source, entry, depth or None, master version pin, elements added, lets, families). Every
+# view's specification is written by `sniff.py --format 6` from the problem's Futhark source, and its tables by
+# `view.py`; both are committed under `sig/<problem>/m6/` and checked byte for byte. The pins are master 5's (the rows
+# keep their versions). A7 is the matrix family alone, as in master 5, with no work bound (no `depth` line).
+SIG6_PROBLEMS = {
+    "a7": ("tests/corpus/futhark_problems/a7/yardstick.fut", "main", None, 1, (), (), ("matrix",)),
+    "histogram": ("tests/corpus/futhark_problems/histogram/yardstick.fut", "main", 2, 2, (), (), ()),
+    "kmeans": ("tests/corpus/futhark_problems/kmeans/yardstick.fut", "main", 3, 5, (), ("[]f32",), ()),
+    "pathfinder": ("tests/corpus/futhark_problems/pathfinder/yardstick.fut", "main", 2, 2, (), (), ()),
+    "reduce": ("tests/corpus/futhark_problems/reduce/yardstick.fut", "main", 2, 2, (), (), ()),
+    "scan": ("tests/corpus/futhark_problems/scan/yardstick.fut", "main", 2, 2, (), (), ()),
+}
+SIG6_FILES = ("datatypes.tsv", "symbols.tsv", "environment.tsv")
+
+# The models, restated apart from the master.
+# The heavy rows (S6's list, master 5's HEAVY_OPS) plus the matrix family's traversals, which in a signature view sit
+# under the core binders (k-means admits the matrix family); `transpose` and `row` are not heavy.
+HEAVY6_OPS = HEAVY_OPS | {"map_rows", "map2_rows", "matmul"}
+WORK_BOUND6 = "env.trips < depth -> subst"
+# The property kinds (G1's PropertyKind) and which compare (master/README.md 5.2): subject kind -> (other side's kinds
+# allowed, relations allowed). A literal has no kind and compares with any.
+PROPERTY_KINDS6 = {"size", "bound", "range", "flag"}
+COMPARABLE6 = {"size": ({"size", "bound"}, {"=", "<="}), "bound": ({"size", "bound"}, {"<="}),
+               "range": ({"range"}, {"="}), "flag": ({"flag"}, {"="})}
+# Each adapter, the relation it repairs and where it runs (README 5.5).
+ADAPTERS6 = {"clampix": ("<=", "node", "no"), "fit": ("=", "node", "yes"), "fit.pair": ("=", "node", "yes"),
+             "fit.state": ("=", "body", "yes"), "fit.body": ("=", "body", "yes"), "fit.inner": ("=", "node", "yes"),
+             "fit.root": ("=", "root", "yes"), "subst": ("<", "node", "no")}
+RESERVED_LETS6 = {"ad_a", "ad_b", "ad_l", "ad_m", "ad_s"}
+# The data type templates and their properties (README 2 and 3).
+DATATYPES6 = {"{E}": ("scalar", "", "E", "{E}", "0{E}", ""), "i64": ("scalar", "", "", "i64", "0i64", "bound=1"),
+              "size": ("scalar", "", "", "size", "", ""), "[]{E}": ("array", "{E}", "E", "a.{E}", "[0{E}]", "len=1"),
+              "[][]{E}": ("array", "[]{E}", "E", "m.{E}", "[[0{E}]]", "rows=1 & cols=1"),
+              "({A}, {B})": ("tuple", "{A};{B}", "A,B:elements", "{A}.{B}", "(0{A}, 0{B})", ""),
+              "({A}, {B}, {C})": ("tuple", "{A};{B};{C}", "A,B,C:elements", "{A}.{B}.{C}", "(0{A}, 0{B}, 0{C})", ""),
+              "[]f32 -> []f32": ("function", "[]f32 -> []f32", "", "fn.arr_f32_arr_f32", "\\xs -> map (\\_ -> 0.0) xs", ""),
+              "[]f32 -> []f32 -> []f32": ("function", "[]f32;[]f32 -> []f32", "", "fn.arr2_f32_arr_f32_arr_f32",
+                                          "\\xs _ys -> map (\\_ -> 0.0) xs", "")}
+PROPERTIES6 = {("[]{E}", "len"): "size", ("[][]{E}", "rows"): "size", ("[][]{E}", "cols"): "size",
+               ("i64", "bound"): "bound", ("size", "value"): "size"}
+# The binders restated: op -> (over, args, binds, trip, spelling).
+BINDERS6 = {
+    ("tab", ""): ("size;{E}", "1:i64 bound=in0.value", "1", "tabulate {0} (\\{1.v0} -> {1})"),
+    ("tabrows", ""): ("size;size;[]{E}", "2:i64 bound=in0.value", "2", "tabulate {0} (\\{2.v0} -> {2})"),
+    ("loop", "S:states"): ("size;{S};{S}", "2:{S} len=in1.len; 2:i64 bound=in0.value", "2",
+                           "loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}"),
+    ("loop1", "S:states"): ("size;{S};{S}", "2:{S} len=in1.len; 2:i64 bound=in0.value", "2",
+                            "loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}"),
+    ("loop", "S:tuples"): ("size;{S};{S}", "2:{S.a}; 2:{S.b}; 2:i64 bound=in0.value", "2",
+                           "loop (({2.v0}, {2.v1}): {1.type}) = {1} for {2.v2} < {0} do {2}"),
+    ("loop1", "S:tuples"): ("size;{S};{S}", "2:{S.a}; 2:{S.b}; 2:i64 bound=in0.value", "2",
+                            "loop (({2.v0}, {2.v1}): {1.type}) = {1} for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in {2}"),
+    ("loop", "S:tuples3"): ("size;{S};{S}", "2:{S.a}; 2:{S.b}; 2:{S.c}; 2:i64 bound=in0.value", "2",
+                            "loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for {2.v3} < {0} do {2}"),
+    ("loop1", "S:tuples3"): ("size;{S};{S}", "2:{S.a}; 2:{S.b}; 2:{S.c}; 2:i64 bound=in0.value", "2",
+                             "loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in {2}"),
+    # The kernel boundary: a `let` binds its argument 1 with no trip and no work bound, anywhere (the `top` condition
+    # of master 5 is dropped, plan 7.1 choice 2).
+    ("let", "S:lets;Y:all"): ("{S};{Y}", "1:{S} len=in0.len & rows=in0.rows & cols=in0.cols", "", "let {1.v0} = {0} in {1}"),
+}
+# The index rows restated (README 6): (op, args, rules, spelling); every row returning `i64` but `var` is one.
+INDEX6 = {
+    ("prev", "i64", "bound=in0.bound", SIG_IX_PREV),
+    ("next", "i64", "bound=in0.bound", "i64.min ({0.bound} - 1) ({0} + 1)"),
+    ("clamp", "size;{E}", "bound=in0.value", "i64.max 0 (i64.min ({0} - 1) (i64.{E} {1}))"),
+    ("clamp", "size;{E}", "bound=in0.value", SIG_IX_CLAMP_F32.replace("{0}", "{1}").replace("{D}", "{0}")),
+    ("zero", "", "bound=1", "0i64"),
+    ("last", "size", "bound=in0.value", "{0} - 1"),
+}
+ROW6_KINDS = {"function", "terminal", "const", "var"}
+OVER6_SETS = {"states": ["", ".tag"], "tuples": ["", ".tag", ".a", ".b", ".zero"],
+              "tuples3": ["", ".tag", ".a", ".b", ".c", ".zero"], "lets": ["", ".tag"], "all": ["", ".tag"],
+              "vars": ["", ".tag"]}
+OPERAND6_RE = re.compile(r"\{(\d+)(?:\.([a-z][a-z0-9_]*))?\}")
+
+
+def _expr6_terms(expr):
+    """The `in<k>.<p>` terms of a property expression."""
+    return [(int(k), p) for k, p in master_view.PROPERTY_TERM_RE.findall(expr)]
+
+
+def _expr6_shape(expr):
+    """Whether a template's property expression is one of master 6's (README 3): `in<k>.<p>`, a literal, `depth`, or a
+    `min` of those -- never `?` and never a sum."""
+    e = expr.strip()
+    if e.startswith("min(") and e.endswith(")"):
+        parts = [p.strip() for p in e[4:-1].split(",")]
+        return len(parts) >= 2 and all(_expr6_shape(p) for p in parts)
+    return bool(re.fullmatch(r"in\d+\.[a-z_][a-z0-9_]*|-?\d+|depth", e))
+
+
+def _template_props(t):
+    """The properties a row's output template carries (`[]{E}`, `[][]f32`: an element written out is `{E}`)."""
+    t = re.sub(r"\b(i32|f32)\b", "{E}", t)
+    return {p for (dt, p) in PROPERTIES6 if dt == t}
+
+
+def witness_master6(mst=None):
+    """Check master 6 itself. Returns the failures (empty = pass)."""
+    bad = []
+    mst = mst or master_view.master6()
+    m5 = master_view.master()
+    if mst["version"] != 6:
+        bad.append(f"N0 master 6's VERSION is {mst['version']}")
+    # N1: the data types are the restated templates; every one but `size` has a constant (F1a witness).
+    seen = []
+    for t in mst["datatypes"]:
+        want = DATATYPES6.get(t["name"])
+        got = (t["kind"], t["members"], t["over"], t["tag"], t["constant"], t["constant_props"])
+        if want != got:
+            bad.append(f"N1 the data type {t['name']} is {got}, the model says {want}")
+        if (t["name"] == "size") != (t["constant"] == ""):
+            bad.append(f"N1 the data type {t['name']} {'has' if t['constant'] else 'has no'} constant (every data type but size has one)")
+        for pe in [x.strip() for x in t["constant_props"].split("&") if x.strip()]:
+            if (t["name"], pe.partition("=")[0]) not in PROPERTIES6:
+                bad.append(f"N1 the constant of {t['name']} sets {pe}, a property {t['name']} does not carry")
+        seen.append(t["name"])
+    if sorted(seen) != sorted(DATATYPES6):
+        bad.append(f"N1 the data types are {seen}, the model has {sorted(DATATYPES6)}")
+    # N2: the properties are the model's, of the kinds G1 has.
+    got = {(p["data_type"], p["name"]): p["kind"] for p in mst["properties"]}
+    if got != PROPERTIES6 or len(mst["properties"]) != len(PROPERTIES6):
+        bad.append(f"N2 the properties are {got}, the model has {PROPERTIES6}")
+    # N3: the adapters are the model's, and their renderings bind only the reserved names.
+    got = {a["name"]: (a["runs_at"], a["heavy"]) for a in mst["adapters"]}
+    if got != {n: (w, h) for n, (_, w, h) in ADAPTERS6.items()}:
+        bad.append(f"N3 the adapters are {got}, the model has {sorted(ADAPTERS6)}")
+    for a in mst["adapters"]:
+        for name in re.findall(r"\blet (\w+)", a["rendering"]):
+            if name not in RESERVED_LETS6:
+                bad.append(f"N3 the adapter {a['name']} binds {name}, which is not one of the reserved names {sorted(RESERVED_LETS6)}")
+    # N4: the pools and the rules are master 5's, in format (README 1); no element is `size` (no size literals).
+    if mst["pools"] != m5["pools"] or "size" in mst["pools"]:
+        bad.append("N4 master 6's pools are not master 5's, or hold a size literal")
+    bad += witness_rules(mst)
+    all_props = {p for (_, p) in PROPERTIES6}
+    refs, replaced = set(), set()
+    m5_by_ref = {r["ref"]: r for r in m5["rows"]}
+    names = {}
+    for r in mst["rows"]:
+        ref = r["ref"]
+        # N5: a reference is unique and well formed; the version is master 5's for a converted row; the kind is known.
+        if not re.fullmatch(r"M\d{4}", ref) or ref in refs:
+            bad.append(f"N5 the reference {ref} is malformed or repeated")
+        refs.add(ref)
+        if r["kind"] not in ROW6_KINDS:
+            bad.append(f"N5 the row {ref} has the kind {r['kind']}")
+        old = m5_by_ref.get(ref)
+        if old is not None and (old["since"], old["family"]) != (r["since"], r["family"]):
+            bad.append(f"N5 the converted row {ref} changed its version or family ({old['since']}, {old['family']}) -> ({r['since']}, {r['family']})")
+        if old is not None and old["elems"] != r["elems"]:
+            bad.append(f"N5 the converted row {ref} changed its elements {old['elems']} -> {r['elems']}")
+        if old is None and int(ref[1:]) < 87:
+            bad.append(f"N5 the new row {ref} takes a reference master 5 had (a new row takes one from M0087 on)")
+        if r["kind"] == "var":
+            replaced |= set(re.findall(r"M\d{4}", r["note"]))
+        if not r["since"].isdigit() or not 1 <= int(r["since"]) <= mst["version"]:
+            bad.append(f"N5 the row {ref} has the version {r['since']}")
+        # N6: every variable is bound: `{E}` and `{E.tag}` by the elements (a row of `*` has none), a quantifier's by
+        # its `over`.
+        bound = set() if r["elems"] == "*" else {"E", "E.tag"}
+        for q in [q for q in r["over"].split(";") if q]:
+            var, _, kind = q.partition(":")
+            if kind not in OVER6_SETS:
+                bad.append(f"N6 the row {ref} has the quantifier {q!r}, which master 6 does not define")
+                continue
+            bound |= {var + s for s in OVER6_SETS[kind]}
+        for col in master_view.ROW6_TEMPLATED:
+            for v in master_view.VAR_RE.findall(r[col]):
+                if v not in bound:
+                    bad.append(f"N6 the {col} of {ref} reads {{{v}}}, which nothing binds")
+        # N7: no row returns `size` (a size is only chosen, by var@size); `size` arguments come first.
+        args = [a for a in r["args"].split(";") if a]
+        if r["out"] == "size":
+            bad.append(f"N7 the row {ref} ({r['name']}) returns size")
+        sizes = [i for i, a in enumerate(args) if a == "size"]
+        if sizes != list(range(len(sizes))):
+            bad.append(f"N7 the row {ref}'s size arguments are not first: {args}")
+        # N8: the name is `<op>@<the output's tag>`, unique among the master's (by its template text and quantifiers).
+        op, at, tag = r["name"].partition("@")
+        if not at or not op:
+            bad.append(f"N8 the row {ref}'s name {r['name']} is not <op>@<tag>")
+        key = (r["name"], r["over"], r["elems"])
+        if key in names and names[key] != ref:
+            bad.append(f"N8 the rows {names[key]} and {ref} have one name {r['name']}")
+        names[key] = ref
+        # N9: placeholders: a function's spelling holds each non-size operand once and a size operand any number of
+        # times (a size renders as a name); `{k.<p>}` names a property of operand k's data type; a leaf has no
+        # arguments and no operand placeholder; `{v}` is the var row's alone.
+        held = OPERAND6_RE.findall(r["spelling"])
+        plain = [int(k) for k, p in held if not p]
+        if r["kind"] == "function":
+            for i, a in enumerate(args):
+                if a != "size" and plain.count(i) != 1:
+                    bad.append(f"N9 the row {ref}'s spelling holds operand {i} {plain.count(i)} times: {r['spelling']!r}")
+            if any(int(k) >= len(args) for k, _ in held):
+                bad.append(f"N9 the row {ref}'s spelling reads an operand it does not have: {r['spelling']!r}")
+        elif held or args:
+            bad.append(f"N9 the leaf {ref} has arguments or operand placeholders")
+        if ("{v}" in r["spelling"]) != (r["kind"] == "var"):
+            bad.append(f"N9 the row {ref} holds {{v}} without being the var row, or the var row does not")
+        for k, p in held:
+            if p and p not in ("type",) and not re.fullmatch(r"v\d+", p) and p not in all_props:
+                bad.append(f"N9 the row {ref}'s spelling reads {{{k}.{p}}}, a property master 6 does not have")
+            if p and re.fullmatch(r"v\d+", p):
+                nbinds = sum(1 for b in [b.strip() for b in r["binds"].split(";") if b.strip()] if b.split(":")[0] == k)
+                if int(p[1:]) >= nbinds:
+                    bad.append(f"N9 the row {ref}'s spelling reads {{{k}.{p}}}, but argument {k} binds {nbinds}")
+        for w in ("fit", "clampix"):
+            if re.search(rf"\b{w}\b", r["spelling"]) or "ad_" in r["spelling"]:
+                bad.append(f"N9 the row {ref}'s spelling uses a name the adapters reserve: {r['spelling']!r}")
+        # N10: every rule, requirement and binding names properties master 6 has, in master 6's expressions; a rule's
+        # property is one the output's template may carry.
+        out_props = _template_props(r["out"]) if not r["out"].startswith("{") or r["out"] in ("{E}",) else None
+        for rule in [x.strip() for x in r["rules"].split(";") if x.strip()]:
+            prop, eq, expr = rule.partition("=")
+            if not eq or prop not in all_props or not _expr6_shape(expr) or any(p not in all_props for _, p in _expr6_terms(expr)):
+                bad.append(f"N10 the row {ref}'s rule {rule!r} names a property master 6 does not have, or is not a master 6 expression")
+            if out_props is not None and prop not in out_props:
+                bad.append(f"N10 the row {ref}'s rule {rule!r} sets a property {r['out']} never carries")
+            if any(k >= len(args) for k, _ in _expr6_terms(expr)):
+                bad.append(f"N10 the row {ref}'s rule {rule!r} reads an input it does not have")
+        requires = [x.strip() for x in r["requires"].split(";") if x.strip()]
+        for q in requires:
+            m = master_view.REQUIRE6_RE.match(q)
+            if not m:
+                bad.append(f"N11 the row {ref}'s requirement {q!r} does not parse")
+                continue
+            subject, rel, expr, adapter = m.groups()
+            # N11: every requirement has an adapter, one that repairs its relation.
+            if adapter not in ADAPTERS6:
+                bad.append(f"N11 the row {ref}'s requirement {q!r} names the adapter {adapter}, which adapters.tsv does not have")
+            elif ADAPTERS6[adapter][0] != rel:
+                bad.append(f"N11 the row {ref}'s requirement {q!r}: {adapter} repairs {ADAPTERS6[adapter][0]}, not {rel}")
+            if subject == "env.trips":
+                if q != WORK_BOUND6:
+                    bad.append(f"N11 the row {ref}'s work bound is {q!r}, not {WORK_BOUND6!r}")
+                continue
+            if subject.startswith("out."):
+                bad.append(f"N11 the row {ref}'s requirement {q!r} is on its output (only the root's is)")
+                continue
+            k, p = int(subject[2:].split(".")[0]), subject.split(".")[1]
+            if k >= len(args) or p not in all_props or not _expr6_shape(expr) or any(t not in all_props for _, t in _expr6_terms(expr)):
+                bad.append(f"N11 the row {ref}'s requirement {q!r} names an input or a property it does not have")
+                continue
+            # N12: the two sides compare (README 5.2).
+            kind_of = {pp: kk for (_, pp), kk in PROPERTIES6.items()}
+            allowed, rels = COMPARABLE6[kind_of[p]]
+            if rel not in rels or any(kind_of[t] not in allowed for _, t in _expr6_terms(expr)):
+                bad.append(f"N12 the row {ref}'s requirement {q!r} compares {kind_of[p]} with {[kind_of[t] for _, t in _expr6_terms(expr)]} by {rel}")
+        # N13 (master 5's M5, carried into the new columns): every heavy row of every family carries the work bound
+        # exactly once, and no other row does; a row with a trip is heavy and its trip argument binds; the `top`
+        # clause rewritten: a `let` binds its argument 1 with no trip and no work bound, legal anywhere; there is no
+        # condition column.
+        bop = op.replace("{E.tag}", "").split(".")[0]
+        wb = requires.count(WORK_BOUND6)
+        if (bop in HEAVY6_OPS) != (wb == 1) or wb > 1:
+            bad.append(f"N13 the row {ref} ({r['name']}) {'is heavy' if bop in HEAVY6_OPS else 'is not heavy'} and carries the work bound {wb} times")
+        if r["trip"] and (bop not in HEAVY6_OPS or not r["trip"].isdigit() or int(r["trip"]) >= len(args)
+                          or not any(b.strip().startswith(r["trip"] + ":") for b in r["binds"].split(";"))):
+            bad.append(f"N13 the row {ref} has the trip {r['trip']!r}, which is not a binding argument of a heavy row")
+        if bop == "let" and (r["trip"] or wb):
+            bad.append(f"N13 the kernel boundary {ref} has a trip or a work bound")
+        # N14: the binders are the restated binders; no other row binds.
+        if r["binds"]:
+            want = BINDERS6.get((bop, r["over"]))
+            got = (r["args"], r["binds"], r["trip"], r["spelling"])
+            if want != got:
+                bad.append(f"N14 the binder {ref} ({r['name']}) is {got}, the model says {want}")
+            for b in [b.strip() for b in r["binds"].split(";") if b.strip()]:
+                mb = master_view.BIND6_RE.match(b)
+                if not mb or int(mb.group(1)) >= len(args):
+                    bad.append(f"N14 the binder {ref}'s binding {b!r} does not name an argument")
+                    continue
+                for pe in [x.strip() for x in (mb.group(3) or "").split("&") if x.strip()]:
+                    p, _, e = pe.partition("=")
+                    if p not in all_props or not _expr6_shape(e):
+                        bad.append(f"N14 the binder {ref}'s binding {b!r} sets {p}, a property master 6 does not have")
+        elif bop in ("tab", "tabrows", "loop", "loop1", "let"):
+            bad.append(f"N14 the binder {ref} binds nothing")
+        # N15: an index row (a function or terminal returning i64) is one of the restated templates.
+        if r["out"] == "i64" and r["kind"] in ("function", "terminal"):
+            if (bop, r["args"], r["rules"], r["spelling"]) not in {(o, a, ru, s) for o, a, ru, s in INDEX6}:
+                bad.append(f"N15 the index row {ref} is not a restated template: {r['args']} {r['rules']} {r['spelling']!r}")
+        # N16: no integer element admits a division or a modulus by a value; `mod` divides by a size (at least 1).
+        elems = INTEGER_ELEMS if r["elems"] == "*" else set(r["elems"].split(","))
+        if elems & INTEGER_ELEMS and (re.search(r"[/] ", r["spelling"])
+                                      or (re.search(r"% ", r["spelling"]) and "% {E}.i64 {0}" not in r["spelling"])):
+            bad.append(f"N16 the row {ref} divides an integer by a value: {r['spelling']!r}")
+    # N17: every master 5 row is converted (its ref kept) or replaced (named by the var row), and no other.
+    missing = set(m5_by_ref) - refs - replaced
+    if missing:
+        bad.append(f"N17 the master 5 rows {sorted(missing)} are neither converted nor replaced")
+    if replaced & refs:
+        bad.append(f"N17 the rows {sorted(replaced & refs)} are both converted and replaced")
+    # N18: the tuple rows and the conversions are the restated templates (master 5's M10, in master 6's names).
+    for r in mst["rows"]:
+        op = r["name"].replace("{E.tag}", "").split("@", 1)[0]
+        want = {"pair": ("{S}", "{S.a};{S.b}", SIG_PAIR), "triple": ("{S}", "{S.a};{S.b};{S.c}", SIG_TRIPLE),
+                "fst.{S.tag}": ("{S.a}", "{S}", SIG_FST), "snd.{S.tag}": ("{S.b}", "{S}", SIG_SND),
+                "thd.{S.tag}": ("{S.c}", "{S}", SIG_THD), "psel": ("{S}", "{E};{S};{S}", SIG_PSEL),
+                "cvt.i32": ("{E}", "i32", SIG_CVT[("f32", "i32")].replace("f32.i32", "{E}.i32")),
+                "cvt.f32": ("{E}", "f32", SIG_CVT[("i32", "f32")].replace("0i32", "0{E}").replace("i32.f32", "{E}.f32"))}.get(op)
+        if op == "zero" and r["over"] in ("S:tuples", "S:tuples3"):
+            want = ("{S}", "", "{S.zero}")
+        if want is not None and (r["out"], r["args"], r["spelling"]) != want:
+            bad.append(f"N18 the tuple row {r['ref']} ({r['name']}) is not its template: {r['out']} {r['args']} {r['spelling']!r}")
+    # N19: with every element, each rule, requirement and binding property of a row is kept in at least one instance
+    # (an item dropped from EVERY instance names a property no instance carries: a typo, never a drop).
+    full = {"format": 6, "master": mst["version"], "elements": ["i32", "f32"], "families": [], "env": [],
+            "output": ("main", "f32", ()), "depth": 2, "lets": ["[]i32", "[]f32", "[][]i32", "[][]f32"], "literals": {}}
+    try:
+        v = master_view.View6.__new__(master_view.View6)
+        v.spec, v.mst, v.elements, v.multi = full, mst, full["elements"], True
+        v.props_of_template = {}
+        for p in mst["properties"]:
+            v.props_of_template.setdefault(p["data_type"], []).append((p["name"], p["kind"]))
+        v.candidates = v._candidate_types()
+        v.by_name = {t["name"]: t for t in v.candidates}
+        inst = v._rows({t["name"] for t in v.candidates})
+    except ValueError as e:
+        return bad + [f"N19 the master does not instantiate over i32 and f32: {e}"]
+    for r in mst["rows"]:
+        mine = [i for i in inst if i["ref"] == r["ref"]]
+        if not mine:
+            bad.append(f"N19 the row {r['ref']} has no instance over i32 and f32")
+            continue
+        kept_rules = {x.partition("=")[0] for i in mine for x in i["rules"]}
+        for rule in [x.strip() for x in r["rules"].split(";") if x.strip()]:
+            if rule.partition("=")[0] not in kept_rules:
+                bad.append(f"N19 the row {r['ref']}'s rule {rule!r} is dropped from every instance")
+        kept_req = {re.sub(r"< \d+ ->", "< depth ->", x) for i in mine for x in i["requires"]}
+        for q in [x.strip() for x in r["requires"].split(";") if x.strip()]:
+            if q not in kept_req:
+                bad.append(f"N19 the row {r['ref']}'s requirement {q!r} is dropped from every instance")
+        kept_bp = {pe.partition("=")[0] for i in mine for _, _, ps in i["binds"] for pe in ps}
+        for b in [b.strip() for b in r["binds"].split(";") if b.strip()]:
+            for pe in [x.strip() for x in (master_view.BIND6_RE.match(b).group(3) or "").split("&") if x.strip()]:
+                if pe.partition("=")[0] not in kept_bp:
+                    bad.append(f"N19 the row {r['ref']}'s binding property {pe!r} is dropped from every instance")
+    return bad
+
+
+def _props6(text):
+    """`rows=n & cols=d` -> {"rows": "n", "cols": "d"}."""
+    return dict(x.strip().partition("=")[::2] for x in text.split("&") if x.strip())
+
+
+def witness_view6(dir_path, name, spec, mst=None):
+    """Check one master 6 view from its WRITTEN text, against the specification and the master's templates."""
+    bad = []
+    mst = mst or master_view.master6()
+    dts = master_view.read_tsv(os.path.join(dir_path, "datatypes.tsv"), master_view.VIEW6_DATATYPE_COLUMNS)
+    syms = master_view.read_tsv(os.path.join(dir_path, "symbols.tsv"), master_view.VIEW6_SYMBOL_COLUMNS)
+    env = master_view.read_tsv(os.path.join(dir_path, "environment.tsv"), master_view.VIEW6_ENV_COLUMNS)
+    depth = spec["depth"]
+    by = {}
+    for i, t in enumerate(dts):
+        # V1: ids dense; names unique; members are data types of the view; every data type but size has a constant.
+        if t["id"] != str(i):
+            bad.append(f"V1 {name}: the data type {t['name']} has the id {t['id']}, not {i}")
+        if t["name"] in by:
+            bad.append(f"V1 {name}: two data types are named {t['name']}")
+        by[t["name"]] = t
+        if (t["name"] == "size") != (t["constant"] == ""):
+            bad.append(f"V1 {name}: the data type {t['name']} {'has' if t['constant'] else 'has no'} constant")
+    props = {n: dict(x.split(":") for x in t["properties"].split(";") if x) for n, t in by.items()}
+    for t in dts:
+        members = t["members"].replace(" -> ", ";").split(";") if t["members"] else []
+        for m in members:
+            if m not in by:
+                bad.append(f"V1 {name}: the data type {t['name']} names {m}, which is not one of the view's")
+        for p, _ in _props6(t["constant_props"]).items():
+            if p not in props[t["name"]]:
+                bad.append(f"V1 {name}: the constant of {t['name']} sets {p}, which {t['name']} does not carry")
+        for p, k in props[t["name"]].items():
+            if k not in PROPERTY_KINDS6:
+                bad.append(f"V1 {name}: the property {t['name']}.{p} is of the kind {k}")
+    m6_rows = {r["ref"]: r for r in mst["rows"]}
+    names = set()
+    var_rows = set()
+    binders = set()
+    for i, s in enumerate(syms):
+        ref, args = s["ref"], [a for a in s["args"].split(";") if a]
+        if s["id"] != str(i) or s["name"] in names:
+            bad.append(f"V2 {name}: the symbol {s['name']} has the id {s['id']} or its name twice")
+        names.add(s["name"])
+        # V2: every symbol is an instance of an admitted master 6 row; its data types are the view's; none returns size.
+        r = m6_rows.get(ref)
+        if r is None or int(r["since"]) > spec["master"] or (spec["families"] and r["family"] not in spec["families"] and r["kind"] != "var"):
+            bad.append(f"V2 {name}: the symbol {s['name']} is of the row {ref}, which the view does not admit")
+            continue
+        if s["kind"] != r["kind"]:
+            bad.append(f"V2 {name}: the symbol {s['name']}'s kind {s['kind']} is not its row's {r['kind']}")
+        for dt in args + [s["out"]]:
+            if dt not in by:
+                bad.append(f"V2 {name}: the symbol {s['name']} takes {dt}, which is not a data type of the view")
+        if s["out"] == "size" and s["kind"] != "var":
+            bad.append(f"V2 {name}: the symbol {s['name']} returns size (a size is only chosen, by var@size)")
+        if any(dt not in by for dt in args + [s["out"]]):
+            continue
+        if s["kind"] == "var":
+            var_rows.add(s["out"])
+            if s["name"] != f"var@{by[s['out']]['tag']}" or args:
+                bad.append(f"V2 {name}: the var row {s['name']} is not var@<its data type's tag>")
+
+        def carried(expr):
+            return all(k < len(args) and p in props[args[k]] for k, p in _expr6_terms(expr))
+
+        # V3: every rule, requirement and binding names a property its data type carries; and every item of the
+        # template is kept exactly when its properties are carried (an item is dropped for that reason alone).
+        rules = [x.strip() for x in s["rules"].split(";") if x.strip()]
+        for rule in rules:
+            p, _, e = rule.partition("=")
+            if p not in props[s["out"]] or not carried(e):
+                bad.append(f"V3 {name}: {s['name']}'s rule {rule!r} names a property its data type does not carry")
+        want_rules = [x.strip() for x in r["rules"].split(";") if x.strip()
+                      and x.strip().partition("=")[0] in props[s["out"]] and carried(x.strip().partition("=")[2])]
+        if rules != want_rules:
+            bad.append(f"V3 {name}: {s['name']}'s rules are {rules}, the template kept as carried gives {want_rules}")
+        requires = [x.strip() for x in s["requires"].split(";") if x.strip()]
+        want_req = []
+        for q in [x.strip() for x in r["requires"].split(";") if x.strip()]:
+            subject, rel, expr, adapter = master_view.REQUIRE6_RE.match(q).groups()
+            if subject == "env.trips":
+                if depth is not None:
+                    want_req.append(f"env.trips < {depth} -> subst")
+                continue
+            k, p = int(subject[2:].split(".")[0]), subject.split(".")[1]
+            if k < len(args) and p in props[args[k]] and carried(expr):
+                want_req.append(q)
+        if requires != want_req:
+            bad.append(f"V3 {name}: {s['name']}'s requirements are {requires}, the template kept as carried gives {want_req}")
+        for q in requires:
+            m = master_view.REQUIRE6_RE.match(q)
+            if not m or m.group(4) not in ADAPTERS6 or ADAPTERS6[m.group(4)][0] != m.group(2):
+                bad.append(f"V3 {name}: {s['name']}'s requirement {q!r} has no adapter that repairs it")
+        # V4: the work bound: a heavy row carries `env.trips < depth` with the view's depth, none in a view with no depth.
+        op = s["name"].split("@")[0].split(".")[0]
+        wb = [q for q in requires if q.startswith("env.trips")]
+        want_wb = [f"env.trips < {depth} -> subst"] if op in HEAVY6_OPS and depth is not None else []
+        if wb != want_wb:
+            bad.append(f"V4 {name}: {s['name']} carries the work bound {wb}, the model {want_wb}")
+        binds = [b.strip() for b in s["binds"].split(";") if b.strip()]
+        tmpl_binds = [b.strip() for b in r["binds"].split(";") if b.strip()]
+        if len(binds) != len(tmpl_binds):
+            bad.append(f"V3 {name}: {s['name']} has {len(binds)} bindings, its row {len(tmpl_binds)}")
+        for b, tb in zip(binds, tmpl_binds):
+            mb, mt = master_view.BIND6_RE.match(b), master_view.BIND6_RE.match(tb)
+            if not mb or mb.group(2) not in by or int(mb.group(1)) >= len(args):
+                bad.append(f"V3 {name}: {s['name']}'s binding {b!r} does not parse, or names no argument or data type")
+                continue
+            binders.add(mb.group(2))
+            got_p = [x.strip() for x in (mb.group(3) or "").split("&") if x.strip()]
+            want_p = [x.strip() for x in (mt.group(3) or "").split("&") if x.strip()
+                      and x.strip().partition("=")[0] in props[mb.group(2)] and carried(x.strip().partition("=")[2])]
+            if got_p != want_p:
+                bad.append(f"V3 {name}: {s['name']}'s binding {b!r} keeps {got_p}, the template kept as carried gives {want_p}")
+        # V5: the spelling's operand placeholders read properties the operand carries and bindings it has.
+        for k, p in OPERAND6_RE.findall(s["spelling"]):
+            k = int(k)
+            if k >= len(args):
+                bad.append(f"V5 {name}: {s['name']}'s spelling reads operand {k}")
+            elif p and p != "type" and not re.fullmatch(r"v\d+", p) and p not in props[args[k]]:
+                bad.append(f"V5 {name}: {s['name']}'s spelling reads {{{k}.{p}}}, which {args[k]} does not carry")
+            elif p and re.fullmatch(r"v\d+", p) and int(p[1:]) >= sum(1 for b in binds if b.startswith(f"{k}:")):
+                bad.append(f"V5 {name}: {s['name']}'s spelling reads {{{k}.{p}}}, a binding argument {k} does not make")
+        if master_view.VAR_RE.search(s["spelling"] + s["name"] + s["out"] + s["args"] + s["binds"]):
+            bad.append(f"V5 {name}: {s['name']} keeps a quantifier variable")
+        if "depth" in s["requires"]:
+            bad.append(f"V5 {name}: {s['name']} keeps `depth` unreplaced")
+    # V6: the environment: the root is the output's data type with its sizes, its requirements fit.root; the
+    # variables are the specification's, in order, those of a data type the view names by a var row; a data type has
+    # a var row exactly when it has a root variable or a binding; the zero arrays are one for each element and size.
+    out_name, out_elem, out_dims = spec["output"]
+    root_dt = "[]" * len(out_dims) + out_elem
+    pn = {0: [], 1: ["len"], 2: ["rows", "cols"]}[len(out_dims)]
+    want_root = {"kind": "root", "name": out_name, "data_type": root_dt,
+                 "properties": " & ".join(f"{p}={d}" for p, d in zip(pn, out_dims)),
+                 "requires": "; ".join(f"out.{p} = {d} -> fit.root" for p, d in zip(pn, out_dims))}
+    if not env or env[0] != want_root:
+        bad.append(f"V6 {name}: the root is {env[:1]}, the model {want_root}")
+    if root_dt not in by:
+        bad.append(f"V6 {name}: the root's data type {root_dt} is not the view's")
+    want_env = []
+    for kind, vname, elem, dims in spec["env"]:
+        if kind == "size":
+            dt, ps = "size", f"value={vname}"
+        else:
+            dt = "[]" * len(dims) + elem
+            ps = " & ".join(f"{p}={d}" for p, d in zip({1: ["len"], 2: ["rows", "cols"]}[len(dims)], dims))
+        if vname in ("fit", "clampix") or vname.startswith("ad_"):
+            bad.append(f"V6 {name}: the root variable {vname} takes a name the adapters reserve")
+        if dt in var_rows:
+            want_env.append({"kind": kind, "name": vname, "data_type": dt, "properties": ps, "requires": ""})
+    if env[1:] != want_env:
+        bad.append(f"V6 {name}: the environment is {env[1:]}, the model {want_env}")
+    have_vars = {e["data_type"] for e in env[1:]} | binders
+    if var_rows != have_vars:
+        bad.append(f"V6 {name}: the var rows are of {sorted(var_rows)}, the data types with a variable are {sorted(have_vars)}")
+    sizes = [n for k, n, _, _ in spec["env"] if k == "size"]
+    zeros = [(n, e, d[0]) for k, n, e, d in spec["env"] if k == "zeros"]
+    want_z = [(f"zeros_{d}" if len(spec["elements"]) == 1 else f"zeros_{e}_{d}", e, d) for e in spec["elements"] for d in sizes]
+    if zeros != want_z:
+        bad.append(f"V6 {name}: the zero arrays are {zeros}, the model {want_z}")
+    # V7: every data type is built (forward) and needed (backward, or a member of one that is).
+    built = {s["out"] for s in syms if s["kind"] != "function"}
+    while True:
+        n0 = len(built)
+        built |= {s["out"] for s in syms if all(a in built for a in s["args"].split(";") if a)}
+        if len(built) == n0:
+            break
+    if root_dt not in built:
+        bad.append(f"V7 {name}: the root {root_dt} cannot be built")
+    for s in syms:
+        if any(a not in built for a in s["args"].split(";") if a):
+            bad.append(f"V7 {name}: the symbol {s['name']} takes a data type no chain builds")
+    used = {root_dt} | {s["out"] for s in syms} | {a for s in syms for a in s["args"].split(";") if a}
+    while True:
+        n0 = len(used)
+        for t in dts:
+            if t["name"] in used:
+                used |= set(t["members"].replace(" -> ", ";").split(";")) - {""}
+        if len(used) == n0:
+            break
+    for t in dts:
+        if t["name"] not in used:
+            bad.append(f"V7 {name}: the data type {t['name']} is neither used nor a member of one that is")
+    return bad
+
+
+def sig6_dir(name):
+    return os.path.join(HERE, "sig", name, "m6")
+
+
+def sig6_texts(name):
+    """A master 6 problem's specification (the sniffer's) and its view's tables (`view.py`), by file name."""
+    src, entry, depth, master, elements, lets, families = SIG6_PROBLEMS[name]
+    spec_text = sniff.sniff6(os.path.join(REPO, src), entry, depth, master, elements, lets, families)
+    out = {"view.tsv": spec_text}
+    out.update(master_view.View6(master_view.read_spec6(spec_text)).texts())
+    return out
+
+
+def master6_main(mode):
+    """Master 6: the master witnesses, then each problem's specification and view, checked byte for byte (the
+    default) or written (to a staging directory, witnessed there, and only then moved into place)."""
+    bad = witness_master6()
+    if bad:
+        print("THE MASTER 6 WITNESS TESTS FAILED:")
+        for b in bad:
+            print("  " + b)
+        return 1
+    mst = master_view.master6()
+    print(f"master 6: {len(mst['rows'])} row templates, {len(mst['datatypes'])} data type templates, "
+          f"{len(mst['adapters'])} adapters, version {mst['version']}; master 6 witness tests PASS")
+    for name in sorted(SIG6_PROBLEMS):
+        out_dir = sig6_dir(name)
+        try:
+            wanted = sig6_texts(name)
+        except ValueError as e:
+            print(f"THE MASTER 6 VIEW {name} FAILED: {e}")
+            return 1
+        if mode == "--write":
+            staged = os.path.join(out_dir, ".staged")
+            os.makedirs(staged, exist_ok=True)
+            for fname, text in wanted.items():
+                with open(os.path.join(staged, fname), "w") as f:
+                    f.write(text)
+            bad = witness_view6(staged, name, master_view.read_spec6(wanted["view.tsv"]), mst)
+            if bad:
+                print(f"THE MASTER 6 VIEW {name} FAILED (the committed files are untouched):")
+                for b in bad[:40]:
+                    print("  " + b)
+                for fname in wanted:
+                    os.remove(os.path.join(staged, fname))
+                os.rmdir(staged)
+                return 1
+            for fname in wanted:
+                os.replace(os.path.join(staged, fname), os.path.join(out_dir, fname))
+            os.rmdir(staged)
+        else:
+            for fname, text in wanted.items():
+                path = os.path.join(out_dir, fname)
+                try:
+                    with open(path, "rb") as f:
+                        got = f.read()
+                except OSError as e:
+                    bad.append(f"the master 6 artefact sig/{name}/m6/{fname} cannot be read: {e}")
+                    continue
+                if got != text.encode("utf-8"):
+                    bad.append(f"the committed sig/{name}/m6/{fname} is not what the sniffer and view.py produce "
+                               f"({first_difference(got, text.encode('utf-8'))}); run with --write to regenerate")
+            if not bad:
+                bad = witness_view6(out_dir, name, master_view.read_spec6(wanted["view.tsv"]), mst)
+            if bad:
+                print(f"THE MASTER 6 VIEW {name} FAILED:")
+                for b in bad[:40]:
+                    print("  " + b)
+                return 1
+        dts = master_view.read_tsv(os.path.join(out_dir, "datatypes.tsv"), master_view.VIEW6_DATATYPE_COLUMNS)
+        syms = master_view.read_tsv(os.path.join(out_dir, "symbols.tsv"), master_view.VIEW6_SYMBOL_COLUMNS)
+        kinds = {}
+        for s in syms:
+            kinds[s["kind"]] = kinds.get(s["kind"], 0) + 1
+        print(f"sig/{name}/m6: {len(dts)} data types ({', '.join(t['name'] for t in dts)}), {len(syms)} symbols "
+              f"({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}); "
+              f"{'committed view MATCHES the sniffer and view.py, ' if mode == '--check' else 'written, '}witness tests PASS")
+    return 0
+
+
 def artefacts():
     """Every generated artefact, by file name: the text it must have."""
     out = {
@@ -2573,7 +3202,8 @@ def main(argv):
         return 1
     print(f"master: {len(master_view.master()['rows'])} row templates, version {master_view.master()['version']}; master witness tests PASS")
     rc = pixel_main(mode)
-    return rc if rc else sig_main(mode)
+    rc = rc if rc else sig_main(mode)
+    return rc if rc else master6_main(mode)
 
 
 def pixel_main(mode):

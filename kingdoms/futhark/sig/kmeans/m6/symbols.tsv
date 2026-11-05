@@ -1,0 +1,84 @@
+id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
+0	M0001	add@f32	function	f32	f32;f32					{0} + {1}
+1	M0002	sub@f32	function	f32	f32;f32					{0} - {1}
+2	M0003	mul@f32	function	f32	f32;f32					{0} * {1}
+3	M0004	min@f32	function	f32	f32;f32					f32.min {0} {1}
+4	M0005	max@f32	function	f32	f32;f32					f32.max {0} {1}
+5	M0006	neg@f32	function	f32	f32					-{0}
+6	M0007	abs@f32	function	f32	f32					f32.abs {0}
+7	M0008	sel@f32	function	f32	f32;f32;f32					if {0} < 0f32 then {1} else {2}
+8	M0009	get@f32	function	f32	[]f32;i64		in1.bound <= in0.len -> clampix			{0}[{1}]
+9	M0010	sum@f32	function	f32	[]f32		env.trips < 3 -> subst			f32.sum {0}
+10	M0011	minimum@f32	function	f32	[]f32		env.trips < 3 -> subst			f32.minimum {0}
+11	M0012	maximum@f32	function	f32	[]f32		env.trips < 3 -> subst			f32.maximum {0}
+12	M0013	ival@f32	function	f32	i64					f32.i64 {0}
+13	M0014	sval@f32	function	f32	size					f32.i64 {0}
+14	M0016	const@f32	const	f32						
+15	M0018	prev@i64	function	i64	i64	bound=in0.bound				i64.max 0 ({0} - 1)
+16	M0019	next@i64	function	i64	i64	bound=in0.bound				i64.min ({0.bound} - 1) ({0} + 1)
+17	M0021	zero@i64	terminal	i64		bound=1				0i64
+18	M0022	last@i64	function	i64	size	bound=in0.value				{0} - 1
+19	M0024	tab@a.f32	function	[]f32	size;f32	len=in0.value	env.trips < 3 -> subst	1:i64 bound=in0.value	1	tabulate {0} (\{1.v0} -> {1})
+20	M0025	replicate@a.f32	function	[]f32	size;f32	len=in0.value	env.trips < 3 -> subst			replicate {0} {1}
+21	M0026	map2.add@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (+) {0} {1}
+22	M0027	map2.sub@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (-) {0} {1}
+23	M0028	map2.min@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 f32.min {0} {1}
+24	M0029	map2.max@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 f32.max {0} {1}
+25	M0030	scan.add@a.f32	function	[]f32	[]f32	len=in0.len	env.trips < 3 -> subst			scan (+) 0f32 (opaque {0})
+26	M0031	scan.min@a.f32	function	[]f32	[]f32	len=in0.len	env.trips < 3 -> subst			scan f32.min f32.highest (opaque {0})
+27	M0032	scan.max@a.f32	function	[]f32	[]f32	len=in0.len	env.trips < 3 -> subst			scan f32.max f32.lowest (opaque {0})
+28	M0036	row@a.f32	function	[]f32	[][]f32;i64	len=in0.cols	in1.bound <= in0.rows -> clampix			{0}[{1}]
+29	M0040	loop@f32	function	f32	size;f32;f32		env.trips < 3 -> subst	2:f32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
+30	M0040	loop@a.f32	function	[]f32	size;[]f32;[]f32	len=in1.len	in2.len = in1.len -> fit.state; env.trips < 3 -> subst	2:[]f32 len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
+31	M0041	loop1@f32	function	f32	size;f32;f32		env.trips < 3 -> subst	2:f32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}
+32	M0041	loop1@a.f32	function	[]f32	size;[]f32;[]f32	len=in1.len	in2.len = in1.len -> fit.state; env.trips < 3 -> subst	2:[]f32 len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}
+33	M0043	map_rows@m.f32	function	[][]f32	[]f32 -> []f32;[][]f32	rows=in1.rows; cols=in1.cols	env.trips < 3 -> subst			map {0} {1}
+34	M0044	map2_rows@m.f32	function	[][]f32	[]f32 -> []f32 -> []f32;[][]f32;[][]f32	rows=min(in1.rows, in2.rows); cols=min(in1.cols, in2.cols)	in2.rows = in1.rows -> fit.pair; in2.cols = in1.cols -> fit.inner; env.trips < 3 -> subst			map2 {0} {1} {2}
+35	M0045	transpose@m.f32	function	[][]f32	[][]f32	rows=in0.cols; cols=in0.rows				transpose {0}
+36	M0046	matmul@m.f32	function	[][]f32	[][]f32;[][]f32	rows=in0.rows; cols=in1.cols	in1.rows = in0.cols -> fit.inner; env.trips < 3 -> subst			matmul {0} {1}
+37	M0047	id@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> xs
+38	M0048	add1@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> map (+1.0) xs
+39	M0049	scale2@fn.arr_f32_arr_f32	function	[]f32 -> []f32						\xs -> map (*2.0) xs
+40	M0050	id@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs _ys -> xs
+41	M0051	add1@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs _ys -> map (+1.0) xs
+42	M0052	add@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32						\xs ys -> map2 (+) xs ys
+43	M0054	const@fn.arr_f32_arr_f32	terminal	[]f32 -> []f32						\xs -> map (\_ -> 0.0) xs
+44	M0055	const@fn.arr2_f32_arr_f32_arr_f32	terminal	[]f32 -> []f32 -> []f32						\xs _ys -> map (\_ -> 0.0) xs
+45	M0056	clamp@i64	function	i64	size;f32	bound=in0.value				let x = {1} in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
+46	M0057	hist.add@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+47	M0058	hist.min@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+48	M0059	hist.max@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+49	M0060	div@f32	function	f32	f32;f32					{0} / {1}
+50	M0061	sqrt@f32	function	f32	f32					f32.sqrt {0}
+51	M0062	map2.mul@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (*) {0} {1}
+52	M0063	tabrows@m.f32	function	[][]f32	size;size;[]f32	rows=in0.value; cols=in1.value	in2.len = in1.value -> fit.body; env.trips < 3 -> subst	2:i64 bound=in0.value	2	tabulate {0} (\{2.v0} -> {2})
+53	M0065	histrows.add@m.f32	function	[][]f32	size;size;[]f32;[][]f32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst			hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}
+54	M0066	rowdiv@m.f32	function	[][]f32	[][]f32;[]f32	rows=min(in0.rows, in1.len); cols=in0.cols	in1.len = in0.rows -> fit.pair; env.trips < 3 -> subst			map2 (\r s -> map (/ s) r) {0} {1}
+55	M0068	pair@f32.f32	function	(f32, f32)	f32;f32					({0}, {1})
+56	M0069	fst.f32.f32@f32	function	f32	(f32, f32)					{0}.0
+57	M0070	snd.f32.f32@f32	function	f32	(f32, f32)					{0}.1
+58	M0071	zero@f32.f32	terminal	(f32, f32)						(0f32, 0f32)
+59	M0072	psel@f32.f32	function	(f32, f32)	f32;(f32, f32);(f32, f32)					if {0} < 0f32 then {1} else {2}
+60	M0073	loop@f32.f32	function	(f32, f32)	size;(f32, f32);(f32, f32)		env.trips < 3 -> subst	2:f32; 2:f32; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}): {1.type}) = {1} for {2.v2} < {0} do {2}
+61	M0074	loop1@f32.f32	function	(f32, f32)	size;(f32, f32);(f32, f32)		env.trips < 3 -> subst	2:f32; 2:f32; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}): {1.type}) = {1} for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in {2}
+62	M0077	triple@f32.f32.f32	function	(f32, f32, f32)	f32;f32;f32					({0}, {1}, {2})
+63	M0078	fst.f32.f32.f32@f32	function	f32	(f32, f32, f32)					{0}.0
+64	M0079	snd.f32.f32.f32@f32	function	f32	(f32, f32, f32)					{0}.1
+65	M0080	thd.f32.f32.f32@f32	function	f32	(f32, f32, f32)					{0}.2
+66	M0081	zero@f32.f32.f32	terminal	(f32, f32, f32)						(0f32, 0f32, 0f32)
+67	M0082	psel@f32.f32.f32	function	(f32, f32, f32)	f32;(f32, f32, f32);(f32, f32, f32)					if {0} < 0f32 then {1} else {2}
+68	M0083	loop@f32.f32.f32	function	(f32, f32, f32)	size;(f32, f32, f32);(f32, f32, f32)		env.trips < 3 -> subst	2:f32; 2:f32; 2:f32; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for {2.v3} < {0} do {2}
+69	M0084	loop1@f32.f32.f32	function	(f32, f32, f32)	size;(f32, f32, f32);(f32, f32, f32)		env.trips < 3 -> subst	2:f32; 2:f32; 2:f32; 2:i64 bound=in0.value	2	loop (({2.v0}, {2.v1}, {2.v2}): {1.type}) = {1} for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in {2}
+70	M0085	let.a.f32@f32	function	f32	[]f32;f32			1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+71	M0085	let.a.f32@i64	function	i64	[]f32;i64	bound=in1.bound		1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+72	M0085	let.a.f32@a.f32	function	[]f32	[]f32;[]f32	len=in1.len		1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+73	M0085	let.a.f32@m.f32	function	[][]f32	[]f32;[][]f32	rows=in1.rows; cols=in1.cols		1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+74	M0085	let.a.f32@f32.f32	function	(f32, f32)	[]f32;(f32, f32)			1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+75	M0085	let.a.f32@f32.f32.f32	function	(f32, f32, f32)	[]f32;(f32, f32, f32)			1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+76	M0085	let.a.f32@fn.arr_f32_arr_f32	function	[]f32 -> []f32	[]f32;[]f32 -> []f32			1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+77	M0085	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	function	[]f32 -> []f32 -> []f32	[]f32;[]f32 -> []f32 -> []f32			1:[]f32 len=in0.len		let {1.v0} = {0} in {1}
+78	M0087	var@f32	var	f32						{v}
+79	M0087	var@i64	var	i64						{v}
+80	M0087	var@size	var	size						{v}
+81	M0087	var@a.f32	var	[]f32						{v}
+82	M0087	var@m.f32	var	[][]f32						{v}

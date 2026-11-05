@@ -1,0 +1,5 @@
+id	name	kind	members	tag	constant	constant_props	properties
+0	i32	scalar		i32	0i32		
+1	i64	scalar		i64	0i64	bound=1	bound:bound
+2	size	scalar		size			value:size
+3	[]i32	array	i32	a.i32	[0i32]	len=1	len:size

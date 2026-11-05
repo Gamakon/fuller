@@ -1,0 +1,11 @@
+# kind	name	element	dims
+# written by kingdoms/futhark/sniff.py --format 6 from tests/corpus/futhark_problems/scan/yardstick.fut, entry main
+format	6		
+master	2		
+element	i32		
+input	xs	i32	n
+output	main	i32	n
+zeros	zeros_n	i32	n
+size	n		
+depth	2		
+literals	0,1,2,-1,10		
