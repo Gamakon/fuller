@@ -1,12 +1,12 @@
 //! THE WGSL KINGDOM AS ROWS of the gene frame's fixed schema (design `docs/DESIGN_geneframe.md` 3.3, 8.4 and 8.5;
-//! plan `docs/PLAN_futhark_kingdom.md` 7.7, task K3). `kingdoms/wgsl_true/tables.tsv`, written by
-//! `kingdoms/wgsl_true/gen_rows.py` (never by hand; its `--check` is a test), holds the four kinds of row and nothing
-//! else: nine data types where the old table had 305, because every rule the old table carried in a type is a property
+//! plan `docs/PLAN_futhark_kingdom.md` 7.7, task K3). The kingdom `wgsl` (its Gram problem the variant `wgsl.gram`) in
+//! the one set of tables `kingdoms/master/`, written by `kingdoms/wgsl_true/gen_rows.py` through `write_rows.py` (never
+//! by hand; its `--check` is a test), holds the four kinds of row and nothing else: nine data types where the old table had 305, because every rule the old table carried in a type is a property
 //! here, moved by Flow rows and enforced by `must` Guard rows with their repairs inline:
 //!
 //! | rule | old carrier | rows |
 //! |---|---|---|
-//! | no two invocations write one element | ownership types | `u32.owned` (injective in the invocation id): `up add_u: owned := (in0.owned and in1.uniform) or (in1.owned and in0.uniform)`; `guard store: in1.owned must -> {const}` |
+//! | no two invocations write one element | ownership types | `u32.owned` (injective in the invocation id): `up add_u: owned := (in0.owned and in1.uniform) or (in1.owned and in0.uniform)`; `guard store: in1.owned must -> {const}`; workgroup memory likewise by `local_owned` (injective in the local invocation index): `guard wg_store: in0.local_owned` |
 //! | barriers only in uniform control flow | statement rungs `L`/`C`/`W`/`O` | `down if_ in1, in2: env.uniform := env.uniform and in0.uniform`; `guard barrier: env.uniform must -> {const}` |
 //! | every loop ends, within the work bound | fuel strata `_f<k>` | `count` terminals with a literal `value`; `down loop in1: env.work := env.work * in0.value`; `guard loop: env.work * in0.value <= 64 must -> {const}` (the Gram interface's old K = 1 budget) |
 //! | every index is in range | masked index types | `guard load, store: in1.bound <= in0.len must -> [in1] min({1}, arrayLength(&{0}) - 1u)` |
@@ -34,11 +34,10 @@ use crate::kingdom_contract::{relations_from_tables, KingdomContract, SymbolId};
 use crate::typed_environment::{Choice, Decoder, Decoding, Failure, Node, Substituted, Substitution};
 use crate::typed_gep::{express, Domain, GeneLayout, Tree};
 
-/// The table the generator writes.
-pub const TABLES_TSV: &str = include_str!("../kingdoms/wgsl_true/tables.tsv");
-
-/// The kingdom's name in its tables and its errors.
-pub const KINGDOM: &str = "wgsl_true";
+/// The kingdom in the one set of tables (`kingdoms/master/`, [`crate::geneframe::master`]): the parent, and the Gram
+/// problem's variant, which holds every row.
+pub const KINGDOM: &str = "wgsl";
+pub const VARIANT: &str = "wgsl.gram";
 
 /// The per-invocation work bound the loop guard enforces (`gen_rows.py` BUDGET).
 pub const BUDGET: i64 = 64;
@@ -69,18 +68,18 @@ pub struct WgslProgram {
 }
 
 impl WgslRows {
-    /// Load the committed table ([`TABLES_TSV`]).
+    /// Load the committed rows of [`VARIANT`] from the one set of tables.
     pub fn load() -> Result<WgslRows, String> {
-        WgslRows::from_text(TABLES_TSV)
+        WgslRows::from_text(&crate::geneframe::master::select(VARIANT)?.named_text()?)
     }
 
-    /// Load a table's text: parse, check, build the contract and the decoder, check the entry.
+    /// Load a table's text (the named text form): parse, check, build the contract and the decoder, check the entry.
     pub fn from_text(text: &str) -> Result<WgslRows, String> {
         let ty = |i: usize| -> Result<Ty, String> {
             Ty::check_dual_count(KINGDOM, i + 1, Ty::MAX_WGSL_DUALS)?;
             Ok(Ty::Wgsl(i as u16))
         };
-        let (tables, entry) = KingdomTables::parse_named(KINGDOM, text, &ty)?;
+        let (tables, entry) = KingdomTables::parse_named(VARIANT, text, &ty)?;
         tables.check().map_err(|d| d.join("\n"))?;
         let contract = relations_from_tables(&tables, vec![entry.output]).check().map_err(|d| d.join("\n"))?;
         let (tables, contract) = (Arc::new(tables), Arc::new(contract));
@@ -226,8 +225,9 @@ pub enum UpRule {
     Copy { k: u32, property: String },
     /// `in0.p and in1.p and ...`, over the listed inputs.
     All { property: String, ks: Vec<u32> },
-    /// `(in0.owned and in1.uniform) or (in1.owned and in0.uniform)`.
-    InjectiveSum,
+    /// `(in0.p and in1.uniform) or (in1.p and in0.uniform)` for the flag `p` (`owned`, `local_owned`): the one way a
+    /// sum stays injective.
+    InjectiveSum { property: String },
     /// `in0.bound + in1.bound`.
     SumBound,
     /// `in0.bound * in1.value`.
@@ -253,10 +253,12 @@ pub enum DownRule {
 pub enum GuardRule {
     /// `in<k>.access = 'read_write'`.
     Access { k: u32 },
-    /// `in<k>.owned`.
-    Owned { k: u32 },
+    /// `in<k>.<property>`, a flag (`owned`, `local_owned`).
+    Flag { k: u32, property: String },
     /// `in<k>.bound <= in<b>.len`, repaired by a clamp of operand k.
     Bound { k: u32, buffer: u32 },
+    /// `in<k>.bound <= limit` (a workgroup array's length), repaired by a clamp of operand k.
+    BoundLiteral { k: u32, limit: i64 },
     /// `in<k>.width = in<w>.width`, repaired by a fit of operand k.
     Width { k: u32, other: u32 },
     /// `env.work * in0.value <= limit`.
@@ -294,6 +296,7 @@ pub struct Twin {
     pub rewritten: Vec<u32>,
     pub uniform: Option<bool>,
     pub owned: Option<bool>,
+    pub local_owned: Option<bool>,
     pub bound: Option<i64>,
     pub width: Option<i64>,
     pub kids: Vec<Twin>,
@@ -326,8 +329,8 @@ impl WgslRows {
                 return Ok(UpRule::All { property: property.to_string(), ks: all[..n].to_vec() });
             }
         }
-        if property == "owned" && is("(in0.owned and in1.uniform) or (in1.owned and in0.uniform)") {
-            return Ok(UpRule::InjectiveSum);
+        if (property == "owned" || property == "local_owned") && is(&format!("(in0.{property} and in1.uniform) or (in1.{property} and in0.uniform)")) {
+            return Ok(UpRule::InjectiveSum { property: property.to_string() });
         }
         if property == "bound" {
             if is("in0.bound + in1.bound") {
@@ -405,9 +408,10 @@ impl WgslRows {
             let repairs = Repairs { rewrite, own: g.repairs.iter().any(|r| r.template == "{in.own}") };
             let rule_of = match &g.condition {
                 Condition::Compare { relation: Relation::Eq, left: PropertyExpr::Input { position: k, property }, right: PropertyExpr::Tag(t) } if property == "access" && t == "read_write" => GuardRule::Access { k: *k },
-                Condition::Flag(PropertyExpr::Input { position: k, property }) if property == "owned" => GuardRule::Owned { k: *k },
+                Condition::Flag(PropertyExpr::Input { position: k, property }) if property == "owned" || property == "local_owned" => GuardRule::Flag { k: *k, property: property.clone() },
                 Condition::Flag(PropertyExpr::Env(a)) if a == "uniform" => GuardRule::Uniform,
                 Condition::Compare { relation: Relation::Le, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Input { position: b, property: q } } if p == "bound" && q == "len" => GuardRule::Bound { k: *k, buffer: *b },
+                Condition::Compare { relation: Relation::Le, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Literal(limit) } if p == "bound" => GuardRule::BoundLiteral { k: *k, limit: *limit },
                 Condition::Compare { relation: Relation::Eq, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Input { position: w, property: q } } if p == "width" && q == "width" => GuardRule::Width { k: *k, other: *w },
                 Condition::Compare { relation: Relation::Le, left, right: PropertyExpr::Literal(limit) } if *left == formula("env.work * in0.value") => GuardRule::Work { limit: *limit },
                 c => return Err(format!("guard {}: the condition {c} is outside the device's forms", g.order)),
@@ -463,9 +467,9 @@ impl WgslRows {
                         unknown
                     }
                 }
-                UpRule::InjectiveSum => {
-                    let a = (f(0, "owned"), f(1, "uniform"));
-                    let b = (f(1, "owned"), f(0, "uniform"));
+                UpRule::InjectiveSum { property } => {
+                    let a = (f(0, property), f(1, "uniform"));
+                    let b = (f(1, property), f(0, "uniform"));
                     let and = |(x, y): (Option<bool>, Option<bool>)| match (x, y) {
                         (Some(false), _) | (_, Some(false)) => Some(false),
                         (Some(true), Some(true)) => Some(true),
@@ -522,12 +526,13 @@ impl WgslRows {
                 props.entry(p.name.clone()).or_insert(PropertyExpr::Unknown);
             }
             // pass 4: the guards in order; the first that fails repairs (a rewrite keeps checking; a substitution ends it)
-            let mut twin = Twin { symbol: s, substituted_by: None, dropped: false, rewritten: Vec::new(), uniform: None, owned: None, bound: None, width: None, kids: kids.into_iter().map(|(tw, _, _)| tw).collect() };
+            let mut twin = Twin { symbol: s, substituted_by: None, dropped: false, rewritten: Vec::new(), uniform: None, owned: None, local_owned: None, bound: None, width: None, kids: kids.into_iter().map(|(tw, _, _)| tw).collect() };
             for (g, repairs) in &rule.guards {
                 let holds = match g {
                     GuardRule::Access { k: a } => kid_props[*a as usize].get("access") == Some(&PropertyExpr::Tag("read_write".into())),
-                    GuardRule::Owned { k: a } => flag(&kid_props[*a as usize], "owned") == Some(true),
+                    GuardRule::Flag { k: a, property } => flag(&kid_props[*a as usize], property) == Some(true),
                     GuardRule::Bound { k: a, buffer } => int(&kid_props[*a as usize], "bound").zip(int(&kid_props[*buffer as usize], "len")).is_some_and(|(b, l)| b <= l),
+                    GuardRule::BoundLiteral { k: a, limit } => int(&kid_props[*a as usize], "bound").is_some_and(|b| b <= *limit),
                     GuardRule::Width { k: a, other } => int(&kid_props[*a as usize], "width").zip(int(&kid_props[*other as usize], "width")).is_some_and(|(x, y)| x == y),
                     GuardRule::Work { limit } => int(&kid_props[0], "value").is_some_and(|v| env.work.saturating_mul(v) <= *limit),
                     GuardRule::Uniform => env.uniform,
@@ -555,6 +560,7 @@ impl WgslRows {
             }
             twin.uniform = flag(&props, "uniform");
             twin.owned = flag(&props, "owned");
+            twin.local_owned = flag(&props, "local_owned");
             twin.bound = int(&props, "bound");
             twin.width = int(&props, "width");
             Ok((twin, props, out_ty))
@@ -568,7 +574,7 @@ impl WgslRows {
             props
         }
         fn leaf(s: SymbolId, props: &Props) -> Twin {
-            Twin { symbol: s, substituted_by: None, dropped: false, rewritten: Vec::new(), uniform: flag(props, "uniform"), owned: flag(props, "owned"), bound: int(props, "bound"), width: int(props, "width"), kids: Vec::new() }
+            Twin { symbol: s, substituted_by: None, dropped: false, rewritten: Vec::new(), uniform: flag(props, "uniform"), owned: flag(props, "owned"), local_owned: flag(props, "local_owned"), bound: int(props, "bound"), width: int(props, "width"), kids: Vec::new() }
         }
         let root_env = self.decoder.root_environment(&self.entry);
         let env = Env {
@@ -610,11 +616,13 @@ impl WgslRows {
                 _ => None,
             };
             let kids = if matches!(n.choice, Some(Choice::Dc(_))) { Vec::new() } else { n.kids.iter().map(|c| go(k, c)).collect() };
-            Twin { symbol: n.symbol, substituted_by, dropped, rewritten, uniform: flag("uniform"), owned: flag("owned"), bound: int("bound"), width: int("width"), kids }
+            Twin { symbol: n.symbol, substituted_by, dropped, rewritten, uniform: flag("uniform"), owned: flag("owned"), local_owned: flag("local_owned"), bound: int("bound"), width: int("width"), kids }
         }
         go(self, &d.root)
     }
 }
+
+pub mod share;
 
 #[cfg(test)]
 mod tests;

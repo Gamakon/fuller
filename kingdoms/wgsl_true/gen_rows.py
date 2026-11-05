@@ -2,8 +2,8 @@
 """THE WGSL KINGDOM AS ROWS of the gene frame's fixed schema (docs/DESIGN_geneframe.md 3.3 and 8.4;
 docs/PLAN_futhark_kingdom.md 7.7, task K3): the Gram interface (`phi` in, `h` out, `cfg { d, m, r_rows, r_off }`).
 
-    python3 -I gen_rows.py            # writes tables.tsv beside this file
-    python3 -I gen_rows.py --check    # the committed file equals a fresh generation (a Rust test runs this)
+    python3 -I gen_rows.py            # writes kingdom `wgsl` (variant `wgsl.gram`) into kingdoms/master/ through write_rows.py
+    python3 -I gen_rows.py --check    # the committed warehouse rows equal a fresh generation (a Rust test runs this)
 
 Every legality rule of WGSL that the old table carried in a TYPE (305 duals: ownership types, statement rungs, fuel
 strata, masked index types) is a PROPERTY here, moved by Flow rows and enforced by `must` Guard rows with their repairs
@@ -33,19 +33,30 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "tables.tsv")
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "master"))
+import write_rows  # noqa: E402  (kingdoms/master/write_rows.py: the one set of tables every kingdom lives in)
+
+KINGDOM = "wgsl"
+VARIANT = "wgsl.gram"
+DESCRIPTION = "the true-GEP WGSL kingdom on the four-row schema: nine data types, legality by Flow and Guard rows (owned, uniform, bound, width, work), scope by var.T"
+VARIANT_DESCRIPTION = "the WGSL kingdom's Gram problem: phi in, h out, cfg { d, m, r_rows, r_off }"
 
 # The per-invocation work bound: the product of the trip counts of the loops around a node. The Gram interface's old
 # fuel budget was K = 1, one stratum of 2^6 = 64 trips, and this is the same bound: one loop of 64, or two nested of 8;
 # a loop of 128 is over it and dropped.
 BUDGET = 64
+# The workgroup array's length: one f32 slot per invocation of the largest workgroup shape (64), indexed by the local
+# invocation index, so a store through a `local_owned` index is one invocation's.
+WG_WORDS = 64
 
-# The Gram interface's bindings (interface.py GRAM), the kernel's prelude: text added once to a program that uses `main`.
+# The Gram interface's bindings (interface.py GRAM) and its workgroup memory, the kernel's prelude: text added once to a
+# program that uses `main`.
 PRELUDE = (
     "struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\\n"
     "@group(0) @binding(0) var<storage, read> phi: array<f32>;\\n"
     "@group(0) @binding(1) var<storage, read_write> h: array<f32>;\\n"
     "@group(0) @binding(2) var<uniform> cfg: Cfg;\\n"
+    f"var<workgroup> wg_f: array<f32, {WG_WORDS}>;\\n"
 )
 
 # The kernel row's spelling: the grid's constants, the entry point, the builtins the entry's parameters name, the
@@ -70,6 +81,7 @@ REGISTERS = 4
 BOTH_UNIFORM = "in0.uniform and in1.uniform"
 # The one way a sum stays injective in the invocation: an owned term plus a term every invocation shares.
 INJECTIVE_SUM = "(in0.owned and in1.uniform) or (in1.owned and in0.uniform)"
+LOCAL_INJECTIVE_SUM = "(in0.local_owned and in1.uniform) or (in1.local_owned and in0.uniform)"
 CLAMP = "min({1}, arrayLength(&{0}) - 1u)"
 # The width fit of vector operand 1 to operand 0's width: a swizzle where it is wider, an extension by zeros where
 # narrower (design 8.4, the list `vfit`).
@@ -145,7 +157,7 @@ def build() -> str:
     # ---- the data types and what they carry ----
     t.data_type("kernel")
     t.data_type("stmt", constant=("{}", None))
-    t.data_type("u32", ["bound", "uniform", "owned"], constant=("0u", "uniform=true;owned=false"))
+    t.data_type("u32", ["bound", "uniform", "owned", "local_owned"], constant=("0u", "uniform=true;owned=false;local_owned=false"))
     t.data_type("f32", ["uniform"], constant=("0.0", "uniform=true"))
     t.data_type("bool", ["uniform"], constant=("false", "uniform=true"))
     t.data_type("vecf", ["width", "uniform"], constant=("vec4<f32>(0.0)", "width=4;uniform=true"))
@@ -164,7 +176,7 @@ def build() -> str:
     # ---- statements ----
     t.function("seq", ["stmt", "stmt"], "stmt", "{0} {1}")
     t.function("let_u", ["u32", "stmt"], "stmt", "{{ let {1.v0}: u32 = {0}; {1} }}",
-               downs=[(1, "var.u32", "1"), (1, "var.u32.bound", "in0.bound"), (1, "var.u32.uniform", "in0.uniform"), (1, "var.u32.owned", "in0.owned"), (1, "var.u32.spell", "u{depth}{nth}")])
+               downs=[(1, "var.u32", "1"), (1, "var.u32.bound", "in0.bound"), (1, "var.u32.uniform", "in0.uniform"), (1, "var.u32.owned", "in0.owned"), (1, "var.u32.local_owned", "in0.local_owned"), (1, "var.u32.spell", "u{depth}{nth}")])
     t.function("let_f", ["f32", "stmt"], "stmt", "{{ let {1.v0}: f32 = {0}; {1} }}",
                downs=[(1, "var.f32", "1"), (1, "var.f32.uniform", "in0.uniform"), (1, "var.f32.spell", "f{depth}{nth}")])
     t.function("let_v", ["vecf", "stmt"], "stmt", "{{ let {1.v0}: vec{=in0.width}<f32> = {0}; {1} }}",
@@ -178,17 +190,22 @@ def build() -> str:
     t.function("if_", ["bool", "stmt", "stmt"], "stmt", "if ({0}) {{ {1} }} else {{ {2} }}",
                downs=[(1, "env.uniform", "env.uniform and in0.uniform"), (2, "env.uniform", "env.uniform and in0.uniform")])
     t.function("loop", ["count", "stmt"], "stmt", "for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}",
-               downs=[(1, "var.u32", "1"), (1, "var.u32.bound", "in0.value"), (1, "var.u32.uniform", "true"), (1, "var.u32.owned", "false"), (1, "var.u32.spell", "i{depth}{nth}"),
+               downs=[(1, "var.u32", "1"), (1, "var.u32.bound", "in0.value"), (1, "var.u32.uniform", "true"), (1, "var.u32.owned", "false"), (1, "var.u32.local_owned", "false"), (1, "var.u32.spell", "i{depth}{nth}"),
                       (1, "env.work", "env.work * in0.value")],
                guards=[(f"env.work * in0.value <= {BUDGET}", DROP)])
     t.function("barrier", [], "stmt", "workgroupBarrier();", guards=[("env.uniform", DROP)])
+    # workgroup memory: a store needs an index that is one invocation's within the workgroup (`local_owned`, injective in
+    # the local invocation index) and within the array (`bound <= WG_WORDS`, else clamped); a load needs the index in range
+    t.function("wg_store", ["u32", "f32"], "stmt", "wg_f[{0}] = {1};",
+               guards=[("in0.local_owned", DROP),
+                       (f"in0.bound <= {WG_WORDS}", [("in0", "true", "true", f"min({{0}}, {WG_WORDS - 1}u)")] + DROP)])
 
     # ---- u32 ----
-    t.function("add_u", ["u32", "u32"], "u32", "({0} + {1})", ups=[("bound", "in0.bound + in1.bound"), ("uniform", BOTH_UNIFORM), ("owned", INJECTIVE_SUM)])
-    t.function("mul_uc", ["u32", "count"], "u32", "({0} * {1}u)", ups=[("bound", "in0.bound * in1.value"), ("uniform", "in0.uniform"), ("owned", "in0.owned")])
-    t.function("mod_uc", ["u32", "count"], "u32", "({0} % {1}u)", ups=[("bound", "in1.value"), ("uniform", "in0.uniform"), ("owned", "false")])
-    t.function("min_u", ["u32", "u32"], "u32", "min({0}, {1})", ups=[("bound", "min(in0.bound, in1.bound)"), ("uniform", BOTH_UNIFORM), ("owned", "false")])
-    t.constant("u32", ["0u", "1u", "2u", "3u", "4u", "8u", "16u", "32u"], ups=[("uniform", "true"), ("owned", "false")])
+    t.function("add_u", ["u32", "u32"], "u32", "({0} + {1})", ups=[("bound", "in0.bound + in1.bound"), ("uniform", BOTH_UNIFORM), ("owned", INJECTIVE_SUM), ("local_owned", LOCAL_INJECTIVE_SUM)])
+    t.function("mul_uc", ["u32", "count"], "u32", "({0} * {1}u)", ups=[("bound", "in0.bound * in1.value"), ("uniform", "in0.uniform"), ("owned", "in0.owned"), ("local_owned", "in0.local_owned")])
+    t.function("mod_uc", ["u32", "count"], "u32", "({0} % {1}u)", ups=[("bound", "in1.value"), ("uniform", "in0.uniform"), ("owned", "false"), ("local_owned", "false")])
+    t.function("min_u", ["u32", "u32"], "u32", "min({0}, {1})", ups=[("bound", "min(in0.bound, in1.bound)"), ("uniform", BOTH_UNIFORM), ("owned", "false"), ("local_owned", "false")])
+    t.constant("u32", ["0u", "1u", "2u", "3u", "4u", "8u", "16u", "32u"], ups=[("uniform", "true"), ("owned", "false"), ("local_owned", "false")])
     t.variable("u32")
 
     # ---- f32 ----
@@ -200,6 +217,8 @@ def build() -> str:
     t.function("f32_u", ["u32"], "f32", "f32({0})", ups=[("uniform", "in0.uniform")])
     t.function("load", ["buf", "u32"], "f32", "{0}[{1}]", ups=[("uniform", "false")],
                guards=[("in1.bound <= in0.len", [("in1", "true", "true", CLAMP)] + DROP)])
+    t.function("wg_load", ["u32"], "f32", "wg_f[{0}]", ups=[("uniform", "false")],
+               guards=[(f"in0.bound <= {WG_WORDS}", [("in0", "true", "true", f"min({{0}}, {WG_WORDS - 1}u)")] + DROP)])
     t.function("dot", ["vecf", "vecf"], "f32", "dot({0}, {1})", ups=[("uniform", BOTH_UNIFORM)],
                guards=[("in1.width = in0.width", [("in1", "true", "true", VFIT)] + DROP)])
     for r in range(REGISTERS):
@@ -235,30 +254,31 @@ def build() -> str:
     t.row("entry", "gram", "kernel")
     t.row("parameter", "phi", "buf", "access='read'", "-", "-", "-", "-")
     t.row("parameter", "h", "buf", "access='read_write'", "-", "-", "-", "-")
-    t.row("parameter", "lin", "u32", "owned=true;uniform=false", "-", "-", "-", "-")
-    for name in ["gid_x", "gid_y", "lid_x", "lid_y", "lidx"]:
-        t.row("parameter", name, "u32", "owned=false;uniform=false", "-", "-", "-", "-")
+    t.row("parameter", "lin", "u32", "owned=true;local_owned=true;uniform=false", "-", "-", "-", "-")
+    t.row("parameter", "lidx", "u32", f"owned=false;local_owned=true;uniform=false;bound={WG_WORDS}", "-", "-", "-", "-")
+    for name in ["gid_x", "gid_y", "lid_x", "lid_y"]:
+        t.row("parameter", name, "u32", "owned=false;local_owned=false;uniform=false", "-", "-", "-", "-")
     for name in ["wid_x", "wid_y", "cfg_d", "cfg_m", "cfg_r_rows", "cfg_r_off"]:
-        t.row("parameter", name, "u32", "owned=false;uniform=true", "-", "-", "-", "-")
+        t.row("parameter", name, "u32", "owned=false;local_owned=false;uniform=true", "-", "-", "-", "-")
     return "\n".join(t.lines) + "\n"
 
 
 def main(argv):
     text = build()
+    rows = write_rows.rows_of_named(text)
+    kingdom_row = (VARIANT, KINGDOM, VARIANT_DESCRIPTION, write_rows.root_of(rows), "")
+    parent_row = (KINGDOM, "", DESCRIPTION, "", "")
     if "--check" in argv:
-        try:
-            with open(OUT, encoding="utf-8") as f:
-                committed = f.read()
-        except FileNotFoundError:
-            committed = None
-        if committed != text:
-            print(f"{OUT} differs from a fresh generation: run gen_rows.py", file=sys.stderr)
+        bad = write_rows.check_kingdom(KINGDOM, {}, parent_row) + write_rows.check_kingdom(VARIANT, rows, kingdom_row)
+        for b in bad:
+            print(b, file=sys.stderr)
+        if bad:
             return 1
-        print(f"{OUT}: up to date ({len(text.splitlines())} rows)")
+        print(f"kingdoms/master: {VARIANT} up to date ({len(text.splitlines())} rows)")
         return 0
-    with open(OUT, "w", encoding="utf-8") as f:
-        f.write(text)
-    print(f"wrote {OUT} ({len(text.splitlines())} rows)")
+    write_rows.write_kingdom(KINGDOM, {}, parent_row)
+    write_rows.write_kingdom(VARIANT, rows, kingdom_row)
+    print(f"wrote {VARIANT} into kingdoms/master ({len(text.splitlines())} rows)")
     return 0
 
 

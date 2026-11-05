@@ -405,10 +405,10 @@ impl Optimisers {
                 k.loops[i].as_ref().is_some_and(|l| !l.own_work) && statement.contains(&r.out) && r.args.iter().any(|a| statement.contains(a))
             })
             .collect();
-        // float literal rows: every C_T entry parses as a float
+        // float literal rows: every C_T entry parses as a float (`f32.*` in the old tables, `f32` in the rows kingdom)
         let mut consts = BTreeMap::new();
         for (i, r) in k.rows.iter().enumerate() {
-            if r.kind != RowKind::Constant || !dual(r.out).starts_with("f32.") {
+            if r.kind != RowKind::Constant || !(dual(r.out) == "f32" || dual(r.out).starts_with("f32.")) {
                 continue;
             }
             let Some(texts) = k.constants.get(&r.out) else { continue };
