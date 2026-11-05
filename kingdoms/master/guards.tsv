@@ -359,3 +359,11 @@ wgsl.gram	load	0	must	in1.bound <= in0.len
 wgsl.gram	wg_load	0	must	in0.bound <= 64
 wgsl.gram	dot	0	must	in1.width = in0.width
 wgsl.gram	vadd	0	must	in1.width = in0.width
+wgsl.image	store_px	0	must	in0.width = 4
+wgsl.image	loop	0	must	env.work * in0.value <= 64
+wgsl.image	barrier	0	must	env.uniform
+wgsl.image	wg_store	0	must	in0.local_owned
+wgsl.image	wg_store	1	must	in0.bound <= 64
+wgsl.image	wg_load	0	must	in0.bound <= 64
+wgsl.image	dot	0	must	in1.width = in0.width
+wgsl.image	vadd	0	must	in1.width = in0.width

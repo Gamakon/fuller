@@ -43,13 +43,16 @@ fn nine_data_types_and_the_root_is_the_kernel() {
     assert!(layout.width > 0);
 }
 
-/// The 200 random kernels, with each one's program.
+/// The 200 random kernels of the Gram variant, with each one's program.
 fn kernels() -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
     kernels_n(GENES)
 }
 
 fn kernels_n(n: usize) -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
-    let k = kingdom();
+    kernels_of(kingdom(), n)
+}
+
+fn kernels_of(k: WgslRows, n: usize) -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
     let layout = k.layout(PROGRAM_SIZE).expect("the layout");
     let mut rng = GeneRng::new(0x0057_4753_4c5f_4b33);
     let mut out = Vec::new();
@@ -66,6 +69,11 @@ fn kernels_n(n: usize) -> (WgslRows, Vec<(Vec<u32>, Tree, WgslProgram)>) {
 #[test]
 fn two_hundred_random_genes_pass_naga_n_of_n() {
     let (_, kernels) = kernels();
+    naga_n_of_n(&kernels);
+}
+
+#[cfg(feature = "wgsl")]
+fn naga_n_of_n(kernels: &[(Vec<u32>, Tree, WgslProgram)]) {
     let mut failures = Vec::new();
     for (i, (_, _, p)) in kernels.iter().enumerate() {
         let module = match naga::front::wgsl::parse_str(&p.text) {
@@ -85,7 +93,13 @@ fn two_hundred_random_genes_pass_naga_n_of_n() {
 
 #[test]
 fn the_host_twin_of_the_device_rules_decodes_equal_to_the_decoder() {
-    let (k, kernels) = kernels();
+    for variant in [VARIANT, IMAGE] {
+        let (k, kernels) = kernels_of(WgslRows::load_variant(variant).expect("loads"), GENES);
+        twin_equals_decoder(&k, &kernels);
+    }
+}
+
+fn twin_equals_decoder(k: &WgslRows, kernels: &[(Vec<u32>, Tree, WgslProgram)]) {
     let rules = k.device_rules().expect("every row is in the device's closed forms");
     assert_eq!(rules.len(), k.contract.n_symbols());
     for (i, (_, tree, _)) in kernels.iter().enumerate() {
@@ -97,19 +111,25 @@ fn the_host_twin_of_the_device_rules_decodes_equal_to_the_decoder() {
 
 #[test]
 fn every_guard_is_exercised_and_the_work_bound_holds() {
-    // 1,000 genes: a loop over the budget is a rarer draw than the other failures
-    let (k, kernels) = kernels_n(5 * GENES);
+    for variant in [VARIANT, IMAGE] {
+        // 1,000 genes: a loop over the budget is a rarer draw than the other failures
+        let (k, kernels) = kernels_of(WgslRows::load_variant(variant).expect("loads"), 5 * GENES);
+        guards_fire_and_work_bound_holds(&k, &kernels);
+    }
+}
+
+fn guards_fire_and_work_bound_holds(k: &WgslRows, kernels: &[(Vec<u32>, Tree, WgslProgram)]) {
     let mut fired: BTreeMap<String, usize> = BTreeMap::new();
-    for (_, _, p) in &kernels {
+    for (_, _, p) in kernels {
         for (_, c) in p.substitutions.iter().chain(&p.rewrites) {
             *fired.entry(c.clone()).or_default() += 1;
         }
     }
     let conditions: Vec<String> = k.tables.guards.iter().map(|g| g.condition.to_string()).collect();
     let silent: Vec<&String> = conditions.iter().filter(|c| !fired.contains_key(*c)).collect();
-    assert!(silent.is_empty(), "guards no random gene fired: {silent:?}; fired {fired:?}");
+    assert!(silent.is_empty(), "{}: guards no random gene fired: {silent:?}; fired {fired:?}", k.tables.kingdom);
     // the work bound: no kernel nests loops past the budget (read back from the rendered text's `for` counts)
-    for (_, tree, _) in &kernels {
+    for (_, tree, _) in kernels {
         let d = k.decode(tree).expect("decodes");
         fn deepest(n: &Node, work: i64, k: &WgslRows) -> i64 {
             let mut w = work;
@@ -120,7 +140,7 @@ fn every_guard_is_exercised_and_the_work_bound_holds() {
             }
             n.kids.iter().map(|c| deepest(c, w, k)).max().unwrap_or(w)
         }
-        assert!(deepest(&d.root, 1, &k) <= BUDGET);
+        assert!(deepest(&d.root, 1, k) <= BUDGET);
     }
 }
 
@@ -287,4 +307,36 @@ fn snap_runs_on_the_kingdom_built_from_the_rows() {
     let out = out.expect("snapped");
     assert_eq!(counts.snapped, 1);
     assert_eq!(k.constants[&f32_ty][out.const_index.expect("a word") as usize].parse::<f64>().map(|v| v as f32), Ok(std::f32::consts::PI));
+}
+
+/// THE IMAGE INTERFACE (variant `wgsl.image`): eight data types (no buffer), the uniforms and the texture's size are
+/// entry variables, every kernel clears its own texel first, and `store_px` writes a pixel there, widened by zeros when
+/// it is not a vec4 (the guard `in0.width = 4`).
+#[test]
+fn the_image_interface_stores_a_vec4_pixel_from_uniforms() {
+    let k = WgslRows::load_variant(IMAGE).expect("the image rows load");
+    assert_eq!(k.tables.kingdom, IMAGE);
+    assert_eq!(k.tables.data_types.len(), 8, "{:?}", k.tables.data_types.iter().map(|d| d.name.as_str()).collect::<Vec<_>>());
+    assert!(k.ty("buf").is_none() && k.symbol_named("store").is_none() && k.symbol_named("load").is_none());
+    let s = |n: &str| k.symbol_named(n).unwrap_or_else(|| panic!("{n}"));
+    let leaf = |n: &str| Tree { symbol: s(n), const_index: None, kids: vec![] };
+    let node = |n: &str, kids: Vec<Tree>| Tree { symbol: s(n), const_index: None, kids };
+    let kernel = |body: Tree| node("main", vec![leaf("g8x8"), body]);
+    let narrow = kernel(node("seq", vec![node("set_rf0", vec![node("mul_f", vec![param(&k, "time"), param(&k, "speed")])]), node("store_px", vec![node("v2", vec![leaf("rf0"), param(&k, "gamma")])])]));
+    let p = k.program(&narrow).expect("renders");
+    assert!(p.substitutions.is_empty(), "{p:?}");
+    assert_eq!(p.rewrites.len(), 1, "the vec2 pixel is widened: {p:?}");
+    assert!(p.text.contains("rf0 = (time * speed);"), "{}", p.text);
+    assert!(p.text.contains("textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(vec2<f32>(rf0, gamma), 0.0, 0.0));"), "{}", p.text);
+    assert!(p.text.contains("let speed: f32 = params.speed;") && p.text.contains("let img_w: u32 = textureDimensions(output).x;"), "{}", p.text);
+    let wide = kernel(node("store_px", vec![node("v4", vec![leaf("rf0"), leaf("rf1"), leaf("rf2"), param(&k, "intensity")])]));
+    let p = k.program(&wide).expect("renders");
+    assert!(p.rewrites.is_empty() && p.substitutions.is_empty(), "{p:?}");
+    assert!(p.text.contains("vec2<u32>(gid.x, gid.y), vec4<f32>(rf0, rf1, rf2, intensity));"), "{}", p.text);
+    #[cfg(feature = "wgsl")]
+    {
+        let (_, kernels) = kernels_of(k, GENES);
+        assert!(kernels.iter().all(|(_, _, p)| p.text.contains("textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(0.0));")), "every image kernel writes its texel");
+        naga_n_of_n(&kernels);
+    }
 }

@@ -1600,3 +1600,81 @@ wgsl.gram	c32	out	up	value	32
 wgsl.gram	c64	out	up	value	64
 wgsl.gram	c128	out	up	value	128
 wgsl.gram	c256	out	up	value	256
+wgsl.image	let_u	in1	down	var.u32	1
+wgsl.image	let_u	in1	down	var.u32.bound	in0.bound
+wgsl.image	let_u	in1	down	var.u32.uniform	in0.uniform
+wgsl.image	let_u	in1	down	var.u32.owned	in0.owned
+wgsl.image	let_u	in1	down	var.u32.local_owned	in0.local_owned
+wgsl.image	let_u	in1	down	var.u32.spell	u{depth}{nth}
+wgsl.image	let_f	in1	down	var.f32	1
+wgsl.image	let_f	in1	down	var.f32.uniform	in0.uniform
+wgsl.image	let_f	in1	down	var.f32.spell	f{depth}{nth}
+wgsl.image	let_v	in1	down	var.vecf	1
+wgsl.image	let_v	in1	down	var.vecf.width	in0.width
+wgsl.image	let_v	in1	down	var.vecf.uniform	in0.uniform
+wgsl.image	let_v	in1	down	var.vecf.spell	v{depth}{nth}
+wgsl.image	if_	in1	down	env.uniform	env.uniform and in0.uniform
+wgsl.image	if_	in2	down	env.uniform	env.uniform and in0.uniform
+wgsl.image	loop	in1	down	var.u32	1
+wgsl.image	loop	in1	down	var.u32.bound	in0.value
+wgsl.image	loop	in1	down	var.u32.uniform	true
+wgsl.image	loop	in1	down	var.u32.owned	false
+wgsl.image	loop	in1	down	var.u32.local_owned	false
+wgsl.image	loop	in1	down	var.u32.spell	i{depth}{nth}
+wgsl.image	loop	in1	down	env.work	env.work * in0.value
+wgsl.image	add_u	out	up	bound	in0.bound + in1.bound
+wgsl.image	add_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	add_u	out	up	owned	(in0.owned and in1.uniform) or (in1.owned and in0.uniform)
+wgsl.image	add_u	out	up	local_owned	(in0.local_owned and in1.uniform) or (in1.local_owned and in0.uniform)
+wgsl.image	mul_uc	out	up	bound	in0.bound * in1.value
+wgsl.image	mul_uc	out	up	uniform	in0.uniform
+wgsl.image	mul_uc	out	up	owned	in0.owned
+wgsl.image	mul_uc	out	up	local_owned	in0.local_owned
+wgsl.image	mod_uc	out	up	bound	in1.value
+wgsl.image	mod_uc	out	up	uniform	in0.uniform
+wgsl.image	mod_uc	out	up	owned	false
+wgsl.image	mod_uc	out	up	local_owned	false
+wgsl.image	min_u	out	up	bound	min(in0.bound, in1.bound)
+wgsl.image	min_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	min_u	out	up	owned	false
+wgsl.image	min_u	out	up	local_owned	false
+wgsl.image	?@u32	out	up	uniform	true
+wgsl.image	?@u32	out	up	owned	false
+wgsl.image	?@u32	out	up	local_owned	false
+wgsl.image	add_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	sub_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	mul_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	max_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	fma_f	out	up	uniform	in0.uniform and in1.uniform and in2.uniform
+wgsl.image	sqrt_f	out	up	uniform	in0.uniform
+wgsl.image	exp_f	out	up	uniform	in0.uniform
+wgsl.image	f32_u	out	up	uniform	in0.uniform
+wgsl.image	wg_load	out	up	uniform	false
+wgsl.image	dot	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	rf0	out	up	uniform	false
+wgsl.image	rf1	out	up	uniform	false
+wgsl.image	rf2	out	up	uniform	false
+wgsl.image	rf3	out	up	uniform	false
+wgsl.image	?@f32	out	up	uniform	true
+wgsl.image	lt_u	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	lt_f	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	and_b	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	not_b	out	up	uniform	in0.uniform
+wgsl.image	?@bool	out	up	uniform	true
+wgsl.image	v2	out	up	width	2
+wgsl.image	v2	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	v4	out	up	width	4
+wgsl.image	v4	out	up	uniform	in0.uniform and in1.uniform and in2.uniform and in3.uniform
+wgsl.image	vadd	out	up	width	in0.width
+wgsl.image	vadd	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	vscale	out	up	width	in0.width
+wgsl.image	vscale	out	up	uniform	in0.uniform and in1.uniform
+wgsl.image	c1	out	up	value	1
+wgsl.image	c2	out	up	value	2
+wgsl.image	c4	out	up	value	4
+wgsl.image	c8	out	up	value	8
+wgsl.image	c16	out	up	value	16
+wgsl.image	c32	out	up	value	32
+wgsl.image	c64	out	up	value	64
+wgsl.image	c128	out	up	value	128
+wgsl.image	c256	out	up	value	256

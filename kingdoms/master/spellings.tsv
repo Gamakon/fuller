@@ -754,8 +754,8 @@ wgsl.gram	sub_f		({0} - {1})
 wgsl.gram	mul_f		({0} * {1})
 wgsl.gram	max_f		max({0}, {1})
 wgsl.gram	fma_f		fma({0}, {1}, {2})
-wgsl.gram	sqrt_f		sqrt({0})
-wgsl.gram	exp_f		exp({0})
+wgsl.gram	sqrt_f		sqrt(abs({0}))
+wgsl.gram	exp_f		exp(min({0}, 88.0))
 wgsl.gram	f32_u		f32({0})
 wgsl.gram	load		{0}[{1}]
 wgsl.gram	wg_load		wg_f[{0}]
@@ -797,3 +797,75 @@ wgsl.gram	=group		({0})
 wgsl.gram	=group	name	{0}
 wgsl.gram	=negative		-{0}
 wgsl.gram	=negative	name	{0}
+wgsl.image	main		{0} @compute @workgroup_size(WG_X, WG_Y, 1) fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{ let gid_x: u32 = gid.x; let gid_y: u32 = gid.y; let lid_x: u32 = lid.x; let lid_y: u32 = lid.y; let wid_x: u32 = wid.x; let wid_y: u32 = wid.y; let lin: u32 = gid.y * (nwg.x * WG_X) + gid.x; let img_w: u32 = textureDimensions(output).x; let img_h: u32 = textureDimensions(output).y; let time: f32 = time_data.time; let delta: f32 = time_data.delta; let frame: u32 = time_data.frame; let speed: f32 = params.speed; let intensity: f32 = params.intensity; let color1_r: f32 = params.color1_r; let color1_g: f32 = params.color1_g; let color1_b: f32 = params.color1_b; let color2_r: f32 = params.color2_r; let color2_g: f32 = params.color2_g; let color2_b: f32 = params.color2_b; let color3_r: f32 = params.color3_r; let color3_g: f32 = params.color3_g; let color3_b: f32 = params.color3_b; let gamma: f32 = params.gamma; let zoom: f32 = params.zoom; if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(0.0)); }} var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0; {1} }}
+wgsl.image	empty		const WG_X: u32 = 8u; const WG_Y: u32 = 8u; @compute @workgroup_size(WG_X, WG_Y, 1) fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{ let gid_x: u32 = gid.x; let gid_y: u32 = gid.y; let lid_x: u32 = lid.x; let lid_y: u32 = lid.y; let wid_x: u32 = wid.x; let wid_y: u32 = wid.y; let lin: u32 = gid.y * (nwg.x * WG_X) + gid.x; let img_w: u32 = textureDimensions(output).x; let img_h: u32 = textureDimensions(output).y; let time: f32 = time_data.time; let delta: f32 = time_data.delta; let frame: u32 = time_data.frame; let speed: f32 = params.speed; let intensity: f32 = params.intensity; let color1_r: f32 = params.color1_r; let color1_g: f32 = params.color1_g; let color1_b: f32 = params.color1_b; let color2_r: f32 = params.color2_r; let color2_g: f32 = params.color2_g; let color2_b: f32 = params.color2_b; let color3_r: f32 = params.color3_r; let color3_g: f32 = params.color3_g; let color3_b: f32 = params.color3_b; let gamma: f32 = params.gamma; let zoom: f32 = params.zoom; if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(0.0)); }} var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0;  }}
+wgsl.image	g8x8		const WG_X: u32 = 8u; const WG_Y: u32 = 8u;
+wgsl.image	g16x16		const WG_X: u32 = 16u; const WG_Y: u32 = 16u;
+wgsl.image	g32x2		const WG_X: u32 = 32u; const WG_Y: u32 = 2u;
+wgsl.image	g64x1		const WG_X: u32 = 64u; const WG_Y: u32 = 1u;
+wgsl.image	seq		{0} {1}
+wgsl.image	let_u		{{ let {1.v0}: u32 = {0}; {1} }}
+wgsl.image	let_f		{{ let {1.v0}: f32 = {0}; {1} }}
+wgsl.image	let_v		{{ let {1.v0}: vec{=in0.width}<f32> = {0}; {1} }}
+wgsl.image	set_rf0		rf0 = {0};
+wgsl.image	set_rf1		rf1 = {0};
+wgsl.image	set_rf2		rf2 = {0};
+wgsl.image	set_rf3		rf3 = {0};
+wgsl.image	store_px		if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), {0}); }}
+wgsl.image	if_		if ({0}) {{ {1} }} else {{ {2} }}
+wgsl.image	loop		for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}
+wgsl.image	barrier		workgroupBarrier();
+wgsl.image	wg_store		wg_f[{0}] = {1};
+wgsl.image	add_u		({0} + {1})
+wgsl.image	mul_uc		({0} * {1}u)
+wgsl.image	mod_uc		({0} % {1}u)
+wgsl.image	min_u		min({0}, {1})
+wgsl.image	?@u32		{v}
+wgsl.image	?@u32	pool	0u,1u,2u,3u,4u,8u,16u,32u
+wgsl.image	add_f		({0} + {1})
+wgsl.image	sub_f		({0} - {1})
+wgsl.image	mul_f		({0} * {1})
+wgsl.image	max_f		max({0}, {1})
+wgsl.image	fma_f		fma({0}, {1}, {2})
+wgsl.image	sqrt_f		sqrt(abs({0}))
+wgsl.image	exp_f		exp(min({0}, 88.0))
+wgsl.image	f32_u		f32({0})
+wgsl.image	wg_load		wg_f[{0}]
+wgsl.image	dot		dot({0}, {1})
+wgsl.image	rf0		rf0
+wgsl.image	rf1		rf1
+wgsl.image	rf2		rf2
+wgsl.image	rf3		rf3
+wgsl.image	?@f32		{v}
+wgsl.image	?@f32	pool	0.0,1.0,0.5,2.0,-1.0,0.001
+wgsl.image	lt_u		({0} < {1})
+wgsl.image	lt_f		({0} < {1})
+wgsl.image	and_b		({0} && {1})
+wgsl.image	not_b		(!{0})
+wgsl.image	?@bool		{v}
+wgsl.image	?@bool	pool	true,false
+wgsl.image	v2		vec2<f32>({0}, {1})
+wgsl.image	v4		vec4<f32>({0}, {1}, {2}, {3})
+wgsl.image	vadd		({0} + {1})
+wgsl.image	vscale		({0} * {1})
+wgsl.image	c1		1
+wgsl.image	c2		2
+wgsl.image	c4		4
+wgsl.image	c8		8
+wgsl.image	c16		16
+wgsl.image	c32		32
+wgsl.image	c64		64
+wgsl.image	c128		128
+wgsl.image	c256		256
+wgsl.image	=min		min({0}, {1})
+wgsl.image	=min	name	{0}_{1}
+wgsl.image	=max		max({0}, {1})
+wgsl.image	=max	name	{0}_{1}
+wgsl.image	=+		{0} + {1}
+wgsl.image	=+	name	{0}_{1}
+wgsl.image	=*		{0} * {1}
+wgsl.image	=*	name	{0}_{1}
+wgsl.image	=group		({0})
+wgsl.image	=group	name	{0}
+wgsl.image	=negative		-{0}
+wgsl.image	=negative	name	{0}

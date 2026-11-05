@@ -701,3 +701,16 @@ wgsl.gram	dot	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({
 wgsl.gram	dot	0	node	true	true	{const}
 wgsl.gram	vadd	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) else ({1}).{=at(list('x', 'xy', 'xyz', 'xyzw'), in0.width - 1, 'x')}}
 wgsl.gram	vadd	0	node	true	true	{in.own}
+wgsl.image	store_px	0	in0	true	true	vec4<f32>({0}, {for i < 4 - in0.width sep , : 0.0})
+wgsl.image	store_px	0	node	true	true	{const}
+wgsl.image	loop	0	node	true	true	{const}
+wgsl.image	barrier	0	node	true	true	{const}
+wgsl.image	wg_store	0	node	true	true	{const}
+wgsl.image	wg_store	1	in0	true	true	min({0}, 63u)
+wgsl.image	wg_store	1	node	true	true	{const}
+wgsl.image	wg_load	0	in0	true	true	min({0}, 63u)
+wgsl.image	wg_load	0	node	true	true	{const}
+wgsl.image	dot	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) else ({1}).{=at(list('x', 'xy', 'xyz', 'xyzw'), in0.width - 1, 'x')}}
+wgsl.image	dot	0	node	true	true	{const}
+wgsl.image	vadd	0	in1	true	true	{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) else ({1}).{=at(list('x', 'xy', 'xyz', 'xyzw'), in0.width - 1, 'x')}}
+wgsl.image	vadd	0	node	true	true	{in.own}

@@ -1,5 +1,6 @@
 //! THE WGSL KINGDOM AS ROWS of the gene frame's fixed schema (design `docs/DESIGN_geneframe.md` 3.3, 8.4 and 8.5;
-//! plan `docs/PLAN_futhark_kingdom.md` 7.7, task K3). The kingdom `wgsl` (its Gram problem the variant `wgsl.gram`) in
+//! plan `docs/PLAN_futhark_kingdom.md` 7.7, task K3). The kingdom `wgsl` (one variant per interface: the Gram problem
+//! `wgsl.gram`, the image problem `wgsl.image`) in
 //! the one set of tables `kingdoms/master/`, written by `kingdoms/wgsl_true/gen_rows.py` through `write_rows.py` (never
 //! by hand; its `--check` is a test), holds the four kinds of row and nothing else: nine data types where the old table had 305, because every rule the old table carried in a type is a property
 //! here, moved by Flow rows and enforced by `must` Guard rows with their repairs inline:
@@ -10,7 +11,8 @@
 //! | barriers only in uniform control flow | statement rungs `L`/`C`/`W`/`O` | `down if_ in1, in2: env.uniform := env.uniform and in0.uniform`; `guard barrier: env.uniform must -> {const}` |
 //! | every loop ends, within the work bound | fuel strata `_f<k>` | `count` terminals with a literal `value`; `down loop in1: env.work := env.work * in0.value`; `guard loop: env.work * in0.value <= 64 must -> {const}` (the Gram interface's old K = 1 budget) |
 //! | every index is in range | masked index types | `guard load, store: in1.bound <= in0.len must -> [in1] min({1}, arrayLength(&{0}) - 1u)` |
-//! | the output is written | the `O` rung | the kernel row's own spelling ends in the primary output's store |
+//! | the output is written | the `O` rung | the kernel row's own spelling ends in the primary output's store (the image: clears the invocation's texel first; `store_px` writes it, `guard store_px: in0.width = 4 must -> [in0] widened by zeros`) |
+//! | a constant operand compiles | | `sqrt_f`, `exp_f` are protected (`sqrt(abs(x))`, `exp(min(x, 88.0))`): the WGSL compiler evaluates a constant expression and rejects one out of range |
 //! | vector widths agree | one type per width | `vecf.width`; `guard vadd, dot: in1.width = in0.width must -> [in1] a swizzle or an extension by zeros` |
 //!
 //! Scope is context (design 8.5): the entry's builtins (`lin`, `gid_x`, `cfg_d`, ...) and the buffers (`phi`, `h`) are
@@ -34,10 +36,12 @@ use crate::kingdom_contract::{relations_from_tables, KingdomContract, SymbolId};
 use crate::typed_environment::{Choice, Decoder, Decoding, Failure, Node, Substituted, Substitution};
 use crate::typed_gep::{express, Domain, GeneLayout, Tree};
 
-/// The kingdom in the one set of tables (`kingdoms/master/`, [`crate::geneframe::master`]): the parent, and the Gram
-/// problem's variant, which holds every row.
+/// The kingdom in the one set of tables (`kingdoms/master/`, [`crate::geneframe::master`]): the parent, and one variant
+/// per interface, each holding every row of its problem: the Gram problem ([`VARIANT`], the default) and the image
+/// problem ([`IMAGE`]: a picture into a write-only storage texture from uniforms, the cuneus volumepassage's bindings).
 pub const KINGDOM: &str = "wgsl";
 pub const VARIANT: &str = "wgsl.gram";
+pub const IMAGE: &str = "wgsl.image";
 
 /// The per-invocation work bound the loop guard enforces (`gen_rows.py` BUDGET).
 pub const BUDGET: i64 = 64;
@@ -68,18 +72,29 @@ pub struct WgslProgram {
 }
 
 impl WgslRows {
-    /// Load the committed rows of [`VARIANT`] from the one set of tables.
+    /// Load the committed rows of [`VARIANT`] (the Gram problem) from the one set of tables.
     pub fn load() -> Result<WgslRows, String> {
-        WgslRows::from_text(&crate::geneframe::master::select(VARIANT)?.named_text()?)
+        WgslRows::load_variant(VARIANT)
     }
 
-    /// Load a table's text (the named text form): parse, check, build the contract and the decoder, check the entry.
+    /// Load the committed rows of one variant (an interface: [`VARIANT`], [`IMAGE`]) from the one set of tables.
+    pub fn load_variant(variant: &str) -> Result<WgslRows, String> {
+        WgslRows::from_variant_text(variant, &crate::geneframe::master::select(variant)?.named_text()?)
+    }
+
+    /// Load a table's text (the named text form) as the Gram variant.
     pub fn from_text(text: &str) -> Result<WgslRows, String> {
+        WgslRows::from_variant_text(VARIANT, text)
+    }
+
+    /// Load a table's text (the named text form) as `variant`: parse, check, build the contract and the decoder, check
+    /// the entry.
+    pub fn from_variant_text(variant: &str, text: &str) -> Result<WgslRows, String> {
         let ty = |i: usize| -> Result<Ty, String> {
             Ty::check_dual_count(KINGDOM, i + 1, Ty::MAX_WGSL_DUALS)?;
             Ok(Ty::Wgsl(i as u16))
         };
-        let (tables, entry) = KingdomTables::parse_named(VARIANT, text, &ty)?;
+        let (tables, entry) = KingdomTables::parse_named(variant, text, &ty)?;
         tables.check().map_err(|d| d.join("\n"))?;
         let contract = relations_from_tables(&tables, vec![entry.output]).check().map_err(|d| d.join("\n"))?;
         let (tables, contract) = (Arc::new(tables), Arc::new(contract));
@@ -261,6 +276,8 @@ pub enum GuardRule {
     BoundLiteral { k: u32, limit: i64 },
     /// `in<k>.width = in<w>.width`, repaired by a fit of operand k.
     Width { k: u32, other: u32 },
+    /// `in<k>.width = width` (the image's pixel, a vec4), repaired by a fit of operand k.
+    WidthLiteral { k: u32, width: i64 },
     /// `env.work * in0.value <= limit`.
     Work { limit: i64 },
     /// `env.uniform`.
@@ -413,6 +430,7 @@ impl WgslRows {
                 Condition::Compare { relation: Relation::Le, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Input { position: b, property: q } } if p == "bound" && q == "len" => GuardRule::Bound { k: *k, buffer: *b },
                 Condition::Compare { relation: Relation::Le, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Literal(limit) } if p == "bound" => GuardRule::BoundLiteral { k: *k, limit: *limit },
                 Condition::Compare { relation: Relation::Eq, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Input { position: w, property: q } } if p == "width" && q == "width" => GuardRule::Width { k: *k, other: *w },
+                Condition::Compare { relation: Relation::Eq, left: PropertyExpr::Input { position: k, property: p }, right: PropertyExpr::Literal(width) } if p == "width" => GuardRule::WidthLiteral { k: *k, width: *width },
                 Condition::Compare { relation: Relation::Le, left, right: PropertyExpr::Literal(limit) } if *left == formula("env.work * in0.value") => GuardRule::Work { limit: *limit },
                 c => return Err(format!("guard {}: the condition {c} is outside the device's forms", g.order)),
             };
@@ -534,6 +552,7 @@ impl WgslRows {
                     GuardRule::Bound { k: a, buffer } => int(&kid_props[*a as usize], "bound").zip(int(&kid_props[*buffer as usize], "len")).is_some_and(|(b, l)| b <= l),
                     GuardRule::BoundLiteral { k: a, limit } => int(&kid_props[*a as usize], "bound").is_some_and(|b| b <= *limit),
                     GuardRule::Width { k: a, other } => int(&kid_props[*a as usize], "width").zip(int(&kid_props[*other as usize], "width")).is_some_and(|(x, y)| x == y),
+                    GuardRule::WidthLiteral { k: a, width } => int(&kid_props[*a as usize], "width") == Some(*width),
                     GuardRule::Work { limit } => int(&kid_props[0], "value").is_some_and(|v| env.work.saturating_mul(v) <= *limit),
                     GuardRule::Uniform => env.uniform,
                 };

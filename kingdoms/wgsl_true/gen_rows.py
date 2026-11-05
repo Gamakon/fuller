@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """THE WGSL KINGDOM AS ROWS of the gene frame's fixed schema (docs/DESIGN_geneframe.md 3.3 and 8.4;
-docs/PLAN_futhark_kingdom.md 7.7, task K3): the Gram interface (`phi` in, `h` out, `cfg { d, m, r_rows, r_off }`).
+docs/PLAN_futhark_kingdom.md 7.7, task K3), one variant per interface: `wgsl.gram` (`phi` in, `h` out,
+`cfg { d, m, r_rows, r_off }`) and `wgsl.image` (a picture into a write-only storage texture from uniforms, the cuneus
+volumepassage's bindings).
 
-    python3 -I gen_rows.py            # writes kingdom `wgsl` (variant `wgsl.gram`) into kingdoms/master/ through write_rows.py
+    python3 -I gen_rows.py            # writes kingdom `wgsl` (its variants) into kingdoms/master/ through write_rows.py
     python3 -I gen_rows.py --check    # the committed warehouse rows equal a fresh generation (a Rust test runs this)
 
 Every legality rule of WGSL that the old table carried in a TYPE (305 duals: ownership types, statement rungs, fuel
@@ -18,7 +20,13 @@ inline, so the kingdom has nine data types:
 | `vecf` | `width`, `uniform` | the vector width, fitted by swizzle or extension where two operands differ |
 | `count` | `value` | a literal trip count or stride: terminals `c1` .. `c64`, so the work bound is decided at decode |
 | `grid` | | the workgroup shape, a terminal |
-| `buf` | `len`, `access` | a storage buffer: `phi` (`read`) and `h` (`read_write`), the entry's variables |
+| `buf` | `len`, `access` | a storage buffer: `phi` (`read`) and `h` (`read_write`), the entry's variables (Gram only) |
+
+An interface is configuration, never a row kind: its bindings are the kernel row's prelude, its uniforms and builtins
+are the entry's parameters (variables by `var.T`, spelled by name), and its output is the kernel row's epilogue. The
+image interface has no buffer (so no `buf`, `store` or `load`); its kernel row first writes a cleared pixel (so the
+output is always written), and the statement row `store_px` writes a `vecf` by `textureStore` at the invocation's own
+pixel, with the guard `in0.width = 4` repaired by widening.
 
 Scope is context (design 8.5): `let` bindings, the loop counter and the entry's builtins are variables chosen by
 `var.T`'s index word in the node's environment, never folded into a type. The work bound is the environment attribute
@@ -37,9 +45,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "master"))
 import write_rows  # noqa: E402  (kingdoms/master/write_rows.py: the one set of tables every kingdom lives in)
 
 KINGDOM = "wgsl"
-VARIANT = "wgsl.gram"
 DESCRIPTION = "the true-GEP WGSL kingdom on the four-row schema: nine data types, legality by Flow and Guard rows (owned, uniform, bound, width, work), scope by var.T"
-VARIANT_DESCRIPTION = "the WGSL kingdom's Gram problem: phi in, h out, cfg { d, m, r_rows, r_off }"
 
 # The per-invocation work bound: the product of the trip counts of the loops around a node. The Gram interface's old
 # fuel budget was K = 1, one stratum of 2^6 = 64 trips, and this is the same bound: one loop of 64, or two nested of 8;
@@ -49,30 +55,71 @@ BUDGET = 64
 # invocation index, so a store through a `local_owned` index is one invocation's.
 WG_WORDS = 64
 
-# The Gram interface's bindings (interface.py GRAM) and its workgroup memory, the kernel's prelude: text added once to a
-# program that uses `main`.
-PRELUDE = (
-    "struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\\n"
-    "@group(0) @binding(0) var<storage, read> phi: array<f32>;\\n"
-    "@group(0) @binding(1) var<storage, read_write> h: array<f32>;\\n"
-    "@group(0) @binding(2) var<uniform> cfg: Cfg;\\n"
-    f"var<workgroup> wg_f: array<f32, {WG_WORDS}>;\\n"
-)
+WG_DECL = f"var<workgroup> wg_f: array<f32, {WG_WORDS}>;\\n"
 
-# The kernel row's spelling: the grid's constants, the entry point, the builtins the entry's parameters name, the
-# registers, the body, and the epilogue that always stores the primary output (one owned element per invocation).
-KERNEL = (
+# The kernel row's spelling, for every interface: the grid's constants, the entry point, the builtins the entry's
+# parameters name, the interface's own lets (its uniforms), the registers, the body, and the interface's epilogue.
+KERNEL_HEAD = (
     "{0} @compute @workgroup_size(WG_X, WG_Y, 1) "
     "fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, "
     "@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{ "
     "let gid_x: u32 = gid.x; let gid_y: u32 = gid.y; let lid_x: u32 = lid.x; let lid_y: u32 = lid.y; "
     "let wid_x: u32 = wid.x; let wid_y: u32 = wid.y; "
     "let lin: u32 = gid.y * (nwg.x * WG_X) + gid.x; "
-    "let cfg_d: u32 = cfg.d; let cfg_m: u32 = cfg.m; let cfg_r_rows: u32 = cfg.r_rows; let cfg_r_off: u32 = cfg.r_off; "
-    "var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0; "
-    "{1} "
-    "if (gid.x < cfg.d && gid.y < cfg.r_rows) {{ h[gid.y * cfg.d + gid.x] = rf0; }} }}"
 )
+REGISTER_DECLS = "var rf0: f32 = 0.0; var rf1: f32 = 0.0; var rf2: f32 = 0.0; var rf3: f32 = 0.0; "
+
+# THE GRAM INTERFACE (interface.py GRAM): its bindings and workgroup memory are the kernel's prelude (text added once to
+# a program that uses `main`); the epilogue always stores the primary output (one owned element per invocation).
+GRAM = dict(
+    name="gram",
+    variant="wgsl.gram",
+    description="the WGSL kingdom's Gram problem: phi in, h out, cfg { d, m, r_rows, r_off }",
+    prelude=(
+        "struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\\n"
+        "@group(0) @binding(0) var<storage, read> phi: array<f32>;\\n"
+        "@group(0) @binding(1) var<storage, read_write> h: array<f32>;\\n"
+        "@group(0) @binding(2) var<uniform> cfg: Cfg;\\n"
+    ) + WG_DECL,
+    lets="let cfg_d: u32 = cfg.d; let cfg_m: u32 = cfg.m; let cfg_r_rows: u32 = cfg.r_rows; let cfg_r_off: u32 = cfg.r_off; ",
+    epilogue="if (gid.x < cfg.d && gid.y < cfg.r_rows) {{ h[gid.y * cfg.d + gid.x] = rf0; }} }}",
+    buffers=[("phi", "read"), ("h", "read_write")],
+    # the uniforms as entry variables: (name, data type, properties)
+    uniforms=[(n, "u32", "owned=false;local_owned=false;uniform=true") for n in ["cfg_d", "cfg_m", "cfg_r_rows", "cfg_r_off"]],
+    pixel=False,
+)
+
+# THE IMAGE INTERFACE (interface.py VOLUMEPASSAGE, the cuneus shader's own bindings): one picture into a write-only
+# storage texture from two uniform blocks. Every field of the blocks (padding aside) and the texture's size are entry
+# variables, the same in every invocation. The kernel row clears the invocation's own texel before the body (the output
+# is always written); the statement row `store_px` writes a pixel there, widened by zeros when it is not a vec4 (the
+# guard `in0.width = 4`).
+IMAGE_TIME = [("time", "f32"), ("delta", "f32"), ("frame", "u32")]
+IMAGE_PARAMS = ["speed", "intensity", "color1_r", "color1_g", "color1_b", "color2_r", "color2_g", "color2_b", "color3_r", "color3_g", "color3_b", "gamma", "zoom"]
+IMAGE = dict(
+    name="image",
+    variant="wgsl.image",
+    description="the WGSL kingdom's image problem: a picture into the write-only texture output from the uniforms time_data and params (cuneus volumepassage's bindings)",
+    prelude=(
+        "struct TimeUniform { time: f32, delta: f32, frame: u32, _padding: u32, };\\n"
+        "struct VolumeParams { " + "".join(f"{n}: f32, " for n in IMAGE_PARAMS) + "_padding1: f32, _padding2: f32, _padding3: f32, };\\n"
+        "@group(0) @binding(0) var<uniform> time_data: TimeUniform;\\n"
+        "@group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;\\n"
+        "@group(1) @binding(1) var<uniform> params: VolumeParams;\\n"
+    ) + WG_DECL,
+    lets=("let img_w: u32 = textureDimensions(output).x; let img_h: u32 = textureDimensions(output).y; "
+          + "".join(f"let {n}: {t} = time_data.{n}; " for n, t in IMAGE_TIME)
+          + "".join(f"let {n}: f32 = params.{n}; " for n in IMAGE_PARAMS)
+          + "if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(0.0)); }} "),
+    epilogue="}}",
+    buffers=[],
+    uniforms=([(n, "u32", "owned=false;local_owned=false;uniform=true") for n in ["img_w", "img_h"]]
+              + [(n, t, "uniform=true" if t == "f32" else "owned=false;local_owned=false;uniform=true") for n, t in IMAGE_TIME]
+              + [(n, "f32", "uniform=true") for n in IMAGE_PARAMS]),
+    pixel=True,
+)
+
+INTERFACES = [GRAM, IMAGE]
 
 GRIDS = [("g8x8", 8, 8), ("g16x16", 16, 16), ("g32x2", 32, 2), ("g64x1", 64, 1)]
 COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -83,6 +130,8 @@ BOTH_UNIFORM = "in0.uniform and in1.uniform"
 INJECTIVE_SUM = "(in0.owned and in1.uniform) or (in1.owned and in0.uniform)"
 LOCAL_INJECTIVE_SUM = "(in0.local_owned and in1.uniform) or (in1.local_owned and in0.uniform)"
 CLAMP = "min({1}, arrayLength(&{0}) - 1u)"
+# The width fit of the pixel (`store_px`'s argument) to a vec4: extended by zeros.
+VEC4_FIT = "vec4<f32>({0}, {for i < 4 - in0.width sep , : 0.0})"
 # The width fit of vector operand 1 to operand 0's width: a swizzle where it is wider, an extension by zeros where
 # narrower (design 8.4, the list `vfit`).
 VFIT = ("{if in1.width < in0.width : vec{=in0.width}<f32>({1}, {for i < in0.width - in1.width sep , : 0.0}) "
@@ -152,8 +201,10 @@ class Table:
 DROP = [("node", "true", "true", "{const}")]
 
 
-def build() -> str:
+def build(iface) -> str:
     t = Table()
+    buffers = bool(iface["buffers"])
+    kernel = KERNEL_HEAD + iface["lets"] + REGISTER_DECLS + "{1} " + iface["epilogue"]
     # ---- the data types and what they carry ----
     t.data_type("kernel")
     t.data_type("stmt", constant=("{}", None))
@@ -163,13 +214,14 @@ def build() -> str:
     t.data_type("vecf", ["width", "uniform"], constant=("vec4<f32>(0.0)", "width=4;uniform=true"))
     t.data_type("count", ["value"])
     t.data_type("grid")
-    t.data_type("buf", ["len", "access"])
+    if buffers:
+        t.data_type("buf", ["len", "access"])
 
     # ---- the kernel ----
     # the prelude is the kernel's: added once to a program that uses `main` (every program does)
-    t.function("main", ["grid", "stmt"], "kernel", KERNEL, prelude=PRELUDE)
+    t.function("main", ["grid", "stmt"], "kernel", kernel, prelude=iface["prelude"])
     # every type the root reaches needs a terminal (the frame's tail): the empty kernel, 8 x 8, the epilogue alone
-    t.terminal("empty", "kernel", KERNEL.replace("{0}", "const WG_X: u32 = 8u; const WG_Y: u32 = 8u;").replace("{1}", ""), prelude=PRELUDE)
+    t.terminal("empty", "kernel", kernel.replace("{0}", "const WG_X: u32 = 8u; const WG_Y: u32 = 8u;").replace("{1}", ""), prelude=iface["prelude"])
     for name, x, y in GRIDS:
         t.terminal(name, "grid", f"const WG_X: u32 = {x}u; const WG_Y: u32 = {y}u;")
 
@@ -183,10 +235,15 @@ def build() -> str:
                downs=[(1, "var.vecf", "1"), (1, "var.vecf.width", "in0.width"), (1, "var.vecf.uniform", "in0.uniform"), (1, "var.vecf.spell", "v{depth}{nth}")])
     for r in range(REGISTERS):
         t.function(f"set_rf{r}", ["f32"], "stmt", f"rf{r} = {{0}};")
-    t.function("store", ["buf", "u32", "f32"], "stmt", "{0}[{1}] = {2};",
-               guards=[("in0.access = 'read_write'", DROP),
-                       ("in1.owned", DROP),
-                       ("in1.bound <= in0.len", [("in1", "true", "true", CLAMP)] + DROP)])
+    if buffers:
+        t.function("store", ["buf", "u32", "f32"], "stmt", "{0}[{1}] = {2};",
+                   guards=[("in0.access = 'read_write'", DROP),
+                           ("in1.owned", DROP),
+                           ("in1.bound <= in0.len", [("in1", "true", "true", CLAMP)] + DROP)])
+    if iface["pixel"]:
+        # the invocation's own texel (the store is one invocation's, as the epilogue's); a narrower pixel widened by zeros
+        t.function("store_px", ["vecf"], "stmt", "if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), {0}); }}",
+                   guards=[("in0.width = 4", [("in0", "true", "true", VEC4_FIT)] + DROP)])
     t.function("if_", ["bool", "stmt", "stmt"], "stmt", "if ({0}) {{ {1} }} else {{ {2} }}",
                downs=[(1, "env.uniform", "env.uniform and in0.uniform"), (2, "env.uniform", "env.uniform and in0.uniform")])
     t.function("loop", ["count", "stmt"], "stmt", "for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}",
@@ -212,11 +269,14 @@ def build() -> str:
     for name, text in [("add_f", "({0} + {1})"), ("sub_f", "({0} - {1})"), ("mul_f", "({0} * {1})"), ("max_f", "max({0}, {1})")]:
         t.function(name, ["f32", "f32"], "f32", text, ups=[("uniform", BOTH_UNIFORM)])
     t.function("fma_f", ["f32", "f32", "f32"], "f32", "fma({0}, {1}, {2})", ups=[("uniform", "in0.uniform and in1.uniform and in2.uniform")])
-    for name, text in [("sqrt_f", "sqrt({0})"), ("exp_f", "exp({0})")]:
+    # protected, as the engine's: an operand that is a constant expression is evaluated by the WGSL compiler, and
+    # sqrt of a negative constant or exp past f32's range does not compile (naga: "out of valid range")
+    for name, text in [("sqrt_f", "sqrt(abs({0}))"), ("exp_f", "exp(min({0}, 88.0))")]:
         t.function(name, ["f32"], "f32", text, ups=[("uniform", "in0.uniform")])
     t.function("f32_u", ["u32"], "f32", "f32({0})", ups=[("uniform", "in0.uniform")])
-    t.function("load", ["buf", "u32"], "f32", "{0}[{1}]", ups=[("uniform", "false")],
-               guards=[("in1.bound <= in0.len", [("in1", "true", "true", CLAMP)] + DROP)])
+    if buffers:
+        t.function("load", ["buf", "u32"], "f32", "{0}[{1}]", ups=[("uniform", "false")],
+                   guards=[("in1.bound <= in0.len", [("in1", "true", "true", CLAMP)] + DROP)])
     t.function("wg_load", ["u32"], "f32", "wg_f[{0}]", ups=[("uniform", "false")],
                guards=[(f"in0.bound <= {WG_WORDS}", [("in0", "true", "true", f"min({{0}}, {WG_WORDS - 1}u)")] + DROP)])
     t.function("dot", ["vecf", "vecf"], "f32", "dot({0}, {1})", ups=[("uniform", BOTH_UNIFORM)],
@@ -244,41 +304,50 @@ def build() -> str:
     # ---- counts and buffers ----
     for c in COUNTS:
         t.terminal(f"c{c}", "count", str(c), ups=[("value", str(c))])
-    t.variable("buf")
+    if buffers:
+        t.variable("buf")
 
     # ---- the formula rows, last (the alphabet's ids are the contract's): how a formula's value is spelled in WGSL ----
     for name, text in [("=min", "min({0}, {1})"), ("=max", "max({0}, {1})"), ("=+", "{0} + {1}"), ("=*", "{0} * {1}"), ("=group", "({0})"), ("=negative", "-{0}")]:
         t.symbol(name, role="formula", spelling=text, forms=[("name", "{0}_{1}" if name in ("=min", "=max", "=+", "=*") else "{0}")])
 
-    # ---- the entry: the Gram problem's root environment ----
-    t.row("entry", "gram", "kernel")
-    t.row("parameter", "phi", "buf", "access='read'", "-", "-", "-", "-")
-    t.row("parameter", "h", "buf", "access='read_write'", "-", "-", "-", "-")
+    # ---- the entry: the problem's root environment (its buffers, the builtins, its uniforms) ----
+    t.row("entry", iface["name"], "kernel")
+    for name, access in iface["buffers"]:
+        t.row("parameter", name, "buf", f"access='{access}'", "-", "-", "-", "-")
     t.row("parameter", "lin", "u32", "owned=true;local_owned=true;uniform=false", "-", "-", "-", "-")
     t.row("parameter", "lidx", "u32", f"owned=false;local_owned=true;uniform=false;bound={WG_WORDS}", "-", "-", "-", "-")
     for name in ["gid_x", "gid_y", "lid_x", "lid_y"]:
         t.row("parameter", name, "u32", "owned=false;local_owned=false;uniform=false", "-", "-", "-", "-")
-    for name in ["wid_x", "wid_y", "cfg_d", "cfg_m", "cfg_r_rows", "cfg_r_off"]:
+    for name in ["wid_x", "wid_y"]:
         t.row("parameter", name, "u32", "owned=false;local_owned=false;uniform=true", "-", "-", "-", "-")
+    for name, ty, props in iface["uniforms"]:
+        t.row("parameter", name, ty, props, "-", "-", "-", "-")
     return "\n".join(t.lines) + "\n"
 
 
 def main(argv):
-    text = build()
-    rows = write_rows.rows_of_named(text)
-    kingdom_row = (VARIANT, KINGDOM, VARIANT_DESCRIPTION, write_rows.root_of(rows), "")
     parent_row = (KINGDOM, "", DESCRIPTION, "", "")
+    variants = []
+    for iface in INTERFACES:
+        text = build(iface)
+        rows = write_rows.rows_of_named(text)
+        variants.append((iface["variant"], rows, (iface["variant"], KINGDOM, iface["description"], write_rows.root_of(rows), ""), len(text.splitlines())))
     if "--check" in argv:
-        bad = write_rows.check_kingdom(KINGDOM, {}, parent_row) + write_rows.check_kingdom(VARIANT, rows, kingdom_row)
+        bad = write_rows.check_kingdom(KINGDOM, {}, parent_row)
+        for variant, rows, kingdom_row, _ in variants:
+            bad += write_rows.check_kingdom(variant, rows, kingdom_row)
         for b in bad:
             print(b, file=sys.stderr)
         if bad:
             return 1
-        print(f"kingdoms/master: {VARIANT} up to date ({len(text.splitlines())} rows)")
+        for variant, _, _, n in variants:
+            print(f"kingdoms/master: {variant} up to date ({n} rows)")
         return 0
     write_rows.write_kingdom(KINGDOM, {}, parent_row)
-    write_rows.write_kingdom(VARIANT, rows, kingdom_row)
-    print(f"wrote {VARIANT} into kingdoms/master ({len(text.splitlines())} rows)")
+    for variant, rows, kingdom_row, n in variants:
+        write_rows.write_kingdom(variant, rows, kingdom_row)
+        print(f"wrote {variant} into kingdoms/master ({n} rows)")
     return 0
 
 

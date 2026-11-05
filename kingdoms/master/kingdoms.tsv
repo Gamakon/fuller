@@ -16,3 +16,4 @@ tsr.order_depth_windows	tsr	TSR variant order_depth_windows	F
 tsr.single	tsr	TSR variant single	F	
 wgsl		the true-GEP WGSL kingdom on the four-row schema: nine data types, legality by Flow and Guard rows (owned, uniform, bound, width, work), scope by var.T		
 wgsl.gram	wgsl	the WGSL kingdom's Gram problem: phi in, h out, cfg { d, m, r_rows, r_off }	kernel	
+wgsl.image	wgsl	the WGSL kingdom's image problem: a picture into the write-only texture output from the uniforms time_data and params (cuneus volumepassage's bindings)	kernel	

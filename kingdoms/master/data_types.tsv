@@ -71,3 +71,11 @@ wgsl.gram	vecf	scalar			width;uniform	vec4<f32>(0.0)	width=4;uniform=true
 wgsl.gram	count	scalar			value			
 wgsl.gram	grid	scalar						
 wgsl.gram	buf	scalar			len;access			
+wgsl.image	kernel	scalar						
+wgsl.image	stmt	scalar				{}	-	
+wgsl.image	u32	scalar			bound;uniform;owned;local_owned	0u	uniform=true;owned=false;local_owned=false	
+wgsl.image	f32	scalar			uniform	0.0	uniform=true	
+wgsl.image	bool	scalar			uniform	false	uniform=true	
+wgsl.image	vecf	scalar			width;uniform	vec4<f32>(0.0)	width=4;uniform=true	
+wgsl.image	count	scalar			value			
+wgsl.image	grid	scalar						
