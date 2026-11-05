@@ -340,13 +340,9 @@ per-reference read; on three-gene symbolic-regression chromosomes it refused
 every fold, correctly. Whether a fold is kept by evolution is a third
 question, answered by the tournament.
 
-`homeotic::fold` turns the matches into a chromosome with a homeotic tail:
-each repeated subtree becomes a tail gene, every occurrence a reference
-terminal `href<t>`, references forward only, and `homeotic::unfold` is the
-check that the fold is exact. `homeotic::encode` returns the genes as Karva.
-phylu owns the loop that selects chromosomes, calls these in parallel, and
-upserts the folded genes into the population (phylu's README, "Homeotic
-genes, and share-equivalence as a mutation").
+The per-chromosome homeotic tail (`homeotic.rs`: each repeated subtree a tail gene, every occurrence a
+slot-addressed reference) was deleted (plan 7.7 K5); the population design's homeotic rows, named by a stable row id
+(`population_dag.rs`, `docs/PLAN_population_dag.md`), supersede it.
 
 ## Python API
 
