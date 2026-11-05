@@ -1,6 +1,7 @@
-//! Master 6's e-graph (plan 7, task F5): every extracted candidate writes back and renders its own text; the
-//! references' variants are master 5's texts; the extracted variable is in scope where written and is the same
-//! resolved variable; a shared part used under two environments evaluates bit for bit as the unshared program; a tree
+//! Master 6's e-graph: every extracted candidate writes back and renders its own text; the references' variants are
+//! master 5's texts; the extracted variable is in scope where written and is the same resolved variable; a shared part
+//! used under two environments evaluates bit for bit as the unshared program; a part whose variable no one word names
+//! everywhere is inlined; a refit never puts a part where its word names another variable; a tree
 //! with a failing requirement is not saturated.
 
 use super::*;
@@ -305,4 +306,150 @@ fn the_same_tree_gives_the_same_variants() {
     let e = Egraph6::load("pathfinder").unwrap();
     let r = REFERENCES6.iter().find(|r| r.problem == "pathfinder" && r.form == "planted").unwrap();
     assert_eq!(master6_variant_texts(&e, r), master6_variant_texts(&e, r));
+}
+
+/// Each program's text and the text it must agree with, compiled together (`c` backend) and run on k-means' first four
+/// stored cases: the outputs are the same bit for bit.
+fn agree_on_the_c_backend(name: &str, pairs: &[(String, String)]) {
+    let mut sources = String::new();
+    for (i, (want, got)) in pairs.iter().enumerate() {
+        sources.push_str(&as_entry(2 * i, want));
+        sources.push_str(&as_entry(2 * i + 1, got));
+    }
+    let dir = scratch(name);
+    let exe = crate::futhark_sig::compile_c(&sources, &dir).unwrap_or_else(|x| panic!("{sources}\n{x}"));
+    let cases = crate::futhark_sig::load_cases(&problem("kmeans").unwrap()).unwrap();
+    for case in cases.iter().take(4) {
+        for i in 0..pairs.len() {
+            assert_eq!(run(&exe, &format!("e{}", 2 * i + 1), &case.stdin), run(&exe, &format!("e{}", 2 * i), &case.stdin), "{name}: individual {i} on {}", case.name);
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Each individual's folded gene, expressed and inlined.
+fn inlined(fold: &crate::saturated_fold::SaturatedFold, layout: &GeneLayout, consts: &BTreeMap<Ty, u32>) -> Vec<Tree> {
+    let cl = crate::typed_chromosome::ChromosomeLayout { normal: crate::typed_gep::Layout::new(0, vec![layout.clone()]), mains: Vec::new() };
+    fold.genes
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            let c = crate::typed_chromosome::Chromosome { chromosome_id: i as u64, genes: vec![g.clone()], mains: Vec::new() };
+            crate::typed_chromosome::express_chromosome(&fold.epoch, &fold.adfs, &cl, &c, consts).unwrap().inlined(&fold.epoch, &fold.adfs).remove(0).1
+        })
+        .collect()
+}
+
+/// The word of the variable node at `path`.
+fn site(e: &Egraph6, t: &Tree, path: &[u32]) -> VariableSite {
+    e.variables(t).unwrap().into_iter().find(|(q, _)| q.as_slice() == path).map(|(_, s)| s).unwrap_or_else(|| panic!("no variable at {path:?}"))
+}
+
+/// A PART WHOSE VARIABLE NO ONE WORD NAMES EVERYWHERE IS INLINED. The part `get zeros_k x`, with `x` the variable
+/// bound at binding depth 2, stands in one individual under a `let` (depth 1), a `tabrows` (depth 2: `x`) and a `tab`
+/// (depth 3), so the `i64`s in scope are `x` and the `tab`'s: `x` is place 0 of 2. In the other it stands under a
+/// `tabrows` (depth 1) and a `tab` (depth 2: `x`): place 1 of 2. One e-class, but no word is 0 and 1 modulo 2, so the
+/// part is no ADF: it is inlined, and each individual's program is its own, bit for bit on the `c` backend.
+#[test]
+fn a_part_whose_variable_no_word_names_everywhere_is_inlined() {
+    let e = Egraph6::load("kmeans").unwrap();
+    let a = build6(&e.kingdom, "(let.a.f32@m.f32[z] zeros_n (tabrows@m.f32[i] k d (tab@a.f32[j] d (neg@f32 (get@f32 zeros_k i)))))").unwrap();
+    let b = build6(&e.kingdom, "(transpose@m.f32 (tabrows@m.f32[i] d k (tab@a.f32[c] k (get@f32 zeros_k c))))").unwrap();
+    for t in [&a, &b] {
+        assert!(e.saturable(t).unwrap(), "{:?}", e.decode(t).unwrap().failures());
+    }
+    assert_eq!((site(&e, &a, &[1, 2, 1, 0, 1]), site(&e, &b, &[0, 2, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 1, count: 2 }));
+    let (layout, consts, pad) = frame(&e);
+    let trees = vec![a, b];
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    assert_eq!((fold.kept, fold.unshared_by_scope, fold.used.len()), (0, 1, 0), "the part is inlined, and nothing else is shared");
+    let back = inlined(&fold, &layout, &consts);
+    let mut pairs = Vec::new();
+    for (i, t) in trees.iter().enumerate() {
+        assert_eq!(e.resolved(&back[i]).unwrap(), e.resolved(t).unwrap(), "individual {i}: the fold changed the program");
+        pairs.push((e.program(t).unwrap().text, e.program(&back[i]).unwrap().text));
+    }
+    agree_on_the_c_backend("inlined_for_scope", &pairs);
+}
+
+/// A REFIT NEVER PUTS A PART WHERE ITS WORD NAMES ANOTHER VARIABLE. Two individuals share `get zeros_k x` (`x` bound at
+/// depth 2, place 1 of 2: common word 1). A third holds the same part inside `fst (pair X part)`, under a `let`, a
+/// `tabrows` binding `x` and a `tab`: `x` is place 0 of 2 there, and word 1 names the `tab`'s variable. Its extracted
+/// form is `X` in place of `fst (pair ..)`, which does not fit its layout (the `f32` head holds 6, and `X`'s three
+/// leaves move the `abs` argument to row 6), so it is refitted from its own tree, where the part's occurrence was
+/// never counted for the common word. The refit may not take the reference there: the individual keeps its program
+/// (bit for bit on the `c` backend), and the other two use the part.
+#[test]
+fn a_refit_never_puts_a_part_where_its_word_names_another_variable() {
+    let e = Egraph6::load("kmeans").unwrap();
+    let a = build6(&e.kingdom, "(transpose@m.f32 (tabrows@m.f32[i] d k (tab@a.f32[j] k (neg@f32 (get@f32 zeros_k j)))))").unwrap();
+    let b = build6(&e.kingdom, "(transpose@m.f32 (tabrows@m.f32[i] d k (tab@a.f32[j] k (abs@f32 (get@f32 zeros_k j)))))").unwrap();
+    let d = build6(&e.kingdom, "(let.a.f32@m.f32[z] zeros_n (tabrows@m.f32[i] k d (tab@a.f32[j] d (sub@f32 (fst.f32.f32@f32 (pair@f32.f32 (sel@f32 1 1 1) (get@f32 zeros_k i))) (abs@f32 (neg@f32 2))))))").unwrap();
+    for t in [&a, &b, &d] {
+        assert!(e.saturable(t).unwrap(), "{:?}", e.decode(t).unwrap().failures());
+    }
+    assert_eq!((site(&e, &a, &[0, 2, 1, 0, 1]), site(&e, &d, &[1, 2, 1, 0, 0, 1, 1])), (VariableSite { place: 1, count: 2 }, VariableSite { place: 0, count: 2 }));
+    // The problem's layout with the `f32` head cut to 6: the third individual fits, its extracted form does not.
+    let f32_ty = e.contract.output(e.kingdom.symbols.iter().position(|s| s.name == "neg@f32").unwrap() as SymbolId);
+    let root = e.kingdom.root.data_type;
+    let mut heads = e.contract.heads_from_program_size(root, problem("kmeans").unwrap().program_size).unwrap();
+    heads.insert(f32_ty, 6);
+    let layout = GeneLayout::from_heads(&e.contract, root, &heads).unwrap();
+    let consts = const_len6(&e.kingdom);
+    let pad = random_gene(&e.contract, &layout, &consts, &mut GeneRng::new(0xF5)).unwrap();
+    let trees = vec![a, b, d];
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    assert_eq!((fold.kept, fold.refitted, fold.unshared_by_scope), (0, 1, 0), "the third individual is refitted");
+    assert_eq!(fold.used.len(), 1, "the part is shared");
+    let back = inlined(&fold, &layout, &consts);
+    let mut pairs = Vec::new();
+    for (i, t) in trees.iter().enumerate() {
+        assert_eq!(e.resolved(&back[i]).unwrap(), e.resolved(t).unwrap(), "individual {i}: the fold changed the program");
+        pairs.push((e.program(t).unwrap().text, e.program(&back[i]).unwrap().text));
+    }
+    agree_on_the_c_backend("refit_scope", &pairs);
+}
+
+/// An individual's tree with every variable's word moved by its count: the same variables, other words.
+fn shifted(e: &Egraph6, t: &Tree) -> Tree {
+    let mut out = t.clone();
+    for (path, s) in e.variables(t).unwrap() {
+        let mut n = &mut out;
+        for k in path {
+            n = &mut n.kids[k as usize];
+        }
+        n.const_index = Some(s.place + s.count);
+    }
+    out
+}
+
+/// AN INDIVIDUAL THE FOLD LEAVES AS IT WAS KEEPS ITS WORDS, AND A WORD MOVED TO ITS LEAST FORM IS THE SAME PROGRAM.
+/// Alone, a tree whose words are not their least (each moved by its count) keeps its gene word for word. Beside its
+/// own least-word spelling and a copy, every individual resolves to its own program, and every part structural hashing
+/// shares has its e-class (the copies' parts, spelled with the moved words, are found too: none is unreached).
+#[test]
+fn an_individual_the_fold_leaves_as_it_was_keeps_its_words() {
+    let e = Egraph6::load("kmeans").unwrap();
+    let least = build6(&e.kingdom, "(let.a.f32@m.f32[z] zeros_n (rowdiv@m.f32 centres (tab@a.f32[c] k (get@f32 zeros_k c))))").unwrap();
+    let moved = shifted(&e, &least);
+    assert_ne!(moved, least);
+    assert_eq!(e.resolved(&moved).unwrap(), e.resolved(&least).unwrap());
+    let (layout, consts, pad) = frame(&e);
+    let fold_of = |trees: &[Tree]| {
+        let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
+        let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, trees, &Budget::default()).unwrap();
+        (genes, fold)
+    };
+    let (genes, alone) = fold_of(std::slice::from_ref(&moved));
+    assert_eq!((alone.rewritten, alone.reformed, alone.references), (0, 0, 0));
+    assert_eq!((&alone.genes[0], &alone.forms[0]), (&genes[0], &moved), "an unchanged individual's words were moved");
+    let trees = vec![least.clone(), moved.clone(), moved];
+    let (_, fold) = fold_of(&trees);
+    assert_eq!(fold.fate.unreached, 0, "a part of the moved copies has no e-class: {:?}", fold.fate);
+    assert!(fold.references > 0, "the copies share nothing");
+    for (i, (b, t)) in inlined(&fold, &layout, &consts).iter().zip(&trees).enumerate() {
+        assert_eq!(e.resolved(b).unwrap(), e.resolved(t).unwrap(), "individual {i}: the fold changed the program");
+    }
 }

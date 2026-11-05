@@ -1,12 +1,12 @@
-//! MASTER 6's E-GRAPH (plan `docs/PLAN_futhark_kingdom.md` section 7, task F5), for A7 and every view alike: one sort
-//! a data type, one constructor a symbol, the rules of `master/6/rules.tsv`, all GENERATED
+//! MASTER 6's E-GRAPH (the e-graph task of `docs/PLAN_futhark_kingdom.md` section 7), for A7 and every view alike:
+//! one sort a data type, one constructor a symbol, the rules of `master/6/rules.tsv`, all GENERATED
 //! (`kingdoms/futhark/sig/<problem>/m6/egraph.*`, written by `gen_tables.py`, computed again by
 //! [`crate::futhark_view::egraph6`]).
 //!
 //! * **The variable constructor on the resolved variable.** A `var@T` enters the e-graph as `(Xvar__T depth ordinal)`,
-//!   the identity of the variable it names (G3's [`Binder`]), never its index word: an index word is relative to its
-//!   environment, so the same word names different variables in different scopes and different words the same one
-//!   (plan 7.5 risk 3). With no variable of `T` in scope it enters as `(Kvar__T)`, the constant it reads.
+//!   the identity of the variable it names (its [`Binder`]: binding depth and ordinal), never its index word: an index
+//!   word is relative to its environment, so the same word names different variables in different scopes and different
+//!   words the same one. With no variable of `T` in scope it enters as `(Kvar__T)`, the constant it reads.
 //! * **The bridge writes an extracted variable back** as the index word that names it in the DESTINATION's
 //!   environment ([`Egraph6::place`]), checked by decoding again: the variable is in scope where it is written and is
 //!   the same resolved variable.

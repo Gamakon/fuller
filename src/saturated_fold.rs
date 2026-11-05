@@ -144,7 +144,8 @@ pub struct SaturatedFold {
     pub folded: Vec<Tree>,
     /// Each individual's extracted form, unfolded (kingdom symbols only).
     pub forms: Vec<Tree>,
-    /// Individuals whose gene words changed.
+    /// Individuals whose gene words changed. An individual whose program the fold left as it was keeps its gene word
+    /// for word; one whose form changed has its own variables at their least index words (the same variables).
     pub rewritten: usize,
     /// Individuals whose gene holds a form that is not the tree they were submitted with.
     pub reformed: usize,
@@ -349,10 +350,16 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         class_of.insert(key_of(&ser, &n.op, &n.children), n.eclass.clone());
     }
     let lookup = |op: &str, kids: Vec<String>| class_of.get(&(op.to_string(), kids)).cloned();
-    // Every subtree of an asserted tree, by its first occurrence, with its e-class: how a structural part finds its
-    // e-class (a subtree alone has no environment, so it is never imported by itself).
+    // Every subtree of every asserted tree, by its first occurrence, with its e-class: how a structural part finds its
+    // e-class (a subtree alone has no environment, so it is never imported by itself). Every asserted tree, not only
+    // the first of its term: two trees whose words differ but name the same variables are one root, and each has its
+    // own subtrees.
     let mut class_of_subtree: HashMap<&Tree, ClassId> = HashMap::new();
-    for (t, term) in distinct.iter().zip(&terms) {
+    for (t, d) in trees.iter().zip(&root_of) {
+        let Some(d) = d else { continue };
+        if class_of_subtree.contains_key(t) {
+            continue; // the same tree again: its subtrees are recorded
+        }
         fn record<'a>(t: &'a Tree, a: &ATree, out: &mut HashMap<&'a Tree, ClassId>) {
             if let Some(c) = &a.class {
                 out.entry(t).or_insert_with(|| c.clone());
@@ -361,7 +368,7 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
                 record(kt, ka, out);
             }
         }
-        record(t, &annotate(t, &parse_sexpr(term)?, &lookup)?, &mut class_of_subtree);
+        record(t, &annotate(t, &parse_sexpr(&terms[*d])?, &lookup)?, &mut class_of_subtree);
     }
     let roots: Vec<ClassId> = ser.root_eclasses.clone();
     let extracted = crate::extract_dag::extract_shared_dag_with_budget(&ser, &roots, &crate::extract_dag::ExtractionBudget { max_rounds: budget.max_rounds })?;
@@ -430,7 +437,9 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         let kids = n.kids.iter().map(|k| expanded[k].clone()).collect();
         expanded.insert(c, Tree { symbol: n.symbol, const_index: n.const_index, kids });
     }
-    // Each root's form placed where it stands, and its variables' words (none outside master 6's kingdoms).
+    // Each root's form placed where it stands, and its variables' words (none outside master 6's kingdoms: with none,
+    // the scope step below, the refit's scope check and the comparison by resolved tree are skipped, and the fold is
+    // what it was before master 6).
     let mut forms_of: Vec<Option<Tree>> = Vec::with_capacity(roots.len());
     let mut variables_of: Vec<BTreeMap<Vec<u32>, VariableSite>> = Vec::with_capacity(roots.len());
     for r in &roots {
@@ -441,12 +450,14 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         });
         forms_of.push(form);
     }
+    let has_variables = variables_of.iter().any(|v| !v.is_empty());
     // A shared part's variables take, each, one word that names its resolved variable wherever the part is used (in
     // every placed form, at every occurrence); a part with a variable no word does that for is not an ADF, and is
     // inlined. To a fixed point: inlining a part puts its nodes into the bodies of the parts around it.
     let mut words_of: BTreeMap<&ClassId, BTreeMap<Vec<u32>, u32>> = BTreeMap::new();
     let mut unshared_by_scope = 0usize;
-    loop {
+    let mut settled = !has_variables;
+    while !settled {
         // Every occurrence of every shared class, by the root form it is in.
         let mut sites: BTreeMap<&ClassId, Vec<(usize, Vec<u32>)>> = BTreeMap::new();
         for (d, r) in roots.iter().enumerate() {
@@ -508,7 +519,7 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
                 shared.remove(c);
                 unshared_by_scope += 1;
             }
-            None => break,
+            None => settled = true,
         }
     }
     // What became of each part structural hashing shares.
@@ -516,7 +527,13 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
     let mut seen_classes: BTreeSet<ClassId> = BTreeSet::new();
     for body in structural_fold.adfs.expanded(&structural_fold.epoch).values() {
         let Some(c) = class_of_subtree.get(body).cloned() else {
-            fate.unreached += 1; // a part only of trees that may not be saturated
+            // Every subtree of an asserted tree has its e-class, so a part with none is a part only of trees that
+            // may not be saturated (kept as submitted); anything else is a bug.
+            let in_kept = trees.iter().zip(&root_of).any(|(t, d)| d.is_none() && holds(t, body));
+            if !in_kept {
+                return Err(bug("a part structural hashing shares has no e-class, and no tree kept as submitted holds it"));
+            }
+            fate.unreached += 1;
             continue;
         };
         if !nodes.contains_key(&c) {
@@ -586,7 +603,24 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
     let (mut out_genes, mut out_folded, mut forms) = (Vec::with_capacity(genes.len()), Vec::with_capacity(genes.len()), Vec::with_capacity(genes.len()));
     let (mut references, mut rewritten, mut reformed, mut refitted) = (0usize, 0usize, 0usize, 0usize);
     let (mut refit_adopted, mut kept) = (0usize, 0usize);
+    // Each ADF's body twice: as the gene holds it (its variables by their common words), and as the extraction chose
+    // it (its variables by their resolved identities, which `place` writes as the words that name them wherever the
+    // body is put).
     let bodies_expanded = adfs.expanded(&epoch);
+    let bodies_resolved: BTreeMap<AdfId, Tree> = adf_of.iter().map(|(c, a)| (*a, expanded[c].clone())).collect();
+    // A REFIT STEP KEEPS THE PROGRAM. A refit may put a shared part where no counted site stands (inside a subtree the
+    // extracted form dropped, `fst (pair a b) -> a`), and there the part's common word may name another variable. A
+    // trial tree (epoch alphabet) is taken only when it is a program where it stands with the bodies as extracted, and
+    // the gene it writes (the bodies as the gene holds them) names the same variables: otherwise the part stays
+    // unshared there (the refit tries its children instead).
+    let scope_holds = |trial: &Tree| -> Result<bool, String> {
+        if !has_variables {
+            return Ok(true);
+        }
+        let Some(placed) = kingdom.place(&crate::typed_chromosome::unfold_with(&epoch, &bodies_resolved, trial))? else { return Ok(false) };
+        let written = crate::typed_chromosome::unfold_with(&epoch, &bodies_expanded, &with_words(&epoch, trial, &placed));
+        Ok(kingdom.import(&written)? == kingdom.import(&placed)?)
+    };
     for (i, (g, t)) in genes.iter().zip(trees).enumerate() {
         let Some(d) = root_of[i] else {
             kept += 1;
@@ -604,18 +638,18 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         };
         let r = &roots[d];
         let vars = &variables_of[d];
+        // A form's own variables take the least word that names their variable where they stand (`w` and
+        // `w mod count` name the same variable, so the program is the same); a shared part's take their common word.
         let (mut f, mut n) = folded(r, true, &nodes, &adf_of, &epoch, &mut Vec::new(), &|p| vars.get(p).map(|v| v.place))?;
         let mut form = placed_form;
         // The write-back's domain is the forms that fit the gene's layout (section 5: encodable exactly when
-        // `j_T <= h_T` for every type). An extracted form that does not fit is outside it, so the gene keeps its own
-        // spelling with its shared parts as references: a removal-only rewrite, which always fits.
-        // The domain of a root is the forms of its e-class that fit its layout (section 5: encodable exactly when
-        // `j_T <= h_T` for every type); a form that does not fit costs infinity for this root, and the other roots
-        // keep the joint choice. The joint form is the best when it fits. When it does not, the root's form is
-        // searched among the forms of its class that do: starting from the form it was submitted with (one of its
-        // class's forms, and one that fits), every subtree, top down, takes its class's joint form, or its reference
-        // when the class is shared, whenever the whole still fits. Every step is checked before it is taken, so no
-        // form outside the domain is ever written.
+        // `j_T <= h_T` for every type). The domain of a root is the forms of its e-class that fit its layout; a form
+        // that does not fit costs infinity for this root, and the other roots keep the joint choice. The joint form is
+        // the best when it fits. When it does not, the root's form is searched among the forms of its class that do:
+        // starting from the form it was submitted with (one of its class's forms, and one that fits), every subtree,
+        // top down, takes its class's joint form, or its reference when the class is shared, whenever the whole still
+        // fits and keeps its program (`scope_holds`). Every step is checked before it is taken, so no form outside the
+        // domain is ever written.
         let words = match write_back(epoch.kingdom(), layout, g, &f) {
             Ok(w) => w,
             Err(_) => {
@@ -630,15 +664,9 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
                     }
                     Ok(None)
                 };
-                let (tree, adopted) = refit(start, epoch.kingdom(), layout, &joint)?;
+                let (tree, adopted) = refit(start, epoch.kingdom(), layout, &joint, &scope_holds)?;
                 // The refit form's extracted parts are placed where they now stand, and its own nodes take their words.
-                let Some(p) = kingdom.place(&crate::typed_chromosome::unfold_with(&epoch, &bodies_expanded, &tree))? else {
-                    kept += 1;
-                    out_genes.push(g.clone());
-                    out_folded.push(t.clone());
-                    forms.push(t.clone());
-                    continue;
-                };
+                let p = kingdom.place(&crate::typed_chromosome::unfold_with(&epoch, &bodies_resolved, &tree))?.ok_or_else(|| bug(format!("individual {i}: the refit form is no program where it stands, though its start was one and every step was checked")))?;
                 refitted += 1;
                 refit_adopted += adopted;
                 f = with_words(&epoch, &tree, &p);
@@ -647,17 +675,21 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
                 write_back(epoch.kingdom(), layout, g, &f).map_err(|e| bug(format!("individual {i}: a form checked to fit the layout did not write back: {e}")))?
             }
         };
+        // The folded gene expresses its form: the same tree, or (master 6: a shared part's variables taking their
+        // common word, an own variable its least word) the same resolved tree. On the direct path the common words
+        // were chosen for every counted site, and every refit step was checked, so a difference is a bug either way:
+        // never a changed program.
         let c = Chromosome { chromosome_id: i as u64, genes: vec![words.clone()], mains: Vec::new() };
         let p = express_chromosome(&epoch, &adfs, &cl, &c, const_len).map_err(|e| format!("individual {i}: {e}"))?;
         let back = p.inlined(&epoch, &adfs);
-        // The folded gene expresses its form: the same tree, or (a shared part's variables taking their common word)
-        // the same resolved tree.
-        if back.len() != 1 || (back[0].1 != form && kingdom.import(&back[0].1)? != kingdom.import(&form)?) {
-            if kingdom.variables(&form)?.is_empty() {
-                return Err(bug(format!("individual {i}: the folded gene does not express its extracted form")));
-            }
-            // A refit put a shared part where its common word names another variable: kept as submitted.
-            kept += 1;
+        let same = |x: &Tree, y: &Tree| -> Result<bool, String> { Ok(if has_variables { kingdom.import(x)? == kingdom.import(y)? } else { x == y }) };
+        if back.len() != 1 || !same(&back[0].1, &form)? {
+            return Err(bug(format!("individual {i}: the folded gene does not express its extracted form")));
+        }
+        // An individual whose program the fold left as it was (the same resolved tree, no reference) keeps its gene
+        // word for word: its index words are not moved to their least form, which would erase the neutral variation
+        // they carry (`w` and `w mod count` differ once a mutation changes `count`).
+        if has_variables && n == 0 && same(&form, t)? {
             out_genes.push(g.clone());
             out_folded.push(t.clone());
             forms.push(t.clone());
@@ -665,7 +697,7 @@ pub fn fold_saturated(table: &mut AdfTable, kingdom: &dyn EgraphKingdom, base: &
         }
         references += n;
         rewritten += usize::from(words != *g);
-        reformed += usize::from(form != *t);
+        reformed += usize::from(!same(&form, t)?);
         out_genes.push(words);
         out_folded.push(f);
         forms.push(form);
@@ -764,9 +796,9 @@ fn annotate(t: &Tree, s: &Sexpr, class: &dyn Fn(&str, Vec<String>) -> Option<Cla
 }
 
 /// The refit search: from `start` (which fits), each subtree in level order takes `joint(its class)` (fixed from
-/// then on) when the whole tree still fits the layout; otherwise its children are tried. Returns the tree and how
-/// many subtrees took their joint form.
-fn refit(start: ATree, k: &KingdomContract, layout: &GeneLayout, joint: &dyn Fn(&ClassId) -> Result<Option<Tree>, String>) -> Result<(Tree, usize), String> {
+/// then on) when the whole tree still fits the layout and `keeps_program` holds for it; otherwise its children are
+/// tried. Returns the tree and how many subtrees took their joint form.
+fn refit(start: ATree, k: &KingdomContract, layout: &GeneLayout, joint: &dyn Fn(&ClassId) -> Result<Option<Tree>, String>, keeps_program: &dyn Fn(&Tree) -> Result<bool, String>) -> Result<(Tree, usize), String> {
     crate::typed_gep::fits(k, layout, &start.tree()).map_err(|e| bug(format!("the submitted form does not fit its own layout: {e}")))?;
     /// A tree whose fixed parts are plain trees and whose open parts are still annotated.
     #[derive(Clone)]
@@ -801,7 +833,8 @@ fn refit(start: ATree, k: &KingdomContract, layout: &GeneLayout, joint: &dyn Fn(
             if j != tree(&here) {
                 let mut trial = whole.clone();
                 *at(&mut trial, &path) = Part::Fixed(j);
-                if crate::typed_gep::fits(k, layout, &tree(&trial)).is_ok() {
+                let whole_trial = tree(&trial);
+                if crate::typed_gep::fits(k, layout, &whole_trial).is_ok() && keeps_program(&whole_trial)? {
                     whole = trial;
                     adopted += 1;
                     continue;
@@ -815,6 +848,11 @@ fn refit(start: ATree, k: &KingdomContract, layout: &GeneLayout, joint: &dyn Fn(
         }
     }
     Ok((tree(&whole), adopted))
+}
+
+/// Whether `sub` is a subtree of `t`.
+fn holds(t: &Tree, sub: &Tree) -> bool {
+    t == sub || t.kids.iter().any(|k| holds(k, sub))
 }
 
 fn count_refs(epoch: &Epoch, t: &Tree) -> usize {

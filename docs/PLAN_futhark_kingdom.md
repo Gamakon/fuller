@@ -1442,8 +1442,13 @@ checked by decoding again, `variants`, `saturable`) and `FoldEgraph6`. `saturate
 submitted, the fold's key is the resolved term, and a shared part's variables take one word naming their variable at
 every use (`common_word`), else the part is inlined. The variants (3 iterations, 32 members, 48) of the eleven
 references of reduce, scan, histogram, pathfinder and A7, and of the k-means reference, are master 5's texts in order
-(k-means: 31 of 31, 0.13 s against master 5's 244 s; fixture `tests/fixtures/futhark_m6_kmeans_variants.txt`); all
-15 references' variants write back and render their own text, none dropped; A7's reference finds the winner. `typed_chromosome::genic_cells` read Dv words as symbols (G2 gap): fixed.
+(k-means: 31 of 31; fixture `tests/fixtures/futhark_m6_kmeans_variants.txt`); all
+15 references' variants write back and render their own text, none dropped; A7's reference finds the winner. `typed_chromosome::genic_cells` read a variable's index word as a symbol (a gap of the gene layout task, G2): fixed.
+Code review (`docs/reviews/2026-11-05_section7_F5_code_review.md`) fixed: a refit step is taken only where the gene it
+writes names the variables its extracted form names (a shared part is never put where its word names another
+variable), a folded gene that does not express its form is a bug on every path, an individual the fold leaves as it
+was keeps its words, and a part with no e-class is a bug. The timing of master 5's k-means variants was never recorded
+with its conditions, so no figure is given.
 
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
