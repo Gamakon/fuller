@@ -3247,15 +3247,17 @@ def witness_egraph6(dir_path, name, mst=None):
 # materialised itself, its serial depth, and whether it is elementwise and so ABSORBS its arguments (master 5's
 # `costs.tsv` rules, restated over argument properties instead of class roles). One line an adapter (`kind` =
 # `adapter`): the traffic it adds where it renders (`traffic`): every `fit` the cells of the operand it fits, at its
-# target length (`fitted.cells`); `clampix` its two compares; a substitution nothing (its node renders as its
-# substitute, which is costed in its place). So an elite with a needless adapter loses to its own clean form (plan 7.5
-# risk 4). `src/futhark_cost.rs` (`CostTable6`, `program_cost6`) reads it.
+# target length (`fitted.cells`), plus the cells it reads of that operand at its source length (`source.cells`), so
+# its own charge covers its full traffic (F3 review finding 3; this table is the charge's single source); `clampix`
+# its two compares; a substitution nothing (its node renders as its substitute, which is costed in its place). So an
+# elite with a needless adapter loses to its own clean form (plan 7.5 risk 4). `src/futhark_cost.rs` (`CostTable6`,
+# `program_cost6`) reads it.
 #
 # A formula is `0` or a sum of products of factors: an integer, `out.<p>` (the row's result) or `in<k>.<p>` (argument
 # k as the node's adapters leave it), `<p>` a property or `cells` (an array's elements, a scalar 1, a tuple its
-# components, a function 0); `fitted.cells` in an adapter's line. The cost is a MODEL and a pre-optimisation one, as
-# master 5's is: a node's costs count once a trip of every binder above it, its depth once a trip of every loop above
-# it (a `tabulate` is parallel).
+# components, a function 0); `fitted.cells` and `source.cells` in an adapter's line. The cost is a MODEL and a
+# pre-optimisation one, as master 5's is: a node's costs count once a trip of every binder above it, its depth once a
+# trip of every loop above it (a `tabulate` is parallel).
 # --------------------------------------------------------------------------
 
 COSTS6_COLUMNS = ["kind", "ref", "name", "reads", "write", "alloc", "depth", "absorb", "traffic"]
@@ -3316,7 +3318,7 @@ def cost6_of_row(r):
 def adapter6_traffic(name):
     """The traffic one rendering of an adapter adds."""
     if name.startswith("fit"):
-        return "fitted.cells"
+        return "fitted.cells+source.cells"
     if name == "clampix":
         return "2"
     if name.startswith("subst"):
@@ -3361,7 +3363,7 @@ for _refs, _cost in [
 ]:
     for _ref in _refs:
         COST6_BY_REF[_ref] = _cost
-COST6_FACTOR = r"(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)"
+COST6_FACTOR = r"(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells|source\.cells)"
 COST6_FORMULA_RE = re.compile(rf"^(?:0|{COST6_FACTOR}(?:\*{COST6_FACTOR})*(?:\+{COST6_FACTOR}(?:\*{COST6_FACTOR})*)*)$")
 
 
@@ -3378,7 +3380,7 @@ def witness_costs6(path, mst):
     elementwise scalar operation, every row not restated, reads each non-size argument's cells, writes its result's,
     allocates nothing and absorbs); every formula well formed and naming only arguments the row has and properties
     the data type of that argument (or of the result) carries; one adapter line an adapter, every `fit` charged the
-    cells it fits and `clampix` 2."""
+    cells it writes and the cells it reads (`fitted.cells+source.cells`), `clampix` 2 and a substitution 0."""
     bad = []
     with open(path) as f:
         lines = [l.rstrip("\n").split("\t") for l in f if l.strip()]
@@ -3414,7 +3416,7 @@ def witness_costs6(path, mst):
         if len(reads) != len(args):
             bad.append(f"C4 {r['name']} reads {len(reads)} arguments and takes {len(args)}")
         for f in reads + [c["write"], c["alloc"], c["depth"]]:
-            if not COST6_FORMULA_RE.match(f) or "fitted" in f:
+            if not COST6_FORMULA_RE.match(f) or "fitted" in f or "source" in f:
                 bad.append(f"C4 {r['name']}'s formula {f!r} is not a sum of products of integers, out.<p> and in<k>.<p>")
                 continue
             for k, p in re.findall(r"in([0-9]+)\.([a-z]+)", f):
@@ -3430,7 +3432,7 @@ def witness_costs6(path, mst):
     if [a["name"] for a in adapters] != [a["name"] for a in mst["adapters"]]:
         bad.append("C5 the adapter lines are not the master's adapters, one an adapter, in order")
     for a in adapters:
-        want = "fitted.cells" if a["name"] in ("fit", "fit.pair", "fit.state", "fit.body", "fit.inner", "fit.root") else "2" if a["name"] == "clampix" else "0"
+        want = "fitted.cells+source.cells" if a["name"] in ("fit", "fit.pair", "fit.state", "fit.body", "fit.inner", "fit.root") else "2" if a["name"] == "clampix" else "0"
         if a["traffic"] != want or (a["reads"], a["write"], a["alloc"], a["depth"], a["absorb"]) != ("", "0", "0", "0", "0"):
             bad.append(f"C6 the adapter {a['name']} costs {a}, restated traffic {want} and nothing else")
     return bad

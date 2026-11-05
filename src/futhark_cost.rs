@@ -381,6 +381,8 @@ enum Factor6 {
     In(usize, String),
     /// The cells of the operand an adapter fits, at its target length.
     Fitted,
+    /// The cells of the operand an adapter fits, at its source length (what the fit reads).
+    Source,
 }
 
 /// A master 6 cost formula: a sum of products of an integer coefficient and factors.
@@ -390,7 +392,8 @@ pub struct Formula6 {
 }
 
 impl Formula6 {
-    /// Parse `0`, or a sum (`+`) of products (`*`) of integers, `out.<p>`, `in<k>.<p>` and `fitted.cells`.
+    /// Parse `0`, or a sum (`+`) of products (`*`) of integers, `out.<p>`, `in<k>.<p>`, `fitted.cells` and
+    /// `source.cells`.
     fn parse(text: &str) -> Result<Formula6, String> {
         let bad = || format!("our software has a bug: futhark_cost: the master 6 cost formula {text:?}");
         if text == "0" {
@@ -405,6 +408,8 @@ impl Formula6 {
                     coefficient = coefficient.checked_mul(c).ok_or_else(bad)?;
                 } else if f == "fitted.cells" {
                     factors.push(Factor6::Fitted);
+                } else if f == "source.cells" {
+                    factors.push(Factor6::Source);
                 } else if let Some(p) = f.strip_prefix("out.") {
                     factors.push(Factor6::Out(p.to_string()));
                 } else if let Some((k, p)) = f.strip_prefix("in").and_then(|r| r.split_once('.')) {
@@ -509,22 +514,17 @@ impl CostTable6 {
         self.rows.get(reference).ok_or_else(|| format!("our software has a bug: futhark_cost: the row {reference} has no cost"))
     }
 
-    /// The traffic one rendered adapter adds, at `sizes`: the table's formula (a `fit` writes `fitted.cells`, the
-    /// operand at its target length) plus, for a `fit`, the cells it reads of its operand at its source length. AN
-    /// ADAPTER'S OWN CHARGE COVERS ITS FULL TRAFFIC and is always positive, whether the target is shorter, equal or
+    /// The traffic one rendered adapter adds, at `sizes`: the table's formula, its only source (a `fit` writes
+    /// `fitted.cells`, the operand at its target length, and reads `source.cells`, the operand at its source length).
+    /// AN ADAPTER'S OWN CHARGE COVERS ITS FULL TRAFFIC and is always positive, whether the target is shorter, equal or
     /// longer, so the cost never rewards an adapter for its own sake; what a shorter array saves downstream is real work
     /// saved, and quality decides whether the program is right (master README section 10).
     pub fn charge(&self, k: &Kingdom6, c: &Charge6, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
         let f = self.adapters.get(&c.adapter).ok_or_else(|| format!("our software has a bug: futhark_cost: the adapter {} has no cost", c.adapter))?;
-        let own = f.eval(&|x: &Factor6| match (x, &c.fitted) {
-            (Factor6::Fitted, Some((ty, props))) => cells6(k, *ty, props, sizes),
+        f.eval(&|x: &Factor6| match (x, &c.fitted, &c.source) {
+            (Factor6::Fitted, Some((ty, props)), _) | (Factor6::Source, _, Some((ty, props))) => cells6(k, *ty, props, sizes),
             _ => Err(format!("our software has a bug: futhark_cost: the adapter {}'s cost reads {x:?}", c.adapter)),
-        })?;
-        let read = match &c.source {
-            Some((ty, props)) => cells6(k, *ty, props, sizes)?,
-            None => 0,
-        };
-        own.checked_add(read).ok_or_else(|| "futhark_cost: a master 6 cost overflows u128".to_string())
+        })
     }
 }
 
@@ -755,12 +755,12 @@ pub fn program_cost6(k: &Kingdom6, table: &CostTable6, decoding: &Decoding, size
                 let (ty, props) = match x {
                     Factor6::Out(_) => (n.data_type, &n.properties),
                     Factor6::In(i, _) => (n.kids.get(*i).ok_or("our software has a bug: a cost reads an argument past the node's")?.data_type, ops.get(*i).ok_or("our software has a bug: a cost reads an argument past the node's")?),
-                    Factor6::Fitted => return Err("our software has a bug: a row's cost reads fitted.cells".into()),
+                    Factor6::Fitted | Factor6::Source => return Err(format!("our software has a bug: a row's cost reads {x:?}")),
                 };
                 match x {
                     Factor6::Out(p) | Factor6::In(_, p) if p == "cells" => cells6(self.k, ty, props, self.sizes),
                     Factor6::Out(p) | Factor6::In(_, p) => known6(props.get(p).ok_or_else(|| format!("our software has a bug: a cost reads the property {p} of a value that has none"))?, self.sizes),
-                    Factor6::Fitted => Err("our software has a bug: a row's cost reads fitted.cells".into()),
+                    Factor6::Fitted | Factor6::Source => Err(format!("our software has a bug: a row's cost reads {x:?}")),
                 }
             })
         }

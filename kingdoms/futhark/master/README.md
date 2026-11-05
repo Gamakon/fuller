@@ -524,15 +524,15 @@ argument when the argument is materialised), `write` and `alloc` (when the row i
 serial depth), `absorb` (1: elementwise, so its arguments are not materialised), `traffic` (an adapter's, where it
 renders). A formula is `0` or a sum of products of integers, `out.<p>` and `in<k>.<p>` (argument k as the node's
 adapters leave it), `<p>` a property or `cells` (an array's elements, a scalar 1, a tuple its components, a function
-0); an adapter's reads `fitted.cells`. The rules are master 5's (`../costs.tsv`) restated over properties: on A7's
+0); an adapter's reads `fitted.cells` and `source.cells`. The rules are master 5's (`../costs.tsv`) restated over properties: on A7's
 references the cost is master 5's exactly. A node's costs count once a trip of every binder above it, its depth once
 a trip of every loop above it.
 
 The adapters (F3 review findings 3 to 5):
 
 - **An adapter's own charge is always positive and covers its full traffic.** A `fit` is charged the cells it writes
-  (`fitted.cells`, the operand at its target length, from this table) plus the cells it reads of its operand at its
-  source length (added by `CostTable6::charge`); `clampix` its two compares. This holds whether the target is shorter,
+  (`fitted.cells`, the operand at its target length) plus the cells it reads of its operand at its source length
+  (`source.cells`), both from this table, its single source; `clampix` its two compares. This holds whether the target is shorter,
   equal or longer than the source, so the cost never rewards adding an adapter for its own sake, and an elite with a
   needless adapter loses to its own clean form (plan 7.5 risk 4). A `fit` to a SHORTER length can still make the
   whole program cheaper (k-means' `map2.add zeros_n zeros_k` at n = 1000, k = 10 costs less than `map2.add zeros_n

@@ -80,11 +80,11 @@ row	M0087	var@{T.tag}		0	0	0	0	0
 row	M0088	zero@{T.tag}		0	0	0	0	0
 row	M0089	nextin@i64	0;in1.cells	out.cells	0	0	1	0
 adapter		clampix		0	0	0	0	2
-adapter		fit		0	0	0	0	fitted.cells
-adapter		fit.pair		0	0	0	0	fitted.cells
-adapter		fit.state		0	0	0	0	fitted.cells
-adapter		fit.body		0	0	0	0	fitted.cells
-adapter		fit.inner		0	0	0	0	fitted.cells
-adapter		fit.root		0	0	0	0	fitted.cells
+adapter		fit		0	0	0	0	fitted.cells+source.cells
+adapter		fit.pair		0	0	0	0	fitted.cells+source.cells
+adapter		fit.state		0	0	0	0	fitted.cells+source.cells
+adapter		fit.body		0	0	0	0	fitted.cells+source.cells
+adapter		fit.inner		0	0	0	0	fitted.cells+source.cells
+adapter		fit.root		0	0	0	0	fitted.cells+source.cells
 adapter		subst		0	0	0	0	0
 adapter		subst.const		0	0	0	0	0

@@ -401,6 +401,18 @@ fn a_gene_with_an_adapter_costs_more_than_the_same_gene_without() {
     }
 }
 
+/// Genes that render adapters (every `fit` kind the costs reach, `clampix`), by view.
+const ADAPTED_GENES: [(&str, &str); 5] = [
+    ("kmeans", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_k) centres)"),
+    ("kmeans", "(tabrows@m.f32[r] k d zeros_n)"),
+    ("kmeans", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 k))) centres)"),
+    ("kmeans", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_k (map2.add@a.f32 zeros_n zeros_n)) centres)"),
+    ("histogram", "(hist.add@a.i32 k zeros_n zeros_k)"),
+];
+
+/// Four size settings, the view's size variables in order: each `fit` of [`ADAPTED_GENES`] shorter, equal and longer.
+const SIZE_SETTINGS: [[usize; 3]; 4] = [[1000, 10, 3], [4, 4, 4], [2, 7, 5], [5, 3, 9]];
+
 /// AN ADAPTER'S OWN CHARGE COVERS ITS FULL TRAFFIC (F3 review finding 3): every adapter of the adapted genes above,
 /// at several size settings that make each `fit` shorter, equal and longer than its operand, is charged more than 0
 /// and at least the cells it reads of its operand plus the cells it writes, so the cost never rewards an adapter for
@@ -408,14 +420,7 @@ fn a_gene_with_an_adapter_costs_more_than_the_same_gene_without() {
 /// n = 1000, k = 10, `map2.add zeros_n zeros_k` (both fitted to 10) costs less than `map2.add zeros_n zeros_n`.
 #[test]
 fn an_adapters_own_charge_covers_its_full_traffic_at_every_size() {
-    let genes: [(&str, &str); 5] = [
-        ("kmeans", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_k) centres)"),
-        ("kmeans", "(tabrows@m.f32[r] k d zeros_n)"),
-        ("kmeans", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 k))) centres)"),
-        ("kmeans", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_k (map2.add@a.f32 zeros_n zeros_n)) centres)"),
-        ("histogram", "(hist.add@a.i32 k zeros_n zeros_k)"),
-    ];
-    let settings: [[usize; 3]; 4] = [[1000, 10, 3], [4, 4, 4], [2, 7, 5], [5, 3, 9]];
+    let (genes, settings) = (ADAPTED_GENES, SIZE_SETTINGS);
     let (mut shorter, mut equal, mut longer, mut other) = (0usize, 0usize, 0usize, 0usize);
     for (view6, text) in genes {
         let (k, _) = interp6(view6);
@@ -559,4 +564,46 @@ fn a_var_constant_leaf_where_a_variable_of_its_type_is_in_scope_is_not_built() {
     build6(&k, good).unwrap();
     let e = build6(&k, &good.replace("is i)", "is var@i64)")).unwrap_err();
     assert!(e.contains("var@i64") && e.contains("in scope"), "{e}");
+}
+
+/// THE COST TABLE IS THE SINGLE SOURCE OF AN ADAPTER'S CHARGE (F3 fix 57de2f98's note): every `fit` line of
+/// `master/6/costs.tsv` charges `fitted.cells+source.cells` (the cells it writes and the cells it reads of its
+/// operand), `clampix` 2 and a substitution 0, and every adapter of [`ADAPTED_GENES`] at the four
+/// [`SIZE_SETTINGS`] is charged exactly what 57de2f98 charged in code: a `fit` its fitted cells plus its source's,
+/// `clampix` 2.
+#[test]
+fn every_adapters_charge_is_the_cost_tables_and_unchanged() {
+    let table = include_str!("../../kingdoms/futhark/master/6/costs.tsv");
+    let lines: Vec<Vec<&str>> = table.lines().map(|l| l.split('\t').collect()).filter(|f: &Vec<&str>| f[0] == "adapter").collect();
+    assert!(!lines.is_empty());
+    for f in &lines {
+        let want = if f[2].starts_with("fit") { "fitted.cells+source.cells" } else if f[2] == "clampix" { "2" } else { "0" };
+        assert_eq!(f[8], want, "the adapter {}'s line in master/6/costs.tsv", f[2]);
+    }
+    let (mut fits, mut clamps) = (0usize, 0usize);
+    for (view6, text) in ADAPTED_GENES {
+        let k = kingdom6(view6).unwrap();
+        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
+        let d = renderer.decode(&build6(&k, text).unwrap()).unwrap();
+        let names: Vec<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
+        for values in SIZE_SETTINGS {
+            let sizes: BTreeMap<String, usize> = names.iter().cloned().zip(values).collect();
+            for (c, own, _) in adapter_charges(&k, &d, &sizes) {
+                let was = match (&c.source, &c.fitted) {
+                    (Some((ts, ps)), Some((tf, pf))) if c.adapter.starts_with("fit") => {
+                        fits += 1;
+                        crate::futhark_cost::cells6(&k, *tf, pf, &sizes).unwrap() + crate::futhark_cost::cells6(&k, *ts, ps, &sizes).unwrap()
+                    }
+                    (None, None) if c.adapter == "clampix" => {
+                        clamps += 1;
+                        2
+                    }
+                    _ => panic!("{text}: an adapter the charge does not cover: {c:?}"),
+                };
+                assert_eq!(own, was, "{text} at {sizes:?}: {}", c.adapter);
+            }
+        }
+    }
+    assert!(fits > 0 && clamps > 0, "fits {fits}, clampix {clamps}");
+    eprintln!("adapters charged as before, from the table: {fits} fits, {clamps} clampix");
 }
