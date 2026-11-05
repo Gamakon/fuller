@@ -1,0 +1,80 @@
+==== reduce.reference ====
+entry main [n] (xs: [n]i32) : i32 =
+  let zeros_n = replicate n 0i32
+  in i32.sum (xs)
+==== reduce.planted ====
+entry main [n] (xs: [n]i32) : i32 =
+  let zeros_n = replicate n 0i32
+  in i32.sum (map2 i32.min (xs) (xs))
+==== scan.reference ====
+entry main [n] (xs: [n]i32) : [n]i32 =
+  let zeros_n = replicate n 0i32
+  in scan (+) 0i32 (opaque (xs))
+==== scan.planted ====
+entry main [n] (xs: [n]i32) : [n]i32 =
+  let zeros_n = replicate n 0i32
+  in scan (+) 0i32 (opaque (map2 i32.max (xs) (xs)))
+==== histogram.reference ====
+entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [i64.i32 k]i32 =
+  let k = i64.i32 k
+  let zeros_k = replicate k 0i32
+  let zeros_n = replicate n 0i32
+  in hist (+) 0i32 k (map i64.i32 (tabulate n (\i_n -> (((is)[(i_n)]) % i32.i64 k)))) (vs)
+==== histogram.planted ====
+entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [i64.i32 k]i32 =
+  let k = i64.i32 k
+  let zeros_k = replicate k 0i32
+  let zeros_n = replicate n 0i32
+  in hist (+) 0i32 k (map i64.i32 (tabulate n (\i_n -> (((is)[(i_n)]) % i32.i64 k)))) (map2 i32.min (vs) (vs))
+==== pathfinder.reference ====
+entry main [rows][cols] (walls: [rows][cols]i32) : [cols]i32 =
+  let zeros_rows = replicate rows 0i32
+  let zeros_cols = replicate cols 0i32
+  in loop (s_a_cols: [cols]i32) = ((walls)[(0i64)]) for ti_rows < rows - 1 do let i_rows = ti_rows + 1 in (tabulate cols (\i_cols -> ((((walls)[(i_rows)])[(i_cols)]) + (i32.min (i32.min ((s_a_cols)[(i_cols)]) ((s_a_cols)[(i64.max 0 ((i_cols) - 1))])) ((s_a_cols)[(i64.min (cols - 1) ((i_cols) + 1))])))))
+==== pathfinder.planted ====
+entry main [rows][cols] (walls: [rows][cols]i32) : [cols]i32 =
+  let zeros_rows = replicate rows 0i32
+  let zeros_cols = replicate cols 0i32
+  in map2 i32.min (loop (s_a_cols: [cols]i32) = ((walls)[(0i64)]) for ti_rows < rows - 1 do let i_rows = ti_rows + 1 in (tabulate cols (\i_cols -> ((((walls)[(i_rows)])[(i_cols)]) + (i32.min (i32.min ((s_a_cols)[(i_cols)]) ((s_a_cols)[(i64.max 0 ((i_cols) - 1))])) ((s_a_cols)[(i64.min (cols - 1) ((i_cols) + 1))])))))) (loop (s_a_cols: [cols]i32) = ((walls)[(0i64)]) for ti_rows < rows - 1 do let i_rows = ti_rows + 1 in (tabulate cols (\i_cols -> ((((walls)[(i_rows)])[(i_cols)]) + (i32.min ((s_a_cols)[(i_cols)]) (i32.min ((s_a_cols)[(i64.max 0 ((i_cols) - 1))]) ((s_a_cols)[(i64.min (cols - 1) ((i_cols) + 1))])))))))
+==== kmeans.reference ====
+entry main [n][d][k] (points: [n][d]f32) (centres: [k][d]f32) : [k][d]f32 =
+  let zeros_n = replicate n 0f32
+  let zeros_d = replicate d 0f32
+  let zeros_k = replicate k 0f32
+  in let s_a_n = (tabulate n (\i_n -> ((loop ((s_f32, s2_f32): (f32, f32)) = (((f32.sqrt (loop (s_f32: f32) = (0f32) for i_d < d do ((s_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])))))), (0f32))) for ti_k < k - 1 do let i_k = ti_k + 1 in (if ((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))) - (s_f32)) < 0f32 then (((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))), (f32.i64 (i_k)))) else (((s_f32), (s2_f32))))).1))) in (tabulate k (\i_k -> (tabulate d (\i_d -> (if (-((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).2)) < 0f32 then (((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).0) / ((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).2)) else (((centres)[(i_k)])[(i_d)]))))))
+==== kmeans.planted ====
+entry main [n][d][k] (points: [n][d]f32) (centres: [k][d]f32) : [k][d]f32 =
+  let zeros_n = replicate n 0f32
+  let zeros_d = replicate d 0f32
+  let zeros_k = replicate k 0f32
+  in let s_a_n = (map2 f32.min (tabulate n (\i_n -> ((loop ((s_f32, s2_f32): (f32, f32)) = (((f32.sqrt (loop (s_f32: f32) = (0f32) for i_d < d do ((s_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])))))), (0f32))) for ti_k < k - 1 do let i_k = ti_k + 1 in (if ((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))) - (s_f32)) < 0f32 then (((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))), (f32.i64 (i_k)))) else (((s_f32), (s2_f32))))).1))) (tabulate n (\i_n -> ((loop ((s_f32, s2_f32): (f32, f32)) = (((f32.sqrt (loop (s_f32: f32) = (0f32) for i_d < d do ((s_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(0i64)])[(i_d)])))))), (0f32))) for ti_k < k - 1 do let i_k = ti_k + 1 in (if ((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))) - (s_f32)) < 0f32 then (((f32.sqrt (loop (s3_f32: f32) = (0f32) for i_d < d do ((s3_f32) + (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])))))), (f32.i64 (i_k)))) else (((s_f32), (s2_f32))))).1)))) in (tabulate k (\i_k -> (tabulate d (\i_d -> (if (-((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).2)) < 0f32 then (((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).0) / ((loop ((s_f32, s2_f32, s3_f32): (f32, f32, f32)) = ((0f32, 0f32, 0f32)) for i_n < n do (if ((f32.abs (((s_a_n)[(i_n)]) - (f32.i64 (i_k)))) - (1f32)) < 0f32 then ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((((s_f32) + ((((points)[(i_n)])[(i_d)]) - (s2_f32))) - (s_f32)) - ((((points)[(i_n)])[(i_d)]) - (s2_f32))), ((s3_f32) + (1f32)))) else (((s_f32), (s2_f32), (s3_f32))))).2)) else (((centres)[(i_k)])[(i_d)]))))))
+==== kmeans.textbook ====
+entry main [n][d][k] (points: [n][d]f32) (centres: [k][d]f32) : [k][d]f32 =
+  let zeros_n = replicate n 0f32
+  let zeros_d = replicate d 0f32
+  let zeros_k = replicate k 0f32
+  in map2 (\r s -> map (/ s) r) (hist (map2 (+)) (replicate d 0f32) k (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 k) x))) (tabulate n (\i_n -> (loop (s_f32: f32) = (0f32) for i_k < k do (if ((f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])))))) - (f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)]))))))) < 0f32 then (s_f32) else (f32.i64 (i_k))))))) (points)) (map2 f32.max (replicate k (1f32)) (hist (+) 0f32 k (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 k) x))) (tabulate n (\i_n -> (loop (s_f32: f32) = (0f32) for i_k < k do (if ((f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])))))) - (f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)]))))))) < 0f32 then (s_f32) else (f32.i64 (i_k))))))) (replicate n (1f32))))
+==== kmeans.textbook_planted ====
+entry main [n][d][k] (points: [n][d]f32) (centres: [k][d]f32) : [k][d]f32 =
+  let zeros_n = replicate n 0f32
+  let zeros_d = replicate d 0f32
+  let zeros_k = replicate k 0f32
+  in map2 (\r s -> map (/ s) r) (hist (map2 (+)) (replicate d 0f32) k (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 k) x))) (tabulate n (\i_n -> (loop (s_f32: f32) = (0f32) for i_k < k do (if ((f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])))))) - (f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)]))))))) < 0f32 then (s_f32) else (f32.i64 (i_k))))))) (points)) (map2 f32.max (replicate k (1f32)) (hist (+) 0f32 k (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 k) x))) (tabulate n (\i_n -> (loop (s_f32: f32) = (0f32) for i_k < k do (if ((f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(let x = (s_f32) in i64.max 0 (i64.min (k - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 (k - 1)) x)))))])[(i_d)])))))) - (f32.sum (tabulate d (\i_d -> (((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)])) * ((((points)[(i_n)])[(i_d)]) - (((centres)[(i_k)])[(i_d)]))))))) < 0f32 then (s_f32) else (f32.i64 (i_k))))))) (map2 f32.min (replicate n (1f32)) (replicate n (1f32)))))
+==== a7.reference ====
+def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
+  map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
+
+entry main [n][m][p] (m_n_n: [n][n]f32) (m_n_m: [n][m]f32) (m_n_p: [n][p]f32) (m_m_n: [m][n]f32) (m_m_m: [m][m]f32) (m_m_p: [m][p]f32) (m_p_n: [p][n]f32) (m_p_m: [p][m]f32) (m_p_p: [p][p]f32) : [n][p]f32 =
+  map2 (\xs ys -> map2 (+) xs ys) (matmul (m_n_m) (m_m_p)) (transpose (matmul (transpose (m_m_p)) (transpose (m_n_m))))
+==== a7.winner ====
+def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
+  map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
+
+entry main [n][m][p] (m_n_n: [n][n]f32) (m_n_m: [n][m]f32) (m_n_p: [n][p]f32) (m_m_n: [m][n]f32) (m_m_m: [m][m]f32) (m_m_p: [m][p]f32) (m_p_n: [p][n]f32) (m_p_m: [p][m]f32) (m_p_p: [p][p]f32) : [n][p]f32 =
+  map2 (\xs ys -> map2 (+) xs ys) (matmul (m_n_m) (m_m_p)) (matmul (m_n_m) (m_m_p))
+==== a7.planted ====
+def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =
+  map (\a -> map (\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A
+
+entry main [n][m][p] (m_n_n: [n][n]f32) (m_n_m: [n][m]f32) (m_n_p: [n][p]f32) (m_m_n: [m][n]f32) (m_m_m: [m][m]f32) (m_m_p: [m][p]f32) (m_p_n: [p][n]f32) (m_p_m: [p][m]f32) (m_p_p: [p][p]f32) : [n][p]f32 =
+  map (\xs -> xs) (map2 (\xs ys -> map2 (+) xs ys) (matmul (m_n_m) (m_m_p)) (transpose (matmul (transpose (m_m_p)) (transpose (m_n_m)))))

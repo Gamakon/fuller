@@ -2096,7 +2096,7 @@ pub fn sexp(k: &FutharkKingdom, t: &Tree) -> String {
 // ---- random genes -----------------------------------------------------------------------------------------------
 
 /// A random gene of the layout: each head cell a function with probability one half and a terminal otherwise (each
-/// uniform over its kind; a cell whose alphabet has one kind draws from it), tail and Dc cells uniform; the root cell
+/// uniform over its kind; a cell whose alphabet has one kind draws from it), tail, Dc and Dv cells uniform; the root cell
 /// is a function of the root type (phylu's `root_function`: a root that is a terminal is a constant program).
 pub fn random_gene(contract: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMap<Ty, u32>, rng: &mut GeneRng) -> Result<Vec<u32>, String> {
     let mut gene = vec![0u32; layout.width];
@@ -2105,8 +2105,9 @@ pub fn random_gene(contract: &KingdomContract, layout: &GeneLayout, const_len: &
         if a.is_empty() {
             return Err(format!("our software has a bug: the span at {} has an empty alphabet", span.off));
         }
-        let (f, t): (Vec<u32>, Vec<u32>) = a.iter().partition(|s| !contract.is_terminal(**s));
-        let split = span.domain == Domain::Head && !f.is_empty() && !t.is_empty();
+        // Only a head cell holds a symbol to split by kind: a Dc cell's words are pool indices, a Dv cell's index words.
+        let (f, t): (Vec<u32>, Vec<u32>) = if span.domain == Domain::Head { a.iter().partition(|s| !contract.is_terminal(**s)) } else { (Vec::new(), Vec::new()) };
+        let split = !f.is_empty() && !t.is_empty();
         for cell in &mut gene[span.off..span.off + span.len] {
             *cell = if split {
                 let pick = if rng.below(2) == 0 { &f } else { &t };
@@ -2712,8 +2713,342 @@ impl EgraphKingdom for FoldEgraph<'_> {
     }
 }
 
+// ---- the reference programs as master 6 trees (plan section 7, task F2a) ------------------------------------------
+//
+// Every reference program (the four benchmarks' references and planted slowdowns, A7's reference, winner and planted
+// slowdown, k-means's reference, planted slowdown, textbook form and its planted slowdown) written by hand as a tree
+// of its master 6 view (`kingdoms/futhark/sig/<problem>/m6/`), beside its master 5 s-expression above. The reader
+// reads no k-means program today, so the conversion is by hand. Each tree's expected text is its master 5 rendering
+// ([`program`], unchanged), stored in `tests/fixtures/futhark_m6_references.txt` for task F2's renderer to reproduce
+// byte for byte.
+//
+// A master 6 s-expression names each function by its view symbol (`tab@a.i32`) and each leaf as one of: a terminal
+// symbol (`zero@i64`, `add@fn.arr2_f32_arr_f32_arr_f32`), a literal of the slot's data type's pool (`0`, a `const@T`
+// cell whose Dc index is the literal's place in the pool), or a VARIABLE by name: a root variable of the view's
+// environment (`points`, `n`) or a name a binder above gives the variables it binds, listed in Binding row order in
+// brackets after the binder's symbol (`(tab@a.i32[i] n ...)`, `(loop1@a.i32[s,i] rows ...)`), the innermost binder
+// first. A variable leaf becomes the `var.T` of the slot's data type, and its index word is the one G3's decoder says
+// names that variable in the leaf's environment ([`crate::typed_environment::Environment::index_of`]): never a number
+// computed by hand.
+
+/// One reference program in both masters: the problem (and the name of its master 6 view), the form (`reference`,
+/// `planted`, `winner`, `textbook`, `textbook_planted`), its master 5 s-expression and its master 6 s-expression.
+#[derive(Debug, Clone, Copy)]
+pub struct Reference6 {
+    pub problem: &'static str,
+    pub form: &'static str,
+    pub master5: fn() -> String,
+    pub master6: fn() -> String,
+}
+
+impl Reference6 {
+    /// `<problem>.<form>`, the reference's key in the fixture.
+    pub fn key(&self) -> String {
+        format!("{}.{}", self.problem, self.form)
+    }
+}
+
+/// Reduce's reference, master 6.
+pub const REDUCE_REFERENCE6: &str = "(sum@i32 xs)";
+pub const REDUCE_PLANTED6: &str = "(sum@i32 (map2.min@a.i32 xs xs))";
+/// Scan's reference, master 6.
+pub const SCAN_REFERENCE6: &str = "(scan.add@a.i32 xs)";
+pub const SCAN_PLANTED6: &str = "(scan.add@a.i32 (map2.max@a.i32 xs xs))";
+/// The histogram's reference, master 6: the bins' size `k` and the tabulate's `n` are `var.size` leaves.
+pub const HISTOGRAM_REFERENCE6: &str = "(hist.add@a.i32 k (tab@a.i32[i] n (mod@i32 k (get@i32 is i))) vs)";
+pub const HISTOGRAM_PLANTED6: &str = "(hist.add@a.i32 k (tab@a.i32[i] n (mod@i32 k (get@i32 is i))) (map2.min@a.i32 vs vs))";
+/// Pathfinder's reference, master 6: the loop from 1 over `rows` binds its state `s` and its counter `i`, the
+/// tabulate over `cols` its index `j`.
+pub const PATHFINDER_REFERENCE6: &str = "(loop1@a.i32[s,i] rows (row@a.i32 walls zero@i64)
+  (tab@a.i32[j] cols (add@i32 (get@i32 (row@a.i32 walls i) j)
+                      (min@i32 (min@i32 (get@i32 s j) (get@i32 s (prev@i64 j))) (get@i32 s (next@i64 j))))))";
+pub const PATHFINDER_PLANTED6: &str = "(map2.min@a.i32
+  (loop1@a.i32[s,i] rows (row@a.i32 walls zero@i64)
+    (tab@a.i32[j] cols (add@i32 (get@i32 (row@a.i32 walls i) j)
+                        (min@i32 (min@i32 (get@i32 s j) (get@i32 s (prev@i64 j))) (get@i32 s (next@i64 j))))))
+  (loop1@a.i32[s,i] rows (row@a.i32 walls zero@i64)
+    (tab@a.i32[j] cols (add@i32 (get@i32 (row@a.i32 walls i) j)
+                        (min@i32 (get@i32 s j) (min@i32 (get@i32 s (prev@i64 j)) (get@i32 s (next@i64 j))))))))";
+/// A7's reference, master 6: every matrix is `[][]f32`, and the interface's inputs are root variables.
+pub const A7_REFERENCE6: &str = "(map2_rows@m.f32 add@fn.arr2_f32_arr_f32_arr_f32
+  (matmul@m.f32 m_n_m m_m_p)
+  (transpose@m.f32 (matmul@m.f32 (transpose@m.f32 m_m_p) (transpose@m.f32 m_n_m))))";
+pub const A7_WINNER6: &str = "(map2_rows@m.f32 add@fn.arr2_f32_arr_f32_arr_f32
+  (matmul@m.f32 m_n_m m_m_p)
+  (matmul@m.f32 m_n_m m_m_p))";
+pub const A7_PLANTED6: &str = "(map_rows@m.f32 id@fn.arr_f32_arr_f32
+  (map2_rows@m.f32 add@fn.arr2_f32_arr_f32_arr_f32
+    (matmul@m.f32 m_n_m m_m_p)
+    (transpose@m.f32 (matmul@m.f32 (transpose@m.f32 m_m_p) (transpose@m.f32 m_n_m)))))";
+
+/// [`KMEANS_SEED_ASSIGN`], master 6: the tabulate over the points binds `i`; the argmin loop from 1 over the centres
+/// binds the best distance `best`, its centre `bi` and the counter `c`; the first centre's distance loop over `d`
+/// binds `acc` and `j`.
+pub const KMEANS_ASSIGN6: &str = "(tab@a.f32[i] n (snd.f32.f32@f32 (loop1@f32.f32[best,bi,c] k (pair@f32.f32 (sqrt@f32 (loop@f32[acc,j] d 0 (add@f32 acc (mul@f32 (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres zero@i64) j)) (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres zero@i64) j)))))) 0)
+  (psel@f32.f32 (sub@f32 DIST best) (pair@f32.f32 DIST (ival@f32 c)) (pair@f32.f32 best bi)))))";
+/// [`KMEANS_SEED_DIST`], master 6: the distance of centre `c`, its loop over `d` binding `acc2` and `j2`.
+pub const KMEANS_DIST6: &str = "(sqrt@f32 (loop@f32[acc2,j2] d 0 (add@f32 acc2 (mul@f32 (sub@f32 (get@f32 (row@a.f32 points i) j2) (get@f32 (row@a.f32 centres c) j2)) (sub@f32 (get@f32 (row@a.f32 points i) j2) (get@f32 (row@a.f32 centres c) j2))))))";
+/// [`KMEANS_SEED_UPDATE`], master 6: the rows over the clusters bind `ck`, the tabulate over the coordinates `cj`.
+pub const KMEANS_UPDATE6: &str = "(tabrows@m.f32[ck] k d (tab@a.f32[cj] d (sel@f32 (neg@f32 (thd.f32.f32.f32@f32 LOOP)) (div@f32 (fst.f32.f32.f32@f32 LOOP) (thd.f32.f32.f32@f32 LOOP)) (get@f32 (row@a.f32 centres ck) cj))))";
+/// [`KMEANS_SEED_CELL_LOOP`], master 6: the loop over the points binds the triple (`sum`, `comp`, `count`) and the
+/// point `p`; `assign` is the kernel boundary's `let`.
+pub const KMEANS_CELL_LOOP6: &str = "(loop@f32.f32.f32[sum,comp,count,p] n zero@f32.f32.f32 (psel@f32.f32.f32 (sub@f32 (abs@f32 (sub@f32 (get@f32 assign p) (ival@f32 ck))) 1)
+    (triple@f32.f32.f32 (add@f32 sum (sub@f32 (get@f32 (row@a.f32 points p) cj) comp))
+            (sub@f32 (sub@f32 (add@f32 sum (sub@f32 (get@f32 (row@a.f32 points p) cj) comp)) sum) (sub@f32 (get@f32 (row@a.f32 points p) cj) comp))
+            (add@f32 count 1))
+    (triple@f32.f32.f32 sum comp count)))";
+
+/// The k-means reference program, master 6: `(let <assignments> <update>)`, the `let` binding `assign`.
+pub fn kmeans_reference6() -> String {
+    format!("(let.a.f32@m.f32[assign] {} {})", KMEANS_ASSIGN6.replace("DIST", KMEANS_DIST6), KMEANS_UPDATE6.replace("LOOP", KMEANS_CELL_LOOP6))
+}
+
+/// The k-means planted slowdown, master 6: the assignments twice and their elementwise least.
+pub fn kmeans_planted6() -> String {
+    let assign = KMEANS_ASSIGN6.replace("DIST", KMEANS_DIST6);
+    format!("(let.a.f32@m.f32[assign] (map2.min@a.f32 {assign} {assign}) {})", KMEANS_UPDATE6.replace("LOOP", KMEANS_CELL_LOOP6))
+}
+
+/// [`KMEANS_TEXTBOOK`]'s membership, master 6: the tabulate over the points binds `i`; the loop over the centres binds
+/// the nearest centre so far `m` (an `f32`) and the counter `c`; each distance's tabulate over `d` binds `j`.
+pub const KMEANS_TEXTBOOK_MEMBERSHIP6: &str = "(tab@a.f32[i] n (loop@f32[m,c] k 0 (sel@f32 (sub@f32 (sum@f32 (tab@a.f32[j] d (mul@f32 (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres (clamp@i64 k m)) j)) (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres (clamp@i64 k m)) j))))) (sum@f32 (tab@a.f32[j] d (mul@f32 (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres c) j)) (sub@f32 (get@f32 (row@a.f32 points i) j) (get@f32 (row@a.f32 centres c) j)))))) m (ival@f32 c))))";
+
+/// [`KMEANS_TEXTBOOK`], master 6, with `ONES` the ones the counts are a histogram of.
+fn kmeans_textbook6_with(ones: &str) -> String {
+    let m = KMEANS_TEXTBOOK_MEMBERSHIP6;
+    format!("(rowdiv@m.f32 (histrows.add@m.f32 k d {m} points) (map2.max@a.f32 (replicate@a.f32 k 1) (hist.add@a.f32 k {m} {ones})))")
+}
+
+/// The textbook k-means step, master 6.
+pub fn kmeans_textbook6() -> String {
+    kmeans_textbook6_with("(replicate@a.f32 n 1)")
+}
+
+/// The textbook step's planted slowdown, master 6.
+pub fn kmeans_textbook_planted6() -> String {
+    kmeans_textbook6_with("(map2.min@a.f32 (replicate@a.f32 n 1) (replicate@a.f32 n 1))")
+}
+
+/// EVERY REFERENCE PROGRAM in both masters, in the problem registry's order ([`PROBLEM_NAMES`]).
+pub const REFERENCES6: [Reference6; 15] = [
+    Reference6 { problem: "reduce", form: "reference", master5: || REDUCE_REFERENCE.to_string(), master6: || REDUCE_REFERENCE6.to_string() },
+    Reference6 { problem: "reduce", form: "planted", master5: || REDUCE_PLANTED.to_string(), master6: || REDUCE_PLANTED6.to_string() },
+    Reference6 { problem: "scan", form: "reference", master5: || SCAN_REFERENCE.to_string(), master6: || SCAN_REFERENCE6.to_string() },
+    Reference6 { problem: "scan", form: "planted", master5: || SCAN_PLANTED.to_string(), master6: || SCAN_PLANTED6.to_string() },
+    Reference6 { problem: "histogram", form: "reference", master5: || HISTOGRAM_REFERENCE.to_string(), master6: || HISTOGRAM_REFERENCE6.to_string() },
+    Reference6 { problem: "histogram", form: "planted", master5: || HISTOGRAM_PLANTED.to_string(), master6: || HISTOGRAM_PLANTED6.to_string() },
+    Reference6 { problem: "pathfinder", form: "reference", master5: || PATHFINDER_REFERENCE.to_string(), master6: || PATHFINDER_REFERENCE6.to_string() },
+    Reference6 { problem: "pathfinder", form: "planted", master5: || PATHFINDER_PLANTED.to_string(), master6: || PATHFINDER_PLANTED6.to_string() },
+    Reference6 { problem: "kmeans", form: "reference", master5: kmeans_seed, master6: kmeans_reference6 },
+    Reference6 { problem: "kmeans", form: "planted", master5: kmeans_planted, master6: kmeans_planted6 },
+    Reference6 { problem: "kmeans", form: "textbook", master5: || KMEANS_TEXTBOOK.to_string(), master6: kmeans_textbook6 },
+    Reference6 { problem: "kmeans", form: "textbook_planted", master5: || KMEANS_TEXTBOOK_PLANTED.to_string(), master6: kmeans_textbook_planted6 },
+    Reference6 { problem: "a7", form: "reference", master5: || A7_REFERENCE.to_string(), master6: || A7_REFERENCE6.to_string() },
+    Reference6 { problem: "a7", form: "winner", master5: || A7_WINNER.to_string(), master6: || A7_WINNER6.to_string() },
+    Reference6 { problem: "a7", form: "planted", master5: || A7_PLANTED.to_string(), master6: || A7_PLANTED6.to_string() },
+];
+
+/// THE EXPECTED TEXTS: every reference's master 5 rendering ([`master5_rendering`]), each after a line
+/// `==== <problem>.<form> ====`, in [`REFERENCES6`]'s order. Task F2's renderer must reproduce each byte for byte.
+pub const REFERENCES6_MASTER5_TEXTS: &str = include_str!("../tests/fixtures/futhark_m6_references.txt");
+
+/// The fixture's separator line for `key`.
+pub fn references6_separator(key: &str) -> String {
+    format!("==== {key} ====\n")
+}
+
+/// The expected text (the stored master 5 rendering) of the reference `key` (`<problem>.<form>`).
+pub fn expected_text6(key: &str) -> Option<&'static str> {
+    let sep = references6_separator(key);
+    let start = REFERENCES6_MASTER5_TEXTS.find(&sep)? + sep.len();
+    let rest = &REFERENCES6_MASTER5_TEXTS[start..];
+    Some(&rest[..rest.find("\n==== ").map_or(rest.len(), |e| e + 1)])
+}
+
+/// A reference's master 5 rendering: its s-expression built in its master 5 view and rendered by [`program`],
+/// unchanged.
+pub fn master5_rendering(r: &Reference6) -> Result<String, String> {
+    let inst = problem(r.problem)?.instance;
+    let k = load(&inst)?;
+    let sig = signature(&inst)?;
+    program(&k, &sig, &build(&k, &(r.master5)())?)
+}
+
+/// A problem's master 6 kingdom: its committed view (`kingdoms/futhark/sig/<problem>/m6/`) over the committed master 6.
+pub fn kingdom6(problem: &str) -> Result<crate::futhark_table::Kingdom6, String> {
+    crate::futhark_view::master6::committed(problem)?.kingdom(problem)
+}
+
+/// The length of each data type's constant pool `C_T` in a master 6 kingdom: its literal pool, for the data types
+/// with a `const` row.
+pub fn const_len6(k: &crate::futhark_table::Kingdom6) -> BTreeMap<Ty, u32> {
+    k.symbols.iter().filter(|s| s.kind == crate::futhark_table::Kind6::Const).filter_map(|s| Some((s.output, k.data_type(s.output)?.literals.len() as u32))).collect()
+}
+
+/// A parsed master 6 s-expression: its head (a symbol, or a leaf's name) with the binder's variable names, and its
+/// arguments.
+#[derive(Debug, Clone)]
+struct Sexp6 {
+    head: String,
+    labels: Vec<String>,
+    kids: Vec<Sexp6>,
+}
+
+fn parse_sexp6(text: &str) -> Result<Sexp6, String> {
+    let spaced = text.replace('(', " ( ").replace(')', " ) ");
+    let tokens: Vec<&str> = spaced.split_whitespace().collect();
+    let mut pos = 0;
+    let e = parse6_at(&tokens, &mut pos)?;
+    if pos != tokens.len() {
+        return Err(format!("our software has a bug: the master 6 s-expression has text after its end at token {pos}"));
+    }
+    Ok(e)
+}
+
+fn parse6_at(tokens: &[&str], pos: &mut usize) -> Result<Sexp6, String> {
+    let bad = |what: &str| format!("our software has a bug: the master 6 s-expression {what}");
+    let t = *tokens.get(*pos).ok_or_else(|| bad("ends early"))?;
+    *pos += 1;
+    if t == ")" {
+        return Err(bad("has an unopened ')'"));
+    }
+    if t != "(" {
+        if t.contains('[') {
+            return Err(bad(&format!("names the variables of the leaf {t}, which binds none")));
+        }
+        return Ok(Sexp6 { head: t.to_string(), labels: Vec::new(), kids: Vec::new() });
+    }
+    let h = *tokens.get(*pos).ok_or_else(|| bad("ends after '('"))?;
+    *pos += 1;
+    let (head, labels) = match h.split_once('[') {
+        Some((name, rest)) => {
+            let names = rest.strip_suffix(']').ok_or_else(|| bad(&format!("has the binder {h} with no closing ']'")))?;
+            (name.to_string(), names.split(',').map(str::to_string).collect())
+        }
+        None => (h.to_string(), Vec::new()),
+    };
+    let mut kids = Vec::new();
+    while tokens.get(*pos) != Some(&")") {
+        if *pos >= tokens.len() {
+            return Err(bad(&format!("leaves ({head} unclosed")));
+        }
+        kids.push(parse6_at(tokens, pos)?);
+    }
+    *pos += 1;
+    Ok(Sexp6 { head, labels, kids })
+}
+
+/// What the first pass of [`build6`] records: each binder's bound argument's path with its variables' names, and each
+/// variable leaf's path with its name.
+#[derive(Default)]
+struct Names6 {
+    binders: Vec<(Vec<u32>, Vec<String>)>,
+    leaves: Vec<(Vec<u32>, String)>,
+}
+
+fn build6_at(k: &crate::futhark_table::Kingdom6, e: &Sexp6, ty: Ty, path: Vec<u32>, names: &mut Names6) -> Result<Tree, String> {
+    use crate::futhark_table::Kind6;
+    let bad = |what: String| format!("our software has a bug: {}'s master 6 tree: {what}", k.kingdom);
+    let ty_name = |t: Ty| k.data_type(t).map_or_else(|| format!("{t:?}"), |d| d.name.clone());
+    let by_name = k.symbols.iter().position(|s| s.name == e.head);
+    if !e.kids.is_empty() || !e.labels.is_empty() {
+        let s = by_name.ok_or_else(|| bad(format!("no symbol {}", e.head)))?;
+        let row = &k.symbols[s];
+        if row.output != ty {
+            return Err(bad(format!("{} returns {}, its slot takes {}", e.head, ty_name(row.output), ty_name(ty))));
+        }
+        if row.inputs.len() != e.kids.len() {
+            return Err(bad(format!("{} takes {} inputs, given {}", e.head, row.inputs.len(), e.kids.len())));
+        }
+        if !e.labels.is_empty() {
+            let positions: std::collections::BTreeSet<u32> = row.binds.iter().map(|b| b.position).collect();
+            let [pos] = positions.into_iter().collect::<Vec<u32>>()[..] else { return Err(bad(format!("{} names its variables but binds at {} arguments", e.head, row.binds.len()))) };
+            if row.binds.len() != e.labels.len() {
+                return Err(bad(format!("{} binds {} variables, {} named", e.head, row.binds.len(), e.labels.len())));
+            }
+            let mut at = path.clone();
+            at.push(pos);
+            names.binders.push((at, e.labels.clone()));
+        }
+        let mut kids = Vec::with_capacity(e.kids.len());
+        for (i, (kid, kty)) in e.kids.iter().zip(&row.inputs).enumerate() {
+            let mut p = path.clone();
+            p.push(i as u32);
+            kids.push(build6_at(k, kid, *kty, p, names)?);
+        }
+        return Ok(Tree { symbol: s as SymbolId, const_index: None, kids });
+    }
+    if let Some(s) = by_name {
+        let row = &k.symbols[s];
+        // A leaf symbol takes no input: a terminal, or a function value of no argument (`add@fn.arr2_f32_...`).
+        if !matches!(row.kind, Kind6::Terminal | Kind6::Function) || !row.inputs.is_empty() || row.output != ty {
+            return Err(bad(format!("the leaf {} is not a terminal of {}", e.head, ty_name(ty))));
+        }
+        return Ok(Tree { symbol: s as SymbolId, const_index: None, kids: Vec::new() });
+    }
+    let of_kind = |kind: Kind6| k.symbols.iter().position(|s| s.kind == kind && s.output == ty);
+    if let (Some(s), Some(i)) = (of_kind(Kind6::Const), k.data_type(ty).and_then(|d| d.literals.iter().position(|l| *l == e.head))) {
+        return Ok(Tree { symbol: s as SymbolId, const_index: Some(i as u32), kids: Vec::new() });
+    }
+    let s = of_kind(Kind6::Var).ok_or_else(|| bad(format!("the leaf {} is no symbol, no literal of {} and no variable: {} has no var row", e.head, ty_name(ty), ty_name(ty))))?;
+    names.leaves.push((path, e.head.clone()));
+    Ok(Tree { symbol: s as SymbolId, const_index: Some(0), kids: Vec::new() })
+}
+
+fn tree_at_mut<'a>(t: &'a mut Tree, path: &[u32]) -> Option<&'a mut Tree> {
+    match path.split_first() {
+        None => Some(t),
+        Some((i, rest)) => tree_at_mut(t.kids.get_mut(*i as usize)?, rest),
+    }
+}
+
+/// THE MASTER 6 BUILDER: the tree of a master 6 s-expression (the syntax above [`Reference6`]) in kingdom `k`, every
+/// variable leaf a `var.T` whose index word names, in the leaf's environment as G3's decoder builds it, the variable
+/// the leaf names: the innermost binder above that names it, else the root variable of that name. A name in scope
+/// nowhere, of another data type, or a malformed text is an error. Every word is checked by decoding the tree again.
+pub fn build6(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<Tree, String> {
+    use crate::typed_environment::{Binder, Choice, Decoder};
+    let bad = |what: String| format!("our software has a bug: {}'s master 6 tree: {what}", k.kingdom);
+    let mut names = Names6::default();
+    let mut tree = build6_at(k, &parse_sexp6(text)?, k.root.data_type, Vec::new(), &mut names)?;
+    let (tables, contract) = (k.tables()?, k.contract()?);
+    let decoder = Decoder::new(&tables, &contract).map_err(|d| d.join("\n"))?;
+    let entry = crate::typed_environment::Entry::of_kingdom6(k);
+    let decoding = decoder.decode(&entry, &tree)?;
+    let mut wanted: Vec<(Vec<u32>, Binder)> = Vec::with_capacity(names.leaves.len());
+    for (path, name) in &names.leaves {
+        let leaf = decoding.node(path).ok_or_else(|| bad(format!("no node at {path:?}")))?;
+        let binder = names.binders.iter().filter(|(at, labels)| path.starts_with(at) && labels.contains(name)).max_by_key(|(at, _)| at.len());
+        let variable = match binder {
+            Some((at, labels)) => {
+                let env = &decoding.node(at).ok_or_else(|| bad(format!("no node at {at:?}")))?.environment;
+                let bound: Vec<_> = env.variables.iter().filter(|v| v.binder.depth == env.depth).collect();
+                let i = labels.iter().position(|l| l == name).ok_or_else(|| bad(format!("{name} is not a label")))?;
+                *bound.get(i).ok_or_else(|| bad(format!("the binder at {at:?} binds {} variables, not {}", bound.len(), labels.len())))?
+            }
+            None => decoding.root.environment.variables.iter().find(|v| v.name.as_deref() == Some(name.as_str())).ok_or_else(|| bad(format!("{name} is bound nowhere above {path:?} and is no root variable")))?,
+        };
+        if variable.data_type != leaf.data_type {
+            return Err(bad(format!("{name} at {path:?} is a {:?}, its slot takes {:?}", variable.data_type, leaf.data_type)));
+        }
+        let word = leaf.environment.index_of(leaf.data_type, variable.binder).ok_or_else(|| bad(format!("{name} is not in scope at {path:?}")))?;
+        tree_at_mut(&mut tree, path).ok_or_else(|| bad(format!("no node at {path:?}")))?.const_index = Some(word);
+        wanted.push((path.clone(), variable.binder));
+    }
+    let again = decoder.decode(&entry, &tree)?;
+    for (path, binder) in wanted {
+        let got = again.node(&path).and_then(|n| n.choice);
+        if got != Some(Choice::Variable(binder)) {
+            return Err(bad(format!("the variable at {path:?} reads as {got:?}, not {binder:?}")));
+        }
+    }
+    Ok(tree)
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_references6;
 #[cfg(test)]
 mod tests_micro;
 #[cfg(test)]

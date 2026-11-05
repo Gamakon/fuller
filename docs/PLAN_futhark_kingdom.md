@@ -1412,6 +1412,15 @@ i32 --lets []i32`), 22 data types, 227 symbols, 123,020 words. A demanded data t
 by `tabrows`) now takes its `var` row, its constant when no variable is in scope (`view.py`, witness V6, README 9).
 Master 5 unchanged.
 
+**F2a status (2026-11-05): done.** `src/futhark_sig.rs`: all 15 reference programs as master 6 s-expressions
+(`REFERENCES6`: reduce, scan, histogram and pathfinder reference and planted slowdown; k-means reference, planted
+slowdown, textbook form and its planted slowdown; A7 reference, winner and planted slowdown), converted by hand. Binders
+name their variables (`(tab@a.i32[i] n ...)`). `build6` sets each `var.T` word through G3's `index_of` in the leaf's
+environment and checks it by decoding again. The master 5 renderings are stored in
+`tests/fixtures/futhark_m6_references.txt` (`expected_text6`). Every tree writes back at the problem's program size,
+expresses to itself and decodes with no failing requirement and no substitution. None needed an adapter.
+`random_gene` no longer reads Dv words as symbols.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
