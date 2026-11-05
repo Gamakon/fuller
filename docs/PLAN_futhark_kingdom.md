@@ -1431,6 +1431,20 @@ genes (the early guard, risk 6): reduce 97.6 %, scan 94.5 %, histogram 16.0 %, p
 Futhark 0.28.1 and changed: `fit.pair`'s `ad_l` for two known lengths (an existential size, so two such `map2`s did not
 match) now fits to the spelled `min`; a `?` state is bound as a size, `let [ad_m] (ad_s: [ad_m]f32) = ..`.
 
+**F5 status (2026-11-05): done (`208e23e7`).** Master 6's e-graph for A7 and every view: `gen_tables.py` (`egraph6_texts`, witness
+E1-E7, E7 "no rule names a binder") writes `sig/<problem>/m6/egraph.{datatype,rules,rows,sorts}`, one sort a data
+type, one constructor a symbol, a `var` row's constructor on the resolved variable (depth, ordinal) and a second for
+its constant reading; `src/futhark_view/egraph6.rs` computes the same texts byte for byte. A7's four matrix rules are
+`mat` rows of `master/6/rules.tsv` (witness M9 checks them on matrices). `src/futhark_saturation/master6.rs`:
+`Egraph6` (import, `place`: an extracted variable written as its index word in the destination's environment and
+checked by decoding again, `variants`, `saturable`) and `FoldEgraph6`. `saturated_fold.rs` gained `saturable`,
+`place`, `variables` (defaults keep every other kingdom as it was): a tree with a failing requirement is kept as
+submitted, the fold's key is the resolved term, and a shared part's variables take one word naming their variable at
+every use (`common_word`), else the part is inlined. The variants (3 iterations, 32 members, 48) of the eleven
+references of reduce, scan, histogram, pathfinder and A7, and of the k-means reference, are master 5's texts in order
+(k-means: 31 of 31, 0.13 s against master 5's 244 s; fixture `tests/fixtures/futhark_m6_kmeans_variants.txt`); all
+15 references' variants write back and render their own text, none dropped; A7's reference finds the winner. `typed_chromosome::genic_cells` read Dv words as symbols (G2 gap): fixed.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
