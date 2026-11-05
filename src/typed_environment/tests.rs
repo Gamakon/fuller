@@ -26,6 +26,7 @@ const LOOP: SymbolId = 8;
 const VAR_I64: SymbolId = 11;
 const VAR_SIZE: SymbolId = 12;
 const VAR_ARR: SymbolId = 13;
+const LET: SymbolId = 14;
 
 /// `(name, inputs, output)` of every symbol, in id order.
 fn rows() -> Vec<(String, Vec<Ty>, Ty)> {
@@ -44,6 +45,7 @@ fn rows() -> Vec<(String, Vec<Ty>, Ty)> {
         ("var.i64", vec![], I64),
         ("var.size", vec![], SIZE),
         ("var.a.i32", vec![], ARR),
+        ("let.a.i32", vec![ARR, ARR], ARR),
     ]
     .into_iter()
     .map(|(n, i, o)| (n.to_string(), i, o))
@@ -63,7 +65,7 @@ fn p(text: &str) -> PropertyExpr {
 }
 
 /// The histogram view's tables at depth 2, as master 6 writes `hist.add`, `tab`, `get`, `mod`, `map2.add`, `sum`,
-/// `zero`, `last` and `loop`.
+/// `zero`, `last`, `loop` and `let` (a binding with no trip).
 fn tables() -> KingdomTables {
     let mut t = KingdomTables { kingdom: "histogram G3".to_string(), ..KingdomTables::default() };
     for (i, (name, ins, out)) in rows().into_iter().enumerate() {
@@ -93,6 +95,7 @@ fn tables() -> KingdomTables {
         rule(ZERO, "bound", "1"),
         rule(LAST, "bound", "in0.value"),
         rule(LOOP, "len", "in1.len"),
+        rule(LET, "len", "in1.len"),
     ];
     let on = |position: u32, property: &str| Subject::Input { position, property: property.into() };
     let req = |symbol: SymbolId, subject: Subject, relation: Relation, against: &str, adapter: &str| Requirement {
@@ -105,7 +108,7 @@ fn tables() -> KingdomTables {
     let work = |symbol: SymbolId| req(symbol, Subject::Trips, Relation::Lt, "2", "subst");
     t.requirements = vec![
         req(HIST, on(2, "len"), Relation::Eq, "in1.len", "fit.pair"),
-        work(HIST),
+        req(HIST, Subject::Trips, Relation::Lt, "2", "subst.const"),
         work(TAB),
         req(GET, on(1, "bound"), Relation::Le, "in0.len", "clampix"),
         req(MAP2, on(1, "len"), Relation::Eq, "in0.len", "fit.pair"),
@@ -118,6 +121,7 @@ fn tables() -> KingdomTables {
         Binding { symbol: TAB as i64, position: 1, data_type: I64, properties: vec![("bound".into(), p("in0.value"))] },
         Binding { symbol: LOOP as i64, position: 2, data_type: ARR, properties: vec![("len".into(), p("in1.len"))] },
         Binding { symbol: LOOP as i64, position: 2, data_type: I64, properties: vec![("bound".into(), p("in0.value"))] },
+        Binding { symbol: LET as i64, position: 1, data_type: ARR, properties: vec![("len".into(), p("in0.len"))] },
     ];
     t.trip_arguments = vec![TripArgument { symbol: TAB as i64, position: 1 }, TripArgument { symbol: LOOP as i64, position: 2 }];
     t.adapters = vec![
@@ -126,6 +130,7 @@ fn tables() -> KingdomTables {
         Adapter { name: "fit.state".into(), heavy: true, runs_at: AdapterSite::Body },
         Adapter { name: "fit.root".into(), heavy: true, runs_at: AdapterSite::Root },
         Adapter { name: "subst".into(), heavy: false, runs_at: AdapterSite::Node },
+        Adapter { name: "subst.const".into(), heavy: false, runs_at: AdapterSite::Node },
     ];
     t
 }
@@ -342,10 +347,12 @@ fn a_variable_with_none_in_scope_reads_the_constant() {
     assert_eq!(x.node(&[0]).expect("var").properties, props(&[("len", "1")]));
     assert_eq!(x.root.properties, props(&[("len", "min(1, n)")]));
     assert_eq!(x.failures(), vec![Failure::Adapter { path: vec![], requirement: 4, adapter: "fit.pair".into() }]);
+    // An entry with no size, where `size` has no constant, is a bug of the entry, found before any tree is read.
     let none = Entry { output: ARR, variables: vec![], requirements: vec![] };
     let e = d.decode(&none, &f(TAB, vec![v(VAR_SIZE, 0), v(10, 0)])).expect_err("no size in scope");
-    assert!(e.starts_with("our software has a bug: kingdom histogram G3: data type Futhark(2) has no constant"), "{e}");
-    let e = d.decode(&none, &f(TAB, vec![Tree { symbol: VAR_SIZE, const_index: None, kids: vec![] }, v(10, 0)])).expect_err("no word");
+    assert_eq!(e, "our software has a bug: kingdom histogram G3: the entry has no parameter of Futhark(2), which has no constant, so var.size has nothing to read at the root");
+    assert_eq!(d.check_entry(&none), Err(vec![e]));
+    let e = d.decode(&bare, &f(TAB, vec![Tree { symbol: VAR_SIZE, const_index: None, kids: vec![] }, v(10, 0)])).expect_err("no word");
     assert!(e.contains("carries no word"), "{e}");
 }
 
@@ -362,7 +369,7 @@ impl Rng {
 }
 
 /// A gene valid by layout: each head cell any symbol of its type, each tail cell a terminal, each Dc and Dv cell a word.
-fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng) -> Vec<u32> {
+fn random_gene(k: &KingdomContract, layout: &GeneLayout, consts: &BTreeMap<Ty, u32>, rng: &mut Rng) -> Vec<u32> {
     use crate::typed_gep::Domain;
     let mut gene = vec![0u32; layout.width];
     for s in layout.spans() {
@@ -378,7 +385,7 @@ fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng) -> Vec<u
                     }
                 }
                 Domain::Tail => ts[rng.below(ts.len())],
-                Domain::Dc => rng.below(5) as u32,
+                Domain::Dc => rng.below(consts.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
                 Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
             };
         }
@@ -397,7 +404,7 @@ fn every_random_histogram_gene_decodes_the_same_twice() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let (mut with_failures, mut substituted) = (0, 0);
     for g in 0..300 {
-        let gene = random_gene(&k, &layout, &mut rng);
+        let gene = random_gene(&k, &layout, &consts, &mut rng);
         let tree = express(&k, &layout, &gene, &consts).unwrap_or_else(|e| panic!("gene {g}: {e:?}")).tree();
         let a = d.decode(&entry(), &tree).unwrap_or_else(|e| panic!("gene {g}: {e}"));
         let b = d.decode(&entry(), &tree).expect("again");
@@ -413,6 +420,7 @@ fn every_random_histogram_gene_decodes_the_same_twice() {
         }
     }
     eprintln!("300 random histogram genes: {with_failures} with a failing requirement, {substituted} with a substitution");
+    assert!(with_failures > 0 && substituted > 0, "the genes exercise failures ({with_failures}) and substitutions ({substituted})");
 }
 
 const CHILD: &str = "FULLER_G3_DECODE_CHILD";
@@ -468,7 +476,7 @@ fn a_kingdom_without_property_rows_has_no_failures() {
         let entry = Entry { output: root, variables: vec![], requirements: vec![] };
         let mut rng = Rng(7);
         for g in 0..200 {
-            let gene = random_gene(&k, &layout, &mut rng);
+            let gene = random_gene(&k, &layout, &consts, &mut rng);
             let tree = express(&k, &layout, &gene, &consts).expect("expresses").tree();
             let dec = d.decode(&entry, &tree).unwrap_or_else(|e| panic!("{} gene {g}: {e}", relations.kingdom));
             assert_eq!(dec.failures(), vec![], "{} gene {g}", relations.kingdom);
@@ -489,7 +497,7 @@ fn a_kingdom_without_property_rows_has_no_failures() {
     }
 }
 
-/// The decoder refuses tables that disagree with the contract.
+/// The decoder reports tables that disagree with the contract as a bug.
 #[test]
 fn the_decoder_checks_the_contract_against_the_tables() {
     let k = contract();
@@ -503,4 +511,177 @@ fn the_decoder_checks_the_contract_against_the_tables() {
     t.property_rules.push(PropertyRule { symbol: VAR_ARR as i64, property: "len".into(), expr: p("1") });
     let e = Decoder::new(&t, &k).expect_err("a rule on a variable");
     assert!(e.iter().any(|m| m.contains("the variable terminal var.a.i32 has property rules")), "{e:#?}");
+}
+
+/// G3 review finding 1 (the lead's decision): a `hist` the work bound substitutes renders its CONSTANT (`subst.const`),
+/// the histogram with nothing counted, never its indices or its values, though both are of its own data type.
+#[test]
+fn a_substituted_histogram_renders_its_constant() {
+    // tab k (sum (tab n (get (hist k is vs) i))): the hist is at trips 2.
+    let body = f(GET, vec![f(HIST, vec![v(VAR_SIZE, W_K), v(VAR_ARR, W_IS), v(VAR_ARR, W_VS)]), v(VAR_I64, 1)]);
+    let d = decode(&f(TAB, vec![v(VAR_SIZE, W_K), f(SUM, vec![f(TAB, vec![v(VAR_SIZE, W_N), body])])]));
+    let t = tables();
+    assert_eq!((t.requirements[1].symbol, &t.requirements[1].adapter), (HIST as i64, &"subst.const".to_string()));
+    assert_eq!(
+        d.failures(),
+        vec![
+            Failure::Adapter { path: vec![1, 0, 1], requirement: 3, adapter: "clampix".into() },
+            Failure::Substituted { path: vec![1, 0, 1, 0], by: Substitution::Constant, requirement: 1 },
+        ],
+        "{d:#?}"
+    );
+    let hist = d.node(&[1, 0, 1, 0]).expect("hist");
+    assert_eq!((hist.environment.trips, &hist.properties), (2, &props(&[("len", "1")])), "the constant's length, not the indices' n");
+    // The same tables with `subst` would have rendered the indices (in1, of length n): the substitute is the table's.
+    let mut own = tables();
+    own.requirements[1].adapter = "subst".into();
+    let k = contract();
+    let dec = Decoder::new(&own, &k).expect("decoder");
+    let tree = f(TAB, vec![v(VAR_SIZE, W_K), f(SUM, vec![f(TAB, vec![v(VAR_SIZE, W_N), f(GET, vec![f(HIST, vec![v(VAR_SIZE, W_K), v(VAR_ARR, W_IS), v(VAR_ARR, W_VS)]), v(VAR_I64, 1)])])])]);
+    assert_eq!(dec.decode(&entry(), &tree).expect("decodes").node(&[1, 0, 1, 0]).expect("hist").substituted.map(|s| s.by), Some(Substitution::Input(1)));
+    // At the root the bound holds and the hist renders itself.
+    assert!(decode(&reference(W_N)).root.substituted.is_none());
+}
+
+/// G3 review finding 4: a subtree's key carries its free variables' properties and its trips, so `get(is, i)` under
+/// `tabulate n` and under `tabulate k` (one renders `is[i]`, the other `is[clampix n i]`) have different keys, though
+/// their resolved subtrees are equal; a variable bound inside the subtree is keyed by its depth below the subtree's
+/// root, so the same subtree under one more binding has the same key.
+#[test]
+fn the_subtree_key_carries_the_free_variables_properties() {
+    let get_i = f(GET, vec![v(VAR_ARR, W_IS), v(VAR_I64, 0)]);
+    let (under_n, under_k) = (decode(&f(TAB, vec![v(VAR_SIZE, W_N), get_i.clone()])), decode(&f(TAB, vec![v(VAR_SIZE, W_K), get_i.clone()])));
+    assert_eq!(under_n.resolved().kids[1], under_k.resolved().kids[1], "the resolved subtrees are equal (finding 4's fault)");
+    assert_eq!(under_n.failures(), vec![Failure::Root { requirement: 0, adapter: "fit.root".into() }], "its length is n, the entry's k");
+    assert_eq!(under_k.failures(), vec![Failure::Adapter { path: vec![1], requirement: 3, adapter: "clampix".into() }]);
+    let (a, b) = (under_n.subtree_key(&[1]).expect("key"), under_k.subtree_key(&[1]).expect("key"));
+    assert_eq!(a.tree, b.tree);
+    assert_ne!(a, b, "the keys differ by i's bound");
+    assert_eq!(a.tree.kids.iter().map(|k| k.choice).collect::<Vec<_>>(), vec![Some(Choice::Free(0)), Some(Choice::Free(1))]);
+    let free = |key: &SubtreeKey| key.free.iter().map(|f| (f.binder, f.data_type, f.properties.clone())).collect::<Vec<_>>();
+    assert_eq!(free(&a), vec![(binder(0, 0), ARR, props(&[("len", "n")])), (binder(1, 0), I64, props(&[("bound", "n")]))]);
+    assert_eq!(free(&b)[1], (binder(1, 0), I64, props(&[("bound", "k")])));
+    assert_eq!((a.trips, b.trips), (1, 1));
+    // The whole tree's key is its resolved tree with nothing free but the entry's parameters.
+    let whole = under_n.subtree_key(&[]).expect("key");
+    assert_eq!(whole.tree.kids[1].kids[1].choice, Some(Choice::Variable(binder(1, 0))));
+    assert_eq!(whole.free.iter().map(|f| f.binder).collect::<Vec<_>>(), vec![binder(0, 5), binder(0, 0)]);
+    // tab n (get is i) under tab k (sum .) and under tab k (sum (let zeros_n in .)): its own i is at depth 2 and 3, its
+    // key the same (the same trips, the same free `is`, its i one binding below its root).
+    let inner = f(TAB, vec![v(VAR_SIZE, W_N), f(GET, vec![v(VAR_ARR, W_IS), v(VAR_I64, 1)])]);
+    let plain = decode(&f(TAB, vec![v(VAR_SIZE, W_K), f(SUM, vec![inner.clone()])]));
+    let with_let = decode(&f(TAB, vec![v(VAR_SIZE, W_K), f(SUM, vec![f(LET, vec![v(VAR_ARR, 3), inner.clone()])])]));
+    assert_eq!(with_let.failures(), plain.failures());
+    let (p_node, l_node) = (plain.node(&[1, 0, 1, 1]).expect("plain i"), with_let.node(&[1, 0, 1, 1, 1]).expect("let i"));
+    assert_eq!((p_node.choice, l_node.choice), (Some(Choice::Variable(binder(2, 0))), Some(Choice::Variable(binder(3, 0)))));
+    assert_eq!(plain.subtree_key(&[1, 0]), with_let.subtree_key(&[1, 0, 1]));
+    // A binding ABOVE a free variable's binder moves the binder, so the key differs: that costs sharing only.
+    let lifted = decode(&f(LET, vec![v(VAR_ARR, 3), f(TAB, vec![v(VAR_SIZE, W_N), get_i.clone()])]));
+    assert_ne!(lifted.subtree_key(&[1, 1]), under_n.subtree_key(&[1]));
+    assert_eq!(under_n.subtree_key(&[7]), None);
+}
+
+/// G3 review finding 5: the entry is checked on every decode, before any tree is read.
+#[test]
+fn the_entry_is_checked_on_every_decode() {
+    let (t, k) = (tables(), contract());
+    let d = Decoder::new(&t, &k).expect("decoder");
+    d.check_entry(&entry()).expect("the histogram entry");
+    let mut typo = entry();
+    typo.requirements[0].property = "lenn".into();
+    let e = d.decode(&typo, &reference(W_N)).expect_err("out.lenn");
+    assert!(e.contains("the entry's requirement out.lenn = k names out.lenn, which Futhark(3) does not carry"), "{e}");
+    let mut twice = entry();
+    twice.variables.push(twice.variables[0].clone());
+    assert!(d.check_entry(&twice).expect_err("twice").iter().any(|m| m.contains("the entry has two parameters named is")));
+    let mut wrong = entry();
+    wrong.variables[0].properties = vec![("bound".into(), p("n"))];
+    assert!(d.check_entry(&wrong).expect_err("bound").iter().any(|m| m.contains("the entry's parameter is sets bound, which Futhark(3) does not carry")));
+}
+
+/// A loaded master 6 view: its kingdom, tables, contract and entry.
+fn view6(problem: &str) -> (crate::futhark_table::Kingdom6, KingdomTables, KingdomContract, Entry) {
+    let k = crate::futhark_view::master6::committed(problem).and_then(|v| v.kingdom(problem)).unwrap_or_else(|e| panic!("{problem}: {e}"));
+    let tables = k.tables().unwrap_or_else(|e| panic!("{problem}: {e}"));
+    let contract = k.contract().unwrap_or_else(|e| panic!("{problem}: {e}"));
+    let entry = Entry::of_kingdom6(&k);
+    (k, tables, contract, entry)
+}
+
+/// G3 review finding 7: design section 6's reference and mutation on the REAL histogram view (loaded through
+/// `Kingdom6::from_tables`), not the tables written here: the reference holds every requirement, the mutation fails
+/// exactly `hist`'s `fit.pair` and `get`'s `clampix`, and a `hist` at trips 2 renders its constant.
+#[test]
+fn the_histogram_view_decodes_the_reference_and_the_mutation() {
+    let (k, t, c, e) = view6("histogram");
+    let d = Decoder::new(&t, &c).unwrap_or_else(|e| panic!("{e:#?}"));
+    let id = |name: &str| k.symbols.iter().position(|s| s.name == name).unwrap_or_else(|| panic!("{name}")) as SymbolId;
+    let (hist, tab, get, md, sum) = (id("hist.add@a.i32"), id("tab@a.i32"), id("get@i32"), id("mod@i32"), id("sum@i32"));
+    let (vsize, varr, vi64) = (id("var@size"), id("var@a.i32"), id("var@i64"));
+    let names: Vec<&str> = e.variables.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(names, ["is", "vs", "zeros_k", "zeros_n", "k", "n"], "the words below are the hand tables'");
+    let reference = |size: u32| {
+        let body = f(md, vec![v(vsize, W_K), f(get, vec![v(varr, W_IS), v(vi64, 0)])]);
+        f(hist, vec![v(vsize, W_K), f(tab, vec![v(vsize, size), body]), v(varr, W_VS)])
+    };
+    let req = |symbol: SymbolId, adapter: &str| t.requirements.iter().position(|q| q.symbol == symbol as i64 && q.adapter == adapter).unwrap_or_else(|| panic!("{adapter}"));
+    assert_eq!(d.decode(&e, &reference(W_N)).expect("reference").failures(), vec![]);
+    let m = d.decode(&e, &reference(W_K)).expect("mutation");
+    assert_eq!(
+        m.failures(),
+        vec![Failure::Adapter { path: vec![], requirement: req(hist, "fit.pair"), adapter: "fit.pair".into() }, Failure::Adapter { path: vec![1, 1, 1], requirement: req(get, "clampix"), adapter: "clampix".into() }]
+    );
+    assert!(m.root_outcomes.iter().all(|o| o.holds));
+    let deep = f(tab, vec![v(vsize, W_K), f(sum, vec![f(tab, vec![v(vsize, W_N), f(get, vec![f(hist, vec![v(vsize, W_K), v(varr, W_IS), v(varr, W_VS)]), v(vi64, 1)])])])]);
+    let s = d.decode(&e, &deep).expect("deep").node(&[1, 0, 1, 0]).expect("hist").substituted.expect("substituted");
+    assert_eq!((s.by, s.requirement), (Substitution::Constant, req(hist, "subst.const")));
+}
+
+/// G3 review finding 7: random genes over EVERY committed master 6 view, loaded through `Kingdom6::from_tables`: each
+/// decodes, the same twice; every failure names an adapter of the tables or a substitution by a work bound of a
+/// substitution adapter; and in a view with a work bound, failures and substitutions both occur.
+#[test]
+fn random_genes_over_the_real_master6_views_fail_only_by_named_adapters() {
+    for (problem, ..) in crate::futhark_view::master6::COMMITTED6 {
+        let (k, t, c, e) = view6(problem);
+        let d = Decoder::new(&t, &c).unwrap_or_else(|e| panic!("{problem}: {e:#?}"));
+        let layout = GeneLayout::from_program_size(&c, e.output, 24).unwrap_or_else(|e| panic!("{problem}: {e:?}"));
+        let consts: BTreeMap<Ty, u32> = k.data_types.iter().enumerate().filter(|(_, dt)| !dt.literals.is_empty()).map(|(i, dt)| (Ty::Futhark(i as u16), dt.literals.len() as u32)).collect();
+        let bounded = t.requirements.iter().any(|q| q.subject == Subject::Trips);
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let (mut with_failures, mut substituted) = (0, 0);
+        for g in 0..200 {
+            let gene = random_gene(&c, &layout, &consts, &mut rng);
+            let tree = express(&c, &layout, &gene, &consts).unwrap_or_else(|err| panic!("{problem} gene {g}: {err:?}")).tree();
+            let a = d.decode(&e, &tree).unwrap_or_else(|err| panic!("{problem} gene {g}: {err}"));
+            assert_eq!(a, d.decode(&e, &tree).expect("again"), "{problem} gene {g}");
+            let fs = a.failures();
+            with_failures += usize::from(!fs.is_empty());
+            substituted += usize::from(fs.iter().any(|f| matches!(f, Failure::Substituted { .. })));
+            for fl in &fs {
+                match fl {
+                    Failure::Adapter { adapter, requirement, .. } => {
+                        assert!(t.adapters.iter().any(|x| &x.name == adapter) && Substitute::of_adapter(adapter).is_none(), "{problem} gene {g}: {adapter}");
+                        assert_eq!(&t.requirements[*requirement].adapter, adapter);
+                    }
+                    Failure::Root { adapter, .. } => assert_eq!(t.adapters.iter().find(|x| &x.name == adapter).map(|x| x.runs_at), Some(AdapterSite::Root), "{problem} gene {g}: {adapter}"),
+                    Failure::Substituted { path, by, requirement } => {
+                        let q = &t.requirements[*requirement];
+                        let node = a.node(path).expect("node");
+                        let work = t.requirements.iter().find(|w| w.symbol == q.symbol && w.subject == Subject::Trips).expect("a work bound");
+                        let how = Substitute::of_adapter(&work.adapter).expect("a substitution adapter");
+                        let own = c.signature(node.symbol).iter().position(|ty| *ty == node.data_type);
+                        let want = match (how, own) {
+                            (Substitute::OwnInput, Some(p)) => Substitution::Input(p as u32),
+                            _ => Substitution::Constant,
+                        };
+                        assert_eq!((q.symbol, *by), (node.symbol as i64, want), "{problem} gene {g}");
+                    }
+                }
+            }
+        }
+        eprintln!("{problem}: 200 random genes, {with_failures} with a failing requirement, {substituted} with a substitution");
+        assert!(with_failures > 0, "{problem}: no gene fails a requirement");
+        assert_eq!(substituted > 0, bounded, "{problem}: substitutions occur exactly in a view with a work bound");
+    }
 }

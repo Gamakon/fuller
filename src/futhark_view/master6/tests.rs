@@ -101,7 +101,7 @@ fn the_kmeans_view_loads_its_rules_requirements_bindings_and_environment() {
     assert_eq!(in_tables, ["in1.len = in0.len -> fit.pair", "env.trips < 3 -> subst"]);
     assert_eq!(tables.requirements.len(), k.symbols.iter().map(|s| s.requires.len()).sum::<usize>());
     assert!(tables.trip_arguments.iter().any(|t| t.symbol == by("tab@a.f32") as i64 && t.position == 1));
-    assert_eq!(tables.adapters.len(), 8);
+    assert_eq!(tables.adapters.len(), 9);
     let lp = &k.symbols[by("loop@a.f32")];
     assert_eq!((lp.trip, lp.binds.len()), (Some(2), 2));
     assert_eq!(k.data_type(lp.binds[0].data_type).unwrap().name, "[]f32");

@@ -29,9 +29,9 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 27	M0030	scan.add@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan (+) 0i32 (opaque {0})
 28	M0031	scan.min@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan i32.min i32.highest (opaque {0})
 29	M0032	scan.max@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 2 -> subst			scan i32.max i32.lowest (opaque {0})
-30	M0033	hist.add@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist (+) 0i32 {0} (map i64.i32 {1}) {2}
-31	M0034	hist.min@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist i32.min i32.highest {0} (map i64.i32 {1}) {2}
-32	M0035	hist.max@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst			hist i32.max i32.lowest {0} (map i64.i32 {1}) {2}
+30	M0033	hist.add@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst.const			hist (+) 0i32 {0} (map i64.i32 {1}) {2}
+31	M0034	hist.min@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst.const			hist i32.min i32.highest {0} (map i64.i32 {1}) {2}
+32	M0035	hist.max@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 2 -> subst.const			hist i32.max i32.lowest {0} (map i64.i32 {1}) {2}
 33	M0040	loop@i32	function	i32	size;i32;i32		env.trips < 2 -> subst	2:i32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
 34	M0040	loop@a.i32	function	[]i32	size;[]i32;[]i32	len=in1.len	in2.len = in1.len -> fit.state; env.trips < 2 -> subst	2:[]i32 len=in1.len; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
 35	M0041	loop1@i32	function	i32	size;i32;i32		env.trips < 2 -> subst	2:i32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in {2}

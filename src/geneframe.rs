@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 /// Ordering: the base + depth-ladder types come FIRST and never move, so
 /// [`Ty::depth`], [`Ty::LADDER`] and [`Ty::at_depth`] — the SR depth typing —
 /// are unaffected by anything below `T2`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Ty {
     // ---- Base types (Symbolic Regression / SQL / REGEX kingdoms) ----
     S, // String
@@ -737,7 +737,7 @@ pub struct Argument {
 /// min's arguments are flattened, sorted and without repeats, so `min(n, k)` is `min(k, n)` and `min(n, n)` is `n`.
 /// [`PropertyExpr::sum`], [`PropertyExpr::min`] and [`PropertyExpr::parse`] build only that form; the table check
 /// reports a `Sum` or `Min` built by hand in another.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PropertyExpr {
     Size(String),
     Literal(i64),
@@ -1120,8 +1120,38 @@ impl AdapterSite {
     }
 }
 
+/// The two substitution adapters (master 6 README 5.3), named by a work bound `env.trips < depth`: what a node the
+/// bound substitutes renders as. The substitute is a table fact, never a coincidence of data types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Substitute {
+    /// `subst`: the node's first input of its own data type, else its data type's constant (`map2.*`, `scan.*`, a
+    /// loop's state; `sum`, `tab`).
+    OwnInput,
+    /// `subst.const`: the node's data type's constant, whatever its inputs (`hist.*`, `histrows.*`: the constant
+    /// fitted to the slot is the histogram with nothing counted, where an own-type input is its indices or values).
+    Constant,
+}
+
+impl Substitute {
+    pub const ALL: [Substitute; 2] = [Substitute::OwnInput, Substitute::Constant];
+
+    /// The adapter's name in `adapters.tsv` and in a `requires` column.
+    pub fn adapter(self) -> &'static str {
+        match self {
+            Substitute::OwnInput => "subst",
+            Substitute::Constant => "subst.const",
+        }
+    }
+
+    /// The substitution adapter named `name`, `None` for any other adapter.
+    pub fn of_adapter(name: &str) -> Option<Substitute> {
+        Substitute::ALL.into_iter().find(|s| s.adapter() == name)
+    }
+}
+
 /// One row of the Adapter table (master 6 `adapters.tsv`): its name, whether it is heavy (does work of the data's
-/// size, as every `fit`), and where its work runs. A requirement on `env.trips` names the substitution adapter.
+/// size, as every `fit`), and where its work runs. A requirement on `env.trips` names a substitution adapter
+/// ([`Substitute`]), and no other requirement does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Adapter {
     pub name: String,
@@ -1203,6 +1233,13 @@ pub struct KingdomTables {
     pub trip_arguments: Vec<TripArgument>,
 }
 
+/// An entry parameter as [`KingdomTables::entry_defects`] reads it: its name, its data type and its properties.
+pub type EntryParameter<'a> = (&'a str, Ty, &'a [(String, PropertyExpr)]);
+
+/// A requirement on the entry's result as [`KingdomTables::entry_defects`] reads it: its property, its relation, the
+/// expression it compares with and its adapter.
+pub type EntryRequirement<'a> = (&'a str, Relation, &'a PropertyExpr, &'a str);
+
 /// The comparability classes of property kinds (master 6 README 5.2): a size and a bound both count elements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum KindClass {
@@ -1227,6 +1264,23 @@ impl KindClass {
             KindClass::Flag => "flag",
         }
     }
+}
+
+/// The relations a property of `kind` takes (master 6 README 5.2): `=` and `<=` for a size, `<=` for a bound, `=`
+/// for a range or a flag.
+fn relations_of(kind: PropertyKind) -> &'static [Relation] {
+    match kind {
+        PropertyKind::Size => &[Relation::Eq, Relation::Le],
+        PropertyKind::Bound => &[Relation::Le],
+        PropertyKind::Range | PropertyKind::Flag => &[Relation::Eq],
+    }
+}
+
+/// Whether a property of `kind` compares with an expression whose terms carry the classes `against` (README 5.2): the
+/// same class, and a literal (no class) only for a size or a bound.
+fn comparable(kind: PropertyKind, against: &std::collections::BTreeSet<KindClass>) -> bool {
+    let mine = KindClass::of(kind);
+    against.iter().all(|c| *c == mine) && (mine == KindClass::Count || !against.is_empty())
 }
 
 /// Text fields hold no tab and no line break; the text form is one row a line, its fields tab-separated.
@@ -1404,7 +1458,10 @@ impl KingdomTables {
     /// for a bound, `<` for `env.trips` against a literal only) and its other side is of a comparable kind (a size and
     /// a bound both count elements, a literal has no kind); it names an adapter that exists, not a root one, and a
     /// body one only on a symbol with a trip argument; no binding reads its own argument and the bindings of one
-    /// symbol read each other's in no cycle ([`KingdomTables::decode_order`]).
+    /// symbol read each other's in no cycle ([`KingdomTables::decode_order`]). And the work bound (G3 review findings
+    /// 2, 3, 6): a requirement on `env.trips` names a substitution adapter ([`Substitute`]) and no other requirement
+    /// does, which is light and runs at the node; a symbol has at most one; when any symbol has one, every symbol that
+    /// names a heavy adapter has one; and a substitution by a constant is of a data type that has one.
     pub fn check(&self) -> Result<(), Vec<String>> {
         let k = &self.kingdom;
         let mut d: Vec<String> = Vec::new();
@@ -1535,6 +1592,9 @@ impl KingdomTables {
             if adapters.insert(a.name.as_str(), a).is_some() {
                 d.push(format!("our software has a bug: kingdom {k}: adapter {} is listed twice", a.name));
             }
+            if Substitute::of_adapter(&a.name).is_some() && (a.heavy || a.runs_at != AdapterSite::Node) {
+                d.push(format!("our software has a bug: kingdom {k}: adapter {} is a substitution adapter, so it is light and runs at the node", a.name));
+            }
         }
         let mut trip_of: BTreeMap<i64, u32> = BTreeMap::new();
         for tr in &self.trip_arguments {
@@ -1569,12 +1629,7 @@ impl KingdomTables {
                     Some(ty) => match props.get(&(*ty, property.as_str())) {
                         None => d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement names in{position}.{property}, which {ty:?} does not carry")),
                         Some(pt) => {
-                            let relations: &[Relation] = match pt.kind {
-                                PropertyKind::Size => &[Relation::Eq, Relation::Le],
-                                PropertyKind::Bound => &[Relation::Le],
-                                PropertyKind::Range | PropertyKind::Flag => &[Relation::Eq],
-                            };
-                            if !relations.contains(&q.relation) {
+                            if !relations_of(pt.kind).contains(&q.relation) {
                                 d.push(format!(
                                     "our software has a bug: kingdom {k}: symbol {s}'s requirement {} {} {} uses {}, which a {} property does not take",
                                     q.subject,
@@ -1584,9 +1639,7 @@ impl KingdomTables {
                                     pt.kind.name()
                                 ));
                             }
-                            let mine = KindClass::of(pt.kind);
-                            let literal_ok = mine == KindClass::Count;
-                            if against.iter().any(|c| *c != mine) || (!literal_ok && against.is_empty()) {
+                            if !comparable(pt.kind, &against) {
                                 d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement compares the {} property {} with {}, which is not of a comparable kind", pt.kind.name(), q.subject, q.against));
                             }
                         }
@@ -1596,7 +1649,13 @@ impl KingdomTables {
                     if q.relation != Relation::Lt || !matches!(q.against, PropertyExpr::Literal(_)) {
                         d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on env.trips is {} {}, not < a literal", q.relation.symbol(), q.against));
                     }
+                    if Substitute::of_adapter(&q.adapter).is_none() {
+                        d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on env.trips names adapter {}, which is not a substitution adapter (subst, subst.const)", q.adapter));
+                    }
                 }
+            }
+            if q.subject != Subject::Trips && Substitute::of_adapter(&q.adapter).is_some() {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} names the substitution adapter {}, which only env.trips takes", q.subject, q.adapter));
             }
             if q.relation == Relation::Lt && q.subject != Subject::Trips {
                 d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} uses <, which only env.trips takes", q.subject));
@@ -1613,6 +1672,32 @@ impl KingdomTables {
                 Some(_) => {}
             }
             d.extend(expr_defects(s, &format!("requirement on {}", q.subject), &q.against));
+        }
+        // The work bound (master 6 README 5.3): at most one a symbol; once any symbol has one, every symbol that names
+        // a heavy adapter has one (else the adapter's work escapes `max(size) ** depth`); and a substitution by a
+        // constant needs its data type to have one, found here and not when a gene reaches it.
+        let mut work: BTreeMap<i64, &Requirement> = BTreeMap::new();
+        for q in self.requirements.iter().filter(|q| q.subject == Subject::Trips) {
+            if work.insert(q.symbol, q).is_some() {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {} has two requirements on env.trips", q.symbol));
+            }
+        }
+        if !work.is_empty() {
+            for q in self.requirements.iter().filter(|q| !work.contains_key(&q.symbol)) {
+                if adapters.get(q.adapter.as_str()).is_some_and(|a| a.heavy && a.runs_at != AdapterSite::Root) {
+                    d.push(format!(
+                        "our software has a bug: kingdom {k}: symbol {}'s requirement on {} names the heavy adapter {}, but the symbol has no requirement on env.trips, so the adapter's work escapes the work bound",
+                        q.symbol, q.subject, q.adapter
+                    ));
+                }
+            }
+        }
+        for (s, q) in &work {
+            let (Some(out), Some(by)) = (out_of.get(s), Substitute::of_adapter(&q.adapter)) else { continue };
+            let own_input = ins_of.get(s).is_some_and(|ins| ins.contains(out));
+            if (by == Substitute::Constant || !own_input) && types.get(out).is_some_and(|t| t.constant.is_none()) {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s work bound ({}) substitutes the constant of {}, which has none", q.adapter, types[out].name));
+            }
         }
         for s in &self.symbols {
             if let Err(e) = self.decode_order(s.symbol) {
@@ -1643,6 +1728,73 @@ impl KingdomTables {
         } else {
             Err(d)
         }
+    }
+
+    /// THE ENTRY CHECK (G3 review finding 5), against these tables. Every defect, each "our software has a bug: ...":
+    /// the result's data type is one of the tables'; each parameter's name is an identifier given once, its data type
+    /// is the tables', and it sets properties its data type carries, once each, reading no input, in their one
+    /// spelling; each requirement on the result names a property its data type carries, by a relation that
+    /// property's kind takes, against an expression of a comparable kind (README 5.2) that reads no input and no `?`,
+    /// and names an adapter that runs at the root. `variables` are `(name, data type, properties)`, `requirements`
+    /// `(property, relation, against, adapter)`.
+    pub fn entry_defects(&self, output: Ty, variables: &[EntryParameter], requirements: &[EntryRequirement]) -> Vec<String> {
+        let k = &self.kingdom;
+        let mut d: Vec<String> = Vec::new();
+        let is_type = |ty: Ty| self.data_types.iter().any(|t| t.id == ty);
+        let kind_of = |ty: Ty, p: &str| self.property_types.iter().find(|pt| pt.data_type == ty && pt.name == p).map(|pt| pt.kind);
+        if !is_type(output) {
+            d.push(format!("our software has a bug: kingdom {k}: the entry returns {output:?}, which is not a data type"));
+        }
+        let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (name, ty, props) in variables {
+            if !is_identifier(name) {
+                d.push(format!("our software has a bug: kingdom {k}: the entry's parameter name {name:?} is not an identifier"));
+            }
+            if !names.insert(name) {
+                d.push(format!("our software has a bug: kingdom {k}: the entry has two parameters named {name}"));
+            }
+            if !is_type(*ty) {
+                d.push(format!("our software has a bug: kingdom {k}: the entry's parameter {name} is of {ty:?}, which is not a data type"));
+            }
+            let mut set: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            for (p, e) in props.iter() {
+                if kind_of(*ty, p).is_none() {
+                    d.push(format!("our software has a bug: kingdom {k}: the entry's parameter {name} sets {p}, which {ty:?} does not carry"));
+                }
+                if !set.insert(p.as_str()) {
+                    d.push(format!("our software has a bug: kingdom {k}: the entry's parameter {name} sets {p} twice"));
+                }
+                if !e.inputs().is_empty() {
+                    d.push(format!("our software has a bug: kingdom {k}: the entry's parameter {name} sets {p} = {e}, which reads an input (the entry has none)"));
+                }
+                d.extend(e.shape_defects().into_iter().map(|what| format!("our software has a bug: kingdom {k}: the entry's parameter {name}'s {p} {what}")));
+            }
+        }
+        for (p, relation, against, adapter) in requirements {
+            let at = format!("the entry's requirement out.{p} {} {against}", relation.symbol());
+            match kind_of(output, p) {
+                None => d.push(format!("our software has a bug: kingdom {k}: {at} names out.{p}, which {output:?} does not carry")),
+                Some(kind) => {
+                    if !relations_of(kind).contains(relation) {
+                        d.push(format!("our software has a bug: kingdom {k}: {at} uses {}, which a {} property does not take", relation.symbol(), kind.name()));
+                    }
+                    let classes: std::collections::BTreeSet<KindClass> = if against.has_size_name() { [KindClass::Count].into() } else { Default::default() };
+                    if !comparable(kind, &classes) {
+                        d.push(format!("our software has a bug: kingdom {k}: {at} compares the {} property with {against}, which is not of a comparable kind", kind.name()));
+                    }
+                }
+            }
+            if !against.inputs().is_empty() || against.has_unknown() {
+                d.push(format!("our software has a bug: kingdom {k}: {at} reads an input or ?, which the entry's result never meets"));
+            }
+            d.extend(against.shape_defects().into_iter().map(|what| format!("our software has a bug: kingdom {k}: {at} {what}")));
+            match self.adapters.iter().find(|a| a.name == *adapter) {
+                None => d.push(format!("our software has a bug: kingdom {k}: {at} names adapter {adapter:?}, which is not an adapter")),
+                Some(a) if a.runs_at != AdapterSite::Root => d.push(format!("our software has a bug: kingdom {k}: {at} names adapter {adapter}, which does not run at the root")),
+                Some(_) => {}
+            }
+        }
+        d
     }
 
     /// The tables as text: one row a line, its table's name first and its fields tab-separated; types by their
@@ -2294,12 +2446,15 @@ mod tests {
             Requirement { symbol: 1, subject: on(1, "len"), relation: Relation::Eq, against: input(2, "len"), adapter: "fit.pair".into() },
             Requirement { symbol: 3, subject: on(1, "bound"), relation: Relation::Le, against: input(0, "len"), adapter: "clampix".into() },
             Requirement { symbol: 2, subject: Subject::Trips, relation: Relation::Lt, against: PropertyExpr::Literal(2), adapter: "subst".into() },
+            Requirement { symbol: 1, subject: Subject::Trips, relation: Relation::Lt, against: PropertyExpr::Literal(2), adapter: "subst.const".into() },
+            Requirement { symbol: 4, subject: Subject::Trips, relation: Relation::Lt, against: PropertyExpr::Literal(2), adapter: "subst".into() },
         ];
         t.bindings = vec![Binding { symbol: 2, position: 1, data_type: i64_, properties: vec![("bound".into(), input(0, "value"))] }];
         t.adapters = vec![
             Adapter { name: "fit.pair".into(), heavy: true, runs_at: AdapterSite::Node },
             Adapter { name: "clampix".into(), heavy: false, runs_at: AdapterSite::Node },
             Adapter { name: "subst".into(), heavy: false, runs_at: AdapterSite::Node },
+            Adapter { name: "subst.const".into(), heavy: false, runs_at: AdapterSite::Node },
             Adapter { name: "fit.body".into(), heavy: true, runs_at: AdapterSite::Body },
             Adapter { name: "fit.root".into(), heavy: true, runs_at: AdapterSite::Root },
         ];
@@ -2549,6 +2704,40 @@ mod tests {
                     t.bindings.push(Binding { symbol: 4, position: 1, data_type: i64_, properties: vec![("bound".into(), input(0, "len"))] });
                 }),
             ),
+            // G3 review finding 7: a range and a flag compare with their own kind only, never with a literal.
+            (
+                "compares the range property in0.span with 1, which is not of a comparable kind",
+                1,
+                Box::new(move |t| {
+                    t.property_types.push(PropertyType { id: 10, data_type: arr, name: "span".into(), kind: PropertyKind::Range });
+                    t.requirements.push(req(4, on(0, "span"), Relation::Eq, PropertyExpr::Literal(1), "fit.pair"));
+                }),
+            ),
+            (
+                "compares the flag property in0.sorted with 1, which is not of a comparable kind",
+                1,
+                Box::new(move |t| {
+                    t.property_types.push(PropertyType { id: 10, data_type: arr, name: "sorted".into(), kind: PropertyKind::Flag });
+                    t.requirements.push(req(4, on(0, "sorted"), Relation::Eq, PropertyExpr::Literal(1), "fit.pair"));
+                }),
+            ),
+            // G3 review finding 2: `env.trips` takes a substitution adapter, and only it does; one a symbol.
+            ("symbol 2's requirement on env.trips names adapter fit.pair, which is not a substitution adapter", 1, Box::new(|t| t.requirements[2].adapter = "fit.pair".into())),
+            (
+                "symbol 4's requirement on in1.len names the substitution adapter subst, which only env.trips takes",
+                1,
+                Box::new(move |t| t.requirements.push(req(4, on(1, "len"), Relation::Eq, input(0, "len"), "subst"))),
+            ),
+            ("symbol 2 has two requirements on env.trips", 1, Box::new(move |t| t.requirements.push(req(2, Subject::Trips, Relation::Lt, PropertyExpr::Literal(3), "subst")))),
+            ("adapter subst.const is a substitution adapter, so it is light and runs at the node", 1, Box::new(|t| t.adapters[3].heavy = true)),
+            // G3 review finding 3: a heavy adapter on a symbol with no work bound escapes the bound.
+            (
+                "symbol 1's requirement on in1.len names the heavy adapter fit.pair, but the symbol has no requirement on env.trips",
+                1,
+                Box::new(|t| t.requirements.retain(|q| !(q.symbol == 1 && q.subject == Subject::Trips))),
+            ),
+            // G3 review finding 6: a substitution by the constant of a data type that has none, found by the tables.
+            ("substitutes the constant of []i32, which has none", 2, Box::new(|t| t.data_types[1].constant = None)),
         ];
         histogram_tables().check().unwrap_or_else(|d| panic!("the base tables check: {d:#?}"));
         for (want, count, edit) in &cases {
@@ -2565,6 +2754,56 @@ mod tests {
         t.requirements.push(req(3, on(1, "bound"), Relation::Le, PropertyExpr::Literal(1), "clampix"));
         t.requirements.push(req(4, on(0, "len"), Relation::Le, PropertyExpr::min(vec![size("n"), input(1, "len")]), "fit.pair"));
         t.check().unwrap_or_else(|d| panic!("{d:#?}"));
+    }
+
+    /// G3 review finding 5: the entry is checked against the tables, each branch provoked alone, by message and count.
+    #[test]
+    fn every_branch_of_the_entry_check() {
+        let (arr, i64_) = (Ty::Futhark(1), Ty::Futhark(2));
+        let t = histogram_tables();
+        let size = |n: &str| PropertyExpr::Size(n.to_string());
+        let len_n = vec![("len".to_string(), size("n"))];
+        let value_k = vec![("value".to_string(), size("k"))];
+        type Vars<'a> = Vec<EntryParameter<'a>>;
+        let good_vars: Vars = vec![("is", arr, &len_n), ("k", i64_, &value_k)];
+        let k_ = size("k");
+        let good_reqs = vec![("len", Relation::Eq, &k_, "fit.root")];
+        assert_eq!(t.entry_defects(arr, &good_vars, &good_reqs), Vec::<String>::new());
+        let unknown = PropertyExpr::Unknown;
+        let in0 = PropertyExpr::Input { position: 0, property: "len".into() };
+        let one = PropertyExpr::Literal(1);
+        let len_twice = vec![("len".to_string(), size("n")), ("len".to_string(), size("k"))];
+        let len_in = vec![("len".to_string(), in0.clone())];
+        let bound = vec![("bound".to_string(), size("n"))];
+        let nested = vec![("len".to_string(), PropertyExpr::Min(vec![size("n"), size("k")]))];
+        let cases: Vec<(&str, usize, Ty, Vars, Vec<EntryRequirement>)> = vec![
+            ("the entry returns Futhark(9), which is not a data type", 2, Ty::Futhark(9), good_vars.clone(), good_reqs.clone()),
+            ("the entry's parameter name \"a b\" is not an identifier", 1, arr, vec![("a b", arr, &len_n)], vec![]),
+            ("the entry has two parameters named is", 1, arr, vec![("is", arr, &len_n), ("is", arr, &len_n)], vec![]),
+            ("the entry's parameter x is of Futhark(9), which is not a data type", 2, arr, vec![("x", Ty::Futhark(9), &len_n)], vec![]),
+            ("the entry's parameter is sets bound, which Futhark(1) does not carry", 1, arr, vec![("is", arr, &bound)], vec![]),
+            ("the entry's parameter is sets len twice", 1, arr, vec![("is", arr, &len_twice)], vec![]),
+            ("the entry's parameter is sets len = in0.len, which reads an input", 1, arr, vec![("is", arr, &len_in)], vec![]),
+            ("the entry's parameter is's len has the min min(n, k)", 1, arr, vec![("is", arr, &nested)], vec![]),
+            ("names out.lenn, which Futhark(1) does not carry", 1, arr, vec![], vec![("lenn", Relation::Eq, &k_, "fit.root")]),
+            ("the entry's requirement out.len < k uses <", 1, arr, vec![], vec![("len", Relation::Lt, &k_, "fit.root")]),
+            ("reads an input or ?, which the entry's result never meets", 1, arr, vec![], vec![("len", Relation::Eq, &unknown, "fit.root")]),
+            ("reads an input or ?, which the entry's result never meets", 1, arr, vec![], vec![("len", Relation::Eq, &in0, "fit.root")]),
+            ("names adapter \"nope\", which is not an adapter", 1, arr, vec![], vec![("len", Relation::Eq, &k_, "nope")]),
+            ("names adapter fit.pair, which does not run at the root", 1, arr, vec![], vec![("len", Relation::Eq, &k_, "fit.pair")]),
+        ];
+        for (want, count, output, vars, reqs) in &cases {
+            let d = t.entry_defects(*output, vars, reqs);
+            assert!(d.iter().all(|e| e.starts_with("our software has a bug: kingdom histogram test: ")), "{d:#?}");
+            assert!(d.iter().any(|e| e.contains(want)), "missing {want:?} in {d:#?}");
+            assert_eq!(d.len(), *count, "{want}: {d:#?}");
+        }
+        // A literal length is comparable (a size counts elements), a range against a literal is not.
+        assert_eq!(t.entry_defects(arr, &[], &[("len", Relation::Eq, &one, "fit.root")]), Vec::<String>::new());
+        let mut ranged = histogram_tables();
+        ranged.property_types.push(PropertyType { id: 10, data_type: arr, name: "span".into(), kind: PropertyKind::Range });
+        let d = ranged.entry_defects(arr, &[], &[("span", Relation::Eq, &one, "fit.root")]);
+        assert!(d.len() == 1 && d[0].contains("compares the range property with 1, which is not of a comparable kind"), "{d:#?}");
     }
 
     #[test]

@@ -53,9 +53,9 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 51	M0031	scan.min@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 3 -> subst			scan i32.min i32.highest (opaque {0})
 52	M0032	scan.max@a.f32	function	[]f32	[]f32	len=in0.len	env.trips < 3 -> subst			scan f32.max f32.lowest (opaque {0})
 53	M0032	scan.max@a.i32	function	[]i32	[]i32	len=in0.len	env.trips < 3 -> subst			scan i32.max i32.lowest (opaque {0})
-54	M0033	hist.add@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist (+) 0i32 {0} (map i64.i32 {1}) {2}
-55	M0034	hist.min@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist i32.min i32.highest {0} (map i64.i32 {1}) {2}
-56	M0035	hist.max@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist i32.max i32.lowest {0} (map i64.i32 {1}) {2}
+54	M0033	hist.add@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist (+) 0i32 {0} (map i64.i32 {1}) {2}
+55	M0034	hist.min@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist i32.min i32.highest {0} (map i64.i32 {1}) {2}
+56	M0035	hist.max@a.i32	function	[]i32	size;[]i32;[]i32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist i32.max i32.lowest {0} (map i64.i32 {1}) {2}
 57	M0036	row@a.f32	function	[]f32	[][]f32;i64	len=in0.cols	in1.bound <= in0.rows -> clampix			{0}[{1}]
 58	M0036	row@a.i32	function	[]i32	[][]i32;i64	len=in0.cols	in1.bound <= in0.rows -> clampix			{0}[{1}]
 59	M0040	loop@f32	function	f32	size;f32;f32		env.trips < 3 -> subst	2:f32; 2:i64 bound=in0.value	2	loop ({2.v0}: {1.type}) = {1} for {2.v1} < {0} do {2}
@@ -79,17 +79,17 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 77	M0054	const@fn.arr_f32_arr_f32	terminal	[]f32 -> []f32						\xs -> map (\_ -> 0.0) xs
 78	M0055	const@fn.arr2_f32_arr_f32_arr_f32	terminal	[]f32 -> []f32 -> []f32						\xs _ys -> map (\_ -> 0.0) xs
 79	M0056	clamp.f32@i64	function	i64	size;f32	bound=in0.value				let x = {1} in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
-80	M0057	hist.add@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
-81	M0058	hist.min@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
-82	M0059	hist.max@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+80	M0057	hist.add@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+81	M0058	hist.min@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+82	M0059	hist.max@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
 83	M0060	div@f32	function	f32	f32;f32					{0} / {1}
 84	M0061	sqrt@f32	function	f32	f32					f32.sqrt {0}
 85	M0062	map2.mul@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (*) {0} {1}
 86	M0062	map2.mul@a.i32	function	[]i32	[]i32;[]i32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (*) {0} {1}
 87	M0063	tabrows@m.f32	function	[][]f32	size;size;[]f32	rows=in0.value; cols=in1.value	in2.len = in1.value -> fit.body; env.trips < 3 -> subst	2:i64 bound=in0.value	2	tabulate {0} (\{2.v0} -> {2})
 88	M0063	tabrows@m.i32	function	[][]i32	size;size;[]i32	rows=in0.value; cols=in1.value	in2.len = in1.value -> fit.body; env.trips < 3 -> subst	2:i64 bound=in0.value	2	tabulate {0} (\{2.v0} -> {2})
-89	M0064	histrows.add@m.i32	function	[][]i32	size;size;[]i32;[][]i32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst			hist (map2 (+)) (replicate {1} 0i32) {0} (map i64.i32 {2}) {3}
-90	M0065	histrows.add@m.f32	function	[][]f32	size;size;[]f32;[][]f32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst			hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}
+89	M0064	histrows.add@m.i32	function	[][]i32	size;size;[]i32;[][]i32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst.const			hist (map2 (+)) (replicate {1} 0i32) {0} (map i64.i32 {2}) {3}
+90	M0065	histrows.add@m.f32	function	[][]f32	size;size;[]f32;[][]f32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst.const			hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}
 91	M0066	rowdiv@m.f32	function	[][]f32	[][]f32;[]f32	rows=min(in0.rows, in1.len); cols=in0.cols	in1.len = in0.rows -> fit.pair; env.trips < 3 -> subst			map2 (\r s -> map (/ s) r) {0} {1}
 92	M0068	pair@f32.f32	function	(f32, f32)	f32;f32					({0}, {1})
 93	M0068	pair@f32.i32	function	(f32, i32)	f32;i32					({0}, {1})

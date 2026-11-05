@@ -45,14 +45,14 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 43	M0054	const@fn.arr_f32_arr_f32	terminal	[]f32 -> []f32						\xs -> map (\_ -> 0.0) xs
 44	M0055	const@fn.arr2_f32_arr_f32_arr_f32	terminal	[]f32 -> []f32 -> []f32						\xs _ys -> map (\_ -> 0.0) xs
 45	M0056	clamp@i64	function	i64	size;f32	bound=in0.value				let x = {1} in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
-46	M0057	hist.add@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
-47	M0058	hist.min@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
-48	M0059	hist.max@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst			hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+46	M0057	hist.add@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+47	M0058	hist.min@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
+48	M0059	hist.max@a.f32	function	[]f32	size;[]f32;[]f32	len=in0.value	in2.len = in1.len -> fit.pair; env.trips < 3 -> subst.const			hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {1}) {2}
 49	M0060	div@f32	function	f32	f32;f32					{0} / {1}
 50	M0061	sqrt@f32	function	f32	f32					f32.sqrt {0}
 51	M0062	map2.mul@a.f32	function	[]f32	[]f32;[]f32	len=min(in0.len, in1.len)	in1.len = in0.len -> fit.pair; env.trips < 3 -> subst			map2 (*) {0} {1}
 52	M0063	tabrows@m.f32	function	[][]f32	size;size;[]f32	rows=in0.value; cols=in1.value	in2.len = in1.value -> fit.body; env.trips < 3 -> subst	2:i64 bound=in0.value	2	tabulate {0} (\{2.v0} -> {2})
-53	M0065	histrows.add@m.f32	function	[][]f32	size;size;[]f32;[][]f32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst			hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}
+53	M0065	histrows.add@m.f32	function	[][]f32	size;size;[]f32;[][]f32	rows=in0.value; cols=in1.value	in3.rows = in2.len -> fit.pair; in3.cols = in1.value -> fit.inner; env.trips < 3 -> subst.const			hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) {2}) {3}
 54	M0066	rowdiv@m.f32	function	[][]f32	[][]f32;[]f32	rows=min(in0.rows, in1.len); cols=in0.cols	in1.len = in0.rows -> fit.pair; env.trips < 3 -> subst			map2 (\r s -> map (/ s) r) {0} {1}
 55	M0068	pair@f32.f32	function	(f32, f32)	f32;f32					({0}, {1})
 56	M0069	fst.f32.f32@f32	function	f32	(f32, f32)					{0}.0

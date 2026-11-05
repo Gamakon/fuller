@@ -161,7 +161,8 @@ G3's "the two sides are the same kind" check uses this table, not equality of ki
 
 ### 5.3 The work bound as a property (plan 7.1 choice 1; Andrew's confirmation is plan 7.5a item 1)
 
-Every heavy row carries the requirement `env.trips < depth -> subst`. The heavy rows are S6's list (`gen_tables.py`
+Every heavy row carries the requirement `env.trips < depth -> subst` (`-> subst.const` for `hist.*` and
+`histrows.*`, below). The heavy rows are S6's list (`gen_tables.py`
 `HEAVY_OPS`): `tab`, `tabrows`, `replicate`, `sum`, `minimum`, `maximum`, `map2.*`, `scan.*`, `hist.*`,
 `histrows.*`, `rowdiv`, `loop`, `loop1`.
 
@@ -172,10 +173,22 @@ Every heavy row carries the requirement `env.trips < depth -> subst`. The heavy 
   (section 9).
 - **`env.trips` is a requirement subject that is not an input's property.** G3 extends `Requirement`'s subject to be
   either `in<k>.<property>` or `env.trips`. G3 also reads the `trip` column as an attribute of the binding argument.
-- The substitution adapter `subst` renders the failing node as its first input of its own data type when it has one
-  (`map2.*`, `scan.*`, `rowdiv`, `loop`'s state, which is in1). Otherwise it renders the data type's constant (`sum`,
-  `tab`, `hist.*`). G3 decides the substitution once, as an annotation. The renderer, the interpreter, `work_parts`,
-  the reader and the e-graph read that annotation and never decide it again.
+- **The work bound names its substitution adapter, so the substitute is a table fact** (G3 review finding 1, the
+  lead's decision):
+  - `subst` renders the failing node as its first input of its own data type when it has one (`map2.*`, `scan.*`,
+    `rowdiv`, `loop`'s state, which is in1), otherwise its data type's constant (`sum`, `tab`). The input it renders
+    is the result carried through: `map2` and `scan` keep their operand's length and meaning, and a loop that runs
+    no trips returns its state.
+  - `subst.const` renders the node as its data type's constant whatever its inputs: `hist.*` and `histrows.*`. Their
+    own-type inputs are their indices and their values, so rendering either would change the meaning and give the
+    length `n` instead of `k`. The constant `[0{E}]` (`[[0{E}]]`) fitted to `k` by the parent's slot is
+    `replicate k 0`, the histogram with nothing counted, `hist`'s own neutral result.
+  - G3 decides the substitution once, as an annotation. The renderer, the interpreter, `work_parts`, the reader and
+    the e-graph read that annotation and never decide it again.
+  - The table check (G3) reports a requirement on `env.trips` that names any other adapter, a substitution adapter
+    on any other subject, two requirements on `env.trips` on one symbol, a substitution adapter that is heavy or does
+    not run at the node, a symbol that names a heavy adapter but has no work bound (in a view with one), and a
+    substitution by the constant of a data type that has none.
 - **The work-bound requirement is checked first.** If it fails, the node is substituted and none of its other adapters
   render.
 - **An adapter that is heavy (every `fit`) runs at the trips of the place it renders:**
@@ -209,7 +222,8 @@ adapter for each requirement. A row with two failing requirements renders both, 
 | `fit.body` | a lambda body's length against a size argument | body | yes | the body becomes `fit {k} 0{E} ({body})` |
 | `fit.inner` | an inner dimension (`matmul`, `map2_rows`, `histrows` columns) | node | yes | `map (fit l 0{E}) {k}` |
 | `fit.root` | the entry's result against the signature's sizes | root | yes | `fit` on each dimension, inner ones by `map (fit ..)` |
-| `subst` | `env.trips < depth` | node | no | section 5.3 |
+| `subst` | `env.trips < depth` | node | no | section 5.3: its first input of its own data type, else its constant |
+| `subst.const` | `env.trips < depth` (`hist.*`, `histrows.*`) | node | no | section 5.3: its data type's constant |
 
 - **The prelude** (design section 5) holds `fit` and `clampix`, and only those the program uses. A program with no
   failing requirement renders exactly as master 5's.
@@ -377,13 +391,14 @@ name     hist.add@a.{E}
 out      []{E}
 args     size;[]{E};[]{E}
 rules    len=in0.value
-requires in2.len = in1.len -> fit.pair; env.trips < depth -> subst
+requires in2.len = in1.len -> fit.pair; env.trips < depth -> subst.const
 spelling hist (+) 0{E} {0} (map i64.{E} {1}) {2}
 ```
 
 Design section 6's mutation (the `tabulate` choosing `k` instead of `n`) fails `in2.len = in1.len`, since `k = n`
 does not hold. `fit.pair` fits both operands to `i64.min (length ad_a) (length ad_b)`. Because the rule reads
-`in0.value`, the output is still of length `k`.
+`in0.value`, the output is still of length `k`. At `env.trips >= depth`, `subst.const` renders `[0i32]`, of length
+1, which the parent's slot fits to its length: the histogram with nothing counted (section 5.3).
 
 **sum** (M0010)
 

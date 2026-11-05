@@ -2469,7 +2469,22 @@ SIG6_FILES = ("datatypes.tsv", "symbols.tsv", "environment.tsv")
 # The heavy rows (S6's list, master 5's HEAVY_OPS) plus the matrix family's traversals, which in a signature view sit
 # under the core binders (k-means admits the matrix family); `transpose` and `row` are not heavy.
 HEAVY6_OPS = HEAVY_OPS | {"map_rows", "map2_rows", "matmul"}
-WORK_BOUND6 = "env.trips < depth -> subst"
+# The work bound's substitution adapter (README 5.3): `subst` renders the first input of the node's own data type, else
+# its constant; `subst.const` its constant, for the rows whose own-type inputs are their indices and values, not a
+# result carried through (`hist.*`, `histrows.*`: the constant fitted to the slot is the histogram with nothing counted).
+SUBST_CONST6_OPS = {"hist", "histrows"}
+
+
+def subst6(op):
+    """The substitution adapter of a heavy row's work bound, by its operation (`hist`, `map2`, ...)."""
+    return "subst.const" if op in SUBST_CONST6_OPS else "subst"
+
+
+def work_bound6(op):
+    """A heavy row's work-bound requirement, as the master writes it."""
+    return f"env.trips < depth -> {subst6(op)}"
+
+
 # The property kinds (G1's PropertyKind) and which compare (master/README.md 5.2): subject kind -> (other side's kinds
 # allowed, relations allowed). A literal has no kind and compares with any.
 PROPERTY_KINDS6 = {"size", "bound", "range", "flag"}
@@ -2478,7 +2493,7 @@ COMPARABLE6 = {"size": ({"size", "bound"}, {"=", "<="}), "bound": ({"size", "bou
 # Each adapter, the relation it repairs and where it runs (README 5.5).
 ADAPTERS6 = {"clampix": ("<=", "node", "no"), "fit": ("=", "node", "yes"), "fit.pair": ("=", "node", "yes"),
              "fit.state": ("=", "body", "yes"), "fit.body": ("=", "body", "yes"), "fit.inner": ("=", "node", "yes"),
-             "fit.root": ("=", "root", "yes"), "subst": ("<", "node", "no")}
+             "fit.root": ("=", "root", "yes"), "subst": ("<", "node", "no"), "subst.const": ("<", "node", "no")}
 RESERVED_LETS6 = {"ad_a", "ad_b", "ad_l", "ad_m", "ad_s"}
 # The data type templates and their properties (README 2 and 3).
 DATATYPES6 = {"{E}": ("scalar", "", "E", "{E}", "0{E}", ""), "i64": ("scalar", "", "", "i64", "0i64", "bound=1"),
@@ -2686,9 +2701,12 @@ def witness_master6(mst=None):
             elif ADAPTERS6[adapter][0] != rel:
                 bad.append(f"N11 the row {ref}'s requirement {q!r}: {adapter} repairs {ADAPTERS6[adapter][0]}, not {rel}")
             if subject == "env.trips":
-                if q != WORK_BOUND6:
-                    bad.append(f"N11 the row {ref}'s work bound is {q!r}, not {WORK_BOUND6!r}")
+                want_wb = work_bound6(op.replace("{E.tag}", "").split(".")[0])
+                if q != want_wb:
+                    bad.append(f"N11 the row {ref}'s work bound is {q!r}, not {want_wb!r}")
                 continue
+            if adapter in ("subst", "subst.const"):
+                bad.append(f"N11 the row {ref}'s requirement {q!r} names a substitution adapter, which only env.trips takes")
             if subject.startswith("out."):
                 bad.append(f"N11 the row {ref}'s requirement {q!r} is on its output (only the root's is)")
                 continue
@@ -2706,7 +2724,7 @@ def witness_master6(mst=None):
         # clause rewritten: a `let` binds its argument 1 with no trip and no work bound, legal anywhere; there is no
         # condition column.
         bop = op.replace("{E.tag}", "").split(".")[0]
-        wb = requires.count(WORK_BOUND6)
+        wb = sum(1 for q in requires if q.startswith("env.trips"))
         if (bop in HEAVY6_OPS) != (wb == 1) or wb > 1:
             bad.append(f"N13 the row {ref} ({r['name']}) {'is heavy' if bop in HEAVY6_OPS else 'is not heavy'} and carries the work bound {wb} times")
         if r["trip"] and (bop not in HEAVY6_OPS or not r["trip"].isdigit() or int(r["trip"]) >= len(args)
@@ -2877,7 +2895,7 @@ def witness_view6(dir_path, name, spec, mst=None):
             subject, rel, expr, adapter = master_view.REQUIRE6_RE.match(q).groups()
             if subject == "env.trips":
                 if depth is not None:
-                    want_req.append(f"env.trips < {depth} -> subst")
+                    want_req.append(f"env.trips < {depth} -> {adapter}")
                 continue
             k, p = int(subject[2:].split(".")[0]), subject.split(".")[1]
             if k < len(args) and p in props[args[k]] and carried(expr):
@@ -2891,7 +2909,7 @@ def witness_view6(dir_path, name, spec, mst=None):
         # V4: the work bound: a heavy row carries `env.trips < depth` with the view's depth, none in a view with no depth.
         op = s["name"].split("@")[0].split(".")[0]
         wb = [q for q in requires if q.startswith("env.trips")]
-        want_wb = [f"env.trips < {depth} -> subst"] if op in HEAVY6_OPS and depth is not None else []
+        want_wb = [f"env.trips < {depth} -> {subst6(op)}"] if op in HEAVY6_OPS and depth is not None else []
         if wb != want_wb:
             bad.append(f"V4 {name}: {s['name']} carries the work bound {wb}, the model {want_wb}")
         binds = [b.strip() for b in s["binds"].split(";") if b.strip()]

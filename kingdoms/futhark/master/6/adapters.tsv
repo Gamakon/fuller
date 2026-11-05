@@ -7,3 +7,4 @@ fit.body	a lambda body's length against a size argument	body	yes	the body become
 fit.inner	an inner dimension (matmul, map2_rows, histrows columns)	node	yes	map (fit l 0{E}) {k}
 fit.root	the entry's result against the signature's sizes	root	yes	fit on each dimension, inner ones by map (fit ..)
 subst	env.trips < depth	node	no	the node renders as its first input of its own data type, else as its data type's constant
+subst.const	env.trips < depth (hist.*, histrows.*)	node	no	the node renders as its data type's constant (the histogram with nothing counted), whatever its inputs

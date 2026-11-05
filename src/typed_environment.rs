@@ -14,19 +14,22 @@
 //!    properties, as symbolic [`PropertyExpr`]s in their one spelling (a var's are its variable's); each Requirement
 //!    checked by its relation ([`Relation::holds`]). A requirement that fails names its adapter. The work bound
 //!    `env.trips < depth` is checked first: when it fails, or when a heavy adapter of the node would run at
-//!    `trips >= depth`, the node is **substituted** by its first input of its own data type, else by its type's
-//!    constant, and none of its other adapters render ([`Substituted`]). The renderer, the interpreter, the cost, the
+//!    `trips >= depth`, the node is **substituted** as its work bound's adapter says ([`Substitute`]): `subst` by its
+//!    first input of its own data type, else by its type's constant; `subst.const` (`hist.*`, `histrows.*`) by its
+//!    type's constant. None of its other adapters render ([`Substituted`]). The renderer, the interpreter, the cost, the
 //!    reader and the e-graph read this annotation and never decide it again.
 //!
 //! The **resolved tree** ([`Decoding::resolved`]) names every variable by its binder's identity (the binding depth and
 //! the ordinal), never by its index word: the only form any consumer compares or hashes (plan 7.5 risk 3). Rendering
-//! (pass 5) is task F2's.
+//! (pass 5) is task F2's. A SUBTREE is compared by its key ([`Decoding::subtree_key`]), which adds what the subtree
+//! renders by that is outside it: its trips and its free variables' binders, data types and properties.
 //!
 //! Deterministic in the gene alone: every map is a `BTreeMap`, every list in table or position order.
 
 use std::collections::BTreeMap;
 
-use crate::geneframe::{Adapter, AdapterSite, KingdomTables, PropertyExpr, Relation, Subject, Ty};
+use crate::futhark_table::Kingdom6;
+use crate::geneframe::{Adapter, AdapterSite, EntryParameter, EntryRequirement, KingdomTables, PropertyExpr, Relation, Subject, Substitute, Ty};
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::typed_gep::Tree;
 
@@ -122,6 +125,7 @@ pub struct RootRequirement {
 }
 
 /// The entry point: its result's data type, its parameters (the root environment) and the requirements on its result.
+/// The decoder checks it against the tables on every decode ([`Decoder::check_entry`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub output: Ty,
@@ -129,13 +133,27 @@ pub struct Entry {
     pub requirements: Vec<RootRequirement>,
 }
 
+impl Entry {
+    /// The entry of a loaded master 6 kingdom: its root's data type and requirements, and its root environment's
+    /// variables in the view's order (`environment.tsv`).
+    pub fn of_kingdom6(k: &Kingdom6) -> Entry {
+        Entry {
+            output: k.root.data_type,
+            variables: k.variables.iter().map(|v| EntryVariable { name: v.name.clone(), data_type: v.data_type, properties: v.properties.clone() }).collect(),
+            requirements: k.root.requires.iter().map(|q| RootRequirement { property: q.property.clone(), relation: q.relation, against: q.against.clone(), adapter: q.adapter.clone() }).collect(),
+        }
+    }
+}
+
 /// What a node's word reads as: a `?_T`'s Dc index, a `var.T`'s variable, or (no variable of its type in scope) its
-/// type's constant.
+/// type's constant. In a [`SubtreeKey`] only, a variable bound outside the subtree is `Free(j)`, the `j`-th of the
+/// key's free variables, and one bound inside it has its depth counted from the subtree's root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Choice {
     Dc(u32),
     Variable(Binder),
     Constant,
+    Free(u32),
 }
 
 /// One requirement checked at one node: its row (an index into the tables' requirements, or into the entry's for a
@@ -179,13 +197,36 @@ pub struct Node {
     pub kids: Vec<Node>,
 }
 
-/// The tree with every variable by its binder's identity: the only form any consumer compares or hashes. Two subtrees
-/// whose equal index words name different variables differ; two whose different words name the same variable are equal.
+/// The tree with every variable by its binder's identity: the form two WHOLE trees of one entry are compared or hashed
+/// by. Two whose equal index words name different variables differ; two whose different words name the same variable
+/// are equal. A subtree is compared by its [`SubtreeKey`] instead, which carries what it renders by outside itself.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResolvedTree {
     pub symbol: SymbolId,
     pub choice: Option<Choice>,
     pub kids: Vec<ResolvedTree>,
+}
+
+/// A variable a subtree uses but does not bind: its binder, its data type and its properties.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FreeVariable {
+    pub binder: Binder,
+    pub data_type: Ty,
+    pub properties: BTreeMap<String, PropertyExpr>,
+}
+
+/// THE KEY OF A SUBTREE (G3 review finding 4): the form F5's sharing and P2's marriage compare and hash a subtree by.
+/// Its resolved tree, with each variable bound outside it as `Choice::Free(j)` and each bound inside it at its depth
+/// below the subtree's root; the trips at its root; and its free variables in order of first use, each with its
+/// binder, data type and properties. Every adapter and substitution inside a subtree is decided by these alone, so
+/// two subtrees of one key render with the same adapters; `get(is, i)` under `tabulate n` and under `tabulate k`
+/// differ (`i`'s bound). The same subtree under one more `let` has a free variable of another binder depth, so its key
+/// differs too, which costs sharing only.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SubtreeKey {
+    pub tree: ResolvedTree,
+    pub trips: u32,
+    pub free: Vec<FreeVariable>,
 }
 
 /// A requirement that fails where the program is rendered (a node under a substitution that drops it is not
@@ -214,6 +255,28 @@ impl Decoding {
             ResolvedTree { symbol: n.symbol, choice: n.choice, kids: n.kids.iter().map(go).collect() }
         }
         go(&self.root)
+    }
+
+    /// The key of the subtree at `path` ([`SubtreeKey`]), `None` when there is no node there.
+    pub fn subtree_key(&self, path: &[u32]) -> Option<SubtreeKey> {
+        fn go(n: &Node, root_depth: u32, free: &mut Vec<FreeVariable>) -> ResolvedTree {
+            let choice = match n.choice {
+                Some(Choice::Variable(b)) if b.depth > root_depth => Some(Choice::Variable(Binder { depth: b.depth - root_depth, ordinal: b.ordinal })),
+                Some(Choice::Variable(b)) => {
+                    let j = free.iter().position(|f| f.binder == b).unwrap_or_else(|| {
+                        free.push(FreeVariable { binder: b, data_type: n.data_type, properties: n.properties.clone() });
+                        free.len() - 1
+                    });
+                    Some(Choice::Free(j as u32))
+                }
+                c => c,
+            };
+            ResolvedTree { symbol: n.symbol, choice, kids: n.kids.iter().map(|k| go(k, root_depth, free)).collect() }
+        }
+        let n = self.node(path)?;
+        let mut free = Vec::new();
+        let tree = go(n, n.environment.depth, &mut free);
+        Some(SubtreeKey { tree, trips: n.environment.trips, free })
     }
 
     /// Every failing requirement and every substitution of the rendered program, the entry's first, then the nodes in
@@ -282,7 +345,8 @@ pub struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    /// The decoder of `tables` and `contract`. Every defect, each "our software has a bug: ...": the tables' own check,
+    /// The decoder of `tables` and `contract`. Every defect, each "our software has a bug: ...": the tables' own check
+    /// (which finds a work-bound substitution by the constant of a data type that has none, before any gene runs),
     /// and a contract symbol whose inputs or output the tables do not give it, or a `var.T` with a property rule (its
     /// properties are its variable's).
     pub fn new(tables: &'a KingdomTables, contract: &'a KingdomContract) -> Result<Decoder<'a>, Vec<String>> {
@@ -349,17 +413,33 @@ impl<'a> Decoder<'a> {
         }
     }
 
-    /// Passes 2 to 4 on the expressed tree `tree`, rooted in `entry`. An error is a bug (a malformed tree, a variable
-    /// of an undeclared property, a type with no constant where one is needed).
+    /// THE ENTRY CHECK (G3 review findings 5 and 6): the tables' [`KingdomTables::entry_defects`], and a data type of a
+    /// variable terminal that has no constant (`size`) has a parameter of the entry, since a `var` of it at the root
+    /// would otherwise have nothing to read (a binding binds an `i64`, never a size).
+    pub fn check_entry(&self, entry: &Entry) -> Result<(), Vec<String>> {
+        let vars: Vec<EntryParameter> = entry.variables.iter().map(|v| (v.name.as_str(), v.data_type, v.properties.as_slice())).collect();
+        let reqs: Vec<EntryRequirement> = entry.requirements.iter().map(|q| (q.property.as_str(), q.relation, &q.against, q.adapter.as_str())).collect();
+        let mut d = self.tables.entry_defects(entry.output, &vars, &reqs);
+        for s in (0..self.contract.n_symbols() as SymbolId).filter(|s| self.contract.is_variable(*s)) {
+            let ty = self.contract.output(s);
+            if matches!(self.constants.get(&ty), Some(None) | None) && !entry.variables.iter().any(|v| v.data_type == ty) {
+                d.push(bug(format!("kingdom {}: the entry has no parameter of {ty:?}, which has no constant, so {} has nothing to read at the root", self.tables.kingdom, self.contract.name(s))));
+            }
+        }
+        if d.is_empty() {
+            Ok(())
+        } else {
+            Err(d)
+        }
+    }
+
+    /// Passes 2 to 4 on the expressed tree `tree`, rooted in `entry`. An error is a bug: an entry that fails
+    /// [`Decoder::check_entry`], or a malformed tree.
     pub fn decode(&self, entry: &Entry, tree: &Tree) -> Result<Decoding, String> {
         let k = &self.tables.kingdom;
+        self.check_entry(entry).map_err(|d| d.join("\n"))?;
         let mut root_env = Environment::default();
         for (ordinal, v) in entry.variables.iter().enumerate() {
-            for (p, _) in &v.properties {
-                if !self.properties_of.get(&v.data_type).is_some_and(|ps| ps.contains(p)) {
-                    return Err(bug(format!("kingdom {k}: the entry's parameter {} sets {p}, which {:?} does not carry", v.name, v.data_type)));
-                }
-            }
             root_env.variables.push(Variable {
                 binder: Binder { depth: 0, ordinal: ordinal as u32 },
                 name: Some(v.name.clone()),
@@ -435,8 +515,12 @@ impl<'a> Decoder<'a> {
                 Outcome { requirement: i, holds: q.relation.holds(&subject, &against), subject, against, adapter: q.adapter.clone() }
             })
             .collect();
-        let substituted = self.substitution(info, &env, &outcomes).map(|requirement| {
-            let by = info.inputs.iter().position(|ty| *ty == info.output).map_or(Substitution::Constant, |p| Substitution::Input(p as u32));
+        let substituted = self.substitution(info, &env, &outcomes).map(|(requirement, how)| {
+            let own = info.inputs.iter().position(|ty| *ty == info.output);
+            let by = match (how, own) {
+                (Substitute::OwnInput, Some(p)) => Substitution::Input(p as u32),
+                (Substitute::OwnInput, None) | (Substitute::Constant, _) => Substitution::Constant,
+            };
             Substituted { by, requirement }
         });
         if let Some(s) = substituted {
@@ -448,14 +532,16 @@ impl<'a> Decoder<'a> {
         Ok(Node { symbol: t.symbol, data_type: info.output, environment: env, choice, properties, outcomes, substituted, kids })
     }
 
-    /// THE WORK-BOUND DECISION (master 6 README 5.3): the requirement that substitutes this node, if any. The work bound
-    /// `env.trips < depth` is checked first; when it holds, a failing requirement whose heavy adapter would run at
-    /// `trips >= depth` (a node adapter at the node's trips, a body adapter at the body's, one more) substitutes the
-    /// node instead.
-    fn substitution(&self, info: &SymbolInfo, env: &Environment, outcomes: &[Outcome]) -> Option<usize> {
+    /// THE WORK-BOUND DECISION (master 6 README 5.3): the requirement that substitutes this node, if any, and how
+    /// (its work bound's adapter, [`Substitute`]). The work bound `env.trips < depth` is checked first; when it holds,
+    /// a failing requirement whose heavy adapter would run at `trips >= depth` (a node adapter at the node's trips, a
+    /// body adapter at the body's, one more) substitutes the node instead. The table check gives a symbol at most one
+    /// work bound, naming a substitution adapter, and one on every symbol that names a heavy adapter.
+    fn substitution(&self, info: &SymbolInfo, env: &Environment, outcomes: &[Outcome]) -> Option<(usize, Substitute)> {
         let work = outcomes.iter().find(|o| self.tables.requirements[o.requirement].subject == Subject::Trips)?;
+        let how = Substitute::of_adapter(&work.adapter)?;
         if !work.holds {
-            return Some(work.requirement);
+            return Some((work.requirement, how));
         }
         let depth = match work.against {
             PropertyExpr::Literal(d) => d,
@@ -473,7 +559,7 @@ impl<'a> Decoder<'a> {
                     a.heavy && i64::from(at) >= depth
                 })
             })
-            .map(|o| o.requirement)
+            .map(|o| (o.requirement, how))
     }
 }
 
