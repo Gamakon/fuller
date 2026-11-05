@@ -666,6 +666,10 @@ pub struct DataType {
     pub id: Ty,
     pub name: String,
     pub kind: DataKind,
+    /// The data type's constant, by its properties (`[0f32]`: `len = 1`; `0i64`: `bound = 1`): what a `var.T` gives
+    /// when no variable of the type is in scope, and what the work-bound substitution gives a node with no input of
+    /// its own type (master 6 README sections 2 and 5.3). `None`: the type has no constant (`size`).
+    pub constant: Option<Vec<(String, PropertyExpr)>>,
 }
 
 /// What kind of fact a property is.
@@ -728,15 +732,20 @@ pub struct Argument {
 /// `?` (known only at run time), a property of one of the symbol's inputs (`in0.len`), or a sum or a minimum of those,
 /// kept symbolic (design 8, weakness 3: a sum is equal only to the same sum; plan 7.1: the `min` of two sizes is
 /// symbolic, not `?`).
+///
+/// **One spelling per value** (master 6 README 5.1): a sum's terms are flattened and sorted, so `a + b` is `b + a`; a
+/// min's arguments are flattened, sorted and without repeats, so `min(n, k)` is `min(k, n)` and `min(n, n)` is `n`.
+/// [`PropertyExpr::sum`], [`PropertyExpr::min`] and [`PropertyExpr::parse`] build only that form; the table check
+/// reports a `Sum` or `Min` built by hand in another.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PropertyExpr {
     Size(String),
     Literal(i64),
     Unknown,
     Input { position: u32, property: String },
-    /// At least two terms, none a sum (build one with [`PropertyExpr::sum`]).
+    /// At least two terms, sorted, none a sum (build one with [`PropertyExpr::sum`]).
     Sum(Vec<PropertyExpr>),
-    /// The least of at least two expressions: `min(n, k)`.
+    /// The least of at least two expressions, sorted, no two equal, none a min (build one with [`PropertyExpr::min`]).
     Min(Vec<PropertyExpr>),
 }
 
@@ -746,7 +755,8 @@ fn is_identifier(s: &str) -> bool {
 }
 
 impl PropertyExpr {
-    /// The sum of `terms`, flattened: a nested sum's terms are spliced in, and a single term is itself.
+    /// The sum of `terms` in its one spelling: a nested sum's terms are spliced in, the terms are sorted, a single
+    /// term is itself, and the sum of no term is the literal 0.
     pub fn sum(terms: Vec<PropertyExpr>) -> PropertyExpr {
         let mut flat = Vec::new();
         for t in terms {
@@ -755,10 +765,82 @@ impl PropertyExpr {
                 other => flat.push(other),
             }
         }
-        if flat.len() == 1 {
-            flat.remove(0)
-        } else {
-            PropertyExpr::Sum(flat)
+        flat.sort();
+        match flat.len() {
+            0 => PropertyExpr::Literal(0),
+            1 => flat.remove(0),
+            _ => PropertyExpr::Sum(flat),
+        }
+    }
+
+    /// The least of `args` in its one spelling: a nested min's arguments are spliced in, sorted, repeats removed, and
+    /// a single argument is itself. The min of no argument is `?` (no table writes one).
+    pub fn min(args: Vec<PropertyExpr>) -> PropertyExpr {
+        let mut flat = Vec::new();
+        for a in args {
+            match a {
+                PropertyExpr::Min(inner) => flat.extend(inner),
+                other => flat.push(other),
+            }
+        }
+        flat.sort();
+        flat.dedup();
+        match flat.len() {
+            0 => PropertyExpr::Unknown,
+            1 => flat.remove(0),
+            _ => PropertyExpr::Min(flat),
+        }
+    }
+
+    /// The expression in its one spelling, at every depth.
+    pub fn normal(&self) -> PropertyExpr {
+        match self {
+            PropertyExpr::Sum(terms) => PropertyExpr::sum(terms.iter().map(PropertyExpr::normal).collect()),
+            PropertyExpr::Min(args) => PropertyExpr::min(args.iter().map(PropertyExpr::normal).collect()),
+            other => other.clone(),
+        }
+    }
+
+    /// Every `in<k>.<property>` term replaced by `value(k, property)`, the result in its one spelling.
+    pub fn substitute(&self, value: &dyn Fn(u32, &str) -> PropertyExpr) -> PropertyExpr {
+        match self {
+            PropertyExpr::Input { position, property } => value(*position, property).normal(),
+            PropertyExpr::Sum(terms) => PropertyExpr::sum(terms.iter().map(|t| t.substitute(value)).collect()),
+            PropertyExpr::Min(args) => PropertyExpr::min(args.iter().map(|a| a.substitute(value)).collect()),
+            other => other.clone(),
+        }
+    }
+
+    /// True when a size name occurs anywhere in the expression.
+    fn has_size_name(&self) -> bool {
+        match self {
+            PropertyExpr::Size(_) => true,
+            PropertyExpr::Sum(terms) | PropertyExpr::Min(terms) => terms.iter().any(PropertyExpr::has_size_name),
+            PropertyExpr::Literal(_) | PropertyExpr::Unknown | PropertyExpr::Input { .. } => false,
+        }
+    }
+
+    /// True when `?` occurs anywhere in the expression.
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            PropertyExpr::Unknown => true,
+            PropertyExpr::Sum(terms) | PropertyExpr::Min(terms) => terms.iter().any(PropertyExpr::has_unknown),
+            PropertyExpr::Size(_) | PropertyExpr::Literal(_) | PropertyExpr::Input { .. } => false,
+        }
+    }
+
+    /// True when the value is at least 1 whatever the sizes are: a size name (every dimension is at least 1, as the
+    /// entries' contracts state), a literal of at least 1, a min of such, a sum of such and of literals of at least 0
+    /// with one such term.
+    fn at_least_one(&self) -> bool {
+        match self {
+            PropertyExpr::Size(_) => true,
+            PropertyExpr::Literal(v) => *v >= 1,
+            PropertyExpr::Min(args) => args.iter().all(PropertyExpr::at_least_one),
+            PropertyExpr::Sum(terms) => {
+                terms.iter().all(|t| t.at_least_one() || matches!(t, PropertyExpr::Literal(v) if *v >= 0)) && terms.iter().any(PropertyExpr::at_least_one)
+            }
+            PropertyExpr::Unknown | PropertyExpr::Input { .. } => false,
         }
     }
 
@@ -780,7 +862,7 @@ impl PropertyExpr {
             *rest = after;
             terms.push(PropertyExpr::parse_term(rest)?);
         }
-        Ok(if terms.len() == 1 { terms.remove(0) } else { PropertyExpr::Sum(terms) })
+        Ok(PropertyExpr::sum(terms))
     }
 
     /// `min(sum, sum, ...)` or one token: `?`, a literal, `in<k>.<property>`, a size name.
@@ -804,7 +886,7 @@ impl PropertyExpr {
             if args.len() < 2 {
                 return Err("our software has a bug: a min in a property expression has one argument".to_string());
             }
-            return Ok(PropertyExpr::Min(args));
+            return Ok(PropertyExpr::min(args));
         }
         let end = rest.find(|c: char| c.is_whitespace() || "+,()".contains(c)).unwrap_or(rest.len());
         let (t, after) = rest.split_at(end);
@@ -828,14 +910,18 @@ impl PropertyExpr {
         Err(format!("our software has a bug: {t:?} is not a property expression (a size name, a literal, ?, in<k>.<property>, a sum or a min)"))
     }
 
-    /// What is malformed in this expression, at any depth: a sum of fewer than two terms or with a sum inside, a min
-    /// of fewer than two arguments, a size name that is not an identifier.
+    /// What is malformed in this expression, at any depth: a sum of fewer than two terms, with a sum inside or its
+    /// terms out of order; a min of fewer than two arguments, with a min inside, or its arguments out of order or
+    /// repeated; a size name that is not an identifier.
     fn shape_defects(&self) -> Vec<String> {
         match self {
             PropertyExpr::Sum(terms) => {
                 let mut v = Vec::new();
                 if terms.len() < 2 || terms.iter().any(|t| matches!(t, PropertyExpr::Sum(_))) {
                     v.push(format!("has a sum of {} terms or a sum inside a sum", terms.len()));
+                }
+                if terms.windows(2).any(|w| w[0] > w[1]) {
+                    v.push(format!("has the sum {self} with its terms out of order (one spelling: {})", self.normal()));
                 }
                 v.extend(terms.iter().flat_map(PropertyExpr::shape_defects));
                 v
@@ -844,6 +930,9 @@ impl PropertyExpr {
                 let mut v = Vec::new();
                 if args.len() < 2 {
                     v.push(format!("has a min of {} arguments", args.len()));
+                }
+                if args.iter().any(|a| matches!(a, PropertyExpr::Min(_))) || args.windows(2).any(|w| w[0] >= w[1]) {
+                    v.push(format!("has the min {self} with a min inside or its arguments out of order or repeated (one spelling: {})", self.normal()));
                 }
                 v.extend(args.iter().flat_map(PropertyExpr::shape_defects));
                 v
@@ -903,13 +992,149 @@ pub struct PropertyRule {
     pub expr: PropertyExpr,
 }
 
-/// One row of the Requirement table: a property of one input must equal an expression (`map2.add`: in0.len = in1.len).
+/// A requirement's relation (master 6 README 5.1): `=` for lengths, `<=` for an index's bound against a length,
+/// `<` for the work bound `env.trips < depth` only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Relation {
+    Eq,
+    Le,
+    Lt,
+}
+
+impl Relation {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Relation::Eq => "=",
+            Relation::Le => "<=",
+            Relation::Lt => "<",
+        }
+    }
+
+    pub fn from_symbol(s: &str) -> Option<Relation> {
+        [Relation::Eq, Relation::Le, Relation::Lt].into_iter().find(|r| r.symbol() == s)
+    }
+
+    /// THE COMPARISON (master 6 README 5.1), on the one spelling of each side. `?` anywhere fails every relation.
+    /// `a = b` when the spellings are identical. `a <= b` when identical, or both literals and `a <= b`, or `a` a
+    /// literal of at most 1 and `b` at least 1 for every size, or `b` a min and `a <=` each argument, or `a` a min
+    /// and one argument `<= b`. `a < b` when both are literals and `a < b`. A failure a smarter comparison would
+    /// have avoided costs only a needless adapter.
+    pub fn holds(self, a: &PropertyExpr, b: &PropertyExpr) -> bool {
+        let (a, b) = (a.normal(), b.normal());
+        if a.has_unknown() || b.has_unknown() {
+            return false;
+        }
+        match self {
+            Relation::Eq => a == b,
+            Relation::Le => at_most(&a, &b),
+            Relation::Lt => matches!((&a, &b), (PropertyExpr::Literal(x), PropertyExpr::Literal(y)) if x < y),
+        }
+    }
+}
+
+/// `a <= b` for two expressions in their one spelling, with no `?` ([`Relation::holds`]).
+fn at_most(a: &PropertyExpr, b: &PropertyExpr) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (PropertyExpr::Literal(x), PropertyExpr::Literal(y)) => return x <= y,
+        (PropertyExpr::Literal(x), _) if *x <= 1 && b.at_least_one() => return true,
+        _ => {}
+    }
+    if let PropertyExpr::Min(args) = b {
+        if args.iter().all(|y| at_most(a, y)) {
+            return true;
+        }
+    }
+    if let PropertyExpr::Min(args) = a {
+        if args.iter().any(|x| at_most(x, b)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// What a requirement constrains: a property of one input (`in1.len`), or the environment's trip count `env.trips`,
+/// the number of trip binders above the node (master 6 README 5.3; a property of no data type).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Subject {
+    Input { position: u32, property: String },
+    Trips,
+}
+
+impl std::fmt::Display for Subject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Subject::Input { position, property } => write!(f, "in{position}.{property}"),
+            Subject::Trips => write!(f, "env.trips"),
+        }
+    }
+}
+
+impl Subject {
+    /// Parse the text [`std::fmt::Display`] writes: `in1.len` or `env.trips`.
+    pub fn parse(text: &str) -> Result<Subject, String> {
+        if text == "env.trips" {
+            return Ok(Subject::Trips);
+        }
+        match PropertyExpr::parse(text) {
+            Ok(PropertyExpr::Input { position, property }) => Ok(Subject::Input { position, property }),
+            _ => Err(format!("our software has a bug: the requirement subject {text:?} is neither in<k>.<property> nor env.trips")),
+        }
+    }
+}
+
+/// One row of the Requirement table: `subject relation against -> adapter` (`map2.add`: `in1.len = in0.len ->
+/// fit.pair`; `get`: `in1.bound <= in0.len -> clampix`; a heavy row: `env.trips < 3 -> subst`). Each requirement names
+/// the adapter that makes it hold at run time where it fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
     pub symbol: i64,
+    pub subject: Subject,
+    pub relation: Relation,
+    pub against: PropertyExpr,
+    pub adapter: String,
+}
+
+/// Where an adapter's work runs (master 6 README 5.3): at its node's trips, at its body's (the trip argument's, one
+/// more), or at the entry's root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AdapterSite {
+    Node,
+    Body,
+    Root,
+}
+
+impl AdapterSite {
+    pub fn name(self) -> &'static str {
+        match self {
+            AdapterSite::Node => "node",
+            AdapterSite::Body => "body",
+            AdapterSite::Root => "root",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<AdapterSite> {
+        [AdapterSite::Node, AdapterSite::Body, AdapterSite::Root].into_iter().find(|a| a.name() == s)
+    }
+}
+
+/// One row of the Adapter table (master 6 `adapters.tsv`): its name, whether it is heavy (does work of the data's
+/// size, as every `fit`), and where its work runs. A requirement on `env.trips` names the substitution adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adapter {
+    pub name: String,
+    pub heavy: bool,
+    pub runs_at: AdapterSite,
+}
+
+/// A symbol's trip argument (master 6 `trip` column): the input whose subtree runs once a trip of the symbol, so its
+/// environment's `env.trips` is the node's plus one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripArgument {
+    pub symbol: i64,
     pub position: u32,
-    pub property: String,
-    pub must_equal: PropertyExpr,
 }
 
 /// One row of the Binding table: a variable an input argument makes visible to its own subtree, with its data type
@@ -962,7 +1187,8 @@ impl Arity {
     }
 }
 
-/// One kingdom's tables: its symbols and the six tables of the design.
+/// One kingdom's tables: its symbols and the six tables of the design, with the adapters its requirements name and
+/// its trip arguments (master 6 README 5).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KingdomTables {
     pub kingdom: String,
@@ -973,6 +1199,34 @@ pub struct KingdomTables {
     pub property_rules: Vec<PropertyRule>,
     pub requirements: Vec<Requirement>,
     pub bindings: Vec<Binding>,
+    pub adapters: Vec<Adapter>,
+    pub trip_arguments: Vec<TripArgument>,
+}
+
+/// The comparability classes of property kinds (master 6 README 5.2): a size and a bound both count elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum KindClass {
+    Count,
+    Range,
+    Flag,
+}
+
+impl KindClass {
+    fn of(k: PropertyKind) -> KindClass {
+        match k {
+            PropertyKind::Size | PropertyKind::Bound => KindClass::Count,
+            PropertyKind::Range => KindClass::Range,
+            PropertyKind::Flag => KindClass::Flag,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            KindClass::Count => "size or bound",
+            KindClass::Range => "range",
+            KindClass::Flag => "flag",
+        }
+    }
 }
 
 /// Text fields hold no tab and no line break; the text form is one row a line, its fields tab-separated.
@@ -1001,6 +1255,26 @@ fn tys_of(text: &str) -> Result<Vec<Ty>, String> {
     text.split(',').map(ty_of).collect()
 }
 
+/// `p=e;q=f`, or `-` for none: a binding's or a constant's properties in the text form.
+fn property_list(props: &[(String, PropertyExpr)]) -> String {
+    if props.is_empty() {
+        return "-".to_string();
+    }
+    props.iter().map(|(p, e)| format!("{p}={e}")).collect::<Vec<_>>().join(";")
+}
+
+fn parse_property_list(text: &str) -> Result<Vec<(String, PropertyExpr)>, String> {
+    if text == "-" {
+        return Ok(Vec::new());
+    }
+    text.split(';')
+        .map(|pe| {
+            let (p, e) = pe.split_once('=').ok_or_else(|| format!("our software has a bug: {pe:?} is not <property>=<expression>"))?;
+            Ok((p.to_string(), PropertyExpr::parse(e)?))
+        })
+        .collect()
+}
+
 fn number<T: std::str::FromStr>(what: &str, text: &str) -> Result<T, String> {
     text.parse::<T>().map_err(|_| format!("our software has a bug: the {what} {text:?} is not a number"))
 }
@@ -1020,8 +1294,37 @@ impl KingdomTables {
             seen.insert(out);
             t.symbols.push(row);
         }
-        t.data_types = seen.into_iter().map(|ty| DataType { id: ty, name: format!("{ty:?}"), kind: DataKind::Scalar }).collect();
+        t.data_types = seen.into_iter().map(|ty| DataType { id: ty, name: format!("{ty:?}"), kind: DataKind::Scalar, constant: None }).collect();
         t
+    }
+
+    /// The order in which the decoder visits a symbol's inputs: each input after every input its own Binding rows
+    /// read (`tabulate` binds `i` with bound = in0.value, so in0 before in1), otherwise in position order. An error
+    /// when a binding reads its own argument or the bindings read each other's in a cycle (the check reports both).
+    pub fn decode_order(&self, symbol: i64) -> Result<Vec<u32>, String> {
+        let n = self.inputs(symbol).len() as u32;
+        let mut after: BTreeMap<u32, std::collections::BTreeSet<u32>> = (0..n).map(|k| (k, std::collections::BTreeSet::new())).collect();
+        for b in self.bindings.iter().filter(|b| b.symbol == symbol) {
+            for (_, e) in &b.properties {
+                for (j, p) in e.inputs() {
+                    if j == b.position {
+                        return Err(format!("our software has a bug: kingdom {}: symbol {symbol}'s binding of argument {j} reads in{j}.{p}, its own argument", self.kingdom));
+                    }
+                    if let Some(s) = after.get_mut(&b.position) {
+                        s.insert(j);
+                    }
+                }
+            }
+        }
+        let mut order: Vec<u32> = Vec::with_capacity(n as usize);
+        while order.len() < n as usize {
+            let next = (0..n).find(|k| !order.contains(k) && after[k].iter().all(|j| *j >= n || order.contains(j)));
+            match next {
+                Some(k) => order.push(k),
+                None => return Err(format!("our software has a bug: kingdom {}: symbol {symbol}'s bindings read each other's arguments in a cycle", self.kingdom)),
+            }
+        }
+        Ok(order)
     }
 
     /// True when the kingdom has any property, rule, requirement or binding row: false is today's kingdom.
@@ -1095,7 +1398,13 @@ impl KingdomTables {
     /// one output at position 0 and inputs at dense positions `0..n`; every rule names a property of its symbol's
     /// output, every requirement a property of an existing input, every binding an existing input and properties of
     /// its own data type; every `in<k>.<property>` an expression reads names an existing input and one of its
-    /// properties; every sum has at least two terms and no sum inside.
+    /// properties; every sum and min is in its one spelling. And (plan 7, G3; master 6 README 5): a constant sets
+    /// properties its type carries, once each, reading no input; adapters are unique; a symbol has at most one trip
+    /// argument and it exists; a requirement's relation is one its subject's kind takes (`=`, `<=` for a size, `<=`
+    /// for a bound, `<` for `env.trips` against a literal only) and its other side is of a comparable kind (a size and
+    /// a bound both count elements, a literal has no kind); it names an adapter that exists, not a root one, and a
+    /// body one only on a symbol with a trip argument; no binding reads its own argument and the bindings of one
+    /// symbol read each other's in no cycle ([`KingdomTables::decode_order`]).
     pub fn check(&self) -> Result<(), Vec<String>> {
         let k = &self.kingdom;
         let mut d: Vec<String> = Vec::new();
@@ -1203,17 +1512,112 @@ impl KingdomTables {
             }
             d.extend(expr_defects(r.symbol, &format!("rule for out.{}", r.property), &r.expr));
         }
+        for t in &self.data_types {
+            let mut named: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            for (p, e) in t.constant.iter().flatten() {
+                if !has(t.id, p) {
+                    d.push(format!("our software has a bug: kingdom {k}: data type {}'s constant sets {p}, which it does not carry", t.name));
+                }
+                if !named.insert(p.as_str()) {
+                    d.push(format!("our software has a bug: kingdom {k}: data type {}'s constant sets {p} twice", t.name));
+                }
+                if !e.inputs().is_empty() {
+                    d.push(format!("our software has a bug: kingdom {k}: data type {}'s constant sets {p} = {e}, which reads an input (a constant has none)", t.name));
+                }
+                d.extend(e.shape_defects().into_iter().map(|what| format!("our software has a bug: kingdom {k}: data type {}'s constant {what}", t.name)));
+            }
+        }
+        let mut adapters: BTreeMap<&str, &Adapter> = BTreeMap::new();
+        for a in &self.adapters {
+            if a.name.is_empty() || a.name.contains(char::is_whitespace) {
+                d.push(format!("our software has a bug: kingdom {k}: adapter name {:?} is empty or holds a space", a.name));
+            }
+            if adapters.insert(a.name.as_str(), a).is_some() {
+                d.push(format!("our software has a bug: kingdom {k}: adapter {} is listed twice", a.name));
+            }
+        }
+        let mut trip_of: BTreeMap<i64, u32> = BTreeMap::new();
+        for tr in &self.trip_arguments {
+            let ins = ins_of.get(&tr.symbol).map_or(&[][..], Vec::as_slice);
+            if (tr.position as usize) >= ins.len() {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {}'s trip argument {} does not exist", tr.symbol, tr.position));
+            }
+            if trip_of.insert(tr.symbol, tr.position).is_some() {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {} has two trip arguments", tr.symbol));
+            }
+        }
+        // The kinds an expression's terms carry, as comparability classes (a literal and `?` carry none).
+        let classes = |sym: i64, e: &PropertyExpr| -> std::collections::BTreeSet<KindClass> {
+            let ins = ins_of.get(&sym).map_or(&[][..], Vec::as_slice);
+            let mut c: std::collections::BTreeSet<KindClass> = e.inputs().into_iter().filter_map(|(pos, p)| ins.get(pos as usize).and_then(|ty| props.get(&(*ty, p))).map(|pt| KindClass::of(pt.kind))).collect();
+            if e.has_size_name() {
+                c.insert(KindClass::Count);
+            }
+            c
+        };
         for q in &self.requirements {
-            let ins = ins_of.get(&q.symbol).map_or(&[][..], Vec::as_slice);
-            match ins.get(q.position as usize) {
-                None => d.push(format!("our software has a bug: kingdom {k}: symbol {}'s requirement names input {}, which does not exist", q.symbol, q.position)),
-                Some(ty) if !has(*ty, &q.property) => d.push(format!(
-                    "our software has a bug: kingdom {k}: symbol {}'s requirement names in{}.{}, which {ty:?} does not carry",
-                    q.symbol, q.position, q.property
+            let s = q.symbol;
+            let ins = ins_of.get(&s).map_or(&[][..], Vec::as_slice);
+            let against = classes(s, &q.against);
+            if against.len() > 1 {
+                let names: Vec<&str> = against.iter().map(|c| c.name()).collect();
+                d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} compares against {}, which mixes kinds ({})", q.subject, q.against, names.join(", ")));
+            }
+            match &q.subject {
+                Subject::Input { position, property } => match ins.get(*position as usize) {
+                    None => d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement names input {position}, which does not exist")),
+                    Some(ty) => match props.get(&(*ty, property.as_str())) {
+                        None => d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement names in{position}.{property}, which {ty:?} does not carry")),
+                        Some(pt) => {
+                            let relations: &[Relation] = match pt.kind {
+                                PropertyKind::Size => &[Relation::Eq, Relation::Le],
+                                PropertyKind::Bound => &[Relation::Le],
+                                PropertyKind::Range | PropertyKind::Flag => &[Relation::Eq],
+                            };
+                            if !relations.contains(&q.relation) {
+                                d.push(format!(
+                                    "our software has a bug: kingdom {k}: symbol {s}'s requirement {} {} {} uses {}, which a {} property does not take",
+                                    q.subject,
+                                    q.relation.symbol(),
+                                    q.against,
+                                    q.relation.symbol(),
+                                    pt.kind.name()
+                                ));
+                            }
+                            let mine = KindClass::of(pt.kind);
+                            let literal_ok = mine == KindClass::Count;
+                            if against.iter().any(|c| *c != mine) || (!literal_ok && against.is_empty()) {
+                                d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement compares the {} property {} with {}, which is not of a comparable kind", pt.kind.name(), q.subject, q.against));
+                            }
+                        }
+                    },
+                },
+                Subject::Trips => {
+                    if q.relation != Relation::Lt || !matches!(q.against, PropertyExpr::Literal(_)) {
+                        d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on env.trips is {} {}, not < a literal", q.relation.symbol(), q.against));
+                    }
+                }
+            }
+            if q.relation == Relation::Lt && q.subject != Subject::Trips {
+                d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} uses <, which only env.trips takes", q.subject));
+            }
+            match adapters.get(q.adapter.as_str()) {
+                None => d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} names adapter {:?}, which is not an adapter", q.subject, q.adapter)),
+                Some(a) if a.runs_at == AdapterSite::Root => {
+                    d.push(format!("our software has a bug: kingdom {k}: symbol {s}'s requirement on {} names adapter {}, which runs at the root", q.subject, q.adapter))
+                }
+                Some(a) if a.runs_at == AdapterSite::Body && !trip_of.contains_key(&s) => d.push(format!(
+                    "our software has a bug: kingdom {k}: symbol {s}'s requirement on {} names adapter {}, which runs at the body, but the symbol has no trip argument",
+                    q.subject, q.adapter
                 )),
                 Some(_) => {}
             }
-            d.extend(expr_defects(q.symbol, &format!("requirement on in{}.{}", q.position, q.property), &q.must_equal));
+            d.extend(expr_defects(s, &format!("requirement on {}", q.subject), &q.against));
+        }
+        for s in &self.symbols {
+            if let Err(e) = self.decode_order(s.symbol) {
+                d.push(e);
+            }
         }
         for b in &self.bindings {
             let ins = ins_of.get(&b.symbol).map_or(&[][..], Vec::as_slice);
@@ -1242,8 +1646,17 @@ impl KingdomTables {
     }
 
     /// The tables as text: one row a line, its table's name first and its fields tab-separated; types by their
-    /// [`Ty::code`]. [`KingdomTables::parse`] reads it back to the same tables.
+    /// [`Ty::code`]. [`KingdomTables::parse`] reads it back to the same tables. Tables that fail
+    /// [`KingdomTables::check`] are an error, not text: they could read back as other tables.
     pub fn to_text(&self) -> Result<String, String> {
+        if let Err(d) = self.check() {
+            return Err(format!(
+                "our software has a bug: kingdom {}: the tables fail their check ({} defects), so their text would not read back the same: {}",
+                self.kingdom,
+                d.len(),
+                d.join("; ")
+            ));
+        }
         let mut lines = vec![format!("kingdom\t{}", field("kingdom name", &self.kingdom)?)];
         for s in &self.symbols {
             lines.push(format!(
@@ -1263,6 +1676,9 @@ impl KingdomTables {
                 DataKind::Function { parameters, result } => format!("function\t{}\t{}", codes(parameters), result.code()),
             };
             lines.push(format!("data_type\t{}\t{}\t{kind}", t.id.code(), field("data type name", &t.name)?));
+            if let Some(c) = &t.constant {
+                lines.push(format!("constant\t{}\t{}", t.id.code(), property_list(c)));
+            }
         }
         for p in &self.property_types {
             lines.push(format!("property_type\t{}\t{}\t{}\t{}", p.id, p.data_type.code(), field("property name", &p.name)?, p.kind.name()));
@@ -1278,12 +1694,16 @@ impl KingdomTables {
             lines.push(format!("rule\t{}\t{}\t{}", r.symbol, field("property name", &r.property)?, r.expr));
         }
         for q in &self.requirements {
-            lines.push(format!("requirement\t{}\t{}\t{}\t{}", q.symbol, q.position, field("property name", &q.property)?, q.must_equal));
+            lines.push(format!("requirement\t{}\t{}\t{}\t{}\t{}", q.symbol, q.subject, q.relation.symbol(), q.against, field("adapter name", &q.adapter)?));
         }
         for b in &self.bindings {
-            let props: Vec<String> = b.properties.iter().map(|(p, e)| format!("{p}={e}")).collect();
-            let props = if props.is_empty() { "-".to_string() } else { props.join(";") };
-            lines.push(format!("binding\t{}\t{}\t{}\t{props}", b.symbol, b.position, b.data_type.code()));
+            lines.push(format!("binding\t{}\t{}\t{}\t{}", b.symbol, b.position, b.data_type.code(), property_list(&b.properties)));
+        }
+        for a in &self.adapters {
+            lines.push(format!("adapter\t{}\t{}\t{}", field("adapter name", &a.name)?, if a.heavy { "heavy" } else { "light" }, a.runs_at.name()));
+        }
+        for tr in &self.trip_arguments {
+            lines.push(format!("trip\t{}\t{}", tr.symbol, tr.position));
         }
         let mut text = lines.join("\n");
         text.push('\n');
@@ -1293,11 +1713,16 @@ impl KingdomTables {
     /// Read the text [`KingdomTables::to_text`] writes.
     pub fn parse(text: &str) -> Result<KingdomTables, String> {
         let mut t = KingdomTables::default();
+        let mut named = false;
         for (n, line) in text.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
             let f: Vec<&str> = line.split('\t').collect();
             let bad = || format!("our software has a bug: line {} of the kingdom tables is not a row: {line:?}", n + 1);
             match (f[0], f.len()) {
-                ("kingdom", 2) => t.kingdom = f[1].to_string(),
+                ("kingdom", 2) if named => return Err(format!("our software has a bug: line {} of the kingdom tables names a second kingdom: {line:?}", n + 1)),
+                ("kingdom", 2) => {
+                    t.kingdom = f[1].to_string();
+                    named = true;
+                }
                 ("symbol", 6) => t.symbols.push(SymbolRow {
                     symbol: number("symbol id", f[1])?,
                     symbol_name: f[2].to_string(),
@@ -1312,11 +1737,16 @@ impl KingdomTables {
                         ("tuple", 5) => DataKind::Tuple { components: tys_of(f[4])? },
                         _ => return Err(bad()),
                     };
-                    t.data_types.push(DataType { id: ty_of(f[1])?, name: f[2].to_string(), kind });
+                    t.data_types.push(DataType { id: ty_of(f[1])?, name: f[2].to_string(), kind, constant: None });
                 }
                 ("data_type", 6) if f[3] == "function" => {
                     let kind = DataKind::Function { parameters: tys_of(f[4])?, result: ty_of(f[5])? };
-                    t.data_types.push(DataType { id: ty_of(f[1])?, name: f[2].to_string(), kind });
+                    t.data_types.push(DataType { id: ty_of(f[1])?, name: f[2].to_string(), kind, constant: None });
+                }
+                ("constant", 3) => {
+                    let id = ty_of(f[1])?;
+                    let props = parse_property_list(f[2])?;
+                    t.data_types.iter_mut().rev().find(|d| d.id == id && d.constant.is_none()).ok_or_else(bad)?.constant = Some(props);
                 }
                 ("property_type", 5) => t.property_types.push(PropertyType {
                     id: number("property type id", f[1])?,
@@ -1335,22 +1765,27 @@ impl KingdomTables {
                     data_type: ty_of(f[4])?,
                 }),
                 ("rule", 4) => t.property_rules.push(PropertyRule { symbol: number("symbol id", f[1])?, property: f[2].to_string(), expr: PropertyExpr::parse(f[3])? }),
-                ("requirement", 5) => t.requirements.push(Requirement {
+                ("requirement", 6) => t.requirements.push(Requirement {
                     symbol: number("symbol id", f[1])?,
-                    position: number("position", f[2])?,
-                    property: f[3].to_string(),
-                    must_equal: PropertyExpr::parse(f[4])?,
+                    subject: Subject::parse(f[2])?,
+                    relation: Relation::from_symbol(f[3]).ok_or_else(bad)?,
+                    against: PropertyExpr::parse(f[4])?,
+                    adapter: f[5].to_string(),
                 }),
                 ("binding", 5) => {
-                    let mut properties = Vec::new();
-                    if f[4] != "-" {
-                        for pe in f[4].split(';') {
-                            let (p, e) = pe.split_once('=').ok_or_else(bad)?;
-                            properties.push((p.to_string(), PropertyExpr::parse(e)?));
-                        }
-                    }
+                    let properties = parse_property_list(f[4])?;
                     t.bindings.push(Binding { symbol: number("symbol id", f[1])?, position: number("position", f[2])?, data_type: ty_of(f[3])?, properties });
                 }
+                ("adapter", 4) => t.adapters.push(Adapter {
+                    name: f[1].to_string(),
+                    heavy: match f[2] {
+                        "heavy" => true,
+                        "light" => false,
+                        _ => return Err(bad()),
+                    },
+                    runs_at: AdapterSite::from_name(f[3]).ok_or_else(bad)?,
+                }),
+                ("trip", 3) => t.trip_arguments.push(TripArgument { symbol: number("symbol id", f[1])?, position: number("position", f[2])? }),
                 _ => return Err(bad()),
             }
         }
@@ -1822,11 +2257,11 @@ mod tests {
                 sym(-2, "var.i64", ""),
             ],
             data_types: vec![
-                DataType { id: i32_, name: "i32".into(), kind: DataKind::Scalar },
-                DataType { id: arr, name: "[]i32".into(), kind: DataKind::Array { element: i32_ } },
-                DataType { id: i64_, name: "i64".into(), kind: DataKind::Scalar },
-                DataType { id: pair, name: "(i32, i32)".into(), kind: DataKind::Tuple { components: vec![i32_, i32_] } },
-                DataType { id: fun, name: "i32 -> i32".into(), kind: DataKind::Function { parameters: vec![i32_], result: i32_ } },
+                DataType { id: i32_, name: "i32".into(), kind: DataKind::Scalar, constant: Some(vec![]) },
+                DataType { id: arr, name: "[]i32".into(), kind: DataKind::Array { element: i32_ }, constant: Some(vec![("len".into(), PropertyExpr::Literal(1))]) },
+                DataType { id: i64_, name: "i64".into(), kind: DataKind::Scalar, constant: Some(vec![("bound".into(), PropertyExpr::Literal(1))]) },
+                DataType { id: pair, name: "(i32, i32)".into(), kind: DataKind::Tuple { components: vec![i32_, i32_] }, constant: Some(vec![]) },
+                DataType { id: fun, name: "i32 -> i32".into(), kind: DataKind::Function { parameters: vec![i32_], result: i32_ }, constant: None },
             ],
             property_types: vec![
                 PropertyType { id: 0, data_type: arr, name: "len".into(), kind: PropertyKind::Size },
@@ -1852,13 +2287,23 @@ mod tests {
             PropertyRule { symbol: 1, property: "len".into(), expr: input(0, "value") },
             PropertyRule { symbol: 2, property: "len".into(), expr: input(0, "value") },
             PropertyRule { symbol: 4, property: "len".into(), expr: PropertyExpr::sum(vec![input(0, "len"), input(1, "len")]) },
-            PropertyRule { symbol: -1, property: "len".into(), expr: PropertyExpr::Min(vec![PropertyExpr::Size("n".into()), PropertyExpr::Size("k".into())]) },
+            PropertyRule { symbol: -1, property: "len".into(), expr: PropertyExpr::min(vec![PropertyExpr::Size("n".into()), PropertyExpr::Size("k".into())]) },
         ];
+        let on = |position: u32, property: &str| Subject::Input { position, property: property.to_string() };
         t.requirements = vec![
-            Requirement { symbol: 1, position: 1, property: "len".into(), must_equal: input(2, "len") },
-            Requirement { symbol: 3, position: 1, property: "bound".into(), must_equal: input(0, "len") },
+            Requirement { symbol: 1, subject: on(1, "len"), relation: Relation::Eq, against: input(2, "len"), adapter: "fit.pair".into() },
+            Requirement { symbol: 3, subject: on(1, "bound"), relation: Relation::Le, against: input(0, "len"), adapter: "clampix".into() },
+            Requirement { symbol: 2, subject: Subject::Trips, relation: Relation::Lt, against: PropertyExpr::Literal(2), adapter: "subst".into() },
         ];
         t.bindings = vec![Binding { symbol: 2, position: 1, data_type: i64_, properties: vec![("bound".into(), input(0, "value"))] }];
+        t.adapters = vec![
+            Adapter { name: "fit.pair".into(), heavy: true, runs_at: AdapterSite::Node },
+            Adapter { name: "clampix".into(), heavy: false, runs_at: AdapterSite::Node },
+            Adapter { name: "subst".into(), heavy: false, runs_at: AdapterSite::Node },
+            Adapter { name: "fit.body".into(), heavy: true, runs_at: AdapterSite::Body },
+            Adapter { name: "fit.root".into(), heavy: true, runs_at: AdapterSite::Root },
+        ];
+        t.trip_arguments = vec![TripArgument { symbol: 2, position: 1 }];
         t
     }
 
@@ -1903,25 +2348,223 @@ mod tests {
         tab.symbols[0].spelling = "a\tb".into();
         assert!(tab.to_text().expect_err("a tab").starts_with("our software has a bug:"));
         assert!(KingdomTables::parse("symbol\t1\tx").expect_err("short row").starts_with("our software has a bug:"));
+        // Tables that fail the check are not written (a nested sum would be written flat and read back flat).
+        let mut unchecked = hist.clone();
+        unchecked.property_rules[2].expr = PropertyExpr::Sum(vec![PropertyExpr::Sum(vec![PropertyExpr::Size("k".into()), PropertyExpr::Size("n".into())]), PropertyExpr::Literal(1)]);
+        let e = unchecked.to_text().expect_err("an unchecked table");
+        assert!(e.starts_with("our software has a bug: kingdom histogram test: the tables fail their check"), "{e}");
+        // A second kingdom line is an error, not a silent rename.
+        let twice = format!("{text}kingdom\tother\n");
+        assert!(KingdomTables::parse(&twice).expect_err("two kingdoms").contains("names a second kingdom"));
     }
 
     #[test]
     fn property_expressions_round_trip() {
+        // Texts already in their one spelling read back to themselves.
         for text in [
-            "n", "k_2", "3", "-1", "?", "in0.len", "in12.bound", "in0.len + in1.len", "n + 1 + ?", "min(n, k)", "min(n, k) + 1",
-            "min(in0.len + 1, in1.len, ?)", "min(min(n, k), d) + in0.value", "min",
+            "n", "k_2", "3", "-1", "?", "in0.len", "in12.bound", "in0.len + in1.len", "n + 1 + ?", "min(k, n)", "1 + min(k, n)",
+            "min(?, in1.len, 1 + in0.len)", "in0.value + min(d, k, n)", "min",
         ] {
             let e = PropertyExpr::parse(text).unwrap_or_else(|err| panic!("{text}: {err}"));
             assert_eq!(e.to_string(), text);
+            assert_eq!(e, e.normal(), "{text}");
         }
-        assert_eq!(PropertyExpr::parse("in0.len+n").expect("sum").to_string(), "in0.len + n");
+        // Any other order reads as the one spelling (G1 review finding 3): a + b = b + a, min(n, k) = min(k, n).
+        for (text, one) in [
+            ("in0.len+n", "n + in0.len"),
+            ("in1.len + in0.len", "in0.len + in1.len"),
+            ("min(n, k)", "min(k, n)"),
+            ("min(n, k) + 1", "1 + min(k, n)"),
+            ("min(in0.len + 1, in1.len, ?)", "min(?, in1.len, 1 + in0.len)"),
+            ("min(min(n, k), d) + in0.value", "in0.value + min(d, k, n)"),
+            ("min(n, n)", "n"),
+            ("min(n, min(k, n))", "min(k, n)"),
+            ("min( n ,k )", "min(k, n)"),
+        ] {
+            assert_eq!(PropertyExpr::parse(text).expect(text).to_string(), one, "{text}");
+        }
+        assert_eq!(PropertyExpr::parse("a + b").expect("a + b"), PropertyExpr::parse("b + a").expect("b + a"));
         assert_eq!(PropertyExpr::sum(vec![PropertyExpr::Size("n".into())]), PropertyExpr::Size("n".into()));
         let nested = PropertyExpr::sum(vec![PropertyExpr::Sum(vec![PropertyExpr::Literal(1), PropertyExpr::Unknown]), PropertyExpr::Size("k".into())]);
-        assert_eq!(nested, PropertyExpr::Sum(vec![PropertyExpr::Literal(1), PropertyExpr::Unknown, PropertyExpr::Size("k".into())]));
-        assert_eq!(PropertyExpr::parse("min( n ,k )").expect("min").to_string(), "min(n, k)");
+        assert_eq!(nested, PropertyExpr::Sum(vec![PropertyExpr::Size("k".into()), PropertyExpr::Literal(1), PropertyExpr::Unknown]));
         for bad in ["", "in.len", "inx.len", "in0.", "a b", "n + ", "1x", "min(n)", "min(n, k", "min(n, k))", "(n)"] {
             assert!(PropertyExpr::parse(bad).expect_err(bad).starts_with("our software has a bug:"), "{bad}");
         }
+    }
+
+    /// The relations of master 6 README 5.1 on the one spelling of each side.
+    #[test]
+    fn the_relations_compare_one_spelling() {
+        let p = |t: &str| PropertyExpr::parse(t).expect(t);
+        let holds = |r: Relation, a: &str, b: &str| r.holds(&p(a), &p(b));
+        assert!(holds(Relation::Eq, "n", "n") && !holds(Relation::Eq, "n", "k"));
+        assert!(holds(Relation::Eq, "min(n, k)", "min(k, n)") && holds(Relation::Eq, "min(n, n)", "n"));
+        assert!(holds(Relation::Eq, "n + k", "k + n") && !holds(Relation::Eq, "n + n", "n"));
+        assert!(!holds(Relation::Eq, "?", "?") && !holds(Relation::Le, "?", "n") && !holds(Relation::Le, "1", "?") && !holds(Relation::Lt, "0", "min(1, ?)"));
+        // An index of bound 1 (`0i64`) is valid for every length; a size's bound only for that size or a longer one.
+        for len in ["n", "k", "1", "7", "min(k, n)", "min(d, k, n)", "n + k", "n + 0", "1 + min(k, n)"] {
+            assert!(holds(Relation::Le, "1", len), "1 <= {len}");
+            assert!(holds(Relation::Le, len, len), "{len} <= {len}");
+        }
+        assert!(!holds(Relation::Le, "1", "0") && !holds(Relation::Le, "1", "n + -1") && !holds(Relation::Le, "2", "n"));
+        assert!(holds(Relation::Le, "min(k, n)", "n") && holds(Relation::Le, "min(k, n)", "k") && !holds(Relation::Le, "n", "min(k, n)"));
+        assert!(holds(Relation::Le, "min(d, k, n)", "min(k, n)") && !holds(Relation::Le, "min(k, n)", "min(d, k, n)"));
+        assert!(holds(Relation::Le, "3", "4") && !holds(Relation::Le, "4", "3") && !holds(Relation::Le, "k", "n"));
+        assert!(holds(Relation::Lt, "1", "2") && !holds(Relation::Lt, "2", "2") && !holds(Relation::Lt, "n", "3"));
+    }
+
+    /// Finding 5 of the G1 review: the typed-depth kingdom's table as literals, not recounted from the signatures that
+    /// build it. 26 operations (no terminal: the SR kingdom's leaves come from elsewhere): 6 binary absorbing ones of
+    /// 6 rows, 15 raising unary ones of 2 rows (none takes `T2`), 5 absorbing unary ones of 3 rows: 81 rows.
+    #[test]
+    fn the_typed_depth_table_as_literals() {
+        let t = typed_depth_table();
+        let rows = t.kingdom(TYPED_SR);
+        assert_eq!(rows.len(), 81);
+        let arity = |ins: &[(Ty, u32)], out: Ty| Arity { inputs: ins.iter().copied().collect(), outputs: BTreeMap::from([(out, 1)]) };
+        let (f, t1, t2) = (Ty::F, Ty::T1, Ty::T2);
+        for (symbol, name, want) in [
+            (1, "add", arity(&[(f, 2)], f)),
+            (2, "add", arity(&[(f, 1), (t1, 1)], t1)),
+            (3, "add", arity(&[(f, 1), (t2, 1)], t2)),
+            (5, "add", arity(&[(t1, 1), (t2, 1)], t2)),
+            (6, "add", arity(&[(t2, 2)], t2)),
+            (25, "neg", arity(&[(f, 1)], f)),
+            (26, "neg", arity(&[(t1, 1)], t1)),
+            (27, "neg", arity(&[(t2, 1)], t2)),
+            (28, "sin", arity(&[(f, 1)], t1)),
+            (29, "sin", arity(&[(t1, 1)], t2)),
+            (44, "pow2", arity(&[(f, 1)], f)),
+            (46, "pow2", arity(&[(t2, 1)], t2)),
+            (50, "pow", arity(&[(f, 2)], f)),
+            (68, "protected_div", arity(&[(f, 2)], f)),
+            (80, "protected_acos", arity(&[(f, 1)], t1)),
+            (81, "protected_acos", arity(&[(t1, 1)], t2)),
+        ] {
+            let s = rows.iter().find(|s| s.symbol == symbol).unwrap_or_else(|| panic!("symbol {symbol}"));
+            assert_eq!((s.semantic_id.as_str(), &s.arity), (name, &want), "symbol {symbol}");
+        }
+        let raising_rows = rows.iter().filter(|s| DEPTH_RAISING.contains(&s.semantic_id.as_str())).count();
+        assert_eq!(raising_rows, 30);
+        assert!(rows.iter().filter(|s| DEPTH_RAISING.contains(&s.semantic_id.as_str())).all(|s| !s.arity.inputs.contains_key(&t2)), "no raising row takes T2");
+    }
+
+    /// Finding 4 of the G1 review: every branch of the check, each provoked alone on the histogram tables and named by
+    /// its message, with the number of defects it gives.
+    #[test]
+    fn every_branch_of_the_table_check() {
+        let (i32_, arr, i64_) = (Ty::Futhark(0), Ty::Futhark(1), Ty::Futhark(2));
+        let input = |position: u32, property: &str| PropertyExpr::Input { position, property: property.to_string() };
+        let on = |position: u32, property: &str| Subject::Input { position, property: property.to_string() };
+        let size = |n: &str| PropertyExpr::Size(n.to_string());
+        let req = |symbol: i64, subject: Subject, relation: Relation, against: PropertyExpr, adapter: &str| Requirement { symbol, subject, relation, against, adapter: adapter.to_string() };
+        let flag = PropertyType { id: 10, data_type: arr, name: "sorted".into(), kind: PropertyKind::Flag };
+        type Edit = Box<dyn Fn(&mut KingdomTables)>;
+        let cases: Vec<(&str, usize, Edit)> = vec![
+            ("symbol 3 (get) is listed twice", 1, Box::new(|t| t.symbols.push(t.symbols[2].clone()))),
+            ("data type Futhark(0) is listed twice", 1, Box::new(move |t| t.data_types.push(DataType { id: i32_, name: "int".into(), kind: DataKind::Scalar, constant: None }))),
+            ("two data types are named \"i32\"", 1, Box::new(|t| t.data_types.push(DataType { id: Ty::Futhark(5), name: "i32".into(), kind: DataKind::Scalar, constant: None }))),
+            (
+                "data type []x names Futhark(9), which is not a data type",
+                1,
+                Box::new(|t| t.data_types.push(DataType { id: Ty::Futhark(6), name: "[]x".into(), kind: DataKind::Array { element: Ty::Futhark(9) }, constant: None })),
+            ),
+            ("property type 0 is listed twice", 1, Box::new(move |t| t.property_types.push(PropertyType { id: 0, data_type: i32_, name: "w".into(), kind: PropertyKind::Size }))),
+            ("property len is on Futhark(9), which is not a data type", 1, Box::new(|t| t.property_types.push(PropertyType { id: 7, data_type: Ty::Futhark(9), name: "len".into(), kind: PropertyKind::Size }))),
+            ("property name \"le n\" is not an identifier", 1, Box::new(move |t| t.property_types.push(PropertyType { id: 8, data_type: i32_, name: "le n".into(), kind: PropertyKind::Size }))),
+            ("data type Futhark(1) has two properties named len", 1, Box::new(move |t| t.property_types.push(PropertyType { id: 9, data_type: arr, name: "len".into(), kind: PropertyKind::Size }))),
+            ("an argument names symbol 99, which is not a symbol", 1, Box::new(move |t| t.arguments.push(Argument { symbol: 99, position: 0, direction: Direction::Out, data_type: arr }))),
+            (
+                "symbol 3's output is at position 1, not 0",
+                1,
+                Box::new(|t| t.arguments.iter_mut().find(|a| a.symbol == 3 && a.direction == Direction::Out).expect("out").position = 1),
+            ),
+            ("symbol 3 has 0 outputs, not one", 1, Box::new(|t| t.arguments.retain(|a| !(a.symbol == 3 && a.direction == Direction::Out)))),
+            (
+                "symbol 50 (lonely) has no output",
+                1,
+                Box::new(|t| t.symbols.push(SymbolRow { symbol: 50, symbol_name: "lonely".into(), alias: String::new(), semantic_id: String::new(), spelling: String::new() })),
+            ),
+            ("a property rule names symbol 77, which has no output", 1, Box::new(|t| t.property_rules.push(PropertyRule { symbol: 77, property: "len".into(), expr: PropertyExpr::Literal(1) }))),
+            (
+                "requirement on in1.len reads in0.len, which Futhark(2) does not carry",
+                1,
+                Box::new(move |t| t.requirements.push(req(1, on(1, "len"), Relation::Eq, input(0, "len"), "fit.pair"))),
+            ),
+            ("with its terms out of order (one spelling: in0.len + in1.len)", 1, Box::new(move |t| t.property_rules[2].expr = PropertyExpr::Sum(vec![input(1, "len"), input(0, "len")]))),
+            ("has the min min(n, k) with a min inside or its arguments out of order", 1, Box::new(move |t| t.property_rules[3].expr = PropertyExpr::Min(vec![size("n"), size("k")]))),
+            ("has the min min(k, k) with", 1, Box::new(move |t| t.property_rules[3].expr = PropertyExpr::Min(vec![size("k"), size("k")]))),
+            ("data type []i32's constant sets bound, which it does not carry", 1, Box::new(|t| t.data_types[1].constant = Some(vec![("bound".into(), PropertyExpr::Literal(1))]))),
+            ("data type []i32's constant sets len twice", 1, Box::new(|t| t.data_types[1].constant = Some(vec![("len".into(), PropertyExpr::Literal(1)), ("len".into(), PropertyExpr::Literal(2))]))),
+            ("data type []i32's constant sets len = in0.len, which reads an input", 1, Box::new(move |t| t.data_types[1].constant = Some(vec![("len".into(), input(0, "len"))]))),
+            ("adapter name \"fit pair\" is empty or holds a space", 1, Box::new(|t| t.adapters.push(Adapter { name: "fit pair".into(), heavy: true, runs_at: AdapterSite::Node }))),
+            ("adapter clampix is listed twice", 1, Box::new(|t| t.adapters.push(Adapter { name: "clampix".into(), heavy: false, runs_at: AdapterSite::Node }))),
+            ("symbol 1's trip argument 9 does not exist", 1, Box::new(|t| t.trip_arguments.push(TripArgument { symbol: 1, position: 9 }))),
+            ("symbol 2 has two trip arguments", 1, Box::new(|t| t.trip_arguments.push(TripArgument { symbol: 2, position: 0 }))),
+            (
+                "compares against n + in0.sorted, which mixes kinds (size or bound, flag)",
+                2,
+                Box::new(move |t| {
+                    t.property_types.push(flag.clone());
+                    t.requirements.push(req(4, on(0, "len"), Relation::Eq, PropertyExpr::sum(vec![size("n"), input(0, "sorted")]), "fit.pair"));
+                }),
+            ),
+            ("symbol 4's requirement names in0.bound, which Futhark(1) does not carry", 1, Box::new(move |t| t.requirements.push(req(4, on(0, "bound"), Relation::Le, size("n"), "clampix")))),
+            ("symbol 3's requirement in1.bound = in0.len uses =, which a bound property does not take", 1, Box::new(move |t| t.requirements[1].relation = Relation::Eq)),
+            (
+                "compares the size property in0.len with in0.sorted, which is not of a comparable kind",
+                1,
+                Box::new(move |t| {
+                    t.property_types.push(PropertyType { id: 10, data_type: arr, name: "sorted".into(), kind: PropertyKind::Flag });
+                    t.requirements.push(req(4, on(0, "len"), Relation::Eq, input(0, "sorted"), "fit.pair"));
+                }),
+            ),
+            ("symbol 2's requirement on env.trips is <= 2, not < a literal", 1, Box::new(|t| t.requirements[2].relation = Relation::Le)),
+            ("symbol 2's requirement on env.trips is < n, not < a literal", 1, Box::new(move |t| t.requirements[2].against = size("n"))),
+            ("symbol 4's requirement on in0.len uses <, which only env.trips takes", 2, Box::new(move |t| t.requirements.push(req(4, on(0, "len"), Relation::Lt, size("n"), "fit.pair")))),
+            ("names adapter \"nope\", which is not an adapter", 1, Box::new(move |t| t.requirements.push(req(4, on(0, "len"), Relation::Eq, size("n"), "nope")))),
+            ("names adapter fit.root, which runs at the root", 1, Box::new(move |t| t.requirements.push(req(4, on(0, "len"), Relation::Eq, size("n"), "fit.root")))),
+            (
+                "names adapter fit.body, which runs at the body, but the symbol has no trip argument",
+                1,
+                Box::new(move |t| t.requirements.push(req(4, on(0, "len"), Relation::Eq, size("n"), "fit.body"))),
+            ),
+            ("symbol 2's binding is of Futhark(9), which is not a data type", 1, Box::new(|t| t.bindings.push(Binding { symbol: 2, position: 1, data_type: Ty::Futhark(9), properties: vec![] }))),
+            ("symbol 2's binding sets len, which Futhark(2) does not carry", 1, Box::new(move |t| t.bindings.push(Binding { symbol: 2, position: 1, data_type: i64_, properties: vec![("len".into(), size("n"))] }))),
+            (
+                "symbol 2's binding sets bound twice",
+                1,
+                Box::new(move |t| t.bindings.push(Binding { symbol: 2, position: 1, data_type: i64_, properties: vec![("bound".into(), size("n")), ("bound".into(), size("k"))] })),
+            ),
+            (
+                "symbol 4's binding of argument 0 reads in0.len, its own argument",
+                1,
+                Box::new(move |t| t.bindings.push(Binding { symbol: 4, position: 0, data_type: i64_, properties: vec![("bound".into(), input(0, "len"))] })),
+            ),
+            (
+                "symbol 4's bindings read each other's arguments in a cycle",
+                1,
+                Box::new(move |t| {
+                    t.bindings.push(Binding { symbol: 4, position: 0, data_type: i64_, properties: vec![("bound".into(), input(1, "len"))] });
+                    t.bindings.push(Binding { symbol: 4, position: 1, data_type: i64_, properties: vec![("bound".into(), input(0, "len"))] });
+                }),
+            ),
+        ];
+        histogram_tables().check().unwrap_or_else(|d| panic!("the base tables check: {d:#?}"));
+        for (want, count, edit) in &cases {
+            let mut t = histogram_tables();
+            edit(&mut t);
+            let d = t.check().expect_err(want);
+            assert!(d.iter().all(|e| e.starts_with("our software has a bug: kingdom histogram test: ")), "{d:#?}");
+            assert!(d.iter().any(|e| e.contains(want)), "missing {want:?} in {d:#?}");
+            assert_eq!(d.len(), *count, "{want}: {d:#?}");
+        }
+        // The bound against the length (`get`) and the bound of a literal index pass: a size and a bound both count
+        // elements (master 6 README 5.2, G1 review finding 1).
+        let mut t = histogram_tables();
+        t.requirements.push(req(3, on(1, "bound"), Relation::Le, PropertyExpr::Literal(1), "clampix"));
+        t.requirements.push(req(4, on(0, "len"), Relation::Le, PropertyExpr::min(vec![size("n"), input(1, "len")]), "fit.pair"));
+        t.check().unwrap_or_else(|d| panic!("{d:#?}"));
     }
 
     #[test]
@@ -1934,17 +2577,19 @@ mod tests {
         t.arguments.iter_mut().find(|a| a.symbol == 1 && a.position == 2 && a.direction == Direction::In).expect("in2").position = 3;
         t.arguments.push(Argument { symbol: 3, position: 0, direction: Direction::Out, data_type: arr });
         t.property_rules.push(PropertyRule { symbol: -2, property: "len".into(), expr: PropertyExpr::Literal(1) });
-        t.requirements.push(Requirement { symbol: 4, position: 7, property: "len".into(), must_equal: PropertyExpr::Size("n".into()) });
+        let req = |position: u32, against: PropertyExpr| Requirement {
+            symbol: 4,
+            subject: Subject::Input { position, property: "len".into() },
+            relation: Relation::Eq,
+            against,
+            adapter: "fit.pair".into(),
+        };
+        t.requirements.push(req(7, PropertyExpr::Size("n".into())));
         t.bindings.push(Binding { symbol: 4, position: 2, data_type: Ty::Futhark(2), properties: vec![] });
         t.property_rules.push(PropertyRule { symbol: 2, property: "len".into(), expr: PropertyExpr::Input { position: 5, property: "len".into() } });
         t.arguments.push(Argument { symbol: -2, position: 0, direction: Direction::In, data_type: Ty::Futhark(9) });
-        t.requirements.push(Requirement { symbol: 4, position: 0, property: "len".into(), must_equal: PropertyExpr::Sum(vec![PropertyExpr::Unknown]) });
-        t.requirements.push(Requirement {
-            symbol: 4,
-            position: 1,
-            property: "len".into(),
-            must_equal: PropertyExpr::sum(vec![PropertyExpr::Min(vec![PropertyExpr::Size("n k".into())]), PropertyExpr::Literal(1)]),
-        });
+        t.requirements.push(req(0, PropertyExpr::Sum(vec![PropertyExpr::Unknown])));
+        t.requirements.push(req(1, PropertyExpr::sum(vec![PropertyExpr::Min(vec![PropertyExpr::Size("n k".into())]), PropertyExpr::Literal(1)])));
         let d = t.check().expect_err("defects");
         assert!(d.iter().all(|e| e.starts_with("our software has a bug: kingdom histogram test: ")), "{d:#?}");
         for want in [

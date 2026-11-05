@@ -1392,6 +1392,16 @@ that moves a head or tail cell moves its Dv word with it, and one applied to a D
 existing kingdoms lay out and express word for word as before (fingerprints taken at e526a62f). phylu has the Dv arms;
 a layout with a Dv lane does not reach the device before P1. The commit lists the 34 `is_constant(` calls.
 
+**G3 status (2026-11-05): done.** `src/typed_environment.rs`: `Decoder::new(tables, contract)` (contract symbol `s` is
+the tables' symbol `s`), `decode(entry, tree)` gives every node its `Environment`, `Choice` (Dc index, variable by
+`Binder` {depth, ordinal}, or the type's constant), properties, requirement `Outcome`s and `Substituted` (the work
+bound, decided once); `in_scope` is the one order (the entry's parameters, then each binding outermost first);
+`Decoding::resolved` the resolved tree, `failures` the rendered failures. `geneframe.rs`: `Relation` (`=`, `<=`, `<`,
+`holds` on one spelling), `Subject` (`in<k>.<p>` or `env.trips`), the requirement's adapter, the `Adapter` and
+`TripArgument` tables, a data type's constant, sorted sums and mins, `decode_order`, the comparable-kinds check,
+`to_text` checking first, every check branch tested, a typed-depth golden. By the rule, a substituted `hist.*` renders
+its first input of its own data type (in1 in the `i32` view), not the constant README 5.3's list names: the lead decides.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
