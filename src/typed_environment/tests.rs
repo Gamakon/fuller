@@ -685,3 +685,14 @@ fn random_genes_over_the_real_master6_views_fail_only_by_named_adapters() {
         assert_eq!(substituted > 0, bounded, "{problem}: substitutions occur exactly in a view with a work bound");
     }
 }
+
+/// A decoder built from `Arc`s owns its tables and contract: the caller's handles dropped, it still decodes, and to
+/// the same decoding as one built by `Decoder::new`.
+#[test]
+fn a_decoder_from_arcs_outlives_the_callers_handles() {
+    let (t, k) = (std::sync::Arc::new(tables()), std::sync::Arc::new(contract()));
+    let d = Decoder::from_arcs(std::sync::Arc::clone(&t), std::sync::Arc::clone(&k)).unwrap_or_else(|e| panic!("{e:#?}"));
+    drop((t, k));
+    let tree = reference(W_N);
+    assert_eq!(d.decode(&entry(), &tree).unwrap_or_else(|e| panic!("{e}")), decode(&tree));
+}

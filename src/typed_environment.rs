@@ -27,6 +27,7 @@
 //! Deterministic in the gene alone: every map is a `BTreeMap`, every list in table or position order.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::futhark_table::Kingdom6;
 use crate::geneframe::{Adapter, AdapterSite, EntryParameter, EntryRequirement, KingdomTables, PropertyExpr, Relation, Subject, Substitute, Ty};
@@ -333,23 +334,32 @@ struct SymbolInfo {
     order: Vec<u32>,
 }
 
-/// The decoder of one kingdom: its tables and its contract, whose symbol `s` is the tables' symbol `s`.
+/// The decoder of one kingdom: its tables and its contract, whose symbol `s` is the tables' symbol `s`. It OWNS
+/// them through `Arc` (plan step 5a F1: Arc handles, no lifetime, no `Box::leak`), so a caller may keep it as long as
+/// it likes and share the tables with it at no copy ([`Decoder::from_arcs`]).
 #[derive(Debug, Clone)]
-pub struct Decoder<'a> {
-    tables: &'a KingdomTables,
-    contract: &'a KingdomContract,
+pub struct Decoder {
+    tables: Arc<KingdomTables>,
+    contract: Arc<KingdomContract>,
     symbols: Vec<SymbolInfo>,
     properties_of: BTreeMap<Ty, Vec<String>>,
     constants: BTreeMap<Ty, Option<Vec<(String, PropertyExpr)>>>,
     adapters: BTreeMap<String, Adapter>,
 }
 
-impl<'a> Decoder<'a> {
+impl Decoder {
     /// The decoder of `tables` and `contract`. Every defect, each "our software has a bug: ...": the tables' own check
     /// (which finds a work-bound substitution by the constant of a data type that has none, before any gene runs),
     /// and a contract symbol whose inputs or output the tables do not give it, or a `var.T` with a property rule (its
     /// properties are its variable's).
-    pub fn new(tables: &'a KingdomTables, contract: &'a KingdomContract) -> Result<Decoder<'a>, Vec<String>> {
+    ///
+    /// It copies `tables` and `contract` once; [`Decoder::from_arcs`] shares them instead.
+    pub fn new(tables: &KingdomTables, contract: &KingdomContract) -> Result<Decoder, Vec<String>> {
+        Decoder::from_arcs(Arc::new(tables.clone()), Arc::new(contract.clone()))
+    }
+
+    /// [`Decoder::new`] over shared tables and contract, kept alive by the decoder's own handles.
+    pub fn from_arcs(tables: Arc<KingdomTables>, contract: Arc<KingdomContract>) -> Result<Decoder, Vec<String>> {
         tables.check()?;
         let k = &tables.kingdom;
         let mut d: Vec<String> = Vec::new();
@@ -397,6 +407,16 @@ impl<'a> Decoder<'a> {
         let constants = tables.data_types.iter().map(|t| (t.id, t.constant.clone())).collect();
         let adapters = tables.adapters.iter().map(|a| (a.name.clone(), a.clone())).collect();
         Ok(Decoder { tables, contract, symbols, properties_of, constants, adapters })
+    }
+
+    /// The kingdom's tables.
+    pub fn tables(&self) -> &KingdomTables {
+        &self.tables
+    }
+
+    /// The kingdom's contract.
+    pub fn contract(&self) -> &KingdomContract {
+        &self.contract
     }
 
     /// Every property `ty` carries, from `given` where it is given and `?` where not, each in its one spelling.
