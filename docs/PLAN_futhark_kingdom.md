@@ -1849,6 +1849,9 @@ e-graph over the rows (generated with the rows). Deleted: the dual tables and th
 values to the 9 data types, lets and loop counters as `var.T` words, builtins as entry parameters; days of work); the
 e-graph, hoist and trips optimisers (they read the old fuel strata, to be rewritten over `env.work`); module interfaces
 (one variant per entry plus a linker row). The 305-type tables stay until the GPU smoke passes.
+The WGSL optimisers are to be rebuilt over the rows: they matched the old tables' row names and did nothing on the
+rows, so cleanse, simplify, the e-graph, hoist, fewer trips, the share pass, the fold and the finisher were deleted
+(fuller 67b2e79e, phylu c7dff4aa); snap is kept (`wgsl::snap`).
 
 Smoke tests are fast (each CPU check under a minute; each GPU run 60 s, one at a time under the GPU lock, watched with
 `evowatch`). They show the kingdom decodes legal programs and learns; they are not studies.
