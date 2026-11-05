@@ -168,5 +168,124 @@ impl PixelRows {
     }
 }
 
+/// What an s-expression position holds while it is read.
+#[derive(Debug, Clone, Copy)]
+enum Place {
+    /// A block (`blk`, `None`) or a body of a state arity (`body<s>`).
+    Block(Option<usize>),
+    Scalar,
+    Count,
+}
+
+impl PixelRows {
+    /// READ A PROGRAM written as an s-expression of the family's forms (the shipped references:
+    /// [`super::VOLUMEPASSAGE_REFERENCE`], [`super::CUNEUS_REFERENCE`]) into a tree of the rows. The text names its
+    /// variables as the old tables did: an interface input (`u_time`), the position (`px`, `py`) or `v<k>`, the k-th
+    /// variable bound on the way down (a `let` binds one, a block of state arity s binds s for its rest, a loop binds its
+    /// s states and its counter in the body and its s results for its rest). Each becomes `var@f32` with the index word
+    /// that names it in the decoder's environment order ([`crate::typed_environment::in_scope`]: innermost first). A
+    /// literal must be in the f32 pool and a trip count in the count pool; a form with no row is an error that names it.
+    pub fn read(&self, text: &str) -> Result<Tree, String> {
+        let sexp = super::parse_sexp(text)?;
+        let super::Sexp::List(items) = &sexp else { return Err("the program is not (image BLOCK)".into()) };
+        if items.len() != 2 || items[0] != super::Sexp::Atom("image".into()) {
+            return Err("the program is not (image BLOCK)".into());
+        }
+        // The environment, outermost first, as the decoder builds it: the entry's parameters, then the picture's px, py.
+        let mut scope: Vec<String> = self.entry.parameters.iter().map(|p| p.name.clone()).collect();
+        scope.extend(["px".to_string(), "py".to_string()]);
+        let block = self.read_at(&items[1], Place::Block(None), &scope, 0)?;
+        Ok(Tree { symbol: self.sym("image")?, const_index: None, kids: vec![block] })
+    }
+
+    fn sym(&self, name: &str) -> Result<SymbolId, String> {
+        self.symbol_named(name).ok_or_else(|| format!("{}: the kingdom has no row {name}", self.variant))
+    }
+
+    /// `scope`: the reference's names in binding order (outermost first); `bound`: how many `v<k>` are bound.
+    fn read_at(&self, e: &super::Sexp, at: Place, scope: &[String], bound: usize) -> Result<Tree, String> {
+        use super::Sexp;
+        let leaf = |symbol: SymbolId, index: u32| Tree { symbol, const_index: Some(index), kids: vec![] };
+        let pool_index = |name: &str, a: &str| -> Result<u32, String> {
+            let s = self.sym(name)?;
+            let v: f64 = a.trim_end_matches("f32").parse().map_err(|_| format!("{a} is not a number"))?;
+            self.literals(s)
+                .iter()
+                .position(|l| l.trim_end_matches("f32").parse::<f64>().map(|x| (x as f32).to_bits()) == Ok((v as f32).to_bits()))
+                .map(|i| i as u32)
+                .ok_or_else(|| format!("the literal {a} is not in the pool of {name}"))
+        };
+        let tag = |b: Option<usize>| b.map_or("blk".to_string(), |s| format!("body{s}"));
+        let node = |name: &str, kids: Vec<Tree>| -> Result<Tree, String> { Ok(Tree { symbol: self.sym(name)?, const_index: None, kids }) };
+        match (e, at) {
+            (Sexp::Atom(a), Place::Count) => Ok(leaf(self.sym("?@count")?, pool_index("?@count", a)?)),
+            (Sexp::Atom(a), Place::Scalar) => {
+                if a.parse::<f64>().is_ok() {
+                    return Ok(leaf(self.sym("?@f32")?, pool_index("?@f32", a)?));
+                }
+                if self.symbol_named(a).is_some() {
+                    // A nullary function of the instance (an image target's nx, ny).
+                    return node(a, vec![]);
+                }
+                // The innermost binding of the name, as the decoder's environment lists it.
+                let place = scope.iter().rev().position(|n| n == a).ok_or_else(|| format!("{a} is not in scope"))?;
+                Ok(leaf(self.sym("var@f32")?, place as u32))
+            }
+            (Sexp::Atom(a), Place::Block(b)) => {
+                let name = match (a.as_str(), b) {
+                    ("black" | "coord", None) => a.clone(),
+                    ("zero", Some(s)) => format!("zero@body{s}"),
+                    _ => return Err(format!("{a} is not a terminal of {}", tag(b))),
+                };
+                node(&name, vec![])
+            }
+            (Sexp::List(items), _) => {
+                let Some(Sexp::Atom(head)) = items.first() else { return Err("a list with no head".into()) };
+                let args = &items[1..];
+                let scalars = |xs: &[Sexp]| xs.iter().map(|x| self.read_at(x, Place::Scalar, scope, bound)).collect::<Result<Vec<_>, _>>();
+                let more = |n: usize| -> Vec<String> {
+                    let mut s = scope.to_vec();
+                    s.extend((bound..bound + n).map(|k| format!("v{k}")));
+                    s
+                };
+                match at {
+                    Place::Scalar => node(head, scalars(args)?),
+                    Place::Count => Err("a count is a literal".into()),
+                    Place::Block(b) => match head.as_str() {
+                        "let" => {
+                            let [value, rest] = args else { return Err("let takes VALUE REST".into()) };
+                            let v = self.read_at(value, Place::Scalar, scope, bound)?;
+                            let r = self.read_at(rest, at, &more(1), bound + 1)?;
+                            node(&format!("let@{}", tag(b)), vec![v, r])
+                        }
+                        h if h.starts_with("loop") => {
+                            let s: usize = h[4..].parse().map_err(|e| format!("{h}: {e}"))?;
+                            let [Sexp::List(inits), count, body, rest] = args else { return Err(format!("{h} takes (INITS) COUNT BODY REST")) };
+                            if inits.len() != s {
+                                return Err(format!("{h} has {} initial values", inits.len()));
+                            }
+                            let mut kids = scalars(inits)?;
+                            kids.push(self.read_at(count, Place::Count, scope, bound)?);
+                            kids.push(self.read_at(body, Place::Block(Some(s)), &more(s + 1), bound + s + 1)?);
+                            kids.push(self.read_at(rest, at, &more(s), bound + s)?);
+                            node(&format!("{h}@{}", tag(b)), kids)
+                        }
+                        h if h.starts_with("block") => {
+                            let s: usize = h[5..].parse().map_err(|e| format!("{h}: {e}"))?;
+                            let [body, rest] = args else { return Err(format!("{h} takes BODY REST")) };
+                            let inner = self.read_at(body, Place::Block(Some(s)), scope, bound)?;
+                            let r = self.read_at(rest, at, &more(s), bound + s)?;
+                            node(&format!("{h}@{}", tag(b)), vec![inner, r])
+                        }
+                        "rgb" if b.is_none() => node("rgb", scalars(args)?),
+                        "tuple" if b.is_some() => node(&format!("tuple@{}", tag(b)), scalars(args)?),
+                        other => Err(format!("{other} is not a form of {} (let, loopS, blockS, rgb, tuple)", tag(b))),
+                    },
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -58,3 +58,46 @@ fn twenty_random_genes_render_programs_futhark_accepts() {
     assert_eq!(checked, 20);
     eprintln!("pixel rows: {checked} random genes accepted by futhark check ({lets} lets, {loops} loops)");
 }
+
+/// A uniform block per (group, binding) of the interface, every word `value`.
+fn blocks(iface: &[super::super::Input], value: f32) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut by: std::collections::BTreeMap<(u32, u32), usize> = std::collections::BTreeMap::new();
+    for i in iface {
+        let words = by.entry((i.group, i.binding)).or_insert(0);
+        *words = (*words).max(i.word + 1);
+    }
+    by.into_iter().map(|((g, b), words)| (g, b, (0..words).flat_map(|_| value.to_le_bytes()).collect())).collect()
+}
+
+/// THE SHIPPED SHADERS READ AND RENDER THROUGH THE ROWS: each reference (volumepassage, cuneus) reads into a tree of
+/// the rows, and its program, compiled by `futhark c`, draws the same picture BIT FOR BIT as the dual tables' program
+/// of the same reference (12 x 8 pixels).
+#[test]
+fn the_references_read_on_the_rows_draw_the_dual_tables_picture() {
+    if !have_futhark() || Command::new("cc").arg("--version").output().is_err() {
+        eprintln!("skipped: futhark or cc is not installed");
+        return;
+    }
+    let dir = std::env::temp_dir().join("futhark_pixel_rows_refs").join(format!("t{}", std::process::id()));
+    for name in ["volumepassage", "cuneus"] {
+        let (inst, reference) = super::super::instance(name).unwrap();
+        let reference = reference.unwrap();
+        let iface = super::super::interface(&inst).unwrap();
+        let rows = PixelRows::load(name).unwrap();
+        let tree = rows.read(reference).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let new = rows.program(&iface, &tree).unwrap();
+        let old_k = super::super::load(&inst).unwrap();
+        let old = super::super::program(&old_k, &iface, &super::super::build(&old_k, reference).unwrap()).unwrap();
+        let b = blocks(&iface, 0.75);
+        let b: Vec<(u32, u32, &[u8])> = b.iter().map(|(g, bb, v)| (*g, *bb, v.as_slice())).collect();
+        let (w, h) = (12u32, 8u32);
+        let tile = super::super::Tile { col0: 0, row0: 0, cols: w, rows: h };
+        let ps = super::super::inputs(&iface, &b, w, h, tile).unwrap();
+        let draw = |src: &str, sub: &str| super::super::run_exe(&super::super::compile_c(src, &dir.join(format!("{name}_{sub}"))).unwrap_or_else(|e| panic!("{name} {sub}: {e}\n{src}")), &ps).unwrap();
+        let (a, z) = (draw(&new, "rows"), draw(&old, "dual"));
+        assert_eq!(a.len(), z.len(), "{name}");
+        assert!(a.iter().any(|v| *v != 0.0), "{name}: a black picture proves nothing");
+        assert!(a.iter().zip(&z).all(|(x, y)| x.to_bits() == y.to_bits()), "{name}: the rows' picture differs from the dual tables'");
+        eprintln!("{name}: the reference on the rows draws the dual tables' picture bit for bit ({} values)", a.len());
+    }
+}
