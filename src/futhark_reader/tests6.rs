@@ -1,7 +1,7 @@
 //! Master 6's reader (plan section 7, task F4): every reference tree reads back from its rendering to itself; random
 //! genes of every view read back to their canonical trees and render the same text again, adapters included; the
-//! pool's 842 programs read from their master 5 renderings and render the same text, so they compute the same values
-//! on every stored case; the k-means pool's programs read.
+//! pool's 842 programs read from their master 5 renderings, render the same text and compute the recorded values on
+//! every stored case; a text with an adapter the gene does not render is not read; the k-means pool's programs read.
 
 use super::*;
 use crate::futhark_sig::{build6, build_stack_named, const_len6, kmeans_reference6, load, load_cases, problem, program, random_gene, signature, values_fingerprint, Interp, REFERENCES6};
@@ -90,32 +90,41 @@ fn random_genes_read_back_to_their_canonical_trees_and_render_the_same_text() {
             if !p.adapter_free() {
                 with_adapters += 1;
             }
-            if let Ok(c) = reader.canonical(&tree) {
-                assert!(read == c, "{name} gene {i}: reads back to another tree than its canonical one: {}\n{}", tree_diff(&read, &c), p.text);
-                compared += 1;
+            // Only the two constant cases are skipped (a terminal of the same spelling reads first there); any other
+            // reason is a bug.
+            match reader.canonical(&tree) {
+                Ok(c) => {
+                    assert!(read == c, "{name} gene {i}: reads back to another tree than its canonical one: {}\n{}", tree_diff(&read, &c), p.text);
+                    compared += 1;
+                }
+                Err(NotCanonical::SubstitutedByConstant | NotCanonical::VariableAsConstant) => {}
+                Err(NotCanonical::Bug(e)) => panic!("{name} gene {i}: no canonical tree: {e}"),
             }
         }
         eprintln!("{name}: 200 random genes read back and render the same text; {with_adapters} with an adapter; {compared} equal to their canonical tree, the rest render a constant");
         report.push((*name, with_adapters, compared));
     }
-    assert!(report.iter().all(|r| r.1 + r.2 > 0), "{report:?}");
+    // The genes are drawn from fixed seeds: the counts of this run, as floors.
+    let floors = [("reduce", 0, 104), ("scan", 2, 165), ("histogram", 166, 143), ("pathfinder", 143, 147), ("a7", 189, 200), ("kmeans", 180, 150), ("kmeans_i32", 183, 156)];
+    for ((name, adapters, compared), (fname, fa, fc)) in report.iter().zip(floors) {
+        assert!(*name == fname && *adapters >= fa && *compared >= fc, "{name}: {adapters} with an adapter (floor {fa}), {compared} compared (floor {fc}): {report:?}");
+    }
 }
 
-/// The tree read by [`Reader6::read_expression`] rendered as pass 5 renders it: the expression of a program whose
-/// entry returns its data type.
+/// The tree read by [`Reader6::read_expression`] rendered as pass 5 renders it: a whole program whose entry returns
+/// its data type.
 fn render_expression(k: &Kingdom6, renderer: &crate::futhark_table::Renderer6, tree: &Tree, ty: Ty) -> String {
     let entry = crate::typed_environment::Entry { output: ty, variables: renderer.entry.variables.clone(), requirements: Vec::new() };
     let decoding = crate::typed_environment::Decoder::new(&renderer.tables, &renderer.contract).unwrap().decode(&entry, tree).unwrap();
-    let text = k.program6(&renderer.header, &decoding).unwrap().text;
-    let last = text.trim_end().lines().last().unwrap_or("").to_string();
-    last.strip_prefix("  in ").or_else(|| last.strip_prefix("  ")).unwrap_or(&last).to_string()
+    k.program6(&renderer.header, &decoding).unwrap().text
 }
 
 /// THE POOL'S 842 PROGRAMS (`tests/fixtures/futhark_pool_values/`: histogram's and pathfinder's bench, llm and
 /// alternatives, recorded with their values on the stored cases): each, built in its master 5 view from its recorded
 /// text and checked against its recorded values (host interpreter), is rendered by master 5's renderer; master 6's
-/// reader reads that text, and master 6's renderer renders the tree read as the same text, byte for byte. The same
-/// program text computes the same values, so every program reads back with the same values on every stored case.
+/// reader reads that text, and master 6's renderer renders the tree read as the same text, byte for byte (an `i32`
+/// expression: its whole body). Master 6 has no interpreter yet, so the VALUES are checked through master 5's: the text
+/// master 6 renders is read by master 5's reader and evaluated on every stored case, against the recorded values.
 #[test]
 fn the_pools_842_programs_read_back_with_the_same_values() {
     let (mut report, mut all_gaps) = (Vec::new(), Vec::new());
@@ -129,6 +138,11 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
         let (k6, header) = view(pname);
         let renderer = k6.renderer6(header.clone()).unwrap();
         let reader = Reader6::new(&k6, header).unwrap();
+        let reader5 = Reader::new(&k5, &sig).unwrap();
+        let values_of = |text6: &str, what: &str| {
+            let back = reader5.read_program(text6).unwrap_or_else(|g| panic!("{what}: master 5 does not read master 6's text: {g}\n{text6}"));
+            format!("{:016x}", values_fingerprint(&interp, &back, &cases))
+        };
         for file in ["bench", "llm", "alternatives"] {
             let path = std::path::Path::new(crate::CHECKOUT).join("tests/fixtures/futhark_pool_values").join(format!("{pname}.{file}.tsv"));
             let fixture = std::fs::read_to_string(&path).unwrap();
@@ -146,6 +160,7 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
                         Ok(t6) => {
                             let text6 = renderer.program(&t6).unwrap().text;
                             assert!(text6 == text5, "{pname} {file} {seq}: {}", diff(&text6, &text5));
+                            assert_eq!(values_of(&text6, &format!("{pname} {file} {seq}")), values, "{pname} {file} {seq}: master 6's text computes other values");
                         }
                         Err(g) => {
                             gaps.push(format!("{pname} {file} {seq}: {}", g.construct));
@@ -157,7 +172,19 @@ fn the_pools_842_programs_read_back_with_the_same_values() {
                     let ty6 = k6.ty(dual.split(':').next().unwrap()).unwrap_or_else(|| panic!("{pname} {file} {seq}: no master 6 data type of {dual}"));
                     let t6 = reader.read_expression(&text5, ty6).unwrap_or_else(|g| panic!("{pname} {file} {seq}: does not read: {g}\n{text5}"));
                     let text6 = render_expression(&k6, &renderer, &t6, ty6);
-                    assert!(text6 == text5, "{pname} {file} {seq}: {}", diff(&text6, &text5));
+                    let body6 = reader.program_body(&text6).unwrap_or_else(|g| panic!("{pname} {file} {seq}: {g}\n{text6}")).1;
+                    assert_eq!(unparen(&body6), unparen(&parse_expression(&text5, false, true).unwrap()), "{pname} {file} {seq}: renders another expression\n{text6}");
+                    // Master 5's reader reads a whole program at its root only: the body of master 6's text, parsed in
+                    // master 5's syntax without the header's bindings, is read at the dual's type.
+                    let defs5 = parse_file(&text6).unwrap_or_else(|g| panic!("{pname} {file} {seq}: {g}\n{text6}"));
+                    let mut body5 = defs5.iter().find(|d| d.entry).unwrap().body.clone().unwrap();
+                    while let E::Let(x, _, rest) = &body5 {
+                        assert!(x == "k" || x.starts_with("zeros_"), "{pname} {file} {seq}: a binding {x} past the header\n{text6}");
+                        body5 = *rest.clone();
+                    }
+                    reader5.steps.set(0);
+                    let back = reader5.read(&body5, ty5).unwrap_or_else(|g| panic!("{pname} {file} {seq}: master 5 does not read master 6's body: {g}\n{text6}"));
+                    assert_eq!(format!("{:016x}", values_fingerprint(&interp, &back, &cases)), values, "{pname} {file} {seq}: master 6's text computes other values");
                 }
                 same += 1;
             }
@@ -231,5 +258,34 @@ fn adapters_are_read_as_the_plain_row() {
     let E::App(_, args) = &stripped else { panic!("{stripped:?}") };
     assert_eq!(unmark(&args[1]).1.map(unparen), Some(unparen(&parse_expression("i64.min (length xs) (length ys)", false, true).unwrap())));
     let e = parse_expression("let [ad_m] (ad_s: [ad_m]f32) = (xs) in (ad_s)[(clampix ad_m (i))]", false, true).unwrap();
-    assert_eq!(unparen(&strip_adapters(&e)), parse_expression("xs[i]", false, true).unwrap());
+    assert_eq!(unparen(&unmarked(&strip_adapters(&e))), parse_expression("xs[i]", false, true).unwrap());
+}
+
+/// AN ADAPTER THE GENE DOES NOT RENDER IS NOT READ (F4 review finding 1): a text with a `fit` or a `clampix` where the
+/// tree read renders none (its requirement holds) is a program no gene expresses, with other values (the `fit`
+/// truncates to 5 elements), so it is a gap naming the adapter, never read as the plain row. The same program as pass 5
+/// renders it reads, and so does a random gene's text whose adapters pass 5 rendered.
+#[test]
+fn an_adapter_the_gene_does_not_render_is_not_read() {
+    let (k, header) = view("kmeans");
+    let reader = Reader6::new(&k, header).unwrap();
+    let seed = std::fs::read_to_string(std::path::Path::new(crate::CHECKOUT).join("kingdoms/futhark/sig/kmeans/pool/seed.fut")).unwrap();
+    reader.read_program(&seed).unwrap_or_else(|g| panic!("seed.fut does not read: {g}"));
+    for (from, to) in [("(points)[(i_n)]", "(fit 5 0f32 ((points)[(i_n)]))"), ("((centres)[(0i64)])", "((centres)[(clampix k (0i64))])")] {
+        assert!(seed.contains(from), "{from}");
+        let text = seed.replacen(from, to, 1);
+        let g = reader.read_program(&text).expect_err(to);
+        assert_eq!(g.construct, "adapter the gene does not render", "{to}: {g}");
+    }
+    let (k, header) = view("histogram");
+    let renderer = k.renderer6(header.clone()).unwrap();
+    let reader = Reader6::new(&k, header).unwrap();
+    let layout = GeneLayout::from_program_size(&renderer.contract, k.root.data_type, problem("histogram").unwrap().program_size).unwrap();
+    let consts = const_len6(&k);
+    let mut rng = GeneRng::new(0xF4_0001);
+    let fitted = (0..500)
+        .map(|_| renderer.program(&express(&renderer.contract, &layout, &random_gene(&renderer.contract, &layout, &consts, &mut rng).unwrap(), &consts).unwrap().tree()).unwrap())
+        .find(|p| p.adapters.iter().any(|a| a.1.starts_with("fit")))
+        .expect("no random histogram gene of 500 renders a fit");
+    reader.read_program(&fitted.text).unwrap_or_else(|g| panic!("a fit pass 5 renders does not read: {g}\n{}", fitted.text));
 }
