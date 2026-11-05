@@ -1,6 +1,6 @@
 # Technical design: data types, properties and scope in the gene frame
 
-**Status:** proposed 2026-11-05, for Andrew's agreement before any code. Andrew's design; this document writes it
+**Status:** 2026-11-05: per-column crossover described; section 5 matches the built fit; section 10 decided. First proposed 2026-11-05. Andrew's design; this document writes it
 down. **Revised 2026-11-05:** section 3 is now ONE FIXED schema that every kingdom fills with rows (Andrew: the tables
 are fixed, a kingdom is configured only by rows); it removes the five Futhark-only parts of the first version (the
 formula operators, the trip count subject, no output subject, the hard-coded substitutions, the adapter sites) and a
@@ -31,6 +31,11 @@ section 4). Two engines: `must` guards run in the decoder, which repairs; `advis
 charges (3.3.1, section 4). Explicit adapters (`fit`, `clampix`, each kingdom's own) are also ordinary symbols that
 evolution can place (3.3.1, section 5). The schema freezes when Futhark and TSR both run end to end on it (section 3).
 Declined: a relation's columns as a tuple type (3.4.5).
+**Revised 2026-11-05: per-column crossover described; section 5 matches the built fit; section 10 decided.** Section
+3.6 now lists the crossovers that work column by column (built and not yet built); section 5 and 8.5 quote the built
+adapters (`fit`, `fitrows`, `fitcols`, `clampix`) and their preludes; Andrew's answers to section 10 are recorded
+there. Section 7 now gives measured sizes, 8.16 phase 2's known limits, and 8.17 the proof results so far. Master 5
+is being deleted: what is kept of it is program text only, with no compatibility path.
 
 ## 1. Context
 
@@ -72,6 +77,8 @@ configured only by rows; section 8 tests the tables against eleven kingdoms.
 Futhark kingdom and TSR (Typed Symbolic Regression) both run end to end on it, evolution included, and one string
 kingdom is added after them. Until then a table may still change, and every change is re-checked against the eleven
 kingdoms of section 8.
+**Status of the freeze rule (2026-11-05):** the Futhark kingdom is configured on the four kinds of row and its proofs
+pass (8.17), but no evolution run has used it yet; TSR is being configured. The schema is not yet frozen.
 
 The model is described at three levels, from the ideas down to the stored tables, and then a fourth model that the
 loader derives from the tables. The physical tables must hold every kingdom; on load they are summarised into the
@@ -643,6 +650,25 @@ scope; with c = 0, `var.T` becomes T's constant. The effect on variation:
 | **decoding** | on the host, with the compiled rules: the environment top-down (down flows), the variables (distance from the innermost, `w mod c`), the properties bottom-up (up flows), the `must` guards and their repairs, the rendered program (section 4) | host |
 | **cost** | on the host, on the decoded tree: the `advise` guards and every adapter, placed or repaired, charged; nothing repaired | host |
 
+**Crossover column by column.** A gene of several data types is a table: each data type is a column (`head_T`, then
+`tail_T`, then `Dc_T`), and a row is the same position in every column. Andrew named three crossovers that use this
+shape. What the code has today, and what is only designed:
+
+| operator | what moves between the two parents | status |
+|---|---|---|
+| **row crossover** (`cross-rows`, and `cross-rows-coding` aimed at a row that holds an expressed cell) | GEP's one-point (rows `c..`) or two-point (rows `[c1, c2)`) recombination at the same row in every column; a column runs head, then tail, then Dc, so one cut spans head and tail together, and with one data type it is the classic operator. Each head or tail cell takes its Dv word with it | built: fuller `src/typed_gep.rs:492` (`crossover_rows`), phylu `src/futhark_eval/operators.rs:144` and `:328` |
+| **relative row crossover** (`cross-rel`) | the same, but each column is cut at the same fraction of its own length, so short columns take part too | built: fuller `src/typed_gep.rs:570` (`crossover_rel`), phylu `src/futhark_eval/operators.rs:232` |
+| **span crossover** (`crossover`) | a range inside one domain (head, tail or Dc) of one data type, around an expressed cell of the first parent, with its Dv words; when the drawn cell is a tail cell this exchanges tail cells only, but it is not a tail-only operator | built: fuller `src/typed_gep.rs:346` (`swap_range`), phylu `src/futhark_eval/operators.rs:26` |
+| **interleaved head/tail swap** | per data type, the head of one parent with the tail of the other (each column's head and tail exchanged as two separate pieces, column by column, alternating) | **not yet built** (designed only) |
+| **column exchange** | one whole data type's column (head, tail, Dc and Dv words) exchanged between the parents | **not yet built** (designed only); the nearest built operator exchanges a whole gene (fuller `src/typed_gep.rs:666`, phylu `src/evolve/typed_vary.rs:1015`) |
+| **tail-only swap** | the tails of one or more data types exchanged, heads kept | **not yet built** (designed only) |
+
+All of them keep legality the same way: a cell moves only to the same column, domain and position in the other
+parent, so it stays in its data type's alphabet, the head rule and the lengths `h_T`, `t_T` hold, and a cell's Dv word
+always moves with it. The not-yet-built ones keep this by the same construction: a column holds only its data type,
+so exchanging a whole column, a whole tail, or a head and a tail of the same column between homologous parents
+changes no arity and needs no check.
+
 Selection reads only the fitness. So the dynamics of evolution (what is drawn, moved and kept) happen entirely on the
 run-time model's columns; the properties decide only how an expressed tree renders as a legal program and what it
 costs.
@@ -743,37 +769,44 @@ In the schema of section 3 the adapters appear twice. As **repairs**, inline in 
 site's environment (an operand that is a loop's or lambda's body is one trip deeper), so a heavy adapter that would run
 too deep is skipped and the next repair, `subst.own` (`{in.own}`, then `{const}`), replaces the node; `clampix` has no
 guard; `subst.const` is `{const}`. As **symbols** (external review): `fit` and `clampix` are also functions of the
-alphabet, with their Argument and up Flow rows, which evolution can place deliberately (`fit@[]f32(size, f32, []f32) ->
-[]f32`, `out.len := in0.value`; `clampix(size, i64) -> i64`, `out.bound := in0.value`). The cost charges both alike.
-The rows are in 8.5.
+alphabet, with their Argument and up Flow rows, which evolution can place deliberately. As built (phase 2, fuller
+e87b9ee0, `kingdoms/futhark/master/6/rows.tsv` M0090 to M0093): `fit@a.E(size, []E) -> []E`, `out.len := in0.value`;
+`fitrows@m.E(size, [][]E) -> [][]E`, `out.rows := in0.value`; `fitcols@m.E(size, [][]E) -> [][]E`,
+`out.cols := in0.value`; `clampix@i64(size, i64) -> i64`, `out.bound := in0.value`. **The symbol takes no pad
+argument:** its template writes the element type's zero itself (`fit {0} 0{E} ({1})`), because a view such as a7's
+has no element leaf to supply one. Rendered programs are unchanged. The cost charges a placed and a repaired adapter
+alike. The rows are in 8.5.
 
-In the terms of the flat enhanced format, an adapter is a corrected form made on read: `fit l z xs` is to `xs` what a
+In the terms of the flat enhanced format, an adapter is a corrected form made on read: `fit l xs` is to `xs` what a
 standardised date is to the raw date, and `clampix m i` to `i`. The raw value is not changed; the form is made where a
 `must` guard needs it. So a measured property can never replace an adapter: k-means' `assign` measured on the
 training cases with `bound = k` still renders `clampix k`, because a test case, or a value the program computes, may
 fall outside what the training cases showed.
 
-Rendered once in each program's prelude (the Symbol rows' `prelude`):
+Rendered once in each program that uses it (the preludes in `kingdoms/futhark/master/6/preludes/`, quoted exactly;
+the Futhark function keeps a `z` parameter, which the symbol's template always fills with `0{E}`, the element's zero;
+`fitcols` renders as `map (fit l 0{E})` and uses `fit`'s prelude):
 
 ```futhark
--- exactly length l: the first l elements of xs, padded with z when xs is shorter
 def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =
   tabulate l (\i -> if i < m then xs[i] else z)
 
--- an index into an array of length m, from any index: clamped into [0, m)
+def fitrows [m][c] 't (l: i64) (z: t) (xs: [m][c]t) : [l][c]t =
+  tabulate l (\i -> if i < m then xs[i] else replicate c z)
+
 def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)
 ```
 
 | guard fails at | rendered as |
 |---|---|
-| `map2 f xs ys`, lengths differ (both known, `k` and `n`) | `map2 f (fit (i64.min k n) z xs) (fit (i64.min k n) z ys)`, each `fit` only where the length is not already the minimum |
-| `map2 f xs ys`, a length known only at run time | `let ad_a = xs let ad_b = ys let ad_l = i64.min (length ad_a) (length ad_b) in map2 f (fit ad_l z ad_a) (fit ad_l z ad_b)` |
-| a slot requires length L, gets another | `fit L z x` |
+| `map2 f xs ys`, lengths differ (both known, `k` and `n`) | `map2 f (fit (i64.min k n) 0{E} xs) (fit (i64.min k n) 0{E} ys)`, each `fit` only where the length is not already the minimum (repair `fit.pair`) |
+| `map2 f xs ys`, a length known only at run time | `let ad_a = xs let ad_b = ys let ad_l = i64.min (length ad_a) (length ad_b) in map2 f (fit ad_l 0{E} ad_a) (fit ad_l 0{E} ad_b)` (not in the first version: section 10, item 2) |
+| a slot requires length L, gets another | `fit L 0{E} x` (repair `fit`); a matrix's rows `fitrows L 0{E} x`, its columns `map (fit L 0{E}) x` |
 | `xs[i]`, i's bound is not len(xs) | `xs[clampix (length xs) i]` |
 | a loop body's result differs from the state | the body wrapped in `fit` to the state's length; a state of a length known only at run time is first bound with its size, `let [ad_m] (ad_s: [ad_m]t) = state`, and the loop declared `[ad_m]` |
-| the entry's result | `fit` on each dimension to the signature's sizes |
+| the entry's result | `fit` on each dimension to the signature's sizes (repair `fit.root`) |
 
-`z` is the element type's zero. Every array dimension is at least 1, as the entry points' contracts state (the size
+`0{E}` is the element type's zero (`0f32`, `0i32`). Every array dimension is at least 1, as the entry points' contracts state (the size
 names' lower bounds), so `clampix` is in range.
 
 **Corrected by the F2 build (2026-11-05), for Futhark's size rules.** The `map2` row first read
@@ -812,14 +845,18 @@ legal, a different program, scored by its fitness, and the cost charges its thre
 
 ## 7. Sizes
 
-| problem | data types | today |
-|---|---|---:|
-| reduce, scan | `i32`, `[]i32`, `i64` | 28 |
-| histogram | `i32`, `[]i32`, `i64` | 162 |
-| pathfinder | `i32`, `[]i32`, `[][]i32`, `i64` | 184 |
-| a7 | `f32`, `[]f32`, `[][]f32`, `i64`, two function types | 11 |
-| k-means, f32 | `f32`, `[]f32`, `[][]f32`, `i64`, `(f32, f32)`, `(f32, f32, f32)`, function types: about 8 | 14,359 |
-| k-means, i32 + f32 | the above plus `i32`, `[]i32`, mixed tuples: about 14 | 237,325 (cannot load) |
+Measured on the built views of master 6 (fuller 0f2d4d44, c2b736ac, e87b9ee0); "master 5" is the type count of the
+table being deleted, kept for comparison only.
+
+| problem | data types | symbols | master 5 types |
+|---|---:|---:|---:|
+| reduce | 4 | 41 | 28 |
+| scan | 4 | 41 | 28 |
+| histogram | 4 | 41 | 162 |
+| pathfinder | 5 | 43 | 184 |
+| a7 | 5 | 13 | 11 |
+| k-means, f32 | 9 | 83 | 14,359 |
+| k-means, i32 + f32 | 22 | 227 | 237,325 (could not load) |
 
 ### 7.1 The size of an individual
 
@@ -827,17 +864,17 @@ An individual is one Karva gene, sized by Ferreira's equations for a program of 
 h = 1 + (N − 1)·n_max, master tail t = h·(n_max − 1) + 1. Each data type is a column of that gene: a position holds one
 symbol per type, and expression reads the column of the type demanded there. A column's length follows from how many
 inputs of its type the symbols take (`kingdom_contract.rs`, `heads_from_program_size` and `bounds`), so it varies by
-type; for k-means today the measured average is about 1,920 positions a column (27,563,026 words over 14,359 columns,
-`docs/kmeans_seed.md`).
+type.
 
-| k-means, N = 192 | type columns | positions a column (average) | symbols | index words (`var.T`) | words | bytes |
-|---|---:|---:|---:|---:|---:|---:|
-| today | 14,359 | ≈ 1,920 | 27,563,026 | 0 | 27.6 million | 110 MB |
-| this design | ≈ 8 | ≈ 1,920 | ≈ 15,400 | ≈ 15,400 | ≈ 31,000 | ≈ 124 KB |
+| k-means, N = 192 | head | tail | Dc | Dv (index words) | words |
+|---|---:|---:|---:|---:|---:|
+| master 5 (14,359 columns) | | | | 0 | 27,563,026 |
+| master 6, f32 (9 data types) | 3,057 | 12,995 | 4,202 | 12,230 | 32,484 |
+| master 6, i32 + f32 (22 data types) | | | | | 122,447 |
 
-The positions a column stay about the same, because the program size and the arities do not change; the number of
-columns falls from the cross-product of data types, sizes and scopes to the data types. Exact figures come from the
-first build of the new table.
+The i32 + f32 figure is after the fix for data types that no variable can be of (c2b736ac: such a type takes its
+constant, not a variable row). **The e-graph** on the k-means reference finds the same 31 variants in 0.13 s, against
+244 s before (208e23e7, one sort per data type).
 
 ## 8. Is it good for many kingdoms? The schema tested, kingdom by kingdom
 
@@ -878,7 +915,8 @@ Notation, one line a row:
 **Expressible: yes.** Needed only leak 4's fix (a substitute repair `{in0}`).
 
 **Strength.** The depth limit is not legality (`sin(sin x)` evaluates); it is a search-space limit, `must` today to
-keep T1/T2's behaviour, and the same choice as TSR's (8.3). **On read:** measured `min`/`max` of an input on the
+keep T1/T2's behaviour, and the same choice as TSR's (8.3). **Deferred (Andrew, 2026-11-05, section 10 item 3):**
+SR keeps `T1`/`T2` until the Futhark kingdom is done; these rows are the design for the later move. **On read:** measured `min`/`max` of an input on the
 training cases may seed alternative forms (`log x` where every training `x > 0`), but the protected log stays
 protected: a measured sign is not a declared one.
 
@@ -949,7 +987,7 @@ remove the clamp.
 | tabulate | `up tab: len := in0.value`; `down tab in1: var.i64 := 1; var.i64.bound := in0.value; env.trips := env.trips + 1` |
 | work bound | `guard tab (order 0): env.trips < depth must -> subst.own` (checked first); `hist.*` repair by `subst.const` |
 | loop state | `guard loop: in2.len = in1.len must -> fit.state; subst.own`, `fit.state` = `[in2] guard env.trips < depth: fit ...`, its guard read in argument 2's environment, one trip deeper, which is today's "body" site |
-| explicit adapters | Symbol `fit@[]f32`, `adapter`, prelude `def fit ...`; Argument `(size, f32, []f32) -> []f32`; `up fit@[]f32: len := in0.value`. Symbol `clampix`, `adapter`, prelude `def clampix ...`; Argument `(size, i64) -> i64`; `up clampix: bound := in0.value` |
+| explicit adapters (built, e87b9ee0) | Symbol `fit@a.E`, `adapter`, prelude `fit.fut`; Argument `(size, []E) -> []E` (no pad argument; the template writes `0{E}`); `up: len := in0.value`. Symbol `fitrows@m.E`, prelude `fitrows.fut`; Argument `(size, [][]E) -> [][]E`; `up: rows := in0.value`. Symbol `fitcols@m.E`, prelude `fit.fut`; Argument `(size, [][]E) -> [][]E`; `up: cols := in0.value`. Symbol `clampix@i64`, prelude `clampix.fut`; Argument `(size, i64) -> i64`; `up: bound := in0.value`. Repairs call them through `{call S(..)}` (`master/6/repairs.tsv`) |
 | entry | `guard entry: out.rows = k must -> [root] fit.root`; DataType `size`: size names `n >= 1`, `k >= 1`, `d >= 1`; no down flows of `entry` |
 
 **First pass: two gaps.** (a) Choosing between the known-length and the run-time-length text needs a condition on
@@ -1220,6 +1258,23 @@ inside a condition, and its widened substitution becomes substitute repairs.
     a variable outside it names whatever sits at the same distance where it lands. Marriage re-encodes those; the GPU
     operators that move cells (transposition, recombination) do not, so after them an outer reference may name another
     variable of the same data type. The child is still legal, and its fitness judges it.
+14. **Phase 2's known limits (e87b9ee0).** Shared-definition (ADF) rendering was dropped for the new tables and is
+    not yet rebuilt. Of 200 random genes per view, 13 that mix a placed adapter with repairs do not read back into the
+    same gene; they are counted, and none is read wrongly.
+
+### 8.17 Proof results so far (2026-11-05)
+
+| check | result |
+|---|---|
+| random genes per view pass `futhark check` | 1,000 of 1,000 |
+| compiled runs per view against the interpreter | 100 of 100, bit for bit |
+| reference programs rendered | 15, byte for byte |
+| the reader on the pool programs | 842 of 842 |
+| interpreter against Futhark's C backend | 1,499 of 1,500; the one difference is Futhark folding `0/x` (`docs/issues/2026-11-05_futhark_zero_division_fold.md`) |
+| random genes with no adapter, per view | reduce 99.9 %, scan 99.9 %, histogram 16.6 %, pathfinder 31.6 %, a7 3.3 %, k-means 7.8 % |
+
+The last row is the search risk to watch: in most views a random gene needs adapters, so the search may drift toward
+adapter-heavy programs. The guard is the cost, which charges every adapter, placed or repaired.
 
 ## 9. What changes, by repository
 
@@ -1241,8 +1296,8 @@ inside a condition, and its widened substitution becomes substitute repairs.
     each variable (0 = the innermost).
   - **Built 2026-11-05 (phase 2):** the Futhark views are four-row tables (`tables.tsv`); adapters are symbols, repairs are
     templates calling them, formula spellings are rows; renderer, interpreter, cost and reader read only those rows.
-    Deviation from section 5: `fit` pads with the element's zero and takes no pad argument (`fit(size, []E)`), so a view
-    whose element has no leaf (A7) can still place and call it.
+    `fit` pads with the element's zero and takes no pad argument (`fit(size, []E)`), so a view whose element has no
+    leaf (A7) can still place and call it; section 5 now describes this.
 - **phylu (evolution):**
   - The typed layout: fewer types, and the index words as a Dc-style array beside each type's region.
   - The point mutation edits an index word as it edits a constant.
@@ -1253,5 +1308,9 @@ inside a condition, and its widened substitution becomes substitute repairs.
 
 1. The adapters' meaning for Futhark: pad with the element's zero and truncate (`fit`), clamp indices (`clampix`),
    take the shorter length for elementwise pairs. Alternatives: repeat the last element; map to the longer length.
+   **Decided 2026-11-05 (Andrew): YES**, as built.
 2. Whether `?` properties (run-time lengths, after a filter) are in the first version.
+   **Decided 2026-11-05 (Andrew): NO.** The first version has only lengths known from the entry's sizes; the `?`
+   rows of section 5 and 8.5 (the `let ad_l` and `let [ad_m]` forms) are kept as design for a later version.
 3. Whether SR's transcendental depth moves to a property now, or stays as `T1`/`T2` until the Futhark kingdom is done.
+   **Decided 2026-11-05 (Andrew): DEFERRED.** SR keeps `T1`/`T2` for now (8.1).
