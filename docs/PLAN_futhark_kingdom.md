@@ -1746,6 +1746,15 @@ GPU run on two laws is a script for the lead (`smoke_k1.sh`, under the GPU lock)
 | K4 | Futhark pixel family | check it loads through the rows (no port expected) | fuller | 100 random genes pass `futhark check` |
 | K5 | deprecated: `futhark_1d`, the old `wgsl`, `safewgsl` | deleted, not migrated (their reference programs kept as text) | fuller | the suites pass without them |
 
+**K4 built (2026-11-05):** the pixel family is three variants of `futhark` in `kingdoms/master/`
+(`futhark.pixel.volumepassage`, `.cuneus`, `.image`; `kingdoms/futhark/pixel_rows.py` through `gen_tables.py`): seven
+shape types (`image`, `blk`, `body1/3/5`, `f32`, `count`) where the dual tables had 435; scope by `var.f32` Flow rows
+(`let`, `block`, `loop` bind, `var@f32` names a variable in scope, the picture binds `px`, `py`); the loop bound by
+`env.trips` (`guard loop: env.trips < 2 must -> {const}`); the f32 literals and the trip counts as constant pools. No
+schema change. `src/futhark_pixel/rows.rs` loads, decodes, renders, reads the references, interprets, and holds the
+e-graph over the rows (generated with the rows). Deleted: the dual tables and their API. Smoke: 20 random genes pass
+`futhark check`; both references draw the dual tables' picture bit for bit (checked before the deletion, then pinned).
+
 **WGSL, left for later (K3's report, 2026-11-05 21:11Z):** the reader `true_reader` (real WGSL text into a gene: match
 values to the 9 data types, lets and loop counters as `var.T` words, builtins as entry parameters; days of work); the
 e-graph, hoist and trips optimisers (they read the old fuel strata, to be rewritten over `env.work`); module interfaces
