@@ -253,6 +253,11 @@ The tables are committed, like the 1-D Futhark kingdom's, so the loader's
 committed table is the trust boundary; `--write` regenerates and then runs the
 same checks.
 
+**Master 6** (plan section 7): data types, properties, requirements and
+bindings in place of the classes and contexts. Its format, the decisions it
+takes and converted example rows are in `master/README.md`; its files land in
+`master/6/` beside master 5 (task F1a). Everything below describes master 5.
+
 ## The problems are views over the master (`master/`, `sig/<problem>/`)
 
 Every row lives once, as a template, in `master/rows.tsv`. A problem's

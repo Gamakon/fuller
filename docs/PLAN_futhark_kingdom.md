@@ -1368,6 +1368,13 @@ rebuilt through the tables is today's for SR, regex, TSR, the three WGSL kingdom
 kingdoms and the five signature views (k-means: 110,871 symbols); mixed data types; round trips; the check's defects.
 No kingdom converted.
 
+**F0 status (2026-11-05): done.** The master 6 format is in `kingdoms/futhark/master/README.md`. It has the files and
+their columns, the master 5 to master 6 mapping, eleven rows converted by hand, and the decisions. Requirement
+relations are `=`, `<=` and `<`; `<` is used only for the work bound `env.trips < depth`, a subject G3 adds. A table of
+which property kinds compare lets `bound <= len` through. The lambda-body rule is an ordinary input requirement. Each
+requirement names its adapter, and adapter `let`s use the reserved names `ad_*`. A heavy adapter that would break the
+work bound substitutes its node. Andrew's confirmation of the work bound (7.5a item 1) is still open.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
