@@ -1717,6 +1717,27 @@ kingdom's rows. **Export and import:** one kingdom, a variant or all of them, to
 to exchange and back up kingdoms; import checks rows as the loader does; export-all then import into empty tables is
 byte-identical (a fast test). Futhark and TSR move in first; K1 to K3 write into the warehouse, never per-kingdom files.
 
+**K0 built (2026-11-05):** `kingdoms/master/` holds `kingdoms.tsv` (14 rows: `futhark` and its 7 problem views,
+`tsr` and its 5 variants) and one table per entity with a `kingdom` column (data types, symbols, spellings, arguments,
+flows, guards, repairs, entries) plus the shared property catalogue (moved from `kingdoms/properties.tsv`); the layout
+and the columns are in design 3.3. Loader: `geneframe::master::select(K)` / `view("futhark", problem)` ->
+`Selection::load` -> `(KingdomTables, Entry)` through `parse_named`, unchanged. Writer: `kingdoms/master/write_rows.py`
+(`write_kingdom`, `check_kingdom`, `rows_of_named`, `named_of_rows`, export/import JSON, `--selftest`); `view.py` and
+`gen_tables.py` write only their kingdom's rows through it. Proofs kept: every Futhark view's rows byte for byte what
+`view.py` and `master6.rs` compute, the generators' `--check`, the TSR equality tests, the Rust rendering of the named
+text equal to the Python's for all 12 variants. Deleted: `sig/<problem>/m6/tables.tsv`, `kingdoms/tsr/<variant>/tables.tsv`.
+
+**K1 built (2026-11-05):** the symbolic regression kingdom is the `depth` variant of the TSR rows (`tsr.depth` in
+`kingdoms/master/`: `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> {in0}` on the ten raising unaries),
+chosen in phylu by `EVOLVE_SR_PROPS=depth` (the law runner's default; `none` is the one-type kingdom with no guard).
+Deleted, both repositories: the depth ladder of types (`Ty::T1`, `Ty::T2`, `typed_depth_table`, `EVOLVE_TYPED_DEPTH`,
+`Config::typed_depth`, the ladder in `typed_decode.wgsl` and its host twin) and the dual TSR row forms (`types.tsv`,
+`functions.tsv`, `TsrKingdom`, `Ty::Tsr`, phylu `tsr_typed`, `SymbolTable::tsr`, `EVOLVE_SR_KINGDOM`); the retired
+`Ty::Tsr` code range stays unassigned so no other family's device code moved. No old gene is read; programs are text.
+Smoke test (CPU, `src/tsr_kingdom/rows/tests.rs`): 1,000 random genes decode on the rows to legal expressions (no
+path with more than two transcendentals) and the host decode equals the device rules' decode on every gene. The 60 s
+GPU run on two laws is a script for the lead (`smoke_k1.sh`, under the GPU lock).
+
 | task | kingdom | rows (design section) | owner of the code | smoke test |
 |---|---|---|---|---|
 | K1 | symbolic regression | `F` with `depth`; up flows; `guard sin: in0.depth <= 1 must -> subst.in0` (design 8.1); `T1`/`T2` deleted | fuller rows + phylu decoder | 1,000 random genes decode to legal expressions equal to the host twin; one 60 s phylu run on 2 laws, best fitness improves |
@@ -1724,6 +1745,11 @@ byte-identical (a fast test). Futhark and TSR move in first; K1 to K3 write into
 | K3 | WGSL (`wgsl_true`) | width, space, access, len, bound, uniform properties; `let` bindings by `var.T`; the loop work bound (design 8.4) | fuller rows + phylu `true_wgsl_fit` | 200 random genes pass naga validation N of N and run under the work bound; one 60 s phylu run, best fitness improves |
 | K4 | Futhark pixel family | check it loads through the rows (no port expected) | fuller | 100 random genes pass `futhark check` |
 | K5 | deprecated: `futhark_1d`, the old `wgsl`, `safewgsl` | deleted, not migrated (their reference programs kept as text) | fuller | the suites pass without them |
+
+**WGSL, left for later (K3's report, 2026-11-05 21:11Z):** the reader `true_reader` (real WGSL text into a gene: match
+values to the 9 data types, lets and loop counters as `var.T` words, builtins as entry parameters; days of work); the
+e-graph, hoist and trips optimisers (they read the old fuel strata, to be rewritten over `env.work`); module interfaces
+(one variant per entry plus a linker row). The 305-type tables stay until the GPU smoke passes.
 
 Smoke tests are fast (each CPU check under a minute; each GPU run 60 s, one at a time under the GPU lock, watched with
 `evowatch`). They show the kingdom decodes legal programs and learns; they are not studies.
