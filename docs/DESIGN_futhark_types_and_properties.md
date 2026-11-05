@@ -63,7 +63,23 @@ Ty = S | I | F | B | A | L | T1 | T2 | (NLP labels) | ... | Futhark(u16) | ...
 | **Requirement** | a constraint an input property must meet | symbol, input property, must equal (another input property, a size, a constant) | `map2.add`: in0.len = in1.len; `hist`: in1.len = in2.len |
 | **Binding** | a variable an argument makes visible to its own subtree | symbol, argument position, the variable's data type, its properties (by rule) | `tabulate`: argument 1 binds an index `i64` with bound = in0; `map`: the body binds one element of in0 |
 
-### 3.2 What derives from what
+### 3.2 Gene expression programming: arity stays explicit and fixed
+
+GEP sizes every open reading frame from the symbols' arities, before any gene is expressed. This model keeps that:
+
+1. **Every symbol's arity is fixed by its Argument rows.** The typed arity Karva needs (the count of inputs of each
+   data type) is the count of those rows, derived once when the table loads. It is the same many-hot arity as today.
+2. **The frames are sized by the same formulas:** each data type's head and tail from the most inputs of that type any
+   symbol takes, `t = h·(n_max − 1) + 1` per type. Fewer types give fewer and smaller frames.
+3. **Properties, rules, requirements and bindings never change arity.** They are read after Karva has expressed the
+   tree.
+4. **Adapters are not in the gene.** They are written into the rendered program text and take no cell.
+5. **`var.T` is a terminal of arity 0.** Its index word is in a Dc-style array of fixed length beside its data type's
+   region, one word a cell, as GEP-RNC keeps its constants.
+
+The model forbids a symbol whose number of arguments depends on a property: arity must be known before expression.
+
+### 3.3 What derives from what
 
 - **Arity** (the count per data type that Karva's head and tail need) is derived from the Argument rows. The gene
   layout and the GPU's typed variation are unchanged: they read Argument and DataType only.
