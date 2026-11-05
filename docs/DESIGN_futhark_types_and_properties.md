@@ -7,6 +7,16 @@ formula operators, the trip count subject, no output subject, the hard-coded sub
 sixth (sizes assumed at least 1). Section 8 tests it against eleven kingdoms with their rows, and holds the gaps found,
 what stays code, what changes from today's code and the honest limits. Sections 4, 5 and 9 follow it. It starts from the gene frame's data model, changes it, and then applies it to the Futhark kingdom first
 (WGSL later). It supersedes the type estimates of `docs/PLAN_futhark_kingdom.md` section 7 where they differ.
+**Revised again 2026-11-05 (data on read), agreed in principle with Andrew** after reviewing the "flat enhanced
+format" of his data-quality tool (book.dataradar.co.uk, chapter 9: each data item is an object holding its raw value,
+never changed, the properties that rules measure from it, and the corrected forms that transformation rules make beside
+it; "data quality on read"). What changed and why: a terminal is now an object (its value, its properties, optional
+alternative forms); properties are defined once in one catalogue for every kingdom and attached to data types by an
+edge table, so a kingdom's properties follow from its view's data types; measure rules fill a terminal's properties
+from the training cases, once, offline; every property value records its source (declared or measured) and every
+requirement its strength (must or advise), so a measured value can never make a program legal. The schema had not yet
+frozen, so these go in now (section 3.7 lists what was taken, what was not, and when). Sections 3, 4, 5, 8 and 9
+carry the change.
 
 ## 1. Context
 
@@ -77,6 +87,34 @@ points' contract, written into the comparison.
 - **Size names are rows with a lower bound.** The comparison reads `n >= 1` from the table, not from code. Leak 6
   disappears.
 
+The next six decisions come from the flat enhanced format (status line; section 3.7).
+
+- **A terminal is an object:** its value, its properties, and optional alternative forms of it. The gene reasons about
+  a terminal only through these. Its properties come from declarations (the program's signature) and from
+  measurements (the training cases). This is the flat enhanced format's data item: the raw value never changes; rules
+  record what they measure about it and the corrected forms they make beside it.
+- **One property catalogue for every kingdom.** Each property (`len`, `rows`, `cols`, `bound`, `depth`, `order`,
+  `trips`, `dtype`, `uniform`, ...) is defined once: its name, kind and meaning, its measure rule, and later its one
+  entry in the device's formula bytecode (8.16, limit 8), each written once. An edge table says which properties a data
+  type carries; a kingdom's properties follow from its view's data types. This replaces today's per-kingdom
+  PropertyType rows (migration in 8.15).
+- **Measure rules are property rules at a leaf.** Where a PropertyRule reads a node's children, a measure rule reads a
+  terminal's data. Measurement runs once, offline, before evolution, on the training cases only (never the test cases:
+  that would leak the test set), and is written into the entry tables as rows. The decoder stays symbolic: nothing is
+  measured while decoding or evolving.
+- **Every property value records its source:** `declared` (from the signature: holds for every input) or
+  `measured on <case set>` (holds only for the cases seen). A measured value may choose a template, feed the cost, or
+  seed a choice. It never makes a `must` requirement hold and never removes a legality adapter.
+- **Every requirement has a strength:** `must` (enforced: its repair runs, so every gene stays legal) or `advise`
+  (a preference: no repair; a failure is reported and may be charged by the cost). Every legality rule is `must`, and
+  the tests enforce it (3.3). A search-space limit may be either; section 8 states each kingdom's choice.
+- **Alternative forms are extra variables.** A transformation rule on an entry parameter makes a corrected or derived
+  form (a standardised date, a sorted copy, a normalised vector) that sits beside the raw value as one more variable
+  of the root environment, chosen by `var.T`'s index word like any other. Evolution takes it or leaves it. Arity and
+  the alphabet do not change; only the count of variables c grows (3.5). The cost charges an expensive form (a sort).
+  **Adapters are corrected forms made on read:** `fit xs` is to `xs` what a standardised date is to the raw date, made
+  where a requirement needs it rather than up front.
+
 ### 3.2 Diagram
 
 ```mermaid
@@ -87,7 +125,9 @@ erDiagram
     SYMBOL ||--o{ REQUIREMENT : "must meet"
     SYMBOL ||--o{ BINDING : "binds"
     SYMBOL ||--o{ ENVIRONMENT_RULE : "changes"
-    DATA_TYPE ||--o{ PROPERTY_TYPE : "carries"
+    DATA_TYPE ||--o{ DATA_TYPE_PROPERTY : "carries"
+    PROPERTY ||--o{ DATA_TYPE_PROPERTY : "carried by"
+    PROPERTY ||--o{ ENTRY_PROPERTY : "valued as"
     DATA_TYPE ||--o{ CONSTANT_PROPERTY : "constant has"
     DATA_TYPE ||--o{ ARGUMENT : "types"
     DATA_TYPE ||--o{ BINDING : "types"
@@ -99,6 +139,9 @@ erDiagram
     ENTRY ||--o{ ENTRY_REQUIREMENT : "result must meet"
     ENTRY ||--o{ SIZE_NAME : "names"
     ENTRY ||--o{ ENTRY_ENVIRONMENT : "starts with"
+    ENTRY_PARAMETER ||--o{ ENTRY_PROPERTY : "has"
+    TRANSFORM ||--o{ ENTRY_PARAMETER : "makes an alternative form"
+    DATA_TYPE ||--o{ TRANSFORM : "from, to"
 
     SYMBOL {
         int id PK
@@ -123,12 +166,18 @@ erDiagram
         string property
         formula value
     }
-    PROPERTY_TYPE {
-        int data_type FK
-        string name
+    PROPERTY {
+        string name PK
         enum kind "size, bound, range, tag, flag, list"
         enum element "for a list: size, range, tag, flag"
         list values "for a tag: its legal names"
+        string meaning
+        string measure "its measure rule; empty if never measured"
+        int bytecode "later: its one device formula entry"
+    }
+    DATA_TYPE_PROPERTY {
+        int data_type FK
+        string property FK
     }
     ARGUMENT {
         int symbol FK
@@ -146,6 +195,7 @@ erDiagram
         int symbol FK
         int order
         condition holds
+        enum strength "must, advise"
     }
     REPAIR {
         int symbol FK
@@ -195,10 +245,26 @@ erDiagram
     ENTRY_PARAMETER {
         string name
         int data_type FK
-        list properties
+        string form_of "empty for a raw value; else its raw parameter"
+        string transform FK "empty for a raw value"
+    }
+    ENTRY_PROPERTY {
+        string parameter FK
+        string property FK
+        formula value
+        string source "declared, or measured on a case set"
+    }
+    TRANSFORM {
+        string name PK
+        int from_type FK
+        int to_type FK
+        string template
+        list properties "the form's, from the raw's"
+        formula cost
     }
     ENTRY_REQUIREMENT {
         condition holds
+        enum strength "must, advise"
         list repair
     }
     SIZE_NAME {
@@ -214,7 +280,7 @@ erDiagram
 ### 3.3 The tables, one per entity
 
 Columns marked **new** are not in today's code; **(test)** marks those the kingdom test of section 8 added to the
-first draft.
+first draft; **(on read)** marks those the flat enhanced format added (3.1, the last six decisions).
 
 **Symbol.** A function or terminal. Its arity is derived from its Argument rows, as today (section 3.5).
 
@@ -235,14 +301,32 @@ first draft.
 DataType. One row per property; the constant's spelling is a Spelling row of the data type under the form `const`,
 and a data type with no such spelling has no constant (Futhark's `size`).
 
-**PropertyType.** A property the values of a data type carry.
+**Property** **new** (on read). The property catalogue: one row per property, shared by every kingdom. Replaces
+today's per-kingdom PropertyType rows (8.15).
 
 | column | meaning |
 |---|---|
-| data_type, name | as today |
+| name | unique across kingdoms: `len`, `rows`, `cols`, `bound`, `depth`, `order`, `trips`, `dtype`, `uniform`, `width`, `space`, `number`, ... Two kingdoms that mean the same thing use the same name; two meanings need two names |
 | kind | `size` (a count of elements), `bound` (an index's exclusive upper bound), `range` (an integer on an ordered scale: depth, order, rank, width), `tag` **new** (one name from an unordered set: an address space, a grammatical number, a dtype), `flag` (true or false), `list` **new** (test: SQL) (an ordered list of one element kind) |
 | element **new** | for a list, its element kind |
 | values **new** | for a tag (or a list of tags), its legal names; the table check reports any other tag literal |
+| meaning | one sentence, the definition every kingdom shares |
+| measure | the measure rule: a name from the closed list of measures in the offline sniffer (kingdom-free code: `axis_len(k)` for `len`, `rows`, `cols`; `max_plus_one` for `bound`; `is_sorted`; `dtype_of`; ...), applied to any data type that carries the property; empty for a property only declared or derived (`depth`, `order`, `trips`) |
+| bytecode | later: the property's one entry in the device's formula bytecode (8.16, limit 8) |
+
+An environment attribute (`trips`, `uniform`) names its catalogue row, so one name means one thing in properties and
+in environments.
+
+**DataTypeProperty** **new** (on read). `data_type, property`: the edge table, which properties a data type carries
+(`[]f32: len`; `[][]f32: rows, cols`; `i64: bound`; `F: depth, order, fam, arm, ties`). A kingdom's properties are the
+properties of its view's data types, so a view generator writes data types and the edges follow; no kingdom declares a
+property of its own.
+
+**Measure rules** (on read) are a property rule at a leaf: the catalogue's `measure` reads a terminal's data where a
+PropertyRule reads a node's children. The sniffer runs them once, offline, before evolution, over the training cases
+only, and writes each result as an EntryProperty row with source `measured on <case set>`. A measured value is the
+value that holds over every training case (the largest index plus one, the one length every case shares), else `?`.
+Nothing is measured during decoding or evolution.
 
 **Argument.** As today (symbol, position, direction, data type), plus `head` **new** (test: NLP): the argument that
 receives a form asked of the node (a verb phrase's verb).
@@ -251,8 +335,17 @@ receives a form asked of the node (a verb phrase's verb).
 (test: TSR), in an order without cycles, which the table check finds, as it does today for bindings
 (`decode_order`).
 
-**Requirement.** `symbol, order, condition`. It holds when its condition is decided true (section 3.4.4). Rows are
-checked in `order`.
+**Requirement.** `symbol, order, condition, strength`. It holds when its condition is decided true (section 3.4.4).
+Rows are checked in `order`. `strength` **new** (on read) is `must` or `advise`:
+
+| strength | when it does not hold | used for |
+|---|---|---|
+| `must` | its repair runs (the first adapter whose guard holds), so the program is legal; a measured value never makes it hold (3.4.4) | every legality rule (map2 lengths, index bounds, a WGSL access mode) and every safety rule (a work bound that protects the device); a search-space limit may also be `must` |
+| `advise` | no repair; the decoder reports the failure, and the cost may charge it | a preference: a search-space limit left to selection, the cost side of a work bound, Spark's repartition |
+
+The table check fails a `must` requirement with no repair. The tests enforce the rule that every legality rule is
+`must`: the random genes of every kingdom's test must render, compile and run N of N with every `advise` requirement
+ignored, so a legality rule written as `advise` fails them.
 
 **Repair** **new**. The ordered adapter calls of one requirement: `rank, adapter, site, parameters`. The site is `node`,
 `in<k>` or `root` (an entry requirement); the parameters are formulas the template reads as `{p0}`, `{p1}`. Today a
@@ -283,9 +376,23 @@ sets `attribute` to `formula`, read over the node's environment (`env.a`) and it
 (`in<j>.p`, ordered as bindings are today). Replaces `TripArgument`.
 
 **Entry** (one per problem, written by the view generator as today, now part of the schema): `EntryParameter` (name,
-data type, properties: the root environment's variables, including builtins such as WGSL's invocation ids),
-`EntryRequirement` (a condition on `out` and its repair, site `root`), `SizeName` **new** (a size name and its lower
-bound; replaces the hard-coded `at_least_one`), `EntryEnvironment` (a root value overriding an attribute's default).
+data type: the root environment's variables, including builtins such as WGSL's invocation ids, and the alternative
+forms below), `EntryProperty` **new** (on read: parameter, property, value, `source`), `EntryRequirement` (a
+condition on `out`, its strength and its repair, site `root`), `SizeName` **new** (a size name and its lower bound;
+replaces the hard-coded `at_least_one`), `EntryEnvironment` (a root value overriding an attribute's default).
+
+**Source** **new** (on read), on every EntryProperty row: `declared` (from the program's signature: `points : [n][d]f32`
+gives `rows = n`, `cols = d`; it holds for every input) or `measured on <case set>` (a measure rule's result; it holds
+only for the cases seen). A value a rule or binding derives carries `measured` if any value it reads does, else
+`declared`. A measured value may choose a template, feed the cost, or seed a choice (a start individual's variable); it
+never makes a `must` requirement hold and never removes a legality adapter.
+
+**Transform** **new** (on read). A transformation rule: `name, from_type, to_type, template, properties, cost`. An
+EntryParameter with `form_of` and `transform` set is an **alternative form**: the raw parameter rendered through the
+template once, at the program's head (`let points_sorted = sort points`), with its properties given by the rule from
+the raw's (a sorted copy keeps `len` and gains `sorted = true`; a normalised vector keeps `len`). It is one more
+variable of `to_type` in the root environment. The raw value stays and never changes; the cost charges `cost` once if a
+program uses the form.
 
 ### 3.4 The formula language (closed list)
 
@@ -337,8 +444,13 @@ A flag property is a condition, and a condition may be a flag rule's formula (`u
 Three values: **holds**, **fails**, **undecided**. `?` anywhere makes a comparison undecided. `=` holds on identical
 spellings and fails on two different literals (tags, flags, integers, fully literal lists); otherwise undecided. `<=`
 holds by today's rules (literals; a literal at most a size name's lower bound from SizeName; min and max argument
-rules) and fails on two literals. A requirement **holds** only when its condition holds; on fail or undecided its
-repair runs. A comparison that a cleverer prover could decide costs only a needless adapter, as today.
+rules) and fails on two literals. A requirement **holds** only when its condition holds; on fail or undecided a `must`
+requirement's repair runs and an `advise` requirement's failure is reported. A comparison that a cleverer prover could
+decide costs only a needless adapter, as today.
+
+**Source in comparisons.** In a `must` requirement's condition every value whose source is `measured` reads as `?`,
+so a measurement can leave it undecided (its repair runs) but never make it hold. An `advise` requirement, a guard, a
+template's `when` and the cost read measured values as they are.
 
 **Kinds that compare** (today's README 5.2, extended): size with size, bound and integer literals; bound only by `<=`;
 range with range and integer literals; tag with tag and tag literals by `=`; flag with flag by `=`; a list with a list
@@ -357,6 +469,9 @@ GEP sizes every open reading frame from the symbols' arities, before any gene is
 4. **Adapters are not in the gene.** They are written into the rendered program text and take no cell.
 5. **`var.T` is a terminal of arity 0.** Its index word is in a Dc-style array of fixed length beside its data type's
    region, one word a cell, as GEP-RNC keeps its constants.
+6. **Alternative forms add variables, not symbols.** A form is one more variable of its data type in the root
+   environment; `var.T` reaches it through its index word (w mod c, with c one larger). The alphabet, the arities, the
+   frames and the gene's length are unchanged.
 
 The model forbids a symbol whose number of arguments depends on a property: arity must be known before expression.
 
@@ -366,32 +481,66 @@ The model forbids a symbol whose number of arguments depends on a property: arit
   layout and the GPU's typed variation are unchanged: they read Argument and DataType only.
 - **Ty codes** stay data types. `Ty::Futhark(u16)` indexes the DataType table: about 8 rows for k-means.
 - **Properties, rules, requirements, repairs, bindings and environment rules** are read only by the decoder, on the host.
-- A kingdom with no PropertyType rows works exactly as today.
+- **A kingdom's properties** derive from its view's data types through DataTypeProperty; it declares none itself.
+- **Measured values** are rows written offline before a run; neither the decoder nor the device measures anything.
+- A kingdom whose data types carry no DataTypeProperty rows works exactly as today.
+
+### 3.7 Data quality on read: what is taken from the flat enhanced format, what is not, and when
+
+The flat enhanced format keeps each data item as an object: the raw value (never changed), shape masks (HU, LU),
+and Rules holding measured properties and corrected forms (`std_date`). Consumers take a corrected form or leave it;
+the quality work is done on read. Section 3.1's last six decisions are what this design takes from it. Deliberately
+not taken:
+
+| not taken | why |
+|---|---|
+| unicode shape masks (HU, LU) for numeric kingdoms | they describe text; a number's shape is its properties. Kept as a later measure rule for the string kingdoms (regex, NLP, SQL) |
+| dotted provenance paths | presentation; the provenance the decoder needs is the `source` column |
+| ragged records (an item with any number of rules) | GEP needs fixed arity (3.5); the catalogue and edge table fix which properties a data type carries |
+| several competing values of one property | the design's `?` covers it: values that disagree across cases are unknown |
+| profiling during evolution | never: measurement is offline, on training cases, before the run |
+
+| when | what |
+|---|---|
+| **now**, before the schema freezes | the Property catalogue and the DataTypeProperty edge table; the `source` column; the `strength` column |
+| **later** | the sniffer measuring the training cases (a profiler of the entry inputs in the style of the flat enhanced format); alternative entry forms, kept only if an A/B run shows they help; shape masks for string kingdoms |
+| **never** | a measured value removing a legality adapter |
 
 ## 4. The decoder
 
 The gene is unchanged: Karva, the head and tail of each data type, and a Dc-style array of index words beside each
-type's region. Decoding runs in five passes, each deterministic in the gene alone:
+type's region.
+
+**Before any run, once, offline (not a pass):** the view generator writes the entry tables: each parameter's declared
+properties from the signature, its alternative forms (Transform rows), and, later, the sniffer's measured properties
+from the training cases, each EntryProperty row with its source. Decoding then runs in five passes, each
+deterministic in the gene and these rows alone:
 
 1. **Express** (as today): breadth-first, giving the tree of symbols.
-2. **Environment, top-down:** the root's environment is the entry point's parameters, each with its data type and
-   properties from the signature (`points : [n][d]f32` → rows = `n`, cols = `d`). A child's environment is its
+2. **Environment, top-down:** the root's environment is the entry point's parameters and their alternative forms, each
+   an object: its data type and its EntryProperty rows with their sources (`points : [n][d]f32` → rows = `n`,
+   cols = `d`, declared). A child's environment is its
    parent's plus the Binding rows of the argument it fills, with its attributes (`env.trips`, `env.uniform`, ...)
    set by the EnvironmentRule rows of that argument (the root's from EnvironmentAttribute and EntryEnvironment).
 3. **Variables:** each variable terminal `var.T` takes the index word w at its cell and becomes the (w mod c)-th
-   variable of data type T in its environment (c of them). With none (c = 0) it becomes T's constant.
+   variable of data type T in its environment (c of them, raw values and alternative forms alike). With none (c = 0)
+   it becomes T's constant.
 4. **Properties, bottom-up, and requirements:** each node's properties from its children by its PropertyRule rows,
-   as symbolic expressions (`n`, `k`, `d`, a literal, or `?` when only known at run time); each Requirement is
-   a condition evaluated three-valued (section 3.4.4). A requirement that does not hold takes the first adapter of
-   its Repair rows whose guard holds in the environment of its site. A `replace` adapter (`subst.own`, `subst.const`,
+   as symbolic expressions (`n`, `k`, `d`, a literal, or `?` when only known at run time), each carrying its source
+   (3.3); each Requirement is a condition evaluated three-valued (section 3.4.4), a `must` one with measured values
+   read as `?`. A `must` requirement that does not hold takes the first adapter of its Repair rows whose guard holds
+   in the environment of its site; an `advise` requirement that does not hold is recorded on the node for the report
+   and the cost, and nothing is repaired. A `replace` adapter (`subst.own`, `subst.const`,
    `subst.in0`) replaces the node, which takes its substitute's properties, and none of the node's other adapters
    render; requirements are checked in their `order`, so a work bound (`env.trips < depth`) is checked first.
 5. **Render:** where every requirement holds, the plain spelling (its Spelling row); where one fails, the spelling
    wrapped by its `wrap` adapter's template (AdapterTemplate), one of our own functions that makes the property hold
-   at run time, with the adapter's prelude added once. The template engine is kingdom-free (8.14.2).
+   at run time, with the adapter's prelude added once; each alternative form the program uses is bound once at its
+   head by its Transform template. The template engine is kingdom-free (8.14.2).
 
-This is `Terminal_With_Properties`: a terminal is reached as its value plus its properties (pass 2 and 3), and every
-function carries its properties up (pass 4).
+This is `Terminal_With_Properties`: a terminal is reached as an object, its value plus its properties and their
+sources, raw or an alternative form (pass 2 and 3), and every function carries its properties up (pass 4). The passes
+read measured values from rows; they never look at data.
 
 The GPU never runs passes 2 to 5. Every gene is legal whatever its index words and properties, so the device draws,
 varies and selects symbols by data type, as now.
@@ -403,6 +552,12 @@ In the schema of section 3 these are Adapter rows with AdapterTemplate rows: `fi
 environment (an operand that is a loop's or lambda's body is one trip deeper), so a heavy adapter that would run too
 deep is skipped and the requirement's next repair, `subst.own` (`replace`, by `in.own; const`), replaces the node;
 `clampix` has no guard; `subst.const` is `replace, by const`. The rows are in 8.5.
+
+In the terms of the flat enhanced format, an adapter is a corrected form made on read: `fit l z xs` is to `xs` what a
+standardised date is to the raw date, and `clampix m i` to `i`. The raw value is not changed; the form is made where a
+`must` requirement needs it. So a measured property can never replace an adapter: k-means' `assign` measured on the
+training cases with `bound = k` still renders `clampix k`, because a test case, or a value the program computes, may
+fall outside what the training cases showed.
 
 Rendered once in each program's prelude:
 
@@ -496,29 +651,39 @@ Each kingdom's characteristic rules written as rows in the schema of section 3: 
 (Typed Symbolic Regression), WGSL, Futhark, NLP, SQL, Spark (Dagnetic), Lua, Python with numpy, Brainfuck. A rule that
 would not fit is a schema gap; each gap was closed by a general addition (8.13) and the kingdom re-checked. **Result:
 eleven of eleven are expressible as rows; seven needed an addition on the first pass; none needs kingdom code in the
-decoder.**
+decoder.** Each kingdom also states the strength of its requirements (`must` or `advise`, 3.3) and, where it has one,
+what a measured property or an alternative form would give it.
 
 ### 8.0 How the test was run
 
 Notation: `symbol: formula` for a rule, `symbol: condition -> repair` for a requirement (repair adapters separated by
-`;`, site in brackets), `binds` for a Binding, `env` for an EnvironmentRule.
+`;`, site in brackets), `binds` for a Binding, `env` for an EnvironmentRule. A property in a `Property, DataTypeProperty` row below
+is a catalogue Property with a DataTypeProperty edge (`F.depth`: data type `F` carries the catalogue's `depth`). Every
+requirement written with a repair is `must`; an `advise` one is marked and has no repair.
 
 ### 8.1 Symbolic regression (transcendental depth, today's `T1`, `T2`)
 
 | table | rows |
 |---|---|
-| DataType, PropertyType | `F`; `F.depth` range; constant `depth = 0` |
+| DataType, Property, DataTypeProperty | `F`; `F.depth` range; constant `depth = 0` |
 | PropertyRule | `add: depth = max(in0.depth, in1.depth)`; `sin: depth = in0.depth + 1`; `neg: depth = in0.depth` |
 | Requirement | `sin: in0.depth <= 1 -> subst.in0` |
 | Adapter | `subst.in0: replace, by in0` |
 
 **Expressible: yes.** Needed only leak 4's fix (a replace adapter by `in0`).
 
+**Strength.** The depth limit is not legality (`sin(sin x)` evaluates); it is a search-space limit, `must` today to
+keep T1/T2's behaviour, and the same choice as TSR's (8.3). **On read:** measured `min`/`max` of an input on the
+training cases may seed alternative forms (`log x` where every training `x > 0`), but the protected log stays
+protected: a measured sign is not a declared one.
+
 ### 8.2 Regex
 
 No property, rule, requirement or binding rows: the schema degenerates to today's regex kingdom. An optional
 characteristic row, a counted repetition: `rep(Pattern, I lo, I hi): in1.value <= in2.value -> swap` with
-`swap: wrap, template {0}{{=in2.value},{=in1.value}}`. **Expressible: yes**, no change.
+`swap: wrap, template {0}{{=in2.value},{=in1.value}}`. **Expressible: yes**, no change. **Strength:** the
+repetition's order is legality (POSIX rejects `a{5,3}`): `must`. **Later:** shape masks of the training strings as a
+measure rule, a string kingdom's first measured property.
 
 ### 8.3 TSR (Typed Symbolic Regression: depth and Horton-Strahler stream order, `docs/PLAN_futhark_kingdom.md` 8.1 and 8.2)
 
@@ -542,11 +707,17 @@ formulas inside its `if` (expressible, about 20 times longer, which T1's "sums o
 rules may read `out.p` without a cycle. Re-check: expressible, the four lines of plan 8.2 with no Strahler-specific
 operator (the plan's `PropertyExpr::Strahler` is not needed).
 
+**Strength: a choice for the TSR A/B.** Neither cap is legality: an order-4 or depth-2 tree evaluates. The order cap
+is a choice of search space. As `must` (today's plan 8.1 and 8.2, and the device decode) every expressed individual
+stays inside the space, and `subst.in0` is the repair. As `advise` the gene expresses the tree as written,
+evolution may pass through order-4 intermediates, the decoder reports the failure and the cost may charge it. The
+design holds both; the TSR A/B run decides, with `must` as the default until it has.
+
 ### 8.4 WGSL
 
 | table | rows |
 |---|---|
-| PropertyType | `vecf.width` range; `ptr.space` tag (`function`, `private`, `workgroup`, `storage`, `uniform`); `ptr.access` tag (`read`, `read_write`); `buf.len` size; `u32.bound` bound; `bool.uniform` flag |
+| Property, DataTypeProperty | `vecf.width` range; `ptr.space` tag (`function`, `private`, `workgroup`, `storage`, `uniform`); `ptr.access` tag (`read`, `read_write`); `buf.len` size; `u32.bound` bound; `bool.uniform` flag |
 | Rule, requirement: vector width | `add@vecf: width = in0.width`; `dot: in1.width = in0.width -> vfit[in1](in0.width)` |
 | Adapter `vfit` | wrap; templates: when `{p0} < in1.width`: `({1}).{=at(list('x','xy','xyz','xyzw'), {p0} - 1, '?')}`; when `in1.width < {p0}`: `vec{p0}<f32>({1}{for i < {p0} - in1.width : , 0.0})` |
 | Requirement: store | `store(ptr, f32): in0.access = 'read_write' -> drop` with `drop: replace, by const` (the `Stmt` constant is the empty statement) |
@@ -557,6 +728,11 @@ operator (the plan's `PropertyExpr::Strahler` is not needed).
 
 **First pass: gap.** The address space and the access mode are not sizes, ranges or flags; spelling them as integer
 ranges works but loses the check that `'storage'` is a legal value. **Fixed:** the `tag` kind. Re-check: expressible.
+
+**Strength: all `must`.** Vector width, the store's access mode and the barrier's uniform control flow are legality
+(naga rejects the program otherwise); the index clamp and the loop work bound are safety (a runaway kernel starved the
+display server on 2026-10-21). **On read:** `buf.len` measured on the training dispatches may choose a template, never
+remove the clamp.
 
 ### 8.5 Futhark
 
@@ -576,11 +752,19 @@ rewrites both operands inside the node's own spelling: **fixed** by the template
 8.14.2). The heavy-adapter decision is now the guard plus the ordered repair, with the same outcome: a heavy adapter
 whose site is at `trips >= depth` is skipped and `subst.own` replaces the node. Re-check: expressible.
 
+**Strength.** `must`: the `map2` lengths, the index bound, the loop state and the entry's result (legality: Futhark
+rejects the program or reads out of range), and the work bound `env.trips < depth`, which is a safety rule, not a
+preference: it protects the GPU from runaway kernels, so no measured value or cost trade may lift it. `advise`: the
+work bound's cost side, the work a program does within the bound, which the static cost (`src/futhark_cost.rs`)
+charges, with no repair. **On read:** k-means' `assign` measured with `bound = k` on the training cases may choose a
+template and feed the cost, never remove `clampix` (section 5); a sorted copy of an input is a candidate alternative
+form, charged by the cost as a sort, for the later A/B.
+
 ### 8.6 NLP (English)
 
 | table | rows |
 |---|---|
-| PropertyType | `Np.number` tag (`sg`, `pl`); `Np.person` tag (`1`, `2`, `3`); `Vp.number`, `Vp.person` tags |
+| Property, DataTypeProperty | `Np.number` tag (`sg`, `pl`); `Np.person` tag (`1`, `2`, `3`); `Vp.number`, `Vp.person` tags |
 | Terminals | `dog: number = 'sg', person = '3'`; `dogs: number = 'pl'`; the lemma `run: number = ?`, with Spelling `run` forms `sg3 -> runs`, `pl -> run`, `sg1 -> run` |
 | Rules | `vp(Verb, Np): number = in0.number` (argument 0 is `head`); `and(Np, Np): number = 'pl', person = '3'` |
 | Agreement | `clause(Np, Vp): in1.number = in0.number and in1.person = in0.person -> agree[in1]`; `agree`: wrap, template `{1@{=in0.number}{=in0.person}}` (operand 1 in that form; the form passes to the verb by `head`) |
@@ -590,11 +774,14 @@ whose site is at `trips >= depth` is skipped and `subst.own` replaces the node. 
 conjugate. **Fixed:** the Spelling table with forms, and `head` on Argument so a form asked of a phrase reaches its
 head word. Re-check: expressible, provided the lexicon lists each lemma's forms (section 8.16).
 
+**Strength:** agreement is the language's legality (a sentence that does not agree is not grammatical English):
+`must`. **Later:** shape masks of the training text as measure rules.
+
 ### 8.7 SQL
 
 | table | rows |
 |---|---|
-| PropertyType | `Rel.cols` list of tag; `Rel.types` list of tag; `Col.name` tag; `Col.dtype` tag; `Col.nullable` flag |
+| Property, DataTypeProperty | `Rel.cols` list of tag; `Rel.types` list of tag; `Col.name` tag; `Col.dtype` tag; `Col.nullable` flag |
 | Entry | parameter `orders: Rel, cols = list('id','cust','total'), types = list('int','int','num')` |
 | FROM binds columns | `select(Rel, Bool, Col)`: binds at positions 1 and 2, `count = len(in0.cols)`, a `Col` with `name = at(in0.cols, each, ?)`, `dtype = at(in0.types, each, ?)`, name template `{=out.name}`; rules `cols = list(in2.name)`, `types = list(in2.dtype)` |
 | join key types | `join(Rel, Rel, Bool)`: binds at position 2 the columns of in0 and of in1 (two binding rows); `cols = concat(in0.cols, in1.cols)`, `types = concat(in0.types, in1.types)`; `eq(Col, Col): in1.dtype = in0.dtype -> cast[in1]`, template `CAST({1} AS {=in0.dtype})` |
@@ -605,17 +792,27 @@ head word. Re-check: expressible, provided the lexicon lists each lemma's forms 
 **fixed** by Binding `count` and `each`. Re-check: expressible. A column list in `SELECT` is variadic and arity is
 fixed; it is written as a chain `cols(Col, ColList)` with list rules (section 8.16).
 
+**Strength:** the key-type cast and `UNION`'s matching types are legality: `must`. **On read:** `Col.nullable`
+measured false on the training rows may feed the cost or choose a template, never drop a null guard: a declared
+`NOT NULL` is the only source that removes one. A standardised date column is the flat enhanced format's own example of
+an alternative form, and a string column's shape masks a later measure rule.
+
 ### 8.8 Spark (Dagnetic)
 
 | table | rows |
 |---|---|
-| PropertyType | `Df.cols`, `Df.types`, `Df.part_keys`, `Df.sorted` lists of tag; `Df.parts` size; `Name.value` tag |
+| Property, DataTypeProperty | `Df.cols`, `Df.types`, `Df.part_keys`, `Df.sorted` lists of tag; `Df.parts` size; `Name.value` tag |
 | withColumn | `with(Df, Name, Col)`: binds at position 2 the columns of in0 (as SQL); `cols = concat(in0.cols, list(in1.value))`, `types = concat(in0.types, list(in2.dtype))`, `part_keys = in0.part_keys` |
 | join keys | `join(Df, Df, Name)`: binds at position 2 a `Name` per column of in0 (`count = len(in0.cols)`, `value = at(in0.cols, each, ?)`); `in2.value in in1.cols -> subst.in0` |
-| partitioning | `join: in0.part_keys = list(in2.value) -> repart[in0](in2.value)`; the same for in1; `repart`: wrap, heavy, template `{0}.repartition("{p0}")`; rule `part_keys = list(in2.value)` |
+| partitioning | `join: in0.part_keys = list(in2.value)` **advise** (no repair); the same for in1; a symbol `repart(Df, Name)`, template `{0}.repartition("{1}")`, for evolution to use; rule on `join`: `part_keys = list(in2.value)` |
 | window needs a sort | `lag(Df, Name, Name): at(in0.sorted, 0, ?) = in2.value -> sort[in0]`, template `{0}.sortWithinPartitions("{=in2.value}")` |
 
 **First pass: gap.** A key in the other side's columns is membership: **fixed** by `in`. Re-check: expressible.
+
+**Strength.** The join key's membership is legality (Spark's analysis rejects the plan): `must`. The partitioning
+requirement is a preference: Spark shuffles for the join anyway, so it becomes `advise`, with no `repart` repair; the
+cost charges the shuffle and evolution may write `repartition` itself. The window's sort stays `must`: without it
+`lag`'s result depends on the row order Spark happens to keep.
 
 ### 8.9 Lua and LuaJIT
 
@@ -623,7 +820,7 @@ One data type `v` (a dynamic language: the Lua type is a property), and `key`.
 
 | table | rows |
 |---|---|
-| PropertyType | `v.ltype` tag (`nil`, `boolean`, `number`, `string`, `table`, `function`); `v.fields` list of tag; `v.ftypes` list of tag; `key.value` tag |
+| Property, DataTypeProperty | `v.ltype` tag (`nil`, `boolean`, `number`, `string`, `table`, `function`); `v.fields` list of tag; `v.ftypes` list of tag; `key.value` tag |
 | field access | `get(v, key): in0.ltype = 'table' and in1.value in in0.fields -> getf[node]`; `getf`: wrap, template `getf({0}, "{=in1.value}")`, prelude `local function getf(t,k) if type(t)=="table" then return t[k] end end`; rule `ltype = if(in1.value in in0.fields, at(in0.ftypes, find(in0.fields, in1.value), ?), ?)` |
 | arithmetic | `add(v, v): in0.ltype = 'number' -> tonum[in0]`, template `(tonumber({0}) or 0)`; the same for in1; rule `ltype = 'number'` |
 | local | `local(v, v)`: binds at position 1 a `v` with `ltype = in0.ltype`, `fields = in0.fields`, `ftypes = in0.ftypes` |
@@ -631,13 +828,16 @@ One data type `v` (a dynamic language: the Lua type is a property), and `key`.
 
 A table of unknown shape has `fields = ?`: `in` is undecided, the requirement runs its repair, and the program
 reads `nil` by Lua's own rule through `getf`. **First pass: gap.** The field's type is at the field's position:
-**fixed** by `find`. Re-check: expressible.
+**fixed** by `find`. Re-check: expressible. **Strength: all `must`:** field access and arithmetic are legality (Lua
+raises an error), the loop bound is safety. **On read:** a table's `fields` measured on the training cases may choose
+a template, never drop `getf`; this is where measurement helps most (limit 5, 8.16), since declared values are mostly
+`?`.
 
 ### 8.10 Python with numpy
 
 | table | rows |
 |---|---|
-| PropertyType | `nd.shape` list of size; `nd.ndim` size; `nd.rank` range (dtype promotion: 0 bool, 1 int64, 2 float64); `nd.dtype` tag |
+| Property, DataTypeProperty | `nd.shape` list of size; `nd.ndim` size; `nd.rank` range (dtype promotion: 0 bool, 1 int64, 2 float64); `nd.dtype` tag |
 | broadcasting | `add(nd, nd)`: `ndim = max(len(in0.shape), len(in1.shape))`; writing `a_i = at(in0.shape, i - out.ndim + len(in0.shape), 1)` and `b_i` likewise: requirement `all(i < out.ndim : a_i = b_i or a_i = 1 or b_i = 1) -> bfit[in1]`; rule `shape = if(that condition, for(i < out.ndim : if(a_i = 1, b_i, a_i)), in0.shape)` |
 | `bfit` | wrap, template `np.resize({1}, {0}.shape)` |
 | dtype | `rank = max(in0.rank, in1.rank)`; `dtype = at(list('bool','int64','float64'), out.rank, ?)` |
@@ -645,29 +845,31 @@ reads `nil` by Lua's own rule through `getf`. **First pass: gap.** The field's t
 
 **First pass: gap.** Broadcasting is an elementwise rule over two shapes aligned from the right: **fixed** by `for`,
 `all`, `at` with a default, and `-`. Re-check: expressible; the formula is long but written once per symbol.
+**Strength:** broadcasting and `matmul`'s inner sizes are legality (numpy raises): `must`. **On read:** a shape
+measured on the training arrays may choose a template; a normalised copy of an input is a candidate alternative form.
 
 ### 8.11 Brainfuck
 
 One data type `Prog`; symbols `inc(Prog)`, `dec(Prog)`, `left(Prog)`, `right(Prog)`, `out(Prog)`, `in(Prog)`,
 `loop(Prog body, Prog rest)`, `end`. No property, rule, requirement or binding rows. Optional: a work bound on nested
 loops, `env loop, position 0: trips := env.trips + 1` and `loop: env.trips < 3 -> subst.in1`. **Expressible: yes**, no
-change.
+change. **Strength:** the loop bound is safety (a program that never halts): `must`.
 
 ### 8.12 Summary
 
-| kingdom | expressible | needed on the first pass |
-|---|---|---|
-| symbolic regression | yes | nothing beyond the five leaks (replace by `in0`) |
-| regex | yes | nothing |
-| TSR | yes | `out.p` in rules |
-| WGSL | yes | `tag` kind |
-| Futhark | yes | `known`, template alternatives, `{self(k := ...)}` |
-| NLP | yes | Spelling forms, Argument `head` |
-| SQL | yes | `list` kind, `len`, `at`, `concat`; Binding `count` and `each` |
-| Spark | yes | `in` |
-| Lua | yes | `find` |
-| Python, numpy | yes | `for`, `all`, `at` default, `-` |
-| Brainfuck | yes | nothing |
+| kingdom | expressible | needed on the first pass | `advise` requirements (all others `must`) |
+|---|---|---|---|
+| symbolic regression | yes | nothing beyond the five leaks (replace by `in0`) | none today; the depth limit follows TSR's A/B |
+| regex | yes | nothing | none |
+| TSR | yes | `out.p` in rules | the order and depth caps: a choice for the TSR A/B, `must` until then |
+| WGSL | yes | `tag` kind | none |
+| Futhark | yes | `known`, template alternatives, `{self(k := ...)}` | the work bound's cost side (the work bound itself is a safety `must`) |
+| NLP | yes | Spelling forms, Argument `head` | none |
+| SQL | yes | `list` kind, `len`, `at`, `concat`; Binding `count` and `each` | none |
+| Spark | yes | `in` | partitioning |
+| Lua | yes | `find` | none |
+| Python, numpy | yes | `for`, `all`, `at` default, `-` | none |
+| Brainfuck | yes | nothing | none |
 
 ### 8.13 The gaps, and how the schema closed them
 
@@ -681,6 +883,10 @@ change.
 | an adapter rewriting several operands | Futhark | `{self(k := ...)}` in a template | pair repairs (`map2`, binary ops in any language) |
 | a repair that changes a word's inflection | NLP | Spelling forms and Argument `head` | morphology, and any language with variant spellings of one symbol |
 | the comparison's built-in `n >= 1` | Futhark | SizeName with a lower bound | a kingdom where a size may be 0 (an empty SQL relation) |
+| the same property defined again in each kingdom | the flat enhanced format review | the Property catalogue and the DataTypeProperty edge table | `len` or `dtype` means one thing everywhere, and its measure rule and device entry are written once |
+| a property known only from the data | the flat enhanced format review | measure rules, run offline on training cases; `source` on every value | Lua's field sets, a SQL column's nullability, an index's observed range |
+| a limit that is a preference, not legality | the flat enhanced format review (Spark's repartition, TSR's cap) | Requirement `strength` | any search-space choice or cost preference left to selection |
+| a derived input the program may use | the flat enhanced format review | Transform rows; alternative forms as root variables | a sorted copy, a normalised vector, a standardised date |
 
 After the fixes every kingdom was re-checked against the final schema (the rows of 8.1 to 8.11 are written in it); none
 needed a further change.
@@ -727,6 +933,10 @@ generators (`sniff.py`, `gen_tables.py`) write rows offline and stay code.
 | `AdapterSite`; the heavy-at-depth decision in `typed_environment.rs` | Repair `site` per call; Adapter `guard`; ordered repairs; the decision becomes "first adapter whose guard holds" | no |
 | `Requirement.adapter` (one name) | the Repair table (ordered, with site and parameters) | no |
 | `PropertyKind` (size, bound, range, flag) | add `tag`, `list` | no |
+| per-kingdom PropertyType rows (`KingdomTables`, one set per view) | the Property catalogue, one for every kingdom, and DataTypeProperty edges; each view's property rows become edges to catalogue names, and two kingdoms' rows of one meaning merge into one catalogue row | no |
+| `Requirement` (no strength) | `strength`, `must` for every row migrated, so behaviour is unchanged; a row becomes `advise` only by a decision of section 8 | no |
+| EntryParameter properties (declared only, no source) | EntryProperty rows with `source`; measured rows added later by the sniffer | no |
+| no alternative forms | Transform rows; EntryParameter `form_of`, `transform` | no |
 | `PropertyRule` reads inputs only | may read `out.p`, acyclic | no |
 | `Binding` | add `count`, `each`, `name_template` | no |
 | `KingdomRelations.constants`, `.variables` | `Symbol.role` | no |
@@ -762,18 +972,28 @@ inside a condition, and its widened substitution becomes `replace` rows.
 8. **The device needs a formula interpreter.** TSR decodes on the GPU (`docs/PLAN_futhark_kingdom.md` 8.3) from rule codes (`max`, `max+1`,
    `copy`, `strahler.*`). Under this schema the device evaluates formulas, so they must be compiled at load into a small
    bytecode a WGSL interpreter runs; a formula outside what the device interpreter supports is "our software has a bug"
-   at load. This is the one place where the closed list costs device code.
+   at load. This is the one place where the closed list costs device code, and the catalogue bounds it: each
+   property's device entry is written once, for every kingdom.
 9. **Rows per data type.** A polymorphic symbol (`let`, `if`) is one row per data type, because arity is by data type.
    The view generator multiplies them; tables grow, the schema does not.
-10. **Tag sets are closed per property.** PropertyType `values` lists a tag's legal names, so a misspelt tag is a
+10. **Tag sets are closed per property.** Property `values` lists a tag's legal names, so a misspelt tag is a
     table bug; a kingdom whose names are open (SQL column names, Lua field names) generates them into `values` from
     the problem's entry, offline.
+11. **A measured value holds only for the cases seen.** The test cases, and values a program computes, may fall
+    outside it. That is why a measured value never makes a `must` requirement hold, and why measurement reads the
+    training cases only. A measurement can still mislead a template choice or the cost; the fitness on held-out
+    cases sees that.
+12. **An alternative form widens the search.** Each form adds a variable, so c grows and a random index word is less
+    likely to pick any one input. Forms are added only where an A/B run shows they help (3.7).
 
 ## 9. What changes, by repository
 
 - **fuller (symbolic; a crate after the merge of plan 6.2):**
   - `src/geneframe.rs`: the tables of 3.3 and the formula language of 3.4, with Arity derived from Argument (the
-    migration list is 8.15).
+    migration list is 8.15). Now, before the schema freezes: the Property catalogue and DataTypeProperty edge tables,
+    the `source` column, the `strength` column.
+  - Later (3.7): the sniffer (`sniff.py` or a sibling) measuring the training cases into EntryProperty rows; Transform
+    rows for alternative forms, after an A/B run; shape masks for string kingdoms.
   - The Futhark master table: `rows.tsv` gains the argument, rule, requirement and binding columns, and loses the
     size and scope columns.
   - The views: data types only.
