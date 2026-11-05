@@ -1332,6 +1332,81 @@ extension (`fuller` is imported by hff: keep the module name or change hff's imp
 (`futhark-rust-rt`, the shim); the docs index, both CLAUDE.md files rewritten once, the memory paths, the papers'
 repository references; and the order: open branches merged to main first.
 
+#### 6.2.1 The plan (draft 2026-11-05 23:20Z, for Codex's review)
+
+**Objective.** One repository, phylu, holding both crates, with fuller's history kept, built and tested as one
+workspace. Andrew's order: everything into fuller's main, everything into phylu's main, then the two mains into one.
+Done in stages; each stage ends green and pushed, so a stop between stages leaves nothing broken.
+
+**Facts it rests on (measured 2026-11-05).**
+
+| | fuller | phylu |
+|---|---|---|
+| working branch, commits ahead of main | `feat/futhark-kingdom`, 205 (main has nothing the branch lacks) | `feat/shape-typed-kingdom`, 72 (same) |
+| tracked files, packed history | 18,396 files (16,049 under `tests/`), 363 MiB | 1,040 files (705 under `logs/`), 1.01 GiB |
+| other branches | `emitter-fidelity` (9 commits not on the branch), `wip/emitter-fix-agent` (1), two `worktree-agent-*` (1 and 3); `emitter-fix`, `naga-wgpu-30`, `paired-fitness` fully merged | `naga-wgpu-30`, fully merged |
+| files naming the other repository's absolute path / `../fuller` / `../phylu` / `../hff` | 41 / 3 / 11 / 3 | 35 / 24 / 0 / 7 |
+| who depends on it | phylu (path dependency); hff's Python (5 files `import fuller`, the PyO3 module) | nothing |
+| side crates | `vendor-egglog` (our egglog fork), `futhark-rust-rt`, `futhark-wgpu-shim`, `futhark-rust-backend` (compiler patches + build script) | none |
+
+**Stage A: finish and clean (in progress).** K5's clean-up lands (old kingdoms and dead code removed; git keeps
+them). Both repositories' full suites pass on the branch heads (every feature set, GPU tests under the lock).
+
+**Stage B: each branch into its own main.** Tag the heads `pre-merge-2026-11` in both repositories. Fast-forward
+`main` to the working branch in each (both mains are strict ancestors, so no merge commit), push. Branch clean-up: each
+unmerged branch (`emitter-fidelity`, `wip/emitter-fix-agent`, the two `worktree-agent-*`) gets an `archive/<name>`
+tag and is deleted locally and on the remote; merged branches are deleted. No worktrees remain.
+
+**Stage C: fuller into phylu, histories kept.** In a fresh clone of fuller, `git filter-repo --to-subdirectory-filter
+fuller` rewrites every path under `fuller/` (so `git log -- fuller/src/x.rs` and blame keep working, which `git
+subtree` does not give per file). In phylu, on a branch `merge/fuller`: add that clone as a remote, `git merge
+--allow-unrelated-histories`. Layout after the merge, with the fewest moves:
+
+```
+phylu/                  repository root: the workspace Cargo.toml, one Cargo.lock, one target/
+  Cargo.toml            [workspace] members = ["crates/*", "vendor/egglog"]; shared versions in [workspace.dependencies]
+  crates/phylu/         today's phylu crate (src, examples, tests, kingdoms/, scripts/, experiments/)
+  crates/fuller/        today's fuller crate (src, examples, tests, kingdoms/, parity/, problems/, python/, pyproject.toml)
+  crates/futhark-rust-rt/, crates/futhark-wgpu-shim/
+  vendor/egglog/        (was fuller/vendor-egglog)
+  tools/futhark-rust-backend/   compiler patches and build script
+  docs/                 both docs trees, fuller's under docs/fuller/ (one index, generated)
+  logs/, papers/        phylu's, plus fuller's papers under papers/
+```
+
+The crates keep their names `fuller` and `phylu` (every `use fuller::`, the Python module `fuller` that hff imports,
+and the papers stay right); a rename to `symbolic`/`evolution` is a separate later step if wanted. The path
+dependency becomes `fuller = { path = "../fuller" }` inside `crates/`, and `hff` becomes `../../../hff` (or a
+workspace-level path). Every absolute path to `gamakon/fuller` (76 files) and every `../fuller`/`../phylu` (38
+files) is rewritten by one script, checked by a grep that must return nothing. The build passes (`cargo build
+--workspace --all-targets` for every feature set), the full suite passes, `maturin develop` builds the Python module
+from `crates/fuller` and hff's tests that import it pass. Merge `merge/fuller` into phylu's main, push.
+
+**Stage D: the architecture moves (inside the one repository).** What Andrew's diagram puts in phylu but is still in
+fuller moves crate to crate: `fitness` (+ `src/fitness/`), `telemetry`, `run_file`, the gene-frame part of
+`geneframe` (the symbol tables stay in fuller), `population_dag`, `homeotic` (if K5 has not removed it), the WGSL
+mutation. Each move is one commit with `git mv` (history follows), and the rule is checked by the build: the fuller
+crate must not depend on phylu, so anything fuller itself still calls stays or is split. One move at a time, build
+and fast tests after each.
+
+**Stage E: the house-keeping.** One `CLAUDE.md` at the root (both rewritten once, the stale Futhark entries out), a
+short one per crate if needed; the docs index generator over the one tree; the GPU and cargo lock scripts (today in
+`fuller/tmp/fixf/`) moved to `scripts/`; the Claude memory directory (keyed by the working directory) copied to the
+new path; the papers' repository references; the fuller GitHub repository archived read-only with a README pointing
+to phylu.
+
+**Stage F (later, Andrew's): rerun the studies** on the one repository.
+
+**Risks.** (1) Size: the merged history is about 1.4 GiB, mostly phylu's `logs/` and fuller's `tests/` corpora;
+acceptable, and a later clean-up can move run logs out of git (not part of this plan). (2) Absolute paths missed by
+the script break silently at run time, not build time: the grep check and one smoke run per kingdom (the 60 s
+scripts of plan 7.7) catch them. (3) hff's Python import: the module name stays `fuller`, so only the build path
+changes. (4) Agents working during stage C would hit moving paths: stage C runs with no other agent active. (5) The
+Claude sessions' memory is keyed by directory: copied, not moved, so nothing is lost.
+
+**Review.** Codex reviews this section (Fable is unavailable); its findings and their disposition are recorded under
+it; Andrew agrees; then the DAG of agents runs it.
+
 ## 7. Data types, properties and scope: the implementation plan (Andrew, 2026-11-05)
 
 The specification is `docs/DESIGN_futhark_types_and_properties.md` (agreed, commit `f66891be`), cited below as "the
