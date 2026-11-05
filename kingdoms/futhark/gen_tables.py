@@ -3231,9 +3231,230 @@ def witness_egraph6(dir_path, name, mst=None):
     return bad
 
 
+# --------------------------------------------------------------------------
+# MASTER 6's STATIC COST (plan section 7, task F3): `master/6/costs.tsv`, GENERATED from `master/6/rows.tsv` and
+# `master/6/adapters.tsv`. One line a master row (`kind` = `row`): what the row reads from each argument when that
+# argument is materialised (`reads`, `;`-separated in argument order), what it writes and allocates when it is
+# materialised itself, its serial depth, and whether it is elementwise and so ABSORBS its arguments (master 5's
+# `costs.tsv` rules, restated over argument properties instead of class roles). One line an adapter (`kind` =
+# `adapter`): the traffic it adds where it renders (`traffic`): every `fit` the cells of the operand it fits, at its
+# target length (`fitted.cells`); `clampix` its two compares; a substitution nothing (its node renders as its
+# substitute, which is costed in its place). So an elite with a needless adapter loses to its own clean form (plan 7.5
+# risk 4). `src/futhark_cost.rs` (`CostTable6`, `program_cost6`) reads it.
+#
+# A formula is `0` or a sum of products of factors: an integer, `out.<p>` (the row's result) or `in<k>.<p>` (argument
+# k as the node's adapters leave it), `<p>` a property or `cells` (an array's elements, a scalar 1, a tuple its
+# components, a function 0); `fitted.cells` in an adapter's line. The cost is a MODEL and a pre-optimisation one, as
+# master 5's is: a node's costs count once a trip of every binder above it, its depth once a trip of every loop above
+# it (a `tabulate` is parallel).
+# --------------------------------------------------------------------------
+
+COSTS6_COLUMNS = ["kind", "ref", "name", "reads", "write", "alloc", "depth", "absorb", "traffic"]
+COSTS6_PATH = os.path.join(HERE, "master", "6", "costs.tsv")
+
+# The rows that are not elementwise scalar operations, by operation: (reads, write, alloc, depth, absorb).
+COST6_RULES = {
+    "get": ("1;in1.cells", "out.cells", "0", "0", "0"),
+    "sum": ("in0.len", "out.cells", "0", "in0.len", "0"),
+    "minimum": ("in0.len", "out.cells", "0", "in0.len", "0"),
+    "maximum": ("in0.len", "out.cells", "0", "in0.len", "0"),
+    "tab": ("0;in0.value", "out.cells", "out.cells", "0", "0"),
+    "tabrows": ("0;0;out.cells", "out.cells", "out.cells", "0", "0"),
+    "replicate": ("0;1", "out.cells", "out.cells", "0", "0"),
+    "map2": ("in0.len;in1.len", "out.cells", "out.cells", "0", "1"),
+    "scan": ("in0.len", "out.cells", "out.cells", "in0.len", "0"),
+    "hist": ("0;in1.len;in2.len", "out.cells", "out.cells", "in2.len", "0"),
+    "histrows": ("0;0;in2.len;in3.cells", "out.cells", "out.cells", "in3.rows", "0"),
+    "rowdiv": ("in0.cells;in1.len", "out.cells", "out.cells", "0", "1"),
+    "row": ("in0.cols;in1.cells", "0", "0", "0", "0"),
+    "loop": ("0;in1.cells;in2.cells", "out.cells", "out.cells", "in0.value", "0"),
+    "loop1": ("0;in1.cells;in2.cells", "out.cells", "out.cells", "in0.value", "0"),
+    "let": ("0;0", "0", "0", "0", "0"),
+    "map_rows": ("0;in1.cells", "out.cells", "out.cells", "0", "1"),
+    "map2_rows": ("0;in1.cells;in2.cells", "out.cells", "out.cells", "0", "1"),
+    "transpose": ("in0.cells", "out.cells", "out.cells", "0", "0"),
+    "matmul": ("in0.cells;in1.cells", "out.cells", "out.cells", "in0.cols", "0"),
+}
+
+
+def cost6_of_row(r):
+    """The cost of one master 6 row template: (reads, write, alloc, depth, absorb).
+
+    * a leaf (a variable, a literal, a terminal) and a row function: nothing read, written or allocated -- a variable
+      is the interface's input or a binder's, already in memory, as master 5's terminal is;
+    * the rows of `COST6_RULES` as written there;
+    * every other row is an elementwise SCALAR operation: it reads each argument's cells (a size nothing: it is a
+      name), writes its result's cells, allocates nothing, and absorbs its arguments (a chain of scalar operations is
+      one expression).
+    """
+    op = re.match(r"[a-z0-9_]+", r["name"]).group(0)
+    args = master_view.items(r["args"])
+    if r["kind"] != "function" or "->" in r["out"]:
+        if args:
+            raise ValueError(f"our software has a bug: the leaf or row function {r['name']} takes arguments")
+        return ("", "0", "0", "0", "0")
+    if op in COST6_RULES:
+        rule = COST6_RULES[op]
+        if len(rule[0].split(";")) != len(args):
+            raise ValueError(f"our software has a bug: the cost rule of {op} reads {rule[0]!r}, and {r['name']} takes {len(args)} arguments")
+        return rule
+    if r["out"].startswith("["):
+        raise ValueError(f"our software has a bug: the array row {r['name']} has no cost rule")
+    reads = ";".join("0" if a == "size" else f"in{k}.cells" for k, a in enumerate(args))
+    return (reads, "out.cells", "0", "0", "1")
+
+
+def adapter6_traffic(name):
+    """The traffic one rendering of an adapter adds."""
+    if name.startswith("fit"):
+        return "fitted.cells"
+    if name == "clampix":
+        return "2"
+    if name.startswith("subst"):
+        return "0"
+    raise ValueError(f"our software has a bug: the adapter {name} has no cost rule")
+
+
+def costs6_text(mst):
+    """The text of `master/6/costs.tsv`."""
+    out = ["\t".join(COSTS6_COLUMNS)]
+    for r in mst["rows"]:
+        reads, write, alloc, depth, absorb = cost6_of_row(r)
+        out.append("\t".join(["row", r["ref"], r["name"], reads, write, alloc, depth, absorb, "0"]))
+    for a in mst["adapters"]:
+        out.append("\t".join(["adapter", "", a["name"], "", "0", "0", "0", "0", adapter6_traffic(a["name"])]))
+    return "\n".join(out) + "\n"
+
+
+# The witness's restatement, by master row: what each row reads, writes, allocates, its depth and whether it absorbs,
+# written out from the rows' meanings (README 4, the spellings), not from the generator's rules above.
+COST6_LEAVES = {"M0016", "M0021", "M0047", "M0048", "M0049", "M0050", "M0051", "M0052", "M0054", "M0055", "M0071",
+                "M0081", "M0087", "M0088"}
+COST6_BY_REF = {}
+for _refs, _cost in [
+    (("M0009",), ("1;in1.cells", "out.cells", "0", "0", "0")),
+    (("M0010", "M0011", "M0012"), ("in0.len", "out.cells", "0", "in0.len", "0")),
+    (("M0024",), ("0;in0.value", "out.cells", "out.cells", "0", "0")),
+    (("M0063",), ("0;0;out.cells", "out.cells", "out.cells", "0", "0")),
+    (("M0025",), ("0;1", "out.cells", "out.cells", "0", "0")),
+    (("M0026", "M0027", "M0028", "M0029", "M0062"), ("in0.len;in1.len", "out.cells", "out.cells", "0", "1")),
+    (("M0030", "M0031", "M0032"), ("in0.len", "out.cells", "out.cells", "in0.len", "0")),
+    (("M0033", "M0034", "M0035", "M0057", "M0058", "M0059"), ("0;in1.len;in2.len", "out.cells", "out.cells", "in2.len", "0")),
+    (("M0064", "M0065"), ("0;0;in2.len;in3.cells", "out.cells", "out.cells", "in3.rows", "0")),
+    (("M0066",), ("in0.cells;in1.len", "out.cells", "out.cells", "0", "1")),
+    (("M0036",), ("in0.cols;in1.cells", "0", "0", "0", "0")),
+    (("M0040", "M0041", "M0073", "M0074", "M0083", "M0084"), ("0;in1.cells;in2.cells", "out.cells", "out.cells", "in0.value", "0")),
+    (("M0085",), ("0;0", "0", "0", "0", "0")),
+    (("M0043",), ("0;in1.cells", "out.cells", "out.cells", "0", "1")),
+    (("M0044",), ("0;in1.cells;in2.cells", "out.cells", "out.cells", "0", "1")),
+    (("M0045",), ("in0.cells", "out.cells", "out.cells", "0", "0")),
+    (("M0046",), ("in0.cells;in1.cells", "out.cells", "out.cells", "in0.cols", "0")),
+]:
+    for _ref in _refs:
+        COST6_BY_REF[_ref] = _cost
+COST6_FORMULA_RE = re.compile(r"^(?:0|(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)(?:\*(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells))*(?:\+(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells)(?:\*(?:[1-9][0-9]*|out\.[a-z]+|in[0-9]+\.[a-z]+|fitted\.cells))*)*)$")
+
+
+def witness_costs6(path, mst):
+    """Check the committed `master/6/costs.tsv` against the restatement above (C1-C6): its header; one row line a
+    master row, in order, with the row's own ref and name; each row's cost as restated (a leaf costs nothing; an
+    elementwise scalar operation, every row not restated, reads each non-size argument's cells, writes its result's,
+    allocates nothing and absorbs); every formula well formed and naming only arguments the row has and properties
+    their data types carry; one adapter line an adapter, every `fit` charged the cells it fits and `clampix` 2."""
+    bad = []
+    with open(path) as f:
+        lines = [l.rstrip("\n").split("\t") for l in f if l.strip()]
+    if not lines or lines[0] != COSTS6_COLUMNS:
+        return [f"C1 master/6/costs.tsv's header is {lines[0] if lines else None}, wants {COSTS6_COLUMNS}"]
+    body = [l for l in lines[1:]]
+    for l in body:
+        if len(l) != len(COSTS6_COLUMNS):
+            bad.append(f"C1 the cost line {l} has {len(l)} columns, wants {len(COSTS6_COLUMNS)}")
+    if bad:
+        return bad
+    rows = [dict(zip(COSTS6_COLUMNS, l)) for l in body if l[0] == "row"]
+    adapters = [dict(zip(COSTS6_COLUMNS, l)) for l in body if l[0] == "adapter"]
+    if len(rows) + len(adapters) != len(body):
+        bad.append("C1 a cost line is neither a row's nor an adapter's")
+    if [(c["ref"], c["name"]) for c in rows] != [(r["ref"], r["name"]) for r in mst["rows"]]:
+        bad.append("C2 the cost rows are not the master's rows, one a row, in order")
+        return bad
+    props = {"len", "rows", "cols", "bound", "value", "cells"}
+    for c, r in zip(rows, mst["rows"]):
+        args = master_view.items(r["args"])
+        got = (c["reads"], c["write"], c["alloc"], c["depth"], c["absorb"])
+        if r["ref"] in COST6_LEAVES:
+            want = ("", "0", "0", "0", "0")
+        elif r["ref"] in COST6_BY_REF:
+            want = COST6_BY_REF[r["ref"]]
+        else:
+            want = (";".join(f"in{k}.cells" if a != "size" else "0" for k, a in enumerate(args)), "out.cells", "0", "0", "1")
+        if got != want:
+            bad.append(f"C3 the cost of {r['ref']} {r['name']} is {got}, restated {want}")
+        if c["traffic"] != "0":
+            bad.append(f"C3 the row {r['name']} adds traffic {c['traffic']}; only an adapter does")
+        reads = c["reads"].split(";") if c["reads"] else []
+        if len(reads) != len(args):
+            bad.append(f"C4 {r['name']} reads {len(reads)} arguments and takes {len(args)}")
+        for f in reads + [c["write"], c["alloc"], c["depth"]]:
+            if not COST6_FORMULA_RE.match(f) or "fitted" in f:
+                bad.append(f"C4 {r['name']}'s formula {f!r} is not a sum of products of integers, out.<p> and in<k>.<p>")
+                continue
+            for k, p in re.findall(r"in([0-9]+)\.([a-z]+)", f):
+                if int(k) >= len(args) or p not in props:
+                    bad.append(f"C4 {r['name']}'s formula {f!r} reads in{k}.{p}, which it does not have")
+        if c["absorb"] not in ("0", "1"):
+            bad.append(f"C4 {r['name']}'s absorb is {c['absorb']!r}")
+    if [a["name"] for a in adapters] != [a["name"] for a in mst["adapters"]]:
+        bad.append("C5 the adapter lines are not the master's adapters, one an adapter, in order")
+    for a in adapters:
+        want = "fitted.cells" if a["name"] in ("fit", "fit.pair", "fit.state", "fit.body", "fit.inner", "fit.root") else "2" if a["name"] == "clampix" else "0"
+        if a["traffic"] != want or (a["reads"], a["write"], a["alloc"], a["depth"], a["absorb"]) != ("", "0", "0", "0", "0"):
+            bad.append(f"C6 the adapter {a['name']} costs {a}, restated traffic {want} and nothing else")
+    return bad
+
+
+def costs6_main(mode, mst):
+    """`master/6/costs.tsv`: checked byte for byte against the generator (the default), or written to a staging file,
+    witnessed there and only then moved into place; then witnessed."""
+    text = costs6_text(mst)
+    if mode == "--write":
+        staged = COSTS6_PATH + ".staged"
+        with open(staged, "w") as f:
+            f.write(text)
+        bad = witness_costs6(staged, mst)
+        if bad:
+            os.remove(staged)
+            print("THE MASTER 6 COST WITNESS TESTS FAILED (the committed file is untouched):")
+            for b in bad:
+                print("  " + b)
+            return 1
+        os.replace(staged, COSTS6_PATH)
+    else:
+        try:
+            with open(COSTS6_PATH, "rb") as f:
+                got = f.read()
+        except OSError as e:
+            print(f"THE MASTER 6 COST TABLE master/6/costs.tsv cannot be read: {e}")
+            return 1
+        if got != text.encode("utf-8"):
+            print(f"THE COMMITTED master/6/costs.tsv is not what the generator produces ({first_difference(got, text.encode('utf-8'))}); "
+                  "run with --write to regenerate")
+            return 1
+    bad = witness_costs6(COSTS6_PATH, mst)
+    if bad:
+        print("THE MASTER 6 COST WITNESS TESTS FAILED:")
+        for b in bad:
+            print("  " + b)
+        return 1
+    print(f"master/6/costs.tsv: {len(mst['rows'])} rows, {len(mst['adapters'])} adapters; "
+          f"{'committed table MATCHES the generator, ' if mode == '--check' else 'written, '}cost witness tests C1-C6 PASS")
+    return 0
+
+
 def master6_main(mode):
-    """Master 6: the master witnesses, then each problem's specification and view, checked byte for byte (the
-    default) or written (to a staging directory, witnessed there, and only then moved into place)."""
+    """Master 6: the master witnesses, its static cost table, then each problem's specification and view, checked byte
+    for byte (the default) or written (to a staging directory, witnessed there, and only then moved into place)."""
     bad = witness_master6()
     if bad:
         print("THE MASTER 6 WITNESS TESTS FAILED:")
@@ -3241,6 +3462,8 @@ def master6_main(mode):
             print("  " + b)
         return 1
     mst = master_view.master6()
+    if costs6_main(mode, mst):
+        return 1
     print(f"master 6: {len(mst['rows'])} row templates, {len(mst['datatypes'])} data type templates, "
           f"{len(mst['adapters'])} adapters, version {mst['version']}; master 6 witness tests PASS")
     for name in sorted(SIG6_PROBLEMS):

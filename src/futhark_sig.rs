@@ -1228,9 +1228,80 @@ impl Work {
     }
 }
 
-/// The interpreter of one instance: each row's meaning, parsed once. It OWNS the kingdom and the signature it reads
-/// (shared handles), so it lives as long as its holder, never as long as a caller's borrow.
-pub struct Interp {
+/// THE INTERPRETER of one instance: a master 5 view's ([`Interp::new`]) or a master 6 view's ([`Interp::new6`], plan
+/// section 7 task F3: the meaning read from G3's decoding, the adapters interpreted, sizes from the properties). The
+/// two answer the same calls ([`Interp::eval`], [`Interp::work`], [`Interp::work_parts`]) with the same signatures, so
+/// phylu's callers build unchanged and take a master 6 interpreter when their kingdom is one. It OWNS the kingdom and
+/// the signature it reads (shared handles), so it lives as long as its holder.
+pub struct Interp(Masters);
+
+/// Which master an interpreter reads (master 5 stays loadable until plan task D1).
+enum Masters {
+    Five(Interp5),
+    Six(Box<interp6::Interp6>),
+}
+
+impl Interp {
+    /// The interpreter of a master 5 kingdom and its signature; it keeps a clone of each handle.
+    pub fn new(k: &Arc<FutharkKingdom>, sig: &Arc<Signature>) -> Result<Interp, String> {
+        Interp5::new(k, sig).map(|i| Interp(Masters::Five(i)))
+    }
+
+    /// The interpreter of a master 6 kingdom whose cases are `sig`'s (its problem's signature: the inputs by name, the
+    /// sizes they bind); it keeps a clone of each handle.
+    pub fn new6(k: &Arc<crate::futhark_table::Kingdom6>, sig: &Arc<Signature>) -> Result<Interp, String> {
+        interp6::Interp6::new(k, sig).map(|i| Interp(Masters::Six(Box::new(i))))
+    }
+
+    /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it. A master 6 tree is
+    /// decoded first (passes 2 to 4), and every value is checked against its properties as Futhark checks its sizes.
+    pub fn eval(&self, tree: &Tree, inputs: &[Array]) -> Result<Array, String> {
+        match &self.0 {
+            Masters::Five(i) => i.eval(tree, inputs),
+            Masters::Six(i) => i.eval(tree, inputs),
+        }
+    }
+
+    /// The node executions of a tree on given sizes, the loops' state traffic included ([`Work::total`]).
+    pub fn work(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<u128, String> {
+        match &self.0 {
+            Masters::Five(i) => i.work(tree, sizes),
+            Masters::Six(i) => i.work(tree, sizes),
+        }
+    }
+
+    /// The work of a tree on given sizes, in two parts ([`Work`]); a master 6 tree's adapters are charged in
+    /// [`Work::nodes`], the per-submit cap's measure.
+    pub fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
+        match &self.0 {
+            Masters::Five(i) => i.work_parts(tree, sizes),
+            Masters::Six(i) => i.work_parts(tree, sizes),
+        }
+    }
+
+    /// THE STATIC COST of a tree at `sizes`: master 5's for the matrix kingdom ([`static_cost`]; `None` for its
+    /// signature views), master 6's for every view (`crate::futhark_cost::program_cost6`, adapters charged).
+    pub fn static_cost(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Option<crate::futhark_cost::Score>, String> {
+        match &self.0 {
+            Masters::Five(i) => static_cost(&i.k, tree, sizes),
+            Masters::Six(i) => i.static_cost(tree, sizes).map(Some),
+        }
+    }
+
+    /// The bound on any tree of a layout: its most nodes, each run at most `max(D) ** depth` times and each costing at
+    /// most `1 + max(D) ** 2`, on the given largest dimension.
+    pub fn layout_bound(&self, layout: &GeneLayout, max_dim: usize) -> u128 {
+        let depth = match &self.0 {
+            Masters::Five(i) => i.sig.depth,
+            Masters::Six(i) => i.depth(),
+        };
+        let d = max_dim as u128;
+        layout.max_nodes() as u128 * d.pow(depth) * (1 + d * d)
+    }
+}
+
+/// Master 5's interpreter: each row's meaning, parsed once.
+struct Interp5 {
     k: Arc<FutharkKingdom>,
     sig: Arc<Signature>,
     ops: Vec<Op>,
@@ -1283,9 +1354,9 @@ struct Env {
     vars: Vec<Option<Val>>,
 }
 
-impl Interp {
+impl Interp5 {
     /// The interpreter of a kingdom and its signature; it keeps a clone of each handle.
-    pub fn new(k: &Arc<FutharkKingdom>, sig: &Arc<Signature>) -> Result<Interp, String> {
+    pub fn new(k: &Arc<FutharkKingdom>, sig: &Arc<Signature>) -> Result<Interp5, String> {
         let dim = |d: &str| sig.dims.iter().position(|x| x == d).ok_or_else(|| format!("no dimension {d}"));
         // A dual's class, read through the class grammar with the view's elements.
         let class_of = |dual: &str| -> Result<Class, String> { Class::parse(dual.split(':').next().unwrap_or(""), &sig.elements, None).map_err(|e| format!("{dual}: {e}")) };
@@ -1458,7 +1529,7 @@ impl Interp {
             };
             ops.push(o);
         }
-        Ok(Interp { k: Arc::clone(k), sig: Arc::clone(sig), ops, literals, slots: slot_of.len() })
+        Ok(Interp5 { k: Arc::clone(k), sig: Arc::clone(sig), ops, literals, slots: slot_of.len() })
     }
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
@@ -1820,7 +1891,7 @@ impl Interp {
     /// that is a variable, an input, `zeros`, a row, a selection or another loop is copied into the state each trip.
     pub fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
         let n: Vec<u128> = self.sig.dims.iter().map(|d| sizes.get(d).map(|&x| x as u128).ok_or_else(|| format!("no size for {d}"))).collect::<Result<_, _>>()?;
-        fn walk(me: &Interp, t: &Tree, mult: u128, n: &[u128], w: &mut Work) -> Result<(), String> {
+        fn walk(me: &Interp5, t: &Tree, mult: u128, n: &[u128], w: &mut Work) -> Result<(), String> {
             let op = me.ops[t.symbol as usize];
             // The cells of a node's matrix class (`mat.X.Y`: the product of its roles' sizes).
             let cells = |node: &Tree| -> Result<u128, String> {
@@ -1873,12 +1944,12 @@ impl Interp {
             Ok(())
         }
         // Whether a subtree reads one of the slots (a loop's state or index).
-        fn reads(me: &Interp, t: &Tree, slots: &[usize]) -> bool {
+        fn reads(me: &Interp5, t: &Tree, slots: &[usize]) -> bool {
             matches!(me.ops[t.symbol as usize], Op::Var(s) if slots.contains(&s)) || t.kids.iter().any(|k| reads(me, k, slots))
         }
         // Whether two subtrees are one Futhark expression: their rows' spellings (a row of one spelling may be several
         // rows, one a context), their constants and their children.
-        fn same(me: &Interp, a: &Tree, b: &Tree) -> bool {
+        fn same(me: &Interp5, a: &Tree, b: &Tree) -> bool {
             me.k.rows[a.symbol as usize].spelling == me.k.rows[b.symbol as usize].spelling && a.const_index == b.const_index && a.kids.len() == b.kids.len() && a.kids.iter().zip(&b.kids).all(|(x, y)| same(me, x, y))
         }
         // An operation that writes a fresh array and is charged its cells already: it writes a loop's state in place.
@@ -1888,7 +1959,7 @@ impl Interp {
         // The cells a loop's state is written a trip: its arrays' (a tuple's summed, component by component when the
         // body is a tuple row), 0 for a scalar or an index, for a body Futhark removes the loop of, and for a component
         // an operation writes fresh.
-        fn state_cells(me: &Interp, t: &Tree, own: &[usize], index: usize, n: &[u128]) -> Result<u128, String> {
+        fn state_cells(me: &Interp5, t: &Tree, own: &[usize], index: usize, n: &[u128]) -> Result<u128, String> {
             let (start, body) = match &t.kids[..] {
                 [start, body] => (start, body),
                 _ => return Err("our software has a bug: a loop without a start and a body".into()),
@@ -1900,7 +1971,7 @@ impl Interp {
                 return Ok(0);
             }
             let dual = &me.k.dual(me.k.rows[t.symbol as usize].output).ok_or("a row with no dual")?.dual;
-            fn cells(c: &Class, body: Option<&Tree>, me: &Interp, n: &[u128]) -> Result<u128, String> {
+            fn cells(c: &Class, body: Option<&Tree>, me: &Interp5, n: &[u128]) -> Result<u128, String> {
                 if body.is_some_and(|b| writes_fresh(me.ops[b.symbol as usize])) {
                     return Ok(0);
                 }
@@ -1918,13 +1989,6 @@ impl Interp {
         let mut w = Work::default();
         walk(self, tree, 1, &n, &mut w)?;
         Ok(w)
-    }
-
-    /// The bound on any tree of a layout: its most nodes, each run at most `max(D) ** depth` times and each costing at
-    /// most `1 + max(D) ** 2` (a histogram or a division of rows), on the given largest dimension.
-    pub fn layout_bound(&self, layout: &GeneLayout, max_dim: usize) -> u128 {
-        let d = max_dim as u128;
-        layout.max_nodes() as u128 * d.pow(self.sig.depth) * (1 + d * d)
     }
 }
 
@@ -3077,3 +3141,7 @@ mod tests_kmeans_seed;
 mod tests_a7;
 #[cfg(test)]
 mod tests_checklist;
+
+mod interp6;
+#[cfg(test)]
+mod tests_interp6;

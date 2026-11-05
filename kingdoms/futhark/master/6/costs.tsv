@@ -1,0 +1,89 @@
+kind	ref	name	reads	write	alloc	depth	absorb	traffic
+row	M0001	add@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0002	sub@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0003	mul@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0004	min@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0005	max@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0006	neg@{E}	in0.cells	out.cells	0	0	1	0
+row	M0007	abs@{E}	in0.cells	out.cells	0	0	1	0
+row	M0008	sel@{E}	in0.cells;in1.cells;in2.cells	out.cells	0	0	1	0
+row	M0009	get@{E}	1;in1.cells	out.cells	0	0	0	0
+row	M0010	sum@{E}	in0.len	out.cells	0	in0.len	0	0
+row	M0011	minimum@{E}	in0.len	out.cells	0	in0.len	0	0
+row	M0012	maximum@{E}	in0.len	out.cells	0	in0.len	0	0
+row	M0013	ival@{E}	in0.cells	out.cells	0	0	1	0
+row	M0014	sval@{E}	0	out.cells	0	0	1	0
+row	M0015	mod@{E}	0;in1.cells	out.cells	0	0	1	0
+row	M0016	const@{E}		0	0	0	0	0
+row	M0018	prev@i64	in0.cells	out.cells	0	0	1	0
+row	M0019	next@i64	in0.cells	out.cells	0	0	1	0
+row	M0020	clamp{E.tag}@i64	0;in1.cells	out.cells	0	0	1	0
+row	M0021	zero@i64		0	0	0	0	0
+row	M0022	last@i64	0	out.cells	0	0	1	0
+row	M0024	tab@a.{E}	0;in0.value	out.cells	out.cells	0	0	0
+row	M0025	replicate@a.{E}	0;1	out.cells	out.cells	0	0	0
+row	M0026	map2.add@a.{E}	in0.len;in1.len	out.cells	out.cells	0	1	0
+row	M0027	map2.sub@a.{E}	in0.len;in1.len	out.cells	out.cells	0	1	0
+row	M0028	map2.min@a.{E}	in0.len;in1.len	out.cells	out.cells	0	1	0
+row	M0029	map2.max@a.{E}	in0.len;in1.len	out.cells	out.cells	0	1	0
+row	M0030	scan.add@a.{E}	in0.len	out.cells	out.cells	in0.len	0	0
+row	M0031	scan.min@a.{E}	in0.len	out.cells	out.cells	in0.len	0	0
+row	M0032	scan.max@a.{E}	in0.len	out.cells	out.cells	in0.len	0	0
+row	M0033	hist.add@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0034	hist.min@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0035	hist.max@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0036	row@a.{E}	in0.cols;in1.cells	0	0	0	0	0
+row	M0040	loop@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0041	loop1@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0043	map_rows@m.f32	0;in1.cells	out.cells	out.cells	0	1	0
+row	M0044	map2_rows@m.f32	0;in1.cells;in2.cells	out.cells	out.cells	0	1	0
+row	M0045	transpose@m.f32	in0.cells	out.cells	out.cells	0	0	0
+row	M0046	matmul@m.f32	in0.cells;in1.cells	out.cells	out.cells	in0.cols	0	0
+row	M0047	id@fn.arr_f32_arr_f32		0	0	0	0	0
+row	M0048	add1@fn.arr_f32_arr_f32		0	0	0	0	0
+row	M0049	scale2@fn.arr_f32_arr_f32		0	0	0	0	0
+row	M0050	id@fn.arr2_f32_arr_f32_arr_f32		0	0	0	0	0
+row	M0051	add1@fn.arr2_f32_arr_f32_arr_f32		0	0	0	0	0
+row	M0052	add@fn.arr2_f32_arr_f32_arr_f32		0	0	0	0	0
+row	M0054	const@fn.arr_f32_arr_f32		0	0	0	0	0
+row	M0055	const@fn.arr2_f32_arr_f32_arr_f32		0	0	0	0	0
+row	M0056	clamp{E.tag}@i64	0;in1.cells	out.cells	0	0	1	0
+row	M0057	hist.add@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0058	hist.min@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0059	hist.max@a.{E}	0;in1.len;in2.len	out.cells	out.cells	in2.len	0	0
+row	M0060	div@{E}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0061	sqrt@{E}	in0.cells	out.cells	0	0	1	0
+row	M0062	map2.mul@a.{E}	in0.len;in1.len	out.cells	out.cells	0	1	0
+row	M0063	tabrows@m.{E}	0;0;out.cells	out.cells	out.cells	0	0	0
+row	M0064	histrows.add@m.{E}	0;0;in2.len;in3.cells	out.cells	out.cells	in3.rows	0	0
+row	M0065	histrows.add@m.{E}	0;0;in2.len;in3.cells	out.cells	out.cells	in3.rows	0	0
+row	M0066	rowdiv@m.{E}	in0.cells;in1.len	out.cells	out.cells	0	1	0
+row	M0068	pair@{S.tag}	in0.cells;in1.cells	out.cells	0	0	1	0
+row	M0069	fst.{S.tag}@{S.a}	in0.cells	out.cells	0	0	1	0
+row	M0070	snd.{S.tag}@{S.b}	in0.cells	out.cells	0	0	1	0
+row	M0071	zero@{S.tag}		0	0	0	0	0
+row	M0072	psel{E.tag}@{S.tag}	in0.cells;in1.cells;in2.cells	out.cells	0	0	1	0
+row	M0073	loop@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0074	loop1@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0075	cvt.i32@{E}	in0.cells	out.cells	0	0	1	0
+row	M0076	cvt.f32@{E}	in0.cells	out.cells	0	0	1	0
+row	M0077	triple@{S.tag}	in0.cells;in1.cells;in2.cells	out.cells	0	0	1	0
+row	M0078	fst.{S.tag}@{S.a}	in0.cells	out.cells	0	0	1	0
+row	M0079	snd.{S.tag}@{S.b}	in0.cells	out.cells	0	0	1	0
+row	M0080	thd.{S.tag}@{S.c}	in0.cells	out.cells	0	0	1	0
+row	M0081	zero@{S.tag}		0	0	0	0	0
+row	M0082	psel{E.tag}@{S.tag}	in0.cells;in1.cells;in2.cells	out.cells	0	0	1	0
+row	M0083	loop@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0084	loop1@{S.tag}	0;in1.cells;in2.cells	out.cells	out.cells	in0.value	0	0
+row	M0085	let.{S.tag}@{Y.tag}	0;0	0	0	0	0	0
+row	M0087	var@{T.tag}		0	0	0	0	0
+row	M0088	zero@{T.tag}		0	0	0	0	0
+adapter		clampix		0	0	0	0	2
+adapter		fit		0	0	0	0	fitted.cells
+adapter		fit.pair		0	0	0	0	fitted.cells
+adapter		fit.state		0	0	0	0	fitted.cells
+adapter		fit.body		0	0	0	0	fitted.cells
+adapter		fit.inner		0	0	0	0	fitted.cells
+adapter		fit.root		0	0	0	0	fitted.cells
+adapter		subst		0	0	0	0	0
+adapter		subst.const		0	0	0	0	0
