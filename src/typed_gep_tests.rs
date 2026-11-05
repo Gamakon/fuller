@@ -62,6 +62,7 @@ fn draw_span(k: &KingdomContract, s: &Span, gene: &mut [u32], rng: &mut Rng) {
                 ts[rng.below(ts.len())]
             }
             Domain::Dc => rng.below(CONSTS as usize) as u32,
+            Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
         };
     }
 }
@@ -591,6 +592,10 @@ fn planted_defects(rel: &KingdomRelations, label: &str) {
             Domain::Dc => {
                 gene[pos] = CONSTS + rng.below(1000) as u32;
                 (LayoutDefect::DcIndexPastConstants { ty: span.ty, index: gene[pos], len: CONSTS }, "dc past C_T")
+            }
+            Domain::Dv => {
+                gene[pos] = crate::typed_gep::DV_WORDS + rng.below(1000) as u32;
+                (LayoutDefect::DvWordPastRange { pos, word: gene[pos] }, "dv past its range")
             }
             Domain::Head | Domain::Tail => match rng.below(3) {
                 0 => {

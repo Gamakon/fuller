@@ -215,6 +215,7 @@ You may first sketch the tree in a few plain lines that do not start with a type
                     Domain::Head => f.head_alpha[(r % f.head_alpha.len() as u64) as usize],
                     Domain::Tail => f.tail_alpha[(r % f.tail_alpha.len() as u64) as usize],
                     Domain::Dc => (r % u64::from(f.const_len.max(1))) as u32,
+                    Domain::Dv => (r % u64::from(crate::typed_gep::DV_WORDS)) as u32,
                 };
             }
         }

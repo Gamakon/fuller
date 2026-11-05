@@ -768,6 +768,7 @@ pub fn random_gene(k: &KingdomContract, layout: &GeneLayout, const_len: &BTreeMa
                 }
                 Domain::Tail => terminals[rng.below(terminals.len())],
                 Domain::Dc => rng.below(const_len.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
+                Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
             };
         }
     }
@@ -815,6 +816,7 @@ pub fn random_gene_weighted(k: &KingdomContract, layout: &GeneLayout, const_len:
                 }
                 Domain::Tail => pick(terminals, tcum, rng),
                 Domain::Dc => rng.below(const_len.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
+                Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
             };
         }
     }

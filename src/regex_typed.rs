@@ -352,6 +352,7 @@ mod tests {
                         ts[rng.below(ts.len())]
                     }
                     Domain::Dc => rng.below(cl[&s.ty] as usize) as u32,
+                    Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
                 };
             }
         }

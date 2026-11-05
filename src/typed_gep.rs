@@ -1,15 +1,27 @@
 //! The multi-typed GEP genome layout and its host expression
 //! (`nucleotable/docs/MultiTypedGEP.md`, revision 4, sections 2 to 5).
 //!
-//! A gene has, for every type `T` its root reaches, a `head_T`, a `tail_T` and
-//! (for a constant-capable type) a `Dc_T`. A slot requiring `T` reads the next
+//! A gene has, for every type `T` its root reaches, a `head_T`, a `tail_T`,
+//! (for a constant-capable type) a `Dc_T` and (for a type with a variable
+//! terminal `var.T`, plan 7 task G2) a `Dv_T`. A slot requiring `T` reads the next
 //! unused row of `T`'s frame, `head_T` then `tail_T`; `head_T` holds symbols
 //! whose output is `T`, `tail_T` terminals whose output is `T`. The lengths
 //! come from the kingdom's bound table ([`KingdomContract::bounds`]) for a
 //! declared program size `N` or explicit `h_T`, and belong to the layout, never
 //! to a gene record. Physical order is every head, then every tail, then every
-//! Dc, each in frame order (the root's type first, then ascending code), so a
-//! one-type gene is exactly the physical Karva head, tail and Dc.
+//! Dc, then every Dv, each in frame order (the root's type first, then ascending
+//! code), so a one-type gene is exactly the physical Karva head, tail and Dc, and
+//! a kingdom with no `var.T` lays out exactly as before the Dv lane existed.
+//!
+//! `Dv_T` is a LANE PARALLEL to `head_T` and `tail_T`: word `r` of `Dv_T` belongs
+//! to frame row `r` (the cell [`Frame::row_pos`] gives), whatever symbol that
+//! cell holds, and is read only when the cell expresses as `var.T`. It is never
+//! consumed in order as `Dc_T` is, so a `var.T` takes no `Dc_T` word and the Dc
+//! lengths are unchanged. Every operator that moves a head or tail cell moves its
+//! Dv word with it; an operator applied to a Dv span alone is a defect, since it
+//! would part a word from its cell (the adversarial review's M2). An index word
+//! is any `u32` below [`DV_WORDS`]; the decoder (G3) reads it modulo the
+//! variables in scope, so no draw or edit needs the environment.
 //!
 //! There is no repair, substitution or fallback: a cell that does not fit is a
 //! [`LayoutDefect`], "our software has a bug: ...". Variation draws from
@@ -26,13 +38,18 @@ use std::fmt;
 use crate::geneframe::Ty;
 use crate::kingdom_contract::{GeneBounds, KingdomContract, SymbolId};
 
-/// The three domains of a gene.
+/// The four domains of a gene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Domain {
     Head,
     Tail,
     Dc,
+    /// The variable terminals' index words, one a frame row of a type with a `var.T`.
+    Dv,
 }
+
+/// An index word of `Dv_T` is any value below this (design 4, plan 7.1).
+pub const DV_WORDS: u32 = 1 << 16;
 
 impl Domain {
     pub fn name(self) -> &'static str {
@@ -40,6 +57,7 @@ impl Domain {
             Domain::Head => "head",
             Domain::Tail => "tail",
             Domain::Dc => "dc",
+            Domain::Dv => "dv",
         }
     }
 }
@@ -67,6 +85,10 @@ pub struct Frame {
     pub dc_off: Option<usize>,
     /// `d_T`; zero without a Dc.
     pub dc_len: usize,
+    /// Present for a type with a variable terminal `var.T`.
+    pub dv_off: Option<usize>,
+    /// `h_T + t_T` with a Dv; zero without.
+    pub dv_len: usize,
 }
 
 impl Frame {
@@ -80,6 +102,11 @@ impl Frame {
         } else {
             None
         }
+    }
+
+    /// The gene position of the Dv word of frame row `k`, or `None` without a Dv or past its end.
+    pub fn dv_pos(&self, k: usize) -> Option<usize> {
+        self.dv_off.filter(|_| k < self.dv_len).map(|o| o + k)
     }
 }
 
@@ -127,7 +154,7 @@ impl GeneLayout {
         let mut frames: Vec<Frame> = Vec::with_capacity(b.types.len());
         let mut off = 0;
         for t in &b.types {
-            frames.push(Frame { ty: t.ty, head_off: off, head_len: t.h, tail_off: 0, tail_len: t.t, dc_off: None, dc_len: 0 });
+            frames.push(Frame { ty: t.ty, head_off: off, head_len: t.h, tail_off: 0, tail_len: t.t, dc_off: None, dc_len: 0, dv_off: None, dv_len: 0 });
             off += t.h;
         }
         for f in &mut frames {
@@ -139,6 +166,13 @@ impl GeneLayout {
                 f.dc_off = Some(off);
                 f.dc_len = t.d;
                 off += t.d;
+            }
+        }
+        for (f, t) in frames.iter_mut().zip(&b.types) {
+            if t.variable {
+                f.dv_off = Some(off);
+                f.dv_len = t.dv();
+                off += t.dv();
             }
         }
         GeneLayout { root, program_size, frames, width: off }
@@ -191,8 +225,31 @@ impl GeneLayout {
                 v.push(Span { domain: Domain::Dc, ty: f.ty, off: d, len: f.dc_len });
             }
         }
+        for f in &self.frames {
+            if let Some(d) = f.dv_off {
+                v.push(Span { domain: Domain::Dv, ty: f.ty, off: d, len: f.dv_len });
+            }
+        }
         v.retain(|s| s.len > 0);
         v
+    }
+
+    /// The gene position of the Dv word parallel to the first cell of `s`, a head or tail span of a type with a Dv
+    /// lane: the word of position `p` of `s` is at `lane + (p - s.off)`. `None` for any other span.
+    pub fn lane(&self, s: &Span) -> Option<usize> {
+        let f = self.frame(s.ty)?;
+        let base = f.dv_off?;
+        match s.domain {
+            Domain::Head => Some(base),
+            Domain::Tail => Some(base + f.head_len),
+            Domain::Dc | Domain::Dv => None,
+        }
+    }
+
+    /// The Dv word parallel to the head or tail cell at `pos`, if its type has a Dv lane.
+    pub fn dv_of_cell(&self, pos: usize) -> Option<usize> {
+        let s = self.spans().into_iter().find(|s| pos >= s.off && pos < s.off + s.len)?;
+        self.lane(&s).map(|l| l + (pos - s.off))
     }
 
     /// The domain-local key of the cell at `pos`.
@@ -206,20 +263,26 @@ impl GeneLayout {
     }
 
     /// The gene as rows of the geneframe relation: head and tail rows carry a
-    /// `symbol`, Dc rows a `dc_index` and never a symbol.
+    /// `symbol`, Dc rows a `dc_index` and Dv rows a `dv_index`, never a symbol.
     pub fn rows(&self, chromosome_id: u64, gene_id: u64, gene: &[u32]) -> Vec<GeneRow> {
         (0..self.width)
             .map(|pos| {
                 let key = self.key(pos);
-                let (symbol, dc_index) = if key.domain == Domain::Dc { (None, Some(gene[pos])) } else { (Some(gene[pos]), None) };
-                GeneRow { chromosome_id, gene_id, key, symbol, dc_index }
+                let w = Some(gene[pos]);
+                let (symbol, dc_index, dv_index) = match key.domain {
+                    Domain::Head | Domain::Tail => (w, None, None),
+                    Domain::Dc => (None, w, None),
+                    Domain::Dv => (None, None, w),
+                };
+                GeneRow { chromosome_id, gene_id, key, symbol, dc_index, dv_index }
             })
             .collect()
     }
 
     /// The values a mutation may write at `pos`: any symbol outputting `T` in
     /// `head_T`, a terminal outputting `T` in `tail_T`, an index below `C_T` in
-    /// `Dc_T`. Enumerated before the draw, so a drawn child is valid.
+    /// `Dc_T`, any word below [`DV_WORDS`] in `Dv_T`. Enumerated before the draw,
+    /// so a drawn child is valid.
     pub fn alphabet(&self, k: &KingdomContract, pos: usize, const_len: &BTreeMap<Ty, u32>) -> Vec<u32> {
         let key = self.key(pos);
         let t = key.domain_type;
@@ -227,6 +290,19 @@ impl GeneLayout {
             Domain::Head => (0..k.n_symbols() as SymbolId).filter(|s| k.output(*s) == t).collect(),
             Domain::Tail => k.terminals_of(t).to_vec(),
             Domain::Dc => (0..const_len.get(&t).copied().unwrap_or(0)).collect(),
+            Domain::Dv => (0..DV_WORDS).collect(),
+        }
+    }
+
+    /// Whether `value` is in the alphabet of the cell at `pos` ([`GeneLayout::alphabet`] without enumerating it).
+    pub fn in_alphabet(&self, k: &KingdomContract, pos: usize, value: u32, const_len: &BTreeMap<Ty, u32>) -> bool {
+        let key = self.key(pos);
+        let t = key.domain_type;
+        match key.domain {
+            Domain::Head => (value as usize) < k.n_symbols() && k.output(value) == t,
+            Domain::Tail => k.terminals_of(t).contains(&value),
+            Domain::Dc => value < const_len.get(&t).copied().unwrap_or(0),
+            Domain::Dv => value < DV_WORDS,
         }
     }
 
@@ -235,47 +311,76 @@ impl GeneLayout {
         self.spans().into_iter().find(|s| lo >= s.off && hi <= s.off + s.len && lo < hi).ok_or(LayoutDefect::RangeAcrossDomains { lo, hi })
     }
 
-    /// Point mutation: `value` must be in the alphabet of the cell.
+    /// The span holding `[lo, hi)` for an operator that MOVES cells: a Dv span alone is a defect (its words would part
+    /// from their cells), and the result carries the Dv lane parallel to the range, if the span has one.
+    fn moving_span(&self, lo: usize, hi: usize) -> Result<(Span, Option<usize>), LayoutDefect> {
+        let s = self.span_of(lo, hi)?;
+        if s.domain == Domain::Dv {
+            return Err(LayoutDefect::LaneMovedAlone { lo, hi });
+        }
+        Ok((s, self.lane(&s).map(|l| l + (lo - s.off))))
+    }
+
+    /// Point mutation: `value` must be in the alphabet of the cell. An edit of a Dv word changes no symbol, and an
+    /// edit of a cell leaves its Dv word.
     pub fn mutate(&self, k: &KingdomContract, gene: &mut [u32], pos: usize, value: u32, const_len: &BTreeMap<Ty, u32>) -> Result<(), LayoutDefect> {
-        if !self.alphabet(k, pos, const_len).contains(&value) {
+        if !self.in_alphabet(k, pos, value, const_len) {
             return Err(LayoutDefect::NotInAlphabet { pos, value });
         }
         gene[pos] = value;
         Ok(())
     }
 
-    /// Homologous recombination: exchange `[lo, hi)` between two genes. Both
+    /// Homologous recombination: exchange `[lo, hi)` between two genes, with the cells' Dv words. Both
     /// layouts must be homologous and the range inside one domain of one type.
     pub fn swap_range(&self, other: &GeneLayout, a: &mut [u32], b: &mut [u32], lo: usize, hi: usize) -> Result<(), LayoutDefect> {
         if !self.homologous(other) {
             return Err(LayoutDefect::NotHomologous);
         }
-        self.span_of(lo, hi)?;
+        let (_, lane) = self.moving_span(lo, hi)?;
         a[lo..hi].swap_with_slice(&mut b[lo..hi]);
+        if let Some(l) = lane {
+            a[l..l + hi - lo].swap_with_slice(&mut b[l..l + hi - lo]);
+        }
         Ok(())
     }
 
-    /// Inversion of `[lo, hi)`, inside one domain of one type.
+    /// Inversion of `[lo, hi)`, inside one domain of one type, the cells' Dv words with them.
     pub fn invert(&self, gene: &mut [u32], lo: usize, hi: usize) -> Result<(), LayoutDefect> {
-        self.span_of(lo, hi)?;
+        let (_, lane) = self.moving_span(lo, hi)?;
         gene[lo..hi].reverse();
+        if let Some(l) = lane {
+            gene[l..l + hi - lo].reverse();
+        }
         Ok(())
+    }
+
+    /// Whether reversing `[lo, hi)` (with its Dv words) would change the gene.
+    fn reversal_changes(&self, gene: &[u32], s: &Span, lo: usize, hi: usize) -> bool {
+        let differs = |cells: &[u32]| cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b);
+        differs(&gene[lo..hi]) || self.lane(s).is_some_and(|l| differs(&gene[l + (lo - s.off)..l + (hi - s.off)]))
     }
 
     /// GEP's insertion-sequence transposition inside one domain of one type: the run `[src, src + len)` is copied
     /// to `dst`, the cells from `dst` on shift towards the span's end and the overflow falls off it. The run and
-    /// `dst` must lie in one span. Returns whether a cell changed.
+    /// `dst` must lie in one span. The cells' Dv words move with them. Returns whether a cell or word changed.
     pub fn transpose(&self, gene: &mut [u32], src: usize, len: usize, dst: usize) -> Result<bool, LayoutDefect> {
-        let s = self.span_of(src, src + len)?;
+        let (s, _) = self.moving_span(src, src + len)?;
         if dst < s.off || dst >= s.off + s.len {
             return Err(LayoutDefect::RangeAcrossDomains { lo: dst, hi: dst + 1 });
         }
-        let before = gene[s.off..s.off + s.len].to_vec();
-        let mut span = before.clone();
-        span.splice(dst - s.off..dst - s.off, gene[src..src + len].iter().copied());
-        span.truncate(s.len);
-        gene[s.off..s.off + s.len].copy_from_slice(&span);
-        Ok(span != before)
+        let shift = |gene: &mut [u32], base: usize| {
+            let before = gene[base..base + s.len].to_vec();
+            let mut span = before.clone();
+            let run: Vec<u32> = gene[base + (src - s.off)..base + (src - s.off) + len].to_vec();
+            span.splice(dst - s.off..dst - s.off, run);
+            span.truncate(s.len);
+            gene[base..base + s.len].copy_from_slice(&span);
+            span != before
+        };
+        let cells = shift(gene, s.off);
+        let words = self.lane(&s).is_some_and(|l| shift(gene, l));
+        Ok(cells || words)
     }
 
     // ---- THE ROW TABLE (Andrew, 2026-11-01): a domain of the gene is a table, row = position, column = type ----
@@ -307,8 +412,7 @@ impl GeneLayout {
             if h <= lo + 1 {
                 continue;
             }
-            let cells = &gene[c.off + lo..c.off + h];
-            if cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b) {
+            if self.reversal_changes(gene, &c, c.off + lo, c.off + h) {
                 self.invert(gene, c.off + lo, c.off + h)?;
                 changed += 1;
             }
@@ -363,7 +467,8 @@ impl GeneLayout {
     /// recombination at row indices of the whole gene's table, the rows exchanged between `a` and `b` in every
     /// column. A column is `head_T`, `tail_T`, `Dc_T` in that order, so a cut spans head and tail (and Dc) together,
     /// as the classic recombination does over the linear gene; with one type the column IS the linear gene and this
-    /// is the classic operator. Both layouts must be homologous. Returns the cells exchanged.
+    /// is the classic operator. A head or tail row's Dv word goes with it. Both layouts must be homologous. Returns
+    /// the cells exchanged, Dv words not counted.
     pub fn crossover_rows(&self, other: &GeneLayout, a: &mut [u32], b: &mut [u32], cut1: usize, cut2: Option<usize>) -> Result<usize, LayoutDefect> {
         if !self.homologous(other) {
             return Err(LayoutDefect::NotHomologous);
@@ -379,6 +484,9 @@ impl GeneLayout {
                 match Self::column_pos(f, r) {
                     Some(p) => {
                         std::mem::swap(&mut a[p], &mut b[p]);
+                        if let Some(d) = f.dv_pos(r) {
+                            std::mem::swap(&mut a[d], &mut b[d]);
+                        }
                         cells += 1;
                     }
                     None => break,
@@ -406,8 +514,7 @@ impl GeneLayout {
             if h <= l + 1 {
                 continue;
             }
-            let cells = &gene[c.off + l..c.off + h];
-            if cells.iter().zip(cells.iter().rev()).any(|(a, b)| a != b) {
+            if self.reversal_changes(gene, &c, c.off + l, c.off + h) {
                 self.invert(gene, c.off + l, c.off + h)?;
                 changed += 1;
             }
@@ -435,7 +542,8 @@ impl GeneLayout {
 
     /// RELATIVE CROSSOVER: one-point (`cut2 = None`) or two-point, each column of the whole gene (`head_T`, `tail_T`,
     /// `Dc_T`, as [`GeneLayout::crossover_rows`]) exchanging its rows `[frac_row(cut1, len), frac_row(cut2, len))`
-    /// (to its end for one-point). `cut1 < cut2 <= FRAC_ONE`. Returns the cells exchanged.
+    /// (to its end for one-point), a head or tail row's Dv word with it. `cut1 < cut2 <= FRAC_ONE`. Returns the cells
+    /// exchanged, Dv words not counted.
     pub fn crossover_rel(&self, other: &GeneLayout, a: &mut [u32], b: &mut [u32], cut1: u64, cut2: Option<u64>) -> Result<usize, LayoutDefect> {
         if !self.homologous(other) {
             return Err(LayoutDefect::NotHomologous);
@@ -450,6 +558,9 @@ impl GeneLayout {
             for r in frac_row(cut1, len)..frac_row(hi, len) {
                 let p = Self::column_pos(f, r).expect("a row below the column's length");
                 std::mem::swap(&mut a[p], &mut b[p]);
+                if let Some(d) = f.dv_pos(r) {
+                    std::mem::swap(&mut a[d], &mut b[d]);
+                }
                 cells += 1;
             }
         }
@@ -546,6 +657,8 @@ pub struct GeneRow {
     pub key: DomainKey,
     pub symbol: Option<SymbolId>,
     pub dc_index: Option<u32>,
+    /// A Dv row's index word.
+    pub dv_index: Option<u32>,
 }
 
 /// A cell the layout or the kingdom cannot express. Every one is a software
@@ -592,6 +705,14 @@ pub enum LayoutDefect {
     DcTooShort { ty: Ty, need: usize, d: usize },
     /// A `?_T` node with no `C_T` index.
     MissingConstIndex { step: usize },
+    /// A `var.T` node with no index word.
+    MissingVariableIndex { step: usize },
+    /// A `var.T` of a type whose frame has no Dv lane.
+    NoDvLane { ty: Ty },
+    /// A Dv word at or past [`DV_WORDS`].
+    DvWordPastRange { pos: usize, word: u32 },
+    /// An operator that moves cells applied to a Dv span alone, which would part its words from their cells.
+    LaneMovedAlone { lo: usize, hi: usize },
 }
 
 impl fmt::Display for LayoutDefect {
@@ -622,6 +743,10 @@ impl fmt::Display for LayoutDefect {
             LayoutDefect::TailTooShort { ty, need, rows } => write!(f, "the tree has {need} nodes of type {ty:?}, head and tail hold {rows}"),
             LayoutDefect::DcTooShort { ty, need, d } => write!(f, "the tree has {need} placeholders of type {ty:?}, Dc holds {d}"),
             LayoutDefect::MissingConstIndex { step } => write!(f, "tree node {step} is a constant placeholder with no C_T index"),
+            LayoutDefect::MissingVariableIndex { step } => write!(f, "tree node {step} is a variable terminal with no index word"),
+            LayoutDefect::NoDvLane { ty } => write!(f, "a variable terminal of type {ty:?}, whose frame has no Dv lane"),
+            LayoutDefect::DvWordPastRange { pos, word } => write!(f, "the Dv word at {pos} is {word}, at or past {DV_WORDS}"),
+            LayoutDefect::LaneMovedAlone { lo, hi } => write!(f, "range [{lo}, {hi}) is a Dv lane moved without its cells"),
         }
     }
 }
@@ -639,7 +764,8 @@ pub struct Node {
     pub depth: usize,
     pub parent_step: Option<usize>,
     pub arg_index: Option<u32>,
-    /// The `C_T` index an expressed `?_T` read from its Dc.
+    /// The `C_T` index an expressed `?_T` read from its Dc, or the index word an expressed `var.T` read from its
+    /// Dv (the symbol's [`KingdomContract::is_variable`] says which).
     pub const_index: Option<u32>,
     /// The gene position the symbol was read from.
     pub pos: usize,
@@ -667,6 +793,7 @@ pub struct Expressed {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tree {
     pub symbol: SymbolId,
+    /// A `?_T`'s `C_T` index, or a `var.T`'s Dv index word ([`KingdomContract::is_variable`]); `None` otherwise.
     pub const_index: Option<u32>,
     pub kids: Vec<Tree>,
 }
@@ -759,6 +886,11 @@ pub fn validate(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_le
                         return Err(LayoutDefect::DcIndexPastConstants { ty: s.ty, index: *w, len });
                     }
                 }
+                Domain::Dv => {
+                    if *w >= DV_WORDS {
+                        return Err(LayoutDefect::DvWordPastRange { pos, word: *w });
+                    }
+                }
             }
         }
     }
@@ -795,6 +927,8 @@ pub fn express(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_len
             q_t.insert(slot.ty, q + 1);
             reach.q_used.insert(slot.ty, q + 1);
             Some(gene[dc_off + q])
+        } else if k.is_variable(symbol) {
+            Some(gene[frame.dv_pos(frame_k).ok_or(LayoutDefect::NoDvLane { ty: slot.ty })?])
         } else {
             None
         };
@@ -818,7 +952,7 @@ pub fn express(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_len
 
 /// THE EXPRESSED NODES WALKED WITHOUT BUILDING THEM: [`express`]'s FIFO walk over the same cells, in the same order,
 /// with the same defects, that keeps only each slot's type. It calls `visit` with each node's symbol and, for a
-/// constant, its Dc word (the two words that decide the node), and stops once it has walked `limit + 1` nodes. Returns
+/// constant, its Dc word, and for a variable terminal, its Dv word (the two words that decide the node), and stops once it has walked `limit + 1` nodes. Returns
 /// the nodes walked: the expressed tree's node count when that is at most `limit`, else `limit + 1`. A size guard
 /// counts with it before any tree or text is built (`FutharkEvaluator`'s size bound, the F3a code review), and keys
 /// an oversized gene by a hash of every node's words (`limit` = `usize::MAX - 1`).
@@ -846,6 +980,8 @@ pub fn walk_expressed(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], co
             }
             q_t.insert(ty, q + 1);
             Some(gene[dc_off + q])
+        } else if k.is_variable(symbol) {
+            Some(gene[frame.dv_pos(frame_k).ok_or(LayoutDefect::NoDvLane { ty })?])
         } else {
             None
         };
@@ -914,9 +1050,18 @@ fn place(k: &KingdomContract, layout: &GeneLayout, tree: &Tree) -> Result<Placem
         let ty = k.output(t.symbol);
         let f = layout.frame(ty).ok_or(LayoutDefect::NoFrame { ty })?;
         let r = rank.entry(ty).or_default();
-        let pos = f.row_pos(*r).ok_or(LayoutDefect::TailTooShort { ty, need: *r + 1, rows: f.head_len + f.tail_len })?;
+        let row = *r;
+        let pos = f.row_pos(row).ok_or(LayoutDefect::TailTooShort { ty, need: row + 1, rows: f.head_len + f.tail_len })?;
         *r += 1;
         cells.push((pos, t.symbol));
+        if k.is_variable(t.symbol) {
+            let w = t.const_index.ok_or(LayoutDefect::MissingVariableIndex { step: i + 1 })?;
+            let d = f.dv_pos(row).ok_or(LayoutDefect::NoDvLane { ty })?;
+            if w >= DV_WORDS {
+                return Err(LayoutDefect::DvWordPastRange { pos: d, word: w });
+            }
+            cells.push((d, w));
+        }
         if k.is_constant(t.symbol) {
             let n = q.entry(ty).or_default();
             let idx = t.const_index.ok_or(LayoutDefect::MissingConstIndex { step: i + 1 })?;
@@ -937,7 +1082,7 @@ pub fn fits(k: &KingdomContract, layout: &GeneLayout, tree: &Tree) -> Result<(),
 /// The write-back of a rewritten expressed tree (fold, cleanse, snap,
 /// promotion): the walk of section 3 in reverse. The `T` nodes in level order
 /// are rows `0, 1, 2, ...` of `T`'s frame, so the first `h_T` are `head_T` and
-/// the rest `tail_T`; `Dc_T` is rebuilt in the order the `?_T` appear; rows the
+/// the rest `tail_T`; `Dc_T` is rebuilt in the order the `?_T` appear; a `var.T`'s word goes to its row of `Dv_T`; rows the
 /// walk does not read keep their `previous` contents (Karva's non-coding
 /// region, deterministic).
 pub fn write_back(k: &KingdomContract, layout: &GeneLayout, previous: &[u32], tree: &Tree) -> Result<Vec<u32>, LayoutDefect> {
@@ -1327,5 +1472,446 @@ mod tests {
         let arity = t(LEFT, vec![t(S, vec![])]);
         assert_eq!(write_back(&k, &layout, &prev, &arity), Err(LayoutDefect::TreeArity { step: 1, want: 2, got: 1 }));
         assert_eq!(write_back(&k, &layout, &prev[..4], &t(S, vec![])), Err(LayoutDefect::GeneLength { want: 5, got: 4 }));
+    }
+
+    // -- every existing kingdom lays out and expresses as before the Dv lane (plan 7 task G2) ----------------------
+
+    /// FNV-1a over 64-bit words: a fingerprint that is the same in every process.
+    fn fnv(h: &mut u64, w: u64) {
+        for b in w.to_le_bytes() {
+            *h ^= u64::from(b);
+            *h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+
+    /// A fingerprint of a kingdom's layouts (every root at N = 1, 8, 32: width and every frame's offsets and lengths)
+    /// and of 200 random genes a root at N = 8 expressed (every node's symbol, word and position). The golden values
+    /// below were taken on the code before the Dv lane existed (fuller e526a62f).
+    fn layout_and_words_fingerprint(r: &crate::kingdom_contract::KingdomRelations, const_len: &BTreeMap<Ty, u32>) -> u64 {
+        let k = r.check().unwrap_or_else(|d| panic!("{}: {:?}", r.kingdom, d.first()));
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        let mut rng = 0x5eed_u64;
+        let mut next = move |n: usize| {
+            rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = rng;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            ((z ^ (z >> 31)) % n as u64) as usize
+        };
+        for root in k.roots().to_vec() {
+            for n in [1usize, 8, 32] {
+                let l = GeneLayout::from_program_size(&k, root, n).unwrap_or_else(|e| panic!("{}: {e}", r.kingdom));
+                for w in [u64::from(root.code()), n as u64, l.width as u64] {
+                    fnv(&mut h, w);
+                }
+                for f in &l.frames {
+                    assert_eq!((f.dv_off, f.dv_len), (None, 0), "{}: no Dv lane", r.kingdom);
+                    for w in [u64::from(f.ty.code()), f.head_off as u64, f.head_len as u64, f.tail_off as u64, f.tail_len as u64, f.dc_off.map_or(u64::MAX, |o| o as u64), f.dc_len as u64] {
+                        fnv(&mut h, w);
+                    }
+                }
+                if n != 8 {
+                    continue;
+                }
+                for _ in 0..200 {
+                    let mut gene = vec![0u32; l.width];
+                    for s in l.spans() {
+                        for cell in &mut gene[s.off..s.off + s.len] {
+                            *cell = match s.domain {
+                                Domain::Head => {
+                                    let (f, t) = (k.functions_of(s.ty), k.terminals_of(s.ty));
+                                    let i = next(f.len() + t.len());
+                                    if i < f.len() {
+                                        f[i]
+                                    } else {
+                                        t[i - f.len()]
+                                    }
+                                }
+                                Domain::Tail => k.terminals_of(s.ty)[next(k.terminals_of(s.ty).len())],
+                                Domain::Dc => next(const_len.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
+                                Domain::Dv => panic!("{}: an existing kingdom has a Dv lane", r.kingdom),
+                            };
+                        }
+                    }
+                    let e = express(&k, &l, &gene, const_len).unwrap_or_else(|d| panic!("{}: {d}", r.kingdom));
+                    for node in &e.nodes {
+                        for w in [u64::from(node.symbol), node.const_index.map_or(u64::MAX, u64::from), node.pos as u64] {
+                            fnv(&mut h, w);
+                        }
+                    }
+                }
+            }
+        }
+        h
+    }
+
+    fn consts_of(r: &crate::kingdom_contract::KingdomRelations) -> BTreeMap<Ty, u32> {
+        let k = r.check().expect("checks");
+        k.types().iter().filter(|t| k.constant_capable(**t)).map(|t| (*t, 5)).collect()
+    }
+
+    #[test]
+    fn every_existing_kingdom_lays_out_and_expresses_word_for_word_as_before_the_dv_lane() {
+        use crate::kingdom_contract::{regex_relations, sr_relations, tsr_relations};
+        let mut kingdoms: Vec<(String, crate::kingdom_contract::KingdomRelations)> = vec![("sr".into(), sr_relations()), ("regex".into(), regex_relations())];
+        kingdoms.push(("typed regex".into(), crate::regex_typed::typed_regex_relations(false)));
+        kingdoms.push(("typed regex, pattern literal".into(), crate::regex_typed::typed_regex_relations(true)));
+        for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::Depth, crate::tsr_kingdom::TsrVariant::OrderDepth] {
+            kingdoms.push((format!("tsr {}", v.dir()), tsr_relations(v, 3).expect("TSR tables load")));
+        }
+        kingdoms.push(("futhark".into(), crate::futhark_table::FutharkKingdom::load().expect("Futhark kingdom").relations()));
+        kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
+        for inst in [crate::futhark_sig::REDUCE, crate::futhark_sig::SCAN, crate::futhark_sig::HISTOGRAM, crate::futhark_sig::PATHFINDER] {
+            kingdoms.push((format!("futhark view {}", inst.name), crate::futhark_sig::load(&inst).expect("view loads").relations()));
+        }
+        #[cfg(feature = "wgsl")]
+        {
+            kingdoms.push(("wgsl".into(), crate::kingdom_contract::wgsl_relations()));
+            kingdoms.push(("safewgsl".into(), crate::kingdom_contract::safewgsl_relations()));
+            let t = crate::wgsl::true_kingdom::TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir()).expect("true WGSL table");
+            kingdoms.push(("true wgsl".into(), t.relations()));
+        }
+        let golden: BTreeMap<&str, u64> = BTreeMap::from([
+            ("sr", 0x5fea_40a2_cad6_8e36),
+            ("regex", 0x7fa3_1d59_5356_0275),
+            ("typed regex", 0x41d5_f0a6_e494_878a),
+            ("typed regex, pattern literal", 0x9839_d2a6_1760_f1a1),
+            ("tsr single", 0x6be9_289b_4aa6_c90b),
+            ("tsr order", 0x63b6_0c17_542c_37b9),
+            ("tsr depth", 0x8890_feef_ab56_ab14),
+            ("tsr order_depth", 0x5872_1638_c12a_7f88),
+            ("futhark", 0x6c96_d430_8287_1fa2),
+            ("futhark 1-D", 0x4d21_23d5_b0e4_8a3c),
+            ("futhark view reduce", 0xfd25_3707_45fa_2ed3),
+            ("futhark view scan", 0xd334_75fe_624f_a773),
+            ("futhark view histogram", 0x3d88_a218_edc9_6378),
+            ("futhark view pathfinder", 0x143c_67e8_b7d1_73ea),
+            ("wgsl", 0xaca5_c7c1_66fa_1914),
+            ("safewgsl", 0x0513_9731_15ba_6f78),
+            ("true wgsl", 0x4119_d902_a24d_25aa),
+        ]);
+        let mut wrong = Vec::new();
+        for (name, r) in &kingdoms {
+            let k = r.check().expect("checks");
+            assert!(k.types().iter().all(|t| !k.variable_capable(*t)), "{name}: no existing kingdom has a variable terminal");
+            let got = layout_and_words_fingerprint(r, &consts_of(r));
+            if golden.get(name.as_str()) != Some(&got) {
+                wrong.push(format!("{name}: 0x{got:016x}"));
+            }
+        }
+        assert!(wrong.is_empty(), "layouts or expressed words changed: {wrong:?}");
+    }
+
+    // -- the variable terminal `var.T` and its Dv lane (plan 7 task G2) ------------------------------------------
+
+    /// The toy kingdom of G2: `pair:S(S,I)`, `inc:I(I)`, terminals `s:S`, `var.S:S`, `i:I`, `var.I:I`, and the
+    /// constant placeholder `?:I`. `variables` false gives the same rows with no variable terminal.
+    fn toy_relations(variables: bool) -> crate::kingdom_contract::KingdomRelations {
+        let r = relations_from_rows(
+            "toy var.T",
+            vec![Ty::S],
+            &[
+                ("pair".to_string(), vec![Ty::S, Ty::I], Ty::S),
+                ("inc".to_string(), vec![Ty::I], Ty::I),
+                ("s".to_string(), vec![], Ty::S),
+                ("var.S".to_string(), vec![], Ty::S),
+                ("i".to_string(), vec![], Ty::I),
+                ("var.I".to_string(), vec![], Ty::I),
+                ("?".to_string(), vec![], Ty::I),
+            ],
+            &["?"],
+        );
+        if variables {
+            r.with_variables(&["var.S", "var.I"]).expect("two terminals")
+        } else {
+            r
+        }
+    }
+    const PAIR: SymbolId = 0;
+    const INC: SymbolId = 1;
+    const SS: SymbolId = 2;
+    const VAR_S: SymbolId = 3;
+    const II: SymbolId = 4;
+    const VAR_I: SymbolId = 5;
+    const QI: SymbolId = 6;
+
+    fn toy() -> KingdomContract {
+        toy_relations(true).check().expect("the toy kingdom checks")
+    }
+
+    fn toy_consts() -> BTreeMap<Ty, u32> {
+        BTreeMap::from([(Ty::I, 4)])
+    }
+
+    fn leaf_w(symbol: SymbolId, w: u32) -> Tree {
+        Tree { symbol, const_index: Some(w), kids: vec![] }
+    }
+
+    /// A gene of `l` drawn valid by layout from `seed`, every Dv word a distinct tag (its own position), so a test can
+    /// tell which cell a word came from.
+    fn toy_gene(k: &KingdomContract, l: &GeneLayout, seed: u64, tag_base: u32) -> Vec<u32> {
+        let mut state = seed;
+        let mut next = |n: usize| {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            ((z ^ (z >> 31)) % n as u64) as usize
+        };
+        let mut gene = vec![0u32; l.width];
+        for s in l.spans() {
+            for (p, cell) in gene.iter_mut().enumerate().skip(s.off).take(s.len) {
+                *cell = match s.domain {
+                    Domain::Head => {
+                        let a = l.alphabet(k, p, &toy_consts());
+                        a[next(a.len())]
+                    }
+                    Domain::Tail => k.terminals_of(s.ty)[next(k.terminals_of(s.ty).len())],
+                    Domain::Dc => next(4) as u32,
+                    Domain::Dv => tag_base + p as u32,
+                };
+            }
+        }
+        gene
+    }
+
+    #[test]
+    fn the_contract_flags_variable_terminals_apart_from_constants() {
+        let k = toy();
+        assert!(k.is_variable(VAR_S) && k.is_variable(VAR_I) && !k.is_constant(VAR_I) && !k.is_variable(QI) && k.is_constant(QI));
+        assert!(k.takes_word(VAR_I) && k.takes_word(QI) && !k.takes_word(II) && !k.takes_word(SS) && !k.takes_word(PAIR));
+        assert!(k.variable_capable(Ty::S) && k.variable_capable(Ty::I));
+        assert_eq!((k.variable_of(Ty::S), k.variable_of(Ty::I)), (Some(VAR_S), Some(VAR_I)));
+        assert!(!k.constant_capable(Ty::S) && k.constant_capable(Ty::I));
+        let plain = toy_relations(false).check().expect("checks");
+        assert!(!plain.variable_capable(Ty::S) && plain.variable_of(Ty::I).is_none());
+    }
+
+    #[test]
+    fn a_variable_terminal_that_is_not_a_plain_terminal_is_a_defect() {
+        let defect = |r: crate::kingdom_contract::KingdomRelations, needle: &str| {
+            let d = r.check().expect_err("defect");
+            assert!(d.iter().all(|m| m.starts_with("our software has a bug: ")) && d.iter().any(|m| m.contains(needle)), "{needle}: {d:?}");
+        };
+        let mut with_args = toy_relations(true);
+        with_args.variables.insert(PAIR);
+        defect(with_args, "variable terminal pair takes arguments");
+        let mut both = toy_relations(true);
+        both.variables.insert(QI);
+        defect(both, "both a constant placeholder and a variable terminal");
+        let mut two = toy_relations(true);
+        two.variables.insert(II);
+        defect(two, "has two variable terminals");
+        let mut unknown = toy_relations(true);
+        unknown.variables.insert(99);
+        defect(unknown, "not a symbol");
+        assert!(toy_relations(false).with_variables(&["pair"]).expect_err("a function").starts_with("our software has a bug: "));
+        assert!(toy_relations(false).with_variables(&["nothing"]).is_err());
+    }
+
+    /// The Dv lane: one word a frame row (`h_T + t_T`) of each variable-capable type, after every Dc; the heads, tails
+    /// and Dcs where they are without variables, so the frames are sized as today and the gene gains one word a cell.
+    #[test]
+    fn the_dv_lane_has_one_word_a_cell_after_the_dcs_and_moves_nothing_else() {
+        let (k, plain) = (toy(), toy_relations(false).check().expect("checks"));
+        for n in [1usize, 2, 5, 17] {
+            let (l, p) = (GeneLayout::from_program_size(&k, Ty::S, n).expect("layout"), GeneLayout::from_program_size(&plain, Ty::S, n).expect("layout"));
+            assert_eq!(l.frames.len(), p.frames.len());
+            for (f, g) in l.frames.iter().zip(&p.frames) {
+                assert_eq!((f.ty, f.head_off, f.head_len, f.tail_off, f.tail_len, f.dc_off, f.dc_len), (g.ty, g.head_off, g.head_len, g.tail_off, g.tail_len, g.dc_off, g.dc_len), "N = {n}");
+                assert_eq!(f.dv_len, f.head_len + f.tail_len, "N = {n}: one word a frame row");
+                assert!(f.dv_off.expect("a Dv") >= p.width, "N = {n}: the Dv lanes follow every Dc");
+            }
+            assert_eq!(l.width, p.width + l.frame_rows(), "N = {n}: one index word a cell");
+            let b = k.bounds(Ty::S, &l.head_lens()).expect("bounds");
+            assert_eq!(b.width(), l.width);
+            assert!(b.types.iter().all(|t| t.variable && t.dv() == t.h + t.t));
+            let dv: Vec<Span> = l.columns(Domain::Dv);
+            assert_eq!(dv.iter().map(|s| s.len).sum::<usize>(), l.frame_rows());
+            for s in &dv {
+                assert_eq!(l.key(s.off).domain, Domain::Dv);
+            }
+            let rows = l.rows(1, 0, &vec![7; l.width]);
+            assert_eq!(rows.iter().filter(|r| r.key.domain == Domain::Dv).count(), l.frame_rows());
+            assert!(rows.iter().filter(|r| r.key.domain == Domain::Dv).all(|r| r.symbol.is_none() && r.dc_index.is_none() && r.dv_index == Some(7)));
+            // Each head and tail cell's parallel word is its own frame row of Dv_T.
+            for f in &l.frames {
+                for r in 0..f.head_len + f.tail_len {
+                    assert_eq!(l.dv_of_cell(f.row_pos(r).expect("row")), f.dv_pos(r));
+                }
+            }
+        }
+    }
+
+    /// A tree with variables writes back and expresses to itself; each `var.T` reads the word of its own row of
+    /// `Dv_T` and no Dc word, so the `?` after it still reads `Dc_I[0]`; `walk_expressed` hands the same words.
+    #[test]
+    fn a_tree_with_variables_writes_back_and_expresses_to_itself() {
+        let k = toy();
+        let l = GeneLayout::from_program_size(&k, Ty::S, 4).expect("layout");
+        // pair(pair(var.S#9, ?#2), inc(var.I#3)): the I nodes in level order are inc, ?, var.I; and
+        // pair(pair(var.S#9, ?#2), var.I#3): var.I comes before the ?, which must still read Dc_I[0].
+        let first = Tree { symbol: PAIR, const_index: None, kids: vec![Tree { symbol: PAIR, const_index: None, kids: vec![leaf_w(VAR_S, 9), leaf_w(QI, 2)] }, Tree { symbol: INC, const_index: None, kids: vec![leaf_w(VAR_I, 3)] }] };
+        let previous = toy_gene(&k, &l, 5, 100);
+        let g1 = write_back(&k, &l, &previous, &first).expect("encodes");
+        assert_eq!(express(&k, &l, &g1, &toy_consts()).expect("expresses").tree(), first);
+        let tree = Tree { symbol: PAIR, const_index: None, kids: vec![Tree { symbol: PAIR, const_index: None, kids: vec![leaf_w(VAR_S, 9), leaf_w(QI, 2)] }, leaf_w(VAR_I, 3)] };
+        let gene = write_back(&k, &l, &previous, &tree).expect("encodes");
+        let e = express(&k, &l, &gene, &toy_consts()).expect("expresses");
+        assert_eq!(e.tree(), tree);
+        assert_eq!(e.reach.q_used.get(&Ty::I), Some(&1), "only the ? read the Dc");
+        let fi = l.frame(Ty::I).expect("I");
+        assert_eq!(gene[fi.dc_off.expect("Dc_I")], 2, "the ? reads Dc_I[0]: the var.I took no Dc word");
+        for node in &e.nodes {
+            if k.is_variable(node.symbol) {
+                let f = l.frame(node.ty).expect("frame");
+                assert_eq!(node.const_index, Some(gene[f.dv_pos(node.frame_k).expect("a Dv word")]), "the word of its own row");
+            } else if !k.is_constant(node.symbol) {
+                assert_eq!(node.const_index, None);
+            }
+        }
+        // Rows the tree does not use keep their previous words, Dv included.
+        let used: std::collections::BTreeSet<usize> = e.nodes.iter().flat_map(|n| [Some(n.pos), l.dv_of_cell(n.pos).filter(|_| k.is_variable(n.symbol))]).flatten().collect();
+        let dc0 = fi.dc_off.expect("Dc_I");
+        for p in (0..l.width).filter(|p| !used.contains(p) && *p != dc0) {
+            assert_eq!(gene[p], previous[p], "cell {p} is not the tree's");
+        }
+        let mut seen = Vec::new();
+        walk_expressed(&k, &l, &gene, &toy_consts(), usize::MAX - 1, &mut |s, w| seen.push((s, w))).expect("walks");
+        assert_eq!(seen, e.nodes.iter().map(|n| (n.symbol, n.const_index)).collect::<Vec<_>>());
+        // A var.T with no word, or a word past the range, does not encode.
+        let bare = Tree { symbol: PAIR, const_index: None, kids: vec![Tree { symbol: VAR_S, const_index: None, kids: vec![] }, leaf_w(QI, 0)] };
+        assert_eq!(write_back(&k, &l, &previous, &bare), Err(LayoutDefect::MissingVariableIndex { step: 2 }));
+        let wide = Tree { symbol: PAIR, const_index: None, kids: vec![leaf_w(VAR_S, DV_WORDS), leaf_w(QI, 0)] };
+        assert!(matches!(write_back(&k, &l, &previous, &wide), Err(LayoutDefect::DvWordPastRange { word: DV_WORDS, .. })));
+    }
+
+    /// An edit of a Dv word changes no symbol, only the word its `var.T` reads; a word at or past the range is not in
+    /// the alphabet, and a gene holding one does not validate.
+    #[test]
+    fn an_edit_of_a_dv_word_changes_no_symbol() {
+        let k = toy();
+        let l = GeneLayout::from_program_size(&k, Ty::S, 6).expect("layout");
+        let mut checked = 0;
+        for seed in 0..200u64 {
+            let gene = toy_gene(&k, &l, seed, 0);
+            let before = express(&k, &l, &gene, &toy_consts()).expect("expresses");
+            for s in l.columns(Domain::Dv) {
+                for p in s.off..s.off + s.len {
+                    let mut g = gene.clone();
+                    l.mutate(&k, &mut g, p, 40_000, &toy_consts()).expect("in the alphabet");
+                    let after = express(&k, &l, &g, &toy_consts()).expect("expresses");
+                    let syms = |e: &Expressed| e.nodes.iter().map(|n| (n.symbol, n.pos)).collect::<Vec<_>>();
+                    assert_eq!(syms(&after), syms(&before), "seed {seed}: a Dv edit at {p} changed a symbol");
+                    let reader = before.nodes.iter().position(|n| k.is_variable(n.symbol) && l.dv_of_cell(n.pos) == Some(p));
+                    for (i, (a, b)) in after.nodes.iter().zip(&before.nodes).enumerate() {
+                        assert_eq!(a.const_index, if Some(i) == reader { Some(40_000) } else { b.const_index });
+                    }
+                    checked += usize::from(reader.is_some());
+                }
+            }
+        }
+        assert!(checked > 100, "only {checked} edits reached an expressed var.T");
+        let s = l.columns(Domain::Dv)[0];
+        assert!(l.in_alphabet(&k, s.off, DV_WORDS - 1, &toy_consts()) && !l.in_alphabet(&k, s.off, DV_WORDS, &toy_consts()));
+        let mut g = toy_gene(&k, &l, 1, 0);
+        assert_eq!(l.mutate(&k, &mut g, s.off, DV_WORDS, &toy_consts()), Err(LayoutDefect::NotInAlphabet { pos: s.off, value: DV_WORDS }));
+        g[s.off] = DV_WORDS;
+        assert_eq!(express(&k, &l, &g, &toy_consts()), Err(LayoutDefect::DvWordPastRange { pos: s.off, word: DV_WORDS }));
+    }
+
+    /// Every head and tail cell's (symbol, Dv word) pair, keyed by the word's tag: a row operator that keeps every
+    /// pair keeps every word with its cell.
+    fn pairs_by_tag(l: &GeneLayout, gene: &[u32]) -> BTreeMap<u32, u32> {
+        let mut m = BTreeMap::new();
+        for s in l.spans().into_iter().filter(|s| matches!(s.domain, Domain::Head | Domain::Tail)) {
+            for p in s.off..s.off + s.len {
+                m.insert(gene[l.dv_of_cell(p).expect("a Dv word")], gene[p]);
+            }
+        }
+        m
+    }
+
+    fn assert_cells_keep_their_words(l: &GeneLayout, tagged: &BTreeMap<u32, u32>, gene: &[u32], what: &str) {
+        for s in l.spans().into_iter().filter(|s| matches!(s.domain, Domain::Head | Domain::Tail)) {
+            for p in s.off..s.off + s.len {
+                let w = gene[l.dv_of_cell(p).expect("a Dv word")];
+                assert_eq!(tagged.get(&w), Some(&gene[p]), "{what}: cell {p} holds {} beside the word of another cell", gene[p]);
+            }
+        }
+    }
+
+    /// After inversion, IS and RIS transposition and one- and two-point crossover, absolute and relative, every cell
+    /// (so every `var.T` cell) keeps its Dv word, and the gene still expresses. A Dv span moved alone is a defect.
+    #[test]
+    fn every_row_operator_moves_a_cell_and_its_dv_word_together() {
+        let k = toy();
+        let l = GeneLayout::from_program_size(&k, Ty::S, 7).expect("layout");
+        let mut moved = 0usize;
+        for seed in 0..300u64 {
+            let (a0, b0) = (toy_gene(&k, &l, seed, 0), toy_gene(&k, &l, seed + 10_000, 20_000));
+            let mut tagged = pairs_by_tag(&l, &a0);
+            tagged.extend(pairs_by_tag(&l, &b0));
+            let x = seed as usize;
+            for domain in [Domain::Head, Domain::Tail] {
+                let rows = l.domain_rows(domain);
+                let (lo, hi) = (x % rows, (x % rows) + 1 + (x / 7) % (rows - x % rows));
+                let mut g = a0.clone();
+                if hi > lo {
+                    moved += l.invert_rows(&mut g, domain, lo, hi).expect("inversion");
+                    assert_cells_keep_their_words(&l, &tagged, &g, "inversion");
+                }
+                let mut g = a0.clone();
+                moved += l.transpose_rows(&mut g, domain, x % rows, 1 + x % 3, (x / 3) % rows).expect("IS");
+                assert_cells_keep_their_words(&l, &tagged, &g, "IS");
+                if let (Domain::Head, Some(src)) = (domain, l.ris_row(&k, &a0, x % rows)) {
+                    let mut g = a0.clone();
+                    moved += l.transpose_rows(&mut g, domain, src, 1 + x % 3, 0).expect("RIS");
+                    assert_cells_keep_their_words(&l, &tagged, &g, "RIS");
+                    express(&k, &l, &g, &toy_consts()).expect("RIS child expresses");
+                }
+                let f = |v: usize| (v as u64 * 0x1234_5679) % FRAC_ONE;
+                let (fl, fh) = (f(x).min(f(x + 1)), f(x).max(f(x + 1)));
+                if fl < fh {
+                    let mut g = a0.clone();
+                    moved += l.invert_rel(&mut g, domain, fl, fh).expect("relative inversion");
+                    assert_cells_keep_their_words(&l, &tagged, &g, "relative inversion");
+                }
+                let mut g = a0.clone();
+                moved += l.transpose_rel(&mut g, domain, fl, fh, f(x + 2)).expect("relative IS");
+                assert_cells_keep_their_words(&l, &tagged, &g, "relative IS");
+            }
+            let rows = l.gene_rows();
+            let cut = 1 + x % (rows - 1);
+            for cut2 in [None, Some(cut + 1 + (x / 5) % (rows - cut))] {
+                let (mut a, mut b) = (a0.clone(), b0.clone());
+                if cut2.is_some_and(|c| c > rows) {
+                    continue;
+                }
+                l.crossover_rows(&l, &mut a, &mut b, cut, cut2).expect("crossover");
+                assert_cells_keep_their_words(&l, &tagged, &a, "crossover, child a");
+                assert_cells_keep_their_words(&l, &tagged, &b, "crossover, child b");
+                express(&k, &l, &a, &toy_consts()).expect("child expresses");
+                let (mut a, mut b) = (a0.clone(), b0.clone());
+                l.crossover_rel(&l, &mut a, &mut b, FRAC_ONE / 3, cut2.map(|_| 2 * FRAC_ONE / 3)).expect("relative crossover");
+                assert_cells_keep_their_words(&l, &tagged, &a, "relative crossover, child a");
+                assert_cells_keep_their_words(&l, &tagged, &b, "relative crossover, child b");
+            }
+            // The position-level operators carry the lane too.
+            let s = l.columns(Domain::Head)[0];
+            let (mut a, mut b) = (a0.clone(), b0.clone());
+            l.swap_range(&l, &mut a, &mut b, s.off, s.off + s.len).expect("swap");
+            assert_cells_keep_their_words(&l, &tagged, &a, "swap_range");
+            assert_cells_keep_their_words(&l, &tagged, &b, "swap_range");
+        }
+        assert!(moved > 300, "only {moved} columns changed");
+        let dv = l.columns(Domain::Dv)[0];
+        let mut g = toy_gene(&k, &l, 3, 0);
+        assert_eq!(l.invert(&mut g, dv.off, dv.off + 2), Err(LayoutDefect::LaneMovedAlone { lo: dv.off, hi: dv.off + 2 }));
+        assert!(matches!(l.invert_rows(&mut g, Domain::Dv, 0, 2), Err(LayoutDefect::LaneMovedAlone { .. })));
+        assert!(matches!(l.transpose(&mut g, dv.off, 1, dv.off + 1), Err(LayoutDefect::LaneMovedAlone { .. })));
+        let mut h = g.clone();
+        assert!(matches!(l.swap_range(&l, &mut g, &mut h, dv.off, dv.off + 1), Err(LayoutDefect::LaneMovedAlone { .. })));
+        assert!(LayoutDefect::LaneMovedAlone { lo: 1, hi: 2 }.to_string().starts_with("our software has a bug: "));
     }
 }

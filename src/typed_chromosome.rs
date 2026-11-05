@@ -187,6 +187,8 @@ impl Epoch {
         let c: Vec<&str> = constants.iter().map(String::as_str).collect();
         let mut relations = relations_from_rows(base.kingdom(), base.roots().to_vec(), &rows, &c);
         relations.tail_free_roots = base.tail_free_roots();
+        // The base symbols keep their ids, so a variable terminal `var.T` stays one in the epoch alphabet.
+        relations.variables = (0..n_base as SymbolId).filter(|s| base.is_variable(*s)).collect();
         let k = relations.check().map_err(|d| ChromosomeDefect::Kingdom(d.join("; ")))?;
         Ok(Epoch { k, n_base, refs, genic, adf_sym, decls })
     }
@@ -500,7 +502,7 @@ impl ChromosomeLayout {
                 *w = match s.domain {
                     Domain::Head => link,
                     Domain::Tail => k.terminals_of(s.ty)[0],
-                    Domain::Dc => 0,
+                    Domain::Dc | Domain::Dv => 0,
                 };
             }
         }
@@ -752,7 +754,7 @@ mod tests {
             for w in &mut filler[s.off..s.off + s.len] {
                 *w = match s.domain {
                     Domain::Head | Domain::Tail => k.terminals_of(s.ty).iter().copied().find(|t| !k.is_constant(*t)).unwrap_or(k.terminals_of(s.ty)[0]),
-                    Domain::Dc => 0,
+                    Domain::Dc | Domain::Dv => 0,
                 };
             }
         }

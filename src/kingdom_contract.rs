@@ -39,6 +39,10 @@ pub struct KingdomRelations {
     pub names: Vec<String>,
     /// Terminals that are the constant placeholder `?_T` of their type.
     pub constants: BTreeSet<SymbolId>,
+    /// Terminals that are the variable terminal `var.T` of their type (plan 7, design 3.2 item 5): at most one a
+    /// type, never a constant. Its word is an index into the variables of `T` in scope, held in the gene's `Dv_T`
+    /// lane beside the cell, never in `Dc_T`. Empty for every kingdom before master 6.
+    pub variables: BTreeSet<SymbolId>,
     pub symbol_outputs: Vec<(SymbolId, Ty)>,
     pub argument_signature: Vec<(SymbolId, u32, Ty)>,
     /// A root no function asks for has no tail cell (`P_R = 1 = h_R`, design section 2.2), so it needs no terminal
@@ -55,6 +59,7 @@ pub struct KingdomContract {
     output: Vec<Ty>,
     signature: Vec<Vec<Ty>>,
     constant: Vec<bool>,
+    variable: Vec<bool>,
     /// Every type that occurs, ascending [`Ty::code`].
     types: Vec<Ty>,
     /// `a_{T,U}`, keyed `(T, U)`: the most arguments of type `T` any one
@@ -148,6 +153,27 @@ impl KingdomRelations {
             }
         }
 
+        let mut variable = vec![false; n];
+        let mut variable_of: BTreeMap<Ty, SymbolId> = BTreeMap::new();
+        for v in &self.variables {
+            match variable.get_mut(*v as usize) {
+                Some(slot) => {
+                    *slot = true;
+                    let name = &self.names[*v as usize];
+                    if !signature[*v as usize].is_empty() {
+                        defects.push(bug(format!("{kd}: variable terminal {name} takes arguments")));
+                    }
+                    if constant[*v as usize] {
+                        defects.push(bug(format!("{kd}: {name} is both a constant placeholder and a variable terminal")));
+                    }
+                    if let Some(other) = variable_of.insert(output[*v as usize], *v) {
+                        defects.push(bug(format!("{kd}: type {:?} has two variable terminals, {} and {name}", output[*v as usize], self.names[other as usize])));
+                    }
+                }
+                None => defects.push(bug(format!("{kd}: variables names symbol {v}, which is not a symbol (only {n})"))),
+            }
+        }
+
         let mut terminals: BTreeMap<Ty, Vec<SymbolId>> = BTreeMap::new();
         let mut functions: BTreeMap<Ty, Vec<SymbolId>> = BTreeMap::new();
         let mut types: BTreeSet<Ty> = BTreeSet::new();
@@ -210,6 +236,7 @@ impl KingdomRelations {
                 output,
                 signature,
                 constant,
+                variable,
                 types: types.into_iter().collect(),
                 a_tu,
                 a,
@@ -257,6 +284,15 @@ impl KingdomContract {
     pub fn is_constant(&self, s: SymbolId) -> bool {
         self.constant[s as usize]
     }
+    /// The variable terminal `var.T` (arity 0): its word is in `Dv_T` at its own cell's row, never in `Dc_T`.
+    pub fn is_variable(&self, s: SymbolId) -> bool {
+        self.variable[s as usize]
+    }
+    /// Whether the symbol's node carries a word beside it ([`crate::typed_gep::Tree::const_index`]): a `?_T`'s `Dc_T`
+    /// word or a `var.T`'s `Dv_T` word.
+    pub fn takes_word(&self, s: SymbolId) -> bool {
+        self.constant[s as usize] || self.variable[s as usize]
+    }
     /// Every type that occurs, ascending [`Ty::code`].
     pub fn types(&self) -> &[Ty] {
         &self.types
@@ -280,6 +316,14 @@ impl KingdomContract {
     /// A type with a constant placeholder terminal.
     pub fn constant_capable(&self, ty: Ty) -> bool {
         self.terminals_of(ty).iter().any(|s| self.constant[*s as usize])
+    }
+    /// A type with a variable terminal `var.T`, so its frame has a `Dv_T` lane.
+    pub fn variable_capable(&self, ty: Ty) -> bool {
+        self.terminals_of(ty).iter().any(|s| self.variable[*s as usize])
+    }
+    /// The variable terminal of `ty`, if it has one.
+    pub fn variable_of(&self, ty: Ty) -> Option<SymbolId> {
+        self.terminals_of(ty).iter().copied().find(|s| self.variable[*s as usize])
     }
 
     /// `a_{T,U}`: the most arguments of type `ty` any one function outputting
@@ -366,7 +410,8 @@ impl KingdomContract {
     /// The bound table of a gene rooted at `root` with head lengths `heads`
     /// (design section 2.2): per reachable type `P_T = [T = R] + sum_U h_U *
     /// a_{T,U}`, `L = 1 + sum_U h_U * (n_U - 1)`, tail `t_T = max(0, min(P_T,
-    /// L + h_T) - h_T)` and Dc `d_T = min(P_T, L)`. A head for a type the root
+    /// L + h_T) - h_T)` and Dc `d_T = min(P_T, L)`; a variable-capable type has a
+    /// Dv lane of `h_T + t_T`, one word a frame row. A head for a type the root
     /// cannot reach is a defect.
     pub fn bounds(&self, root: Ty, heads: &BTreeMap<Ty, usize>) -> Result<GeneBounds, String> {
         self.check_root(root)?;
@@ -381,7 +426,7 @@ impl KingdomContract {
             .map(|t| {
                 let p = usize::from(*t == root) + reach.iter().map(|u| head(*u) * self.a_tu(*t, *u) as usize).sum::<usize>();
                 let h = head(*t);
-                TypeBound { ty: *t, h, p, t: p.min(l + h).saturating_sub(h), d: p.min(l), constant: self.constant_capable(*t) }
+                TypeBound { ty: *t, h, p, t: p.min(l + h).saturating_sub(h), d: p.min(l), constant: self.constant_capable(*t), variable: self.variable_capable(*t) }
             })
             .collect();
         Ok(GeneBounds { root, l, types })
@@ -403,6 +448,24 @@ pub struct TypeBound {
     pub d: usize,
     /// `T` has a constant placeholder `?_T`, so the gene holds a `Dc_T` of `d_T`.
     pub constant: bool,
+    /// `T` has a variable terminal `var.T`, so the gene holds a `Dv_T` of [`TypeBound::dv`] words.
+    pub variable: bool,
+}
+
+impl TypeBound {
+    /// The length of `Dv_T`: one word a frame row (`h_T + t_T`), a lane parallel to the head and tail, so a cell
+    /// and its word share a row; zero without a variable terminal.
+    pub fn dv(&self) -> usize {
+        if self.variable {
+            self.h + self.t
+        } else {
+            0
+        }
+    }
+    /// The words of this type in a gene: head, tail, Dc and Dv.
+    pub fn words(&self) -> usize {
+        self.h + self.t + if self.constant { self.d } else { 0 } + self.dv()
+    }
 }
 
 /// The bound table of one gene: `L` and a [`TypeBound`] per reachable type,
@@ -419,10 +482,10 @@ impl GeneBounds {
     pub fn get(&self, ty: Ty) -> Option<&TypeBound> {
         self.types.iter().find(|b| b.ty == ty)
     }
-    /// The words of the gene: every head, tail and the Dc of each
-    /// constant-capable type.
+    /// The words of the gene: every head, tail, the Dc of each
+    /// constant-capable type and the Dv of each variable-capable type.
     pub fn width(&self) -> usize {
-        self.types.iter().map(|b| b.h + b.t + if b.constant { b.d } else { 0 }).sum()
+        self.types.iter().map(TypeBound::words).sum()
     }
 }
 
@@ -448,6 +511,7 @@ pub fn relations_from_rows(kingdom: &str, roots: Vec<Ty>, rows: &[(String, Vec<T
         roots,
         names: Vec::new(),
         constants: BTreeSet::new(),
+        variables: BTreeSet::new(),
         symbol_outputs: Vec::new(),
         argument_signature: Vec::new(),
         tail_free_roots: false,
@@ -464,6 +528,21 @@ pub fn relations_from_rows(kingdom: &str, roots: Vec<Ty>, rows: &[(String, Vec<T
         }
     }
     r
+}
+
+impl KingdomRelations {
+    /// The same relations with the terminals named in `names` marked as variable terminals `var.T`. A name that is
+    /// not a terminal of these relations is a defect.
+    pub fn with_variables(mut self, names: &[&str]) -> Result<KingdomRelations, String> {
+        for name in names {
+            let ids: Vec<SymbolId> = (0..self.names.len() as SymbolId).filter(|s| self.names[*s as usize] == *name && !self.argument_signature.iter().any(|(f, _, _)| f == s)).collect();
+            if ids.is_empty() {
+                return Err(bug(format!("{}: {name} is not a terminal, so it cannot be a variable terminal", self.kingdom)));
+            }
+            self.variables.extend(ids);
+        }
+        Ok(self)
+    }
 }
 
 /// The Symbolic Regression kingdom: the 26 `Math` ops over `F`, plus the two
@@ -559,9 +638,9 @@ pub fn report(r: &KingdomRelations, n: usize) -> String {
                         let n_back = c.guaranteed_program_size(*root, &heads);
                         s.push_str(&format!("\n  root {root:?}: {} types reachable, L = {}, gene width {} words, heads guarantee N = {n_back}", b.types.len(), b.l, b.width()));
                         let mut widest: Vec<&TypeBound> = b.types.iter().collect();
-                        widest.sort_by_key(|t| std::cmp::Reverse((t.h + t.t + if t.constant { t.d } else { 0 }, t.ty.code())));
+                        widest.sort_by_key(|t| std::cmp::Reverse((t.words(), t.ty.code())));
                         for t in widest.iter().take(6) {
-                            s.push_str(&format!("\n    {:?}: h {} P {} t {} d {}{}", t.ty, t.h, t.p, t.t, t.d, if t.constant { "" } else { " (no Dc)" }));
+                            s.push_str(&format!("\n    {:?}: h {} P {} t {} d {}{}{}", t.ty, t.h, t.p, t.t, t.d, if t.constant { "" } else { " (no Dc)" }, if t.variable { format!(" Dv {}", t.dv()) } else { String::new() }));
                         }
                         if widest.len() > 6 {
                             s.push_str(&format!("\n    ... {} more types", widest.len() - 6));
@@ -614,6 +693,24 @@ mod tests {
         assert_eq!((b.l, row(Ty::S), row(Ty::I)), (3, (2, 3, 1, 3), (1, 2, 1, 2)));
         assert_eq!(b.width(), 2 + 1 + 1 + 1, "no constants, so no Dc");
         assert_eq!(c.guaranteed_program_size(Ty::S, &h), 2);
+    }
+
+    /// A variable terminal gives its type a Dv of `h_T + t_T` words and changes no other length: the design's
+    /// two-type fixture with `i` as `var.I` is `h_I + t_I = 2` words wider, its Dc lengths and frames as before.
+    #[test]
+    fn a_variable_terminal_adds_one_dv_word_a_frame_row_and_nothing_else() {
+        let (plain, var) = (fixture().check().expect("valid"), fixture().with_variables(&["i"]).expect("a terminal").check().expect("valid"));
+        assert!(var.is_variable(2) && !var.is_constant(2) && var.variable_capable(Ty::I) && !var.variable_capable(Ty::S));
+        let h = plain.heads_from_program_size(Ty::S, 2).expect("heads");
+        assert_eq!(var.heads_from_program_size(Ty::S, 2).expect("heads"), h);
+        let (b, v) = (plain.bounds(Ty::S, &h).expect("bounds"), var.bounds(Ty::S, &h).expect("bounds"));
+        for (x, y) in b.types.iter().zip(&v.types) {
+            assert_eq!((x.ty, x.h, x.p, x.t, x.d, x.constant), (y.ty, y.h, y.p, y.t, y.d, y.constant));
+        }
+        let i = v.get(Ty::I).expect("I");
+        assert_eq!((i.variable, i.dv(), v.get(Ty::S).expect("S").dv()), (true, i.h + i.t, 0));
+        assert_eq!(v.width(), b.width() + 2);
+        assert!(report(&fixture().with_variables(&["i"]).expect("a terminal"), 2).contains("Dv 2"));
     }
 
     /// One type: t = d = h (n_max - 1) + 1, the physical Karva tail, and

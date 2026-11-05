@@ -1375,6 +1375,23 @@ which property kinds compare lets `bound <= len` through. The lambda-body rule i
 requirement names its adapter, and adapter `let`s use the reserved names `ad_*`. A heavy adapter that would break the
 work bound substitutes its node. Andrew's confirmation of the work bound (7.5a item 1) is still open.
 
+**F1a status (2026-11-05): done.** Master 6 is in `kingdoms/futhark/master/6/` beside master 5: 78 row templates
+(master 5's 86, with its eight variable terminals merged into `var@{T}`, M0087, and its zero arrays now root
+variables), 9 data type templates, 5 properties, 8 adapters. `sniff.py --format 6` writes each problem's specification
+with its root environment (inputs, zero arrays, sizes); `view.py` (`View6`) writes its data types, symbols and
+environment under `kingdoms/futhark/sig/<problem>/m6/`, committed and checked byte for byte by `gen_tables.py --check`
+with the master 6 witnesses N0-N19 and the per-view V1-V7. Data types (symbols): reduce, scan and histogram 4 (41),
+pathfinder 5 (43), a7 5 (13: the matrix family alone, so no `i64` and no `size`), k-means `f32` 9 (83). Where F0's
+format was silent, master 6's README section 9 records what F1a decided.
+
+**G2 status (2026-11-05): done.** `KingdomRelations::variables` (`with_variables`), `KingdomContract::is_variable`,
+`variable_capable`, `variable_of`, `takes_word`; `TypeBound::variable` and `dv()` = `h_T + t_T`; `Domain::Dv`,
+`Frame::dv_off`/`dv_len`/`dv_pos`, the Dv lanes after every Dc, `GeneLayout::lane`/`dv_of_cell`/`in_alphabet`,
+`DV_WORDS` = 2^16. `express`, `walk_expressed` and `write_back` carry a `var.T`'s word in `const_index`. Every operator
+that moves a head or tail cell moves its Dv word with it, and one applied to a Dv span alone is a defect. All 17
+existing kingdoms lay out and express word for word as before (fingerprints taken at e526a62f). phylu has the Dv arms;
+a layout with a Dv lane does not reach the device before P1. The commit lists the 34 `is_constant(` calls.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.

@@ -296,7 +296,7 @@ pub fn encode_into(a: &Alphabet, kingdom: &WgslKingdom, tree: &Tree, layout: &Ge
         for w in &mut filler[s.off..s.off + s.len] {
             *w = match s.domain {
                 Domain::Head | Domain::Tail => k.terminals_of(s.ty).iter().copied().find(|t| !k.is_constant(*t)).or_else(|| k.terminals_of(s.ty).first().copied()).ok_or_else(|| gap("layout", format!("no terminal of {:?}", s.ty)))?,
-                Domain::Dc => 0,
+                Domain::Dc | Domain::Dv => 0,
             };
         }
     }
@@ -329,7 +329,7 @@ pub fn encode(a: &Alphabet, kingdom: &WgslKingdom, tree: &Tree) -> Result<Encode
         for w in &mut filler[s.off..s.off + s.len] {
             *w = match s.domain {
                 Domain::Head | Domain::Tail => k.terminals_of(s.ty).iter().copied().find(|t| !k.is_constant(*t)).or_else(|| k.terminals_of(s.ty).first().copied()).ok_or_else(|| gap("layout", format!("no terminal of {:?}", s.ty)))?,
-                Domain::Dc => 0,
+                Domain::Dc | Domain::Dv => 0,
             };
         }
     }
@@ -363,6 +363,7 @@ pub fn random_gene(a: &Alphabet, kingdom: &WgslKingdom, layout: &GeneLayout, sta
             Domain::Head => (k.functions_of(s.ty), k.terminals_of(s.ty).to_vec()),
             Domain::Tail => (&[], k.terminals_of(s.ty).to_vec()),
             Domain::Dc => (&[], (0..pools.get(&s.ty).map_or(0, Vec::len) as u32).collect()),
+            Domain::Dv => (&[], (0..typed_gep::DV_WORDS).collect()),
         };
         if terminals.is_empty() && functions.is_empty() {
             return Err(gap("layout", format!("no symbol for the {:?} cells of {:?}", s.domain, s.ty)));
