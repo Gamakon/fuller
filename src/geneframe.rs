@@ -29,6 +29,8 @@
 
 use std::collections::BTreeMap;
 
+pub mod formula;
+
 
 /// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of
 /// `docs/design/DataModel.md`, as enum variants so `Arity`'s many-hot maps are
