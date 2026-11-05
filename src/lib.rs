@@ -65,6 +65,7 @@ pub mod futhark_1d_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
 pub mod typed_gep;
+pub mod orf_padding;
 pub mod typed_environment;
 pub mod regex_typed;
 #[cfg(test)]

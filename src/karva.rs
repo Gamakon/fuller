@@ -279,7 +279,7 @@ fn decode(
 
 /// A parsed Math node (intermediate tree between the s-expression and karva).
 #[derive(Debug, Clone)]
-pub(crate) enum MathNode {
+pub enum MathNode {
     Num(f64),
     Var(String),
     /// (constructor, children)
@@ -323,7 +323,7 @@ pub(crate) fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
 
 /// Minimal recursive-descent parser for the Math s-expression subset emitted by
 /// the extractor: `(Ctor child ...)`, `(Num <f64>)`, `(Var "<name>")`.
-pub(crate) fn parse_math(s: &str) -> Result<MathNode, String> {
+pub fn parse_math(s: &str) -> Result<MathNode, String> {
     let toks = tokenize(s);
     let mut pos = 0;
     let node = parse_node(&toks, &mut pos, 0)?;
