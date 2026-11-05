@@ -819,7 +819,707 @@ impl Kingdom6 {
     }
 }
 
+// ---- master 6: pass 5, the renderer (plan section 7, task F2) ---------------------------------------------------
+//
+// Passes 1 to 4 (`typed_gep::express`, `typed_environment::Decoder::decode`) give the decoded tree: every node's
+// environment, variable, properties, requirement outcomes and work-bound substitution. Pass 5 writes the Futhark text:
+// where every requirement holds, the row's plain spelling; where one fails, the spelling with the adapter its
+// requirement names (master 6 README 5.5), in `requires` order; a substituted node as its substitute. The renderer
+// decides nothing again: it reads the decoding.
+//
+// THE ONE INVARIANT the adapters rest on: the Futhark type of every rendered expression is its data type with its
+// properties as sizes. A size name or a literal renders as itself and a `min` as `i64.min a b`, which Futhark 0.28.1
+// compares as written (each `min` has one spelling, so two of the same value are the same text). An adapter fits an
+// operand to a property it can spell (`fit (i64.min k n) 0f32 (xs)`), so the result's type is its rule's property and a
+// parent's requirement that holds holds in Futhark too. Only a `?` property (no row of the committed master gives
+// one) is read at run time: its operand is bound by `let` under a reserved name, as the README says (`let ad_a = ..
+// let ad_b = .. let ad_l = i64.min (length ad_a) (length ad_b) in ..`), and where the length is a TYPE (a loop state's
+// declaration) by a size binding (`let [ad_m] (ad_s: [ad_m]f32) = ..`, [`Render6::bind`]); the result is then an
+// unknown size, `?` again, and every requirement on it fails, so it is adapted wherever a size must agree.
+// (The README's `ad_l` form for two KNOWN lengths gives an existential size, and Futhark rejects a `map2` of two such
+// results, "Sizes d12 and d25 do not match", measured 2026-11-05: so a known length is fitted to its spelling.)
+
+/// What the entry point declares that the root environment does not: the sizes given as an `i32` parameter (the
+/// histogram's `k`), which the program rebinds as `i64` (`let k = i64.i32 k`). Such a size is the entry's first
+/// parameter, before the arrays, as every problem's source has it (the specification does not keep the order).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Header6 {
+    pub size_inputs: Vec<String>,
+}
+
+impl Header6 {
+    /// The header of a master 6 specification: its `size` lines that name an element.
+    pub fn of_spec(spec: &crate::futhark_view::master6::ViewSpec6) -> Header6 {
+        Header6 { size_inputs: spec.env.iter().filter(|l| l.kind == "size" && !l.elem.is_empty()).map(|l| l.name.clone()).collect() }
+    }
+}
+
+/// A rendered master 6 program: its text, the nodes it renders (the inputs a substitution drops are not rendered;
+/// an ADF's nodes once, in its definition), and every adapter it renders with its node's path (the entry's own
+/// requirements at the root's path), in render order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program6 {
+    pub text: String,
+    pub nodes: usize,
+    pub adapters: Vec<(Vec<u32>, String)>,
+}
+
+impl Program6 {
+    /// No adapter and no substitution: the program renders as master 5 renders it.
+    pub fn adapter_free(&self) -> bool {
+        self.adapters.is_empty()
+    }
+
+    /// The number of nodes that render at least one adapter.
+    pub fn adapter_nodes(&self) -> usize {
+        self.adapters.iter().map(|(p, _)| p).collect::<BTreeSet<_>>().len()
+    }
+}
+
+/// An operand while its node renders: its text, data type and properties (its Futhark type), and the name a `?`
+/// property was bound to (`ad_m`), read in place of the property.
+#[derive(Debug, Clone)]
+struct Operand6 {
+    text: String,
+    ty: Ty,
+    props: BTreeMap<String, PropertyExpr>,
+    bound: BTreeMap<String, String>,
+}
+
+/// A property as Futhark text: a size name or a literal as itself, a `min` as nested `i64.min`, a sum with `+`; `None`
+/// for `?`.
+fn futhark_size(e: &PropertyExpr) -> Option<String> {
+    match e {
+        PropertyExpr::Size(n) => Some(n.clone()),
+        PropertyExpr::Literal(v) => Some(v.to_string()),
+        PropertyExpr::Min(args) => {
+            let texts: Vec<String> = args.iter().map(|a| futhark_size(a).map(|t| atom(&t))).collect::<Option<_>>()?;
+            let (last, rest) = texts.split_last()?;
+            Some(rest.iter().rev().fold(last.clone(), |acc, a| format!("i64.min {a} {}", atom(&acc))))
+        }
+        PropertyExpr::Sum(terms) => Some(terms.iter().map(|t| futhark_size(t).map(|x| atom(&x))).collect::<Option<Vec<_>>>()?.join(" + ")),
+        PropertyExpr::Unknown | PropertyExpr::Input { .. } => None,
+    }
+}
+
+/// A text as an application's argument: a name or a non-negative literal as itself, anything else in parentheses.
+fn atom(t: &str) -> String {
+    if !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        t.to_string()
+    } else {
+        format!("({t})")
+    }
+}
+
+/// A property in a bound variable's class text (master 5's class: `a.n`, `ix.cols`): a size name or a literal as
+/// itself, a `min` as `min_k_n`, a sum as `sum_..`, `?` as `q`.
+fn class_part(e: &PropertyExpr) -> String {
+    match e {
+        PropertyExpr::Size(n) => n.clone(),
+        PropertyExpr::Literal(v) if *v < 0 => format!("m{}", -v),
+        PropertyExpr::Literal(v) => v.to_string(),
+        PropertyExpr::Min(args) => format!("min_{}", args.iter().map(class_part).collect::<Vec<_>>().join("_")),
+        PropertyExpr::Sum(terms) => format!("sum_{}", terms.iter().map(class_part).collect::<Vec<_>>().join("_")),
+        PropertyExpr::Unknown | PropertyExpr::Input { .. } => "q".to_string(),
+    }
+}
+
+/// The renderer of one decoding.
+struct Render6<'a> {
+    k: &'a Kingdom6,
+    decoding: &'a crate::typed_environment::Decoding,
+    /// The tables' requirement rows, in the order G3's outcomes index them (each symbol's `requires`, symbol order).
+    reqs: Vec<&'a Requirement>,
+    /// The view has several elements: an array's class names its element (`a.f32.n`), as master 5's does.
+    multi: bool,
+    /// The subtrees rendered as ADFs, by path; the index is the ADF's number.
+    adfs: &'a [Vec<u32>],
+    uses: BTreeSet<&'static str>,
+    adapters: Vec<(Vec<u32>, String)>,
+    nodes: usize,
+}
+
+impl<'a> Render6<'a> {
+    fn bug(&self, what: String) -> String {
+        bug6(&self.k.kingdom, what)
+    }
+
+    fn data_type(&self, ty: Ty) -> Result<&'a DataType6, String> {
+        self.k.data_type(ty).ok_or_else(|| self.bug(format!("{ty:?} is no data type of the view")))
+    }
+
+    /// The property names of a data type, in its order (`len`; `rows`, `cols`).
+    fn property_names(&self, ty: Ty) -> Result<Vec<&'a str>, String> {
+        Ok(self.data_type(ty)?.properties.iter().map(|(n, _)| n.as_str()).collect())
+    }
+
+    /// The scalar inside an array data type (itself for a scalar).
+    fn innermost(&self, ty: Ty) -> Result<Ty, String> {
+        let mut t = ty;
+        while let DataKind::Array { element } = self.data_type(t)?.kind {
+            t = element;
+        }
+        Ok(t)
+    }
+
+    /// The zero `fit` pads with, at an array's element: the scalar's constant for a vector, a zero row
+    /// (`replicate c 0f32`) for a matrix.
+    fn zero(&self, op: &Operand6) -> Result<String, String> {
+        let d = self.data_type(op.ty)?;
+        let DataKind::Array { element } = d.kind else { return Err(self.bug(format!("fit pads a {}, which is no array", d.name))) };
+        let scalar = self.data_type(self.innermost(element)?)?.constant.clone();
+        if matches!(self.data_type(element)?.kind, DataKind::Array { .. }) {
+            Ok(format!("(replicate {} {scalar})", atom(&self.dim(op, "cols")?)))
+        } else {
+            Ok(scalar)
+        }
+    }
+
+    /// An operand's property as Futhark text: the name it was bound to, else its spelling; a `?` not bound is a bug.
+    fn dim(&self, op: &Operand6, p: &str) -> Result<String, String> {
+        if let Some(name) = op.bound.get(p) {
+            return Ok(name.clone());
+        }
+        let e = op.props.get(p).ok_or_else(|| self.bug(format!("a {} has no property {p}", self.data_type(op.ty).map_or("?", |d| d.name.as_str()))))?;
+        futhark_size(e).ok_or_else(|| self.bug(format!("the property {p} = {e} is read where it has no spelling")))
+    }
+
+    /// The Futhark type of an operand: its data type with its properties as sizes (`[n]f32`, `[k][d]f32`, `(f32, f32)`).
+    fn type_text(&self, op: &Operand6) -> Result<String, String> {
+        let d = self.data_type(op.ty)?;
+        if !matches!(d.kind, DataKind::Array { .. }) {
+            return Ok(d.name.clone());
+        }
+        let mut s = String::new();
+        for p in self.property_names(op.ty)? {
+            s.push_str(&format!("[{}]", self.dim(op, p)?));
+        }
+        s.push_str(&self.data_type(self.innermost(op.ty)?)?.name);
+        Ok(s)
+    }
+
+    /// A bound variable's class (master 5's, from its data type and properties): an index `ix.<bound>`, a scalar its
+    /// element, an array `a.<dims>` (`a.<elem>.<dims>` in a view of several elements), any other its tag.
+    fn class_of(&self, v: &crate::typed_environment::Variable) -> Result<String, String> {
+        let d = self.data_type(v.data_type)?;
+        let prop = |p: &str| v.properties.get(p).map_or_else(|| "q".to_string(), class_part);
+        Ok(match &d.kind {
+            DataKind::Scalar if d.properties.iter().any(|(n, _)| n == "bound") => format!("ix.{}", prop("bound")),
+            DataKind::Array { .. } => {
+                let dims: Vec<String> = d.properties.iter().map(|(n, _)| prop(n)).collect();
+                let elem = &self.data_type(self.innermost(v.data_type)?)?.name;
+                if self.multi {
+                    format!("a.{elem}.{}", dims.join("."))
+                } else {
+                    format!("a.{}", dims.join("."))
+                }
+            }
+            DataKind::Scalar => d.name.clone(),
+            _ => d.tag.clone(),
+        })
+    }
+
+    /// THE NAME OF A VARIABLE in an environment: an entry parameter's own name; a bound variable is master 5's
+    /// `var_name` of its class and its ordinal, one past the bound variables of its class before it (`i_n`, `i2_n`,
+    /// `s3_f32`, `s_a_n`), so two variables in scope never share a name.
+    fn name_of(&self, env: &crate::typed_environment::Environment, v: &crate::typed_environment::Variable) -> Result<String, String> {
+        if let Some(n) = &v.name {
+            return Ok(n.clone());
+        }
+        let class = self.class_of(v)?;
+        let mut ordinal = 1;
+        for w in env.variables.iter().take_while(|w| w.binder != v.binder) {
+            if w.name.is_none() && self.class_of(w)? == class {
+                ordinal += 1;
+            }
+        }
+        Ok(crate::futhark_view::var_name(&class, ordinal))
+    }
+
+    /// Fit an operand's property `p` to `target` (its value and its Futhark text): a vector's length by `fit`, a
+    /// matrix's rows by `fit` with a zero row, its columns by `map (fit ..)`.
+    fn fit_to(&mut self, op: &mut Operand6, p: &str, target: (PropertyExpr, String)) -> Result<(), String> {
+        let (value, text) = target;
+        let elem_zero = self.data_type(self.innermost(op.ty)?)?.constant.clone();
+        op.text = match p {
+            "len" | "rows" => format!("fit {} {} ({})", atom(&text), self.zero(op)?, op.text),
+            "cols" => format!("map (fit {} {elem_zero}) ({})", atom(&text), op.text),
+            other => return Err(self.bug(format!("fit has no rendering for the property {other}"))),
+        };
+        self.uses.insert("fit");
+        op.props.insert(p.to_string(), value);
+        if value_is_unknown(op.props.get(p)) {
+            op.bound.insert(p.to_string(), text);
+        } else {
+            op.bound.remove(p);
+        }
+        Ok(())
+    }
+
+    /// Bind an operand by `let` under the reserved name `arr` (its text becomes the name) and, when `len` is given,
+    /// its property `len.1` to the reserved name `len.0` as a SIZE of its type: `let [ad_m] (ad_s: [ad_m]f32) = (..)`.
+    /// The README's `let ad_s = .. let ad_m = length ad_s` names the length as a value only, and Futhark 0.28.1 rejects
+    /// a loop declared `[ad_m]` over it ("Sizes ad_m and d6 do not match", measured 2026-11-05); the size binding gives
+    /// Futhark the name of the unknown size itself.
+    fn bind(&self, op: &mut Operand6, arr: &str, len: Option<(&str, &str)>, lets: &mut Vec<String>, used: &mut BTreeSet<String>) -> Result<(), String> {
+        for name in std::iter::once(arr).chain(len.map(|l| l.0)) {
+            if !used.insert(name.to_string()) {
+                return Err(self.bug(format!("one node binds the reserved name {name} twice")));
+            }
+        }
+        match len {
+            None => lets.push(format!("let {arr} = ({})", op.text)),
+            Some((name, p)) => {
+                if !self.property_names(op.ty)?.contains(&p) {
+                    return Err(self.bug(format!("a {} has no size {p} to bind", self.data_type(op.ty)?.name)));
+                }
+                op.bound.insert(p.to_string(), name.to_string());
+                lets.push(format!("let [{name}] ({arr}: {}) = ({})", self.type_text(op)?, op.text));
+            }
+        }
+        op.text = arr.to_string();
+        Ok(())
+    }
+
+    /// The input position and property a requirement side names (`in1.len`).
+    fn side(&self, e: &PropertyExpr) -> Option<(usize, String)> {
+        match e {
+            PropertyExpr::Input { position, property } => Some((*position as usize, property.clone())),
+            _ => None,
+        }
+    }
+
+    /// One failing requirement's adapter on the node's operands.
+    fn adapt(&mut self, o: &crate::typed_environment::Outcome, ops: &mut [Operand6], lets: &mut Vec<String>, used: &mut BTreeSet<String>) -> Result<(), String> {
+        let q = *self.reqs.get(o.requirement).ok_or_else(|| self.bug(format!("the outcome names requirement {}, which the tables do not have", o.requirement)))?;
+        let Subject::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound's adapter {} renders as an adapter, not a substitution", o.adapter))) };
+        let (s, ps) = (*position as usize, property.clone());
+        if s >= ops.len() {
+            return Err(self.bug(format!("the requirement reads input {s} of a node of {} inputs", ops.len())));
+        }
+        let against = self.side(&q.against);
+        let known = |e: &PropertyExpr| futhark_size(e).map(|t| (e.clone(), t));
+        match o.adapter.as_str() {
+            "clampix" => {
+                let (a, pa) = against.ok_or_else(|| self.bug("clampix's requirement names no input's length".to_string()))?;
+                let len = match known(&o.against) {
+                    Some((_, t)) => t,
+                    None => {
+                        let mut op = ops[a].clone();
+                        self.bind(&mut op, "ad_a", Some(("ad_m", &pa)), lets, used)?;
+                        ops[a] = op;
+                        self.dim(&ops[a], &pa)?
+                    }
+                };
+                ops[s].text = format!("clampix {} ({})", atom(&len), ops[s].text);
+                self.uses.insert("clampix");
+            }
+            "fit" | "fit.body" | "fit.state" => {
+                let target = match (known(&o.against), against) {
+                    (Some(t), _) => t,
+                    (None, Some((j, pj))) => {
+                        let (arr, len) = if o.adapter == "fit.state" { ("ad_s", "ad_m") } else { ("ad_a", "ad_m") };
+                        let mut op = ops[j].clone();
+                        self.bind(&mut op, arr, Some((len, &pj)), lets, used)?;
+                        ops[j] = op;
+                        (PropertyExpr::Unknown, self.dim(&ops[j], &pj)?)
+                    }
+                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no spelling", o.adapter, o.against))),
+                };
+                let mut op = ops[s].clone();
+                self.fit_to(&mut op, &ps, target)?;
+                ops[s] = op;
+            }
+            "fit.pair" => {
+                let (j, pj) = against.ok_or_else(|| self.bug("fit.pair's requirement names no second input".to_string()))?;
+                if j >= ops.len() {
+                    return Err(self.bug(format!("the requirement reads input {j} of a node of {} inputs", ops.len())));
+                }
+                let target = PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]);
+                match known(&target) {
+                    Some(t) => {
+                        for (x, px) in [(j, pj.as_str()), (s, ps.as_str())] {
+                            if ops[x].props.get(px) != Some(&t.0) || ops[x].bound.contains_key(px) {
+                                let mut op = ops[x].clone();
+                                self.fit_to(&mut op, px, t.clone())?;
+                                ops[x] = op;
+                            }
+                        }
+                    }
+                    None => {
+                        let (mut a, mut b) = (ops[j].clone(), ops[s].clone());
+                        self.bind(&mut a, "ad_a", None, lets, used)?;
+                        self.bind(&mut b, "ad_b", None, lets, used)?;
+                        let (la, lb) = (length_of("ad_a", &pj), length_of("ad_b", &ps));
+                        let (Some(la), Some(lb)) = (la, lb) else { return Err(self.bug(format!("fit.pair pairs {pj} and {ps}, which no length reads"))) };
+                        if !used.insert("ad_l".to_string()) {
+                            return Err(self.bug("one node binds the reserved name ad_l twice".to_string()));
+                        }
+                        lets.push(format!("let ad_l = i64.min ({la}) ({lb})"));
+                        self.fit_to(&mut a, &pj, (PropertyExpr::Unknown, "ad_l".to_string()))?;
+                        self.fit_to(&mut b, &ps, (PropertyExpr::Unknown, "ad_l".to_string()))?;
+                        ops[j] = a;
+                        ops[s] = b;
+                    }
+                }
+            }
+            "fit.inner" => {
+                let mut sides = vec![(s, ps.clone(), o.subject.clone())];
+                if let Some((a, pa)) = against.clone() {
+                    sides.push((a, pa, o.against.clone()));
+                }
+                let cols: Vec<usize> = (0..sides.len()).filter(|i| sides[*i].1 == "cols").collect();
+                let target = match cols.as_slice() {
+                    [_, _] => PropertyExpr::min(vec![o.subject.clone(), o.against.clone()]),
+                    [0] => o.against.clone(),
+                    [1] => o.subject.clone(),
+                    _ => return Err(self.bug(format!("fit.inner's requirement {} {} {} names no inner dimension", q.subject, q.relation.symbol(), q.against))),
+                };
+                let t = known(&target).ok_or_else(|| self.bug(format!("fit.inner fits to {target}, which has no spelling")))?;
+                for i in cols {
+                    let x = sides[i].0;
+                    if ops[x].props.get("cols") != Some(&t.0) {
+                        let mut op = ops[x].clone();
+                        self.fit_to(&mut op, "cols", t.clone())?;
+                        ops[x] = op;
+                    }
+                }
+            }
+            other => return Err(self.bug(format!("the adapter {other} has no rendering at a node"))),
+        }
+        Ok(())
+    }
+
+    /// The node at `path` rendered (its children first), with its Futhark type. A node an ADF stands for renders as
+    /// the ADF's call, except where the ADF itself is defined (`defining`).
+    fn render(&mut self, n: &crate::typed_environment::Node, path: &mut Vec<u32>, defining: Option<&[u32]>) -> Result<Operand6, String> {
+        use crate::typed_environment::{Choice, Substitution};
+        if let Some(id) = self.adfs.iter().position(|p| p == path) {
+            if defining != Some(path.as_slice()) {
+                let (params, _) = self.adf_params(path)?;
+                let call = std::iter::once(format!("adf_{id}")).chain(params.into_iter().map(|(name, _)| name)).collect::<Vec<_>>().join(" ");
+                return Ok(Operand6 { text: call, ty: n.data_type, props: n.properties.clone(), bound: BTreeMap::new() });
+            }
+        }
+        self.nodes += 1;
+        let made = |text: String| Operand6 { text, ty: n.data_type, props: n.properties.clone(), bound: BTreeMap::new() };
+        let constant = |r: &Self| -> Result<String, String> {
+            let d = r.data_type(n.data_type)?;
+            if d.constant.is_empty() {
+                Err(r.bug(format!("a node of {} renders its constant, and it has none", d.name)))
+            } else {
+                Ok(d.constant.clone())
+            }
+        };
+        if let Some(s) = n.substituted {
+            let name = self.reqs.get(s.requirement).map(|q| q.adapter.clone()).ok_or_else(|| self.bug(format!("the substitution names requirement {}", s.requirement)))?;
+            self.adapters.push((path.clone(), name));
+            return match s.by {
+                Substitution::Input(p) => {
+                    let kid = n.kids.get(p as usize).ok_or_else(|| self.bug(format!("the substitution renders input {p}, which the node does not have")))?;
+                    path.push(p);
+                    let r = self.render(kid, path, defining);
+                    path.pop();
+                    r
+                }
+                Substitution::Constant => Ok(made(constant(self)?)),
+            };
+        }
+        let sym = self.k.symbols.get(n.symbol as usize).ok_or_else(|| self.bug(format!("the tree names symbol {}", n.symbol)))?;
+        match sym.kind {
+            Kind6::Var => {
+                return match n.choice {
+                    Some(Choice::Variable(b)) => {
+                        let v = n.environment.variables.iter().find(|v| v.binder == b).ok_or_else(|| self.bug(format!("{} names {b:?}, which is not in scope", sym.name)))?;
+                        Ok(made(self.name_of(&n.environment, v)?))
+                    }
+                    Some(Choice::Constant) => Ok(made(constant(self)?)),
+                    other => Err(self.bug(format!("the variable {} reads as {other:?}", sym.name))),
+                };
+            }
+            Kind6::Const => {
+                let Some(Choice::Dc(i)) = n.choice else { return Err(self.bug(format!("the constant {} reads as {:?}", sym.name, n.choice))) };
+                let d = self.data_type(n.data_type)?;
+                let lit = d.literals.get(i as usize).ok_or_else(|| self.bug(format!("{} literal {i} is past its pool of {}", sym.name, d.literals.len())))?;
+                return Ok(made(format!("{lit}{}", d.name)));
+            }
+            Kind6::Terminal | Kind6::Function if n.kids.is_empty() => {
+                if sym.spelling.contains('{') {
+                    return Err(self.bug(format!("the leaf {}'s spelling {:?} holds a placeholder", sym.name, sym.spelling)));
+                }
+                return Ok(made(sym.spelling.clone()));
+            }
+            Kind6::Terminal | Kind6::Function => {}
+        }
+        let mut ops = Vec::with_capacity(n.kids.len());
+        for (i, kid) in n.kids.iter().enumerate() {
+            path.push(i as u32);
+            let r = self.render(kid, path, defining);
+            path.pop();
+            ops.push(r?);
+        }
+        let (mut lets, mut used) = (Vec::new(), BTreeSet::new());
+        for o in n.outcomes.iter().filter(|o| !o.holds) {
+            self.adapt(o, &mut ops, &mut lets, &mut used)?;
+            self.adapters.push((path.clone(), o.adapter.clone()));
+        }
+        if sym.spelling.starts_with("matmul ") {
+            self.uses.insert("matmul");
+        }
+        let text = self.spell(sym, n, &ops)?;
+        Ok(made(if lets.is_empty() { text } else { format!("{} in {text}", lets.join(" ")) }))
+    }
+
+    /// A row's spelling with its placeholders filled (master 6 README section 4): `{k}` operand k (a size bare, any
+    /// other operand in parentheses: Futhark's application is greedy), `{k.vj}` the j-th variable argument k binds,
+    /// `{k.type}` operand k's Futhark type, `{k.<property>}` its property.
+    fn spell(&self, sym: &Symbol6, n: &crate::typed_environment::Node, ops: &[Operand6]) -> Result<String, String> {
+        let mut out = String::with_capacity(sym.spelling.len() * 2);
+        let mut rest = sym.spelling.as_str();
+        while let Some(i) = rest.find('{') {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + 1..];
+            let j = after.find('}').ok_or_else(|| self.bug(format!("{}'s spelling has an unclosed placeholder", sym.name)))?;
+            let ph = &after[..j];
+            rest = &after[j + 1..];
+            let (k, field) = ph.split_once('.').unwrap_or((ph, ""));
+            let k: usize = k.parse().map_err(|_| self.bug(format!("{}'s spelling has the placeholder {{{ph}}}", sym.name)))?;
+            let op = ops.get(k).ok_or_else(|| self.bug(format!("{}'s spelling reads operand {k} of {}", sym.name, ops.len())))?;
+            match field {
+                "" if self.data_type(op.ty)?.name == "size" => out.push_str(&op.text),
+                "" => out.push_str(&format!("({})", op.text)),
+                "type" => out.push_str(&self.type_text(op)?),
+                f if f.starts_with('v') && f.len() > 1 && f[1..].bytes().all(|b| b.is_ascii_digit()) => {
+                    let j: usize = f[1..].parse().map_err(|_| self.bug(format!("the placeholder {{{ph}}}")))?;
+                    let kid = &n.kids[k];
+                    let env = &kid.environment;
+                    let bound: Vec<_> = env.variables.iter().filter(|v| env.depth > n.environment.depth && v.binder.depth == env.depth).collect();
+                    let v = bound.get(j).ok_or_else(|| self.bug(format!("{}'s argument {k} binds {} variables, the spelling names the {j}th", sym.name, bound.len())))?;
+                    out.push_str(&self.name_of(env, v)?);
+                }
+                p => out.push_str(&atom(&self.dim(op, p)?)),
+            }
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
+    /// The parameters of the ADF at `path`, in order: (its name at the call, its Futhark type). First every size the
+    /// subtree's properties or its free variables name (`(n: i64)`), in the root environment's order, so a later
+    /// parameter's type may name it; then its free variables that are not sizes, in order of first use.
+    fn adf_params(&self, path: &[u32]) -> Result<(Vec<(String, String)>, String), String> {
+        let node = self.decoding.node(path).ok_or_else(|| self.bug(format!("no node at the ADF's path {path:?}")))?;
+        let key = self.decoding.subtree_key(path).ok_or_else(|| self.bug(format!("no subtree at {path:?}")))?;
+        let mut sizes: BTreeSet<String> = BTreeSet::new();
+        fn names(e: &PropertyExpr, out: &mut BTreeSet<String>) {
+            match e {
+                PropertyExpr::Size(n) => {
+                    out.insert(n.clone());
+                }
+                PropertyExpr::Sum(xs) | PropertyExpr::Min(xs) => xs.iter().for_each(|x| names(x, out)),
+                _ => {}
+            }
+        }
+        let mut stack = vec![node];
+        while let Some(m) = stack.pop() {
+            m.properties.values().for_each(|e| names(e, &mut sizes));
+            m.outcomes.iter().for_each(|o| {
+                names(&o.subject, &mut sizes);
+                names(&o.against, &mut sizes);
+            });
+            stack.extend(m.kids.iter());
+        }
+        let size_ty = self.k.ty("size");
+        let mut vars = Vec::new();
+        for f in &key.free {
+            f.properties.values().for_each(|e| names(e, &mut sizes));
+            let v = node.environment.variables.iter().find(|v| v.binder == f.binder).ok_or_else(|| self.bug(format!("the ADF at {path:?} uses {:?}, which is not in its scope", f.binder)))?;
+            let name = self.name_of(&node.environment, v)?;
+            if Some(f.data_type) == size_ty {
+                sizes.insert(name);
+            } else {
+                let op = Operand6 { text: name.clone(), ty: f.data_type, props: f.properties.clone(), bound: BTreeMap::new() };
+                vars.push((name, self.type_text(&op)?));
+            }
+        }
+        let order: Vec<&str> = self.k.variables.iter().map(|v| v.name.as_str()).collect();
+        let mut sizes: Vec<String> = sizes.into_iter().collect();
+        sizes.sort_by_key(|s| (order.iter().position(|o| o == s).unwrap_or(usize::MAX), s.clone()));
+        let mut params: Vec<(String, String)> = sizes.into_iter().map(|s| (s, "i64".to_string())).collect();
+        params.extend(vars);
+        let d = self.data_type(node.data_type)?;
+        if matches!(d.kind, DataKind::Function { .. }) || d.name == "size" {
+            return Err(self.bug(format!("no ADF can have the data type {}", d.name)));
+        }
+        let result = self.type_text(&Operand6 { text: String::new(), ty: node.data_type, props: node.properties.clone(), bound: BTreeMap::new() })?;
+        Ok((params, result))
+    }
+}
+
+/// `length` of a bound name read as the property `p`: the outer length for `len` and `rows`, the inner for `cols`.
+fn length_of(name: &str, p: &str) -> Option<String> {
+    match p {
+        "len" | "rows" => Some(format!("length {name}")),
+        "cols" => Some(format!("length (transpose {name})")),
+        _ => None,
+    }
+}
+
+fn value_is_unknown(e: Option<&PropertyExpr>) -> bool {
+    e.is_none_or(PropertyExpr::has_unknown)
+}
+
+impl Kingdom6 {
+    /// THE PROGRAM (pass 5, plan 7 task F2) of a decoded tree: the prelude (the `matmul` helper, `fit`, `clampix`: each
+    /// only if the program renders it), then the entry `entry main [dims] (size inputs: i32) (inputs) : result =`, the
+    /// size inputs rebound as `i64`, the zero arrays of the root environment bound once, and the rendered tree with the
+    /// entry's own requirements' adapters (`fit.root`). A program with no failing requirement renders exactly as master
+    /// 5 renders it.
+    pub fn program6(&self, header: &Header6, decoding: &crate::typed_environment::Decoding) -> Result<Program6, String> {
+        self.program6_with_adfs(header, decoding, &[])
+    }
+
+    /// [`Kingdom6::program6`] with the subtrees at `adfs` (paths from the root) rendered as ADFs: each a top-level
+    /// `def adf_<i>` (its sizes, then its free variables, as parameters; deepest first, so a definition follows every
+    /// ADF it calls) and its node as the call `adf_<i> <arguments>`. The text computes what the program without ADFs
+    /// computes.
+    pub fn program6_with_adfs(&self, header: &Header6, decoding: &crate::typed_environment::Decoding, adfs: &[Vec<u32>]) -> Result<Program6, String> {
+        let multi = self.data_types.iter().filter_map(|d| if let DataKind::Array { element } = d.kind { Some(element) } else { None }).filter(|e| self.data_type(*e).is_some_and(|d| d.kind == DataKind::Scalar)).collect::<BTreeSet<_>>().len() > 1;
+        let reqs: Vec<&Requirement> = self.symbols.iter().flat_map(|s| s.requires.iter()).collect();
+        let mut r = Render6 { k: self, decoding, reqs, multi, adfs, uses: BTreeSet::new(), adapters: Vec::new(), nodes: 0 };
+        if let Some(p) = adfs.iter().find(|p| p.is_empty()) {
+            return Err(r.bug(format!("the root ({p:?}) cannot be an ADF of its own program")));
+        }
+        let mut order: Vec<usize> = (0..adfs.len()).collect();
+        order.sort_by_key(|i| (std::cmp::Reverse(adfs[*i].len()), adfs[*i].clone()));
+        let mut definitions = String::new();
+        for i in order {
+            let path = &adfs[i];
+            let node = decoding.node(path).ok_or_else(|| r.bug(format!("no node at the ADF's path {path:?}")))?;
+            let body = r.render(node, &mut path.clone(), Some(path))?;
+            let (params, result) = r.adf_params(path)?;
+            let params: String = params.iter().map(|(n, t)| format!(" ({n}: {t})")).collect();
+            definitions.push_str(&format!("def adf_{i}{params} : {result} =\n  {}\n\n", body.text));
+        }
+        let mut root = r.render(&decoding.root, &mut Vec::new(), None)?;
+        for o in decoding.root_outcomes.iter().filter(|o| !o.holds) {
+            if o.adapter != "fit.root" {
+                return Err(r.bug(format!("the entry's requirement names the adapter {}, not fit.root", o.adapter)));
+            }
+            let q = self.root.requires.get(o.requirement).ok_or_else(|| r.bug(format!("the entry has no requirement {}", o.requirement)))?;
+            let target = futhark_size(&o.against).ok_or_else(|| r.bug(format!("the entry's requirement fits to {}, which has no spelling", o.against)))?;
+            r.fit_to(&mut root, &q.property, (o.against.clone(), target))?;
+            r.adapters.push((Vec::new(), o.adapter.clone()));
+        }
+        let mut text = String::new();
+        if r.uses.contains("matmul") {
+            text.push_str(&format!("{}\n", crate::futhark::MATMUL_HELPER));
+        }
+        if r.uses.contains("fit") {
+            text.push_str(&format!("{}\n", crate::futhark::FIT_HELPER));
+        }
+        if r.uses.contains("clampix") {
+            text.push_str(&format!("{}\n", crate::futhark::CLAMPIX_HELPER));
+        }
+        text.push_str(&definitions);
+        text.push_str(&self.entry6(header, &root.text)?);
+        Ok(Program6 { text, nodes: r.nodes, adapters: r.adapters })
+    }
+
+    /// The entry point around a rendered expression: `entry <name> [dims] (k: i32) (xs: [n]i32) : <result> =`, the size
+    /// inputs rebound, the zero arrays bound, then `in <expr>` (the expression alone when nothing is bound).
+    fn entry6(&self, header: &Header6, expr: &str) -> Result<String, String> {
+        let size_text = |e: &PropertyExpr| -> Result<String, String> {
+            let t = futhark_size(e).ok_or_else(|| bug6(&self.kingdom, format!("the entry declares the size {e}, which has no spelling")))?;
+            Ok(if header.size_inputs.contains(&t) { format!("i64.i32 {t}") } else { t })
+        };
+        let type_of = |ty: Ty, props: &[(String, PropertyExpr)]| -> Result<String, String> {
+            let d = self.data_type(ty).ok_or_else(|| bug6(&self.kingdom, format!("{ty:?} is no data type")))?;
+            let mut t = ty;
+            let mut s = String::new();
+            for (p, _) in &d.properties {
+                let e = props.iter().find(|(q, _)| q == p).map(|(_, e)| e).ok_or_else(|| bug6(&self.kingdom, format!("the entry's {} has no property {p}", d.name)))?;
+                s.push_str(&format!("[{}]", size_text(e)?));
+            }
+            while let Some(DataType6 { kind: DataKind::Array { element }, .. }) = self.data_type(t) {
+                t = *element;
+            }
+            s.push_str(&self.data_type(t).map_or_else(|| d.name.clone(), |e| e.name.clone()));
+            Ok(s)
+        };
+        let inputs: Vec<&RootVariable6> = self.variables.iter().filter(|v| v.kind == "input").collect();
+        let mut dims: Vec<String> = Vec::new();
+        for v in &inputs {
+            for (_, e) in &v.properties {
+                let t = futhark_size(e).ok_or_else(|| bug6(&self.kingdom, format!("the input {} has the size {e}", v.name)))?;
+                if !header.size_inputs.contains(&t) && !dims.contains(&t) {
+                    dims.push(t);
+                }
+            }
+        }
+        let mut s = format!("entry {} {}", self.root.name, dims.iter().map(|d| format!("[{d}]")).collect::<String>());
+        for k in &header.size_inputs {
+            s.push_str(&format!(" ({k}: i32)"));
+        }
+        for v in &inputs {
+            s.push_str(&format!(" ({}: {})", v.name, type_of(v.data_type, &v.properties)?));
+        }
+        s.push_str(&format!(" : {} =\n", type_of(self.root.data_type, &self.root.properties)?));
+        let mut lets = String::new();
+        for k in &header.size_inputs {
+            lets.push_str(&format!("  let {k} = i64.i32 {k}\n"));
+        }
+        for v in self.variables.iter().filter(|v| v.kind == "zeros") {
+            let len = v.properties.iter().find(|(p, _)| p == "len").and_then(|(_, e)| futhark_size(e)).ok_or_else(|| bug6(&self.kingdom, format!("the zero array {} has no length", v.name)))?;
+            let mut t = v.data_type;
+            while let Some(DataType6 { kind: DataKind::Array { element }, .. }) = self.data_type(t) {
+                t = *element;
+            }
+            let zero = self.data_type(t).map(|d| d.constant.clone()).ok_or_else(|| bug6(&self.kingdom, format!("the zero array {} has no element", v.name)))?;
+            lets.push_str(&format!("  let {} = replicate {len} {zero}\n", v.name));
+        }
+        s.push_str(&lets);
+        s.push_str(&format!("  {}{expr}\n", if lets.is_empty() { "" } else { "in " }));
+        Ok(s)
+    }
+
+    /// THE RENDERER of this kingdom: its tables, contract and header, prepared once ([`Renderer6::program`]).
+    pub fn renderer6(&self, header: Header6) -> Result<Renderer6<'_>, String> {
+        Ok(Renderer6 { kingdom: self, tables: self.tables()?, contract: self.contract()?, header, entry: crate::typed_environment::Entry::of_kingdom6(self) })
+    }
+}
+
+/// A kingdom's renderer, prepared once: passes 2 to 5 of an expressed tree.
+#[derive(Debug, Clone)]
+pub struct Renderer6<'a> {
+    pub kingdom: &'a Kingdom6,
+    pub tables: KingdomTables,
+    pub contract: KingdomContract,
+    pub header: Header6,
+    pub entry: crate::typed_environment::Entry,
+}
+
+impl Renderer6<'_> {
+    /// The decoding of a tree (passes 2 to 4).
+    pub fn decode(&self, tree: &Tree) -> Result<crate::typed_environment::Decoding, String> {
+        crate::typed_environment::Decoder::new(&self.tables, &self.contract).map_err(|d| d.join("\n"))?.decode(&self.entry, tree)
+    }
+
+    /// The program of a tree (passes 2 to 5).
+    pub fn program(&self, tree: &Tree) -> Result<Program6, String> {
+        self.kingdom.program6(&self.header, &self.decode(tree)?)
+    }
+
+    /// The program of a tree with the subtrees at `adfs` as ADFs ([`Kingdom6::program6_with_adfs`]).
+    pub fn program_with_adfs(&self, tree: &Tree, adfs: &[Vec<u32>]) -> Result<Program6, String> {
+        self.kingdom.program6_with_adfs(&self.header, &self.decode(tree)?, adfs)
+    }
+}
+
 /// The symbol id of a row by name, for the loader's tests.
 pub fn symbol_id(k: &FutharkKingdom, name: &str) -> Option<SymbolId> {
     k.rows.iter().position(|r| r.name == name).map(|i| i as SymbolId)
 }
+
+#[cfg(test)]
+mod tests6;

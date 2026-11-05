@@ -56,6 +56,16 @@ impl FutharkKingdom {
 /// that disagree cannot both be right.
 pub const MATMUL_HELPER: &str = "def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =\n  map (\\a -> map (\\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A\n";
 
+/// THE ADAPTER `fit` (design `docs/DESIGN_futhark_types_and_properties.md` section 5; master 6 README 5.5): exactly
+/// length `l`, the first `l` elements of `xs` padded with `z` where `xs` is shorter. A master 6 program's prelude
+/// holds it only when the program renders a `fit` (`futhark_table::Kingdom6::program6`). `t` may be an array type, so
+/// one `fit` fits a matrix's rows (`z` a zero row) and `map (fit l z)` its columns.
+pub const FIT_HELPER: &str = "def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =\n  tabulate l (\\i -> if i < m then xs[i] else z)\n";
+
+/// THE ADAPTER `clampix`: an index into an array of length `m`, from any index, clamped into `[0, m)`. Every dimension
+/// is at least 1 (the entries' contracts), so the result is in range. A master 6 prelude holds it only when used.
+pub const CLAMPIX_HELPER: &str = "def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)\n";
+
 /// The dimension roles of the kingdom's interface, in a deterministic order.
 ///
 /// A role is a dimension variable in the generated source, so `mat.n.m` and
