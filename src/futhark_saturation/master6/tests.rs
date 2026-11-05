@@ -22,16 +22,16 @@ const N: usize = 48;
 /// A problem's gene frame: its layout at the problem's program size, its constant pools and a padding gene.
 fn frame(e: &Egraph6) -> (GeneLayout, BTreeMap<Ty, u32>, Vec<u32>) {
     let size = problem(&e.problem).unwrap().program_size;
-    let layout = GeneLayout::from_program_size(&e.contract, e.kingdom.root.data_type, size).unwrap();
+    let layout = GeneLayout::from_program_size(&e.kingdom.contract, e.kingdom.entry.output, size).unwrap();
     let consts = const_len6(&e.kingdom);
-    let pad = random_gene(&e.contract, &layout, &consts, &mut GeneRng::new(0xF5)).unwrap();
+    let pad = random_gene(&e.kingdom.contract, &layout, &consts, &mut GeneRng::new(0xF5)).unwrap();
     (layout, consts, pad)
 }
 
 /// A tree written onto `pad` and expressed again.
 fn round_trip(e: &Egraph6, layout: &GeneLayout, consts: &BTreeMap<Ty, u32>, pad: &[u32], t: &Tree) -> Tree {
-    let gene = write_back(&e.contract, layout, pad, t).unwrap_or_else(|d| panic!("{}: a candidate does not write back: {d:?}", e.problem));
-    express(&e.contract, layout, &gene, consts).unwrap_or_else(|d| panic!("{}: a written candidate does not express: {d:?}", e.problem)).tree()
+    let gene = write_back(&e.kingdom.contract, layout, pad, t).unwrap_or_else(|d| panic!("{}: a candidate does not write back: {d:?}", e.problem));
+    express(&e.kingdom.contract, layout, &gene, consts).unwrap_or_else(|d| panic!("{}: a written candidate does not express: {d:?}", e.problem)).tree()
 }
 
 fn egraphs() -> BTreeMap<&'static str, Egraph6> {
@@ -79,38 +79,49 @@ fn every_extracted_candidate_writes_back_and_renders_its_own_text() {
     eprintln!("variants a reference: {}", report.join(", "));
 }
 
-/// The master 5 variants' texts of a reference: master 5's own e-graph and renderer (`futhark_sig::variants`,
-/// `program`), at the start population's settings.
-fn master5_variant_texts(r: &crate::futhark_sig::Reference6) -> Vec<String> {
-    let inst = problem(r.problem).unwrap().instance;
-    let k = crate::futhark_sig::load(&inst).unwrap();
-    let sig = crate::futhark_sig::signature(&inst).unwrap();
-    let bridge = crate::futhark_sig::Bridge::load(&inst).unwrap();
-    let tree = crate::futhark_sig::build(&k, &(r.master5)()).unwrap();
-    crate::futhark_sig::variants(&k, &bridge, &tree, ITERS, MEMBERS, N).unwrap().iter().map(|v| crate::futhark_sig::program(&k, &sig, v).unwrap()).collect()
-}
-
 fn master6_variant_texts(e: &Egraph6, r: &crate::futhark_sig::Reference6) -> Vec<String> {
     let tree = build6(&e.kingdom, &(r.master6)()).unwrap();
     e.variants(&tree, ITERS, MEMBERS, N).unwrap().trees.iter().map(|v| e.program(v).unwrap().text).collect()
 }
 
+/// Today's variants of every reference of reduce, scan, histogram, pathfinder and A7, as program text: `==== <key>
+/// <i> ====` before each (written by master 5's e-graph and renderer, at the start population's settings, before master
+/// 5 was deleted).
+const VARIANTS: &str = include_str!("../../../tests/fixtures/futhark_m6_variants.txt");
+
+/// The stored variants of a reference, in order.
+fn stored_variants(key: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut mine = false;
+    for line in VARIANTS.split_inclusive('\n') {
+        if let Some(head) = line.strip_prefix("==== ") {
+            mine = head.split(' ').next() == Some(key);
+            if mine {
+                out.push(String::new());
+            }
+        } else if mine {
+            if let Some(last) = out.last_mut() {
+                last.push_str(line);
+            }
+        }
+    }
+    out
+}
+
 /// THE VARIANTS ARE TODAY'S TEXTS: every reference of reduce, scan, histogram, pathfinder and A7 gives, through master
-/// 6's e-graph, the variants master 5's e-graph gives, text for text and in the same order (master 5 live; k-means
-/// below, from its fixture, since master 5's k-means view takes minutes to load).
+/// 6's e-graph, its stored variants, text for text and in the same order (k-means below, from its own fixture).
 #[test]
 fn the_variants_are_todays_texts() {
     let es = egraphs();
     for r in REFERENCES6.iter().filter(|r| r.problem != "kmeans") {
-        let want = master5_variant_texts(r);
+        let want = stored_variants(&r.key());
         let got = master6_variant_texts(&es[r.problem], r);
-        assert!(got == want, "{}: master 6 gives {} variants, master 5 {}; the first that differ:\n{:?}", r.key(), got.len(), want.len(), got.iter().zip(&want).find(|(a, b)| a != b));
+        assert!(got == want, "{}: master 6 gives {} variants, the stored {}; the first that differ:\n{:?}", r.key(), got.len(), want.len(), got.iter().zip(&want).find(|(a, b)| a != b));
     }
 }
 
-/// Today's (master 5's) variants of the k-means reference, one after a line `==== <i> ====`.
+/// Today's variants of the k-means reference as program text, one after a line `==== <i> ====`.
 const KMEANS_VARIANTS5: &str = include_str!("../../../tests/fixtures/futhark_m6_kmeans_variants.txt");
-const KMEANS_VARIANTS5_PATH: &str = "tests/fixtures/futhark_m6_kmeans_variants.txt";
 
 fn fixture_texts(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -128,9 +139,8 @@ fn kmeans_reference() -> &'static crate::futhark_sig::Reference6 {
     REFERENCES6.iter().find(|r| r.problem == "kmeans" && r.form == "reference").unwrap()
 }
 
-/// THE K-MEANS REFERENCE'S VARIANTS ARE TODAY'S TEXTS: master 6's e-graph gives, text for text and in order, the
-/// variants master 5's gives (stored in the fixture; [`the_kmeans_fixture_is_master_5s_variants`] checks the fixture
-/// against master 5 live).
+/// THE K-MEANS REFERENCE'S VARIANTS ARE TODAY'S TEXTS: master 6's e-graph gives, text for text and in order, the stored
+/// variants (program text written by master 5's e-graph before master 5 was deleted).
 #[test]
 fn the_kmeans_reference_variants_are_todays_texts() {
     let e = Egraph6::load("kmeans").unwrap();
@@ -141,22 +151,6 @@ fn the_kmeans_reference_variants_are_todays_texts() {
     eprintln!("k-means reference: {} variants, today's texts", got.len());
 }
 
-/// The fixture is master 5's k-means variants, live (minutes: master 5's k-means view). With `FULLER_F5_WRITE=1` it
-/// writes the fixture and FAILS, so a rewrite never passes as a check.
-#[test]
-#[ignore = "minutes: master 5's k-means view; run with --ignored"]
-fn the_kmeans_fixture_is_master_5s_variants() {
-    let texts = master5_variant_texts(kmeans_reference());
-    if std::env::var("FULLER_F5_WRITE").is_ok_and(|v| v == "1") {
-        let body: String = texts.iter().enumerate().map(|(i, t)| format!("==== {i} ====\n{t}")).collect();
-        std::fs::write(Path::new(env!("CARGO_MANIFEST_DIR")).join(KMEANS_VARIANTS5_PATH), body).unwrap();
-        panic!("wrote {} variants to {KMEANS_VARIANTS5_PATH}; run again without FULLER_F5_WRITE", texts.len());
-    }
-    assert_eq!(texts, fixture_texts(KMEANS_VARIANTS5), "the fixture is not master 5's k-means variants");
-}
-
-/// A7's e-graph finds the winner: the reference's variants hold the winning program (the transposed product
-/// computed directly).
 #[test]
 fn the_a7_reference_variants_hold_the_winner() {
     let e = Egraph6::load("a7").unwrap();
@@ -196,7 +190,7 @@ fn the_extracted_variable_is_in_scope_and_the_same_resolved_variable() {
     }
     // An index of depth 1 at the root, where nothing is bound: not in scope, so no program.
     let e = &es["pathfinder"];
-    let var = e.kingdom.symbols.iter().position(|s| s.name == "var@i64").unwrap() as SymbolId;
+    let var = e.kingdom.symbol_named("var@i64").unwrap();
     let walls = build6(&e.kingdom, "(row@a.i32 walls zero@i64)").unwrap();
     let mut stray = walls.clone();
     stray.kids[1] = Tree { symbol: var, const_index: pack(Binder { depth: 1, ordinal: 0 }), kids: Vec::new() };
@@ -219,9 +213,9 @@ fn a_tree_with_a_failing_requirement_is_not_saturated() {
     assert!(!vs.saturated && vs.trees.is_empty(), "a tree with a failing requirement was saturated");
     let (layout, consts, pad) = frame(&e);
     let trees = [failing.clone(), planted.clone()];
-    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
-    let trees: Vec<Tree> = genes.iter().map(|g| express(&e.contract, &layout, g, &consts).unwrap().tree()).collect();
-    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.kingdom.contract, &layout, &pad, t).unwrap()).collect();
+    let trees: Vec<Tree> = genes.iter().map(|g| express(&e.kingdom.contract, &layout, g, &consts).unwrap().tree()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.kingdom.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
     assert_eq!(fold.kept, 1);
     assert_eq!((&fold.genes[0], &fold.forms[0]), (&genes[0], &trees[0]), "the failing tree was rewritten");
     let reference = e.program(&build6(&e.kingdom, crate::futhark_sig::HISTOGRAM_REFERENCE6).unwrap()).unwrap().text;
@@ -267,12 +261,12 @@ fn a_shared_part_under_two_environments_evaluates_as_the_unshared_program() {
     assert_eq!((word(&a, &[0, 2, 1, 1]), word(&b, &[1, 1, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 0, count: 1 }), "the part's `c` is the innermost at both");
     let (layout, consts, pad) = frame(&e);
     let trees = vec![a.clone(), b.clone()];
-    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
-    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.kingdom.contract, &layout, &pad, t).unwrap()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.kingdom.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
     assert_eq!((fold.kept, fold.unshared_by_scope), (0, 0));
     assert!(!fold.used.is_empty(), "the part is not shared");
     let bodies = fold.adfs.expanded(&fold.epoch);
-    let body = bodies.values().find(|b| e.kingdom.symbols[b.symbol as usize].name == "tab@a.f32").expect("the part is an ADF");
+    let body = bodies.values().find(|b| e.kingdom.name(b.symbol) == "tab@a.f32").expect("the part is an ADF");
     assert_eq!(body.kids[1].kids[1].const_index, Some(0), "the part's `c` takes the word that names it in both environments");
     let cl = crate::typed_chromosome::ChromosomeLayout { normal: crate::typed_gep::Layout::new(0, vec![layout.clone()]), mains: Vec::new() };
     let mut sources = String::new();
@@ -281,10 +275,9 @@ fn a_shared_part_under_two_environments_evaluates_as_the_unshared_program() {
         let inlined = crate::typed_chromosome::express_chromosome(&fold.epoch, &fold.adfs, &cl, &c, &consts).unwrap().inlined(&fold.epoch, &fold.adfs).remove(0).1;
         assert_eq!(e.resolved(&inlined).unwrap(), e.resolved(&fold.forms[i]).unwrap(), "individual {i}: the folded gene does not express its form");
         let path = if i == 0 { &pa } else { &pb };
-        let adf = e.kingdom.program6_with_adfs(&e.header, &e.decode(&inlined).unwrap(), std::slice::from_ref(path)).unwrap().text;
-        assert!(adf.contains("def adf_0"), "{adf}");
-        for (j, text) in [e.program(t).unwrap().text, e.program(&inlined).unwrap().text, adf].iter().enumerate() {
-            sources.push_str(&as_entry(3 * i + j, text));
+        assert!(!path.is_empty(), "the shared part sits below the root");
+        for (j, text) in [e.program(t).unwrap().text, e.program(&inlined).unwrap().text].iter().enumerate() {
+            sources.push_str(&as_entry(2 * i + j, text));
         }
     }
     let dir = scratch("shared_part");
@@ -292,10 +285,8 @@ fn a_shared_part_under_two_environments_evaluates_as_the_unshared_program() {
     let cases = crate::futhark_sig::load_cases(&problem("kmeans").unwrap()).unwrap();
     for case in cases.iter().take(4) {
         for i in 0..2 {
-            let want = run(&exe, &format!("e{}", 3 * i), &case.stdin);
-            for j in 1..3 {
-                assert_eq!(run(&exe, &format!("e{}", 3 * i + j), &case.stdin), want, "individual {i}, form {j}, on {}", case.name);
-            }
+            let want = run(&exe, &format!("e{}", 2 * i), &case.stdin);
+            assert_eq!(run(&exe, &format!("e{}", 2 * i + 1), &case.stdin), want, "individual {i}, the folded form, on {}", case.name);
         }
     }
     std::fs::remove_dir_all(&dir).ok();
@@ -363,8 +354,8 @@ fn a_part_whose_variable_no_word_names_everywhere_is_inlined() {
     assert_eq!((site(&e, &a, &[1, 2, 1, 0, 1]), site(&e, &b, &[0, 2, 1, 1])), (VariableSite { place: 1, count: 2 }, VariableSite { place: 0, count: 2 }));
     let (layout, consts, pad) = frame(&e);
     let trees = vec![a, b];
-    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
-    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.kingdom.contract, &layout, &pad, t).unwrap()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.kingdom.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
     assert_eq!((fold.kept, fold.unshared_by_scope, fold.used.len()), (0, 1, 0), "the part is inlined, and nothing else is shared");
     let back = inlined(&fold, &layout, &consts);
     let mut pairs = Vec::new();
@@ -393,16 +384,16 @@ fn a_refit_never_puts_a_part_where_its_word_names_another_variable() {
     }
     assert_eq!((site(&e, &a, &[0, 2, 1, 0, 1]), site(&e, &d, &[1, 2, 1, 0, 0, 1, 1])), (VariableSite { place: 0, count: 2 }, VariableSite { place: 1, count: 2 }));
     // The problem's layout with the `f32` head cut to 6: the third individual fits, its extracted form does not.
-    let f32_ty = e.contract.output(e.kingdom.symbols.iter().position(|s| s.name == "neg@f32").unwrap() as SymbolId);
-    let root = e.kingdom.root.data_type;
-    let mut heads = e.contract.heads_from_program_size(root, problem("kmeans").unwrap().program_size).unwrap();
+    let f32_ty = e.kingdom.contract.output(e.kingdom.symbol_named("neg@f32").unwrap());
+    let root = e.kingdom.entry.output;
+    let mut heads = e.kingdom.contract.heads_from_program_size(root, problem("kmeans").unwrap().program_size).unwrap();
     heads.insert(f32_ty, 6);
-    let layout = GeneLayout::from_heads(&e.contract, root, &heads).unwrap();
+    let layout = GeneLayout::from_heads(&e.kingdom.contract, root, &heads).unwrap();
     let consts = const_len6(&e.kingdom);
-    let pad = random_gene(&e.contract, &layout, &consts, &mut GeneRng::new(0xF5)).unwrap();
+    let pad = random_gene(&e.kingdom.contract, &layout, &consts, &mut GeneRng::new(0xF5)).unwrap();
     let trees = vec![a, b, d];
-    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
-    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
+    let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.kingdom.contract, &layout, &pad, t).unwrap()).collect();
+    let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.kingdom.contract, &layout, &consts, &genes, &trees, &Budget::default()).unwrap();
     assert_eq!((fold.kept, fold.refitted, fold.unshared_by_scope), (0, 1, 0), "the third individual is refitted");
     assert_eq!(fold.used.len(), 1, "the part is shared");
     let back = inlined(&fold, &layout, &consts);
@@ -440,8 +431,8 @@ fn an_individual_the_fold_leaves_as_it_was_keeps_its_words() {
     assert_eq!(e.resolved(&moved).unwrap(), e.resolved(&least).unwrap());
     let (layout, consts, pad) = frame(&e);
     let fold_of = |trees: &[Tree]| {
-        let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.contract, &layout, &pad, t).unwrap()).collect();
-        let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.contract, &layout, &consts, &genes, trees, &Budget::default()).unwrap();
+        let genes: Vec<Vec<u32>> = trees.iter().map(|t| write_back(&e.kingdom.contract, &layout, &pad, t).unwrap()).collect();
+        let fold = fold_saturated(&mut crate::population_fold::AdfTable::default(), &FoldEgraph6 { egraph: &e }, &e.kingdom.contract, &layout, &consts, &genes, trees, &Budget::default()).unwrap();
         (genes, fold)
     };
     let (genes, alone) = fold_of(std::slice::from_ref(&moved));

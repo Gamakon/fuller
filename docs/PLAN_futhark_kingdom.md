@@ -1463,6 +1463,13 @@ cap on the case, 41 and 46 of 1,000, on it cropped); 100 a view on `c` equal the
 1,500 runs, the other (`kmeans_i32`) equal but for Futhark's `0 / x` fold (its simplifier folds a known zero divided by
 anything to 0, where IEEE gives NaN, depending on fusion; counted apart); an adapter costs more than its clean form.
 
+**Phase 2 status (2026-11-05): master 6 is configured by the four kinds of row alone.** `view.py` and
+`futhark_view::master6` write each view as one `tables.tsv` of Argument, Flow, Guard and Entry rows (read by
+`KingdomTables::parse_named`); the adapters `fit`, `fitrows`, `fitcols`, `clampix` are alphabet symbols with preludes, and
+the repairs are templates in `master/6/repairs.tsv` that call them (`{call ..}`); Futhark's spelling of a size formula is
+the formula rows (`=min` as `i64.min {0} {1}`). Renderer, interpreter, cost and reader read only those rows through the
+decoder (`steps`, `exec`, `calls`); the legacy row forms and the code matched on adapter names are deleted.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.

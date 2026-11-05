@@ -1,26 +1,29 @@
-//! THE MASTER 6 VIEW (`docs/PLAN_futhark_kingdom.md` section 7, task F1b): a Futhark kingdom over master 6
+//! THE MASTER 6 VIEW (`docs/PLAN_futhark_kingdom.md` section 7): a Futhark kingdom over master 6
 //! (`kingdoms/futhark/master/6/`, the format in `kingdoms/futhark/master/README.md`), where a type is a DATA TYPE and
 //! nothing else, an array's length and an index's bound are PROPERTIES, and the variables a node may use are its
-//! ENVIRONMENT.
+//! ENVIRONMENT, written in the gene frame's FOUR KINDS OF ROW (design `docs/DESIGN_futhark_types_and_properties.md`
+//! 3.3: Argument, Flow, Guard, Entry) and nothing else: no row form of its own.
 //!
-//! This computes the same three tables as `kingdoms/futhark/view.py` (`View6`), byte for byte (the test below compares
-//! them with the committed `sig/<problem>/m6/` files, which `gen_tables.py --check` compares with `view.py`'s):
+//! This computes the same table as `kingdoms/futhark/view.py` (`View6`), byte for byte (the test below compares it
+//! with the committed `sig/<problem>/m6/tables.tsv`, which `gen_tables.py --check` compares with `view.py`'s):
 //!
 //! 1. the CANDIDATE data types: `datatypes.tsv`'s templates, in order, each over the view's elements (`E`, or the
 //!    ordered pairs and triples of elements), a function type only where its members are candidates;
-//! 2. the CANDIDATE rows: each admitted row (version at most the pin, its family admitted, the `var` row in every
-//!    view, one of its elements in the view) once for each of its elements when its templates read `{E}`, then over
-//!    its `over` quantifiers in order; an instance whose output, an argument or a binding is not a candidate data type
-//!    does not exist; `depth` is replaced by the view's depth (the work-bound requirement is dropped in a view with
-//!    none), and a rule, requirement or binding property that names a property its data type does not carry is dropped;
-//! 3. kept when REACHABLE both ways, with `var@{T}` for every data type that has a variable (a root variable or a
-//!    binding of a kept row, iterated until they settle), and `zero@{T}`, T's constant (M0088), for every data type
-//!    the root or a kept row demands that no kept row of no arguments gives (no variable can be in scope for it, so
-//!    it has no var row and no Dv lane), to a fixed point;
-//! 4. written: `datatypes.tsv`, `symbols.tsv`, `environment.tsv`.
+//! 2. the CANDIDATE rows: each admitted row (version at most the pin and its family admitted; a `var` row and an
+//!    ADAPTER in every view) once for each of its elements when its templates read `{E}`, then over its `over`
+//!    quantifiers in order; an instance whose output, an argument or a variable's data type is not a candidate does not
+//!    exist; `depth` is the view's depth (the work bound dropped in a view with none), and an up flow, a variable's
+//!    property or a guard that reads a property its data type does not carry is dropped;
+//! 3. kept when REACHABLE both ways, with `var@{T}` for every data type that has a variable, and `zero@{T}`, T's
+//!    constant (M0088), for every data type the root or a kept row demands that no kept row of no arguments gives, to
+//!    a fixed point;
+//! 4. written (`tables.tsv`, read by `KingdomTables::parse_named`): the data types (properties, constants, the entry's
+//!    size names at least 1 on `size`), the symbols (role, adapter, spellings, prelude; the master's formula rows last),
+//!    their Argument rows, their Flow rows (up flows, variables with their properties and spellings, the trip
+//!    attribute), their Guard rows with their repairs inline (the master's repair lists, `repairs.tsv`, with the
+//!    guard's operands and the adapter that fits each bound, then the row's work-bound substitutes), and the entry.
 //!
-//! [`View6::kingdom`] loads the written text through [`Kingdom6::from_tables`], so the engine's kingdom is the table
-//! the witnesses checked. Master 5 ([`super::View`]) is untouched and stays loadable until task D1.
+//! [`View6::kingdom`] loads the written text, so the engine's kingdom is the table the witnesses checked.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,16 +33,21 @@ const VERSION6: &str = include_str!("../../kingdoms/futhark/master/6/VERSION");
 const DATATYPES6: &str = include_str!("../../kingdoms/futhark/master/6/datatypes.tsv");
 const PROPERTIES6: &str = include_str!("../../kingdoms/futhark/master/6/properties.tsv");
 const ROWS6: &str = include_str!("../../kingdoms/futhark/master/6/rows.tsv");
-/// The master's adapters, which every master 6 kingdom loads.
-pub const ADAPTERS6: &str = include_str!("../../kingdoms/futhark/master/6/adapters.tsv");
+const REPAIRS6: &str = include_str!("../../kingdoms/futhark/master/6/repairs.tsv");
+const FORMULAS6: &str = include_str!("../../kingdoms/futhark/master/6/formulas.tsv");
+/// The master's preludes, by name (`master/6/preludes/<name>.fut`).
+const PRELUDES6: [(&str, &str); 4] = [
+    ("clampix", include_str!("../../kingdoms/futhark/master/6/preludes/clampix.fut")),
+    ("fit", include_str!("../../kingdoms/futhark/master/6/preludes/fit.fut")),
+    ("fitrows", include_str!("../../kingdoms/futhark/master/6/preludes/fitrows.fut")),
+    ("matmul", include_str!("../../kingdoms/futhark/master/6/preludes/matmul.fut")),
+];
 
-const ROW6_COLUMNS: [&str; 15] = ["ref", "since", "family", "kind", "elems", "over", "name", "out", "args", "rules", "requires", "binds", "trip", "spelling", "note"];
-const DATATYPE6_COLUMNS: [&str; 8] = ["name", "kind", "members", "over", "tag", "constant", "constant_props", "note"];
+const ROW6_COLUMNS: [&str; 14] = ["ref", "since", "family", "kind", "elems", "over", "name", "out", "args", "flows", "guards", "spelling", "prelude", "note"];
+const DATATYPE6_COLUMNS: [&str; 10] = ["name", "kind", "members", "over", "tag", "constant", "constant_props", "spell", "type_spelling", "note"];
 const PROPERTY6_COLUMNS: [&str; 4] = ["data_type", "name", "kind", "meaning"];
-/// The written view's columns.
-pub const VIEW6_DATATYPE_COLUMNS: [&str; 8] = ["id", "name", "kind", "members", "tag", "constant", "constant_props", "properties"];
-pub const VIEW6_SYMBOL_COLUMNS: [&str; 11] = ["id", "ref", "name", "kind", "out", "args", "rules", "requires", "binds", "trip", "spelling"];
-pub const VIEW6_ENV_COLUMNS: [&str; 5] = ["kind", "name", "data_type", "properties", "requires"];
+const REPAIR6_COLUMNS: [&str; 5] = ["list", "site", "when", "guard", "template"];
+const FORMULA6_COLUMNS: [&str; 3] = ["operator", "form", "spelling"];
 
 fn bug(what: String) -> String {
     format!("our software has a bug: {what}")
@@ -85,6 +93,8 @@ struct DataTypeTemplate {
     tag: String,
     constant: String,
     constant_props: String,
+    spell: String,
+    type_spelling: String,
 }
 
 /// One row template of `master/6/rows.tsv`, its fields by column name.
@@ -100,30 +110,48 @@ impl RowTemplate {
     }
 }
 
-/// The template columns a row's `{E}` and quantifier variables are substituted in.
-const ROW6_TEMPLATED: [&str; 8] = ["name", "out", "args", "rules", "requires", "binds", "spelling", "note"];
+/// One repair of a repair list of `master/6/repairs.tsv`.
+#[derive(Debug, Clone)]
+struct RepairTemplate {
+    list: String,
+    site: String,
+    when: String,
+    guard: String,
+    template: String,
+}
 
-/// Master 6: its version, data type templates, properties (by data type template, in order) and row templates.
+/// The template columns a row's `{E}` and quantifier variables are substituted in (its spelling apart: it also reads
+/// each argument's type spelling, `{TYPE<k>}`).
+const ROW6_TEMPLATED: [&str; 7] = ["name", "out", "args", "flows", "guards", "spelling", "note"];
+
+/// The adapter that fits a property of a value, by its data type's shape (the repairs' `{FITS}`, `{FITJ}`).
+const FIT6: [(&str, &str, &str); 3] = [("[]", "len", "fit@a.{E}"), ("[][]", "rows", "fitrows@m.{E}"), ("[][]", "cols", "fitcols@m.{E}")];
+
+/// Master 6: its version, data type templates, properties (by data type template, in order), row templates, repair
+/// lists, formula rows and preludes.
 #[derive(Debug, Clone)]
 pub struct Master6 {
     pub version: u32,
     datatypes: Vec<DataTypeTemplate>,
     properties: BTreeMap<String, Vec<(String, String)>>,
     rows: Vec<RowTemplate>,
+    repairs: Vec<RepairTemplate>,
+    formulas: Vec<(String, String, String)>,
+    preludes: BTreeMap<String, String>,
 }
 
 impl Master6 {
     /// The committed master 6, as compiled in.
     pub fn committed() -> Result<Master6, String> {
-        Master6::parse(VERSION6, DATATYPES6, PROPERTIES6, ROWS6)
+        Master6::parse(VERSION6, DATATYPES6, PROPERTIES6, ROWS6, REPAIRS6, FORMULAS6, &PRELUDES6)
     }
 
     /// Master 6 from the text of its files.
-    pub fn parse(version: &str, datatypes: &str, properties: &str, rows: &str) -> Result<Master6, String> {
+    pub fn parse(version: &str, datatypes: &str, properties: &str, rows: &str, repairs: &str, formulas: &str, preludes: &[(&str, &str)]) -> Result<Master6, String> {
         let version = version.trim().parse::<u32>().map_err(|e| bug(format!("master/6/VERSION: {e}")))?;
         let datatypes = tsv6("datatypes.tsv", datatypes, &DATATYPE6_COLUMNS)?
             .into_iter()
-            .map(|f| DataTypeTemplate { name: f[0].into(), kind: f[1].into(), members: f[2].into(), over: f[3].into(), tag: f[4].into(), constant: f[5].into(), constant_props: f[6].into() })
+            .map(|f| DataTypeTemplate { name: f[0].into(), kind: f[1].into(), members: f[2].into(), over: f[3].into(), tag: f[4].into(), constant: f[5].into(), constant_props: f[6].into(), spell: f[7].into(), type_spelling: f[8].into() })
             .collect();
         let mut props: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for f in tsv6("properties.tsv", properties, &PROPERTY6_COLUMNS)? {
@@ -136,7 +164,10 @@ impl Master6 {
                 Ok(RowTemplate { fields: ROW6_COLUMNS.iter().zip(&f).map(|(c, v)| (*c, v.to_string())).collect(), since })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Master6 { version, datatypes, properties: props, rows })
+        let repairs = tsv6("repairs.tsv", repairs, &REPAIR6_COLUMNS)?.into_iter().map(|f| RepairTemplate { list: f[0].into(), site: f[1].into(), when: f[2].into(), guard: f[3].into(), template: f[4].into() }).collect();
+        let formulas = tsv6("formulas.tsv", formulas, &FORMULA6_COLUMNS)?.into_iter().map(|f| (f[0].to_string(), f[1].to_string(), f[2].to_string())).collect();
+        let preludes = preludes.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect();
+        Ok(Master6 { version, datatypes, properties: props, rows, repairs, formulas, preludes })
     }
 }
 
@@ -338,45 +369,54 @@ fn replace_depth(expr: &str, value: u32) -> String {
     out
 }
 
-/// A requirement's text in its four parts: (subject, relation, expression, adapter).
-pub type RequirementParts = (String, String, String, String);
+/// A guard item of a row as (strength, subject, relation, expression, repair list): `must <subject> <relation> <expr>
+/// -> <list>`, the subject `in<k>.<p>` or `env.trips`, the relation `=`, `<=` or `<`.
+pub type GuardParts = (String, String, String, String, String);
 
-/// A requirement's text as (subject, relation, expression, adapter): `<subject> <relation> <expr> -> <adapter>`, the
-/// subject `in<k>.<p>`, `env.trips` or `out.<p>`, the relation `=`, `<=` or `<`.
-pub fn parse_requirement(q: &str) -> Result<RequirementParts, String> {
-    let no = || bug(format!("the requirement {q:?} does not parse"));
-    let (subject, rest) = q.split_once(' ').ok_or_else(no)?;
+/// A guard item's text in its five parts ([`GuardParts`]).
+pub fn parse_guard(q: &str) -> Result<GuardParts, String> {
+    let no = || bug(format!("the guard {q:?} does not parse"));
+    let (strength, rest) = q.split_once(' ').ok_or_else(no)?;
+    let (subject, rest) = rest.split_once(' ').ok_or_else(no)?;
     let ident = |s: &str| s.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '_') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    let subject_ok = subject == "env.trips"
-        || subject.strip_prefix("out.").is_some_and(ident)
-        || subject.strip_prefix("in").and_then(|s| s.split_once('.')).is_some_and(|(k, p)| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && ident(p));
+    let subject_ok = subject == "env.trips" || subject.strip_prefix("in").and_then(|s| s.split_once('.')).is_some_and(|(k, p)| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && ident(p));
     let (relation, rest) = rest.split_once(' ').ok_or_else(no)?;
-    let (expr, adapter) = rest.rsplit_once(" -> ").ok_or_else(no)?;
-    let adapter_ok = adapter.chars().next().is_some_and(|c| c.is_ascii_lowercase()) && adapter.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.');
-    if !subject_ok || !["=", "<=", "<"].contains(&relation) || expr.is_empty() || !adapter_ok {
+    let (expr, list) = rest.rsplit_once(" -> ").ok_or_else(no)?;
+    let list_ok = list.chars().next().is_some_and(|c| c.is_ascii_lowercase()) && list.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.');
+    if !["must", "advise"].contains(&strength) || !subject_ok || !["=", "<=", "<"].contains(&relation) || expr.is_empty() || !list_ok {
         return Err(no());
     }
-    Ok((subject.to_string(), relation.to_string(), expr.to_string(), adapter.to_string()))
+    Ok((strength.to_string(), subject.to_string(), relation.to_string(), expr.to_string(), list.to_string()))
 }
 
-/// A binding's text as (argument, data type, the properties text): `<argument>:<data type>[ <properties>]`.
-fn parse_binding(b: &str) -> Result<(usize, String, String), String> {
-    let no = || bug(format!("the binding {b:?} does not parse"));
-    let (arg, rest) = b.split_once(':').ok_or_else(no)?;
-    if arg.is_empty() || !arg.bytes().all(|c| c.is_ascii_digit()) {
-        return Err(no());
+/// One flow item of a row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FlowItem {
+    /// `out.<p> := <formula>`.
+    Up(String, String),
+    /// `in<k>: env.<a> := <formula>`.
+    Env(usize, String, String),
+    /// `in<k>: var <T>[ with p := f & ..]`.
+    Var(usize, String, Vec<(String, String)>),
+}
+
+/// A flow item's text.
+fn parse_flow(item: &str) -> Result<FlowItem, String> {
+    let no = || bug(format!("the flow {item:?} does not parse"));
+    if let Some(rest) = item.strip_prefix("out.") {
+        let (p, e) = rest.split_once(" := ").ok_or_else(no)?;
+        return Ok(FlowItem::Up(p.to_string(), e.to_string()));
     }
-    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    let (dt, props) = rest.split_at(end);
-    if dt.is_empty() {
-        return Err(no());
+    let (at, rest) = item.split_once(": ").ok_or_else(no)?;
+    let k: usize = at.strip_prefix("in").and_then(|d| d.parse().ok()).ok_or_else(no)?;
+    if let Some(rest) = rest.strip_prefix("env.") {
+        let (a, e) = rest.split_once(" := ").ok_or_else(no)?;
+        return Ok(FlowItem::Env(k, a.to_string(), e.to_string()));
     }
-    let props = match props.strip_prefix(' ') {
-        Some(p) => p,
-        None if props.is_empty() => "",
-        None => return Err(no()),
-    };
-    Ok((arg.parse().map_err(|_| no())?, dt.to_string(), props.to_string()))
+    let rest = rest.strip_prefix("var ").ok_or_else(no)?;
+    let (dt, props) = rest.split_once(" with ").unwrap_or((rest, ""));
+    let props = items(props, '&').into_iter().map(|pe| pe.split_once(" := ").map(|(p, e)| (p.to_string(), e.to_string())).ok_or_else(no)).collect::<Result<Vec<_>, _>>()?;
+    Ok(FlowItem::Var(k, dt.to_string(), props))
 }
 
 // ---- the view -------------------------------------------------------------------------------------------------
@@ -392,7 +432,12 @@ struct Candidate {
     constant: String,
     constant_props: String,
     properties: Vec<(String, String)>,
+    spell: String,
+    type_spelling: String,
 }
+
+/// A variable a row's flow introduces: the argument, its data type, its properties.
+type VarFlow = (usize, String, Vec<(String, String)>);
 
 /// A row of a view: a row template instantiated.
 #[derive(Debug, Clone)]
@@ -402,20 +447,22 @@ struct Instance {
     kind: String,
     out: String,
     args: Vec<String>,
-    rules: Vec<String>,
-    requires: Vec<String>,
-    binds: Vec<(usize, String, Vec<String>)>,
-    trip: String,
+    ups: Vec<(String, String)>,
+    envs: Vec<(usize, String, String)>,
+    vars: Vec<VarFlow>,
+    guards: Vec<GuardParts>,
     spelling: String,
+    prelude: String,
 }
 
-/// A master 6 view: its specification and the three tables it writes.
+/// A master 6 view: its specification, the table it writes, and what its e-graph is written from: each data type's
+/// (name, kind, members, tag) and each symbol's (name, kind, output, arguments), in the table's order.
 #[derive(Debug, Clone)]
 pub struct View6 {
     pub spec: ViewSpec6,
-    pub datatypes_tsv: String,
-    pub symbols_tsv: String,
-    pub environment_tsv: String,
+    pub tables_tsv: String,
+    pub types: Vec<[String; 4]>,
+    pub symbols: Vec<(String, String, String, Vec<String>)>,
 }
 
 struct Builder<'a> {
@@ -444,9 +491,12 @@ impl Builder<'_> {
         Ok(b)
     }
 
+    /// A var row and an ADAPTER are in every view, whatever its pin and families: every view's repairs call the
+    /// adapters, and evolution may place them.
     fn admitted(&self, r: &RowTemplate) -> bool {
-        r.since <= self.spec.master
-            && (self.spec.families.is_empty() || self.spec.families.iter().any(|f| f == r.get("family")) || r.get("kind") == "var" || items(r.get("over"), ';').iter().any(|q| q.split_once(':').is_some_and(|(_, k)| k == "leafless")))
+        let everywhere = r.get("kind") == "var" || r.get("kind") == "adapter";
+        (everywhere || r.since <= self.spec.master)
+            && (self.spec.families.is_empty() || self.spec.families.iter().any(|f| f == r.get("family")) || everywhere || items(r.get("over"), ';').iter().any(|q| q.split_once(':').is_some_and(|(_, k)| k == "leafless")))
             && (r.get("elems") == "*" || r.get("elems").split(',').any(|e| self.spec.elements.iter().any(|v| v == e)))
     }
 
@@ -514,63 +564,54 @@ impl Builder<'_> {
     /// One instance of row `r` under `env`, or none when one of its data types is not a candidate.
     fn instance(&self, r: &RowTemplate, env: &Env) -> Result<Option<Instance>, String> {
         let mut t: BTreeMap<&str, String> = BTreeMap::new();
-        for c in ROW6_TEMPLATED {
+        for c in ROW6_TEMPLATED.iter().filter(|c| **c != "spelling") {
             t.insert(c, subst(r.get(c), env)?);
         }
         let args = items(&t["args"], ';');
         if !self.by_name.contains_key(&t["out"]) || args.iter().any(|a| !self.by_name.contains_key(a)) {
             return Ok(None);
         }
+        let mut with_types = env.clone();
+        for (k, a) in args.iter().enumerate() {
+            let ts = self.candidate(a).map(|c| c.type_spelling.replace("@.", &format!("in{k}."))).unwrap_or_default();
+            with_types.insert(format!("TYPE{k}"), ts);
+        }
+        let spelling = subst(r.get("spelling"), &with_types)?;
         let held = |expr: &str| property_terms(expr).iter().all(|(k, p)| *k < args.len() && self.carries(&args[*k], p));
-        let mut rules = Vec::new();
-        for rule in items(&t["rules"], ';') {
-            let (prop, expr) = rule.split_once('=').unwrap_or((rule.as_str(), ""));
-            if self.carries(&t["out"], prop) && held(expr) {
-                rules.push(rule.clone());
+        let (mut ups, mut envs, mut vars) = (Vec::new(), Vec::new(), Vec::new());
+        for item in items(&t["flows"], ';') {
+            match parse_flow(&item).map_err(|e| format!("{e} (row {})", r.get("ref")))? {
+                FlowItem::Up(p, e) => {
+                    if self.carries(&t["out"], &p) && held(&e) {
+                        ups.push((p, e));
+                    }
+                }
+                FlowItem::Env(k, a, e) => envs.push((k, a, e)),
+                FlowItem::Var(k, dt, props) => {
+                    if !self.by_name.contains_key(&dt) {
+                        return Ok(None);
+                    }
+                    let kept = props.into_iter().filter(|(p, e)| self.carries(&dt, p) && held(e)).collect();
+                    vars.push((k, dt, kept));
+                }
             }
         }
-        let mut requires = Vec::new();
-        for q in items(&t["requires"], ';') {
-            let (subject, rel, expr, adapter) = parse_requirement(&q).map_err(|e| format!("{e} (row {})", r.get("ref")))?;
+        let mut guards = Vec::new();
+        for q in items(&t["guards"], ';') {
+            let (strength, subject, rel, expr, list) = parse_guard(&q).map_err(|e| format!("{e} (row {})", r.get("ref")))?;
             if subject == "env.trips" {
                 if let Some(depth) = self.spec.depth {
-                    requires.push(format!("{subject} {rel} {} -> {adapter}", replace_depth(&expr, depth)));
+                    guards.push((strength, subject, rel, replace_depth(&expr, depth), list));
                 }
                 continue;
             }
-            let (k, p) = subject.strip_prefix("in").and_then(|s| s.split_once('.')).ok_or_else(|| bug(format!("the row {} has a requirement on {subject}, which is not an input", r.get("ref"))))?;
-            let k: usize = k.parse().map_err(|_| bug(format!("the requirement {q:?} of {} names no input", r.get("ref"))))?;
+            let (k, p) = subject.strip_prefix("in").and_then(|s| s.split_once('.')).ok_or_else(|| bug(format!("the row {} has a guard on {subject}, which is not an input", r.get("ref"))))?;
+            let k: usize = k.parse().map_err(|_| bug(format!("the guard {q:?} of {} names no input", r.get("ref"))))?;
             if k < args.len() && self.carries(&args[k], p) && held(&expr) {
-                requires.push(q.clone());
+                guards.push((strength, subject, rel, expr, list));
             }
         }
-        let mut binds = Vec::new();
-        for b in items(&t["binds"], ';') {
-            let (arg, dt, props) = parse_binding(&b).map_err(|e| format!("{e} (row {})", r.get("ref")))?;
-            if !self.by_name.contains_key(&dt) {
-                return Ok(None);
-            }
-            let kept = items(&props, '&')
-                .into_iter()
-                .filter(|pe| {
-                    let (p, e) = pe.split_once('=').unwrap_or((pe.as_str(), ""));
-                    self.carries(&dt, p) && held(e)
-                })
-                .collect();
-            binds.push((arg, dt, kept));
-        }
-        Ok(Some(Instance {
-            reference: r.get("ref").to_string(),
-            name: t["name"].clone(),
-            kind: r.get("kind").to_string(),
-            out: t["out"].clone(),
-            args,
-            rules,
-            requires,
-            binds,
-            trip: r.get("trip").to_string(),
-            spelling: t["spelling"].clone(),
-        }))
+        Ok(Some(Instance { reference: r.get("ref").to_string(), name: t["name"].clone(), kind: r.get("kind").to_string(), out: t["out"].clone(), args, ups, envs, vars, guards, spelling, prelude: r.get("prelude").to_string() }))
     }
 
     fn rows(&self, var_types: &BTreeSet<String>, leafless: &BTreeSet<String>) -> Result<Vec<Instance>, String> {
@@ -604,7 +645,7 @@ impl Builder<'_> {
 
     /// The rows reachable both ways: forward from the leaves, backward from the root.
     fn reachable(&self, rows: Vec<Instance>) -> Result<Vec<Instance>, String> {
-        let mut built: BTreeSet<String> = rows.iter().filter(|r| r.kind != "function").map(|r| r.out.clone()).collect();
+        let mut built: BTreeSet<String> = rows.iter().filter(|r| r.kind != "function" && r.kind != "adapter").map(|r| r.out.clone()).collect();
         loop {
             let before = built.len();
             for r in &rows {
@@ -645,6 +686,87 @@ impl Builder<'_> {
         }
         Ok(out)
     }
+
+    /// The adapter symbol that fits property `prop` of a value of data type `dt`.
+    fn fitter(&self, dt: &str, prop: &str) -> Result<String, String> {
+        let shape = if dt.starts_with("[][]") {
+            "[][]"
+        } else if dt.starts_with("[]") {
+            "[]"
+        } else {
+            ""
+        };
+        let name = FIT6.iter().find(|(s, p, _)| *s == shape && *p == prop).map(|(_, _, n)| *n).ok_or_else(|| bug(format!("no adapter fits the {prop} of {dt}")))?;
+        Ok(name.replace("{E}", &dt[shape.len()..]))
+    }
+
+    /// The repairs of one guard ([`View6`], step 4): its list with the guard's operands, properties and adapters bound,
+    /// then the row's work-bound substitutes (its own work bound's list, else `subst`), so the last always applies.
+    fn repairs(&self, args: &[String], work: Option<&str>, subject: &str, expr: &str, list: &str) -> Result<Vec<[String; 4]>, String> {
+        let mut env = Env::new();
+        if let Some(rest) = subject.strip_prefix("in") {
+            let (s, ps) = rest.split_once('.').ok_or_else(|| bug(format!("the subject {subject}")))?;
+            let si: usize = s.parse().map_err(|_| bug(format!("the subject {subject}")))?;
+            for (k, v) in [("S", s.to_string()), ("PS", ps.to_string()), ("SUBJECT", subject.to_string()), ("AGAINST", expr.to_string()), ("MIN", format!("min({subject}, {expr})"))] {
+                env.insert(k.to_string(), v);
+            }
+            env.insert("FITS".to_string(), if list == "clampix" { String::new() } else { self.fitter(&args[si], ps)? });
+            if let Some((j, pj)) = expr.strip_prefix("in").and_then(|r| r.split_once('.')).filter(|(j, pj)| !j.is_empty() && j.bytes().all(|b| b.is_ascii_digit()) && !pj.is_empty() && pj.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')) {
+                let ji: usize = j.parse().map_err(|_| bug(format!("the guard's {expr}")))?;
+                env.insert("J".to_string(), j.to_string());
+                env.insert("PJ".to_string(), pj.to_string());
+                env.insert("FITJ".to_string(), if list == "fit.pair" || list == "fit.against" { self.fitter(&args[ji], pj)? } else { String::new() });
+            }
+        } else if let Some(p) = subject.strip_prefix("out.") {
+            for (k, v) in [("PS", p.to_string()), ("SUBJECT", subject.to_string()), ("AGAINST", expr.to_string()), ("FITS", self.fitter(&self.root, p)?)] {
+                env.insert(k.to_string(), v);
+            }
+        }
+        let list_of = |name: &str| -> Result<Vec<&RepairTemplate>, String> {
+            let v: Vec<&RepairTemplate> = self.master.repairs.iter().filter(|r| r.list == name).collect();
+            if v.is_empty() {
+                Err(bug(format!("the repair list {name} is not in master/6/repairs.tsv")))
+            } else {
+                Ok(v)
+            }
+        };
+        let mut out = Vec::new();
+        for r in list_of(list)? {
+            let guard = if r.guard.contains("depth") {
+                match self.spec.depth {
+                    None => "true".to_string(),
+                    Some(d) => replace_depth(&r.guard, d),
+                }
+            } else {
+                r.guard.clone()
+            };
+            out.push([subst(&r.site, &env)?, subst(&r.when, &env)?, guard, subst(&r.template, &env)?]);
+        }
+        if !["subst", "subst.const", "fit.root"].contains(&list) {
+            for r in list_of(work.unwrap_or("subst"))? {
+                out.push([r.site.clone(), r.when.clone(), r.guard.clone(), r.template.clone()]);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every size name of the entry, sorted, each at least 1 (the entry points' contract).
+    fn size_names(&self) -> Vec<String> {
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for e in &self.spec.env {
+            names.extend(e.dims.iter().cloned());
+            if e.kind == "size" {
+                names.insert(e.name.clone());
+            }
+        }
+        names.extend(self.spec.output.2.iter().cloned());
+        names.into_iter().collect()
+    }
+}
+
+/// A prelude's text on one line of the table (`\` as `\\`, a line break as `\n`).
+fn escape6(text: &str) -> String {
+    crate::geneframe::escape(text)
 }
 
 impl View6 {
@@ -652,6 +774,7 @@ impl View6 {
     pub fn load(master: &Master6, spec_text: &str) -> Result<View6, String> {
         let spec = ViewSpec6::parse(spec_text)?;
         let elements = &spec.elements;
+        let multi = elements.len() > 1;
         // 1. The candidate data types.
         let mut candidates: Vec<Candidate> = Vec::new();
         for t in &master.datatypes {
@@ -677,6 +800,11 @@ impl View6 {
                 if member_list.iter().any(|m| !candidates.iter().any(|c| &c.name == m)) {
                     continue;
                 }
+                let mut spell_env = env.clone();
+                spell_env.insert("M".to_string(), match env.get("E") {
+                    Some(e) if multi => format!("_{e}"),
+                    _ => String::new(),
+                });
                 candidates.push(Candidate {
                     name,
                     kind: t.kind.clone(),
@@ -686,6 +814,8 @@ impl View6 {
                     constant: subst(&t.constant, &env)?,
                     constant_props: t.constant_props.clone(),
                     properties: master.properties.get(&t.name).cloned().unwrap_or_default(),
+                    spell: subst(&t.spell, &spell_env)?,
+                    type_spelling: subst(&t.type_spelling, &env)?,
                 });
             }
         }
@@ -700,10 +830,10 @@ impl View6 {
                 return Err(bug(format!("the specification names the data type {dt}, which the master does not have for {elements:?}")));
             }
         }
-        let b = Builder { spec: &spec, master, multi: elements.len() > 1, candidates, by_name, root };
+        let b = Builder { spec: &spec, master, multi, candidates, by_name, root };
         // 2 and 3: the rows, reachable both ways, the data types with a variable settled.
         let root_types: BTreeSet<String> = root_vars.iter().map(|(_, dt, _)| dt.clone()).collect();
-        let binders = |rows: &[Instance]| -> BTreeSet<String> { rows.iter().flat_map(|r| r.binds.iter().map(|(_, dt, _)| dt.clone())).collect() };
+        let binders = |rows: &[Instance]| -> BTreeSet<String> { rows.iter().flat_map(|r| r.vars.iter().map(|(_, dt, _)| dt.clone())).collect() };
         let none = BTreeSet::new();
         let mut var_types: BTreeSet<String> = root_types.union(&binders(&b.rows(&none, &none)?)).cloned().collect();
         let mut settled_rows = None;
@@ -718,9 +848,6 @@ impl View6 {
             var_types = settled;
         }
         let mut rows = settled_rows.ok_or_else(|| bug("the data types with a variable do not settle".to_string()))?;
-        // A data type the root or a kept row demands that no kept row of no arguments gives can never have a variable
-        // in scope: it takes its constant (the `T:leafless` row, M0088), no var row and no Dv lane. To a fixed point:
-        // rows the new leaves admit may demand more data types.
         let mut leafless = BTreeSet::new();
         let mut settled = false;
         for _ in 0..b.candidates.len() + 2 {
@@ -743,7 +870,7 @@ impl View6 {
         for r in &rows {
             used.insert(r.out.clone());
             used.extend(r.args.iter().cloned());
-            used.extend(r.binds.iter().map(|(_, dt, _)| dt.clone()));
+            used.extend(r.vars.iter().map(|(_, dt, _)| dt.clone()));
         }
         loop {
             let before = used.len();
@@ -758,75 +885,158 @@ impl View6 {
         }
         let types: Vec<&Candidate> = b.candidates.iter().filter(|t| used.contains(&t.name)).collect();
         let var_rows: BTreeSet<&str> = rows.iter().filter(|r| r.kind == "var").map(|r| r.out.as_str()).collect();
-        // 4. The written tables.
-        let mut dt = VIEW6_DATATYPE_COLUMNS.join("\t") + "\n";
-        for (i, t) in types.iter().enumerate() {
-            let props = t.properties.iter().map(|(p, k)| format!("{p}:{k}")).collect::<Vec<_>>().join(";");
-            dt.push_str(&[i.to_string(), t.name.clone(), t.kind.clone(), t.members.clone(), t.tag.clone(), t.constant.clone(), t.constant_props.clone(), props].join("\t"));
-            dt.push('\n');
-        }
-        let mut sy = VIEW6_SYMBOL_COLUMNS.join("\t") + "\n";
-        for (i, r) in rows.iter().enumerate() {
-            let binds = r.binds.iter().map(|(a, d, ps)| format!("{a}:{d}{}", if ps.is_empty() { String::new() } else { format!(" {}", ps.join(" & ")) })).collect::<Vec<_>>().join("; ");
-            sy.push_str(&[i.to_string(), r.reference.clone(), r.name.clone(), r.kind.clone(), r.out.clone(), r.args.join(";"), r.rules.join("; "), r.requires.join("; "), binds, r.trip.clone(), r.spelling.clone()].join("\t"));
-            sy.push('\n');
-        }
-        let (out_name, _, out_dims) = &spec.output;
-        let props = rank_properties(out_dims.len()).ok_or_else(|| bug(format!("the output has {} dimensions", out_dims.len())))?;
-        let root_props = props.iter().zip(out_dims).map(|(p, d)| format!("{p}={d}")).collect::<Vec<_>>().join(" & ");
-        let root_req = props.iter().zip(out_dims).map(|(p, d)| format!("out.{p} = {d} -> fit.root")).collect::<Vec<_>>().join("; ");
-        let mut en = VIEW6_ENV_COLUMNS.join("\t") + "\n";
-        en.push_str(&["root", out_name, &b.root, &root_props, &root_req].join("\t"));
-        en.push('\n');
-        for (line, (vname, vdt, ps)) in spec.env.iter().zip(&root_vars) {
-            if var_rows.contains(vdt.as_str()) {
-                let ps = ps.iter().map(|(p, v)| format!("{p}={v}")).collect::<Vec<_>>().join(" & ");
-                en.push_str(&[line.kind.as_str(), vname, vdt, &ps, ""].join("\t"));
-                en.push('\n');
+        // 4. The written table: the four kinds of row.
+        let mut lines: Vec<String> = Vec::new();
+        let holder = if types.iter().any(|t| t.name == "size") { Some("size".to_string()) } else { types.iter().find(|t| t.properties.iter().any(|(_, k)| k == "size")).map(|t| t.name.clone()) };
+        for t in &types {
+            match t.kind.as_str() {
+                "scalar" => lines.push(format!("data_type\t{}\tscalar", t.name)),
+                "array" | "tuple" => lines.push(format!("data_type\t{}\t{}\t{}", t.name, t.kind, t.members)),
+                _ => {
+                    let (params, result) = t.members.split_once(" -> ").ok_or_else(|| bug(format!("the function type {} has members {:?}", t.name, t.members)))?;
+                    lines.push(format!("data_type\t{}\tfunction\t{params}\t{result}", t.name));
+                }
+            }
+            for (p, _) in &t.properties {
+                lines.push(format!("carries\t{}\t{p}", t.name));
+            }
+            if !t.constant.is_empty() {
+                let props = items(&t.constant_props, '&').join(";");
+                lines.push(format!("constant\t{}\t{}\t{}", t.name, t.constant, if props.is_empty() { "-" } else { &props }));
+            }
+            if holder.as_deref() == Some(t.name.as_str()) {
+                for n in b.size_names() {
+                    lines.push(format!("size_name\t{}\t{n}\t1", t.name));
+                }
             }
         }
-        Ok(View6 { spec: spec.clone(), datatypes_tsv: dt, symbols_tsv: sy, environment_tsv: en })
+        for r in &rows {
+            let role = match r.kind.as_str() {
+                "const" => "constant",
+                "var" => "variable",
+                _ => "function",
+            };
+            let prelude = if r.prelude.is_empty() { "-".to_string() } else { escape6(master.preludes.get(&r.prelude).ok_or_else(|| bug(format!("the row {} names the prelude {}, which master/6/preludes/ does not hold", r.reference, r.prelude)))?) };
+            lines.push(format!("symbol\t{}\t{}\t{role}\t{}\t{prelude}", r.name, r.reference, if r.kind == "adapter" { "adapter" } else { "-" }));
+            if r.kind == "const" {
+                let pool = spec.literals.get(&r.out).ok_or_else(|| bug(format!("the constant {} has no literal pool", r.name)))?;
+                lines.push(format!("spelling\t{}\tpool\t{}", r.name, pool.iter().map(|x| format!("{x}{}", r.out)).collect::<Vec<_>>().join(",")));
+            } else if !r.spelling.is_empty() {
+                lines.push(format!("spelling\t{}\t\t{}", r.name, r.spelling));
+            }
+        }
+        let mut ops: Vec<&str> = Vec::new();
+        for (op, _, _) in &master.formulas {
+            if !ops.contains(&op.as_str()) {
+                ops.push(op);
+            }
+        }
+        for op in ops {
+            lines.push(format!("symbol\t={op}\t=\tformula\t-\t-"));
+            for (o, form, sp) in master.formulas.iter().filter(|(o, _, _)| o == op) {
+                lines.push(format!("spelling\t={o}\t{form}\t{sp}"));
+            }
+        }
+        for r in &rows {
+            for (k, a) in r.args.iter().enumerate() {
+                lines.push(format!("argument\t{}\t{k}\tin\t{a}\t-", r.name));
+            }
+            lines.push(format!("argument\t{}\t0\tout\t{}\t-", r.name, r.out));
+        }
+        for r in &rows {
+            for (p, e) in &r.ups {
+                lines.push(format!("flow\t{}\tout\tup\t{p}\t{e}", r.name));
+            }
+            let mut groups: BTreeMap<(usize, &str), u32> = BTreeMap::new();
+            for (k, dt, props) in &r.vars {
+                let g = groups.entry((*k, dt.as_str())).or_insert(0);
+                let name = if *g == 0 { format!("var.{dt}") } else { format!("var.{dt}/{g}") };
+                *g += 1;
+                lines.push(format!("flow\t{}\tin{k}\tdown\t{name}\t1", r.name));
+                for (p, e) in props {
+                    lines.push(format!("flow\t{}\tin{k}\tdown\t{name}.{p}\t{e}", r.name));
+                }
+                let spell = &b.candidate(dt).ok_or_else(|| bug(format!("no data type {dt}")))?.spell;
+                if !spell.is_empty() {
+                    lines.push(format!("flow\t{}\tin{k}\tdown\t{name}.spell\t{spell}", r.name));
+                }
+            }
+            for (k, a, e) in &r.envs {
+                lines.push(format!("flow\t{}\tin{k}\tdown\tenv.{a}\t{e}", r.name));
+            }
+        }
+        for r in &rows {
+            let work = r.guards.iter().find(|g| g.1 == "env.trips").map(|g| g.4.as_str());
+            let mut ordered: Vec<&GuardParts> = r.guards.iter().filter(|g| g.1 == "env.trips").collect();
+            ordered.extend(r.guards.iter().filter(|g| g.1 != "env.trips"));
+            let mut order = 1;
+            for (strength, subject, rel, expr, list) in ordered {
+                let at = if subject == "env.trips" {
+                    0
+                } else {
+                    order += 1;
+                    order - 1
+                };
+                lines.push(format!("guard\t{}\t{at}\t{strength}\t{subject} {rel} {expr}", r.name));
+                for [site, when, guard, template] in b.repairs(&r.args, work, subject, expr, list)? {
+                    lines.push(format!("repair\t{}\t{at}\t{site}\t{when}\t{guard}\t{template}", r.name));
+                }
+            }
+        }
+        let (out_name, _, out_dims) = &spec.output;
+        lines.push(format!("entry\t{out_name}\t{}", b.root));
+        for (vname, vdt, ps) in &root_vars {
+            if var_rows.contains(vdt.as_str()) {
+                let ps = ps.iter().map(|(p, v)| format!("{p}={v}")).collect::<Vec<_>>().join(";");
+                lines.push(format!("parameter\t{vname}\t{vdt}\t{}\t-\t-\t-\t-", if ps.is_empty() { "-" } else { &ps }));
+            }
+        }
+        let props = rank_properties(out_dims.len()).ok_or_else(|| bug(format!("the output has {} dimensions", out_dims.len())))?;
+        for (i, (p, d)) in props.iter().zip(out_dims).enumerate() {
+            let subject = format!("out.{p}");
+            lines.push(format!("guard\tentry\t{i}\tmust\t{subject} = {d}"));
+            for [site, when, guard, template] in b.repairs(&[], None, &subject, d, "fit.root")? {
+                lines.push(format!("repair\tentry\t{i}\t{site}\t{when}\t{guard}\t{template}"));
+            }
+        }
+        let mut tables_tsv = lines.join("\n");
+        tables_tsv.push('\n');
+        let types = types.iter().map(|t| [t.name.clone(), t.kind.clone(), t.members.clone(), t.tag.clone()]).collect();
+        let symbols = rows.iter().map(|r| (r.name.clone(), r.kind.clone(), r.out.clone(), r.args.clone())).collect();
+        Ok(View6 { spec: spec.clone(), tables_tsv, types, symbols })
     }
 
-    /// The view's three tables, by file name.
-    pub fn artefacts(&self) -> [(&'static str, &str); 3] {
-        [("datatypes.tsv", self.datatypes_tsv.as_str()), ("symbols.tsv", self.symbols_tsv.as_str()), ("environment.tsv", self.environment_tsv.as_str())]
+    /// The view's table, by file name.
+    pub fn artefacts(&self) -> [(&'static str, &str); 1] {
+        [("tables.tsv", self.tables_tsv.as_str())]
     }
 
     /// The kingdom the view is, loaded from its written text.
     pub fn kingdom(&self, name: &str) -> Result<Kingdom6, String> {
-        Kingdom6::from_tables(name, &self.datatypes_tsv, &self.symbols_tsv, &self.environment_tsv, ADAPTERS6, &self.spec.literals)
+        Kingdom6::load(name, &self.tables_tsv, &self.spec)
     }
 }
 
 macro_rules! m6 {
     ($p:literal) => {
-        (
-            $p,
-            include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/view.tsv")),
-            include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/datatypes.tsv")),
-            include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/symbols.tsv")),
-            include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/environment.tsv")),
-        )
+        ($p, include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/view.tsv")), include_str!(concat!("../../kingdoms/futhark/sig/", $p, "/m6/tables.tsv")))
     };
 }
 
-/// Every committed master 6 view: (problem, the specification, and the three tables `view.py` wrote), under
+/// Every committed master 6 view: (problem, the specification, and the table `view.py` wrote), under
 /// `kingdoms/futhark/sig/<problem>/m6/`.
-pub const COMMITTED6: [(&str, &str, &str, &str, &str); 7] = [
-    m6!("a7"),
-    m6!("histogram"),
-    m6!("kmeans"),
-    m6!("kmeans_i32"),
-    m6!("pathfinder"),
-    m6!("reduce"),
-    m6!("scan"),
-];
+pub const COMMITTED6: [(&str, &str, &str); 7] = [m6!("a7"), m6!("histogram"), m6!("kmeans"), m6!("kmeans_i32"), m6!("pathfinder"), m6!("reduce"), m6!("scan")];
 
 /// The committed view of a problem, computed over the committed master 6.
 pub fn committed(problem: &str) -> Result<View6, String> {
-    let (_, spec, ..) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
+    let (_, spec, _) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
     View6::load(&Master6::committed()?, spec)
+}
+
+/// The committed kingdom of a problem, loaded from its committed table (`tables.tsv`).
+pub fn committed_kingdom(problem: &str) -> Result<Kingdom6, String> {
+    let (_, spec, tables) = COMMITTED6.iter().find(|c| c.0 == problem).ok_or_else(|| bug(format!("{problem} is not a committed master 6 view")))?;
+    Kingdom6::load(problem, tables, &ViewSpec6::parse(spec)?)
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! is stored for task F2.
 
 use super::*;
-use crate::typed_environment::{Choice, Decoder, Entry};
+use crate::typed_environment::Choice;
 use crate::typed_gep::{express, write_back};
 
 /// The fixture as master 5 renders it now, in [`REFERENCES6`]'s order.
@@ -80,32 +80,31 @@ fn every_reference_expresses_writes_back_and_decodes_with_no_failure() {
     for r in &REFERENCES6 {
         let key = r.key();
         let k = kingdom6(r.problem).unwrap_or_else(|e| panic!("{key}: {e}"));
-        let (tables, contract) = (k.tables().unwrap(), k.contract().unwrap());
+        let contract = k.contract.as_ref().clone();
         let tree = build6(&k, &(r.master6)()).unwrap_or_else(|e| panic!("{key}: {e}"));
         let n = problem(r.problem).unwrap().program_size;
-        let layout = GeneLayout::from_program_size(&contract, k.root.data_type, n).unwrap_or_else(|e| panic!("{key}: {e:?}"));
+        let layout = GeneLayout::from_program_size(&contract, k.entry.output, n).unwrap_or_else(|e| panic!("{key}: {e:?}"));
         let consts = const_len6(&k);
         let carrier = random_gene(&contract, &layout, &consts, &mut rng).unwrap();
         let gene = write_back(&contract, &layout, &carrier, &tree).unwrap_or_else(|e| panic!("{key}: does not fit at N = {n}: {e:?}"));
         let expressed = express(&contract, &layout, &gene, &consts).unwrap_or_else(|e| panic!("{key}: {e:?}")).tree();
         assert_eq!(expressed, tree, "{key}: the gene does not express the tree");
         assert_eq!(write_back(&contract, &layout, &gene, &expressed).unwrap(), gene, "{key}: the tree does not write back to its gene");
-        let decoder = Decoder::new(&tables, &contract).unwrap();
-        let decoding = decoder.decode(&Entry::of_kingdom6(&k), &tree).unwrap_or_else(|e| panic!("{key}: {e}"));
+        let decoding = k.decode(&tree).unwrap_or_else(|e| panic!("{key}: {e}"));
         assert_eq!(decoding.failures(), Vec::new(), "{key}: a requirement fails or a node is substituted");
         assert!(decoding.root_outcomes.iter().all(|o| o.holds), "{key}");
         let mut stack = vec![&decoding.root];
         let (mut nodes, mut variables) = (0, 0);
         while let Some(node) = stack.pop() {
             nodes += 1;
-            assert!(node.substituted.is_none() && node.outcomes.iter().all(|o| o.holds), "{key}: {}", k.symbols[node.symbol as usize].name);
+            assert!(node.substituted.is_none() && node.outcomes.iter().all(|o| o.holds), "{key}: {}", k.name(node.symbol));
             if contract.is_variable(node.symbol) {
                 variables += 1;
                 assert!(matches!(node.choice, Some(Choice::Variable(_))), "{key}: a variable leaf reads as {:?}", node.choice);
             }
             stack.extend(node.kids.iter());
         }
-        assert_eq!(decoder.decode(&Entry::of_kingdom6(&k), &tree).unwrap(), decoding, "{key}");
+        assert_eq!(k.decode(&tree).unwrap(), decoding, "{key}");
         eprintln!("{key}: {nodes} nodes, {variables} variables, {} functions, N = {n}", tree.level_order().iter().filter(|(t, _)| !t.kids.is_empty()).count());
     }
 }
@@ -117,9 +116,7 @@ fn every_reference_expresses_writes_back_and_decodes_with_no_failure() {
 fn the_trees_name_the_variables_master_5_names() {
     let k = kingdom6("histogram").unwrap();
     let tree = build6(&k, HISTOGRAM_REFERENCE6).unwrap();
-    let (tables, contract) = (k.tables().unwrap(), k.contract().unwrap());
-    let decoder = Decoder::new(&tables, &contract).unwrap();
-    let d = decoder.decode(&Entry::of_kingdom6(&k), &tree).unwrap();
+    let d = k.decode(&tree).unwrap();
     let name_at = |path: &[u32]| {
         let n = d.node(path).unwrap();
         let Some(Choice::Variable(b)) = n.choice else { panic!("{path:?} is not a variable") };
@@ -130,28 +127,26 @@ fn the_trees_name_the_variables_master_5_names() {
     assert_eq!(name_at(&[1, 0]), (Some("n".into()), 0));
     assert_eq!(name_at(&[1, 1, 0]), (Some("k".into()), 0));
     assert_eq!(name_at(&[1, 1, 1, 0]), (Some("is".into()), 0));
-    assert_eq!(name_at(&[1, 1, 1, 1]), (None, 1), "the index is the tabulate's");
+    assert_eq!(name_at(&[1, 1, 1, 1]), (Some("i_n".into()), 1), "the index is the tabulate's, named by its spelling");
     assert_eq!(name_at(&[2]), (Some("vs".into()), 0));
 
     let k = kingdom6("pathfinder").unwrap();
     let tree = build6(&k, PATHFINDER_REFERENCE6).unwrap();
-    let (tables, contract) = (k.tables().unwrap(), k.contract().unwrap());
-    let decoder = Decoder::new(&tables, &contract).unwrap();
-    let d = decoder.decode(&Entry::of_kingdom6(&k), &tree).unwrap();
+    let d = k.decode(&tree).unwrap();
     // (loop1 rows init (tab cols (add (get (row walls i) j) (min (min (get s j) ...) ...)))): get s j at [2,1,1,0,0].
     let get = d.node(&[2, 1, 1, 0, 0]).unwrap();
     let choice = |p: &[u32]| match d.node(p).unwrap().choice {
         Some(Choice::Variable(b)) => b,
         other => panic!("{p:?} reads as {other:?}"),
     };
-    assert_eq!(k.symbols[get.symbol as usize].name, "get@i32");
+    assert_eq!(k.name(get.symbol), "get@i32");
     assert_eq!((choice(&[2, 1, 1, 0, 0, 0]).depth, choice(&[2, 1, 1, 0, 0, 0]).ordinal), (1, 0), "the loop's state");
     assert_eq!((choice(&[2, 1, 1, 0, 0, 1]).depth, choice(&[2, 1, 1, 0, 0, 1]).ordinal), (2, 0), "the tabulate's index");
     assert_eq!((choice(&[2, 1, 0, 0, 1]).depth, choice(&[2, 1, 0, 0, 1]).ordinal), (1, 1), "the loop's counter");
 
     let k = kingdom6("kmeans").unwrap();
     let tree = build6(&k, &kmeans_reference6()).unwrap();
-    assert_eq!(k.symbols[tree.symbol as usize].name, "let.a.f32@m.f32");
+    assert_eq!(k.name(tree.symbol), "let.a.f32@m.f32");
 }
 
 /// What master 5's program names each bound variable of a reference, as `<binder symbol> v<N>`: the binder row's
@@ -190,8 +185,7 @@ fn bound_names(key: &str) -> &'static [(&'static str, &'static str)] {
 fn variable_mismatches(key: &str, problem: &str, text: &str) -> Vec<String> {
     let k = kingdom6(problem).unwrap();
     let (tree, leaves) = build6_named(&k, text).unwrap_or_else(|e| panic!("{key}: {e}"));
-    let (tables, contract) = (k.tables().unwrap(), k.contract().unwrap());
-    let d = Decoder::new(&tables, &contract).unwrap().decode(&Entry::of_kingdom6(&k), &tree).unwrap();
+    let d = k.decode(&tree).unwrap();
     let expected = bound_names(key);
     let mut out = Vec::new();
     for (path, name) in &leaves {
@@ -202,7 +196,7 @@ fn variable_mismatches(key: &str, problem: &str, text: &str) -> Vec<String> {
             format!("root {}", v.name.clone().unwrap_or_default())
         } else {
             let i = (0..path.len()).find(|i| d.node(&path[..=*i]).unwrap().environment.depth == b.depth).unwrap_or_else(|| panic!("{key}: no binder of {name}"));
-            format!("{} v{}", k.symbols[d.node(&path[..i]).unwrap().symbol as usize].name, b.ordinal)
+            format!("{} v{}", k.name(d.node(&path[..i]).unwrap().symbol), b.ordinal)
         };
         let want = expected.iter().find(|(n, _)| n == name).map_or_else(|| format!("root {name}"), |(_, w)| w.to_string());
         if got != want {
@@ -227,10 +221,10 @@ fn every_variable_of_every_reference_is_the_one_master_5_names() {
         let tree = build6(&k, &(r.master6)()).unwrap();
         let mut stack = vec![&tree];
         while let Some(t) = stack.pop() {
-            let row = &k.symbols[t.symbol as usize];
-            if let Some(pos) = row.binds.first().map(|b| b.position) {
-                let named: Vec<usize> = (0..row.binds.len() + 2).filter(|n| row.spelling.contains(&format!("{{{pos}.v{n}}}"))).collect();
-                assert_eq!(named, (0..row.binds.len()).collect::<Vec<_>>(), "{key}: {}'s spelling {:?} and its {} bindings", row.name, row.spelling, row.binds.len());
+            if let Some((pos, count)) = k.binds(t.symbol).unwrap() {
+                let spelling = k.symbol(t.symbol).and_then(|r| r.spelling("")).unwrap_or_default().to_string();
+                let named: Vec<usize> = (0..count + 2).filter(|n| spelling.contains(&format!("{{{pos}.v{n}}}"))).collect();
+                assert_eq!(named, (0..count).collect::<Vec<_>>(), "{key}: {}'s spelling {spelling:?} and its {count} variables", k.name(t.symbol));
             }
             stack.extend(t.kids.iter());
         }

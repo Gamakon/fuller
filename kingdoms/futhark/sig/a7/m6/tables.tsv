@@ -1,0 +1,134 @@
+data_type	f32	scalar
+constant	f32	0f32	-
+data_type	size	scalar
+carries	size	value
+size_name	size	m	1
+size_name	size	n	1
+size_name	size	p	1
+data_type	[]f32	array	f32
+carries	[]f32	len
+constant	[]f32	[0f32]	len=1
+data_type	[][]f32	array	[]f32
+carries	[][]f32	rows
+carries	[][]f32	cols
+constant	[][]f32	[[0f32]]	rows=1;cols=1
+data_type	[]f32 -> []f32	function	[]f32	[]f32
+constant	[]f32 -> []f32	\xs -> map (\_ -> 0.0) xs	-
+data_type	[]f32 -> []f32 -> []f32	function	[]f32;[]f32	[]f32
+constant	[]f32 -> []f32 -> []f32	\xs _ys -> map (\_ -> 0.0) xs	-
+symbol	map_rows@m.f32	M0043	function	-	-
+spelling	map_rows@m.f32		map ({0}) ({1})
+symbol	map2_rows@m.f32	M0044	function	-	-
+spelling	map2_rows@m.f32		map2 ({0}) ({1}) ({2})
+symbol	transpose@m.f32	M0045	function	-	-
+spelling	transpose@m.f32		transpose ({0})
+symbol	matmul@m.f32	M0046	function	-	def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =\n  map (\\a -> map (\\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A\n
+spelling	matmul@m.f32		matmul ({0}) ({1})
+symbol	id@fn.arr_f32_arr_f32	M0047	function	-	-
+spelling	id@fn.arr_f32_arr_f32		\xs -> xs
+symbol	add1@fn.arr_f32_arr_f32	M0048	function	-	-
+spelling	add1@fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
+symbol	scale2@fn.arr_f32_arr_f32	M0049	function	-	-
+spelling	scale2@fn.arr_f32_arr_f32		\xs -> map (*2.0) xs
+symbol	id@fn.arr2_f32_arr_f32_arr_f32	M0050	function	-	-
+spelling	id@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs
+symbol	add1@fn.arr2_f32_arr_f32_arr_f32	M0051	function	-	-
+spelling	add1@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs
+symbol	add@fn.arr2_f32_arr_f32_arr_f32	M0052	function	-	-
+spelling	add@fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys
+symbol	const@fn.arr_f32_arr_f32	M0054	function	-	-
+spelling	const@fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs
+symbol	const@fn.arr2_f32_arr_f32_arr_f32	M0055	function	-	-
+spelling	const@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs
+symbol	var@size	M0087	variable	-	-
+symbol	var@m.f32	M0087	variable	-	-
+symbol	fitrows@m.f32	M0091	function	adapter	def fitrows [m][c] 't (l: i64) (z: t) (xs: [m][c]t) : [l][c]t =\n  tabulate l (\\i -> if i < m then xs[i] else replicate c z)\n
+spelling	fitrows@m.f32		fitrows {0} 0f32 ({1})
+symbol	fitcols@m.f32	M0092	function	adapter	def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =\n  tabulate l (\\i -> if i < m then xs[i] else z)\n
+spelling	fitcols@m.f32		map (fit {0} 0f32) ({1})
+symbol	=min	=	formula	-	-
+spelling	=min		i64.min {0} {1}
+spelling	=min	name	min_{0}_{1}
+symbol	=max	=	formula	-	-
+spelling	=max		i64.max {0} {1}
+spelling	=max	name	max_{0}_{1}
+symbol	=+	=	formula	-	-
+spelling	=+		{0} + {1}
+spelling	=+	name	sum_{0}_{1}
+symbol	=*	=	formula	-	-
+spelling	=*		{0} * {1}
+spelling	=*	name	prod_{0}_{1}
+symbol	=group	=	formula	-	-
+spelling	=group		({0})
+spelling	=group	name	{0}
+symbol	=negative	=	formula	-	-
+spelling	=negative	name	m{0}
+argument	map_rows@m.f32	0	in	[]f32 -> []f32	-
+argument	map_rows@m.f32	1	in	[][]f32	-
+argument	map_rows@m.f32	0	out	[][]f32	-
+argument	map2_rows@m.f32	0	in	[]f32 -> []f32 -> []f32	-
+argument	map2_rows@m.f32	1	in	[][]f32	-
+argument	map2_rows@m.f32	2	in	[][]f32	-
+argument	map2_rows@m.f32	0	out	[][]f32	-
+argument	transpose@m.f32	0	in	[][]f32	-
+argument	transpose@m.f32	0	out	[][]f32	-
+argument	matmul@m.f32	0	in	[][]f32	-
+argument	matmul@m.f32	1	in	[][]f32	-
+argument	matmul@m.f32	0	out	[][]f32	-
+argument	id@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	add1@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	scale2@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	id@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	add1@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	add@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	const@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	const@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	var@size	0	out	size	-
+argument	var@m.f32	0	out	[][]f32	-
+argument	fitrows@m.f32	0	in	size	-
+argument	fitrows@m.f32	1	in	[][]f32	-
+argument	fitrows@m.f32	0	out	[][]f32	-
+argument	fitcols@m.f32	0	in	size	-
+argument	fitcols@m.f32	1	in	[][]f32	-
+argument	fitcols@m.f32	0	out	[][]f32	-
+flow	map_rows@m.f32	out	up	rows	in1.rows
+flow	map_rows@m.f32	out	up	cols	in1.cols
+flow	map2_rows@m.f32	out	up	rows	min(in1.rows, in2.rows)
+flow	map2_rows@m.f32	out	up	cols	min(in1.cols, in2.cols)
+flow	transpose@m.f32	out	up	rows	in0.cols
+flow	transpose@m.f32	out	up	cols	in0.rows
+flow	matmul@m.f32	out	up	rows	in0.rows
+flow	matmul@m.f32	out	up	cols	in1.cols
+flow	fitrows@m.f32	out	up	rows	in0.value
+flow	fitrows@m.f32	out	up	cols	in1.cols
+flow	fitcols@m.f32	out	up	rows	in1.rows
+flow	fitcols@m.f32	out	up	cols	in0.value
+guard	map2_rows@m.f32	1	must	in2.rows = in1.rows
+repair	map2_rows@m.f32	1	node	known(in2.rows) and known(in1.rows)	true	{self(1 := {if in1.rows = min(in2.rows, in1.rows) : {1} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {1})}}, 2 := {if in2.rows = min(in2.rows, in1.rows) : {2} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {2})}})}
+repair	map2_rows@m.f32	1	node	true	true	{in.own}
+repair	map2_rows@m.f32	1	node	true	true	{const}
+guard	map2_rows@m.f32	2	must	in2.cols = in1.cols
+repair	map2_rows@m.f32	2	node	known(in2.cols) and known(in1.cols)	true	{self(1 := {if in1.cols = min(in2.cols, in1.cols) : {1} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {1})}}, 2 := {if in2.cols = min(in2.cols, in1.cols) : {2} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {2})}})}
+repair	map2_rows@m.f32	2	node	true	true	{in.own}
+repair	map2_rows@m.f32	2	node	true	true	{const}
+guard	matmul@m.f32	1	must	in1.rows = in0.cols
+repair	matmul@m.f32	1	in0	known(in1.rows)	true	{call fitcols@m.f32({=in1.rows}, {0})}
+repair	matmul@m.f32	1	node	true	true	{in.own}
+repair	matmul@m.f32	1	node	true	true	{const}
+entry	main	[][]f32
+parameter	m_n_n	[][]f32	rows=n;cols=n	-	-	-	-
+parameter	m_n_m	[][]f32	rows=n;cols=m	-	-	-	-
+parameter	m_n_p	[][]f32	rows=n;cols=p	-	-	-	-
+parameter	m_m_n	[][]f32	rows=m;cols=n	-	-	-	-
+parameter	m_m_m	[][]f32	rows=m;cols=m	-	-	-	-
+parameter	m_m_p	[][]f32	rows=m;cols=p	-	-	-	-
+parameter	m_p_n	[][]f32	rows=p;cols=n	-	-	-	-
+parameter	m_p_m	[][]f32	rows=p;cols=m	-	-	-	-
+parameter	m_p_p	[][]f32	rows=p;cols=p	-	-	-	-
+parameter	n	size	value=n	-	-	-	-
+parameter	m	size	value=m	-	-	-	-
+parameter	p	size	value=p	-	-	-	-
+guard	entry	0	must	out.rows = n
+repair	entry	0	root	true	true	{call fitrows@m.f32({=n}, {self})}
+guard	entry	1	must	out.cols = p
+repair	entry	1	root	true	true	{call fitcols@m.f32({=p}, {self})}

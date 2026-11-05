@@ -71,16 +71,16 @@ fn c(text: &str) -> Condition {
 
 /// The repairs `subst.own` (design 8.0): the node's first input of its own data type, else its constant.
 fn subst_own() -> Vec<Repair> {
-    vec![Repair::new(Site::Node, "{in.own}", ""), Repair::new(Site::Node, "{const}", "")]
+    vec![Repair::new(Site::Node, "{in.own}"), Repair::new(Site::Node, "{const}")]
 }
 
 /// A heavy adapter's repair at `site`, guarded by the work bound's depth, then `subst.own`.
-fn heavy(site: Site, adapter: &str) -> Vec<Repair> {
+fn heavy(site: Site) -> Vec<Repair> {
     let template = match site {
         Site::In(k) => format!("{{{k}}}"),
         _ => "{self}".to_string(),
     };
-    let mut r = Repair::new(site, &template, adapter);
+    let mut r = Repair::new(site, &template);
     r.guard = c("env.trips < 2");
     let mut v = vec![r];
     v.extend(subst_own());
@@ -140,14 +140,14 @@ fn tables() -> KingdomTables {
     ];
     // In master 6's row order, so the guards' indices are the requirements' (0 to 8).
     t.guards = vec![
-        must(HIST, 1, "in2.len = in1.len", heavy(Site::Node, "fit.pair").into_iter().take(1).chain([Repair::new(Site::Node, "{const}", "")]).collect()),
-        must(HIST, 0, "env.trips < 2", vec![Repair::new(Site::Node, "{const}", "")]),
+        must(HIST, 1, "in2.len = in1.len", heavy(Site::Node).into_iter().take(1).chain([Repair::new(Site::Node, "{const}")]).collect()),
+        must(HIST, 0, "env.trips < 2", vec![Repair::new(Site::Node, "{const}")]),
         must(TAB, 0, "env.trips < 2", subst_own()),
-        must(GET, 0, "in1.bound <= in0.len", vec![Repair::new(Site::In(1), "clampix ({=in0.len}) ({1})", "clampix")]),
-        must(MAP2, 1, "in1.len = in0.len", heavy(Site::Node, "fit.pair")),
+        must(GET, 0, "in1.bound <= in0.len", vec![Repair::new(Site::In(1), "{1}")]),
+        must(MAP2, 1, "in1.len = in0.len", heavy(Site::Node)),
         must(MAP2, 0, "env.trips < 2", subst_own()),
         must(SUM, 0, "env.trips < 2", subst_own()),
-        must(LOOP, 1, "in2.len = in1.len", heavy(Site::In(2), "fit.state")),
+        must(LOOP, 1, "in2.len = in1.len", heavy(Site::In(2))),
         must(LOOP, 0, "env.trips < 2", subst_own()),
     ];
     t
@@ -163,7 +163,7 @@ fn entry() -> Entry {
     for name in ["k", "n"] {
         e.parameters.push(EntryParameter::declared(name, SIZE, &[("value", p(name))]));
     }
-    e.guards.push(Guard { owner: Owner::Entry, order: 0, condition: c("out.len = k"), strength: Strength::Must, repairs: vec![Repair::new(Site::Root, "{self}", "fit.root")] });
+    e.guards.push(Guard { owner: Owner::Entry, order: 0, condition: c("out.len = k"), strength: Strength::Must, repairs: vec![Repair::new(Site::Root, "{self}")] });
     e
 }
 
@@ -242,8 +242,8 @@ fn the_tabulate_size_choosing_k_fails_exactly_two() {
     assert_eq!(
         failures,
         vec![
-            Failure::Adapter { path: vec![], requirement: 0, adapter: "fit.pair".into() },
-            Failure::Adapter { path: vec![1, 1, 1], requirement: 3, adapter: "clampix".into() },
+            Failure::Adapter { path: vec![], requirement: 0, calls: vec![] },
+            Failure::Adapter { path: vec![1, 1, 1], requirement: 3, calls: vec![] },
         ],
         "{d:#?}"
     );
@@ -358,7 +358,7 @@ fn the_work_bound_substitutes_as_an_annotation() {
     assert_eq!(in_scope(body_env, ARR).first().map(|v| (v.binder, v.properties.clone())), Some((binder(2, 0), props(&[("len", "k")]))), "the loop's state is the innermost array");
     // The same loop at the root: fit.state runs at trips 1, so it is an adapter, not a substitution.
     let shallow = decode(&mismatched);
-    assert_eq!(shallow.failures(), vec![Failure::Adapter { path: vec![], requirement: 7, adapter: "fit.state".into() }]);
+    assert_eq!(shallow.failures(), vec![Failure::Adapter { path: vec![], requirement: 7, calls: vec![] }]);
     assert!(shallow.root_outcomes[0].holds, "the loop's length is its state's, k");
 }
 
@@ -374,7 +374,7 @@ fn a_variable_with_none_in_scope_reads_the_constant() {
     assert_eq!(x.node(&[0]).expect("var").choice, Some(Choice::Constant));
     assert_eq!(x.node(&[0]).expect("var").properties, props(&[("len", "1")]));
     assert_eq!(x.root.properties, props(&[("len", "min(1, n)")]));
-    assert_eq!(x.failures(), vec![Failure::Adapter { path: vec![], requirement: 4, adapter: "fit.pair".into() }]);
+    assert_eq!(x.failures(), vec![Failure::Adapter { path: vec![], requirement: 4, calls: vec![] }]);
     // An entry with no size, where `size` has no constant, is a bug of the entry, found before any tree is read.
     let none = Entry::new("none", ARR);
     let e = d.decode(&none, &f(TAB, vec![v(VAR_SIZE, 0), v(10, 0)])).expect_err("no size in scope");
@@ -442,8 +442,8 @@ fn every_random_histogram_gene_decodes_the_same_twice() {
         with_failures += usize::from(!fs.is_empty());
         substituted += usize::from(fs.iter().any(|f| matches!(f, Failure::Substituted { .. })));
         for f in &fs {
-            if let Failure::Adapter { adapter, .. } | Failure::Root { adapter, .. } = f {
-                assert!(["fit.pair", "fit.state", "clampix", "fit.root"].contains(&adapter.as_str()), "gene {g}: {adapter}");
+            if let Failure::Adapter { calls, .. } | Failure::Root { calls, .. } = f {
+                assert!(calls.is_empty(), "gene {g}: these tables' repairs call no adapter, yet {calls:?}");
             }
         }
     }
@@ -478,7 +478,7 @@ fn the_annotations_are_the_same_in_two_processes() {
     assert!(out.status.success(), "the child failed: {}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout);
     let theirs = text.split_once("<<<").and_then(|(_, r)| r.split_once(">>>")).map(|(t, _)| t).expect("the child's annotations");
-    assert!(mine.contains("Binder") && mine.contains("fit.pair"));
+    assert!(mine.contains("Binder") && mine.contains("Substituted"));
     assert_eq!(theirs, mine);
 }
 
@@ -558,7 +558,7 @@ fn a_substituted_histogram_renders_its_constant() {
     assert_eq!(
         d.failures(),
         vec![
-            Failure::Adapter { path: vec![1, 0, 1], requirement: 3, adapter: "clampix".into() },
+            Failure::Adapter { path: vec![1, 0, 1], requirement: 3, calls: vec![] },
             Failure::Substituted { path: vec![1, 0, 1, 0], by: Substitution::Constant, requirement: 1 },
         ],
         "{d:#?}"
@@ -586,8 +586,8 @@ fn the_subtree_key_carries_the_free_variables_properties() {
     let get_i = f(GET, vec![v(VAR_ARR, W_IS), v(VAR_I64, 0)]);
     let (under_n, under_k) = (decode(&f(TAB, vec![v(VAR_SIZE, W_N), get_i.clone()])), decode(&f(TAB, vec![v(VAR_SIZE, W_K), get_i.clone()])));
     assert_eq!(under_n.resolved().kids[1], under_k.resolved().kids[1], "the resolved subtrees are equal (finding 4's fault)");
-    assert_eq!(under_n.failures(), vec![Failure::Root { requirement: 0, adapter: "fit.root".into() }], "its length is n, the entry's k");
-    assert_eq!(under_k.failures(), vec![Failure::Adapter { path: vec![1], requirement: 3, adapter: "clampix".into() }]);
+    assert_eq!(under_n.failures(), vec![Failure::Root { requirement: 0, calls: vec![] }], "its length is n, the entry's k");
+    assert_eq!(under_k.failures(), vec![Failure::Adapter { path: vec![1], requirement: 3, calls: vec![] }]);
     let (a, b) = (under_n.subtree_key(&[1]).expect("key"), under_k.subtree_key(&[1]).expect("key"));
     assert_eq!(a.tree, b.tree);
     assert_ne!(a, b, "the keys differ by i's bound");
@@ -639,23 +639,20 @@ fn the_entry_is_checked_on_every_decode() {
     assert!(d.check_entry(&wrong).expect_err("bound").iter().any(|m| m.contains("the entry's parameter is sets bound, which Futhark(3) does not carry")));
 }
 
-/// A loaded master 6 view: its kingdom, tables, contract and entry.
-fn view6(problem: &str) -> (crate::futhark_table::Kingdom6, KingdomTables, KingdomContract, Entry) {
-    let k = crate::futhark_view::master6::committed(problem).and_then(|v| v.kingdom(problem)).unwrap_or_else(|e| panic!("{problem}: {e}"));
-    let tables = k.tables().unwrap_or_else(|e| panic!("{problem}: {e}"));
-    let contract = k.contract().unwrap_or_else(|e| panic!("{problem}: {e}"));
-    let entry = Entry::of_kingdom6(&k);
-    (k, tables, contract, entry)
+/// A committed master 6 view: its kingdom (tables, contract, entry and decoder).
+fn view6(problem: &str) -> crate::futhark_table::Kingdom6 {
+    crate::futhark_view::master6::committed_kingdom(problem).unwrap_or_else(|e| panic!("{problem}: {e}"))
 }
 
-/// G3 review finding 7: design section 6's reference and mutation on the REAL histogram view (loaded through
-/// `Kingdom6::from_tables`), not the tables written here: the reference holds every requirement, the mutation fails
-/// exactly `hist`'s `fit.pair` and `get`'s `clampix`, and a `hist` at trips 2 renders its constant.
+/// G3 review finding 7: design section 6's reference and mutation on the REAL histogram view (its committed table of
+/// four kinds of row), not the tables written here: the reference holds every guard, the mutation fails exactly
+/// `hist`'s pair guard (its repair calls `fit`) and `get`'s bound guard (its repair calls `clampix`), and a `hist` at
+/// trips 2 renders its constant.
 #[test]
 fn the_histogram_view_decodes_the_reference_and_the_mutation() {
-    let (k, t, c, e) = view6("histogram");
-    let d = Decoder::new(&t, &c).unwrap_or_else(|e| panic!("{e:#?}"));
-    let id = |name: &str| k.symbols.iter().position(|s| s.name == name).unwrap_or_else(|| panic!("{name}")) as SymbolId;
+    let k = view6("histogram");
+    let (d, e) = (&k.decoder, &k.entry);
+    let id = |name: &str| k.symbol_named(name).unwrap_or_else(|| panic!("{name}"));
     let (hist, tab, get, md, sum) = (id("hist.add@a.i32"), id("tab@a.i32"), id("get@i32"), id("mod@i32"), id("sum@i32"));
     let (vsize, varr, vi64) = (id("var@size"), id("var@a.i32"), id("var@i64"));
     let names: Vec<&str> = e.parameters.iter().map(|v| v.name.as_str()).collect();
@@ -664,68 +661,64 @@ fn the_histogram_view_decodes_the_reference_and_the_mutation() {
         let body = f(md, vec![v(vsize, W_K), f(get, vec![v(varr, W_IS), v(vi64, 0)])]);
         f(hist, vec![v(vsize, W_K), f(tab, vec![v(vsize, size), body]), v(varr, W_VS)])
     };
-    let reqs = crate::futhark_cost::requirements6(&k);
-    let req = |symbol: SymbolId, adapter: &str| reqs.iter().position(|q| q.symbol == symbol as i64 && q.adapter == adapter).unwrap_or_else(|| panic!("{adapter}"));
-    assert_eq!(t.guards.len(), reqs.len(), "one guard a requirement, in its order");
-    assert_eq!(d.decode(&e, &reference(W_N)).expect("reference").failures(), vec![]);
-    let m = d.decode(&e, &reference(W_K)).expect("mutation");
+    let guard = |symbol: SymbolId, condition: &str| k.tables.guards.iter().position(|g| g.owner == Owner::Symbol(i64::from(symbol)) && g.condition == c(condition)).unwrap_or_else(|| panic!("{condition}"));
+    assert_eq!(d.decode(e, &reference(W_N)).expect("reference").failures(), vec![]);
+    let m = d.decode(e, &reference(W_K)).expect("mutation");
     assert_eq!(
         m.failures(),
-        vec![Failure::Adapter { path: vec![], requirement: req(hist, "fit.pair"), adapter: "fit.pair".into() }, Failure::Adapter { path: vec![1, 1, 1], requirement: req(get, "clampix"), adapter: "clampix".into() }]
+        vec![
+            Failure::Adapter { path: vec![], requirement: guard(hist, "in2.len = in1.len"), calls: vec!["fit@a.i32".into()] },
+            Failure::Adapter { path: vec![1, 1, 1], requirement: guard(get, "in1.bound <= in0.len"), calls: vec!["clampix@i64".into()] }
+        ]
     );
     assert!(m.root_outcomes.iter().all(|o| o.holds));
     let deep = f(tab, vec![v(vsize, W_K), f(sum, vec![f(tab, vec![v(vsize, W_N), f(get, vec![f(hist, vec![v(vsize, W_K), v(varr, W_IS), v(varr, W_VS)]), v(vi64, 0)])])])]);
-    let s = d.decode(&e, &deep).expect("deep").node(&[1, 0, 1, 0]).expect("hist").substituted.expect("substituted");
-    assert_eq!((s.by, s.requirement), (Substitution::Constant, req(hist, "subst.const")));
+    let s = d.decode(e, &deep).expect("deep").node(&[1, 0, 1, 0]).expect("hist").substituted.expect("substituted");
+    assert_eq!((s.by, s.requirement), (Substitution::Constant, guard(hist, "env.trips < 2")));
 }
 
-/// G3 review finding 7: random genes over EVERY committed master 6 view, loaded through `Kingdom6::from_tables`: each
-/// decodes, the same twice; every failure names an adapter of the tables or a substitution by a work bound of a
-/// substitution adapter; and in a view with a work bound, failures and substitutions both occur.
+/// G3 review finding 7: random genes over EVERY committed master 6 view, loaded from its table: each decodes, the same
+/// twice; every failure's repair calls only adapter symbols of the view, every substitution is by the node's work
+/// bound's first applicable substitute; and in a view with a work bound, failures and substitutions both occur.
 #[test]
 fn random_genes_over_the_real_master6_views_fail_only_by_named_adapters() {
     for (problem, ..) in crate::futhark_view::master6::COMMITTED6 {
-        let (k, t, c, e) = view6(problem);
-        let d = Decoder::new(&t, &c).unwrap_or_else(|e| panic!("{problem}: {e:#?}"));
-        let layout = GeneLayout::from_program_size(&c, e.output, 24).unwrap_or_else(|e| panic!("{problem}: {e:?}"));
-        let consts: BTreeMap<Ty, u32> = k.data_types.iter().enumerate().filter(|(_, dt)| !dt.literals.is_empty()).map(|(i, dt)| (Ty::Futhark(i as u16), dt.literals.len() as u32)).collect();
-        let reqs = crate::futhark_cost::requirements6(&k);
-        let bounded = reqs.iter().any(|q| q.subject == crate::futhark_table::Subject6::Trips);
-        assert_eq!(t.guards.len(), reqs.len());
+        let k = view6(problem);
+        let (d, e, c) = (&k.decoder, &k.entry, &k.contract);
+        let layout = GeneLayout::from_program_size(c, e.output, 24).unwrap_or_else(|e| panic!("{problem}: {e:?}"));
+        let consts = k.const_len();
+        let bounded = k.tables.guards.iter().any(|g| g.condition.references().iter().any(|r| matches!(r, Reference::Env("trips"))));
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
         let (mut with_failures, mut substituted) = (0, 0);
         for g in 0..200 {
-            let gene = random_gene(&c, &layout, &consts, &mut rng);
-            let tree = express(&c, &layout, &gene, &consts).unwrap_or_else(|err| panic!("{problem} gene {g}: {err:?}")).tree();
-            let a = d.decode(&e, &tree).unwrap_or_else(|err| panic!("{problem} gene {g}: {err}"));
-            assert_eq!(a, d.decode(&e, &tree).expect("again"), "{problem} gene {g}");
+            let gene = random_gene(c, &layout, &consts, &mut rng);
+            let tree = express(c, &layout, &gene, &consts).unwrap_or_else(|err| panic!("{problem} gene {g}: {err:?}")).tree();
+            let a = d.decode(e, &tree).unwrap_or_else(|err| panic!("{problem} gene {g}: {err}"));
+            assert_eq!(a, d.decode(e, &tree).expect("again"), "{problem} gene {g}");
             let fs = a.failures();
             with_failures += usize::from(!fs.is_empty());
             substituted += usize::from(fs.iter().any(|f| matches!(f, Failure::Substituted { .. })));
             for fl in &fs {
                 match fl {
-                    Failure::Adapter { adapter, requirement, .. } => {
-                        assert!(k.adapters.iter().any(|x| &x.name == adapter) && crate::futhark_table::Substitute6::of_adapter(adapter).is_none(), "{problem} gene {g}: {adapter}");
-                        assert_eq!(&reqs[*requirement].adapter, adapter);
+                    Failure::Adapter { calls, .. } | Failure::Root { calls, .. } => {
+                        for name in calls {
+                            assert!(k.symbol_named(name).and_then(|s| k.symbol(s)).is_some_and(|r| r.adapter), "{problem} gene {g}: {name} is no adapter symbol");
+                        }
                     }
-                    Failure::Root { adapter, .. } => assert_eq!(k.adapters.iter().find(|x| &x.name == adapter).map(|x| x.runs_at), Some(crate::futhark_table::Site6::Root), "{problem} gene {g}: {adapter}"),
                     Failure::Substituted { path, by, requirement } => {
-                        let q = &reqs[*requirement];
                         let node = a.node(path).expect("node");
-                        let work = reqs.iter().find(|w| w.symbol == q.symbol && w.subject == crate::futhark_table::Subject6::Trips).expect("a work bound");
-                        let how = crate::futhark_table::Substitute6::of_adapter(&work.adapter).expect("a substitution adapter");
+                        assert_eq!(k.tables.guards[*requirement].owner, Owner::Symbol(i64::from(node.symbol)), "{problem} gene {g}");
                         let own = c.signature(node.symbol).iter().position(|ty| *ty == node.data_type);
-                        let want = match (how, own) {
-                            (crate::futhark_table::Substitute6::OwnInput, Some(p)) => Substitution::Input(p as u32),
-                            _ => Substitution::Constant,
-                        };
-                        assert_eq!((q.symbol, *by), (node.symbol as i64, want), "{problem} gene {g}");
+                        assert!(matches!(by, Substitution::Constant) || own.map(|p| p as u32) == Some(match by {
+                            Substitution::Input(p) => *p,
+                            Substitution::Constant => u32::MAX,
+                        }), "{problem} gene {g}: {by:?}");
                     }
                 }
             }
         }
-        eprintln!("{problem}: 200 random genes, {with_failures} with a failing requirement, {substituted} with a substitution");
-        assert!(with_failures > 0, "{problem}: no gene fails a requirement");
+        eprintln!("{problem}: 200 random genes, {with_failures} with a failing guard, {substituted} with a substitution");
+        assert!(with_failures > 0, "{problem}: no gene fails a guard");
         assert_eq!(substituted > 0, bounded, "{problem}: substitutions occur exactly in a view with a work bound");
     }
 }
@@ -783,10 +776,9 @@ fn must_repairs_advise_reports_and_a_measured_value_never_satisfies_a_must() {
     let get = dec.node(&[1]).expect("get");
     assert!(get.kids[1].measured.contains("bound"));
     assert_eq!((get.outcomes[0].holds, get.outcomes[0].subject()), (false, &PropertyExpr::Unknown), "a measured bound reads as ? in a must guard");
-    assert_eq!(dec.failures(), vec![Failure::Adapter { path: vec![1], requirement: 3, adapter: "clampix".into() }]);
+    assert_eq!(dec.failures(), vec![Failure::Adapter { path: vec![1], requirement: 3, calls: vec![] }]);
     assert_eq!(d.advice(&e, &dec).iter().map(|a| a.guard).collect::<Vec<_>>(), vec![10], "the cost reads the measured value as it is: the copy holds");
-    let rescues = d.rescues(&dec);
-    assert_eq!(rescues, vec![Rescue { path: Some(vec![1]), adapter: "clampix".into(), placed: false }]);
+    assert_eq!(d.rescues(&e, &dec), Ok(vec![]), "these tables' repair calls no adapter");
 }
 
 /// TSR's stream order (design 8.3) as rows: up flows reading `out.arm` and `out.ties` (no cycle), and the guard
@@ -819,7 +811,7 @@ fn tsr_stream_order_reads_out_p_and_replaces_by_in0() {
         t.flows.push(Flow::up(id, "arm", p(&format!("max({}, {})", b(0), b(1)))));
         t.flows.push(Flow::up(id, "fam", p(&fam.to_string())));
         t.flows.push(Flow::up(id, "depth", p("max(in0.depth, in1.depth)")));
-        t.guards.push(Guard { owner: Owner::Symbol(id), order: 0, condition: c("out.order <= 3"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in0}", "")] });
+        t.guards.push(Guard { owner: Owner::Symbol(id), order: 0, condition: c("out.order <= 3"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in0}")] });
     }
     t.check().unwrap_or_else(|d| panic!("{d:#?}"));
     let names: Vec<FlowName> = t.up_order(0).expect("order").iter().map(|i| t.flows[*i].name.clone()).collect();
@@ -855,7 +847,7 @@ fn a_flag_attribute_flows_down_and_guards_a_node() {
         t.arguments.push(Argument { symbol: i as i64, position: 0, direction: Direction::Out, data_type: Ty::S, head: false });
     }
     t.flows.push(Flow::down(1, 0, FlowName::Env("uniform".into()), p("false")));
-    t.guards.push(Guard { owner: Owner::Symbol(0), order: 0, condition: c("env.uniform"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in0}", "")] });
+    t.guards.push(Guard { owner: Owner::Symbol(0), order: 0, condition: c("env.uniform"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in0}")] });
     let k = contract_of(&t, Ty::S);
     let d = Decoder::new(&t, &k).unwrap_or_else(|e| panic!("{e:#?}"));
     let e = Entry::new("uniformity", Ty::S);
@@ -892,23 +884,26 @@ fn a_group_of_variables_with_each_and_a_spelling() {
     assert_eq!(d.decode(&e, &tree(1)).expect("decodes").node(&[1, 1, 1]).expect("index").choice, Some(Choice::Variable(binder(1, 2))), "word 1: c2");
 }
 
-/// Pass 5 by the template engine: spellings, variable names, a clampix repair at an operand, a fit.pair repair that
-/// rewrites both operands in the node's own spelling, and the explicit adapter symbol `clampix` that evolution placed,
-/// whose prelude is written once and which the cost charges as placed.
+/// Pass 5 by the template engine: spellings, variable names, a clampix repair at an operand that calls the adapter
+/// symbol `clampix`, a pair repair that rewrites both operands by calls of the adapter symbol `fit` where they are not
+/// already the shorter length, a root repair that calls `fit`; each adapter's prelude written once; the cost's
+/// rescues, placed or called, and the calls' properties; and the explicit adapter `clampix` that evolution placed.
 #[test]
 fn pass_five_renders_spellings_and_repairs_and_the_cost_charges_every_adapter() {
     let mut t = tables();
     let spell = |t: &mut KingdomTables, s: SymbolId, text: &str| t.symbols[s as usize].spellings = vec![(String::new(), text.to_string())];
     spell(&mut t, HIST, "hist (+) 0 {0} ({1}) ({2})");
-    spell(&mut t, TAB, "tabulate {0} (\\i -> {1})");
+    spell(&mut t, TAB, "tabulate {0} (\\{1.v0} -> {1})");
     spell(&mut t, GET, "{0}[{1}]");
     spell(&mut t, MOD, "{1} % {0}");
     spell(&mut t, SUM, "i32.sum {0}");
-    t.flows.push(crate::geneframe::spell(TAB as i64, 1, I64, 0, "i"));
+    t.flows.push(crate::geneframe::spell(TAB as i64, 1, I64, 0, "i{nth}"));
     let clampix = "def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)";
     let fit = "def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t = tabulate l (\\i -> if i < m then xs[i] else z)";
-    t.symbols.push(SymbolRow { adapter: true, prelude: clampix.into(), spellings: vec![(String::new(), "clampix {0} {1}".into())], ..SymbolRow::named(15, "clampix") });
-    t.symbols.push(SymbolRow { adapter: true, prelude: fit.into(), spellings: vec![(String::new(), "fit {0} 0 {1}".into())], ..SymbolRow::named(16, "fit") });
+    t.symbols.push(SymbolRow { adapter: true, prelude: clampix.into(), spellings: vec![(String::new(), "clampix {0} ({1})".into())], ..SymbolRow::named(15, "clampix") });
+    t.symbols.push(SymbolRow { adapter: true, prelude: fit.into(), spellings: vec![(String::new(), "fit {0} 0 ({1})".into())], ..SymbolRow::named(16, "fit") });
+    t.symbols.push(SymbolRow { role: Role::Formula, spellings: vec![(String::new(), "i64.min {0} {1}".into())], ..SymbolRow::named(17, "=min") });
+    t.symbols.push(SymbolRow { role: Role::Formula, spellings: vec![(String::new(), "({0})".into())], ..SymbolRow::named(18, "=group") });
     for (s, ins, out) in [(15i64, vec![SIZE, I64], I64), (16, vec![SIZE, ARR], ARR)] {
         for (k, ty) in ins.iter().enumerate() {
             t.arguments.push(Argument { symbol: s, position: k as u32, direction: Direction::In, data_type: *ty, head: false });
@@ -917,34 +912,52 @@ fn pass_five_renders_spellings_and_repairs_and_the_cost_charges_every_adapter() 
     }
     t.flows.push(Flow::up(15, "bound", p("in0.value")));
     t.flows.push(Flow::up(16, "len", p("in0.value")));
-    let pair = "{self(1 := {if in1.len = min(in1.len, in2.len) : {1} else fit ({=min(in1.len, in2.len)}) {zero} ({1})}, 2 := {if in2.len = min(in1.len, in2.len) : {2} else fit ({=min(in1.len, in2.len)}) {zero} ({2})})}";
-    t.guards[0].repairs[0] = Repair { template: pair.into(), calls: "fit".into(), ..t.guards[0].repairs[0].clone() };
-    t.guards[3].repairs[0].template = "clampix ({=in0.len}) ({1})".into();
-    for g in &mut t.guards {
-        for r in &mut g.repairs {
-            if r.calls == "fit.pair" || r.calls == "fit.state" {
-                r.calls = "fit".into();
-            }
-        }
-    }
+    let pair = "{self(1 := {if in1.len = min(in1.len, in2.len) : {1} else {call fit({=min(in1.len, in2.len)}, {1})}}, 2 := {if in2.len = min(in1.len, in2.len) : {2} else {call fit({=min(in1.len, in2.len)}, {2})}})}";
+    t.guards[0].repairs[0].template = pair.into();
+    t.guards[3].repairs = vec![Repair::new(Site::In(1), "{call clampix({=in0.len}, {1})}"), Repair::new(Site::Node, "{const}")];
     let k = contract_of(&t, ARR);
     let d = Decoder::new(&t, &k).unwrap_or_else(|e| panic!("{e:#?}"));
     let mut e = entry();
-    e.guards[0].repairs[0] = Repair::new(Site::Root, "fit k 0 ({self})", "fit");
-    let dc = |_: SymbolId, w: u32| w.to_string();
+    e.guards[0].repairs[0] = Repair::new(Site::Root, "{call fit({=k}, {self})}");
+    let dc = |_: SymbolId, w: u32| Ok(w.to_string());
     let plain = d.render(&e, &d.decode(&e, &reference(W_N)).expect("decodes"), &dc).expect("renders");
     assert_eq!(plain, Rendered { preludes: vec![], forms: vec![], body: "hist (+) 0 k (tabulate n (\\i -> is[i] % k)) (vs)".into() });
     let mutation = d.decode(&e, &reference(W_K)).expect("decodes");
     let text = d.render(&e, &mutation, &dc).expect("renders");
-    assert_eq!(text.body, "hist (+) 0 k (fit (min(k, n)) 0 (tabulate k (\\i -> is[clampix (n) (i)] % k))) (fit (min(k, n)) 0 (vs))");
+    assert_eq!(text.body, "hist (+) 0 k (fit (i64.min k n) 0 (tabulate k (\\i -> is[clampix n (i)] % k))) (fit (i64.min k n) 0 (vs))", "Futhark's spelling of the minimum, from the formula rows");
     assert_eq!(text.preludes, vec![clampix.to_string(), fit.to_string()], "each adapter's prelude once, in first use");
+    let calls = d.calls(&e, &mutation).expect("calls");
+    assert_eq!(calls.iter().map(|c| (c.path.clone(), c.adapter.as_str())).collect::<Vec<_>>(), vec![(Some(vec![]), "fit"), (Some(vec![]), "fit"), (Some(vec![1, 1, 1]), "clampix")]);
+    assert_eq!(calls[0].out.get("len"), Some(&p("min(k, n)")), "a call's result has the adapter's properties: fit's len its size");
     // Evolution placed clampix itself: tab n (get is (clampix n i)). The guard holds (its bound is n), no repair, and the
-    // cost still charges the adapter, as placed.
+    // cost still charges the adapter, as placed; the root's repair calls fit.
     let placed = f(TAB, vec![v(VAR_SIZE, W_N), f(GET, vec![v(VAR_ARR, W_IS), f(15, vec![v(VAR_SIZE, W_N), v(VAR_I64, 0)])])]);
     let dec = d.decode(&e, &placed).expect("decodes");
-    assert_eq!(dec.failures(), vec![Failure::Root { requirement: 0, adapter: "fit".into() }], "only the result's length n differs from k");
-    assert_eq!(d.rescues(&dec), vec![Rescue { path: None, adapter: "fit".into(), placed: false }, Rescue { path: Some(vec![1, 1]), adapter: "clampix".into(), placed: true }]);
+    assert_eq!(dec.failures(), vec![Failure::Root { requirement: 0, calls: vec!["fit".into()] }], "only the result's length n differs from k");
+    assert_eq!(d.rescues(&e, &dec), Ok(vec![Rescue { path: None, adapter: "fit".into(), placed: false }, Rescue { path: Some(vec![1, 1]), adapter: "clampix".into(), placed: true }]));
     let text = d.render(&e, &dec, &dc).expect("renders");
-    assert_eq!(text.body, "fit k 0 (tabulate n (\\i -> is[clampix n i]))");
+    assert_eq!(text.body, "fit k 0 (tabulate n (\\i -> is[clampix n (i)]))");
     assert_eq!(text.preludes, vec![clampix.to_string(), fit.to_string()]);
+}
+
+/// NAME HYGIENE (design 8.14.2): two nested binders of one stem have distinct names (`i`, `i2`), and the root
+/// repair's `{zero}` is the result's element's constant, not the array's (code review finding 8).
+#[test]
+fn nested_binders_are_numbered_and_the_root_zero_is_the_element() {
+    let mut t = tables();
+    t.symbols[TAB as usize].spellings = vec![(String::new(), "tabulate {0} (\\{1.v0} -> {1})".into())];
+    t.symbols[SUM as usize].spellings = vec![(String::new(), "sum {0}".into())];
+    t.symbols[GET as usize].spellings = vec![(String::new(), "{0}[{1}]".into())];
+    t.symbols[MOD as usize].spellings = vec![(String::new(), "{1} % {0}".into())];
+    t.symbols[ZERO as usize].spellings = vec![(String::new(), "0".into())];
+    t.flows.push(crate::geneframe::spell(TAB as i64, 1, I64, 0, "i{nth}_{=out.bound}"));
+    let k = contract_of(&t, ARR);
+    let d = Decoder::new(&t, &k).unwrap_or_else(|e| panic!("{e:#?}"));
+    let mut e = entry();
+    e.guards[0].repairs[0] = Repair::new(Site::Root, "pad {zero} ({self})");
+    // tab k (sum (tab k (get is i))) and tab n (sum (tab n (get is i))): an inner i of the same bound is i2_<bound>.
+    let tree = |w: u32| f(TAB, vec![v(VAR_SIZE, w), f(SUM, vec![f(TAB, vec![v(VAR_SIZE, w), f(GET, vec![v(VAR_ARR, W_IS), v(VAR_I64, 0)])])])]);
+    let dc = |_: SymbolId, w: u32| Ok(w.to_string());
+    let text = d.render(&e, &d.decode(&e, &tree(W_N)).expect("decodes"), &dc).expect("renders");
+    assert_eq!(text.body, "pad 0 (tabulate n (\\i_n -> sum tabulate n (\\i2_n -> is[i2_n])))", "{text:?}");
 }

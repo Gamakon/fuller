@@ -27,22 +27,27 @@ fn bug(kingdom: &str, what: String) -> String {
 // ---- the lists that name things -----------------------------------------------------------------------------------
 
 /// What a symbol is to the gene (Symbol.role): an ordinary function or terminal, the constant placeholder `?_T` (a Dc
-/// word), or the variable terminal `var.T` (a Dv word).
+/// word), the variable terminal `var.T` (a Dv word), or a FORMULA OPERATOR's spelling in the target language (`=min`,
+/// `=+`, `=group`, ...: never in the alphabet, no Argument row; the template engine's `{=formula}` reads it, code
+/// review 2026-11-05 finding 3). A kingdom lists its formula rows after its alphabet, so the contract's symbol ids are
+/// the tables' ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
     Function,
     Constant,
     Variable,
+    Formula,
 }
 
 impl Role {
-    pub const ALL: [Role; 3] = [Role::Function, Role::Constant, Role::Variable];
+    pub const ALL: [Role; 4] = [Role::Function, Role::Constant, Role::Variable, Role::Formula];
 
     pub fn name(self) -> &'static str {
         match self {
             Role::Function => "function",
             Role::Constant => "constant",
             Role::Variable => "variable",
+            Role::Formula => "formula",
         }
     }
 
@@ -219,10 +224,11 @@ pub fn parse_catalogue(text: &str) -> Result<Vec<Property>, String> {
 }
 
 /// THE PROPERTY CATALOGUE, one for every kingdom, read once from `kingdoms/properties.tsv` (its test reads it too, so a
-/// malformed catalogue fails `cargo test`).
+/// malformed catalogue fails `cargo test`). A malformed catalogue is our software's bug and stops the process: an empty
+/// one would read every property as undefined (code review 2026-11-05, finding 14).
 pub fn catalogue() -> &'static [Property] {
     static CATALOGUE: OnceLock<Vec<Property>> = OnceLock::new();
-    CATALOGUE.get_or_init(|| parse_catalogue(CATALOGUE_TSV).unwrap_or_default())
+    CATALOGUE.get_or_init(|| parse_catalogue(CATALOGUE_TSV).unwrap_or_else(|e| panic!("{e}")))
 }
 
 /// The catalogue's row for `name`.
@@ -393,13 +399,13 @@ impl Site {
 }
 
 /// One repair of a `must` guard, inline: its site, its template (a wrap, an operand rewrite, or one substitute that
-/// replaces the node), the adapter symbol it calls (empty for a substitute; its prelude is added once and the cost
-/// charges it), its `when` (choosing the text) and its guard (read in the site's environment).
+/// replaces the node; the adapter symbols it calls are its `{call ..}` placeholders, each an adapter Symbol, whose
+/// prelude is added once and which the cost charges), its `when` (choosing the text) and its guard (read in the site's
+/// environment).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repair {
     pub site: Site,
     pub template: String,
-    pub calls: String,
     pub when: Condition,
     pub guard: Condition,
 }
@@ -410,9 +416,14 @@ pub fn always() -> Condition {
 }
 
 impl Repair {
-    /// A repair at `site` by `template`, calling `calls`, with no `when` and no guard.
-    pub fn new(site: Site, template: &str, calls: &str) -> Repair {
-        Repair { site, template: template.to_string(), calls: calls.to_string(), when: always(), guard: always() }
+    /// A repair at `site` by `template`, with no `when` and no guard.
+    pub fn new(site: Site, template: &str) -> Repair {
+        Repair { site, template: template.to_string(), when: always(), guard: always() }
+    }
+
+    /// True when the repair always applies: its guard and its `when` are both `true`.
+    pub fn unconditional(&self) -> bool {
+        self.guard == always() && self.when == always()
     }
 }
 
@@ -858,7 +869,7 @@ impl KingdomTables {
     pub fn symbol_table(&self) -> SymbolTable {
         let by = self.arguments_by_symbol();
         let mut t = SymbolTable::new();
-        for s in &self.symbols {
+        for s in self.symbols.iter().filter(|s| s.role != Role::Formula) {
             t.push(Symbol {
                 kingdom: self.kingdom.clone(),
                 symbol: s.symbol,
@@ -896,6 +907,25 @@ impl KingdomTables {
     /// The sizes' lower bounds: every data type's size names.
     pub fn bounds(&self) -> SizeBounds {
         self.data_types.iter().flat_map(|d| d.size_names.iter().cloned()).collect()
+    }
+
+    /// THE LEXICON the template engine spells with (code review finding 3): each formula row's spellings by form (its
+    /// name without the `=`), and each adapter symbol's default spelling and prelude, which a `{call ..}` renders.
+    pub fn lexicon(&self) -> Result<crate::typed_environment::template::Lexicon, String> {
+        use crate::typed_environment::template::parse_template;
+        let mut lex = crate::typed_environment::template::Lexicon::default();
+        for s in &self.symbols {
+            if s.role == Role::Formula {
+                let op = s.symbol_name.strip_prefix('=').ok_or_else(|| bug(&self.kingdom, format!("the formula row {} is not named =<operator>", s.symbol_name)))?;
+                for (form, t) in &s.spellings {
+                    lex.formulas.insert((op.to_string(), form.clone()), parse_template(t)?);
+                }
+            } else if s.adapter {
+                let t = s.spelling("").ok_or_else(|| bug(&self.kingdom, format!("the adapter {} has no default spelling", s.symbol_name)))?;
+                lex.adapters.insert(s.symbol_name.clone(), (parse_template(t)?, s.prelude.clone()));
+            }
+        }
+        Ok(lex)
     }
 
     /// The environment attributes of the kingdom: every `env.a` a Flow sets or a Flow or Guard reads, sorted.
@@ -1058,7 +1088,34 @@ impl KingdomTables {
             }
         }
         let mut variable_of: BTreeMap<Ty, i64> = BTreeMap::new();
+        let mut formulas = false;
         for s in &self.symbols {
+            if s.role == Role::Formula {
+                formulas = true;
+                if by.contains_key(&s.symbol) || self.flows.iter().any(|f| f.owner == Owner::Symbol(s.symbol)) || self.guards.iter().any(|g| g.owner == Owner::Symbol(s.symbol)) || s.adapter || !s.prelude.is_empty() {
+                    d.push(bug(k, format!("the formula row {} has an argument, a flow, a guard, an adapter mark or a prelude; a formula row is a spelling and nothing else", s.symbol_name)));
+                }
+                if !s.symbol_name.starts_with('=') {
+                    d.push(bug(k, format!("the formula row {} is not named =<operator>", s.symbol_name)));
+                }
+                for (form, t) in &s.spellings {
+                    if let Ok(t) = crate::typed_environment::template::parse_template(t) {
+                        if t.iter().any(|p| !matches!(p, crate::typed_environment::template::Piece::Text(_) | crate::typed_environment::template::Piece::Operand { form: None, .. })) {
+                            d.push(bug(k, format!("the formula row {}'s spelling {form:?} holds a placeholder other than an operand", s.symbol_name)));
+                        }
+                    }
+                }
+                continue;
+            }
+            if formulas {
+                d.push(bug(k, format!("symbol {} ({}) comes after a formula row; formula rows come last, so the alphabet's ids are the contract's", s.symbol, s.symbol_name)));
+            }
+            if s.adapter {
+                match s.spelling("").map(crate::typed_environment::template::parse_template) {
+                    Some(Ok(t)) if t.iter().all(|p| matches!(p, crate::typed_environment::template::Piece::Text(_) | crate::typed_environment::template::Piece::Operand { form: None, .. })) => {}
+                    _ => d.push(bug(k, format!("the adapter {} has no default spelling made of its operands alone, which a repair's call renders", s.symbol_name))),
+                }
+            }
             if !by.contains_key(&s.symbol) {
                 d.push(bug(k, format!("symbol {} ({}) has no output", s.symbol, s.symbol_name)));
             }
@@ -1200,8 +1257,10 @@ impl KingdomTables {
     }
 
     /// The defects of a guard's strength and repairs: a `must` guard has a repair, an `advise` guard none; each repair's
-    /// site exists, its template parses, its guard reads only the site's environment, a substitute replaces at the
-    /// node, and the repairs can resolve (a guard whose every repair is a substitute the node can never have is a bug).
+    /// site exists, its template parses, every symbol it calls is an adapter Symbol (always, code review finding 6), its
+    /// guard reads only the site's environment, a substitute replaces at the node; and a `must` guard's LAST repair
+    /// always applies (guard and `when` both `true`) and is a wrap or a substitute the node always has, so no gene can
+    /// meet a guard none of whose repairs applies (finding 5).
     fn repair_defects(&self, at: &str, g: &Guard, resolve: &Resolve, n_in: usize, has: &dyn Fn(crate::typed_environment::template::Substitute) -> bool) -> Vec<String> {
         let k = self.kingdom.as_str();
         let mut d = Vec::new();
@@ -1219,7 +1278,6 @@ impl KingdomTables {
                 _ => Err("and a repair's guard reads only the site's environment (env.a)".to_string()),
             }
         };
-        let mut resolvable = false;
         for (i, r) in g.repairs.iter().enumerate() {
             let rat = format!("{at}'s repair {i}");
             let root = matches!(g.owner, Owner::Entry);
@@ -1229,29 +1287,30 @@ impl KingdomTables {
                 Site::In(j) if j as usize >= n_in => d.push(bug(k, format!("{rat} runs at input {j}, which the symbol has not"))),
                 _ => {}
             }
+            let last = i + 1 == g.repairs.len();
             match crate::typed_environment::template::parse_template(&r.template) {
                 Err(e) => d.push(bug(k, format!("{rat}: {e}"))),
-                Ok(t) => match crate::typed_environment::template::substitute_of(&t) {
-                    Some(sub) => {
+                Ok(t) => {
+                    if let Some(sub) = crate::typed_environment::template::substitute_of(&t) {
                         if r.site != Site::Node {
                             d.push(bug(k, format!("{rat} is a substitute at {}, and a substitute replaces at the node", r.site)));
                         }
-                        resolvable |= has(sub);
+                        if last && g.strength == Strength::Must && !has(sub) {
+                            d.push(bug(k, format!("{rat} is the last and a substitute the node does not always have (no input of its own data type, no constant)")));
+                        }
                     }
-                    None => resolvable = true,
-                },
+                    for c in crate::typed_environment::template::calls_of(&t) {
+                        if !self.symbols.iter().any(|s| s.symbol_name == c && s.adapter) {
+                            d.push(bug(k, format!("{rat} calls {c}, which is not an adapter symbol of the kingdom")));
+                        }
+                    }
+                }
             }
-            // Every adapter a repair calls is an adapter Symbol (design 3.3.1), checked once the kingdom has adapter symbols
-            // (master 6's adapters become symbols with the conversion of its rows to this schema).
-            let has_adapters = self.symbols.iter().any(|s| s.adapter);
-            if has_adapters && !r.calls.is_empty() && !self.symbols.iter().any(|s| s.symbol_name == r.calls && s.adapter) {
-                d.push(bug(k, format!("{rat} calls {}, which is not an adapter symbol of the kingdom", r.calls)));
+            if last && g.strength == Strength::Must && !r.unconditional() {
+                d.push(bug(k, format!("{rat} is the last repair of a must guard and has the guard {} and the when {}: the last must always apply", r.guard, r.when)));
             }
             d.extend(condition_defects(&format!("{rat}'s guard"), &r.guard, &env_only).into_iter().map(|x| bug(k, x)));
             d.extend(condition_defects(&format!("{rat}'s when"), &r.when, resolve).into_iter().map(|x| bug(k, x)));
-        }
-        if g.strength == Strength::Must && !g.repairs.is_empty() && !resolvable {
-            d.push(bug(k, format!("{at}: every repair is a substitute the node never has (no input of its own data type, no constant)")));
         }
         d
     }
@@ -1390,7 +1449,7 @@ impl KingdomTables {
                 field("semantic id", &s.semantic_id)?,
                 s.role.name(),
                 if s.adapter { "adapter" } else { "-" },
-                field("prelude", &s.prelude)?
+                field("prelude", &escape(&s.prelude))?
             ));
             for (form, t) in &s.spellings {
                 lines.push(format!("spelling\t{}\t{}\t{}", s.symbol, field("form", form)?, field("spelling", t)?));
@@ -1432,7 +1491,7 @@ impl KingdomTables {
         for g in &self.guards {
             lines.push(format!("guard\t{}\t{}\t{}\t{}", owner_text(g.owner), g.order, g.strength.name(), g.condition));
             for r in &g.repairs {
-                lines.push(format!("repair\t{}\t{}\t{}\t{}\t{}\t{}\t{}", owner_text(g.owner), g.order, r.site, field("adapter name", &r.calls)?, r.when, r.guard, field("template", &r.template)?));
+                lines.push(format!("repair\t{}\t{}\t{}\t{}\t{}\t{}", owner_text(g.owner), g.order, r.site, r.when, r.guard, field("template", &r.template)?));
             }
         }
         let mut text = lines.join("\n");
@@ -1469,7 +1528,7 @@ impl KingdomTables {
                         _ => return Err(bad()),
                     },
                     spellings: Vec::new(),
-                    prelude: f[7].to_string(),
+                    prelude: unescape(f[7]),
                 }),
                 ("spelling", 4) => {
                     let s: i64 = number("symbol id", f[1])?;
@@ -1527,15 +1586,208 @@ impl KingdomTables {
                     t.flows.push(Flow { owner: owner_of(f[1])?, at, name, formula, template, way });
                 }
                 ("guard", 5) => t.guards.push(Guard { owner: owner_of(f[1])?, order: number("order", f[2])?, strength: Strength::from_name(f[3]).ok_or_else(bad)?, condition: Condition::parse(f[4])?, repairs: Vec::new() }),
-                ("repair", 8) => {
+                ("repair", 7) => {
                     let (owner, order) = (owner_of(f[1])?, number::<u32>("order", f[2])?);
                     let g = t.guards.iter_mut().rev().find(|g| g.owner == owner && g.order == order).ok_or_else(bad)?;
-                    g.repairs.push(Repair { site: Site::parse(f[3]).ok_or_else(bad)?, calls: f[4].to_string(), when: Condition::parse(f[5])?, guard: Condition::parse(f[6])?, template: f[7].to_string() });
+                    g.repairs.push(Repair { site: Site::parse(f[3]).ok_or_else(bad)?, when: Condition::parse(f[4])?, guard: Condition::parse(f[5])?, template: f[6].to_string() });
                 }
                 _ => return Err(bad()),
             }
         }
         Ok(t)
+    }
+}
+
+/// A text field on one line: a backslash as `\\`, a line break as `\n` ([`unescape`] reads it back).
+pub fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+/// A text field read back: `\\` is a backslash and `\n` a line break (a prelude is several lines of the target
+/// language, on one line of a table).
+pub fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+impl KingdomTables {
+    /// THE NAMED TEXT FORM of a kingdom's four kinds of row and its entry, which a view generator writes (one row a
+    /// line, its kind first, its fields tab-separated, every data type and symbol by its NAME, `-` for none):
+    ///
+    /// | line | fields |
+    /// |---|---|
+    /// | `data_type` | name, `scalar` / `array` element / `tuple` components (`;`) / `function` parameters (`;`) result |
+    /// | `carries` | data type, property |
+    /// | `constant` | data type, spelling, properties (`p=e;q=f`) |
+    /// | `size_name` | data type, name, lower bound |
+    /// | `symbol` | name, alias, role, `adapter` or `-`, prelude (`\n` a line break, `\\` a backslash) |
+    /// | `spelling` | symbol, form (empty: the default), template |
+    /// | `argument` | symbol, position, `in` / `out`, data type, `head` or `-` |
+    /// | `flow` | symbol, `in<k>` / `out`, `up` / `down`, name (`p`, `env.a`, `var.<T>[/g][.p or .spell]`), formula or template |
+    /// | `guard` | symbol or `entry`, order, `must` / `advise`, condition |
+    /// | `repair` | symbol or `entry`, order, site, when, guard, template |
+    /// | `entry` | problem, result's data type |
+    /// | `parameter` | name, data type, properties (`p=e`, `p=e @ <case set>` when measured), raw, transform, its properties, cost |
+    ///
+    /// Data type `i` (in order) is `ty(i)`; symbol `i` is the i-th `symbol` line. A data type's name holds no `.` or
+    /// `/`, so `var.<T>.p` reads back.
+    pub fn parse_named(kingdom: &str, text: &str, ty: &dyn Fn(usize) -> Result<Ty, String>) -> Result<(KingdomTables, Entry), String> {
+        let mut t = KingdomTables { kingdom: kingdom.to_string(), ..KingdomTables::default() };
+        let mut entry: Option<Entry> = None;
+        let mut types: BTreeMap<String, Ty> = BTreeMap::new();
+        let mut symbols: BTreeMap<String, i64> = BTreeMap::new();
+        for (n, line) in text.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
+            let f: Vec<&str> = line.split('\t').collect();
+            let bad = |why: &str| format!("our software has a bug: kingdom {kingdom}: line {} of its table {why}: {line:?}", n + 1);
+            let dt = |name: &str| types.get(name).copied().ok_or_else(|| bad(&format!("names the data type {name:?}, which no earlier line declares")));
+            let dts = |text: &str| -> Result<Vec<Ty>, String> { text.split(';').filter(|x| !x.is_empty()).map(dt).collect() };
+            let sym = |name: &str| symbols.get(name).copied().ok_or_else(|| bad(&format!("names the symbol {name:?}, which no earlier line declares")));
+            let owner = |name: &str| if name == "entry" { Ok(Owner::Entry) } else { sym(name).map(Owner::Symbol) };
+            fn none(x: &str) -> &str {
+                if x == "-" {
+                    ""
+                } else {
+                    x
+                }
+            }
+            match (f[0], f.len()) {
+                ("data_type", 3..=5) => {
+                    let id = ty(types.len())?;
+                    let kind = match (f[2], f.len()) {
+                        ("scalar", 3) => DataKind::Scalar,
+                        ("array", 4) => DataKind::Array { element: dt(f[3])? },
+                        ("tuple", 4) => DataKind::Tuple { components: dts(f[3])? },
+                        ("function", 5) => DataKind::Function { parameters: dts(f[3])?, result: dt(f[4])? },
+                        _ => return Err(bad("is not a data type of one of the four kinds")),
+                    };
+                    if f[1].contains(['.', '/']) || types.insert(f[1].to_string(), id).is_some() {
+                        return Err(bad("declares a data type twice, or one whose name holds . or /"));
+                    }
+                    t.data_types.push(DataType { kind, ..DataType::scalar(id, f[1]) });
+                }
+                ("carries", 3) => {
+                    let id = dt(f[1])?;
+                    t.data_types.iter_mut().find(|d| d.id == id).ok_or_else(|| bad("names no data type"))?.properties.push(f[2].to_string());
+                }
+                ("constant", 4) => {
+                    let id = dt(f[1])?;
+                    t.data_types.iter_mut().find(|d| d.id == id).ok_or_else(|| bad("names no data type"))?.constant = Some(Constant { spelling: f[2].to_string(), properties: parse_property_list(f[3])? });
+                }
+                ("size_name", 4) => {
+                    let id = dt(f[1])?;
+                    let lb = number("lower bound", f[3])?;
+                    t.data_types.iter_mut().find(|d| d.id == id).ok_or_else(|| bad("names no data type"))?.size_names.push((f[2].to_string(), lb));
+                }
+                ("symbol", 6) => {
+                    let id = symbols.len() as i64;
+                    if symbols.insert(f[1].to_string(), id).is_some() {
+                        return Err(bad("declares a symbol twice"));
+                    }
+                    let adapter = match f[4] {
+                        "adapter" => true,
+                        "-" => false,
+                        _ => return Err(bad("marks an adapter neither adapter nor -")),
+                    };
+                    let role = Role::from_name(f[3]).ok_or_else(|| bad("names no role"))?;
+                    t.symbols.push(SymbolRow { symbol: id, symbol_name: f[1].to_string(), alias: f[2].to_string(), semantic_id: f[1].to_string(), role, adapter, spellings: Vec::new(), prelude: unescape(none(f[5])) });
+                }
+                ("spelling", 4) => {
+                    let id = sym(f[1])?;
+                    t.symbols.iter_mut().find(|s| s.symbol == id).ok_or_else(|| bad("names no symbol"))?.spellings.push((f[2].to_string(), f[3].to_string()));
+                }
+                ("argument", 6) => t.arguments.push(Argument {
+                    symbol: sym(f[1])?,
+                    position: number("position", f[2])?,
+                    direction: match f[3] {
+                        "in" => Direction::In,
+                        "out" => Direction::Out,
+                        _ => return Err(bad("has a direction neither in nor out")),
+                    },
+                    data_type: dt(f[4])?,
+                    head: match f[5] {
+                        "head" => true,
+                        "-" => false,
+                        _ => return Err(bad("marks a head neither head nor -")),
+                    },
+                }),
+                ("flow", 6) => {
+                    let at = match f[2] {
+                        "out" => Place::Out,
+                        x => Place::In(x.strip_prefix("in").and_then(|d| d.parse().ok()).ok_or_else(|| bad("acts at neither out nor in<k>"))?),
+                    };
+                    let way = match f[3] {
+                        "up" => Way::Up,
+                        "down" => Way::Down,
+                        _ => return Err(bad("flows neither up nor down")),
+                    };
+                    let name = match f[4].strip_prefix("var.") {
+                        Some(rest) => {
+                            let end = rest.find(['.', '/']).unwrap_or(rest.len());
+                            let coded = format!("var.{}{}", dt(&rest[..end])?.code(), &rest[end..]);
+                            FlowName::parse(&coded).ok_or_else(|| bad("names no flow"))?
+                        }
+                        None => FlowName::parse(f[4]).ok_or_else(|| bad("names no flow"))?,
+                    };
+                    let (formula, template) = if matches!(name, FlowName::VarSpell { .. }) { (PropertyExpr::Unknown, f[5].to_string()) } else { (PropertyExpr::parse(f[5])?, String::new()) };
+                    let flow = Flow { owner: owner(f[1])?, at, name, formula, template, way };
+                    match flow.owner {
+                        Owner::Entry => entry.as_mut().ok_or_else(|| bad("is the entry's before the entry line"))?.flows.push(flow),
+                        Owner::Symbol(_) => t.flows.push(flow),
+                    }
+                }
+                ("guard", 5) => {
+                    let g = Guard { owner: owner(f[1])?, order: number("order", f[2])?, strength: Strength::from_name(f[3]).ok_or_else(|| bad("has a strength neither must nor advise"))?, condition: Condition::parse(f[4])?, repairs: Vec::new() };
+                    match g.owner {
+                        Owner::Entry => entry.as_mut().ok_or_else(|| bad("is the entry's before the entry line"))?.guards.push(g),
+                        Owner::Symbol(_) => t.guards.push(g),
+                    }
+                }
+                ("repair", 7) => {
+                    let (o, order) = (owner(f[1])?, number::<u32>("order", f[2])?);
+                    let r = Repair { site: Site::parse(f[3]).ok_or_else(|| bad("names no site"))?, when: Condition::parse(f[4])?, guard: Condition::parse(f[5])?, template: f[6].to_string() };
+                    let guards = match o {
+                        Owner::Entry => &mut entry.as_mut().ok_or_else(|| bad("is the entry's before the entry line"))?.guards,
+                        Owner::Symbol(_) => &mut t.guards,
+                    };
+                    guards.iter_mut().rev().find(|g| g.owner == o && g.order == order).ok_or_else(|| bad("repairs no guard declared before it"))?.repairs.push(r);
+                }
+                ("entry", 3) => {
+                    if entry.is_some() {
+                        return Err(bad("declares a second entry"));
+                    }
+                    entry = Some(Entry::new(f[1], dt(f[2])?));
+                }
+                ("parameter", 8) => {
+                    let mut properties = Vec::new();
+                    for item in f[3].split(';').filter(|x| *x != "-" && !x.is_empty()) {
+                        let (body, source) = match item.split_once(" @ ") {
+                            Some((b, cases)) => (b, Source::Measured(cases.to_string())),
+                            None => (item, Source::Declared),
+                        };
+                        let (q, v) = body.split_once('=').ok_or_else(|| bad("has a property that is not p=e"))?;
+                        properties.push((q.to_string(), PropertyExpr::parse(v)?, source));
+                    }
+                    let form_of = if f[4] == "-" { None } else { Some((f[4].to_string(), Transform { template: f[5].to_string(), properties: parse_property_list(f[6])?, cost: PropertyExpr::parse(f[7])? })) };
+                    let p = EntryParameter { name: f[1].to_string(), data_type: dt(f[2])?, properties, form_of };
+                    entry.as_mut().ok_or_else(|| bad("is a parameter before the entry line"))?.parameters.push(p);
+                }
+                _ => return Err(bad("is not a row of the named text form")),
+            }
+        }
+        let entry = entry.ok_or_else(|| format!("our software has a bug: kingdom {kingdom}: its table has no entry line"))?;
+        Ok((t, entry))
     }
 }
 

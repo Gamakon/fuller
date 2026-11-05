@@ -33,7 +33,7 @@ fn tables() -> KingdomTables {
         SymbolRow { spellings: vec![(String::new(), "{0}".into()), ("pl".into(), "{0}s".into())], ..SymbolRow::named(7, "noun") },
     ];
     t.data_types = vec![
-        DataType::scalar(F, "f32"),
+        DataType { constant: Some(Constant { spelling: "0f32".into(), properties: vec![] }), ..DataType::scalar(F, "f32") },
         DataType { kind: DataKind::Array { element: F }, properties: vec!["len".into(), "sorted".into()], constant: Some(Constant { spelling: "[0f32]".into(), properties: vec![("len".into(), p("1"))] }), ..DataType::scalar(ARR, "[]f32") },
         DataType { properties: vec!["bound".into()], constant: Some(Constant { spelling: "0i64".into(), properties: vec![("bound".into(), p("1"))] }), ..DataType::scalar(IX, "i64") },
         DataType { properties: vec!["value".into()], size_names: vec![("k".into(), 1), ("n".into(), 0)], ..DataType::scalar(SIZE, "size") },
@@ -62,13 +62,13 @@ fn tables() -> KingdomTables {
         Flow::down(1, 1, FlowName::VarProperty { ty: IX, group: 0, property: "bound".into() }, p("in0.value + each")),
         spell(1, 1, IX, 0, "i{each}"),
     ];
-    let mut fit = Repair::new(Site::Node, "{self(0 := fit ({=min(in0.len, in1.len)}) {zero} ({0}))}", "clampix");
+    let mut fit = Repair::new(Site::Node, "{self(0 := {call clampix({=min(in0.len, in1.len)}, {0})})}");
     fit.guard = c("env.trips < 3");
     fit.when = c("known(in0.len)");
     t.guards = vec![
-        Guard { owner: Owner::Symbol(0), order: 1, condition: c("in1.len = in0.len"), strength: Strength::Must, repairs: vec![fit, Repair::new(Site::Node, "{in.own}", ""), Repair::new(Site::Node, "{const}", "")] },
-        Guard { owner: Owner::Symbol(0), order: 0, condition: c("env.trips < 3"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in.own}", "")] },
-        Guard { owner: Owner::Symbol(2), order: 0, condition: c("in1.bound <= in0.len"), strength: Strength::Must, repairs: vec![Repair::new(Site::In(1), "clampix ({=in0.len}) ({1})", "clampix")] },
+        Guard { owner: Owner::Symbol(0), order: 1, condition: c("in1.len = in0.len"), strength: Strength::Must, repairs: vec![fit, Repair::new(Site::Node, "{in.own}"), Repair::new(Site::Node, "{const}")] },
+        Guard { owner: Owner::Symbol(0), order: 0, condition: c("env.trips < 3"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in.own}")] },
+        Guard { owner: Owner::Symbol(2), order: 0, condition: c("in1.bound <= in0.len"), strength: Strength::Must, repairs: vec![Repair::new(Site::In(1), "{call clampix({=in0.len}, {1})}"), Repair::new(Site::Node, "{const}")] },
         Guard { owner: Owner::Symbol(0), order: 2, condition: c("out.sorted"), strength: Strength::Advise, repairs: vec![] },
     ];
     t
@@ -144,14 +144,17 @@ fn every_branch_of_the_table_check() {
         ("a bound compares by <= only", Box::new(|t| t.guards[2].condition = c("in1.bound = in0.len"))),
         ("a tag, a flag or a list compares by = only", Box::new(|t| t.guards[3].condition = c("out.sorted <= true"))),
         ("is must and has no repair", Box::new(|t| t.guards[2].repairs.clear())),
-        ("is advise and has a repair", Box::new(|t| t.guards[3].repairs.push(Repair::new(Site::Node, "{in.own}", "")))),
+        ("is advise and has a repair", Box::new(|t| t.guards[3].repairs.push(Repair::new(Site::Node, "{in.own}")))),
         ("the order is used twice", Box::new(|t| t.guards[1].order = 1)),
         ("runs at input 7, which the symbol has not", Box::new(|t| t.guards[2].repairs[0].site = Site::In(7))),
         ("runs at the root, which only the entry's guards do", Box::new(|t| t.guards[2].repairs[0].site = Site::Root)),
         ("is a substitute at in1", Box::new(|t| t.guards[2].repairs[0].template = "{const}".into())),
-        ("calls fit, which is not an adapter symbol", Box::new(|t| t.guards[2].repairs[0].calls = "fit".into())),
+        ("calls fit, which is not an adapter symbol", Box::new(|t| t.guards[2].repairs[0].template = "{call fit({=in0.len}, {1})}".into())),
+        ("is the last repair of a must guard and has the guard", Box::new(|t| t.guards[0].repairs.truncate(1))),
+        ("is the last and a substitute the node does not always have", Box::new(|t| t.guards[2].repairs = vec![Repair::new(Site::Node, "{in.own}")])),
+        ("a formula row is a spelling and nothing else", Box::new(|t| t.symbols.push(SymbolRow { role: Role::Formula, adapter: true, spellings: vec![(String::new(), "i64.min {0} {1}".into())], ..SymbolRow::named(8, "=min") }))),
         ("a repair's guard reads only the site's environment", Box::new(|t| t.guards[0].repairs[0].guard = c("in0.len = 1"))),
-        ("every repair is a substitute the node never has", Box::new(|t| t.guards.push(Guard { owner: Owner::Symbol(2), order: 1, condition: c("in1.bound <= 1"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in.own}", "")] }))),
+        ("is the last and a substitute the node does not always have", Box::new(|t| t.guards.push(Guard { owner: Owner::Symbol(2), order: 1, condition: c("in1.bound <= 1"), strength: Strength::Must, repairs: vec![Repair::new(Site::Node, "{in.own}")] }))),
         ("has a { that is not closed", Box::new(|t| t.symbols[0].spellings[0].1 = "map2 {0".into())),
         ("is not in its one spelling", Box::new(|t| t.flows[2].formula = PropertyExpr::Sum(vec![p("in0.value")]))),
         ("sets a property of variables no var flow introduces", Box::new(|t| t.flows.push(Flow::down(1, 1, FlowName::VarProperty { ty: ARR, group: 0, property: "len".into() }, p("1"))))),
@@ -175,7 +178,7 @@ fn every_branch_of_the_entry_check() {
         e.parameters.push(EntryParameter::declared("xs", ARR, &[("len", p("n"))]));
         e.parameters.push(EntryParameter { name: "ys".into(), data_type: ARR, properties: vec![("len".into(), p("k"), Source::Measured("train".into()))], form_of: None });
         e.parameters.push(EntryParameter { name: "xs_sorted".into(), data_type: ARR, properties: vec![], form_of: Some(("xs".into(), Transform { template: "sort {0}".into(), properties: vec![("len".into(), p("in0.len")), ("sorted".into(), p("true"))], cost: p("in0.len * 3") })) });
-        e.guards.push(Guard { owner: Owner::Entry, order: 0, condition: c("out.len = k"), strength: Strength::Must, repairs: vec![Repair::new(Site::Root, "fit k 0 ({self})", "clampix")] });
+        e.guards.push(Guard { owner: Owner::Entry, order: 0, condition: c("out.len = k"), strength: Strength::Must, repairs: vec![Repair::new(Site::Root, "{call clampix({=k}, {self})}")] });
         e.guards.push(Guard { owner: Owner::Entry, order: 1, condition: c("out.sorted"), strength: Strength::Advise, repairs: vec![] });
         e.flows.push(Flow { owner: Owner::Entry, at: Place::Out, name: FlowName::Env("trips".into()), formula: p("1"), template: String::new(), way: Way::Down });
         e

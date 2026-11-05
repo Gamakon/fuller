@@ -1,10 +1,10 @@
-name	kind	members	over	tag	constant	constant_props	note
-{E}	scalar		E	{E}	0{E}		an element value
-i64	scalar			i64	0i64	bound=1	an index; its bound is a property (master 5's ix.D)
-size	scalar			size			a length or a trip count, rendered as Futhark's i64; its only terminal is var@size, and no row returns it
-[]{E}	array	{E}	E	a.{E}	[0{E}]	len=1	an array of elements; its length is a property
-[][]{E}	array	[]{E}	E	m.{E}	[[0{E}]]	rows=1 & cols=1	an array of rows; its two lengths are properties (master 5's a.D.D and A7's mat.P)
-({A}, {B})	tuple	{A};{B}	A,B:elements	{A}.{B}	(0{A}, 0{B})		a pair of elements (a loop's destructured state)
-({A}, {B}, {C})	tuple	{A};{B};{C}	A,B,C:elements	{A}.{B}.{C}	(0{A}, 0{B}, 0{C})		a triple of elements (the Kahan loop's state)
-[]f32 -> []f32	function	[]f32 -> []f32		fn.arr_f32_arr_f32	\xs -> map (\_ -> 0.0) xs		a row function; every row function of the master keeps its row's length
-[]f32 -> []f32 -> []f32	function	[]f32;[]f32 -> []f32		fn.arr2_f32_arr_f32_arr_f32	\xs _ys -> map (\_ -> 0.0) xs		a binary row function, on two rows of one length (map2_rows fits them first); it keeps that length
+name	kind	members	over	tag	constant	constant_props	spell	type_spelling	note
+{E}	scalar		E	{E}	0{E}		s{nth}_{E}	{E}	an element value
+i64	scalar			i64	0i64	bound=1	i{nth}_{=out.bound@name}	i64	an index; its bound is a property (master 5's ix.D)
+size	scalar			size				i64	a length or a trip count, rendered as Futhark's i64; its only terminal is var@size, and no row returns it
+[]{E}	array	{E}	E	a.{E}	[0{E}]	len=1	s{nth}_a{M}_{=out.len@name}	[{=@.len}]{E}	an array of elements; its length is a property
+[][]{E}	array	[]{E}	E	m.{E}	[[0{E}]]	rows=1 & cols=1	s{nth}_a{M}_{=out.rows@name}_{=out.cols@name}	[{=@.rows}][{=@.cols}]{E}	an array of rows; its two lengths are properties (master 5's a.D.D and A7's mat.P)
+({A}, {B})	tuple	{A};{B}	A,B:elements	{A}.{B}	(0{A}, 0{B})		s{nth}_{A}_{B}	({A}, {B})	a pair of elements (a loop's destructured state)
+({A}, {B}, {C})	tuple	{A};{B};{C}	A,B,C:elements	{A}.{B}.{C}	(0{A}, 0{B}, 0{C})		s{nth}_{A}_{B}_{C}	({A}, {B}, {C})	a triple of elements (the Kahan loop's state)
+[]f32 -> []f32	function	[]f32 -> []f32		fn.arr_f32_arr_f32	\xs -> map (\_ -> 0.0) xs			[]f32 -> []f32	a row function; every row function of the master keeps its row's length
+[]f32 -> []f32 -> []f32	function	[]f32;[]f32 -> []f32		fn.arr2_f32_arr_f32_arr_f32	\xs _ys -> map (\_ -> 0.0) xs			[]f32 -> []f32 -> []f32	a binary row function, on two rows of one length (map2_rows fits them first); it keeps that length

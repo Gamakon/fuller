@@ -1,5 +1,6 @@
 //! Master 6's interpreter, work and static cost (plan section 7, task F3; proof 1's second half, plan 7.3 item 1):
-//! the reference programs keep master 5's values, work and static cost; every random gene of every view runs on the
+//! the reference programs keep their stored values, work and static cost (`tests/fixtures/
+//! futhark_m6_reference_values.tsv`, written by master 5 before it was deleted); every random gene of every view runs on the
 //! interpreter with no run-time error and its per-submit cap is computed, adapters counted; 100 random genes a view
 //! compile with Futhark's `c` backend and equal the interpreter, N of N; an adapter costs more than its clean form.
 
@@ -28,8 +29,8 @@ fn interp6(view6: &str) -> (Arc<Kingdom6>, Interp) {
 
 /// `n` random genes of a view, expressed, from the random seed `seed` (F2's draw).
 fn random_trees(k: &Kingdom6, view6: &str, n: usize, seed: u64) -> Vec<Tree> {
-    let contract = k.contract().unwrap();
-    let layout = GeneLayout::from_program_size(&contract, k.root.data_type, problem_of(view6).program_size).unwrap();
+    let contract = k.contract.as_ref().clone();
+    let layout = GeneLayout::from_program_size(&contract, k.entry.output, problem_of(view6).program_size).unwrap();
     let consts = const_len6(k);
     let mut rng = GeneRng::new(seed);
     (0..n)
@@ -64,9 +65,9 @@ fn run_cases(k: &Kingdom6, view6: &str) -> Vec<Case> {
 
 /// [`run_cases`] and the one of them whose sizes are distinct.
 fn run_cases_and_distinct(k: &Kingdom6, view6: &str) -> (Vec<Case>, Case) {
-    let mut names: BTreeSet<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
-    for v in k.variables.iter().filter(|v| v.kind == "input") {
-        names.extend(v.properties.iter().filter_map(|(_, e)| if let crate::geneframe::PropertyExpr::Size(n) = e { Some(n.clone()) } else { None }));
+    let mut names: BTreeSet<String> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| l.name.clone()).collect();
+    for l in k.spec.env.iter().filter(|l| l.kind == "input") {
+        names.extend(l.dims.iter().cloned());
     }
     let mut cases: Vec<Case> = load_cases(&problem_of(view6)).unwrap().into_iter().filter(|c| c.split != Split::Test).collect();
     cases.sort_by_key(|c| (c.stdin.len(), c.name.clone()));
@@ -114,22 +115,45 @@ fn cropped(view6: &str, case: &Case) -> (Vec<Array>, Vec<u8>) {
     (inputs, stdin)
 }
 
+/// The stored values, work and static cost of the reference programs, one line a reference and a case (`key`, `case`,
+/// the value's FNV-1a digest, the work's two parts, the static cost or `-`), written by master 5's interpreter before
+/// master 5 was deleted: the programs' meaning, kept as data.
+const REFERENCE_VALUES: &str = include_str!("../../tests/fixtures/futhark_m6_reference_values.tsv");
+
+/// An array's FNV-1a digest: its dims, its element's name's length, its words.
+fn digest(a: &Array) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |x: u64| {
+        for b in x.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for d in &a.dims {
+        eat(*d as u64);
+    }
+    eat(a.elem.name().len() as u64);
+    for w in &a.data {
+        eat(u64::from(*w));
+    }
+    format!("{h:016x}")
+}
+
 /// THE REFERENCE PROGRAMS ARE UNCHANGED (plan 7.3 item 2, F3's half): every reference, read as its master 6 tree, has
-/// on every stored case the value master 5's interpreter gives its master 5 tree (bit for bit, two NaNs equal), the
-/// same work (both parts; k-means on its two smallest cases), and, where master 5 has one (A7, the matrix kingdom), the same static cost; every master 6
-/// reference has a static cost, adapter-free.
+/// on every stored case the stored value (bit for bit), the stored work (both parts; k-means on its two smallest
+/// cases), and, where one is stored (A7, the matrix kingdom), the stored static cost; every reference has a static
+/// cost, adapter-free.
 #[test]
-fn every_reference_has_its_master_5_value_work_and_static_cost() {
+fn every_reference_has_its_stored_value_work_and_static_cost() {
+    let stored: BTreeMap<(String, String), Vec<&str>> = REFERENCE_VALUES.lines().skip(1).map(|l| l.split('\t').collect::<Vec<_>>()).map(|f| ((f[0].to_string(), f[1].to_string()), f[2..].to_vec())).collect();
     let mut report = Vec::new();
+    let mut seen = 0;
     for r in &REFERENCES6 {
         let key = r.key();
         let p = problem(r.problem).unwrap();
-        let (k5, sig) = (load(&p.instance).unwrap(), signature(&p.instance).unwrap());
-        let i5 = Interp::new(&k5, &sig).unwrap();
-        let t5 = build(&k5, &(r.master5)()).unwrap();
+        let sig = signature(&p.instance).unwrap();
         let (k6, i6) = interp6(r.problem);
         let t6 = build6(&k6, &(r.master6)()).unwrap_or_else(|e| panic!("{key}: {e}"));
-        // Every stored case; k-means's (n up to 1000 points of d = 1536) its two smallest, the interpreters' time.
         let mut cases = load_cases(&p).unwrap();
         if r.problem == "kmeans" {
             cases.sort_by_key(|c| (c.stdin.len(), c.name.clone()));
@@ -137,23 +161,22 @@ fn every_reference_has_its_master_5_value_work_and_static_cost() {
         }
         let mut costed = 0;
         for c in &cases {
-            let t = Instant::now();
-            let v5 = i5.eval(&t5, &c.inputs).unwrap();
-            let t6s = Instant::now();
+            let want = stored.get(&(key.clone(), c.name.clone())).unwrap_or_else(|| panic!("{key} on {}: no stored line", c.name));
+            seen += 1;
             let v6 = i6.eval(&t6, &c.inputs).unwrap_or_else(|e| panic!("{key} on {}: {e}", c.name));
-            let six = t6s.elapsed().as_secs_f64();
-            assert_eq!(v6, v5, "{key} on {}: master 6's value differs from master 5's", c.name);
+            assert_eq!(digest(&v6), want[0], "{key} on {}: the value differs from the stored one", c.name);
             let sizes = sig.sizes(&c.inputs).unwrap();
-            assert_eq!(i6.work_parts(&t6, &sizes).unwrap(), i5.work_parts(&t5, &sizes).unwrap(), "{key} on {}: the work differs", c.name);
+            let w = i6.work_parts(&t6, &sizes).unwrap();
+            assert_eq!((w.nodes.to_string(), w.state.to_string()), (want[1].to_string(), want[2].to_string()), "{key} on {}: the work differs", c.name);
             let s6 = i6.static_cost(&t6, &sizes).unwrap().expect("master 6 costs every view");
-            if let Some(s5) = i5.static_cost(&t5, &sizes).unwrap() {
-                assert_eq!(s6, s5, "{key} on {}: the static cost differs", c.name);
+            if want[3] != "-" {
+                assert_eq!([s6.traffic.to_string(), s6.alloc.to_string(), s6.depth.to_string()], [want[3], want[4], want[5]], "{key} on {}: the static cost differs", c.name);
                 costed += 1;
             }
-            eprintln!("{key} on {}: {:.2} s, master 6's interpreter {six:.2} s", c.name, t.elapsed().as_secs_f64());
         }
         report.push(format!("{key}: {} cases equal (value, work){}", cases.len(), if costed > 0 { format!(", static cost equal on {costed}") } else { String::new() }));
     }
+    assert_eq!(seen, stored.len(), "every stored line is checked");
     eprintln!("{}", report.join("\n"));
 }
 
@@ -170,7 +193,6 @@ fn a_thousand_random_genes_a_view_run_on_the_interpreter_and_have_a_work_bound()
     for (v, view6) in VIEWS6.iter().enumerate() {
         let started = Instant::now();
         let (k, i6) = interp6(view6);
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
         let case = run_cases_and_distinct(&k, view6).1;
         let case_sizes_of = signature(&problem_of(view6).instance).unwrap().sizes(&case.inputs).unwrap();
         let small = cropped(view6, &case);
@@ -178,22 +200,22 @@ fn a_thousand_random_genes_a_view_run_on_the_interpreter_and_have_a_work_bound()
         let all: Vec<BTreeMap<String, usize>> = load_cases(&problem_of(view6)).unwrap().iter().map(|c| signature(&problem_of(view6).instance).unwrap().sizes(&c.inputs).unwrap()).collect();
         let (mut adapted, mut most, mut charged) = (0usize, 0u128, 0u128);
         for (g, tree) in random_trees(&k, view6, n, 0x5eed_0000 + v as u64).iter().enumerate() {
-            let program = renderer.program(tree).unwrap();
+            let program = k.program(tree).unwrap();
             let over = i6.work_parts(tree, &case_sizes_of).unwrap().nodes > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
             let inputs = if over { &small.0 } else { &case.inputs };
             cropped_runs += usize::from(over);
             i6.eval(tree, inputs).unwrap_or_else(|e| panic!("{view6} gene {g} on {}{}: {e}\n{}", case.name, if over { " cropped" } else { "" }, program.text));
-            let d = renderer.decode(tree).unwrap();
+            let d = k.decode(tree).unwrap();
             for s in &all {
                 let w = i6.work_parts(tree, s).unwrap_or_else(|e| panic!("{view6} gene {g}: the work: {e}"));
                 most = most.max(w.nodes);
-                if !program.adapter_free() {
+                if program.repairs() > 0 {
                     let charge = adapters_charge(&k, &d, s);
                     assert!(w.nodes >= charge, "{view6} gene {g}: nodes {} do not count its adapters' {charge}\n{}", w.nodes, program.text);
                     charged += charge;
                 }
             }
-            adapted += usize::from(!program.adapter_free());
+            adapted += usize::from(program.repairs() > 0);
         }
         assert!(adapted == 0 || charged > 0, "{view6}: {adapted} genes render adapters and none is charged");
         let line = format!("{view6}: {n} of {n} ran on the interpreter on {} with no error ({cropped_runs} over the per-submit cap on it ran on it cropped), {adapted} with adapters; the per-submit work computed on {} cases, the most {most} node executions, adapters charged {charged} in all ({:.1} s)\n", case.name, all.len(), started.elapsed().as_secs_f64());
@@ -203,45 +225,37 @@ fn a_thousand_random_genes_a_view_run_on_the_interpreter_and_have_a_work_bound()
     eprint!("{report}");
 }
 
-/// The adapters' charge of a decoded tree at `sizes` (the node adapters at their node's trips, the body adapters at
-/// their body's, `fit.root` once), recomputed apart from `work_parts` from the same rendering decision
-/// (`futhark_cost::adapters6`).
+/// The adapters' charge of a decoded tree at `sizes` (each call of a repair at its node's trips, a body's at its
+/// body's, the entry's once), recomputed apart from `work_parts` from the decoder's calls.
 fn adapters_charge(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: &BTreeMap<String, usize>) -> u128 {
     adapter_charges(k, d, sizes).iter().map(|(_, own, by)| own * by).sum()
 }
 
-/// Every adapter a decoded tree renders at `sizes`: what it adapts, its own charge, and how many times it runs.
-fn adapter_charges(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: &BTreeMap<String, usize>) -> Vec<(crate::futhark_cost::Charge6, u128, u128)> {
-    use crate::futhark_cost::{adapters6, rendered6, requirements6, trips6, Charge6, CostTable6};
+/// Every adapter a repair calls in a decoded tree at `sizes`: the call, its own charge, and how many times it runs.
+fn adapter_charges(k: &Kingdom6, d: &crate::typed_environment::Decoding, sizes: &BTreeMap<String, usize>) -> Vec<(crate::typed_environment::Call, u128, u128)> {
+    use crate::futhark_cost::{rendered6, trips6, CostTable6};
     let table = CostTable6::load(k).unwrap();
-    let reqs = requirements6(k);
-    type Found = Vec<(Charge6, u128, u128)>;
-    fn go(k: &Kingdom6, table: &CostTable6, reqs: &[&crate::futhark_table::Requirement6], n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>, out: &mut Found) {
+    type Found = Vec<(crate::typed_environment::Call, u128, u128)>;
+    fn go(k: &Kingdom6, table: &CostTable6, n: &crate::typed_environment::Node, mult: u128, sizes: &BTreeMap<String, usize>, out: &mut Found) {
         let n = rendered6(n);
         if n.substituted.is_some() {
             return;
         }
         let trips = trips6(k, n, sizes).unwrap();
-        let mut ops: Vec<_> = n.kids.iter().map(|c| rendered6(c).properties.clone()).collect();
-        for (body, by) in [(false, mult), (true, mult * trips.unwrap_or(1))] {
-            for c in adapters6(k, reqs, n, body, &mut ops).unwrap() {
-                let own = table.charge(k, &c, sizes).unwrap();
-                out.push((c, own, by));
-            }
+        let trip = k.trip(n.symbol);
+        for (at, c) in k.decoder.node_calls(n).unwrap() {
+            let by = if at.is_some() && at == trip { mult * trips.unwrap_or(1) } else { mult };
+            let own = table.call(k, &c, sizes).unwrap();
+            out.push((c, own, by));
         }
-        let trip = k.symbols[n.symbol as usize].trip;
         for (i, c) in n.kids.iter().enumerate() {
-            go(k, table, reqs, c, if trip == Some(i as u32) { mult * trips.unwrap_or(1) } else { mult }, sizes, out);
+            go(k, table, c, if trip == Some(i as u32) { mult * trips.unwrap_or(1) } else { mult }, sizes, out);
         }
     }
     let mut out = Vec::new();
-    go(k, &table, &reqs, &d.root, 1, sizes, &mut out);
-    let mut root = rendered6(&d.root).properties.clone();
-    for o in d.root_outcomes.iter().filter(|o| !o.holds) {
-        let source = Some((k.root.data_type, root.clone()));
-        root.insert(k.root.requires[o.requirement].property.clone(), o.against().clone());
-        let c = Charge6 { adapter: o.adapter_name().to_string(), operand: None, fitted: Some((k.root.data_type, root.clone())), source };
-        let own = table.charge(k, &c, sizes).unwrap();
+    go(k, &table, &d.root, 1, sizes, &mut out);
+    for c in k.decoder.calls(&k.entry, d).unwrap().into_iter().filter(|c| c.path.is_none()) {
+        let own = table.call(k, &c, sizes).unwrap();
         out.push((c, own, 1));
     }
     out
@@ -325,9 +339,8 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
     let mut report = String::new();
     for (v, view6) in VIEWS6.iter().enumerate() {
         let (k, i6) = interp6(view6);
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
         let trees = random_trees(&k, view6, n, 0xc0de_0000 + v as u64);
-        let texts: Vec<String> = trees.iter().map(|t| renderer.program(t).unwrap().text).collect();
+        let texts: Vec<String> = trees.iter().map(|t| k.program(t).unwrap().text).collect();
         let cases = run_cases(&k, view6);
         let dir = std::env::temp_dir().join(format!("fuller_f3_{view6}_{}", std::process::id()));
         let (mut exact, mut folded, mut adapted, mut cropped_runs) = (0usize, 0usize, 0usize, 0usize);
@@ -338,7 +351,7 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
             let exe = compile_c(&src, &dir.join(format!("c{c}"))).unwrap_or_else(|e| panic!("{view6} genes {base}..: futhark c: {e}"));
             for (i, text) in part.iter().enumerate() {
                 let g = base + i;
-                adapted += usize::from(text.contains("def fit") || text.contains("def clampix"));
+                adapted += usize::from(text.contains("def fit") || text.contains("def clampix") || text.contains("def fitrows"));
                 for case in &cases {
                     let over = i6.work_parts(&trees[g], &signature(&problem_of(view6).instance).unwrap().sizes(&case.inputs).unwrap()).unwrap().nodes > CAP_M3_MAX_NODE_EXECUTIONS_PER_SUBMIT;
                     let small;
@@ -375,25 +388,26 @@ fn a_hundred_random_genes_a_view_compile_on_c_and_equal_the_interpreter() {
 }
 
 /// AN ADAPTER COSTS MORE THAN ITS CLEAN FORM (the Fable review's guard, plan 7.5 risk 4): each gene with a failing
-/// requirement, against the same gene whose variable names a size or an array that satisfies it, at sizes where every
-/// size name has one value (so the adapter is needless and the two compute the same): its static cost's traffic and
-/// its work's node executions are both strictly more, by the adapter's charge.
+/// guard, against the same gene whose variable names a size or an array that satisfies it, at sizes where every size
+/// name has one value (so the adapter is needless and the two compute the same): its static cost's traffic and its
+/// work's node executions are both strictly more, by the adapter's charge; and so is a gene where evolution PLACED the
+/// adapter itself (design 3.3.1: the cost charges an adapter placed or called alike).
 #[test]
 fn a_gene_with_an_adapter_costs_more_than_the_same_gene_without() {
-    let pairs: [(&str, &str, &str, &str); 5] = [
-        ("kmeans", "fit.pair", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_k) centres)", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_n) centres)"),
-        ("kmeans", "fit.body", "(tabrows@m.f32[r] k d zeros_n)", "(tabrows@m.f32[r] k d zeros_d)"),
-        ("kmeans", "clampix", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 k))) centres)", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 n))) centres)"),
-        ("kmeans", "fit.state", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_k (map2.add@a.f32 zeros_n zeros_n)) centres)", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_n (map2.add@a.f32 zeros_n zeros_n)) centres)"),
-        ("histogram", "fit.pair", "(hist.add@a.i32 k zeros_n zeros_k)", "(hist.add@a.i32 k zeros_n zeros_n)"),
+    let pairs: [(&str, &str, &str, &str); 6] = [
+        ("kmeans", "fit@a.f32", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_k) centres)", "(let.a.f32@m.f32[w] (map2.add@a.f32 zeros_n zeros_n) centres)"),
+        ("kmeans", "fit@a.f32", "(tabrows@m.f32[r] k d zeros_n)", "(tabrows@m.f32[r] k d zeros_d)"),
+        ("kmeans", "clampix@i64", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 k))) centres)", "(let.a.f32@m.f32[w] (replicate@a.f32 n (get@f32 zeros_n (last@i64 n))) centres)"),
+        ("kmeans", "fit@a.f32", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_k (map2.add@a.f32 zeros_n zeros_n)) centres)", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n zeros_n (map2.add@a.f32 zeros_n zeros_n)) centres)"),
+        ("histogram", "fit@a.i32", "(hist.add@a.i32 k zeros_n zeros_k)", "(hist.add@a.i32 k zeros_n zeros_n)"),
+        ("kmeans", "fit@a.f32", "(let.a.f32@m.f32[w] (fit@a.f32 n zeros_n) centres)", "(let.a.f32@m.f32[w] zeros_n centres)"),
     ];
     for (view6, adapter, with, without) in pairs {
         let (k, i6) = interp6(view6);
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
         let (a, b) = (build6(&k, with).unwrap(), build6(&k, without).unwrap());
-        let (pa, pb) = (renderer.program(&a).unwrap(), renderer.program(&b).unwrap());
-        assert!(pa.adapters.iter().any(|(_, x)| x == adapter) && pb.adapter_free(), "{with}: {:?}; {without}: {:?}", pa.adapters, pb.adapters);
-        let sizes: BTreeMap<String, usize> = k.variables.iter().filter(|v| v.kind == "size").map(|v| (v.name.clone(), 4)).collect();
+        let (pa, pb) = (k.program(&a).unwrap(), k.program(&b).unwrap());
+        assert!(pa.adapters.iter().any(|(_, x, _)| x == adapter) && pb.adapter_free(), "{with}: {:?}; {without}: {:?}", pa.adapters, pb.adapters);
+        let sizes: BTreeMap<String, usize> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| (l.name.clone(), 4)).collect();
         let (ca, cb) = (i6.static_cost(&a, &sizes).unwrap().unwrap(), i6.static_cost(&b, &sizes).unwrap().unwrap());
         let (wa, wb) = (i6.work_parts(&a, &sizes).unwrap(), i6.work_parts(&b, &sizes).unwrap());
         assert!(ca.traffic > cb.traffic && wa.nodes > wb.nodes, "{adapter}: with {ca:?} {wa:?}, without {cb:?} {wb:?}");
@@ -424,20 +438,21 @@ fn an_adapters_own_charge_covers_its_full_traffic_at_every_size() {
     let (mut shorter, mut equal, mut longer, mut other) = (0usize, 0usize, 0usize, 0usize);
     for (view6, text) in genes {
         let (k, _) = interp6(view6);
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
-        let d = renderer.decode(&build6(&k, text).unwrap()).unwrap();
-        let names: Vec<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
+        let d = k.decode(&build6(&k, text).unwrap()).unwrap();
+        let names: Vec<String> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| l.name.clone()).collect();
         for values in settings {
             let sizes: BTreeMap<String, usize> = names.iter().cloned().zip(values).collect();
             let charges = adapter_charges(&k, &d, &sizes);
             assert!(!charges.is_empty(), "{text}: no adapter renders");
             for (c, own, _) in charges {
                 assert!(own > 0, "{text} at {sizes:?}: {} is charged nothing", c.adapter);
-                let Some(((ts, ps), (tf, pf))) = c.source.as_ref().zip(c.fitted.as_ref()) else {
+                if !c.adapter.starts_with("fit") {
                     other += 1;
                     continue;
-                };
-                let (read, write) = (crate::futhark_cost::cells6(&k, *ts, ps, &sizes).unwrap(), crate::futhark_cost::cells6(&k, *tf, pf, &sizes).unwrap());
+                }
+                let s = k.symbol_named(&c.adapter).unwrap();
+                let (ts, tf) = (k.inputs(s)[1], k.output(s));
+                let (read, write) = (crate::futhark_cost::cells6(&k, ts, &c.args[1], &sizes).unwrap(), crate::futhark_cost::cells6(&k, tf, &c.out, &sizes).unwrap());
                 assert!(own >= read + write, "{text} at {sizes:?}: {} is charged {own}, reads {read} and writes {write}", c.adapter);
                 match write.cmp(&read) {
                     std::cmp::Ordering::Less => shorter += 1,
@@ -499,41 +514,6 @@ fn the_zero_fold_is_allowed_only_where_a_zero_dividend_reached_the_cell() {
     assert_eq!(agreement(&zeroed, &want, || eval_folded(&i6, &nan_of_sqrt, &inputs)).unwrap(), Agreement::Differs, "a zero for a NaN of a sqrt, in a program that divides");
 }
 
-/// A `?` LENGTH IS CHARGED AT THE LARGEST SIZE IN SCOPE (F3 review finding 5): a view with a row of `?` length (a
-/// scan whose result's length the table leaves unknown, as a `filter`'s is) gives F2's `?` programs, a `map2` over
-/// two `?`-length operands, a loop of `?` state length and a body of `?` length; each has a work, a static cost and a
-/// value, and none is cheaper than the same program with every `?` length the largest size, known (a `?` is charged
-/// that size, plus the adapters that fit it).
-#[test]
-fn a_question_mark_length_is_charged_at_the_largest_size_in_scope() {
-    let v = crate::futhark_view::master6::committed("kmeans").unwrap();
-    let rows = v.symbols_tsv.lines().count() - 1;
-    let spelling = v.symbols_tsv.lines().find(|l| l.split('\t').nth(1) == Some("M0030")).and_then(|l| l.split('\t').nth(10)).unwrap().to_string();
-    let symbols = format!("{}{rows}\tM0030\tqscan@a.f32\tfunction\t[]f32\t[]f32\tlen=?\t\t\t\t{spelling}\n", v.symbols_tsv);
-    let k = Arc::new(Kingdom6::from_tables("kmeans_unknown", &v.datatypes_tsv, &symbols, &v.environment_tsv, crate::futhark_view::master6::ADAPTERS6, &v.spec.literals).unwrap());
-    let i6 = Interp::new6(&k, &signature(&problem_of("kmeans").instance).unwrap()).unwrap();
-    let (n, kk, d) = (5usize, 3usize, 2usize);
-    let inputs = [Array::f32s(vec![n, d], vec![0.5; n * d]), Array::f32s(vec![kk, d], vec![0.25; kk * d])];
-    let sizes: BTreeMap<String, usize> = [("n", n), ("k", kk), ("d", d)].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
-    let programs = [
-        ("a map2 over two ? lengths", "(let.a.f32@m.f32[w] (map2.add@a.f32 (qscan@a.f32 zeros_n) (qscan@a.f32 zeros_n)) centres)", "(let.a.f32@m.f32[w] (map2.add@a.f32 (scan.add@a.f32 zeros_n) (scan.add@a.f32 zeros_n)) centres)"),
-        ("a loop of ? state length", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n (qscan@a.f32 zeros_n) (map2.add@a.f32 s s)) centres)", "(let.a.f32@m.f32[w] (loop@a.f32[s,i] n (scan.add@a.f32 zeros_n) (map2.add@a.f32 s s)) centres)"),
-        ("a body of ? length", "(tabrows@m.f32[r] k d (qscan@a.f32 zeros_n))", "(tabrows@m.f32[r] k d (scan.add@a.f32 zeros_n))"),
-    ];
-    for (name, unknown, known) in programs {
-        let t = build6(&k, unknown).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let w = i6.work_parts(&t, &sizes).unwrap_or_else(|e| panic!("{name}: the work: {e}"));
-        let c = i6.static_cost(&t, &sizes).unwrap_or_else(|e| panic!("{name}: the static cost: {e}")).unwrap();
-        i6.eval(&t, &inputs).unwrap_or_else(|e| panic!("{name}: the value: {e}"));
-        // Every `?` is a scan of zeros_n here, of the largest size n: the program with `scan.add` (its length n) reads and
-        // writes as much, but renders no adapter where the `?` one fits to its own length; so the `?` one is no cheaper.
-        let tk = build6(&k, known).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let (wk, ck) = (i6.work_parts(&tk, &sizes).unwrap(), i6.static_cost(&tk, &sizes).unwrap().unwrap());
-        assert!(w.nodes >= wk.nodes && c.traffic >= ck.traffic, "{name}: with ? {w:?} {c:?}, at the largest size {wk:?} {ck:?}");
-        eprintln!("{name}: node executions {} (at the largest size, no adapter {}), traffic {} ({})", w.nodes, wk.nodes, c.traffic, ck.traffic);
-    }
-}
-
 /// THE TEXT FORM BUILDS BACK (phylu P3, d73ca669): 1,000 random genes of every master 6 view print in the text form
 /// ([`sexp6`], the ledger's, the hall of fame's and the checkpoint's) to a text that [`build6`] reads back to a tree
 /// that renders the same Futhark text, the genes with a `var.T` reading `T`'s constant (`var@i64`) among them.
@@ -542,13 +522,12 @@ fn a_thousand_random_genes_a_view_print_to_a_text_that_builds_back_to_the_same_p
     let n = 1000;
     for (v, view6) in VIEWS6.iter().enumerate() {
         let k = kingdom6(view6).unwrap_or_else(|e| panic!("{view6}: {e}"));
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
         let mut constants = 0usize;
         for (g, tree) in random_trees(&k, view6, n, 0x7e47_0000 + v as u64).iter().enumerate() {
             let text = sexp6(&k, tree).unwrap_or_else(|e| panic!("{view6} gene {g}: {e}"));
             constants += usize::from(text.split([' ', '(', ')']).any(|w| w.starts_with("var@")));
             let back = build6(&k, &text).unwrap_or_else(|e| panic!("{view6} gene {g}: {text}: {e}"));
-            assert_eq!(renderer.program(&back).unwrap().text, renderer.program(tree).unwrap().text, "{view6} gene {g}: {text}");
+            assert_eq!(k.program(&back).unwrap().text, k.program(tree).unwrap().text, "{view6} gene {g}: {text}");
             assert_eq!(sexp6(&k, &back).unwrap(), text, "{view6} gene {g}");
         }
         eprintln!("{view6}: {n} of {n} built back to the same program, {constants} with a var@T reading its constant");
@@ -566,44 +545,40 @@ fn a_var_constant_leaf_where_a_variable_of_its_type_is_in_scope_is_not_built() {
     assert!(e.contains("var@i64") && e.contains("in scope"), "{e}");
 }
 
-/// THE COST TABLE IS THE SINGLE SOURCE OF AN ADAPTER'S CHARGE (F3 fix 57de2f98's note): every `fit` line of
-/// `master/6/costs.tsv` charges `fitted.cells+source.cells` (the cells it writes and the cells it reads of its
-/// operand), `clampix` 2 and a substitution 0, and every adapter of [`ADAPTED_GENES`] at the four
-/// [`SIZE_SETTINGS`] is charged exactly what 57de2f98 charged in code: a `fit` its fitted cells plus its source's,
-/// `clampix` 2.
+/// THE COST TABLE IS THE SINGLE SOURCE OF AN ADAPTER'S CHARGE: every adapter row of `master/6/costs.tsv` charges its
+/// traffic (`out.cells+in1.cells` for every `fit`, the cells it writes and the cells it reads of its operand;
+/// `clampix` 2), no other row any, and every call of every adapter of [`ADAPTED_GENES`] at the four [`SIZE_SETTINGS`]
+/// is charged exactly that: a `fit` its fitted cells plus its operand's, `clampix` 2.
 #[test]
-fn every_adapters_charge_is_the_cost_tables_and_unchanged() {
+fn every_adapters_charge_is_the_cost_tables() {
     let table = include_str!("../../kingdoms/futhark/master/6/costs.tsv");
-    let lines: Vec<Vec<&str>> = table.lines().map(|l| l.split('\t').collect()).filter(|f: &Vec<&str>| f[0] == "adapter").collect();
-    assert!(!lines.is_empty());
-    for f in &lines {
-        let want = if f[2].starts_with("fit") { "fitted.cells+source.cells" } else if f[2] == "clampix" { "2" } else { "0" };
+    let lines: Vec<Vec<&str>> = table.lines().skip(1).map(|l| l.split('\t').collect()).collect();
+    let adapters: Vec<&Vec<&str>> = lines.iter().filter(|f| f[8] != "0").collect();
+    assert_eq!(adapters.iter().map(|f| f[1]).collect::<Vec<_>>(), ["M0090", "M0091", "M0092", "M0093"], "only the adapter rows add traffic");
+    for f in &adapters {
+        let want = if f[2].starts_with("fit") { "out.cells+in1.cells" } else { "2" };
         assert_eq!(f[8], want, "the adapter {}'s line in master/6/costs.tsv", f[2]);
     }
     let (mut fits, mut clamps) = (0usize, 0usize);
     for (view6, text) in ADAPTED_GENES {
         let k = kingdom6(view6).unwrap();
-        let renderer = k.renderer6(crate::futhark_table::Header6::of_spec(&crate::futhark_view::master6::committed(view6).unwrap().spec)).unwrap();
-        let d = renderer.decode(&build6(&k, text).unwrap()).unwrap();
-        let names: Vec<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
+        let d = k.decode(&build6(&k, text).unwrap()).unwrap();
+        let names: Vec<String> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| l.name.clone()).collect();
         for values in SIZE_SETTINGS {
             let sizes: BTreeMap<String, usize> = names.iter().cloned().zip(values).collect();
             for (c, own, _) in adapter_charges(&k, &d, &sizes) {
-                let was = match (&c.source, &c.fitted) {
-                    (Some((ts, ps)), Some((tf, pf))) if c.adapter.starts_with("fit") => {
-                        fits += 1;
-                        crate::futhark_cost::cells6(&k, *tf, pf, &sizes).unwrap() + crate::futhark_cost::cells6(&k, *ts, ps, &sizes).unwrap()
-                    }
-                    (None, None) if c.adapter == "clampix" => {
-                        clamps += 1;
-                        2
-                    }
-                    _ => panic!("{text}: an adapter the charge does not cover: {c:?}"),
+                let s = k.symbol_named(&c.adapter).unwrap();
+                let was = if c.adapter.starts_with("fit") {
+                    fits += 1;
+                    crate::futhark_cost::cells6(&k, k.output(s), &c.out, &sizes).unwrap() + crate::futhark_cost::cells6(&k, k.inputs(s)[1], &c.args[1], &sizes).unwrap()
+                } else {
+                    clamps += 1;
+                    2
                 };
                 assert_eq!(own, was, "{text} at {sizes:?}: {}", c.adapter);
             }
         }
     }
     assert!(fits > 0 && clamps > 0, "fits {fits}, clampix {clamps}");
-    eprintln!("adapters charged as before, from the table: {fits} fits, {clamps} clampix");
+    eprintln!("adapters charged from the table: {fits} fits, {clamps} clampix");
 }

@@ -1,5 +1,6 @@
 # data type	sort
 f32	Sf32
+size	Ssize
 []f32	Sa_f32
 [][]f32	Sm_f32
 []f32 -> []f32	Sfn_arr_f32_arr_f32

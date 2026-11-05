@@ -52,3 +52,5 @@
 (constructor Xvar__a_i32 (i64 i64) Sa_i32)
 (constructor Kvar__a_i32 () Sa_i32)
 (constructor Xnextin__i64 (Ssize Si64) Si64)
+(constructor Xfit__a_i32 (Ssize Sa_i32) Sa_i32)
+(constructor Xclampix__i64 (Ssize Si64) Si64)

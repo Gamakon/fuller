@@ -1,5 +1,0 @@
-kind	name	data_type	properties	requires
-root	main	[]i32	len=n	out.len = n -> fit.root
-input	xs	[]i32	len=n	
-zeros	zeros_n	[]i32	len=n	
-size	n	size	value=n	

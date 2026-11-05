@@ -1,8 +1,10 @@
 //! MASTER 6's INTERPRETER AND WORK (plan section 7, task F3). The meaning of a master 6 gene on the host, read from
 //! its DECODING (`crate::typed_environment`, passes 2 to 4), never from the types: a variable is the binder its
-//! environment names, a length or a bound is a property evaluated at the case's sizes, and every adapter the decoding
-//! says renders is applied as the renderer spells it (`futhark_table::Render6`): `fit` takes the first elements of
-//! its operand and pads with zeros, `clampix` clamps an index into its array, a substituted node is its substitute.
+//! environment names, a length or a bound is a property evaluated at the case's sizes, and a substituted node is its
+//! substitute. Every symbol means what its master row means, the ADAPTERS included (`fit` takes the first elements of
+//! its operand and pads with zeros, `clampix` clamps an index into its array): evolution may place them as nodes, and
+//! a repair's template calls them, which this interpreter EXECUTES as the renderer renders it
+//! ([`crate::typed_environment::Decoder::exec`]). Nothing here is matched on an adapter's name.
 //! The arithmetic is master 5's ([`super::Num`]): Futhark's, bit for bit.
 //!
 //! THE INTERPRETER CHECKS WHAT FUTHARK CHECKS: an index in its array's range, the two arrays of a `map2` (a histogram,
@@ -12,21 +14,22 @@
 //! different value. Every such error is "our software has a bug".
 //!
 //! THE WORK ([`Interp6::work_parts`]) is master 5's measure (`Interp::work_parts`) with every size read from the
-//! properties, and every adapter charged where it renders (`futhark_cost::adapters6`, the renderer's decision): a
-//! `fit` the cells it writes, `clampix` its two compares, counted in [`Work::nodes`], the measure phylu's per-submit
-//! cap reads (`submit_work_of`), a `fit` also the cells it reads of its operand. A size leaf costs nothing (it is a name, as master 5's row names hold their sizes),
-//! so a reference program's work is master 5's.
+//! properties, and every adapter charged by its row's traffic wherever it is, placed or called by a repair
+//! (`futhark_cost::calls6`): a `fit` the cells it writes and reads, `clampix` its two compares, counted in
+//! [`Work::nodes`], the measure phylu's per-submit cap reads (`submit_work_of`). A size leaf costs nothing (it is a
+//! name, as master 5's row names hold their sizes), so a reference program's work is master 5's.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::{Array, Bin, Elem, Num, Signature, Val, View, Work};
-use crate::futhark_cost::{adapters6, program_cost6, rendered6, requirements6, size6, trips6, CostTable6, Score};
+use crate::futhark_cost::{calls6, program_cost6, rendered6, size6, trips6, CostTable6, Score};
 use crate::futhark_interpreter::{Row2Fn, RowFn};
-use crate::futhark_table::{Kind6, Kingdom6};
-use crate::futhark_table::{Requirement6, Site6, Subject6};
-use crate::geneframe::{DataKind, PropertyExpr, Ty};
-use crate::typed_environment::{Binder, Choice, Decoder, Decoding, Entry, Node, Outcome, Substitution};
+use crate::futhark_table::Kingdom6;
+use crate::geneframe::{DataKind, PropertyExpr, Role, Ty};
+use crate::kingdom_contract::SymbolId;
+use crate::typed_environment::template::Exec;
+use crate::typed_environment::{Binder, Choice, Decoding, Node, Step, Substitution};
 use crate::typed_gep::Tree;
 
 /// What a master 6 row does, parsed once from its master row (`ref`) and its data types.
@@ -77,6 +80,28 @@ enum Op6 {
     Var,
     /// The data type's constant (`zero` of a tuple, M0088's leafless constant).
     Constant,
+    /// The adapter `fit` along a property: exactly a length (`len`), a number of rows, a row length.
+    Fit(Along),
+    /// The adapter `clampix`: an index clamped into an array's length.
+    Clampix,
+}
+
+/// What a `fit` fits: an array's length, a matrix's rows, every row's length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Along {
+    Len,
+    Rows,
+    Cols,
+}
+
+impl Along {
+    fn property(self) -> &'static str {
+        match self {
+            Along::Len => "len",
+            Along::Rows => "rows",
+            Along::Cols => "cols",
+        }
+    }
 }
 
 /// What the shape check reads of a data type, gathered once: an array's element and property names in order, an
@@ -99,16 +124,13 @@ enum Source6 {
     Size(String),
 }
 
-/// The interpreter of one master 6 view, prepared once: its decoder and entry, each symbol's meaning and literals, the
-/// requirement rows, the root's sources, and the cost table.
+/// The interpreter of one master 6 view, prepared once: its kingdom (tables, entry, decoder), each symbol's meaning and
+/// literals, the root's sources, and the cost table.
 pub(super) struct Interp6 {
     k: Arc<Kingdom6>,
     sig: Arc<Signature>,
-    decoder: Decoder,
-    entry: Entry,
     ops: Vec<Op6>,
     literals: Vec<Vec<Num>>,
-    reqs: Vec<Requirement6>,
     roots: Vec<Source6>,
     costs: CostTable6,
     shapes: Vec<Shape6>,
@@ -131,19 +153,21 @@ fn elem6(k: &Kingdom6, ty: Ty) -> Result<Elem, String> {
 }
 
 /// The meaning of one symbol, by its master row.
-fn op6(k: &Kingdom6, s: &crate::futhark_table::Symbol6) -> Result<Op6, String> {
-    let out = || elem6(k, s.output);
+fn op6(k: &Kingdom6, s: SymbolId) -> Result<Op6, String> {
+    let name = k.name(s).to_string();
+    let out = || elem6(k, k.output(s));
     let arity = || -> Result<usize, String> {
-        let n = match &k.data_type(s.output).ok_or_else(|| bug(k, format!("{} has no data type", s.name)))?.kind {
+        let n = match &k.data_type(k.output(s)).ok_or_else(|| bug(k, format!("{name} has no data type")))?.kind {
             DataKind::Tuple { components } => components.len(),
             _ => 1,
         };
-        if s.binds.len() != n + 1 {
-            return Err(bug(k, format!("the loop {} binds {} variables, wants its state's {n} and its counter", s.name, s.binds.len())));
+        let bound = k.binds(s)?.map_or(0, |(_, c)| c);
+        if bound != n + 1 {
+            return Err(bug(k, format!("the loop {name} binds {bound} variables, wants its state's {n} and its counter")));
         }
         Ok(n)
     };
-    Ok(match s.reference.as_str() {
+    Ok(match k.reference(s) {
         "M0001" => Op6::Bin(Bin::Add),
         "M0002" => Op6::Bin(Bin::Sub),
         "M0003" => Op6::Bin(Bin::Mul),
@@ -208,20 +232,12 @@ fn op6(k: &Kingdom6, s: &crate::futhark_table::Symbol6) -> Result<Op6, String> {
         "M0075" | "M0076" => Op6::Cvt(out()?),
         "M0085" => Op6::Let,
         "M0087" => Op6::Var,
-        other => return Err(bug(k, format!("the row {} ({other}) has no meaning in the interpreter", s.name))),
+        "M0090" => Op6::Fit(Along::Len),
+        "M0091" => Op6::Fit(Along::Rows),
+        "M0092" => Op6::Fit(Along::Cols),
+        "M0093" => Op6::Clampix,
+        other => return Err(bug(k, format!("the row {name} ({other}) has no meaning in the interpreter"))),
     })
-}
-
-/// The extent of an array value along a property (`len` and `rows` its outer length, `cols` its inner), and a size's
-/// `value`.
-fn extent(k: &Kingdom6, v: &Val, p: &str) -> Result<i64, String> {
-    match (v, p) {
-        (Val::A(a), "len") if a.dims.len() == 1 => Ok(a.dims[0] as i64),
-        (Val::A(a), "rows") if a.dims.len() == 2 => Ok(a.dims[0] as i64),
-        (Val::A(a), "cols") if a.dims.len() == 2 => Ok(a.dims[1] as i64),
-        (Val::I(i), "value") => Ok(*i),
-        _ => Err(bug(k, format!("the property {p} is read of {v:?}"))),
-    }
 }
 
 /// THE ADAPTER `fit` on a value: exactly `l` along `p` (`len` or `rows`: the first `l` elements or rows, padded with
@@ -256,50 +272,58 @@ fn fit(k: &Kingdom6, v: &Val, p: &str, l: i64) -> Result<Val, String> {
 impl Interp6 {
     /// The interpreter of a master 6 kingdom whose case inputs are `sig`'s (its master 5 instance's signature).
     pub(super) fn new(k: &Arc<Kingdom6>, sig: &Arc<Signature>) -> Result<Interp6, String> {
-        let tables = k.tables()?;
-        let contract = k.contract()?;
-        let decoder = Decoder::from_arcs(Arc::new(tables), Arc::new(contract)).map_err(|d| d.join("\n"))?;
-        let entry = Entry::of_kingdom6(k);
-        let ops = k.symbols.iter().map(|s| op6(k, s)).collect::<Result<Vec<_>, _>>()?;
-        let mut literals = Vec::with_capacity(k.symbols.len());
-        for s in &k.symbols {
-            literals.push(if s.kind == Kind6::Const {
-                let elem = elem6(k, s.output)?;
-                let d = k.data_type(s.output).ok_or_else(|| bug(k, format!("{} has no data type", s.name)))?;
-                d.literals.iter().map(|l| Num::parse(elem, l.trim_end_matches(elem.name()))).collect::<Result<Vec<_>, _>>()?
+        let n = k.contract.n_symbols() as SymbolId;
+        let ops = (0..n).map(|s| op6(k, s)).collect::<Result<Vec<_>, _>>()?;
+        let mut literals = Vec::with_capacity(n as usize);
+        for s in 0..n {
+            literals.push(if k.role(s) == Role::Constant {
+                let elem = elem6(k, k.output(s))?;
+                k.literals(s).iter().map(|l| Num::parse(elem, l.trim_end_matches(elem.name()))).collect::<Result<Vec<_>, _>>()?
             } else {
                 Vec::new()
             });
         }
+        // The root's sources: a size (its data type carries `value`), a zero array (the signature's), an input.
         let mut roots = Vec::new();
-        for v in &k.variables {
-            roots.push(match v.kind.as_str() {
-                "input" => Source6::Input(sig.inputs.iter().position(|p| p.name == v.name).ok_or_else(|| bug(k, format!("the input {} is not in the signature", v.name)))?),
-                "zeros" => Source6::Zeros { len: v.properties.iter().find(|(p, _)| p == "len").map(|(_, e)| e.clone()).ok_or_else(|| bug(k, format!("the zero array {} has no length", v.name)))?, elem: elem6(k, v.data_type)? },
-                "size" => Source6::Size(v.name.clone()),
-                other => return Err(bug(k, format!("a root variable of the kind {other}"))),
+        for v in &k.entry.parameters {
+            let zeros = k.spec.env.iter().any(|l| l.kind == "zeros" && l.name == v.name);
+            let given = |p: &str| v.properties.iter().find(|(q, _, _)| q == p).map(|(_, e, _)| e.clone());
+            roots.push(if k.tables.carried(v.data_type, "value").is_some() {
+                Source6::Size(v.name.clone())
+            } else if zeros {
+                Source6::Zeros { len: given("len").ok_or_else(|| bug(k, format!("the zero array {} has no length", v.name)))?, elem: elem6(k, v.data_type)? }
+            } else {
+                Source6::Input(sig.inputs.iter().position(|p| p.name == v.name).ok_or_else(|| bug(k, format!("the input {} is not in the signature", v.name)))?)
             });
         }
-        let reqs = requirements6(k).into_iter().cloned().collect();
         let costs = CostTable6::load(k)?;
-        let mut shapes = Vec::with_capacity(k.data_types.len());
-        for (i, d) in k.data_types.iter().enumerate() {
-            let ty = Ty::Futhark(i as u16);
+        let mut shapes = Vec::with_capacity(k.tables.data_types.len());
+        for d in &k.tables.data_types {
+            let carries = |p: &str| d.properties.iter().any(|x| x == p);
             shapes.push(match &d.kind {
-                DataKind::Array { .. } => Shape6::Array(elem6(k, ty)?, d.properties.iter().map(|(p, _)| p.clone()).collect()),
-                DataKind::Scalar if d.name == "i64" => Shape6::Index,
-                DataKind::Scalar if d.name == "size" => Shape6::Size,
-                DataKind::Scalar => Shape6::Scalar(elem6(k, ty)?),
+                DataKind::Array { .. } => Shape6::Array(elem6(k, d.id)?, d.properties.clone()),
+                DataKind::Scalar if carries("bound") => Shape6::Index,
+                DataKind::Scalar if carries("value") => Shape6::Size,
+                DataKind::Scalar => Shape6::Scalar(elem6(k, d.id)?),
                 DataKind::Tuple { components } => Shape6::Tuple(components.clone()),
                 DataKind::Function { parameters, .. } => Shape6::Function(parameters.len()),
             });
         }
-        Ok(Interp6 { k: Arc::clone(k), sig: Arc::clone(sig), decoder, entry, ops, literals, reqs, roots, costs, shapes })
+        Ok(Interp6 { k: Arc::clone(k), sig: Arc::clone(sig), ops, literals, roots, costs, shapes })
     }
 
     /// The decoding of an expressed tree (passes 2 to 4).
     pub(super) fn decode(&self, tree: &Tree) -> Result<Decoding, String> {
-        self.decoder.decode(&self.entry, tree)
+        self.k.decode(tree)
+    }
+
+    /// A data type's shape.
+    fn shape(&self, ty: Ty) -> Result<&Shape6, String> {
+        match ty {
+            Ty::Futhark(i) => self.shapes.get(usize::from(i)),
+            _ => None,
+        }
+        .ok_or_else(|| bug(&self.k, format!("{ty:?} is no data type")))
     }
 
     /// The value of an expressed tree on the inputs: the program's output, as Futhark computes it.
@@ -334,11 +358,12 @@ impl Interp6 {
         }
         let mut run = Run { me: self, sizes: &sizes, vars: vec![root], expect: std::collections::HashMap::new(), fold };
         let mut v = run.at(&d.root)?;
-        for o in d.root_outcomes.iter().filter(|o| !o.holds) {
-            let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
-            v = fit(&self.k, &v, &q.property, self.size(o.against(), &sizes)?)?;
+        for (_, t) in self.k.decoder.root_steps(&self.k.entry, &d)? {
+            let mut x = ValExec { me: self, sizes: &sizes, ops: Vec::new(), whole: Some(v), site: self.k.entry.output };
+            v = self.k.decoder.exec_root(&d, &t, &mut x)?;
         }
-        let want: Vec<usize> = self.k.root.properties.iter().map(|(_, e)| self.size(e, &sizes).map(|x| x as usize)).collect::<Result<_, _>>()?;
+        let out_dims: &[String] = &self.k.spec.output.2;
+        let want: Vec<usize> = out_dims.iter().map(|n| sizes.get(n).copied().ok_or_else(|| bug(&self.k, format!("the result's size {n} has no value")))).collect::<Result<_, _>>()?;
         match v {
             Val::A(a) if a.dims == want => Ok(Array { dims: a.dims.clone(), elem: a.elem, data: a.slice().to_vec() }),
             Val::S(x) if want.is_empty() => Ok(Array { dims: vec![], elem: x.elem(), data: vec![x.word()] }),
@@ -356,11 +381,11 @@ impl Interp6 {
     /// function.
     fn constant(&self, ty: Ty) -> Result<Val, String> {
         let d = self.k.data_type(ty).ok_or_else(|| bug(&self.k, format!("{ty:?} is no data type")))?;
-        Ok(match &d.kind {
-            DataKind::Scalar if d.name == "i64" => Val::I(0),
-            DataKind::Scalar if d.name == "size" => return Err(bug(&self.k, "the data type size has no constant".into())),
-            DataKind::Scalar => Val::S(Num::zero(elem6(&self.k, ty)?)),
-            DataKind::Array { element } => {
+        Ok(match (&d.kind, self.shape(ty)?) {
+            (_, Shape6::Index) => Val::I(0),
+            (_, Shape6::Size) => return Err(bug(&self.k, format!("the data type {} has no constant", d.name))),
+            (DataKind::Scalar, _) => Val::S(Num::zero(elem6(&self.k, ty)?)),
+            (DataKind::Array { element }, _) => {
                 let dims = match self.k.data_type(*element).map(|e| &e.kind) {
                     Some(DataKind::Scalar) => vec![1],
                     Some(DataKind::Array { .. }) => vec![1, 1],
@@ -368,8 +393,8 @@ impl Interp6 {
                 };
                 Val::A(View::of(vec![0], dims, elem6(&self.k, ty)?))
             }
-            DataKind::Tuple { components } => Val::Tup(components.iter().map(|c| self.constant(*c)).collect::<Result<_, _>>()?),
-            DataKind::Function { parameters, .. } => match parameters.len() {
+            (DataKind::Tuple { components }, _) => Val::Tup(components.iter().map(|c| self.constant(*c)).collect::<Result<_, _>>()?),
+            (DataKind::Function { parameters, .. }, _) => match parameters.len() {
                 1 => Val::F(RowFn::Zero),
                 2 => Val::F2(Row2Fn::Zero2),
                 n => return Err(bug(&self.k, format!("a row function of {n} parameters"))),
@@ -380,11 +405,7 @@ impl Interp6 {
     /// THE SHAPE CHECK's expectation of a node at `sizes` (`Run::at` checks every value against it): an array's
     /// element and lengths, an index at least 0 and below its bound, a size its value.
     fn expect(&self, ty: Ty, props: &BTreeMap<String, PropertyExpr>, sizes: &BTreeMap<String, usize>) -> Result<Expect6, String> {
-        let shape = match ty {
-            Ty::Futhark(i) => self.shapes.get(usize::from(i)),
-            _ => None,
-        }
-        .ok_or_else(|| bug(&self.k, format!("{ty:?} is no data type")))?;
+        let shape = self.shape(ty)?;
         let known = |p: &str| -> Result<Option<i64>, String> { props.get(p).map_or(Ok(None), |e| size6(e, sizes)) };
         Ok(match shape {
             Shape6::Array(elem, names) => Expect6::Array(*elem, names.iter().map(|p| known(p)).collect::<Result<_, _>>()?),
@@ -398,11 +419,7 @@ impl Interp6 {
 
     /// A value against its data type and properties (a tuple's components).
     fn check_of(&self, ty: Ty, props: &BTreeMap<String, PropertyExpr>, v: &Val, sizes: &BTreeMap<String, usize>) -> Result<(), String> {
-        let shape = match ty {
-            Ty::Futhark(i) => self.shapes.get(usize::from(i)),
-            _ => None,
-        }
-        .ok_or_else(|| bug(&self.k, format!("{ty:?} is no data type")))?;
+        let shape = self.shape(ty)?;
         let known = |p: &str| -> Result<Option<i64>, String> { props.get(p).map_or(Ok(None), |e| size6(e, sizes)) };
         let fine = match (shape, v) {
             (Shape6::Array(elem, names), Val::A(a)) => {
@@ -450,39 +467,33 @@ impl Interp6 {
     /// cells (a product times its inner length); a size leaf nothing. [`Work::state`]: master 5's loop state traffic.
     pub(super) fn work_parts(&self, tree: &Tree, sizes: &BTreeMap<String, usize>) -> Result<Work, String> {
         let d = self.decode(tree)?;
-        let reqs: Vec<&Requirement6> = self.reqs.iter().collect();
         let mut w = Work::default();
-        self.walk(&d.root, 1, sizes, &reqs, &mut w)?;
-        let mut root = rendered6(&d.root).properties.clone();
-        for o in d.root_outcomes.iter().filter(|o| !o.holds) {
-            let q = self.k.root.requires.get(o.requirement).ok_or_else(|| bug(&self.k, format!("the entry has no requirement {}", o.requirement)))?;
-            let source = Some((self.k.root.data_type, root.clone()));
-            root.insert(q.property.clone(), o.against().clone());
-            w.nodes += self.costs.charge(&self.k, &crate::futhark_cost::Charge6 { adapter: o.adapter_name().to_string(), operand: None, fitted: Some((self.k.root.data_type, root.clone())), source }, sizes)?;
+        self.walk(&d.root, 1, sizes, &mut w)?;
+        for c in self.k.decoder.calls(&self.k.entry, &d)?.iter().filter(|c| c.path.is_none()) {
+            w.nodes += self.costs.call(&self.k, c, sizes)?;
         }
         Ok(w)
     }
 
-    fn walk(&self, n: &Node, mult: u128, sizes: &BTreeMap<String, usize>, reqs: &[&Requirement6], w: &mut Work) -> Result<(), String> {
+    fn walk(&self, n: &Node, mult: u128, sizes: &BTreeMap<String, usize>, w: &mut Work) -> Result<(), String> {
         let n = rendered6(n);
         if n.substituted.is_some() {
             w.nodes += mult;
             return Ok(());
         }
-        if self.k.data_type(n.data_type).is_some_and(|d| d.name == "size") {
+        if matches!(self.shape(n.data_type)?, Shape6::Size) {
             return Ok(());
         }
         let op = self.ops[n.symbol as usize];
         let cells = |ty: Ty, props: &BTreeMap<String, PropertyExpr>| crate::futhark_cost::cells6(&self.k, ty, props, sizes);
-        let mut ops: Vec<BTreeMap<String, PropertyExpr>> = n.kids.iter().map(|c| rendered6(c).properties.clone()).collect();
+        let ops = self.k.decoder.adapted_operands(n)?;
         let trips = trips6(&self.k, n, sizes)?;
-        let mut adapters = 0u128;
-        for (body, by) in [(false, 1), (true, trips.unwrap_or(1))] {
-            for c in adapters6(&self.k, reqs, n, body, &mut ops)? {
-                adapters += self.costs.charge(&self.k, &c, sizes)? * by;
-            }
+        let mut adapters = calls6(&self.k, &self.costs, n, false, sizes)? + calls6(&self.k, &self.costs, n, true, sizes)? * trips.unwrap_or(1);
+        if matches!(op, Op6::Fit(_) | Op6::Clampix) {
+            let args: Vec<crate::futhark_cost::Valued6> = n.kids.iter().map(|c| (c.data_type, c.properties.clone())).collect();
+            adapters += self.costs.traffic(&self.k, self.k.reference(n.symbol), &args, &(n.data_type, n.properties.clone()), sizes)?;
         }
-        let kid_ty = |i: usize| n.kids.get(i).map(|c| c.data_type).ok_or_else(|| bug(&self.k, format!("a node of {} has no argument {i}", self.k.symbols[n.symbol as usize].name)));
+        let kid_ty = |i: usize| n.kids.get(i).map(|c| c.data_type).ok_or_else(|| bug(&self.k, format!("a node of {} has no argument {i}", self.k.name(n.symbol))));
         let own = match op {
             Op6::Replicate(_) | Op6::Hist(..) | Op6::HistRows(_) | Op6::Transpose | Op6::MapRows | Op6::Map2Rows => 1 + cells(n.data_type, &n.properties)?,
             Op6::Matmul => {
@@ -504,10 +515,10 @@ impl Interp6 {
         if let (Op6::Loop { arity, .. }, Some(t)) = (op, trips) {
             w.state += mult * t * self.state_cells(n, arity, sizes)?;
         }
-        let trip = self.k.symbols[n.symbol as usize].trip;
+        let trip = self.k.trip(n.symbol);
         for (i, c) in n.kids.iter().enumerate() {
             let m = if trip == Some(i as u32) { mult * trips.unwrap_or(1) } else { mult };
-            self.walk(c, m, sizes, reqs, w)?;
+            self.walk(c, m, sizes, w)?;
         }
         Ok(())
     }
@@ -528,7 +539,8 @@ impl Interp6 {
         if own_state || (same(body, start) && !reads(body, depth)) {
             return Ok(0);
         }
-        let fitted = n.outcomes.iter().any(|o| !o.holds && o.adapter_name() == "fit.state");
+        // A body a repair fitted to the state writes a fresh array (its `fit`).
+        let fitted = self.k.decoder.steps(n).iter().any(|st| matches!(st, Step::Operand { k: 2, .. }));
         let fresh = |b: &Node| -> bool {
             let b = rendered6(b);
             b.substituted.is_none()
@@ -670,79 +682,34 @@ impl Run<'_> {
         }
     }
 
-    /// The failing requirements of a node whose adapter runs at the body (`body`) or at the node, applied to its
-    /// operands in the renderer's order (the others first, `clampix` last).
+    /// THE REPAIRS OF A NODE THAT REWRITE ITS OPERANDS, executed as the renderer renders them: those in its trip
+    /// argument (`body`: once a trip, on the body's value) or the others (before the node applies).
     fn adapt(&self, n: &Node, body: bool, ops: &mut [Val]) -> Result<(), String> {
-        let k = &self.me.k;
-        let at_body = |name: &str| k.adapters.iter().find(|a| a.name == name).map(|a| a.runs_at == Site6::Body);
-        let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() != "clampix").chain(n.outcomes.iter().filter(|o| !o.holds && o.adapter_name() == "clampix")).collect();
-        for o in failing {
-            if at_body(o.adapter_name()).ok_or_else(|| self.bug(format!("the adapter {} is not in the master", o.adapter_name())))? == body {
-                self.adapt_one(o, ops)?;
+        let trip = self.me.k.trip(n.symbol);
+        for step in self.me.k.decoder.steps(n) {
+            if let Step::Operand { k, template, .. } = step {
+                if (Some(k) == trip) != body {
+                    continue;
+                }
+                let site = self.me.k.decoder.step_type(n, &step);
+                let mut x = ValExec { me: self.me, sizes: self.sizes, ops: ops.to_vec(), whole: None, site };
+                let v = self.me.k.decoder.exec(n, template, &mut x)?;
+                let n_ops = ops.len();
+                *ops.get_mut(k as usize).ok_or_else(|| self.bug(format!("a repair rewrites operand {k} of a node of {n_ops} operands")))? = v;
             }
         }
         Ok(())
     }
 
-    fn adapt_one(&self, o: &Outcome, ops: &mut [Val]) -> Result<(), String> {
-        let k = &self.me.k;
-        let q = self.me.reqs.get(o.requirement).ok_or_else(|| self.bug(format!("the outcome names requirement {}", o.requirement)))?;
-        let Subject6::Input { position, property } = &q.subject else { return Err(self.bug(format!("the work bound fails at an unsubstituted node ({})", o.adapter_name()))) };
-        let (s, ps) = (*position as usize, property.as_str());
-        let against = match &q.against {
-            PropertyExpr::Input { position, property } => Some((*position as usize, property.as_str())),
-            _ => None,
-        };
-        if s >= ops.len() || against.is_some_and(|(a, _)| a >= ops.len()) {
-            return Err(self.bug(format!("the requirement {} reads an input past the node's {}", q.subject, ops.len())));
+    /// THE REPAIRS OF A NODE THAT WRAP IT, executed on its value.
+    fn wrap(&self, n: &Node, mut v: Val) -> Result<Val, String> {
+        for step in self.me.k.decoder.steps(n) {
+            if let Step::Wrap { template, .. } = step {
+                let mut x = ValExec { me: self.me, sizes: self.sizes, ops: Vec::new(), whole: Some(v), site: n.data_type };
+                v = self.me.k.decoder.exec(n, template, &mut x)?;
+            }
         }
-        let known = |e: &PropertyExpr| size6(e, self.sizes);
-        match o.adapter_name() {
-            "clampix" => {
-                let (a, pa) = against.ok_or_else(|| self.bug("clampix's requirement names no array".into()))?;
-                let len = extent(k, &ops[a], pa)?;
-                let i = self.index(&ops[s])?;
-                ops[s] = Val::I(i.min(len - 1).max(0));
-            }
-            "fit" | "fit.body" | "fit.state" => {
-                let target = match (known(o.against())?, against) {
-                    (Some(t), _) => t,
-                    (None, Some((j, pj))) => extent(k, &ops[j], pj)?,
-                    (None, None) => return Err(self.bug(format!("{} fits to {}, which has no value", o.adapter_name(), o.against()))),
-                };
-                ops[s] = fit(k, &ops[s], ps, target)?;
-            }
-            "fit.pair" => {
-                let (j, pj) = against.ok_or_else(|| self.bug("fit.pair's requirement names no second input".into()))?;
-                let t = extent(k, &ops[j], pj)?.min(extent(k, &ops[s], ps)?);
-                ops[j] = fit(k, &ops[j], pj, t)?;
-                ops[s] = fit(k, &ops[s], ps, t)?;
-            }
-            "fit.inner" => {
-                let mut sides = vec![(s, ps)];
-                if let Some(a) = against {
-                    sides.push(a);
-                }
-                let subject = extent(k, &ops[s], ps)?;
-                let other = match against {
-                    Some((a, pa)) => extent(k, &ops[a], pa)?,
-                    None => known(o.against())?.ok_or_else(|| self.bug(format!("fit.inner fits to {}, which has no value", o.against())))?,
-                };
-                let cols: Vec<usize> = (0..sides.len()).filter(|i| sides[*i].1 == "cols").collect();
-                let t = match cols.as_slice() {
-                    [_, _] => subject.min(other),
-                    [0] => other,
-                    [1] => subject,
-                    _ => return Err(self.bug(format!("fit.inner's requirement {} names no inner dimension", q.subject))),
-                };
-                for i in cols {
-                    let x = sides[i].0;
-                    ops[x] = fit(k, &ops[x], "cols", t)?;
-                }
-            }
-            other => return Err(self.bug(format!("the adapter {other} renders at no node"))),
-        }
-        Ok(())
+        Ok(v)
     }
 
     fn value(&mut self, n: &Node) -> Result<Val, String> {
@@ -757,7 +724,7 @@ impl Run<'_> {
         }
         let me = self.me;
         let op = me.ops[n.symbol as usize];
-        let kid = |i: usize| n.kids.get(i).ok_or_else(|| bug(&me.k, format!("{} lacks argument {i}", me.k.symbols[n.symbol as usize].name)));
+        let kid = |i: usize| n.kids.get(i).ok_or_else(|| bug(&me.k, format!("{} lacks argument {i}", me.k.name(n.symbol))));
         match op {
             Op6::Var => {
                 return match n.choice {
@@ -776,9 +743,10 @@ impl Run<'_> {
         }
         let binder = matches!(op, Op6::Tab(_) | Op6::TabRows | Op6::Loop { .. } | Op6::Let | Op6::Sel | Op6::PSel);
         if binder {
-            // A binder's node adapters would run before its body: none of master 6's rows has one.
-            if n.outcomes.iter().any(|o| !o.holds && self.me.k.adapters.iter().any(|a| a.name == o.adapter_name() && a.runs_at != Site6::Body)) {
-                return Err(self.bug(format!("the binder {} renders a node adapter", self.me.k.symbols[n.symbol as usize].name)));
+            // A binder's repairs other than its body's would run before its body: none of master 6's rows has one.
+            let trip = me.k.trip(n.symbol);
+            if me.k.decoder.steps(n).iter().any(|st| !matches!(st, Step::Operand { k, .. } if Some(*k) == trip)) {
+                return Err(self.bug(format!("the binder {} has a repair outside its body", me.k.name(n.symbol))));
             }
         }
         match op {
@@ -885,14 +853,15 @@ impl Run<'_> {
                     ops.push(self.at(c)?);
                 }
                 self.adapt(n, false, &mut ops)?;
-                self.apply(n, op, ops)
+                let v = self.apply(n, op, ops)?;
+                self.wrap(n, v)
             }
         }
     }
 
     /// A node that is no binder, no leaf and no selection, on its adapted operands.
     fn apply(&self, n: &Node, op: Op6, ops: Vec<Val>) -> Result<Val, String> {
-        let arg = |i: usize| ops.get(i).ok_or_else(|| self.bug(format!("{} lacks argument {i}", self.me.k.symbols[n.symbol as usize].name)));
+        let arg = |i: usize| ops.get(i).ok_or_else(|| self.bug(format!("{} lacks argument {i}", self.me.k.name(n.symbol))));
         let s = |i: usize| -> Result<Num, String> { self.scalar(arg(i)?) };
         let ix = |i: usize| -> Result<i64, String> { self.index(arg(i)?) };
         let a = |i: usize| -> Result<&View, String> { self.array(arg(i)?) };
@@ -1083,9 +1052,71 @@ impl Run<'_> {
                 other => return Err(self.bug(format!("the projection {i} of {other:?}"))),
             },
             Op6::Cvt(into) => Val::S(s(0)?.convert(into)),
+            Op6::Fit(_) | Op6::Clampix => self.me.adapter(op, ops)?,
             Op6::Var | Op6::Literal | Op6::Constant | Op6::Sel | Op6::PSel | Op6::Tab(_) | Op6::TabRows | Op6::Loop { .. } | Op6::Let => {
                 return Err(self.bug(format!("{op:?} applied as an operation")))
             }
         })
+    }
+}
+
+impl Interp6 {
+    /// An ADAPTER's meaning, as its symbol's spelling and prelude compute it: `fit` (a size, an array) exactly that
+    /// long along its property, padded with zeros; `clampix` (a size, an index) the index clamped into `[0, size)`.
+    fn adapter(&self, op: Op6, args: Vec<Val>) -> Result<Val, String> {
+        let index = |v: &Val| match v {
+            Val::I(i) => Ok(*i),
+            other => Err(bug(&self.k, format!("an adapter's size or index holds {other:?}"))),
+        };
+        match (op, args.as_slice()) {
+            (Op6::Fit(along), [l, xs]) => fit(&self.k, xs, along.property(), index(l)?),
+            (Op6::Clampix, [m, i]) => {
+                let m = index(m)?;
+                if m < 1 {
+                    return Err(bug(&self.k, format!("clampix into the length {m}")));
+                }
+                Ok(Val::I(index(i)?.clamp(0, m - 1)))
+            }
+            (other, _) => Err(bug(&self.k, format!("{other:?} applied as an adapter to {} arguments", args.len()))),
+        }
+    }
+}
+
+/// The executor of a repair's template over the interpreter's values: an operand as the node's earlier repairs left
+/// it, a formula's value at the case's sizes, the site's constants, the node itself, and an adapter's meaning.
+struct ValExec<'a> {
+    me: &'a Interp6,
+    sizes: &'a BTreeMap<String, usize>,
+    ops: Vec<Val>,
+    whole: Option<Val>,
+    site: Ty,
+}
+
+impl Exec for ValExec<'_> {
+    type V = Val;
+
+    fn operand(&mut self, k: u32) -> Result<Val, String> {
+        self.ops.get(k as usize).cloned().ok_or_else(|| bug(&self.me.k, format!("a repair reads operand {k}, which the node has not")))
+    }
+
+    fn value(&mut self, e: &PropertyExpr) -> Result<Val, String> {
+        Ok(Val::I(self.me.size(e, self.sizes)?))
+    }
+
+    fn zero(&mut self) -> Result<Val, String> {
+        self.me.constant(self.me.k.innermost(self.site))
+    }
+
+    fn constant(&mut self) -> Result<Val, String> {
+        self.me.constant(self.site)
+    }
+
+    fn whole(&mut self) -> Result<Val, String> {
+        self.whole.clone().ok_or_else(|| bug(&self.me.k, "a repair at an operand reads the node itself".into()))
+    }
+
+    fn call(&mut self, symbol: &str, args: Vec<Val>) -> Result<Val, String> {
+        let s = self.me.k.symbol_named(symbol).ok_or_else(|| bug(&self.me.k, format!("a repair calls {symbol}, which is no symbol")))?;
+        self.me.adapter(self.me.ops[s as usize], args)
     }
 }

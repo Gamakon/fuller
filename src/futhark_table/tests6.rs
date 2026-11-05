@@ -1,27 +1,26 @@
-//! Master 6's renderer (pass 5, plan section 7 task F2): the reference programs render their master 5 texts byte for
-//! byte, every adapter of the design's section 5 table renders a program Futhark accepts, and random genes of every
-//! view render programs Futhark accepts and runs.
+//! Master 6's rendering (pass 5 by the decoder's template engine, plan section 7 task F2): the reference programs render
+//! their published texts byte for byte, every repair of the design's section 5 table renders a program Futhark accepts,
+//! and random genes of every view render programs Futhark accepts and runs.
 
 use super::*;
 use crate::futhark_sig::{build6, expected_text6, kingdom6, REFERENCES6};
+use std::collections::{BTreeMap, BTreeSet};
 
-/// A problem's kingdom and renderer.
-fn view(problem: &str) -> (Kingdom6, Header6) {
-    let k = kingdom6(problem).unwrap_or_else(|e| panic!("{problem}: {e}"));
-    let spec = crate::futhark_view::master6::committed(problem).unwrap().spec;
-    (k, Header6::of_spec(&spec))
+/// A problem's kingdom.
+fn view(problem: &str) -> Kingdom6 {
+    kingdom6(problem).unwrap_or_else(|e| panic!("{problem}: {e}"))
 }
 
-/// EVERY REFERENCE RENDERS ITS MASTER 5 TEXT: each F2a tree, decoded and rendered, is byte for byte the stored master 5
-/// rendering (`tests/fixtures/futhark_m6_references.txt`), `0i64` indices included, and needs no adapter.
+/// EVERY REFERENCE RENDERS ITS PUBLISHED TEXT: each reference tree, built from its text form, decoded and rendered, is
+/// byte for byte its stored program text (`tests/fixtures/futhark_m6_references.txt`), `0i64` indices included, and
+/// needs no adapter.
 #[test]
-fn every_reference_renders_its_master_5_text_byte_for_byte() {
+fn every_reference_renders_its_published_text_byte_for_byte() {
     for r in &REFERENCES6 {
         let key = r.key();
-        let (k, header) = view(r.problem);
-        let renderer = k.renderer6(header).unwrap();
+        let k = view(r.problem);
         let tree = build6(&k, &(r.master6)()).unwrap_or_else(|e| panic!("{key}: {e}"));
-        let p = renderer.program(&tree).unwrap_or_else(|e| panic!("{key}: {e}"));
+        let p = k.program(&tree).unwrap_or_else(|e| panic!("{key}: {e}"));
         let want = expected_text6(&key).unwrap_or_else(|| panic!("{key}: no stored text"));
         assert!(p.adapter_free() && p.substitution_free(), "{key}: renders adapters {:?} and substitutions {:?}", p.adapters, p.substitutions);
         if p.text != want {
@@ -47,16 +46,15 @@ fn program_size(view: &str) -> usize {
 
 /// `n` random genes of a view, expressed and rendered, from the random seed `seed`.
 fn random_programs(view6: &str, n: usize, seed: u64) -> Vec<(Tree, Program6)> {
-    let (k, header) = view(view6);
-    let renderer = k.renderer6(header).unwrap();
-    let layout = GeneLayout::from_program_size(&renderer.contract, k.root.data_type, program_size(view6)).unwrap();
+    let k = view(view6);
+    let layout = GeneLayout::from_program_size(&k.contract, k.entry.output, program_size(view6)).unwrap();
     let consts = const_len6(&k);
     let mut rng = GeneRng::new(seed);
     (0..n)
         .map(|i| {
-            let gene = random_gene(&renderer.contract, &layout, &consts, &mut rng).unwrap();
-            let tree = express(&renderer.contract, &layout, &gene, &consts).unwrap_or_else(|e| panic!("{view6} gene {i}: {e:?}")).tree();
-            let p = renderer.program(&tree).unwrap_or_else(|e| panic!("{view6} gene {i}: our software has a bug: {e}"));
+            let gene = random_gene(&k.contract, &layout, &consts, &mut rng).unwrap();
+            let tree = express(&k.contract, &layout, &gene, &consts).unwrap_or_else(|e| panic!("{view6} gene {i}: {e:?}")).tree();
+            let p = k.program(&tree).unwrap_or_else(|e| panic!("{view6} gene {i}: our software has a bug: {e}"));
             (tree, p)
         })
         .collect()
@@ -116,12 +114,12 @@ fn a_thousand_random_genes_a_view_render_programs_futhark_accepts() {
         let free = programs.iter().filter(|(_, p)| p.adapter_free()).count();
         let unsubstituted = programs.iter().filter(|(_, p)| p.substitution_free()).count();
         let nodes: usize = programs.iter().map(|(_, p)| p.nodes).sum();
-        let adapted: usize = programs.iter().map(|(_, p)| p.adapter_nodes()).sum();
-        let substituted: usize = programs.iter().map(|(_, p)| p.substituted_nodes()).sum();
-        let (mut by_adapter, mut by_cause): (BTreeMap<&str, usize>, BTreeMap<&str, usize>) = (BTreeMap::new(), BTreeMap::new());
+        let called: usize = programs.iter().map(|(_, p)| p.repairs()).sum();
+        let substituted: usize = programs.iter().map(|(_, p)| p.substitutions.len()).sum();
+        let (mut by_adapter, mut by_cause): (BTreeMap<String, usize>, BTreeMap<&str, usize>) = (BTreeMap::new(), BTreeMap::new());
         for (_, p) in &programs {
-            for (_, a) in &p.adapters {
-                *by_adapter.entry(a.as_str()).or_default() += 1;
+            for (_, a, placed) in &p.adapters {
+                *by_adapter.entry(format!("{a} {}", if *placed { "placed" } else { "called" })).or_default() += 1;
             }
             for (_, c) in &p.substitutions {
                 *by_cause.entry(c.as_str()).or_default() += 1;
@@ -135,10 +133,9 @@ fn a_thousand_random_genes_a_view_render_programs_futhark_accepts() {
         }
         std::fs::remove_dir_all(&dir).ok();
         let line = format!(
-            "{view6}: {} of {n} accepted by futhark check; adapter-free genes {free} of {n} ({:.1} %); nodes with an adapter {adapted} of {nodes} ({:.2} %); adapters {by_adapter:?}; substitution-free genes {unsubstituted} of {n} ({:.1} %); substituted nodes {substituted} of {nodes} ({:.2} %); substitutions {by_cause:?}\n",
+            "{view6}: {} of {n} accepted by futhark check; adapter-free genes {free} of {n} ({:.1} %); adapters a repair called {called} in {nodes} nodes; adapters {by_adapter:?}; substitution-free genes {unsubstituted} of {n} ({:.1} %); substituted nodes {substituted} of {nodes} ({:.2} %); substitutions {by_cause:?}\n",
             n - bad.len(),
             100.0 * free as f64 / n as f64,
-            100.0 * adapted as f64 / nodes.max(1) as f64,
             100.0 * unsubstituted as f64 / n as f64,
             100.0 * substituted as f64 / nodes.max(1) as f64
         );
@@ -199,10 +196,10 @@ fn case_sizes(case: &crate::futhark_sig::Case) -> BTreeSet<i64> {
 
 /// The number of size names a view's entry has (`n`, `m`, `p`): its size variables and the sizes its inputs name.
 fn roles(view6: &str) -> usize {
-    let k = view(view6).0;
-    let mut names: BTreeSet<String> = k.variables.iter().filter(|v| v.kind == "size").map(|v| v.name.clone()).collect();
-    for v in k.variables.iter().filter(|v| v.kind == "input") {
-        names.extend(v.properties.iter().filter_map(|(_, e)| if let PropertyExpr::Size(n) = e { Some(n.clone()) } else { None }));
+    let k = view(view6);
+    let mut names: BTreeSet<String> = k.spec.env.iter().filter(|l| l.kind == "size").map(|l| l.name.clone()).collect();
+    for l in k.spec.env.iter().filter(|l| l.kind == "input") {
+        names.extend(l.dims.iter().cloned());
     }
     names.len()
 }
@@ -264,8 +261,7 @@ fn may_make_nan(text: &str) -> bool {
 }
 
 /// THE LEGAL OUTPUT of a run: the entry's declared shape, and no NaN where the program renders nothing that can make
-/// one. The values are not compared with an interpreter here: master 6's interpreter is task F3 (proof 1's second
-/// half), and master 5's does not read master 6 trees.
+/// one. The values are compared with the interpreter elsewhere (`futhark_sig::tests_interp6`).
 fn legal_output(case: &crate::futhark_sig::Case, out: &crate::futhark_sig::Array, text: &str) -> Result<(), String> {
     let want = output_dims(case);
     if out.dims != want {
@@ -346,9 +342,14 @@ fn a_hundred_random_genes_a_view_compile_and_run_on_the_c_backend() {
 }
 
 /// Render a master 6 s-expression of a view; the program and the adapters it renders.
-fn render(k: &Kingdom6, header: &Header6, text: &str) -> Program6 {
+fn render(k: &Kingdom6, text: &str) -> Program6 {
     let tree = build6(k, text).unwrap_or_else(|e| panic!("{text}: {e}"));
-    k.renderer6(header.clone()).unwrap().program(&tree).unwrap_or_else(|e| panic!("{text}: {e}"))
+    k.program(&tree).unwrap_or_else(|e| panic!("{text}: {e}"))
+}
+
+/// The adapters a repair called in a program, by name.
+fn called(p: &Program6) -> Vec<&str> {
+    p.adapters.iter().filter(|a| !a.2).map(|a| a.1.as_str()).collect()
 }
 
 /// Check every program with `futhark check` (one batch), and panic naming the first one Futhark rejects.
@@ -363,16 +364,16 @@ fn assert_accepted(what: &str, programs: &[(String, Program6)]) {
     }
 }
 
-/// The k-means view's expressions that fail one requirement each, with the adapter each renders (design section 5's
-/// table; the `fit` of a slot is `fit.body`'s, a lambda body against its size argument), as (name, data type tag,
+/// The k-means view's expressions that fail one guard each, with the adapter its repair calls (design section 5's
+/// table: a slot of another length is `tabrows`' body, fitted to its size argument), as (name, adapter, data type tag,
 /// s-expression). `[]f32` of lengths `n`, `k`, `d` are the zero arrays; the case's sizes differ.
 const ADAPTER_ROWS: [(&str, &str, &str, &str); 6] = [
-    ("map2 of two lengths", "fit.pair", "a.f32", "(map2.add@a.f32 zeros_n zeros_k)"),
-    ("a slot of another length", "fit.body", "m.f32", "(tabrows@m.f32[r] k d zeros_n)"),
-    ("an index of another bound", "clampix", "f32", "(get@f32 zeros_n (last@i64 k))"),
-    ("a loop body of another length", "fit.state", "a.f32", "(loop@a.f32[s,i] n zeros_k zeros_n)"),
-    ("matmul's inner sizes", "fit.inner", "m.f32", "(matmul@m.f32 points centres)"),
-    ("map2_rows' rows and columns", "fit.pair", "m.f32", "(map2_rows@m.f32 add@fn.arr2_f32_arr_f32_arr_f32 points (transpose@m.f32 centres))"),
+    ("map2 of two lengths", "fit@a.f32", "a.f32", "(map2.add@a.f32 zeros_n zeros_k)"),
+    ("a slot of another length", "fit@a.f32", "m.f32", "(tabrows@m.f32[r] k d zeros_n)"),
+    ("an index of another bound", "clampix@i64", "f32", "(get@f32 zeros_n (last@i64 k))"),
+    ("a loop body of another length", "fit@a.f32", "a.f32", "(loop@a.f32[s,i] n zeros_k zeros_n)"),
+    ("matmul's inner sizes", "fitcols@m.f32", "m.f32", "(matmul@m.f32 points centres)"),
+    ("map2_rows' rows and columns", "fitrows@m.f32", "m.f32", "(map2_rows@m.f32 add@fn.arr2_f32_arr_f32_arr_f32 points (transpose@m.f32 centres))"),
 ];
 
 /// An expression of the tag's data type as a `[]f32` (a scalar replicated over `n`, a matrix's first row).
@@ -393,9 +394,9 @@ fn as_scalar(tag: &str, e: &str) -> String {
     }
 }
 
-/// The expression nested three deep in its own adapted operand: each adapter's operand is the adapter before (a
-/// loop's through its state, not its body, so no level adds a trip; `tabrows` has no other operand than its body, so
-/// its third level sits at the work bound and is substituted).
+/// The expression nested three deep in its own repaired operand: each repair's operand is the one before (a loop's
+/// through its state, not its body, so no level adds a trip; `tabrows` has no other operand than its body, so its third
+/// level sits at the work bound and is substituted).
 fn nested3(name: &str, e: &str) -> String {
     let mut x = e.to_string();
     for _ in 0..2 {
@@ -411,18 +412,18 @@ fn nested3(name: &str, e: &str) -> String {
     x
 }
 
-/// THE DESIGN'S ADAPTER TABLE AS FIXTURES (design section 5; master 6 README 5.5): each requirement that fails renders
-/// its adapter, and `futhark check` accepts the program at the root, inside a `tabulate` lambda, inside a loop body,
-/// and with the adapter nested three deep in its own operand. The entry's result (`fit.root`) is the root's: a
-/// program of `[n][d]` and one of `[d][n]` where the entry returns `[k][d]`.
+/// THE DESIGN'S ADAPTER TABLE AS FIXTURES (design section 5): each guard that fails is repaired by a call of its
+/// adapter, and `futhark check` accepts the program at the root, inside a `tabulate` lambda, inside a loop body, and
+/// with the repair nested three deep in its own operand. The entry's result is repaired at the root: a program of
+/// `[n][d]` (its rows fitted) and one of `[d][n]` (its rows and columns) where the entry returns `[k][d]`.
 #[test]
 fn every_adapter_of_the_design_table_renders_a_program_futhark_accepts() {
-    let (k, header) = view("kmeans");
+    let k = view("kmeans");
     let root = |arr: &str| format!("(let.a.f32@m.f32[w] {arr} centres)");
     let mut programs = Vec::new();
     for (name, adapter, tag, e) in ADAPTER_ROWS {
-        let p = render(&k, &header, &root(&as_array(tag, e)));
-        assert!(p.adapters.iter().any(|(_, a)| a == adapter), "{name}: renders {:?}, not {adapter}", p.adapters);
+        let p = render(&k, &root(&as_array(tag, e)));
+        assert!(called(&p).contains(&adapter), "{name}: calls {:?}, not {adapter}", p.adapters);
         programs.push((format!("{name} at the root"), p));
         let contexts = [
             ("inside a tabulate lambda", root(&format!("(tab@a.f32[t] n {})", as_scalar(tag, e)))),
@@ -430,143 +431,42 @@ fn every_adapter_of_the_design_table_renders_a_program_futhark_accepts() {
             ("nested three deep", root(&as_array(tag, &nested3(name, e)))),
         ];
         for (place, text) in contexts {
-            let p = render(&k, &header, &text);
-            assert!(p.adapters.iter().any(|(_, a)| a == adapter), "{name} {place}: renders {:?}, not {adapter}", p.adapters);
-            if place == "nested three deep" {
-                assert!(p.adapters.iter().filter(|(_, a)| a == adapter).count() >= 3 || adapter == "fit.body", "{name} {place}: {:?}", p.adapters);
-            }
+            let p = render(&k, &text);
+            assert!(called(&p).contains(&adapter), "{name} {place}: calls {:?}, not {adapter}", p.adapters);
             programs.push((format!("{name} {place}"), p));
         }
     }
-    for (name, text) in [("the entry's rows", "points"), ("the entry's rows and columns", "(transpose@m.f32 points)")] {
-        let p = render(&k, &header, text);
-        assert!(p.adapters.iter().all(|(path, a)| path.is_empty() && a == "fit.root") && !p.adapters.is_empty(), "{name}: {:?}", p.adapters);
+    for (name, text, want) in [("the entry's rows", "points", vec!["fitrows@m.f32"]), ("the entry's rows and columns", "(transpose@m.f32 points)", vec!["fitrows@m.f32", "fitcols@m.f32"])] {
+        let p = render(&k, text);
+        assert!(p.adapters.iter().all(|(path, _, placed)| path.is_none() && !placed), "{name}: {:?}", p.adapters);
+        assert_eq!(called(&p), want, "{name}");
         programs.push((name.to_string(), p));
     }
-    let (h, hh) = view("histogram");
-    let p = render(&h, &hh, "(hist.add@a.i32 k zeros_n zeros_k)");
-    assert_eq!(p.adapters, vec![(Vec::new(), "fit.pair".to_string())]);
+    let h = view("histogram");
+    let p = render(&h, "(hist.add@a.i32 k zeros_n zeros_k)");
+    assert_eq!(p.adapters, vec![(Some(Vec::new()), "fit@a.i32".to_string(), false); 2], "both operands fitted to min(k, n), which neither length is as written");
     programs.push(("hist of two lengths".to_string(), p));
+    // An adapter evolution placed renders as its symbol's spelling, with its prelude.
+    let p = render(&k, "(let.a.f32@m.f32[w] (fit@a.f32 d zeros_n) centres)");
+    assert_eq!(p.adapters, vec![(Some(vec![0]), "fit@a.f32".to_string(), true)]);
+    assert!(p.text.contains("fit d 0f32 (zeros_n)") && p.text.starts_with("def fit "), "{}", p.text);
+    programs.push(("a placed fit".to_string(), p));
     assert_accepted("adapter_table", &programs);
-}
-
-/// A k-means view with one more row whose length is known only at run time (`filter`: `len=?`), so `?` lengths reach
-/// the adapters. No row of the committed master gives `?`; the renderer's `let`-bound form must still be legal.
-fn kmeans_with_a_filter() -> (Kingdom6, Header6) {
-    kmeans_with(&[])
-}
-
-/// The k-means view with `filter@a.f32` and the synthetic `rows` (each a symbols.tsv row from its `ref` column on).
-fn kmeans_with(rows: &[&str]) -> (Kingdom6, Header6) {
-    let v = crate::futhark_view::master6::committed("kmeans").unwrap();
-    let n = v.symbols_tsv.lines().count() - 1;
-    let mut symbols = format!("{}{n}\tM9999\tfilter@a.f32\tfunction\t[]f32\t[]f32\tlen=?\t\t\t\tfilter (\\x -> x > 0f32) {{0}}\n", v.symbols_tsv);
-    for (i, row) in rows.iter().enumerate() {
-        symbols.push_str(&format!("{}\t{row}\n", n + 1 + i));
-    }
-    let k = Kingdom6::from_tables("kmeans_filter", &v.datatypes_tsv, &symbols, &v.environment_tsv, crate::futhark_view::master6::ADAPTERS6, &v.spec.literals).unwrap();
-    (k, Header6::of_spec(&v.spec))
-}
-
-/// Compile programs on `c` with their entries `e<i>` and run each on the k-means run cases: the outputs, per case.
-fn run_on_kmeans(what: &str, programs: &[&Program6]) -> Vec<Vec<crate::futhark_sig::Array>> {
-    let src: String = programs.iter().enumerate().map(|(i, p)| with_entry(i, &p.text)).collect();
-    let dir = scratch(what);
-    let exe = crate::futhark_sig::compile_c(&src, &dir).unwrap_or_else(|e| panic!("{what}: {e}"));
-    let out = run_cases("kmeans")
-        .iter()
-        .map(|case| {
-            (0..programs.len())
-                .map(|i| {
-                    let a = run_entry(&exe, &format!("e{i}"), &case.stdin).unwrap_or_else(|e| panic!("{what} program {i} on {}: {e}\n{}", case.name, programs[i].text));
-                    legal_output(case, &a, &programs[i].text).unwrap_or_else(|e| panic!("{what} program {i} on {}: {e}\n{}", case.name, programs[i].text));
-                    a
-                })
-                .collect()
-        })
-        .collect();
-    std::fs::remove_dir_all(&dir).ok();
-    out
-}
-
-/// TWO `?` ADAPTERS ON ONE NODE BIND DIFFERENT NAMES (F2 review finding 7): a node with two `fit.pair` requirements,
-/// each between two `?`-length operands, binds `ad_a`, `ad_b`, `ad_l`, then `ad_a1`, `ad_b1`, `ad_l1`; Futhark
-/// accepts the program and it runs.
-#[test]
-fn two_unknown_length_adapters_on_one_node_bind_different_names() {
-    let (k, header) = kmeans_with(&["M9998\tdot2@f32\tfunction\tf32\t[]f32;[]f32;[]f32;[]f32\t\tin1.len = in0.len -> fit.pair; in3.len = in2.len -> fit.pair; env.trips < 3 -> subst\t\t\tf32.sum (map2 (*) {0} {1}) + f32.sum (map2 (*) {2} {3})"]);
-    let text = "(let.a.f32@m.f32[w] (replicate@a.f32 n (dot2@f32 (filter@a.f32 zeros_n) (filter@a.f32 zeros_d) (filter@a.f32 zeros_k) (filter@a.f32 zeros_n))) centres)";
-    let p = render(&k, &header, text);
-    assert_eq!(p.adapters.iter().filter(|(_, a)| a == "fit.pair").count(), 2, "{:?}", p.adapters);
-    for name in ["let ad_l = ", "let ad_l1 = ", "let ad_a = ", "let ad_a1 = "] {
-        assert!(p.text.contains(name), "no {name:?} in\n{}", p.text);
-    }
-    assert_accepted("two_unknown", &[("dot2".to_string(), p.clone())]);
-    run_on_kmeans("two_unknown_run", &[&p]);
-}
-
-/// A CLAMP READS THE INDEXED ARRAY AS ITS NODE'S OTHER ADAPTERS LEFT IT (F2 review finding 7): a node that clamps an
-/// index into an array (`clampix`) and fits that array to a shorter length (`fit`) clamps to the fitted length, so
-/// the program reads in bounds (a clamp to the old length reads past the fitted array on a case where `k < n`).
-#[test]
-fn a_clamp_reads_the_length_its_array_was_fitted_to() {
-    let (k, header) = kmeans_with(&["M9997\tgetk@f32\tfunction\tf32\t[]f32;i64;size\t\tin1.bound <= in0.len -> clampix; in0.len = in2.value -> fit; env.trips < 3 -> subst\t\t\t{0}[{1}]"]);
-    let text = "(let.a.f32@m.f32[w] (replicate@a.f32 n (getk@f32 zeros_n (last@i64 d) k)) centres)";
-    let p = render(&k, &header, text);
-    let names: Vec<&str> = p.adapters.iter().map(|(_, a)| a.as_str()).collect();
-    assert_eq!(names, ["fit", "clampix"], "{}", p.text);
-    assert!(p.text.contains("clampix k "), "the clamp is not to the fitted length k:\n{}", p.text);
-    run_on_kmeans("clamp_fitted", &[&p]);
-}
-
-/// `?` LENGTHS ARE BOUND TO A NAME BEFORE FUTHARK SEES THEM (plan 7.1): a loop whose state's length is `?` declares it
-/// `[ad_m]` after the size binding `let [ad_m] (ad_s: [ad_m]f32) = ..`; a `map2` over two `?`-length operands binds both and fits
-/// them to `ad_l`; an index into a `?`-length array clamps to `length ad_a`; a body of `?` length fits to its size.
-/// Futhark accepts each, and each compiles and runs on the c backend.
-#[test]
-fn unknown_lengths_are_bound_to_a_name_and_futhark_accepts_them() {
-    let (k, header) = kmeans_with_a_filter();
-    let root = |arr: &str| format!("(let.a.f32@m.f32[w] {arr} centres)");
-    let cases = [
-        ("a loop of ? state length", root("(loop@a.f32[s,i] n (filter@a.f32 zeros_n) (map2.add@a.f32 s s))"), "let [ad_m] (ad_s: [ad_m]f32) = "),
-        ("a map2 over two ? lengths", root("(map2.add@a.f32 (filter@a.f32 zeros_n) (filter@a.f32 zeros_d))"), "let ad_l = i64.min (length ad_a) (length ad_b)"),
-        ("an index into a ? length", root("(replicate@a.f32 n (get@f32 (filter@a.f32 zeros_n) (last@i64 n)))"), "clampix ad_m"),
-        ("a body of ? length", "(tabrows@m.f32[r] k d (filter@a.f32 zeros_d))".to_string(), "fit d 0f32"),
-        ("map2 of a ? length nested three deep", root("(map2.add@a.f32 (map2.add@a.f32 (map2.add@a.f32 (filter@a.f32 zeros_n) zeros_k) zeros_d) zeros_n)"), "let ad_l"),
-    ];
-    let mut programs = Vec::new();
-    for (name, text, shows) in cases {
-        let p = render(&k, &header, &text);
-        assert!(p.text.contains(shows), "{name}: no {shows:?} in\n{}", p.text);
-        programs.push((name.to_string(), p));
-    }
-    assert!(programs[0].1.text.contains("loop (s_a_q: [ad_m]f32) = (ad_s)"), "{}", programs[0].1.text);
-    assert_accepted("unknown_lengths", &programs);
-    let src: String = programs.iter().enumerate().map(|(i, (_, p))| format!("{}{}\n", as_module(i, &p.text), entry_calling(i, &p.text))).collect();
-    let dir = scratch("unknown_run");
-    let exe = crate::futhark_sig::compile_c(&src, &dir).unwrap();
-    for case in run_cases("kmeans") {
-        for (i, (name, _)) in programs.iter().enumerate() {
-            let a = run_entry(&exe, &format!("e{i}"), &case.stdin).unwrap_or_else(|e| panic!("{name} on {}: {e}", case.name));
-            assert_eq!(a.dims, output_dims(&case), "{name} on {}", case.name);
-        }
-    }
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// TEXT LINEAR IN THE DEPTH (adversarial H1): ten `map2` adapters, each the operand of the next, grow the text by a
 /// bounded amount a level (never doubling), and Futhark accepts the deepest.
 #[test]
 fn ten_nested_map2_adapters_give_text_linear_in_the_depth() {
-    let (k, header) = view("kmeans");
+    let k = view("kmeans");
     let zeros = ["zeros_k", "zeros_d", "zeros_n"];
     let mut e = "zeros_n".to_string();
     let mut lengths = Vec::new();
     let mut last = None;
     for level in 0..10 {
         e = format!("(map2.add@a.f32 {e} {})", zeros[level % 3]);
-        let p = render(&k, &header, &format!("(let.a.f32@m.f32[w] {e} centres)"));
-        assert_eq!(p.adapters.iter().filter(|(_, a)| a == "fit.pair").count(), level + 1, "level {level}: {:?}", p.adapters);
+        let p = render(&k, &format!("(let.a.f32@m.f32[w] {e} centres)"));
+        assert!(p.repairs() > level, "level {level}: {:?}", p.adapters);
         lengths.push(p.text.len());
         last = Some(p);
     }
@@ -577,27 +477,22 @@ fn ten_nested_map2_adapters_give_text_linear_in_the_depth() {
     assert_accepted("linear_depth", &[("depth 10".to_string(), last.unwrap())]);
 }
 
-/// NESTED BINDERS OF ONE DATA TYPE AND PROPERTIES HAVE DISTINCT NAMES (`i_n`, `i2_n`, as master 5's `var_name`), the
-/// text is master 5's rendering of the same program, and the interpreter (master 5's, on that program) and the `c`
-/// backend give the same value bit for bit on every stored case.
+/// NESTED BINDERS OF ONE DATA TYPE AND PROPERTIES HAVE DISTINCT NAMES (`i_n`, `i2_n`: the engine's `{nth}` name
+/// hygiene), and the interpreter and the `c` backend give the same value bit for bit on every stored case.
 #[test]
 fn nested_binders_render_distinct_names_and_the_interpreter_and_c_agree() {
-    let (k, header) = view("reduce");
+    let k = view("reduce");
     let m6 = "(sum@i32 (tab@a.i32[i] n (sum@i32 (tab@a.i32[j] n (sub@i32 (mul@i32 (get@i32 xs i) 2) (get@i32 xs j))))))";
-    let p = render(&k, &header, m6);
+    let p = render(&k, m6);
     assert!(p.adapter_free(), "{:?}", p.adapters);
     assert!(p.text.contains("(\\i_n -> ") && p.text.contains("(\\i2_n -> "), "{}", p.text);
-    let inst = problem("reduce").unwrap().instance;
-    let k5 = crate::futhark_sig::load(&inst).unwrap();
-    let sig = crate::futhark_sig::signature(&inst).unwrap();
-    let tree5 = crate::futhark_sig::build(&k5, "(sum.n (tab (sum.n (tab (sub (mul (get.n xs i_n) 2) (get.n xs i2_n))))))").unwrap();
-    assert_eq!(p.text, crate::futhark_sig::program(&k5, &sig, &tree5).unwrap(), "master 6 and master 5 render one program differently");
-    let interp = crate::futhark_sig::Interp::new(&k5, &sig).unwrap();
+    let tree = build6(&k, m6).unwrap();
+    let interp = crate::futhark_sig::Interp::new6(&std::sync::Arc::new(k.clone()), &crate::futhark_sig::signature(&problem("reduce").unwrap().instance).unwrap()).unwrap();
     let dir = scratch("nested_binders");
     let exe = crate::futhark_sig::compile_c(&p.text, &dir).unwrap();
     let cases = crate::futhark_sig::load_cases(&problem("reduce").unwrap()).unwrap();
     for case in &cases {
-        let want = interp.eval(&tree5, &case.inputs).unwrap();
+        let want = interp.eval(&tree, &case.inputs).unwrap();
         let got = run_entry(&exe, "main", &case.stdin).unwrap();
         assert_eq!(got, want, "{}", case.name);
     }
@@ -639,117 +534,3 @@ fn the_rendered_text_is_the_same_across_two_processes() {
     assert_eq!(theirs, mine);
 }
 
-/// THE ADF RENDERING: a reference program with subtrees hoisted into `def adf_<i>` (sizes and free variables as
-/// parameters, a nested ADF defined before the one that calls it) is accepted by Futhark and computes, on the `c`
-/// backend, the same output bit for bit as the program without ADFs.
-#[test]
-fn a_program_with_adfs_computes_what_it_computes_without_them() {
-    let picks: [(&str, &str, &[&[u32]]); 4] = [
-        ("histogram", "reference", &[&[1], &[1, 1]]),
-        ("pathfinder", "reference", &[&[2, 1], &[2, 1, 1, 0]]),
-        ("kmeans", "reference", &[&[0, 1, 0], &[1, 2], &[0, 1, 0, 1, 0]]),
-        ("a7", "reference", &[&[1], &[2, 0]]),
-    ];
-    for (problem6, form, paths) in picks {
-        let r = REFERENCES6.iter().find(|r| r.problem == problem6 && r.form == form).unwrap();
-        let (k, header) = view(problem6);
-        let renderer = k.renderer6(header).unwrap();
-        let tree = build6(&k, &(r.master6)()).unwrap();
-        let paths: Vec<Vec<u32>> = paths.iter().map(|p| p.to_vec()).collect();
-        let plain = renderer.program(&tree).unwrap();
-        let folded = renderer.program_with_adfs(&tree, &paths).unwrap_or_else(|e| panic!("{problem6}: {e}"));
-        assert_eq!(folded.text.matches("\ndef adf_").count() + usize::from(folded.text.starts_with("def adf_")), paths.len(), "{problem6}:\n{}", folded.text);
-        assert!(folded.text.contains("adf_0") && plain.text != folded.text);
-        let dir = scratch(&format!("adf_{problem6}"));
-        let src = format!("{}{}\n{}{}\n", as_module(0, &plain.text), entry_calling(0, &plain.text), as_module(1, &folded.text), entry_calling(1, &folded.text));
-        let exe = crate::futhark_sig::compile_c(&src, &dir).unwrap_or_else(|e| panic!("{problem6}:\n{}\n{e}", folded.text));
-        for case in run_cases(problem6) {
-            let a = run_entry(&exe, "e0", &case.stdin).unwrap();
-            let b = run_entry(&exe, "e1", &case.stdin).unwrap();
-            assert_eq!(a, b, "{problem6} on {}", case.name);
-        }
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
-
-/// THE ADF RENDERING OF ADAPTED PROGRAMS (F2 review finding 8): random k-means genes with adapters, each with the
-/// subtree at an adapted node (and, where it has one, its parent) hoisted into an ADF, compute on the `c` backend the
-/// same output bit for bit as without ADFs.
-#[test]
-fn an_adapted_program_with_adfs_computes_what_it_computes_without_them() {
-    let (k, header) = view("kmeans");
-    let renderer = k.renderer6(header).unwrap();
-    let mut pairs: Vec<(Program6, Program6)> = Vec::new();
-    for (tree, plain) in random_programs("kmeans", 200, 0xadf0_0006) {
-        if pairs.len() == 6 {
-            break;
-        }
-        let decoding = renderer.decode(&tree).unwrap();
-        let hoistable = |path: &[u32]| -> bool {
-            !path.is_empty() && decoding.node(path).and_then(|n| k.data_type(n.data_type)).is_some_and(|d| d.name != "size" && !matches!(d.kind, DataKind::Function { .. }))
-        };
-        let Some(at) = plain.adapters.iter().map(|(p, _)| p.clone()).find(|p| hoistable(p)) else { continue };
-        let mut paths = vec![at.clone()];
-        if hoistable(&at[..at.len() - 1]) {
-            paths.push(at[..at.len() - 1].to_vec());
-        }
-        let folded = renderer.program_with_adfs(&tree, &paths).unwrap_or_else(|e| panic!("ADFs at {paths:?}: {e}\n{}", plain.text));
-        assert!(folded.text.contains("def adf_0") && !folded.adapters.is_empty(), "{}", folded.text);
-        pairs.push((plain, folded));
-    }
-    assert_eq!(pairs.len(), 6, "fewer than 6 of 200 random k-means genes have an adapter to hoist");
-    let programs: Vec<&Program6> = pairs.iter().flat_map(|(a, b)| [a, b]).collect();
-    for (c, outputs) in run_on_kmeans("adf_adapted", &programs).iter().enumerate() {
-        for (i, pair) in outputs.chunks(2).enumerate() {
-            assert_eq!(pair[0], pair[1], "pair {i} on case {c}:\n{}\n{}", pairs[i].0.text, pairs[i].1.text);
-        }
-    }
-}
-
-/// The k-means view's tables, with `edit` applied to one of them (by file name).
-fn kmeans_tables_with(file: &str, edit: impl Fn(&str) -> String) -> Result<Kingdom6, String> {
-    let v = crate::futhark_view::master6::committed("kmeans").unwrap();
-    let (mut d, mut s, mut e, mut a) = (v.datatypes_tsv.clone(), v.symbols_tsv.clone(), v.environment_tsv.clone(), crate::futhark_view::master6::ADAPTERS6.to_string());
-    match file {
-        "datatypes" => d = edit(&d),
-        "symbols" => s = edit(&s),
-        "environment" => e = edit(&e),
-        _ => a = edit(&a),
-    }
-    let k = Kingdom6::from_tables("kmeans_edited", &d, &s, &e, &a, &v.spec.literals)?;
-    k.contract()?;
-    Ok(k)
-}
-
-/// THE LOADER CHECKS WHAT IT USED TO SKIP (F1b review finding 5): every table's header, a non-function row with
-/// inputs, a constant's properties with no constant, and the root and its variables against their data types; and
-/// every view's entry, the `i32` + `f32` k-means view's among them, passes the entry check at load.
-#[test]
-fn the_loader_checks_headers_row_kinds_and_the_root() {
-    let swap_header = |t: &str| {
-        let (head, rest) = t.split_once('\n').unwrap();
-        let mut cols: Vec<&str> = head.split('\t').collect();
-        let n = cols.len();
-        cols.swap(n - 2, n - 3);
-        format!("{}\n{rest}", cols.join("\t"))
-    };
-    for file in ["datatypes", "symbols", "environment", "adapters"] {
-        let e = kmeans_tables_with(file, swap_header).err().unwrap_or_else(|| panic!("{file}.tsv with two columns swapped loads"));
-        assert!(e.contains("header"), "{file}: {e}");
-    }
-    let e = kmeans_tables_with("symbols", |t| t.replacen("\tterminal\ti64\t\t", "\tterminal\ti64\ti64\t", 1)).expect_err("a terminal with an input loads");
-    assert!(e.contains("only a function takes inputs"), "{e}");
-    let e = kmeans_tables_with("datatypes", |t| t.replacen("\tsize\t\t\t", "\tsize\t\tvalue=1\t", 1)).expect_err("a constant's properties with no constant load");
-    assert!(e.contains("has no constant"), "{e}");
-    let e = kmeans_tables_with("environment", |t| t.replacen("rows=k & cols=d\tout.rows", "rows=k\tout.rows", 1)).expect_err("a root without its cols loads");
-    assert!(e.contains("the root"), "{e}");
-    let e = kmeans_tables_with("environment", |t| t.replacen("zeros\tzeros_n\t[]f32\tlen=n", "zeros\tzeros_n\t[]f32\tlen=n & rows=n", 1)).expect_err("a zero array with a rows loads");
-    assert!(e.contains("zeros_n"), "{e}");
-    let e = kmeans_tables_with("environment", |t| t.replacen("size\tk\tsize\tvalue=k", "size\tk\tsize\tvalue=n", 1)).expect_err("a size of another value loads");
-    assert!(e.contains("size k"), "{e}");
-    let e = kmeans_tables_with("environment", |t| t.replacen("out.rows = k -> fit.root", "out.width = k -> fit.root", 1)).expect_err("a root requirement on a property it does not carry loads");
-    assert!(e.contains("does not carry"), "{e}");
-    for view6 in VIEWS6 {
-        view(view6).0.contract().unwrap_or_else(|e| panic!("{view6}: {e}"));
-    }
-}

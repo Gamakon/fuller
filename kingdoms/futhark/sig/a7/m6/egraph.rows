@@ -11,5 +11,9 @@ add1@fn.arr2_f32_arr_f32_arr_f32	Xadd1__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32
 add@fn.arr2_f32_arr_f32_arr_f32	Xadd__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
 const@fn.arr_f32_arr_f32	Xconst__fn_arr_f32_arr_f32	Sfn_arr_f32_arr_f32	node
 const@fn.arr2_f32_arr_f32_arr_f32	Xconst__fn_arr2_f32_arr_f32_arr_f32	Sfn_arr2_f32_arr_f32_arr_f32	node
+var@size	Xvar__size	Ssize	binder
+var@size	Kvar__size	Ssize	constant
 var@m.f32	Xvar__m_f32	Sm_f32	binder
 var@m.f32	Kvar__m_f32	Sm_f32	constant
+fitrows@m.f32	Xfitrows__m_f32	Sm_f32	node
+fitcols@m.f32	Xfitcols__m_f32	Sm_f32	node

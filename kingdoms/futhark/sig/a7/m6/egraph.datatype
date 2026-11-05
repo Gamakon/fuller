@@ -2,6 +2,7 @@
 ; One sort per data type: the sort IS the data type.
 
 (sort Sf32)
+(sort Ssize)
 (sort Sa_f32)
 (sort Sm_f32)
 (sort Sfn_arr_f32_arr_f32)
@@ -19,5 +20,9 @@
 (constructor Xadd__fn_arr2_f32_arr_f32_arr_f32 () Sfn_arr2_f32_arr_f32_arr_f32)
 (constructor Xconst__fn_arr_f32_arr_f32 () Sfn_arr_f32_arr_f32)
 (constructor Xconst__fn_arr2_f32_arr_f32_arr_f32 () Sfn_arr2_f32_arr_f32_arr_f32)
+(constructor Xvar__size (i64 i64) Ssize)
+(constructor Kvar__size () Ssize)
 (constructor Xvar__m_f32 (i64 i64) Sm_f32)
 (constructor Kvar__m_f32 () Sm_f32)
+(constructor Xfitrows__m_f32 (Ssize Sm_f32) Sm_f32)
+(constructor Xfitcols__m_f32 (Ssize Sm_f32) Sm_f32)

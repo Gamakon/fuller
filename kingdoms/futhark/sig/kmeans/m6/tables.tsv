@@ -1,0 +1,761 @@
+data_type	f32	scalar
+constant	f32	0f32	-
+data_type	i64	scalar
+carries	i64	bound
+constant	i64	0i64	bound=1
+data_type	size	scalar
+carries	size	value
+size_name	size	d	1
+size_name	size	k	1
+size_name	size	n	1
+data_type	[]f32	array	f32
+carries	[]f32	len
+constant	[]f32	[0f32]	len=1
+data_type	[][]f32	array	[]f32
+carries	[][]f32	rows
+carries	[][]f32	cols
+constant	[][]f32	[[0f32]]	rows=1;cols=1
+data_type	(f32, f32)	tuple	f32;f32
+constant	(f32, f32)	(0f32, 0f32)	-
+data_type	(f32, f32, f32)	tuple	f32;f32;f32
+constant	(f32, f32, f32)	(0f32, 0f32, 0f32)	-
+data_type	[]f32 -> []f32	function	[]f32	[]f32
+constant	[]f32 -> []f32	\xs -> map (\_ -> 0.0) xs	-
+data_type	[]f32 -> []f32 -> []f32	function	[]f32;[]f32	[]f32
+constant	[]f32 -> []f32 -> []f32	\xs _ys -> map (\_ -> 0.0) xs	-
+symbol	add@f32	M0001	function	-	-
+spelling	add@f32		({0}) + ({1})
+symbol	sub@f32	M0002	function	-	-
+spelling	sub@f32		({0}) - ({1})
+symbol	mul@f32	M0003	function	-	-
+spelling	mul@f32		({0}) * ({1})
+symbol	min@f32	M0004	function	-	-
+spelling	min@f32		f32.min ({0}) ({1})
+symbol	max@f32	M0005	function	-	-
+spelling	max@f32		f32.max ({0}) ({1})
+symbol	neg@f32	M0006	function	-	-
+spelling	neg@f32		-({0})
+symbol	abs@f32	M0007	function	-	-
+spelling	abs@f32		f32.abs ({0})
+symbol	sel@f32	M0008	function	-	-
+spelling	sel@f32		if ({0}) < 0f32 then ({1}) else ({2})
+symbol	get@f32	M0009	function	-	-
+spelling	get@f32		({0})[({1})]
+symbol	sum@f32	M0010	function	-	-
+spelling	sum@f32		f32.sum ({0})
+symbol	minimum@f32	M0011	function	-	-
+spelling	minimum@f32		f32.minimum ({0})
+symbol	maximum@f32	M0012	function	-	-
+spelling	maximum@f32		f32.maximum ({0})
+symbol	ival@f32	M0013	function	-	-
+spelling	ival@f32		f32.i64 ({0})
+symbol	sval@f32	M0014	function	-	-
+spelling	sval@f32		f32.i64 {0}
+symbol	const@f32	M0016	constant	-	-
+spelling	const@f32	pool	0f32,1f32,2f32,-1f32,0.5f32,10f32
+symbol	prev@i64	M0018	function	-	-
+spelling	prev@i64		i64.max 0 (({0}) - 1)
+symbol	next@i64	M0019	function	-	-
+spelling	next@i64		i64.min ({=in0.bound} - 1) (({0}) + 1)
+symbol	zero@i64	M0021	function	-	-
+spelling	zero@i64		0i64
+symbol	last@i64	M0022	function	-	-
+spelling	last@i64		{0} - 1
+symbol	tab@a.f32	M0024	function	-	-
+spelling	tab@a.f32		tabulate {0} (\{1.v0} -> ({1}))
+symbol	replicate@a.f32	M0025	function	-	-
+spelling	replicate@a.f32		replicate {0} ({1})
+symbol	map2.add@a.f32	M0026	function	-	-
+spelling	map2.add@a.f32		map2 (+) ({0}) ({1})
+symbol	map2.sub@a.f32	M0027	function	-	-
+spelling	map2.sub@a.f32		map2 (-) ({0}) ({1})
+symbol	map2.min@a.f32	M0028	function	-	-
+spelling	map2.min@a.f32		map2 f32.min ({0}) ({1})
+symbol	map2.max@a.f32	M0029	function	-	-
+spelling	map2.max@a.f32		map2 f32.max ({0}) ({1})
+symbol	scan.add@a.f32	M0030	function	-	-
+spelling	scan.add@a.f32		scan (+) 0f32 (opaque ({0}))
+symbol	scan.min@a.f32	M0031	function	-	-
+spelling	scan.min@a.f32		scan f32.min f32.highest (opaque ({0}))
+symbol	scan.max@a.f32	M0032	function	-	-
+spelling	scan.max@a.f32		scan f32.max f32.lowest (opaque ({0}))
+symbol	row@a.f32	M0036	function	-	-
+spelling	row@a.f32		({0})[({1})]
+symbol	loop@f32	M0040	function	-	-
+spelling	loop@f32		loop ({2.v0}: f32) = ({1}) for {2.v1} < {0} do ({2})
+symbol	loop@a.f32	M0040	function	-	-
+spelling	loop@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for {2.v1} < {0} do ({2})
+symbol	loop1@f32	M0041	function	-	-
+spelling	loop1@f32		loop ({2.v0}: f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+symbol	loop1@a.f32	M0041	function	-	-
+spelling	loop1@a.f32		loop ({2.v0}: [{=in1.len}]f32) = ({1}) for t{2.v1} < {0} - 1 do let {2.v1} = t{2.v1} + 1 in ({2})
+symbol	map_rows@m.f32	M0043	function	-	-
+spelling	map_rows@m.f32		map ({0}) ({1})
+symbol	map2_rows@m.f32	M0044	function	-	-
+spelling	map2_rows@m.f32		map2 ({0}) ({1}) ({2})
+symbol	transpose@m.f32	M0045	function	-	-
+spelling	transpose@m.f32		transpose ({0})
+symbol	matmul@m.f32	M0046	function	-	def matmul [n][m][p] (A: [n][m]f32) (B: [m][p]f32) : [n][p]f32 =\n  map (\\a -> map (\\b -> reduce (+) 0.0 (map2 (*) a b)) (transpose B)) A\n
+spelling	matmul@m.f32		matmul ({0}) ({1})
+symbol	id@fn.arr_f32_arr_f32	M0047	function	-	-
+spelling	id@fn.arr_f32_arr_f32		\xs -> xs
+symbol	add1@fn.arr_f32_arr_f32	M0048	function	-	-
+spelling	add1@fn.arr_f32_arr_f32		\xs -> map (+1.0) xs
+symbol	scale2@fn.arr_f32_arr_f32	M0049	function	-	-
+spelling	scale2@fn.arr_f32_arr_f32		\xs -> map (*2.0) xs
+symbol	id@fn.arr2_f32_arr_f32_arr_f32	M0050	function	-	-
+spelling	id@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> xs
+symbol	add1@fn.arr2_f32_arr_f32_arr_f32	M0051	function	-	-
+spelling	add1@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (+1.0) xs
+symbol	add@fn.arr2_f32_arr_f32_arr_f32	M0052	function	-	-
+spelling	add@fn.arr2_f32_arr_f32_arr_f32		\xs ys -> map2 (+) xs ys
+symbol	const@fn.arr_f32_arr_f32	M0054	function	-	-
+spelling	const@fn.arr_f32_arr_f32		\xs -> map (\_ -> 0.0) xs
+symbol	const@fn.arr2_f32_arr_f32_arr_f32	M0055	function	-	-
+spelling	const@fn.arr2_f32_arr_f32_arr_f32		\xs _ys -> map (\_ -> 0.0) xs
+symbol	clamp@i64	M0056	function	-	-
+spelling	clamp@i64		let x = ({1}) in i64.max 0 (i64.min ({0} - 1) (if f32.isnan x then 0i64 else i64.f32 (f32.max 0f32 (f32.min (f32.i64 ({0} - 1)) x))))
+symbol	hist.add@a.f32	M0057	function	-	-
+spelling	hist.add@a.f32		hist (+) 0f32 {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+symbol	hist.min@a.f32	M0058	function	-	-
+spelling	hist.min@a.f32		hist f32.min f32.highest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+symbol	hist.max@a.f32	M0059	function	-	-
+spelling	hist.max@a.f32		hist f32.max f32.lowest {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({1})) ({2})
+symbol	div@f32	M0060	function	-	-
+spelling	div@f32		({0}) / ({1})
+symbol	sqrt@f32	M0061	function	-	-
+spelling	sqrt@f32		f32.sqrt ({0})
+symbol	map2.mul@a.f32	M0062	function	-	-
+spelling	map2.mul@a.f32		map2 (*) ({0}) ({1})
+symbol	tabrows@m.f32	M0063	function	-	-
+spelling	tabrows@m.f32		tabulate {0} (\{2.v0} -> ({2}))
+symbol	histrows.add@m.f32	M0065	function	-	-
+spelling	histrows.add@m.f32		hist (map2 (+)) (replicate {1} 0f32) {0} (map (\x -> if f32.isnan x then -1i64 else i64.f32 (f32.max (-1f32) (f32.min (f32.i64 {0}) x))) ({2})) ({3})
+symbol	rowdiv@m.f32	M0066	function	-	-
+spelling	rowdiv@m.f32		map2 (\r s -> map (/ s) r) ({0}) ({1})
+symbol	pair@f32.f32	M0068	function	-	-
+spelling	pair@f32.f32		(({0}), ({1}))
+symbol	fst.f32.f32@f32	M0069	function	-	-
+spelling	fst.f32.f32@f32		({0}).0
+symbol	snd.f32.f32@f32	M0070	function	-	-
+spelling	snd.f32.f32@f32		({0}).1
+symbol	zero@f32.f32	M0071	function	-	-
+spelling	zero@f32.f32		(0f32, 0f32)
+symbol	psel@f32.f32	M0072	function	-	-
+spelling	psel@f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+symbol	loop@f32.f32	M0073	function	-	-
+spelling	loop@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for {2.v2} < {0} do ({2})
+symbol	loop1@f32.f32	M0074	function	-	-
+spelling	loop1@f32.f32		loop (({2.v0}, {2.v1}): (f32, f32)) = ({1}) for t{2.v2} < {0} - 1 do let {2.v2} = t{2.v2} + 1 in ({2})
+symbol	triple@f32.f32.f32	M0077	function	-	-
+spelling	triple@f32.f32.f32		(({0}), ({1}), ({2}))
+symbol	fst.f32.f32.f32@f32	M0078	function	-	-
+spelling	fst.f32.f32.f32@f32		({0}).0
+symbol	snd.f32.f32.f32@f32	M0079	function	-	-
+spelling	snd.f32.f32.f32@f32		({0}).1
+symbol	thd.f32.f32.f32@f32	M0080	function	-	-
+spelling	thd.f32.f32.f32@f32		({0}).2
+symbol	zero@f32.f32.f32	M0081	function	-	-
+spelling	zero@f32.f32.f32		(0f32, 0f32, 0f32)
+symbol	psel@f32.f32.f32	M0082	function	-	-
+spelling	psel@f32.f32.f32		if ({0}) < 0f32 then ({1}) else ({2})
+symbol	loop@f32.f32.f32	M0083	function	-	-
+spelling	loop@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for {2.v3} < {0} do ({2})
+symbol	loop1@f32.f32.f32	M0084	function	-	-
+spelling	loop1@f32.f32.f32		loop (({2.v0}, {2.v1}, {2.v2}): (f32, f32, f32)) = ({1}) for t{2.v3} < {0} - 1 do let {2.v3} = t{2.v3} + 1 in ({2})
+symbol	let.a.f32@f32	M0085	function	-	-
+spelling	let.a.f32@f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@i64	M0085	function	-	-
+spelling	let.a.f32@i64		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@a.f32	M0085	function	-	-
+spelling	let.a.f32@a.f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@m.f32	M0085	function	-	-
+spelling	let.a.f32@m.f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@f32.f32	M0085	function	-	-
+spelling	let.a.f32@f32.f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@f32.f32.f32	M0085	function	-	-
+spelling	let.a.f32@f32.f32.f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@fn.arr_f32_arr_f32	M0085	function	-	-
+spelling	let.a.f32@fn.arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+symbol	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	M0085	function	-	-
+spelling	let.a.f32@fn.arr2_f32_arr_f32_arr_f32		let {1.v0} = ({0}) in ({1})
+symbol	var@f32	M0087	variable	-	-
+symbol	var@i64	M0087	variable	-	-
+symbol	var@size	M0087	variable	-	-
+symbol	var@a.f32	M0087	variable	-	-
+symbol	var@m.f32	M0087	variable	-	-
+symbol	nextin@i64	M0089	function	-	-
+spelling	nextin@i64		i64.min ({0} - 1) (({1}) + 1)
+symbol	fit@a.f32	M0090	function	adapter	def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =\n  tabulate l (\\i -> if i < m then xs[i] else z)\n
+spelling	fit@a.f32		fit {0} 0f32 ({1})
+symbol	fitrows@m.f32	M0091	function	adapter	def fitrows [m][c] 't (l: i64) (z: t) (xs: [m][c]t) : [l][c]t =\n  tabulate l (\\i -> if i < m then xs[i] else replicate c z)\n
+spelling	fitrows@m.f32		fitrows {0} 0f32 ({1})
+symbol	fitcols@m.f32	M0092	function	adapter	def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =\n  tabulate l (\\i -> if i < m then xs[i] else z)\n
+spelling	fitcols@m.f32		map (fit {0} 0f32) ({1})
+symbol	clampix@i64	M0093	function	adapter	def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)\n
+spelling	clampix@i64		clampix {0} ({1})
+symbol	=min	=	formula	-	-
+spelling	=min		i64.min {0} {1}
+spelling	=min	name	min_{0}_{1}
+symbol	=max	=	formula	-	-
+spelling	=max		i64.max {0} {1}
+spelling	=max	name	max_{0}_{1}
+symbol	=+	=	formula	-	-
+spelling	=+		{0} + {1}
+spelling	=+	name	sum_{0}_{1}
+symbol	=*	=	formula	-	-
+spelling	=*		{0} * {1}
+spelling	=*	name	prod_{0}_{1}
+symbol	=group	=	formula	-	-
+spelling	=group		({0})
+spelling	=group	name	{0}
+symbol	=negative	=	formula	-	-
+spelling	=negative	name	m{0}
+argument	add@f32	0	in	f32	-
+argument	add@f32	1	in	f32	-
+argument	add@f32	0	out	f32	-
+argument	sub@f32	0	in	f32	-
+argument	sub@f32	1	in	f32	-
+argument	sub@f32	0	out	f32	-
+argument	mul@f32	0	in	f32	-
+argument	mul@f32	1	in	f32	-
+argument	mul@f32	0	out	f32	-
+argument	min@f32	0	in	f32	-
+argument	min@f32	1	in	f32	-
+argument	min@f32	0	out	f32	-
+argument	max@f32	0	in	f32	-
+argument	max@f32	1	in	f32	-
+argument	max@f32	0	out	f32	-
+argument	neg@f32	0	in	f32	-
+argument	neg@f32	0	out	f32	-
+argument	abs@f32	0	in	f32	-
+argument	abs@f32	0	out	f32	-
+argument	sel@f32	0	in	f32	-
+argument	sel@f32	1	in	f32	-
+argument	sel@f32	2	in	f32	-
+argument	sel@f32	0	out	f32	-
+argument	get@f32	0	in	[]f32	-
+argument	get@f32	1	in	i64	-
+argument	get@f32	0	out	f32	-
+argument	sum@f32	0	in	[]f32	-
+argument	sum@f32	0	out	f32	-
+argument	minimum@f32	0	in	[]f32	-
+argument	minimum@f32	0	out	f32	-
+argument	maximum@f32	0	in	[]f32	-
+argument	maximum@f32	0	out	f32	-
+argument	ival@f32	0	in	i64	-
+argument	ival@f32	0	out	f32	-
+argument	sval@f32	0	in	size	-
+argument	sval@f32	0	out	f32	-
+argument	const@f32	0	out	f32	-
+argument	prev@i64	0	in	i64	-
+argument	prev@i64	0	out	i64	-
+argument	next@i64	0	in	i64	-
+argument	next@i64	0	out	i64	-
+argument	zero@i64	0	out	i64	-
+argument	last@i64	0	in	size	-
+argument	last@i64	0	out	i64	-
+argument	tab@a.f32	0	in	size	-
+argument	tab@a.f32	1	in	f32	-
+argument	tab@a.f32	0	out	[]f32	-
+argument	replicate@a.f32	0	in	size	-
+argument	replicate@a.f32	1	in	f32	-
+argument	replicate@a.f32	0	out	[]f32	-
+argument	map2.add@a.f32	0	in	[]f32	-
+argument	map2.add@a.f32	1	in	[]f32	-
+argument	map2.add@a.f32	0	out	[]f32	-
+argument	map2.sub@a.f32	0	in	[]f32	-
+argument	map2.sub@a.f32	1	in	[]f32	-
+argument	map2.sub@a.f32	0	out	[]f32	-
+argument	map2.min@a.f32	0	in	[]f32	-
+argument	map2.min@a.f32	1	in	[]f32	-
+argument	map2.min@a.f32	0	out	[]f32	-
+argument	map2.max@a.f32	0	in	[]f32	-
+argument	map2.max@a.f32	1	in	[]f32	-
+argument	map2.max@a.f32	0	out	[]f32	-
+argument	scan.add@a.f32	0	in	[]f32	-
+argument	scan.add@a.f32	0	out	[]f32	-
+argument	scan.min@a.f32	0	in	[]f32	-
+argument	scan.min@a.f32	0	out	[]f32	-
+argument	scan.max@a.f32	0	in	[]f32	-
+argument	scan.max@a.f32	0	out	[]f32	-
+argument	row@a.f32	0	in	[][]f32	-
+argument	row@a.f32	1	in	i64	-
+argument	row@a.f32	0	out	[]f32	-
+argument	loop@f32	0	in	size	-
+argument	loop@f32	1	in	f32	-
+argument	loop@f32	2	in	f32	-
+argument	loop@f32	0	out	f32	-
+argument	loop@a.f32	0	in	size	-
+argument	loop@a.f32	1	in	[]f32	-
+argument	loop@a.f32	2	in	[]f32	-
+argument	loop@a.f32	0	out	[]f32	-
+argument	loop1@f32	0	in	size	-
+argument	loop1@f32	1	in	f32	-
+argument	loop1@f32	2	in	f32	-
+argument	loop1@f32	0	out	f32	-
+argument	loop1@a.f32	0	in	size	-
+argument	loop1@a.f32	1	in	[]f32	-
+argument	loop1@a.f32	2	in	[]f32	-
+argument	loop1@a.f32	0	out	[]f32	-
+argument	map_rows@m.f32	0	in	[]f32 -> []f32	-
+argument	map_rows@m.f32	1	in	[][]f32	-
+argument	map_rows@m.f32	0	out	[][]f32	-
+argument	map2_rows@m.f32	0	in	[]f32 -> []f32 -> []f32	-
+argument	map2_rows@m.f32	1	in	[][]f32	-
+argument	map2_rows@m.f32	2	in	[][]f32	-
+argument	map2_rows@m.f32	0	out	[][]f32	-
+argument	transpose@m.f32	0	in	[][]f32	-
+argument	transpose@m.f32	0	out	[][]f32	-
+argument	matmul@m.f32	0	in	[][]f32	-
+argument	matmul@m.f32	1	in	[][]f32	-
+argument	matmul@m.f32	0	out	[][]f32	-
+argument	id@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	add1@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	scale2@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	id@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	add1@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	add@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	const@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	const@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	clamp@i64	0	in	size	-
+argument	clamp@i64	1	in	f32	-
+argument	clamp@i64	0	out	i64	-
+argument	hist.add@a.f32	0	in	size	-
+argument	hist.add@a.f32	1	in	[]f32	-
+argument	hist.add@a.f32	2	in	[]f32	-
+argument	hist.add@a.f32	0	out	[]f32	-
+argument	hist.min@a.f32	0	in	size	-
+argument	hist.min@a.f32	1	in	[]f32	-
+argument	hist.min@a.f32	2	in	[]f32	-
+argument	hist.min@a.f32	0	out	[]f32	-
+argument	hist.max@a.f32	0	in	size	-
+argument	hist.max@a.f32	1	in	[]f32	-
+argument	hist.max@a.f32	2	in	[]f32	-
+argument	hist.max@a.f32	0	out	[]f32	-
+argument	div@f32	0	in	f32	-
+argument	div@f32	1	in	f32	-
+argument	div@f32	0	out	f32	-
+argument	sqrt@f32	0	in	f32	-
+argument	sqrt@f32	0	out	f32	-
+argument	map2.mul@a.f32	0	in	[]f32	-
+argument	map2.mul@a.f32	1	in	[]f32	-
+argument	map2.mul@a.f32	0	out	[]f32	-
+argument	tabrows@m.f32	0	in	size	-
+argument	tabrows@m.f32	1	in	size	-
+argument	tabrows@m.f32	2	in	[]f32	-
+argument	tabrows@m.f32	0	out	[][]f32	-
+argument	histrows.add@m.f32	0	in	size	-
+argument	histrows.add@m.f32	1	in	size	-
+argument	histrows.add@m.f32	2	in	[]f32	-
+argument	histrows.add@m.f32	3	in	[][]f32	-
+argument	histrows.add@m.f32	0	out	[][]f32	-
+argument	rowdiv@m.f32	0	in	[][]f32	-
+argument	rowdiv@m.f32	1	in	[]f32	-
+argument	rowdiv@m.f32	0	out	[][]f32	-
+argument	pair@f32.f32	0	in	f32	-
+argument	pair@f32.f32	1	in	f32	-
+argument	pair@f32.f32	0	out	(f32, f32)	-
+argument	fst.f32.f32@f32	0	in	(f32, f32)	-
+argument	fst.f32.f32@f32	0	out	f32	-
+argument	snd.f32.f32@f32	0	in	(f32, f32)	-
+argument	snd.f32.f32@f32	0	out	f32	-
+argument	zero@f32.f32	0	out	(f32, f32)	-
+argument	psel@f32.f32	0	in	f32	-
+argument	psel@f32.f32	1	in	(f32, f32)	-
+argument	psel@f32.f32	2	in	(f32, f32)	-
+argument	psel@f32.f32	0	out	(f32, f32)	-
+argument	loop@f32.f32	0	in	size	-
+argument	loop@f32.f32	1	in	(f32, f32)	-
+argument	loop@f32.f32	2	in	(f32, f32)	-
+argument	loop@f32.f32	0	out	(f32, f32)	-
+argument	loop1@f32.f32	0	in	size	-
+argument	loop1@f32.f32	1	in	(f32, f32)	-
+argument	loop1@f32.f32	2	in	(f32, f32)	-
+argument	loop1@f32.f32	0	out	(f32, f32)	-
+argument	triple@f32.f32.f32	0	in	f32	-
+argument	triple@f32.f32.f32	1	in	f32	-
+argument	triple@f32.f32.f32	2	in	f32	-
+argument	triple@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	fst.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+argument	fst.f32.f32.f32@f32	0	out	f32	-
+argument	snd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+argument	snd.f32.f32.f32@f32	0	out	f32	-
+argument	thd.f32.f32.f32@f32	0	in	(f32, f32, f32)	-
+argument	thd.f32.f32.f32@f32	0	out	f32	-
+argument	zero@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	psel@f32.f32.f32	0	in	f32	-
+argument	psel@f32.f32.f32	1	in	(f32, f32, f32)	-
+argument	psel@f32.f32.f32	2	in	(f32, f32, f32)	-
+argument	psel@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	loop@f32.f32.f32	0	in	size	-
+argument	loop@f32.f32.f32	1	in	(f32, f32, f32)	-
+argument	loop@f32.f32.f32	2	in	(f32, f32, f32)	-
+argument	loop@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	loop1@f32.f32.f32	0	in	size	-
+argument	loop1@f32.f32.f32	1	in	(f32, f32, f32)	-
+argument	loop1@f32.f32.f32	2	in	(f32, f32, f32)	-
+argument	loop1@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	let.a.f32@f32	0	in	[]f32	-
+argument	let.a.f32@f32	1	in	f32	-
+argument	let.a.f32@f32	0	out	f32	-
+argument	let.a.f32@i64	0	in	[]f32	-
+argument	let.a.f32@i64	1	in	i64	-
+argument	let.a.f32@i64	0	out	i64	-
+argument	let.a.f32@a.f32	0	in	[]f32	-
+argument	let.a.f32@a.f32	1	in	[]f32	-
+argument	let.a.f32@a.f32	0	out	[]f32	-
+argument	let.a.f32@m.f32	0	in	[]f32	-
+argument	let.a.f32@m.f32	1	in	[][]f32	-
+argument	let.a.f32@m.f32	0	out	[][]f32	-
+argument	let.a.f32@f32.f32	0	in	[]f32	-
+argument	let.a.f32@f32.f32	1	in	(f32, f32)	-
+argument	let.a.f32@f32.f32	0	out	(f32, f32)	-
+argument	let.a.f32@f32.f32.f32	0	in	[]f32	-
+argument	let.a.f32@f32.f32.f32	1	in	(f32, f32, f32)	-
+argument	let.a.f32@f32.f32.f32	0	out	(f32, f32, f32)	-
+argument	let.a.f32@fn.arr_f32_arr_f32	0	in	[]f32	-
+argument	let.a.f32@fn.arr_f32_arr_f32	1	in	[]f32 -> []f32	-
+argument	let.a.f32@fn.arr_f32_arr_f32	0	out	[]f32 -> []f32	-
+argument	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	0	in	[]f32	-
+argument	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	1	in	[]f32 -> []f32 -> []f32	-
+argument	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	0	out	[]f32 -> []f32 -> []f32	-
+argument	var@f32	0	out	f32	-
+argument	var@i64	0	out	i64	-
+argument	var@size	0	out	size	-
+argument	var@a.f32	0	out	[]f32	-
+argument	var@m.f32	0	out	[][]f32	-
+argument	nextin@i64	0	in	size	-
+argument	nextin@i64	1	in	i64	-
+argument	nextin@i64	0	out	i64	-
+argument	fit@a.f32	0	in	size	-
+argument	fit@a.f32	1	in	[]f32	-
+argument	fit@a.f32	0	out	[]f32	-
+argument	fitrows@m.f32	0	in	size	-
+argument	fitrows@m.f32	1	in	[][]f32	-
+argument	fitrows@m.f32	0	out	[][]f32	-
+argument	fitcols@m.f32	0	in	size	-
+argument	fitcols@m.f32	1	in	[][]f32	-
+argument	fitcols@m.f32	0	out	[][]f32	-
+argument	clampix@i64	0	in	size	-
+argument	clampix@i64	1	in	i64	-
+argument	clampix@i64	0	out	i64	-
+flow	prev@i64	out	up	bound	in0.bound
+flow	next@i64	out	up	bound	in0.bound
+flow	zero@i64	out	up	bound	1
+flow	last@i64	out	up	bound	in0.value
+flow	tab@a.f32	out	up	len	in0.value
+flow	tab@a.f32	in1	down	var.i64	1
+flow	tab@a.f32	in1	down	var.i64.bound	in0.value
+flow	tab@a.f32	in1	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	tab@a.f32	in1	down	env.trips	env.trips + 1
+flow	replicate@a.f32	out	up	len	in0.value
+flow	map2.add@a.f32	out	up	len	min(in0.len, in1.len)
+flow	map2.sub@a.f32	out	up	len	min(in0.len, in1.len)
+flow	map2.min@a.f32	out	up	len	min(in0.len, in1.len)
+flow	map2.max@a.f32	out	up	len	min(in0.len, in1.len)
+flow	scan.add@a.f32	out	up	len	in0.len
+flow	scan.min@a.f32	out	up	len	in0.len
+flow	scan.max@a.f32	out	up	len	in0.len
+flow	row@a.f32	out	up	len	in0.cols
+flow	loop@f32	in2	down	var.f32	1
+flow	loop@f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop@f32	in2	down	var.i64	1
+flow	loop@f32	in2	down	var.i64.bound	in0.value
+flow	loop@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop@f32	in2	down	env.trips	env.trips + 1
+flow	loop@a.f32	out	up	len	in1.len
+flow	loop@a.f32	in2	down	var.[]f32	1
+flow	loop@a.f32	in2	down	var.[]f32.len	in1.len
+flow	loop@a.f32	in2	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	loop@a.f32	in2	down	var.i64	1
+flow	loop@a.f32	in2	down	var.i64.bound	in0.value
+flow	loop@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop@a.f32	in2	down	env.trips	env.trips + 1
+flow	loop1@f32	in2	down	var.f32	1
+flow	loop1@f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop1@f32	in2	down	var.i64	1
+flow	loop1@f32	in2	down	var.i64.bound	in0.value
+flow	loop1@f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop1@f32	in2	down	env.trips	env.trips + 1
+flow	loop1@a.f32	out	up	len	in1.len
+flow	loop1@a.f32	in2	down	var.[]f32	1
+flow	loop1@a.f32	in2	down	var.[]f32.len	in1.len
+flow	loop1@a.f32	in2	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	loop1@a.f32	in2	down	var.i64	1
+flow	loop1@a.f32	in2	down	var.i64.bound	in0.value
+flow	loop1@a.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop1@a.f32	in2	down	env.trips	env.trips + 1
+flow	map_rows@m.f32	out	up	rows	in1.rows
+flow	map_rows@m.f32	out	up	cols	in1.cols
+flow	map2_rows@m.f32	out	up	rows	min(in1.rows, in2.rows)
+flow	map2_rows@m.f32	out	up	cols	min(in1.cols, in2.cols)
+flow	transpose@m.f32	out	up	rows	in0.cols
+flow	transpose@m.f32	out	up	cols	in0.rows
+flow	matmul@m.f32	out	up	rows	in0.rows
+flow	matmul@m.f32	out	up	cols	in1.cols
+flow	clamp@i64	out	up	bound	in0.value
+flow	hist.add@a.f32	out	up	len	in0.value
+flow	hist.min@a.f32	out	up	len	in0.value
+flow	hist.max@a.f32	out	up	len	in0.value
+flow	map2.mul@a.f32	out	up	len	min(in0.len, in1.len)
+flow	tabrows@m.f32	out	up	rows	in0.value
+flow	tabrows@m.f32	out	up	cols	in1.value
+flow	tabrows@m.f32	in2	down	var.i64	1
+flow	tabrows@m.f32	in2	down	var.i64.bound	in0.value
+flow	tabrows@m.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	tabrows@m.f32	in2	down	env.trips	env.trips + 1
+flow	histrows.add@m.f32	out	up	rows	in0.value
+flow	histrows.add@m.f32	out	up	cols	in1.value
+flow	rowdiv@m.f32	out	up	rows	min(in0.rows, in1.len)
+flow	rowdiv@m.f32	out	up	cols	in0.cols
+flow	loop@f32.f32	in2	down	var.f32	1
+flow	loop@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop@f32.f32	in2	down	var.f32/1	1
+flow	loop@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+flow	loop@f32.f32	in2	down	var.i64	1
+flow	loop@f32.f32	in2	down	var.i64.bound	in0.value
+flow	loop@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop@f32.f32	in2	down	env.trips	env.trips + 1
+flow	loop1@f32.f32	in2	down	var.f32	1
+flow	loop1@f32.f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop1@f32.f32	in2	down	var.f32/1	1
+flow	loop1@f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+flow	loop1@f32.f32	in2	down	var.i64	1
+flow	loop1@f32.f32	in2	down	var.i64.bound	in0.value
+flow	loop1@f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop1@f32.f32	in2	down	env.trips	env.trips + 1
+flow	loop@f32.f32.f32	in2	down	var.f32	1
+flow	loop@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop@f32.f32.f32	in2	down	var.f32/1	1
+flow	loop@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+flow	loop@f32.f32.f32	in2	down	var.f32/2	1
+flow	loop@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+flow	loop@f32.f32.f32	in2	down	var.i64	1
+flow	loop@f32.f32.f32	in2	down	var.i64.bound	in0.value
+flow	loop@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop@f32.f32.f32	in2	down	env.trips	env.trips + 1
+flow	loop1@f32.f32.f32	in2	down	var.f32	1
+flow	loop1@f32.f32.f32	in2	down	var.f32.spell	s{nth}_f32
+flow	loop1@f32.f32.f32	in2	down	var.f32/1	1
+flow	loop1@f32.f32.f32	in2	down	var.f32/1.spell	s{nth}_f32
+flow	loop1@f32.f32.f32	in2	down	var.f32/2	1
+flow	loop1@f32.f32.f32	in2	down	var.f32/2.spell	s{nth}_f32
+flow	loop1@f32.f32.f32	in2	down	var.i64	1
+flow	loop1@f32.f32.f32	in2	down	var.i64.bound	in0.value
+flow	loop1@f32.f32.f32	in2	down	var.i64.spell	i{nth}_{=out.bound@name}
+flow	loop1@f32.f32.f32	in2	down	env.trips	env.trips + 1
+flow	let.a.f32@f32	in1	down	var.[]f32	1
+flow	let.a.f32@f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@i64	out	up	bound	in1.bound
+flow	let.a.f32@i64	in1	down	var.[]f32	1
+flow	let.a.f32@i64	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@i64	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@a.f32	out	up	len	in1.len
+flow	let.a.f32@a.f32	in1	down	var.[]f32	1
+flow	let.a.f32@a.f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@a.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@m.f32	out	up	rows	in1.rows
+flow	let.a.f32@m.f32	out	up	cols	in1.cols
+flow	let.a.f32@m.f32	in1	down	var.[]f32	1
+flow	let.a.f32@m.f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@m.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@f32.f32	in1	down	var.[]f32	1
+flow	let.a.f32@f32.f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@f32.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@f32.f32.f32	in1	down	var.[]f32	1
+flow	let.a.f32@f32.f32.f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@f32.f32.f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32	1
+flow	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@fn.arr_f32_arr_f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32	1
+flow	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32.len	in0.len
+flow	let.a.f32@fn.arr2_f32_arr_f32_arr_f32	in1	down	var.[]f32.spell	s{nth}_a_{=out.len@name}
+flow	nextin@i64	out	up	bound	in0.value
+flow	fit@a.f32	out	up	len	in0.value
+flow	fitrows@m.f32	out	up	rows	in0.value
+flow	fitrows@m.f32	out	up	cols	in1.cols
+flow	fitcols@m.f32	out	up	rows	in1.rows
+flow	fitcols@m.f32	out	up	cols	in0.value
+flow	clampix@i64	out	up	bound	in0.value
+guard	get@f32	1	must	in1.bound <= in0.len
+repair	get@f32	1	in1	known(in0.len)	true	{call clampix@i64({=in0.len}, {1})}
+repair	get@f32	1	node	true	true	{in.own}
+repair	get@f32	1	node	true	true	{const}
+guard	sum@f32	0	must	env.trips < 3
+repair	sum@f32	0	node	true	true	{in.own}
+repair	sum@f32	0	node	true	true	{const}
+guard	minimum@f32	0	must	env.trips < 3
+repair	minimum@f32	0	node	true	true	{in.own}
+repair	minimum@f32	0	node	true	true	{const}
+guard	maximum@f32	0	must	env.trips < 3
+repair	maximum@f32	0	node	true	true	{in.own}
+repair	maximum@f32	0	node	true	true	{const}
+guard	tab@a.f32	0	must	env.trips < 3
+repair	tab@a.f32	0	node	true	true	{in.own}
+repair	tab@a.f32	0	node	true	true	{const}
+guard	replicate@a.f32	0	must	env.trips < 3
+repair	replicate@a.f32	0	node	true	true	{in.own}
+repair	replicate@a.f32	0	node	true	true	{const}
+guard	map2.add@a.f32	0	must	env.trips < 3
+repair	map2.add@a.f32	0	node	true	true	{in.own}
+repair	map2.add@a.f32	0	node	true	true	{const}
+guard	map2.add@a.f32	1	must	in1.len = in0.len
+repair	map2.add@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+repair	map2.add@a.f32	1	node	true	true	{in.own}
+repair	map2.add@a.f32	1	node	true	true	{const}
+guard	map2.sub@a.f32	0	must	env.trips < 3
+repair	map2.sub@a.f32	0	node	true	true	{in.own}
+repair	map2.sub@a.f32	0	node	true	true	{const}
+guard	map2.sub@a.f32	1	must	in1.len = in0.len
+repair	map2.sub@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+repair	map2.sub@a.f32	1	node	true	true	{in.own}
+repair	map2.sub@a.f32	1	node	true	true	{const}
+guard	map2.min@a.f32	0	must	env.trips < 3
+repair	map2.min@a.f32	0	node	true	true	{in.own}
+repair	map2.min@a.f32	0	node	true	true	{const}
+guard	map2.min@a.f32	1	must	in1.len = in0.len
+repair	map2.min@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+repair	map2.min@a.f32	1	node	true	true	{in.own}
+repair	map2.min@a.f32	1	node	true	true	{const}
+guard	map2.max@a.f32	0	must	env.trips < 3
+repair	map2.max@a.f32	0	node	true	true	{in.own}
+repair	map2.max@a.f32	0	node	true	true	{const}
+guard	map2.max@a.f32	1	must	in1.len = in0.len
+repair	map2.max@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+repair	map2.max@a.f32	1	node	true	true	{in.own}
+repair	map2.max@a.f32	1	node	true	true	{const}
+guard	scan.add@a.f32	0	must	env.trips < 3
+repair	scan.add@a.f32	0	node	true	true	{in.own}
+repair	scan.add@a.f32	0	node	true	true	{const}
+guard	scan.min@a.f32	0	must	env.trips < 3
+repair	scan.min@a.f32	0	node	true	true	{in.own}
+repair	scan.min@a.f32	0	node	true	true	{const}
+guard	scan.max@a.f32	0	must	env.trips < 3
+repair	scan.max@a.f32	0	node	true	true	{in.own}
+repair	scan.max@a.f32	0	node	true	true	{const}
+guard	row@a.f32	1	must	in1.bound <= in0.rows
+repair	row@a.f32	1	in1	known(in0.rows)	true	{call clampix@i64({=in0.rows}, {1})}
+repair	row@a.f32	1	node	true	true	{in.own}
+repair	row@a.f32	1	node	true	true	{const}
+guard	loop@f32	0	must	env.trips < 3
+repair	loop@f32	0	node	true	true	{in.own}
+repair	loop@f32	0	node	true	true	{const}
+guard	loop@a.f32	0	must	env.trips < 3
+repair	loop@a.f32	0	node	true	true	{in.own}
+repair	loop@a.f32	0	node	true	true	{const}
+guard	loop@a.f32	1	must	in2.len = in1.len
+repair	loop@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+repair	loop@a.f32	1	node	true	true	{in.own}
+repair	loop@a.f32	1	node	true	true	{const}
+guard	loop1@f32	0	must	env.trips < 3
+repair	loop1@f32	0	node	true	true	{in.own}
+repair	loop1@f32	0	node	true	true	{const}
+guard	loop1@a.f32	0	must	env.trips < 3
+repair	loop1@a.f32	0	node	true	true	{in.own}
+repair	loop1@a.f32	0	node	true	true	{const}
+guard	loop1@a.f32	1	must	in2.len = in1.len
+repair	loop1@a.f32	1	in2	known(in1.len)	env.trips < 3	{call fit@a.f32({=in1.len}, {2})}
+repair	loop1@a.f32	1	node	true	true	{in.own}
+repair	loop1@a.f32	1	node	true	true	{const}
+guard	map_rows@m.f32	0	must	env.trips < 3
+repair	map_rows@m.f32	0	node	true	true	{in.own}
+repair	map_rows@m.f32	0	node	true	true	{const}
+guard	map2_rows@m.f32	0	must	env.trips < 3
+repair	map2_rows@m.f32	0	node	true	true	{in.own}
+repair	map2_rows@m.f32	0	node	true	true	{const}
+guard	map2_rows@m.f32	1	must	in2.rows = in1.rows
+repair	map2_rows@m.f32	1	node	known(in2.rows) and known(in1.rows)	env.trips < 3	{self(1 := {if in1.rows = min(in2.rows, in1.rows) : {1} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {1})}}, 2 := {if in2.rows = min(in2.rows, in1.rows) : {2} else {call fitrows@m.f32({=min(in2.rows, in1.rows)}, {2})}})}
+repair	map2_rows@m.f32	1	node	true	true	{in.own}
+repair	map2_rows@m.f32	1	node	true	true	{const}
+guard	map2_rows@m.f32	2	must	in2.cols = in1.cols
+repair	map2_rows@m.f32	2	node	known(in2.cols) and known(in1.cols)	env.trips < 3	{self(1 := {if in1.cols = min(in2.cols, in1.cols) : {1} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {1})}}, 2 := {if in2.cols = min(in2.cols, in1.cols) : {2} else {call fitcols@m.f32({=min(in2.cols, in1.cols)}, {2})}})}
+repair	map2_rows@m.f32	2	node	true	true	{in.own}
+repair	map2_rows@m.f32	2	node	true	true	{const}
+guard	matmul@m.f32	0	must	env.trips < 3
+repair	matmul@m.f32	0	node	true	true	{in.own}
+repair	matmul@m.f32	0	node	true	true	{const}
+guard	matmul@m.f32	1	must	in1.rows = in0.cols
+repair	matmul@m.f32	1	in0	known(in1.rows)	env.trips < 3	{call fitcols@m.f32({=in1.rows}, {0})}
+repair	matmul@m.f32	1	node	true	true	{in.own}
+repair	matmul@m.f32	1	node	true	true	{const}
+guard	hist.add@a.f32	0	must	env.trips < 3
+repair	hist.add@a.f32	0	node	true	true	{const}
+guard	hist.add@a.f32	1	must	in2.len = in1.len
+repair	hist.add@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+repair	hist.add@a.f32	1	node	true	true	{const}
+guard	hist.min@a.f32	0	must	env.trips < 3
+repair	hist.min@a.f32	0	node	true	true	{const}
+guard	hist.min@a.f32	1	must	in2.len = in1.len
+repair	hist.min@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+repair	hist.min@a.f32	1	node	true	true	{const}
+guard	hist.max@a.f32	0	must	env.trips < 3
+repair	hist.max@a.f32	0	node	true	true	{const}
+guard	hist.max@a.f32	1	must	in2.len = in1.len
+repair	hist.max@a.f32	1	node	known(in2.len) and known(in1.len)	env.trips < 3	{self(1 := {if in1.len = min(in2.len, in1.len) : {1} else {call fit@a.f32({=min(in2.len, in1.len)}, {1})}}, 2 := {if in2.len = min(in2.len, in1.len) : {2} else {call fit@a.f32({=min(in2.len, in1.len)}, {2})}})}
+repair	hist.max@a.f32	1	node	true	true	{const}
+guard	map2.mul@a.f32	0	must	env.trips < 3
+repair	map2.mul@a.f32	0	node	true	true	{in.own}
+repair	map2.mul@a.f32	0	node	true	true	{const}
+guard	map2.mul@a.f32	1	must	in1.len = in0.len
+repair	map2.mul@a.f32	1	node	known(in1.len) and known(in0.len)	env.trips < 3	{self(0 := {if in0.len = min(in1.len, in0.len) : {0} else {call fit@a.f32({=min(in1.len, in0.len)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.len) : {1} else {call fit@a.f32({=min(in1.len, in0.len)}, {1})}})}
+repair	map2.mul@a.f32	1	node	true	true	{in.own}
+repair	map2.mul@a.f32	1	node	true	true	{const}
+guard	tabrows@m.f32	0	must	env.trips < 3
+repair	tabrows@m.f32	0	node	true	true	{in.own}
+repair	tabrows@m.f32	0	node	true	true	{const}
+guard	tabrows@m.f32	1	must	in2.len = in1.value
+repair	tabrows@m.f32	1	in2	known(in1.value)	env.trips < 3	{call fit@a.f32({=in1.value}, {2})}
+repair	tabrows@m.f32	1	node	true	true	{in.own}
+repair	tabrows@m.f32	1	node	true	true	{const}
+guard	histrows.add@m.f32	0	must	env.trips < 3
+repair	histrows.add@m.f32	0	node	true	true	{const}
+guard	histrows.add@m.f32	1	must	in3.rows = in2.len
+repair	histrows.add@m.f32	1	node	known(in3.rows) and known(in2.len)	env.trips < 3	{self(2 := {if in2.len = min(in3.rows, in2.len) : {2} else {call fit@a.f32({=min(in3.rows, in2.len)}, {2})}}, 3 := {if in3.rows = min(in3.rows, in2.len) : {3} else {call fitrows@m.f32({=min(in3.rows, in2.len)}, {3})}})}
+repair	histrows.add@m.f32	1	node	true	true	{const}
+guard	histrows.add@m.f32	2	must	in3.cols = in1.value
+repair	histrows.add@m.f32	2	in3	known(in1.value)	env.trips < 3	{call fitcols@m.f32({=in1.value}, {3})}
+repair	histrows.add@m.f32	2	node	true	true	{const}
+guard	rowdiv@m.f32	0	must	env.trips < 3
+repair	rowdiv@m.f32	0	node	true	true	{in.own}
+repair	rowdiv@m.f32	0	node	true	true	{const}
+guard	rowdiv@m.f32	1	must	in1.len = in0.rows
+repair	rowdiv@m.f32	1	node	known(in1.len) and known(in0.rows)	env.trips < 3	{self(0 := {if in0.rows = min(in1.len, in0.rows) : {0} else {call fitrows@m.f32({=min(in1.len, in0.rows)}, {0})}}, 1 := {if in1.len = min(in1.len, in0.rows) : {1} else {call fit@a.f32({=min(in1.len, in0.rows)}, {1})}})}
+repair	rowdiv@m.f32	1	node	true	true	{in.own}
+repair	rowdiv@m.f32	1	node	true	true	{const}
+guard	loop@f32.f32	0	must	env.trips < 3
+repair	loop@f32.f32	0	node	true	true	{in.own}
+repair	loop@f32.f32	0	node	true	true	{const}
+guard	loop1@f32.f32	0	must	env.trips < 3
+repair	loop1@f32.f32	0	node	true	true	{in.own}
+repair	loop1@f32.f32	0	node	true	true	{const}
+guard	loop@f32.f32.f32	0	must	env.trips < 3
+repair	loop@f32.f32.f32	0	node	true	true	{in.own}
+repair	loop@f32.f32.f32	0	node	true	true	{const}
+guard	loop1@f32.f32.f32	0	must	env.trips < 3
+repair	loop1@f32.f32.f32	0	node	true	true	{in.own}
+repair	loop1@f32.f32.f32	0	node	true	true	{const}
+guard	fit@a.f32	0	must	env.trips < 3
+repair	fit@a.f32	0	node	true	true	{in.own}
+repair	fit@a.f32	0	node	true	true	{const}
+guard	fitrows@m.f32	0	must	env.trips < 3
+repair	fitrows@m.f32	0	node	true	true	{in.own}
+repair	fitrows@m.f32	0	node	true	true	{const}
+guard	fitcols@m.f32	0	must	env.trips < 3
+repair	fitcols@m.f32	0	node	true	true	{in.own}
+repair	fitcols@m.f32	0	node	true	true	{const}
+entry	main	[][]f32
+parameter	points	[][]f32	rows=n;cols=d	-	-	-	-
+parameter	centres	[][]f32	rows=k;cols=d	-	-	-	-
+parameter	zeros_n	[]f32	len=n	-	-	-	-
+parameter	zeros_d	[]f32	len=d	-	-	-	-
+parameter	zeros_k	[]f32	len=k	-	-	-	-
+parameter	n	size	value=n	-	-	-	-
+parameter	d	size	value=d	-	-	-	-
+parameter	k	size	value=k	-	-	-	-
+guard	entry	0	must	out.rows = k
+repair	entry	0	root	true	true	{call fitrows@m.f32({=k}, {self})}
+guard	entry	1	must	out.cols = d
+repair	entry	1	root	true	true	{call fitcols@m.f32({=d}, {self})}

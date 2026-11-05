@@ -88,3 +88,7 @@ var@a.f32	Kvar__a_f32	Sa_f32	constant
 var@m.f32	Xvar__m_f32	Sm_f32	binder
 var@m.f32	Kvar__m_f32	Sm_f32	constant
 nextin@i64	Xnextin__i64	Si64	node
+fit@a.f32	Xfit__a_f32	Sa_f32	node
+fitrows@m.f32	Xfitrows__m_f32	Sm_f32	node
+fitcols@m.f32	Xfitcols__m_f32	Sm_f32	node
+clampix@i64	Xclampix__i64	Si64	node

@@ -1,0 +1,11 @@
+seq	data_type	program	text	values
+1	i32	expression	0i32	1412f2d4de6cc3ec
+2	i32	expression	0i32	1412f2d4de6cc3ec
+3	a.k	program	entry main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [i64.i32 k]i32 =\n  let k = i64.i32 k\n  let zeros_k = replicate k 0i32\n  let zeros_n = replicate n 0i32\n  in hist (+) 0i32 k (map i64.i32 (tabulate n (\\i_n -> (((is)[(i_n)]) % i32.i64 k)))) (vs)\n	95d73e0a8b31fc14
+4	i32	expression	0i32	1412f2d4de6cc3ec
+5	i32	expression	1i32	d5b980d7a440812b
+6	i32	expression	2i32	235d3a3703bd6cb2
+7	i32	expression	10i32	a3d26d96eda6712a
+8	i32	expression	0i32	1412f2d4de6cc3ec
+9	i32	expression	1i32	d5b980d7a440812b
+10	i32	expression	((i32.i64 k) * ((i32.i64 k) + (1i32))) + (i32.i64 n)	7e374945a11437fa

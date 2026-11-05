@@ -1239,6 +1239,10 @@ inside a condition, and its widened substitution becomes substitute repairs.
   - The e-graph: one sort per data type; its rules rewrite rendered programs and need no change.
   - The reader that turns a Futhark program into a gene: it emits `var.T` with the binder-relative index that picks
     each variable (0 = the innermost).
+  - **Built 2026-11-05 (phase 2):** the Futhark views are four-row tables (`tables.tsv`); adapters are symbols, repairs are
+    templates calling them, formula spellings are rows; renderer, interpreter, cost and reader read only those rows.
+    Deviation from section 5: `fit` pads with the element's zero and takes no pad argument (`fit(size, []E)`), so a view
+    whose element has no leaf (A7) can still place and call it.
 - **phylu (evolution):**
   - The typed layout: fewer types, and the index words as a Dc-style array beside each type's region.
   - The point mutation edits an index word as it edits a constant.

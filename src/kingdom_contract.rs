@@ -284,7 +284,6 @@ impl KingdomContract {
     pub fn is_constant(&self, s: SymbolId) -> bool {
         self.constant[s as usize]
     }
-    /// The variable terminal `var.T` (arity 0): its word is in `Dv_T` at its own cell's row, never in `Dc_T`.
     /// The symbol's role (design 3.3.3, Symbol.role).
     pub fn role(&self, s: SymbolId) -> crate::geneframe::Role {
         if self.is_constant(s) {
@@ -296,6 +295,7 @@ impl KingdomContract {
         }
     }
 
+    /// The variable terminal `var.T` (arity 0): its word is in `Dv_T` at its own cell's row, never in `Dc_T`.
     pub fn is_variable(&self, s: SymbolId) -> bool {
         self.variable[s as usize]
     }
@@ -556,7 +556,8 @@ pub fn relations_from_tables(t: &crate::geneframe::KingdomTables, roots: Vec<Ty>
         tail_free_roots: false,
     };
     let sigs: BTreeMap<i64, (Vec<Ty>, Ty)> = t.signatures().into_iter().map(|(s, i, o)| (s, (i, o))).collect();
-    for s in &t.symbols {
+    // A formula row is a spelling, not a symbol of the alphabet: the tables list them last, so the ids still agree.
+    for s in t.symbols.iter().filter(|s| s.role != crate::geneframe::Role::Formula) {
         let id = r.names.len() as SymbolId;
         r.names.push(s.symbol_name.clone());
         if let Some((ins, out)) = sigs.get(&s.symbol) {
@@ -572,7 +573,7 @@ pub fn relations_from_tables(t: &crate::geneframe::KingdomTables, roots: Vec<Ty>
             crate::geneframe::Role::Variable => {
                 r.variables.insert(id);
             }
-            crate::geneframe::Role::Function => {}
+            crate::geneframe::Role::Function | crate::geneframe::Role::Formula => {}
         }
     }
     r

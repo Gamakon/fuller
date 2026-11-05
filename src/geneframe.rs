@@ -628,7 +628,7 @@ mod schema;
 
 pub use formula::{Condition, Formula, PropertyExpr, Reference, Relation, SizeBounds, Truth};
 pub use schema::{
-    always, catalogue, parse_catalogue, property, spell, Argument, Constant, DataKind, DataType, Direction, Entry, EntryParameter, Flow, FlowName, Guard, KingdomTables, Owner, Place,
+    always, catalogue, escape, parse_catalogue, property, spell, unescape, Argument, Constant, DataKind, DataType, Direction, Entry, EntryParameter, Flow, FlowName, Guard, KingdomTables, Owner, Place,
     Property, PropertyKind, Repair, Role, Site, Source, Strength, SymbolRow, Transform, Way, CATALOGUE_TSV,
 };
 

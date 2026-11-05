@@ -16,6 +16,11 @@
 //!
 //! Comparison (3.4.4, fixed here): `?` anywhere makes a comparison undecided; `=` holds on identical spellings and
 //! fails on two different literals; `<=` holds by the rules of [`Relation::truth`] and fails on two literals.
+//!
+//! THE WHOLE LANGUAGE IS HOST ONLY TODAY (code review 2026-11-05, finding 10): no device path evaluates a formula. When
+//! the device's formula bytecode lands (design 8.16), a kingdom marked for the device gets a table check that rejects
+//! `list`, `len`, `at`, `concat`, `find`, `for`, `in` and `all`. An integer that overflows i64 in a normal form is `?`,
+//! never a wrong literal (finding 17).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -239,17 +244,25 @@ impl PropertyExpr {
             }
         }
         let mut opaque: Vec<PropertyExpr> = Vec::new();
-        let mut monomials: BTreeMap<Vec<PropertyExpr>, i64> = BTreeMap::new();
+        let mut monomials: BTreeMap<Vec<PropertyExpr>, Option<i64>> = BTreeMap::new();
         for t in flat {
             if t.has_unknown() {
                 opaque.push(t);
                 continue;
             }
             let (c, fs) = monomial(t);
-            let e = monomials.entry(fs).or_insert(0);
-            *e = e.saturating_add(c);
+            let e = monomials.entry(fs).or_insert(Some(0));
+            // An overflowing coefficient is `?`, never a wrong plausible literal (code review finding 17).
+            *e = e.and_then(|x| x.checked_add(c));
         }
-        let mut out: Vec<PropertyExpr> = monomials.into_iter().filter(|(_, c)| *c != 0).map(|(fs, c)| term(c, fs)).collect();
+        let mut out: Vec<PropertyExpr> = Vec::new();
+        for (fs, c) in monomials {
+            match c {
+                Some(0) => {}
+                Some(c) => out.push(term(c, fs)),
+                None => opaque.push(PropertyExpr::Unknown),
+            }
+        }
         out.extend(opaque);
         out.sort();
         match out.len() {
@@ -277,7 +290,11 @@ impl PropertyExpr {
         let mut rest = Vec::new();
         for f in flat {
             match f {
-                PropertyExpr::Literal(v) => c = c.saturating_mul(v),
+                // An overflowing coefficient is `?` (code review finding 17).
+                PropertyExpr::Literal(v) => match c.checked_mul(v) {
+                    Some(x) => c = x,
+                    None => return PropertyExpr::Unknown,
+                },
                 other => rest.push(other),
             }
         }
@@ -565,10 +582,14 @@ impl PropertyExpr {
             P::Literal(v) => Some(*v),
             P::Min(xs) => xs.iter().map(|x| x.lower_bound(b)).collect::<Option<Vec<i64>>>()?.into_iter().min(),
             P::Max(xs) => xs.iter().filter_map(|x| x.lower_bound(b)).max(),
-            P::Sum(xs) => xs.iter().map(|x| x.lower_bound(b)).try_fold(0i64, |acc, v| v.map(|v| acc.saturating_add(v))),
+            P::Sum(xs) => xs.iter().map(|x| x.lower_bound(b)).try_fold(0i64, |acc, v| v.and_then(|v| acc.checked_add(v))),
             P::Product(xs) => {
                 let lbs = xs.iter().map(|x| x.lower_bound(b)).collect::<Option<Vec<i64>>>()?;
-                lbs.iter().all(|v| *v >= 0).then(|| lbs.iter().fold(1i64, |a, v| a.saturating_mul(*v)))
+                if lbs.iter().all(|v| *v >= 0) {
+                    lbs.iter().try_fold(1i64, |a, v| a.checked_mul(*v))
+                } else {
+                    None
+                }
             }
             P::If { then, otherwise, .. } => Some(then.lower_bound(b)?.min(otherwise.lower_bound(b)?)),
             P::Len(_) => Some(0),

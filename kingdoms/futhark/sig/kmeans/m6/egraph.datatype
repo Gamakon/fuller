@@ -100,3 +100,7 @@
 (constructor Xvar__m_f32 (i64 i64) Sm_f32)
 (constructor Kvar__m_f32 () Sm_f32)
 (constructor Xnextin__i64 (Ssize Si64) Si64)
+(constructor Xfit__a_f32 (Ssize Sa_f32) Sa_f32)
+(constructor Xfitrows__m_f32 (Ssize Sm_f32) Sm_f32)
+(constructor Xfitcols__m_f32 (Ssize Sm_f32) Sm_f32)
+(constructor Xclampix__i64 (Ssize Si64) Si64)

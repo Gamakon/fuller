@@ -56,3 +56,7 @@
 (constructor Xvar__m_i32 (i64 i64) Sm_i32)
 (constructor Kvar__m_i32 () Sm_i32)
 (constructor Xnextin__i64 (Ssize Si64) Si64)
+(constructor Xfit__a_i32 (Ssize Sa_i32) Sa_i32)
+(constructor Xfitrows__m_i32 (Ssize Sm_i32) Sm_i32)
+(constructor Xfitcols__m_i32 (Ssize Sm_i32) Sm_i32)
+(constructor Xclampix__i64 (Ssize Si64) Si64)

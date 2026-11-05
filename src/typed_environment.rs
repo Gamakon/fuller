@@ -20,10 +20,16 @@
 //!    substitute's properties, and none of the node's other repairs render ([`Substituted`]). The renderer, the
 //!    interpreter, the cost, the reader and the e-graph read this annotation and never decide it again.
 //! 5. **Render** ([`Decoder::render`]): the spellings and the repairs' templates by the one template engine
-//!    ([`template`]), each adapter's prelude once, each alternative form bound once at the head.
+//!    ([`template`]), each used symbol's prelude once, each alternative form bound once at the head. A node's repairs
+//!    render in their guards' `order`: first every operand rewrite (a repair at `in<k>`, or one `{self(k := ..)}` at the
+//!    node), then every wrap of the node ([`Decoder::steps`]).
 //!
 //! `advise` guards are never read here: they are the cost's ([`Decoder::advice`]), with every adapter in the program,
-//! placed by evolution or written by a repair ([`Decoder::rescues`]). The decoder repairs, the cost charges.
+//! placed by evolution or called by a repair's template ([`Decoder::rescues`], [`Decoder::calls`]). The decoder
+//! repairs, the cost charges. The interpreter and the cost EXECUTE the repairs' templates ([`Decoder::exec`]): an
+//! adapter means what its symbol means, wherever it is written.
+//!
+//! The entry is checked once per decoder (code review finding 16), the first time it is decoded.
 //!
 //! The **resolved tree** ([`Decoding::resolved`]) names every variable by its binder's identity (the binding depth and
 //! the ordinal), never by its index word: the only form any consumer compares or hashes. A SUBTREE is compared by its
@@ -33,13 +39,13 @@
 //! Deterministic in the gene and the rows alone: every map is a `BTreeMap`, every list in table or position order.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub use crate::geneframe::Entry;
 use crate::geneframe::{Condition, Constant, FlowName, Guard, KingdomTables, Owner, PropertyExpr, Reference, Role, Site, SizeBounds, Strength, Truth, Ty};
 use crate::kingdom_contract::{KingdomContract, SymbolId};
 use crate::typed_gep::Tree;
-use template::{parse_template, substitute_of, Fresh, Scope, Substitute, Template};
+use template::{calls_of, forms_of, parse_template, rewrites_of, substitute_of, Exec, Fresh, Lexicon, Scope, Substitute, Template};
 
 pub mod template;
 
@@ -56,12 +62,14 @@ pub struct Binder {
 }
 
 /// A variable in scope: its identity, its name (an entry parameter's, or its `var.T.spell` flow's; `None` where the
-/// kingdom's renderer names it), its data type, its properties (every property its data type carries; `?` where
-/// unknown) and the names of those whose source is measured.
+/// kingdom has no spelling for it), the stem its spelling's `{nth}` numbers it among (`None` for an entry's parameter),
+/// its data type, its properties (every property its data type carries; `?` where unknown) and the names of those whose
+/// source is measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
     pub binder: Binder,
     pub name: Option<String>,
+    pub stem: Option<String>,
     pub data_type: Ty,
     pub properties: BTreeMap<String, PropertyExpr>,
     pub measured: BTreeSet<String>,
@@ -121,14 +129,14 @@ pub enum Choice {
 
 /// One `must` guard checked at one node: its row (an index into the tables' guards, or the entry's for a root guard),
 /// its condition with every reference read (measured values as `?`), whether it holds, and, where it does not, the
-/// repair taken (its index in the guard's repairs) and the adapter that repair calls.
+/// repair taken (its index in the guard's repairs) and the adapter symbols that repair's template may call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub requirement: usize,
     pub condition: Condition,
     pub holds: bool,
     pub repair: Option<usize>,
-    pub adapter: Option<String>,
+    pub calls: Vec<String>,
 }
 
 static UNKNOWN: PropertyExpr = PropertyExpr::Unknown;
@@ -144,14 +152,9 @@ impl Outcome {
         self.condition.comparison().map_or(&UNKNOWN, |(_, _, b)| b)
     }
 
-    /// The adapter the repair taken calls (empty where none was taken, or the repair calls none).
-    pub fn adapter_name(&self) -> &str {
-        self.adapter.as_deref().unwrap_or_default()
-    }
-
-    /// True when the guard failed and its repair calls `adapter`.
+    /// True when the guard failed and its repair may call `adapter`.
     pub fn repaired_by(&self, adapter: &str) -> bool {
-        !self.holds && self.adapter.as_deref() == Some(adapter)
+        !self.holds && self.calls.iter().any(|c| c == adapter)
     }
 }
 
@@ -218,12 +221,12 @@ pub struct SubtreeKey {
 /// the node's path of argument positions from the root, and what renders there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
-    /// Guard `requirement` fails at the node; its repair calls `adapter` (empty for a repair that calls none).
-    Adapter { path: Vec<u32>, requirement: usize, adapter: String },
+    /// Guard `requirement` fails at the node; its repair may call the adapters `calls`.
+    Adapter { path: Vec<u32>, requirement: usize, calls: Vec<String> },
     /// The node is replaced by a substitute repair.
     Substituted { path: Vec<u32>, by: Substitution, requirement: usize },
-    /// The entry's guard `requirement` fails on the result; its repair calls `adapter`.
-    Root { requirement: usize, adapter: String },
+    /// The entry's guard `requirement` fails on the result; its repair may call the adapters `calls`.
+    Root { requirement: usize, calls: Vec<String> },
 }
 
 /// An `advise` guard that does not hold where the program is rendered: what the cost charges (`None` path: the
@@ -296,7 +299,7 @@ impl Decoding {
                 return;
             }
             for o in n.outcomes.iter().filter(|o| !o.holds) {
-                out.push(Failure::Adapter { path: path.clone(), requirement: o.requirement, adapter: o.adapter.clone().unwrap_or_default() });
+                out.push(Failure::Adapter { path: path.clone(), requirement: o.requirement, calls: o.calls.clone() });
             }
             for (k, kid) in n.kids.iter().enumerate() {
                 path.push(k as u32);
@@ -304,7 +307,7 @@ impl Decoding {
                 path.pop();
             }
         }
-        let mut out: Vec<Failure> = self.root_outcomes.iter().filter(|o| !o.holds).map(|o| Failure::Root { requirement: o.requirement, adapter: o.adapter.clone().unwrap_or_default() }).collect();
+        let mut out: Vec<Failure> = self.root_outcomes.iter().filter(|o| !o.holds).map(|o| Failure::Root { requirement: o.requirement, calls: o.calls.clone() }).collect();
         go(&self.root, &mut Vec::new(), &mut out);
         out
     }
@@ -319,7 +322,7 @@ impl Decoding {
     }
 
     /// The nodes that render, in pre-order with their paths (a replaced node's dropped inputs left out).
-    fn rendered_nodes(&self) -> Vec<(Vec<u32>, &Node)> {
+    pub fn rendered_nodes(&self) -> Vec<(Vec<u32>, &Node)> {
         fn go<'a>(n: &'a Node, path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, &'a Node)>) {
             if let Some(Substituted { by, .. }) = n.substituted {
                 if let Substitution::Input(k) = by {
@@ -381,6 +384,10 @@ pub struct Decoder {
     bounds: SizeBounds,
     /// Every guard's repairs' templates, parsed: `templates[g][r]`.
     templates: Vec<Vec<Template>>,
+    lexicon: Lexicon,
+    by_name: BTreeMap<String, SymbolId>,
+    /// The entries already checked ([`Decoder::check_entry`]), so each is checked once (finding 16).
+    checked: Arc<Mutex<Vec<Entry>>>,
 }
 
 /// The value of a reference at a node, reading measured values as `?` when `must`.
@@ -504,7 +511,9 @@ impl Decoder {
         let constants = tables.data_types.iter().map(|t| (t.id, t.constant.clone())).collect();
         let templates = tables.guards.iter().map(|g| g.repairs.iter().map(|r| parse_template(&r.template)).collect::<Result<Vec<_>, _>>()).collect::<Result<Vec<_>, _>>().map_err(|e| vec![e])?;
         let (attributes, bounds) = (tables.attributes(), tables.bounds());
-        Ok(Decoder { tables, contract, symbols, properties_of, constants, attributes, bounds, templates })
+        let lexicon = tables.lexicon().map_err(|e| vec![e])?;
+        let by_name = (0..contract.n_symbols() as SymbolId).map(|s| (contract.name(s).to_string(), s)).collect();
+        Ok(Decoder { tables, contract, symbols, properties_of, constants, attributes, bounds, templates, lexicon, by_name, checked: Arc::new(Mutex::new(Vec::new())) })
     }
 
     /// The kingdom's tables.
@@ -587,16 +596,21 @@ impl Decoder {
                     measured.insert(q.clone());
                 }
             }
-            env.variables.push(Variable { binder: Binder { depth: 0, ordinal: ordinal as u32 }, name: Some(p.name.clone()), data_type: p.data_type, properties: self.complete(p.data_type, given), measured });
+            env.variables.push(Variable { binder: Binder { depth: 0, ordinal: ordinal as u32 }, name: Some(p.name.clone()), stem: None, data_type: p.data_type, properties: self.complete(p.data_type, given), measured });
         }
         env
     }
 
     /// Passes 2 to 4 on the expressed tree `tree`, rooted in `entry`. An error is a bug: an entry that fails
-    /// [`Decoder::check_entry`], a malformed tree, or a `must` guard none of whose repairs applies.
+    /// [`Decoder::check_entry`] (checked the first time this decoder decodes it), a malformed tree, or a `must` guard
+    /// none of whose repairs applies (which the table check rules out).
     pub fn decode(&self, entry: &Entry, tree: &Tree) -> Result<Decoding, String> {
         let k = &self.tables.kingdom;
-        self.check_entry(entry).map_err(|d| d.join("\n"))?;
+        let poisoned = || bug(format!("kingdom {k}: the checked entries' lock is poisoned"));
+        if !self.checked.lock().map_err(|_| poisoned())?.contains(entry) {
+            self.check_entry(entry).map_err(|d| d.join("\n"))?;
+            self.checked.lock().map_err(|_| poisoned())?.push(entry.clone());
+        }
         let root_env = self.root_environment(entry);
         let root = self.node(tree, root_env.clone())?;
         if root.data_type != entry.output {
@@ -610,15 +624,15 @@ impl Decoder {
             let values = Values { kids: &[], out: &root.properties, out_measured: &root.measured, env: &root_env, must: true };
             let condition = g.condition.substitute(&|r| values.read(r), &self.bounds);
             let holds = condition.truth(&self.bounds).holds();
-            let (mut repair, mut adapter) = (None, None);
+            let (mut repair, mut calls) = (None, Vec::new());
             if !holds {
                 let plain = Values { must: false, ..values };
                 let r = g.repairs.iter().position(|r| self.applies(&r.guard, &root_env) && r.when.substitute(&|x| plain.read(x), &self.bounds).truth(&self.bounds).holds());
                 let r = r.ok_or_else(|| bug(format!("kingdom {k}: the entry's must guard {} fails and none of its repairs applies", g.condition)))?;
                 repair = Some(r);
-                adapter = Some(g.repairs[r].calls.clone());
+                calls = calls_of(&parse_template(&g.repairs[r].template)?);
             }
-            root_outcomes.push(Outcome { requirement: i, condition, holds, repair, adapter });
+            root_outcomes.push(Outcome { requirement: i, condition, holds, repair, calls });
         }
         root_outcomes.sort_by_key(|o| o.requirement);
         Ok(Decoding { root, root_outcomes })
@@ -655,9 +669,10 @@ impl Decoder {
                     child.attributes.insert(a.clone(), v);
                 }
                 Down::Vars { ty, count, properties, spell } => {
+                    // A count that is not a literal here would bind nothing in silence (code review finding 7): a bug.
                     let n = match count.substitute(&|r| values.read(r), &self.bounds) {
-                        PropertyExpr::Literal(n) => n.max(0),
-                        _ => 0,
+                        PropertyExpr::Literal(n) if n >= 0 => n,
+                        other => return Err(bug(format!("kingdom {k}: a binding introduces {other} variables of {ty:?}, which is not a literal count here"))),
                     };
                     for each in 0..n {
                         let read = |r: &Reference| match r {
@@ -667,21 +682,26 @@ impl Decoder {
                         let given: Vec<(String, PropertyExpr)> = properties.iter().map(|(p, e)| (p.clone(), e.substitute(&read, &self.bounds))).collect();
                         let measured: BTreeSet<String> = properties.iter().filter(|(_, e)| values.measured(e)).map(|(p, _)| p.clone()).collect();
                         let props = self.complete(*ty, given);
-                        let name = match spell {
-                            None => None,
+                        let (name, stem) = match spell {
+                            None => (None, None),
                             Some(t) => {
                                 let own = |r: &Reference| match r {
                                     Reference::Output(p) => props.get(*p).cloned(),
                                     other => values.read(other),
                                 };
-                                let in_form = |_: u32, _: &str| Err(bug(format!("kingdom {k}: a variable's spelling reads an operand in a form")));
-                                let scope = Scope { operands: Vec::new(), own: None, in_form: &in_form, spelling: None, values: &own, params: &[], zero: None, constant: None, bounds: &self.bounds };
                                 let ix = BTreeMap::from([("each".to_string(), each), ("depth".to_string(), i64::from(depth))]);
-                                Some(scope.render_with(t, &mut Fresh::default(), &ix)?)
+                                // NAME HYGIENE (design 8.14.2): `{nth}` is nothing for the first variable in scope of its
+                                // stem, else its ordinal among them, so two variables in scope never share a name.
+                                let mut scope = Scope::new(&own, &self.bounds, &self.lexicon);
+                                scope.nth = Some(String::new());
+                                let stem = scope.render_with(t, &mut Fresh::default(), &ix)?;
+                                let before = env.variables.iter().chain(bound.iter()).filter(|v| v.stem.as_deref() == Some(stem.as_str())).count();
+                                scope.nth = Some(if before == 0 { String::new() } else { (before + 1).to_string() });
+                                (Some(scope.render_with(t, &mut Fresh::default(), &ix)?), Some(stem))
                             }
                         };
                         let ordinal = bound.len() as u32;
-                        bound.push(Variable { binder: Binder { depth, ordinal }, name, data_type: *ty, properties: props, measured });
+                        bound.push(Variable { binder: Binder { depth, ordinal }, name, stem, data_type: *ty, properties: props, measured });
                     }
                 }
             }
@@ -736,7 +756,7 @@ impl Decoder {
             let values = Values { kids: &kids, out: &properties, out_measured: &measured, env: &env, must: true };
             let condition = g.condition.substitute(&|r| values.read(r), &self.bounds);
             let holds = condition.truth(&self.bounds).holds();
-            let (mut repair, mut adapter) = (None, None);
+            let (mut repair, mut calls) = (None, Vec::new());
             if !holds && substituted.is_none() {
                 let plain = Values { must: false, ..values };
                 let mut chosen = None;
@@ -765,14 +785,14 @@ impl Decoder {
                         }
                         None => {
                             chosen = Some(ri);
-                            adapter = Some(r.calls.clone());
+                            calls = calls_of(&self.templates[gi][ri]);
                             break;
                         }
                     }
                 }
                 repair = Some(chosen.ok_or_else(|| bug(format!("kingdom {k}: {}'s must guard {} fails and none of its repairs applies", self.contract.name(t.symbol), g.condition)))?);
             }
-            outcomes.push(Outcome { requirement: gi, condition, holds, repair, adapter });
+            outcomes.push(Outcome { requirement: gi, condition, holds, repair, calls });
         }
         outcomes.sort_by_key(|o| o.requirement);
         let kids: Vec<Node> = kids.into_iter().collect::<Option<Vec<Node>>>().ok_or_else(|| bug(format!("kingdom {k}: {}'s decode order skips an input", self.contract.name(t.symbol))))?;
@@ -812,44 +832,198 @@ impl Decoder {
         out
     }
 
-    /// THE COST'S ADAPTERS (the second engine): every adapter in the rendered program, the entry's repairs first, then in
-    /// pre-order each node that is an adapter symbol (placed by evolution) and each repair that calls one (written by
-    /// the decoder). The cost charges both alike, so selection prefers programs that need no rescue.
-    pub fn rescues(&self, decoding: &Decoding) -> Vec<Rescue> {
-        let mut out: Vec<Rescue> = decoding.root_outcomes.iter().filter_map(|o| o.adapter.clone().filter(|a| !a.is_empty())).map(|adapter| Rescue { path: None, adapter, placed: false }).collect();
-        for (path, n) in decoding.rendered_nodes() {
-            if let Some(row) = self.tables.symbol(i64::from(n.symbol)).filter(|s| s.adapter) {
-                out.push(Rescue { path: Some(path.clone()), adapter: row.symbol_name.clone(), placed: true });
+    /// THE REPAIRS A RENDERED NODE TAKES, in the order they render (design 4, pass 5): first every operand rewrite in
+    /// its guard's `order` (a repair at `in<k>`, or each `k := ..` of a `{self(k := ..)}` at the node), then every wrap
+    /// of the node (any other template at the node). A substituted node takes none (it is its substitute).
+    pub fn steps<'a>(&'a self, n: &Node) -> Vec<Step<'a>> {
+        if n.substituted.is_some() {
+            return Vec::new();
+        }
+        let mut failing: Vec<(u32, usize, usize)> = n.outcomes.iter().filter(|o| !o.holds).filter_map(|o| o.repair.map(|r| (self.tables.guards[o.requirement].order, o.requirement, r))).collect();
+        failing.sort();
+        let mut out = Vec::new();
+        for &(_, g, r) in &failing {
+            let t = &self.templates[g][r];
+            match (self.tables.guards[g].repairs[r].site, rewrites_of(t)) {
+                (Site::In(k), _) => out.push(Step::Operand { k, template: t, guard: g }),
+                (Site::Node, Some(rw)) => out.extend(rw.iter().map(|(k, t)| Step::Operand { k: *k, template: t, guard: g })),
+                _ => {}
             }
-            for o in n.outcomes.iter().filter(|o| !o.holds) {
-                if let Some(a) = o.adapter.clone().filter(|a| !a.is_empty()) {
-                    out.push(Rescue { path: Some(path.clone()), adapter: a, placed: false });
-                }
+        }
+        for &(_, g, r) in &failing {
+            let t = &self.templates[g][r];
+            if self.tables.guards[g].repairs[r].site == Site::Node && rewrites_of(t).is_none() {
+                out.push(Step::Wrap { template: t, guard: g });
             }
         }
         out
     }
 
-    /// PASS 5, kingdom-free: the program `decoding` renders as, by the symbols' spellings and the repairs' templates
-    /// ([`template`]). `dc` gives a `?_T`'s text from its symbol and Dc word. The preludes of the adapters used (placed
-    /// or called) come first, once each, then each alternative form the program uses, bound once, then the program.
-    pub fn render(&self, entry: &Entry, decoding: &Decoding, dc: &dyn Fn(SymbolId, u32) -> String) -> Result<Rendered, String> {
-        let mut r = Renderer { d: self, dc, fresh: Fresh::default(), preludes: Vec::new(), used: BTreeSet::new() };
-        let mut body = r.node(&decoding.root, "")?;
+    /// The repairs of the entry's failing `must` guards, in their order: each wraps the result.
+    pub fn root_steps(&self, entry: &Entry, decoding: &Decoding) -> Result<Vec<(usize, Template)>, String> {
+        let mut out: Vec<(u32, usize, Template)> = Vec::new();
         for o in decoding.root_outcomes.iter().filter(|o| !o.holds) {
             let g = &entry.guards[o.requirement];
-            let ri = o.repair.ok_or_else(|| bug("a failing root guard has no repair".to_string()))?;
-            let t = parse_template(&g.repairs[ri].template)?;
+            let r = o.repair.ok_or_else(|| bug("a failing root guard has no repair".to_string()))?;
+            out.push((g.order, o.requirement, parse_template(&g.repairs[r].template)?));
+        }
+        out.sort_by_key(|(order, i, _)| (*order, *i));
+        Ok(out.into_iter().map(|(_, i, t)| (i, t)).collect())
+    }
+
+    /// The data type a step's template runs at: operand k's, or the node's.
+    pub fn step_type(&self, n: &Node, step: &Step) -> Ty {
+        match step {
+            Step::Operand { k, .. } => n.kids.get(*k as usize).map_or(n.data_type, |c| c.data_type),
+            Step::Wrap { .. } => n.data_type,
+        }
+    }
+
+    /// EXECUTE a template at node `n` with `x` (the interpreter's values, the cost's properties): its conditions and
+    /// formulas read the node's decoded properties and environment, as the renderer reads them.
+    pub fn exec<X: Exec>(&self, n: &Node, template: &Template, x: &mut X) -> Result<X::V, String> {
+        let kids: Vec<Option<Node>> = n.kids.iter().cloned().map(Some).collect();
+        let values = Values { kids: &kids, out: &n.properties, out_measured: &n.measured, env: &n.environment, must: false };
+        let read = |r: &Reference| values.read(r);
+        let mut scope = Scope::new(&read, &self.bounds, &self.lexicon);
+        scope.own = self.symbols.get(n.symbol as usize).and_then(|i| i.inputs.iter().position(|ty| *ty == i.output)).map(|p| p as u32);
+        scope.exec(template, x)
+    }
+
+    /// EXECUTE a root repair's template with `x`: it reads the result's properties and the root environment.
+    pub fn exec_root<X: Exec>(&self, decoding: &Decoding, template: &Template, x: &mut X) -> Result<X::V, String> {
+        let root = &decoding.root;
+        let no_kids: [Option<Node>; 0] = [];
+        let values = Values { kids: &no_kids, out: &root.properties, out_measured: &root.measured, env: &root.environment, must: false };
+        let read = |r: &Reference| values.read(r);
+        Scope::new(&read, &self.bounds, &self.lexicon).exec(template, x)
+    }
+
+    /// The symbol id of a name of the contract.
+    pub fn symbol_named(&self, name: &str) -> Option<SymbolId> {
+        self.by_name.get(name).copied()
+    }
+
+    /// The properties the adapter symbol `name` gives on arguments of properties `args` (its up flows).
+    pub fn call_properties(&self, name: &str, args: &[BTreeMap<String, PropertyExpr>]) -> Result<(Ty, BTreeMap<String, PropertyExpr>), String> {
+        let s = self.symbol_named(name).ok_or_else(|| bug(format!("kingdom {}: a call names {name}, which is no symbol", self.tables.kingdom)))?;
+        let info = &self.symbols[s as usize];
+        let mut out: BTreeMap<String, PropertyExpr> = BTreeMap::new();
+        for (p, e) in &info.ups {
+            let v = e.substitute(
+                &|r| match r {
+                    Reference::Input { position, property } => Some(args.get(*position as usize).and_then(|a| a.get(*property)).cloned().unwrap_or(PropertyExpr::Unknown)),
+                    Reference::Output(q) => Some(out.get(*q).cloned().unwrap_or(PropertyExpr::Unknown)),
+                    _ => None,
+                },
+                &self.bounds,
+            );
+            out.insert(p.clone(), v);
+        }
+        Ok((info.output, self.complete(info.output, out)))
+    }
+
+    /// The properties of `ty`'s constant (`{const}`), and of its element's for an array (`{zero}`).
+    fn constants_of(&self, ty: Ty) -> (BTreeMap<String, PropertyExpr>, BTreeMap<String, PropertyExpr>) {
+        let constant = self.constant_of(ty).unwrap_or_default();
+        let mut z = ty;
+        while let Some(crate::geneframe::DataKind::Array { element }) = self.tables.data_type(z).map(|t| &t.kind) {
+            z = *element;
+        }
+        (constant, self.constant_of(z).unwrap_or_default())
+    }
+
+    /// The adapters the repairs of node `n` call, in the order they render, each with the operand its step rewrites
+    /// (`None` for a wrap of the node): the interpreter and the cost charge a body's once a trip. Each call's path is
+    /// left `None` for the caller to set.
+    pub fn node_calls(&self, n: &Node) -> Result<Vec<(Option<u32>, Call)>, String> {
+        self.repaired(n).map(|(calls, _)| calls)
+    }
+
+    /// The properties of node `n`'s operands as its repairs leave them (a fitted operand at its new length).
+    pub fn adapted_operands(&self, n: &Node) -> Result<Vec<BTreeMap<String, PropertyExpr>>, String> {
+        self.repaired(n).map(|(_, ops)| ops)
+    }
+
+    /// [`Decoder::node_calls`] and [`Decoder::adapted_operands`] in one walk of the node's repairs.
+    fn repaired(&self, n: &Node) -> Result<NodeRepairs, String> {
+        let mut out = Vec::new();
+        let mut ops: Vec<BTreeMap<String, PropertyExpr>> = n.kids.iter().map(|c| c.properties.clone()).collect();
+        for step in self.steps(n) {
+            let (constant, zero) = self.constants_of(self.step_type(n, &step));
+            let mut x = PropExec { d: self, ops: ops.clone(), whole: n.properties.clone(), zero, constant, calls: Vec::new() };
+            let v = self.exec(n, step.template(), &mut x)?;
+            let at = match step {
+                Step::Operand { k, .. } => {
+                    ops[k as usize] = v;
+                    Some(k)
+                }
+                Step::Wrap { .. } => None,
+            };
+            out.extend(x.calls.into_iter().map(|(adapter, args, result)| (at, Call { path: None, adapter, args, out: result })));
+        }
+        Ok((out, ops))
+    }
+
+    /// EVERY ADAPTER A REPAIR CALLS where the program renders (the second engine's charge for a rescue written by the
+    /// decoder): the entry's first, then each rendered node's in the order its repairs render, each with its arguments'
+    /// properties and its result's. A call inside an `{if ..}` that renders the other branch is not one.
+    pub fn calls(&self, entry: &Entry, decoding: &Decoding) -> Result<Vec<Call>, String> {
+        let mut out = Vec::new();
+        let mut whole = decoding.root.properties.clone();
+        for (_, t) in self.root_steps(entry, decoding)? {
+            let (constant, zero) = self.constants_of(entry.output);
+            let mut x = PropExec { d: self, ops: Vec::new(), whole: whole.clone(), zero, constant, calls: Vec::new() };
+            whole = self.exec_root(decoding, &t, &mut x)?;
+            out.extend(x.calls.into_iter().map(|(adapter, args, result)| Call { path: None, adapter, args, out: result }));
+        }
+        for (path, n) in decoding.rendered_nodes() {
+            out.extend(self.node_calls(n)?.into_iter().map(|(_, mut c)| {
+                c.path = Some(path.clone());
+                c
+            }));
+        }
+        Ok(out)
+    }
+
+    /// THE COST'S ADAPTERS (the second engine): every adapter in the rendered program, the entry's repairs' calls first,
+    /// then in pre-order each node that is an adapter symbol (placed by evolution) and each adapter a repair calls
+    /// (written by the decoder). The cost charges both alike, so selection prefers programs that need no rescue.
+    pub fn rescues(&self, entry: &Entry, decoding: &Decoding) -> Result<Vec<Rescue>, String> {
+        let calls = self.calls(entry, decoding)?;
+        let mut out: Vec<Rescue> = calls.iter().filter(|c| c.path.is_none()).map(|c| Rescue { path: None, adapter: c.adapter.clone(), placed: false }).collect();
+        for (path, n) in decoding.rendered_nodes() {
+            if let Some(row) = self.tables.symbol(i64::from(n.symbol)).filter(|s| s.adapter) {
+                out.push(Rescue { path: Some(path.clone()), adapter: row.symbol_name.clone(), placed: true });
+            }
+            out.extend(calls.iter().filter(|c| c.path.as_ref() == Some(&path)).map(|c| Rescue { path: Some(path.clone()), adapter: c.adapter.clone(), placed: false }));
+        }
+        Ok(out)
+    }
+
+    /// PASS 5, kingdom-free: the program `decoding` renders as, by the symbols' spellings and the repairs' templates
+    /// ([`template`]). `dc` gives a `?_T`'s text from its symbol and Dc word. The preludes of the symbols used (placed or
+    /// called) come first, once each in the tables' order, then each alternative form the program uses, bound once,
+    /// then the program.
+    pub fn render(&self, entry: &Entry, decoding: &Decoding, dc: &dyn Fn(SymbolId, u32) -> Result<String, String>) -> Result<Rendered, String> {
+        let mut r = Renderer { d: self, dc, fresh: Fresh::default(), preludes: Vec::new(), used: BTreeSet::new() };
+        let mut body = r.node(&decoding.root, "")?;
+        for (_, t) in self.root_steps(entry, decoding)? {
             let spelling: Template = vec![template::Piece::Text(body.clone())];
             let root = &decoding.root;
             let no_kids: [Option<Node>; 0] = [];
             let values = Values { kids: &no_kids, out: &root.properties, out_measured: &root.measured, env: &root.environment, must: false };
             let read = |x: &Reference| values.read(x);
-            let in_form = |_: u32, _: &str| Err(bug("a root repair reads an operand in a form".to_string()));
-            let constant = self.constants.get(&entry.output).cloned().flatten().map(|c| c.spelling);
-            let scope = Scope { operands: vec![body.clone()], own: None, in_form: &in_form, spelling: Some(&spelling), values: &read, params: &[], zero: constant.clone(), constant, bounds: &self.bounds };
+            let mut scope = Scope::new(&read, &self.bounds, &self.lexicon);
+            scope.operands = vec![body.clone()];
+            scope.spelling = Some(&spelling);
+            // The root's {zero} is its element's constant, as at any node (code review finding 8).
+            scope.zero = r.zero(entry.output);
+            scope.constant = r.constant(entry.output);
             body = scope.render(&t, &mut r.fresh)?;
-            r.prelude_of(&g.repairs[ri].calls);
+            for c in scope.take_called() {
+                r.prelude_of(&c);
+            }
         }
         let mut forms = Vec::new();
         for (i, p) in entry.parameters.iter().enumerate() {
@@ -859,17 +1033,93 @@ impl Decoder {
             }
             let template = parse_template(&t.template)?;
             let none = |_: &Reference| None;
-            let in_form = |_: u32, _: &str| Err(bug("a transform reads an operand in a form".to_string()));
-            let ix = BTreeMap::new();
-            let scope = Scope { operands: vec![raw.clone()], own: None, in_form: &in_form, spelling: None, values: &none, params: &[], zero: None, constant: None, bounds: &self.bounds };
-            let text = scope.render_with(&template, &mut r.fresh, &ix)?;
+            let mut scope = Scope::new(&none, &self.bounds, &self.lexicon);
+            scope.operands = vec![raw.clone()];
+            let text = scope.render_with(&template, &mut r.fresh, &BTreeMap::new())?;
             forms.push(format!("let {} = {text}", p.name));
         }
-        Ok(Rendered { preludes: r.preludes, forms, body })
+        // The preludes in the tables' order (of the first symbol that has each), so two trees of one program text give
+        // it with one prelude order whether an adapter was placed or called.
+        let mut preludes = r.preludes;
+        preludes.sort_by_key(|t| self.tables.symbols.iter().position(|s| &s.prelude == t));
+        Ok(Rendered { preludes, forms, body })
     }
 }
 
-/// A rendered program: the adapters' preludes (once each, in first use), the alternative forms' bindings, the body.
+/// One repair step of a rendered node ([`Decoder::steps`]): a rewrite of operand `k` by `template`, or a wrap of the
+/// node; `guard` is the tables' guard it repairs.
+#[derive(Debug, Clone, Copy)]
+pub enum Step<'a> {
+    Operand { k: u32, template: &'a Template, guard: usize },
+    Wrap { template: &'a Template, guard: usize },
+}
+
+impl<'a> Step<'a> {
+    /// The step's template.
+    pub fn template(&self) -> &'a Template {
+        match self {
+            Step::Operand { template, .. } | Step::Wrap { template, .. } => template,
+        }
+    }
+}
+
+/// One adapter a repair calls where the program renders ([`Decoder::calls`]): its node's path (`None`: the entry's
+/// result), the adapter symbol, its arguments' properties in order, and its result's properties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    pub path: Option<Vec<u32>>,
+    pub adapter: String,
+    pub args: Vec<BTreeMap<String, PropertyExpr>>,
+    pub out: BTreeMap<String, PropertyExpr>,
+}
+
+/// A node's repairs: the calls they make (each with the operand its step rewrites) and the operands they leave.
+type NodeRepairs = (Vec<(Option<u32>, Call)>, Vec<BTreeMap<String, PropertyExpr>>);
+
+/// A call an executed template made: the adapter, its arguments' properties, its result's.
+type CallMade = (String, Vec<BTreeMap<String, PropertyExpr>>, BTreeMap<String, PropertyExpr>);
+
+/// The executor of a repair's template over properties: what each call reads and gives.
+struct PropExec<'a> {
+    d: &'a Decoder,
+    ops: Vec<BTreeMap<String, PropertyExpr>>,
+    whole: BTreeMap<String, PropertyExpr>,
+    zero: BTreeMap<String, PropertyExpr>,
+    constant: BTreeMap<String, PropertyExpr>,
+    calls: Vec<CallMade>,
+}
+
+impl Exec for PropExec<'_> {
+    type V = BTreeMap<String, PropertyExpr>;
+
+    fn operand(&mut self, k: u32) -> Result<Self::V, String> {
+        self.ops.get(k as usize).cloned().ok_or_else(|| bug(format!("a repair reads operand {k}, which the node has not")))
+    }
+
+    fn value(&mut self, e: &PropertyExpr) -> Result<Self::V, String> {
+        Ok(BTreeMap::from([("value".to_string(), e.clone())]))
+    }
+
+    fn zero(&mut self) -> Result<Self::V, String> {
+        Ok(self.zero.clone())
+    }
+
+    fn constant(&mut self) -> Result<Self::V, String> {
+        Ok(self.constant.clone())
+    }
+
+    fn whole(&mut self) -> Result<Self::V, String> {
+        Ok(self.whole.clone())
+    }
+
+    fn call(&mut self, symbol: &str, args: Vec<Self::V>) -> Result<Self::V, String> {
+        let (_, out) = self.d.call_properties(symbol, &args)?;
+        self.calls.push((symbol.to_string(), args, out.clone()));
+        Ok(out)
+    }
+}
+
+/// A rendered program: the used symbols' preludes (once each, in first use), the alternative forms' bindings, the body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     pub preludes: Vec<String>,
@@ -879,15 +1129,15 @@ pub struct Rendered {
 
 struct Renderer<'a> {
     d: &'a Decoder,
-    dc: &'a dyn Fn(SymbolId, u32) -> String,
+    dc: &'a dyn Fn(SymbolId, u32) -> Result<String, String>,
     fresh: Fresh,
     preludes: Vec<String>,
     used: BTreeSet<Binder>,
 }
 
 impl Renderer<'_> {
-    fn prelude_of(&mut self, adapter: &str) {
-        if let Some(s) = self.d.tables.symbols.iter().find(|s| s.symbol_name == adapter && !s.prelude.is_empty()) {
+    fn prelude_of(&mut self, symbol: &str) {
+        if let Some(s) = self.d.tables.symbols.iter().find(|s| s.symbol_name == symbol && !s.prelude.is_empty()) {
             if !self.preludes.contains(&s.prelude) {
                 self.preludes.push(s.prelude.clone());
             }
@@ -906,6 +1156,32 @@ impl Renderer<'_> {
         }
     }
 
+    /// The operands `t` reads in a form, rendered here (through this renderer, so their fresh names, preludes and
+    /// variables are the program's: code review finding 9).
+    fn forms(&mut self, n: &Node, t: &Template) -> Result<BTreeMap<(u32, String), String>, String> {
+        let mut out = BTreeMap::new();
+        for (k, f) in forms_of(t) {
+            let kid = n.kids.get(k as usize).ok_or_else(|| bug(format!("a template reads operand {k} in a form, which the node has not")))?;
+            out.insert((k, f.clone()), self.node(kid, &f)?);
+        }
+        Ok(out)
+    }
+
+    /// The names of the variables each argument of `n` introduces, by argument.
+    fn bound(n: &Node) -> Vec<Vec<String>> {
+        n.kids
+            .iter()
+            .map(|kid| {
+                let env = &kid.environment;
+                if env.depth > n.environment.depth {
+                    env.variables.iter().filter(|v| v.binder.depth == env.depth).map(|v| v.name.clone().unwrap_or_default()).collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect()
+    }
+
     /// The text of node `n` in `form` (empty: the default).
     fn node(&mut self, n: &Node, form: &str) -> Result<String, String> {
         let k = &self.d.tables.kingdom;
@@ -922,14 +1198,12 @@ impl Renderer<'_> {
                 return v.name.clone().ok_or_else(|| bug(format!("kingdom {k}: the variable {b:?} has no name (no var.T.spell flow)")));
             }
             Some(Choice::Constant) => return self.constant(n.data_type).ok_or_else(|| bug(format!("kingdom {k}: {:?} has no constant", n.data_type))),
-            Some(Choice::Dc(w)) => return Ok((self.dc)(n.symbol, w)),
+            Some(Choice::Dc(w)) => return (self.dc)(n.symbol, w),
             Some(Choice::Free(_)) | None => {}
         }
         let info = &self.d.symbols[n.symbol as usize];
-        if let Some(row) = self.d.tables.symbol(i64::from(n.symbol)).filter(|s| s.adapter) {
-            let name = row.symbol_name.clone();
-            self.prelude_of(&name);
-        }
+        let name = self.d.contract.name(n.symbol).to_string();
+        self.prelude_of(&name);
         let mut operands: Vec<String> = Vec::with_capacity(n.kids.len());
         for kid in &n.kids {
             operands.push(self.node(kid, "")?);
@@ -939,59 +1213,60 @@ impl Renderer<'_> {
             (Some(t), _) => t.clone(),
             (None, Some(h)) if !form.is_empty() => {
                 operands[h as usize] = self.node(&n.kids[h as usize], form)?;
-                info.spellings.get("").cloned().ok_or_else(|| bug(format!("kingdom {k}: {} has no spelling", self.d.contract.name(n.symbol))))?
+                info.spellings.get("").cloned().ok_or_else(|| bug(format!("kingdom {k}: {name} has no spelling")))?
             }
-            _ => info.spellings.get("").cloned().ok_or_else(|| bug(format!("kingdom {k}: {} has no spelling", self.d.contract.name(n.symbol))))?,
+            _ => info.spellings.get("").cloned().ok_or_else(|| bug(format!("kingdom {k}: {name} has no spelling")))?,
         };
         let kids_opt: Vec<Option<Node>> = n.kids.iter().cloned().map(Some).collect();
         let values = Values { kids: &kids_opt, out: &n.properties, out_measured: &n.measured, env: &n.environment, must: false };
         let read = |x: &Reference| values.read(x);
         let own = info.inputs.iter().position(|ty| *ty == info.output).map(|p| p as u32);
+        let bound = Renderer::bound(n);
+        let steps = self.d.steps(n);
         let mut text: Option<String> = None;
-        let failing: Vec<&Outcome> = n.outcomes.iter().filter(|o| !o.holds && o.repair.is_some()).collect();
-        // Operand rewrites first, then the node's own repairs, in the guards' order.
-        for site_node in [false, true] {
-            for o in &failing {
-                let g = &self.d.tables.guards[o.requirement];
-                let ri = o.repair.unwrap_or_default();
-                let r = &g.repairs[ri];
-                if (r.site == Site::Node) != site_node {
-                    continue;
+        for step in &steps {
+            let ty = self.d.step_type(n, step);
+            if let Step::Wrap { .. } = step {
+                if text.is_none() {
+                    let forms = self.forms(n, &spelling)?;
+                    let mut scope = Scope::new(&read, &self.d.bounds, &self.d.lexicon);
+                    (scope.operands, scope.own, scope.forms, scope.bound) = (operands.clone(), own, forms, bound.clone());
+                    (scope.zero, scope.constant) = (self.zero(n.data_type), self.constant(n.data_type));
+                    text = Some(scope.render(&spelling, &mut self.fresh)?);
+                    for c in scope.take_called() {
+                        self.prelude_of(&c);
+                    }
                 }
-                let ty = match r.site {
-                    Site::In(j) => n.kids[j as usize].data_type,
-                    _ => n.data_type,
-                };
-                let kids_ref: Vec<Node> = n.kids.clone();
-                let forms = |j: u32, f: &str| -> Result<String, String> {
-                    let mut sub = Renderer { d: self.d, dc: self.dc, fresh: Fresh::default(), preludes: Vec::new(), used: BTreeSet::new() };
-                    sub.node(kids_ref.get(j as usize).ok_or_else(|| bug(format!("a template reads operand {j}, which the node has not")))?, f)
-                };
-                let current: Template = match &text {
-                    Some(t) => vec![template::Piece::Text(t.clone())],
-                    None => spelling.clone(),
-                };
-                let params: Vec<PropertyExpr> = Vec::new();
-                let scope = Scope { operands: operands.clone(), own, in_form: &forms, spelling: Some(&current), values: &read, params: &params, zero: self.zero(ty), constant: self.constant(ty), bounds: &self.d.bounds };
-                let rendered = scope.render(&self.d.templates[o.requirement][ri], &mut self.fresh)?;
-                match r.site {
-                    Site::In(j) => operands[j as usize] = rendered,
-                    Site::Node | Site::Root => text = Some(rendered),
-                }
-                let calls = r.calls.clone();
-                self.prelude_of(&calls);
+            }
+            let current: Template = match &text {
+                Some(t) => vec![template::Piece::Text(t.clone())],
+                None => spelling.clone(),
+            };
+            let forms = self.forms(n, step.template())?;
+            let mut scope = Scope::new(&read, &self.d.bounds, &self.d.lexicon);
+            (scope.operands, scope.own, scope.forms, scope.bound) = (operands.clone(), own, forms, bound.clone());
+            (scope.spelling, scope.zero, scope.constant) = (Some(&current), self.zero(ty), self.constant(ty));
+            let rendered = scope.render(step.template(), &mut self.fresh)?;
+            for c in scope.take_called() {
+                self.prelude_of(&c);
+            }
+            match step {
+                Step::Operand { k: at, .. } => *operands.get_mut(*at as usize).ok_or_else(|| bug(format!("kingdom {k}: a repair rewrites operand {at} of {name}, which has {} inputs", n.kids.len())))? = rendered,
+                Step::Wrap { .. } => text = Some(rendered),
             }
         }
         match text {
             Some(t) => Ok(t),
             None => {
-                let kids_ref: Vec<Node> = n.kids.clone();
-                let forms = |j: u32, f: &str| -> Result<String, String> {
-                    let mut sub = Renderer { d: self.d, dc: self.dc, fresh: Fresh::default(), preludes: Vec::new(), used: BTreeSet::new() };
-                    sub.node(kids_ref.get(j as usize).ok_or_else(|| bug(format!("a spelling reads operand {j}, which the node has not")))?, f)
-                };
-                let scope = Scope { operands, own, in_form: &forms, spelling: None, values: &read, params: &[], zero: self.zero(n.data_type), constant: self.constant(n.data_type), bounds: &self.d.bounds };
-                scope.render(&spelling, &mut self.fresh)
+                let forms = self.forms(n, &spelling)?;
+                let mut scope = Scope::new(&read, &self.d.bounds, &self.d.lexicon);
+                (scope.operands, scope.own, scope.forms, scope.bound) = (operands, own, forms, bound);
+                (scope.zero, scope.constant) = (self.zero(n.data_type), self.constant(n.data_type));
+                let t = scope.render(&spelling, &mut self.fresh)?;
+                for c in scope.take_called() {
+                    self.prelude_of(&c);
+                }
+                Ok(t)
             }
         }
     }

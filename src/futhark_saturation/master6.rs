@@ -22,12 +22,12 @@ use egglog::extract::hff_extract;
 use egglog::prelude::exprs;
 use egglog::{EGraph, Term, TermDag, TermId};
 
-use crate::futhark_table::{Header6, Kind6, Kingdom6, Program6};
+use crate::futhark_table::{Kingdom6, Program6};
 use crate::futhark_view::egraph6::{egraph6, Egraph6Texts, RULESET6};
-use crate::geneframe::KingdomTables;
-use crate::kingdom_contract::{KingdomContract, SymbolId};
+use crate::geneframe::Role;
+use crate::kingdom_contract::SymbolId;
 use crate::saturated_fold::{EgraphKingdom, VariableSite};
-use crate::typed_environment::{in_scope, Binder, Choice, Decoder, Decoding, Entry, Node, ResolvedTree};
+use crate::typed_environment::{in_scope, Binder, Choice, Decoding, Node, ResolvedTree};
 use crate::typed_gep::Tree;
 
 fn bug(what: String) -> String {
@@ -85,16 +85,12 @@ fn unpack(w: u32) -> Word {
     }
 }
 
-/// One problem's master 6 e-graph: its kingdom, its renderer's parts and its generated datatype, rules and bridge.
+/// One problem's master 6 e-graph: its kingdom (tables, entry, contract and decoder) and its generated datatype, rules
+/// and bridge.
 #[derive(Debug, Clone)]
 pub struct Egraph6 {
     pub problem: String,
     pub kingdom: Kingdom6,
-    pub header: Header6,
-    pub tables: KingdomTables,
-    pub contract: KingdomContract,
-    pub entry: Entry,
-    decoder: Decoder,
     /// The generated texts (`egraph.datatype`, `egraph.rules`, `egraph.rows`, `egraph.sorts`).
     pub texts: Egraph6Texts,
     ctor_of: BTreeMap<(SymbolId, Reads), String>,
@@ -116,39 +112,35 @@ impl Egraph6 {
     /// The e-graph of a committed master 6 view (`kingdoms/futhark/sig/<problem>/m6/`).
     pub fn load(problem: &str) -> Result<Egraph6, String> {
         let view = crate::futhark_view::master6::committed(problem)?;
-        let kingdom = view.kingdom(problem)?;
+        let kingdom = crate::futhark_view::master6::committed_kingdom(problem)?;
         let texts = egraph6(&view)?;
-        Egraph6::new(problem, kingdom, Header6::of_spec(&view.spec), texts)
+        Egraph6::new(problem, kingdom, texts)
     }
 
     /// The e-graph of a kingdom and its generated texts; the bridge is read from `egraph.rows`, never derived again.
-    pub fn new(problem: &str, kingdom: Kingdom6, header: Header6, texts: Egraph6Texts) -> Result<Egraph6, String> {
-        let (tables, contract) = (kingdom.tables()?, kingdom.contract()?);
-        let entry = Entry::of_kingdom6(&kingdom);
+    pub fn new(problem: &str, kingdom: Kingdom6, texts: Egraph6Texts) -> Result<Egraph6, String> {
         let mut ctor_of = BTreeMap::new();
         let mut of_ctor = BTreeMap::new();
         for line in texts.rows.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
             let f: Vec<&str> = line.split('\t').collect();
             let [name, ctor, _, reads] = f[..] else { return Err(bug(format!("{problem}: the bridge line {line:?} is malformed"))) };
-            let symbol = kingdom.symbols.iter().position(|s| s.name == name).ok_or_else(|| bug(format!("{problem}: the bridge names {name}, which is no symbol")))? as SymbolId;
+            let symbol = kingdom.symbol_named(name).ok_or_else(|| bug(format!("{problem}: the bridge names {name}, which is no symbol")))?;
             let reads = Reads::parse(reads).ok_or_else(|| bug(format!("{problem}: the bridge line {line:?} reads {reads:?}")))?;
             if ctor_of.insert((symbol, reads), ctor.to_string()).is_some() || of_ctor.insert(ctor.to_string(), (symbol, reads)).is_some() {
                 return Err(bug(format!("{problem}: the bridge line {line:?} repeats a symbol or a constructor")));
             }
         }
-        for (s, sym) in kingdom.symbols.iter().enumerate() {
-            let want: &[Reads] = match sym.kind {
-                Kind6::Const => &[Reads::Dc],
-                Kind6::Var => &[Reads::Binder, Reads::Constant],
-                Kind6::Function | Kind6::Terminal => &[Reads::Node],
+        for s in 0..kingdom.contract.n_symbols() as SymbolId {
+            let want: &[Reads] = match kingdom.role(s) {
+                Role::Constant => &[Reads::Dc],
+                Role::Variable => &[Reads::Binder, Reads::Constant],
+                Role::Function | Role::Formula => &[Reads::Node],
             };
-            if want.iter().any(|r| !ctor_of.contains_key(&(s as SymbolId, *r))) {
-                return Err(bug(format!("{problem}: the symbol {} has no constructor for every reading {want:?}", sym.name)));
+            if want.iter().any(|r| !ctor_of.contains_key(&(s, *r))) {
+                return Err(bug(format!("{problem}: the symbol {} has no constructor for every reading {want:?}", kingdom.name(s))));
             }
         }
-        let decoder = Decoder::new(&tables, &contract).map_err(|d| d.join("\n"))?;
-        decoder.check_entry(&entry).map_err(|d| d.join("\n"))?;
-        Ok(Egraph6 { problem: problem.to_string(), kingdom, header, tables, contract, entry, decoder, texts, ctor_of, of_ctor })
+        Ok(Egraph6 { problem: problem.to_string(), kingdom, texts, ctor_of, of_ctor })
     }
 
     fn ctor(&self, symbol: SymbolId, reads: Reads) -> Result<&str, String> {
@@ -157,7 +149,7 @@ impl Egraph6 {
 
     /// The decoding of a tree (passes 2 to 4).
     pub fn decode(&self, tree: &Tree) -> Result<Decoding, String> {
-        self.decoder.decode(&self.entry, tree)
+        self.kingdom.decode(tree)
     }
 
     /// The resolved tree.
@@ -167,7 +159,7 @@ impl Egraph6 {
 
     /// The program of a tree (passes 2 to 5).
     pub fn program(&self, tree: &Tree) -> Result<Program6, String> {
-        self.kingdom.program6(&self.header, &self.decode(tree)?)
+        self.kingdom.program(tree)
     }
 
     /// SATURATION ONLY ON TREES WITH NO FAILING REQUIREMENT: no adapter, no work-bound substitution, no adapter on the
@@ -185,13 +177,15 @@ impl Egraph6 {
     }
 
     fn term(&self, n: &Node, t: &Tree, out: &mut String) -> Result<(), String> {
-        let sym = self.kingdom.symbols.get(t.symbol as usize).ok_or_else(|| bug(format!("{}: symbol {} is not in the kingdom", self.problem, t.symbol)))?;
-        match (sym.kind, n.choice) {
-            (Kind6::Var, Some(Choice::Variable(b))) => out.push_str(&format!("({} {} {})", self.ctor(t.symbol, Reads::Binder)?, b.depth, b.ordinal)),
-            (Kind6::Var, Some(Choice::Constant)) => out.push_str(&format!("({})", self.ctor(t.symbol, Reads::Constant)?)),
-            (Kind6::Const, Some(Choice::Dc(i))) => out.push_str(&format!("({} {i})", self.ctor(t.symbol, Reads::Dc)?)),
-            (Kind6::Var | Kind6::Const, c) => return Err(bug(format!("{}: {} reads as {c:?}", self.problem, sym.name))),
-            (Kind6::Function | Kind6::Terminal, _) => {
+        if t.symbol as usize >= self.kingdom.contract.n_symbols() {
+            return Err(bug(format!("{}: symbol {} is not in the kingdom", self.problem, t.symbol)));
+        }
+        match (self.kingdom.role(t.symbol), n.choice) {
+            (Role::Variable, Some(Choice::Variable(b))) => out.push_str(&format!("({} {} {})", self.ctor(t.symbol, Reads::Binder)?, b.depth, b.ordinal)),
+            (Role::Variable, Some(Choice::Constant)) => out.push_str(&format!("({})", self.ctor(t.symbol, Reads::Constant)?)),
+            (Role::Constant, Some(Choice::Dc(i))) => out.push_str(&format!("({} {i})", self.ctor(t.symbol, Reads::Dc)?)),
+            (Role::Variable | Role::Constant, c) => return Err(bug(format!("{}: {} reads as {c:?}", self.problem, self.kingdom.name(t.symbol)))),
+            (Role::Function | Role::Formula, _) => {
                 out.push('(');
                 out.push_str(self.ctor(t.symbol, Reads::Node)?);
                 for (kn, kt) in n.kids.iter().zip(&t.kids) {
@@ -233,7 +227,7 @@ impl Egraph6 {
         let mut out = form.clone();
         let mut wanted: Vec<(Vec<u32>, Option<Binder>)> = Vec::new();
         fn walk(e: &Egraph6, n: &Node, t: &mut Tree, path: &mut Vec<u32>, wanted: &mut Vec<(Vec<u32>, Option<Binder>)>) -> Result<bool, String> {
-            if e.contract.is_variable(t.symbol) {
+            if e.kingdom.contract.is_variable(t.symbol) {
                 let word = t.const_index.ok_or_else(|| bug(format!("{}: a variable at {path:?} has no word", e.problem)))?;
                 let want = match unpack(word) {
                     Word::Resolved(b) => Some(b),
@@ -284,7 +278,7 @@ impl Egraph6 {
         let d = self.decode(form)?;
         let mut out = Vec::new();
         fn walk(e: &Egraph6, n: &Node, path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, VariableSite)>) -> Result<(), String> {
-            if e.contract.is_variable(n.symbol) {
+            if e.kingdom.contract.is_variable(n.symbol) {
                 let vs = in_scope(&n.environment, n.data_type);
                 let place = match n.choice {
                     Some(Choice::Variable(b)) => vs.iter().position(|v| v.binder == b).ok_or_else(|| bug(format!("{}: the variable at {path:?} is not in scope", e.problem)))?,

@@ -223,35 +223,47 @@ def class_tag(cls, elements):
 # 4. written: `datatypes.tsv`, `symbols.tsv` and `environment.tsv` (columns below).
 
 MASTER6 = os.path.join(MASTER, "6")
-ROW6_COLUMNS = ["ref", "since", "family", "kind", "elems", "over", "name", "out", "args", "rules", "requires", "binds",
-                "trip", "spelling", "note"]
-DATATYPE6_COLUMNS = ["name", "kind", "members", "over", "tag", "constant", "constant_props", "note"]
+ROW6_COLUMNS = ["ref", "since", "family", "kind", "elems", "over", "name", "out", "args", "flows", "guards", "spelling",
+                "prelude", "note"]
+DATATYPE6_COLUMNS = ["name", "kind", "members", "over", "tag", "constant", "constant_props", "spell", "type_spelling", "note"]
 PROPERTY6_COLUMNS = ["data_type", "name", "kind", "meaning"]
-ADAPTER6_COLUMNS = ["name", "repairs", "runs_at", "heavy", "rendering"]
-# The written view's columns.
-VIEW6_DATATYPE_COLUMNS = ["id", "name", "kind", "members", "tag", "constant", "constant_props", "properties"]
-VIEW6_SYMBOL_COLUMNS = ["id", "ref", "name", "kind", "out", "args", "rules", "requires", "binds", "trip", "spelling"]
-VIEW6_ENV_COLUMNS = ["kind", "name", "data_type", "properties", "requires"]
+REPAIR6_COLUMNS = ["list", "site", "when", "guard", "template"]
+FORMULA6_COLUMNS = ["operator", "form", "spelling"]
 # The template columns a row's `{E}` and quantifier variables are substituted in.
-ROW6_TEMPLATED = ["name", "out", "args", "rules", "requires", "binds", "spelling", "note"]
+ROW6_TEMPLATED = ["name", "out", "args", "flows", "guards", "spelling", "note"]
 PROPERTY_TERM_RE = re.compile(r"\bin(\d+)\.([a-z_][a-z0-9_]*)\b")
-REQUIRE6_RE = re.compile(r"^(in\d+\.[a-z_][a-z0-9_]*|env\.trips|out\.[a-z_][a-z0-9_]*) (=|<=|<) (.+) -> ([a-z][a-z0-9_.]*)$")
-BIND6_RE = re.compile(r"^(\d+):(\S+)(?: (.*))?$")
+# A flow item of a row: `out.<p> := <formula>`, `in<k>: env.<a> := <formula>`, `in<k>: var <T>[ with p := f & ..]`.
+UP6_RE = re.compile(r"^out\.([a-z_][a-z0-9_]*) := (.+)$")
+ENV6_RE = re.compile(r"^in(\d+): env\.([a-z_][a-z0-9_]*) := (.+)$")
+VAR6_RE = re.compile(r"^in(\d+): var (.+?)(?: with (.+))?$")
+# A guard item: `must <condition> -> <repair list>`; the condition's left side a subject `in<k>.<p>` or `env.trips`.
+GUARD6_RE = re.compile(r"^(must|advise) (in\d+\.[a-z_][a-z0-9_]*|env\.trips) (=|<=|<) (.+) -> ([a-z][a-z0-9_.]*)$")
+# The adapter that fits a property of a value of a data type (the repairs' {FITS}, {FITJ}): by the data type's shape.
+FIT6 = {("[]", "len"): "fit@a.{E}", ("[][]", "rows"): "fitrows@m.{E}", ("[][]", "cols"): "fitcols@m.{E}"}
 
 
 def master6(path=MASTER6):
-    """Master 6: its version, data types, properties, rows, adapters, rules and literal pools."""
+    """Master 6: its version, data types, properties, rows, repair lists, formula rows, preludes, rules and literal
+    pools."""
     with open(os.path.join(path, "VERSION")) as f:
         version = int(f.read().strip())
     pools = {}
     for p in read_tsv(os.path.join(path, "pools.tsv"), ["element", "literals"]):
         pools[p["element"]] = p["literals"].split(",")
+    preludes = {}
+    pdir = os.path.join(path, "preludes")
+    for fname in sorted(os.listdir(pdir)):
+        if fname.endswith(".fut"):
+            with open(os.path.join(pdir, fname)) as f:
+                preludes[fname[:-4]] = f.read()
     return {
         "version": version,
         "datatypes": read_tsv(os.path.join(path, "datatypes.tsv"), DATATYPE6_COLUMNS),
         "properties": read_tsv(os.path.join(path, "properties.tsv"), PROPERTY6_COLUMNS),
         "rows": read_tsv(os.path.join(path, "rows.tsv"), ROW6_COLUMNS),
-        "adapters": read_tsv(os.path.join(path, "adapters.tsv"), ADAPTER6_COLUMNS),
+        "repairs": read_tsv(os.path.join(path, "repairs.tsv"), REPAIR6_COLUMNS),
+        "formulas": read_tsv(os.path.join(path, "formulas.tsv"), FORMULA6_COLUMNS),
+        "preludes": preludes,
         "rules": read_tsv(os.path.join(path, "rules.tsv"), ["on", "elems", "needs", "rule"]),
         "pools": pools,
     }
@@ -322,8 +334,15 @@ def _subst(text, env):
     return VAR_RE.sub(one, text)
 
 
+def escape6(text):
+    """A prelude's text on one line of a view's table: `\\` as `\\\\`, a line break as `\\n`."""
+    return text.replace("\\", "\\\\").replace("\n", "\\n")
+
+
 class View6:
-    """A master 6 view: the specification over the master, its tables computed at construction."""
+    """A master 6 view: the specification over the master, its tables computed at construction and written in the
+    gene frame's four kinds of row (design 3.3): data types, symbols (the formula rows last), Argument, Flow and Guard
+    rows with their repairs inline, and the entry (`texts`, read by `KingdomTables::parse_named`)."""
 
     def __init__(self, spec, mst=None):
         self.spec = spec
@@ -333,6 +352,9 @@ class View6:
         self.props_of_template = {}
         for p in self.mst["properties"]:
             self.props_of_template.setdefault(p["data_type"], []).append((p["name"], p["kind"]))
+        self.lists = {}
+        for r in self.mst["repairs"]:
+            self.lists.setdefault(r["list"], []).append(r)
         self.candidates = self._candidate_types()
         self.by_name = {t["name"]: t for t in self.candidates}
         self.root_vars = [env_variable(e) for e in spec["env"]]
@@ -370,9 +392,11 @@ class View6:
                 if any(m not in [c["name"] for c in out] for m in members):
                     continue  # a function type of an element the view does not have
                 props = [(p, k) for p, k in self.props_of_template.get(t["name"], [])]
+                spell_env = dict(env, M=f"_{env['E']}" if self.multi and "E" in env else "")
                 out.append({"name": name, "kind": t["kind"], "members": members_text, "member_list": members,
                             "tag": _subst(t["tag"], env), "constant": _subst(t["constant"], env),
-                            "constant_props": t["constant_props"], "properties": props})
+                            "constant_props": t["constant_props"], "properties": props,
+                            "spell": _subst(t["spell"], spell_env), "type_spelling": _subst(t["type_spelling"], env)})
         return out
 
     def carries(self, dt, prop):
@@ -381,8 +405,12 @@ class View6:
     # ---- 2. the candidate rows ----------------------------------------------------------------------------------
 
     def _admitted(self, r):
-        return (int(r["since"]) <= self.spec["master"]
-                and (not self.spec["families"] or r["family"] in self.spec["families"] or r["kind"] == "var"
+        """A row the view admits: its version within the pin and its family admitted, and one of its elements the
+        view's. A `var` row and an ADAPTER are in every view whatever its pin and families: every view's repairs call
+        the adapters, and evolution may place them."""
+        everywhere = r["kind"] in ("var", "adapter")
+        return ((everywhere or int(r["since"]) <= self.spec["master"])
+                and (not self.spec["families"] or r["family"] in self.spec["families"] or everywhere
                      or any(q.partition(":")[2] == "leafless" for q in items(r["over"])))
                 and (r["elems"] == "*" or any(e in self.elements for e in r["elems"].split(","))))
 
@@ -419,50 +447,62 @@ class View6:
         return out
 
     def _instance(self, r, env):
-        """One instance of row `r` under `env`, or None when one of its data types is not a candidate."""
-        t = {c: _subst(r[c], env) for c in ROW6_TEMPLATED}
+        """One instance of row `r` under `env`, or None when one of its data types is not a candidate. Its flows and
+        guards: an up flow is kept when its result carries the property and every argument property it reads is
+        carried; a `var` flow's data type must be a candidate (else there is no instance), its properties kept as an up
+        flow's; the work bound's `depth` is the view's (no work bound in a view with none); a guard is kept when the
+        properties it reads are carried."""
+        t = {c: _subst(r[c], env) for c in ROW6_TEMPLATED if c != "spelling"}
         args = items(t["args"])
         if t["out"] not in self.by_name or any(a not in self.by_name for a in args):
             return None
+        types = {f"TYPE{k}": self.by_name[a]["type_spelling"].replace("@.", f"in{k}.") for k, a in enumerate(args)}
+        spelling = _subst(r["spelling"], dict(env, **types))
         depth = self.spec["depth"]
 
         def held(expr):
             """Whether every `in<k>.<p>` of `expr` names a property its argument carries."""
             return all(int(k) < len(args) and self.carries(args[int(k)], p) for k, p in PROPERTY_TERM_RE.findall(expr))
 
-        rules = []
-        for rule in items(t["rules"]):
-            prop, _, expr = rule.partition("=")
-            if self.carries(t["out"], prop) and held(expr):
-                rules.append(rule)
-        requires = []
-        for q in items(t["requires"]):
-            m = REQUIRE6_RE.match(q)
+        ups, envs, vars_ = [], [], []
+        for item in items(t["flows"]):
+            m_up, m_env, m_var = UP6_RE.match(item), ENV6_RE.match(item), VAR6_RE.match(item)
+            if m_up:
+                prop, expr = m_up.groups()
+                if self.carries(t["out"], prop) and held(expr):
+                    ups.append((prop, expr))
+            elif m_env:
+                k, a, expr = m_env.groups()
+                envs.append((int(k), a, expr))
+            elif m_var:
+                k, dt, props = m_var.groups()
+                if dt not in self.by_name:
+                    return None
+                kept = []
+                for pe in items(props or "", "&"):
+                    p, _, e = pe.partition(" := ")
+                    if self.carries(dt, p) and held(e):
+                        kept.append((p, e))
+                vars_.append((int(k), dt, kept))
+            else:
+                raise ValueError(f"our software has a bug: the flow {item!r} of {r['ref']} does not parse")
+        guards = []
+        for q in items(t["guards"]):
+            m = GUARD6_RE.match(q)
             if not m:
-                raise ValueError(f"our software has a bug: the requirement {q!r} of {r['ref']} does not parse")
-            subject, rel, expr, adapter = m.groups()
+                raise ValueError(f"our software has a bug: the guard {q!r} of {r['ref']} does not parse")
+            strength, subject, rel, expr, lst = m.groups()
             if subject == "env.trips":
                 if depth is None:
                     continue
-                bound = re.sub(r"\bdepth\b", str(depth), expr)
-                requires.append(f"{subject} {rel} {bound} -> {adapter}")
+                guards.append((strength, subject, rel, re.sub(r"\bdepth\b", str(depth), expr), lst))
                 continue
             k, p = subject[2:].split(".")
             if int(k) < len(args) and self.carries(args[int(k)], p) and held(expr):
-                requires.append(q)
-        binds = []
-        for b in items(t["binds"]):
-            m = BIND6_RE.match(b)
-            if not m:
-                raise ValueError(f"our software has a bug: the binding {b!r} of {r['ref']} does not parse")
-            arg, dt, props = m.groups()
-            if dt not in self.by_name:
-                return None
-            kept = [pe for pe in items(props or "", "&") if self.carries(dt, pe.partition("=")[0]) and held(pe.partition("=")[2])]
-            binds.append((int(arg), dt, kept))
+                guards.append((strength, subject, rel, expr, lst))
         return {"ref": r["ref"], "name": t["name"], "kind": r["kind"], "family": r["family"], "out": t["out"],
-                "args": args, "rules": rules, "requires": requires, "binds": binds, "trip": r["trip"],
-                "spelling": t["spelling"]}
+                "args": args, "ups": ups, "envs": envs, "vars": vars_, "guards": guards, "spelling": spelling,
+                "prelude": r["prelude"]}
 
     def _rows(self, var_types, leafless=frozenset()):
         out = []
@@ -485,7 +525,7 @@ class View6:
     # ---- 3. reachable both ways ---------------------------------------------------------------------------------
 
     def _reachable(self, rows):
-        built = {r["out"] for r in rows if r["kind"] != "function"}
+        built = {r["out"] for r in rows if r["kind"] not in ("function", "adapter")}
         while True:
             before = len(built)
             for r in rows:
@@ -519,21 +559,19 @@ class View6:
 
     def _compute(self):
         root_types = {dt for _, dt, _ in self.root_vars}
-        var_types = root_types | {dt for r in self._rows(set()) for _, dt, _ in r["binds"]}
+        var_types = root_types | {dt for r in self._rows(set()) for _, dt, _ in r["vars"]}
         for _ in range(len(self.candidates) + 2):
             rows = self._reachable(self._rows(var_types))
-            settled = root_types | {dt for r in rows for _, dt, _ in r["binds"]}
+            settled = root_types | {dt for r in rows for _, dt, _ in r["vars"]}
             settled = {t for t in var_types if t in settled}
             if settled == var_types:
                 break
             var_types = settled
         else:
             raise ValueError("our software has a bug: the data types with a variable do not settle")
-        # A data type the root or a kept row demands that no kept row of no arguments gives (the `i32` + `f32` k-means
-        # view's `[][]i32`: built by `tabrows`, with no variable) can never have a variable in scope, so it takes no var
-        # row and no Dv lane: it takes its constant, the `T:leafless` row (M0088), because Karva's tail needs a leaf of
-        # every data type it can demand (the contract's check). Computed to a fixed point: rows the new leaves admit may
-        # demand more data types.
+        # A data type the root or a kept row demands that no kept row of no arguments gives can never have a variable
+        # in scope, so it takes no var row and no Dv lane: it takes its constant, the `T:leafless` row (M0088). To a
+        # fixed point: rows the new leaves admit may demand more data types.
         leafless = set()
         for _ in range(len(self.candidates) + 2):
             more = leafless | self._leafless(rows)
@@ -543,14 +581,14 @@ class View6:
             rows = self._reachable(self._rows(var_types, leafless))
         else:
             raise ValueError("our software has a bug: the data types with no leaf do not settle")
-        stray = {dt for r in rows for _, dt, _ in r["binds"]} - var_types
+        stray = {dt for r in rows for _, dt, _ in r["vars"]} - var_types
         if stray:
             raise ValueError(f"our software has a bug: the leaf rows of {sorted(leafless)} admit binders of {sorted(stray)}, which have no var row")
         used = {self.root}
         for r in rows:
             used.add(r["out"])
             used.update(r["args"])
-            used.update(dt for _, dt, _ in r["binds"])
+            used.update(dt for _, dt, _ in r["vars"])
         while True:
             before = len(used)
             for t in self.candidates:
@@ -562,32 +600,136 @@ class View6:
         self.var_types = [t["name"] for t in types if any(r["kind"] == "var" and r["out"] == t["name"] for r in rows)]
         return rows, types
 
-    # ---- 4. the written tables ----------------------------------------------------------------------------------
+    # ---- 4. the written tables: the four kinds of row -----------------------------------------------------------
 
-    def environment(self):
-        """The root environment: the root (the entry's result, its requirements against the signature's sizes) and the
-        variables whose data type the view can name (has a `var` row), in the specification's order."""
-        name, _, dims = self.spec["output"]
-        props = {0: [], 1: ["len"], 2: ["rows", "cols"]}[len(dims)]
-        root_props = " & ".join(f"{p}={d}" for p, d in zip(props, dims))
-        root_req = "; ".join(f"out.{p} = {d} -> fit.root" for p, d in zip(props, dims))
-        lines = [("root", name, self.root, root_props, root_req)]
-        for (kind, _, _, _), (vname, dt, ps) in zip(self.spec["env"], self.root_vars):
-            if dt in self.var_types:
-                lines.append((kind, vname, dt, " & ".join(f"{p}={v}" for p, v in ps), ""))
-        return lines
+    def fitter(self, dt, prop):
+        """The adapter symbol that fits property `prop` of a value of data type `dt`, by the master's FIT6."""
+        shape = "[][]" if dt.startswith("[][]") else "[]" if dt.startswith("[]") else ""
+        name = FIT6.get((shape, prop))
+        if name is None:
+            raise ValueError(f"our software has a bug: no adapter fits the {prop} of {dt}")
+        return name.replace("{E}", dt[len(shape):])
+
+    def repairs(self, row, subject, rel, expr, lst):
+        """The repairs of one guard: its repair list (master/6/repairs.tsv) with the guard's operands, properties and
+        adapters bound, then the row's work-bound substitutes (its own work bound's list, else `subst`), so the last
+        repair always applies. A heavy repair's guard `env.trips < depth` is the view's depth, `true` in a view with
+        none."""
+        depth = self.spec["depth"]
+        env = {}
+        if subject.startswith("in"):
+            s, ps = subject[2:].split(".")
+            env.update({"S": s, "PS": ps, "SUBJECT": subject, "AGAINST": expr, "MIN": f"min({subject}, {expr})"})
+            env["FITS"] = self.fitter(row["args"][int(s)], ps) if lst != "clampix" else ""
+            m = re.fullmatch(r"in(\d+)\.([a-z_][a-z0-9_]*)", expr)
+            if m:
+                env.update({"J": m.group(1), "PJ": m.group(2)})
+                env["FITJ"] = self.fitter(row["args"][int(m.group(1))], m.group(2)) if lst in ("fit.pair", "fit.against") else ""
+        elif subject.startswith("out."):
+            env.update({"PS": subject[4:], "SUBJECT": subject, "AGAINST": expr, "FITS": self.fitter(self.root, subject[4:])})
+        out = []
+        for r in self.lists[lst]:
+            guard = r["guard"]
+            if "depth" in guard:
+                guard = "true" if depth is None else re.sub(r"\bdepth\b", str(depth), guard)
+            out.append((_subst(r["site"], env), _subst(r["when"], env), guard, _subst(r["template"], env)))
+        if lst not in ("subst", "subst.const", "fit.root"):
+            work = [g[4] for g in row["guards"] if g[1] == "env.trips"]
+            for r in self.lists[work[0] if work else "subst"]:
+                out.append((r["site"], r["when"], r["guard"], r["template"]))
+        return out
+
+    def size_names(self):
+        """Every size name of the entry (each dimension of an input, a zero array or the output, and each size), sorted,
+        each at least 1: the entry points' contract (every dimension is at least 1)."""
+        names = set()
+        for kind, name, _, dims in self.spec["env"]:
+            names.update(dims)
+            if kind == "size":
+                names.add(name)
+        names.update(self.spec["output"][2])
+        return sorted(names)
 
     def texts(self):
-        """The view's three tables as text, by file name."""
-        dt = ["\t".join(VIEW6_DATATYPE_COLUMNS)]
-        for i, t in enumerate(self.types):
-            dt.append("\t".join([str(i), t["name"], t["kind"], t["members"], t["tag"], t["constant"], t["constant_props"],
-                                 ";".join(f"{p}:{k}" for p, k in t["properties"])]))
-        sy = ["\t".join(VIEW6_SYMBOL_COLUMNS)]
-        for i, r in enumerate(self.symbols):
-            binds = "; ".join(f"{a}:{d}" + (" " + " & ".join(ps) if ps else "") for a, d, ps in r["binds"])
-            sy.append("\t".join([str(i), r["ref"], r["name"], r["kind"], r["out"], ";".join(r["args"]), "; ".join(r["rules"]),
-                                 "; ".join(r["requires"]), binds, r["trip"], r["spelling"]]))
-        en = ["\t".join(VIEW6_ENV_COLUMNS)] + ["\t".join(line) for line in self.environment()]
-        return {"datatypes.tsv": "\n".join(dt) + "\n", "symbols.tsv": "\n".join(sy) + "\n",
-                "environment.tsv": "\n".join(en) + "\n"}
+        """The view's table as text: `tables.tsv`, the four kinds of row and the entry, by data type and symbol NAME
+        (`KingdomTables::parse_named` reads it)."""
+        lines = []
+        holder = "size" if "size" in [t["name"] for t in self.types] else next((t["name"] for t in self.types if any(k == "size" for _, k in t["properties"])), None)
+        for t in self.types:
+            kind = t["kind"]
+            if kind == "scalar":
+                lines.append(f"data_type\t{t['name']}\tscalar")
+            elif kind == "array":
+                lines.append(f"data_type\t{t['name']}\tarray\t{t['members']}")
+            elif kind == "tuple":
+                lines.append(f"data_type\t{t['name']}\ttuple\t{t['members']}")
+            else:
+                params, result = t["members"].split(" -> ")
+                lines.append(f"data_type\t{t['name']}\tfunction\t{params}\t{result}")
+            for p, _ in t["properties"]:
+                lines.append(f"carries\t{t['name']}\t{p}")
+            if t["constant"]:
+                props = ";".join(x.strip() for x in t["constant_props"].split("&") if x.strip()) or "-"
+                lines.append(f"constant\t{t['name']}\t{t['constant']}\t{props}")
+            if t["name"] == holder:
+                for n in self.size_names():
+                    lines.append(f"size_name\t{t['name']}\t{n}\t1")
+        role = {"function": "function", "terminal": "function", "adapter": "function", "const": "constant", "var": "variable"}
+        for r in self.symbols:
+            prelude = escape6(self.mst["preludes"][r["prelude"]]) if r["prelude"] else "-"
+            lines.append(f"symbol\t{r['name']}\t{r['ref']}\t{role[r['kind']]}\t{'adapter' if r['kind'] == 'adapter' else '-'}\t{prelude}")
+            if r["kind"] == "const":
+                elem = r["out"]
+                lines.append(f"spelling\t{r['name']}\tpool\t{','.join(x + elem for x in self.spec['literals'][elem])}")
+            elif r["spelling"]:
+                lines.append(f"spelling\t{r['name']}\t\t{r['spelling']}")
+        ops = []
+        for f in self.mst["formulas"]:
+            if f["operator"] not in ops:
+                ops.append(f["operator"])
+        for op in ops:
+            lines.append(f"symbol\t={op}\t=\tformula\t-\t-")
+            for f in self.mst["formulas"]:
+                if f["operator"] == op:
+                    lines.append(f"spelling\t={op}\t{f['form']}\t{f['spelling']}")
+        for r in self.symbols:
+            for k, a in enumerate(r["args"]):
+                lines.append(f"argument\t{r['name']}\t{k}\tin\t{a}\t-")
+            lines.append(f"argument\t{r['name']}\t0\tout\t{r['out']}\t-")
+        for r in self.symbols:
+            for p, e in r["ups"]:
+                lines.append(f"flow\t{r['name']}\tout\tup\t{p}\t{e}")
+            groups = {}
+            for k, dt, props in r["vars"]:
+                g = groups.get((k, dt), 0)
+                groups[(k, dt)] = g + 1
+                name = f"var.{dt}" if g == 0 else f"var.{dt}/{g}"
+                lines.append(f"flow\t{r['name']}\tin{k}\tdown\t{name}\t1")
+                for p, e in props:
+                    lines.append(f"flow\t{r['name']}\tin{k}\tdown\t{name}.{p}\t{e}")
+                spell = self.by_name[dt]["spell"]
+                if spell:
+                    lines.append(f"flow\t{r['name']}\tin{k}\tdown\t{name}.spell\t{spell}")
+            for k, a, e in r["envs"]:
+                lines.append(f"flow\t{r['name']}\tin{k}\tdown\tenv.{a}\t{e}")
+        for r in self.symbols:
+            order = 1
+            for strength, subject, rel, expr, lst in sorted(r["guards"], key=lambda g: g[1] != "env.trips"):
+                at = 0 if subject == "env.trips" else order
+                if subject != "env.trips":
+                    order += 1
+                lines.append(f"guard\t{r['name']}\t{at}\t{strength}\t{subject} {rel} {expr}")
+                for site, when, guard, template in self.repairs(r, subject, rel, expr, lst):
+                    lines.append(f"repair\t{r['name']}\t{at}\t{site}\t{when}\t{guard}\t{template}")
+        name, _, dims = self.spec["output"]
+        lines.append(f"entry\t{name}\t{self.root}")
+        for (kind, _, _, _), (vname, dt, ps) in zip(self.spec["env"], self.root_vars):
+            if dt in self.var_types:
+                props = ";".join(f"{p}={v}" for p, v in ps) or "-"
+                lines.append(f"parameter\t{vname}\t{dt}\t{props}\t-\t-\t-\t-")
+        props = {0: [], 1: ["len"], 2: ["rows", "cols"]}[len(dims)]
+        for i, (p, d) in enumerate(zip(props, dims)):
+            lines.append(f"guard\tentry\t{i}\tmust\tout.{p} = {d}")
+            for site, when, guard, template in self.repairs({"args": [], "guards": []}, f"out.{p}", "=", d, "fit.root"):
+                lines.append(f"repair\tentry\t{i}\t{site}\t{when}\t{guard}\t{template}")
+        return {"tables.tsv": "\n".join(lines) + "\n"}

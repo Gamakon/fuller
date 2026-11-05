@@ -2940,13 +2940,13 @@ pub fn master5_rendering(r: &Reference6) -> Result<String, String> {
 
 /// A problem's master 6 kingdom: its committed view (`kingdoms/futhark/sig/<problem>/m6/`) over the committed master 6.
 pub fn kingdom6(problem: &str) -> Result<crate::futhark_table::Kingdom6, String> {
-    crate::futhark_view::master6::committed(problem)?.kingdom(problem)
+    crate::futhark_view::master6::committed_kingdom(problem)
 }
 
 /// The length of each data type's constant pool `C_T` in a master 6 kingdom: its literal pool, for the data types
 /// with a `const` row.
 pub fn const_len6(k: &crate::futhark_table::Kingdom6) -> BTreeMap<Ty, u32> {
-    k.symbols.iter().filter(|s| s.kind == crate::futhark_table::Kind6::Const).filter_map(|s| Some((s.output, k.data_type(s.output)?.literals.len() as u32))).collect()
+    k.const_len()
 }
 
 /// A parsed master 6 s-expression: its head (a symbol, or a leaf's name) with the binder's variable names, and its
@@ -3020,58 +3020,58 @@ struct Names6 {
 }
 
 fn build6_at(k: &crate::futhark_table::Kingdom6, e: &Sexp6, ty: Ty, path: Vec<u32>, names: &mut Names6) -> Result<Tree, String> {
-    use crate::futhark_table::Kind6;
+    use crate::geneframe::Role;
     let bad = |what: String| format!("our software has a bug: {}'s master 6 tree: {what}", k.kingdom);
     let ty_name = |t: Ty| k.data_type(t).map_or_else(|| format!("{t:?}"), |d| d.name.clone());
-    let by_name = k.symbols.iter().position(|s| s.name == e.head);
+    let by_name = k.symbol_named(&e.head);
     if !e.kids.is_empty() || !e.labels.is_empty() {
         let s = by_name.ok_or_else(|| bad(format!("no symbol {}", e.head)))?;
-        let row = &k.symbols[s];
-        if row.output != ty {
-            return Err(bad(format!("{} returns {}, its slot takes {}", e.head, ty_name(row.output), ty_name(ty))));
+        if k.output(s) != ty {
+            return Err(bad(format!("{} returns {}, its slot takes {}", e.head, ty_name(k.output(s)), ty_name(ty))));
         }
-        if row.inputs.len() != e.kids.len() {
-            return Err(bad(format!("{} takes {} inputs, given {}", e.head, row.inputs.len(), e.kids.len())));
+        let inputs = k.inputs(s).to_vec();
+        if inputs.len() != e.kids.len() {
+            return Err(bad(format!("{} takes {} inputs, given {}", e.head, inputs.len(), e.kids.len())));
         }
         if !e.labels.is_empty() {
-            let positions: std::collections::BTreeSet<u32> = row.binds.iter().map(|b| b.position).collect();
-            let [pos] = positions.into_iter().collect::<Vec<u32>>()[..] else { return Err(bad(format!("{} names its variables but binds at {} arguments", e.head, row.binds.len()))) };
-            if row.binds.len() != e.labels.len() {
-                return Err(bad(format!("{} binds {} variables, {} named", e.head, row.binds.len(), e.labels.len())));
+            let (pos, count) = k.binds(s)?.ok_or_else(|| bad(format!("{} names its variables but binds none", e.head)))?;
+            if count != e.labels.len() {
+                return Err(bad(format!("{} binds {count} variables, {} named", e.head, e.labels.len())));
             }
             let mut at = path.clone();
             at.push(pos);
             names.binders.push((at, e.labels.clone()));
         }
         let mut kids = Vec::with_capacity(e.kids.len());
-        for (i, (kid, kty)) in e.kids.iter().zip(&row.inputs).enumerate() {
+        for (i, (kid, kty)) in e.kids.iter().zip(&inputs).enumerate() {
             let mut p = path.clone();
             p.push(i as u32);
             kids.push(build6_at(k, kid, *kty, p, names)?);
         }
-        return Ok(Tree { symbol: s as SymbolId, const_index: None, kids });
+        return Ok(Tree { symbol: s, const_index: None, kids });
     }
     if let Some(s) = by_name {
-        let row = &k.symbols[s];
         // A variable terminal by its own name (`var@i64`): the leaf that reads its data type's constant, which the
         // second pass checks (nothing of the type is in scope there).
-        if row.kind == Kind6::Var && row.output == ty {
+        if k.role(s) == Role::Variable && k.output(s) == ty {
             names.constants.push(path);
-            return Ok(Tree { symbol: s as SymbolId, const_index: Some(0), kids: Vec::new() });
+            return Ok(Tree { symbol: s, const_index: Some(0), kids: Vec::new() });
         }
         // A leaf symbol takes no input: a terminal, or a function value of no argument (`add@fn.arr2_f32_...`).
-        if !matches!(row.kind, Kind6::Terminal | Kind6::Function) || !row.inputs.is_empty() || row.output != ty {
+        if k.role(s) != Role::Function || !k.inputs(s).is_empty() || k.output(s) != ty {
             return Err(bad(format!("the leaf {} is not a terminal of {}", e.head, ty_name(ty))));
         }
-        return Ok(Tree { symbol: s as SymbolId, const_index: None, kids: Vec::new() });
+        return Ok(Tree { symbol: s, const_index: None, kids: Vec::new() });
     }
-    let of_kind = |kind: Kind6| k.symbols.iter().position(|s| s.kind == kind && s.output == ty);
-    if let (Some(s), Some(i)) = (of_kind(Kind6::Const), k.data_type(ty).and_then(|d| d.literals.iter().position(|l| *l == e.head))) {
-        return Ok(Tree { symbol: s as SymbolId, const_index: Some(i as u32), kids: Vec::new() });
+    let of_role = |role: Role| k.symbols().find(|r| r.role == role && k.output(r.symbol as SymbolId) == ty).map(|r| r.symbol as SymbolId);
+    if let Some(s) = of_role(Role::Constant) {
+        if let Some(i) = (0..k.literals(s).len()).find(|i| k.literal_text(s, *i).as_deref() == Some(e.head.as_str())) {
+            return Ok(Tree { symbol: s, const_index: Some(i as u32), kids: Vec::new() });
+        }
     }
-    let s = of_kind(Kind6::Var).ok_or_else(|| bad(format!("the leaf {} is no symbol, no literal of {} and no variable: {} has no var row", e.head, ty_name(ty), ty_name(ty))))?;
+    let s = of_role(Role::Variable).ok_or_else(|| bad(format!("the leaf {} is no symbol, no literal of {} and no variable: {} has no var row", e.head, ty_name(ty), ty_name(ty))))?;
     names.leaves.push((path, e.head.clone()));
-    Ok(Tree { symbol: s as SymbolId, const_index: Some(0), kids: Vec::new() })
+    Ok(Tree { symbol: s, const_index: Some(0), kids: Vec::new() })
 }
 
 fn tree_at_mut<'a>(t: &'a mut Tree, path: &[u32]) -> Option<&'a mut Tree> {
@@ -3097,14 +3097,11 @@ type NamedLeaves6 = Vec<(Vec<u32>, String)>;
 
 /// [`build6`], with its variable leaves' names.
 fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree, NamedLeaves6), String> {
-    use crate::typed_environment::{Binder, Choice, Decoder};
+    use crate::typed_environment::{Binder, Choice};
     let bad = |what: String| format!("our software has a bug: {}'s master 6 tree: {what}", k.kingdom);
     let mut names = Names6::default();
-    let mut tree = build6_at(k, &parse_sexp6(text)?, k.root.data_type, Vec::new(), &mut names)?;
-    let (tables, contract) = (k.tables()?, k.contract()?);
-    let decoder = Decoder::new(&tables, &contract).map_err(|d| d.join("\n"))?;
-    let entry = crate::typed_environment::Entry::of_kingdom6(k);
-    let decoding = decoder.decode(&entry, &tree)?;
+    let mut tree = build6_at(k, &parse_sexp6(text)?, k.entry.output, Vec::new(), &mut names)?;
+    let decoding = k.decode(&tree)?;
     let mut wanted: Vec<(Vec<u32>, Binder)> = Vec::with_capacity(names.leaves.len());
     for (path, name) in &names.leaves {
         let leaf = decoding.node(path).ok_or_else(|| bad(format!("no node at {path:?}")))?;
@@ -3125,12 +3122,12 @@ fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree,
         tree_at_mut(&mut tree, path).ok_or_else(|| bad(format!("no node at {path:?}")))?.const_index = Some(word);
         wanted.push((path.clone(), variable.binder));
     }
-    let again = decoder.decode(&entry, &tree)?;
+    let again = k.decode(&tree)?;
     for path in &names.constants {
         let node = again.node(path).ok_or_else(|| bad(format!("no node at {path:?}")))?;
         let got = node.choice;
         if got != Some(Choice::Constant) {
-            let name = k.symbols.get(node.symbol as usize).map_or("?", |s| s.name.as_str());
+            let name = k.name(node.symbol);
             return Err(bad(format!("{name} at {path:?} names its data type's constant, but a variable of the type is in scope there and the leaf reads {got:?}")));
         }
     }
@@ -3148,44 +3145,39 @@ fn build6_named(k: &crate::futhark_table::Kingdom6, text: &str) -> Result<(Tree,
 /// `v<depth>_<ordinal>` named at its binder (`(tab@a.i32[v1_0] n ..)`), and a `var.T` with nothing of `T` in scope,
 /// which reads `T`'s constant, by its own symbol name (`var@i64`). `build6(k, &sexp6(k, t)?)` decodes as `t` does.
 pub fn sexp6(k: &crate::futhark_table::Kingdom6, tree: &Tree) -> Result<String, String> {
-    let (tables, contract) = (k.tables()?, k.contract()?);
-    let decoder = crate::typed_environment::Decoder::new(&tables, &contract).map_err(|d| d.join("\n"))?;
-    let decoding = decoder.decode(&crate::typed_environment::Entry::of_kingdom6(k), tree)?;
+    let decoding = k.decode(tree)?;
     let mut s = String::new();
     sexp6_at(k, &decoding.root, &mut s)?;
     Ok(s)
 }
 
 fn sexp6_at(k: &crate::futhark_table::Kingdom6, n: &crate::typed_environment::Node, s: &mut String) -> Result<(), String> {
-    use crate::futhark_table::Kind6;
+    use crate::geneframe::Role;
     use crate::typed_environment::Choice;
     let bad = |what: String| format!("our software has a bug: {}'s master 6 text form: {what}", k.kingdom);
-    let sym = k.symbols.get(n.symbol as usize).ok_or_else(|| bad(format!("no symbol {}", n.symbol)))?;
-    match (sym.kind, n.choice) {
-        (Kind6::Const, Some(Choice::Dc(i))) => {
-            let lit = k.data_type(sym.output).and_then(|d| d.literals.get(i as usize)).ok_or_else(|| bad(format!("{} has no literal {i}", sym.name)))?;
-            s.push_str(lit);
-        }
-        (Kind6::Var, Some(Choice::Variable(b))) => {
+    let name = k.name(n.symbol).to_string();
+    match (k.role(n.symbol), n.choice) {
+        (Role::Constant, Some(Choice::Dc(i))) => s.push_str(&k.literal_text(n.symbol, i as usize).ok_or_else(|| bad(format!("{name} has no literal {i}")))?),
+        (Role::Variable, Some(Choice::Variable(b))) => {
             let v = n.environment.variables.iter().find(|v| v.binder == b).ok_or_else(|| bad(format!("the variable {b:?} is not in scope")))?;
             match &v.name {
-                Some(name) if b.depth == 0 => s.push_str(name),
+                Some(vname) if b.depth == 0 => s.push_str(vname),
                 _ => s.push_str(&format!("v{}_{}", b.depth, b.ordinal)),
             }
         }
-        (Kind6::Var, Some(Choice::Constant)) => s.push_str(&sym.name),
+        (Role::Variable, Some(Choice::Constant)) => s.push_str(&name),
         (_, choice) if n.kids.is_empty() => {
             if choice.is_some() {
-                return Err(bad(format!("the leaf {} reads {choice:?}", sym.name)));
+                return Err(bad(format!("the leaf {name} reads {choice:?}")));
             }
-            s.push_str(&sym.name);
+            s.push_str(&name);
         }
         _ => {
             s.push('(');
-            s.push_str(&sym.name);
-            if let Some(pos) = sym.binds.first().map(|b| b.position) {
-                let depth = n.kids.get(pos as usize).map(|kid| kid.environment.depth).ok_or_else(|| bad(format!("{} binds at its argument {pos}, which it has not", sym.name)))?;
-                let labels: Vec<String> = (0..sym.binds.len()).map(|o| format!("v{depth}_{o}")).collect();
+            s.push_str(&name);
+            if let Some((pos, count)) = k.binds(n.symbol)? {
+                let depth = n.kids.get(pos as usize).map(|kid| kid.environment.depth).ok_or_else(|| bad(format!("{name} binds at its argument {pos}, which it has not")))?;
+                let labels: Vec<String> = (0..count).map(|o| format!("v{depth}_{o}")).collect();
                 s.push_str(&format!("[{}]", labels.join(",")));
             }
             for kid in &n.kids {

@@ -1,0 +1,12 @@
+operator	form	spelling
+min		i64.min {0} {1}
+max		i64.max {0} {1}
++		{0} + {1}
+*		{0} * {1}
+group		({0})
+min	name	min_{0}_{1}
+max	name	max_{0}_{1}
++	name	sum_{0}_{1}
+*	name	prod_{0}_{1}
+negative	name	m{0}
+group	name	{0}

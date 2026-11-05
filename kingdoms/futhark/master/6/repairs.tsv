@@ -1,0 +1,9 @@
+list	site	when	guard	template
+clampix	in{S}	known({AGAINST})	true	{call clampix@i64({={AGAINST}}, {{S}})}
+fit	in{S}	known({AGAINST})	env.trips < depth	{call {FITS}({={AGAINST}}, {{S}})}
+fit.against	in{J}	known({SUBJECT})	env.trips < depth	{call {FITJ}({={SUBJECT}}, {{J}})}
+fit.pair	node	known({SUBJECT}) and known({AGAINST})	env.trips < depth	{self({J} := {if {AGAINST} = {MIN} : {{J}} else {call {FITJ}({={MIN}}, {{J}})}}, {S} := {if {SUBJECT} = {MIN} : {{S}} else {call {FITS}({={MIN}}, {{S}})}})}
+fit.root	root	true	true	{call {FITS}({={AGAINST}}, {self})}
+subst	node	true	true	{in.own}
+subst	node	true	true	{const}
+subst.const	node	true	true	{const}

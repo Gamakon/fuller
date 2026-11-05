@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::master6::{View6, VIEW6_DATATYPE_COLUMNS, VIEW6_SYMBOL_COLUMNS};
+use super::master6::View6;
 
 /// Master 6's e-graph rules (`on`, `elems`, `needs`, `rule`).
 pub const RULES6: &str = include_str!("../../kingdoms/futhark/master/6/rules.tsv");
@@ -129,8 +129,9 @@ fn instantiate(rule: &str, ctors: &[String]) -> String {
 
 /// THE E-GRAPH OF A MASTER 6 VIEW: its four texts, as `gen_tables.py` writes them.
 pub fn egraph6(view: &View6) -> Result<Egraph6Texts, String> {
-    let dts = table(&view.datatypes_tsv, "datatypes.tsv", &VIEW6_DATATYPE_COLUMNS)?;
-    let syms = table(&view.symbols_tsv, "symbols.tsv", &VIEW6_SYMBOL_COLUMNS)?;
+    let dts: Vec<BTreeMap<&str, &str>> = view.types.iter().map(|[n, k, m, t]| BTreeMap::from([("name", n.as_str()), ("kind", k.as_str()), ("members", m.as_str()), ("tag", t.as_str())])).collect();
+    let args_text: Vec<String> = view.symbols.iter().map(|s| s.3.join(";")).collect();
+    let syms: Vec<BTreeMap<&str, &str>> = view.symbols.iter().zip(&args_text).map(|((n, k, o, _), a)| BTreeMap::from([("name", n.as_str()), ("kind", k.as_str()), ("out", o.as_str()), ("args", a.as_str())])).collect();
     let rules = table(RULES6, "rules.tsv", &["on", "elems", "needs", "rule"])?;
     let by_name: BTreeMap<&str, &BTreeMap<&str, &str>> = dts.iter().map(|t| (t["name"], t)).collect();
     let names: BTreeSet<&str> = syms.iter().map(|s| s["name"]).collect();
