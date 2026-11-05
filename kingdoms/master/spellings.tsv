@@ -740,7 +740,7 @@ wgsl.gram	set_rf2		rf2 = {0};
 wgsl.gram	set_rf3		rf3 = {0};
 wgsl.gram	store		{0}[{1}] = {2};
 wgsl.gram	if_		if ({0}) {{ {1} }} else {{ {2} }}
-wgsl.gram	loop		for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}
+wgsl.gram	loop		{{ var {1.v0}: u32 = 0u; loop {{ if ({1.v0} >= {0}u) {{ break; }} {1} {1.v0} = {1.v0} + 1u; }} }}
 wgsl.gram	barrier		workgroupBarrier();
 wgsl.gram	wg_store		wg_f[{0}] = {1};
 wgsl.gram	add_u		({0} + {1})
@@ -813,7 +813,7 @@ wgsl.image	set_rf2		rf2 = {0};
 wgsl.image	set_rf3		rf3 = {0};
 wgsl.image	store_px		if (gid.x < img_w && gid.y < img_h) {{ textureStore(output, vec2<u32>(gid.x, gid.y), {0}); }}
 wgsl.image	if_		if ({0}) {{ {1} }} else {{ {2} }}
-wgsl.image	loop		for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}
+wgsl.image	loop		{{ var {1.v0}: u32 = 0u; loop {{ if ({1.v0} >= {0}u) {{ break; }} {1} {1.v0} = {1.v0} + 1u; }} }}
 wgsl.image	barrier		workgroupBarrier();
 wgsl.image	wg_store		wg_f[{0}] = {1};
 wgsl.image	add_u		({0} + {1})

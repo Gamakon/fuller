@@ -84,8 +84,14 @@ fn naga_n_of_n(kernels: &[(Vec<u32>, Tree, WgslProgram)]) {
             }
         };
         let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
-        if let Err(e) = v.validate(&module) {
-            failures.push(format!("gene {i}: validate: {}\n{}", e.emit_to_string(&p.text), p.text));
+        match v.validate(&module) {
+            Err(e) => failures.push(format!("gene {i}: validate: {}\n{}", e.emit_to_string(&p.text), p.text)),
+            // the MSL naga writes has no `loop_init` (a `for`'s continuing step, the form Apple's compiler hangs on)
+            Ok(info) => match crate::wgsl::target::metal_source(&module, &info, "main", &[]) {
+                Ok(msl) if msl.contains("loop_init") => failures.push(format!("gene {i}: loop_init in the MSL\n{}", p.text)),
+                Ok(_) => {}
+                Err(e) => failures.push(format!("gene {i}: msl: {e}\n{}", p.text)),
+            },
         }
     }
     assert!(failures.is_empty(), "{} of {GENES} fail naga:\n{}", failures.len(), failures.join("\n\n"));

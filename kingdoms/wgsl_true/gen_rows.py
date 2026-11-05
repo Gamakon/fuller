@@ -267,7 +267,9 @@ def build(iface) -> str:
                    guards=[("in0.width = 4", [("in0", "true", "true", VEC4_FIT)] + DROP)])
     t.function("if_", ["bool", "stmt", "stmt"], "stmt", "if ({0}) {{ {1} }} else {{ {2} }}",
                downs=[(1, "env.uniform", "env.uniform and in0.uniform"), (2, "env.uniform", "env.uniform and in0.uniform")])
-    t.function("loop", ["count", "stmt"], "stmt", "for (var {1.v0}: u32 = 0u; {1.v0} < {0}u; {1.v0}++) {{ {1} }}",
+    # a plain `loop` with the step as the body's last statement: naga writes a `for` (a continuing step) as the
+    # `loop_init` form Apple's compiler hangs a dispatch on (loops.py loop_text; no row spells `continue` or `break`)
+    t.function("loop", ["count", "stmt"], "stmt", "{{ var {1.v0}: u32 = 0u; loop {{ if ({1.v0} >= {0}u) {{ break; }} {1} {1.v0} = {1.v0} + 1u; }} }}",
                downs=[(1, "var.u32", "1"), (1, "var.u32.bound", "in0.value"), (1, "var.u32.uniform", "true"), (1, "var.u32.owned", "false"), (1, "var.u32.local_owned", "false"), (1, "var.u32.spell", "i{depth}{nth}"),
                       (1, "env.work", "env.work * in0.value")],
                guards=[(f"env.work * in0.value <= {BUDGET}", DROP)])
