@@ -116,3 +116,6 @@ cabal.tar.xz
 # Scratch scripts and logs of agents (Rules.md: temporary scripts go in tmp/), and LaTeX auxiliary files.
 /tmp/
 papers/*.toc
+
+# The old WGSL harness's generated case files (its problem directories were deleted in plan 7.7 K5; nothing reads them).
+/problems/
