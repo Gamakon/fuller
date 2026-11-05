@@ -33,107 +33,60 @@ pub mod formula;
 pub mod master;
 
 
-/// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of
-/// `docs/design/DataModel.md`, as enum variants so `Arity`'s many-hot maps are
-/// keyed by them. THE FULL SET IS DECLARED NOW so the row structure is stable
-/// over time: a new kingdom REUSES these columns, it does not add a variant and
-/// migrate every row. Most types are zero on any given row. A new type is a
-/// genuinely new value class (not a new kingdom), and only then is a variant
-/// added — and because every match on `Ty` is non-exhaustive (a `_` arm), that
-/// addition stays backward-compatible.
+/// The value types a symbol's slots can carry: the keys of [`Arity`]'s many-hot maps and of every kingdom's typed
+/// layout. A kingdom's own types are a table-defined family ([`Ty::Wgsl`], [`Ty::Futhark1d`], [`Ty::Futhark`]): a new
+/// type is a table row, not a variant.
 ///
-/// Ordering: the base types come FIRST and never move. Symbolic regression has ONE data type, `F`; a tree's
-/// transcendental depth is a PROPERTY of it (`kingdoms/tsr/depth/tables.tsv`, the `depth` up flows and the
-/// `in0.depth <= 1` guard on a raising unary), not a type. The old depth ladder `T1`/`T2` was deleted with the move
-/// to the four kinds of row (plan 7.7, task K1).
+/// Symbolic regression has ONE data type, `F`; a tree's transcendental depth is a PROPERTY of it (the kingdom `sr` of
+/// `kingdoms/master/`: the `depth` up flows and the `in0.depth <= 1` guard on a raising unary), not a type.
+///
+/// Every variant's device code is fixed ([`Ty::code`]): a variant deleted leaves its code unassigned, so no other
+/// type's code moves (the base set once also held A, L, the NLP labels and Addr, codes 4 to 29, and the depth
+/// ladder T1, T2; plan 7.7 K1 and K5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Ty {
-    // ---- Base types (Symbolic Regression / SQL / REGEX kingdoms) ----
-    S, // String
-    I, // Integer
-    F, // Float
-    B, // Boolean
-    A, // Array
-    L, // List
-
-    // ---- NLP-English input types (NLP kingdom) — spaCy entity/phrase labels ----
-    Person,
-    Org,
-    Gpe,
-    Loc,
-    Norp,
-    Fac,
-    Event,
-    Product,
-    Date,
-    Time,
-    Money,
-    Quantity,
-    Cardinal,
-    Percent,
-    Np,     // noun phrase
-    Ap,     // adjective phrase
-    Clause,
-    Verb,
-
-    // ---- NLP-English Phylo OUTPUT types (NLP kingdom) ----
-    Entity,     // 📦
-    Relation,   // 🔗
-    Metric,     // 📊
-    Procedure,  // ⚙️
-    Narrative,  // 📜
-
-    // ---- BotjiKingdom types ----
-    Addr, // botji address string
-
-    // ---- REGEX kingdom types ----
-    // Appended last so the base types keep their positions (the ordering rule above).
-    // Integer repeat counts reuse `Ty::I`; they are not needed until counted
-    // repetition is added (Phase 1 omits it).
-    Char,      // one literal byte
-    CharClass, // a set of bytes ([a-z], \d, …)
-    Pattern,   // a regex sub-tree — the kingdom's root/hub type
+    /// String (code 0).
+    S,
+    /// Integer (code 1): the regex kingdom's repeat counts.
+    I,
+    /// Float (code 2): symbolic regression's one data type.
+    F,
+    /// Boolean (code 3): the third type of the typed core's multi-type fixtures.
+    B,
+    /// One literal byte (code 30, regex).
+    Char,
+    /// A set of bytes, `[a-z]`, `\d` (code 31, regex).
+    CharClass,
+    /// A regex sub-tree, the regex kingdom's root type (code 32).
+    Pattern,
 
     // ---- Table-defined type families ----
     /// A dual `slot.form` of the WGSL kingdom: the index of its row in
-    /// `kingdoms/wgsl/types.tsv` (ref `T001` → 0). One variant for the whole
+    /// its kingdom's type table. One variant for the whole
     /// family, so a new dual is a table row, not a variant; its device code
-    /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]). Appended last.
+    /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]).
     Wgsl(u16),
     /// A dual of the deprecated 1-D Futhark kingdom: the index of its row in
     /// `kingdoms/futhark_1d/types.tsv` (ref `T001` → 0). Its device code is
-    /// [`Ty::FUTHARK_1D_CODE_BASE`] + the index. Appended last.
+    /// [`Ty::FUTHARK_1D_CODE_BASE`] + the index.
     Futhark1d(u16),
-    /// A type of the Futhark kingdom: a data type of a view (its index in the view's table,
-    /// `kingdoms/futhark/sig/<problem>/m6/tables.tsv`), or a dual of the pixel family (its row in
-    /// `kingdoms/futhark/pixel/<shader>/types.tsv`, ref `T001` → 0). Its device code
-    /// is [`Ty::FUTHARK_CODE_BASE`] + the index.
+    /// A type of the Futhark kingdom: a data type of a view or of the pixel family (its index in the kingdom's
+    /// table). Its device code is [`Ty::FUTHARK_CODE_BASE`] + the index.
     ///
     /// A SEPARATE family from [`Ty::Futhark1d`], not another range of the same
-    /// one: the two kingdoms coexist (the 1-D Futhark kingdom keeps the programs whose
-    /// shapes are only equal at run time), and a type code must not mean one
-    /// thing in one kingdom and another in the other. Two kingdoms that shared
-    /// a family would make `Ty::Futhark1d(0)` ambiguous, and `homologous()`
-    /// compares roots -- so the families are kept apart. Appended last.
+    /// one: a type code must not mean one thing in one kingdom and another in the other, and `homologous()`
+    /// compares roots -- so the families are kept apart.
     Futhark(u16),
 }
 
 impl Ty {
-    /// Every variant, in declaration order. [`Ty::code`] is the position here.
-    pub const ALL: [Ty; 33] = [
-        Ty::S, Ty::I, Ty::F, Ty::B, Ty::A, Ty::L,
-        Ty::Person, Ty::Org, Ty::Gpe, Ty::Loc, Ty::Norp, Ty::Fac, Ty::Event, Ty::Product,
-        Ty::Date, Ty::Time, Ty::Money, Ty::Quantity, Ty::Cardinal, Ty::Percent, Ty::Np, Ty::Ap,
-        Ty::Clause, Ty::Verb,
-        Ty::Entity, Ty::Relation, Ty::Metric, Ty::Procedure, Ty::Narrative,
-        Ty::Addr,
-        Ty::Char, Ty::CharClass, Ty::Pattern,
-    ];
+    /// Every base variant with its fixed device code (the code is the variant's position in the declaration the
+    /// codes were first given by; deleted variants leave gaps).
+    pub const BASE: [(Ty, u32); 7] = [(Ty::S, 0), (Ty::I, 1), (Ty::F, 2), (Ty::B, 3), (Ty::Char, 30), (Ty::CharClass, 31), (Ty::Pattern, 32)];
 
     /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
-    /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables). A base variant's code is its declaration index from 0
-    /// (what `ty as u32` was before the payload variant made the cast
-    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row.
+    /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables). A base variant's code is fixed ([`Ty::BASE`]); a
+    /// table-defined family's is its base plus the index.
     pub fn code(self) -> u32 {
         match self {
             Ty::Wgsl(i) => {
@@ -156,11 +109,11 @@ impl Ty {
                 );
                 Ty::FUTHARK_CODE_BASE + u32::from(i)
             }
-            base => Ty::ALL
+            base => Ty::BASE
                 .iter()
-                .position(|t| *t == base)
-                .map(|i| i as u32)
-                .unwrap_or_else(|| unreachable!("every base variant is in Ty::ALL (test-pinned)")),
+                .find(|(t, _)| *t == base)
+                .map(|(_, c)| *c)
+                .unwrap_or_else(|| unreachable!("every base variant is in Ty::BASE (test-pinned)")),
         }
     }
 
@@ -214,7 +167,7 @@ impl Ty {
             // A code in the retired TSR range is no type.
             return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().filter(|i| usize::from(*i) < Ty::MAX_WGSL_DUALS).map(Ty::Wgsl);
         }
-        Ty::ALL.get(code as usize).copied()
+        Ty::BASE.iter().find(|(_, c)| *c == code).map(|(t, _)| *t)
     }
 }
 
@@ -513,26 +466,25 @@ mod tests {
     // ---- Ty::code(), the one spelling of a type on the device ----
 
     #[test]
-    fn ty_code_is_the_declaration_index_and_every_variant_is_listed_once() {
-        // Pins `code() == ty as u32` for every base variant, so phylu's moved
-        // cast sites see the same numbers, and that `ALL` is complete and in
-        // order: a variant added without a slot here fails this test.
-        for (i, t) in Ty::ALL.iter().enumerate() {
-            assert_eq!(t.code(), i as u32, "{t:?}");
-            assert_eq!(Ty::from_code(i as u32), Some(*t));
+    fn ty_code_is_fixed_and_every_base_variant_is_listed_once() {
+        // The codes the deleted variants left stay unassigned, so no type's code moved (plan 7.7 K5).
+        let codes: Vec<(Ty, u32)> = Ty::BASE.to_vec();
+        assert_eq!(codes, [(Ty::S, 0), (Ty::I, 1), (Ty::F, 2), (Ty::B, 3), (Ty::Char, 30), (Ty::CharClass, 31), (Ty::Pattern, 32)]);
+        for (t, c) in Ty::BASE {
+            assert_eq!(t.code(), c, "{t:?}");
+            assert_eq!(Ty::from_code(c), Some(t));
         }
-        assert_eq!(Ty::ALL.last(), Some(&Ty::Pattern), "ALL ends at the last base variant");
-        assert_eq!(Ty::ALL.len(), 33);
+        for gap in (4..30).chain(33..Ty::TABLE_CODE_BASE) {
+            assert_eq!(Ty::from_code(gap), None, "code {gap} is unassigned");
+        }
+        // Declaration order (the derived Ord) is the codes' order.
+        assert!(Ty::BASE.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1));
         // The table-defined family sits past every base code.
         assert_eq!(Ty::Wgsl(0).code(), 256);
         assert_eq!(Ty::Wgsl(70).code(), 326);
         assert_eq!(Ty::from_code(300), Some(Ty::Wgsl(44)));
         assert!(Ty::Wgsl(0) > Ty::Pattern, "ordered after every base variant");
-        let mut codes: Vec<u32> = Ty::ALL.iter().map(|t| t.code()).collect();
-        codes.dedup();
-        assert_eq!(codes.len(), Ty::ALL.len(), "codes are unique");
         assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
-        assert_eq!(Ty::from_code(Ty::ALL.len() as u32), None);
         // The table-defined ranges round-trip in full and do not overlap.
         // The retired TSR range (4352..69888) is no type, so the Futhark families' codes did not move.
         assert_eq!(Ty::FUTHARK_1D_CODE_BASE, 69888);
@@ -699,7 +651,5 @@ mod tests {
             let t = crate::wgsl::true_kingdom::TrueKingdom::load(&crate::wgsl::true_kingdom::default_dir()).expect("true WGSL table");
             the_contract_is_unchanged_through_the_tables(&t.relations());
         }
-        // The deprecated 1-D Futhark kingdom.
-        the_contract_is_unchanged_through_the_tables(&crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations());
     }
 }
