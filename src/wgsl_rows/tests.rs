@@ -329,6 +329,9 @@ fn the_image_interface_stores_a_vec4_pixel_from_uniforms() {
     assert!(p.text.contains("rf0 = (time * speed);"), "{}", p.text);
     assert!(p.text.contains("textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(vec2<f32>(rf0, gamma), 0.0, 0.0));"), "{}", p.text);
     assert!(p.text.contains("let speed: f32 = params.speed;") && p.text.contains("let img_w: u32 = textureDimensions(output).x;"), "{}", p.text);
+    // the tiled dispatch of fuller's image host: the submit's ids, the tile uniform at group 3, the override
+    assert!(p.text.contains("@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;") && p.text.contains("override DISPATCH_TILED: bool = true;"), "{}", p.text);
+    assert!(p.text.contains("let gid: vec3<u32> = select(gid_tile, gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u), DISPATCH_TILED);"), "{}", p.text);
     let wide = kernel(node("store_px", vec![node("v4", vec![leaf("rf0"), leaf("rf1"), leaf("rf2"), param(&k, "intensity")])]));
     let p = k.program(&wide).expect("renders");
     assert!(p.rewrites.is_empty() && p.substitutions.is_empty(), "{p:?}");

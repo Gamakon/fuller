@@ -2,7 +2,7 @@
 """THE WGSL KINGDOM AS ROWS of the gene frame's fixed schema (docs/DESIGN_geneframe.md 3.3 and 8.4;
 docs/PLAN_futhark_kingdom.md 7.7, task K3), one variant per interface: `wgsl.gram` (`phi` in, `h` out,
 `cfg { d, m, r_rows, r_off }`) and `wgsl.image` (a picture into a write-only storage texture from uniforms, the cuneus
-volumepassage's bindings).
+volumepassage's bindings, with fuller `wgsl::image`'s tiled dispatch).
 
     python3 -I gen_rows.py            # writes kingdom `wgsl` (its variants) into kingdoms/master/ through write_rows.py
     python3 -I gen_rows.py --check    # the committed warehouse rows equal a fresh generation (a Rust test runs this)
@@ -59,6 +59,22 @@ WG_DECL = f"var<workgroup> wg_f: array<f32, {WG_WORDS}>;\\n"
 
 # The kernel row's spelling, for every interface: the grid's constants, the entry point, the builtins the entry's
 # parameters name, the interface's own lets (its uniforms), the registers, the body, and the interface's epilogue.
+def kernel_head(tiled):
+    """The entry point's head. A tiled dispatch (the image interface, fuller `wgsl::image`): the host splits the
+    dispatch into submits of whole workgroups and the uniform `dispatch_tile` gives each submit's origin and the whole
+    grid, so `gid`, `wid` and `nwg` are the whole dispatch's ids (the builtins of the submit are `*_tile`); the
+    pipeline-overridable `DISPATCH_TILED` is false for a pass of one submit (skeleton.py's entry, the same text)."""
+    if not tiled:
+        return KERNEL_HEAD
+    return KERNEL_HEAD.replace(
+        "@builtin(global_invocation_id) gid: vec3<u32>", "@builtin(global_invocation_id) gid_tile: vec3<u32>").replace(
+        "@builtin(workgroup_id) wid: vec3<u32>", "@builtin(workgroup_id) wid_tile: vec3<u32>").replace(
+        "@builtin(num_workgroups) nwg: vec3<u32>) {{ ", "@builtin(num_workgroups) nwg_tile: vec3<u32>) {{ "
+        "let wid: vec3<u32> = select(wid_tile, wid_tile + dispatch_tile.origin.xyz, DISPATCH_TILED); "
+        "let gid: vec3<u32> = select(gid_tile, gid_tile + dispatch_tile.origin.xyz * vec3<u32>(WG_X, WG_Y, 1u), DISPATCH_TILED); "
+        "let nwg: vec3<u32> = select(nwg_tile, dispatch_tile.grid.xyz, DISPATCH_TILED); ")
+
+
 KERNEL_HEAD = (
     "{0} @compute @workgroup_size(WG_X, WG_Y, 1) "
     "fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, "
@@ -87,6 +103,7 @@ GRAM = dict(
     # the uniforms as entry variables: (name, data type, properties)
     uniforms=[(n, "u32", "owned=false;local_owned=false;uniform=true") for n in ["cfg_d", "cfg_m", "cfg_r_rows", "cfg_r_off"]],
     pixel=False,
+    tiled=False,
 )
 
 # THE IMAGE INTERFACE (interface.py VOLUMEPASSAGE, the cuneus shader's own bindings): one picture into a write-only
@@ -106,6 +123,9 @@ IMAGE = dict(
         "@group(0) @binding(0) var<uniform> time_data: TimeUniform;\\n"
         "@group(1) @binding(0) var output: texture_storage_2d<rgba16float, write>;\\n"
         "@group(1) @binding(1) var<uniform> params: VolumeParams;\\n"
+        "struct DispatchTile { origin: vec4<u32>, grid: vec4<u32>, };\\n"
+        "@group(3) @binding(0) var<uniform> dispatch_tile: DispatchTile;\\n"
+        "override DISPATCH_TILED: bool = true;\\n"
     ) + WG_DECL,
     lets=("let img_w: u32 = textureDimensions(output).x; let img_h: u32 = textureDimensions(output).y; "
           + "".join(f"let {n}: {t} = time_data.{n}; " for n, t in IMAGE_TIME)
@@ -117,6 +137,7 @@ IMAGE = dict(
               + [(n, t, "uniform=true" if t == "f32" else "owned=false;local_owned=false;uniform=true") for n, t in IMAGE_TIME]
               + [(n, "f32", "uniform=true") for n in IMAGE_PARAMS]),
     pixel=True,
+    tiled=True,
 )
 
 INTERFACES = [GRAM, IMAGE]
@@ -204,7 +225,7 @@ DROP = [("node", "true", "true", "{const}")]
 def build(iface) -> str:
     t = Table()
     buffers = bool(iface["buffers"])
-    kernel = KERNEL_HEAD + iface["lets"] + REGISTER_DECLS + "{1} " + iface["epilogue"]
+    kernel = kernel_head(iface["tiled"]) + iface["lets"] + REGISTER_DECLS + "{1} " + iface["epilogue"]
     # ---- the data types and what they carry ----
     t.data_type("kernel")
     t.data_type("stmt", constant=("{}", None))
