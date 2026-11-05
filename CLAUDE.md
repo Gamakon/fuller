@@ -4,105 +4,141 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## FULLER DOES NOT EVOLVE CODE (Andrew, 2026-11-03)
 
-**fuller is the symbolic side only: kingdoms (symbol tables and views), the AST, gene encoding and decoding,
-program rendering (Futhark, WGSL, Python), and symbolic rewriting (the e-graph, snap, fold). It does NOT run
+**fuller is the symbolic side only: kingdoms (the kingdom warehouse and its views), the AST, gene encoding and
+decoding, program rendering (Futhark, WGSL, Python), and symbolic rewriting (the e-graph, snap, fold). It does NOT run
 evolution and does NOT measure fitness.** phylu (`../phylu`) owns every genetic operation and every fitness
-measurement: the gene frame, the generation loop (virtual ALPS, the pump, the islands), variation, selection, the
-population, the HFF schemes, GPU scoring, calling external compilers and programs (`evolve::program_eval`), the
-runners (Andrew's architecture diagram, 2026-11-04). Working from this directory is no reason to put code here. Never
-add a generation loop, a population, selection, a fitness evaluator or a runner to fuller; phylu calls fuller to
-decode, render and rewrite. The Futhark evaluator moved to phylu (`src/futhark_eval/`, `docs/PLAN_futhark_kingdom.md`
-5b); `futhark_evolve` and the other deprecated runners are deleted, frozen as binaries at tag `pre-5b` in
-`~/.local/share/fuller/pre-5b/`. Code still here that the diagram puts in phylu (`fitness`, `telemetry`, `run_file`,
-`geneframe`, `population_dag`, the WGSL mutation) moves when fuller and phylu merge into one repository (soon).
+measurement: the generation loop (virtual ALPS, the pump, the islands), variation, selection, the population, the HFF
+schemes, GPU scoring, calling external compilers and programs (`evolve::program_eval`), the runners (Andrew's
+architecture diagram, 2026-11-04). Working from this directory is no reason to put code here. Never add a generation
+loop, a population, selection, a fitness evaluator or a runner to fuller; phylu calls fuller to decode, render and
+rewrite. Code still here that the diagram puts in phylu (`fitness`, `telemetry`, `run_file`, `population_dag`) moves
+when fuller and phylu merge into one repository: the plan is `docs/PLAN_futhark_kingdom.md` 6.2.1, reviewed by
+Codex (6.2.2).
 
 ## What this is
 
-fuller is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/gamakon/hff/`: deterministic, real-domain, bounded.
-
-The original Phase-1 spec is **delivered and superseded** — see `stale/BRIEF.md` for history only. Current state is `src/` + `docs/`.
+fuller is a Rust crate (PyO3-exposed as the Python module `fuller`, imported by hff) for symbolic programs: the gene
+frame's kingdoms, decoding genes into programs, rendering them, and rewriting them with **egglog 2.0** (our fork in
+`vendor-egglog`). It replaced sympy for the SR engine in `/Users/andrewmorgan/Dev/gamakon/hff/`: deterministic,
+real-domain, bounded.
 
 ## Build & test
 
 ```bash
 cargo test                       # Rust tests (plain build, no PyO3 link needed)
-cargo clippy --all-targets       # MUST be clean
+cargo test --features wgsl       # with the WGSL kingdom
+cargo clippy --all-targets       # MUST be clean, with and without --features wgsl
 maturin develop --release        # build + install the Python extension (fuller)
-cargo run --example 00_calibration
-cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 ```
 
-**Hard rule from the user: zero warnings, none hidden.** Never silence with `_`-prefix or `#[allow(...)]` — fix the root cause. `RUSTFLAGS="-D warnings" cargo test` passing + clippy 100% clean is required before any commit.
+**Hard rule from the user: zero warnings, none hidden.** Never silence with `_`-prefix or `#[allow(...)]` — fix the
+root cause. `RUSTFLAGS="-D warnings"` build and clippy clean in every feature set (fuller: none, `wgsl`; phylu: none,
+`gpu`, `gpu,wgsl`) before any push. Tests must be fast (fail fast); a long verification test is not added during
+development. Before main: both repositories' full suites plus the GPU tests.
 
-## Architecture (what's actually built)
+## The gene frame: one fixed schema, one kingdom warehouse
 
-- `src/expr.rs` — `Math` datatype (real-domain ops incl. `Protected*`) + `GUARD_RELATIONS` (is-positive/is-nonzero for guarded rewrites).
-- `src/eval.rs` — real-domain evaluator over egglog `Term`s. `sqrt(neg)/log(≤0)/div0 → NaN`; protected ops match the engine's exact semantics (e.g. `ProtectedExp` = uncapped exp, +inf on overflow).
-- `src/karva.rs` — karva (GEP chromosome) ↔ `Math` converter, keyed on `semantic_id` (NOT geppy name). Holds `master_pset()`.
-- `src/ruleset/` — egglog rulesets: `identities` (algebra), `powers`, `distribute`, `rational`, `trig`.
-- `src/extract.rs` — `denoise()`: saturate (algebra+powers only, bounded) → `extract_variants` → score on data → smallest within R² tolerance, else unchanged. The live mutation operator. Never raises.
-- `src/physics.rs` — `generate()`: pure one-to-many physics-prior mutation GENERATOR (NO eval/score). Tags candidates `speculative` (caller must extrapolation-gate those).
-- `src/snap.rs` — constant snapping (π/e/√2/G… within tol → symbol annotation; Math stays pure-numeric).
-- `src/geneframe.rs` — the **master symbol table and gene-frame data model** (the symbol table is kingdom definition and stays; the gene frame is phylu's by the architecture and moves at the repo merge): master `SymbolTable`, typed many-hot arity, kingdom = a query. The direction the symbol/pset layer migrates toward.
-- **The geneframe holds two row kinds** (design 2026-10-09, `docs/PLAN_population_dag.md`): ordinary chromosomes and homeotic chromosomes (population-wide shared definitions with a stable row id, a root type, memoised row values and a referrer count). An href names a homeotic row by its stable id, never a position in the homeotic tail. Fold is a variation operator: it adds definitions, rewrites ordinary rows to reference them and re-sorts the homeotic tail by use; execution follows a separate level schedule (a definition after everything it references). The memoised top of the homeotic tail is the expressed frame. Determinism is a tested contract: values bit-identical with homeotic rows present or stripped.
-- `src/population_dag.rs` — the population DAG on the host (plan task 3): hash-consed nodes, homeotic rows, memos keyed by node, data version, type and input binding, level schedule, nothing evicted. The device arena (variant B in phylu) is not built.
-- `src/homeotic.rs` — the earlier per-chromosome homeotic tail (fold of a chromosome's shared subtrees into tail slots, encode back to Karva). Its slot-addressed href is superseded by the stable-row-id href of the population design; see its module header.
-- `src/wgsl/` — the WGSL kingdom (feature `wgsl`): naga reader cutting a kernel at its effects into a chromosome over `kingdoms/wgsl` tables, scaffold, interpreter, oracle, mutation (a variation operator: phylu's, moves at the repo merge), rebuild.
-- `docs/PLAN_futhark_product.md` — the Futhark kingdom's **product** decision: superoptimise shape-polymorphic Futhark kernels (the Souper/STOKE idea, aimed at the GPU — nothing of the kind exists for Futhark). The kernel set is **four** (the draft's nine were cut by a review — five could not be won, one was not even a legal gene — and of the four only A7 can be won); softmax/layernorm/scan need three 1-D vector classes, and only after a measured win. The score is correctness plus a **static cost that is a polynomial in the roles** — traffic, allocations, serial depth — never C-backend wall-clock, which does not transfer to the GPU. Tiling is Futhark's own job (the GPU pipeline's `tileLoops`, and the block+register tiler, which names SGEMM), so the tiler's state is **REPORTED, never filtered on** — the measurement showed the reference is tiled and the winner is not, so a rule that credited only a tiled form would have rejected the only win. Search: GEP for discovery, the e-graph as a **local search on elites** — its rules are equalities by construction, so it moves the cost axis only. **The measured result and the learning curve** are in `docs/measurements/2026-10-27_futhark_shapes_A7.md` and `..._A7_learning.md`; the research write-up is the GECCO mini-poster at `phylu/docs/paper/shape_typed_gecco.tex` (with its PDF beside it) and the **4-page paper** at `phylu/docs/paper/shape_typed_gecco_paper.tex`.
-- `docs/index.html` — the **documentation index**: every markdown file in this repository and in the sibling `phylu` checkout, with its title and its first sentence, and a filter box. It is GENERATED by `docs/build_index.py`, whose default is `--check`, and a Rust test (`src/docs_index.rs`) runs that check and walks every link — so a hand-edited index fails `cargo test`, and so does a stale one. Edit the generator, not the page. `docs/REPORT_2026-10-27_shape_kingdom.md` is the one-page progress report on the Futhark kingdom's state.
-- `src/futhark_1d_egraph.rs` — DEPRECATED, the 1-D Futhark kingdom inside Fuller's e-graph: **one egglog sort per kingdom type** (`FR`/`FA`/`FS`/`FF`), so the sort IS the type and the `acc` distinction is structural. The 38 rows map one-for-one onto constructors, plus two e-graph-only ones (`FId`, `FCompose`) whose candidates are compilation-only. Every rule was checked bit-identical against Futhark 0.28.1. See `docs/EGRAPH_futhark.md`.
-- **The Futhark kingdoms** (renamed 2026-11-01, `docs/PLAN_futhark_kingdom.md` step 3a, which holds the old-to-new mapping). `src/futhark_table.rs` is the SHARED machinery every Futhark kingdom loads through: `FutharkKingdom`, `FutharkFamily`, the table loader `from_tables`, the renderer, the ADF rendering, `GeneRng`. `src/futhark_1d_kingdom.rs` + `kingdoms/futhark_1d/` — the **DEPRECATED** 1-D Futhark kingdom (`FutharkKingdom::load_1d`, with `futhark_1d_interp`, `futhark_1d_egraph` and the `futhark_1d_*` examples): 4 types, 38 rows, "shape is a value, not a type". `src/futhark.rs` + `kingdoms/futhark/` — **the Futhark kingdom** (`FutharkKingdom::load`), with its signature family (`src/futhark_sig.rs`, `kingdoms/futhark/sig/`) and pixel family (`src/futhark_pixel.rs`, `kingdoms/futhark/pixel/`): a shape class IS a type (`mat.n.m` = the interface's `[n][m]`), 11 types, 71 rows. **Every Futhark kingdom is a VIEW over the master table** (`kingdoms/futhark/master/`: row templates over size variables, the element and contexts, versioned per row; `docs/PLAN_futhark_kingdom.md` step 3 design): a problem's `view.tsv` is written by `kingdoms/futhark/sniff.py` from its Futhark source (never by hand), `src/futhark_view.rs` computes the table at runtime, and `kingdoms/futhark/view.py` writes the same table for the witnesses — a test requires the two byte for byte. Improve the master, not a view. The unification happens ONCE, OFFLINE, in `gen_tables.py`, whose 12 witness tests re-check every shape relation from the emitted text — the table is the trust boundary, because the engine no longer checks shapes. The two kingdoms live in separate `Ty` families (`Ty::Futhark1d` / `Ty::Futhark`). `src/futhark_interpreter.rs` is the Futhark kingdom's own interpreter, so the compiled programs and the interpreter can be compared — **bit for bit** on the elementwise paths and **exactly** on the reduction path, with no tolerance anywhere (Futhark's `c` backend reduces with a sequential left fold, measured bit-identical over 600 of 600 elements). Futhark's simplifier folds `x + 0` away, so no row may be spelled as an addition of zero; the `const` rows are spelled `map (\_ -> 0.0)`, a genuine constant, and differ from the identity by VALUE. `src/futhark_saturation.rs` is its e-graph (one sort per class), whose datatype, ruleset and bridge are GENERATED (`kingdoms/futhark/egraph.*`) — never hand-written, or they would drift from the table. See `docs/ASSESSMENT_first_class_shapes.md` §15, and the review of the implementation with the disposition of every finding in `docs/reviews/2026-10-26_first_class_shapes_poc_codex.md`. The generator's DEFAULT is `--check`: the committed artefacts are compared byte for byte with what the generator would write, and a Rust test runs that check, so a hand-edited table fails `cargo test`. The **third piece** — shapes that are not the interface's roles — is designed in `docs/ASSESSMENT_dynamic_shapes.md`: the class set's axes may be dynamic and a dimension becomes a value of its own sort, which fits the architecture and costs 3× the gene width (322 → 991 at three roles).
-- `src/futhark_cost.rs` — the Futhark kingdom's **static cost**: a polynomial in the dimension roles (traffic, allocations, serial depth), generated into `kingdoms/futhark/costs.tsv` with the generator's own witness test. It is the *filter*, and it is a pre-optimisation model.
-- `src/futhark_gpu.rs` and `src/futhark_search.rs` — MOVED to phylu (`src/futhark_eval/`, plan 5b): the measured GPU cost and the A7 search with its `Scorer` seam.
-- `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, **per-family** (`Family::Algebra|Rational|Trig`).
+- **The schema** (`docs/DESIGN_geneframe.md`, the live design): a FIXED abstract data model. Kingdoms are configured
+  by rows only, never by changing the data model. Four row kinds: **Argument** (a function's typed inputs and output),
+  **Flow** (properties computed up or down the tree: sizes, depth, order, bindings, environment), **Guard** (a
+  condition with strength `must`, repaired in the decoder, or `advise`, charged in the cost) and **Entry** (the root
+  and its parameters). **Types are data types** (the data types of function arguments; dozens, never thousands).
+  **Sizes and other facts are properties** carried with values. **Scope is context**: a generic `var.T` with an index
+  word, resolved at decode (de Bruijn, innermost binder first). A closed formula language (`src/geneframe/formula.rs`).
+  Every gene decodes into a legal program by construction.
+- **The kingdom warehouse** (`kingdoms/master/`): ONE set of tables for every kingdom. `kingdoms.tsv` lists the
+  kingdoms and variants (`parent.name`); `data_types`, `symbols`, `spellings`, `arguments`, `flows`, `guards`,
+  `repairs`, `entries` each carry a leading `kingdom` column; `properties.tsv` is the shared property catalogue.
+  Loading a kingdom selects it and filters (`src/geneframe/master.rs`: `master::select("tsr.order")`,
+  `master::view("futhark", "kmeans")`). ONE writer, `kingdoms/master/write_rows.py`: each kingdom's generator
+  replaces only its own rows; `--check` is a test; export/import of a kingdom to JSON and back. Never hand-edit the
+  tables: change the generator.
+- **The kingdoms** (all on the warehouse): `futhark` (signature views a7, histogram, kmeans, kmeans_i32, pathfinder,
+  reduce, scan; the pixel family `futhark.pixel.*`), `sr` (symbolic regression, a depth property), `tsr` (Typed
+  Symbolic Regression: depth and Horton-Strahler stream order as properties; variants single, order, order_depth,
+  order_depth_windows), `regex` (POSIX, plus the counted-repetition guard), `wgsl` (variants `wgsl.gram` and
+  `wgsl.image`, nine data types). **TSR is Typed Symbolic Regression**, never "Transcendental".
+- `src/typed_environment.rs` builds a kingdom's typed environment from the rows; `src/typed_gep.rs` the typed Karva
+  gene (per-type head and tail; master head h = 1 + (N-1)n_max, tail t = h(n_max-1) + 1; Dc lanes hold constants, Dv
+  lanes hold `var.T` index words). `src/orf_padding.rs`: the champion-pool overlay and frequency draws for the unread
+  cells of a gene (design section 11).
+- Per-kingdom loaders: `src/futhark_table/kingdom6.rs` + `src/futhark_view/master6.rs` (Futhark),
+  `src/futhark_pixel/rows.rs` (pixel), `src/tsr_kingdom/rows.rs` (SR and TSR, with the device rules phylu decodes on
+  the GPU and their host twin), `src/regex_typed.rs` (regex), `src/wgsl_rows.rs` (WGSL, with the share pass).
+
+## Other modules
+
+- `src/expr.rs` — `Math` datatype (real-domain ops incl. `Protected*`) + `GUARD_RELATIONS`.
+- `src/eval.rs` — real-domain evaluator over egglog `Term`s (`sqrt(neg)/log(<=0)/div0 -> NaN`; protected ops match the
+  engine's semantics).
+- `src/karva.rs` — Karva <-> `Math`, keyed on `semantic_id`; `master_pset()`.
+- `src/ruleset/` — egglog rulesets: `identities`, `powers`, `distribute`, `rational`, `trig`.
+- `src/extract.rs` — `denoise()`: bounded saturation (algebra+powers) -> variants -> scored -> smallest within R²
+  tolerance. Never raises.
+- `src/physics.rs` — `generate()`: physics-prior candidate generator (no scoring; `speculative` tags).
+- `src/snap.rs`, `src/snap_karva.rs` — constant snapping (π, e, √2, G ...).
+- `src/saturated_fold.rs`, `src/population_fold.rs`, `src/population_dag.rs` — fold and the population DAG (the DAG
+  moves to phylu at the merge).
+- **Futhark**: `src/futhark_reader.rs` (Futhark text -> gene), `src/futhark_sig/` (the interpreter, `interp6`),
+  `src/futhark_saturation/` (the e-graph, generated from the rows), `src/futhark_cost.rs` (the static cost, a
+  polynomial in the dimension roles), `src/futhark_exec.rs` (compiling with Futhark's own pass list and a capped
+  fusion loop). The product decision and the measured A7 result: `docs/PLAN_futhark_product.md`,
+  `docs/measurements/`. The evaluator and the GPU cost are phylu's (`src/futhark_eval/`).
+- **WGSL** (feature `wgsl`): `src/wgsl/` (naga front end and target, the image interface, the cuneus originals, the
+  oracle, snap, the work guard). Reference programs as WGSL text in `kingdoms/wgsl_true/gram/`. The WGSL reader
+  (text -> gene) and the WGSL optimisers are to be rebuilt over the rows (plan 7.7).
+- `src/regex/` — the regex AST, parser and rules.
+- `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, per family.
 - `src/python.rs` — PyO3: `denoise`, `denoise_karva`, `physics_mutate`, `physics_mutate_karva`, `master_pset`.
-- `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
-- `nucleotable/` — subsumed design source of truth (referenced by `geneframe.rs`). `stale/` — delivered briefs, history only.
+- `docs/index.html` — the documentation index of this repository and phylu, GENERATED by `docs/build_index.py`
+  (default `--check`; a Rust test runs it and walks every link). Edit the generator, not the page.
+- Compiler: Futhark's `c` backend is Homebrew Futhark 0.28.1; the GPU path uses our rust-wgpu fork
+  (`futhark-rust-backend/`, patches 0001–0016; `futhark-rust-rt/`, `futhark-wgpu-shim/`). A compiler fault gets its
+  note in `docs/issues/` first.
 
 ## Every evolution runner meets one standard
 
-Every evolution loop (all in phylu; none may be in fuller) writes `OUT/stream.jsonl` through `fuller::telemetry` (`RunTelemetry`, phylu's by the architecture, moves at the repo merge),
-honours `OUT/killme.trigger` (`fuller::run_file`), and emits a mutation event for every operator outside plain GEP
-variation. The standard, the event schema and the inventory of runners: `docs/STANDARD_runners.md`.
-
-**Watch any run with ONE app, `evowatch`** (built in phylu: `cargo build --release --bin evowatch`):
-`../phylu/target/release/evowatch OUT` in a terminal, `evowatch OUT --web 8787` in a browser, `--compare OUT2` for
-an A/B. Every kingdom, no change needed for a new one. Manual: `../phylu/docs/WATCHER.md`. There is no other watcher.
+Every evolution loop (all in phylu) writes `OUT/stream.jsonl` through `fuller::telemetry`, honours
+`OUT/killme.trigger` (`fuller::run_file`), and emits a mutation event for every operator outside plain GEP variation
+(`docs/STANDARD_runners.md`). **Watch any run with ONE app, `evowatch`** (phylu: `cargo build --release --bin
+evowatch`; `evowatch OUT`, `--web 8787`, `--compare OUT2`; `../phylu/docs/WATCHER.md`). Give Andrew the `evowatch`
+command line at every run launch.
 
 ## Fitness is a named scheme, chosen per experiment
 
-`fuller::fitness::SCHEMES` (`src/fitness.rs`; fitness is phylu's by the architecture and moves at the repo merge) holds every fitness function a runner offers. A runner takes `--fitness NAME` (`EVOLVE_FITNESS` for phylu's regex engine), defaults to its family's newest scheme, and records the scheme in its header, its report or run card, and the stream's `run_start`. A new or fixed fitness is a NEW scheme beside the others: never change what an existing name computes. Old schemes (an ungated stage 2, the study's 7 quality inputs, the Futhark kingdom's two bands, the regex generation-0 scaling) stay registered, marked NOT TO BE RUN AS IS with their fault: redefine the fitness before using one. An old result is reproduced at its own commit, listed in `docs/FITNESS_SCHEMES.md`.
-
-## The evolution engine moved to phylu
-
-`src/evolve/`, the viewer, `evolve_fit` and the fit runbook now live in
-`../phylu` (`docs/SPLIT_fuller_phylu.md`). phylu depends on fuller; fuller must
-never depend on phylu. When phylu needs a fuller item, widen it here with a
-fuller commit, tested here.
+`fuller::fitness::SCHEMES` holds every fitness function a runner offers (moves to phylu at the merge). A runner takes
+`--fitness NAME`, defaults to its family's newest scheme and records it in its header and the stream's `run_start`. A
+new or fixed fitness is a NEW scheme; never change what an existing name computes; old schemes stay, marked NOT TO BE
+RUN AS IS with their fault (`docs/FITNESS_SCHEMES.md`).
 
 ## Non-obvious things that will bite you
 
-- **Rule families are NON-CONFLUENT.** distribute + trig (or + rational) co-saturated explode the e-graph (verified: pegs CPU, killed runs). The scorer keeps them in separate `Family`s; `denoise` uses only the bounded algebra+powers subset. Do NOT merge all rulesets into one saturation. **Always kill-guard a saturation/parity run** so a divergent rule can't peg the machine: `( cmd & PID=$!; for i in $(seq 1 N); do kill -0 $PID 2>/dev/null||break; sleep 1; done; kill -9 $PID 2>/dev/null )`.
-- **distribute must NOT go in `denoise`** — it's a normal-form canonicaliser; `extract_variants` over its unbounded equivalent-class hangs. Scorer-only.
-- **egglog does NOT constant-fold f64 literals** unless a rule does it (distribute/rational add the folds).
-- **`Protected*` are distinct functions** from raw ops (real-domain raw vs the engine's guarded semantics). Never map a protected geppy name to a raw semantic_id — unsound on negatives/zero.
-- **The old "no bare commutativity" advice is nuanced** — egglog's own tests ship bare comm/assoc rewrites; they're fine *bounded*, fatal at unbounded fixpoint with other expand rules. Measured finding: commutativity is NOT the parity wall here (≈2/600 pairs); the gaps are structural.
-- **Determinism**: same input + rng_seed = identical output (tests assert). HashMap iteration order bit us once — sort when choosing among equal-keyed entries.
-- **The 1-D Futhark e-graph's (`src/futhark_1d_egraph.rs`) `map id` and its fusion rules used to DIVERGE together.** `map id` puts a class's own `map` node inside that class, and the fusion pattern then matched inside it and built another one: measured 5 → 7 → 13 → 55 → 1357 e-nodes over five iterations, no convergence after six. The **unit laws of composition** (`f . id = f`, `id . g = g`) close the loop — the fused node the pattern mints collapses to one that is already there — so the pair now settles at 6 e-nodes and the two rulesets are **merged** into `FUTHARK_RULESET`. Do not add associativity of `FCompose`: that is the next explosion.
-- **Futhark 0.28.1's optimiser does not converge on one legal program** (a reduction over a `acc`, a reversed accumulator-derived operand, and an outer reduction, together). The hang is in the **"Fuse SOACs"** pass, whose fixpoint loop is unbounded (`fuseSOACs Nothing` in `src/Futhark/Passes.hs`); the pass takes a bound and `futhark dev --fuse=N` exposes it. So the program **does** compile, and the engine does it by **capping the compiler's fusion loop**: `futhark_exec`'s bounded-fusion path runs Futhark's own sequential pass list (mirroring `standardPipeline`/`seqPipeline`/`seqmemPipeline`, checked byte-for-byte against `futhark c`) with `--fuse=10`, and the program that hung for ever compiles in **0.12 s** and agrees with the interpreter. This is a **compiler workaround, not an e-graph rescue**: the e-graph's contribution to the outcome is zero, and equality-preserving rewrites of the program do NOT rescue it on their own (measured) — it is the compiler's fusion loop, not the gene. The verdict says so: `Verdict::BoundedFusion`. See `docs/EGRAPH_futhark.md` and `docs/RESCUE_futhark.md`.
-- **Futhark 0.28.1's prelude is RANK-1 and has no `matmul`.** `map`/`map2`/`reduce` apply to 1-D arrays of SCALARS; `transpose` is the only 2-D primitive; `zipWith`, `matmul` and `reshape` do not exist. Mapping over a matrix's rows needs an ARRAY-valued function (`map (\row -> …) A`), and `map2` is CURRIED — it needs a TWO-argument function (`[]f32 -> []f32 -> []f32`), which is why the Futhark kingdom has two function classes. Getting either wrong compiles into a type error, not a wrong answer.
+- **Rule families are NON-CONFLUENT.** distribute + trig (or + rational) co-saturated explode the e-graph. Keep them
+  in separate `Family`s; `denoise` uses only bounded algebra+powers. **Always kill-guard a saturation/parity run**:
+  `( cmd & PID=$!; for i in $(seq 1 N); do kill -0 $PID 2>/dev/null||break; sleep 1; done; kill -9 $PID 2>/dev/null )`.
+- **distribute must NOT go in `denoise`** — `extract_variants` over its unbounded class hangs. Scorer-only.
+- **egglog does NOT constant-fold f64 literals** unless a rule does it.
+- **`Protected*` are distinct functions** from raw ops. Never map a protected name to a raw semantic_id.
+- **Bare commutativity/associativity** is fine bounded, fatal at unbounded fixpoint with other expand rules.
+- **Determinism**: same input + seed = identical output (tests assert). Sort when choosing among equal-keyed entries
+  (HashMap order bit us once).
+- **Futhark 0.28.1's "Fuse SOACs" pass can loop for ever**; `futhark_exec` compiles with `--fuse=10` through Futhark's
+  own pass list (`Verdict::BoundedFusion`, a compiler workaround, not an e-graph rescue; `docs/RESCUE_futhark.md`).
+- **Futhark 0.28.1's prelude is rank-1 and has no `matmul`**; `map2` is curried. Getting either wrong is a type error.
+- **Futhark's simplifier folds `x + 0`**: no row may be spelled as an addition of zero.
+- **naga rejects some constant expressions** (e.g. `sqrt(-1.0)`): WGSL `sqrt`/`exp` rows are protected.
+- **A WGSL `for` becomes naga's `loop_init`, which hangs Apple's dispatch**: the loop row writes a plain `loop`.
 
-## Parity status (the SymPy-replacement metric)
+## Workflow
 
-Against frozen SymPy corpora (`parity/corpus/*.jsonl`, generated offline; sympy NEVER in the scoring loop): overall ~33.6% — powsimp 84.9%, trigsimp 47%, radsimp/ratsimp ~15%, simplify 13%. radsimp/ratsimp low % is partly a measurement artifact: sympy rationalises to *larger* canonical forms, not the simpler expression SR wants.
-
-## In flight
-
-- **The population DAG programme** (`docs/PLAN_population_dag.md`, ahead of the WGSL superoptimiser): tasks 1–3 measured (63 % of subtree occurrences repeated within a generation; 72 % of repeated subtrees survive a generation; the shared DAG does a third of an interpreter's operator evaluations, a quarter with memos). Next: variant B in phylu (Fold in the generation loop, the device arena, checkpoints carrying homeotic rows), then the banded compiler restricted to stable definitions, then the paired A/B/C experiment.
-- Earlier item, status not re-checked 2026-10-09: **Simplify-corpus instrumentation** merged in `hff/` (env-gated `GAMAK_SIMPLIFY_CORPUS`) — captures real before→after sympy edits on the SRBench sweep. `parity/label_corpus.py` labels them by family → train a **kingdom classifier** (the learned router that picks which rule family to load, dodging the non-confluence problem). Waiting on the near-miss re-sweep to emit the corpus.
-
-## Workflow & memory
-
-- **Do not push.** Local commits, branch off main, conventional-commit messages.
-- The user is **not** in a rush — he manages ~10 projects in parallel and is drowning in reading he does not want. So: tight status lines, fix-don't-explain, no essays; the detail belongs in the commits, tests and docs, not in the reply. **This constrains how you write, never how you verify**: be concise, but never rush the testing — let the long run finish, then give the count.
-- Persistent design context lives in `~/.claude/projects/-Users-andrewmorgan-Dev-kaito-fuller/memory/` — read `MEMORY.md` then `00-design-overview.md`. Key ones: `ownership-contract`, `working-posture-frontier-rnd`, `just-fix-it`, `worktree-agent-cleanup`, `two-part-simplify-and-classifier`.
+- **Commit and push often**: after every change that builds and passes its test, commit your own paths (`git commit
+  -- <paths>`; in a shared file only your hunks) and push. Never sit on uncommitted work. Never `git stash`, `git
+  reset`, `git rm --cached`, `git add -A`/`.`; no worktrees; never `cargo clean` a shared target. Git identity
+  `andrew-gamakon`. Working branch `feat/futhark-kingdom`; main only after the full suites.
+- One GPU process at a time, under the GPU lock (`tmp/fixf/gpu_lock.sh`: `take_gpu`, `run_bg`); the cargo lock
+  `/private/tmp/claude-501/locks/cargo` for builds only, never held during `cargo test`.
+- Keep the live documents (`docs/DESIGN_geneframe.md`, `docs/PLAN_futhark_kingdom.md`) updated in place; no parallel
+  new documents. Programs worth keeping are stored as program TEXT, never as genes (no migrations).
+- Replies to Andrew: short, plain English, GECCO vocabulary, no jargon; detail goes in commits, tests and docs. Never
+  write "nucleotable" (say master symbol table / gene frame).
+- Memory: `~/.claude/projects/-Users-andrewmorgan-Dev-gamakon-fuller/memory/MEMORY.md`.
