@@ -96,6 +96,9 @@ pub fn instance(shader: &str) -> Result<(Instance, Option<&'static str>), String
     }
 }
 
+/// The pixel family on the rows of the master tables (plan 7.7 K4).
+pub mod rows;
+
 /// The ruleset name the generated rules are in.
 pub const RULESET: &str = "futhark_pixel";
 

@@ -5,6 +5,9 @@ futhark.histogram	futhark	the Futhark kingdom's view of the problem histogram (t
 futhark.kmeans	futhark	the Futhark kingdom's view of the problem kmeans (tests/corpus/futhark_problems/kmeans/yardstick.fut)	[][]f32	
 futhark.kmeans_i32	futhark	the Futhark kingdom's view of the problem kmeans_i32 (tests/corpus/futhark_problems/kmeans/yardstick.fut)	[][]f32	
 futhark.pathfinder	futhark	the Futhark kingdom's view of the problem pathfinder (tests/corpus/futhark_problems/pathfinder/yardstick.fut)	[]i32	
+futhark.pixel.cuneus	futhark	the Futhark pixel family's instance cuneus (tests/corpus/cuneus_visual/cuneus.wgsl)	image	
+futhark.pixel.image	futhark	the Futhark pixel family's instance image (an image target: no shader)	image	
+futhark.pixel.volumepassage	futhark	the Futhark pixel family's instance volumepassage (tests/corpus/cuneus_visual/volumepassage.wgsl)	image	
 futhark.reduce	futhark	the Futhark kingdom's view of the problem reduce (tests/corpus/futhark_problems/reduce/yardstick.fut)	i32	
 futhark.scan	futhark	the Futhark kingdom's view of the problem scan (tests/corpus/futhark_problems/scan/yardstick.fut)	[]i32	
 regex		the regex kingdom: POSIX ERE over Pattern, CharClass, Char and I; one guard, the counted range's bounds in order	Pattern	

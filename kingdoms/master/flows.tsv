@@ -692,6 +692,294 @@ futhark.pathfinder	fitrows@m.i32	out	up	cols	in1.cols
 futhark.pathfinder	fitcols@m.i32	out	up	rows	in1.rows
 futhark.pathfinder	fitcols@m.i32	out	up	cols	in0.value
 futhark.pathfinder	clampix@i64	out	up	bound	in0.value
+futhark.pixel.cuneus	image	in0	down	var.f32	1
+futhark.pixel.cuneus	image	in0	down	var.f32.spell	px
+futhark.pixel.cuneus	image	in0	down	var.f32/1	1
+futhark.pixel.cuneus	image	in0	down	var.f32/1.spell	py
+futhark.pixel.cuneus	let@blk	in1	down	var.f32	1
+futhark.pixel.cuneus	let@blk	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.cuneus	block1@blk	in1	down	var.f32	1
+futhark.pixel.cuneus	block1@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block3@blk	in1	down	var.f32	3
+futhark.pixel.cuneus	block3@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block5@blk	in1	down	var.f32	5
+futhark.pixel.cuneus	block5@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@blk	in2	down	var.f32	2
+futhark.pixel.cuneus	loop1@blk	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@blk	in2	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop1@blk	in3	down	var.f32	1
+futhark.pixel.cuneus	loop1@blk	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@blk	in4	down	var.f32	4
+futhark.pixel.cuneus	loop3@blk	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@blk	in4	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop3@blk	in5	down	var.f32	3
+futhark.pixel.cuneus	loop3@blk	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@blk	in6	down	var.f32	6
+futhark.pixel.cuneus	loop5@blk	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@blk	in6	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop5@blk	in7	down	var.f32	5
+futhark.pixel.cuneus	loop5@blk	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	let@body1	in1	down	var.f32	1
+futhark.pixel.cuneus	let@body1	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.cuneus	block1@body1	in1	down	var.f32	1
+futhark.pixel.cuneus	block1@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block3@body1	in1	down	var.f32	3
+futhark.pixel.cuneus	block3@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block5@body1	in1	down	var.f32	5
+futhark.pixel.cuneus	block5@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body1	in2	down	var.f32	2
+futhark.pixel.cuneus	loop1@body1	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body1	in2	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop1@body1	in3	down	var.f32	1
+futhark.pixel.cuneus	loop1@body1	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body1	in4	down	var.f32	4
+futhark.pixel.cuneus	loop3@body1	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body1	in4	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop3@body1	in5	down	var.f32	3
+futhark.pixel.cuneus	loop3@body1	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body1	in6	down	var.f32	6
+futhark.pixel.cuneus	loop5@body1	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body1	in6	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop5@body1	in7	down	var.f32	5
+futhark.pixel.cuneus	loop5@body1	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	let@body3	in1	down	var.f32	1
+futhark.pixel.cuneus	let@body3	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.cuneus	block1@body3	in1	down	var.f32	1
+futhark.pixel.cuneus	block1@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block3@body3	in1	down	var.f32	3
+futhark.pixel.cuneus	block3@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block5@body3	in1	down	var.f32	5
+futhark.pixel.cuneus	block5@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body3	in2	down	var.f32	2
+futhark.pixel.cuneus	loop1@body3	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body3	in2	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop1@body3	in3	down	var.f32	1
+futhark.pixel.cuneus	loop1@body3	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body3	in4	down	var.f32	4
+futhark.pixel.cuneus	loop3@body3	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body3	in4	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop3@body3	in5	down	var.f32	3
+futhark.pixel.cuneus	loop3@body3	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body3	in6	down	var.f32	6
+futhark.pixel.cuneus	loop5@body3	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body3	in6	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop5@body3	in7	down	var.f32	5
+futhark.pixel.cuneus	loop5@body3	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	let@body5	in1	down	var.f32	1
+futhark.pixel.cuneus	let@body5	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.cuneus	block1@body5	in1	down	var.f32	1
+futhark.pixel.cuneus	block1@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block3@body5	in1	down	var.f32	3
+futhark.pixel.cuneus	block3@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	block5@body5	in1	down	var.f32	5
+futhark.pixel.cuneus	block5@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body5	in2	down	var.f32	2
+futhark.pixel.cuneus	loop1@body5	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop1@body5	in2	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop1@body5	in3	down	var.f32	1
+futhark.pixel.cuneus	loop1@body5	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body5	in4	down	var.f32	4
+futhark.pixel.cuneus	loop3@body5	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop3@body5	in4	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop3@body5	in5	down	var.f32	3
+futhark.pixel.cuneus	loop3@body5	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body5	in6	down	var.f32	6
+futhark.pixel.cuneus	loop5@body5	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.cuneus	loop5@body5	in6	down	env.trips	env.trips + 1
+futhark.pixel.cuneus	loop5@body5	in7	down	var.f32	5
+futhark.pixel.cuneus	loop5@body5	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	image	in0	down	var.f32	1
+futhark.pixel.image	image	in0	down	var.f32.spell	px
+futhark.pixel.image	image	in0	down	var.f32/1	1
+futhark.pixel.image	image	in0	down	var.f32/1.spell	py
+futhark.pixel.image	let@blk	in1	down	var.f32	1
+futhark.pixel.image	let@blk	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.image	block1@blk	in1	down	var.f32	1
+futhark.pixel.image	block1@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block3@blk	in1	down	var.f32	3
+futhark.pixel.image	block3@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block5@blk	in1	down	var.f32	5
+futhark.pixel.image	block5@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	loop1@blk	in2	down	var.f32	2
+futhark.pixel.image	loop1@blk	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop1@blk	in2	down	env.trips	env.trips + 1
+futhark.pixel.image	loop1@blk	in3	down	var.f32	1
+futhark.pixel.image	loop1@blk	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop3@blk	in4	down	var.f32	4
+futhark.pixel.image	loop3@blk	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop3@blk	in4	down	env.trips	env.trips + 1
+futhark.pixel.image	loop3@blk	in5	down	var.f32	3
+futhark.pixel.image	loop3@blk	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop5@blk	in6	down	var.f32	6
+futhark.pixel.image	loop5@blk	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop5@blk	in6	down	env.trips	env.trips + 1
+futhark.pixel.image	loop5@blk	in7	down	var.f32	5
+futhark.pixel.image	loop5@blk	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	let@body1	in1	down	var.f32	1
+futhark.pixel.image	let@body1	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.image	block1@body1	in1	down	var.f32	1
+futhark.pixel.image	block1@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block3@body1	in1	down	var.f32	3
+futhark.pixel.image	block3@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block5@body1	in1	down	var.f32	5
+futhark.pixel.image	block5@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	loop1@body1	in2	down	var.f32	2
+futhark.pixel.image	loop1@body1	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop1@body1	in2	down	env.trips	env.trips + 1
+futhark.pixel.image	loop1@body1	in3	down	var.f32	1
+futhark.pixel.image	loop1@body1	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop3@body1	in4	down	var.f32	4
+futhark.pixel.image	loop3@body1	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop3@body1	in4	down	env.trips	env.trips + 1
+futhark.pixel.image	loop3@body1	in5	down	var.f32	3
+futhark.pixel.image	loop3@body1	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop5@body1	in6	down	var.f32	6
+futhark.pixel.image	loop5@body1	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop5@body1	in6	down	env.trips	env.trips + 1
+futhark.pixel.image	loop5@body1	in7	down	var.f32	5
+futhark.pixel.image	loop5@body1	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	let@body3	in1	down	var.f32	1
+futhark.pixel.image	let@body3	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.image	block1@body3	in1	down	var.f32	1
+futhark.pixel.image	block1@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block3@body3	in1	down	var.f32	3
+futhark.pixel.image	block3@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block5@body3	in1	down	var.f32	5
+futhark.pixel.image	block5@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	loop1@body3	in2	down	var.f32	2
+futhark.pixel.image	loop1@body3	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop1@body3	in2	down	env.trips	env.trips + 1
+futhark.pixel.image	loop1@body3	in3	down	var.f32	1
+futhark.pixel.image	loop1@body3	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop3@body3	in4	down	var.f32	4
+futhark.pixel.image	loop3@body3	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop3@body3	in4	down	env.trips	env.trips + 1
+futhark.pixel.image	loop3@body3	in5	down	var.f32	3
+futhark.pixel.image	loop3@body3	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop5@body3	in6	down	var.f32	6
+futhark.pixel.image	loop5@body3	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop5@body3	in6	down	env.trips	env.trips + 1
+futhark.pixel.image	loop5@body3	in7	down	var.f32	5
+futhark.pixel.image	loop5@body3	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	let@body5	in1	down	var.f32	1
+futhark.pixel.image	let@body5	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.image	block1@body5	in1	down	var.f32	1
+futhark.pixel.image	block1@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block3@body5	in1	down	var.f32	3
+futhark.pixel.image	block3@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	block5@body5	in1	down	var.f32	5
+futhark.pixel.image	block5@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.image	loop1@body5	in2	down	var.f32	2
+futhark.pixel.image	loop1@body5	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop1@body5	in2	down	env.trips	env.trips + 1
+futhark.pixel.image	loop1@body5	in3	down	var.f32	1
+futhark.pixel.image	loop1@body5	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop3@body5	in4	down	var.f32	4
+futhark.pixel.image	loop3@body5	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop3@body5	in4	down	env.trips	env.trips + 1
+futhark.pixel.image	loop3@body5	in5	down	var.f32	3
+futhark.pixel.image	loop3@body5	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.image	loop5@body5	in6	down	var.f32	6
+futhark.pixel.image	loop5@body5	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.image	loop5@body5	in6	down	env.trips	env.trips + 1
+futhark.pixel.image	loop5@body5	in7	down	var.f32	5
+futhark.pixel.image	loop5@body5	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	image	in0	down	var.f32	1
+futhark.pixel.volumepassage	image	in0	down	var.f32.spell	px
+futhark.pixel.volumepassage	image	in0	down	var.f32/1	1
+futhark.pixel.volumepassage	image	in0	down	var.f32/1.spell	py
+futhark.pixel.volumepassage	let@blk	in1	down	var.f32	1
+futhark.pixel.volumepassage	let@blk	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.volumepassage	block1@blk	in1	down	var.f32	1
+futhark.pixel.volumepassage	block1@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block3@blk	in1	down	var.f32	3
+futhark.pixel.volumepassage	block3@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block5@blk	in1	down	var.f32	5
+futhark.pixel.volumepassage	block5@blk	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@blk	in2	down	var.f32	2
+futhark.pixel.volumepassage	loop1@blk	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@blk	in2	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop1@blk	in3	down	var.f32	1
+futhark.pixel.volumepassage	loop1@blk	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@blk	in4	down	var.f32	4
+futhark.pixel.volumepassage	loop3@blk	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@blk	in4	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop3@blk	in5	down	var.f32	3
+futhark.pixel.volumepassage	loop3@blk	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@blk	in6	down	var.f32	6
+futhark.pixel.volumepassage	loop5@blk	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@blk	in6	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop5@blk	in7	down	var.f32	5
+futhark.pixel.volumepassage	loop5@blk	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	let@body1	in1	down	var.f32	1
+futhark.pixel.volumepassage	let@body1	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.volumepassage	block1@body1	in1	down	var.f32	1
+futhark.pixel.volumepassage	block1@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block3@body1	in1	down	var.f32	3
+futhark.pixel.volumepassage	block3@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block5@body1	in1	down	var.f32	5
+futhark.pixel.volumepassage	block5@body1	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body1	in2	down	var.f32	2
+futhark.pixel.volumepassage	loop1@body1	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body1	in2	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop1@body1	in3	down	var.f32	1
+futhark.pixel.volumepassage	loop1@body1	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body1	in4	down	var.f32	4
+futhark.pixel.volumepassage	loop3@body1	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body1	in4	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop3@body1	in5	down	var.f32	3
+futhark.pixel.volumepassage	loop3@body1	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body1	in6	down	var.f32	6
+futhark.pixel.volumepassage	loop5@body1	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body1	in6	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop5@body1	in7	down	var.f32	5
+futhark.pixel.volumepassage	loop5@body1	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	let@body3	in1	down	var.f32	1
+futhark.pixel.volumepassage	let@body3	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.volumepassage	block1@body3	in1	down	var.f32	1
+futhark.pixel.volumepassage	block1@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block3@body3	in1	down	var.f32	3
+futhark.pixel.volumepassage	block3@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block5@body3	in1	down	var.f32	5
+futhark.pixel.volumepassage	block5@body3	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body3	in2	down	var.f32	2
+futhark.pixel.volumepassage	loop1@body3	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body3	in2	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop1@body3	in3	down	var.f32	1
+futhark.pixel.volumepassage	loop1@body3	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body3	in4	down	var.f32	4
+futhark.pixel.volumepassage	loop3@body3	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body3	in4	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop3@body3	in5	down	var.f32	3
+futhark.pixel.volumepassage	loop3@body3	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body3	in6	down	var.f32	6
+futhark.pixel.volumepassage	loop5@body3	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body3	in6	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop5@body3	in7	down	var.f32	5
+futhark.pixel.volumepassage	loop5@body3	in7	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	let@body5	in1	down	var.f32	1
+futhark.pixel.volumepassage	let@body5	in1	down	var.f32.spell	v{depth}_{each}{nth}
+futhark.pixel.volumepassage	block1@body5	in1	down	var.f32	1
+futhark.pixel.volumepassage	block1@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block3@body5	in1	down	var.f32	3
+futhark.pixel.volumepassage	block3@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	block5@body5	in1	down	var.f32	5
+futhark.pixel.volumepassage	block5@body5	in1	down	var.f32.spell	b{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body5	in2	down	var.f32	2
+futhark.pixel.volumepassage	loop1@body5	in2	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop1@body5	in2	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop1@body5	in3	down	var.f32	1
+futhark.pixel.volumepassage	loop1@body5	in3	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body5	in4	down	var.f32	4
+futhark.pixel.volumepassage	loop3@body5	in4	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop3@body5	in4	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop3@body5	in5	down	var.f32	3
+futhark.pixel.volumepassage	loop3@body5	in5	down	var.f32.spell	r{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body5	in6	down	var.f32	6
+futhark.pixel.volumepassage	loop5@body5	in6	down	var.f32.spell	s{depth}_{each}{nth}
+futhark.pixel.volumepassage	loop5@body5	in6	down	env.trips	env.trips + 1
+futhark.pixel.volumepassage	loop5@body5	in7	down	var.f32	5
+futhark.pixel.volumepassage	loop5@body5	in7	down	var.f32.spell	r{depth}_{each}{nth}
 futhark.reduce	prev@i64	out	up	bound	in0.bound
 futhark.reduce	next@i64	out	up	bound	in0.bound
 futhark.reduce	clamp@i64	out	up	bound	in0.value

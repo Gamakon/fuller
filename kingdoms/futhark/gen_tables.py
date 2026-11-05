@@ -1680,8 +1680,8 @@ def main(argv):
         print("  --check  verify the committed artefacts (the default)")
         print("  --write  regenerate them, then verify")
         return 2
-    rc = pixel_main(mode)
-    return rc if rc else master6_main(mode)
+    rc = pixel_main(mode) or master6_main(mode)
+    return rc if rc else pixel_rows_main(mode)
 
 
 def pixel_main(mode):
@@ -1737,6 +1737,36 @@ def pixel_main(mode):
               f"({', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}); "
               f"{'committed artefacts MATCH the generator, ' if mode == '--check' else 'written, '}witness tests PASS")
     return 0
+
+
+def pixel_kingdom(instance):
+    """The pixel family's kingdom of one instance in the master tables (plan 7.7 K4)."""
+    return f"futhark.pixel.{instance}"
+
+
+def pixel_rows_main(mode):
+    """The pixel family on the four row kinds (`pixel_rows.py`): each instance's rows written into, or checked against,
+    the master tables as the kingdom `futhark.pixel.<instance>`, a variant of `futhark`."""
+    import pixel_rows
+    bad = []
+    for instance in sorted(PIXEL_INSTANCES):
+        if PIXEL_INSTANCES[instance] is None:
+            inputs, literals = [], [f"{t}f32" for t in PIXEL_GENERIC_LITERALS + PIXEL_IMAGE_LITERALS]
+        else:
+            shader = os.path.join(REPO, PIXEL_INSTANCES[instance])
+            inputs, literals = [f["spelling"] for f in pixel_interface(shader)], pixel_literals(shader)
+        name = pixel_kingdom(instance)
+        rows = write_rows.rows_of_named(pixel_rows.named(instance, inputs, literals, image=PIXEL_INSTANCES[instance] is None))
+        source = PIXEL_INSTANCES[instance] or "an image target: no shader"
+        kingdom_row = (name, "futhark", f"the Futhark pixel family's instance {instance} ({source})", pixel_rows.IMAGE, "")
+        if mode == "--write":
+            write_rows.write_kingdom(name, rows, kingdom_row)
+        else:
+            bad += write_rows.check_kingdom(name, rows, kingdom_row)
+    for b in bad:
+        print("  " + b)
+    print(f"pixel rows: {len(PIXEL_INSTANCES)} instances {'DIFFER FROM' if bad else 'equal'} the master tables")
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

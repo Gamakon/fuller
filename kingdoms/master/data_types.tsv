@@ -45,6 +45,27 @@ futhark.pathfinder	i64	scalar			bound	0i64	bound=1
 futhark.pathfinder	size	scalar			value			cols:1;rows:1
 futhark.pathfinder	[]i32	array	i32		len	[0i32]	len=1	
 futhark.pathfinder	[][]i32	array	[]i32		rows;cols	[[0i32]]	rows=1;cols=1	
+futhark.pixel.cuneus	image	scalar				map (\_ -> map (\_ -> [0f32, 0f32, 0f32]) (iota cols)) (iota rows)	-	
+futhark.pixel.cuneus	blk	scalar				[0f32, 0f32, 0f32]	-	
+futhark.pixel.cuneus	body1	scalar				(0f32)	-	
+futhark.pixel.cuneus	body3	scalar				(0f32, 0f32, 0f32)	-	
+futhark.pixel.cuneus	body5	scalar				(0f32, 0f32, 0f32, 0f32, 0f32)	-	
+futhark.pixel.cuneus	f32	scalar				0f32	-	
+futhark.pixel.cuneus	count	scalar				1	-	
+futhark.pixel.image	image	scalar				map (\_ -> map (\_ -> [0f32, 0f32, 0f32]) (iota cols)) (iota rows)	-	
+futhark.pixel.image	blk	scalar				[0f32, 0f32, 0f32]	-	
+futhark.pixel.image	body1	scalar				(0f32)	-	
+futhark.pixel.image	body3	scalar				(0f32, 0f32, 0f32)	-	
+futhark.pixel.image	body5	scalar				(0f32, 0f32, 0f32, 0f32, 0f32)	-	
+futhark.pixel.image	f32	scalar				0f32	-	
+futhark.pixel.image	count	scalar				1	-	
+futhark.pixel.volumepassage	image	scalar				map (\_ -> map (\_ -> [0f32, 0f32, 0f32]) (iota cols)) (iota rows)	-	
+futhark.pixel.volumepassage	blk	scalar				[0f32, 0f32, 0f32]	-	
+futhark.pixel.volumepassage	body1	scalar				(0f32)	-	
+futhark.pixel.volumepassage	body3	scalar				(0f32, 0f32, 0f32)	-	
+futhark.pixel.volumepassage	body5	scalar				(0f32, 0f32, 0f32, 0f32, 0f32)	-	
+futhark.pixel.volumepassage	f32	scalar				0f32	-	
+futhark.pixel.volumepassage	count	scalar				1	-	
 futhark.reduce	i32	scalar				0i32	-	
 futhark.reduce	i64	scalar			bound	0i64	bound=1	
 futhark.reduce	size	scalar			value			n:1
