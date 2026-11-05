@@ -3158,7 +3158,15 @@ def egraph6_texts(view_texts, spec, mst):
                 if r["needs"] and f"{r['needs']}@{t['tag']}" not in names:
                     continue
                 named = egraph6_rule_symbols(r["rule"], t, by_name)
-                if any(n not in names for n in named):
+                missing = sorted({n for n in named if n not in names})
+                if missing:
+                    # A view without the operation has none of the rule's rows (A7 has no `add@f32`). A rule whose
+                    # `needs` row is present, or with some of its rows present and others not, names a row that was
+                    # renamed or dropped: dropping the rule in silence would lose it from this view and the Rust copy
+                    # would agree byte for byte, so the generator stops.
+                    if (r["needs"] and f"{r['needs']}@{t['tag']}" in names) or len(missing) < len(set(named)):
+                        raise ValueError(f"our software has a bug: the master 6 rule {r['rule']!r} on {t['name']} "
+                                         f"names {', '.join(missing)}, which the view does not hold")
                     continue
                 text = r["rule"]
                 for n in named:
@@ -3452,10 +3460,35 @@ def costs6_main(mode, mst):
     return 0
 
 
+def witness_egraph6_admission(mst):
+    """E8: the generator stops on a rule that names a row the view does not hold while the view holds the rule's other
+    rows (a renamed row). A7's view with `id@fn.arr_f32_arr_f32` taken out of its symbols must fail, naming that row;
+    A7's own view must not."""
+    src, entry, depth, master, elements, lets, families = SIG6_PROBLEMS["a7"]
+    spec_text = sniff.sniff6(os.path.join(REPO, src), entry, depth, master, elements, lets, families)
+    spec = master_view.read_spec6(spec_text)
+    texts = master_view.View6(spec).texts()
+    try:
+        egraph6_texts(texts, spec, mst)
+    except ValueError as e:
+        return [f"E8 a7: the view's own e-graph does not generate: {e}"]
+    gone = "id@fn.arr_f32_arr_f32"
+    lines = texts["symbols.tsv"].splitlines(keepends=True)
+    cut = [l for l in lines if l.split("\t")[2] != gone]
+    if len(cut) != len(lines) - 1:
+        return [f"E8 a7: the view holds no single row {gone} to take out"]
+    try:
+        egraph6_texts(dict(texts, **{"symbols.tsv": "".join(cut)}), spec, mst)
+    except ValueError as e:
+        return [] if gone in str(e) else [f"E8 a7: without {gone} the generator stops for another reason: {e}"]
+    return [f"E8 a7: without {gone} the generator drops A7's rule on it in silence"]
+
+
 def master6_main(mode):
     """Master 6: the master witnesses, its static cost table, then each problem's specification and view, checked byte
     for byte (the default) or written (to a staging directory, witnessed there, and only then moved into place)."""
-    bad = witness_master6()
+    mst = master_view.master6()
+    bad = witness_master6() + witness_egraph6_admission(mst)
     if bad:
         print("THE MASTER 6 WITNESS TESTS FAILED:")
         for b in bad:
