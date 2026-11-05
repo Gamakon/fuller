@@ -1,211 +1,202 @@
-# Technical design: data types, properties and scope in the Futhark kingdom
+# Technical design: data types, properties and scope in the gene frame
 
 **Status:** proposed 2026-11-05, for Andrew's agreement before any code. Andrew's design; this document writes it
-down. It replaces the scope-and-size-in-the-type construction of the Futhark kingdom's views (14,359 types for
-k-means), and supersedes the type count estimates of `docs/PLAN_futhark_kingdom.md` section 7 where they differ.
+down. It starts from the gene frame's data model, changes it, and then applies it to the Futhark kingdom first
+(WGSL later). It supersedes the type estimates of `docs/PLAN_futhark_kingdom.md` section 7 where they differ.
 
 ## 1. Context
 
-**Objective.** Pass the size of an array along with the array, so that a gene's types are only the data types of
-function arguments, and every gene still expresses a legal Futhark program.
+**Objective.** A gene's types are the data types of function arguments, and nothing else. Facts about a value that
+are not its data type (an array's length, an index's range) travel with the value as **properties**. Which variables
+a node can use is **scope**, decided while decoding. Every gene still expresses a legal program.
 
-**The problem.** The kingdom's views put two things in the type that are not data types:
+**The problem.** The gene frame's data model has one entity for types, and arity is a count per type. It has no place
+for a property, so the Futhark kingdom folded sizes and scope into the type: histogram 162 types, k-means 14,359 (85 %
+of them scope bodies at depth 3), the k-means view with integer assignments 237,325, over the 65,536 type codes, so it
+cannot load. The k-means gene is 27.6 million words; its layout takes 34 s, and the start population's e-graph and
+fold 149 s and 193 s at 19.5 GB.
 
-1. the **sizes** of arrays (`a.n` and `a.k` are different types, as are `ix.n` and `ix.k`);
-2. the **scope** (which variables are bound around a node, before or after the kernel boundary).
+## 2. The data model today
 
-Every combination of sizes and scopes became a type: histogram 162 types, k-means 14,359 (85 % of them bodies at
-depth 3), and the k-means view with integer assignments 237,325, over the 65,536 type codes, so it cannot load. The
-k-means gene is 27.6 million words; its layout takes 34 s, and the start population's e-graph and fold 149 s and
-193 s at 19.5 GB.
+`src/geneframe.rs`:
 
-**The design in one paragraph.** A type is a data type: the data type of a function's argument or result. Sizes are
-**properties** of values: every value is reached through a function that returns the value and its properties, and
-the decoder carries the properties through the tree. Where a function needs two properties to agree (`map2` needs
-equal lengths), the decoder compares them: if they agree, the plain Futhark call is written; if not, a bespoke
-adapting function of ours is written, which makes them agree. Scope is context: a variable terminal names a data type
-and an index, and the decoder resolves it from the variables in scope at that node.
+```
+Symbol (kingdom, symbol id, symbol_name, alias, semantic_id)
+  └── Arity { inputs: Ty → count, outputs: Ty → count }
 
-## 2. Definitions
+Ty = S | I | F | B | A | L | T1 | T2 | (NLP labels) | ... | Futhark(u16) | ...
+```
 
-| term | meaning |
-|---|---|
-| **data type** (the gene's **type**) | the data type of a function argument or result, as Futhark spells it without sizes: `i32`, `i64`, `f32`, `bool`, `[]t`, `[][]t`, a tuple `(a, b, c)`, a function `a -> b` |
-| **property** | a fact about a value that is not its data type. For an array: the length of each dimension. For an index: the array length it is in range of. Properties are what Futhark checks where values meet |
-| **size expression** | how a property is known at decode time: a size name of the entry point (`n`, `k`, `d`), a literal, or `?` (a length known only when the program runs, e.g. after a filter) |
-| **environment** | the variables visible at a node: the entry point's parameters, then each binder's variables from the root down to the node, each with its data type and properties |
-| **adapter** | one of our own Futhark functions, rendered in a prelude with every program, that makes properties agree at run time |
+- A **kingdom** is a filter over the master symbol table.
+- **Arity** is a map from type to count: `add: in {F: 2}, out {F: 1}`. It has no argument order.
+- `Ty::Futhark(u16)` is an index into a Futhark view's own type table. That table is where the 14,359 rows live:
+  each row is a data type crossed with sizes (`a.n`, `a.k`, `ix.n`) and with a scope (the variables bound around the
+  node).
+- Karva's head and tail are laid out per type; the GPU draws, varies and selects symbols by type.
 
-The rank of an array is part of its data type (`[]f32` and `[][]f32` differ, as they do in Futhark); its lengths
-are properties.
+## 3. The data model proposed
 
-## 3. The data types of each problem
+```
+                      ┌──────────────┐
+                      │   DataType   │──────────────┐
+                      └──────────────┘              │ 1
+                        ▲ 1      ▲ 1                ▼ n
+┌────────┐ 1   n ┌──────┴───┐   ┌┴─────────┐   ┌──────────────┐
+│ Symbol │──────<│ Argument │   │ Binding  │   │ PropertyType │
+└────────┘       └──────────┘   └──────────┘   └──────────────┘
+   │ 1             (position,     (argument →     (name, kind)
+   │               in | out)       a variable
+   │ n                             of a DataType)
+   ├──────< PropertyRule   (an output property = a function of input properties)
+   └──────< Requirement    (an input property must equal another property, or a size)
+```
 
-The kingdom's types are exactly the data types that appear as arguments or results of the problem's functions. From
-the master table's families (`kingdoms/futhark/master/rows.tsv`):
+### 3.1 The tables
 
-| problem | data types | count (today) |
-|---|---|---:|
-| reduce, scan | `i32`, `[]i32`, `i64` (an index) | 3 (28) |
-| histogram | `i32`, `[]i32`, `i64` | 3 (162) |
-| pathfinder | `i32`, `[]i32`, `[][]i32`, `i64` | 4 (184) |
-| a7 | `f32`, `[]f32`, `[][]f32`, `i64`, the two row-function types | 6 (11) |
-| k-means, f32 | `f32`, `[]f32`, `[][]f32`, `i64`, `(f32, f32)`, `(f32, f32, f32)`, the row-function types | about 8 (14,359) |
-| k-means, i32 + f32 | the above plus `i32`, `[]i32` and the mixed tuples | about 14 (237,325) |
+| table | one row is | columns | example |
+|---|---|---|---|
+| **Symbol** | a function or terminal, as today | id, kingdom, name, alias, semantic_id, spelling | `map2.add`, spelled `map2 (+) {0} {1}` |
+| **DataType** | a data type, as the target language spells it without sizes | id, name, kind (scalar, array, tuple, function), element / components | `f32`; `[]f32` (array of `f32`); `[][]f32`; `(f32, f32, f32)`; `[]f32 -> []f32` |
+| **PropertyType** | a property that values of a data type carry | id, data type, name, kind (size, bound, range, flag) | `[]f32.len`; `[][]f32.rows`, `[][]f32.cols`; an index `i64.bound` |
+| **Argument** | one ordered input or output of a symbol | symbol, position, direction (in, out), data type | `map2.add`: in 0 `[]f32`, in 1 `[]f32`, out `[]f32` |
+| **PropertyRule** | how an output property follows from input properties | symbol, output property, expression over inputs | `map2.add`: out.len = in0.len; `transpose`: out.rows = in0.cols; `tabulate`: out.len = in0 (a size) |
+| **Requirement** | a constraint an input property must meet | symbol, input property, must equal (another input property, a size, a constant) | `map2.add`: in0.len = in1.len; `hist`: in1.len = in2.len |
+| **Binding** | a variable an argument makes visible to its own subtree | symbol, argument position, the variable's data type, its properties (by rule) | `tabulate`: argument 1 binds an index `i64` with bound = in0; `map`: the body binds one element of in0 |
 
-These counts are to be confirmed by the first build.
+### 3.2 What derives from what
 
-## 4. Properties
+- **Arity** (the count per data type that Karva's head and tail need) is derived from the Argument rows. The gene
+  layout and the GPU's typed variation are unchanged: they read Argument and DataType only.
+- **Ty codes** stay data types. `Ty::Futhark(u16)` indexes the DataType table: about 8 rows for k-means.
+- **Properties, rules, requirements and bindings** are read only by the decoder, on the host.
+- A kingdom with no PropertyType rows works exactly as today.
 
-### 4.1 What each data type carries
+## 4. The decoder
 
-| data type | properties |
-|---|---|
-| scalar (`i32`, `f32`, `bool`) | none |
-| index (`i64` used as an index) | `bound`: the size expression it is in range of, `[0, bound)` |
-| `[]t` | `len`: a size expression |
-| `[][]t` | `rows`, `cols`: size expressions |
-| tuple | the properties of each component |
-| function `a -> b` | the properties of its result given its argument's (a rule, below) |
+The gene is unchanged: Karva, the head and tail of each data type, and a Dc-style array of index words beside each
+type's region. Decoding runs in five passes, each deterministic in the gene alone:
 
-### 4.2 Where properties come from: `Terminal_With_Properties`
+1. **Express** (as today): breadth-first, giving the tree of symbols.
+2. **Environment, top-down:** the root's environment is the entry point's parameters, each with its data type and
+   properties from the signature (`points : [n][d]f32` → rows = `n`, cols = `d`). A child's environment is its
+   parent's plus the Binding rows of the argument it fills.
+3. **Variables:** each variable terminal `var.T` takes the index word w at its cell and becomes the (w mod c)-th
+   variable of data type T in its environment (c of them). With none (c = 0) it becomes T's constant.
+4. **Properties, bottom-up, and requirements:** each node's properties from its children by its PropertyRule rows,
+   as symbolic expressions (`n`, `k`, `d`, a literal, or `?` when only known at run time); each Requirement is
+   checked by comparing the expressions.
+5. **Render:** where every requirement holds, the plain spelling; where one fails, the spelling wrapped in an
+   **adapter**, one of our own functions that makes the property hold at run time.
 
-Every terminal of a data type is reached through a wrapper that returns the value and its properties. We write these
-ourselves; they exist at decode time (the decoder's attribute), not as Futhark code:
+This is `Terminal_With_Properties`: a terminal is reached as its value plus its properties (pass 2 and 3), and every
+function carries its properties up (pass 4).
 
-| terminal | value | properties |
-|---|---|---|
-| an entry parameter, `points : [n][d]f32` | `points` | rows = `n`, cols = `d` |
-| an entry size, `k` | `k` | none (a scalar); also names the size `k` |
-| a variable bound by a binder (a `map` element, a `loop` state, a `tabulate` index, a `let`) | its name | from the binder's rule (4.3) |
-| a constant array (`zeros`) | `replicate L 0` | len = L, where L is the property the slot requires (4.4); `zeros` has no length of its own |
-| a literal | the literal | none |
+The GPU never runs passes 2 to 5. Every gene is legal whatever its index words and properties, so the device draws,
+varies and selects symbols by data type, as now.
 
-### 4.3 How properties flow up: each function's property rule
+## 5. Futhark: the adapters
 
-Each row of the master table gains a **property rule**: its result's properties from its arguments'. Examples:
-
-| function | result properties |
-|---|---|
-| `map f xs`, `map2 f xs ys` (lengths agree) | len = len(xs) |
-| `tabulate L body` | len = L; binds an index with bound = L for the body |
-| `replicate L x` | len = L |
-| `hist op ne L is vs` | len = L |
-| `reduce`, `sum`, `minimum` | none (a scalar) |
-| `transpose m` | rows = cols(m), cols = rows(m) |
-| `xs[i]` | the element's properties: for a row of `[][]t`, len = cols |
-| `loop (s = init) for i < L do body` | the properties of `init`; binds `s` with them and `i` with bound = L |
-| `filter p xs` | len = `?` |
-
-### 4.4 What a slot requires: properties flowing down
-
-Some argument slots require properties, which flow top-down: the entry point's result (`[k][d]f32` requires rows =
-`k`, cols = `d`); the destination length of `hist`; a `loop` body's result (it must equal the state's properties);
-`replicate`'s and `tabulate`'s length argument when it is a size name. A slot with no requirement accepts any
-properties.
-
-## 5. Agreement: plain call or adapter
-
-Where a function needs properties to agree, or a slot requires a property, the decoder compares the size
-expressions symbolically:
-
-- **They are the same expression** (both `n`): the plain Futhark call is written. The reference programs fall here
-  everywhere, so they render to their own text, at full speed.
-- **They differ, or one is `?`**: an adapter is written around the argument.
-
-The adapters, rendered once in each program's prelude:
+Rendered once in each program's prelude:
 
 ```futhark
--- an array of exactly length l: the first l elements of xs, padded with z when xs is shorter
+-- exactly length l: the first l elements of xs, padded with z when xs is shorter
 def fit [m] 't (l: i64) (z: t) (xs: [m]t) : [l]t =
   tabulate l (\i -> if i < m then xs[i] else z)
-
--- the same for both dimensions of a matrix
-def fit2 [r][c] 't (lr: i64) (lc: i64) (z: t) (xs: [r][c]t) : [lr][lc]t =
-  tabulate lr (\i -> tabulate lc (\j -> if i < r && j < c then xs[i, j] else z))
 
 -- an index into an array of length m, from any index: clamped into [0, m)
 def clampix (m: i64) (i: i64) : i64 = i64.max 0 (i64.min (m - 1) i)
 ```
 
-| where | rule |
+| requirement fails at | rendered as |
 |---|---|
-| `map2 f xs ys`, lengths `a` and `b` differ | `map2 f (fit l z xs) (fit l z ys)` with `l = i64.min (length xs) (length ys)` |
-| a slot requiring length L gets length `a` ≠ L | `fit L z x` |
+| `map2 f xs ys`, lengths differ | `let l = i64.min (length xs) (length ys) in map2 f (fit l z xs) (fit l z ys)` |
+| a slot requires length L, gets another | `fit L z x` |
 | `xs[i]`, i's bound is not len(xs) | `xs[clampix (length xs) i]` |
 | a loop body's result differs from the state | the body wrapped in `fit` to the state's length |
-| the entry's result | `fit2 k d 0 r` when r's properties are not (`k`, `d`) |
+| the entry's result | `fit` on each dimension to the signature's sizes |
 
-`z` is the element type's zero (`0i32`, `0f32`). Every array dimension in these programs is at least 1, as the
-entry points' contracts already state (`last` in `rows.tsv` assumes it), so `m - 1` in `clampix` is in range.
+`z` is the element type's zero. Every array dimension is at least 1, as the entry points' contracts state, so
+`clampix` is in range.
 
-**What this changes:** the index types (`ix.n`, `ix.k`) disappear into one data type `i64` with a `bound` property;
-the clamped index rows (`prev`, `next`, `clamp`) remain as functions on it.
+## 6. A worked example: histogram
 
-## 6. Scope: the environment
+Entry: `main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [k]i32`. Data types: `i32`, `[]i32`, `i64`. Today: 162 types.
 
-As in Andrew's notes. A variable terminal is `var.T`: "a variable of data type T". Its index i is a word in a
-Dc-style array beside the type's tail. At decode the node's environment is known (its ancestors are decoded first,
-breadth-first); `var.T` becomes the (i mod c)-th variable of data type T in the environment, where c is how many
-there are, and carries that variable's properties. If there are none, it becomes T's constant. Binders (`map`'s
-element, `loop`'s state and counter, `tabulate`'s index, `let`) add their variables, with properties, to the
-environment of the slot they bind. The kernel boundary is a `let`.
+The reference program `hist (+) 0 k (tabulate n (\i -> is[i] % k)) vs`:
 
-## 7. Decoding, in passes
+| node | environment's `[]i32` | properties | requirement | rendered |
+|---|---|---|---|---|
+| `hist.add` | is, vs | len = `k` | indices.len = values.len: `n` = `n` holds | `hist (+) 0 k ...` |
+| `tabulate`, size `n` | is, vs | len = `n` | | `tabulate n (\i -> ...)`, binds `i`, bound `n` |
+| `var.[]i32`, w = 1 | is, vs | `vs`, len = `n` | | `vs` |
+| `get` | is, vs | element | i.bound = is.len: `n` = `n` holds | `is[i]` |
 
-1. **Express** (unchanged): Karva breadth-first, the head and tail of each data type, giving the tree of symbols.
-2. **Environment, top-down:** each node's environment from its parent's plus the binder's variables; resolve each
-   `var.T` (index word mod count, or the constant).
-3. **Properties, bottom-up:** each node's properties from its children by the row's property rule.
-4. **Requirements, top-down:** each slot's required properties from its parent (the entry's result at the root).
-5. **Render:** each node's Futhark text, the plain call where properties agree, the adapter where they do not.
+The same text as today. A mutation that changes the `tabulate` size to `k` breaks two requirements, so it renders as
+`hist (+) 0 k (fit (i64.min k n) 0 (tabulate k (\i -> is[clampix n i] % k))) (fit (i64.min k n) 0 vs)`. That is
+legal, a different program, scored by its fitness.
 
-All five are deterministic in the gene alone. They run on the host, where programs are rendered. The GPU never needs
-them: it draws, varies and selects symbols by data type, and every gene is legal whatever its index words and
-properties, so the device's work is unchanged except that the types are fewer.
+## 7. Sizes
 
-## 8. A worked example: histogram
+| problem | data types | today |
+|---|---|---:|
+| reduce, scan | `i32`, `[]i32`, `i64` | 28 |
+| histogram | `i32`, `[]i32`, `i64` | 162 |
+| pathfinder | `i32`, `[]i32`, `[][]i32`, `i64` | 184 |
+| a7 | `f32`, `[]f32`, `[][]f32`, `i64`, two function types | 11 |
+| k-means, f32 | `f32`, `[]f32`, `[][]f32`, `i64`, `(f32, f32)`, `(f32, f32, f32)`, function types: about 8 | 14,359 |
+| k-means, i32 + f32 | the above plus `i32`, `[]i32`, mixed tuples: about 14 | 237,325 (cannot load) |
 
-Entry: `main [n] (k: i32) (is: [n]i32) (vs: [n]i32) : [k]i32`. Data types `i32`, `[]i32`, `i64`.
+The k-means gene at program size 192 falls from 27.6 million words to roughly 30,000. Both to be confirmed by the
+first build.
 
-The reference program `hist (+) 0 k (tabulate n (\i_n -> is[i_n] % k)) vs`:
+## 8. Is it good for many kingdoms?
 
-| node | environment's `[]i32` | properties | rendered |
-|---|---|---|---|
-| `hist.add` (requires len `k`) | is, vs | len = `k` | plain: `hist (+) 0 k ...` |
-| `tab` | is, vs | len = `n` | `tabulate n (\i_n -> ...)`, binds `i_n`, bound `n` |
-| `var.[]i32`, word 1 | is, vs | `vs`, len = `n` | `vs`: indices and values both length `n`, plain |
-| `get` | is, vs | element | `is[i_n]`: `i_n`'s bound `n` = len(is), plain |
+A test of the model against the kingdoms we have and those we want. The question for each: does a type stay a data
+type, and does everything else fit as a property, a requirement or a binding?
 
-The same text as today. Now a mutation turns `tab`'s length into `k` (a `tabulate k` row): indices have len `k`,
-values len `n`, `hist` needs them equal, so the decoder writes `fit (i64.min k n) 0 ...` around both, and `is[i_k]`
-becomes `is[clampix (length is) i_k]`. Legal, a different program, scored by its fitness.
+| kingdom | data types | properties | requirements | bindings | fits? |
+|---|---|---|---|---|---|
+| **symbolic regression** (have) | `F` | **transcendental depth** (today the types `T1`, `T2`) | `sin`'s input depth < 2 | none | yes, and better: the depth ladder becomes one data type with a depth property; the rule "no `T3`" becomes a requirement. Its adapter is not a wrap but a substitution (a failing node renders as its argument), to be decided |
+| **regex** (have) | `Pattern`, `Char`, `I` | none needed (a repetition count could carry a bound) | none | none | yes, unchanged: no property rows, the model degenerates to today's |
+| **TSR** (have) | `F` and its order and window types | the order and the window as properties | an order limit | none | yes, the same move as SR's depth |
+| **WGSL** (have, unfinished) | `f32`, `i32`, `u32`, `bool`, `vecN<T>`, `matCxR<T>`, arrays, pointers | a vector's width, an array's length, a buffer's length, the address space (function, workgroup, storage), the workgroup size | `dot` needs equal widths; a store needs a writable address space; an index in range | `let`, `var`, loop variables, the invocation ids | yes, and it is where sizes and scope matter most after Futhark; the address space is a property, not a type |
+| **Futhark** (have) | section 7 | lengths, bounds | section 5 | `map`, `loop`, `tabulate`, `let` | yes, the reason for this design |
+| **NLP / English** (have, early) | the entity labels (`Person`, `Org`, `Money`, ...) | a phrase's number, tense, person | a verb agrees with its subject in number | none | yes: agreement is the textbook case of properties with a requirement |
+| **SQL** (want) | relation, column, scalar types | a relation's schema (its columns and their types), a column's nullability | a join's keys have equal types; `UNION` needs equal schemas | a query's `FROM` binds its tables' columns for `WHERE` and `SELECT` | yes: the schema is a property of the relation; this design is how a typed SQL kingdom would avoid a type per schema |
+| **Spark / Dagnetic** (want) | DataFrame, column, scalar | the schema, the partitioning, sortedness | a join needs compatible keys; a window needs a sort | a `withColumn` binds the new column downstream | yes, the same as SQL |
+| **Lua / LuaJIT** (want) | the 8 Lua types | a table's shape (its fields), a string's length | a field access needs the field; arithmetic needs numbers | `local`, function parameters, loop variables, upvalues | yes for the types and scope; a dynamic language's properties are partly unknowable (`?`), so adapters do more of the work (a missing field reads `nil`, Lua's own rule) |
+| **Python** (want) | `int`, `float`, `str`, `list`, `dict`, `tuple`, `ndarray` | a list's length, an array's shape and dtype | numpy broadcasting rules | the same scope rules as Lua | yes; numpy shapes are exactly Futhark's lengths |
+| **Brainfuck** (want) | one: the cell | none | none | none | yes, trivially |
 
-## 9. What it costs and what it gives
+**Where it is weaker:**
+1. **Adapters are kingdom-specific.** Futhark's are `fit` and `clampix`; SR's depth needs a substitution; SQL's schema
+   mismatch needs a projection. The model holds the requirement; each kingdom supplies its adapters. That is the one
+   part a new kingdom must write.
+2. **Properties known only at run time** (Lua tables, Futhark `filter`, SQL `WHERE`) carry `?`, and every requirement
+   on a `?` renders an adapter. That is legal but costs run time.
+3. **Properties that need arithmetic** (a concatenation's length is `a + b`) need the rule language to hold
+   expressions, not just equalities between names. The first version can keep sums symbolic and treat them as
+   different from any name, rendering an adapter where one is required.
 
-| | today | this design |
-|---|---|---|
-| types, k-means | 14,359 | about 8 |
-| gene, k-means (N = 192) | 27.6 million words | about 30,000 (to confirm) |
-| integer assignments in k-means | cannot load | about 14 types |
-| legality | by the type alone | by the data type plus adapters; every gene legal, no repair |
-| the reference programs | render to their text | the same: their properties agree everywhere |
-| a mismatched program | cannot be expressed | expressed with adapters, which cost run time and may block fusion |
-| static binding of variables | yes | no: a mutation of a binder above can retarget `var.T` (a legal, neutral move) |
+## 9. What changes, by repository
 
-## 10. Where the code changes (by repository, after the merge plan of section 6.2 these are two crates)
+- **fuller (symbolic; a crate after the merge of plan 6.2):**
+  - `src/geneframe.rs`: the tables of 3.1, with Arity derived from Argument.
+  - The Futhark master table: `rows.tsv` gains the argument, rule, requirement and binding columns, and loses the
+    size and scope columns.
+  - The views: data types only.
+  - `typed_gep` decoding: passes 2 to 4.
+  - The renderer: the adapters and the prelude.
+  - The e-graph: one sort per data type; its rules rewrite rendered programs and need no change.
+  - The reader that turns a Futhark program into a gene: it emits `var.T` with the index that picks each variable.
+- **phylu (evolution):**
+  - The typed layout: fewer types, and the index words as a Dc-style array beside each type's region.
+  - The point mutation edits an index word as it edits a constant.
+  - The start population takes the reference program's gene from the reader.
 
-- **fuller (symbolic):** the master table (`rows.tsv` gains the property rule and the requirement column; the size
-  and scope columns go); the view (data types only); `typed_gep` decoding (passes 2-4); the renderer (adapters and the
-  prelude); the e-graph (one sort per data type; rules unchanged, they rewrite rendered terms); the reader that turns
-  a Futhark program into a gene (it emits `var.T` with the index that picks each variable).
-- **phylu (evolution):** the typed layout (fewer types; the index words of `var.T` as a Dc-style array beside each
-  tail); the point mutation edits an index word as it edits a constant; the start population (the reference program's
-  gene from the reader).
+## 10. Decisions for Andrew
 
-## 11. Decisions for Andrew
-
-1. The adapters' semantics: pad with the element's zero and truncate (`fit`), clamp indices (`clampix`), take the
-   shorter length for elementwise pairs. Alternatives: pad by repeating the last element; map2 to the longer length.
-2. Whether `?` lengths (filters) are in the first version, or only the size names and literals.
-3. Whether properties beyond sizes are wanted now (value ranges, sortedness), or later.
+1. The adapters' meaning for Futhark: pad with the element's zero and truncate (`fit`), clamp indices (`clampix`),
+   take the shorter length for elementwise pairs. Alternatives: repeat the last element; map to the longer length.
+2. Whether `?` properties (run-time lengths, after a filter) are in the first version.
+3. Whether SR's transcendental depth moves to a property now, or stays as `T1`/`T2` until the Futhark kingdom is done.
