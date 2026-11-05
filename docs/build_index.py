@@ -57,7 +57,6 @@ START_HERE = [
     ("PLAN_futhark_product.md", "the Futhark kingdom's product decision, and what the phylu half turned out to be"),
     ("FirstClassShapes.md", "the design that made a matrix shape a TYPE"),
     ("ASSESSMENT_first_class_shapes.md", "that design, measured, with the build's corrections"),
-    ("EGRAPH_futhark.md", "the 1-D Futhark kingdom inside the e-graph, and the rules that are bit-identical"),
     ("RESCUE_futhark.md", "the compiler hang: what was measured, and why the e-graph rescue is negative"),
     ("SPLIT_fuller_phylu.md", "the boundary between this repository and phylu — read every line before changing it"),
     ("PLAN_population_dag.md", "the population DAG: the next structural step"),

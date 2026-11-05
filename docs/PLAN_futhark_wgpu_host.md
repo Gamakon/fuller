@@ -240,7 +240,7 @@ The Rust side of the repo gets one small module, `src/futhark_wgpu_host.rs`, tha
 
 ## 9. Out of scope
 
-H1, H3, the upstream WGSL defects (those are Futhark's to fix, and the assessment records them for an upstream report), the population DAG, the device arena, the shape-aware IR, and the Futhark e-graph work in `docs/EGRAPH_futhark.md`.
+H1, H3, the upstream WGSL defects (those are Futhark's to fix, and the assessment records them for an upstream report), the population DAG, the device arena, the shape-aware IR, and the Futhark e-graph work (the 1-D kingdom's, `docs/EGRAPH_futhark.md`, deleted with that kingdom at plan 7.7 K5).
 
 ---
 

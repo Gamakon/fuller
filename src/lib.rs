@@ -54,15 +54,12 @@ pub mod tsr_kingdom;
 pub mod wgsl_rows;
 pub mod futhark_table;
 pub mod futhark_view;
-pub mod futhark_1d_kingdom;
 pub mod futhark_cost;
 pub mod futhark_saturation;
-pub mod futhark_1d_interp;
 pub mod futhark_exec;
 pub mod futhark_pixel;
 pub mod futhark_sig;
 pub mod futhark_reader;
-pub mod futhark_1d_egraph;
 pub mod kingdom_contract;
 pub mod typed_chromosome;
 pub mod typed_gep;
@@ -71,8 +68,6 @@ pub mod typed_environment;
 pub mod regex_typed;
 #[cfg(test)]
 mod typed_gep_tests;
-#[cfg(test)]
-mod futhark_adf_tests;
 /// The documentation index (`docs/index.html`) is generated; this is the check
 /// that keeps it so.
 #[cfg(test)]

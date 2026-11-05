@@ -2,7 +2,7 @@
 //! the real C compiler, and the real program.
 //!
 //! This is the check that the kingdom means what it says. The renderer turns
-//! an expressed tree into Futhark source; [`crate::futhark_1d_interp`] turns the
+//! an expressed tree into Futhark source; the kingdom's interpreter turns the
 //! same tree into a value; this module compiles the source and runs it, so
 //! the two can be compared element for element.
 
@@ -626,7 +626,7 @@ pub(crate) mod tests {
             eprintln!("skipped: futhark or cc is not installed");
             return;
         }
-        let dir = std::env::temp_dir().join("futhark_1d_rescue_test").join(format!("t{}", std::process::id()));
+        let dir = std::env::temp_dir().join("futhark_bounded_fusion_test").join(format!("t{}", std::process::id()));
 
         // The normal path does not finish.
         let verdict =

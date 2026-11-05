@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::futhark_sig::{build6, expected_text6, kingdom6, REFERENCES6};
+use crate::typed_gep::Tree;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A problem's kingdom.

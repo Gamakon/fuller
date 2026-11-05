@@ -1583,7 +1583,6 @@ mod tests {
         // Every TSR variant has the same Argument rows (they differ by their guards), so one fingerprint.
         let tsr = crate::tsr_kingdom::rows::TsrRows::load(crate::tsr_kingdom::TsrVariant::Depth, 3).expect("TSR rows load");
         kingdoms.push(("tsr rows".into(), crate::kingdom_contract::relations_from_tables(&tsr.tables, vec![tsr.entry.output])));
-        kingdoms.push(("futhark 1-D".into(), crate::futhark_table::FutharkKingdom::load_1d().expect("1-D kingdom").relations()));
         #[cfg(feature = "wgsl")]
         {
             kingdoms.push(("wgsl".into(), crate::kingdom_contract::wgsl_relations()));
@@ -1601,7 +1600,6 @@ mod tests {
             // The one-type TSR rows (plan 7.7 K1; the dual tables and their four fingerprints were deleted with the
             // depth ladder), taken by a run of this fingerprint on the rows.
             ("tsr rows", 0x113c_6c94_4793_5d13),
-            ("futhark 1-D", 0x4d21_23d5_b0e4_8a3c),
             // The pixel family's three instances (added by the G2 code review's finding 7) left this list with their
             // dual tables (plan 7.7 K4): on the rows they have a variable terminal, `var@f32`.
             ("wgsl", 0xaca5_c7c1_66fa_1914),
