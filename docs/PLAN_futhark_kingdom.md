@@ -1356,7 +1356,17 @@ and a gene from 27.6 million words to about 31,000 (design 7.1). Arity, the fram
 unchanged; properties, requirements and bindings are read only after Karva has expressed the tree.
 
 **Status.** Advisor review applied (aae172d8); the Fable review (24453707) and the adversarial review (88629b19)
-applied here, with the lead's five decisions (7.8). Design agreed; this plan; G1 being built.
+applied here, with the lead's five decisions (7.8). Design agreed; this plan; G1 built.
+
+**G1 status (2026-11-05): done.** `src/geneframe.rs`: `KingdomTables` (symbols with their spelling, `DataType`,
+`PropertyType`, `Argument`, `PropertyRule`, `Requirement`, `Binding`); `PropertyExpr` (a size name, a literal, `?`,
+`in<k>.<property>`, a symbolic sum, and a symbolic `min` as 7.1 now asks); `Arity::from_arguments`;
+`KingdomTables::check` (every defect "our software has a bug: ..."), `signatures`, `symbol_table`; a text form that
+reads back to the same tables (an exchange form for tests; master 6's file format is F0's). Tested: the derived arity
+is today's row for row for SR, Law, typed depth, regex, the four TSR variants and both WGSL kingdoms; the contract
+rebuilt through the tables is today's for SR, regex, TSR, the three WGSL kingdoms, the Futhark matrix and 1-D
+kingdoms and the five signature views (k-means: 110,871 symbols); mixed data types; round trips; the check's defects.
+No kingdom converted.
 
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
