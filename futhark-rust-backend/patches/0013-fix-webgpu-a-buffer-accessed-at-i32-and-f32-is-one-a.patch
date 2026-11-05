@@ -1,0 +1,130 @@
+From 7983303b051f40cf9c318b4f6b3c50ad4feafe55 Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Thu, 5 Nov 2026 02:07:32 +0000
+Subject: [PATCH 13/14] fix(webgpu): a buffer accessed at i32 and f32 is one
+ atomic word buffer; f32 <-> bits conversions
+
+A histogram whose operator has no WGSL atomic (f32.max, f32.min) updates its
+buckets by compare-and-exchange of the value's bits: an i32 atomic on the
+sub-histogram buffer, which the same kernel reads as f32. The webgpu code
+generator gave each binding one element type and stopped ("Buffer ... used
+at multiple types: [IntType Int32,FloatType Float32]"; upstream's base has
+the same check, "Buffer used at multiple types"). Every k-means program with
+such a histogram failed to compile on both the webgpu and rust-wgpu paths.
+
+- A global buffer accessed at i32 and f32 (atomically or not) is declared
+  array<atomic<i32>>, and every access goes through the atomic helpers,
+  which reinterpret the word (atomic_read_f32_global is bitcast<f32> of
+  atomicLoad), as Futhark's OpenCL and CUDA kernels cast one untyped
+  buffer. One binding, not one a type: WebGPU forbids two writable storage
+  bindings of one buffer in a dispatch, and two typed views of one buffer
+  would have no defined order between their writes.
+- A shared allocation accessed atomically at i32 and f32 is one
+  array<atomic<i32>> likewise (it was a compiler limitation); without
+  atomics it is still one workgroup array a type (patch 0010).
+- FPToBits f32 and BitsToFP f32 are bitcast<i32> and bitcast<f32> (they
+  were emitted as not_implemented(...), invalid WGSL): the CAS loop
+  compares the bits.
+
+Other element-type mixes still stop with the error. No program that
+compiled before changes: only programs that stopped take the new paths.
+
+Test: tests/webgpu/hist_f32_minmax.fut.
+---
+ src/Futhark/CodeGen/ImpGen/WebGPU.hs | 32 ++++++++++++++++++++++++++--
+ tests/webgpu/hist_f32_minmax.fut     | 19 +++++++++++++++++
+ 2 files changed, 49 insertions(+), 2 deletions(-)
+ create mode 100644 tests/webgpu/hist_f32_minmax.fut
+
+diff --git a/src/Futhark/CodeGen/ImpGen/WebGPU.hs b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+index 8ac604ac2..391566793 100644
+--- a/src/Futhark/CodeGen/ImpGen/WebGPU.hs
++++ b/src/Futhark/CodeGen/ImpGen/WebGPU.hs
+@@ -889,7 +889,8 @@ sharedTypedName :: WGSL.Ident -> PrimType -> WGSL.Ident
+ sharedTypedName name' t = name' <> "_" <> prettyText t
+ 
+ -- | The element types a shared allocation is accessed at. Several types are
+--- allowed only without atomic accesses.
++-- allowed without atomic accesses (one array a type), and with them only at
++-- @i32@ and @f32@ (one word array, 'atomicWordType').
+ sharedTypes :: VName -> KernelM [(PrimType, Bool, Signedness)]
+ sharedTypes name = do
+   types <- findMemoryTypes name
+@@ -897,6 +898,9 @@ sharedTypes name = do
+     [] -> pure []
+     [_] -> maybe [] pure <$> findSingleMemoryType name
+     prims
++      | any (\(_, a, _) -> a) types,
++        Just word <- atomicWordType types ->
++          pure [word]
+       | any (\(_, a, _) -> a) types ->
+           compilerLimitation $
+             "WebGPU backend cannot access the shared allocation " <> prettyText name <> " atomically at several types: " <> prettyText prims
+@@ -1280,6 +1284,10 @@ wgslConvOp op a = WGSL.CallExp (fun op) [a]
+     fun (BToI Int16) = "bool_to_i16"
+     fun (BToI Int32) = "i32"
+     fun (BToI Int64) = "bool_to_i64"
++    -- An f32 and its bits are one 32-bit word: a histogram with no WGSL
++    -- atomic for its operator compares and exchanges the bits.
++    fun (FPToBits Float32) = "bitcast<i32>"
++    fun (BitsToFP Float32) = "bitcast<f32>"
+     fun o = "not_implemented(" <> prettyText o <> ")"
+ 
+ intLiteral :: IntValue -> WGSL.Exp
+@@ -1458,7 +1466,27 @@ findSingleMemoryType name = do
+         Just (t, _, _) ->
+           error $ "Atomics not supported for values of type " <> show t
+         Nothing -> pure $ Just (prim, False, Signed)
+-    _tooMany -> error $ "Buffer " <> prettyString name <> " used at multiple types: " <> show prims
++    _tooMany
++      | Just word <- atomicWordType types -> pure $ Just word
++      | otherwise -> error $ "Buffer " <> prettyString name <> " used at multiple types: " <> show prims
++
++-- | A buffer accessed at both @i32@ and @f32@ is one 32-bit word buffer,
++-- declared @array<atomic<i32>>@: every access goes through the atomic
++-- helpers, which reinterpret the word as the access's type (@bitcast@), as
++-- Futhark's OpenCL and CUDA kernels cast one untyped buffer. A histogram whose
++-- operator has no WGSL atomic (@f32.max@, @f32.min@) updates its buckets by
++-- compare-and-exchange of the value's bits (an @i32@ atomic) and reads them
++-- as @f32@, in one kernel. One binding is needed, not one a type: WebGPU
++-- forbids two writable storage bindings of one buffer in a dispatch, and two
++-- bindings could not see each other's writes in a defined order anyway.
++atomicWordType :: [(PrimType, Bool, Signedness)] -> Maybe (PrimType, Bool, Signedness)
++atomicWordType types
++  | all (\(t, _, _) -> t `elem` [IntType Int32, FloatType Float32]) types =
++      case nubOrd [s | (_, True, s) <- types] of
++        [] -> Just (IntType Int32, True, Signed)
++        [sgn] -> Just (IntType Int32, True, sgn)
++        _ -> error "Atomic type used at multiple signednesses"
++  | otherwise = Nothing
+ 
+ -- | A primitive type WGSL can hold in an atomic buffer (no 64-bit atomics).
+ primCanBeAtomic :: PrimType -> Bool
+diff --git a/tests/webgpu/hist_f32_minmax.fut b/tests/webgpu/hist_f32_minmax.fut
+new file mode 100644
+index 000000000..19afec184
+--- /dev/null
++++ b/tests/webgpu/hist_f32_minmax.fut
+@@ -0,0 +1,19 @@
++-- A histogram with f32.max or f32.min, which WGSL has no atomic for: its buckets are updated by compare-and-exchange
++-- of the value's bits (an i32 atomic) and read as f32, so one buffer is accessed at two types in one kernel. The
++-- buffer is one 32-bit word buffer (array<atomic<i32>>) and every access reinterprets the word.
++--
++-- ==
++-- entry: max_hist
++-- input { [0i64, 1i64, 0i64, 2i64, 1i64, 9i64] [1f32, -2f32, 3f32, 0.5f32, -1f32, 7f32] }
++-- output { [3f32, -1f32, 0.5f32] }
++
++entry max_hist [n] (is: [n]i64) (xs: [n]f32) : []f32 =
++  hist f32.max f32.lowest 3 is xs
++
++-- ==
++-- entry: min_hist
++-- input { [0i64, 1i64, 0i64, 2i64, 1i64, 9i64] [1f32, -2f32, 3f32, 0.5f32, -1f32, 7f32] }
++-- output { [1f32, -2f32, 0.5f32] }
++
++entry min_hist [n] (is: [n]i64) (xs: [n]f32) : []f32 =
++  hist f32.min f32.highest 3 is xs
+-- 
+2.50.1 (Apple Git-155)
+

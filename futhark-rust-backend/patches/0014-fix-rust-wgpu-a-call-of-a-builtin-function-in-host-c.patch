@@ -1,0 +1,69 @@
+From 5f6c334615203b70d7b411b152f8def68aaec813 Mon Sep 17 00:00:00 2001
+From: futhark-rust-backend <none>
+Date: Thu, 5 Nov 2026 02:07:32 +0000
+Subject: [PATCH 14/14] fix(rust-wgpu): a call of a builtin function in host
+ code is the scalar function it names
+
+ImpCode spells a builtin function of the language called in host code
+(f32.isnan on an entry's scalar, or on a reduction's result) as a Call of
+the function's name (isnan32), not a FunExp. GenericC compiles such a call
+to the builtin directly; the rust-wgpu backend looked the name up among the
+program's own functions and stopped ("The rust-wgpu backend found no
+function isnan32"). It is now compiled as the FunExp it names
+(rt::sc::fun_isnan32), the program's own functions as before.
+
+Test: tests/webgpu/host_builtin_call.fut.
+---
+ src/Futhark/CodeGen/Backends/RustWGPU.hs | 11 +++++++++++
+ tests/webgpu/host_builtin_call.fut       | 17 +++++++++++++++++
+ 2 files changed, 28 insertions(+)
+ create mode 100644 tests/webgpu/host_builtin_call.fut
+
+diff --git a/src/Futhark/CodeGen/Backends/RustWGPU.hs b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+index 3ee1cbcc4..6b23a93fa 100644
+--- a/src/Futhark/CodeGen/Backends/RustWGPU.hs
++++ b/src/Futhark/CodeGen/Backends/RustWGPU.hs
+@@ -614,6 +614,17 @@ compileCode (SetMem x y _) = do
+   x' <- varRef x
+   y' <- varRef y
+   line $ x' <> ".set_from(&" <> y' <> ");"
++-- A call of a builtin function of the language (an intrinsic such as
++-- @isnan32@ in host code, e.g. a lifted constant's computation) is the
++-- scalar expression it names, as GenericC compiles it; the program's own
++-- functions are in 'envFuns'.
++compileCode (Call [dest] fname args)
++  | Just (_, ret, _) <- M.lookup (nameToText fname) primFuns,
++    Just es <- mapM expArg args =
++      compileCode $ SetScalar dest $ FunExp (nameToText fname) es ret
++  where
++    expArg (ExpArg e) = Just e
++    expArg MemArg {} = Nothing
+ compileCode (Call dests fname args) = do
+   funs <- asks envFuns
+   callee <- case M.lookup fname funs of
+diff --git a/tests/webgpu/host_builtin_call.fut b/tests/webgpu/host_builtin_call.fut
+new file mode 100644
+index 000000000..5f6e5acd9
+--- /dev/null
++++ b/tests/webgpu/host_builtin_call.fut
+@@ -0,0 +1,17 @@
++-- A builtin function of the language called in host code (f32.isnan on an entry's scalar, or on a reduction's
++-- result before it indexes): ImpCode spells it a Call of isnan32, which the rust-wgpu backend compiles to the
++-- scalar function it names, as GenericC does.
++--
++-- ==
++-- entry: main
++-- input { 1f32 } output { false }
++-- input { f32.nan } output { true }
++
++entry main (x: f32) : bool = f32.isnan x
++
++-- ==
++-- entry: guarded
++-- input { [3f32, 1f32, 2f32] } output { 1i64 }
++
++entry guarded [n] (xs: [n]f32) : i64 =
++  let x = f32.minimum xs in if f32.isnan x then 0 else i64.f32 x
+-- 
+2.50.1 (Apple Git-155)
+
