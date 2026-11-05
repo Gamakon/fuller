@@ -1,4 +1,4 @@
-# TSR — Transcendental Symbolic Regression
+# TSR — Typed Symbolic Regression
 
 **Andrew Morgan's name for it**, and the name carries the claim:
 
