@@ -1331,3 +1331,181 @@ subtree`); the dependency direction (the evolution crate depends on the symbolic
 extension (`fuller` is imported by hff: keep the module name or change hff's import); the helper crates
 (`futhark-rust-rt`, the shim); the docs index, both CLAUDE.md files rewritten once, the memory paths, the papers'
 repository references; and the order: open branches merged to main first.
+
+## 7. Types are shapes, scope is context (Andrew, 2026-11-05)
+
+**Objective.** Take variable scope out of the Futhark kingdom's types. A type is a shape class only (`f32`, `ix.n`,
+`a.n.d`, `(f32,f32)`); what is bound around a node (loop states, indices, the kernel boundary's `let`) is context the
+decoder carries down the tree while it expresses the gene. Futhark first; the WGSL kingdom later, the same way.
+
+**Approach.** An attribute grammar over Karva. The shape travels bottom-up as the type code (arity, which functions
+may sit in which slot), as today. The scope travels top-down: Karva is breadth-first, so when a node is decoded its
+ancestors, and so the stack of variables bound above it, are known. A variable terminal says only "a bound variable of
+class C, index i"; the decoder resolves it to the (i mod count)-th variable of C in scope, and to C's constant when
+none is in scope. Legal by construction, no repair.
+
+**What is unique.** Multi-typed GEP keeps its guarantee (every gene expresses a legal program) while the type count
+falls from the cross product of shapes and scopes to the number of shapes: k-means from 14,359 types to about 11.
+
+**Status.** Design (Andrew's notes of 2026-11-05) and this plan; no code. The sizes in 7.3 are estimates from today's
+views and are confirmed by the first build.
+
+**Why.** Scope in the type abused the multi-typed geneframe design. Measured today on k-means (`docs/kmeans_seed.md`,
+"The two views"): 14,359 types, 85 % of them depth-3 scope bodies, 110,871 rows, a gene of 27.6 million words at
+N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB; the faithful `i32` + `f32` view (131,825 types,
+237,325 with the kernel boundary) is over the 65,536 type codes and cannot load.
+
+### 7.1 The design
+
+1. **A type is a shape class.** The view's types are its classes and its two function classes (A7); no context
+   suffix (`:c/{..}@d`) remains in any type name.
+2. **One variable terminal a class**, `fn_terminal(T, i)`: arity 0, so it may sit in any tail. Its index `i` is a
+   word of an index array `Dv_T` beside the type's tail, read as a constant reads `Dc_T` (the q-th expressed variable
+   terminal of `T` reads `Dv_T[q]`). The alphabet of a `Dv_T` cell is `0 .. V_T - 1`, where `V_T` is the most
+   variables of `T` any stack of the view can hold, so a cell's alphabet is still known from the layout alone.
+3. **The decoder carries the binder stack.** A row's argument slot may name a frame (today's `{S}+L-{D}-{S}`: a
+   loop body binds its state and its counter; `T-{D}` a tabulate's index; `B-{S}` the `let`). The child's scope is the
+   parent's plus that frame. The attribute a node needs is small: the count of variables of each class in scope, the
+   trip depth, and whether a trip binder lies above (for the `let`).
+4. **Resolution.** The variable is the ((i mod count) + 1)-th of class C, outermost first, so its name is today's
+   `var_name(C, ordinal)` (`s_f32`, `s3_f32`, `i_k`, `s_a_n`) and a binder names its own variable `var_name(C,
+   count + 1)` as today. The reference programs therefore render to the same text.
+5. **Fallbacks, one rule.** Where the grammar's condition fails, the node expresses as its class's constant terminal
+   (`0f32`, `zeros_n`, `zero` for `ix`, the zero pair or triple), consuming no children: a variable terminal with no
+   variable of C in scope; a `shallow` row (a loop, a reduction) at the depth cap; a `let` below a trip binder or
+   whose class is already bound. Every class gets a constant terminal (a witness checks it). The depth cap and the
+   kernel boundary are attributes on the binder stack, never type dimensions (Andrew's rule 2).
+6. **Determinism.** The resolution reads the gene and the node's ancestors only: same gene, same program, on host and
+   device, word for word.
+7. **What is given up.** No static binding: an edit that adds or removes a binder above a variable can retarget its
+   index (as a de Bruijn index shifts). The program stays legal; the move is a neutral or a small one. The decoder
+   carries an inherited attribute: a change to expression, not to the tables. The middle step (a bitmask of non-empty
+   classes and the depth in the type) is not chosen.
+
+### 7.2 What changes, file by file
+
+| repo | file | change |
+|---|---|---|
+| fuller | `kingdoms/futhark/master/rows.tsv`, `frames.tsv`, `VERSION` | master version 6: the `C` quantifier and the `vars(..)` terminals (M0017, M0023, M0037, M0086) are replaced by one variable row a class; a constant terminal for every class (the row classes `a.n.d` gain `replicate`-of-zeros); `when` (`shallow`, `top`) and the frames stay, read by the decoder instead of the view |
+| fuller | `src/futhark_view.rs`, `kingdoms/futhark/view.py` | the view enumerates classes, not contexts: `Binder::contexts`, `Ctx::push`, the dual's context suffix and `Ctx::of_dual` go; each row's argument slots carry their frame and each row its condition, written into `functions.tsv` as two columns; the view's `V_T` per class |
+| fuller | `kingdoms/futhark/sniff.py` | unchanged in content: `depth` becomes the decoder's cap, `lets` the classes a `let` may bind; every specification re-sniffed at master 6 |
+| fuller | `kingdoms/futhark/gen_tables.py` | witnesses rewritten for scope-free tables (every class has a constant; every slot's frame names classes of the view; every rule's right-hand variables are among its left-hand ones); views re-pinned with new fingerprints |
+| fuller | `src/kingdom_contract.rs`, `src/geneframe.rs` | a variable-capable type and its `V_T`; the bounds give `Dv_T` the length `d_T`, as `Dc_T`; per-slot frames and per-row conditions in the contract |
+| fuller | `src/typed_gep.rs` | `express`, `walk_expressed`, `write_back`, `alphabet` and `mutate`: the `Dv` domain, the inherited stack, the fallback rule; the expressed node carries the resolved (class, ordinal) as `const_index` carries its constant |
+| fuller | `src/futhark_table.rs` | `from_tables` reads the two new columns; the renderer names binders and variables from the stack; the ADF rendering likewise |
+| fuller | `src/futhark_sig.rs`, `src/futhark_cost.rs` | the interpreter's variable slots by (class, ordinal) from the walk, not from the duals (today `binder_slot`, line 1322); the work estimate reads the depth from the walk |
+| fuller | `src/futhark_reader.rs` | the reader (Futhark source to a tree: the reference programs and the pool's 842 programs) resolves a name to (class, ordinal) and writes the index `ordinal - 1` |
+| fuller | `src/futhark_saturation.rs`, `kingdoms/futhark/egraph.*`, `src/saturated_fold.rs` | one sort a class (k-means: about 11 sorts, not 14,359); a variable constructor a class over its name; the bridge writes an extracted variable back as its index; the fold shares closed subtrees only (7.6) |
+| phylu | `src/evolve/typed_layout.rs` | the frame words gain the `Dv` offset, length and `V_T`; `cell_map` a `CELL_DV` kind; `const_lens` beside the new `var_lens` |
+| phylu | `src/evolve/typed_init.wgsl` / `typed_init.rs` | the init draw fills `Dv_T` cells uniformly in `0 .. V_T - 1` |
+| phylu | `src/evolve/walk.wgsl`, `typed_decode.wgsl` | the walk carries each node's counts and depth from its parent, applies the fallback rule, and reports the `Dv` cells it reads |
+| phylu | `src/evolve/typed_vary.rs`, `typed_vary.wgsl` | `LeafTable::build_point`: an expressed variable terminal's `Dv` cell is a mutable cell (alphabet `0 .. V_T - 1`): its edit switches the variable, never its shape; the same-signature classes now span all scopes (more replacements a class); crossover per type covers the `Dv` columns |
+| phylu | `src/evolve/marriage.rs` | unchanged in kind: a subtree moved into another scope resolves its variables there (7.6) |
+| phylu | `src/futhark_eval/evaluator/start.rs`, `fresh` | the reference program goes text to tree through the reader and onto a fresh gene by `write_back`; it must express to the same program text as today (`kmeans_seed()`, the four benchmarks', A7's); the variants and mutants as before |
+| phylu | `src/evolve/futhark_typed.rs` | the contract, layout and `var_lens` given to the device; the layout check covers `Dv` |
+
+**Deleted:** the scope-in-type contexts (the `C` quantifier, `Ctx` as a type component, the `:c/{..}@d` names and
+sorts, `Ty::MAX_FUTHARK_DUALS` as a binding limit, the test that the two-element view does not load, which becomes a
+test that it does). The pixel family's scope types (`f32.s{k}`) and the WGSL kingdom keep theirs until their own step.
+
+### 7.3 Expected sizes (estimates, to be confirmed by the first build)
+
+Today's counts are measured (`examples/futhark_views`, 2026-11-05, master 5). The after column takes each view's
+classes and its rows with the context removed and duplicates merged, plus one variable row a class.
+
+| view | types now | types after | rows now | rows after |
+|---|---:|---:|---:|---:|
+| reduce | 28 | 3 | 281 | about 42 |
+| scan | 28 | 3 | 281 | about 42 |
+| histogram | 162 | 5 | 1,487 | about 84 |
+| pathfinder | 184 | 6 | 1,629 | about 84 |
+| a7 (no scope today) | 11 | 11 | 71 | 71 |
+| kahan / argmin | 328 | 9 | 2,854 / 2,816 | about 116 |
+| cell / kernels | 1,041 / 1,892 | 17 | 8,470 / 15,333 | about 190 |
+| **k-means, f32, `lets a.n`** | **14,359** | **11** | **110,871** | **about 176** |
+| **k-means, i32 + f32, `lets a.i32.n`** | **237,325** (does not load) | **about 27** | over 1 million | **350 to 450** |
+
+The i32 + f32 classes: 2 scalars, 3 indices, 6 rank-1 arrays, 4 row classes, 4 pairs, 8 triples. Andrew's notes
+expected 50 to 200 types; the views reach fewer classes than that. The gene: the layout's width grows with the types
+(heads `(N - 1) a_T` each, tails and the `Dc`/`Dv` arrays bounded by them), so k-means at N = 192 goes from 27.6
+million words to the order of 30,000, the layout from 34 s to milliseconds, the e-graph's datatype from 14,359 sorts to
+11. The fold's and the e-graph's seconds depend on the programs, not only the sorts: measured, not estimated.
+
+### 7.4 Proof (tests)
+
+1. **Random genes are legal.** Per problem (reduce, scan, histogram, pathfinder, a7, k-means f32, k-means i32 + f32,
+   and the test views kahan, argmin, cell, kernels): 500 random genes express with no defect, and every rendered
+   program is accepted by `futhark check`, N of N, as the kingdom standard requires; the first 8 compile and equal the
+   host interpreter.
+2. **The reference programs are unchanged.** Every reference program (the four benchmarks', A7's, k-means's and its
+   planted slowdown, the test views') translates to a gene and renders to its published text byte for byte, and
+   scores as before: the replay checks `f3a_rust_generation.sh` and `f3b_kmeans_generation.sh` give the frozen old
+   runner's ledgers (`histogram_r_seed1_ledger.tsv`, `kmeans_p_seed1_ledger.tsv`, matched on the text column; the
+   genes differ by construction) the same quality and speed inputs; `tests_kmeans_seed` passes 8 of 8 as today.
+3. **The pool.** All 842 pool programs read back with the same values on every stored case.
+4. **Host and device agree word for word** on 20,000 random genes a problem: the expressed cells, the `Dv` cells
+   read, the resolved (class, ordinal) of every variable, the fallbacks taken.
+5. **Determinism.** The same gene expresses to the same program twice and across processes; the same random seed
+   draws the same population on host and device.
+6. **The e-graph.** Every rule's right-hand variables are among its left-hand ones (a witness); every extracted
+   candidate writes back and expresses to its own text; the k-means variants are those of today (the same texts).
+7. **Retargeting measured.** On 20,000 point edits a problem: the share whose text changes outside the edited node
+   (the cost of no static binding), reported, not gated.
+
+### 7.5 Tasks
+
+| task | repo | size | what | after |
+|---|---|---|---|---|
+| S0 | lead | half a day | the table format: the two new columns of `functions.tsv`, `V_T`, the `Dv` domain in the contract | none |
+| S1 | fuller | 2 days | master 6, the view, `view.py`, `sniff.py` re-sniffs, `gen_tables.py` witnesses, the new fingerprints; 7.3's table measured | S0 |
+| S2 | fuller | 2 days | contract, bounds, `typed_gep` (express, walk, write-back, alphabet, mutate) with the stack and the fallback rule; tests 7.4.1 (host), 7.4.5 | S0 |
+| S3 | fuller | 2 days | renderer, ADF rendering, the interpreter's slots, the cost model, the reader; tests 7.4.2 (CPU part), 7.4.3 | S1, S2 |
+| S4 | fuller | 2 days | the generated e-graph a sort a class, the bridge, the fold on closed subtrees; test 7.4.6 | S1, S2 |
+| S5 | phylu | 2 days | `typed_layout`, init, `build_point`, crossover over `Dv`, `futhark_typed`; host twins first | S2 |
+| S6 | phylu | 2 days | the device walk and decode with the inherited counts and the fallback; test 7.4.4 (host twin) | S2, S5 |
+| S7 | phylu | 1 day | `start.rs` and `fresh` through the reader; test 7.4.2 (the start populations' texts) | S3, S4, S5 |
+| S8 | lead | 1 day | full suites of both repositories, clippy clean, the code review of each commit | S6, S7 |
+| S9 | fuller | 1 day | the i32 + f32 k-means view (`sniff.py --elements i32 --lets a.i32.n`) and the i32 translation of the reference program (five rows differ); test 7.4.1 and 7.4.2 on it | S3, S4 |
+
+```
+S0 ─┬─> S1 ─┬─> S3 ─┬─> S7 ─> S8 ─> GPU checks ─> R0 ─> R3 ─> R1 ─> R2 ─> R2b ─> R4 ─> RC
+    └─> S2 ─┼─> S4 ─┤
+            └─> S5 ─┴─> S6 ─────────> S8          S3, S4 ─> S9 (before R3's i32 arm)
+```
+
+**The lead's GPU checks**, one at a time, before any run: host and device decoders agree on 20,000 random genes a
+problem (7.4.4, on the device); `f3a_rust_generation.sh` and `f3b_kmeans_generation.sh` replayed; the k-means reference
+program through the converged judge on the GPU (`kmeans_gpu_controls.sh`, the controls). Then the regressions of 5a.4
+rerun on the new kingdom: R0 (pathfinder generation 0, the same 24 programs, the same inputs bit for bit), then
+**k-means first (R3)**, then R1, R2, R2b, R4 and RC. Each report says the new gene's width beside the old.
+
+### 7.6 Risks
+
+1. **Positional retargeting under mutation.** A point edit, an inversion, a crossover or a marriage that changes the
+   binders above a variable changes which variable it names. Legal, and measured (7.4.7); if the measurement shows it
+   hurts the search, the answer is in the variation operators (an edit that keeps the ordinal), never in a repair.
+2. **The fallback can cut a subtree.** A loop pushed to the depth cap by an edit above it expresses as a constant. The
+   share of genes where a fallback fires is reported with 7.4.7.
+3. **The e-graph's sorts.** Today one sort a type keeps scopes apart. With one sort a class, `s_f32` in two scopes is
+   one e-node. That is sound because every rule is a syntactic equality whose right side reads no variable its left
+   side does not (the witness of 7.4.6); the bridge checks that an extracted variable's ordinal is in scope where it
+   is written back, and a failure is a bug, not a fallback.
+4. **The fold and the ADFs.** A shared definition with a free variable would mean a different variable at each call
+   site. The fold shares closed subtrees only; passing the free variables as parameters is later work, measured
+   against the closed-only fold's share of today's fold forms.
+5. **Caching by text.** Unchanged: the text holds the names, and the reference programs' texts are unchanged, so the
+   quality caches and the scored-text sets stay valid. More genes render one text (the neutral retargets); the
+   dedup by text already handles that.
+6. **The linker.** The program's assembly (`def kernel`, the entry point binding `zeros_*` and the inputs) is the
+   bottom of the stack: the inputs and the zeros stay named terminals, never stack variables. A gene of a
+   multigenic chromosome starts from that bottom; no gene sees another's binders.
+7. **Scope assumed elsewhere.** Every reader of a dual's context: `Ctx::of_dual` (`futhark_sig.rs` 1312, 1323),
+   `futhark_reader.rs`, `tests_kmeans_seed` (fuller and phylu), the pinned fingerprints, the cost model's depth, the
+   same-signature classes of `LeafTable::build`, checkpoints and ledgers holding genes of the old layout (they do not
+   load: a checkpoint is converted through its texts, an old result is reproduced at its own commit). S1 starts by
+   listing them with a search for `:c/` and `of_dual`, and each is a line of S2 to S7.
+
+**Not in this step (Andrew's note, recorded):** the signatures (`view.tsv` per problem) derive the intermediate
+classes from the inputs through fixed constructors. Better: tables over a general set of Futhark types and functions,
+the declaration naming only the root type and the leaf inputs, and a filter keeping what is relevant. Planned after
+section 7's regressions.
