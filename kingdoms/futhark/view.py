@@ -382,10 +382,11 @@ class View6:
 
     def _admitted(self, r):
         return (int(r["since"]) <= self.spec["master"]
-                and (not self.spec["families"] or r["family"] in self.spec["families"] or r["kind"] == "var")
+                and (not self.spec["families"] or r["family"] in self.spec["families"] or r["kind"] == "var"
+                     or any(q.partition(":")[2] == "leafless" for q in items(r["over"])))
                 and (r["elems"] == "*" or any(e in self.elements for e in r["elems"].split(","))))
 
-    def _quantifier(self, q, env, row_elems, var_types):
+    def _quantifier(self, q, env, row_elems, var_types, leafless):
         var, _, kind = q.partition(":")
         def tagged(dt):
             return {var: dt, f"{var}.tag": self.by_name[dt]["tag"]}
@@ -410,6 +411,9 @@ class View6:
             out = [dict(env, **tagged(t["name"])) for t in self.candidates if t["name"] != "size"]
         elif kind == "vars":
             out = [dict(env, **tagged(t["name"])) for t in self.candidates if t["name"] in var_types]
+        elif kind == "leafless":
+            out = [dict(env, **tagged(t["name"]), **{f"{var}.constant": t["constant"]}) for t in self.candidates
+                   if t["name"] in leafless]
         else:
             raise ValueError(f"our software has a bug: the quantifier {q!r} is not one of master 6's")
         return out
@@ -460,7 +464,7 @@ class View6:
                 "args": args, "rules": rules, "requires": requires, "binds": binds, "trip": r["trip"],
                 "spelling": t["spelling"]}
 
-    def _rows(self, var_types):
+    def _rows(self, var_types, leafless=frozenset()):
         out = []
         for r in self.mst["rows"]:
             if not self._admitted(r):
@@ -471,7 +475,7 @@ class View6:
             else:
                 envs = [{}]
             for q in items(r["over"]):
-                envs = [b for env in envs for b in self._quantifier(q, env, row_elems, var_types)]
+                envs = [b for env in envs for b in self._quantifier(q, env, row_elems, var_types, leafless)]
             for env in envs:
                 inst = self._instance(r, env)
                 if inst is not None:
@@ -526,14 +530,22 @@ class View6:
         else:
             raise ValueError("our software has a bug: the data types with a variable do not settle")
         # A data type the root or a kept row demands that no kept row of no arguments gives (the `i32` + `f32` k-means
-        # view's `[][]i32`: built by `tabrows`, with no variable) takes its var row too, which with no variable in scope
-        # renders the data type's constant: Karva's tail needs a leaf of every data type it can demand (the contract's
-        # check), and the design's `var.T` is T's constant when c = 0. A var row has no argument, so the reachable rows
-        # are otherwise unchanged.
-        leafless = self._leafless(rows)
-        if leafless:
-            var_types = var_types | leafless
-            rows = self._reachable(self._rows(var_types))
+        # view's `[][]i32`: built by `tabrows`, with no variable) can never have a variable in scope, so it takes no var
+        # row and no Dv lane: it takes its constant, the `T:leafless` row (M0088), because Karva's tail needs a leaf of
+        # every data type it can demand (the contract's check). Computed to a fixed point: rows the new leaves admit may
+        # demand more data types.
+        leafless = set()
+        for _ in range(len(self.candidates) + 2):
+            more = leafless | self._leafless(rows)
+            if more == leafless:
+                break
+            leafless = more
+            rows = self._reachable(self._rows(var_types, leafless))
+        else:
+            raise ValueError("our software has a bug: the data types with no leaf do not settle")
+        stray = {dt for r in rows for _, dt, _ in r["binds"]} - var_types
+        if stray:
+            raise ValueError(f"our software has a bug: the leaf rows of {sorted(leafless)} admit binders of {sorted(stray)}, which have no var row")
         used = {self.root}
         for r in rows:
             used.add(r["out"])

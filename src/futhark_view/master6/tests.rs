@@ -27,6 +27,22 @@ fn every_master6_view_is_what_view_py_writes_byte_for_byte() {
     }
 }
 
+/// `COMMITTED6` IS `gen_tables.py`'s LIST: its problems are exactly `SIG6_PROBLEMS`'s keys, in order, and exactly the
+/// directories `kingdoms/futhark/sig/*/m6/`, so no view `view.py` writes goes uncomputed here.
+#[test]
+fn committed6_is_the_list_of_problems_gen_tables_writes() {
+    let text = include_str!("../../../kingdoms/futhark/gen_tables.py");
+    let start = text.find("\nSIG6_PROBLEMS = {\n").expect("gen_tables.py has SIG6_PROBLEMS") + 1;
+    let block = &text[start..start + text[start..].find("\n}\n").expect("SIG6_PROBLEMS closes")];
+    let in_python: Vec<&str> = block.lines().filter_map(|l| l.strip_prefix("    \"")).filter_map(|l| l.split_once("\": (")).map(|(name, _)| name).collect();
+    let in_rust: Vec<&str> = COMMITTED6.iter().map(|c| c.0).collect();
+    assert_eq!(in_rust, in_python, "COMMITTED6 and gen_tables.py's SIG6_PROBLEMS");
+    let sig = concat!(env!("CARGO_MANIFEST_DIR"), "/kingdoms/futhark/sig");
+    let mut on_disk: Vec<String> = std::fs::read_dir(sig).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().join("m6").is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    on_disk.sort();
+    assert_eq!(in_rust, on_disk, "COMMITTED6 and the directories sig/*/m6/");
+}
+
 /// The words of a laid-out gene, by kind: (head, tail, Dc, Dv, width).
 fn words(layout: &GeneLayout) -> (usize, usize, usize, usize, usize) {
     let f = &layout.frames;
@@ -64,10 +80,11 @@ fn every_master6_view_loads_its_tables_and_contract_and_lays_out() {
 /// THE K-MEANS GENES (design 7.1: about 8 types and 31,000 words at N = 192, against master 5's 14,359 types and
 /// 27.6 million words). Measured 2026-11-05 at N = 192: the `f32` view, 9 data types, head 3,057, tail 12,995, Dc
 /// 4,202, Dv 12,230, 32,484 words; the faithful `i32` + `f32` view (master 5: 237,325 types, which did not load), 22
-/// data types, 123,020 words. The sizes are pinned, so a change to the master or the view is seen.
+/// data types, 122,447 words (123,020 until its `[][]i32`, which no variable can be of, lost its var row and 573-word
+/// Dv lane for its constant, M0088). The sizes are pinned, so a change to the master or the view is seen.
 #[test]
 fn the_kmeans_views_load_and_their_genes_are_the_measured_size() {
-    for (problem, types, symbols, want) in [("kmeans", 9, 83, (3_057, 12_995, 4_202, 12_230, 32_484)), ("kmeans_i32", 22, 227, (8_023, 54_634, 19_482, 40_881, 123_020))] {
+    for (problem, types, symbols, want) in [("kmeans", 9, 83, (3_057, 12_995, 4_202, 12_230, 32_484)), ("kmeans_i32", 22, 227, (8_023, 54_634, 19_482, 40_308, 122_447))] {
         let k = committed(problem).unwrap().kingdom(problem).unwrap();
         let contract = k.contract().unwrap();
         let layout = GeneLayout::from_program_size(&contract, k.root.data_type, 192).unwrap();
@@ -116,15 +133,38 @@ fn the_kmeans_view_loads_its_rules_requirements_bindings_and_environment() {
     assert_eq!(k.data_type(k.ty("[][]f32").unwrap()).unwrap().constant_props.len(), 2);
 }
 
-/// A view whose demanded data type has no variable and no other leaf gets its `var` row, the data type's constant
-/// with no variable in scope: the `i32` + `f32` view's `[][]i32`, built only by `tabrows`.
+/// A view whose demanded data type can never have a variable in scope gives it its constant (`zero@T`, M0088), a
+/// terminal with the constant's properties, and no `var` row: the `i32` + `f32` view's `[][]i32`, built only by
+/// `tabrows`.
 #[test]
-fn a_demanded_data_type_with_no_other_leaf_has_its_var_row() {
+fn a_demanded_data_type_with_no_variable_has_its_constant_and_no_var_row() {
     let k = committed("kmeans_i32").unwrap().kingdom("kmeans_i32").unwrap();
     let m = k.ty("[][]i32").unwrap();
-    assert!(k.symbols.iter().any(|s| s.kind == Kind6::Var && s.output == m && s.name == "var@m.i32"));
     assert!(!k.variables.iter().any(|v| v.data_type == m), "no root variable is a [][]i32");
+    assert!(!k.symbols.iter().any(|s| s.binds.iter().any(|b| b.data_type == m)), "no binder binds a [][]i32");
+    assert!(!k.symbols.iter().any(|s| s.kind == Kind6::Var && s.output == m), "a [][]i32 can never be in scope, so it has no var row");
+    let zero: Vec<_> = k.symbols.iter().filter(|s| s.output == m && s.inputs.is_empty()).collect();
+    assert_eq!(zero.len(), 1);
+    assert_eq!((zero[0].name.as_str(), zero[0].kind, zero[0].reference.as_str(), zero[0].spelling.as_str()), ("zero@m.i32", Kind6::Terminal, "M0088", "[[0i32]]"));
+    assert_eq!(zero[0].rules.iter().map(|(p, e)| format!("{p}={e}")).collect::<Vec<_>>(), ["rows=1", "cols=1"]);
     assert_eq!(k.data_type(m).unwrap().constant, "[[0i32]]");
+}
+
+/// NO DEAD Dv LANE: in every view, a frame has a Dv lane only when its data type can have a variable in scope (a root
+/// variable's or a binding's data type); every other demanded data type has a leaf that is not a variable.
+#[test]
+fn a_dv_lane_only_for_a_data_type_that_can_have_a_variable() {
+    for (problem, ..) in COMMITTED6 {
+        let k = committed(problem).unwrap().kingdom(problem).unwrap();
+        let contract = k.contract().unwrap();
+        let layout = GeneLayout::from_program_size(&contract, k.root.data_type, 192).unwrap();
+        let can_have: std::collections::BTreeSet<Ty> = k.variables.iter().map(|v| v.data_type).chain(k.symbols.iter().flat_map(|s| s.binds.iter().map(|b| b.data_type))).collect();
+        let dead: usize = layout.frames.iter().filter(|f| f.dv_len > 0 && !can_have.contains(&f.ty)).map(|f| f.dv_len).sum();
+        assert_eq!(dead, 0, "{problem}: Dv words of data types that never have a variable in scope");
+        for s in k.symbols.iter().filter(|s| s.kind == Kind6::Var) {
+            assert!(can_have.contains(&s.output), "{problem}: {} names a data type no variable is of", s.name);
+        }
+    }
 }
 
 #[test]

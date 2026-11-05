@@ -98,7 +98,7 @@ Columns: `ref`, `since`, `family`, `kind`, `elems`, `over`, `name`, `out`, `args
 | `since` | The version that introduced the row. A converted row keeps master 5's value (the least of those it merges), so a view pinned to version v sees the same rows, converted. A row new in master 6 has 6. |
 | `family`, `elems` | As master 5. |
 | `kind` | `function`, `terminal`, `const` (a Dc literal of `pools.tsv`), and the new `var`: a terminal of arity 0 whose cell has an index word in the Dv array, flagged `is_variable` (task G2). |
-| `over` | **Data-type quantifiers only**, instantiated by the view. `S:states` is the scalar of each element and `[]{E}` of each element. `S:tuples` and `S:tuples3` are the pairs and triples of elements. `S:lets` is the view's `lets` data types. `Y:all` is every data type of the view but `size`. `T:vars` is every data type that has a variable (a root input, a zero array, a size, or a binding's data type). `{E}` is bound by `elems`, as in master 5. A quantified data type's components are `{S.a}`, `{S.b}`, `{S.c}`, and its tag is `{S.tag}`. |
+| `over` | **Data-type quantifiers only**, instantiated by the view. `S:states` is the scalar of each element and `[]{E}` of each element. `S:tuples` and `S:tuples3` are the pairs and triples of elements. `S:lets` is the view's `lets` data types. `Y:all` is every data type of the view but `size`. `T:vars` is every data type that has a variable (a root input, a zero array, a size, or a binding's data type). `T:leafless` is every data type the view demands that no row of no arguments gives (section 9), and binds `{T.constant}`, its constant. `{E}` is bound by `elems`, as in master 5. A quantified data type's components are `{S.a}`, `{S.b}`, `{S.c}`, and its tag is `{S.tag}`. |
 | `name` | `<op>@<out tag>`, with no size in it: `get@{E}`, `map2.add@a.{E}`. |
 | `out`, `args` | Data type templates; `args` lists the inputs in order, `;`-separated. These are the Argument rows: input k is at position k, and the output is at position 0. **A `size` argument comes first**, in the order the spelling reads the sizes. |
 | `rules` | `;`-separated `<property>=<expr>`, one PropertyRule each, for the output's properties. **A rule holds whether or not the row's adapters fire** (map2's `len=min(in0.len, in1.len)`), so no adapter changes a rule. A `var` row has no rules: its properties are the chosen variable's (decoder pass 3), or the constant's when c = 0. |
@@ -478,12 +478,13 @@ A literal of `{E}`'s pool (`pools.tsv`), drawn from Dc as in master 5. It has no
   writes the root environment as `input`, `zeros` and `size` lines in that order, and may have `families` (A7: the
   matrix family alone, with no `depth` line).
 - **The `var` row is admitted in every view**, whatever its `families`.
-- **A data type with no leaf takes its `var` row too** (task F1b). A data type that the root or a kept row demands,
-  and that no kept row of no arguments gives, has its `var` row even with no variable: in the `i32` + `f32` k-means
-  view (`sig/kmeans_i32/m6/`) `[][]i32` is built only by `tabrows`. With no variable in scope the cell renders the
-  data type's constant (`[[0i32]]`), as the design's `var.T` does when c = 0, so the contract's check finds a leaf for
-  every demanded data type. A var row has no argument, so the reachable rows are otherwise unchanged. Witness V6 holds
-  this rule.
+- **A data type with no leaf takes its constant** (task F1b; its review's finding 3). A data type that the root or a
+  kept row demands, and that no kept row of no arguments gives, can never have a variable in scope, so it has no `var`
+  row and no Dv lane: it takes `zero@{T.tag}` (M0088, quantified `T:leafless`, admitted in every view like the `var`
+  row), a terminal spelled as its constant with the constant's properties as its rules. In the `i32` + `f32` k-means
+  view (`sig/kmeans_i32/m6/`) `[][]i32` is built only by `tabrows` and takes `zero@m.i32`, `[[0i32]]`, so the
+  contract's check finds a leaf for every demanded data type. `view.py` and `master6.rs` compute the leafless data
+  types to a fixed point (rows the new leaves admit may demand more), and witness V6 holds the rule.
 - **The matrix family's traversals are heavy** (`map_rows`, `map2_rows`, `matmul`): in a signature view they sit under
   the core binders (k-means admits the matrix family), so they carry the work bound; `transpose` and `row` do not.
 - **`let`'s name is `let.{S.tag}@{Y.tag}`**, so a view of two `lets` data types has unique names.

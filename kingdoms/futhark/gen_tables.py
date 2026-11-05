@@ -2538,7 +2538,7 @@ INDEX6 = {
 ROW6_KINDS = {"function", "terminal", "const", "var"}
 OVER6_SETS = {"states": ["", ".tag"], "tuples": ["", ".tag", ".a", ".b", ".zero"],
               "tuples3": ["", ".tag", ".a", ".b", ".c", ".zero"], "lets": ["", ".tag"], "all": ["", ".tag"],
-              "vars": ["", ".tag"]}
+              "vars": ["", ".tag"], "leafless": ["", ".tag", ".constant"]}
 OPERAND6_RE = re.compile(r"\{(\d+)(?:\.([a-z][a-z0-9_]*))?\}")
 
 
@@ -2788,7 +2788,8 @@ def witness_master6(mst=None):
             v.props_of_template.setdefault(p["data_type"], []).append((p["name"], p["kind"]))
         v.candidates = v._candidate_types()
         v.by_name = {t["name"]: t for t in v.candidates}
-        inst = v._rows({t["name"] for t in v.candidates})
+        every = {t["name"] for t in v.candidates}
+        inst = v._rows(every, every)
     except ValueError as e:
         return bad + [f"N19 the master does not instantiate over i32 and f32: {e}"]
     for r in mst["rows"]:
@@ -2967,13 +2968,23 @@ def witness_view6(dir_path, name, spec, mst=None):
     if env[1:] != want_env:
         bad.append(f"V6 {name}: the environment is {env[1:]}, the model {want_env}")
     have_vars = {e["data_type"] for e in env[1:]} | binders
-    # A data type the root or a symbol demands that no other symbol of no arguments gives has a var row too (its
-    # constant when no variable is in scope), so every demanded data type has a leaf.
-    demanded6 = {root_dt} | {a for s in syms for a in s["args"].split(";") if a}
-    other_leaves6 = {s["out"] for s in syms if not s["args"] and s["kind"] != "var"}
-    have_vars |= demanded6 - other_leaves6
     if var_rows != have_vars:
         bad.append(f"V6 {name}: the var rows are of {sorted(var_rows)}, the data types with a variable are {sorted(have_vars)}")
+    # Every demanded data type has a leaf; one with no variable and no other leaf has its constant (M0088) and no var
+    # row, its rules the constant's properties; no other data type has an M0088 row.
+    demanded6 = {root_dt} | {a for s in syms for a in s["args"].split(";") if a}
+    leaves6 = {s["out"] for s in syms if not s["args"]}
+    if demanded6 - leaves6:
+        bad.append(f"V6 {name}: the demanded data types {sorted(demanded6 - leaves6)} have no leaf")
+    constant_rows6 = [s for s in syms if s["ref"] == "M0088"]
+    other_leaves6 = {s["out"] for s in syms if not s["args"] and s["ref"] != "M0088"}
+    if sorted(s["out"] for s in constant_rows6) != sorted((demanded6 - other_leaves6) & set(by)):
+        bad.append(f"V6 {name}: the constant leaves are of {sorted(s['out'] for s in constant_rows6)}, the data types with no other leaf {sorted(demanded6 - other_leaves6)}")
+    for s in constant_rows6:
+        t = by.get(s["out"], {})
+        want_rules = "; ".join(x.strip() for x in t.get("constant_props", "").split("&") if x.strip())
+        if s["kind"] != "terminal" or s["spelling"] != t.get("constant") or s["rules"] != want_rules:
+            bad.append(f"V6 {name}: the constant leaf {s['name']} is {s['kind']} {s['spelling']!r} {s['rules']!r}, not the terminal {t.get('constant')!r} {want_rules!r}")
     sizes = [n for k, n, _, _ in spec["env"] if k == "size"]
     zeros = [(n, e, d[0]) for k, n, e, d in spec["env"] if k == "zeros"]
     want_z = [(f"zeros_{d}" if len(spec["elements"]) == 1 else f"zeros_{e}_{d}", e, d) for e in spec["elements"] for d in sizes]

@@ -14,8 +14,9 @@
 //!    does not exist; `depth` is replaced by the view's depth (the work-bound requirement is dropped in a view with
 //!    none), and a rule, requirement or binding property that names a property its data type does not carry is dropped;
 //! 3. kept when REACHABLE both ways, with `var@{T}` for every data type that has a variable (a root variable or a
-//!    binding of a kept row, iterated until they settle), and for every data type the root or a kept row demands that
-//!    no kept row of no arguments gives (its constant when no variable is in scope);
+//!    binding of a kept row, iterated until they settle), and `zero@{T}`, T's constant (M0088), for every data type
+//!    the root or a kept row demands that no kept row of no arguments gives (no variable can be in scope for it, so
+//!    it has no var row and no Dv lane), to a fixed point;
 //! 4. written: `datatypes.tsv`, `symbols.tsv`, `environment.tsv`.
 //!
 //! [`View6::kingdom`] loads the written text through [`Kingdom6::from_tables`], so the engine's kingdom is the table
@@ -445,11 +446,11 @@ impl Builder<'_> {
 
     fn admitted(&self, r: &RowTemplate) -> bool {
         r.since <= self.spec.master
-            && (self.spec.families.is_empty() || self.spec.families.iter().any(|f| f == r.get("family")) || r.get("kind") == "var")
+            && (self.spec.families.is_empty() || self.spec.families.iter().any(|f| f == r.get("family")) || r.get("kind") == "var" || items(r.get("over"), ';').iter().any(|q| q.split_once(':').is_some_and(|(_, k)| k == "leafless")))
             && (r.get("elems") == "*" || r.get("elems").split(',').any(|e| self.spec.elements.iter().any(|v| v == e)))
     }
 
-    fn quantifier(&self, q: &str, env: &Env, row_elems: &[String], var_types: &BTreeSet<String>) -> Result<Vec<Env>, String> {
+    fn quantifier(&self, q: &str, env: &Env, row_elems: &[String], var_types: &BTreeSet<String>, leafless: &BTreeSet<String>) -> Result<Vec<Env>, String> {
         let (var, kind) = q.split_once(':').unwrap_or((q, ""));
         let mut out = Vec::new();
         match kind {
@@ -496,6 +497,13 @@ impl Builder<'_> {
             "vars" => {
                 for t in self.candidates.iter().filter(|t| var_types.contains(&t.name)) {
                     out.push(self.tagged(env, var, &t.name)?);
+                }
+            }
+            "leafless" => {
+                for t in self.candidates.iter().filter(|t| leafless.contains(&t.name)) {
+                    let mut b = self.tagged(env, var, &t.name)?;
+                    b.insert(format!("{var}.constant"), t.constant.clone());
+                    out.push(b);
                 }
             }
             _ => return Err(bug(format!("the quantifier {q:?} is not one of master 6's"))),
@@ -565,7 +573,7 @@ impl Builder<'_> {
         }))
     }
 
-    fn rows(&self, var_types: &BTreeSet<String>) -> Result<Vec<Instance>, String> {
+    fn rows(&self, var_types: &BTreeSet<String>, leafless: &BTreeSet<String>) -> Result<Vec<Instance>, String> {
         let mut out = Vec::new();
         for r in self.master.rows.iter().filter(|r| self.admitted(r)) {
             let row_elems: Vec<String> = if r.get("elems") == "*" {
@@ -581,7 +589,7 @@ impl Builder<'_> {
             for q in items(r.get("over"), ';') {
                 let mut next = Vec::new();
                 for env in &envs {
-                    next.extend(self.quantifier(&q, env, &row_elems, var_types)?);
+                    next.extend(self.quantifier(&q, env, &row_elems, var_types, leafless)?);
                 }
                 envs = next;
             }
@@ -696,10 +704,11 @@ impl View6 {
         // 2 and 3: the rows, reachable both ways, the data types with a variable settled.
         let root_types: BTreeSet<String> = root_vars.iter().map(|(_, dt, _)| dt.clone()).collect();
         let binders = |rows: &[Instance]| -> BTreeSet<String> { rows.iter().flat_map(|r| r.binds.iter().map(|(_, dt, _)| dt.clone())).collect() };
-        let mut var_types: BTreeSet<String> = root_types.union(&binders(&b.rows(&BTreeSet::new())?)).cloned().collect();
+        let none = BTreeSet::new();
+        let mut var_types: BTreeSet<String> = root_types.union(&binders(&b.rows(&none, &none)?)).cloned().collect();
         let mut settled_rows = None;
         for _ in 0..b.candidates.len() + 2 {
-            let rows = b.reachable(b.rows(&var_types)?)?;
+            let rows = b.reachable(b.rows(&var_types, &none)?)?;
             let have: BTreeSet<String> = root_types.union(&binders(&rows)).cloned().collect();
             let settled: BTreeSet<String> = var_types.intersection(&have).cloned().collect();
             if settled == var_types {
@@ -709,10 +718,26 @@ impl View6 {
             var_types = settled;
         }
         let mut rows = settled_rows.ok_or_else(|| bug("the data types with a variable do not settle".to_string()))?;
-        let leafless = b.leafless(&rows)?;
-        if !leafless.is_empty() {
-            var_types.extend(leafless);
-            rows = b.reachable(b.rows(&var_types)?)?;
+        // A data type the root or a kept row demands that no kept row of no arguments gives can never have a variable
+        // in scope: it takes its constant (the `T:leafless` row, M0088), no var row and no Dv lane. To a fixed point:
+        // rows the new leaves admit may demand more data types.
+        let mut leafless = BTreeSet::new();
+        let mut settled = false;
+        for _ in 0..b.candidates.len() + 2 {
+            let more: BTreeSet<String> = leafless.union(&b.leafless(&rows)?).cloned().collect();
+            if more == leafless {
+                settled = true;
+                break;
+            }
+            leafless = more;
+            rows = b.reachable(b.rows(&var_types, &leafless)?)?;
+        }
+        if !settled {
+            return Err(bug("the data types with no leaf do not settle".to_string()));
+        }
+        let stray: Vec<String> = binders(&rows).difference(&var_types).cloned().collect();
+        if !stray.is_empty() {
+            return Err(bug(format!("the leaf rows of {leafless:?} admit binders of {stray:?}, which have no var row")));
         }
         let mut used: BTreeSet<String> = BTreeSet::from([b.root.clone()]);
         for r in &rows {

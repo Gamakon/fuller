@@ -1408,8 +1408,9 @@ master 6 view's three tables byte for byte as `view.py` does (7 of 7 committed v
 checked (requirements with relation and adapter, bindings, trip arguments, constants), and the contract with a `var.T`
 per `var` row. Every view lays out. At N = 192: k-means `f32`, 9 data types, head 3,057, tail 12,995, Dc 4,202, Dv
 12,230, 32,484 words (design 7.1: about 31,000); the `i32` + `f32` view (`sig/kmeans_i32/m6/`, sniffed with `--elements
-i32 --lets []i32`), 22 data types, 227 symbols, 123,020 words. A demanded data type with no leaf (`[][]i32`, built only
-by `tabrows`) now takes its `var` row, its constant when no variable is in scope (`view.py`, witness V6, README 9).
+i32 --lets []i32`), 22 data types, 227 symbols, 122,447 words. A demanded data type with no leaf (`[][]i32`, built only
+by `tabrows`) takes its constant, `zero@m.i32` (M0088), and no `var` row: no variable can be of it, so it has no Dv lane
+(the F1b review's finding 3 took its dead 573-word lane away; it was 123,020 words; `view.py`, witness V6, README 9).
 Master 5 unchanged.
 
 **F2a status (2026-11-05): done.** `src/futhark_sig.rs`: all 15 reference programs as master 6 s-expressions

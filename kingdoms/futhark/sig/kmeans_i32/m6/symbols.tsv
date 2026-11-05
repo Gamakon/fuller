@@ -225,4 +225,4 @@ id	ref	name	kind	out	args	rules	requires	binds	trip	spelling
 223	M0087	var@a.f32	var	[]f32						{v}
 224	M0087	var@a.i32	var	[]i32						{v}
 225	M0087	var@m.f32	var	[][]f32						{v}
-226	M0087	var@m.i32	var	[][]i32						{v}
+226	M0088	zero@m.i32	terminal	[][]i32		rows=1; cols=1				[[0i32]]
