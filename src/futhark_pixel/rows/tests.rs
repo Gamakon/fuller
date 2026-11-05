@@ -43,7 +43,7 @@ fn twenty_random_genes_render_programs_futhark_accepts() {
         let iface = super::super::interface(&inst).unwrap();
         let layout = k.layout(24).unwrap();
         for i in 0..count {
-            let gene = k.random_gene(&layout, &mut rng);
+            let gene = k.random_gene(&layout, HeadDraw::Half, &mut rng).unwrap();
             let tree = k.express(&layout, &gene).unwrap();
             let text = k.program(&iface, &tree).unwrap_or_else(|e| panic!("{name} gene {i}: {e}"));
             loops += text.matches(" loop (").count();
@@ -100,4 +100,59 @@ fn the_references_read_on_the_rows_draw_the_dual_tables_picture() {
         assert!(a.iter().zip(&z).all(|(x, y)| x.to_bits() == y.to_bits()), "{name}: the rows' picture differs from the dual tables'");
         eprintln!("{name}: the reference on the rows draws the dual tables' picture bit for bit ({} values)", a.len());
     }
+}
+
+/// THE INTERPRETER ON THE ROWS AGREES WITH FUTHARK'S C BACKEND: 12 random genes of the image instance (half head
+/// draw, program size 24) and the two references, drawn both ways at 12 x 8, agree to 1e-4 relative (libm and
+/// Futhark's `sin`/`pow` are not bit-identical), a NaN where the other is a NaN. The references' work a pixel is the
+/// dual tables' count.
+#[test]
+fn the_interpreter_on_the_rows_agrees_with_futhark_c() {
+    if !have_futhark() || Command::new("cc").arg("--version").output().is_err() {
+        eprintln!("skipped: futhark or cc is not installed");
+        return;
+    }
+    let dir = std::env::temp_dir().join("futhark_pixel_rows_interp").join(format!("t{}", std::process::id()));
+    let mut rng = crate::futhark_table::GeneRng::new(0x1A7E);
+    let mut checked = 0;
+    for name in ["image", "volumepassage", "cuneus"] {
+        let (inst, reference) = super::super::instance(name).unwrap();
+        let iface = super::super::interface(&inst).unwrap();
+        let k = PixelRows::load(name).unwrap();
+        let trees: Vec<Tree> = match reference {
+            Some(r) => {
+                let tree = k.read(r).unwrap();
+                let old_k = super::super::load(&inst).unwrap();
+                let old = super::super::work_per_pixel(&old_k, &super::super::build(&old_k, r).unwrap()).unwrap();
+                assert_eq!(k.work_per_pixel(&k.decode(&tree).unwrap()).unwrap(), old, "{name}: the work a pixel");
+                vec![tree]
+            }
+            None => {
+                let layout = k.layout(24).unwrap();
+                (0..12).map(|_| k.express(&layout, &k.random_gene(&layout, HeadDraw::Half, &mut rng).unwrap()).unwrap()).collect()
+            }
+        };
+        let b = blocks(&iface, 0.75);
+        let b: Vec<(u32, u32, &[u8])> = b.iter().map(|(g, bb, v)| (*g, *bb, v.as_slice())).collect();
+        for t in &trees {
+            let (w, h) = (12u32, 8u32);
+            let tile = super::super::Tile { col0: 0, row0: 0, cols: w, rows: h };
+            let ps = super::super::inputs(&iface, &b, w, h, tile).unwrap();
+            let src = k.program(&iface, t).unwrap();
+            let got = super::super::run_exe(&super::super::compile_c(&src, &dir.join(format!("p{checked}"))).unwrap(), &ps).unwrap();
+            let d = k.decode(t).unwrap();
+            for y in 0..h {
+                for x in 0..w {
+                    let want = k.eval_pixel(&d, &iface, &ps, x as f32, y as f32).unwrap();
+                    for c in 0..3 {
+                        let (g, e) = (got[((y * w + x) * 3 + c) as usize], want[c as usize]);
+                        let ok = (g.is_nan() && e.is_nan()) || g == e || (g - e).abs() <= 1e-4 * g.abs().max(e.abs()).max(1e-3);
+                        assert!(ok, "{name} pixel ({x}, {y}) channel {c}: futhark c {g}, the interpreter {e}\n{src}");
+                    }
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 14);
 }

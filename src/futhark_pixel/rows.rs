@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use crate::geneframe::{Entry, KingdomTables, Role, Ty};
 use crate::kingdom_contract::{relations_from_tables, KingdomContract, SymbolId};
-use crate::typed_environment::{Decoder, Decoding};
+use crate::typed_environment::{Choice, Decoder, Decoding, Node};
 use crate::typed_gep::{express, Domain, GeneLayout, Tree};
 
 use super::{Input, HEADER};
@@ -140,31 +140,231 @@ impl PixelRows {
         Ok(s)
     }
 
-    /// A random gene over `layout` (a head cell a function or a terminal of its type at one half each, a tail cell a
-    /// terminal, a Dc cell a word below its pool, a Dv cell a word below `DV_WORDS`; the root's first cell a function).
-    pub fn random_gene(&self, layout: &GeneLayout, rng: &mut crate::futhark_table::GeneRng) -> Vec<u32> {
+    /// A random gene over `layout`: head cells by `draw` ([`HeadDraw::Half`]: a function or a terminal of the cell's
+    /// type at one half each, each uniform over its kind; [`HeadDraw::Uniform`]: uniform over both), tail cells a
+    /// terminal, Dc cells a word below the pool, Dv cells a word below `DV_WORDS`; the root's first cell is the `image`
+    /// row (a gene whose root is the black picture draws nothing to evolve from).
+    pub fn random_gene(&self, layout: &GeneLayout, draw: HeadDraw, rng: &mut crate::futhark_table::GeneRng) -> Result<Vec<u32>, String> {
         let k = &self.contract;
         let const_len = self.const_len();
+        let image = self.sym("image")?;
         let mut gene = vec![0u32; layout.width];
         for s in layout.spans() {
             let (functions, terminals) = (k.functions_of(s.ty), k.terminals_of(s.ty));
             for (i, cell) in gene[s.off..s.off + s.len].iter_mut().enumerate() {
                 *cell = match s.domain {
-                    Domain::Head => {
-                        let force = s.ty == layout.root && i == 0 && !functions.is_empty();
-                        if !functions.is_empty() && (terminals.is_empty() || force || rng.below(2) == 0) {
-                            functions[rng.below(functions.len())]
-                        } else {
-                            terminals[rng.below(terminals.len())]
+                    Domain::Head if s.ty == layout.root && i == 0 => image,
+                    Domain::Head => match draw {
+                        HeadDraw::Half if !functions.is_empty() && (terminals.is_empty() || rng.below(2) == 0) => functions[rng.below(functions.len())],
+                        HeadDraw::Half => terminals[rng.below(terminals.len())],
+                        HeadDraw::Uniform => {
+                            let n = rng.below(functions.len() + terminals.len());
+                            if n < functions.len() {
+                                functions[n]
+                            } else {
+                                terminals[n - functions.len()]
+                            }
                         }
-                    }
+                    },
                     Domain::Tail => terminals[rng.below(terminals.len())],
                     Domain::Dc => rng.below(const_len.get(&s.ty).copied().unwrap_or(1).max(1) as usize) as u32,
                     Domain::Dv => rng.below(crate::typed_gep::DV_WORDS as usize) as u32,
                 };
             }
         }
-        gene
+        Ok(gene)
+    }
+
+    /// The trips of a decoded `count` node: its pool literal.
+    fn trips(&self, n: &Node) -> Result<u64, String> {
+        match (n.substituted, &n.choice) {
+            (Some(_), _) => Ok(1),
+            (None, Some(Choice::Dc(w))) => self.literals(n.symbol).get(*w as usize).ok_or_else(|| bug(format!("a count past its pool: {w}")))?.parse().map_err(|e| bug(format!("a count that is not a number: {e}"))),
+            _ => Err(bug("a count node with no pool word".into())),
+        }
+    }
+
+    /// The node executions of one pixel: every rendered node once, times the trips of the loops it is inside (a loop
+    /// row's body is its second-last argument and its trip count the `count` argument before it). The exact bound of
+    /// the decoded tree.
+    pub fn work_per_pixel(&self, d: &Decoding) -> Result<u128, String> {
+        fn walk(k: &PixelRows, n: &Node, mult: u128) -> Result<u128, String> {
+            let mut sum = mult;
+            if n.substituted.is_some() {
+                return Ok(sum);
+            }
+            let kids = n.kids.len();
+            let is_loop = k.name(n.symbol).starts_with("loop");
+            let trips = if is_loop { u128::from(k.trips(&n.kids[kids - 3])?) } else { 1 };
+            for (i, kid) in n.kids.iter().enumerate() {
+                sum += walk(k, kid, if is_loop && i == kids - 2 { mult * trips } else { mult })?;
+            }
+            Ok(sum)
+        }
+        walk(self, &d.root, 1)
+    }
+
+    /// THE VALUE OF A DECODED PICTURE AT ONE PIXEL, on the host: the family's meaning written out row by row (a test
+    /// oracle and a host-side measurement, never the fitness path, which runs the compiled program on the GPU). `ps`
+    /// is the input vector of [`super::inputs`]; `px`, `py` the pixel. A node a repair replaced is its type's constant.
+    /// The arithmetic is f32 as Futhark's: `%` truncated, `**` `powf`, `f32.max`/`min` ignoring a NaN operand.
+    pub fn eval_pixel(&self, d: &Decoding, iface: &[Input], ps: &[f32], px: f32, py: f32) -> Result<[f32; 3], String> {
+        let mut values: BTreeMap<String, f32> = BTreeMap::from([("u_width".to_string(), ps[0]), ("u_height".to_string(), ps[1])]);
+        for (i, input) in iface.iter().enumerate() {
+            values.insert(input.spelling.clone(), *ps.get(HEADER + i).ok_or("the input vector is short")?);
+        }
+        let root = &d.root;
+        if root.substituted.is_some() || self.name(root.symbol) == "image.black" {
+            return Ok([0.0; 3]);
+        }
+        let block = root.kids.first().ok_or("an image row with no block")?;
+        let mut e = Eval { k: self, values, px, py };
+        e.bind(root, block, &[px, py])?;
+        match e.block(block)?.as_slice() {
+            [r, g, b] => Ok([*r, *g, *b]),
+            other => Err(bug(format!("a pixel block gave {} values", other.len()))),
+        }
+    }
+}
+
+/// How a random gene draws its head cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadDraw {
+    /// Uniform over the cell's whole alphabet (functions and terminals alike).
+    Uniform,
+    /// A function with probability one half, a terminal otherwise, each uniform over its kind (phylu's
+    /// `FunctionShare::half`). A cell whose alphabet has only one kind draws from it.
+    Half,
+}
+
+struct Eval<'a> {
+    k: &'a PixelRows,
+    values: BTreeMap<String, f32>,
+    px: f32,
+    py: f32,
+}
+
+impl Eval<'_> {
+    /// Give the variables `parent` binds into `child` (those `child`'s environment adds) their values, in order.
+    fn bind(&mut self, parent: &Node, child: &Node, vals: &[f32]) -> Result<(), String> {
+        let new = &child.environment.variables[parent.environment.variables.len()..];
+        if new.len() != vals.len() {
+            return Err(bug(format!("{} binds {} variables, the interpreter has {} values", self.k.name(parent.symbol), new.len(), vals.len())));
+        }
+        for (v, x) in new.iter().zip(vals) {
+            self.values.insert(v.name.clone().ok_or_else(|| bug("a bound variable with no name".into()))?, *x);
+        }
+        Ok(())
+    }
+
+    /// A substituted node's value: its type's constant (the black pixel, the zero tuple, 0).
+    fn constant(&self, n: &Node) -> Vec<f32> {
+        let name = self.k.tables.data_type(n.data_type).map_or("", |t| t.name.as_str());
+        match name {
+            "blk" => vec![0.0; 3],
+            b if b.starts_with("body") => vec![0.0; b[4..].parse().unwrap_or(0)],
+            _ => vec![0.0],
+        }
+    }
+
+    fn block(&mut self, n: &Node) -> Result<Vec<f32>, String> {
+        if n.substituted.is_some() {
+            return Ok(self.constant(n));
+        }
+        let name = self.k.name(n.symbol).to_string();
+        let op = name.split('@').next().unwrap_or("");
+        match op {
+            "let" => {
+                let v = self.scalar(&n.kids[0])?;
+                self.bind(n, &n.kids[1], &[v])?;
+                self.block(&n.kids[1])
+            }
+            "rgb" | "tuple" => n.kids.iter().map(|c| self.scalar(c)).collect(),
+            "black" => Ok(vec![0.0; 3]),
+            "coord" => Ok(vec![self.px / self.values["u_width"], self.py / self.values["u_height"], 0.5]),
+            "zero" => Ok(self.constant(n)),
+            o if o.starts_with("block") => {
+                let vals = self.block(&n.kids[0])?;
+                self.bind(n, &n.kids[1], &vals)?;
+                self.block(&n.kids[1])
+            }
+            o if o.starts_with("loop") => {
+                let s: usize = o[4..].parse().map_err(|_| bug(format!("{o} has no state arity")))?;
+                let mut state: Vec<f32> = n.kids[..s].iter().map(|c| self.scalar(c)).collect::<Result<_, _>>()?;
+                let trips = self.k.trips(&n.kids[s])?;
+                for i in 0..trips {
+                    let mut vals = state.clone();
+                    vals.push(i as f32);
+                    self.bind(n, &n.kids[s + 1], &vals)?;
+                    state = self.block(&n.kids[s + 1])?;
+                    if state.len() != s {
+                        return Err(bug(format!("{o}'s body gave {} values", state.len())));
+                    }
+                }
+                self.bind(n, &n.kids[s + 2], &state)?;
+                self.block(&n.kids[s + 2])
+            }
+            other => Err(bug(format!("{other} is not a block row the interpreter knows"))),
+        }
+    }
+
+    fn scalar(&mut self, n: &Node) -> Result<f32, String> {
+        if n.substituted.is_some() {
+            return Ok(0.0);
+        }
+        match &n.choice {
+            Some(Choice::Dc(w)) => {
+                let text = self.k.literals(n.symbol).get(*w as usize).cloned().ok_or_else(|| bug(format!("a literal past its pool: {w}")))?;
+                return text.trim_end_matches("f32").parse::<f32>().map_err(|e| bug(format!("the literal {text}: {e}")));
+            }
+            Some(Choice::Variable(b)) => {
+                let v = n.environment.variables.iter().find(|v| v.binder == *b).ok_or_else(|| bug("a variable not in scope".into()))?;
+                let name = v.name.as_deref().ok_or_else(|| bug("a variable with no name".into()))?;
+                return self.values.get(name).copied().ok_or_else(|| bug(format!("the variable {name} has no value")));
+            }
+            _ => {}
+        }
+        let op = self.k.name(n.symbol).to_string();
+        if n.kids.is_empty() {
+            return match op.as_str() {
+                "nx" => Ok(self.px / self.values["u_width"]),
+                "ny" => Ok(self.py / self.values["u_height"]),
+                other => Err(bug(format!("{other} is not a scalar terminal the interpreter knows"))),
+            };
+        }
+        let a = self.scalar(&n.kids[0])?;
+        if n.kids.len() == 3 {
+            // sel: if a >= 0 then b else c (only the taken branch is evaluated, as Futhark's `if`).
+            return if a >= 0.0 { self.scalar(&n.kids[1]) } else { self.scalar(&n.kids[2]) };
+        }
+        if n.kids.len() == 2 {
+            let b = self.scalar(&n.kids[1])?;
+            return Ok(match op.as_str() {
+                "add" => a + b,
+                "sub" => a - b,
+                "mul" => a * b,
+                "div" => a / b,
+                "max" => a.max(b),
+                "min" => a.min(b),
+                "pow" => a.powf(b),
+                "mod" => a % b,
+                o => return Err(bug(format!("{o} is not a binary row"))),
+            });
+        }
+        Ok(match op.as_str() {
+            "neg" => -a,
+            "abs" => a.abs(),
+            "sqrt" => a.sqrt(),
+            "sin" => a.sin(),
+            "cos" => a.cos(),
+            "tan" => a.tan(),
+            "tanh" => a.tanh(),
+            "exp" => a.exp(),
+            "log" => a.ln(),
+            "floor" => a.floor(),
+            "trunc" => a.trunc(),
+            o => return Err(bug(format!("{o} is not a unary row"))),
+        })
     }
 }
 
