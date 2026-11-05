@@ -1422,6 +1422,15 @@ environment and checks it by decoding again. The master 5 renderings are stored 
 expresses to itself and decodes with no failing requirement and no substitution. None needed an adapter.
 `random_gene` no longer reads Dv words as symbols.
 
+**F2 status (2026-11-05): done (`4ddf1fba`).** `src/futhark_table.rs`: `Kingdom6::program6` and `Renderer6` (pass 5),
+the ADF rendering (`program6_with_adfs`, subtrees by path); `src/futhark.rs`: `FIT_HELPER`, `CLAMPIX_HELPER`. All 15
+references render their master 5 texts byte for byte. Proof 1: 1,000 random genes a view pass `futhark check`, 1000 of
+1000 for each of the seven views; 100 a view compile with `c` and run legally on two stored cases, N of N. Adapter-free
+genes (the early guard, risk 6): reduce 97.6 %, scan 94.5 %, histogram 16.0 %, pathfinder 31.1 %, a7 3.3 %, k-means
+7.8 %, k-means `i32` + `f32` 7.6 %; nodes with an adapter 0.4 % to 24.6 %. Two README adapter texts were rejected by
+Futhark 0.28.1 and changed: `fit.pair`'s `ad_l` for two known lengths (an existential size, so two such `map2`s did not
+match) now fits to the spelled `min`; a `?` state is bound as a size, `let [ad_m] (ad_s: [ad_m]f32) = ..`.
+
 **Why.** Folding sizes and scope into the type made k-means 14,359 types (85 % depth-3 scope bodies), a gene of 27.6
 million words at N = 192, a 34 s layout, a 149 s e-graph and a 193 s fold at 19.5 GB, and the `i32` + `f32` k-means
 view (237,325 types) cannot load at all (65,536 type codes). Measured, `docs/kmeans_seed.md`, master 5.
