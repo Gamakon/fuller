@@ -2,9 +2,9 @@
 //! standard piece.
 //!
 //! 1. `every_example_with_a_generation_loop_is_a_registered_runner`: every example whose source has a generation
-//!    loop is in [`RUNNERS`] or, excluded by name with its reason and its guard, in [`LEGACY`]; every registered
-//!    runner reaches the standard through `RunTelemetry` (directly, or through a library loop that creates one) and
-//!    carries the two-level HFF.
+//!    loop is in [`RUNNERS`]; every registered runner reaches the standard through `RunTelemetry` (directly, or
+//!    through a library loop that creates one) and carries the two-level HFF. (The legacy WGSL kingdom's excluded
+//!    runner `wgsl_gram_evolve` was deleted with that kingdom, plan 7.7 K5.)
 //!
 //! fuller runs no evolution (`CLAUDE.md`): the Futhark runners (`futhark_evolve`, `futhark_a7_evolve`,
 //! `futhark_pixel_evolve`, the `futhark_search` loop) were frozen as binaries at the tag `pre-5b` and deleted
@@ -17,14 +17,6 @@ use std::path::Path;
 /// library loop that creates one), and the source marker of its two-level HFF (θ_quality, θ_speed; every runner here
 /// has speed inputs).
 const RUNNERS: &[(&str, &str, &str)] = &[];
-
-/// LEGACY, EXCLUDED FROM THE STANDARD BY NAME: (example, why, the guard in its source that stops it running). The day
-/// the guard goes, the test fails until the runner is brought to the standard.
-const LEGACY: &[(&str, &str, &str)] = &[(
-    "wgsl_gram_evolve",
-    "the legacy WGSL kingdom, which has no work bound: the work guard refuses every device dispatch of it",
-    "Fuel::Unported.refuse_unported()?",
-)];
 
 /// A generation loop, as the examples write one.
 fn has_generation_loop(src: &str) -> bool {
@@ -43,7 +35,7 @@ fn every_example_with_a_generation_loop_is_a_registered_runner() {
         }
         let name = path.file_stem().expect("a stem").to_string_lossy().into_owned();
         let src = std::fs::read_to_string(&path).expect("the source");
-        if has_generation_loop(&src) && !RUNNERS.iter().chain(LEGACY).any(|(n, _, _)| *n == name) {
+        if has_generation_loop(&src) && !RUNNERS.iter().any(|(n, _, _)| *n == name) {
             problems.push(format!("examples/{name}.rs has a generation loop and is not a registered runner"));
         }
     }
@@ -55,11 +47,6 @@ fn every_example_with_a_generation_loop_is_a_registered_runner() {
         }
         if !src.contains(hff) {
             problems.push(format!("examples/{name}.rs has speed inputs and its source lacks the two-level HFF's {hff:?}"));
-        }
-    }
-    for (name, why, guard) in LEGACY {
-        if !source(name).contains(guard) {
-            problems.push(format!("examples/{name}.rs is excluded from the standard ({why}) and no longer holds {guard:?}: bring it to the standard"));
         }
     }
     assert!(problems.is_empty(), "runners below the standard (docs/STANDARD_runners.md):\n  {}", problems.join("\n  "));
