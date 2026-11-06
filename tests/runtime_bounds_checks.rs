@@ -82,12 +82,14 @@ fn every_kernel_compiles_with_runtime_bounds_checks() {
         compiles += text.matches("create_shader_module(").count();
     }
     // The evolved kernels' two compile sites are among them.
-    for (file, site) in [("src/wgsl/gram.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/oracle.rs", "self.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/harness.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor")] {
+    for (file, site) in [("src/wgsl/gram.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/oracle.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor")] {
         let text = std::fs::read_to_string(root.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
         assert!(text.contains(site), "{file}: the kernels' compile site moved; read it again");
     }
     assert!(compiles >= 2, "{compiles} compile sites");
-    let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("Cargo.lock");
+    // The lock is the crate's own, or the workspace's above it once the crate is a workspace member.
+    let lock_path = root.ancestors().map(|d| d.join("Cargo.lock")).find(|p| p.exists()).expect("a Cargo.lock at or above the crate");
+    let lock = std::fs::read_to_string(lock_path).expect("Cargo.lock");
     for (name, version) in [("wgpu", "30.0.1"), ("wgpu-hal", "30.0.1"), ("wgpu-core", "30.0.1"), ("wgpu-types", "30.0.1"), ("naga", "30.0.1")] {
         assert!(lock.contains(&format!("name = \"{name}\"\nversion = \"{version}\"")), "{name} is no longer {version}: read create_shader_module's bounds-check policy again (see this file's header)");
     }
