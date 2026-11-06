@@ -1,5 +1,10 @@
 # fuller
 
+> **MOVED (2026-11-06): fuller now lives in the phylu repository as `crates/fuller`**
+> (`/Users/andrewmorgan/Dev/gamakon/phylu`, github.com/Gamakon/phylu), with its whole history.
+> This repository is frozen: do not commit here. `crates/fuller/docs/COMMIT_MAP.tsv` there maps every commit
+> hash of this repository to its new one.
+
 **An e-graph engine for making symbolic expressions smaller — provably without changing what they compute.**
 
 Named after Buckminster Fuller's *ephemeralization*: doing more with less. `fuller`
