@@ -1095,7 +1095,8 @@ pub fn compile_c(source: &str, dir: &Path) -> Result<PathBuf, String> {
         None,
     )?;
     if !out.status.success() {
-        return Err(format!("futhark c failed:\n{}", String::from_utf8_lossy(&out.stderr)));
+        // The exit status names a kill by a signal (the machine under load), which leaves no compiler message.
+        return Err(format!("futhark c failed ({}):\n{}", out.status, String::from_utf8_lossy(&out.stderr)));
     }
     Ok(exe)
 }

@@ -176,3 +176,16 @@ fn the_quality_fingerprint_of_the_i32_formula_is_pinned() {
     let every = [QualityPart::Wrong, QualityPart::CellLog, QualityPart::CellLevel, QualityPart::Step, QualityPart::Shape, QualityPart::Order, QualityPart::Outside(10)];
     assert_eq!((quality_fingerprint(), quality_fingerprint_of(&[QualityPart::Study]), quality_fingerprint_of(&every)), ("80b71efa5c5adfb0".to_string(), "7405ef68d2104e9c".to_string(), "756d9a9553fe716b".to_string()));
 }
+
+/// A failed `futhark c` names its exit status, so a compile killed by a signal (no compiler message, the machine under
+/// load: the final check's kmeans_i32 chunk of 2026-11-06, which compiles here) is told apart from a program Futhark
+/// rejects.
+#[test]
+fn a_failed_compile_names_its_exit_status() {
+    if !have_futhark() {
+        eprintln!("skipped: futhark is not installed");
+        return;
+    }
+    let e = crate::futhark_sig::compile_c("entry main (x: i32) : i32 = y\n", &scratch("bad_compile")).expect_err("an unbound name does not compile");
+    assert!(e.starts_with("futhark c failed (exit status: "), "{e}");
+}
