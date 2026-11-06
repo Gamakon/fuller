@@ -49,9 +49,22 @@ fn timed_entry(line: &str) -> Option<&str> {
     }
 }
 
-/// A `t` or `p` command whose entry already reached [`TIMED_RUN_BOUND`] in this run: its tag and its failure's text
-/// (it is not run again), else None.
+/// The entry of a `k` command that carries its own loop's bound (`bound_ms=MS`: a candidate's run, never the
+/// reference's), else None.
+fn bounded_k_entry(line: &str) -> Option<&str> {
+    let mut w = line.split_whitespace();
+    (w.next() == Some("k") && line.split_whitespace().any(|x| x.starts_with("bound_ms="))).then(|| w.next()).flatten()
+}
+
+/// A `t` or `p` command whose entry already reached [`TIMED_RUN_BOUND`] in this run, or a bounded `k` command whose
+/// entry's run already stopped at its bound: its tag and its failure's text (it is not run again), else None. A
+/// k-means candidate that reached its bound has failed its row (phylu's evaluator reads no case after it); each later
+/// run of it would spend its bound again and make the device again, with another upload of the resident sample (the
+/// k-means GPU replay of 2026-11-06: 7 uploads for 1 failed row).
 fn known_too_slow(line: &str, too_slow: &HashSet<String>) -> Option<(&'static str, String)> {
+    if let Some(e) = bounded_k_entry(line).filter(|e| too_slow.contains(*e)) {
+        return Some(("k", format!("the k-means run failed: the run of {e} {} in an earlier command (not run again)", crate::ctx::RUN_BOUND_MARK)));
+    }
     let e = timed_entry(line).filter(|e| too_slow.contains(*e))?;
     let tag = if line.starts_with('t') { "t" } else { "p" };
     Some((tag, format!("the timed entry failed: the run of {e} {} in an earlier command (not run again)", crate::ctx::RUN_BOUND_MARK)))
@@ -820,7 +833,7 @@ pub fn run(s: &mut Session, path: &Path, commands: &str, inputs: &RunInputs) -> 
             }
             Ok(Err((tag, e))) => {
                 if e.message().contains(crate::ctx::RUN_BOUND_MARK) {
-                    if let Some(entry) = timed_entry(line) {
+                    if let Some(entry) = timed_entry(line).or_else(|| bounded_k_entry(line)) {
                         too_slow.insert(entry.to_string());
                     }
                 }
@@ -1020,6 +1033,26 @@ mod tests {
             assert!(why.starts_with("the timed entry failed: ") && why.contains(crate::ctx::RUN_BOUND_MARK), "{why}");
         }
         for line in ["p t4 yard 1000000000 3 1", "q t3", "o t3", "k t3 0 0 10 100 0.0001"] {
+            assert_eq!(known_too_slow(line, &too_slow), None, "{line} still runs");
+        }
+    }
+
+    /// A BOUNDED K-MEANS RUN AT ITS BOUND (`bound_ms=MS`, a candidate's): the entry's later bounded `k` commands fail at
+    /// once, tagged `k`, their text holding the bound's mark (phylu's evaluator reads it as too slow); the reference's
+    /// `k` commands (no `bound_ms`) and another entry's still run. No device.
+    #[test]
+    fn a_bounded_k_means_run_at_its_bound_stops_the_entrys_later_bounded_runs() {
+        assert_eq!(bounded_k_entry("k k3 0 0 1000 100 0.0001 ky bound_ms=10000"), Some("k3"));
+        assert_eq!(bounded_k_entry("k k3 0 0 1000 100 0.0001 bound_ms=10000"), Some("k3"));
+        assert_eq!((bounded_k_entry("k ky 0 0 1000 100 0.0001"), bounded_k_entry("t k3 5")), (None, None));
+        let mut too_slow = HashSet::new();
+        let later = "k k3 1 1000 1000 100 0.0001 ky bound_ms=10000";
+        assert_eq!(known_too_slow(later, &too_slow), None, "nothing is too slow before a run reaches its bound");
+        too_slow.insert("k3".to_string());
+        let (tag, why) = known_too_slow(later, &too_slow).expect("not run again");
+        assert_eq!(tag, "k");
+        assert!(why.starts_with("the k-means run failed: ") && why.contains(crate::ctx::RUN_BOUND_MARK), "{why}");
+        for line in ["k ky 1 1000 1000 100 0.0001", "k k4 1 1000 1000 100 0.0001 bound_ms=10000"] {
             assert_eq!(known_too_slow(line, &too_slow), None, "{line} still runs");
         }
     }
